@@ -40,6 +40,25 @@ class StubStore implements KernelConfigStore {
   }
 }
 
+/** A store whose cleanup() can be held open so tests can observe ordering. */
+class DeferredStore extends StubStore {
+  holdCleanup = false
+  cleanupStarted = 0
+  private cleanupResolvers: Array<() => void> = []
+
+  override async cleanup(config: KernelConfig): Promise<void> {
+    this.cleanupCalls.push(config)
+    this.cleanupStarted += 1
+    if (!this.holdCleanup) return
+    await new Promise<void>((resolve) => this.cleanupResolvers.push(resolve))
+  }
+
+  /** Release the oldest held cleanup() so it resolves. */
+  resolveCleanup(): void {
+    this.cleanupResolvers.shift()?.()
+  }
+}
+
 class FakeHandle implements KernelProcessHandle {
   readonly pid: number | undefined
   private stdout: Array<(text: string) => void> = []
@@ -127,9 +146,10 @@ function createHarness(options: {
   maxRestarts?: number
   backoffMs?: number
   maxBackoffMs?: number
+  store?: StubStore
 } = {}): Harness {
   const resolver = new StubResolver()
-  const store = new StubStore()
+  const store = options.store ?? new StubStore()
   const adapter = new FakeAdapter()
   const supervisor = new KernelSupervisor(
     { resolver, configStore: store, adapter, secret: 's3cret' },
@@ -266,6 +286,9 @@ describe('KernelSupervisor lifecycle', () => {
     await expect(h.supervisor.start()).rejects.toMatchObject({ code: ProtocolErrorCode.KERNEL_START_TIMEOUT })
     expect(h.supervisor.getStatus().phase).toBe('failed')
     expect(h.supervisor.getStatus().lastError).toMatch(/ready within the start timeout/)
+    // The half-started process exited during the bounded abort; its config was cleaned.
+    expect(h.store.cleanupCalls.length).toBe(1)
+    expect(h.adapter.spawnCalls.length).toBe(1)
   })
 
   it('cleans up the temp config after a normal stop', async () => {
@@ -284,6 +307,27 @@ describe('KernelSupervisor lifecycle', () => {
     expect(h.store.cleanupCalls.length).toBe(0)
   })
 
+  it('does not finish stop() until the temp config cleanup resolves', async () => {
+    const store = new DeferredStore()
+    const h = createHarness({ store })
+    await startToRunning(h)
+    store.holdCleanup = true
+
+    let stopped = false
+    const stopPromise = h.supervisor.stop().then(() => {
+      stopped = true
+    })
+    // The process exits but cleanup is held open: stop() must stay pending.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(store.cleanupStarted).toBe(1)
+    expect(stopped).toBe(false)
+
+    store.resolveCleanup()
+    await stopPromise
+    expect(stopped).toBe(true)
+    expect(h.supervisor.getStatus().phase).toBe('stopped')
+  })
+
   it('cleans the crashed config before a restart materializes a new one', async () => {
     const h = createHarness({ readinessPattern: null, maxRestarts: 1, backoffMs: 10, maxBackoffMs: 40 })
     await h.supervisor.start()
@@ -297,6 +341,53 @@ describe('KernelSupervisor lifecycle', () => {
     expect(h.store.materializeCalls).toBe(2)
     // The old secret-bearing config was cleaned before the new one was made.
     expect(h.store.cleanupCalls.length).toBe(1)
+  })
+
+  it('holds a crash-restart until the crashed config cleanup resolves', async () => {
+    const store = new DeferredStore()
+    const h = createHarness({ store, readinessPattern: null, maxRestarts: 1, backoffMs: 10, maxBackoffMs: 40 })
+    await h.supervisor.start()
+    store.holdCleanup = true
+
+    h.adapter.lastHandle!.emitExit({ code: 1, signal: null })
+    await waitFor(() => store.cleanupStarted === 1)
+    // Cleanup is held: the restart must not materialize a new config or spawn.
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(h.store.materializeCalls).toBe(1)
+    expect(h.adapter.spawnCalls.length).toBe(1)
+
+    store.resolveCleanup()
+    await waitFor(() => h.adapter.spawnCalls.length === 2)
+    expect(h.store.materializeCalls).toBe(2)
+    // The old config was fully cleaned before the new one was materialized.
+    expect(h.store.cleanupCalls.length).toBe(1)
+  })
+
+  it('keeps an unstartable-but-alive process tracked when it survives SIGKILL on start timeout', async () => {
+    const h = createHarness({ startTimeoutMs: 50, stopTimeoutMs: 15, forceKillTimeoutMs: 15 })
+    const startP = h.supervisor.start()
+    await waitFor(() => h.adapter.lastHandle != null)
+    const handle = h.adapter.lastHandle!
+    handle.onSigterm = 'ignores'
+    handle.onSigkill = 'ignores'
+
+    await expect(startP).rejects.toMatchObject({ code: ProtocolErrorCode.KERNEL_STOP_TIMEOUT })
+    const status = h.supervisor.getStatus()
+    // The un-terminable half-started process is still tracked, not dropped.
+    expect(status.phase).toBe('failed')
+    expect(status.pid).toBe(handle.pid)
+    expect((h.supervisor as unknown as { handle: unknown }).handle).toBe(handle)
+    expect(h.store.cleanupCalls.length).toBe(0)
+
+    // start() is refused while the survivor is still tracked.
+    await expect(h.supervisor.start()).rejects.toMatchObject({ code: ProtocolErrorCode.KERNEL_RUNNING })
+    expect(h.adapter.spawnCalls.length).toBe(1)
+
+    // A later stop() retry terminates the survivor and releases the config.
+    handle.onSigterm = 'exits'
+    await expect(h.supervisor.stop()).resolves.toMatchObject({ phase: 'stopped' })
+    expect(h.store.cleanupCalls.length).toBe(1)
+    expect((h.supervisor as unknown as { handle: unknown }).handle).toBeNull()
   })
 
   it('cleans the config even when the restart cap is reached', async () => {

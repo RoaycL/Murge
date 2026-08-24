@@ -86,6 +86,9 @@ export class KernelSupervisor extends EventEmitter {
   private restartTimer: NodeJS.Timeout | null = null
   private readiness: Readiness | null = null
   private exitWait: ExitWait | null = null
+  /** In-flight post-exit work (config cleanup + status/restart). Never on the
+   * lifecycle chain, so awaiting it from stop()/start() cannot deadlock. */
+  private exitWork: Promise<void> | null = null
   private stdoutBuf = ''
 
   constructor(deps: KernelDependencies, options: KernelSupervisorOptions = {}) {
@@ -129,6 +132,10 @@ export class KernelSupervisor extends EventEmitter {
           'A kernel process is still running; stop it before starting again.'
         )
       }
+      // If a previous process's exit work is still removing its temp config,
+      // wait so we never materialize/respawn over an uncleaned workspace.
+      const priorWork = this.exitWork
+      if (priorWork) await priorWork
       this.clearRestartTimer()
       this.restartCount = 0
       await this.doStart()
@@ -144,24 +151,20 @@ export class KernelSupervisor extends EventEmitter {
 
       const handle = this.handle
       if (!handle) {
+        // Either never started, or the process already exited. If that prior
+        // exit is still removing its temp config, wait so stop()/before-quit
+        // never finish before the workspace is gone.
+        const priorWork = this.exitWork
+        if (priorWork) await priorWork
         this.setStatus({ phase: 'stopped', pid: null })
         return this.getStatus()
       }
 
       this.isStopping = true
       this.setStatus({ phase: 'stopping' })
-      handle.sendSignal('SIGTERM')
-      const graceful = await this.waitForExit(handle, this.stopTimeoutMs)
-      if (graceful) {
+      const exited = await this.terminate(handle)
+      if (exited) {
         // The process exited and handleExit already cleaned the temp config.
-        return this.getStatus()
-      }
-
-      // Bounded forced-termination fallback.
-      handle.sendSignal('SIGKILL')
-      const forced = await this.waitForExit(handle, this.forceKillTimeoutMs)
-      if (forced) {
-        // The process exited via SIGKILL and handleExit already cleaned it up.
         return this.getStatus()
       }
 
@@ -178,6 +181,20 @@ export class KernelSupervisor extends EventEmitter {
       })
       throw new ProtocolError(ProtocolErrorCode.KERNEL_STOP_TIMEOUT, 'Kernel did not exit after SIGKILL.')
     })
+  }
+
+  /**
+   * Send SIGTERM then SIGKILL, waiting for a real exit after each signal.
+   * Resolves true only once the process has actually exited (and handleExit has
+   * removed its temp config); resolves false when it survives even SIGKILL, in
+   * which case the caller must keep the handle and pid tracked.
+   */
+  private async terminate(handle: KernelProcessHandle): Promise<boolean> {
+    handle.sendSignal('SIGTERM')
+    const graceful = await this.waitForExit(handle, this.stopTimeoutMs)
+    if (graceful) return true
+    handle.sendSignal('SIGKILL')
+    return this.waitForExit(handle, this.forceKillTimeoutMs)
   }
 
   private async doStart(): Promise<void> {
@@ -228,9 +245,23 @@ export class KernelSupervisor extends EventEmitter {
     try {
       await this.awaitReady(handle)
     } catch (error) {
-      await this.cleanupHandle()
-      await this.cleanupConfig()
-      return this.raiseFailed(toProtocolError(error))
+      // The half-started process may still be alive. Abort it with the same
+      // bounded termination used by stop(): never drop the handle or delete its
+      // config until we know the process has actually exited.
+      const underlying = toProtocolError(error)
+      const exited = await this.terminate(handle)
+      if (exited) return this.raiseFailed(underlying)
+      // The process survived even SIGKILL. Keep it tracked (failed + pid +
+      // handle) so start() refuses a second kernel and the config is preserved.
+      this.setStatus({
+        phase: 'failed',
+        pid: handle.pid ?? this.status.pid,
+        lastError: `Kernel did not exit after SIGKILL (start failed: ${underlying.message})`
+      })
+      throw new ProtocolError(
+        ProtocolErrorCode.KERNEL_STOP_TIMEOUT,
+        `Kernel did not exit after SIGKILL while aborting an unstarted kernel (${underlying.message}).`
+      )
     }
 
     this.setStatus({ phase: 'running', startedAt: new Date().toISOString() })
@@ -298,30 +329,32 @@ export class KernelSupervisor extends EventEmitter {
 
   private handleExit(info: KernelExitInfo): void {
     // The process has exited, so its temp workspace (which may hold the
-    // controller secret) is no longer needed. Clean it up for every exit path:
-    // graceful stop, forced stop, crash, and crash-restart.
-    void this.cleanupConfig()
-
+    // controller secret) is no longer needed. Run all post-exit work on a single
+    // awaited promise: config cleanup is finished before the exit wait is
+    // resolved (so stop()/before-quit never complete early) and before a
+    // crash-restart is scheduled (so a fresh directory never materializes over
+    // an uncleaned one).
     this.rejectReadiness(new ProtocolError(ProtocolErrorCode.KERNEL_CRASHED, `Kernel ${this.describeExit(info)}`))
-    if (this.exitWait) {
-      clearTimeout(this.exitWait.timer)
-      const w = this.exitWait
-      this.exitWait = null
-      w.resolve(true)
-    }
-
-    if (this.isStopping) {
-      this.isStopping = false
-      this.setStatus({ phase: 'stopped', pid: null })
-      return
-    }
-
     const wasRunning = this.status.phase === 'running'
     const desc = this.describeExit(info)
-    this.setStatus({ phase: 'failed', pid: null, lastError: `Kernel ${desc}` })
-    if (wasRunning) {
-      this.scheduleRestart(desc)
-    }
+    this.exitWork = (async () => {
+      await this.cleanupConfig()
+      if (this.exitWait) {
+        clearTimeout(this.exitWait.timer)
+        const w = this.exitWait
+        this.exitWait = null
+        w.resolve(true)
+      }
+      if (this.isStopping) {
+        this.isStopping = false
+        this.setStatus({ phase: 'stopped', pid: null })
+        return
+      }
+      this.setStatus({ phase: 'failed', pid: null, lastError: `Kernel ${desc}` })
+      if (wasRunning) {
+        this.scheduleRestart(desc)
+      }
+    })()
   }
 
   private handleError(error: Error): void {
@@ -348,7 +381,12 @@ export class KernelSupervisor extends EventEmitter {
   }
 
   private waitForExit(handle: KernelProcessHandle, timeoutMs: number): Promise<boolean> {
-    if (this.handle !== handle) return Promise.resolve(true)
+    if (this.handle !== handle) {
+      // The process already exited, so the exit event is gone. Wait for its
+      // cleanup to finish before reporting so a caller never proceeds while the
+      // temp workspace is still being removed.
+      return (this.exitWork ?? Promise.resolve()).then(() => true)
+    }
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         if (this.exitWait?.resolve === resolve) this.exitWait = null

@@ -17,6 +17,12 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   }
 }
 
+function listen<T>(channel: string, listener: (value: T) => void): () => void {
+  const handler = (_event: Electron.IpcRendererEvent, value: T): void => listener(value)
+  ipcRenderer.on(channel, handler)
+  return () => ipcRenderer.removeListener(channel, handler)
+}
+
 const api: DesktopApi = {
   app: {
     getBrand: () => invoke(IPC.appGetBrand)
@@ -25,11 +31,7 @@ const api: DesktopApi = {
     getStatus: () => invoke(IPC.kernelGetStatus),
     start: () => invoke(IPC.kernelStart),
     stop: () => invoke(IPC.kernelStop),
-    onStatus: (listener) => {
-      const handler = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]): void => listener(value)
-      ipcRenderer.on(IPC.kernelStatusEvent, handler)
-      return () => ipcRenderer.removeListener(IPC.kernelStatusEvent, handler)
-    }
+    onStatus: (listener) => listen(IPC.kernelStatusEvent, listener)
   },
   runtime: {
     getSummary: () => invoke(IPC.runtimeGetSummary)
@@ -42,11 +44,10 @@ const api: DesktopApi = {
     getRules: () => invoke(IPC.mihomoGetRules),
     getConnections: () => invoke(IPC.mihomoGetConnections),
     closeConnection: (id) => invoke(IPC.mihomoCloseConnection, id),
-    onTraffic: (listener) => {
-      const handler = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]): void => listener(value)
-      ipcRenderer.on(IPC.mihomoTrafficEvent, handler)
-      return () => ipcRenderer.removeListener(IPC.mihomoTrafficEvent, handler)
-    }
+    onTraffic: (listener) => listen(IPC.mihomoTrafficEvent, listener),
+    onConnections: (listener) => listen(IPC.mihomoConnectionsEvent, listener),
+    onLogs: (listener) => listen(IPC.mihomoLogEvent, listener),
+    onStreamError: (listener) => listen(IPC.mihomoStreamErrorEvent, listener)
   }
 }
 

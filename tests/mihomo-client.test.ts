@@ -16,6 +16,21 @@ function fakeResponse(body: unknown, status = 200) {
   } as Response
 }
 
+/** A pending Response promise that rejects with an AbortError when `signal` aborts,
+ * mirroring how a real fetch reacts to an AbortController. */
+function hangingResponse(signal: AbortSignal | undefined): Promise<Response> {
+  return new Promise((_resolve, reject) => {
+    if (!signal) return
+    if (signal.aborted) {
+      reject(new DOMException('The operation was aborted.', 'AbortError'))
+      return
+    }
+    signal.addEventListener('abort', () => {
+      reject(new DOMException('The operation was aborted.', 'AbortError'))
+    }, { once: true })
+  })
+}
+
 afterEach(() => {
   vi.unstubAllGlobals()
 })
@@ -76,5 +91,25 @@ describe('MihomoClient', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse('', 204)))
     const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
     await expect(client.closeConnection('conn-1')).resolves.toBeUndefined()
+  })
+
+  it('maps a request that exceeds the timeout to UPSTREAM_TIMEOUT', async () => {
+    vi.stubGlobal('fetch', vi.fn((_url, init) => hangingResponse(init?.signal)))
+    const client = new MihomoClient('http://127.0.0.1:9090', 'secret', { timeoutMs: 25 })
+    const error = await client.getVersion().catch((e) => e)
+    expect(error).toBeInstanceOf(ProtocolError)
+    expect((error as ProtocolError).code).toBe(ProtocolErrorCode.UPSTREAM_TIMEOUT)
+  })
+
+  it('maps an external cancellation to UPSTREAM_UNREACHABLE with an aborted reason', async () => {
+    vi.stubGlobal('fetch', vi.fn((_url, init) => hangingResponse(init?.signal)))
+    const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
+    const abort = new AbortController()
+    const pending = client.getConnections(abort.signal)
+    abort.abort()
+    const error = (await pending.catch((e) => e)) as ProtocolError
+    expect(error).toBeInstanceOf(ProtocolError)
+    expect(error.code).toBe(ProtocolErrorCode.UPSTREAM_UNREACHABLE)
+    expect(error.details?.reason).toBe('aborted')
   })
 })

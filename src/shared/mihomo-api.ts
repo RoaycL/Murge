@@ -109,3 +109,13 @@ export interface MihomoConfigSnapshot {
   tun?: Record<string, unknown>
   [key: string]: unknown
 }
+
+/** A failure surfaced by a push stream (bad JSON, schema reject, or connect error). */
+export interface MihomoStreamError {
+  code: string
+  message: string
+  /** Which stream reported the failure. */
+  source: 'traffic' | 'connections' | 'logs'
+  /** `connection` = the socket dropped or could not be (re)opened; `parse` = a message was malformed. */
+  kind: 'connection' | 'parse'
+}

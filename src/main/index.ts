@@ -9,13 +9,40 @@ import { createKernelResolver } from './kernel/resolvers'
 import { TempKernelConfigStore } from './kernel/config-store'
 import { NodeKernelProcessAdapter } from './kernel/node-adapter'
 import { MihomoClient } from './services/mihomo-client'
+import { MihomoService } from './services/mihomo-service'
+import { startMockMihomoServer, type MockMihomoServerHandle } from './testing/mock-mihomo-server'
+import type { MihomoGateway } from '@shared/gateways'
 
 const controllerUrl = process.env.MURGE_DEV_CONTROLLER ?? 'http://127.0.0.1:9090'
 const controllerSecret = process.env.MURGE_DEV_SECRET ?? ''
 
 // Created inside app.whenReady; held here so the quit path can stop it.
 let kernel: KernelSupervisor | null = null
+let mihomo: MihomoService | null = null
+let mockServer: MockMihomoServerHandle | null = null
 let isQuitting = false
+
+/**
+ * Build the controller gateway. Development builds run the in-process localhost
+ * mock controller so the renderer can be exercised without a real binary or any
+ * network change. Production keeps the REST surface but leaves push streams
+ * closed: a real controller is a later, opt-in milestone.
+ */
+async function createMihomoGateway(): Promise<MihomoGateway> {
+  if (is.dev) {
+    const secret = controllerSecret || 'dev-mock-secret'
+    mockServer = await startMockMihomoServer({ secret })
+    const client = new MihomoClient(mockServer.baseUrl, secret)
+    mihomo = new MihomoService(client, { wsBaseUrl: mockServer.wsBaseUrl, secret, enabled: true })
+  } else {
+    const client = new MihomoClient(controllerUrl, controllerSecret)
+    mihomo = new MihomoService(
+      client,
+      { wsBaseUrl: controllerUrl.replace(/^http/, 'ws'), secret: controllerSecret, enabled: false }
+    )
+  }
+  return mihomo
+}
 
 function createWindow(): void {
   const window = new BrowserWindow({
@@ -48,7 +75,7 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   try {
     parseBrandConfig(brand)
   } catch (error) {
@@ -70,9 +97,12 @@ app.whenReady().then(() => {
     { readinessPattern: /fixture-ready/ }
   )
   kernel = kernelInstance
+  // Await the (mock or disabled) controller gateway before wiring IPC so the
+  // renderer's first pull always sees a live controller in dev.
+  const gateway = await createMihomoGateway()
   registerIpc({
     kernel: kernelInstance,
-    mihomo: new MihomoClient(controllerUrl, controllerSecret)
+    mihomo: gateway
   })
   createWindow()
 
@@ -98,6 +128,12 @@ app.on('before-quit', (event) => {
       await kernel?.stop()
     } catch (error) {
       console.error('[kernel] failed to stop during quit:', error)
+    }
+    try {
+      mihomo?.dispose()
+      await mockServer?.close()
+    } catch (error) {
+      console.error('[mihomo] failed to stop mock controller during quit:', error)
     }
     app.quit()
   })()

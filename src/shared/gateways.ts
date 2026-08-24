@@ -2,10 +2,12 @@ import type { BrandConfig } from './brand'
 import type {
   MihomoConfigSnapshot,
   MihomoConnectionsSnapshot,
+  MihomoLogMessage,
   MihomoProxiesResponse,
-  MihomoRulesResponse
+  MihomoRulesResponse,
+  MihomoStreamError
 } from './mihomo-api'
-import type { KernelStatus, RuntimeSummary } from './runtime'
+import type { KernelStatus, RuntimeSummary, TrafficSample } from './runtime'
 
 /**
  * Narrow, testable service boundaries. Main-process services implement these
@@ -29,6 +31,11 @@ export interface MihomoGateway {
   getRules(): Promise<MihomoRulesResponse>
   getConnections(): Promise<MihomoConnectionsSnapshot>
   closeConnection(id: string): Promise<void>
+  /** Push subscriptions over the shared WebSocket transports. */
+  onTraffic(listener: (sample: TrafficSample) => void): () => void
+  onConnections(listener: (snapshot: MihomoConnectionsSnapshot) => void): () => void
+  onLogs(listener: (message: MihomoLogMessage) => void): () => void
+  onStreamError(listener: (error: MihomoStreamError) => void): () => void
 }
 
 export interface RuntimeGateway {

@@ -22,6 +22,8 @@ export const ProtocolErrorCode = {
   UPSTREAM_HTTP_ERROR: 'UPSTREAM_HTTP_ERROR',
   /** The mihomo controller could not be reached at all. */
   UPSTREAM_UNREACHABLE: 'UPSTREAM_UNREACHABLE',
+  /** The mihomo controller did not answer within the configured timeout. */
+  UPSTREAM_TIMEOUT: 'UPSTREAM_TIMEOUT',
   /** The requested capability is not supported by this build or upstream. */
   UNSUPPORTED: 'UNSUPPORTED',
   /** The kernel process could not be started. */

@@ -1,0 +1,128 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
+import { useTrafficStore } from '../src/renderer/src/stores/traffic'
+import { useConnectionsStore } from '../src/renderer/src/stores/connections'
+import type { MihomoConnectionsSnapshot, MihomoStreamError } from '../src/shared/mihomo-api'
+import type { TrafficSample } from '../src/shared/runtime'
+
+type Mh = {
+  trafficListeners: Set<(sample: TrafficSample) => void>
+  connectionsListeners: Set<(snapshot: MihomoConnectionsSnapshot) => void>
+  errorListeners: Set<(error: MihomoStreamError) => void>
+  getConnections: ReturnType<typeof vi.fn>
+  onTraffic: (listener: (sample: TrafficSample) => void) => () => void
+  onConnections: (listener: (snapshot: MihomoConnectionsSnapshot) => void) => () => void
+  onLogs: (listener: (message: unknown) => void) => () => void
+  onStreamError: (listener: (error: MihomoStreamError) => void) => () => void
+}
+
+let mihomo: Mh
+
+beforeEach(() => {
+  setActivePinia(createPinia())
+  const listeners = {
+    trafficListeners: new Set<(sample: TrafficSample) => void>(),
+    connectionsListeners: new Set<(snapshot: MihomoConnectionsSnapshot) => void>(),
+    errorListeners: new Set<(error: MihomoStreamError) => void>()
+  }
+  mihomo = {
+    ...listeners,
+    getConnections: vi.fn(),
+    onTraffic: (listener) => {
+      listener && listeners.trafficListeners.add(listener)
+      return () => listeners.trafficListeners.delete(listener)
+    },
+    onConnections: (listener) => {
+      listener && listeners.connectionsListeners.add(listener)
+      return () => listeners.connectionsListeners.delete(listener)
+    },
+    onLogs: () => () => undefined,
+    onStreamError: (listener) => {
+      listener && listeners.errorListeners.add(listener)
+      return () => listeners.errorListeners.delete(listener)
+    }
+  }
+  ;(globalThis as unknown as { window: unknown }).window = { desktop: { mihomo } }
+})
+
+afterEach(() => {
+  ;(globalThis as unknown as { window?: unknown }).window = undefined
+})
+
+function sample(up = 10, down = 20): TrafficSample {
+  return { timestamp: Date.now(), up, down, upTotal: 1000, downTotal: 2000 }
+}
+
+function emitTraffic(store: ReturnType<typeof useTrafficStore>, value: TrafficSample): void {
+  for (const listener of Array.from(mihomo.trafficListeners)) listener(value)
+}
+
+describe('traffic store', () => {
+  it('bounds history to a single minute and transitions to live on first sample', () => {
+    const store = useTrafficStore()
+    expect(store.status).toBe('loading')
+    store.connect()
+    expect(store.status).toBe('loading')
+
+    for (let i = 0; i < 80; i += 1) emitTraffic(store, sample(i, i))
+    expect(store.status).toBe('live')
+    expect(store.samples.length).toBe(60)
+    expect(store.current).toEqual(store.samples[59])
+    expect(store.downloadSeries).toHaveLength(60)
+    store.disconnect()
+  })
+
+  it('maps stream errors to disconnected or error by kind and filters other sources', () => {
+    const store = useTrafficStore()
+    store.connect()
+    emitTraffic(store, sample())
+    expect(store.status).toBe('live')
+
+    const connError: MihomoStreamError = { code: 'UPSTREAM_UNREACHABLE', message: 'traffic stream: closed', source: 'traffic', kind: 'connection' }
+    for (const listener of Array.from(mihomo.errorListeners)) listener(connError)
+    expect(store.status).toBe('disconnected')
+    expect(store.lastError).toBe('traffic stream: closed')
+
+    const wrongSource: MihomoStreamError = { code: 'UPSTREAM_UNREACHABLE', message: 'connections stream: closed', source: 'connections', kind: 'connection' }
+    for (const listener of Array.from(mihomo.errorListeners)) listener(wrongSource)
+    expect(store.status).toBe('disconnected')
+
+    const parseError: MihomoStreamError = { code: 'UPSTREAM_UNREACHABLE', message: 'traffic stream: bad data', source: 'traffic', kind: 'parse' }
+    for (const listener of Array.from(mihomo.errorListeners)) listener(parseError)
+    expect(store.status).toBe('error')
+    store.disconnect()
+  })
+})
+
+describe('connections store', () => {
+  const snapshot: MihomoConnectionsSnapshot = {
+    downloadTotal: 1000,
+    uploadTotal: 200,
+    memory: 512000,
+    connections: [
+      { id: 'c1', metadata: { process: 'curl', sourceIP: '10.0.0.1' }, upload: 10, download: 100, start: 'x', chains: ['DIRECT'], rule: 'R', rulePayload: '' },
+      { id: 'c2', metadata: { process: 'Browser', sourceIP: '10.0.0.1' }, upload: 20, download: 200, start: 'x', chains: ['Socks5', 'Proxy'], rule: 'R', rulePayload: '' },
+      { id: 'c3', metadata: { process: 'curl', sourceIP: '10.0.0.2' }, upload: 5, download: 50, start: 'x', chains: ['DIRECT'], rule: 'R', rulePayload: '' }
+    ]
+  }
+
+  it('aggregates connections into a bounded summary and ranks processes', () => {
+    const store = useConnectionsStore()
+    mihomo.getConnections.mockResolvedValue(snapshot)
+    store.connect()
+    for (const listener of Array.from(mihomo.connectionsListeners)) listener(snapshot)
+
+    const summary = store.summary
+    expect(summary).toBeTruthy()
+    expect(summary?.totalConnections).toBe(3)
+    expect(summary?.distinctProcesses).toBe(2)
+    expect(summary?.distinctDevices).toBe(2)
+    expect(summary?.directDownload).toBe(150)
+    expect(summary?.proxyDownload).toBe(200)
+    expect(summary?.topProcesses[0]?.name).toBe('Browser')
+    expect(summary?.topProcesses[0]?.download).toBe(200)
+    expect(summary?.topProcesses[1]?.name).toBe('curl')
+    expect(store.status).toBe('live')
+    store.disconnect()
+  })
+})

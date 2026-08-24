@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Activity — 934x672 implementation vs normative reference</title>
+<style>
+  body { margin: 0; padding: 24px; background: #f2f3f5; color: #18191c;
+         font: 14px/1.5 "Segoe UI", system-ui, sans-serif; }
+  .wrap { max-width: 2000px; margin: 0 auto; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: #5b6472; margin: 0 0 20px; }
+  .pair { display: flex; gap: 16px; flex-wrap: wrap; }
+  .col { flex: 1 1 934px; min-width: 0; }
+  .col h2 { font-size: 14px; margin: 0 0 8px; }
+  .col img { width: 934px; height: 672px; display: block; background: #fff;
+             border: 1px solid #d8dce3; border-radius: 12px; box-shadow: 0 12px 34px rgba(24,31,45,.12); }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; margin-left: 8px; vertical-align: middle; }
+  .tag.impl { background: #e7e2ff; color: #4b3fd0; }
+  .tag.ref { background: #dff2e6; color: #1d7a3d; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Activity — 934 &times; 672 implementation vs normative reference</h1>
+  <p class="sub">Framework milestone. Left: production build with live mock data. Right: owner-approved reference. Both captured at a 934&nbsp;&times;&nbsp;672 content viewport. Differences are data-level &amp; resilience affordances (see README.md).</p>
+  <div class="pair">
+    <div class="col">
+      <h2>Implementation<span class="tag impl">live mock</span></h2>
+      <img src="activity-impl-934x672.png" alt="Activity implementation with live mock data">
+    </div>
+    <div class="col">
+      <h2>Normative reference<span class="tag ref">owner-approved</span></h2>
+      <img src="activity-ref-934x672.png" alt="Normative Activity reference">
+    </div>
+  </div>
+</div>
+</body>
+</html>

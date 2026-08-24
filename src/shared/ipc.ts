@@ -1,5 +1,12 @@
 import type { BrandConfig } from './brand'
-import type { MihomoConfigSnapshot, MihomoConnectionsSnapshot, MihomoProxiesResponse, MihomoRulesResponse } from './mihomo-api'
+import type {
+  MihomoConfigSnapshot,
+  MihomoConnectionsSnapshot,
+  MihomoLogMessage,
+  MihomoProxiesResponse,
+  MihomoRulesResponse,
+  MihomoStreamError
+} from './mihomo-api'
 import type { KernelStatus, RuntimeSummary, TrafficSample } from './runtime'
 
 export const IPC = {
@@ -16,6 +23,9 @@ export const IPC = {
   mihomoGetConnections: 'mihomo:get-connections',
   mihomoCloseConnection: 'mihomo:close-connection',
   mihomoTrafficEvent: 'mihomo:traffic-event',
+  mihomoConnectionsEvent: 'mihomo:connections-event',
+  mihomoLogEvent: 'mihomo:log-event',
+  mihomoStreamErrorEvent: 'mihomo:stream-error-event',
   kernelStatusEvent: 'kernel:status-event'
 } as const
 
@@ -41,5 +51,8 @@ export interface DesktopApi {
     getConnections(): Promise<MihomoConnectionsSnapshot>
     closeConnection(id: string): Promise<void>
     onTraffic(listener: (sample: TrafficSample) => void): () => void
+    onConnections(listener: (snapshot: MihomoConnectionsSnapshot) => void): () => void
+    onLogs(listener: (message: MihomoLogMessage) => void): () => void
+    onStreamError(listener: (error: MihomoStreamError) => void): () => void
   }
 }

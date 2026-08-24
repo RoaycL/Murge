@@ -2,10 +2,12 @@ import type { KernelGateway, MihomoGateway, RuntimeGateway, IpcDeps } from '@sha
 import type {
   MihomoConfigSnapshot,
   MihomoConnectionsSnapshot,
+  MihomoLogMessage,
   MihomoProxiesResponse,
-  MihomoRulesResponse
+  MihomoRulesResponse,
+  MihomoStreamError
 } from '@shared/mihomo-api'
-import type { KernelStatus, RuntimeSummary } from '@shared/runtime'
+import type { KernelStatus, RuntimeSummary, TrafficSample } from '@shared/runtime'
 import type { BrandConfig } from '@shared/brand'
 
 /**
@@ -96,6 +98,45 @@ export class FakeMihomoGateway implements MihomoGateway {
   closeConnection(id: string): Promise<void> {
     this.closeConnectionCalls.push(id)
     return Promise.resolve()
+  }
+
+  private readonly trafficListeners = new Set<(sample: TrafficSample) => void>()
+  private readonly connectionsListeners = new Set<(snapshot: MihomoConnectionsSnapshot) => void>()
+  private readonly logsListeners = new Set<(message: MihomoLogMessage) => void>()
+  private readonly streamErrorListeners = new Set<(error: MihomoStreamError) => void>()
+
+  onTraffic(listener: (sample: TrafficSample) => void): () => void {
+    this.trafficListeners.add(listener)
+    return () => this.trafficListeners.delete(listener)
+  }
+
+  onConnections(listener: (snapshot: MihomoConnectionsSnapshot) => void): () => void {
+    this.connectionsListeners.add(listener)
+    return () => this.connectionsListeners.delete(listener)
+  }
+
+  onLogs(listener: (message: MihomoLogMessage) => void): () => void {
+    this.logsListeners.add(listener)
+    return () => this.logsListeners.delete(listener)
+  }
+
+  onStreamError(listener: (error: MihomoStreamError) => void): () => void {
+    this.streamErrorListeners.add(listener)
+    return () => this.streamErrorListeners.delete(listener)
+  }
+
+  /** Test helpers: publish push events to subscribers. */
+  emitTraffic(sample: TrafficSample): void {
+    for (const listener of this.trafficListeners) listener(sample)
+  }
+  emitConnections(snapshot: MihomoConnectionsSnapshot): void {
+    for (const listener of this.connectionsListeners) listener(snapshot)
+  }
+  emitLogs(message: MihomoLogMessage): void {
+    for (const listener of this.logsListeners) listener(message)
+  }
+  emitStreamError(error: MihomoStreamError): void {
+    for (const listener of this.streamErrorListeners) listener(error)
   }
 }
 

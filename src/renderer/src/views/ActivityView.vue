@@ -1,15 +1,61 @@
 <script setup lang="ts">
+import { computed, onMounted } from 'vue'
 import SpeedSparkline from '../components/SpeedSparkline.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
+import { useTrafficStore } from '../stores/traffic'
+import { useConnectionsStore } from '../stores/connections'
+import { useRuntimeStore } from '../stores/runtime'
+import { useKernelStore } from '../stores/kernel'
+import { formatBytes, formatBytesParts, formatRate } from '../lib/format'
 
+const traffic = useTrafficStore()
+const connections = useConnectionsStore()
+const runtime = useRuntimeStore()
+const kernel = useKernelStore()
+
+onMounted(() => {
+  kernel.connect()
+  traffic.connect()
+  connections.connect()
+  void runtime.refresh()
+})
+
+const up = computed(() => formatRate(traffic.current?.up ?? 0))
+const down = computed(() => formatRate(traffic.current?.down ?? 0))
+const total = computed(() => formatBytesParts(traffic.totalDownload))
+const activeCount = computed(() => connections.summary?.totalConnections ?? 0)
+const processCount = computed(() => connections.summary?.distinctProcesses ?? 0)
+const deviceCount = computed(() => connections.summary?.distinctDevices ?? 0)
+const topProcesses = computed(() => connections.summary?.topProcesses ?? [])
+const direct = computed(() => formatBytesParts(connections.summary?.directDownload ?? 0))
+const proxy = computed(() => formatBytesParts(connections.summary?.proxyDownload ?? 0))
+const directPct = computed(() => {
+  const summary = connections.summary
+  if (!summary) return 0
+  const total = summary.directDownload + summary.proxyDownload
+  return total ? Math.round((summary.directDownload / total) * 100) : 0
+})
+
+const modeLabel = computed(() => {
+  const map = { rule: '规则判定', global: '全局', direct: '直连' } as const
+  return map[runtime.summary?.mode ?? 'rule']
+})
+
+const connStatus = computed(() => connections.status)
+const connDotClass = computed(() => {
+  if (connStatus.value === 'live') return 'online-dot'
+  if (connStatus.value === 'loading') return 'online-dot pending'
+  return 'online-dot offline'
+})
+const connStateLabel = computed(() => {
+  if (connStatus.value === 'loading') return '载入中'
+  if (connStatus.value === 'disconnected') return '已断开'
+  if (connStatus.value === 'error') return '数据异常'
+  return ''
+})
+
+// Placeholder fallbacks keep the layout stable while the store is empty.
 const bars = [18, 29, 52, 63, 48, 36, 20, 25, 31, 82, 15, 13, 12, 9, 10, 6, 5, 8, 7, 6, 7, 8, 7]
-const ranks = [
-  { icon: 'PC', name: 'DESKTOP', amount: '3.43 GB', width: 100 },
-  { icon: '>_', name: 'curl', amount: '466.9 MB', width: 42 },
-  { icon: '◎', name: 'Browser', amount: '271.3 MB', width: 29 },
-  { icon: 'O', name: 'Terminal', amount: '151.0 MB', width: 21 },
-  { icon: 'M', name: 'Mail', amount: '95.3 MB', width: 14 }
-]
 </script>
 
 <template>
@@ -17,16 +63,16 @@ const ranks = [
     <header class="activity-header">
       <h1>活动</h1>
       <div class="status-pills" aria-label="网络接管状态">
-        <span class="status-pill"><i />系统代理</span>
-        <span class="status-pill"><i />TUN 模式</span>
+        <span class="status-pill"><i :class="{ 'pill-dim': !runtime.summary?.systemProxyEnabled }" />系统代理</span>
+        <span class="status-pill"><i :class="{ 'pill-dim': !runtime.summary?.tunEnabled }" />TUN 模式</span>
       </div>
     </header>
 
     <section class="runtime-context" aria-label="运行上下文">
-      <div><span>网络</span><strong>以太网</strong></div>
-      <div><span>配置</span><strong>Default</strong></div>
-      <div><span>出站模式</span><strong>规则判定</strong></div>
-      <div><span>外部 IP⌄</span><strong>116.149.199.179</strong></div>
+      <div><span>网络</span><strong>{{ runtime.summary?.networkName ?? '以太网' }}</strong></div>
+      <div><span>配置</span><strong>{{ runtime.summary?.profileName ?? 'Default' }}</strong></div>
+      <div><span>出站模式</span><strong>{{ modeLabel }}</strong></div>
+      <div><span>外部 IP⌄</span><strong>{{ runtime.summary?.externalIp ?? '—' }}</strong></div>
     </section>
 
     <section class="dashboard-grid">
@@ -42,16 +88,16 @@ const ranks = [
       </SurfaceCard>
 
       <div class="speed-grid">
-        <SpeedSparkline kind="upload" title="上传" value="15" unit="KB/s" ceiling="1.0 MB/s" middle="524 KB/s" />
-        <SpeedSparkline kind="download" title="下载" value="81" unit="KB/s" ceiling="2.1 MB/s" middle="1.0 MB/s" />
+        <SpeedSparkline kind="upload" title="上传" :value="up.value" :unit="up.unit" ceiling="1.0 MB/s" middle="524 KB/s" :series="traffic.uploadSeries" />
+        <SpeedSparkline kind="download" title="下载" :value="down.value" :unit="down.unit" ceiling="2.1 MB/s" middle="1.0 MB/s" :series="traffic.downloadSeries" />
       </div>
 
       <SurfaceCard class="connections-card">
-        <span class="metric-label">活动连接</span><i class="online-dot" />
-        <div class="large-metric">120</div>
+        <span class="metric-label">活动连接<span v-if="connStateLabel" class="stream-state">{{ connStateLabel }}</span></span><i :class="connDotClass" />
+        <div class="large-metric">{{ activeCount }}</div>
         <div class="connection-breakdown">
-          <div><strong>25</strong><span>进程</span></div>
-          <div><strong>1</strong><span>设备</span></div>
+          <div><strong>{{ processCount }}</strong><span>进程</span></div>
+          <div><strong>{{ deviceCount }}</strong><span>设备</span></div>
           <div><strong>1</strong><span>DHCP 设备</span></div>
         </div>
       </SurfaceCard>
@@ -64,20 +110,35 @@ const ranks = [
         <div class="chart-axis"><span>12AM</span><span>6AM</span><span>12PM</span><span>6PM</span></div>
         <div class="rank-tabs"><button class="selected">进程与设备</button><button>域名</button><button>策略</button></div>
         <div class="rank-list">
-          <div v-for="item in ranks" :key="item.name" class="rank-row">
-            <span class="rank-icon">{{ item.icon }}</span>
+          <div v-for="item in topProcesses" :key="item.name" class="rank-row">
+            <span class="rank-icon">{{ item.name.slice(0, 2) }}</span>
             <div><span>{{ item.name }}</span><i><b :style="{ width: `${item.width}%` }" /></i></div>
-            <strong>{{ item.amount }}</strong>
+            <strong>{{ formatBytes(item.download) }}</strong>
           </div>
         </div>
       </SurfaceCard>
 
       <SurfaceCard class="total-card">
         <div class="card-title-row"><span class="metric-label">总计</span><div class="segmented"><button class="selected">今日</button><button>本月</button></div></div>
-        <div class="large-metric">5.04<span>GB</span></div>
-        <div class="total-labels"><div><span>DIRECT</span><strong>3.54 GB</strong></div><div><span>代理</span><strong>1.50 GB</strong></div></div>
-        <div class="total-bar"><i /><i /></div>
+        <div class="large-metric">{{ total.value }}<span>{{ total.unit }}</span></div>
+        <div class="total-labels"><div><span>DIRECT</span><strong>{{ direct.value }} {{ direct.unit }}</strong></div><div><span>代理</span><strong>{{ proxy.value }} {{ proxy.unit }}</strong></div></div>
+        <div class="total-bar"><i :style="{ width: `${directPct}%` }" /><i :style="{ width: `${100 - directPct}%` }" /></div>
       </SurfaceCard>
     </section>
   </div>
 </template>
+
+<style scoped>
+.stream-state {
+  margin-left: 6px;
+}
+.online-dot.pending {
+  background: #c9a227 !important;
+}
+.online-dot.offline {
+  background: var(--app-danger, #d64f4f) !important;
+}
+.pill-dim {
+  background: #b7bcc4 !important;
+}
+</style>

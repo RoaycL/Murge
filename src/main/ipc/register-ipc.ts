@@ -49,10 +49,35 @@ export function registerIpc({ kernel, mihomo }: IpcDependencies): void {
     ipcMain.handle(channel, wrapHandler(handler))
   }
 
+  // Forward push streams to every open renderer window. The gateway's shared
+  // transports fan out to these forwarders, so window recreation never opens a
+  // duplicate socket and no listener survives its window.
+  const forward = <T>(channel: string, subscribe: (listener: (value: T) => void) => () => void): (() => void) => {
+    return subscribe((value) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send(channel, value)
+      }
+    })
+  }
+
+  const trafficUnsub = forward(IPC.mihomoTrafficEvent, mihomo.onTraffic)
+  const connectionsUnsub = forward(IPC.mihomoConnectionsEvent, mihomo.onConnections)
+  const logsUnsub = forward(IPC.mihomoLogEvent, mihomo.onLogs)
+  const streamErrorUnsub = forward(IPC.mihomoStreamErrorEvent, mihomo.onStreamError)
+
   // Forward kernel status transitions to every open renderer window.
-  kernel.onStatus((status) => {
+  const statusUnsub = kernel.onStatus((status) => {
     for (const win of BrowserWindow.getAllWindows()) {
       win.webContents.send(IPC.kernelStatusEvent, status)
     }
+  })
+
+  // Release all forwarders when the app is tearing down.
+  process.once('before-quit', () => {
+    trafficUnsub()
+    connectionsUnsub()
+    logsUnsub()
+    streamErrorUnsub()
+    statusUnsub()
   })
 }

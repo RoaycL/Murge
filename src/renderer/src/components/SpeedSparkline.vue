@@ -1,12 +1,36 @@
 <script setup lang="ts">
-defineProps<{
+import { computed } from 'vue'
+
+const props = defineProps<{
   kind: 'upload' | 'download'
   title: string
   value: string
   unit: string
   ceiling: string
   middle: string
+  series: number[]
 }>()
+
+// Fixed plot box: kept identical whether data is present or not so the card
+// never reflows during loading / disconnected states.
+const W = 165
+const H = 72
+const TOP = 6
+const BOTTOM = 66
+
+const paths = computed(() => {
+  const pts = props.series.length >= 2 ? props.series : [0, 0]
+  const max = Math.max(...pts, 1)
+  const step = W / (pts.length - 1)
+  const coords = pts.map((value, index) => {
+    const x = index * step
+    const y = BOTTOM - (value / max) * (BOTTOM - TOP)
+    return `${x.toFixed(1)} ${y.toFixed(1)}`
+  })
+  const stroke = `M${coords.join(' L')}`
+  const area = `${stroke} L${W} ${H} L0 ${H} Z`
+  return { stroke, area }
+})
 </script>
 
 <template>
@@ -16,10 +40,8 @@ defineProps<{
     <span class="speed-scale speed-scale-top">{{ ceiling }}</span>
     <span class="speed-scale speed-scale-middle">{{ middle }}</span>
     <svg class="sparkline" viewBox="0 0 165 72" preserveAspectRatio="none" role="img" :aria-label="`${title}趋势`">
-      <path v-if="kind === 'upload'" class="spark-area spark-upload-area" d="M0 66 L18 66 L38 67 L58 67 L78 64 L99 66 L123 66 L165 65 L165 72 L0 72Z" />
-      <path v-if="kind === 'upload'" class="spark-stroke spark-upload" d="M0 66 L18 66 L38 67 L58 67 L78 64 L99 66 L123 66 L165 65" />
-      <path v-else class="spark-area spark-download-area" d="M0 66 L24 65 L48 64 L79 63 L105 67 L132 67 L165 65 L165 72 L0 72Z" />
-      <path v-if="kind === 'download'" class="spark-stroke spark-download" d="M0 66 L24 65 L48 64 L79 63 L105 67 L132 67 L165 65" />
+      <path class="spark-area" :class="kind === 'upload' ? 'spark-upload-area' : 'spark-download-area'" :d="paths.area" />
+      <path class="spark-stroke" :class="kind === 'upload' ? 'spark-upload' : 'spark-download'" :d="paths.stroke" />
     </svg>
   </SurfaceCard>
 </template>

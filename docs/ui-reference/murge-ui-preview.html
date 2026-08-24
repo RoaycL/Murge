@@ -1,0 +1,197 @@
+<style>
+#murge-preview {
+  font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  color: light-dark(#18191c, #f4f5f7);
+  background: transparent;
+  width: 100%;
+}
+#murge-preview * { box-sizing: border-box; }
+#murge-preview .murge-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 934 / 672;
+  overflow: hidden;
+}
+#murge-preview .murge-window {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 934px;
+  height: 672px;
+  transform-origin: top left;
+  overflow: hidden;
+  border: 1px solid light-dark(#d8dce3, #343842);
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 88% 78%, rgba(99,78,255,.10), transparent 34%),
+    linear-gradient(135deg, light-dark(#edf3f9, #171b23), light-dark(#f6f4fb, #1e1d29));
+  box-shadow: 0 18px 55px rgba(24,31,45,.18);
+}
+#murge-preview .titlebar { position:absolute; inset:0 0 auto 0; z-index:3; height:34px; display:flex; align-items:center; padding:0 14px; gap:9px; pointer-events:none; }
+#murge-preview .brand { display:none; }
+#murge-preview .window-actions { margin-left:auto; display:flex; height:100%; opacity:0; }
+#murge-preview .window-action { width:42px; border:0; background:transparent; color:inherit; font-size:14px; }
+#murge-preview .window-action:hover { background:rgba(127,127,127,.12); }
+#murge-preview .shell { display:grid; grid-template-columns:205px 729px; width:934px; height:672px; }
+#murge-preview .sidebar { position:relative; padding:54px 10px 12px; border-right:1px solid rgba(127,127,127,.08); }
+#murge-preview .master { position:absolute; top:5px; left:5px; display:flex; align-items:center; gap:138px; height:25px; margin:0; }
+#murge-preview .master-button { width:64px; height:25px; border:0; border-radius:13px; background:#6958ef; color:white; font-size:15px; }
+#murge-preview .master-button.off { background:light-dark(#d4d7de,#414650); }
+#murge-preview .event-state { display:none; }
+#murge-preview .nav-group { margin:13px 7px 5px; font-size:12px; color:light-dark(#858b96,#8f96a2); }
+#murge-preview .nav-item { width:100%; display:flex; align-items:center; gap:10px; height:38px; padding:0 10px; border:0; border-radius:9px; color:inherit; background:transparent; text-align:left; font-size:14px; }
+#murge-preview .nav-item:hover { background:rgba(127,127,127,.09); }
+#murge-preview .nav-item.active { background:light-dark(rgba(210,216,226,.74),rgba(67,72,83,.67)); box-shadow:0 9px 22px rgba(39,45,58,.08); }
+#murge-preview .nav-icon { width:17px; text-align:center; font-size:16px; color:light-dark(#6e747f,#aeb4be); }
+#murge-preview .sidebar-bottom { position:absolute; left:10px; right:10px; bottom:11px; padding-top:9px; border-top:1px solid rgba(127,127,127,.15); }
+#murge-preview .main { width:729px; height:672px; padding:45px 34px 30px 5px; overflow:hidden; }
+#murge-preview .page-title { margin:0 0 22px; font-size:28px; line-height:34px; font-weight:720; letter-spacing:-.7px; }
+#murge-preview .section-title { margin:0 0 15px; color:#c32bbf; font-size:14px; font-weight:600; }
+#murge-preview .section { margin-bottom:29px; }
+#murge-preview .grid { display:grid; grid-template-columns:337px 337px; gap:15px; width:689px; }
+#murge-preview .panel { width:337px; min-height:120px; padding:16px 16px 12px; border:1px solid light-dark(rgba(255,255,255,.8),rgba(255,255,255,.05)); border-radius:19px; background:light-dark(rgba(255,255,255,.78),rgba(39,42,51,.92)); box-shadow:0 7px 20px rgba(31,37,51,.07); }
+#murge-preview .panel-head { display:flex; align-items:flex-start; gap:12px; }
+#murge-preview .panel-copy { min-width:0; flex:1; }
+#murge-preview .panel-name { font-size:15px; font-weight:650; margin-bottom:5px; }
+#murge-preview .panel-desc { font-size:12px; line-height:1.45; color:light-dark(#858991,#a4aab4); }
+#murge-preview .toggle { flex:0 0 auto; position:relative; width:37px; height:20px; border:0; border-radius:10px; background:light-dark(#d9dbe0,#515661); padding:0; }
+#murge-preview .toggle::after { content:""; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:#fff; box-shadow:0 1px 4px rgba(0,0,0,.18); transition:.18s; }
+#murge-preview .toggle.on { background:#6b5af4; }
+#murge-preview .toggle.on::after { transform:translateX(17px); }
+#murge-preview .panel-status { display:flex; align-items:center; gap:7px; margin-top:17px; font-size:12px; }
+#murge-preview .dot { width:8px; height:8px; border-radius:50%; background:#36c65a; box-shadow:0 0 0 4px rgba(54,198,90,.08); }
+#murge-preview .dots { margin-left:auto; letter-spacing:1px; color:light-dark(#747983,#adb2bb); }
+#murge-preview .placeholder .dot { background:#a6abb4; box-shadow:none; }
+#murge-preview .content-page { display:none; }
+#murge-preview .content-page.active { display:block; }
+#murge-preview .policy-bar { display:grid; grid-template-columns:repeat(3,1fr); max-width:560px; padding:2px; border-radius:15px; background:light-dark(#e1e4e9,#343944); }
+#murge-preview .policy-choice { border:0; border-radius:13px; padding:7px; color:inherit; background:transparent; }
+#murge-preview .policy-choice.active { background:#1684f8; color:#fff; }
+#murge-preview .proxy-grid { display:grid; grid-template-columns:repeat(4,151px); gap:13px; margin-top:30px; width:643px; }
+#murge-preview .proxy { height:94px; padding:12px; border-radius:8px; background:light-dark(rgba(228,231,236,.83),rgba(49,53,63,.9)); }
+#murge-preview .proxy-type { font-size:11px; color:light-dark(#989da5,#8e949e); }
+#murge-preview .proxy-name { font-size:13px; font-weight:650; margin-top:3px; }
+#murge-preview .proxy-latency { margin-top:22px; font-size:12px; color:#68d21d; }
+#murge-preview .activity-page .page-title { margin-bottom:8px; }
+#murge-preview .activity-context { display:grid; grid-template-columns:160px 185px 185px 165px; width:695px; height:57px; }
+#murge-preview .context-label { font-size:11px; color:light-dark(#9398a0,#9097a2); margin-bottom:3px; }
+#murge-preview .context-value { font-size:16px; line-height:19px; font-weight:650; }
+#murge-preview .activity-dashboard { display:grid; grid-template-columns:347px 347px; grid-template-rows:166px 165px 165px; gap:15px; width:709px; }
+#murge-preview .activity-surface { background:light-dark(rgba(255,255,255,.80),rgba(39,42,51,.92)); border:1px solid light-dark(rgba(255,255,255,.82),rgba(255,255,255,.05)); border-radius:19px; box-shadow:0 7px 20px rgba(31,37,51,.07); overflow:hidden; }
+#murge-preview .latency-surface { padding:15px 16px 13px; }
+#murge-preview .activity-kicker { font-size:11px; color:light-dark(#777c84,#a2a8b1); }
+#murge-preview .activity-number { margin-top:5px; font-size:34px; line-height:37px; font-weight:650; }
+#murge-preview .activity-unit { margin-left:3px; font-size:13px; font-weight:500; }
+#murge-preview .diagnose { float:right; margin-top:-20px; width:100px; height:28px; border:1px solid light-dark(#d6d9de,#505560); border-radius:6px; color:inherit; background:transparent; font-size:12px; }
+#murge-preview .latency-breakdown { display:grid; grid-template-columns:1fr 1fr 1fr; margin-top:35px; }
+#murge-preview .latency-breakdown > div { padding-left:13px; border-left:1px solid light-dark(#e2e4e8,#494e58); }
+#murge-preview .latency-breakdown > div:first-child { padding-left:0; border-left:0; }
+#murge-preview .latency-label { font-size:11px; color:light-dark(#81868e,#969ca6); }
+#murge-preview .latency-value { margin-top:4px; font-size:15px; font-weight:650; }
+#murge-preview .speed-pair { display:grid; grid-template-columns:1fr 1fr; gap:15px; background:transparent; border:0; box-shadow:none; overflow:visible; }
+#murge-preview .speed-panel { position:relative; padding:16px 14px; border-radius:19px; background:light-dark(rgba(255,255,255,.80),rgba(39,42,51,.92)); box-shadow:0 7px 20px rgba(31,37,51,.07); overflow:hidden; }
+#murge-preview .speed-scale { position:absolute; right:8px; top:18px; font-size:10px; color:light-dark(#d0d2d6,#555b66); }
+#murge-preview .speed-scale.mid { top:83px; }
+#murge-preview .speed-line { position:absolute; left:0; right:0; bottom:0; height:72px; width:100%; }
+#murge-preview .connections-surface { padding:16px; }
+#murge-preview .connection-dot { float:right; width:11px; height:11px; border-radius:50%; background:#31ce5b; box-shadow:0 0 0 5px rgba(49,206,91,.10); }
+#murge-preview .connection-breakdown { display:grid; grid-template-columns:1fr 1fr 1fr; margin-top:36px; }
+#murge-preview .connection-breakdown > div { padding-left:15px; border-left:1px solid light-dark(#e1e3e7,#494e58); }
+#murge-preview .connection-breakdown > div:first-child { padding-left:0; border:0; }
+#murge-preview .small-number { font-size:24px; line-height:25px; font-weight:650; }
+#murge-preview .small-label { margin-top:4px; font-size:11px; color:light-dark(#858a92,#969ca6); }
+#murge-preview .traffic-surface { grid-column:2; grid-row:2 / span 2; padding:15px 16px; }
+#murge-preview .segmented { float:right; display:flex; margin-top:-2px; padding:2px; border-radius:7px; background:light-dark(#e2e4e8,#494e58); }
+#murge-preview .segment { width:64px; height:20px; border:0; border-radius:5px; color:inherit; background:transparent; font-size:11px; }
+#murge-preview .segment.selected { color:#fff; background:light-dark(#8d8d94,#777b84); }
+#murge-preview .bar-chart { display:flex; align-items:flex-end; gap:7px; height:78px; margin-top:19px; padding:0 4px 15px; border-bottom:1px solid light-dark(#e3e5e9,#454a54); }
+#murge-preview .bar-chart span { width:5px; min-height:4px; border-radius:2px 2px 0 0; background:#20bad9; }
+#murge-preview .chart-axis { display:flex; justify-content:space-between; margin:-13px 1px 7px; font-size:9px; color:light-dark(#c1c5cb,#656c77); }
+#murge-preview .rank-tabs { display:grid; grid-template-columns:1fr 1fr 1fr; height:23px; padding:2px; border-radius:6px; background:light-dark(#eef0f3,#343944); }
+#murge-preview .rank-tab { border:0; border-radius:5px; background:transparent; color:inherit; font-size:10px; }
+#murge-preview .rank-tab.active { background:light-dark(#99999f,#6d717a); color:#fff; }
+#murge-preview .rank-list { margin-top:8px; }
+#murge-preview .rank-row { display:grid; grid-template-columns:24px 1fr auto; align-items:center; height:31px; font-size:12px; }
+#murge-preview .rank-icon { width:16px; height:16px; border-radius:4px; display:grid; place-items:center; background:light-dark(#e0e3e8,#4a4f59); font-size:9px; }
+#murge-preview .rank-track { height:3px; width:44px; margin-top:4px; border-radius:2px; background:light-dark(#e0e2e6,#4a4f59); overflow:hidden; }
+#murge-preview .rank-track::after { content:""; display:block; height:100%; width:var(--rank); background:light-dark(#aeb3bc,#8d949f); }
+#murge-preview .total-surface { padding:15px 16px; }
+#murge-preview .period-switch { float:right; display:flex; margin-top:-2px; padding:2px; border-radius:7px; background:light-dark(#e5e7eb,#474c56); }
+#murge-preview .total-parts { display:grid; grid-template-columns:1fr 1fr; margin-top:16px; }
+#murge-preview .total-proxy { text-align:right; }
+#murge-preview .total-label { font-size:11px; color:light-dark(#81868e,#969ca6); }
+#murge-preview .total-value { font-size:16px; font-weight:650; }
+#murge-preview .total-bar { display:grid; grid-template-columns:68fr 32fr; gap:5px; height:23px; margin-top:5px; }
+#murge-preview .total-bar span:first-child { border-radius:5px; background:#6652ed; }
+#murge-preview .total-bar span:last-child { border-radius:5px; background:#16bfd4; }
+</style>
+<div id="murge-preview">
+  <div class="murge-stage"><div class="murge-window">
+    <div class="titlebar"><span class="brand">Murge</span><div class="window-actions"><button class="window-action">—</button><button class="window-action">□</button><button class="window-action">×</button></div></div>
+    <div class="shell">
+      <aside class="sidebar">
+        <button class="nav-item active" data-page="activity"><span class="nav-icon">▧</span>活动</button>
+        <button class="nav-item" data-page="overview"><span class="nav-icon">⌘</span>概览</button>
+        <div class="nav-group">客户端</div>
+        <button class="nav-item"><span class="nav-icon">▣</span>进程</button>
+        <button class="nav-item"><span class="nav-icon">▤</span>设备</button>
+        <div class="nav-group">代理</div>
+        <button class="nav-item" data-page="policy"><span class="nav-icon">⑂</span>策略</button>
+        <button class="nav-item"><span class="nav-icon">☷</span>规则</button>
+        <div class="nav-group">HTTP</div>
+        <button class="nav-item"><span class="nav-icon">⌗</span>捕获</button>
+        <button class="nav-item"><span class="nav-icon">♙</span>解密</button>
+        <button class="nav-item"><span class="nav-icon">〆</span>重写</button>
+        <div class="sidebar-bottom"><button class="nav-item"><span class="nav-icon">☷</span>更多</button><button class="nav-item"><span class="nav-icon">◉</span>面板</button></div>
+      </aside>
+      <main class="main">
+        <section class="content-page" data-content="overview">
+          <h1 class="page-title">概览</h1>
+          <div class="section"><h2 class="section-title">网络接管</h2><div class="grid">
+            <article class="panel"><div class="panel-head"><div class="panel-copy"><div class="panel-name">系统代理</div><div class="panel-desc">大多数应用的流量可以通过将 Murge 设置为系统代理接管，具有最佳的兼容性和性能。</div></div><button class="toggle on" aria-label="系统代理"></button></div><div class="panel-status"><span class="dot"></span><span>Murge 当前被设置为系统代理</span><span class="dots">•••</span></div></article>
+            <article class="panel"><div class="panel-head"><div class="panel-copy"><div class="panel-name">TUN 模式</div><div class="panel-desc">部分应用可能不遵循系统代理设置。使用 TUN 模式可以让所有应用由 Murge 处理。</div></div><button class="toggle on" aria-label="TUN 模式"></button></div><div class="panel-status"><span class="dot"></span><span>TUN 模式已激活</span></div></article>
+          </div></div>
+          <div class="section"><h2 class="section-title">局域网设备接管</h2><div class="grid">
+            <article class="panel"><div class="panel-head"><div class="panel-copy"><div class="panel-name">HTTP &amp; SOCKS5 代理</div><div class="panel-desc">Murge 可以被其他设备用作标准的 HTTP 和 SOCKS5 代理服务器。</div></div><button class="toggle" aria-label="局域网代理"></button></div><div class="panel-status placeholder"><span class="dot"></span><span>HTTP 代理未开放至局域网</span><span class="dots">•••</span></div></article>
+            <article class="panel"><div class="panel-head"><div class="panel-copy"><div class="panel-name">允许局域网连接</div><div class="panel-desc">允许同一网络中的设备通过当前电脑连接 Murge。</div></div><button class="toggle" aria-label="允许局域网连接"></button></div><div class="panel-status placeholder"><span class="dot"></span><span>当前仅监听本机地址</span><span class="dots">•••</span></div></article>
+          </div></div>
+        </section>
+        <section class="content-page" data-content="policy">
+          <h1 class="page-title">策略</h1><div class="policy-bar"><button class="policy-choice">直接连接</button><button class="policy-choice">全局代理</button><button class="policy-choice active">规则判定</button></div>
+          <div class="proxy-grid"><div class="proxy"><div class="proxy-type">Shadowsocks</div><div class="proxy-name">Hong Kong 01</div><div class="proxy-latency">42 ms</div></div><div class="proxy"><div class="proxy-type">Hysteria 2</div><div class="proxy-name">Tokyo 01</div><div class="proxy-latency">67 ms</div></div><div class="proxy"><div class="proxy-type">VLESS</div><div class="proxy-name">Singapore 01</div><div class="proxy-latency">81 ms</div></div><div class="proxy"><div class="proxy-type">Trojan</div><div class="proxy-name">Los Angeles 01</div><div class="proxy-latency">153 ms</div></div></div>
+        </section>
+        <section class="content-page activity-page active" data-content="activity">
+          <h1 class="page-title">活动</h1>
+          <div class="activity-context"><div><div class="context-label">网络</div><div class="context-value">以太网</div></div><div><div class="context-label">配置</div><div class="context-value">Murge Default</div></div><div><div class="context-label">出站模式</div><div class="context-value">规则判定</div></div><div><div class="context-label">外部 IP⌄</div><div class="context-value">116.149.199.179</div></div></div>
+          <div class="activity-dashboard">
+            <article class="activity-surface latency-surface"><div class="activity-kicker">INTERNET 延迟　↻</div><button class="diagnose">网络诊断</button><div class="activity-number">6<span class="activity-unit">ms</span></div><div class="latency-breakdown"><div><div class="latency-label">路由</div><div class="latency-value">≤1 ms</div></div><div><div class="latency-label">DNS</div><div class="latency-value">11 ms</div></div><div><div class="latency-label">Hong Kong 01</div><div class="latency-value">73 ms</div></div></div></article>
+            <div class="activity-surface speed-pair"><article class="speed-panel"><div class="activity-kicker">上传</div><div class="activity-number">15<span class="activity-unit">KB/s</span></div><span class="speed-scale">1.0 MB/s</span><span class="speed-scale mid">524 KB/s</span><svg class="speed-line" viewBox="0 0 165 72" preserveAspectRatio="none" aria-label="上传速度"><path d="M0 66 L18 66 L38 67 L58 67 L78 64 L99 66 L123 66 L165 65" fill="none" stroke="#6652ed" stroke-width="2"/><path d="M0 66 L18 66 L38 67 L58 67 L78 64 L99 66 L123 66 L165 65 L165 72 L0 72Z" fill="rgba(102,82,237,.09)"/></svg></article><article class="speed-panel"><div class="activity-kicker">下载</div><div class="activity-number">81<span class="activity-unit">KB/s</span></div><span class="speed-scale">2.1 MB/s</span><span class="speed-scale mid">1.0 MB/s</span><svg class="speed-line" viewBox="0 0 165 72" preserveAspectRatio="none" aria-label="下载速度"><path d="M0 66 L24 65 L48 64 L79 63 L105 67 L132 67 L165 65" fill="none" stroke="#18bfd8" stroke-width="2"/><path d="M0 66 L24 65 L48 64 L79 63 L105 67 L132 67 L165 65 L165 72 L0 72Z" fill="rgba(24,191,216,.10)"/></svg></article></div>
+            <article class="activity-surface connections-surface"><div class="activity-kicker">活动连接</div><span class="connection-dot"></span><div class="activity-number">120</div><div class="connection-breakdown"><div><div class="small-number">25</div><div class="small-label">进程</div></div><div><div class="small-number">1</div><div class="small-label">设备</div></div><div><div class="small-number">1</div><div class="small-label">DHCP 设备</div></div></div></article>
+            <article class="activity-surface traffic-surface"><div class="activity-kicker">流量</div><div class="segmented"><button class="segment selected">全部</button><button class="segment">仅代理</button></div><div class="bar-chart"><span style="height:18%"></span><span style="height:29%"></span><span style="height:52%"></span><span style="height:63%"></span><span style="height:48%"></span><span style="height:36%"></span><span style="height:20%"></span><span style="height:25%"></span><span style="height:31%"></span><span style="height:82%"></span><span style="height:15%"></span><span style="height:13%"></span><span style="height:12%"></span><span style="height:9%"></span><span style="height:10%"></span><span style="height:6%"></span><span style="height:5%"></span><span style="height:8%"></span><span style="height:7%"></span><span style="height:6%"></span><span style="height:7%"></span><span style="height:8%"></span><span style="height:7%"></span></div><div class="chart-axis"><span>12AM</span><span>6AM</span><span>12PM</span><span>6PM</span></div><div class="rank-tabs"><button class="rank-tab active">进程与设备</button><button class="rank-tab">域名</button><button class="rank-tab">策略</button></div><div class="rank-list"><div class="rank-row"><span class="rank-icon">PC</span><div>DXP 4800Plus<div class="rank-track" style="--rank:100%"></div></div><span>3.43 GB</span></div><div class="rank-row"><span class="rank-icon">›_</span><div>curl<div class="rank-track" style="--rank:42%"></div></div><span>466.9 MB</span></div><div class="rank-row"><span class="rank-icon">◎</span><div>ChatGPT<div class="rank-track" style="--rank:29%"></div></div><span>271.3 MB</span></div><div class="rank-row"><span class="rank-icon">O</span><div>OpenCode<div class="rank-track" style="--rank:21%"></div></div><span>151.0 MB</span></div><div class="rank-row"><span class="rank-icon">M</span><div>Mole<div class="rank-track" style="--rank:14%"></div></div><span>95.3 MB</span></div></div></article>
+            <article class="activity-surface total-surface"><div class="activity-kicker">总计</div><div class="period-switch"><button class="segment selected">今日</button><button class="segment">本月</button></div><div class="activity-number">5.04<span class="activity-unit">GB</span></div><div class="total-parts"><div><div class="total-label">DIRECT</div><div class="total-value">3.54 GB</div></div><div class="total-proxy"><div class="total-label">代理</div><div class="total-value">1.50 GB</div></div></div><div class="total-bar"><span></span><span></span></div></article>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div></div>
+</div>
+<script>
+(() => {
+  const root = document.getElementById('murge-preview');
+  const stage = root.querySelector('.murge-stage');
+  const win = root.querySelector('.murge-window');
+  const fitWindow = () => { const scale = stage.clientWidth / 934; win.style.transform = `scale(${scale})`; };
+  new ResizeObserver(fitWindow).observe(stage);
+  fitWindow();
+  root.querySelectorAll('.nav-item[data-page]').forEach(button => button.addEventListener('click', () => {
+    root.querySelectorAll('.nav-item').forEach(x => x.classList.remove('active'));
+    button.classList.add('active');
+    root.querySelectorAll('.content-page').forEach(x => x.classList.toggle('active', x.dataset.content === button.dataset.page));
+  }));
+  root.querySelectorAll('.toggle').forEach(button => button.addEventListener('click', () => button.classList.toggle('on')));
+  root.querySelectorAll('.policy-choice').forEach(button => button.addEventListener('click', () => {
+    root.querySelectorAll('.policy-choice').forEach(x => x.classList.remove('active'));
+    button.classList.add('active');
+  }));
+})();
+</script>

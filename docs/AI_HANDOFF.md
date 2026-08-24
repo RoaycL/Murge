@@ -2,7 +2,7 @@
 
 ## Mandatory reading
 
-Read `DEVELOPMENT_SAFETY.md` first, then read `ARCHITECTURE.md`, `UI_SPEC.md`, `MIHOMO_API.md`, `BRANDING.md` and `ACCEPTANCE.md` before editing code.
+Read `DEVELOPMENT_SAFETY.md` first, then open `ui-reference/murge-ui-preview.html` and read `UI_SPEC.md`, `ARCHITECTURE.md`, `MIHOMO_API.md`, `BRANDING.md` and `ACCEPTANCE.md` before editing code.
 
 ## Development-machine safety gate
 
@@ -21,6 +21,7 @@ This restriction overrides task wording such as “run,” “verify,” “fini
 7. Do not rewrite an entire YAML profile merely to change one GUI-supported field.
 8. Preserve unrelated user changes and keep each implementation task scoped.
 9. Follow `DEVELOPMENT_SAFETY.md`; default development and test commands must remain non-mutating.
+10. Treat `ui-reference/murge-ui-preview.html` as the normative visual source. Do not redesign, embellish or substitute your own layout without explicit owner approval.
 
 ## Recommended task sequence
 
@@ -53,6 +54,7 @@ Done when disconnect/reconnect does not duplicate samples or leak listeners.
 - Replace fixture data with stores backed by typed IPC.
 - Keep layout pixel-stable in loading, active and failed states.
 - Implement bounded histories and aggregations described in `MIHOMO_API.md`.
+- Compare the 934×672 implementation screenshot directly with the Activity state in `ui-reference/murge-ui-preview.html`; do not reinterpret its layout.
 
 Done when screenshot geometry remains approved at 934×672 and live data updates once per second.
 

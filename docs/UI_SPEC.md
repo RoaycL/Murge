@@ -1,5 +1,11 @@
 # UI specification
 
+## Normative visual reference
+
+The owner-approved interactive reference is [`ui-reference/murge-ui-preview.html`](ui-reference/murge-ui-preview.html). It is part of the repository and is the primary authority for geometry, spacing, card composition, navigation hierarchy and visual state.
+
+Implementation agents must open the relevant reference page before changing Vue or CSS. If this document, existing production UI and the reference differ visually, the reference wins unless the owner explicitly approves an exception. Do not invent replacement layouts or add decorative components.
+
 ## Reference boundary
 
 The UI follows the observed information architecture, density, spacing and card proportions of the installed Surge for Mac interface. Do not copy vendor trademarks, icons, illustrations or proprietary text. Windows system controls, keyboard behavior and accessibility remain native to the target platform.
@@ -80,4 +86,4 @@ The Activity page is the default route.
 
 ## Visual review rule
 
-For every page, capture at exactly 934×672 and compare against the approved reference. A reviewer must approve geometry before live data integration changes the page.
+For every page, capture at exactly 934×672 and compare it beside `ui-reference/murge-ui-preview.html`. A reviewer must approve geometry before live data integration changes the page. Every intentional difference must be documented in the pull request and approved by the owner.

@@ -11,6 +11,7 @@
 - [ ] Development window opens at no less than 934×672.
 - [ ] Default route is Activity.
 - [ ] Activity geometry matches `UI_SPEC.md`.
+- [ ] A 934×672 screenshot has been compared directly with `ui-reference/murge-ui-preview.html` and all deviations are documented.
 - [ ] Overview switches are local visual prototypes only.
 - [ ] Navigation placeholders render without errors.
 - [ ] Renderer has no Node access.

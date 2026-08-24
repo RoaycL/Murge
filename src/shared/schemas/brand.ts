@@ -21,6 +21,7 @@ const brandConfigSchema = z
     appId: z.string().min(1).regex(new RegExp(APP_ID_PATTERN)),
     executableName: z.string().min(1).regex(new RegExp(EXECUTABLE_NAME_PATTERN)),
     protocolScheme: z.string().min(1).regex(new RegExp(PROTOCOL_SCHEME_PATTERN)),
+    defaultProfileName: z.string().trim().min(1),
     companyName: z.string(),
     repositoryUrl: z.string(),
     supportUrl: z.string(),

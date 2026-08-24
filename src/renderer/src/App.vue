@@ -15,9 +15,11 @@ onMounted(async () => {
 
 <template>
   <div class="app-window">
-    <AppSidebar :brand="brand" />
-    <main class="app-content">
-      <RouterView />
-    </main>
+    <div class="app-frame">
+      <AppSidebar :brand="brand" />
+      <main class="app-content">
+        <RouterView />
+      </main>
+    </div>
   </div>
 </template>

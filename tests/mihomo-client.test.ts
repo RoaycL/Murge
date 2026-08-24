@@ -31,6 +31,21 @@ function hangingResponse(signal: AbortSignal | undefined): Promise<Response> {
   })
 }
 
+/** A body-read promise that stays pending until `signal` aborts, simulating a
+ * controller that sends headers then stalls its body. */
+function hangingBody(signal: AbortSignal | undefined): Promise<string | never> {
+  return new Promise((_resolve, reject) => {
+    if (!signal) return
+    if (signal.aborted) {
+      reject(new DOMException('The operation was aborted.', 'AbortError'))
+      return
+    }
+    signal.addEventListener('abort', () => {
+      reject(new DOMException('The operation was aborted.', 'AbortError'))
+    }, { once: true })
+  })
+}
+
 afterEach(() => {
   vi.unstubAllGlobals()
 })
@@ -111,5 +126,45 @@ describe('MihomoClient', () => {
     expect(error).toBeInstanceOf(ProtocolError)
     expect(error.code).toBe(ProtocolErrorCode.UPSTREAM_UNREACHABLE)
     expect(error.details?.reason).toBe('aborted')
+  })
+
+  it('times out when json() hangs after headers were received', async () => {
+    const fetchMock = vi.fn((_url, init) => Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => hangingBody(init?.signal),
+      text: async () => ''
+    } as unknown as Response))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new MihomoClient('http://127.0.0.1:9090', 'secret', { timeoutMs: 25 })
+    const error = await client.getVersion().catch((e) => e)
+    expect(error).toBeInstanceOf(ProtocolError)
+    expect((error as ProtocolError).code).toBe(ProtocolErrorCode.UPSTREAM_TIMEOUT)
+  })
+
+  it('times out when text() hangs on an HTTP error response', async () => {
+    const fetchMock = vi.fn((_url, init) => Promise.resolve({
+      ok: false,
+      status: 500,
+      text: () => hangingBody(init?.signal),
+      json: async () => ''
+    } as unknown as Response))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new MihomoClient('http://127.0.0.1:9090', 'secret', { timeoutMs: 25 })
+    const error = await client.getVersion().catch((e) => e)
+    expect(error).toBeInstanceOf(ProtocolError)
+    expect((error as ProtocolError).code).toBe(ProtocolErrorCode.UPSTREAM_TIMEOUT)
+  })
+
+  it('removes the external abort listener after a successful request', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({ meta: true, version: '1.18.9' })))
+    const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
+    const addEventListener = vi.fn()
+    const removeEventListener = vi.fn()
+    const signal = { aborted: false, addEventListener, removeEventListener } as unknown as AbortSignal
+    await client.getVersion(signal)
+    expect(addEventListener).toHaveBeenCalledWith('abort', expect.any(Function), { once: true })
+    const listener = addEventListener.mock.calls[0][1]
+    expect(removeEventListener).toHaveBeenCalledWith('abort', listener)
   })
 })

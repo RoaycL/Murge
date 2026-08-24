@@ -20,6 +20,7 @@ const controllerSecret = process.env.MURGE_DEV_SECRET ?? ''
 let kernel: KernelSupervisor | null = null
 let mihomo: MihomoService | null = null
 let mockServer: MockMihomoServerHandle | null = null
+let disposeIpc: (() => void) | null = null
 let isQuitting = false
 
 /**
@@ -100,7 +101,7 @@ app.whenReady().then(async () => {
   // Await the (mock or disabled) controller gateway before wiring IPC so the
   // renderer's first pull always sees a live controller in dev.
   const gateway = await createMihomoGateway()
-  registerIpc({
+  disposeIpc = registerIpc({
     kernel: kernelInstance,
     mihomo: gateway
   })
@@ -130,10 +131,13 @@ app.on('before-quit', (event) => {
       console.error('[kernel] failed to stop during quit:', error)
     }
     try {
+      disposeIpc?.()
       mihomo?.dispose()
       await mockServer?.close()
     } catch (error) {
       console.error('[mihomo] failed to stop mock controller during quit:', error)
+    } finally {
+      disposeIpc = null
     }
     app.quit()
   })()

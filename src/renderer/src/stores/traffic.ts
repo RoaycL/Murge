@@ -24,7 +24,11 @@ export const useTrafficStore = defineStore('traffic', () => {
   function armWatchdog(): void {
     if (watchdog) clearTimeout(watchdog)
     watchdog = setTimeout(() => {
-      if (status.value !== 'live') {
+      watchdog = null
+      // After this long with no message the stream is effectively dead even if
+      // no close/error event surfaced. Only override loading/live so a genuine
+      // parse error is not masked by silence.
+      if (status.value === 'loading' || status.value === 'live') {
         lastError.value = '未收到流量数据'
         status.value = 'disconnected'
       }
@@ -38,15 +42,13 @@ export const useTrafficStore = defineStore('traffic', () => {
   const totalUpload = computed<number>(() => current.value?.upTotal ?? 0)
 
   function push(sample: TrafficSample): void {
-    if (watchdog) {
-      clearTimeout(watchdog)
-      watchdog = null
-    }
     samples.value = samples.value.length < HISTORY ? [...samples.value, sample] : [...samples.value.slice(1), sample]
-    if (status.value !== 'live') {
-      lastError.value = null
-      status.value = 'live'
-    }
+    // Any valid sample proves the stream is alive; recover from loading or
+    // disconnected and clear the stale error.
+    lastError.value = null
+    status.value = 'live'
+    // Keep a fresh silence watchdog armed after every message.
+    armWatchdog()
   }
 
   function onError(error: MihomoStreamError): void {
@@ -75,6 +77,9 @@ export const useTrafficStore = defineStore('traffic', () => {
       clearTimeout(watchdog)
       watchdog = null
     }
+    // A clean slate on explicit disconnect: no lingering timer or listeners.
+    lastError.value = null
+    status.value = 'loading'
   }
 
   return {

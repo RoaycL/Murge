@@ -29,7 +29,7 @@ function wrapHandler(handler: IpcHandler): IpcHandler {
 function buildRuntimeSummary(): RuntimeSummary {
   return {
     networkName: 'Ethernet',
-    profileName: 'Default',
+    profileName: brand.defaultProfileName,
     mode: 'rule',
     externalIp: null,
     systemProxyEnabled: false,
@@ -37,15 +37,15 @@ function buildRuntimeSummary(): RuntimeSummary {
   }
 }
 
-export function registerIpc({ kernel, mihomo }: IpcDependencies): void {
+export function registerIpc({ kernel, mihomo }: IpcDependencies): () => void {
   const deps: IpcDeps = {
     brand,
     kernel,
     mihomo,
     runtime: { getSummary: buildRuntimeSummary }
   }
-  const handlers = buildIpcHandlers(deps)
-  for (const [channel, handler] of Object.entries(handlers)) {
+  const entries = Object.entries(buildIpcHandlers(deps))
+  for (const [channel, handler] of entries) {
     ipcMain.handle(channel, wrapHandler(handler))
   }
 
@@ -72,12 +72,18 @@ export function registerIpc({ kernel, mihomo }: IpcDependencies): void {
     }
   })
 
-  // Release all forwarders when the app is tearing down.
-  process.once('before-quit', () => {
+  // Cleanup is owned by the caller (index.ts wires it into the `app` "before-quit"
+  // lifecycle event, which is the correct Electron signal — `process` has no
+  // `before-quit` event). Repeated calls are harmless no-ops.
+  let disposed = false
+  return function dispose(): void {
+    if (disposed) return
+    disposed = true
+    for (const [channel] of entries) ipcMain.removeHandler(channel)
     trafficUnsub()
     connectionsUnsub()
     logsUnsub()
     streamErrorUnsub()
     statusUnsub()
-  })
+  }
 }

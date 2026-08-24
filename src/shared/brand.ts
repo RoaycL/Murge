@@ -7,6 +7,7 @@ export interface BrandConfig {
   appId: string
   executableName: string
   protocolScheme: string
+  defaultProfileName: string
   companyName: string
   repositoryUrl: string
   supportUrl: string

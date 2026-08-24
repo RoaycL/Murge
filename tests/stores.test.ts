@@ -46,8 +46,13 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   ;(globalThis as unknown as { window?: unknown }).window = undefined
 })
+
+function emitConnections(store: ReturnType<typeof useConnectionsStore>, value: MihomoConnectionsSnapshot): void {
+  for (const listener of Array.from(mihomo.connectionsListeners)) listener(value)
+}
 
 function sample(up = 10, down = 20): TrafficSample {
   return { timestamp: Date.now(), up, down, upTotal: 1000, downTotal: 2000 }
@@ -92,6 +97,57 @@ describe('traffic store', () => {
     expect(store.status).toBe('error')
     store.disconnect()
   })
+
+  it('re-arms the watchdog after every sample and recovers live after silence', () => {
+    vi.useFakeTimers()
+    const store = useTrafficStore()
+    store.connect()
+    emitTraffic(store, sample(1, 1))
+    expect(store.status).toBe('live')
+    expect(store.lastError).toBeNull()
+
+    // No message for the full watchdog window must flip to disconnected.
+    vi.advanceTimersByTime(5000)
+    expect(store.status).toBe('disconnected')
+    expect(store.lastError).toBe('未收到流量数据')
+
+    // A fresh valid sample recovers to live and clears the stale error.
+    emitTraffic(store, sample(2, 2))
+    expect(store.status).toBe('live')
+    expect(store.lastError).toBeNull()
+    store.disconnect()
+  })
+
+  it('subscribes once even when connect is called repeatedly (no duplicate messages)', () => {
+    const store = useTrafficStore()
+    store.connect()
+    store.connect()
+    expect(mihomo.trafficListeners.size).toBe(1)
+
+    emitTraffic(store, sample(1, 1))
+    emitTraffic(store, sample(2, 2))
+    expect(store.samples).toHaveLength(2)
+    expect(store.samples[1].up).toBe(2)
+    store.disconnect()
+  })
+
+  it('disconnect releases the watchdog and listeners and stops further updates', () => {
+    const store = useTrafficStore()
+    store.connect()
+    emitTraffic(store, sample(1, 1))
+    expect(store.status).toBe('live')
+
+    store.disconnect()
+    expect(mihomo.trafficListeners.size).toBe(0)
+    expect(mihomo.errorListeners.size).toBe(0)
+    expect(store.status).toBe('loading')
+    expect(store.lastError).toBeNull()
+
+    // A message emitted after disconnect must not mutate the store.
+    emitTraffic(store, sample(2, 2))
+    expect(store.samples).toHaveLength(1)
+    expect(store.status).toBe('loading')
+  })
 })
 
 describe('connections store', () => {
@@ -124,5 +180,42 @@ describe('connections store', () => {
     expect(summary?.topProcesses[1]?.name).toBe('curl')
     expect(store.status).toBe('live')
     store.disconnect()
+  })
+
+  it('re-arms the watchdog after every snapshot and recovers live after silence', async () => {
+    vi.useFakeTimers()
+    mihomo.getConnections.mockResolvedValue(snapshot)
+    const store = useConnectionsStore()
+    store.connect()
+    emitConnections(store, snapshot)
+    expect(store.status).toBe('live')
+
+    vi.advanceTimersByTime(5000)
+    expect(store.status).toBe('disconnected')
+    expect(store.lastError).toBe('未收到连接数据')
+
+    emitConnections(store, snapshot)
+    expect(store.status).toBe('live')
+    expect(store.lastError).toBeNull()
+    store.disconnect()
+    await Promise.resolve()
+  })
+
+  it('disconnect releases the watchdogs and listeners and stops further updates', async () => {
+    mihomo.getConnections.mockResolvedValue(snapshot)
+    const store = useConnectionsStore()
+    store.connect()
+    emitConnections(store, snapshot)
+    expect(store.status).toBe('live')
+
+    store.disconnect()
+    expect(mihomo.connectionsListeners.size).toBe(0)
+    expect(mihomo.errorListeners.size).toBe(0)
+    expect(store.status).toBe('loading')
+    expect(store.lastError).toBeNull()
+
+    emitConnections(store, snapshot)
+    expect(store.status).toBe('loading')
+    await Promise.resolve()
   })
 })

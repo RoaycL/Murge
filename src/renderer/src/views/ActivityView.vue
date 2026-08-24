@@ -7,6 +7,7 @@ import { useConnectionsStore } from '../stores/connections'
 import { useRuntimeStore } from '../stores/runtime'
 import { useKernelStore } from '../stores/kernel'
 import { formatBytes, formatBytesParts, formatRate } from '../lib/format'
+import { brand } from '@shared/brand'
 
 const traffic = useTrafficStore()
 const connections = useConnectionsStore()
@@ -22,18 +23,20 @@ onMounted(() => {
 
 const up = computed(() => formatRate(traffic.current?.up ?? 0))
 const down = computed(() => formatRate(traffic.current?.down ?? 0))
-const total = computed(() => formatBytesParts(traffic.totalDownload))
 const activeCount = computed(() => connections.summary?.totalConnections ?? 0)
 const processCount = computed(() => connections.summary?.distinctProcesses ?? 0)
 const deviceCount = computed(() => connections.summary?.distinctDevices ?? 0)
 const topProcesses = computed(() => connections.summary?.topProcesses ?? [])
-const direct = computed(() => formatBytesParts(connections.summary?.directDownload ?? 0))
-const proxy = computed(() => formatBytesParts(connections.summary?.proxyDownload ?? 0))
+const directBytes = computed(() => connections.summary?.directDownload ?? 0)
+const proxyBytes = computed(() => connections.summary?.proxyDownload ?? 0)
+const direct = computed(() => formatBytesParts(directBytes.value))
+const proxy = computed(() => formatBytesParts(proxyBytes.value))
+// 总计 is the same cumulative source as DIRECT + 代理 so the breakdown always
+// reconciles to the headline figure (any residual is per-part rounding only).
+const total = computed(() => formatBytesParts(directBytes.value + proxyBytes.value))
 const directPct = computed(() => {
-  const summary = connections.summary
-  if (!summary) return 0
-  const total = summary.directDownload + summary.proxyDownload
-  return total ? Math.round((summary.directDownload / total) * 100) : 0
+  const totalBytes = directBytes.value + proxyBytes.value
+  return totalBytes ? Math.round((directBytes.value / totalBytes) * 100) : 0
 })
 
 const modeLabel = computed(() => {
@@ -62,15 +65,11 @@ const bars = [18, 29, 52, 63, 48, 36, 20, 25, 31, 82, 15, 13, 12, 9, 10, 6, 5, 8
   <div class="activity-view page-shell">
     <header class="activity-header">
       <h1>活动</h1>
-      <div class="status-pills" aria-label="网络接管状态">
-        <span class="status-pill"><i :class="{ 'pill-dim': !runtime.summary?.systemProxyEnabled }" />系统代理</span>
-        <span class="status-pill"><i :class="{ 'pill-dim': !runtime.summary?.tunEnabled }" />TUN 模式</span>
-      </div>
     </header>
 
     <section class="runtime-context" aria-label="运行上下文">
       <div><span>网络</span><strong>{{ runtime.summary?.networkName ?? '以太网' }}</strong></div>
-      <div><span>配置</span><strong>{{ runtime.summary?.profileName ?? 'Default' }}</strong></div>
+      <div><span>配置</span><strong>{{ runtime.summary?.profileName ?? brand.defaultProfileName }}</strong></div>
       <div><span>出站模式</span><strong>{{ modeLabel }}</strong></div>
       <div><span>外部 IP⌄</span><strong>{{ runtime.summary?.externalIp ?? '—' }}</strong></div>
     </section>

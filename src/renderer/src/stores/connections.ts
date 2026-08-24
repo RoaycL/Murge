@@ -33,7 +33,11 @@ export const useConnectionsStore = defineStore('connections', () => {
   function armWatchdog(): void {
     if (watchdog) clearTimeout(watchdog)
     watchdog = setTimeout(() => {
-      if (status.value !== 'live') {
+      watchdog = null
+      // No snapshot for this long means the stream is effectively dead even if
+      // no close/error event surfaced. Only override loading/live so a genuine
+      // parse error is not masked by silence.
+      if (status.value === 'loading' || status.value === 'live') {
         lastError.value = '未收到连接数据'
         status.value = 'disconnected'
       }
@@ -73,15 +77,13 @@ export const useConnectionsStore = defineStore('connections', () => {
   })
 
   function accept(snap: MihomoConnectionsSnapshot): void {
-    if (watchdog) {
-      clearTimeout(watchdog)
-      watchdog = null
-    }
     snapshot.value = snap
-    if (status.value !== 'live') {
-      lastError.value = null
-      status.value = 'live'
-    }
+    // Any valid snapshot proves the stream is alive; recover from loading or
+    // disconnected and clear the stale error.
+    lastError.value = null
+    status.value = 'live'
+    // Keep a fresh silence watchdog armed after every snapshot.
+    armWatchdog()
   }
 
   function onError(error: MihomoStreamError): void {
@@ -111,6 +113,9 @@ export const useConnectionsStore = defineStore('connections', () => {
       clearTimeout(watchdog)
       watchdog = null
     }
+    // A clean slate on explicit disconnect: no lingering timer or listeners.
+    lastError.value = null
+    status.value = 'loading'
   }
 
   return { status, lastError, snapshot, summary, connect, disconnect }

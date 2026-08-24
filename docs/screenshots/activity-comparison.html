@@ -2,27 +2,42 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Activity — 934x672 implementation vs normative reference</title>
+<title>Activity 934x672 — implementation vs reference (follow-up fix)</title>
 <style>
-  body { margin: 0; padding: 24px; background: #f2f3f5; color: #18191c;
-         font: 14px/1.5 "Segoe UI", system-ui, sans-serif; }
-  .wrap { max-width: 2000px; margin: 0 auto; }
-  h1 { font-size: 18px; margin: 0 0 4px; }
-  .sub { color: #5b6472; margin: 0 0 20px; }
-  .pair { display: flex; gap: 16px; flex-wrap: wrap; }
-  .col { flex: 1 1 934px; min-width: 0; }
-  .col h2 { font-size: 14px; margin: 0 0 8px; }
-  .col img { width: 934px; height: 672px; display: block; background: #fff;
-             border: 1px solid #d8dce3; border-radius: 12px; box-shadow: 0 12px 34px rgba(24,31,45,.12); }
-  .tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; margin-left: 8px; vertical-align: middle; }
-  .tag.impl { background: #e7e2ff; color: #4b3fd0; }
-  .tag.ref { background: #dff2e6; color: #1d7a3d; }
+  body { margin:0; padding:24px; background:#f2f3f5; color:#18191c; font:14px/1.5 "Segoe UI",system-ui,sans-serif; }
+  .wrap { max-width:2040px; margin:0 auto; }
+  h1 { font-size:19px; margin:0 0 4px; }
+  .sub { color:#5b6472; margin:0 0 18px; }
+  .pair { display:flex; gap:16px; flex-wrap:wrap; }
+  .col { flex:1 1 934px; min-width:0; }
+  .col h2 { font-size:14px; margin:0 0 8px; }
+  .col img { width:934px; height:672px; display:block; background:#fff; border:1px solid #d8dce3; border-radius:12px; box-shadow:0 12px 34px rgba(24,31,45,.12); }
+  .tag { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; margin-left:8px; vertical-align:middle; }
+  .tag.impl { background:#e7e2ff; color:#4b3fd0; }
+  .tag.ref { background:#dff2e6; color:#1d7a3d; }
+  .panel { background:#fff; border:1px solid #e0e4ea; border-radius:12px; padding:18px 20px; margin-top:20px; box-shadow:0 8px 24px rgba(24,31,45,.06); }
+  h3 { font-size:15px; margin:0 0 12px; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th, td { border:1px solid #eceff3; padding:6px 9px; text-align:left; }
+  th { background:#f7f8fb; font-weight:600; }
+  td.n { text-align:right; }
+  ul.checks { list-style:none; padding:0; margin:0; }
+  ul.checks li { padding:6px 10px; border-radius:8px; margin-bottom:6px; background:#f7f8fb; }
+  ul.checks li.ok { background:#eef8f0; }
+  ul.checks li.bad { background:#fdecec; }
+  .det { color:#6b7280; font-size:12px; }
+  .burst { background:#eef4ff; border-radius:8px; padding:10px 12px; margin-top:12px; font-size:13px; }
+  .burst code { background:#e5eaf3; border-radius:4px; padding:1px 5px; font-size:12px; }
+  table.heat td.h { width:6.25%; text-align:center; font-size:11px; color:#333; }
+  .ok { color:#1d7a3d; } .warn { color:#b58900; }
+  .gridwrap { display:flex; gap:24px; flex-wrap:wrap; } .gridwrap > div { display:flex; gap:20px; flex-wrap:wrap; }
+  .note { color:#5b6472; font-size:12px; margin-top:8px; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Activity — 934 &times; 672 implementation vs normative reference</h1>
-  <p class="sub">Framework milestone. Left: production build with live mock data. Right: owner-approved reference. Both captured at a 934&nbsp;&times;&nbsp;672 content viewport. Differences are data-level &amp; resilience affordances (see README.md).</p>
+  <h1>Activity — 934&times;672 implementation vs norming reference</h1>
+  <p class="sub">Follow-up fix (commit <code>28b020c</code>): frame/margin geometry, activity-title bar, 8px outer margin, dashboard grid, and 总计 = DIRECT + 代理. Left: production build with live mock data. Right: owner-approved reference (auto-scaled to fit). Both captured at a 934&times;672 content viewport under Xvfb + Electron.</p>
   <div class="pair">
     <div class="col">
       <h2>Implementation<span class="tag impl">live mock</span></h2>
@@ -32,6 +47,69 @@
       <h2>Normative reference<span class="tag ref">owner-approved</span></h2>
       <img src="activity-ref-934x672.png" alt="Normative Activity reference">
     </div>
+  </div>
+
+  <div class="panel">
+    <h3>Automated DOM assertions — 10/10 passed</h3>
+    <ul class="checks">
+    <li class='ok'><b>PASS</b> — 1. Viewport exactly 934x672 <span class='det'>(viewport=934x672)</span></li>
+<li class='ok'><b>PASS</b> — 2. No page horizontal overflow (documentElement.scrollWidth<=clientWidth) <span class='det'>(scrollWidth=934 clientWidth=934)</span></li>
+<li class='ok'><b>PASS</b> — 3. No content-box horizontal overflow (.app-content.scrollWidth<=clientWidth) <span class='det'>(scrollWidth=715 clientWidth=715)</span></li>
+<li class='ok'><b>PASS</b> — 4. No horizontal scrollbar (no reserved scrollbar width) <span class='det'>(content cw=715 contentW=715)</span></li>
+<li class='ok'><b>PASS</b> — 5. Exactly two independent rate cards (.speed-card) <span class='det'>(count=2)</span></li>
+<li class='ok'><b>PASS</b> — 6. Rate-card bounding boxes do not overlap <span class='det'>(570.0,145.0,732.5,307.0 | 747.5,145.0,910.0,307.0)</span></li>
+<li class='ok'><b>PASS</b> — 7. Every dashboard card fits within viewport width <span class='det'>(maxRight=910)</span></li>
+<li class='ok'><b>PASS</b> — 8. Live state shows no disconnected badge (.stream-state) <span class='det'>(streamState=null)</span></li>
+<li class='ok'><b>PASS</b> — 9. Total card + ratio bar fully inside the first screen <span class='det'>(totalCardBottom=661 totalBarBottom=659)</span></li>
+<li class='ok'><b>PASS</b> — 10. DIRECT + 代理 === 总计 from one cumulative source <span class='det'>(total=3.0MB direct=1.9 MB proxy=1.1 MB sum=3)</span></li>
+    </ul>
+    <div class="burst">
+      <b>Scroll widths:</b> documentElement scrollWidth = <code>934</code> vs clientWidth = <code>934</code> (no page horizontal overflow) ·
+      <code>.app-content</code> scrollWidth = <code>715</code> vs clientWidth = <code>715</code>, scrollHeight = <code>654</code> vs clientHeight = <code>654</code> (no horizontal <i>or</i> vertical scrollbar).
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Bounding-box comparison (positions/sizes normalized to each frame's origin &amp; size)</h3>
+    <table>
+      <tr><th>Element</th><th>impl x% / y%</th><th>impl w%</th><th>impl h%</th><th>ref x% / y%</th><th>ref w%</th><th>ref h%</th><th>Δ width</th></tr>
+      <tr><td>sidebar</td><td>0.11% / 0.15%</td><td>21.90%</td><td>99.70%</td><td>0.11% / 0.15%</td><td>21.95%</td><td>100.00%</td><td class='ok'>0.054%</td></tr>
+<tr><td>content / main</td><td>22.00% / 0.15%</td><td>77.89%</td><td>99.70%</td><td>22.06% / 0.15%</td><td>78.05%</td><td>100.00%</td><td class='ok'>0.164%</td></tr>
+<tr><td>title (活动)</td><td>22.55% / 7.01%</td><td>75.71%</td><td>5.18%</td><td>22.59% / 6.85%</td><td>73.88%</td><td>5.06%</td><td class='warn'>1.832%</td></tr>
+<tr><td>runtime context</td><td>22.55% / 12.20%</td><td>75.71%</td><td>8.69%</td><td>22.59% / 13.10%</td><td>74.41%</td><td>8.48%</td><td class='warn'>1.301%</td></tr>
+<tr><td>dashboard grid</td><td>22.55% / 20.88%</td><td>75.71%</td><td>78.66%</td><td>22.59% / 21.58%</td><td>75.91%</td><td>78.27%</td><td class='ok'>0.206%</td></tr>
+<tr><td>latency card</td><td>22.55% / 20.88%</td><td>37.04%</td><td>24.70%</td><td>22.59% / 21.58%</td><td>37.15%</td><td>24.70%</td><td class='ok'>0.117%</td></tr>
+<tr><td>speed-pair surface</td><td>61.22% / 20.88%</td><td>37.04%</td><td>24.70%</td><td>61.35% / 21.58%</td><td>37.15%</td><td>24.70%</td><td class='ok'>0.117%</td></tr>
+<tr><td>rate card 0</td><td>61.22% / 20.88%</td><td>17.70%</td><td>24.70%</td><td>61.35% / 21.58%</td><td>17.77%</td><td>24.70%</td><td class='ok'>0.073%</td></tr>
+<tr><td>rate card 1</td><td>80.56% / 20.88%</td><td>17.70%</td><td>24.70%</td><td>80.73% / 21.58%</td><td>17.77%</td><td>24.70%</td><td class='ok'>0.073%</td></tr>
+<tr><td>connections card</td><td>22.55% / 47.87%</td><td>37.04%</td><td>24.70%</td><td>22.59% / 48.51%</td><td>37.15%</td><td>24.55%</td><td class='ok'>0.117%</td></tr>
+<tr><td>traffic card</td><td>61.22% / 47.87%</td><td>37.04%</td><td>51.68%</td><td>61.35% / 48.51%</td><td>37.15%</td><td>51.33%</td><td class='ok'>0.117%</td></tr>
+<tr><td>total card</td><td>22.55% / 74.85%</td><td>37.04%</td><td>24.70%</td><td>22.59% / 75.30%</td><td>37.15%</td><td>24.55%</td><td class='ok'>0.117%</td></tr>
+<tr><td>total ratio bar</td><td>24.40% / 95.73%</td><td>33.33%</td><td>3.51%</td><td>24.41% / 96.72%</td><td>33.51%</td><td>3.42%</td><td class='ok'>0.177%</td></tr>
+    </table>
+    <p class="note">Reference is auto-scaled by <code>fitWindow()</code> (~0.9668) into a 919-wide stage, so raw px differ slightly; normalizing to each frame removes the scale and shows the impl tracks the reference layout within ~0.1–0.2% for the cardinal elements. The title/context strip is 5px wider in impl (695 content-box vs ref 690 + padding) — a sub-2% deviation.</p>
+  </div>
+
+  <div class="panel">
+    <h3>Pixel diff (impl vs ref, 934&times;672)</h3>
+    <table>
+      <tr><th>total px</th><th>differing px</th><th>differing %</th><th>mean abs diff / channel</th><th>threshold</th><th>max region differing %</th></tr>
+      <tr>
+        <td class="n">627648</td>
+        <td class="n">62992</td>
+        <td class="n"><b>10.04%</b></td>
+        <td class="n">11.64</td>
+        <td class="n">24</td>
+        <td class="n">31.2%</td>
+      </tr>
+    </table>
+    <p class="note">The raw pixel diff is NOT zero because the reference renders at a ~0.9668 scale (so every edge is offset by 1–3px) and the data is live vs static (different numbers, bar heights, sparkline shapes and rank values; impl shows 3.0MB where the reference shows 5.04GB). The grid below shows the fraction of differing pixels per 8&times;6 cell. The meaningful fidelity check is the normalized geometry above, which is within ~0.2%.</p>
+    <table class="heat"><tr><th colspan="8">differing-pixel fraction per 8x6 cell (%)</th></tr><tr><td class='h' title='8%' style='background:rgba(229,72,77,0.13)'>8</td><td class='h' title='4%' style='background:rgba(229,72,77,0.094)'>4</td><td class='h' title='5%' style='background:rgba(229,72,77,0.10600000000000001)'>5</td><td class='h' title='2%' style='background:rgba(229,72,77,0.07100000000000001)'>2</td><td class='h' title='2%' style='background:rgba(229,72,77,0.07400000000000001)'>2</td><td class='h' title='1%' style='background:rgba(229,72,77,0.065)'>1</td><td class='h' title='2%' style='background:rgba(229,72,77,0.078)'>2</td><td class='h' title='2%' style='background:rgba(229,72,77,0.07400000000000001)'>2</td></tr>
+<tr><td class='h' title='18%' style='background:rgba(229,72,77,0.23199999999999998)'>18</td><td class='h' title='2%' style='background:rgba(229,72,77,0.076)'>2</td><td class='h' title='10%' style='background:rgba(229,72,77,0.154)'>10</td><td class='h' title='8%' style='background:rgba(229,72,77,0.139)'>8</td><td class='h' title='10%' style='background:rgba(229,72,77,0.15100000000000002)'>10</td><td class='h' title='11%' style='background:rgba(229,72,77,0.164)'>11</td><td class='h' title='16%' style='background:rgba(229,72,77,0.21300000000000002)'>16</td><td class='h' title='8%' style='background:rgba(229,72,77,0.139)'>8</td></tr>
+<tr><td class='h' title='18%' style='background:rgba(229,72,77,0.239)'>18</td><td class='h' title='0%' style='background:rgba(229,72,77,0.055)'>0</td><td class='h' title='4%' style='background:rgba(229,72,77,0.094)'>4</td><td class='h' title='5%' style='background:rgba(229,72,77,0.10700000000000001)'>5</td><td class='h' title='4%' style='background:rgba(229,72,77,0.093)'>4</td><td class='h' title='5%' style='background:rgba(229,72,77,0.10300000000000001)'>5</td><td class='h' title='5%' style='background:rgba(229,72,77,0.10400000000000001)'>5</td><td class='h' title='8%' style='background:rgba(229,72,77,0.138)'>8</td></tr>
+<tr><td class='h' title='18%' style='background:rgba(229,72,77,0.237)'>18</td><td class='h' title='0%' style='background:rgba(229,72,77,0.056)'>0</td><td class='h' title='9%' style='background:rgba(229,72,77,0.14800000000000002)'>9</td><td class='h' title='1%' style='background:rgba(229,72,77,0.066)'>1</td><td class='h' title='2%' style='background:rgba(229,72,77,0.07100000000000001)'>2</td><td class='h' title='13%' style='background:rgba(229,72,77,0.184)'>13</td><td class='h' title='17%' style='background:rgba(229,72,77,0.22100000000000003)'>17</td><td class='h' title='14%' style='background:rgba(229,72,77,0.191)'>14</td></tr>
+<tr><td class='h' title='12%' style='background:rgba(229,72,77,0.177)'>12</td><td class='h' title='1%' style='background:rgba(229,72,77,0.060000000000000005)'>1</td><td class='h' title='9%' style='background:rgba(229,72,77,0.14400000000000002)'>9</td><td class='h' title='14%' style='background:rgba(229,72,77,0.193)'>14</td><td class='h' title='6%' style='background:rgba(229,72,77,0.116)'>6</td><td class='h' title='31%' style='background:rgba(229,72,77,0.362)'>31</td><td class='h' title='2%' style='background:rgba(229,72,77,0.07300000000000001)'>2</td><td class='h' title='12%' style='background:rgba(229,72,77,0.175)'>12</td></tr>
+<tr><td class='h' title='20%' style='background:rgba(229,72,77,0.257)'>20</td><td class='h' title='9%' style='background:rgba(229,72,77,0.14300000000000002)'>9</td><td class='h' title='22%' style='background:rgba(229,72,77,0.277)'>22</td><td class='h' title='21%' style='background:rgba(229,72,77,0.263)'>21</td><td class='h' title='23%' style='background:rgba(229,72,77,0.28400000000000003)'>23</td><td class='h' title='21%' style='background:rgba(229,72,77,0.268)'>21</td><td class='h' title='8%' style='background:rgba(229,72,77,0.13)'>8</td><td class='h' title='17%' style='background:rgba(229,72,77,0.22699999999999998)'>17</td></tr></table>
   </div>
 </div>
 </body>

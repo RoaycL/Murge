@@ -100,6 +100,34 @@ describe('MihomoStream transport', () => {
     expect(events).toEqual([1, 2])
   })
 
+  it('reports a connection error immediately on close, not only after retries exhaust', () => {
+    vi.useFakeTimers()
+    const sockets: FakeSocket[] = []
+    const factory = () => {
+      const socket = new FakeSocket()
+      sockets.push(socket)
+      return socket
+    }
+    const connectionErrors: Error[] = []
+    const stream = createMihomoStream<{ up: number }>({
+      url: 'ws://127.0.0.1:1/traffic',
+      parse: (raw) => raw as { up: number },
+      options: { backoffMs: 10, maxBackoffMs: 40, jitter: 0, maxRetries: 5 },
+      onConnectionError: (error) => connectionErrors.push(error as Error),
+      socketFactory: factory
+    })
+    stream.subscribe(() => undefined)
+    sockets[0].emit('open')
+
+    // An unsolicited close must notify the upper layer right away.
+    sockets[0].emit('close')
+    expect(connectionErrors).toHaveLength(1)
+
+    // It must still schedule a reconnect rather than giving up.
+    vi.advanceTimersByTime(10)
+    expect(sockets).toHaveLength(2)
+  })
+
   it('removes only the unsubscribed listener (no leaks)', () => {
     const sockets: FakeSocket[] = []
     const factory = () => {

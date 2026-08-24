@@ -6,6 +6,7 @@
   "appId": "io.murge.desktop",
   "executableName": "murge",
   "protocolScheme": "murge",
+  "defaultProfileName": "Murge Default",
   "companyName": "Murge Contributors",
   "repositoryUrl": "",
   "supportUrl": "",

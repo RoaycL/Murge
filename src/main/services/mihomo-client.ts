@@ -57,74 +57,105 @@ export class MihomoClient {
     const controller = new AbortController()
     let timedOut = false
 
+    // The timer must live until the ENTIRE request completes (fetch + body
+    // parse). Aborting the controller also aborts a pending `response.text()` /
+    // `response.json()` body read, so a server that returns headers and then
+    // stalls its body will still surface as UPSTREAM_TIMEOUT rather than
+    // hanging forever.
     const timer = timeoutMs ? setTimeout(() => {
       timedOut = true
       controller.abort()
     }, timeoutMs) : null
 
+    // Distinguish caller cancellation from our own timeout. The external
+    // listener must be a named function so it can be removed in `finally`;
+    // otherwise reusing the same AbortSignal across requests would accumulate
+    // listeners.
+    const onExternalAbort = () => controller.abort()
     const external = options.signal
     if (external) {
       if (external.aborted) controller.abort()
-      else external.addEventListener('abort', () => controller.abort(), { once: true })
+      else external.addEventListener('abort', onExternalAbort, { once: true })
     }
 
-    let response: Response
-    try {
-      response = await fetch(new URL(path, this.baseUrl), {
-        ...init,
-        signal: controller.signal,
-        headers: {
-          Authorization: `Bearer ${this.secret}`,
-          'Content-Type': 'application/json',
-          ...init.headers
-        }
-      })
-    } catch (error) {
-      if (timedOut) {
-        throw new ProtocolError(
-          ProtocolErrorCode.UPSTREAM_TIMEOUT,
-          `mihomo controller timed out after ${timeoutMs}ms`,
-          { path, reason: `timeout-after-${timeoutMs}ms` }
-        )
-      }
-      const aborted = external?.aborted ?? false
-      const message = error instanceof Error ? error.message : 'network failure'
+    const throwTimeout = (): never => {
+      throw new ProtocolError(
+        ProtocolErrorCode.UPSTREAM_TIMEOUT,
+        `mihomo controller timed out after ${timeoutMs}ms`,
+        { path, reason: `timeout-after-${timeoutMs}ms` }
+      )
+    }
+    const throwAborted = (): never => {
       throw new ProtocolError(
         ProtocolErrorCode.UPSTREAM_UNREACHABLE,
-        aborted ? `mihomo request to ${path} was aborted` : `mihomo controller unreachable: ${message}`,
-        { path, reason: aborted ? 'aborted' : 'connection-failed' }
+        `mihomo request to ${path} was aborted`,
+        { path, reason: 'aborted' }
       )
+    }
+
+    try {
+      let response: Response
+      try {
+        response = await fetch(new URL(path, this.baseUrl), {
+          ...init,
+          signal: controller.signal,
+          headers: {
+            Authorization: `Bearer ${this.secret}`,
+            'Content-Type': 'application/json',
+            ...init.headers
+          }
+        })
+      } catch (error) {
+        if (timedOut) throwTimeout()
+        if (external?.aborted) throwAborted()
+        const message = error instanceof Error ? error.message : 'network failure'
+        throw new ProtocolError(
+          ProtocolErrorCode.UPSTREAM_UNREACHABLE,
+          `mihomo controller unreachable: ${message}`,
+          { path, reason: 'connection-failed' }
+        )
+      }
+
+      if (!response.ok) {
+        let body = ''
+        try {
+          body = await response.text()
+        } catch (error) {
+          if (timedOut) throwTimeout()
+          if (external?.aborted) throwAborted()
+          throw error
+        }
+        const reason = body ? `${response.status}: ${body}` : String(response.status)
+        if (response.status === 401) {
+          throw new ProtocolError(ProtocolErrorCode.UNAUTHORIZED, 'controller secret mismatch', { path, reason })
+        }
+        throw new ProtocolError(
+          ProtocolErrorCode.UPSTREAM_HTTP_ERROR,
+          `mihomo request failed with HTTP ${response.status}`,
+          { path, reason }
+        )
+      }
+
+      if (response.status === 204) return undefined
+
+      let raw: unknown
+      try {
+        raw = await response.json()
+      } catch (error) {
+        if (timedOut) throwTimeout()
+        if (external?.aborted) throwAborted()
+        const message = error instanceof Error ? error.message : 'invalid JSON'
+        throw new ProtocolError(ProtocolErrorCode.INVALID_UPSTREAM, `mihomo returned invalid JSON: ${message}`, {
+          path,
+          reason: 'invalid-json'
+        })
+      }
+      if (raw === undefined || raw === null) return raw
+      return raw
     } finally {
       if (timer) clearTimeout(timer)
+      if (external) external.removeEventListener('abort', onExternalAbort)
     }
-
-    if (!response.ok) {
-      const body = await response.text()
-      const reason = body ? `${response.status}: ${body}` : String(response.status)
-      if (response.status === 401) {
-        throw new ProtocolError(ProtocolErrorCode.UNAUTHORIZED, 'controller secret mismatch', { path, reason })
-      }
-      throw new ProtocolError(
-        ProtocolErrorCode.UPSTREAM_HTTP_ERROR,
-        `mihomo request failed with HTTP ${response.status}`,
-        { path, reason }
-      )
-    }
-
-    if (response.status === 204) return undefined
-
-    let raw: unknown
-    try {
-      raw = await response.json()
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'invalid JSON'
-      throw new ProtocolError(ProtocolErrorCode.INVALID_UPSTREAM, `mihomo returned invalid JSON: ${message}`, {
-        path,
-        reason: 'invalid-json'
-      })
-    }
-    if (raw === undefined || raw === null) return raw
-    return raw
   }
 
   getVersion(signal?: AbortSignal): Promise<MihomoVersion> {

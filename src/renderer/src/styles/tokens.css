@@ -18,8 +18,12 @@
   --app-blue: #1587f8;
   --radius-large: 19px;
   --radius-control: 7px;
-  --sidebar-width: 205px;
+  --sidebar-width: 201px;
   --content-max-width: 709px;
+  --activity-content-width: 695px;
+  --frame-radius: 12px;
+  --frame-border: rgba(213, 218, 226, 0.85);
+  --frame-shadow: 0 18px 55px rgba(24, 31, 45, 0.18);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -35,5 +39,7 @@
     --app-surface-solid: #292c34;
     --app-divider: rgba(190, 196, 206, 0.16);
     --app-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    --frame-border: rgba(52, 56, 66, 0.85);
+    --frame-shadow: 0 18px 55px rgba(0, 0, 0, 0.35);
   }
 }

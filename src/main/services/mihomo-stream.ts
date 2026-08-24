@@ -167,6 +167,9 @@ export class MihomoStreamImpl<T> implements MihomoStream<T> {
     this.socket = null
     if (this.closed) return
     if (this.listeners.size === 0) return
+    // An unsolicited drop must reach the upper layer immediately so the UI can
+    // switch to a disconnected state; it must not wait for retries to exhaust.
+    this.onConnectionError?.(new Error('stream closed unexpectedly'))
     this.scheduleReconnect()
   }
 

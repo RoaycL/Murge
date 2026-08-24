@@ -132,7 +132,7 @@ onMounted(() => {
         <div v-for="provider in providers.orderedProxyProviders" :key="provider.name" class="provider-row">
           <div class="provider-info">
             <strong>{{ provider.name }}</strong>
-            <small>{{ provider.vehicleType || 'unknown' }} · {{ provider.proxiesCount ?? 0 }} 节点 · {{ formatUpdatedAt(provider.updatedAt) }}</small>
+            <small>{{ provider.vehicleType || 'unknown' }} · {{ provider.proxies?.length ?? 0 }} 节点 · {{ formatUpdatedAt(provider.updatedAt) }}</small>
           </div>
           <div v-if="providers.opOf(provider.name).error" class="provider-error">
             {{ providers.opOf(provider.name).error }}

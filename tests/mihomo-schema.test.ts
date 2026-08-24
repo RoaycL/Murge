@@ -193,6 +193,21 @@ describe('parseMihomoProxyProviders / parseMihomoProxyProvider', () => {
     expect(result.custom).toBe(1)
   })
 
+  it('parses subscription metadata and probe settings', () => {
+    const result = parseMihomoProxyProvider({
+      name: '机场 A',
+      type: 'Proxy',
+      testUrl: 'https://www.gstatic.com/generate_204',
+      expectedStatus: '204',
+      subscriptionInfo: { Upload: 1000, Download: 2000, Total: 5000, Expire: 1893456000 }
+    })
+    expect(result.testUrl).toBe('https://www.gstatic.com/generate_204')
+    expect(result.expectedStatus).toBe('204')
+    expect(result.subscriptionInfo?.Upload).toBe(1000)
+    expect(result.subscriptionInfo?.Total).toBe(5000)
+    expect(result.subscriptionInfo?.Expire).toBe(1893456000)
+  })
+
   it('rejects a provider missing its name', () => {
     expect(() => parseMihomoProxyProvider({ type: 'Proxy' })).toThrowError(ProtocolError)
   })
@@ -202,6 +217,11 @@ describe('parseMihomoRuleProviders / parseMihomoRuleProvider', () => {
   it('parses a valid rule providers response', () => {
     const result = parseMihomoRuleProviders({ providers: { '规则集 A': { name: '规则集 A', type: 'Rule', ruleCount: 8 } } })
     expect(result.providers['规则集 A'].ruleCount).toBe(8)
+  })
+
+  it('parses the rule provider format field', () => {
+    const result = parseMihomoRuleProvider({ name: '规则集 B', type: 'Rule', format: 'yaml' })
+    expect(result.format).toBe('yaml')
   })
 
   it('rejects a rule provider missing its name', () => {

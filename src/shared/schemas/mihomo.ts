@@ -120,7 +120,18 @@ const proxyProviderSchema = z
     ...providerShared,
     vehicleType: z.string().optional(),
     proxies: z.array(proxySchema).optional(),
-    proxiesCount: z.number().optional()
+    proxiesCount: z.number().optional(),
+    testUrl: z.string().optional(),
+    expectedStatus: z.string().optional(),
+    subscriptionInfo: z
+      .object({
+        Upload: z.number().optional(),
+        Download: z.number().optional(),
+        Total: z.number().optional(),
+        Expire: z.number().optional()
+      })
+      .passthrough()
+      .optional()
   })
   .passthrough()
 
@@ -133,6 +144,7 @@ const proxyProvidersResponseSchema = z
 const ruleProviderSchema = z
   .object({
     ...providerShared,
+    format: z.string().optional(),
     ruleCount: z.number().optional()
   })
   .passthrough()

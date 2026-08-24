@@ -57,10 +57,30 @@ export interface MihomoProxyProvider {
   behavior?: string
   /** Member proxies resolved from this provider. */
   proxies?: MihomoProxy[]
+  /** Member proxy count (legacy/optional; upstream does not emit it). */
   proxiesCount?: number
+  /** Probe URL used when testing this provider's nodes. */
+  testUrl?: string
+  /** Expected HTTP status that counts as a successful probe. */
+  expectedStatus?: string
+  /** `SubscriptionInfo` from a remote subscription (traffic + expiry). */
+  subscriptionInfo?: MihomoSubscriptionInfo
   /** Provider health/version stamp; may be an empty object when not loaded. */
   now?: string | Record<string, unknown> | null
   updatedAt?: string
+  [key: string]: unknown
+}
+
+/** Traffic/expiry metadata reported for a subscription-backed proxy provider. */
+export interface MihomoSubscriptionInfo {
+  /** Bytes uploaded since subscription inception. */
+  Upload?: number
+  /** Bytes downloaded since subscription inception. */
+  Download?: number
+  /** Total bytes allowed by the subscription. */
+  Total?: number
+  /** Subscription expiry, as a Unix timestamp (seconds). */
+  Expire?: number
   [key: string]: unknown
 }
 
@@ -72,6 +92,8 @@ export interface MihomoRuleProvider {
   name: string
   type: string
   behavior?: string
+  /** Rule payload format: `yaml`/`text`/`surge`/`mrs`. */
+  format?: string
   ruleCount?: number
   now?: string | Record<string, unknown> | null
   updatedAt?: string

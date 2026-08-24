@@ -40,6 +40,12 @@ export interface MihomoStreamOptions {
   maxBackoffMs?: number
   /** Random jitter multiplier applied to each backoff, e.g. 0.2 = +/-20%. */
   jitter?: number
+  /**
+   * A socket open for this long is considered "stable": the reconnect backoff
+   * counter resets. A socket that drops sooner keeps growing the backoff so a
+   * connect-then-drop cycle cannot collapse into a 250 ms reconnect storm.
+   */
+  stableResetMs?: number
 }
 
 export interface MihomoStreamConfig<T> {
@@ -78,10 +84,12 @@ export class MihomoStreamImpl<T> implements MihomoStream<T> {
   private readonly backoffMs: number
   private readonly maxBackoffMs: number
   private readonly jitter: number
+  private readonly stableResetMs: number
 
   private readonly listeners = new Set<(value: T) => void>()
   private socket: MihomoSocket | null = null
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private stableTimer: ReturnType<typeof setTimeout> | null = null
   private attempt = 0
   private closed = false
 
@@ -96,6 +104,7 @@ export class MihomoStreamImpl<T> implements MihomoStream<T> {
     this.backoffMs = config.options?.backoffMs ?? 250
     this.maxBackoffMs = config.options?.maxBackoffMs ?? 5000
     this.jitter = config.options?.jitter ?? 0.2
+    this.stableResetMs = config.options?.stableResetMs ?? 10000
   }
 
   subscribe(listener: (value: T) => void): () => void {
@@ -117,6 +126,7 @@ export class MihomoStreamImpl<T> implements MihomoStream<T> {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
     }
+    this.clearStableTimer()
     if (this.socket) {
       this.socket.removeAllListeners?.()
       this.socket.terminate()
@@ -141,8 +151,23 @@ export class MihomoStreamImpl<T> implements MihomoStream<T> {
     socket.on('close', () => this.onClose())
     socket.on('error', (error) => this.onConnectionError?.(error))
     socket.on('open', () => {
-      this.attempt = 0
+      // Do NOT reset the backoff counter here. A connect-then-drop cycle would
+      // otherwise collapse back to the 250 ms base forever. Only once the socket
+      // stays open for the "stable" window do we treat the connection as healthy
+      // and let the next drop restart the backoff from the base.
+      this.clearStableTimer()
+      this.stableTimer = setTimeout(() => {
+        this.stableTimer = null
+        this.attempt = 0
+      }, this.stableResetMs)
     })
+  }
+
+  private clearStableTimer(): void {
+    if (this.stableTimer) {
+      clearTimeout(this.stableTimer)
+      this.stableTimer = null
+    }
   }
 
   private onMessage(data: RawMessage): void {
@@ -165,6 +190,7 @@ export class MihomoStreamImpl<T> implements MihomoStream<T> {
 
   private onClose(): void {
     this.socket = null
+    this.clearStableTimer()
     if (this.closed) return
     if (this.listeners.size === 0) return
     // An unsolicited drop must reach the upper layer immediately so the UI can

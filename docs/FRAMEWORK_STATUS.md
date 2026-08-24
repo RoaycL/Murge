@@ -9,13 +9,13 @@ Verified on macOS on 2026-08-24:
 - `npm run dev`: Electron process and Vite development server started.
 - `http://localhost:5173/`: returned HTTP 200 while the development process was active.
 - Activity, Overview, Processes, Devices, Policies, Rules, Capture, Decrypt, Rewrite and Settings visual shells are present.
+- Controller WebSocket streams (`/traffic`, `/logs`, `/connections`) via the in-process mock controller; reconnect backoff, jitter and listener cleanup verified.
 
 Not verified in this milestone:
 
 - Windows x64/arm64 packaging.
 - Windows code signing.
 - Actual mihomo binary supervision.
-- Controller WebSocket streams.
 - Windows system proxy mutation/restoration.
 - TUN installation and traffic capture.
 

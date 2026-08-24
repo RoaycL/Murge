@@ -100,6 +100,66 @@ describe('MihomoStream transport', () => {
     expect(events).toEqual([1, 2])
   })
 
+  it('grows the backoff across short-lived opens instead of resetting (no storm)', () => {
+    vi.useFakeTimers()
+    const sockets: FakeSocket[] = []
+    const factory = () => {
+      const socket = new FakeSocket()
+      sockets.push(socket)
+      return socket
+    }
+    const stream = createMihomoStream<unknown>({
+      url: 'ws://127.0.0.1:1/traffic',
+      parse: (raw) => raw,
+      options: { backoffMs: 100, maxBackoffMs: 5000, jitter: 0, maxRetries: 0, stableResetMs: 1000 },
+      socketFactory: factory
+    })
+    stream.subscribe(() => {})
+
+    sockets[0].emit('open')
+    sockets[0].emit('close') // drop before the stable window; backoff must grow
+    vi.advanceTimersByTime(100)
+    expect(sockets).toHaveLength(2) // reconnect #1 at the 100 ms base
+
+    sockets[1].emit('open')
+    sockets[1].emit('close') // still short-lived -> should NOT reset to base
+    vi.advanceTimersByTime(100)
+    // A reset backoff would have reconnected at 100 ms; growing backoff is 200 ms.
+    expect(sockets).toHaveLength(2)
+    vi.advanceTimersByTime(100)
+    expect(sockets).toHaveLength(3)
+  })
+
+  it('resets the backoff to the base after a stable (configurable) connection', () => {
+    vi.useFakeTimers()
+    const sockets: FakeSocket[] = []
+    const factory = () => {
+      const socket = new FakeSocket()
+      sockets.push(socket)
+      return socket
+    }
+    const stream = createMihomoStream<unknown>({
+      url: 'ws://127.0.0.1:1/traffic',
+      parse: (raw) => raw,
+      options: { backoffMs: 100, maxBackoffMs: 5000, jitter: 0, maxRetries: 0, stableResetMs: 1000 },
+      socketFactory: factory
+    })
+    stream.subscribe(() => {})
+
+    sockets[0].emit('open')
+    sockets[0].emit('close')
+    vi.advanceTimersByTime(100)
+    expect(sockets).toHaveLength(2)
+
+    sockets[1].emit('open')
+    vi.advanceTimersByTime(1000) // hold open past the stable window -> reset attempt
+    sockets[1].emit('close')
+    vi.advanceTimersByTime(100)
+    // Without a reset the next backoff would be 200 ms and this connect would not
+    // have happened yet; the reset lets it reconnect at the 100 ms base.
+    expect(sockets).toHaveLength(3)
+  })
+
   it('reports a connection error immediately on close, not only after retries exhaust', () => {
     vi.useFakeTimers()
     const sockets: FakeSocket[] = []

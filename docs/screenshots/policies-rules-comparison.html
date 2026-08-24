@@ -61,7 +61,7 @@
     <ul class="checks">
       <li class='ok'><b>PASS</b> — Policy page renders title 策略, 3 mode choices, 3 proxy cards + 1 provider 机场 A, no error state</li>
       <li class='ok'><b>PASS</b> — Rules page renders 8 rules, header "共 8 条规则 · 命中 75993470 次", 1 provider 规则集 A, no error state</li>
-      <li class='ok'><b>PASS</b> — Active mode is 规则判定; proxy cards show latency (42 ms / 超时 / 6 ms) and unavailable state (香港 02)</li>
+      <li class='ok'><b>PASS</b> — Active mode is 规则判定; proxy cards show latency (42 ms / 不可用 / 6 ms) and unavailable state (香港 02)</li>
       <li class='ok'><b>PASS</b> — 使用计数 column shows real hit counts from <code>extra.hitCount</code>, independent of <code>size</code> (rule-set/GEOIP/MATCH rows report <code>size: -1</code> yet render large counts like 272660 / 70242469 / 4884189)</li>
       <li class='ok'><b>PASS</b> — Provider health-check no longer returns a client-side delay map: the rendered list shows the provider row with 2 proxies, and health-check resolves without an error state</li>
       <li class='ok'><b>PASS</b> — No page horizontal overflow (policies &amp; rules stay inside the 934&times;672 viewport)</li>
@@ -89,7 +89,7 @@
       <tr><th>Route</th><th>Facts</th><th>Geometry</th></tr>
       <tr>
         <td><code>#/policies</code></td>
-        <td>title 策略; modes <b>规则判定</b>/全局代理/直接连接; 3 proxy cards (<b>香港 01 42 ms</b>, <b>香港 02 超时 (unavailable)</b>, <b>DIRECT 6 ms</b>); 1 provider 机场 A; error state = false</td>
+        <td>title 策略; modes <b>规则判定</b>/全局代理/直接连接; 3 proxy cards (<b>香港 01 42 ms</b>, <b>香港 02 不可用 (unavailable)</b>, <b>DIRECT 6 ms</b>); 1 provider 机场 A; error state = false</td>
         <td>grid x=215 y=209 w=695 h=94; 3 cards 151&times;94, gap dx=13; no page horizontal overflow</td>
       </tr>
       <tr>

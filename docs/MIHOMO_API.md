@@ -138,6 +138,8 @@ GET /proxies/<name>/delay?url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204&timeo
 
 Response: `{ "delay": 73 }`. Treat timeouts, zero and missing delay distinctly.
 
+Group latency testing uses `GET /group/<name>/delay?...` and returns a map keyed by member name (`{ "香港 01": 42, "DIRECT": 6 }`). Members that failed or were not measured are omitted from the map (they are not written with a sentinel), so a missing key means "no latency available" and must be surfaced as unavailable — it is not a timeout. A whole-group timeout/probe failure returns HTTP 504/503 for the request itself.
+
 ### Running configuration
 
 `GET /configs` returns a flexible object containing fields such as:
@@ -197,6 +199,8 @@ Use `WS /logs?level=info&format=structured` when supported. Structured messages 
 | HTTP 401 | Controller secret mismatch; never display secret |
 | HTTP 404 | Unsupported endpoint/version capability |
 | HTTP 400/422 | Invalid requested config or node operation |
+| HTTP 503 (delay test) | Node unreachable / unavailable |
+| HTTP 504 (delay test) | Node latency timeout |
 | WebSocket close during stop | Normal stopped state |
 | Malformed JSON | Protocol error with redacted diagnostic log |
 | Repeated crash/reconnect | Failed state with explicit retry action |

@@ -20,7 +20,12 @@ export type PolicyMode = (typeof POLICY_MODE_OPTIONS)[number]
 function classifyDelayError(value: unknown): DelayStatus {
   const code = toProtocolError(value).code
   if (code === ProtocolErrorCode.UPSTREAM_TIMEOUT) return 'timeout'
-  if (code === ProtocolErrorCode.UPSTREAM_HTTP_ERROR || code === ProtocolErrorCode.UPSTREAM_UNREACHABLE || code === ProtocolErrorCode.NOT_FOUND) {
+  // 503 (probe failed / node unreachable) and "controller not reachable" are
+  // both genuinely "no usable measurement" states. Every other failure — a
+  // generic HTTP error, a missing group, an invalid payload — is NOT a node
+  // availability verdict, so surface it as a generic error instead of a
+  // misleading "unavailable".
+  if (code === ProtocolErrorCode.UPSTREAM_TEST_FAILED || code === ProtocolErrorCode.UPSTREAM_UNREACHABLE) {
     return 'unavailable'
   }
   return 'error'
@@ -151,10 +156,17 @@ export const usePoliciesStore = defineStore('policies', () => {
     const members = groupMembers.value
     try {
       const map = await window.desktop.mihomo.groupDelayTest(selectedGroup.value)
+      // Upstream's group delay endpoint writes a member into the map ONLY when
+      // its probe succeeded (err == nil); a node that timed out, was unreachable,
+      // or simply wasn't measured is OMITTED. So an absent key is not evidence of
+      // a timeout — label it "unavailable" (no usable measurement) rather than
+      // "timeout", which would mislabel reachable nodes that merely went untested.
+      // The whole-group 504 "all proxies timeout" case still surfaces through the
+      // catch branch below as UPSTREAM_TIMEOUT -> 'timeout' for every member.
       for (const member of members) {
         const delay = map[member]
         if (typeof delay === 'number' && delay >= 0) setDelay(member, { status: 'ok', delay })
-        else setDelay(member, { status: 'timeout', delay: null })
+        else setDelay(member, { status: 'unavailable', delay: null })
       }
       groupDelayStatus.value = 'ok'
     } catch (error) {

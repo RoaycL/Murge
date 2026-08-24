@@ -67,15 +67,17 @@ Environment: current Mac, safe only with a non-network fixture process.
 
 Entry gate: Phase 1 complete.
 
-- [ ] Define `KernelBinaryResolver`, `KernelConfigStore` and `KernelProcessAdapter` interfaces.
-- [ ] Implement lifecycle state transitions and concurrency locking.
-- [ ] Add a harmless fixture process that opens no network listener.
-- [ ] Implement start, graceful stop, timeout and forced-stop behavior against the fixture.
-- [ ] Implement stdout/stderr capture and bounded log rotation.
-- [ ] Implement crash detection and capped restart backoff.
-- [ ] Emit typed status events to preload and renderer.
-- [ ] Add tests for double-start, stop-during-start, crash, failed spawn and stale PID.
-- [ ] Keep real binary resolution disabled in development builds.
+Status: complete.
+
+- [x] Define `KernelBinaryResolver`, `KernelConfigStore` and `KernelProcessAdapter` interfaces.
+- [x] Implement lifecycle state transitions and concurrency locking.
+- [x] Add a harmless fixture process that opens no network listener.
+- [x] Implement start, graceful stop, timeout and forced-stop behavior against the fixture.
+- [x] Implement stdout/stderr capture and bounded log rotation.
+- [x] Implement crash detection and capped restart backoff.
+- [x] Emit typed status events to preload and renderer.
+- [x] Add tests for double-start, stop-during-start, crash, failed spawn and stale PID.
+- [x] Keep real binary resolution disabled in development builds.
 
 Exit criteria:
 
@@ -89,15 +91,17 @@ Environment: current Mac, safe. In-process mock server only.
 
 Entry gate: Phases 1–2 complete.
 
-- [ ] Implement REST timeout, cancellation and typed HTTP errors.
-- [ ] Implement one shared WebSocket transport per stream.
-- [ ] Implement reconnect backoff, jitter and listener cleanup.
-- [ ] Provide mock `/version`, `/configs`, `/traffic`, `/connections` and `/logs` endpoints.
-- [ ] Add `kernelStore`, `runtimeStore`, `trafficStore` and `connectionsStore`.
-- [ ] Replace Activity fixture values with mock IPC data.
-- [ ] Add bounded traffic history and connection aggregation.
-- [ ] Add loading, disconnected, empty and malformed-data states without changing geometry.
-- [ ] Compare a 934×672 screenshot with the normative HTML reference.
+Status: complete.
+
+- [x] Implement REST timeout, cancellation and typed HTTP errors.
+- [x] Implement one shared WebSocket transport per stream.
+- [x] Implement reconnect backoff, jitter and listener cleanup.
+- [x] Provide mock `/version`, `/configs`, `/traffic`, `/connections` and `/logs` endpoints.
+- [x] Add `kernelStore`, `runtimeStore`, `trafficStore` and `connectionsStore`.
+- [x] Replace Activity fixture values with mock IPC data.
+- [x] Add bounded traffic history and connection aggregation.
+- [x] Add loading, disconnected, empty and malformed-data states without changing geometry.
+- [x] Compare a 934×672 screenshot with the normative HTML reference.
 
 Exit criteria:
 

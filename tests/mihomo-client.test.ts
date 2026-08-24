@@ -79,7 +79,7 @@ describe('MihomoClient', () => {
   })
 
   it('maps other non-2xx to UPSTREAM_HTTP_ERROR and preserves the body', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse('bad gateway', 503)))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse('bad gateway', 502)))
     const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
     const error = await client.getProxies().catch((e) => e)
     expect(error).toBeInstanceOf(ProtocolError)
@@ -231,12 +231,20 @@ describe('MihomoClient', () => {
       expect((error as ProtocolError).code).toBe(ProtocolErrorCode.UPSTREAM_TIMEOUT)
     })
 
-    it('maps a 408 delay failure to UPSTREAM_TIMEOUT', async () => {
+    it('maps a 408 delay failure to UPSTREAM_HTTP_ERROR (upstream has no 408)', async () => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({ message: 'unexpected status' }, 408)))
       const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
       const error = await client.delayTest('node').catch((e) => e)
       expect(error).toBeInstanceOf(ProtocolError)
-      expect((error as ProtocolError).code).toBe(ProtocolErrorCode.UPSTREAM_TIMEOUT)
+      expect((error as ProtocolError).code).toBe(ProtocolErrorCode.UPSTREAM_HTTP_ERROR)
+    })
+
+    it('maps a 503 probe failure to UPSTREAM_TEST_FAILED', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({ message: 'node unreachable' }, 503)))
+      const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
+      const error = await client.delayTest('node').catch((e) => e)
+      expect(error).toBeInstanceOf(ProtocolError)
+      expect((error as ProtocolError).code).toBe(ProtocolErrorCode.UPSTREAM_TEST_FAILED)
     })
 
     it('fetches proxy and rule providers', async () => {

@@ -160,14 +160,22 @@ export class MihomoClient {
         if (response.status === 401) {
           throw new ProtocolError(ProtocolErrorCode.UNAUTHORIZED, 'controller secret mismatch', { path, reason })
         }
-        // mihomo signals a node/group delay timeout with 504 and an upstream
-        // test failure with 408. Classify both as a typed timeout so the
-        // renderer can show a distinct "timeout" state rather than a generic
-        // HTTP error.
-        if (response.status === 504 || response.status === 408) {
+        // mihomo returns 504 when a group delay test reported every proxy as
+        // timed out (the group request's ctx expired), and 503 when a single
+        // node test failed (unreachable or delay == 0). 504 is classified as a
+        // typed timeout; 503 as a distinct "probe failed" so the renderer can
+        // show "unavailable" rather than conflating it with a stray HTTP error.
+        if (response.status === 504) {
           throw new ProtocolError(
             ProtocolErrorCode.UPSTREAM_TIMEOUT,
-            `mihomo delay test failed with HTTP ${response.status}`,
+            `mihomo delay test timed out with HTTP ${response.status}`,
+            { path, reason }
+          )
+        }
+        if (response.status === 503) {
+          throw new ProtocolError(
+            ProtocolErrorCode.UPSTREAM_TEST_FAILED,
+            `mihomo delay test failed: HTTP ${response.status}`,
             { path, reason }
           )
         }

@@ -20,6 +20,8 @@ export const ProtocolErrorCode = {
   UNAUTHORIZED: 'UNAUTHORIZED',
   /** The controller returned an unexpected HTTP or transport error. */
   UPSTREAM_HTTP_ERROR: 'UPSTREAM_HTTP_ERROR',
+  /** A proxy latency probe failed (HTTP 503: node unreachable or delay == 0). */
+  UPSTREAM_TEST_FAILED: 'UPSTREAM_TEST_FAILED',
   /** The mihomo controller could not be reached at all. */
   UPSTREAM_UNREACHABLE: 'UPSTREAM_UNREACHABLE',
   /** The mihomo controller did not answer within the configured timeout. */

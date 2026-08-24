@@ -219,12 +219,30 @@ describe('KernelSupervisor lifecycle', () => {
     expect(h.adapter.lastHandle!.signals).toEqual(['SIGTERM', 'SIGKILL'])
   })
 
-  it('throws KERNEL_STOP_TIMEOUT when even SIGKILL is ignored', async () => {
+  it('keeps a still-running process tracked when even SIGKILL is ignored, and retries later', async () => {
     const h = createHarness({ stopTimeoutMs: 15, forceKillTimeoutMs: 15 })
     await startToRunning(h)
-    h.adapter.lastHandle!.onSigterm = 'ignores'
-    h.adapter.lastHandle!.onSigkill = 'ignores'
+    const handle = h.adapter.lastHandle!
+    handle.onSigterm = 'ignores'
+    handle.onSigkill = 'ignores'
     await expect(h.supervisor.stop()).rejects.toThrow('Kernel did not exit after SIGKILL')
+
+    // The un-terminable process is NOT reported as stopped: pid and handle survive.
+    const status = h.supervisor.getStatus()
+    expect(status.phase).toBe('failed')
+    expect(status.pid).toBe(handle.pid)
+    expect((h.supervisor as unknown as { handle: unknown }).handle).toBe(handle)
+    // The temp config is kept while the process is still alive.
+    expect(h.store.cleanupCalls.length).toBe(0)
+
+    // Starting again is refused while a process is still running.
+    await expect(h.supervisor.start()).rejects.toMatchObject({ code: ProtocolErrorCode.KERNEL_RUNNING })
+    expect(h.adapter.spawnCalls.length).toBe(1)
+
+    // A later stop() retry terminates the still-running process.
+    handle.onSigterm = 'exits'
+    await expect(h.supervisor.stop()).resolves.toMatchObject({ phase: 'stopped' })
+    expect(h.store.cleanupCalls.length).toBe(1)
     expect(h.supervisor.getStatus().phase).toBe('stopped')
   })
 
@@ -248,6 +266,55 @@ describe('KernelSupervisor lifecycle', () => {
     await expect(h.supervisor.start()).rejects.toMatchObject({ code: ProtocolErrorCode.KERNEL_START_TIMEOUT })
     expect(h.supervisor.getStatus().phase).toBe('failed')
     expect(h.supervisor.getStatus().lastError).toMatch(/ready within the start timeout/)
+  })
+
+  it('cleans up the temp config after a normal stop', async () => {
+    const h = createHarness()
+    await startToRunning(h)
+    expect(h.store.materializeCalls).toBe(1)
+    expect(h.store.cleanupCalls.length).toBe(0)
+    await h.supervisor.stop()
+    expect(h.store.cleanupCalls.length).toBe(1)
+  })
+
+  it('is a no-op when already stopped (safe for the app quit path)', async () => {
+    const h = createHarness()
+    const status = await h.supervisor.stop()
+    expect(status.phase).toBe('stopped')
+    expect(h.store.cleanupCalls.length).toBe(0)
+  })
+
+  it('cleans the crashed config before a restart materializes a new one', async () => {
+    const h = createHarness({ readinessPattern: null, maxRestarts: 1, backoffMs: 10, maxBackoffMs: 40 })
+    await h.supervisor.start()
+    expect(h.store.materializeCalls).toBe(1)
+    expect(h.store.cleanupCalls.length).toBe(0)
+
+    h.adapter.lastHandle!.emitExit({ code: 1, signal: null })
+    await waitFor(() => h.store.cleanupCalls.length === 1)
+    await waitFor(() => h.adapter.spawnCalls.length === 2)
+
+    expect(h.store.materializeCalls).toBe(2)
+    // The old secret-bearing config was cleaned before the new one was made.
+    expect(h.store.cleanupCalls.length).toBe(1)
+  })
+
+  it('cleans the config even when the restart cap is reached', async () => {
+    const h = createHarness({ readinessPattern: null, maxRestarts: 0, backoffMs: 10, maxBackoffMs: 40 })
+    await h.supervisor.start()
+    h.adapter.lastHandle!.emitExit({ code: 1, signal: null })
+    await waitFor(() => h.supervisor.getStatus().phase === 'failed')
+    expect(h.store.cleanupCalls.length).toBe(1)
+  })
+
+  it('allows stop after a failed start without leaking the config', async () => {
+    const h = createHarness()
+    h.adapter.spawnPid = undefined
+    await expect(h.supervisor.start()).rejects.toMatchObject({ code: ProtocolErrorCode.KERNEL_SPAWN_FAILED })
+    expect(h.store.cleanupCalls.length).toBe(1)
+    const stopped = await h.supervisor.stop()
+    expect(stopped.phase).toBe('stopped')
+    expect(h.store.cleanupCalls.length).toBe(1)
   })
 
   it('clears a stale recorded PID before spawning', async () => {

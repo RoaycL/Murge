@@ -118,8 +118,16 @@ export class KernelSupervisor extends EventEmitter {
 
   async start(): Promise<KernelStatus> {
     return this.withLifecycle(async () => {
-      if (this.status.phase === 'running' || this.status.phase === 'starting') {
+      if (this.status.phase === 'running' || this.status.phase === 'starting' || this.status.phase === 'stopping') {
         return this.getStatus()
+      }
+      // A still-alive process (e.g. one that survived SIGKILL) must be stopped
+      // before a second kernel is spawned, otherwise the old process leaks.
+      if (this.handle != null) {
+        throw new ProtocolError(
+          ProtocolErrorCode.KERNEL_RUNNING,
+          'A kernel process is still running; stop it before starting again.'
+        )
       }
       this.clearRestartTimer()
       this.restartCount = 0
@@ -145,20 +153,30 @@ export class KernelSupervisor extends EventEmitter {
       handle.sendSignal('SIGTERM')
       const graceful = await this.waitForExit(handle, this.stopTimeoutMs)
       if (graceful) {
-        this.isStopping = false
+        // The process exited and handleExit already cleaned the temp config.
         return this.getStatus()
       }
 
       // Bounded forced-termination fallback.
       handle.sendSignal('SIGKILL')
       const forced = await this.waitForExit(handle, this.forceKillTimeoutMs)
-      this.isStopping = false
-      if (!forced) {
-        this.setStatus({ phase: 'stopped', pid: null, lastError: 'Kernel survived SIGKILL and may still be running.' })
-        throw new ProtocolError(ProtocolErrorCode.KERNEL_STOP_TIMEOUT, 'Kernel did not exit after SIGKILL.')
+      if (forced) {
+        // The process exited via SIGKILL and handleExit already cleaned it up.
+        return this.getStatus()
       }
-      this.setStatus({ phase: 'stopped', pid: null })
-      return this.getStatus()
+
+      // The process survived even SIGKILL, so it is almost certainly still
+      // running. Never report it as stopped or drop its pid/handle: doing so
+      // would let a later start() spawn a second kernel that shadows the first.
+      // The temp config is kept because the live process may still read it, and
+      // a subsequent stop() can retry termination.
+      this.isStopping = false
+      this.setStatus({
+        phase: 'failed',
+        pid: handle.pid ?? this.status.pid,
+        lastError: 'Kernel survived SIGKILL and may still be running.'
+      })
+      throw new ProtocolError(ProtocolErrorCode.KERNEL_STOP_TIMEOUT, 'Kernel did not exit after SIGKILL.')
     })
   }
 
@@ -279,6 +297,11 @@ export class KernelSupervisor extends EventEmitter {
   }
 
   private handleExit(info: KernelExitInfo): void {
+    // The process has exited, so its temp workspace (which may hold the
+    // controller secret) is no longer needed. Clean it up for every exit path:
+    // graceful stop, forced stop, crash, and crash-restart.
+    void this.cleanupConfig()
+
     this.rejectReadiness(new ProtocolError(ProtocolErrorCode.KERNEL_CRASHED, `Kernel ${this.describeExit(info)}`))
     if (this.exitWait) {
       clearTimeout(this.exitWait.timer)

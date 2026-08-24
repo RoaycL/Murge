@@ -34,6 +34,8 @@ export const ProtocolErrorCode = {
   KERNEL_CRASHED: 'KERNEL_CRASHED',
   /** A requested entity was not found. */
   NOT_FOUND: 'NOT_FOUND',
+  /** A kernel process is still alive and must be stopped before starting again. */
+  KERNEL_RUNNING: 'KERNEL_RUNNING',
   /** An unexpected internal failure. */
   INTERNAL: 'INTERNAL'
 } as const

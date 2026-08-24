@@ -44,4 +44,15 @@ describe('brand JSON Schema <-> runtime sync', () => {
       expect(() => parseBrandConfig({ ...brand, [field]: value })).toThrowError(ProtocolError)
     }
   })
+
+  it('rejects a whitespace-only productName through both surfaces', () => {
+    // JSON Schema pattern (\\S) and Zod trim().min(1) must agree.
+    expect('   ').not.toMatch(new RegExp(schema.properties.productName.pattern))
+    expect(() => parseBrandConfig({ ...brand, productName: '   ' })).toThrowError(ProtocolError)
+  })
+
+  it('rejects an unknown brand key through both surfaces', () => {
+    expect(schema.additionalProperties).toBe(false)
+    expect(() => parseBrandConfig({ ...brand, unexpected: 'nope' })).toThrowError(ProtocolError)
+  })
 })

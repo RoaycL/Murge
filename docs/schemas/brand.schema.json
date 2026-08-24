@@ -17,8 +17,8 @@
   ],
   "properties": {
     "$schema": { "type": "string", "description": "Path to this schema document." },
-    "productName": { "type": "string", "minLength": 1 },
-    "shortName": { "type": "string", "minLength": 1 },
+    "productName": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "shortName": { "type": "string", "minLength": 1, "pattern": "\\S" },
     "description": { "type": "string" },
     "appId": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9.-]+$" },
     "executableName": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$" },

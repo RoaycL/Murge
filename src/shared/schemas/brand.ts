@@ -4,11 +4,17 @@ import { APP_ID_PATTERN, EXECUTABLE_NAME_PATTERN, PROTOCOL_SCHEME_PATTERN } from
 import { ProtocolError, ProtocolErrorCode } from '../protocol-errors'
 
 /**
- * Runtime schema for `brand.config.json`. The file also carries a `$schema`
- * annotation, so unknown keys are preserved rather than rejected.
+ * Runtime schema for `brand.config.json`.
+ *
+ * Unknown keys are rejected (`.strict()`), matching the JSON Schema's
+ * `additionalProperties: false`. The `$schema` annotation is declared as an
+ * allowed optional field rather than smuggled through `passthrough()`, so all
+ * three validation surfaces (JSON Schema, Zod, build time) agree on the
+ * allowed key set.
  */
 const brandConfigSchema = z
   .object({
+    $schema: z.string().optional(),
     productName: z.string().trim().min(1),
     shortName: z.string().trim().min(1),
     description: z.string(),
@@ -20,7 +26,7 @@ const brandConfigSchema = z
     supportUrl: z.string(),
     copyright: z.string()
   })
-  .passthrough()
+  .strict()
 
 /**
  * Validate an unknown brand payload and return a strongly typed BrandConfig.

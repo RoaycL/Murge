@@ -1,7 +1,11 @@
 import { readFile, readdir, stat } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const root = resolve(new URL('..', import.meta.url).pathname)
+// Resolve the repo root from this module's URL. fileURLToPath handles the
+// Windows file:///C:/... form and percent-encoding, so the path stays valid on
+// every platform (the raw .pathname form breaks on Windows spaces/encoding).
+const root = fileURLToPath(new URL('..', import.meta.url))
 const schemaPath = join(root, 'docs', 'schemas', 'brand.schema.json')
 const brandPath = join(root, 'brand.config.json')
 

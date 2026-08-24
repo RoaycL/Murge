@@ -11,6 +11,13 @@ import type {
   MihomoRulesResponse,
   MihomoStreamError
 } from './mihomo-api'
+import type {
+  ConfigEdit,
+  ImportRequest,
+  Profile,
+  ProfileMeta,
+  ValidationResult
+} from './profiles'
 import type { KernelStatus, RuntimeSummary, TrafficSample } from './runtime'
 
 /**
@@ -53,10 +60,27 @@ export interface RuntimeGateway {
   getSummary(): RuntimeSummary
 }
 
+/**
+ * Profile/subscription management boundary. Implementations manage an isolated
+ * profile directory with atomic writes and never touch the live mihomo config.
+ */
+export interface ProfileGateway {
+  listProfiles(): ProfileMeta[] | Promise<ProfileMeta[]>
+  getProfile(id: string): Profile | Promise<Profile>
+  importProfile(request: ImportRequest): ProfileMeta | Promise<ProfileMeta>
+  importFromUrl(name: string, url: string, activate?: boolean): ProfileMeta | Promise<ProfileMeta>
+  activateProfile(id: string): ProfileMeta | Promise<ProfileMeta>
+  deleteProfile(id: string): Promise<void>
+  renameProfile(id: string, name: string): ProfileMeta | Promise<ProfileMeta>
+  editDocument(id: string, edits: ConfigEdit[]): ProfileMeta | Promise<ProfileMeta>
+  validateDocument(document: string): ValidationResult | Promise<ValidationResult>
+}
+
 /** Everything the IPC handler factory needs from the trusted main process. */
 export interface IpcDeps {
   brand: BrandConfig
   kernel: KernelGateway
   mihomo: MihomoGateway
   runtime: RuntimeGateway
+  profiles: ProfileGateway
 }

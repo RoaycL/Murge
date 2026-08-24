@@ -26,6 +26,13 @@ const groups = [
     ]
   },
   {
+    label: '配置',
+    items: [
+      { to: '/config', label: '配置文件', icon: '⌁' },
+      { to: '/providers', label: '代理设置', icon: '▣' }
+    ]
+  },
+  {
     label: 'HTTP',
     items: [
       { to: '/capture', label: '捕获', icon: '⌗' },

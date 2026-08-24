@@ -11,6 +11,7 @@ import type {
   MihomoRulesResponse,
   MihomoStreamError
 } from './mihomo-api'
+import type { ConfigEdit, ImportRequest, Profile, ProfileMeta, ValidationResult } from './profiles'
 import type { KernelStatus, RuntimeSummary, TrafficSample } from './runtime'
 
 export const IPC = {
@@ -37,6 +38,15 @@ export const IPC = {
   mihomoConnectionsEvent: 'mihomo:connections-event',
   mihomoLogEvent: 'mihomo:log-event',
   mihomoStreamErrorEvent: 'mihomo:stream-error-event',
+  profilesList: 'profiles:list',
+  profilesGet: 'profiles:get',
+  profilesImport: 'profiles:import',
+  profilesImportFromUrl: 'profiles:import-from-url',
+  profilesActivate: 'profiles:activate',
+  profilesDelete: 'profiles:delete',
+  profilesRename: 'profiles:rename',
+  profilesEditDocument: 'profiles:edit-document',
+  profilesValidate: 'profiles:validate',
   kernelStatusEvent: 'kernel:status-event'
 } as const
 
@@ -72,5 +82,16 @@ export interface DesktopApi {
     onConnections(listener: (snapshot: MihomoConnectionsSnapshot) => void): () => void
     onLogs(listener: (message: MihomoLogMessage) => void): () => void
     onStreamError(listener: (error: MihomoStreamError) => void): () => void
+  }
+  profiles: {
+    list(): Promise<ProfileMeta[]>
+    get(id: string): Promise<Profile>
+    import(request: ImportRequest): Promise<ProfileMeta>
+    importFromUrl(name: string, url: string, activate?: boolean): Promise<ProfileMeta>
+    activate(id: string): Promise<ProfileMeta>
+    delete(id: string): Promise<void>
+    rename(id: string, name: string): Promise<ProfileMeta>
+    editDocument(id: string, edits: ConfigEdit[]): Promise<ProfileMeta>
+    validate(document: string): Promise<ValidationResult>
   }
 }

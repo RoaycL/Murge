@@ -8,6 +8,8 @@ import RulesView from './views/RulesView.vue'
 import CaptureView from './views/CaptureView.vue'
 import DecryptView from './views/DecryptView.vue'
 import RewriteView from './views/RewriteView.vue'
+import ConfigView from './views/ConfigView.vue'
+import ProviderSettingsView from './views/ProviderSettingsView.vue'
 import MoreView from './views/MoreView.vue'
 import PlaceholderView from './views/PlaceholderView.vue'
 
@@ -26,6 +28,8 @@ export const router = createRouter({
     { path: '/capture', component: CaptureView },
     { path: '/decrypt', component: DecryptView },
     { path: '/rewrite', component: RewriteView },
+    { path: '/config', component: ConfigView },
+    { path: '/providers', component: ProviderSettingsView },
     { path: '/more', component: MoreView },
     { path: '/panel', ...placeholder('面板') }
   ]

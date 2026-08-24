@@ -1,4 +1,6 @@
 import { join } from 'node:path'
+import { mkdtemp } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { app, BrowserWindow, shell } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { brand } from '@shared/brand'
@@ -10,6 +12,10 @@ import { TempKernelConfigStore } from './kernel/config-store'
 import { NodeKernelProcessAdapter } from './kernel/node-adapter'
 import { MihomoClient } from './services/mihomo-client'
 import { MihomoService } from './services/mihomo-service'
+import { ProfileRepository } from './profiles/profile-repository'
+import { ProfileService } from './profiles/profile-service'
+import { createConfigValidator } from './profiles/config-validator'
+import { SubscriptionFetcher } from './subscriptions/subscription-fetcher'
 import { startMockMihomoServer, type MockMihomoServerHandle } from './testing/mock-mihomo-server'
 import type { MihomoGateway } from '@shared/gateways'
 
@@ -101,9 +107,20 @@ app.whenReady().then(async () => {
   // Await the (mock or disabled) controller gateway before wiring IPC so the
   // renderer's first pull always sees a live controller in dev.
   const gateway = await createMihomoGateway()
+  // Profile management runs against an isolated, temp workspace directory. It
+  // never points at (or writes) a real mihomo config on this host; a production
+  // profile root lands in a later milestone alongside the real validator.
+  const profileRoot = await mkdtemp(join(tmpdir(), 'proxy-profiles-'))
+  const validator = createConfigValidator({ requireProxySections: false })
+  const profileService = new ProfileService(
+    new ProfileRepository({ rootDir: profileRoot, validator }),
+    validator,
+    new SubscriptionFetcher()
+  )
   disposeIpc = registerIpc({
     kernel: kernelInstance,
-    mihomo: gateway
+    mihomo: gateway,
+    profiles: profileService
   })
   createWindow()
 

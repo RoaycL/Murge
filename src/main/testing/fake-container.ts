@@ -1,4 +1,4 @@
-import type { KernelGateway, MihomoGateway, RuntimeGateway, IpcDeps } from '@shared/gateways'
+import type { KernelGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps } from '@shared/gateways'
 import type {
   MihomoConfigSnapshot,
   MihomoConnectionsSnapshot,
@@ -11,6 +11,7 @@ import type {
   MihomoRulesResponse,
   MihomoStreamError
 } from '@shared/mihomo-api'
+import type { ConfigEdit, ImportRequest, Profile, ProfileMeta, ValidationResult } from '@shared/profiles'
 import type { KernelStatus, RuntimeSummary, TrafficSample } from '@shared/runtime'
 import type { BrandConfig } from '@shared/brand'
 
@@ -208,21 +209,92 @@ export class FakeRuntimeGateway implements RuntimeGateway {
   }
 }
 
+export class FakeProfileGateway implements ProfileGateway {
+  profiles: Profile[] = []
+  activeIndex = -1
+  listCalls = 0
+  importCalls: ImportRequest[] = []
+
+  async listProfiles(): Promise<ProfileMeta[]> {
+    this.listCalls += 1
+    return this.profiles.map((profile, index) => ({ ...profile.meta, active: index === this.activeIndex }))
+  }
+
+  async getProfile(id: string): Promise<Profile> {
+    const profile = this.profiles.find((entry) => entry.meta.id === id)
+    if (!profile) throw new Error(`profile ${id} not found`)
+    return profile
+  }
+
+  async importProfile(request: ImportRequest): Promise<ProfileMeta> {
+    this.importCalls.push({ ...request })
+    const meta: ProfileMeta = {
+      id: `p${this.profiles.length + 1}`,
+      name: request.name,
+      source: request.source,
+      size: request.document.length,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      active: false
+    }
+    this.profiles.push({ meta, document: request.document })
+    if (request.activate) this.activeIndex = this.profiles.length - 1
+    return { ...meta, active: request.activate === true }
+  }
+
+  async importFromUrl(name: string, url: string): Promise<ProfileMeta> {
+    return this.importProfile({ name, document: `proxies:\n  - name: node\n    server: 127.0.0.1\n`, source: { type: 'url', url } })
+  }
+
+  async activateProfile(id: string): Promise<ProfileMeta> {
+    const index = this.profiles.findIndex((entry) => entry.meta.id === id)
+    if (index === -1) throw new Error(`profile ${id} not found`)
+    this.activeIndex = index
+    return { ...this.profiles[index].meta, active: true }
+  }
+
+  async deleteProfile(id: string): Promise<void> {
+    const index = this.profiles.findIndex((entry) => entry.meta.id === id)
+    if (index === -1) throw new Error(`profile ${id} not found`)
+    this.profiles.splice(index, 1)
+    if (this.activeIndex === index) this.activeIndex = -1
+    else if (this.activeIndex > index) this.activeIndex -= 1
+  }
+
+  async renameProfile(id: string, name: string): Promise<ProfileMeta> {
+    const index = this.profiles.findIndex((entry) => entry.meta.id === id)
+    if (index === -1) throw new Error(`profile ${id} not found`)
+    this.profiles[index].meta.name = name
+    return this.profiles[index].meta
+  }
+
+  async editDocument(id: string, _edits: ConfigEdit[]): Promise<ProfileMeta> {
+    return this.getProfile(id).then((profile) => profile.meta)
+  }
+
+  validateDocument(_document: string): ValidationResult {
+    return { ok: true, issues: [] }
+  }
+}
+
 export interface FakeContainer {
   deps: IpcDeps
   kernel: FakeKernelGateway
   mihomo: FakeMihomoGateway
   runtime: FakeRuntimeGateway
+  profiles: FakeProfileGateway
 }
 
 export function createFakeContainer(brand: BrandConfig): FakeContainer {
   const kernel = new FakeKernelGateway()
   const mihomo = new FakeMihomoGateway()
   const runtime = new FakeRuntimeGateway()
+  const profiles = new FakeProfileGateway()
   return {
     kernel,
     mihomo,
     runtime,
-    deps: { brand, kernel, mihomo, runtime }
+    profiles,
+    deps: { brand, kernel, mihomo, runtime, profiles }
   }
 }

@@ -55,6 +55,17 @@ const api: DesktopApi = {
     onConnections: (listener) => listen(IPC.mihomoConnectionsEvent, listener),
     onLogs: (listener) => listen(IPC.mihomoLogEvent, listener),
     onStreamError: (listener) => listen(IPC.mihomoStreamErrorEvent, listener)
+  },
+  profiles: {
+    list: () => invoke(IPC.profilesList),
+    get: (id) => invoke(IPC.profilesGet, id),
+    import: (request) => invoke(IPC.profilesImport, request),
+    importFromUrl: (name, url, activate) => invoke(IPC.profilesImportFromUrl, name, url, activate),
+    activate: (id) => invoke(IPC.profilesActivate, id),
+    delete: (id) => invoke(IPC.profilesDelete, id),
+    rename: (id, name) => invoke(IPC.profilesRename, id, name),
+    editDocument: (id, edits) => invoke(IPC.profilesEditDocument, id, edits),
+    validate: (document) => invoke(IPC.profilesValidate, document)
   }
 }
 

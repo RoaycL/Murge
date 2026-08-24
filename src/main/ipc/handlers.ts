@@ -1,6 +1,7 @@
 import { IPC } from '@shared/ipc'
 import type { IpcDeps } from '@shared/gateways'
 import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions } from '@shared/schemas/ipc'
+import { parseConfigEdit, parseImportRequest, parseProfileName } from '@shared/schemas/profiles'
 
 /** A single IPC handler. The event is opaque to keep the factory Electron-free. */
 export type IpcHandler = (event: unknown, ...args: unknown[]) => unknown | Promise<unknown>
@@ -15,7 +16,7 @@ export type IpcHandler = (event: unknown, ...args: unknown[]) => unknown | Promi
  * the semantics Electron uses for `ipcMain.handle`.
  */
 export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
-  const { brand, kernel, mihomo, runtime } = deps
+  const { brand, kernel, mihomo, runtime, profiles } = deps
 
   return {
     [IPC.appGetBrand]: async () => brand,
@@ -42,6 +43,23 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
     [IPC.mihomoDelayTest]: async (_event, name, opts) => mihomo.delayTest(parseMihomoName(name), parseDelayOptions(opts)),
     [IPC.mihomoGroupDelayTest]: async (_event, name, opts) => mihomo.groupDelayTest(parseMihomoName(name), parseDelayOptions(opts)),
     [IPC.mihomoGetConnections]: async () => mihomo.getConnections(),
-    [IPC.mihomoCloseConnection]: async (_event, id) => mihomo.closeConnection(parseConnectionId(id))
+    [IPC.mihomoCloseConnection]: async (_event, id) => mihomo.closeConnection(parseConnectionId(id)),
+
+    [IPC.profilesList]: async () => profiles.listProfiles(),
+    [IPC.profilesGet]: async (_event, id) => profiles.getProfile(parseProfileName(id)),
+    [IPC.profilesImport]: async (_event, request) => profiles.importProfile(parseImportRequest(request)),
+    [IPC.profilesImportFromUrl]: async (_event, name, url, activate) =>
+      profiles.importFromUrl(parseProfileName(name), parseProfileName(url), activate === true),
+    [IPC.profilesActivate]: async (_event, id) => profiles.activateProfile(parseProfileName(id)),
+    [IPC.profilesDelete]: async (_event, id) => profiles.deleteProfile(parseProfileName(id)),
+    [IPC.profilesRename]: async (_event, id, name) => profiles.renameProfile(parseProfileName(id), parseProfileName(name)),
+    [IPC.profilesEditDocument]: async (_event, id, edits) =>
+      profiles.editDocument(parseProfileName(id), parseEditsArray(edits)),
+    [IPC.profilesValidate]: async (_event, document) => profiles.validateDocument(String(document))
   }
+}
+
+function parseEditsArray(input: unknown): { key: string; value: string }[] {
+  if (!Array.isArray(input)) throw new Error('config edits must be an array')
+  return input.map(parseConfigEdit)
 }

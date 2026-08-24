@@ -73,3 +73,20 @@ Constraints until then:
 - When the latency probe and durable traffic history land, replace the
   hardcoded values and add the disconnected/empty states for these two cards
   (the connections card already switches on `connStatus`).
+
+## UI-DEBT-005 — Configuration & provider-setting pages are functional-only
+
+Phase 5 added `ConfigView.vue` (profile list / activate / rename / delete / import)
+and `ProviderSettingsView.vue` (mode + mixed-port scalar editing) using the shared
+tokens and the generic `.import-card` / `.field` / `.profile-row` styles. They are
+wired to the profile gateway and pass the Phase 5 exit criteria, but they were NOT
+pixel-tuned against the 934×672 reference:
+
+- Inputs, buttons and row spacing reuse the provisional `.import-card` idiom
+  rather than the page-specific geometry used by the Activity/Policy pages.
+- No dedicated empty/error artwork; they fall back to the generic `.empty-state`.
+- The profile list has no per-profile detail drawer/editor yet; editing is
+  scalar-only for `mode` and `mixed-port`, everything else is preserved verbatim.
+
+Defer the visual pass to the unified visual-acceptance phase. Functional behavior
+must not be reworked for layout reasons.

@@ -1,0 +1,26 @@
+# Framework acceptance criteria
+
+## Current milestone
+
+- [ ] `npm install` completes.
+- [ ] `npm run typecheck` passes.
+- [ ] `npm run build` passes.
+- [ ] `npm run brand:check` passes.
+- [ ] Development window opens at no less than 934×672.
+- [ ] Default route is Activity.
+- [ ] Activity geometry matches `UI_SPEC.md`.
+- [ ] Overview switches are local visual prototypes only.
+- [ ] Navigation placeholders render without errors.
+- [ ] Renderer has no Node access.
+- [ ] The kernel lifecycle remains visibly marked as unimplemented.
+- [ ] API and handoff documents identify source references and uncertainty.
+
+## Future runtime evidence
+
+A command returning success is not enough. Runtime tasks must prove the relevant layer:
+
+- Kernel: executable path, version, PID, controller listener and `/version`.
+- System proxy: before/after OS settings and effective request route.
+- TUN: service/driver state, route table, DNS path and a captured non-proxy-aware request.
+- Profile switch: validation, active path/config and retained unsupported fields.
+- Update: signature/checksum, version change, restart and rollback behavior.

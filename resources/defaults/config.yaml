@@ -1,0 +1,11 @@
+# Development-only minimal configuration. Production code must generate a random secret.
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+external-controller: 127.0.0.1:9090
+secret: change-me-at-first-launch
+ipv6: true
+
+rules:
+  - MATCH,DIRECT

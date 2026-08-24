@@ -1,0 +1,13 @@
+{
+  "$schema": "./docs/schemas/brand.schema.json",
+  "productName": "Murge",
+  "shortName": "Murge",
+  "description": "A desktop network client powered by mihomo.",
+  "appId": "io.murge.desktop",
+  "executableName": "murge",
+  "protocolScheme": "murge",
+  "companyName": "Murge Contributors",
+  "repositoryUrl": "",
+  "supportUrl": "",
+  "copyright": "Copyright © 2026 Murge Contributors"
+}

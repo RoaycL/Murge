@@ -1,0 +1,39 @@
+:root {
+  color-scheme: light;
+  --app-font: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --app-background-start: #edf3f9;
+  --app-background-end: #f7f4fb;
+  --app-text: #191a1d;
+  --app-muted: #858b95;
+  --app-faint: #c4c8cf;
+  --app-sidebar-selected: rgba(215, 220, 228, 0.76);
+  --app-surface: rgba(255, 255, 255, 0.82);
+  --app-surface-solid: #fbfbfc;
+  --app-divider: rgba(130, 136, 146, 0.2);
+  --app-shadow: 0 8px 24px rgba(34, 42, 55, 0.075);
+  --app-purple: #6652ed;
+  --app-cyan: #19bdd6;
+  --app-green: #31c95a;
+  --app-pink: #c32bbf;
+  --app-blue: #1587f8;
+  --radius-large: 19px;
+  --radius-control: 7px;
+  --sidebar-width: 205px;
+  --content-max-width: 709px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --app-background-start: #171b23;
+    --app-background-end: #201e29;
+    --app-text: #f1f3f6;
+    --app-muted: #9ca3ae;
+    --app-faint: #5d6470;
+    --app-sidebar-selected: rgba(68, 73, 84, 0.72);
+    --app-surface: rgba(39, 42, 51, 0.94);
+    --app-surface-solid: #292c34;
+    --app-divider: rgba(190, 196, 206, 0.16);
+    --app-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  }
+}

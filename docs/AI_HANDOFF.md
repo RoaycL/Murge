@@ -2,7 +2,9 @@
 
 ## Mandatory reading
 
-Read `DEVELOPMENT_SAFETY.md` first, then open `ui-reference/murge-ui-preview.html` and read `UI_SPEC.md`, `ARCHITECTURE.md`, `MIHOMO_API.md`, `BRANDING.md` and `ACCEPTANCE.md` before editing code.
+Read `DEVELOPMENT_SAFETY.md` first, then open `ui-reference/murge-ui-preview.html` and read `ROADMAP.md`, `UI_SPEC.md`, `ARCHITECTURE.md`, `MIHOMO_API.md`, `BRANDING.md` and `ACCEPTANCE.md` before editing code.
+
+Use `ROADMAP.md` as the task authority. Implement only the assigned phase or checkbox and respect its entry gate, environment restriction and exit criteria.
 
 ## Development-machine safety gate
 

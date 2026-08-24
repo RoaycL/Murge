@@ -18,11 +18,12 @@ The default Activity page uses deterministic fixture values so visual work does 
 1. [`docs/DEVELOPMENT_SAFETY.md`](docs/DEVELOPMENT_SAFETY.md)
 2. [`docs/ui-reference/murge-ui-preview.html`](docs/ui-reference/murge-ui-preview.html)
 3. [`docs/AI_HANDOFF.md`](docs/AI_HANDOFF.md)
-4. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-5. [`docs/UI_SPEC.md`](docs/UI_SPEC.md)
-6. [`docs/MIHOMO_API.md`](docs/MIHOMO_API.md)
-7. [`docs/BRANDING.md`](docs/BRANDING.md)
-8. [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)
+4. [`docs/ROADMAP.md`](docs/ROADMAP.md)
+5. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+6. [`docs/UI_SPEC.md`](docs/UI_SPEC.md)
+7. [`docs/MIHOMO_API.md`](docs/MIHOMO_API.md)
+8. [`docs/BRANDING.md`](docs/BRANDING.md)
+9. [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)
 
 > Safety gate: this Mac may be the owner's active remote connection. Do not start a real kernel or modify its proxy, TUN, DNS, routes, firewall or other network state. The complete mandatory rules are in `docs/DEVELOPMENT_SAFETY.md`.
 

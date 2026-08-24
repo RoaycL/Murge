@@ -13,6 +13,10 @@ import { MihomoClient } from './services/mihomo-client'
 const controllerUrl = process.env.MURGE_DEV_CONTROLLER ?? 'http://127.0.0.1:9090'
 const controllerSecret = process.env.MURGE_DEV_SECRET ?? ''
 
+// Created inside app.whenReady; held here so the quit path can stop it.
+let kernel: KernelSupervisor | null = null
+let isQuitting = false
+
 function createWindow(): void {
   const window = new BrowserWindow({
     width: 1120,
@@ -56,7 +60,7 @@ app.whenReady().then(() => {
   app.setName(brand.productName)
   // Development/builds always use the harmless fixture process; a real kernel
   // is never resolved or executed until a later milestone enables it opt-in.
-  const kernel = new KernelSupervisor(
+  const kernelInstance = new KernelSupervisor(
     {
       resolver: createKernelResolver({ appPath: app.getAppPath(), mode: is.dev ? 'fixture' : 'disabled' }),
       configStore: new TempKernelConfigStore(),
@@ -65,8 +69,9 @@ app.whenReady().then(() => {
     },
     { readinessPattern: /fixture-ready/ }
   )
+  kernel = kernelInstance
   registerIpc({
-    kernel,
+    kernel: kernelInstance,
     mihomo: new MihomoClient(controllerUrl, controllerSecret)
   })
   createWindow()
@@ -78,4 +83,22 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+// Give the kernel a bounded chance to shut down and release its temp config
+// before the process exits. Without this the child could outlive the GUI and
+// keep a port (and a secret-bearing temp dir) behind. The guard flag makes the
+// flow idempotent: block the first quit, stop the kernel, then really quit.
+app.on('before-quit', (event) => {
+  if (isQuitting) return
+  event.preventDefault()
+  isQuitting = true
+  void (async () => {
+    try {
+      await kernel?.stop()
+    } catch (error) {
+      console.error('[kernel] failed to stop during quit:', error)
+    }
+    app.quit()
+  })()
 })

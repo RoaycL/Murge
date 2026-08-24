@@ -42,11 +42,24 @@ export const usePoliciesStore = defineStore('policies', () => {
   const groupDelayStatus = ref<'idle' | 'testing' | 'ok' | 'error'>('idle')
   const panelError = ref<string | null>(null)
 
-  // Monotonic request tokens: only the LATEST mode/selection request may mutate
-  // or roll back state. A stale request that resolves (or fails) after a newer
-  // one must not clobber the user's most recent intent.
-  let modeRequestId = 0
-  let selectionRequestId = 0
+  // A request token only protects the UI: it cannot stop the controller from
+  // applying an earlier PUT after a later one, so the UI would end up showing a
+  // mode/member the controller did not actually reach. Instead we SERIALIZE each
+  // mutation onto the controller (one in-flight write at a time) and coalesce
+  // rapid intents into a single "latest-intent" slot, then CONFIRM the
+  // controller's true state with a fresh read and reconcile the optimistic value
+  // to it. An intent superseded by a newer one never mutates the UI or surfaces
+  // an error.
+  let pendingSelection: string | null = null
+  let pendingMode: PolicyMode | null = null
+  let selectionDrainPromise: Promise<void> | null = null
+  let modeDrainPromise: Promise<void> | null = null
+  // The most recent intent actually submitted, and the error it produced (if any).
+  // Only the FINAL intent is used to reconcile against the controller read.
+  let lastSelectionTarget: string | null = null
+  let lastSelectionError: string | null = null
+  let lastModeTarget: PolicyMode | null = null
+  let lastModeError: string | null = null
 
   const groups = computed<MihomoProxy[]>(() => {
     if (!proxies.value) return []
@@ -107,36 +120,109 @@ export const usePoliciesStore = defineStore('policies', () => {
     selectedMember.value = typeof group.now === 'string' ? group.now : (group.all?.[0] ?? '')
   }
 
-  async function setMode(next: PolicyMode): Promise<void> {
-    if (next === mode.value) return
-    const seq = ++modeRequestId
-    const previous = mode.value
-    mode.value = next
-    panelError.value = null
+  function setMode(next: PolicyMode): Promise<void> {
+    if (next === mode.value) return Promise.resolve()
+    pendingMode = next
+    modeDrainPromise ??= drainMode().finally(() => {
+      modeDrainPromise = null
+      pendingMode = null
+    })
+    return modeDrainPromise
+  }
+
+  async function drainMode(): Promise<void> {
     try {
-      await window.desktop.mihomo.patchConfig({ mode: next })
-    } catch (error) {
-      if (seq === modeRequestId) {
-        mode.value = previous
-        panelError.value = toProtocolError(error).message
+      while (pendingMode !== null) {
+        const intent = pendingMode
+        pendingMode = null
+        lastModeTarget = intent
+        lastModeError = null
+        if (intent === mode.value) continue
+        mode.value = intent
+        panelError.value = null
+        try {
+          await window.desktop.mihomo.patchConfig({ mode: intent })
+        } catch (error) {
+          // A newer intent arrived while this write was in flight, so its outcome
+          // no longer matters; only the FINAL intent's failure is surfaced.
+          if (pendingMode === null) lastModeError = toProtocolError(error).message
+        }
       }
+      await confirmMode()
+    } finally {
+      lastModeTarget = null
+      lastModeError = null
     }
   }
 
-  async function selectNode(member: string): Promise<void> {
-    if (!selectedGroup.value || member === selectedMember.value) return
-    const seq = ++selectionRequestId
-    const previous = selectedMember.value
-    selectedMember.value = member
-    panelError.value = null
+  async function confirmMode(): Promise<void> {
+    const target = lastModeTarget
+    const submitError = lastModeError
     try {
-      await window.desktop.mihomo.selectProxy(selectedGroup.value, member)
-    } catch (error) {
-      if (seq === selectionRequestId) {
-        selectedMember.value = previous
-        panelError.value = toProtocolError(error).message
+      const config = await window.desktop.mihomo.getConfig()
+      const confirmed = config.mode && POLICY_MODE_OPTIONS.includes(config.mode) ? (config.mode as PolicyMode) : null
+      if (confirmed) mode.value = confirmed
+      if (submitError) {
+        panelError.value = submitError
+      } else if (target !== null && confirmed !== null && confirmed !== target) {
+        panelError.value = `模式切换未生效：controller 当前为 "${confirmed}"，期望 "${target}"`
       }
-      throw error
+    } catch (error) {
+      panelError.value = submitError ?? toProtocolError(error).message
+    }
+  }
+
+  function selectNode(member: string): Promise<void> {
+    const group = selectedGroup.value
+    if (!group) return Promise.resolve()
+    if (member === selectedMember.value) return Promise.resolve()
+    pendingSelection = member
+    selectionDrainPromise ??= drainSelection(group).finally(() => {
+      selectionDrainPromise = null
+      pendingSelection = null
+    })
+    return selectionDrainPromise
+  }
+
+  async function drainSelection(group: string): Promise<void> {
+    try {
+      while (pendingSelection !== null) {
+        if (selectedGroup.value !== group) return
+        const intent = pendingSelection
+        pendingSelection = null
+        lastSelectionTarget = intent
+        lastSelectionError = null
+        if (intent === selectedMember.value) continue
+        selectedMember.value = intent
+        panelError.value = null
+        try {
+          await window.desktop.mihomo.selectProxy(group, intent)
+        } catch (error) {
+          if (pendingSelection === null) lastSelectionError = toProtocolError(error).message
+        }
+      }
+      if (selectedGroup.value === group) await confirmSelection(group)
+    } finally {
+      lastSelectionTarget = null
+      lastSelectionError = null
+    }
+  }
+
+  async function confirmSelection(group: string): Promise<void> {
+    const target = lastSelectionTarget
+    const submitError = lastSelectionError
+    try {
+      const result = await window.desktop.mihomo.getProxies()
+      const now = result.proxies[group]?.now
+      const confirmed = typeof now === 'string' && now.length > 0 ? now : null
+      if (confirmed) selectedMember.value = confirmed
+      if (submitError) {
+        panelError.value = submitError
+      } else if (target !== null && confirmed !== null && confirmed !== target) {
+        panelError.value = `选择未生效：controller 当前为 "${confirmed}"，期望 "${target}"`
+      }
+    } catch (error) {
+      panelError.value = submitError ?? toProtocolError(error).message
     }
   }
 

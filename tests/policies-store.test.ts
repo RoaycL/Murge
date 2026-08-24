@@ -8,9 +8,10 @@ import type {
   MihomoDelayResult
 } from '../src/shared/mihomo-api'
 
+const GROUP = '节点选择'
 const PROXIES: MihomoProxiesResponse = {
   proxies: {
-    节点选择: { name: '节点选择', type: 'Selector', now: '香港 01', all: ['香港 01', '香港 02', 'DIRECT'] },
+    [GROUP]: { name: GROUP, type: 'Selector', now: '香港 01', all: ['香港 01', '香港 02', 'DIRECT'] },
     '香港 01': { name: '香港 01', type: 'Shadowsocks', alive: true },
     '香港 02': { name: '香港 02', type: 'Shadowsocks', alive: false },
     DIRECT: { name: 'DIRECT', type: 'Direct' }
@@ -29,8 +30,22 @@ describe('policies store', () => {
   let patchConfig: ReturnType<typeof vi.fn>
   let getConfig: ReturnType<typeof vi.fn>
 
+  /**
+   * Controller state the mocks read back, mirroring a real mihomo: the selection
+   * PUT / GET /proxies and the mode PATCH / GET /configs round-trip through here,
+   * so a later "confirmation read" reflects what the controller actually applied.
+   */
+  let controllerNow: string
+  let controllerMode: string
+
+  function proxiesResponse(now = controllerNow): MihomoProxiesResponse {
+    return { ...PROXIES, proxies: { ...PROXIES.proxies, [GROUP]: { ...PROXIES.proxies[GROUP], now } } }
+  }
+
   beforeEach(() => {
     setActivePinia(createPinia())
+    controllerNow = '香港 01'
+    controllerMode = 'rule'
     getProxies = vi.fn()
     selectProxy = vi.fn()
     delayTest = vi.fn()
@@ -54,29 +69,114 @@ describe('policies store', () => {
     const store = usePoliciesStore()
     await store.load()
     expect(store.status).toBe('ready')
-    expect(store.groups.map((group) => group.name)).toEqual(['节点选择'])
-    expect(store.selectedGroup).toBe('节点选择')
+    expect(store.groups.map((group) => group.name)).toEqual([GROUP])
+    expect(store.selectedGroup).toBe(GROUP)
     expect(store.selectedMember).toBe('香港 01')
   })
 
-  it('selects a node optimistically and keeps it on success', async () => {
-    getProxies.mockResolvedValue(PROXIES)
-    selectProxy.mockResolvedValue(undefined)
+  it('selects a node, confirms the controller applied it, and keeps it', async () => {
+    getProxies.mockImplementation(async () => proxiesResponse(controllerNow))
+    selectProxy.mockImplementation(async (_group, name) => {
+      controllerNow = name
+    })
     const store = usePoliciesStore()
     await store.load()
     await store.selectNode('香港 02')
     expect(store.selectedMember).toBe('香港 02')
-    expect(selectProxy).toHaveBeenCalledWith('节点选择', '香港 02')
+    expect(selectProxy).toHaveBeenCalledWith(GROUP, '香港 02')
+    expect(store.panelError).toBeNull()
   })
 
-  it('rolls back the optimistic selection on failure', async () => {
-    getProxies.mockResolvedValue(PROXIES)
+  it('surfaces a failed selection and reconciles to the controller state', async () => {
+    getProxies.mockImplementation(async () => proxiesResponse(controllerNow))
     selectProxy.mockRejectedValue(error(ProtocolErrorCode.UPSTREAM_HTTP_ERROR))
     const store = usePoliciesStore()
     await store.load()
-    await expect(store.selectNode('香港 02')).rejects.toThrow(ProtocolError)
+    // The controller never applied the write, so the confirmation read shows the
+    // ORIGINAL member; the optimistic value is reconciled back and the error is
+    // surfaced on the panel. selectNode itself no longer rejects.
+    await store.selectNode('香港 02')
     expect(store.selectedMember).toBe('香港 01')
     expect(store.panelError).toBe('boom')
+  })
+
+  it('serializes rapid selections and confirms only the latest intent is applied', async () => {
+    getProxies.mockImplementation(async () => proxiesResponse(controllerNow))
+    const order: string[] = []
+    const resolvers: Array<() => void> = []
+    selectProxy.mockImplementation((_group, name) => new Promise<void>((resolve) => {
+      order.push(name)
+      resolvers.push(() => {
+        controllerNow = name
+        resolve()
+      })
+    }))
+    const store = usePoliciesStore()
+    await store.load()
+    store.selectNode('香港 02')
+    const second = store.selectNode('DIRECT')
+    // DIRECT is held as the latest intent, so exactly one write is in flight.
+    expect(order).toEqual(['香港 02'])
+    expect(selectProxy).toHaveBeenCalledTimes(1)
+    resolvers[0]()
+    await Promise.resolve()
+    // Once 香港 02 settles, the drain submits the coalesced DIRECT intent.
+    expect(order).toEqual(['香港 02', 'DIRECT'])
+    expect(selectProxy).toHaveBeenCalledTimes(2)
+    resolvers[1]()
+    await second
+    expect(store.selectedMember).toBe('DIRECT')
+    expect(store.panelError).toBeNull()
+  })
+
+  it('ignores a superseded selection failure and keeps the latest intent on success', async () => {
+    getProxies.mockImplementation(async () => proxiesResponse(controllerNow))
+    const store = usePoliciesStore()
+    await store.load()
+    const resolvers: Array<{ reject: (e: unknown) => void }> = []
+    selectProxy.mockImplementationOnce((_group, _name) => new Promise<void>((_, reject) => resolvers.push({ reject })))
+    selectProxy.mockImplementationOnce((_group, name) => new Promise<void>((resolve) => {
+      controllerNow = name
+      resolve()
+    }))
+    store.selectNode('香港 02')
+    const second = store.selectNode('DIRECT')
+    // The superseded 香港 02 write fails while DIRECT is the pending intent.
+    resolvers[0].reject(error(ProtocolErrorCode.UPSTREAM_HTTP_ERROR))
+    await Promise.resolve()
+    await second
+    expect(store.selectedMember).toBe('DIRECT')
+    expect(store.panelError).toBeNull()
+  })
+
+  it('commits only the last of several rapid selections (coalesces intermediates)', async () => {
+    getProxies.mockImplementation(async () => proxiesResponse(controllerNow))
+    selectProxy.mockImplementation(async (_group, name) => {
+      controllerNow = name
+    })
+    const store = usePoliciesStore()
+    await store.load()
+    await Promise.all([store.selectNode('香港 02'), store.selectNode('DIRECT'), store.selectNode('香港 01')])
+    expect(store.selectedMember).toBe('香港 01')
+    // DIRECT was coalesced away by the latest intent, so it is never written.
+    expect(selectProxy).toHaveBeenCalledWith(GROUP, '香港 01')
+    expect(selectProxy).toHaveBeenCalledWith(GROUP, '香港 02')
+    expect(selectProxy).not.toHaveBeenCalledWith(GROUP, 'DIRECT')
+    expect(store.panelError).toBeNull()
+  })
+
+  it('reports a recoverable error when the controller did not reach the requested member', async () => {
+    getProxies.mockImplementation(async () => proxiesResponse(controllerNow))
+    // The write "succeeds" server-side but the controller stubbornly keeps the
+    // old member (e.g. the group dropped the request), so the confirmation read
+    // disagrees with our intent.
+    selectProxy.mockImplementation(async () => undefined)
+    controllerNow = '香港 01'
+    const store = usePoliciesStore()
+    await store.load()
+    await store.selectNode('香港 02')
+    expect(store.selectedMember).toBe('香港 01')
+    expect(store.panelError).toContain('香港 01')
   })
 
   it('records an ok delay from a node test', async () => {
@@ -141,9 +241,12 @@ describe('policies store', () => {
     expect(store.nodeState('香港 01').status).toBe('error')
   })
 
-  it('patches the mode optimistically and rolls back on failure', async () => {
+  it('patches the mode, confirms the controller, and rolls back a rejected patch', async () => {
     getProxies.mockResolvedValue(PROXIES)
-    patchConfig.mockResolvedValue(undefined)
+    getConfig.mockImplementation(async () => ({ mode: controllerMode }))
+    patchConfig.mockImplementation(async (patch) => {
+      controllerMode = (patch as { mode: string }).mode
+    })
     const store = usePoliciesStore()
     await store.load()
     await store.setMode('global')
@@ -151,72 +254,23 @@ describe('policies store', () => {
     expect(patchConfig).toHaveBeenCalledWith({ mode: 'global' })
     patchConfig.mockRejectedValueOnce(error(ProtocolErrorCode.UPSTREAM_HTTP_ERROR))
     await store.setMode('direct')
+    // The rejected patch left the controller in 'global', so the confirmation
+    // read reconciles mode back to it.
     expect(store.mode).toBe('global')
+    expect(store.panelError).toBe('boom')
   })
 
-  it('keeps the latest selection when an earlier request resolves out of order', async () => {
+  it('serializes rapid mode changes and confirms the latest mode', async () => {
     getProxies.mockResolvedValue(PROXIES)
+    getConfig.mockImplementation(async () => ({ mode: controllerMode }))
+    patchConfig.mockImplementation(async (patch) => {
+      controllerMode = (patch as { mode: string }).mode
+    })
     const store = usePoliciesStore()
     await store.load()
-    const resolvers: Array<{ resolve: (v: void) => void }> = []
-    selectProxy.mockImplementation((_g, _m) => new Promise<void>((resolve) => resolvers.push({ resolve })))
-    const first = store.selectNode('香港 02')
-    const second = store.selectNode('DIRECT')
-    // The second (latest) request settles first, then the stale first one.
-    resolvers[1].resolve()
-    await second
-    expect(store.selectedMember).toBe('DIRECT')
-    resolvers[0].resolve()
-    await first
-    // The stale request must not clobber the user's latest choice.
-    expect(store.selectedMember).toBe('DIRECT')
-    expect(store.panelError).toBeNull()
-  })
-
-  it('a stale selection failure neither rolls back the latest selection nor sets panelError', async () => {
-    getProxies.mockResolvedValue(PROXIES)
-    const store = usePoliciesStore()
-    await store.load()
-    const resolvers: Array<{ resolve: (v: void) => void; reject: (e: unknown) => void }> = []
-    selectProxy.mockImplementationOnce((_g, _m) => new Promise<void>((resolve, reject) => resolvers.push({ resolve, reject })))
-    selectProxy.mockImplementationOnce((_g, _m) => Promise.resolve())
-    const first = store.selectNode('香港 02')
-    const second = store.selectNode('DIRECT')
-    await second
-    expect(store.selectedMember).toBe('DIRECT')
-    // The stale first request now fails: it still rethrows, but must not
-    // roll back or surface an error, because a newer intent already won.
-    resolvers[0].reject(error(ProtocolErrorCode.UPSTREAM_HTTP_ERROR))
-    await expect(first).rejects.toThrow(ProtocolError)
-    expect(store.selectedMember).toBe('DIRECT')
-    expect(store.panelError).toBeNull()
-  })
-
-  it('commits only the last of several rapid selections', async () => {
-    getProxies.mockResolvedValue(PROXIES)
-    const store = usePoliciesStore()
-    await store.load()
-    selectProxy.mockResolvedValue(undefined)
-    await Promise.all([store.selectNode('香港 02'), store.selectNode('DIRECT'), store.selectNode('香港 01')])
-    expect(store.selectedMember).toBe('香港 01')
-  })
-
-  it('a stale mode failure neither rolls back the mode nor sets panelError', async () => {
-    getProxies.mockResolvedValue(PROXIES)
-    const store = usePoliciesStore()
-    await store.load()
-    const resolvers: Array<{ resolve: (v: void) => void; reject: (e: unknown) => void }> = []
-    patchConfig.mockImplementationOnce((_cfg) => new Promise<void>((resolve, reject) => resolvers.push({ resolve, reject })))
-    patchConfig.mockResolvedValueOnce(undefined)
-    const first = store.setMode('global')
-    const second = store.setMode('direct')
-    await second
-    expect(store.mode).toBe('direct')
-    // The stale global-mode request now fails; setMode never rejects and must
-    // not roll the mode back.
-    resolvers[0].reject(error(ProtocolErrorCode.UPSTREAM_HTTP_ERROR))
-    await first
-    expect(store.mode).toBe('direct')
+    await Promise.all([store.setMode('direct'), store.setMode('global')])
+    expect(store.mode).toBe('global')
+    expect(patchConfig).toHaveBeenCalledWith({ mode: 'global' })
     expect(store.panelError).toBeNull()
   })
 

@@ -135,8 +135,12 @@ describe('providers store', () => {
     await store.healthCheckProxyProvider('机场 A')
     expect(healthCheckProxyProvider).toHaveBeenCalledWith('机场 A')
     expect(getProxyProviders).toHaveBeenCalled()
-    // 香港 01 has a history entry (42); 香港 02 has none, so it is excluded.
-    expect(store.healthOf('机场 A')).toEqual({ '香港 01': 42 })
+    // 香港 01 has a usable history entry (42); 香港 02 has none, so it is
+    // reported as unavailable rather than as a bogus 0ms success.
+    expect(store.healthOf('机场 A')).toEqual({
+      '香港 01': { status: 'ok', delay: 42 },
+      '香港 02': { status: 'unavailable', delay: null }
+    })
     expect(store.opOf('机场 A').healthchecking).toBe(false)
     expect(store.opOf('机场 A').error).toBeNull()
   })
@@ -158,5 +162,87 @@ describe('providers store', () => {
     await store.refreshRuleProvider('规则集 A')
     expect(refreshRuleProvider).toHaveBeenCalledWith('规则集 A')
     expect(store.opOf('规则集 A').refreshing).toBe(false)
+  })
+
+  it('keeps the last good providers when a refresh API call succeeds but its reload fetch fails', async () => {
+    getProxyProviders
+      .mockResolvedValueOnce(PROXY_PROVIDERS)
+      .mockRejectedValueOnce(new ProtocolError(ProtocolErrorCode.UPSTREAM_HTTP_ERROR, 'reload failed'))
+    refreshProxyProvider.mockResolvedValue(undefined)
+    const store = useProvidersStore()
+    await store.loadProxyProviders()
+    expect(store.orderedProxyProviders).toHaveLength(2)
+
+    await store.refreshProxyProvider('机场 A')
+    // The old data survives a failed re-pull — it is never wiped.
+    expect(store.orderedProxyProviders.map((p) => p.name)).toEqual(['机场 A', '机场 B'])
+    expect(store.proxyProviders['机场 B'].vehicleType).toBe('File')
+    // The refresh error is surfaced on the row so the user can retry.
+    expect(store.opOf('机场 A').error).toBe('reload failed')
+    expect(store.opOf('机场 A').refreshing).toBe(false)
+  })
+
+  it('keeps prior health results when a health check 204 succeeds but its reload fetch fails', async () => {
+    healthCheckProxyProvider.mockResolvedValue(undefined)
+    getProxyProviders
+      .mockResolvedValueOnce(PROXY_PROVIDERS)
+      .mockRejectedValueOnce(new ProtocolError(ProtocolErrorCode.UPSTREAM_HTTP_ERROR, 'reload after healthcheck failed'))
+    const store = useProvidersStore()
+
+    await store.healthCheckProxyProvider('机场 A')
+    expect(store.healthOf('机场 A')).toEqual({
+      '香港 01': { status: 'ok', delay: 42 },
+      '香港 02': { status: 'unavailable', delay: null }
+    })
+
+    // A second health check that fails to reload must NOT wipe the measured map.
+    await store.healthCheckProxyProvider('机场 A')
+    expect(store.healthOf('机场 A')).toEqual({
+      '香港 01': { status: 'ok', delay: 42 },
+      '香港 02': { status: 'unavailable', delay: null }
+    })
+    expect(store.opOf('机场 A').error).toBe('reload after healthcheck failed')
+    expect(store.opOf('机场 A').healthchecking).toBe(false)
+  })
+
+  it('surfaces a rule refresh reload failure and keeps the loaded rule providers', async () => {
+    getRuleProviders
+      .mockResolvedValueOnce(RULE_PROVIDERS)
+      .mockRejectedValueOnce(new ProtocolError(ProtocolErrorCode.UPSTREAM_TIMEOUT, 'rule reload failed'))
+    refreshRuleProvider.mockResolvedValue(undefined)
+    const store = useProvidersStore()
+    await store.loadRuleProviders()
+    expect(store.orderedRuleProviders).toHaveLength(1)
+
+    await store.refreshRuleProvider('规则集 A')
+    expect(store.orderedRuleProviders.map((p) => p.name)).toEqual(['规则集 A'])
+    expect(store.ruleProviders['规则集 A'].format).toBe('yaml')
+    expect(store.opOf('规则集 A').error).toBe('rule reload failed')
+    expect(store.opOf('规则集 A').refreshing).toBe(false)
+  })
+
+  it('treats a recorded delay of 0 as unavailable, never as a 0ms success', async () => {
+    getProxyProviders.mockResolvedValue({
+      providers: {
+        '机场 A': {
+          name: '机场 A',
+          type: 'Proxy',
+          vehicleType: 'HTTP',
+          proxies: [
+            { name: '香港 01', type: 'Shadowsocks', udp: true, alive: true, history: [{ time: '2024-06-01T00:00:00Z', delay: 0 }] },
+            { name: '香港 02', type: 'Shadowsocks', udp: true, alive: false, history: [{ time: '2024-06-01T00:00:00Z', delay: 0 }] }
+          ]
+        }
+      }
+    })
+    healthCheckProxyProvider.mockResolvedValue(undefined)
+    const store = useProvidersStore()
+    await store.healthCheckProxyProvider('机场 A')
+    // Both nodes report delay 0 — mihomo's idiom for "no usable latency" — so
+    // neither is rendered as a real 0ms result.
+    expect(store.healthOf('机场 A')).toEqual({
+      '香港 01': { status: 'unavailable', delay: null },
+      '香港 02': { status: 'unavailable', delay: null }
+    })
   })
 })

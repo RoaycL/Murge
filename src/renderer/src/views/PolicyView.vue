@@ -138,7 +138,11 @@ onMounted(() => {
             {{ providers.opOf(provider.name).error }}
           </div>
           <div v-if="providers.healthOf(provider.name)" class="provider-health">
-            <span v-for="(delay, member) in providers.healthOf(provider.name)" :key="member">{{ member }} {{ delay }}ms</span>
+            <span
+              v-for="(nodeHealth, member) in providers.healthOf(provider.name)"
+              :key="member"
+              :class="nodeHealth.status === 'ok' ? 'ok' : 'unavailable'"
+            >{{ member }} {{ nodeHealth.status === 'ok' ? `${nodeHealth.delay}ms` : '不可用' }}</span>
           </div>
           <div class="provider-actions">
             <button
@@ -184,4 +188,5 @@ onMounted(() => {
 .provider-actions button:disabled { opacity: .5; }
 .provider-error { grid-column: 1 / -1; color: #e05b5b; font-size: 11px; }
 .provider-health { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--app-muted); font-size: 11px; }
+.provider-health span.unavailable { color: #e05b5b; }
 </style>

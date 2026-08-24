@@ -135,9 +135,20 @@ Entry gate: Phase 3 complete.
 
 Exit criteria:
 
-- Mock selection is confirmed by a subsequent mock read.
-- Timeout, unavailable node and provider-refresh failures are visible and recoverable.
-- Geometry matches the normative reference.
+- [x] Mock selection is confirmed by a subsequent mock read.
+  - Verified by `tests/policies-selection.integration.test.ts`: a real
+    `MihomoClient` against the mock controller, so a rapid B→C selection is
+    read back from the controller (`group.now`) and confirmed against the store.
+  - Also covered at the store level by `tests/policies-store.test.ts`
+    (confirm-controller, serialize-rapid, supersede and recoverable-mismatch).
+- [x] Timeout, unavailable node and provider-refresh failures are visible and recoverable.
+  - Verified by `tests/policies-store.test.ts` (recoverable `panelError` on a
+    controller mismatch) and `tests/providers-store.test.ts` (a failed reload
+    surfaces a per-row error while preserving the last good data; a recorded
+    `delay === 0` is rendered as unavailable, never 0ms).
+- [ ] Geometry matches the normative reference.
+  - Pending; tracked as UI pixel-diff debt in `docs/UI_DEBT.md` until the final
+    unified alignment pass.
 
 ## Phase 5 — Profiles and subscriptions
 

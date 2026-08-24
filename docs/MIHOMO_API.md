@@ -140,6 +140,52 @@ Response: `{ "delay": 73 }`. Treat timeouts, zero and missing delay distinctly.
 
 Group latency testing uses `GET /group/<name>/delay?...` and returns a map keyed by member name (`{ "香港 01": 42, "DIRECT": 6 }`). Members that failed or were not measured are omitted from the map (they are not written with a sentinel), so a missing key means "no latency available" and must be surfaced as unavailable — it is not a timeout. A whole-group timeout/probe failure returns HTTP 504/503 for the request itself.
 
+### Providers
+
+`GET /providers/proxies` returns `{ "providers": { <name>: {...} } }`. Each proxy
+provider is marshalled by upstream as (verified against
+`adapter/provider/provider.go`):
+
+```ts
+interface MihomoProxyProvider {
+  name: string
+  type: 'Proxy'
+  vehicleType: string          // HTTP | File | Compatible | Inline
+  proxies: MihomoProxy[]        // member OBJECTS, not names — there is NO count field
+  testUrl?: string
+  expectedStatus?: string       // e.g. "204"
+  updatedAt?: string
+  subscriptionInfo?: {          // only for a subscription-backed vehicle
+    Upload: number              // bytes (int64), capitalised keys
+    Download: number
+    Total: number
+    Expire: number              // Unix timestamp in SECONDS (0 = no expiry)
+  }
+}
+```
+
+Derive a node count from `proxies.length`; do not expect a `proxiesCount` field.
+`GET /providers/proxies/<name>/healthcheck` returns **HTTP 204 with no body** (it
+re-probes members and records fresh `history` entries on each proxy); read the
+delays back from `/providers/proxies` afterwards rather than from the healthcheck
+response.
+
+`GET /providers/rules` returns rule providers marshalled as (verified against
+`rules/provider/provider.go`):
+
+```ts
+interface MihomoRuleProvider {
+  name: string
+  type: 'Rule'
+  behavior: string              // Domain | IPCIDR | Classical
+  format: string                // yaml | text | mrs
+  vehicleType: string           // HTTP | File | Inline
+  ruleCount: number
+  updatedAt?: string
+  payload?: string[]            // inline providers only
+}
+```
+
 ### Running configuration
 
 `GET /configs` returns a flexible object containing fields such as:

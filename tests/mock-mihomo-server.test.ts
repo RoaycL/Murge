@@ -113,15 +113,31 @@ describe('mock mihomo server', () => {
       expect(map['香港 02']).toBeUndefined()
     })
 
-    it('serves proxy and rule provider metadata', async () => {
+    it('serves proxy and rule provider metadata in the upstream shape', async () => {
       const server = await startMockMihomoServer()
       handles.push(server)
-      const proxyRes = await fetch(`${server.baseUrl}/providers/proxies`).then((r) => r.json()) as { providers: Record<string, { type: string; proxiesCount: number }> }
+      const proxyRes = await fetch(`${server.baseUrl}/providers/proxies`).then((r) => r.json()) as {
+        providers: Record<string, {
+          type: string
+          proxies: Array<{ name: string }>
+          testUrl?: string
+          subscriptionInfo?: { Upload: number; Download: number; Total: number; Expire: number }
+        }>
+      }
       const proxyProvider = proxyRes.providers['机场 A']
       expect(proxyProvider.type).toBe('Proxy')
-      expect(proxyProvider.proxiesCount).toBe(2)
-      const ruleRes = await fetch(`${server.baseUrl}/providers/rules`).then((r) => r.json()) as { providers: Record<string, { type: string; ruleCount: number }> }
+      // Upstream emits `proxies` (objects), not a `proxiesCount`.
+      expect(proxyProvider.proxies).toHaveLength(2)
+      expect((proxyProvider as Record<string, unknown>).proxiesCount).toBeUndefined()
+      expect(proxyProvider.subscriptionInfo?.Total).toBeGreaterThan(0)
+      // A File-vehicle provider carries no subscription block.
+      expect(proxyRes.providers['机场 B'].subscriptionInfo).toBeUndefined()
+      const ruleRes = await fetch(`${server.baseUrl}/providers/rules`).then((r) => r.json()) as {
+        providers: Record<string, { type: string; ruleCount: number; format?: string; vehicleType?: string }>
+      }
       expect(ruleRes.providers['规则集 A'].type).toBe('Rule')
+      expect(ruleRes.providers['规则集 A'].format).toBe('yaml')
+      expect(ruleRes.providers['规则集 A'].vehicleType).toBe('HTTP')
     })
 
     it('refreshes a proxy provider and returns 204 and bumps updatedAt', async () => {

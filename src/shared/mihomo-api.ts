@@ -55,10 +55,14 @@ export interface MihomoProxyProvider {
   vehicleType?: string
   /** Grouping behavior: `rule`, `global`, `direct`. */
   behavior?: string
-  /** Member proxies resolved from this provider. */
+  /**
+   * Member proxies resolved from this provider.
+   *
+   * Upstream emits no member-count field, so a node count must be derived from
+   * `proxies.length`. The index signature still tolerates an unknown count
+   * field from a future release without inventing a contract for it.
+   */
   proxies?: MihomoProxy[]
-  /** Member proxy count (legacy/optional; upstream does not emit it). */
-  proxiesCount?: number
   /** Probe URL used when testing this provider's nodes. */
   testUrl?: string
   /** Expected HTTP status that counts as a successful probe. */
@@ -92,6 +96,8 @@ export interface MihomoRuleProvider {
   name: string
   type: string
   behavior?: string
+  /** `HTTP`/`File`/`Inline` vehicle for a rule provider. */
+  vehicleType?: string
   /** Rule payload format: `yaml`/`text`/`surge`/`mrs`. */
   format?: string
   ruleCount?: number

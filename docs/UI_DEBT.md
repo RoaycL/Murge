@@ -44,3 +44,32 @@ margins differ by a few px).
   RAW pixels (impl vs reference).
 - Do NOT substitute normalized proportions/ratios for acceptance. Normalized
   comparison is fine as a diagnostic, never as the accept gate.
+
+## UI-DEBT-004 — Activity latency card and hourly bars are still hardcoded
+
+Phase 3 wired the Activity speed cards, active-connection counts, process/domain
+ranking and the 总计 breakdown to live mock IPC data, but three regions of
+`src/renderer/src/views/ActivityView.vue` are still static placeholders:
+
+- The INTERNET latency card (`6 ms`, `路由 ≤1 ms`, `DNS 11 ms`,
+  `Hong Kong 01 73 ms`) — hardcoded in the template.
+- The hourly-traffic bar chart (`const bars = [...]`) — a fixed literal array.
+- The "1 DHCP 设备" figure in the connections card.
+
+These are intentionally deferred, not wired, because the data does not come from
+the P0 streams already integrated:
+
+- Real latency requires a routing/DNS probe plus a selected-node delay
+  (`/proxies/:name/delay`, and a diagnostic path for route/DNS) — see the P2
+  `/dns/query` capability in `MIHOMO_API.md`.
+- A truthful hourly series requires the app to persist sampled traffic deltas
+  over time (the `/traffic` stream only yields instantaneous rate + cumulative
+  totals), which is the same durable-history gap called out in UI-DEBT-002.
+
+Constraints until then:
+
+- Do NOT present these three regions as live data or reuse them as a shared
+  contract. They exist only to hold the 934×672 geometry stable.
+- When the latency probe and durable traffic history land, replace the
+  hardcoded values and add the disconnected/empty states for these two cards
+  (the connections card already switches on `connStatus`).

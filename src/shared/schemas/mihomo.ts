@@ -120,7 +120,6 @@ const proxyProviderSchema = z
     ...providerShared,
     vehicleType: z.string().optional(),
     proxies: z.array(proxySchema).optional(),
-    proxiesCount: z.number().optional(),
     testUrl: z.string().optional(),
     expectedStatus: z.string().optional(),
     subscriptionInfo: z
@@ -144,6 +143,7 @@ const proxyProvidersResponseSchema = z
 const ruleProviderSchema = z
   .object({
     ...providerShared,
+    vehicleType: z.string().optional(),
     format: z.string().optional(),
     ruleCount: z.number().optional()
   })

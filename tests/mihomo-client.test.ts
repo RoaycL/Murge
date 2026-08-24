@@ -249,11 +249,24 @@ describe('MihomoClient', () => {
 
     it('fetches proxy and rule providers', async () => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
-        providers: { '机场 A': { name: '机场 A', type: 'Proxy', vehicleType: 'HTTP', proxiesCount: 2 } }
+        providers: {
+          '机场 A': {
+            name: '机场 A',
+            type: 'Proxy',
+            vehicleType: 'HTTP',
+            proxies: [{ name: '香港 01', type: 'Shadowsocks' }],
+            testUrl: 'https://www.gstatic.com/generate_204',
+            expectedStatus: '204',
+            subscriptionInfo: { Upload: 1, Download: 2, Total: 3, Expire: 1_767_225_600 }
+          }
+        }
       })))
       const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
       const providers = await client.getProxyProviders()
-      expect(providers.providers['机场 A'].proxiesCount).toBe(2)
+      const provider = providers.providers['机场 A']
+      // Upstream emits no member-count field; the count comes from `proxies`.
+      expect(provider.proxies).toHaveLength(1)
+      expect(provider.subscriptionInfo?.Expire).toBe(1_767_225_600)
     })
 
     it('refreshes a proxy provider with a PUT and resolves undefined on 204', async () => {

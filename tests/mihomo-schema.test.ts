@@ -181,16 +181,26 @@ describe('parseMihomoLog', () => {
 })
 
 describe('parseMihomoProxyProviders / parseMihomoProxyProvider', () => {
-  it('parses a valid proxy providers response', () => {
+  it('parses a valid proxy providers response with member objects', () => {
     const result = parseMihomoProxyProviders({
-      providers: { '机场 A': { name: '机场 A', type: 'Proxy', vehicleType: 'HTTP', proxiesCount: 2 } }
+      providers: {
+        '机场 A': {
+          name: '机场 A',
+          type: 'Proxy',
+          vehicleType: 'HTTP',
+          proxies: [{ name: '香港 01', type: 'Shadowsocks' }, { name: '香港 02', type: 'Shadowsocks' }]
+        }
+      }
     })
-    expect(result.providers['机场 A'].proxiesCount).toBe(2)
+    // Upstream emits no member-count field; the count is derived from `proxies`.
+    expect(result.providers['机场 A'].proxies).toHaveLength(2)
   })
 
   it('tolerates forward-compatible provider fields', () => {
     const result = parseMihomoProxyProvider({ name: 'A', type: 'Proxy', proxiesCount: 2, custom: 1 })
+    // An unknown/legacy count survives passthrough without being part of the contract.
     expect(result.custom).toBe(1)
+    expect((result as Record<string, unknown>).proxiesCount).toBe(2)
   })
 
   it('parses subscription metadata and probe settings', () => {

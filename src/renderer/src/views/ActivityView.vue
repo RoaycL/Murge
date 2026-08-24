@@ -57,7 +57,13 @@ const connStateLabel = computed(() => {
   return ''
 })
 
-// Placeholder fallbacks keep the layout stable while the store is empty.
+// STATIC PLACEHOLDER — see docs/UI_DEBT.md UI-DEBT-004.
+// The hourly-traffic series is NOT live data. `/traffic` only reports the
+// instantaneous rate plus cumulative totals, so a truthful hourly chart needs
+// durable sampled deltas the app does not persist yet. This literal exists only
+// to hold the 934×672 geometry; do not present it as real traffic history and do
+// not reuse it as a shared contract. The latency card and the DHCP figure in the
+// template are hardcoded for the same reason.
 const bars = [18, 29, 52, 63, 48, 36, 20, 25, 31, 82, 15, 13, 12, 9, 10, 6, 5, 8, 7, 6, 7, 8, 7]
 </script>
 

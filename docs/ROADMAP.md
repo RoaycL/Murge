@@ -91,16 +91,24 @@ Environment: current Mac, safe. In-process mock server only.
 
 Entry gate: Phases 1–2 complete.
 
-Status: complete.
+Status: complete, with two scoped carve-outs recorded in `docs/UI_DEBT.md`
+(UI-DEBT-004). The P0 streams are fully integrated; the Activity latency card and
+hourly-traffic bars remain static placeholders because their data sources (a
+routing/DNS latency probe and durable sampled traffic history) are not part of
+Phase 3's stream scope.
 
 - [x] Implement REST timeout, cancellation and typed HTTP errors.
 - [x] Implement one shared WebSocket transport per stream.
 - [x] Implement reconnect backoff, jitter and listener cleanup.
 - [x] Provide mock `/version`, `/configs`, `/traffic`, `/connections` and `/logs` endpoints.
 - [x] Add `kernelStore`, `runtimeStore`, `trafficStore` and `connectionsStore`.
-- [x] Replace Activity fixture values with mock IPC data.
+- [x] Replace Activity fixture values with mock IPC data. *(Speed cards, active
+      connections, process/domain ranking and the 总计 breakdown are live. The
+      latency card, hourly bars and the DHCP figure stay hardcoded — UI-DEBT-004.)*
 - [x] Add bounded traffic history and connection aggregation.
 - [x] Add loading, disconnected, empty and malformed-data states without changing geometry.
+      *(Traffic and connections surface loading/disconnected/error; the two
+      placeholder cards above have no live state to reflect yet — UI-DEBT-004.)*
 - [x] Compare a 934×672 screenshot with the normative HTML reference.
 
 Exit criteria:

@@ -14,23 +14,24 @@ const PROXY_PROVIDERS: MihomoProxyProvidersResponse = {
         { name: '香港 01', type: 'Shadowsocks', udp: true, alive: true, history: [{ time: '2024-06-01T00:00:00Z', delay: 42 }] },
         { name: '香港 02', type: 'Shadowsocks', udp: true, alive: false, history: [] }
       ],
-      proxiesCount: 2
+      testUrl: 'https://www.gstatic.com/generate_204',
+      expectedStatus: '204',
+      subscriptionInfo: { Upload: 12_345_678, Download: 987_654_321, Total: 107_374_182_400, Expire: 1_767_225_600 }
     },
     '机场 B': {
       name: '机场 B',
       type: 'Proxy',
-      vehicleType: 'HTTP',
+      vehicleType: 'File',
       proxies: [
         { name: '香港 03', type: 'Shadowsocks', udp: true, alive: true, history: [{ time: '2024-06-01T00:00:00Z', delay: 6 }] }
-      ],
-      proxiesCount: 1
+      ]
     }
   }
 }
 
 const RULE_PROVIDERS: MihomoRuleProvidersResponse = {
   providers: {
-    '规则集 A': { name: '规则集 A', type: 'Rule', behavior: 'rule', ruleCount: 8 }
+    '规则集 A': { name: '规则集 A', type: 'Rule', behavior: 'rule', format: 'yaml', vehicleType: 'HTTP', ruleCount: 8 }
   }
 }
 
@@ -68,6 +69,42 @@ describe('providers store', () => {
     await store.loadRuleProviders()
     expect(store.orderedProxyProviders.map((p) => p.name)).toEqual(['机场 A', '机场 B'])
     expect(store.orderedRuleProviders.map((p) => p.name)).toEqual(['规则集 A'])
+  })
+
+  it('derives the node count from proxies.length, since upstream emits no count field', async () => {
+    getProxyProviders.mockResolvedValue(PROXY_PROVIDERS)
+    const store = useProvidersStore()
+    await store.loadProxyProviders()
+    const [a, b] = store.orderedProxyProviders
+    // This is exactly what PolicyView renders (`provider.proxies?.length ?? 0`).
+    expect(a.proxies?.length ?? 0).toBe(2)
+    expect(b.proxies?.length ?? 0).toBe(1)
+  })
+
+  it('preserves subscription traffic/expiry metadata and omits it when absent', async () => {
+    getProxyProviders.mockResolvedValue(PROXY_PROVIDERS)
+    const store = useProvidersStore()
+    await store.loadProxyProviders()
+    const subscribed = store.proxyProviders['机场 A']
+    expect(subscribed.subscriptionInfo).toEqual({
+      Upload: 12_345_678,
+      Download: 987_654_321,
+      Total: 107_374_182_400,
+      Expire: 1_767_225_600
+    })
+    expect(subscribed.testUrl).toBe('https://www.gstatic.com/generate_204')
+    // A File vehicle has no subscription; the field must stay absent, not zeroed.
+    expect(store.proxyProviders['机场 B'].subscriptionInfo).toBeUndefined()
+  })
+
+  it('keeps rule-provider format and vehicleType from upstream', async () => {
+    getRuleProviders.mockResolvedValue(RULE_PROVIDERS)
+    const store = useProvidersStore()
+    await store.loadRuleProviders()
+    const provider = store.ruleProviders['规则集 A']
+    expect(provider.format).toBe('yaml')
+    expect(provider.vehicleType).toBe('HTTP')
+    expect(provider.ruleCount).toBe(8)
   })
 
   it('refreshes a proxy provider and reloads the list on success', async () => {

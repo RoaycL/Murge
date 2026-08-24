@@ -284,6 +284,21 @@ class MockServer {
     this.json(response, 204)
   }
 
+  /**
+   * Seed provider metadata using the SAME field set upstream mihomo emits, so
+   * the renderer is exercised against a realistic shape:
+   *
+   * - a proxy provider marshals `proxies` as an array of proxy OBJECTS plus
+   *   `testUrl`, `expectedStatus`, `updatedAt` and — for a subscription-backed
+   *   vehicle — `subscriptionInfo` with capitalised Upload/Download/Total/Expire
+   *   integer fields. Upstream emits NO `proxiesCount`, so neither do we: the
+   *   node count must be derived from `proxies.length`.
+   * - a rule provider marshals `behavior`, `format`, `ruleCount`, `vehicleType`
+   *   and `updatedAt`.
+   *
+   * `机场 B` deliberately omits `subscriptionInfo` (a File vehicle has no
+   * subscription) so the absent-field path is covered as well.
+   */
   private seedProviders(): void {
     const now = '2024-06-01T00:00:00Z'
     this.proxyProviders['机场 A'] = {
@@ -295,7 +310,27 @@ class MockServer {
         { name: '香港 01', type: 'Shadowsocks', udp: true, alive: true, history: [{ time: now, delay: 42 }] },
         { name: '香港 02', type: 'Shadowsocks', udp: true, alive: false, history: [] }
       ],
-      proxiesCount: 2,
+      testUrl: 'https://www.gstatic.com/generate_204',
+      expectedStatus: '204',
+      // Upstream reports these as int64 byte counts, and Expire as a Unix
+      // timestamp in SECONDS (not an RFC3339 string).
+      subscriptionInfo: {
+        Upload: 12_345_678,
+        Download: 987_654_321,
+        Total: 107_374_182_400,
+        Expire: 1_767_225_600
+      },
+      now,
+      updatedAt: now
+    }
+    this.proxyProviders['机场 B'] = {
+      name: '机场 B',
+      type: 'Proxy',
+      vehicleType: 'File',
+      behavior: 'rule',
+      proxies: [{ name: '香港 03', type: 'Shadowsocks', udp: true, alive: true, history: [{ time: now, delay: 6 }] }],
+      testUrl: 'https://www.gstatic.com/generate_204',
+      expectedStatus: '204',
       now,
       updatedAt: now
     }
@@ -303,6 +338,8 @@ class MockServer {
       name: '规则集 A',
       type: 'Rule',
       behavior: 'rule',
+      format: 'yaml',
+      vehicleType: 'HTTP',
       ruleCount: 8,
       now,
       updatedAt: now

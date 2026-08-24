@@ -130,7 +130,9 @@ describe('buildIpcHandlers', () => {
     })
 
     it('exposes proxy and rule providers through the gateway', async () => {
-      container.mihomo.proxyProviders = { providers: { A: { name: 'A', type: 'Proxy', proxiesCount: 2 } as never } }
+      container.mihomo.proxyProviders = {
+        providers: { A: { name: 'A', type: 'Proxy', proxies: [{ name: 'n1', type: 'Shadowsocks' }] } as never }
+      }
       const result = await handlers[IPC.mihomoGetProxyProviders](null)
       expect(result).toEqual(container.mihomo.proxyProviders)
     })

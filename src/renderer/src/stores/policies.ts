@@ -37,6 +37,12 @@ export const usePoliciesStore = defineStore('policies', () => {
   const groupDelayStatus = ref<'idle' | 'testing' | 'ok' | 'error'>('idle')
   const panelError = ref<string | null>(null)
 
+  // Monotonic request tokens: only the LATEST mode/selection request may mutate
+  // or roll back state. A stale request that resolves (or fails) after a newer
+  // one must not clobber the user's most recent intent.
+  let modeRequestId = 0
+  let selectionRequestId = 0
+
   const groups = computed<MihomoProxy[]>(() => {
     if (!proxies.value) return []
     return Object.values(proxies.value.proxies).filter((proxy) => POLICY_GROUP_TYPES.includes(proxy.type as PolicyGroupType))
@@ -98,27 +104,33 @@ export const usePoliciesStore = defineStore('policies', () => {
 
   async function setMode(next: PolicyMode): Promise<void> {
     if (next === mode.value) return
+    const seq = ++modeRequestId
     const previous = mode.value
     mode.value = next
     panelError.value = null
     try {
       await window.desktop.mihomo.patchConfig({ mode: next })
     } catch (error) {
-      mode.value = previous
-      panelError.value = toProtocolError(error).message
+      if (seq === modeRequestId) {
+        mode.value = previous
+        panelError.value = toProtocolError(error).message
+      }
     }
   }
 
   async function selectNode(member: string): Promise<void> {
     if (!selectedGroup.value || member === selectedMember.value) return
+    const seq = ++selectionRequestId
     const previous = selectedMember.value
     selectedMember.value = member
     panelError.value = null
     try {
       await window.desktop.mihomo.selectProxy(selectedGroup.value, member)
     } catch (error) {
-      selectedMember.value = previous
-      panelError.value = toProtocolError(error).message
+      if (seq === selectionRequestId) {
+        selectedMember.value = previous
+        panelError.value = toProtocolError(error).message
+      }
       throw error
     }
   }

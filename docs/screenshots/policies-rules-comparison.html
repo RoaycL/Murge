@@ -60,8 +60,10 @@
     <h3>Automated DOM assertions — all passed</h3>
     <ul class="checks">
       <li class='ok'><b>PASS</b> — Policy page renders title 策略, 3 mode choices, 3 proxy cards + 1 provider 机场 A, no error state</li>
-      <li class='ok'><b>PASS</b> — Rules page renders 8 rules, header "共 8 条规则 · 命中 4021 次", 1 provider 规则集 A, no error state</li>
+      <li class='ok'><b>PASS</b> — Rules page renders 8 rules, header "共 8 条规则 · 命中 75993470 次", 1 provider 规则集 A, no error state</li>
       <li class='ok'><b>PASS</b> — Active mode is 规则判定; proxy cards show latency (42 ms / 超时 / 6 ms) and unavailable state (香港 02)</li>
+      <li class='ok'><b>PASS</b> — 使用计数 column shows real hit counts from <code>extra.hitCount</code>, independent of <code>size</code> (rule-set/GEOIP/MATCH rows report <code>size: -1</code> yet render large counts like 272660 / 70242469 / 4884189)</li>
+      <li class='ok'><b>PASS</b> — Provider health-check no longer returns a client-side delay map: the rendered list shows the provider row with 2 proxies, and health-check resolves without an error state</li>
       <li class='ok'><b>PASS</b> — No page horizontal overflow (policies &amp; rules stay inside the 934&times;672 viewport)</li>
     </ul>
   </div>
@@ -79,6 +81,24 @@
       <tr><td>rule row count</td><td class="n">8</td><td class="n">8</td><td class="n">8</td><td class='ok'>match</td></tr>
     </table>
     <p class="note">The reference renders through <code>fitWindow()</code> which applies <code>transform: scale(stageWidth/934)</code> (~0.967 here), so its raw px (146/12.6/90.9) are uniformly scaled. The impl matches the <b>declared</b> authoritative CSS exactly: track 151px, gap 13px, card 151&times;94, table columns 34/35/102/(flex)/118/75. The reference table width/row-height figures differ only by the 1px border rounding.</p>
+  </div>
+
+  <div class="panel">
+    <h3>DOM probe — raw geometry (934&times;672 viewport, no overflow)</h3>
+    <table>
+      <tr><th>Route</th><th>Facts</th><th>Geometry</th></tr>
+      <tr>
+        <td><code>#/policies</code></td>
+        <td>title 策略; modes <b>规则判定</b>/全局代理/直接连接; 3 proxy cards (<b>香港 01 42 ms</b>, <b>香港 02 超时 (unavailable)</b>, <b>DIRECT 6 ms</b>); 1 provider 机场 A; error state = false</td>
+        <td>grid x=215 y=209 w=695 h=94; 3 cards 151&times;94, gap dx=13; no page horizontal overflow</td>
+      </tr>
+      <tr>
+        <td><code>#/rules</code></td>
+        <td>title 规则; header 共 8 条规则 · 命中 75993470 次; 8 rows; columns "", ID↑, 类型, 值, 策略, 使用计数; 1 provider 规则集 A; error state = false</td>
+        <td>table x=216 y=151 w=673 (frame 675) h=243; cols 34/35/102/flex(309)/118/75 = 673; rows 27px; no page horizontal overflow</td>
+      </tr>
+    </table>
+    <p class="note">Hits derivation: the <b>使用计数</b> column is sourced from <code>extra.hitCount</code> (per-rule usage count), never from <code>size</code>. Rule-set/GEOIP/MATCH rows report <code>size: -1</code> yet still render their large hit counts (272660 / 70242469 / 4884189), which is exactly the P1 fix that previously showed the small <code>size</code> value instead.</p>
   </div>
 </div>
 </body>

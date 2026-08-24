@@ -97,7 +97,7 @@ export class MihomoService implements MihomoGateway {
     return this.client.refreshProxyProvider(name)
   }
 
-  healthCheckProxyProvider(name: string): Promise<MihomoDelayMap> {
+  healthCheckProxyProvider(name: string): Promise<void> {
     return this.client.healthCheckProxyProvider(name)
   }
 
@@ -109,11 +109,11 @@ export class MihomoService implements MihomoGateway {
     return this.client.refreshRuleProvider(name)
   }
 
-  delayTest(name: string, opts?: { timeout?: number; url?: string }): Promise<MihomoDelayResult> {
+  delayTest(name: string, opts?: { timeout?: number }): Promise<MihomoDelayResult> {
     return this.client.delayTest(name, opts)
   }
 
-  groupDelayTest(name: string, opts?: { timeout?: number; url?: string }): Promise<MihomoDelayMap> {
+  groupDelayTest(name: string, opts?: { timeout?: number }): Promise<MihomoDelayMap> {
     return this.client.groupDelayTest(name, opts)
   }
 

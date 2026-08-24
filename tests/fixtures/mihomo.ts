@@ -120,8 +120,8 @@ export const trafficMissingTotals = {
 
 export const validRules = {
   rules: [
-    { index: 0, type: 'DOMAIN-SUFFIX', payload: 'example.com', proxy: 'DIRECT', size: 831 },
-    { index: 1, type: 'MATCH', payload: '', proxy: 'Proxy', size: 4884189 }
+    { index: 0, type: 'DOMAIN-SUFFIX', payload: 'example.com', proxy: 'DIRECT', size: 831, extra: { hitCount: 12 } },
+    { index: 1, type: 'MATCH', payload: '', proxy: 'Proxy', size: -1, extra: { hitCount: 4884189 } }
   ]
 }
 

@@ -2,6 +2,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type {
   MihomoDelayMap,
+  MihomoProxy,
   MihomoProxyProvider,
   MihomoRuleProvider
 } from '@shared/mihomo-api'
@@ -18,6 +19,14 @@ export interface ProviderOp {
 
 function emptyOp(): ProviderOp {
   return { refreshing: false, healthchecking: false, error: null }
+}
+
+/** Latest measured delay for a proxy, or `null` when it has no history yet. */
+function latestDelay(proxy: MihomoProxy): number | null {
+  const history = proxy.history
+  if (!history || history.length === 0) return null
+  const last = history[history.length - 1]
+  return typeof last?.delay === 'number' ? last.delay : null
 }
 
 export const useProvidersStore = defineStore('providers', () => {
@@ -101,7 +110,20 @@ export const useProvidersStore = defineStore('providers', () => {
   async function healthCheckProxyProvider(name: string): Promise<void> {
     setOp(name, { healthchecking: true, error: null })
     try {
-      const map = await window.desktop.mihomo.healthCheckProxyProvider(name)
+      // A provider health check is a fire-and-forget action: mihomo re-probes the
+      // members of the provider and records fresh history entries on each proxy.
+      // We therefore await a 204, then re-pull the provider and derive each node's
+      // latest delay from its history, rather than trusting a returned map.
+      await window.desktop.mihomo.healthCheckProxyProvider(name)
+      await loadProxyProviders()
+      const map: MihomoDelayMap = {}
+      const provider = proxyProviders.value[name]
+      if (provider?.proxies) {
+        for (const proxy of provider.proxies) {
+          const delay = latestDelay(proxy)
+          if (delay !== null) map[proxy.name] = delay
+        }
+      }
       healthResults.value = { ...healthResults.value, [name]: map }
       setOp(name, { healthchecking: false })
     } catch (error) {

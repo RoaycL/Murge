@@ -254,8 +254,18 @@ class MockServer {
   }
 
   private healthCheckProvider(response: ServerResponse, name: string): void {
-    if (!this.proxyProviders[name]) return this.json(response, 404, { message: 'provider not found' })
-    this.json(response, 200, { ...this.nodeDelay })
+    const provider = this.proxyProviders[name]
+    if (!provider) return this.json(response, 404, { message: 'provider not found' })
+    // A provider health check is fire-and-forget: it re-probes members and
+    // records fresh history on each proxy (204, no body). The client therefore
+    // resolves `undefined` and the renderer re-pulls the provider to read the
+    // latest per-node delay from its history.
+    const timestamp = new Date().toISOString()
+    for (const proxy of provider.proxies ?? []) {
+      const delay = proxy.name === '香港 02' ? 0 : (this.nodeDelay[proxy.name] ?? 0)
+      proxy.history = [...(proxy.history ?? []), { time: timestamp, delay }]
+    }
+    this.json(response, 204)
   }
 
   private refreshProxyProvider(response: ServerResponse, name: string): void {
@@ -281,7 +291,10 @@ class MockServer {
       type: 'Proxy',
       vehicleType: 'HTTP',
       behavior: 'rule',
-      proxies: ['香港 01', '香港 02'],
+      proxies: [
+        { name: '香港 01', type: 'Shadowsocks', udp: true, alive: true, history: [{ time: now, delay: 42 }] },
+        { name: '香港 02', type: 'Shadowsocks', udp: true, alive: false, history: [] }
+      ],
       proxiesCount: 2,
       now,
       updatedAt: now
@@ -323,14 +336,21 @@ class MockServer {
       ['DOMAIN-SUFFIX', 'microsoft.com', 'DIRECT'],
       ['MATCH', '', '节点选择']
     ]
+    // Rule-set-scoped rules (GEOIP/GEOSITE/RULE-SET/MATCH) expand at runtime and
+    // report `size: -1`; `extra.hitCount` is the real, independent usage count.
+    const RULE_SET_TYPES = new Set(['GEOIP', 'GEOSITE', 'RULE-SET', 'MATCH'])
     return {
-      rules: rows.map(([type, payload, proxy], index) => ({
-        index,
-        type,
-        payload,
-        proxy,
-        size: (index * 13 + 7) % 37 + 1
-      }))
+      rules: rows.map(([type, payload, proxy], index) => {
+        const size = RULE_SET_TYPES.has(type) ? -1 : ((index * 13 + 7) % 37) + 1
+        return {
+          index,
+          type,
+          payload,
+          proxy,
+          size,
+          extra: { hitCount: (index * 7 + 3) % 1000 }
+        }
+      })
     }
   }
 

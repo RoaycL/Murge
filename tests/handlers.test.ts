@@ -90,8 +90,12 @@ describe('buildIpcHandlers', () => {
     })
 
     it('passes options through without failing validation', async () => {
-      const result = await handlers[IPC.mihomoDelayTest](null, 'node', { timeout: 2000, url: 'https://example.com' })
+      const result = await handlers[IPC.mihomoDelayTest](null, 'node', { timeout: 2000 })
       expect(result).toEqual({ delay: 0 })
+    })
+
+    it('rejects an options object carrying a probe URL', async () => {
+      await expect(handlers[IPC.mihomoDelayTest](null, 'node', { timeout: 2000, url: 'https://example.com' })).rejects.toThrow(ProtocolError)
     })
 
     it('rejects an invalid delay options BEFORE reaching the gateway', async () => {
@@ -109,10 +113,10 @@ describe('buildIpcHandlers', () => {
       expect(container.mihomo.refreshProxyProviderCalls).toEqual(['机场 A'])
     })
 
-    it('health-checks a proxy provider by name', async () => {
-      container.mihomo.healthCheckResults['机场 A'] = { '香港 01': 42 }
+    it('health-checks a proxy provider by name (fire-and-forget 204)', async () => {
       const result = await handlers[IPC.mihomoHealthCheckProxyProvider](null, '机场 A')
-      expect(result).toEqual({ '香港 01': 42 })
+      expect(result).toBeUndefined()
+      expect(container.mihomo.healthCheckProxyProviderCalls).toEqual(['机场 A'])
     })
 
     it('rejects an empty provider name BEFORE reaching the gateway', async () => {

@@ -135,6 +135,72 @@ describe('policies store', () => {
     expect(store.mode).toBe('global')
   })
 
+  it('keeps the latest selection when an earlier request resolves out of order', async () => {
+    getProxies.mockResolvedValue(PROXIES)
+    const store = usePoliciesStore()
+    await store.load()
+    const resolvers: Array<{ resolve: (v: void) => void }> = []
+    selectProxy.mockImplementation((_g, _m) => new Promise<void>((resolve) => resolvers.push({ resolve })))
+    const first = store.selectNode('香港 02')
+    const second = store.selectNode('DIRECT')
+    // The second (latest) request settles first, then the stale first one.
+    resolvers[1].resolve()
+    await second
+    expect(store.selectedMember).toBe('DIRECT')
+    resolvers[0].resolve()
+    await first
+    // The stale request must not clobber the user's latest choice.
+    expect(store.selectedMember).toBe('DIRECT')
+    expect(store.panelError).toBeNull()
+  })
+
+  it('a stale selection failure neither rolls back the latest selection nor sets panelError', async () => {
+    getProxies.mockResolvedValue(PROXIES)
+    const store = usePoliciesStore()
+    await store.load()
+    const resolvers: Array<{ resolve: (v: void) => void; reject: (e: unknown) => void }> = []
+    selectProxy.mockImplementationOnce((_g, _m) => new Promise<void>((resolve, reject) => resolvers.push({ resolve, reject })))
+    selectProxy.mockImplementationOnce((_g, _m) => Promise.resolve())
+    const first = store.selectNode('香港 02')
+    const second = store.selectNode('DIRECT')
+    await second
+    expect(store.selectedMember).toBe('DIRECT')
+    // The stale first request now fails: it still rethrows, but must not
+    // roll back or surface an error, because a newer intent already won.
+    resolvers[0].reject(error(ProtocolErrorCode.UPSTREAM_HTTP_ERROR))
+    await expect(first).rejects.toThrow(ProtocolError)
+    expect(store.selectedMember).toBe('DIRECT')
+    expect(store.panelError).toBeNull()
+  })
+
+  it('commits only the last of several rapid selections', async () => {
+    getProxies.mockResolvedValue(PROXIES)
+    const store = usePoliciesStore()
+    await store.load()
+    selectProxy.mockResolvedValue(undefined)
+    await Promise.all([store.selectNode('香港 02'), store.selectNode('DIRECT'), store.selectNode('香港 01')])
+    expect(store.selectedMember).toBe('香港 01')
+  })
+
+  it('a stale mode failure neither rolls back the mode nor sets panelError', async () => {
+    getProxies.mockResolvedValue(PROXIES)
+    const store = usePoliciesStore()
+    await store.load()
+    const resolvers: Array<{ resolve: (v: void) => void; reject: (e: unknown) => void }> = []
+    patchConfig.mockImplementationOnce((_cfg) => new Promise<void>((resolve, reject) => resolvers.push({ resolve, reject })))
+    patchConfig.mockResolvedValueOnce(undefined)
+    const first = store.setMode('global')
+    const second = store.setMode('direct')
+    await second
+    expect(store.mode).toBe('direct')
+    // The stale global-mode request now fails; setMode never rejects and must
+    // not roll the mode back.
+    resolvers[0].reject(error(ProtocolErrorCode.UPSTREAM_HTTP_ERROR))
+    await first
+    expect(store.mode).toBe('direct')
+    expect(store.panelError).toBeNull()
+  })
+
   it('marks the store as error when loading proxies fails', async () => {
     getProxies.mockRejectedValue(error(ProtocolErrorCode.UPSTREAM_UNREACHABLE))
     const store = usePoliciesStore()

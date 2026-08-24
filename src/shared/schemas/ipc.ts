@@ -57,8 +57,10 @@ const connectionIdSchema = z.object({
 
 const delayOptionsSchema = z
   .object({
-    timeout: z.number().int().positive().optional(),
-    url: nonEmptyString.optional()
+    // The probe URL is owned by the trusted main process (the renderer must not
+    // make the controller fetch an arbitrary URL), so `url` is intentionally
+    // absent and `.strict()` rejects it if a renderer ever sends one.
+    timeout: z.number().int().min(1000).max(30000).optional()
   })
   .strict()
 
@@ -99,7 +101,7 @@ export function parseMihomoName(name: unknown): string {
 }
 
 /** Validate a delay-test options object from the renderer. */
-export function parseDelayOptions(input: unknown): { timeout?: number; url?: string } {
+export function parseDelayOptions(input: unknown): { timeout?: number } {
   if (input === undefined) return {}
   if (!(typeof input === 'object' && input !== null && !Array.isArray(input))) {
     throw invalid('delay options must be an object')

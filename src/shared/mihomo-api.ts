@@ -55,8 +55,8 @@ export interface MihomoProxyProvider {
   vehicleType?: string
   /** Grouping behavior: `rule`, `global`, `direct`. */
   behavior?: string
-  /** Member proxy names resolved from this provider. */
-  proxies?: string[]
+  /** Member proxies resolved from this provider. */
+  proxies?: MihomoProxy[]
   proxiesCount?: number
   /** Provider health/version stamp; may be an empty object when not loaded. */
   now?: string | Record<string, unknown> | null

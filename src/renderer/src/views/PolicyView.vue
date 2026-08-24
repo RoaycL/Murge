@@ -42,7 +42,13 @@ function isUnavailable(name: string): boolean {
 }
 
 async function onCardClick(name: string): Promise<void> {
-  await policies.selectNode(name)
+  // A rejected selection is surfaced via `panelError` by the store; swallow it
+  // here so a click never becomes an unhandled promise rejection in the view.
+  try {
+    await policies.selectNode(name)
+  } catch {
+    /* no-op: the store keeps the error message in `panelError` */
+  }
   void policies.testNode(name)
 }
 

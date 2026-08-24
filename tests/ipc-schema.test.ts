@@ -98,11 +98,20 @@ describe('parseDelayOptions', () => {
     expect(parseDelayOptions(undefined)).toEqual({})
   })
 
-  it('accepts a valid options object', () => {
-    expect(parseDelayOptions({ timeout: 2000, url: 'https://example.com' })).toEqual({ timeout: 2000, url: 'https://example.com' })
+  it('accepts a valid timeout', () => {
+    expect(parseDelayOptions({ timeout: 2000 })).toEqual({ timeout: 2000 })
   })
 
-  it('rejects a non-positive timeout', () => {
+  it('rejects a probe URL: the renderer must not control which URL mihomo fetches', () => {
+    expect(() => parseDelayOptions({ timeout: 2000, url: 'https://example.com' })).toThrowError(ProtocolError)
+  })
+
+  it('rejects a timeout outside the 1000-30000ms REST window', () => {
+    expect(() => parseDelayOptions({ timeout: 999 })).toThrowError(ProtocolError)
+    expect(() => parseDelayOptions({ timeout: 30001 })).toThrowError(ProtocolError)
+  })
+
+  it('rejects a non-positive or non-integer timeout', () => {
     expect(() => parseDelayOptions({ timeout: 0 })).toThrowError(ProtocolError)
     expect(() => parseDelayOptions({ timeout: -1 })).toThrowError(ProtocolError)
     expect(() => parseDelayOptions({ timeout: 1.5 })).toThrowError(ProtocolError)

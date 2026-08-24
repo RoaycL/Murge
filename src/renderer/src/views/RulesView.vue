@@ -12,8 +12,14 @@ const COLUMNS: Array<{ key: RulesSortKey | null; label: string; className?: stri
   { key: 'type', label: '类型' },
   { key: 'payload', label: '值' },
   { key: 'proxy', label: '策略' },
-  { key: 'size', label: '使用计数' }
+  { key: 'hits', label: '使用计数' }
 ]
+
+/** Format a rule's real hit count; mihomo reports rule-set sizes separately. */
+function formatHits(row: { extra?: { hitCount?: number } }): string {
+  const hits = row.extra?.hitCount
+  return typeof hits === 'number' ? String(hits) : '—'
+}
 
 function arrowFor(key: RulesSortKey): string {
   if (rules.sortKey !== key) return ''
@@ -48,7 +54,7 @@ onMounted(() => {
     </header>
 
     <div v-if="rules.status === 'ready'" class="rules-counters">
-      共 {{ rules.summary.total }} 条规则 · 命中 {{ rules.summary.totalHits }} 次
+      共 {{ rules.summary.total }} 条规则<span v-if="rules.summary.totalHits !== null"> · 命中 {{ rules.summary.totalHits }} 次</span>
     </div>
 
     <div v-if="rules.status === 'error'" class="empty-state">
@@ -78,7 +84,7 @@ onMounted(() => {
             <td>{{ row.type }}</td>
             <td>{{ row.payload }}</td>
             <td>{{ row.proxy }}</td>
-            <td>{{ row.size }}</td>
+            <td>{{ formatHits(row) }}</td>
           </tr>
         </tbody>
       </table>

@@ -48,6 +48,7 @@ function hangingBody(signal: AbortSignal | undefined): Promise<string | never> {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 describe('MihomoClient', () => {
@@ -156,6 +157,26 @@ describe('MihomoClient', () => {
     expect((error as ProtocolError).code).toBe(ProtocolErrorCode.UPSTREAM_TIMEOUT)
   })
 
+  it('uses a 10000ms default REST timeout when none is configured', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', vi.fn((_url, init) => hangingResponse(init?.signal)))
+    const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
+    const pending = client.getVersion().catch((e) => e)
+    await vi.advanceTimersByTimeAsync(10000)
+    const error = await pending
+    expect(error).toBeInstanceOf(ProtocolError)
+    expect((error as ProtocolError).code).toBe(ProtocolErrorCode.UPSTREAM_TIMEOUT)
+  })
+
+  it('rejects a non-http(s) probe URL before reaching the controller', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
+    // delayTest validates the probe URL synchronously, before any fetch.
+    expect(() => client.delayTest('香港 01', { url: 'file:///etc/passwd' })).toThrowError(ProtocolError)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('removes the external abort listener after a successful request', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({ meta: true, version: '1.18.9' })))
     const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
@@ -236,13 +257,20 @@ describe('MihomoClient', () => {
       expect(fetchMock.mock.calls[0][1].method).toBe('PUT')
     })
 
-    it('health-checks a proxy provider and parses the member map', async () => {
-      const fetchMock = vi.fn().mockResolvedValue(fakeResponse({ '香港 01': 42 }))
+    it('health-checks a proxy provider as a fire-and-forget 204', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(fakeResponse('', 204))
       vi.stubGlobal('fetch', fetchMock)
       const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
-      const map = await client.healthCheckProxyProvider('机场 A')
-      expect(map['香港 01']).toBe(42)
+      await expect(client.healthCheckProxyProvider('机场 A')).resolves.toBeUndefined()
       expect(String(fetchMock.mock.calls[0][0])).toContain('/providers/proxies/%E6%9C%BA%E5%9C%BA%20A/healthcheck')
+    })
+
+    it('resolves undefined for any 2xx when empty204 is set (no JSON parse)', async () => {
+      // A 200 with an empty/non-JSON body must not be parsed when the action has
+      // no payload (provider refresh, select, patch, healthcheck).
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse('', 200)))
+      const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
+      await expect(client.refreshProxyProvider('机场 A')).resolves.toBeUndefined()
     })
   })
 })

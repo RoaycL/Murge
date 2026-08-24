@@ -79,7 +79,6 @@ export class FakeMihomoGateway implements MihomoGateway {
   /** Configurable results for the delay APIs. */
   delayResults: Record<string, MihomoDelayResult> = {}
   groupDelayResults: Record<string, MihomoDelayMap> = {}
-  healthCheckResults: Record<string, MihomoDelayMap> = {}
   /** If set, these methods reject with this error. */
   delayError: Error | null = null
 
@@ -118,10 +117,10 @@ export class FakeMihomoGateway implements MihomoGateway {
     return Promise.resolve()
   }
 
-  healthCheckProxyProvider(name: string): Promise<MihomoDelayMap> {
+  healthCheckProxyProvider(name: string): Promise<void> {
     this.healthCheckProxyProviderCalls.push(name)
     if (this.delayError) return Promise.reject(this.delayError)
-    return Promise.resolve(this.healthCheckResults[name] ?? {})
+    return Promise.resolve()
   }
 
   getRuleProviders(): Promise<MihomoRuleProvidersResponse> {

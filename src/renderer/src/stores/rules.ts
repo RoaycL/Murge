@@ -4,12 +4,20 @@ import type { MihomoRule } from '@shared/mihomo-api'
 import { toProtocolError } from '@shared/protocol-errors'
 
 export type RulesStatus = 'idle' | 'loading' | 'ready' | 'error'
-export type RulesSortKey = 'index' | 'type' | 'payload' | 'proxy' | 'size'
+export type RulesSortKey = 'index' | 'type' | 'payload' | 'proxy' | 'hits'
 export type SortDirection = 'asc' | 'desc'
 
 export interface RulesSummary {
   total: number
-  totalHits: number
+  /** Sum of `extra.hitCount`; `null` when no rule reports hit counts. */
+  totalHits: number | null
+  /** Sum of reported sizes; `-1` (rule-set) entries contribute 0. */
+  totalSize: number
+}
+
+/** Sort key for `extra.hitCount`, with a missing count treated as `-1`. */
+function hitCountOf(rule: MihomoRule): number {
+  return rule.extra?.hitCount ?? -1
 }
 
 export const useRulesStore = defineStore('rules', () => {
@@ -36,11 +44,7 @@ export const useRulesStore = defineStore('rules', () => {
     return [...result].sort((a, b) => {
       const key = sortKey.value
       if (key === 'index') return (a.index - b.index) * dir
-      if (key === 'size') {
-        const left = typeof a.size === 'number' ? a.size : 0
-        const right = typeof b.size === 'number' ? b.size : 0
-        return (left - right) * dir
-      }
+      if (key === 'hits') return (hitCountOf(a) - hitCountOf(b)) * dir
       const left = String(a[key] ?? '')
       const right = String(b[key] ?? '')
       if (left < right) return -1 * dir
@@ -51,8 +55,18 @@ export const useRulesStore = defineStore('rules', () => {
 
   const summary = computed<RulesSummary>(() => {
     const total = rows.value.length
-    const totalHits = rows.value.reduce((sum, rule) => sum + (typeof rule.size === 'number' ? rule.size : 0), 0)
-    return { total, totalHits }
+    let hasHits = false
+    let totalHits = 0
+    let totalSize = 0
+    for (const rule of rows.value) {
+      const hits = rule.extra?.hitCount
+      if (typeof hits === 'number') {
+        hasHits = true
+        totalHits += hits
+      }
+      if (typeof rule.size === 'number' && rule.size >= 0) totalSize += rule.size
+    }
+    return { total, totalHits: hasHits ? totalHits : null, totalSize }
   })
 
   async function load(): Promise<void> {

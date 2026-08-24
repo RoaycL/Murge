@@ -35,11 +35,21 @@ export interface MihomoRequestOptions {
   signal?: AbortSignal
   /** Request-specific timeout override (ms). */
   timeoutMs?: number
+  /**
+   * Treat ANY 2xx status as an empty body and resolve `undefined` without
+   * parsing JSON. Used for actions whose response carries no payload
+   * (healthchecks, provider refreshes, select, patch).
+   */
+  empty204?: boolean
 }
 
 /** Options for a node or group delay test. */
 export interface DelayTestOptions {
-  /** Probe URL. Defaults to a benign connectivity check. */
+  /**
+   * Probe URL. The renderer never supplies this (the IPC schema rejects it);
+   * it is an internal-only override that defaults to a benign connectivity
+   * check and is validated by `assertSafeTestUrl`.
+   */
   url?: string
   /** Per-node timeout in ms. Defaults to 5000. */
   timeout?: number
@@ -48,14 +58,14 @@ export interface DelayTestOptions {
 }
 
 export class MihomoClient {
-  private readonly timeoutMs: number | undefined
+  private readonly timeoutMs: number
 
   constructor(
     private readonly baseUrl: string,
     private readonly secret: string,
     options: MihomoClientOptions = {}
   ) {
-    this.timeoutMs = options.timeoutMs
+    this.timeoutMs = options.timeoutMs ?? 10000
   }
 
   /**
@@ -168,7 +178,7 @@ export class MihomoClient {
         )
       }
 
-      if (response.status === 204) return undefined
+      if (response.status === 204 || options.empty204) return undefined
 
       let raw: unknown
       try {
@@ -199,7 +209,7 @@ export class MihomoClient {
   }
 
   patchConfig(patch: Partial<MihomoConfigSnapshot>): Promise<void> {
-    return this.request('/configs', { method: 'PATCH', body: JSON.stringify(patch) }).then(() => undefined)
+    return this.request('/configs', { method: 'PATCH', body: JSON.stringify(patch) }, { empty204: true }).then(() => undefined)
   }
 
   getProxies(signal?: AbortSignal): Promise<MihomoProxiesResponse> {
@@ -210,7 +220,7 @@ export class MihomoClient {
     return this.request(`/proxies/${encodeURIComponent(group)}`, {
       method: 'PUT',
       body: JSON.stringify({ name })
-    }).then(() => undefined)
+    }, { empty204: true }).then(() => undefined)
   }
 
   getRules(signal?: AbortSignal): Promise<MihomoRulesResponse> {
@@ -222,11 +232,15 @@ export class MihomoClient {
   }
 
   refreshProxyProvider(name: string): Promise<void> {
-    return this.request(`/providers/proxies/${encodeURIComponent(name)}`, { method: 'PUT' }).then(() => undefined)
+    return this.request(`/providers/proxies/${encodeURIComponent(name)}`, { method: 'PUT' }, { empty204: true }).then(() => undefined)
   }
 
-  healthCheckProxyProvider(name: string, signal?: AbortSignal): Promise<MihomoDelayMap> {
-    return this.request(`/providers/proxies/${encodeURIComponent(name)}/healthcheck`, {}, { signal }).then(parseMihomoDelayMap)
+  healthCheckProxyProvider(name: string, signal?: AbortSignal): Promise<void> {
+    return this.request(
+      `/providers/proxies/${encodeURIComponent(name)}/healthcheck`,
+      { method: 'GET' },
+      { signal, empty204: true }
+    ).then(() => undefined)
   }
 
   getRuleProviders(signal?: AbortSignal): Promise<MihomoRuleProvidersResponse> {
@@ -234,21 +248,48 @@ export class MihomoClient {
   }
 
   refreshRuleProvider(name: string): Promise<void> {
-    return this.request(`/providers/rules/${encodeURIComponent(name)}`, { method: 'PUT' }).then(() => undefined)
+    return this.request(`/providers/rules/${encodeURIComponent(name)}`, { method: 'PUT' }, { empty204: true }).then(() => undefined)
+  }
+
+  /** Reject any probe URL the controller must not be asked to fetch. */
+  private assertSafeTestUrl(url: string): void {
+    let parsed: URL
+    try {
+      parsed = new URL(url)
+    } catch {
+      throw new ProtocolError(ProtocolErrorCode.INVALID_ARGUMENT, `invalid proxy test URL: ${url}`, {
+        path: 'testUrl',
+        reason: 'invalid-url'
+      })
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new ProtocolError(ProtocolErrorCode.INVALID_ARGUMENT, 'proxy test URL must be http or https', {
+        path: 'testUrl',
+        reason: 'unsupported-scheme'
+      })
+    }
   }
 
   delayTest(name: string, opts: DelayTestOptions = {}): Promise<MihomoDelayResult> {
     const url = opts.url ?? DEFAULT_TEST_URL
     const timeout = opts.timeout ?? 5000
+    this.assertSafeTestUrl(url)
     const query = `?timeout=${encodeURIComponent(String(timeout))}&url=${encodeURIComponent(url)}`
-    return this.request(`/proxies/${encodeURIComponent(name)}/delay${query}`, {}, { signal: opts.signal }).then(parseMihomoDelayResult)
+    return this.request(`/proxies/${encodeURIComponent(name)}/delay${query}`, {}, {
+      signal: opts.signal,
+      timeoutMs: Math.max(this.timeoutMs, timeout + 3000)
+    }).then(parseMihomoDelayResult)
   }
 
   groupDelayTest(name: string, opts: DelayTestOptions = {}): Promise<MihomoDelayMap> {
     const url = opts.url ?? DEFAULT_TEST_URL
     const timeout = opts.timeout ?? 5000
+    this.assertSafeTestUrl(url)
     const query = `?timeout=${encodeURIComponent(String(timeout))}&url=${encodeURIComponent(url)}`
-    return this.request(`/group/${encodeURIComponent(name)}/delay${query}`, {}, { signal: opts.signal }).then(parseMihomoDelayMap)
+    return this.request(`/group/${encodeURIComponent(name)}/delay${query}`, {}, {
+      signal: opts.signal,
+      timeoutMs: Math.max(this.timeoutMs, timeout + 3000)
+    }).then(parseMihomoDelayMap)
   }
 
   getConnections(signal?: AbortSignal): Promise<MihomoConnectionsSnapshot> {

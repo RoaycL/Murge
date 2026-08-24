@@ -6,8 +6,25 @@ import type { MihomoProxyProvidersResponse, MihomoRuleProvidersResponse } from '
 
 const PROXY_PROVIDERS: MihomoProxyProvidersResponse = {
   providers: {
-    '机场 A': { name: '机场 A', type: 'Proxy', vehicleType: 'HTTP', proxiesCount: 2 },
-    '机场 B': { name: '机场 B', type: 'Proxy', vehicleType: 'HTTP', proxiesCount: 1 }
+    '机场 A': {
+      name: '机场 A',
+      type: 'Proxy',
+      vehicleType: 'HTTP',
+      proxies: [
+        { name: '香港 01', type: 'Shadowsocks', udp: true, alive: true, history: [{ time: '2024-06-01T00:00:00Z', delay: 42 }] },
+        { name: '香港 02', type: 'Shadowsocks', udp: true, alive: false, history: [] }
+      ],
+      proxiesCount: 2
+    },
+    '机场 B': {
+      name: '机场 B',
+      type: 'Proxy',
+      vehicleType: 'HTTP',
+      proxies: [
+        { name: '香港 03', type: 'Shadowsocks', udp: true, alive: true, history: [{ time: '2024-06-01T00:00:00Z', delay: 6 }] }
+      ],
+      proxiesCount: 1
+    }
   }
 }
 
@@ -74,12 +91,26 @@ describe('providers store', () => {
     expect(store.opOf('机场 A').refreshing).toBe(false)
   })
 
-  it('records a health-check result map', async () => {
-    healthCheckProxyProvider.mockResolvedValue({ '香港 01': 42, '香港 02': 6 })
+  it('awaits a 204 health check, re-pulls the provider and derives per-node delays from proxy history', async () => {
+    healthCheckProxyProvider.mockResolvedValue(undefined)
+    getProxyProviders.mockResolvedValue(PROXY_PROVIDERS)
     const store = useProvidersStore()
     await store.healthCheckProxyProvider('机场 A')
-    expect(store.healthOf('机场 A')).toEqual({ '香港 01': 42, '香港 02': 6 })
+    expect(healthCheckProxyProvider).toHaveBeenCalledWith('机场 A')
+    expect(getProxyProviders).toHaveBeenCalled()
+    // 香港 01 has a history entry (42); 香港 02 has none, so it is excluded.
+    expect(store.healthOf('机场 A')).toEqual({ '香港 01': 42 })
     expect(store.opOf('机场 A').healthchecking).toBe(false)
+    expect(store.opOf('机场 A').error).toBeNull()
+  })
+
+  it('surfaces a health-check failure and leaves prior results untouched', async () => {
+    healthCheckProxyProvider.mockRejectedValue(new ProtocolError(ProtocolErrorCode.UPSTREAM_HTTP_ERROR, 'hc failed'))
+    const store = useProvidersStore()
+    await store.healthCheckProxyProvider('机场 A')
+    expect(store.opOf('机场 A').error).toBe('hc failed')
+    expect(store.opOf('机场 A').healthchecking).toBe(false)
+    expect(store.healthOf('机场 A')).toBeNull()
   })
 
   it('refreshes a rule provider on success', async () => {

@@ -61,11 +61,11 @@ export interface DesktopApi {
     getRules(): Promise<MihomoRulesResponse>
     getProxyProviders(): Promise<MihomoProxyProvidersResponse>
     refreshProxyProvider(name: string): Promise<void>
-    healthCheckProxyProvider(name: string): Promise<MihomoDelayMap>
+    healthCheckProxyProvider(name: string): Promise<void>
     getRuleProviders(): Promise<MihomoRuleProvidersResponse>
     refreshRuleProvider(name: string): Promise<void>
-    delayTest(name: string, opts?: { timeout?: number; url?: string }): Promise<MihomoDelayResult>
-    groupDelayTest(name: string, opts?: { timeout?: number; url?: string }): Promise<MihomoDelayMap>
+    delayTest(name: string, opts?: { timeout?: number }): Promise<MihomoDelayResult>
+    groupDelayTest(name: string, opts?: { timeout?: number }): Promise<MihomoDelayMap>
     getConnections(): Promise<MihomoConnectionsSnapshot>
     closeConnection(id: string): Promise<void>
     onTraffic(listener: (sample: TrafficSample) => void): () => void

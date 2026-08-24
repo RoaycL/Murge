@@ -119,7 +119,7 @@ const proxyProviderSchema = z
   .object({
     ...providerShared,
     vehicleType: z.string().optional(),
-    proxies: z.array(z.string()).optional(),
+    proxies: z.array(proxySchema).optional(),
     proxiesCount: z.number().optional()
   })
   .passthrough()

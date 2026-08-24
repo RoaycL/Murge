@@ -134,14 +134,21 @@ describe('mock mihomo server', () => {
       expect(typeof refetched.providers['机场 A'].updatedAt).toBe('string')
     })
 
-    it('health-checks a proxy provider into a delay map', async () => {
+    it('health-checks a proxy provider (fire-and-forget 204) and records per-proxy history', async () => {
       const server = await startMockMihomoServer()
       handles.push(server)
       const provider = encodeURIComponent('机场 A')
       const res = await fetch(`${server.baseUrl}/providers/proxies/${provider}/healthcheck`)
-      expect(res.status).toBe(200)
-      const map = await res.json() as Record<string, number>
-      expect(map['香港 01']).toBeGreaterThan(0)
+      expect(res.status).toBe(204)
+      const refetched = await fetch(`${server.baseUrl}/providers/proxies`).then((r) => r.json()) as {
+        providers: Record<string, { proxies: Array<{ name: string; history: Array<{ delay: number }> }> }>
+      }
+      const proxies = refetched.providers['机场 A'].proxies
+      const hk01 = proxies.find((p) => p.name === '香港 01')
+      expect(hk01?.history.at(-1)?.delay).toBeGreaterThan(0)
+      // 香港 02 is unreachable: the probe leaves a single (0-delay) entry.
+      const hk02 = proxies.find((p) => p.name === '香港 02')
+      expect(hk02?.history.length).toBe(1)
     })
   })
 })

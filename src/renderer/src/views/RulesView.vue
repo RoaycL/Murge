@@ -1,0 +1,4 @@
+<script setup lang="ts">
+const rows = [['0','RULE-SET','rules/ai.list','AI','272660'],['1','RULE-SET','rules/openai.list','AI','5791'],['2','RULE-SET','rules/telegram.list','Telegram','549929'],['3','RULE-SET','rules/youtube.list','Media','920'],['4','RULE-SET','rules/github.list','GitHub','36681'],['5','DOMAIN-SUFFIX','example.com','DIRECT','831'],['6','GEOIP','CN','DIRECT','70242469'],['7','MATCH','','Proxy','4884189']]
+</script>
+<template><div class="page-shell rules-view"><header class="rules-header"><div><h1>规则</h1><p>规则将按照从上至下的顺序进行测试。</p></div><input placeholder="搜索"></header><div class="table-frame"><table><thead><tr><th></th><th>ID</th><th>类型</th><th>值</th><th>策略</th><th>使用计数</th></tr></thead><tbody><tr v-for="row in rows" :key="row[0]"><td>☑</td><td>{{ row[0] }}</td><td>{{ row[1] }}</td><td>{{ row[2] }}</td><td>{{ row[3] }}</td><td>{{ row[4] }}</td></tr></tbody></table></div></div></template>

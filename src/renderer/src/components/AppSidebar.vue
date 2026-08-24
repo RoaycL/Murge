@@ -50,7 +50,7 @@ const groups = [
     </nav>
     <div class="sidebar-footer">
       <RouterLink to="/more" class="nav-link"><span class="nav-icon">☷</span><span>更多</span></RouterLink>
-      <button class="nav-link sidebar-button" type="button"><span class="nav-icon">◉</span><span>面板</span></button>
+      <RouterLink to="/panel" class="nav-link"><span class="nav-icon">◉</span><span>面板</span></RouterLink>
       <span class="visually-hidden">{{ brand.productName }}</span>
     </div>
   </aside>

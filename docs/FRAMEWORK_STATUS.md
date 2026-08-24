@@ -8,6 +8,7 @@ Verified on macOS on 2026-08-24:
 - `npm run build`: passed for main, preload and renderer bundles.
 - `npm run dev`: Electron process and Vite development server started.
 - `http://localhost:5173/`: returned HTTP 200 while the development process was active.
+- Activity, Overview, Processes, Devices, Policies, Rules, Capture, Decrypt, Rewrite and Settings visual shells are present.
 
 Not verified in this milestone:
 

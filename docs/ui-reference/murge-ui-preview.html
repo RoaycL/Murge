@@ -124,6 +124,65 @@
 #murge-preview .total-bar { display:grid; grid-template-columns:68fr 32fr; gap:5px; height:23px; margin-top:5px; }
 #murge-preview .total-bar span:first-child { border-radius:5px; background:#6652ed; }
 #murge-preview .total-bar span:last-child { border-radius:5px; background:#16bfd4; }
+#murge-preview .split-page { position:relative; width:695px; height:575px; }
+#murge-preview .page-toolbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:24px; }
+#murge-preview .compact-select { height:27px; padding:0 10px; border:0; border-radius:6px; background:light-dark(#e5e6e9,#414650); color:inherit; font-size:12px; }
+#murge-preview .master-detail { display:grid; grid-template-columns:347px 320px; gap:15px; height:490px; }
+#murge-preview .master-list { overflow:hidden; }
+#murge-preview .detail-pane { border:1px dashed light-dark(#d8dadd,#505660); border-radius:10px; background:rgba(255,255,255,.12); }
+#murge-preview .list-row { display:grid; grid-template-columns:34px 1fr auto; align-items:center; min-height:47px; padding:3px 8px; border-radius:7px; }
+#murge-preview .list-row:hover { background:rgba(127,127,127,.08); }
+#murge-preview .item-icon { display:grid; place-items:center; width:29px; height:29px; border-radius:7px; background:light-dark(#e0e3e8,#4a4f59); font-size:10px; }
+#murge-preview .item-main { font-size:14px; }
+#murge-preview .item-sub { margin-top:2px; color:light-dark(#b0b4bb,#737a85); font-size:9px; }
+#murge-preview .item-rate { text-align:right; font-size:13px; }
+#murge-preview .bottom-setting { position:absolute; left:0; bottom:-7px; width:347px; padding-top:9px; border-top:1px solid light-dark(#dedfe3,#444952); }
+#murge-preview .bottom-setting p { margin:5px 0 0; color:light-dark(#a4a8af,#7c838e); font-size:10px; line-height:1.35; }
+#murge-preview .mini-switch { float:right; width:43px; height:22px; border:0; border-radius:11px; background:light-dark(#d9dbe0,#515661); }
+#murge-preview .mini-switch.on { background:#1688f7; }
+#murge-preview .rules-page { width:695px; }
+#murge-preview .search-field { width:245px; height:27px; padding:0 12px; border:1px solid light-dark(#dadce0,#4b505a); border-radius:14px; background:rgba(255,255,255,.35); color:inherit; }
+#murge-preview .rules-table { width:675px; border-collapse:collapse; table-layout:fixed; overflow:hidden; border:1px solid light-dark(#d9dbe0,#4a4f59); border-radius:6px; font-size:11px; }
+#murge-preview .rules-table th { height:24px; text-align:left; font-weight:500; background:rgba(255,255,255,.32); }
+#murge-preview .rules-table td { height:26px; padding:0 6px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; border-top:1px solid light-dark(#e5e6e9,#40454e); }
+#murge-preview .rules-table tr:nth-child(even) { background:rgba(127,127,127,.045); }
+#murge-preview .rules-table .check { width:34px; text-align:center; color:#1688f7; }
+#murge-preview .rules-table .id { width:35px; }
+#murge-preview .rules-table .type { width:102px; }
+#murge-preview .rules-table .policy { width:118px; }
+#murge-preview .rules-table .hits { width:75px; text-align:right; }
+#murge-preview .settings-page { width:695px; }
+#murge-preview .settings-title-line { display:flex; align-items:center; gap:15px; }
+#murge-preview .settings-description { margin:2px 0 22px; color:light-dark(#a2a6ad,#7f8691); font-size:11px; }
+#murge-preview .settings-columns { display:grid; grid-template-columns:317px 341px; gap:24px; }
+#murge-preview .settings-section { margin-bottom:24px; }
+#murge-preview .settings-section h3 { margin:0 0 10px; padding-bottom:4px; border-bottom:1px solid light-dark(#dbdde1,#454a53); font-size:13px; font-weight:500; color:#1da8e1; }
+#murge-preview .settings-section h3.orange { color:#e89242; }
+#murge-preview .settings-section h3.green { color:#3dbe65; }
+#murge-preview .settings-section h3.pink { color:#cf36bc; }
+#murge-preview .settings-action { height:28px; padding:0 12px; border:0; border-radius:6px; background:light-dark(#e5e6e9,#414650); color:inherit; font-size:12px; }
+#murge-preview .setting-row { display:flex; align-items:center; min-height:28px; gap:8px; font-size:12px; }
+#murge-preview .setting-note { margin:5px 0 12px; color:light-dark(#a3a7ae,#7d8490); font-size:10px; line-height:1.45; }
+#murge-preview .certificate-row { display:flex; gap:12px; align-items:center; margin-bottom:12px; }
+#murge-preview .certificate-icon { width:54px; height:54px; display:grid; place-items:center; border-radius:9px; background:linear-gradient(145deg,#1cb8e7,#2372e7); color:white; font-size:24px; }
+#murge-preview .hostname-box { height:465px; border:1px solid light-dark(#d5d7dc,#4a505a); border-radius:5px; background:rgba(255,255,255,.22); }
+#murge-preview .hostname-head { height:31px; padding:8px 12px; color:light-dark(#8e939b,#979da7); font-size:12px; background:rgba(127,127,127,.08); }
+#murge-preview .hostname-row { padding:4px 12px; font-size:12px; }
+#murge-preview .hostname-row span { color:#1688f7; margin-right:8px; }
+#murge-preview .rewrite-grid { display:grid; grid-template-columns:337px 337px; gap:30px 15px; margin-top:40px; }
+#murge-preview .rewrite-card { height:141px; padding:17px 16px; border-radius:19px; background:light-dark(rgba(255,255,255,.8),rgba(39,42,51,.92)); box-shadow:0 7px 20px rgba(31,37,51,.07); }
+#murge-preview .rewrite-card h3 { margin:0 0 7px; font-size:14px; }
+#murge-preview .rewrite-card p { height:49px; margin:0; color:light-dark(#a2a6ad,#7f8691); font-size:11px; line-height:1.4; }
+#murge-preview .rewrite-foot { display:flex; justify-content:space-between; align-items:center; font-size:11px; }
+#murge-preview .more-page { width:695px; }
+#murge-preview .more-divider { height:1px; background:light-dark(#dcdde1,#454a53); }
+#murge-preview .more-grid { display:grid; grid-template-columns:repeat(3,1fr); padding:40px 18px 30px; gap:0 45px; }
+#murge-preview .more-item { height:158px; }
+#murge-preview .more-icon { width:44px; height:44px; margin-bottom:24px; border-radius:12px; background:linear-gradient(145deg,#5e7ff1,#5fd7ed); }
+#murge-preview .more-item:nth-child(2n) .more-icon { background:linear-gradient(145deg,#6952ef,#ef58b7); }
+#murge-preview .more-item:nth-child(3n) .more-icon { background:linear-gradient(145deg,#ffb44b,#ff7645); }
+#murge-preview .more-item h3 { margin:0 0 4px; font-size:16px; }
+#murge-preview .more-item p { margin:0; color:light-dark(#a3a7ae,#7d8490); font-size:10px; line-height:1.4; }
 </style>
 <div id="murge-preview">
   <div class="murge-stage"><div class="murge-window">
@@ -133,16 +192,16 @@
         <button class="nav-item active" data-page="activity"><span class="nav-icon">▧</span>活动</button>
         <button class="nav-item" data-page="overview"><span class="nav-icon">⌘</span>概览</button>
         <div class="nav-group">客户端</div>
-        <button class="nav-item"><span class="nav-icon">▣</span>进程</button>
-        <button class="nav-item"><span class="nav-icon">▤</span>设备</button>
+        <button class="nav-item" data-page="processes"><span class="nav-icon">▣</span>进程</button>
+        <button class="nav-item" data-page="devices"><span class="nav-icon">▤</span>设备</button>
         <div class="nav-group">代理</div>
         <button class="nav-item" data-page="policy"><span class="nav-icon">⑂</span>策略</button>
-        <button class="nav-item"><span class="nav-icon">☷</span>规则</button>
+        <button class="nav-item" data-page="rules"><span class="nav-icon">☷</span>规则</button>
         <div class="nav-group">HTTP</div>
-        <button class="nav-item"><span class="nav-icon">⌗</span>捕获</button>
-        <button class="nav-item"><span class="nav-icon">♙</span>解密</button>
-        <button class="nav-item"><span class="nav-icon">〆</span>重写</button>
-        <div class="sidebar-bottom"><button class="nav-item"><span class="nav-icon">☷</span>更多</button><button class="nav-item"><span class="nav-icon">◉</span>面板</button></div>
+        <button class="nav-item" data-page="capture"><span class="nav-icon">⌗</span>捕获</button>
+        <button class="nav-item" data-page="decrypt"><span class="nav-icon">♙</span>解密</button>
+        <button class="nav-item" data-page="rewrite"><span class="nav-icon">〆</span>重写</button>
+        <div class="sidebar-bottom"><button class="nav-item" data-page="more"><span class="nav-icon">☷</span>更多</button><button class="nav-item"><span class="nav-icon">◉</span>面板</button></div>
       </aside>
       <main class="main">
         <section class="content-page" data-content="overview">
@@ -159,6 +218,47 @@
         <section class="content-page" data-content="policy">
           <h1 class="page-title">策略</h1><div class="policy-bar"><button class="policy-choice">直接连接</button><button class="policy-choice">全局代理</button><button class="policy-choice active">规则判定</button></div>
           <div class="proxy-grid"><div class="proxy"><div class="proxy-type">Shadowsocks</div><div class="proxy-name">Hong Kong 01</div><div class="proxy-latency">42 ms</div></div><div class="proxy"><div class="proxy-type">Hysteria 2</div><div class="proxy-name">Tokyo 01</div><div class="proxy-latency">67 ms</div></div><div class="proxy"><div class="proxy-type">VLESS</div><div class="proxy-name">Singapore 01</div><div class="proxy-latency">81 ms</div></div><div class="proxy"><div class="proxy-type">Trojan</div><div class="proxy-name">Los Angeles 01</div><div class="proxy-latency">153 ms</div></div></div>
+        </section>
+        <section class="content-page split-page" data-content="processes">
+          <div class="page-toolbar"><h1 class="page-title" style="margin:0">进程</h1><select class="compact-select"><option>按流量排序</option><option>按名称排序</option></select></div>
+          <div class="master-detail"><div class="master-list">
+            <div class="list-row"><span class="item-icon">AI</span><div class="item-main">Chat Client<div class="item-sub">活动连接 18</div></div><div class="item-rate">23 KB/s<div class="item-sub">总计 2.63 GB</div></div></div>
+            <div class="list-row"><span class="item-icon">SYS</span><div class="item-main">System Services</div><div class="item-rate">0 B/s<div class="item-sub">总计 2.46 GB</div></div></div>
+            <div class="list-row"><span class="item-icon">&gt;_</span><div class="item-main">curl</div><div class="item-rate">0 B/s<div class="item-sub">总计 828.6 MB</div></div></div>
+            <div class="list-row"><span class="item-icon">N</span><div class="item-main">node</div><div class="item-rate">0 B/s<div class="item-sub">总计 440.0 MB</div></div></div>
+            <div class="list-row"><span class="item-icon">C</span><div class="item-main">Code Editor</div><div class="item-rate">0 B/s<div class="item-sub">总计 406.0 MB</div></div></div>
+            <div class="list-row"><span class="item-icon">B</span><div class="item-main">Browser</div><div class="item-rate">778 B/s<div class="item-sub">总计 121.6 MB</div></div></div>
+            <div class="list-row"><span class="item-icon">M</span><div class="item-main">Mail</div><div class="item-rate">0 B/s<div class="item-sub">总计 103.1 MB</div></div></div>
+          </div><div class="detail-pane"></div></div>
+          <div class="bottom-setting"><button class="mini-switch"></button><strong>计费网络模式</strong><p>启动后所有进程将默认禁止使用网络，适用于按流量计费的网络。</p></div>
+        </section>
+        <section class="content-page split-page" data-content="devices">
+          <div class="page-toolbar"><h1 class="page-title" style="margin:0">设备</h1><select class="compact-select"><option>按 IP 排序</option><option>按流量排序</option></select></div>
+          <div class="master-detail"><div class="master-list"><div class="list-row"><span class="item-icon">PC</span><div class="item-main">DESKTOP<div class="item-sub">192.168.1.3</div></div><div class="item-rate">1 KB/s<div class="item-sub">总计 33.81 GB</div></div></div></div><div class="detail-pane"></div></div>
+          <div class="bottom-setting"><button class="mini-switch on"></button><strong>允许局域网连接</strong><p>允许同一局域网中的其他设备通过本机代理访问网络。</p></div>
+        </section>
+        <section class="content-page rules-page" data-content="rules">
+          <div class="page-toolbar"><div><h1 class="page-title" style="margin:0">规则</h1><div class="item-sub">规则将按照从上至下的顺序进行测试。</div></div><input class="search-field" placeholder="⌕ 搜索"></div>
+          <table class="rules-table"><thead><tr><th class="check"></th><th class="id">ID</th><th class="type">类型</th><th>值</th><th class="policy">策略</th><th class="hits">使用计数</th></tr></thead><tbody>
+            <tr><td class="check">☑</td><td>0</td><td>RULE-SET</td><td>rules/ai.list</td><td>AI</td><td class="hits">272660</td></tr><tr><td class="check">☑</td><td>1</td><td>RULE-SET</td><td>rules/openai.list</td><td>AI</td><td class="hits">5791</td></tr><tr><td class="check">☑</td><td>2</td><td>RULE-SET</td><td>rules/telegram.list</td><td>Telegram</td><td class="hits">549929</td></tr><tr><td class="check">☑</td><td>3</td><td>RULE-SET</td><td>rules/youtube.list</td><td>Media</td><td class="hits">920</td></tr><tr><td class="check">☑</td><td>4</td><td>RULE-SET</td><td>rules/github.list</td><td>GitHub</td><td class="hits">36681</td></tr><tr><td class="check">☑</td><td>5</td><td>DOMAIN-SUFFIX</td><td>example.com</td><td>DIRECT</td><td class="hits">831</td></tr><tr><td class="check">☑</td><td>6</td><td>GEOIP</td><td>CN</td><td>DIRECT</td><td class="hits">70242469</td></tr><tr><td class="check">☑</td><td>7</td><td>MATCH</td><td></td><td>Proxy</td><td class="hits">4884189</td></tr>
+          </tbody></table>
+        </section>
+        <section class="content-page settings-page" data-content="capture">
+          <div class="settings-title-line"><h1 class="page-title" style="margin:0">捕获 HTTP 内容</h1><button class="mini-switch"></button></div><p class="settings-description">开启后将捕获 HTTP 请求的内容数据。此选项会降低性能并占用存储空间，请仅在需要时开启。</p>
+          <div class="settings-columns"><div><div class="settings-section"><h3 class="orange">可见性</h3><button class="settings-action">设置内存记录过滤器…</button><p class="setting-note">内存记录会保留最近请求的摘要，供随时查看。</p><button class="settings-action">设置 HTTP 捕获过滤器…</button><p class="setting-note">HTTP 捕获会将请求摘要与 Body 存储到磁盘。</p></div><div class="settings-section"><h3 class="green">磁盘 HTTP 捕获</h3><strong style="font-size:12px">本地路径：不可用</strong><div style="margin-top:8px"><button class="settings-action">在资源管理器中显示</button></div><p class="setting-note">转存数据放置于临时目录，系统会定期清理。</p></div></div>
+          <div><div class="settings-section"><h3>捕获限制器</h3><div class="setting-row">时间限制：<select class="compact-select"><option>3 分钟</option></select></div><div class="setting-row">尺寸限制：<select class="compact-select"><option>50 MB</option></select></div><div class="setting-row">数量限制：<select class="compact-select"><option>100 请求</option></select></div><p class="setting-note">达到任意限制时自动停止本次捕获会话。</p></div><div class="settings-section"><h3>捕获 MITM 覆写</h3><div class="setting-row">☑ 自动开启 MITM</div><button class="settings-action">编辑 MITM 主机名…</button></div><div class="settings-section"><h3 class="pink">显示</h3><div class="setting-row">☑ 合并系统进程</div><div class="setting-row">☑ 应用包合并</div></div></div></div>
+        </section>
+        <section class="content-page settings-page" data-content="decrypt">
+          <div class="settings-title-line"><h1 class="page-title" style="margin:0">HTTPS 解密</h1><button class="mini-switch on"></button></div><p class="settings-description">通过中间人方式解密 HTTPS 流量。该页面仅定义界面；是否支持取决于后续能力评估。</p>
+          <div class="settings-columns"><div><div class="settings-section"><h3 class="orange">CA 证书</h3><div class="certificate-row"><div class="certificate-icon">▣</div><div><div style="font-size:13px">Generated CA DDD4351B</div><div class="item-sub">CA 证书已被系统信任</div></div></div><div style="display:grid;gap:7px;margin-left:76px"><button class="settings-action">生成新证书</button><button class="settings-action">将证书安装到系统</button><button class="settings-action">从 PKCS #12 文件导入证书</button></div></div><div class="settings-section"><h3 class="green">选项</h3><div class="setting-row">☑ 进行 MitM 时跳过服务端证书验证</div><div class="setting-row">☑ 自动屏蔽 QUIC</div><div class="setting-row">☑ MitM over HTTP/2</div></div></div>
+          <div><div class="hostname-box"><div class="hostname-head">MitM 主机名　＋</div><div class="hostname-row"><span>☑</span>www.example.com</div><div class="hostname-row"><span>☑</span>api.example.com</div><div class="hostname-row"><span>☑</span>*.example.net</div><div class="hostname-row"><span>☑</span>auth.example.org</div></div><p class="setting-note">只有列表中的域名才会被解密，允许使用通配符。</p></div></div>
+        </section>
+        <section class="content-page settings-page" data-content="rewrite">
+          <div class="settings-title-line"><h1 class="page-title" style="margin:0">重写 & 映射</h1><button class="mini-switch on"></button></div>
+          <div class="rewrite-grid"><article class="rewrite-card"><h3>URL 重定向</h3><p>重定向 HTTP 请求，可使用多种方式重写请求 URL。</p><div class="rewrite-foot"><span>0 条规则生效中</span><button class="settings-action">编辑 URL 重定向规则…</button></div></article><article class="rewrite-card"><h3>Header 重写</h3><p>修改发送到服务器的 HTTP Header 以及返回响应的 Header。</p><div class="rewrite-foot"><span>0 条规则生效中</span><button class="settings-action">编辑 Header 重写规则…</button></div></article><article class="rewrite-card"><h3>Mock</h3><p>模拟 API 服务器并返回静态响应，也可称为 Map Local。</p><div class="rewrite-foot"><span>0 条规则生效中</span><button class="settings-action">编辑 Mock 规则…</button></div></article><article class="rewrite-card"><h3>Body 重写</h3><p>使用正则表达式替换 HTTP 请求或响应的 Body 内容。</p><div class="rewrite-foot"><span>0 条规则生效中</span><button class="settings-action">编辑 Body 重写规则…</button></div></article></div>
+        </section>
+        <section class="content-page more-page" data-content="more">
+          <h1 class="page-title">设置</h1><div class="more-divider"></div><div class="more-grid"><div class="more-item"><div class="more-icon"></div><h3>通用</h3><p>基础运行、启动与网络相关设置。</p></div><div class="more-item"><div class="more-icon"></div><h3>外观</h3><p>主题、托盘图标和通知相关设置。</p></div><div class="more-item"><div class="more-icon"></div><h3>DNS</h3><p>本地 DNS 映射和 DNS 相关设置。</p></div><div class="more-item"><div class="more-icon"></div><h3>订阅</h3><p>管理代理与规则 Provider。</p></div><div class="more-item"><div class="more-icon"></div><h3>配置</h3><p>导入、验证并管理所有配置文件。</p></div><div class="more-item"><div class="more-icon"></div><h3>内核 & 更新</h3><p>查看内核版本与更新通道。</p></div></div>
         </section>
         <section class="content-page activity-page active" data-content="activity">
           <h1 class="page-title">活动</h1>

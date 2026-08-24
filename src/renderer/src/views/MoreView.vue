@@ -1,0 +1,2 @@
+<script setup lang="ts">const items=[['通用','基础运行、启动与网络相关设置。'],['外观','主题、托盘图标和通知相关设置。'],['DNS','本地 DNS 映射与解析相关设置。'],['订阅','管理代理与规则 Provider。'],['配置','导入、验证并管理配置文件。'],['内核 & 更新','查看内核版本与更新通道。']]</script>
+<template><div class="page-shell more-view"><h1>设置</h1><div class="settings-menu"><button v-for="item in items" :key="item[0]"><i /><strong>{{ item[0] }}</strong><span>{{ item[1] }}</span></button></div></div></template>

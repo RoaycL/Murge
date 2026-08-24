@@ -27,7 +27,7 @@ If the implementation and reference disagree, the reference wins unless the owne
 Imported reference SHA-256:
 
 ```text
-396a59abd9130c601971ac065055ffefc65ab4bb31fee03ee46b82eecdec745b
+2aee6ba66294e21b14270ec31fb9a0cbbee6d6dab94094c0d859ed0dafe4bf7d
 ```
 
 Update this hash when, and only when, the owner approves a new reference version.

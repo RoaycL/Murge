@@ -68,13 +68,13 @@ The Activity page is the default route.
 |---|---|---|
 | Activity | `/traffic`, `/connections`, `/configs`, `/version` | Visual shell |
 | Overview | `/configs`, Windows proxy service, TUN service | Visual shell |
-| Processes | `/connections` aggregation | Placeholder |
-| Devices | `/connections` source aggregation | Placeholder |
-| Policies | `/proxies`, `/group` | Placeholder |
-| Rules | `/rules`, `/providers/rules` | Placeholder |
-| Capture | local connection event history | Placeholder |
-| Decrypt | no direct equivalent; feature decision required | Placeholder |
-| Rewrite | no direct equivalent; feature decision required | Placeholder |
+| Processes | `/connections` aggregation | Visual shell |
+| Devices | `/connections` source aggregation | Visual shell |
+| Policies | `/proxies`, `/group` | Visual shell |
+| Rules | `/rules`, `/providers/rules` | Visual shell |
+| Capture | local connection event history | Visual shell; capability pending |
+| Decrypt | no direct equivalent; feature decision required | Visual shell only |
+| Rewrite | no direct equivalent; feature decision required | Visual shell only |
 
 ## Accessibility
 

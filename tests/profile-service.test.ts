@@ -127,6 +127,25 @@ describe('ProfileService', () => {
     expect(profile.document).toContain('proxies:\n  - name: node-01')
   })
 
+  it('does not persist an edit whose result fails validation', async () => {
+    // A validator that rejects any document setting mixed-port to the forbidden
+    // value, so the edit preview is rejected before it reaches disk.
+    const strictValidator = {
+      validate: (document: string) =>
+        document.includes('mixed-port: 9090')
+          ? { ok: false, issues: [{ severity: 'error' as const, message: 'forbidden port' }] }
+          : { ok: true, issues: [] }
+    }
+    const strictService = new ProfileService(repository, strictValidator, new SubscriptionFetcher({ maxBytes: 1024 }))
+    const meta = await strictService.importProfile({ name: 'cfg', document: VALID_DOC, source: { type: 'manual' } })
+    await expect(
+      strictService.editDocument(meta.id, [{ key: 'mixed-port', value: '9090' }])
+    ).rejects.toThrow(/配置校验失败/i)
+    const profile = await repository.get(meta.id)
+    expect(profile.document).toContain('mixed-port: 7890')
+    expect(profile.document).not.toContain('mixed-port: 9090')
+  })
+
   it('rename throws a duplicate-name error', async () => {
     await service.importProfile({ name: 'a', document: VALID_DOC, source: { type: 'manual' } })
     await service.importProfile({ name: 'b', document: VALID_DOC, source: { type: 'manual' } })

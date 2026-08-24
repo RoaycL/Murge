@@ -71,10 +71,11 @@ export class ProfileService implements ProfileGateway {
   }
 
   async editDocument(id: string, edits: ConfigEdit[]): Promise<ProfileMeta> {
-    const meta = await this.repository.editDocument(id, edits)
-    const profile = await this.repository.get(id)
-    this.throwIfInvalid(this.validator.validate(profile.document))
-    return meta
+    // Validate the WOULD-BE document before writing so a rejected edit cannot
+    // leave a half-edited (invalid) document on disk.
+    const nextDocument = await this.repository.previewEdit(id, edits)
+    this.throwIfInvalid(this.validator.validate(nextDocument))
+    return this.repository.editDocument(id, edits)
   }
 
   validateDocument(document: string): ValidationResult {

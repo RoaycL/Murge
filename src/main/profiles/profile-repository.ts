@@ -213,6 +213,16 @@ export class ProfileRepository {
   }
 
   /**
+   * Return the document that {@link editDocument} would write WITHOUT persisting
+   * it. Lets the service validate the result before it ever reaches disk, so a
+   * rejected edit never leaves a half-edited document behind.
+   */
+  async previewEdit(id: string, edits: ConfigEdit[]): Promise<string> {
+    const profile = await this.get(id)
+    return applyEdits(profile.document, edits)
+  }
+
+  /**
    * Apply supported scalar edits without re-serializing the document. Only the
    * value of each listed top-level key changes; unknown keys, their order, and
    * any inline or standalone comments are preserved verbatim.

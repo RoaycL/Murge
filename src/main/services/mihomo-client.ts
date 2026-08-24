@@ -14,21 +14,21 @@ import {
 } from '@shared/schemas/mihomo'
 import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
 
-export class MihomoHttpError extends Error {
-  constructor(
-    public readonly status: number,
-    public readonly body: string
-  ) {
-    super(`mihomo request failed with HTTP ${status}`)
-  }
-}
-
 export class MihomoClient {
   constructor(
     private readonly baseUrl: string,
     private readonly secret: string
   ) {}
 
+  /**
+   * Perform a request against the controller and map every failure mode to a
+   * typed `ProtocolError` so the renderer always receives a stable error code:
+   *
+   * - transport failure        -> UPSTREAM_UNREACHABLE
+   * - HTTP 401                 -> UNAUTHORIZED
+   * - any other non-2xx        -> UPSTREAM_HTTP_ERROR
+   * - invalid JSON in a 2xx    -> INVALID_UPSTREAM
+   */
   private async request(path: string, init: RequestInit = {}): Promise<unknown> {
     let response: Response
     try {
@@ -43,27 +43,39 @@ export class MihomoClient {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'network failure'
       throw new ProtocolError(
-        ProtocolErrorCode.INTERNAL,
+        ProtocolErrorCode.UPSTREAM_UNREACHABLE,
         `mihomo controller unreachable: ${message}`,
         { path, reason: 'connection-failed' }
       )
     }
 
     if (!response.ok) {
+      const body = await response.text()
+      const reason = body ? `${response.status}: ${body}` : String(response.status)
       if (response.status === 401) {
-        throw new ProtocolError(
-          ProtocolErrorCode.UNSUPPORTED,
-          'controller secret mismatch',
-          { path, reason: String(response.status) }
-        )
+        throw new ProtocolError(ProtocolErrorCode.UNAUTHORIZED, 'controller secret mismatch', { path, reason })
       }
-      throw new MihomoHttpError(response.status, await response.text())
+      throw new ProtocolError(
+        ProtocolErrorCode.UPSTREAM_HTTP_ERROR,
+        `mihomo request failed with HTTP ${response.status}`,
+        { path, reason }
+      )
     }
 
     if (response.status === 204) return undefined
-    const raw = await response.json()
+
+    let raw: unknown
+    try {
+      raw = await response.json()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'invalid JSON'
+      throw new ProtocolError(ProtocolErrorCode.INVALID_UPSTREAM, `mihomo returned invalid JSON: ${message}`, {
+        path,
+        reason: 'invalid-json'
+      })
+    }
     if (raw === undefined || raw === null) return raw
-    return raw as unknown
+    return raw
   }
 
   getVersion(): Promise<MihomoVersion> {

@@ -16,6 +16,12 @@ export const ProtocolErrorCode = {
   INVALID_BRAND: 'INVALID_BRAND',
   /** An upstream mihomo payload did not match its expected shape. */
   INVALID_UPSTREAM: 'INVALID_UPSTREAM',
+  /** The controller rejected the request because the secret mismatched. */
+  UNAUTHORIZED: 'UNAUTHORIZED',
+  /** The controller returned an unexpected HTTP or transport error. */
+  UPSTREAM_HTTP_ERROR: 'UPSTREAM_HTTP_ERROR',
+  /** The mihomo controller could not be reached at all. */
+  UPSTREAM_UNREACHABLE: 'UPSTREAM_UNREACHABLE',
   /** The requested capability is not supported by this build or upstream. */
   UNSUPPORTED: 'UNSUPPORTED',
   /** A requested entity was not found. */

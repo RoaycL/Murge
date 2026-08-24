@@ -6,6 +6,7 @@ export interface MihomoVersion {
 export interface DelayHistory {
   time: string
   delay: number
+  [key: string]: unknown
 }
 
 export interface MihomoProxy {
@@ -40,6 +41,7 @@ export interface MihomoRule {
     missCount?: number
     missAt?: string
   }
+  [key: string]: unknown
 }
 
 export interface MihomoRulesResponse {
@@ -70,6 +72,7 @@ export interface MihomoConnection {
   providerChains?: string[]
   rule: string
   rulePayload: string
+  [key: string]: unknown
 }
 
 export interface MihomoConnectionsSnapshot {

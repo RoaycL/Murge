@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { BrandConfig } from '../brand'
+import { APP_ID_PATTERN, EXECUTABLE_NAME_PATTERN, PROTOCOL_SCHEME_PATTERN } from '../brand-patterns'
 import { ProtocolError, ProtocolErrorCode } from '../protocol-errors'
 
 /**
@@ -11,9 +12,9 @@ const brandConfigSchema = z
     productName: z.string().trim().min(1),
     shortName: z.string().trim().min(1),
     description: z.string(),
-    appId: z.string().min(1).regex(/^[A-Za-z0-9][A-Za-z0-9.-]+$/),
-    executableName: z.string().min(1).regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/),
-    protocolScheme: z.string().min(1).regex(/^[A-Za-z0-9][A-Za-z0-9+.-]*$/),
+    appId: z.string().min(1).regex(new RegExp(APP_ID_PATTERN)),
+    executableName: z.string().min(1).regex(new RegExp(EXECUTABLE_NAME_PATTERN)),
+    protocolScheme: z.string().min(1).regex(new RegExp(PROTOCOL_SCHEME_PATTERN)),
     companyName: z.string(),
     repositoryUrl: z.string(),
     supportUrl: z.string(),

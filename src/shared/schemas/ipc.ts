@@ -15,7 +15,14 @@ function invalid(message: string): ProtocolError {
   return new ProtocolError(ProtocolErrorCode.INVALID_ARGUMENT, message)
 }
 
-/** Fields that the renderer is allowed to patch on the live controller config. */
+/**
+ * Fields that the renderer is allowed to patch on the live controller config.
+ *
+ * Deliberately excludes `tun`: TUN is a high-privilege network configuration
+ * that must not be forwarded as an arbitrary object by the renderer. A future
+ * Phase will add a dedicated, strongly typed TUN IPC routed through the
+ * privileged service instead.
+ */
 const patchableConfigKeys = {
   port: z.number().int().min(0).max(65535).optional(),
   'socks-port': z.number().int().min(0).max(65535).optional(),
@@ -23,19 +30,29 @@ const patchableConfigKeys = {
   mode: z.enum(['rule', 'global', 'direct']).optional(),
   'log-level': z.string().optional(),
   'allow-lan': z.boolean().optional(),
-  ipv6: z.boolean().optional(),
-  tun: z.record(z.string(), z.unknown()).optional()
+  ipv6: z.boolean().optional()
 } satisfies Record<string, z.ZodType>
 
 const configPatchSchema = z.object(patchableConfigKeys).partial().strict()
 
+/**
+ * A non-empty string check that does NOT rewrite the value.
+ *
+ * Proxy group names, member names and connection ids are exact identifiers in
+ * mihomo. Trimming would silently retarget the request to a different name, so
+ * we only assert non-empty-after-trim while passing the original value through.
+ */
+const nonEmptyString = z.string().refine((value) => value.trim().length > 0, {
+  message: 'must be a non-empty string'
+})
+
 const proxySelectionSchema = z.object({
-  group: z.string().trim().min(1),
-  name: z.string().trim().min(1)
+  group: nonEmptyString,
+  name: nonEmptyString
 })
 
 const connectionIdSchema = z.object({
-  id: z.string().trim().min(1)
+  id: nonEmptyString
 })
 
 /** Validate a renderer-sent config patch. Rejects unknown keys and bad types. */

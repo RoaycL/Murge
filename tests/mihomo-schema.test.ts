@@ -127,6 +127,43 @@ describe('parseMihomoTraffic', () => {
   })
 })
 
+describe('forward-compatible passthrough', () => {
+  it('preserves unknown fields on delay-history entries', () => {
+    const proxy = parseMihomoProxy({
+      ...validProxy,
+      history: [{ time: '00:00:00', delay: 42, jitter: 5 }]
+    })
+    expect(proxy.history?.[0].jitter).toBe(5)
+  })
+
+  it('preserves unknown top-level fields on a rule', () => {
+    const rule = parseMihomoRule({
+      index: 0,
+      type: 'DOMAIN-SUFFIX',
+      payload: 'example.com',
+      proxy: 'DIRECT',
+      size: 831,
+      source: 'geoip'
+    })
+    expect(rule.source).toBe('geoip')
+  })
+
+  it('preserves unknown top-level fields on a connection', () => {
+    const connection = parseMihomoConnection({ ...validConnection, extra: { remoteAddr: '1.2.3.4:443' } })
+    expect(connection.extra).toEqual({ remoteAddr: '1.2.3.4:443' })
+  })
+
+  it('keeps connection.extra from the forward-compatible fixture', () => {
+    const result = parseMihomoConnections(connectionsForwardCompatible)
+    expect(result.connections[0].extra).toEqual({ remoteAddr: '1.2.3.4:443' })
+  })
+
+  it('keeps unknown metadata fields from the forward-compatible fixture', () => {
+    const result = parseMihomoConnections(connectionsForwardCompatible)
+    expect(result.connections[0].metadata.newlyAddedMeta).toBe('kept')
+  })
+})
+
 describe('parseMihomoLog', () => {
   it('parses a valid log message', () => {
     expect(parseMihomoLog({ type: 'info', payload: 'started', time: '00:00:00' }).payload).toBe('started')

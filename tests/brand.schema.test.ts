@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { brand } from '@shared/brand'
+import { APP_ID_PATTERN } from '@shared/brand-patterns'
 import { parseBrandConfig } from '@shared/schemas/brand'
 import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
 
@@ -7,7 +8,7 @@ describe('parseBrandConfig', () => {
   it('accepts the real brand configuration file', () => {
     const parsed = parseBrandConfig(brand)
     expect(parsed.productName).toBe(brand.productName)
-    expect(parsed.appId).toMatch(/^[A-Za-z0-9][A-Za-z0-9.-]+$/)
+    expect(parsed.appId).toMatch(new RegExp(APP_ID_PATTERN))
   })
 
   it('preserves extra keys such as $schema', () => {

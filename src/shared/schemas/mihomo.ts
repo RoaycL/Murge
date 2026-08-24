@@ -33,10 +33,12 @@ const versionSchema = z.object({
   version: z.string()
 }).passthrough()
 
-const delayHistorySchema = z.object({
-  time: z.string(),
-  delay: z.number()
-})
+const delayHistorySchema = z
+  .object({
+    time: z.string(),
+    delay: z.number()
+  })
+  .passthrough()
 
 const proxySchema = z
   .object({
@@ -73,23 +75,25 @@ const configSchema = z
   })
   .passthrough()
 
-const ruleSchema = z.object({
-  index: z.number(),
-  type: z.string(),
-  payload: z.string(),
-  proxy: z.string(),
-  size: z.number(),
-  extra: z
-    .object({
-      disabled: z.boolean().optional(),
-      hitCount: z.number().optional(),
-      hitAt: z.string().optional(),
-      missCount: z.number().optional(),
-      missAt: z.string().optional()
-    })
-    .passthrough()
-    .optional()
-})
+const ruleSchema = z
+  .object({
+    index: z.number(),
+    type: z.string(),
+    payload: z.string(),
+    proxy: z.string(),
+    size: z.number(),
+    extra: z
+      .object({
+        disabled: z.boolean().optional(),
+        hitCount: z.number().optional(),
+        hitAt: z.string().optional(),
+        missCount: z.number().optional(),
+        missAt: z.string().optional()
+      })
+      .passthrough()
+      .optional()
+  })
+  .passthrough()
 
 const rulesResponseSchema = z
   .object({
@@ -112,17 +116,19 @@ const connectionMetadataSchema = z
   })
   .passthrough()
 
-const connectionSchema = z.object({
-  id: z.string(),
-  metadata: connectionMetadataSchema,
-  upload: z.number(),
-  download: z.number(),
-  start: z.string(),
-  chains: z.array(z.string()),
-  providerChains: z.array(z.string()).optional(),
-  rule: z.string(),
-  rulePayload: z.string()
-})
+const connectionSchema = z
+  .object({
+    id: z.string(),
+    metadata: connectionMetadataSchema,
+    upload: z.number(),
+    download: z.number(),
+    start: z.string(),
+    chains: z.array(z.string()),
+    providerChains: z.array(z.string()).optional(),
+    rule: z.string(),
+    rulePayload: z.string()
+  })
+  .passthrough()
 
 const connectionsSnapshotSchema = z
   .object({

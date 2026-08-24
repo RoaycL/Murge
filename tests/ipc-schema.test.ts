@@ -16,6 +16,10 @@ describe('parseConfigPatch', () => {
     expect(() => parseConfigPatch({ mode: 'rule', unexpected: 'x' })).toThrowError(ProtocolError)
   })
 
+  it('rejects tun: renderer must not forward arbitrary TUN config', () => {
+    expect(() => parseConfigPatch({ tun: { enable: true, 'stack': 'mixed' } })).toThrowError(ProtocolError)
+  })
+
   it('rejects a non-object', () => {
     expect(() => parseConfigPatch('nope')).toThrowError(ProtocolError)
     expect(() => parseConfigPatch(null)).toThrowError(ProtocolError)
@@ -54,11 +58,20 @@ describe('parseProxySelection', () => {
     expect(() => parseProxySelection(1, 'x')).toThrowError(ProtocolError)
     expect(() => parseProxySelection('x', null)).toThrowError(ProtocolError)
   })
+
+  it('does not rewrite exact identifiers', () => {
+    // Leading/trailing spaces are preserved: mihomo names are exact identifiers.
+    expect(parseProxySelection(' Proxy ', ' HK-01 ')).toEqual({ group: ' Proxy ', name: ' HK-01 ' })
+  })
 })
 
 describe('parseConnectionId', () => {
   it('accepts a non-empty id', () => {
     expect(parseConnectionId('conn-42')).toBe('conn-42')
+  })
+
+  it('does not rewrite the id', () => {
+    expect(parseConnectionId(' conn-1 ')).toBe(' conn-1 ')
   })
 
   it('rejects an empty or non-string id', () => {

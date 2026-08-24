@@ -2,43 +2,55 @@ import { readFile, readdir, stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
 const root = resolve(new URL('..', import.meta.url).pathname)
-const brand = JSON.parse(await readFile(join(root, 'brand.config.json'), 'utf8'))
-const required = ['productName', 'shortName', 'appId', 'executableName', 'protocolScheme']
-const missing = required.filter((key) => !brand[key])
+const schemaPath = join(root, 'docs', 'schemas', 'brand.schema.json')
+const brandPath = join(root, 'brand.config.json')
 
+const brand = JSON.parse(await readFile(brandPath, 'utf8'))
+const schema = JSON.parse(await readFile(schemaPath, 'utf8'))
+
+const properties = schema.properties ?? {}
+const required = Array.isArray(schema.required) ? schema.required : []
+
+/**
+ * Validate `brand.config.json` against `docs/schemas/brand.schema.json` so the
+ * JSON Schema is the single source of truth for shape and format. The runtime
+ * Zod schema mirrors the same patterns; a unit test keeps the two in sync.
+ */
+const missing = required.filter((key) => brand[key] === undefined)
 if (missing.length) {
   throw new Error(`Missing brand keys: ${missing.join(', ')}`)
 }
 
-/**
- * Build-time shape/type validation mirroring the runtime Zod schema in
- * src/shared/schemas/brand.ts. Keeps an invalid brand document from
- * reaching a build or a packaged app.
- */
-const checks = [
-  ['productName', (v) => typeof v === 'string' && v.trim().length > 0],
-  ['shortName', (v) => typeof v === 'string' && v.trim().length > 0],
-  ['appId', (v) => typeof v === 'string' && /^[A-Za-z0-9][A-Za-z0-9.-]+$/.test(v)],
-  ['executableName', (v) => typeof v === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(v)],
-  ['protocolScheme', (v) => typeof v === 'string' && /^[A-Za-z0-9][A-Za-z0-9+.-]*$/.test(v)],
-  ['description', (v) => typeof v === 'string'],
-  ['companyName', (v) => typeof v === 'string'],
-  ['repositoryUrl', (v) => typeof v === 'string'],
-  ['supportUrl', (v) => typeof v === 'string'],
-  ['copyright', (v) => typeof v === 'string']
-]
+const allowedKeys = new Set([...Object.keys(properties), '$schema'])
+const unknownKeys = Object.keys(brand).filter((key) => !allowedKeys.has(key))
+if (schema.additionalProperties === false && unknownKeys.length) {
+  throw new Error(`Unknown brand keys: ${unknownKeys.join(', ')}`)
+}
 
-const typeViolations = checks
-  .filter(([key, validate]) => !validate(brand[key]))
-  .map(([key]) => `${key}`)
+const violations = []
+for (const key of Object.keys(brand)) {
+  const prop = properties[key]
+  if (!prop) continue
+  const value = brand[key]
+  if (typeof value !== 'string') {
+    violations.push(`${key}: must be a string`)
+    continue
+  }
+  if (typeof prop.minLength === 'number' && value.length < prop.minLength) {
+    violations.push(`${key}: must be at least ${prop.minLength} character(s)`)
+  }
+  if (typeof prop.pattern === 'string' && !new RegExp(prop.pattern).test(value)) {
+    violations.push(`${key}: "${value}" does not match ${prop.pattern}`)
+  }
+}
 
-if (typeViolations.length) {
-  throw new Error(`Invalid brand values: ${typeViolations.join(', ')}`)
+if (violations.length) {
+  throw new Error(`Invalid brand values:\n${violations.map((v) => `  - ${v}`).join('\n')}`)
 }
 
 const forbidden = [brand.productName, brand.shortName]
 const allowed = new Set(['brand.config.json', 'README.md', 'BRANDING.md'])
-const violations = []
+const scanViolations = []
 
 async function walk(directory) {
   for (const entry of await readdir(directory)) {
@@ -49,7 +61,7 @@ async function walk(directory) {
     else if (!allowed.has(entry) && /\.(ts|vue|css|json|mjs|yaml|yml)$/.test(entry)) {
       const content = await readFile(path, 'utf8')
       for (const value of forbidden) {
-        if (value && content.includes(value)) violations.push(`${path}: contains ${value}`)
+        if (value && content.includes(value)) scanViolations.push(`${path}: contains ${value}`)
       }
     }
   }
@@ -57,8 +69,8 @@ async function walk(directory) {
 
 await walk(root)
 
-if (violations.length) {
-  console.error(violations.join('\n'))
+if (scanViolations.length) {
+  console.error(scanViolations.join('\n'))
   process.exit(1)
 }
 

@@ -2,6 +2,8 @@
 
 ## Current milestone
 
+- [ ] Default development commands do not start a real kernel or mutate system networking.
+- [ ] macOS system proxy and TUN implementations are absent or explicitly blocked.
 - [ ] `npm install` completes.
 - [ ] `npm run typecheck` passes.
 - [ ] `npm run build` passes.

@@ -2,7 +2,13 @@
 
 ## Mandatory reading
 
-Read `ARCHITECTURE.md`, `UI_SPEC.md`, `MIHOMO_API.md`, `BRANDING.md` and `ACCEPTANCE.md` before editing code.
+Read `DEVELOPMENT_SAFETY.md` first, then read `ARCHITECTURE.md`, `UI_SPEC.md`, `MIHOMO_API.md`, `BRANDING.md` and `ACCEPTANCE.md` before editing code.
+
+## Development-machine safety gate
+
+The current Mac may be the owner's active remote connection. On this machine, do not start real mihomo or modify system proxy, TUN, DNS, routes, interfaces, firewall rules or any other network state. Do not use the owner's real subscriptions or credentials. Use fixtures, fake processes, mocks and unit tests only. Windows network code may be written but must not be executed here.
+
+This restriction overrides task wording such as “run,” “verify,” “finish” or “test end to end.” Only a new, explicit owner authorization for an exact network test can change it.
 
 ## Non-negotiable rules
 
@@ -14,6 +20,7 @@ Read `ARCHITECTURE.md`, `UI_SPEC.md`, `MIHOMO_API.md`, `BRANDING.md` and `ACCEPT
 6. Do not download or execute a kernel binary without checksum verification.
 7. Do not rewrite an entire YAML profile merely to change one GUI-supported field.
 8. Preserve unrelated user changes and keep each implementation task scoped.
+9. Follow `DEVELOPMENT_SAFETY.md`; default development and test commands must remain non-mutating.
 
 ## Recommended task sequence
 

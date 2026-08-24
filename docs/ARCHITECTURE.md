@@ -1,5 +1,7 @@
 # Architecture
 
+> Mandatory safety boundary: read `DEVELOPMENT_SAFETY.md` before implementing or testing process and network services. Real kernel startup and network mutation are prohibited on the current Mac.
+
 ## Goals
 
 - Windows-first desktop UX with a renderer that can be developed on macOS.

@@ -38,15 +38,15 @@ Environment: current Mac, safe. Mocks only.
 
 Entry gate: Phase 0 complete.
 
-- [ ] Add a runtime schema-validation library.
-- [ ] Validate `brand.config.json` at startup and build time.
-- [ ] Validate every renderer-to-main IPC argument.
-- [ ] Validate and normalize mihomo REST/WebSocket payloads.
-- [ ] Add typed error codes shared across process boundaries.
-- [ ] Add unit-test fixtures for valid, missing and forward-compatible API fields.
-- [ ] Add a fake service container for main-process tests.
-- [ ] Add CI for install, brand check, type check, unit tests and production build.
-- [ ] Add pull-request template requiring scope, evidence and UI screenshots.
+- [x] Add a runtime schema-validation library.
+- [x] Validate `brand.config.json` at startup and build time.
+- [x] Validate every renderer-to-main IPC argument.
+- [x] Validate and normalize mihomo REST/WebSocket payloads.
+- [x] Add typed error codes shared across process boundaries.
+- [x] Add unit-test fixtures for valid, missing and forward-compatible API fields.
+- [x] Add a fake service container for main-process tests.
+- [x] Add CI for install, brand check, type check, unit tests and production build.
+- [x] Add pull-request template requiring scope, evidence and UI screenshots.
 
 Exit criteria:
 

@@ -10,6 +10,32 @@ if (missing.length) {
   throw new Error(`Missing brand keys: ${missing.join(', ')}`)
 }
 
+/**
+ * Build-time shape/type validation mirroring the runtime Zod schema in
+ * src/shared/schemas/brand.ts. Keeps an invalid brand document from
+ * reaching a build or a packaged app.
+ */
+const checks = [
+  ['productName', (v) => typeof v === 'string' && v.trim().length > 0],
+  ['shortName', (v) => typeof v === 'string' && v.trim().length > 0],
+  ['appId', (v) => typeof v === 'string' && /^[A-Za-z0-9][A-Za-z0-9.-]+$/.test(v)],
+  ['executableName', (v) => typeof v === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(v)],
+  ['protocolScheme', (v) => typeof v === 'string' && /^[A-Za-z0-9][A-Za-z0-9+.-]*$/.test(v)],
+  ['description', (v) => typeof v === 'string'],
+  ['companyName', (v) => typeof v === 'string'],
+  ['repositoryUrl', (v) => typeof v === 'string'],
+  ['supportUrl', (v) => typeof v === 'string'],
+  ['copyright', (v) => typeof v === 'string']
+]
+
+const typeViolations = checks
+  .filter(([key, validate]) => !validate(brand[key]))
+  .map(([key]) => `${key}`)
+
+if (typeViolations.length) {
+  throw new Error(`Invalid brand values: ${typeViolations.join(', ')}`)
+}
+
 const forbidden = [brand.productName, brand.shortName]
 const allowed = new Set(['brand.config.json', 'README.md', 'BRANDING.md'])
 const violations = []

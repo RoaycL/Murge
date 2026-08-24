@@ -2,6 +2,7 @@ import { join } from 'node:path'
 import { app, BrowserWindow, shell } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { brand } from '@shared/brand'
+import { parseBrandConfig } from '@shared/schemas/brand'
 import { registerIpc } from './ipc/register-ipc'
 import { KernelSupervisor } from './services/kernel-supervisor'
 import { MihomoClient } from './services/mihomo-client'
@@ -41,6 +42,14 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  try {
+    parseBrandConfig(brand)
+  } catch (error) {
+    console.error('[brand] invalid brand configuration:', error)
+    app.exit(1)
+    return
+  }
+
   app.setName(brand.productName)
   registerIpc({
     kernel: new KernelSupervisor(),

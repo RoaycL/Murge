@@ -1,36 +1,50 @@
 import { ipcMain } from 'electron'
 import { brand } from '@shared/brand'
-import { IPC } from '@shared/ipc'
-import type { MihomoConfigSnapshot } from '@shared/mihomo-api'
+import type { IpcDeps, KernelGateway, MihomoGateway } from '@shared/gateways'
 import type { RuntimeSummary } from '@shared/runtime'
-import type { KernelSupervisor } from '../services/kernel-supervisor'
-import type { MihomoClient } from '../services/mihomo-client'
+import { ProtocolError, encodeProtocolError } from '@shared/protocol-errors'
+import { buildIpcHandlers, type IpcHandler } from './handlers'
 
 export interface IpcDependencies {
-  kernel: KernelSupervisor
-  mihomo: MihomoClient
+  kernel: KernelGateway
+  mihomo: MihomoGateway
 }
 
-export function registerIpc({ kernel, mihomo }: IpcDependencies): void {
-  ipcMain.handle(IPC.appGetBrand, () => brand)
-  ipcMain.handle(IPC.kernelGetStatus, () => kernel.getStatus())
-  ipcMain.handle(IPC.kernelStart, () => kernel.start())
-  ipcMain.handle(IPC.kernelStop, () => kernel.stop())
+/**
+ * Wrap a handler so a typed ProtocolError crosses Electron IPC as an encoded
+ * message. The renderer-side preload decodes it back into a ProtocolError.
+ */
+function wrapHandler(handler: IpcHandler): IpcHandler {
+  return async (event, ...args) => {
+    try {
+      return await handler(event, ...args)
+    } catch (error) {
+      if (error instanceof ProtocolError) throw new Error(encodeProtocolError(error))
+      throw error
+    }
+  }
+}
 
-  ipcMain.handle(IPC.runtimeGetSummary, (): RuntimeSummary => ({
+function buildRuntimeSummary(): RuntimeSummary {
+  return {
     networkName: 'Ethernet',
     profileName: 'Default',
     mode: 'rule',
     externalIp: null,
     systemProxyEnabled: false,
     tunEnabled: false
-  }))
+  }
+}
 
-  ipcMain.handle(IPC.mihomoGetConfig, () => mihomo.getConfig())
-  ipcMain.handle(IPC.mihomoPatchConfig, (_event, patch: Partial<MihomoConfigSnapshot>) => mihomo.patchConfig(patch))
-  ipcMain.handle(IPC.mihomoGetProxies, () => mihomo.getProxies())
-  ipcMain.handle(IPC.mihomoSelectProxy, (_event, group: string, name: string) => mihomo.selectProxy(group, name))
-  ipcMain.handle(IPC.mihomoGetRules, () => mihomo.getRules())
-  ipcMain.handle(IPC.mihomoGetConnections, () => mihomo.getConnections())
-  ipcMain.handle(IPC.mihomoCloseConnection, (_event, id: string) => mihomo.closeConnection(id))
+export function registerIpc({ kernel, mihomo }: IpcDependencies): void {
+  const deps: IpcDeps = {
+    brand,
+    kernel,
+    mihomo,
+    runtime: { getSummary: buildRuntimeSummary }
+  }
+  const handlers = buildIpcHandlers(deps)
+  for (const [channel, handler] of Object.entries(handlers)) {
+    ipcMain.handle(channel, wrapHandler(handler))
+  }
 }

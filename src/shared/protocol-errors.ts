@@ -24,6 +24,14 @@ export const ProtocolErrorCode = {
   UPSTREAM_UNREACHABLE: 'UPSTREAM_UNREACHABLE',
   /** The requested capability is not supported by this build or upstream. */
   UNSUPPORTED: 'UNSUPPORTED',
+  /** The kernel process could not be started. */
+  KERNEL_SPAWN_FAILED: 'KERNEL_SPAWN_FAILED',
+  /** The kernel did not report ready within the start timeout. */
+  KERNEL_START_TIMEOUT: 'KERNEL_START_TIMEOUT',
+  /** The kernel did not exit within the stop timeout. */
+  KERNEL_STOP_TIMEOUT: 'KERNEL_STOP_TIMEOUT',
+  /** The kernel exited unexpectedly (crash / crash-loop exhausted). */
+  KERNEL_CRASHED: 'KERNEL_CRASHED',
   /** A requested entity was not found. */
   NOT_FOUND: 'NOT_FOUND',
   /** An unexpected internal failure. */

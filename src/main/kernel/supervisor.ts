@@ -1,0 +1,389 @@
+import { EventEmitter } from 'node:events'
+import type { KernelStatus } from '@shared/runtime'
+import { ProtocolError, ProtocolErrorCode, toProtocolError } from '@shared/protocol-errors'
+import { BoundedLogBuffer, type KernelLog } from './bounded-log'
+import type {
+  KernelBinary,
+  KernelConfig,
+  KernelDependencies,
+  KernelExitInfo,
+  KernelProcessHandle
+} from './types'
+
+const STOPPED: KernelStatus = {
+  phase: 'stopped',
+  pid: null,
+  version: null,
+  controllerUrl: null,
+  startedAt: null,
+  lastError: null
+}
+
+export interface KernelSupervisorOptions {
+  /** Max time to wait for readiness after a spawn. Default 5000ms. */
+  startTimeoutMs?: number
+  /** Max time to wait for a graceful SIGTERM stop. Default 5000ms. */
+  stopTimeoutMs?: number
+  /** Extra time to wait after SIGKILL before declaring failure. Default 3000ms. */
+  forceKillTimeoutMs?: number
+  /** Max unexpected-exit restarts before giving up. Default 3. */
+  maxRestarts?: number
+  /** Base crash backoff; doubled per attempt. Default 250ms. */
+  backoffMs?: number
+  /** Upper bound on a single backoff delay. Default 5000ms. */
+  maxBackoffMs?: number
+  /**
+   * Readiness regex tested against accumulated stdout. When null/empty, spawn
+   * success means ready. The fixture emits a ready line to exercise this path.
+   */
+  readinessPattern?: RegExp | null
+  /** Rolling log byte cap. Default 256 KiB. */
+  maxLogBytes?: number
+  /** Rolling log entry cap. Default 4000. */
+  maxLogEntries?: number
+}
+
+interface Readiness {
+  resolve: () => void
+  reject: (error: ProtocolError) => void
+  timer: NodeJS.Timeout
+}
+
+interface ExitWait {
+  resolve: (exited: boolean) => void
+  timer: NodeJS.Timeout
+}
+
+/**
+ * Owns the kernel process lifecycle.
+ *
+ * Start/stop are serialised through a single promise chain so concurrent calls
+ * queue instead of racing: a second start is idempotent, and a stop submitted
+ * while a start is still in flight runs only after the start settles. The
+ * process is driven through an injected `KernelProcessAdapter`; the supervisor
+ * never touches Node streams directly and never opens a socket.
+ *
+ * Eventing: the supervisor emits `status` events (and exposes `onStatus`) on
+ * every transition so the main process can forward them to the renderer.
+ */
+export class KernelSupervisor extends EventEmitter {
+  private readonly deps: KernelDependencies
+  private readonly readinessPattern: RegExp | null
+  private readonly startTimeoutMs: number
+  private readonly stopTimeoutMs: number
+  private readonly forceKillTimeoutMs: number
+  private readonly maxRestarts: number
+  private readonly backoffMs: number
+  private readonly maxBackoffMs: number
+  private readonly log: BoundedLogBuffer
+
+  private status: KernelStatus = { ...STOPPED }
+  private chain: Promise<unknown> = Promise.resolve()
+  private handle: KernelProcessHandle | null = null
+  private config: KernelConfig | null = null
+  private isStopping = false
+  private restartCount = 0
+  private restartTimer: NodeJS.Timeout | null = null
+  private readiness: Readiness | null = null
+  private exitWait: ExitWait | null = null
+  private stdoutBuf = ''
+
+  constructor(deps: KernelDependencies, options: KernelSupervisorOptions = {}) {
+    super()
+    this.deps = deps
+    this.readinessPattern = options.readinessPattern ?? null
+    this.startTimeoutMs = options.startTimeoutMs ?? 5000
+    this.stopTimeoutMs = options.stopTimeoutMs ?? 5000
+    this.forceKillTimeoutMs = options.forceKillTimeoutMs ?? 3000
+    this.maxRestarts = options.maxRestarts ?? 3
+    this.backoffMs = options.backoffMs ?? 250
+    this.maxBackoffMs = options.maxBackoffMs ?? 5000
+    this.log = new BoundedLogBuffer(options.maxLogBytes ?? 256 * 1024, options.maxLogEntries ?? 4000)
+  }
+
+  getStatus(): KernelStatus {
+    return { ...this.status }
+  }
+
+  onStatus(listener: (status: KernelStatus) => void): () => void {
+    const handler = (status: KernelStatus): void => listener({ ...status })
+    this.on('status', handler)
+    listener({ ...this.status })
+    return () => this.off('status', handler)
+  }
+
+  getRecentLogs(limit = 200): KernelLog[] {
+    return this.log.snapshot(limit)
+  }
+
+  async start(): Promise<KernelStatus> {
+    return this.withLifecycle(async () => {
+      if (this.status.phase === 'running' || this.status.phase === 'starting') {
+        return this.getStatus()
+      }
+      this.clearRestartTimer()
+      this.restartCount = 0
+      await this.doStart()
+      return this.getStatus()
+    })
+  }
+
+  async stop(): Promise<KernelStatus> {
+    return this.withLifecycle(async () => {
+      this.clearRestartTimer()
+      this.restartCount = 0
+      if (this.status.phase === 'stopped') return this.getStatus()
+
+      const handle = this.handle
+      if (!handle) {
+        this.setStatus({ phase: 'stopped', pid: null })
+        return this.getStatus()
+      }
+
+      this.isStopping = true
+      this.setStatus({ phase: 'stopping' })
+      handle.sendSignal('SIGTERM')
+      const graceful = await this.waitForExit(handle, this.stopTimeoutMs)
+      if (graceful) {
+        this.isStopping = false
+        return this.getStatus()
+      }
+
+      // Bounded forced-termination fallback.
+      handle.sendSignal('SIGKILL')
+      const forced = await this.waitForExit(handle, this.forceKillTimeoutMs)
+      this.isStopping = false
+      if (!forced) {
+        this.setStatus({ phase: 'stopped', pid: null, lastError: 'Kernel survived SIGKILL and may still be running.' })
+        throw new ProtocolError(ProtocolErrorCode.KERNEL_STOP_TIMEOUT, 'Kernel did not exit after SIGKILL.')
+      }
+      this.setStatus({ phase: 'stopped', pid: null })
+      return this.getStatus()
+    })
+  }
+
+  private async doStart(): Promise<void> {
+    this.stdoutBuf = ''
+    this.setStatus({ phase: 'starting', lastError: null })
+
+    let binary: KernelBinary
+    try {
+      binary = await this.deps.resolver.resolve()
+    } catch (error) {
+      return this.raiseFailed(toProtocolError(error))
+    }
+
+    await this.handleStalePid()
+
+    let config: KernelConfig
+    try {
+      config = await this.deps.configStore.materialize(binary, this.deps.secret)
+    } catch (error) {
+      return this.raiseFailed(toProtocolError(error))
+    }
+    this.config = config
+
+    let handle: KernelProcessHandle
+    try {
+      handle = this.deps.adapter.spawn({
+        ...binary,
+        cwd: config.rootDir,
+        env: { ...(binary.env ?? {}), ...(config.env ?? {}) }
+      })
+    } catch (error) {
+      await this.cleanupConfig()
+      return this.raiseFailed(toProtocolError(error))
+    }
+    this.handle = handle
+    // Attach listeners even when no PID was reported, so a failed spawn's
+    // async 'error' event is always consumed instead of surfacing unhandled.
+    this.attach(handle, binary)
+
+    if (!handle.pid) {
+      await this.cleanupHandle()
+      await this.cleanupConfig()
+      return this.raiseFailed(new ProtocolError(ProtocolErrorCode.KERNEL_SPAWN_FAILED, 'Kernel process did not report a PID.'))
+    }
+
+    this.setStatus({ pid: handle.pid, version: binary.version ?? null, startedAt: null, lastError: null })
+
+    try {
+      await this.awaitReady(handle)
+    } catch (error) {
+      await this.cleanupHandle()
+      await this.cleanupConfig()
+      return this.raiseFailed(toProtocolError(error))
+    }
+
+    this.setStatus({ phase: 'running', startedAt: new Date().toISOString() })
+  }
+
+  private async handleStalePid(): Promise<void> {
+    const recorded = this.status.pid
+    if (recorded == null) return
+    if (this.deps.adapter.isProcessAlive(recorded)) {
+      this.log.append('stdout', `[supervisor] recorded pid=${recorded} is still alive; proceeding with a fresh spawn.\n`)
+    } else {
+      this.setStatus({ pid: null })
+      this.log.append('stdout', `[supervisor] cleared stale pid=${recorded}.\n`)
+    }
+  }
+
+  private attach(handle: KernelProcessHandle, binary: KernelBinary): void {
+    this.log.append('stdout', `[supervisor] spawned pid=${handle.pid} cmd=${binary.command} ${binary.args.join(' ')}\n`)
+    handle.onStdout((text) => {
+      this.log.append('stdout', text)
+      this.acceptReadinessFromStdout(text)
+    })
+    handle.onStderr((text) => this.log.append('stderr', text))
+    handle.onExit((info) => {
+      if (this.handle !== handle) return
+      this.handle = null
+      this.handleExit(info)
+    })
+    handle.onError((error) => {
+      if (this.handle !== handle) return
+      this.handle = null
+      this.handleError(error)
+    })
+  }
+
+  private acceptReadinessFromStdout(text: string): void {
+    if (!this.readiness || !this.readinessPattern) return
+    this.stdoutBuf += text
+    if (this.readinessPattern.test(this.stdoutBuf)) {
+      clearTimeout(this.readiness.timer)
+      const r = this.readiness
+      this.readiness = null
+      r.resolve()
+    }
+  }
+
+  private awaitReady(handle: KernelProcessHandle): Promise<void> {
+    if (!this.readinessPattern) return Promise.resolve()
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (this.readiness?.timer === timer) this.readiness = null
+        reject(new ProtocolError(ProtocolErrorCode.KERNEL_START_TIMEOUT, 'Kernel did not report ready within the start timeout.'))
+      }, this.startTimeoutMs)
+      this.readiness = { resolve, reject, timer }
+    })
+  }
+
+  private rejectReadiness(error: ProtocolError): void {
+    if (!this.readiness) return
+    clearTimeout(this.readiness.timer)
+    const r = this.readiness
+    this.readiness = null
+    r.reject(error)
+  }
+
+  private handleExit(info: KernelExitInfo): void {
+    this.rejectReadiness(new ProtocolError(ProtocolErrorCode.KERNEL_CRASHED, `Kernel ${this.describeExit(info)}`))
+    if (this.exitWait) {
+      clearTimeout(this.exitWait.timer)
+      const w = this.exitWait
+      this.exitWait = null
+      w.resolve(true)
+    }
+
+    if (this.isStopping) {
+      this.isStopping = false
+      this.setStatus({ phase: 'stopped', pid: null })
+      return
+    }
+
+    const wasRunning = this.status.phase === 'running'
+    const desc = this.describeExit(info)
+    this.setStatus({ phase: 'failed', pid: null, lastError: `Kernel ${desc}` })
+    if (wasRunning) {
+      this.scheduleRestart(desc)
+    }
+  }
+
+  private handleError(error: Error): void {
+    this.rejectReadiness(new ProtocolError(ProtocolErrorCode.KERNEL_SPAWN_FAILED, error.message))
+    this.setStatus({ phase: 'failed', pid: null, lastError: `Kernel spawn failed: ${error.message}` })
+  }
+
+  private scheduleRestart(reason: string): void {
+    if (this.restartCount >= this.maxRestarts) return
+    this.restartCount += 1
+    const delay = Math.min(this.backoffMs * 2 ** (this.restartCount - 1), this.maxBackoffMs)
+    this.log.append('stdout', `[supervisor] crash detected; restart ${this.restartCount}/${this.maxRestarts} in ${delay}ms (${reason})\n`)
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null
+      void this.withLifecycle(async () => {
+        if (this.handle != null || this.status.phase !== 'failed') return
+        try {
+          await this.doStart()
+        } catch {
+          // doStart already recorded the failure; the cap prevents an infinite loop.
+        }
+      })
+    }, delay)
+  }
+
+  private waitForExit(handle: KernelProcessHandle, timeoutMs: number): Promise<boolean> {
+    if (this.handle !== handle) return Promise.resolve(true)
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        if (this.exitWait?.resolve === resolve) this.exitWait = null
+        resolve(false)
+      }, timeoutMs)
+      this.exitWait = { resolve, timer }
+    })
+  }
+
+  private async cleanupHandle(): Promise<void> {
+    const handle = this.handle
+    if (!handle) return
+    this.handle = null
+    try {
+      handle.sendSignal('SIGKILL')
+    } catch {
+      // best effort
+    }
+    this.setStatus({ pid: null })
+  }
+
+  private async cleanupConfig(): Promise<void> {
+    const config = this.config
+    this.config = null
+    if (config) {
+      try {
+        await this.deps.configStore.cleanup(config)
+      } catch {
+        // best effort
+      }
+    }
+  }
+
+  private raiseFailed(error: ProtocolError): never {
+    this.setStatus({ phase: 'failed', lastError: error.message })
+    throw error
+  }
+
+  private setStatus(patch: Partial<KernelStatus>): void {
+    this.status = { ...this.status, ...patch }
+    this.emit('status', { ...this.status })
+  }
+
+  private clearRestartTimer(): void {
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer)
+      this.restartTimer = null
+    }
+  }
+
+  private describeExit(info: KernelExitInfo): string {
+    if (info.signal) return `terminated by ${info.signal}`
+    return `exited with code ${info.code ?? 'unknown'}`
+  }
+
+  private withLifecycle<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.chain.then(fn)
+    this.chain = run.catch(() => undefined)
+    return run
+  }
+}

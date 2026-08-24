@@ -17,6 +17,8 @@ export interface KernelGateway {
   getStatus(): KernelStatus | Promise<KernelStatus>
   start(): Promise<KernelStatus>
   stop(): Promise<KernelStatus>
+  /** Subscribe to status transitions; returns an unsubscribe function. */
+  onStatus(listener: (status: KernelStatus) => void): () => void
 }
 
 export interface MihomoGateway {

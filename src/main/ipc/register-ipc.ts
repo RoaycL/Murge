@@ -1,7 +1,8 @@
-import { ipcMain } from 'electron'
+import { ipcMain, BrowserWindow } from 'electron'
 import { brand } from '@shared/brand'
 import type { IpcDeps, KernelGateway, MihomoGateway } from '@shared/gateways'
 import type { RuntimeSummary } from '@shared/runtime'
+import { IPC } from '@shared/ipc'
 import { ProtocolError, encodeProtocolError } from '@shared/protocol-errors'
 import { buildIpcHandlers, type IpcHandler } from './handlers'
 
@@ -47,4 +48,11 @@ export function registerIpc({ kernel, mihomo }: IpcDependencies): void {
   for (const [channel, handler] of Object.entries(handlers)) {
     ipcMain.handle(channel, wrapHandler(handler))
   }
+
+  // Forward kernel status transitions to every open renderer window.
+  kernel.onStatus((status) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send(IPC.kernelStatusEvent, status)
+    }
+  })
 }

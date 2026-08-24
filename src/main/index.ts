@@ -4,7 +4,10 @@ import { is } from '@electron-toolkit/utils'
 import { brand } from '@shared/brand'
 import { parseBrandConfig } from '@shared/schemas/brand'
 import { registerIpc } from './ipc/register-ipc'
-import { KernelSupervisor } from './services/kernel-supervisor'
+import { KernelSupervisor } from './kernel/supervisor'
+import { createKernelResolver } from './kernel/resolvers'
+import { TempKernelConfigStore } from './kernel/config-store'
+import { NodeKernelProcessAdapter } from './kernel/node-adapter'
 import { MihomoClient } from './services/mihomo-client'
 
 const controllerUrl = process.env.MURGE_DEV_CONTROLLER ?? 'http://127.0.0.1:9090'
@@ -51,8 +54,19 @@ app.whenReady().then(() => {
   }
 
   app.setName(brand.productName)
+  // Development/builds always use the harmless fixture process; a real kernel
+  // is never resolved or executed until a later milestone enables it opt-in.
+  const kernel = new KernelSupervisor(
+    {
+      resolver: createKernelResolver({ appPath: app.getAppPath(), mode: is.dev ? 'fixture' : 'disabled' }),
+      configStore: new TempKernelConfigStore(),
+      adapter: new NodeKernelProcessAdapter(),
+      secret: controllerSecret
+    },
+    { readinessPattern: /fixture-ready/ }
+  )
   registerIpc({
-    kernel: new KernelSupervisor(),
+    kernel,
     mihomo: new MihomoClient(controllerUrl, controllerSecret)
   })
   createWindow()

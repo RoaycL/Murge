@@ -20,6 +20,7 @@ export class FakeKernelGateway implements KernelGateway {
   getStatusCalls = 0
   startCalls = 0
   stopCalls = 0
+  private readonly listeners = new Set<(status: KernelStatus) => void>()
 
   getStatus(): Promise<KernelStatus> {
     this.getStatusCalls += 1
@@ -34,6 +35,17 @@ export class FakeKernelGateway implements KernelGateway {
   stop(): Promise<KernelStatus> {
     this.stopCalls += 1
     return Promise.resolve({ ...this.status })
+  }
+
+  onStatus(listener: (status: KernelStatus) => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  /** Test helper: publish a status transition to subscribers. */
+  emitStatus(status: KernelStatus): void {
+    this.status = { ...status }
+    for (const listener of this.listeners) listener({ ...status })
   }
 }
 

@@ -167,4 +167,82 @@ describe('MihomoClient', () => {
     const listener = addEventListener.mock.calls[0][1]
     expect(removeEventListener).toHaveBeenCalledWith('abort', listener)
   })
+
+  describe('delay and provider APIs', () => {
+    it('tests a node delay with the default url and timeout', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(fakeResponse({ delay: 42 }))
+      vi.stubGlobal('fetch', fetchMock)
+      const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
+      const result = await client.delayTest('香港 01')
+      expect(result.delay).toBe(42)
+      const url = String(fetchMock.mock.calls[0][0])
+      expect(url).toContain('/proxies/%E9%A6%99%E6%B8%AF%2001/delay')
+      expect(url).toContain('timeout=5000')
+      expect(url).toContain('url=')
+    })
+
+    it('honors custom delay options', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(fakeResponse({ delay: 12, url: 'https://example.com' }))
+      vi.stubGlobal('fetch', fetchMock)
+      const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
+      const result = await client.delayTest('node', { timeout: 2000, url: 'https://example.com' })
+      expect(result.delay).toBe(12)
+      const url = String(fetchMock.mock.calls[0][0])
+      expect(url).toContain('timeout=2000')
+      expect(url).toContain('url=https%3A%2F%2Fexample.com')
+    })
+
+    it('tests a group delay and parses the member map', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(fakeResponse({ '香港 01': 42, DIRECT: 6 }))
+      vi.stubGlobal('fetch', fetchMock)
+      const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
+      const map = await client.groupDelayTest('节点选择')
+      expect(map['香港 01']).toBe(42)
+      expect(map.DIRECT).toBe(6)
+      expect(String(fetchMock.mock.calls[0][0])).toContain('/group/%E8%8A%82%E7%82%B9%E9%80%89%E6%8B%A9/delay')
+    })
+
+    it('maps a 504 delay timeout to UPSTREAM_TIMEOUT', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({ message: 'timeout' }, 504)))
+      const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
+      const error = await client.delayTest('香港 02').catch((e) => e)
+      expect(error).toBeInstanceOf(ProtocolError)
+      expect((error as ProtocolError).code).toBe(ProtocolErrorCode.UPSTREAM_TIMEOUT)
+    })
+
+    it('maps a 408 delay failure to UPSTREAM_TIMEOUT', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({ message: 'unexpected status' }, 408)))
+      const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
+      const error = await client.delayTest('node').catch((e) => e)
+      expect(error).toBeInstanceOf(ProtocolError)
+      expect((error as ProtocolError).code).toBe(ProtocolErrorCode.UPSTREAM_TIMEOUT)
+    })
+
+    it('fetches proxy and rule providers', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fakeResponse({
+        providers: { '机场 A': { name: '机场 A', type: 'Proxy', vehicleType: 'HTTP', proxiesCount: 2 } }
+      })))
+      const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
+      const providers = await client.getProxyProviders()
+      expect(providers.providers['机场 A'].proxiesCount).toBe(2)
+    })
+
+    it('refreshes a proxy provider with a PUT and resolves undefined on 204', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(fakeResponse('', 204))
+      vi.stubGlobal('fetch', fetchMock)
+      const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
+      await expect(client.refreshProxyProvider('机场 A')).resolves.toBeUndefined()
+      expect(String(fetchMock.mock.calls[0][0])).toContain('/providers/proxies/')
+      expect(fetchMock.mock.calls[0][1].method).toBe('PUT')
+    })
+
+    it('health-checks a proxy provider and parses the member map', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(fakeResponse({ '香港 01': 42 }))
+      vi.stubGlobal('fetch', fetchMock)
+      const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
+      const map = await client.healthCheckProxyProvider('机场 A')
+      expect(map['香港 01']).toBe(42)
+      expect(String(fetchMock.mock.calls[0][0])).toContain('/providers/proxies/%E6%9C%BA%E5%9C%BA%20A/healthcheck')
+    })
+  })
 })

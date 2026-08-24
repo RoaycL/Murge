@@ -2,8 +2,12 @@ import type { MihomoGateway } from '@shared/gateways'
 import type {
   MihomoConfigSnapshot,
   MihomoConnectionsSnapshot,
+  MihomoDelayMap,
+  MihomoDelayResult,
   MihomoLogMessage,
   MihomoProxiesResponse,
+  MihomoProxyProvidersResponse,
+  MihomoRuleProvidersResponse,
   MihomoRulesResponse,
   MihomoStreamError
 } from '@shared/mihomo-api'
@@ -83,6 +87,34 @@ export class MihomoService implements MihomoGateway {
 
   getRules(): Promise<MihomoRulesResponse> {
     return this.client.getRules()
+  }
+
+  getProxyProviders(): Promise<MihomoProxyProvidersResponse> {
+    return this.client.getProxyProviders()
+  }
+
+  refreshProxyProvider(name: string): Promise<void> {
+    return this.client.refreshProxyProvider(name)
+  }
+
+  healthCheckProxyProvider(name: string): Promise<MihomoDelayMap> {
+    return this.client.healthCheckProxyProvider(name)
+  }
+
+  getRuleProviders(): Promise<MihomoRuleProvidersResponse> {
+    return this.client.getRuleProviders()
+  }
+
+  refreshRuleProvider(name: string): Promise<void> {
+    return this.client.refreshRuleProvider(name)
+  }
+
+  delayTest(name: string, opts?: { timeout?: number; url?: string }): Promise<MihomoDelayResult> {
+    return this.client.delayTest(name, opts)
+  }
+
+  groupDelayTest(name: string, opts?: { timeout?: number; url?: string }): Promise<MihomoDelayMap> {
+    return this.client.groupDelayTest(name, opts)
   }
 
   getConnections(): Promise<MihomoConnectionsSnapshot> {

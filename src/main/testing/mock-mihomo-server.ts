@@ -6,6 +6,8 @@ import type {
   MihomoConnection,
   MihomoConnectionsSnapshot,
   MihomoProxiesResponse,
+  MihomoProxyProvider,
+  MihomoRuleProvider,
   MihomoRulesResponse,
   MihomoTrafficMessage,
   MihomoLogMessage
@@ -66,6 +68,14 @@ class MockServer {
   private downTotal = 0
   private startedAt = Date.now()
   private readonly config: Required<Pick<MihomoConfigSnapshot, 'mode' | 'port' | 'allow-lan'>> & MihomoConfigSnapshot
+  /** The currently selected member of the `节点选择` Selector group. */
+  private selectorNow = '香港 01'
+  /** Delay results keyed by node name; `香港 02` is intentionally unreachable. */
+  private readonly nodeDelay: Record<string, number> = { '香港 01': 42, DIRECT: 6 }
+  /** Proxy provider metadata keyed by provider name. */
+  private readonly proxyProviders: Record<string, MihomoProxyProvider> = {}
+  /** Rule provider metadata keyed by provider name. */
+  private readonly ruleProviders: Record<string, MihomoRuleProvider> = {}
 
   constructor(options: MockMihomoServerOptions = {}) {
     this.intervalMs = options.trafficIntervalMs ?? 1000
@@ -80,6 +90,8 @@ class MockServer {
       ipv6: false,
       tun: { enable: false, stack: 'system' }
     }
+
+    this.seedProviders()
 
     this.httpServer = createServer((req, res) => this.handleHttp(req, res))
     this.trafficWss = new WebSocketServer({ noServer: true })
@@ -135,50 +147,153 @@ class MockServer {
       return
     }
     const url = new URL(request.url ?? '/', this.httpBaseUrlFallback())
-    const path = url.pathname
+    const segments = url.pathname.split('/').filter(Boolean).map(decodeURIComponent)
     const method = request.method ?? 'GET'
 
-    if (path === '/version' && method === 'GET') {
+    if (segments[0] === 'version' && method === 'GET') {
       return this.json(response, 200, this.version)
     }
-    if (path === '/configs' && method === 'GET') {
+    if (segments[0] === 'configs' && method === 'GET') {
       return this.json(response, 200, this.config)
     }
-    if (path === '/configs' && method === 'PATCH') {
-      let body: Record<string, unknown> = {}
+    if (segments[0] === 'configs' && method === 'PATCH') {
+      return this.patchConfig(request, response)
+    }
+    if (segments[0] === 'proxies' && segments.length === 1 && method === 'GET') {
+      return this.json(response, 200, this.proxies())
+    }
+    if (segments[0] === 'proxies' && segments[1] && segments[2] === 'delay' && method === 'GET') {
+      return this.delayNode(response, segments[1])
+    }
+    if (segments[0] === 'proxies' && segments[1] && method === 'PUT') {
+      return this.selectProxy(request, response, segments[1])
+    }
+    if (segments[0] === 'group' && segments[1] && segments[2] === 'delay' && method === 'GET') {
+      return this.groupDelay(response, segments[1])
+    }
+    if (segments[0] === 'rules' && method === 'GET') {
+      return this.json(response, 200, this.rules())
+    }
+    if (segments[0] === 'providers' && segments[1] === 'proxies' && segments.length === 2 && method === 'GET') {
+      return this.json(response, 200, { providers: this.proxyProviders })
+    }
+    if (segments[0] === 'providers' && segments[1] === 'proxies' && segments[2] && segments[3] === 'healthcheck' && method === 'GET') {
+      return this.healthCheckProvider(response, segments[2])
+    }
+    if (segments[0] === 'providers' && segments[1] === 'proxies' && segments[2] && method === 'PUT') {
+      return this.refreshProxyProvider(response, segments[2])
+    }
+    if (segments[0] === 'providers' && segments[1] === 'rules' && segments.length === 2 && method === 'GET') {
+      return this.json(response, 200, { providers: this.ruleProviders })
+    }
+    if (segments[0] === 'providers' && segments[1] === 'rules' && segments[2] && method === 'PUT') {
+      return this.refreshRuleProvider(response, segments[2])
+    }
+    if (segments[0] === 'connections' && method === 'GET') {
+      return this.json(response, 200, this.snapshot())
+    }
+    if (segments[0] === 'connections' && segments[1] && method === 'DELETE') {
+      return this.json(response, 204)
+    }
+    this.json(response, 404, { message: 'not found' })
+  }
+
+  private patchConfig(request: IncomingMessage, response: ServerResponse): void {
+    let body: Record<string, unknown> = {}
+    const chunks: Buffer[] = []
+    request.on('data', (chunk) => chunks.push(chunk))
+    request.on('end', () => {
+      try {
+        body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
+      } catch {
+        return this.json(response, 400, { message: 'invalid JSON' })
+      }
+      if (body.mode === 'rule' || body.mode === 'global' || body.mode === 'direct') this.config.mode = body.mode
+      if (typeof body['allow-lan'] === 'boolean') this.config['allow-lan'] = body['allow-lan']
+      if (typeof body.port === 'number') this.config.port = body.port
+      this.json(response, 204)
+    })
+    request.resume()
+  }
+
+  /** Select a group member and record it so a subsequent GET reflects the choice. */
+  private selectProxy(request: IncomingMessage, response: ServerResponse, group: string): void {
+    if (group === '节点选择') {
       const chunks: Buffer[] = []
       request.on('data', (chunk) => chunks.push(chunk))
       request.on('end', () => {
+        let payload: Record<string, unknown> = {}
         try {
-          body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
+          payload = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
         } catch {
           return this.json(response, 400, { message: 'invalid JSON' })
         }
-        if (body.mode === 'rule' || body.mode === 'global' || body.mode === 'direct') this.config.mode = body.mode
-        if (typeof body['allow-lan'] === 'boolean') this.config['allow-lan'] = body['allow-lan']
-        if (typeof body.port === 'number') this.config.port = body.port
+        if (typeof payload.name === 'string') this.selectorNow = payload.name
         this.json(response, 204)
       })
       request.resume()
       return
     }
-    if (path === '/proxies' && method === 'GET') {
-      return this.json(response, 200, this.proxies())
+    request.resume()
+    this.json(response, 204)
+  }
+
+  private delayNode(response: ServerResponse, name: string): void {
+    if (name === '香港 02') {
+      return this.json(response, 504, { message: 'timeout' })
     }
-    if (path.startsWith('/proxies/') && method === 'PUT') {
-      request.resume()
-      return this.json(response, 204)
+    if (!(name in this.nodeDelay)) {
+      return this.json(response, 404, { message: 'proxy not found' })
     }
-    if (path === '/rules' && method === 'GET') {
-      return this.json(response, 200, this.rules())
+    this.json(response, 200, { delay: this.nodeDelay[name] })
+  }
+
+  private groupDelay(response: ServerResponse, name: string): void {
+    if (name !== '节点选择') return this.json(response, 404, { message: 'group not found' })
+    this.json(response, 200, { ...this.nodeDelay })
+  }
+
+  private healthCheckProvider(response: ServerResponse, name: string): void {
+    if (!this.proxyProviders[name]) return this.json(response, 404, { message: 'provider not found' })
+    this.json(response, 200, { ...this.nodeDelay })
+  }
+
+  private refreshProxyProvider(response: ServerResponse, name: string): void {
+    const provider = this.proxyProviders[name]
+    if (!provider) return this.json(response, 404, { message: 'provider not found' })
+    provider.updatedAt = new Date().toISOString()
+    provider.now = 'refreshed'
+    this.json(response, 204)
+  }
+
+  private refreshRuleProvider(response: ServerResponse, name: string): void {
+    const provider = this.ruleProviders[name]
+    if (!provider) return this.json(response, 404, { message: 'provider not found' })
+    provider.updatedAt = new Date().toISOString()
+    provider.now = 'refreshed'
+    this.json(response, 204)
+  }
+
+  private seedProviders(): void {
+    const now = '2024-06-01T00:00:00Z'
+    this.proxyProviders['机场 A'] = {
+      name: '机场 A',
+      type: 'Proxy',
+      vehicleType: 'HTTP',
+      behavior: 'rule',
+      proxies: ['香港 01', '香港 02'],
+      proxiesCount: 2,
+      now,
+      updatedAt: now
     }
-    if (path === '/connections' && method === 'GET') {
-      return this.json(response, 200, this.snapshot())
+    this.ruleProviders['规则集 A'] = {
+      name: '规则集 A',
+      type: 'Rule',
+      behavior: 'rule',
+      ruleCount: 8,
+      now,
+      updatedAt: now
     }
-    if (path.startsWith('/connections/') && method === 'DELETE') {
-      return this.json(response, 204)
-    }
-    this.json(response, 404, { message: 'not found' })
   }
 
   private httpBaseUrlFallback(): string {
@@ -189,20 +304,33 @@ class MockServer {
   private proxies(): MihomoProxiesResponse {
     return {
       proxies: {
-        '节点选择': { name: '节点选择', type: 'Selector', now: '香港 01', all: ['香港 01', '香港 02', 'DIRECT'] },
+        '节点选择': { name: '节点选择', type: 'Selector', now: this.selectorNow, all: ['香港 01', '香港 02', 'DIRECT'] },
         '劫持': { name: '劫持', type: 'Direct' },
         '香港 01': { name: '香港 01', type: 'Shadowsocks', alive: true, udp: true },
-        '香港 02': { name: '香港 02', type: 'Shadowsocks', alive: true, udp: true }
+        '香港 02': { name: '香港 02', type: 'Shadowsocks', alive: false, udp: true }
       }
     }
   }
 
   private rules(): MihomoRulesResponse {
+    const rows = [
+      ['DOMAIN-SUFFIX', 'google.com', '香港 01'],
+      ['DOMAIN-SUFFIX', 'youtube.com', '香港 01'],
+      ['DOMAIN-KEYWORD', 'github', '香港 02'],
+      ['GEOIP', 'CN', 'DIRECT'],
+      ['DOMAIN', 'localhost', 'DIRECT'],
+      ['PROCESS-NAME', 'steam', '香港 01'],
+      ['DOMAIN-SUFFIX', 'microsoft.com', 'DIRECT'],
+      ['MATCH', '', '节点选择']
+    ]
     return {
-      rules: [
-        { index: 0, type: 'DOMAIN-SUFFIX', payload: 'localhost', proxy: 'DIRECT', size: 1 },
-        { index: 1, type: 'MATCH', payload: '', proxy: '节点选择', size: 1 }
-      ]
+      rules: rows.map(([type, payload, proxy], index) => ({
+        index,
+        type,
+        payload,
+        proxy,
+        size: (index * 13 + 7) % 37 + 1
+      }))
     }
   }
 

@@ -1,4 +1,128 @@
 <script setup lang="ts">
-const rows = [['0','RULE-SET','rules/ai.list','AI','272660'],['1','RULE-SET','rules/openai.list','AI','5791'],['2','RULE-SET','rules/telegram.list','Telegram','549929'],['3','RULE-SET','rules/youtube.list','Media','920'],['4','RULE-SET','rules/github.list','GitHub','36681'],['5','DOMAIN-SUFFIX','example.com','DIRECT','831'],['6','GEOIP','CN','DIRECT','70242469'],['7','MATCH','','Proxy','4884189']]
+import { onMounted } from 'vue'
+import { useRulesStore, type RulesSortKey } from '../stores/rules'
+import { useProvidersStore } from '../stores/providers'
+
+const rules = useRulesStore()
+const providers = useProvidersStore()
+
+const COLUMNS: Array<{ key: RulesSortKey | null; label: string; className?: string }> = [
+  { key: null, label: '' },
+  { key: 'index', label: 'ID' },
+  { key: 'type', label: '类型' },
+  { key: 'payload', label: '值' },
+  { key: 'proxy', label: '策略' },
+  { key: 'size', label: '使用计数' }
+]
+
+function arrowFor(key: RulesSortKey): string {
+  if (rules.sortKey !== key) return ''
+  return rules.sortDirection === 'asc' ? '↑' : '↓'
+}
+
+function formatUpdatedAt(value?: string): string {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+}
+
+async function init(): Promise<void> {
+  await rules.load()
+  void providers.loadRuleProviders()
+}
+
+onMounted(() => {
+  void init()
+})
 </script>
-<template><div class="page-shell rules-view"><header class="rules-header"><div><h1>规则</h1><p>规则将按照从上至下的顺序进行测试。</p></div><input placeholder="搜索"></header><div class="table-frame"><table><thead><tr><th></th><th>ID</th><th>类型</th><th>值</th><th>策略</th><th>使用计数</th></tr></thead><tbody><tr v-for="row in rows" :key="row[0]"><td>☑</td><td>{{ row[0] }}</td><td>{{ row[1] }}</td><td>{{ row[2] }}</td><td>{{ row[3] }}</td><td>{{ row[4] }}</td></tr></tbody></table></div></div></template>
+
+<template>
+  <div class="page-shell rules-view">
+    <header class="rules-header">
+      <div>
+        <h1>规则</h1>
+        <p>规则将按照从上至下的顺序进行测试。</p>
+      </div>
+      <input :value="rules.search" placeholder="搜索规则" @input="rules.setSearch(($event.target as HTMLInputElement).value)">
+    </header>
+
+    <div v-if="rules.status === 'ready'" class="rules-counters">
+      共 {{ rules.summary.total }} 条规则 · 命中 {{ rules.summary.totalHits }} 次
+    </div>
+
+    <div v-if="rules.status === 'error'" class="empty-state">
+      <p>无法读取规则</p>
+      <span>{{ rules.lastError }}</span>
+      <button type="button" @click="init">重试</button>
+    </div>
+
+    <div v-else-if="rules.status === 'ready' && rules.visibleRows.length === 0" class="empty-state">
+      <p>{{ rules.search ? '没有匹配的规则' : '暂无规则' }}</p>
+      <span v-if="rules.search">请调整搜索条件。</span>
+    </div>
+
+    <div v-else class="table-frame">
+      <table>
+        <thead>
+          <tr>
+            <th v-for="column in COLUMNS" :key="column.label" @click="column.key && rules.sortBy(column.key)">
+              {{ column.label }}<span v-if="column.key && arrowFor(column.key)" class="sort-arrow">{{ arrowFor(column.key) }}</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in rules.visibleRows" :key="row.index">
+            <td><input type="checkbox" aria-label="选择规则"></td>
+            <td>{{ row.index }}</td>
+            <td>{{ row.type }}</td>
+            <td>{{ row.payload }}</td>
+            <td>{{ row.proxy }}</td>
+            <td>{{ row.size }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <section v-if="providers.orderedRuleProviders.length" class="provider-section">
+      <header class="section-caption"><span>规则集</span></header>
+      <div class="provider-list surface-card">
+        <div v-for="provider in providers.orderedRuleProviders" :key="provider.name" class="provider-row">
+          <div class="provider-info">
+            <strong>{{ provider.name }}</strong>
+            <small>{{ provider.behavior || 'rule' }} · {{ provider.ruleCount ?? 0 }} 条规则 · {{ formatUpdatedAt(provider.updatedAt) }}</small>
+          </div>
+          <div v-if="providers.opOf(provider.name).error" class="provider-error">
+            {{ providers.opOf(provider.name).error }}
+          </div>
+          <div class="provider-actions">
+            <button
+              type="button"
+              :disabled="providers.opOf(provider.name).refreshing"
+              @click="providers.refreshRuleProvider(provider.name)"
+            >{{ providers.opOf(provider.name).refreshing ? '更新中' : '更新' }}</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</template>
+
+<style scoped>
+.rules-counters { margin-bottom: 10px; color: var(--app-muted); font-size: 11px; }
+.sort-arrow { margin-left: 3px; font-size: 10px; }
+.empty-state { padding: 26px; border: 1px dashed var(--app-divider); border-radius: 8px; }
+.empty-state p { margin: 0 0 8px; }
+.empty-state span { color: var(--app-muted); font-size: 12px; }
+.empty-state button { margin-top: 12px; height: 28px; padding: 0 12px; border: 0; border-radius: 6px; background: rgba(127,127,127,.13); }
+.provider-section { margin-top: 42px; }
+.provider-list { width: 675px; }
+.provider-row { display: grid; grid-template-columns: 1fr auto; column-gap: 14px; align-items: center; padding: 13px 16px; border-top: 1px solid var(--app-divider); }
+.provider-row:first-child { border-top: 0; }
+.provider-info strong { display: block; font-size: 14px; }
+.provider-info small { display: block; margin-top: 3px; color: var(--app-muted); font-size: 11px; }
+.provider-actions { display: flex; gap: 8px; }
+.provider-actions button { height: 28px; padding: 0 12px; border: 0; border-radius: 6px; background: rgba(127,127,127,.13); }
+.provider-actions button:disabled { opacity: .5; }
+.provider-error { grid-column: 1 / -1; color: #e05b5b; font-size: 11px; }
+</style>

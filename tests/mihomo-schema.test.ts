@@ -9,7 +9,13 @@ import {
   parseMihomoConnections,
   parseMihomoConnection,
   parseMihomoTraffic,
-  parseMihomoLog
+  parseMihomoLog,
+  parseMihomoProxyProviders,
+  parseMihomoProxyProvider,
+  parseMihomoRuleProviders,
+  parseMihomoRuleProvider,
+  parseMihomoDelayResult,
+  parseMihomoDelayMap
 } from '@shared/schemas/mihomo'
 import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
 import {
@@ -171,5 +177,48 @@ describe('parseMihomoLog', () => {
 
   it('tolerates a log with no optional fields', () => {
     expect(parseMihomoLog({})).toBeDefined()
+  })
+})
+
+describe('parseMihomoProxyProviders / parseMihomoProxyProvider', () => {
+  it('parses a valid proxy providers response', () => {
+    const result = parseMihomoProxyProviders({
+      providers: { '机场 A': { name: '机场 A', type: 'Proxy', vehicleType: 'HTTP', proxiesCount: 2 } }
+    })
+    expect(result.providers['机场 A'].proxiesCount).toBe(2)
+  })
+
+  it('tolerates forward-compatible provider fields', () => {
+    const result = parseMihomoProxyProvider({ name: 'A', type: 'Proxy', proxiesCount: 2, custom: 1 })
+    expect(result.custom).toBe(1)
+  })
+
+  it('rejects a provider missing its name', () => {
+    expect(() => parseMihomoProxyProvider({ type: 'Proxy' })).toThrowError(ProtocolError)
+  })
+})
+
+describe('parseMihomoRuleProviders / parseMihomoRuleProvider', () => {
+  it('parses a valid rule providers response', () => {
+    const result = parseMihomoRuleProviders({ providers: { '规则集 A': { name: '规则集 A', type: 'Rule', ruleCount: 8 } } })
+    expect(result.providers['规则集 A'].ruleCount).toBe(8)
+  })
+
+  it('rejects a rule provider missing its name', () => {
+    expect(() => parseMihomoRuleProvider({ type: 'Rule' })).toThrowError(ProtocolError)
+  })
+})
+
+describe('parseMihomoDelayResult / parseMihomoDelayMap', () => {
+  it('parses a delay result', () => {
+    expect(parseMihomoDelayResult({ delay: 42 }).delay).toBe(42)
+  })
+
+  it('rejects a delay result with no numeric delay', () => {
+    expect(() => parseMihomoDelayResult({})).toThrowError(ProtocolError)
+  })
+
+  it('parses a delay map preserving unknown member values', () => {
+    expect(parseMihomoDelayMap({ '香港 01': 42, DIRECT: 6 })).toEqual({ '香港 01': 42, DIRECT: 6 })
   })
 })

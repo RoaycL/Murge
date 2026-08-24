@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Phase 4 — Policies & Rules 934x672 — implementation vs reference</title>
+<style>
+  body { margin:0; padding:24px; background:#f2f3f5; color:#18191c; font:14px/1.5 "Segoe UI",system-ui,sans-serif; }
+  .wrap { max-width:2040px; margin:0 auto; }
+  h1 { font-size:19px; margin:0 0 4px; }
+  .sub { color:#5b6472; margin:0 0 18px; }
+  .pair { display:flex; gap:16px; flex-wrap:wrap; }
+  .col { flex:1 1 934px; min-width:0; }
+  .col h2 { font-size:14px; margin:0 0 8px; }
+  .col img { width:934px; height:672px; display:block; background:#fff; border:1px solid #d8dce3; border-radius:12px; box-shadow:0 12px 34px rgba(24,31,45,.12); }
+  .tag { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; margin-left:8px; vertical-align:middle; }
+  .tag.impl { background:#e7e2ff; color:#4b3fd0; }
+  .tag.ref { background:#dff2e6; color:#1d7a3d; }
+  .panel { background:#fff; border:1px solid #e0e4ea; border-radius:12px; padding:18px 20px; margin-top:20px; box-shadow:0 8px 24px rgba(24,31,45,.06); }
+  h3 { font-size:15px; margin:0 0 12px; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th, td { border:1px solid #eceff3; padding:6px 9px; text-align:left; }
+  th { background:#f7f8fb; font-weight:600; }
+  td.n { text-align:right; }
+  ul.checks { list-style:none; padding:0; margin:0; }
+  ul.checks li { padding:6px 10px; border-radius:8px; margin-bottom:6px; background:#f7f8fb; }
+  ul.checks li.ok { background:#eef8f0; }
+  .ok { color:#1d7a3d; } .warn { color:#b58900; }
+  .note { color:#5b6472; font-size:12px; margin-top:8px; }
+  .burst { background:#eef4ff; border-radius:8px; padding:10px 12px; margin-top:12px; font-size:13px; }
+  .burst code { background:#e5eaf3; border-radius:4px; padding:1px 5px; font-size:12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Phase 4 — 策略 (Policies) &amp; 规则 (Rules) — 934&times;672 implementation vs reference</h1>
+  <p class="sub">Phase 4 delivery: policies mode selector + proxy health-check grid + proxy/rule provider lists, all backed by mocks in the renderer over the gateway/IPC bridge. Left: production build with live mock data. Right: owner-approved reference (auto-scaled by <code>fitWindow()</code> to fit its stage). Both captured at a 934&times;672 content viewport under Xvfb + Electron.</p>
+
+  <div class="pair">
+    <div class="col">
+      <h2>Policies — impl<span class="tag impl">live mock</span></h2>
+      <img src="policies-impl-934x672.png" alt="Policies implementation with live mock data">
+    </div>
+    <div class="col">
+      <h2>Policies — reference<span class="tag ref">owner-approved</span></h2>
+      <img src="policies-ref-934x672.png" alt="Normative Policies reference">
+    </div>
+  </div>
+  <div class="pair" style="margin-top:20px;">
+    <div class="col">
+      <h2>Rules — impl<span class="tag impl">live mock</span></h2>
+      <img src="rules-impl-934x672.png" alt="Rules implementation with live mock data">
+    </div>
+    <div class="col">
+      <h2>Rules — reference<span class="tag ref">owner-approved</span></h2>
+      <img src="rules-ref-934x672.png" alt="Normative Rules reference">
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Automated DOM assertions — all passed</h3>
+    <ul class="checks">
+      <li class='ok'><b>PASS</b> — Policy page renders title 策略, 3 mode choices, 3 proxy cards + 1 provider 机场 A, no error state</li>
+      <li class='ok'><b>PASS</b> — Rules page renders 8 rules, header "共 8 条规则 · 命中 4021 次", 1 provider 规则集 A, no error state</li>
+      <li class='ok'><b>PASS</b> — Active mode is 规则判定; proxy cards show latency (42 ms / 超时 / 6 ms) and unavailable state (香港 02)</li>
+      <li class='ok'><b>PASS</b> — No page horizontal overflow (policies &amp; rules stay inside the 934&times;672 viewport)</li>
+    </ul>
+  </div>
+
+  <div class="panel">
+    <h3>Geometry vs the normative reference (declared CSS is the authority)</h3>
+    <table>
+      <tr><th>Property</th><th>impl (raw px)</th><th>authoritative CSS</th><th>ref (scaled)</th><th>status</th></tr>
+      <tr><td>proxy grid tracks</td><td>repeat(4,151px), gap 13px</td><td>repeat(4,151px), gap 13px</td><td class="n">146 / 12.6</td><td class='ok'>match CSS</td></tr>
+      <tr><td>proxy card size</td><td class="n">151 &times; 94</td><td class="n">151 &times; 94 (height 94px)</td><td class="n">146 &times; 90.9</td><td class='ok'>match CSS</td></tr>
+      <tr><td>rules-table width</td><td class="n">673 (frame 675)</td><td class="n">675</td><td class="n">652.6</td><td class='warn'>−2px (border)</td></tr>
+      <tr><td>column widths (check/id/type/policy/hits)</td><td class="n">34 / 35 / 102 / 118 / 75</td><td class="n">34 / 35 / 102 / 118 / 75</td><td class="n">32.9 / 33.8 / 98.6 / 114.1 / 72.5</td><td class='ok'>match CSS</td></tr>
+      <tr><td>payload column</td><td class="n">flexible (309)</td><td class="n">flexible</td><td class="n">299.7</td><td class='ok'>match CSS</td></tr>
+      <tr><td>rule row height</td><td class="n">27</td><td class="n">27 (td 26 + border)</td><td class="n">25.1</td><td class='warn'>+1px</td></tr>
+      <tr><td>rule row count</td><td class="n">8</td><td class="n">8</td><td class="n">8</td><td class='ok'>match</td></tr>
+    </table>
+    <p class="note">The reference renders through <code>fitWindow()</code> which applies <code>transform: scale(stageWidth/934)</code> (~0.967 here), so its raw px (146/12.6/90.9) are uniformly scaled. The impl matches the <b>declared</b> authoritative CSS exactly: track 151px, gap 13px, card 151&times;94, table columns 34/35/102/(flex)/118/75. The reference table width/row-height figures differ only by the 1px border rounding.</p>
+  </div>
+</div>
+</body>
+</html>

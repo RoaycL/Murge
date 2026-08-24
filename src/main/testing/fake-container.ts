@@ -2,8 +2,12 @@ import type { KernelGateway, MihomoGateway, RuntimeGateway, IpcDeps } from '@sha
 import type {
   MihomoConfigSnapshot,
   MihomoConnectionsSnapshot,
+  MihomoDelayMap,
+  MihomoDelayResult,
   MihomoLogMessage,
   MihomoProxiesResponse,
+  MihomoProxyProvidersResponse,
+  MihomoRuleProvidersResponse,
   MihomoRulesResponse,
   MihomoStreamError
 } from '@shared/mihomo-api'
@@ -56,14 +60,28 @@ export class FakeMihomoGateway implements MihomoGateway {
   proxies: MihomoProxiesResponse = { proxies: {} }
   rules: MihomoRulesResponse = { rules: [] }
   connections: MihomoConnectionsSnapshot = { downloadTotal: 0, uploadTotal: 0, memory: 0, connections: [] }
+  proxyProviders: MihomoProxyProvidersResponse = { providers: {} }
+  ruleProviders: MihomoRuleProvidersResponse = { providers: {} }
 
   getConfigCalls = 0
   patchConfigCalls: Array<Partial<MihomoConfigSnapshot>> = []
   getProxiesCalls = 0
   selectProxyCalls: Array<{ group: string; name: string }> = []
   getRulesCalls = 0
+  getProxyProvidersCalls = 0
+  refreshProxyProviderCalls: string[] = []
+  healthCheckProxyProviderCalls: string[] = []
+  getRuleProvidersCalls = 0
+  refreshRuleProviderCalls: string[] = []
   getConnectionsCalls = 0
   closeConnectionCalls: string[] = []
+
+  /** Configurable results for the delay APIs. */
+  delayResults: Record<string, MihomoDelayResult> = {}
+  groupDelayResults: Record<string, MihomoDelayMap> = {}
+  healthCheckResults: Record<string, MihomoDelayMap> = {}
+  /** If set, these methods reject with this error. */
+  delayError: Error | null = null
 
   getConfig(): Promise<MihomoConfigSnapshot> {
     this.getConfigCalls += 1
@@ -88,6 +106,42 @@ export class FakeMihomoGateway implements MihomoGateway {
   getRules(): Promise<MihomoRulesResponse> {
     this.getRulesCalls += 1
     return Promise.resolve(this.rules)
+  }
+
+  getProxyProviders(): Promise<MihomoProxyProvidersResponse> {
+    this.getProxyProvidersCalls += 1
+    return Promise.resolve(this.proxyProviders)
+  }
+
+  refreshProxyProvider(name: string): Promise<void> {
+    this.refreshProxyProviderCalls.push(name)
+    return Promise.resolve()
+  }
+
+  healthCheckProxyProvider(name: string): Promise<MihomoDelayMap> {
+    this.healthCheckProxyProviderCalls.push(name)
+    if (this.delayError) return Promise.reject(this.delayError)
+    return Promise.resolve(this.healthCheckResults[name] ?? {})
+  }
+
+  getRuleProviders(): Promise<MihomoRuleProvidersResponse> {
+    this.getRuleProvidersCalls += 1
+    return Promise.resolve(this.ruleProviders)
+  }
+
+  refreshRuleProvider(name: string): Promise<void> {
+    this.refreshRuleProviderCalls.push(name)
+    return Promise.resolve()
+  }
+
+  delayTest(name: string): Promise<MihomoDelayResult> {
+    if (this.delayError) return Promise.reject(this.delayError)
+    return Promise.resolve(this.delayResults[name] ?? { delay: 0 })
+  }
+
+  groupDelayTest(name: string): Promise<MihomoDelayMap> {
+    if (this.delayError) return Promise.reject(this.delayError)
+    return Promise.resolve(this.groupDelayResults[name] ?? {})
   }
 
   getConnections(): Promise<MihomoConnectionsSnapshot> {

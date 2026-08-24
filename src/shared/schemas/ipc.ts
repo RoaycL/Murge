@@ -55,6 +55,13 @@ const connectionIdSchema = z.object({
   id: nonEmptyString
 })
 
+const delayOptionsSchema = z
+  .object({
+    timeout: z.number().int().positive().optional(),
+    url: nonEmptyString.optional()
+  })
+  .strict()
+
 /** Validate a renderer-sent config patch. Rejects unknown keys and bad types. */
 export function parseConfigPatch(input: unknown): Partial<MihomoConfigSnapshot> {
   if (!(typeof input === 'object' && input !== null && !Array.isArray(input))) {
@@ -83,4 +90,24 @@ export function parseConnectionId(id: unknown): string {
   const parsed = connectionIdSchema.safeParse({ id })
   if (!parsed.success) throw invalid('connection id must be a non-empty string')
   return parsed.data.id
+}
+
+/** Validate a provider or node name used in a path segment. */
+export function parseMihomoName(name: unknown): string {
+  if (!(typeof name === 'string' && name.trim().length > 0)) throw invalid('name must be a non-empty string')
+  return name
+}
+
+/** Validate a delay-test options object from the renderer. */
+export function parseDelayOptions(input: unknown): { timeout?: number; url?: string } {
+  if (input === undefined) return {}
+  if (!(typeof input === 'object' && input !== null && !Array.isArray(input))) {
+    throw invalid('delay options must be an object')
+  }
+  const parsed = delayOptionsSchema.safeParse(input)
+  if (!parsed.success) {
+    const detail = parsed.error.issues[0]
+    throw invalid(`invalid delay options at ${detail?.path.join('.') || 'options'}: ${detail?.message}`)
+  }
+  return parsed.data
 }

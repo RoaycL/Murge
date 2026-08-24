@@ -2,8 +2,12 @@ import type { BrandConfig } from './brand'
 import type {
   MihomoConfigSnapshot,
   MihomoConnectionsSnapshot,
+  MihomoDelayMap,
+  MihomoDelayResult,
   MihomoLogMessage,
   MihomoProxiesResponse,
+  MihomoProxyProvidersResponse,
+  MihomoRuleProvidersResponse,
   MihomoRulesResponse,
   MihomoStreamError
 } from './mihomo-api'
@@ -29,6 +33,13 @@ export interface MihomoGateway {
   getProxies(): Promise<MihomoProxiesResponse>
   selectProxy(group: string, name: string): Promise<void>
   getRules(): Promise<MihomoRulesResponse>
+  getProxyProviders(): Promise<MihomoProxyProvidersResponse>
+  refreshProxyProvider(name: string): Promise<void>
+  healthCheckProxyProvider(name: string): Promise<MihomoDelayMap>
+  getRuleProviders(): Promise<MihomoRuleProvidersResponse>
+  refreshRuleProvider(name: string): Promise<void>
+  delayTest(name: string, opts?: { timeout?: number; url?: string }): Promise<MihomoDelayResult>
+  groupDelayTest(name: string, opts?: { timeout?: number; url?: string }): Promise<MihomoDelayMap>
   getConnections(): Promise<MihomoConnectionsSnapshot>
   closeConnection(id: string): Promise<void>
   /** Push subscriptions over the shared WebSocket transports. */

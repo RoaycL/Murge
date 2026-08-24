@@ -48,6 +48,49 @@ export interface MihomoRulesResponse {
   rules: MihomoRule[]
 }
 
+export interface MihomoProxyProvider {
+  name: string
+  type: string
+  /** `HTTP`/`Compatible`/`File`/`local` vehicle for a proxy provider. */
+  vehicleType?: string
+  /** Grouping behavior: `rule`, `global`, `direct`. */
+  behavior?: string
+  /** Member proxy names resolved from this provider. */
+  proxies?: string[]
+  proxiesCount?: number
+  /** Provider health/version stamp; may be an empty object when not loaded. */
+  now?: string | Record<string, unknown> | null
+  updatedAt?: string
+  [key: string]: unknown
+}
+
+export interface MihomoProxyProvidersResponse {
+  providers: Record<string, MihomoProxyProvider>
+}
+
+export interface MihomoRuleProvider {
+  name: string
+  type: string
+  behavior?: string
+  ruleCount?: number
+  now?: string | Record<string, unknown> | null
+  updatedAt?: string
+  [key: string]: unknown
+}
+
+export interface MihomoRuleProvidersResponse {
+  providers: Record<string, MihomoRuleProvider>
+}
+
+/** A single-node delay test result, in milliseconds. */
+export interface MihomoDelayResult {
+  delay: number
+  url?: string
+}
+
+/** Per-node delay map returned by a group or provider health-check, in ms. */
+export type MihomoDelayMap = Record<string, number>
+
 export interface ConnectionMetadata {
   network?: string
   type?: string

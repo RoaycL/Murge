@@ -1,6 +1,6 @@
 import { IPC } from '@shared/ipc'
 import type { IpcDeps } from '@shared/gateways'
-import { parseConfigPatch, parseProxySelection, parseConnectionId } from '@shared/schemas/ipc'
+import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions } from '@shared/schemas/ipc'
 
 /** A single IPC handler. The event is opaque to keep the factory Electron-free. */
 export type IpcHandler = (event: unknown, ...args: unknown[]) => unknown | Promise<unknown>
@@ -34,6 +34,13 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
       return mihomo.selectProxy(selection.group, selection.name)
     },
     [IPC.mihomoGetRules]: async () => mihomo.getRules(),
+    [IPC.mihomoGetProxyProviders]: async () => mihomo.getProxyProviders(),
+    [IPC.mihomoRefreshProxyProvider]: async (_event, name) => mihomo.refreshProxyProvider(parseMihomoName(name)),
+    [IPC.mihomoHealthCheckProxyProvider]: async (_event, name) => mihomo.healthCheckProxyProvider(parseMihomoName(name)),
+    [IPC.mihomoGetRuleProviders]: async () => mihomo.getRuleProviders(),
+    [IPC.mihomoRefreshRuleProvider]: async (_event, name) => mihomo.refreshRuleProvider(parseMihomoName(name)),
+    [IPC.mihomoDelayTest]: async (_event, name, opts) => mihomo.delayTest(parseMihomoName(name), parseDelayOptions(opts)),
+    [IPC.mihomoGroupDelayTest]: async (_event, name, opts) => mihomo.groupDelayTest(parseMihomoName(name), parseDelayOptions(opts)),
     [IPC.mihomoGetConnections]: async () => mihomo.getConnections(),
     [IPC.mihomoCloseConnection]: async (_event, id) => mihomo.closeConnection(parseConnectionId(id))
   }

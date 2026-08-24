@@ -1,18 +1,29 @@
 import type {
   MihomoConfigSnapshot,
   MihomoConnectionsSnapshot,
+  MihomoDelayMap,
+  MihomoDelayResult,
   MihomoProxiesResponse,
+  MihomoProxyProvidersResponse,
+  MihomoRuleProvidersResponse,
   MihomoRulesResponse,
   MihomoVersion
 } from '@shared/mihomo-api'
 import {
   parseMihomoConfig,
   parseMihomoConnections,
+  parseMihomoDelayMap,
+  parseMihomoDelayResult,
   parseMihomoProxies,
+  parseMihomoProxyProviders,
+  parseMihomoRuleProviders,
   parseMihomoRules,
   parseMihomoVersion
 } from '@shared/schemas/mihomo'
 import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
+
+/** Default connectivity probe used when the caller does not supply a URL. */
+const DEFAULT_TEST_URL = 'http://www.gstatic.com/generate_204'
 
 export interface MihomoClientOptions {
   /** Abort a request that does not complete within this many milliseconds. */
@@ -24,6 +35,16 @@ export interface MihomoRequestOptions {
   signal?: AbortSignal
   /** Request-specific timeout override (ms). */
   timeoutMs?: number
+}
+
+/** Options for a node or group delay test. */
+export interface DelayTestOptions {
+  /** Probe URL. Defaults to a benign connectivity check. */
+  url?: string
+  /** Per-node timeout in ms. Defaults to 5000. */
+  timeout?: number
+  /** An external cancellation signal. */
+  signal?: AbortSignal
 }
 
 export class MihomoClient {
@@ -129,6 +150,17 @@ export class MihomoClient {
         if (response.status === 401) {
           throw new ProtocolError(ProtocolErrorCode.UNAUTHORIZED, 'controller secret mismatch', { path, reason })
         }
+        // mihomo signals a node/group delay timeout with 504 and an upstream
+        // test failure with 408. Classify both as a typed timeout so the
+        // renderer can show a distinct "timeout" state rather than a generic
+        // HTTP error.
+        if (response.status === 504 || response.status === 408) {
+          throw new ProtocolError(
+            ProtocolErrorCode.UPSTREAM_TIMEOUT,
+            `mihomo delay test failed with HTTP ${response.status}`,
+            { path, reason }
+          )
+        }
         throw new ProtocolError(
           ProtocolErrorCode.UPSTREAM_HTTP_ERROR,
           `mihomo request failed with HTTP ${response.status}`,
@@ -183,6 +215,40 @@ export class MihomoClient {
 
   getRules(signal?: AbortSignal): Promise<MihomoRulesResponse> {
     return this.request('/rules', {}, { signal }).then(parseMihomoRules)
+  }
+
+  getProxyProviders(signal?: AbortSignal): Promise<MihomoProxyProvidersResponse> {
+    return this.request('/providers/proxies', {}, { signal }).then(parseMihomoProxyProviders)
+  }
+
+  refreshProxyProvider(name: string): Promise<void> {
+    return this.request(`/providers/proxies/${encodeURIComponent(name)}`, { method: 'PUT' }).then(() => undefined)
+  }
+
+  healthCheckProxyProvider(name: string, signal?: AbortSignal): Promise<MihomoDelayMap> {
+    return this.request(`/providers/proxies/${encodeURIComponent(name)}/healthcheck`, {}, { signal }).then(parseMihomoDelayMap)
+  }
+
+  getRuleProviders(signal?: AbortSignal): Promise<MihomoRuleProvidersResponse> {
+    return this.request('/providers/rules', {}, { signal }).then(parseMihomoRuleProviders)
+  }
+
+  refreshRuleProvider(name: string): Promise<void> {
+    return this.request(`/providers/rules/${encodeURIComponent(name)}`, { method: 'PUT' }).then(() => undefined)
+  }
+
+  delayTest(name: string, opts: DelayTestOptions = {}): Promise<MihomoDelayResult> {
+    const url = opts.url ?? DEFAULT_TEST_URL
+    const timeout = opts.timeout ?? 5000
+    const query = `?timeout=${encodeURIComponent(String(timeout))}&url=${encodeURIComponent(url)}`
+    return this.request(`/proxies/${encodeURIComponent(name)}/delay${query}`, {}, { signal: opts.signal }).then(parseMihomoDelayResult)
+  }
+
+  groupDelayTest(name: string, opts: DelayTestOptions = {}): Promise<MihomoDelayMap> {
+    const url = opts.url ?? DEFAULT_TEST_URL
+    const timeout = opts.timeout ?? 5000
+    const query = `?timeout=${encodeURIComponent(String(timeout))}&url=${encodeURIComponent(url)}`
+    return this.request(`/group/${encodeURIComponent(name)}/delay${query}`, {}, { signal: opts.signal }).then(parseMihomoDelayMap)
   }
 
   getConnections(signal?: AbortSignal): Promise<MihomoConnectionsSnapshot> {

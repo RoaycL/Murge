@@ -2,6 +2,8 @@
 
 This roadmap is the execution order for human and AI contributors. Complete one phase at a time. Do not begin a phase whose entry gate is not satisfied.
 
+Deferred visual issues are tracked in `docs/UI_DEBT.md` and are NOT fixed in feature phases (resolved only in the unified visual-acceptance pass).
+
 Safety rules in `DEVELOPMENT_SAFETY.md` apply to every phase. On the current Mac, do not start real mihomo or change system proxy, TUN, DNS, routes, firewall or network interfaces.
 
 ## Status legend
@@ -109,15 +111,15 @@ Environment: current Mac, safe. Mocks only.
 
 Entry gate: Phase 3 complete.
 
-- [ ] Implement policy-group and proxy-node stores.
-- [ ] Implement selection flow with optimistic state and rollback.
-- [ ] Implement individual and group delay-test states.
-- [ ] Implement proxy-provider list, refresh and health-check UI.
-- [ ] Implement rule table, search, sort and counters.
-- [ ] Implement rule-provider list and refresh UI.
-- [ ] Percent-encode all dynamic API path segments.
-- [ ] Add empty, unsupported and partial-capability states.
-- [ ] Add 934×672 reference screenshots for Policies and Rules.
+- [x] Implement policy-group and proxy-node stores.
+- [x] Implement selection flow with optimistic state and rollback.
+- [x] Implement individual and group delay-test states.
+- [x] Implement proxy-provider list, refresh and health-check UI.
+- [x] Implement rule table, search, sort and counters.
+- [x] Implement rule-provider list and refresh UI.
+- [x] Percent-encode all dynamic API path segments.
+- [x] Add empty, unsupported and partial-capability states.
+- [x] Add 934×672 reference screenshots for Policies and Rules.
 
 Exit criteria:
 

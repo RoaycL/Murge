@@ -69,4 +69,79 @@ describe('mock mihomo server', () => {
     handles.push(server)
     await expect(firstMessage(`${server.wsBaseUrl}/traffic`)).rejects.toThrow(/Unexpected server response: 401/)
   })
+
+  describe('Phase 4 selection, delay and providers', () => {
+    it('persists a proxy selection so a later read reflects it', async () => {
+      const server = await startMockMihomoServer()
+      handles.push(server)
+      const group = encodeURIComponent('节点选择')
+      const response = await fetch(`${server.baseUrl}/proxies/${group}`, {
+        method: 'PUT',
+        body: JSON.stringify({ name: '香港 02' })
+      })
+      expect(response.status).toBe(204)
+      const proxies = await fetch(`${server.baseUrl}/proxies`).then((r) => r.json()) as { proxies: Record<string, { all: string[]; now: string }> }
+      expect(proxies.proxies['节点选择'].now).toBe('香港 02')
+    })
+
+    it('serves an individual delay result', async () => {
+      const server = await startMockMihomoServer()
+      handles.push(server)
+      const node = encodeURIComponent('香港 01')
+      const res = await fetch(`${server.baseUrl}/proxies/${node}/delay?timeout=5000`)
+      expect(res.status).toBe(200)
+      const body = await res.json() as { delay: number }
+      expect(typeof body.delay).toBe('number')
+    })
+
+    it('maps an unreachable node to 504', async () => {
+      const server = await startMockMihomoServer()
+      handles.push(server)
+      const node = encodeURIComponent('香港 02')
+      const res = await fetch(`${server.baseUrl}/proxies/${node}/delay`)
+      expect(res.status).toBe(504)
+    })
+
+    it('serves a group delay map that omits unreachable members', async () => {
+      const server = await startMockMihomoServer()
+      handles.push(server)
+      const group = encodeURIComponent('节点选择')
+      const res = await fetch(`${server.baseUrl}/group/${group}/delay`)
+      expect(res.status).toBe(200)
+      const map = await res.json() as Record<string, number>
+      expect(map['香港 01']).toBeGreaterThan(0)
+      expect(map['香港 02']).toBeUndefined()
+    })
+
+    it('serves proxy and rule provider metadata', async () => {
+      const server = await startMockMihomoServer()
+      handles.push(server)
+      const proxyRes = await fetch(`${server.baseUrl}/providers/proxies`).then((r) => r.json()) as { providers: Record<string, { type: string; proxiesCount: number }> }
+      const proxyProvider = proxyRes.providers['机场 A']
+      expect(proxyProvider.type).toBe('Proxy')
+      expect(proxyProvider.proxiesCount).toBe(2)
+      const ruleRes = await fetch(`${server.baseUrl}/providers/rules`).then((r) => r.json()) as { providers: Record<string, { type: string; ruleCount: number }> }
+      expect(ruleRes.providers['规则集 A'].type).toBe('Rule')
+    })
+
+    it('refreshes a proxy provider and returns 204 and bumps updatedAt', async () => {
+      const server = await startMockMihomoServer()
+      handles.push(server)
+      const provider = encodeURIComponent('机场 A')
+      const res = await fetch(`${server.baseUrl}/providers/proxies/${provider}`, { method: 'PUT' })
+      expect(res.status).toBe(204)
+      const refetched = await fetch(`${server.baseUrl}/providers/proxies`).then((r) => r.json()) as { providers: Record<string, { updatedAt: string }> }
+      expect(typeof refetched.providers['机场 A'].updatedAt).toBe('string')
+    })
+
+    it('health-checks a proxy provider into a delay map', async () => {
+      const server = await startMockMihomoServer()
+      handles.push(server)
+      const provider = encodeURIComponent('机场 A')
+      const res = await fetch(`${server.baseUrl}/providers/proxies/${provider}/healthcheck`)
+      expect(res.status).toBe(200)
+      const map = await res.json() as Record<string, number>
+      expect(map['香港 01']).toBeGreaterThan(0)
+    })
+  })
 })

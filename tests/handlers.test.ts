@@ -81,4 +81,54 @@ describe('buildIpcHandlers', () => {
       expect(result).toEqual(container.mihomo.proxies)
     })
   })
+
+  describe('mihomo Phase 4 provider and delay channels', () => {
+    it('forwards a delay test to the gateway', async () => {
+      container.mihomo.delayResults['香港 01'] = { delay: 42 }
+      const result = await handlers[IPC.mihomoDelayTest](null, '香港 01')
+      expect(result).toEqual({ delay: 42 })
+    })
+
+    it('passes options through without failing validation', async () => {
+      const result = await handlers[IPC.mihomoDelayTest](null, 'node', { timeout: 2000, url: 'https://example.com' })
+      expect(result).toEqual({ delay: 0 })
+    })
+
+    it('rejects an invalid delay options BEFORE reaching the gateway', async () => {
+      await expect(handlers[IPC.mihomoDelayTest](null, 'node', { timeout: -1 })).rejects.toThrow(ProtocolError)
+    })
+
+    it('forwards a group delay test to the gateway', async () => {
+      container.mihomo.groupDelayResults['节点选择'] = { '香港 01': 42 }
+      const result = await handlers[IPC.mihomoGroupDelayTest](null, '节点选择')
+      expect(result).toEqual({ '香港 01': 42 })
+    })
+
+    it('refreshes a proxy provider by name', async () => {
+      await handlers[IPC.mihomoRefreshProxyProvider](null, '机场 A')
+      expect(container.mihomo.refreshProxyProviderCalls).toEqual(['机场 A'])
+    })
+
+    it('health-checks a proxy provider by name', async () => {
+      container.mihomo.healthCheckResults['机场 A'] = { '香港 01': 42 }
+      const result = await handlers[IPC.mihomoHealthCheckProxyProvider](null, '机场 A')
+      expect(result).toEqual({ '香港 01': 42 })
+    })
+
+    it('rejects an empty provider name BEFORE reaching the gateway', async () => {
+      await expect(handlers[IPC.mihomoRefreshProxyProvider](null, '  ')).rejects.toThrow(ProtocolError)
+      expect(container.mihomo.refreshProxyProviderCalls).toHaveLength(0)
+    })
+
+    it('refreshes a rule provider by name', async () => {
+      await handlers[IPC.mihomoRefreshRuleProvider](null, '规则集 A')
+      expect(container.mihomo.refreshRuleProviderCalls).toEqual(['规则集 A'])
+    })
+
+    it('exposes proxy and rule providers through the gateway', async () => {
+      container.mihomo.proxyProviders = { providers: { A: { name: 'A', type: 'Proxy', proxiesCount: 2 } as never } }
+      const result = await handlers[IPC.mihomoGetProxyProviders](null)
+      expect(result).toEqual(container.mihomo.proxyProviders)
+    })
+  })
 })

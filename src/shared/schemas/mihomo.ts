@@ -3,10 +3,16 @@ import type {
   MihomoConfigSnapshot,
   MihomoConnection,
   MihomoConnectionsSnapshot,
+  MihomoDelayMap,
+  MihomoDelayResult,
   MihomoLogMessage,
   MihomoProxiesResponse,
   MihomoProxy,
+  MihomoProxyProvider,
+  MihomoProxyProvidersResponse,
   MihomoRule,
+  MihomoRuleProvider,
+  MihomoRuleProvidersResponse,
   MihomoRulesResponse,
   MihomoTrafficMessage,
   MihomoVersion
@@ -101,6 +107,51 @@ const rulesResponseSchema = z
   })
   .passthrough()
 
+const providerShared = {
+  name: z.string(),
+  type: z.string(),
+  behavior: z.string().optional(),
+  now: z.union([z.string(), z.record(z.string(), z.unknown()), z.null()]).optional(),
+  updatedAt: z.string().optional()
+}
+
+const proxyProviderSchema = z
+  .object({
+    ...providerShared,
+    vehicleType: z.string().optional(),
+    proxies: z.array(z.string()).optional(),
+    proxiesCount: z.number().optional()
+  })
+  .passthrough()
+
+const proxyProvidersResponseSchema = z
+  .object({
+    providers: z.record(z.string(), proxyProviderSchema)
+  })
+  .passthrough()
+
+const ruleProviderSchema = z
+  .object({
+    ...providerShared,
+    ruleCount: z.number().optional()
+  })
+  .passthrough()
+
+const ruleProvidersResponseSchema = z
+  .object({
+    providers: z.record(z.string(), ruleProviderSchema)
+  })
+  .passthrough()
+
+const delayResultSchema = z
+  .object({
+    delay: z.number(),
+    url: z.string().optional()
+  })
+  .passthrough()
+
+const delayMapSchema = z.record(z.string(), z.number())
+
 const connectionMetadataSchema = z
   .object({
     network: z.string().optional(),
@@ -193,6 +244,42 @@ export function parseMihomoRule(input: unknown): MihomoRule {
   const parsed = ruleSchema.safeParse(input)
   if (!parsed.success) throw fail('rule', parsed.error.issues[0]?.message)
   return parsed.data
+}
+
+export function parseMihomoProxyProviders(input: unknown): MihomoProxyProvidersResponse {
+  const parsed = proxyProvidersResponseSchema.safeParse(input)
+  if (!parsed.success) throw fail('proxy-providers', parsed.error.issues[0]?.message)
+  return parsed.data as MihomoProxyProvidersResponse
+}
+
+export function parseMihomoProxyProvider(input: unknown): MihomoProxyProvider {
+  const parsed = proxyProviderSchema.safeParse(input)
+  if (!parsed.success) throw fail('proxy-provider', parsed.error.issues[0]?.message)
+  return parsed.data
+}
+
+export function parseMihomoRuleProviders(input: unknown): MihomoRuleProvidersResponse {
+  const parsed = ruleProvidersResponseSchema.safeParse(input)
+  if (!parsed.success) throw fail('rule-providers', parsed.error.issues[0]?.message)
+  return parsed.data as MihomoRuleProvidersResponse
+}
+
+export function parseMihomoRuleProvider(input: unknown): MihomoRuleProvider {
+  const parsed = ruleProviderSchema.safeParse(input)
+  if (!parsed.success) throw fail('rule-provider', parsed.error.issues[0]?.message)
+  return parsed.data
+}
+
+export function parseMihomoDelayResult(input: unknown): MihomoDelayResult {
+  const parsed = delayResultSchema.safeParse(input)
+  if (!parsed.success) throw fail('delay-result', parsed.error.issues[0]?.message)
+  return parsed.data
+}
+
+export function parseMihomoDelayMap(input: unknown): MihomoDelayMap {
+  const parsed = delayMapSchema.safeParse(input)
+  if (!parsed.success) throw fail('delay-map', parsed.error.issues[0]?.message)
+  return parsed.data as MihomoDelayMap
 }
 
 export function parseMihomoConnection(input: unknown): MihomoConnection {

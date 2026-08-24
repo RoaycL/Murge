@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseConfigPatch, parseProxySelection, parseConnectionId } from '@shared/schemas/ipc'
+import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions } from '@shared/schemas/ipc'
 import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
 
 describe('parseConfigPatch', () => {
@@ -78,5 +78,39 @@ describe('parseConnectionId', () => {
     expect(() => parseConnectionId('')).toThrowError(ProtocolError)
     expect(() => parseConnectionId('  ')).toThrowError(ProtocolError)
     expect(() => parseConnectionId(7)).toThrowError(ProtocolError)
+  })
+})
+
+describe('parseMihomoName', () => {
+  it('accepts a non-empty name preserving spaces', () => {
+    expect(parseMihomoName('香港 01')).toBe('香港 01')
+  })
+
+  it('rejects empty, whitespace-only and non-string names', () => {
+    expect(() => parseMihomoName('')).toThrowError(ProtocolError)
+    expect(() => parseMihomoName('   ')).toThrowError(ProtocolError)
+    expect(() => parseMihomoName(1)).toThrowError(ProtocolError)
+  })
+})
+
+describe('parseDelayOptions', () => {
+  it('accepts undefined and returns an empty object', () => {
+    expect(parseDelayOptions(undefined)).toEqual({})
+  })
+
+  it('accepts a valid options object', () => {
+    expect(parseDelayOptions({ timeout: 2000, url: 'https://example.com' })).toEqual({ timeout: 2000, url: 'https://example.com' })
+  })
+
+  it('rejects a non-positive timeout', () => {
+    expect(() => parseDelayOptions({ timeout: 0 })).toThrowError(ProtocolError)
+    expect(() => parseDelayOptions({ timeout: -1 })).toThrowError(ProtocolError)
+    expect(() => parseDelayOptions({ timeout: 1.5 })).toThrowError(ProtocolError)
+  })
+
+  it('rejects unknown keys and non-objects', () => {
+    expect(() => parseDelayOptions({ nope: 1 })).toThrowError(ProtocolError)
+    expect(() => parseDelayOptions('x')).toThrowError(ProtocolError)
+    expect(() => parseDelayOptions(null)).toThrowError(ProtocolError)
   })
 })

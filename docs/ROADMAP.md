@@ -156,15 +156,15 @@ Environment: current Mac, safe. Filesystem fixtures and mock validation only.
 
 Entry gate: Phase 1 complete; can run in parallel with Phase 4 after contracts stabilize.
 
-- [ ] Define profile metadata, active profile and subscription models.
-- [ ] Implement import into an isolated test-data directory.
-- [ ] Preserve unsupported YAML keys and comments where feasible.
-- [ ] Implement atomic writes using temporary file plus rename.
-- [ ] Implement subscription fetch abstraction with credential redaction.
-- [ ] Implement validation adapter using a fake validator on this Mac.
-- [ ] Implement activation transaction and rollback.
-- [ ] Build configuration and provider settings pages from the approved visual language.
-- [ ] Add tests for failed fetch, invalid YAML, duplicate name and failed activation.
+- [x] Define profile metadata, active profile and subscription models.
+- [x] Implement import into an isolated test-data directory.
+- [x] Preserve unsupported YAML keys and comments where feasible.
+- [x] Implement atomic writes using temporary file plus rename.
+- [x] Implement subscription fetch abstraction with credential redaction.
+- [x] Implement validation adapter using a fake validator on this Mac.
+- [x] Implement activation transaction and rollback.
+- [x] Build configuration and provider settings pages from the approved visual language.
+- [x] Add tests for failed fetch, invalid YAML, duplicate name and failed activation.
 
 Exit criteria:
 

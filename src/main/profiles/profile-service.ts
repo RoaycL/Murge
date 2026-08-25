@@ -1,9 +1,10 @@
-import type { ConfigEdit, ImportRequest, Profile, ProfileMeta, ValidationResult } from '../../shared/profiles'
+import type { ConfigEdit, ImportRequest, Profile, ProfileMeta, ProfileSubscription, ValidationResult } from '../../shared/profiles'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
 import type { ProfileGateway } from '../../shared/gateways'
 import type { ConfigValidator } from './config-validator'
 import { ProfileRepository } from './profile-repository'
 import type { SubscriptionFetcher } from '../subscriptions/subscription-fetcher'
+import { redactCredentials } from '../subscriptions/subscription-fetcher'
 
 /**
  * Compose the profile store, config validator, and subscription fetcher into the
@@ -29,7 +30,14 @@ export class ProfileService implements ProfileGateway {
   async importProfile(request: ImportRequest): Promise<ProfileMeta> {
     const result = this.validator.validate(request.document)
     this.throwIfInvalid(result)
-    return this.repository.import(request.name, request.document, request.source, request.activate ?? false)
+    
+    // Ensure URL is redacted before persisting
+    const processedSource: ProfileSubscription = {
+      ...request.source,
+      url: request.source.url ? redactCredentials(request.source.url) : undefined
+    }
+    
+    return this.repository.import(request.name, request.document, processedSource, request.activate ?? false)
   }
 
   /**

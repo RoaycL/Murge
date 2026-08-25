@@ -12,7 +12,7 @@ export type ProfileSourceType = 'url' | 'file' | 'manual'
 /** Where a profile came from, WITHOUT any secret material (never a raw token). */
 export interface ProfileSubscription {
   type: ProfileSourceType
-  /** For `url`: the normalized subscription URL. Credentials must be redacted. */
+  /** For `url`: the normalized subscription URL with credentials redacted. Used for display and logs only. */
   url?: string
   /** For `file`: the local path the user imported from (kept for provenance only). */
   path?: string
@@ -62,11 +62,30 @@ export interface ValidationResult {
   issues: ValidationIssue[]
 }
 
+/**
+ * Top-level keys a profile document may be edited through.
+ *
+ * Mirrors `patchableConfigKeys` in `shared/schemas/ipc.ts`. `tun` is deliberately
+ * excluded: it is high-privilege network configuration and must never be written
+ * from the renderer as free-form text.
+ */
+export type ConfigEditKey =
+  | 'port'
+  | 'socks-port'
+  | 'mixed-port'
+  | 'mode'
+  | 'log-level'
+  | 'allow-lan'
+  | 'ipv6'
+
 /** A single supported scalar edit applied to a profile document. */
 export interface ConfigEdit {
   /** Top-level YAML key to set, e.g. `mode` or `mixed-port`. */
-  key: string
-  /** The scalar value as a string, e.g. `rule` or `7890`. */
+  key: ConfigEditKey
+  /**
+   * The scalar value, as the string written into the document (e.g. `rule`,
+   * `7890`, `true`). Validated per key in `parseConfigEdit`.
+   */
   value: string
 }
 

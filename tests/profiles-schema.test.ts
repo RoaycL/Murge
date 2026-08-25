@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { parseImportRequest, parseConfigEdit, parseProfileName, parseProfilePatch } from '../src/shared/schemas/profiles'
+import { ProtocolError } from '../src/shared/protocol-errors'
 
 const VALID_REQUEST = {
   name: 'my profile',
@@ -60,5 +61,41 @@ describe('parseProfilePatch', () => {
 
   it('rejects a patch with unknown fields', () => {
     expect(() => parseProfilePatch({ name: 'new', secret: 'x' })).toThrow(/invalid profile patch/i)
+  })
+})
+
+/**
+ * Regression coverage for config-edit key/value injection. Restricting the key to
+ * the same allowlist `parseConfigPatch` uses is what prevents a renderer from
+ * writing `tun`, or a key containing `:` that would emit invalid YAML.
+ */
+describe('parseConfigEdit key allowlist', () => {
+  it('rejects tun, which must never be written from the renderer', () => {
+    expect(() => parseConfigEdit({ key: 'tun', value: '{enable: true}' })).toThrowError(ProtocolError)
+  })
+
+  it('rejects an arbitrary unknown key', () => {
+    expect(() => parseConfigEdit({ key: 'anything-goes', value: 'x' })).toThrowError(ProtocolError)
+  })
+
+  it('rejects a key containing a colon that would emit invalid YAML', () => {
+    // `x: y` previously produced the line `x: y: z`, which is not valid YAML and
+    // which the structural validator could not detect.
+    expect(() => parseConfigEdit({ key: 'x: y', value: 'z' })).toThrowError(ProtocolError)
+  })
+
+  it('accepts every supported key', () => {
+    expect(parseConfigEdit({ key: 'mode', value: 'global' })).toEqual({ key: 'mode', value: 'global' })
+    expect(parseConfigEdit({ key: 'mixed-port', value: '7890' })).toEqual({ key: 'mixed-port', value: '7890' })
+    expect(parseConfigEdit({ key: 'allow-lan', value: 'false' })).toEqual({ key: 'allow-lan', value: 'false' })
+    expect(parseConfigEdit({ key: 'log-level', value: 'debug' })).toEqual({ key: 'log-level', value: 'debug' })
+  })
+
+  it('enforces the per-key value type', () => {
+    expect(() => parseConfigEdit({ key: 'mode', value: 'nonsense' })).toThrowError(ProtocolError)
+    expect(() => parseConfigEdit({ key: 'mixed-port', value: '70000' })).toThrowError(ProtocolError)
+    expect(() => parseConfigEdit({ key: 'mixed-port', value: 'abc' })).toThrowError(ProtocolError)
+    expect(() => parseConfigEdit({ key: 'allow-lan', value: 'yes' })).toThrowError(ProtocolError)
+    expect(() => parseConfigEdit({ key: 'log-level', value: 'verbose' })).toThrowError(ProtocolError)
   })
 })

@@ -2,6 +2,7 @@ import { IPC } from '@shared/ipc'
 import type { IpcDeps } from '@shared/gateways'
 import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions } from '@shared/schemas/ipc'
 import { parseConfigEdit, parseImportRequest, parseProfileName } from '@shared/schemas/profiles'
+import type { ConfigEdit } from '@shared/profiles'
 
 /** A single IPC handler. The event is opaque to keep the factory Electron-free. */
 export type IpcHandler = (event: unknown, ...args: unknown[]) => unknown | Promise<unknown>
@@ -59,7 +60,7 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
   }
 }
 
-function parseEditsArray(input: unknown): { key: string; value: string }[] {
+function parseEditsArray(input: unknown): ConfigEdit[] {
   if (!Array.isArray(input)) throw new Error('config edits must be an array')
   return input.map(parseConfigEdit)
 }

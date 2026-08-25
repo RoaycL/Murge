@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ProfileRepository } from '../src/main/profiles/profile-repository'
@@ -103,6 +103,24 @@ describe('ProfileService', () => {
     const meta = await serviceWithFetch.importFromUrl('sub', 'https://user:secret@example.com/x')
     expect(meta.source.url).toBe('https://redacted@example.com/x')
     expect(meta.source.url).not.toContain('secret')
+  })
+
+  it('never writes a credential to the meta file on disk (import path)', async () => {
+    // Regression guard: assert the RAW persisted bytes, not just the returned
+    // meta. A previous design kept a full-credential `url` on disk while only the
+    // display copy was redacted, which the return-value assertions above missed.
+    const meta = await service.importProfile({
+      name: 'creds',
+      document: VALID_DOC,
+      source: { type: 'url', url: 'https://user:supersecret@example.com/sub?token=TOK123' }
+    })
+    const raw = await readFile(join(rootDir, `${meta.id}.meta.json`), 'utf8')
+    expect(raw).not.toContain('supersecret')
+    expect(raw).not.toContain('TOK123')
+    // And what the renderer receives via listProfiles must be clean too.
+    const listed = JSON.stringify(await service.listProfiles())
+    expect(listed).not.toContain('supersecret')
+    expect(listed).not.toContain('TOK123')
   })
 
   it('rejects an invalid subscription document (HTTP 200 but malformed body)', async () => {

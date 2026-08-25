@@ -18,6 +18,7 @@ import { createConfigValidator } from './profiles/config-validator'
 import { SubscriptionFetcher } from './subscriptions/subscription-fetcher'
 import { startMockMihomoServer, type MockMihomoServerHandle } from './testing/mock-mihomo-server'
 import type { MihomoGateway } from '@shared/gateways'
+import { ProtocolError, ProtocolErrorCode } from '../shared/protocol-errors'
 
 const controllerUrl = process.env.MURGE_DEV_CONTROLLER ?? 'http://127.0.0.1:9090'
 const controllerSecret = process.env.MURGE_DEV_SECRET ?? ''
@@ -112,10 +113,28 @@ app.whenReady().then(async () => {
   // profile root lands in a later milestone alongside the real validator.
   const profileRoot = await mkdtemp(join(tmpdir(), 'proxy-profiles-'))
   const validator = createConfigValidator({ requireProxySections: false })
+  
+  // SECURITY: In development builds, block all outbound network requests for subscriptions
+  // to comply with DEVELOPMENT_SAFETY.md restrictions. Production builds use real fetch.
+  let subscriptionFetcher: SubscriptionFetcher
+  if (is.dev) {
+    subscriptionFetcher = new SubscriptionFetcher({
+      strictUrlValidation: true,
+      fetchFn: async () => {
+        throw new ProtocolError(
+          ProtocolErrorCode.INVALID_ARGUMENT,
+          '开发构建禁止真实订阅抓取；请切换到生产构建或显式启用网络访问'
+        )
+      }
+    })
+  } else {
+    subscriptionFetcher = new SubscriptionFetcher()
+  }
+  
   const profileService = new ProfileService(
     new ProfileRepository({ rootDir: profileRoot, validator }),
     validator,
-    new SubscriptionFetcher()
+    subscriptionFetcher
   )
   disposeIpc = registerIpc({
     kernel: kernelInstance,

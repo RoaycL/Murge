@@ -88,5 +88,55 @@ pixel-tuned against the 934×672 reference:
 - The profile list has no per-profile detail drawer/editor yet; editing is
   scalar-only for `mode` and `mixed-port`, everything else is preserved verbatim.
 
+**Development machine note (mkdtemp semantics):**  
+The profile root directory is created via `mkdtemp` at application startup
+(`src/main/index.ts:113`). This means:
+- A fresh temp directory is created each launch; old profiles are orphaned in
+  system temp and never seen again by the app.
+- Profiles do NOT persist across restarts on this development Mac.
+- This is intentional for safety (no real mihomo process, no network mutation),
+  but is easily misread as "restores from the same directory after a restart".
+
 Defer the visual pass to the unified visual-acceptance phase. Functional behavior
 must not be reworked for layout reasons.
+
+## UI-DEBT-006 — Profile storage uses mkdtemp (ephemeral per-launch)
+
+Phase 5 stores profiles in a `mkdtemp` directory under `/tmp` (`index.ts:113`).
+This means:
+
+- Each application launch creates a fresh profile directory; old profiles are
+  orphaned in system temp and never recovered on restart.
+- The ephemeral store is intentional for development safety (no persistent
+  credential exposure), but it contradicts user expectations of "profiles survive
+  restart".
+- On production Windows builds, this must be replaced with a stable app-data
+  path (e.g., `%LOCALAPPDATA%\Murge\profiles`) so profiles persist across
+  launches.
+
+Until then, treat Phase 5 as mock-only: profiles exist only within a single
+session. Document this clearly in the UI if users ask where their profiles go.
+
+## UI-DEBT-007 — Subscription refresh is deferred (credentials are not stored)
+
+Phase 5 persists only the REDACTED subscription URL (`ProfileSubscription.url`),
+in both the profile metadata and anything the renderer receives. Credentials are
+never written to disk or sent to the renderer — this is required by the Phase 5
+exit criterion "logs never contain subscription credentials".
+
+A direct consequence: there is no stored secret to re-fetch with, so
+"refresh subscription" cannot be implemented purely from the persisted metadata.
+
+Deferred to a later phase (alongside durable storage, UI-DEBT-006):
+
+- A secure secret store (e.g. Electron `safeStorage`) that holds the full
+  credential-bearing URL encrypted at rest, keyed by profile id.
+- A refresh action that asks the main process to re-fetch using that stored
+  secret and re-import, without the credential ever crossing IPC.
+
+Until then:
+
+- Treat "refresh subscription" as a not-yet-available feature.
+- Re-importing from the original URL remains the supported way to update content.
+- Do NOT reintroduce a credential-bearing field on `ProfileSubscription` to work
+  around this; that would reopen the plaintext-at-rest leak.

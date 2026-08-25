@@ -4,6 +4,7 @@ import { dirname, join, resolve, sep } from 'node:path'
 import type { ConfigEdit, Profile, ProfileMeta, ProfileSubscription } from '../../shared/profiles'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
 import type { ConfigValidator } from './config-validator'
+import { redactCredentials } from '../subscriptions/subscription-fetcher'
 
 /**
  * Manages a single, isolated profile directory.
@@ -170,10 +171,17 @@ export class ProfileRepository {
     await this.ensureUniqueName(name)
     const id = await this.createId()
     const timestamp = this.now()
+    
+    // Redact credentials from URL before persisting
+    const processedSource: ProfileSubscription = {
+      ...source,
+      url: source.url ? redactCredentials(source.url) : undefined
+    }
+    
     const meta: ProfileMeta = {
       id,
       name: name.trim(),
-      source,
+      source: processedSource,
       size: Buffer.byteLength(document, 'utf8'),
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -231,7 +239,11 @@ export class ProfileRepository {
     const profile = await this.get(id)
     const updatedDocument = applyEdits(profile.document, edits)
     await this.writeBytes(this.docPath(id), updatedDocument)
-    const updated: ProfileMeta = { ...profile.meta, updatedAt: this.now() }
+    const updated: ProfileMeta = { 
+      ...profile.meta, 
+      updatedAt: this.now(),
+      size: Buffer.byteLength(updatedDocument, 'utf8') // MEDIUM FIX: Update size after edit
+    }
     await this.writeBytes(this.metaPath(id), JSON.stringify(updated))
     return updated
   }

@@ -39,3 +39,41 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  package-win:
+    name: Package Windows installer (NSIS)
+    needs: verify
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies (including development)
+        run: npm ci --include=dev
+        env:
+          NODE_ENV: development
+
+      - name: Build and package Windows (x64 + arm64)
+        run: npm run package:win -- --publish never
+        env:
+          # Signing is intentionally disabled for CI smoke builds. Real signing
+          # needs a certificate and is an owner decision — see docs/CODE_SIGNING.md.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: List packaged artifacts
+        run: |
+          Get-ChildItem -Path dist -Recurse -File | Select-Object Name, Length | Format-Table -AutoSize
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: dist/*.exe
+          if-no-files-found: error
+

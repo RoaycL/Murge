@@ -5,6 +5,7 @@ import { app, BrowserWindow, shell } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { brand } from '@shared/brand'
 import { parseBrandConfig } from '@shared/schemas/brand'
+import { migrateLegacyAppData, appDataRoot } from './storage/app-data'
 import { registerIpc } from './ipc/register-ipc'
 import { KernelSupervisor } from './kernel/supervisor'
 import { createKernelResolver } from './kernel/resolvers'
@@ -22,6 +23,16 @@ import { ProtocolError, ProtocolErrorCode } from '../shared/protocol-errors'
 
 const controllerUrl = process.env.MURGE_DEV_CONTROLLER ?? 'http://127.0.0.1:9090'
 const controllerSecret = process.env.MURGE_DEV_SECRET ?? ''
+
+// Production pins the application-data directory to a stable, product-name-free
+// namespace (see storage/app-data.ts) so a future rename never orphans user
+// data. This must run before the ready event so every Electron subsystem that
+// derives paths from `userData` (localStorage, caches, session) resolves it
+// consistently. Dev builds leave the default path and the ephemeral profile
+// workspace untouched — see DEVELOPMENT_SAFETY.md.
+if (!is.dev) {
+  app.setPath('userData', appDataRoot(app.getPath('appData')))
+}
 
 // Created inside app.whenReady; held here so the quit path can stop it.
 let kernel: KernelSupervisor | null = null
@@ -93,6 +104,14 @@ app.whenReady().then(async () => {
   }
 
   app.setName(brand.productName)
+
+  // Import any data a prior build kept under the old product-name folder into
+  // the stable namespace. Only runs in production (dev never writes real user
+  // data) and is naturally idempotent.
+  if (!is.dev) {
+    await migrateLegacyAppData(app.getPath('appData'))
+  }
+
   // Development/builds always use the harmless fixture process; a real kernel
   // is never resolved or executed until a later milestone enables it opt-in.
   const kernelInstance = new KernelSupervisor(

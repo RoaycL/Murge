@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { MihomoConfigSnapshot } from '../mihomo-api'
 import { ProtocolError, ProtocolErrorCode } from '../protocol-errors'
+import { logLevelSchema } from './log-level'
 
 /**
  * Runtime validation for every renderer-to-main IPC argument.
@@ -28,7 +29,7 @@ const patchableConfigKeys = {
   'socks-port': z.number().int().min(0).max(65535).optional(),
   'mixed-port': z.number().int().min(0).max(65535).optional(),
   mode: z.enum(['rule', 'global', 'direct']).optional(),
-  'log-level': z.string().optional(),
+  'log-level': logLevelSchema.optional(),
   'allow-lan': z.boolean().optional(),
   ipv6: z.boolean().optional()
 } satisfies Record<string, z.ZodType>

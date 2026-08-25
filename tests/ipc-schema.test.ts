@@ -35,6 +35,16 @@ describe('parseConfigPatch', () => {
     expect(() => parseConfigPatch({ mode: 'bogus' })).toThrowError(ProtocolError)
   })
 
+  it('accepts a valid log-level', () => {
+    expect(parseConfigPatch({ 'log-level': 'debug' })).toEqual({ 'log-level': 'debug' })
+  })
+
+  it('rejects an unrecognized log-level rather than forwarding it to the controller', () => {
+    // log-level is validated against the shared mihomo set at the boundary instead
+    // of being sent through and rejected by the kernel at apply time.
+    expect(() => parseConfigPatch({ 'log-level': 'bogus' })).toThrowError(ProtocolError)
+  })
+
   it('surfaces the typed code', () => {
     try {
       parseConfigPatch({ mode: 'bogus' })

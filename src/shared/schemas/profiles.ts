@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { ProfileSubscription, ProfilePatch, ConfigEdit } from '../profiles'
 import { ProtocolError, ProtocolErrorCode } from '../protocol-errors'
+import { logLevelSchema } from './log-level'
 
 /**
  * Runtime validation for every renderer-to-main profile IPC argument.
@@ -39,12 +40,12 @@ const configEditKeySchema = z.enum([
 ])
 
 /**
- * Per-key value constraints. These align with `patchableConfigKeys` in `./ipc.ts`,
- * except `log-level` is tightened to mihomo's actual accepted set
- * (`LogLevelMapping`: silent/error/warning/info/debug) rather than an open string,
- * because an unrecognized level written into the document makes the kernel reject
- * the whole config on load. Values cross the wire as strings (they are written
- * verbatim into YAML), so each key validates the string FORM of its type.
+ * Per-key value constraints. These align with `patchableConfigKeys` in `./ipc.ts`.
+ * `log-level` is validated against the shared `logLevelSchema` (the single source
+ * of truth for mihomo's accepted log levels), because an unrecognized level written
+ * into the document makes the kernel reject the whole config on load. Values
+ * cross the wire as strings (they are written verbatim into YAML), so each key
+ * validates the string FORM of its type.
  */
 const PORT_PATTERN = /^\d{1,5}$/
 const configEditValueByKey: Record<z.infer<typeof configEditKeySchema>, z.ZodType<string>> = {
@@ -52,7 +53,7 @@ const configEditValueByKey: Record<z.infer<typeof configEditKeySchema>, z.ZodTyp
   'socks-port': portValue(),
   'mixed-port': portValue(),
   mode: z.enum(['rule', 'global', 'direct']),
-  'log-level': z.enum(['silent', 'error', 'warning', 'info', 'debug']),
+  'log-level': logLevelSchema,
   'allow-lan': z.enum(['true', 'false']),
   ipv6: z.enum(['true', 'false'])
 }

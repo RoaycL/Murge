@@ -3,12 +3,17 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import type { KernelBinary, KernelConfig, KernelConfigStore } from './types'
-import { generateMihomoConfig, randomSecret, validateMihomoConfigYaml } from './mihomo-config'
+import { generateMihomoConfig, randomSecret, validateMihomoConfigYaml, SECRET_PATTERN } from './mihomo-config'
 
 export interface MihomoConfigStoreOptions {
   mixedPort: number
   controllerPort: number
-  /** Pin the workspace location (e.g. for tests); defaults to a fresh temp dir. */
+  /**
+   * Pin the parent that owns the per-run workspace (e.g. for tests). It is
+   * treated strictly as a parent directory: the store creates an exclusive
+   * `mihomo-workspace-*` child beneath it and only ever deletes that exact
+   * child. The parent is never removed. Defaults to the OS temp dir.
+   */
   workspaceDir?: string
 }
 
@@ -19,19 +24,28 @@ export interface MihomoConfigStoreOptions {
  * Safety: the written document always satisfies the Phase-7 invariants
  * (mixed-port only, allow-lan:false, mode:direct, external-controller on
  * 127.0.0.1, tun.enable:false, dns.enable:false, rules MATCH,DIRECT). Cleanup
- * refuses to delete any path outside the workspace this store created.
+ * deletes exactly the per-run child the store created and refuses to touch any
+ * other path, including the caller-provided parent.
  */
 export class MihomoKernelConfigStore implements KernelConfigStore {
+  /** The exact directory this store created; unknown until materialize runs. */
+  private ownedDir: string | null = null
+
   constructor(private readonly options: MihomoConfigStoreOptions) {}
 
   async materialize(_binary: KernelBinary, secret?: string): Promise<KernelConfig> {
-    const rootDir = this.options.workspaceDir
+    // Always materialize into an exclusive child. `workspaceDir` (if given) is a
+    // parent; the caller's own files under it must survive a later cleanup.
+    const parent = this.options.workspaceDir
       ? await mkdir(this.options.workspaceDir, { recursive: true }).then(() => this.options.workspaceDir!)
-      : await mkdtemp(join(tmpdir(), 'mihomo-workspace-'))
+      : tmpdir()
+    const rootDir = await mkdtemp(join(parent, 'mihomo-workspace-'))
+    this.ownedDir = rootDir
     const configPath = join(rootDir, 'config.yaml')
-    // Prefer a passed secret; fall back to a fresh high-entropy one so a caller
-    // that omits it still gets a non-empty, unguessable bearer token.
-    const effectiveSecret = secret && secret.length >= 16 ? secret : randomSecret(32)
+    // Prefer a passed secret only when it is already a valid 64-hex token;
+    // otherwise mint a fresh high-entropy one so a caller can never inject a
+    // malformed or non-conforming bearer token.
+    const effectiveSecret = secret && SECRET_PATTERN.test(secret) ? secret : randomSecret(32)
     const configText = generateMihomoConfig({
       mixedPort: this.options.mixedPort,
       controllerPort: this.options.controllerPort,
@@ -50,11 +64,17 @@ export class MihomoKernelConfigStore implements KernelConfigStore {
   }
 
   async cleanup(config: KernelConfig): Promise<void> {
+    // Only ever delete the exact child this store created. Anything else (the
+    // parent passed in, a config the store did not materialize, or a path
+    // outside the workspace) is left untouched.
+    if (!this.ownedDir) return
+    const owned = resolve(this.ownedDir)
     const root = resolve(config.rootDir)
+    if (root !== owned) return
     const child = resolve(config.configPath)
-    // Never delete outside the workspace this store created.
-    if (child !== root && !child.startsWith(root + sep)) return
-    await rm(root, { recursive: true, force: true })
+    if (child !== owned && !child.startsWith(owned + sep)) return
+    await rm(owned, { recursive: true, force: true })
+    this.ownedDir = null
   }
 }
 

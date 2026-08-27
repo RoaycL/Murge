@@ -1,7 +1,10 @@
 import { describe, it, expect, vi } from 'vitest'
+import { mkdtemp, writeFile, symlink } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { MihomoKernelResolver, mihomoExecutableName } from '../src/main/kernel/resolvers'
+import { sha256File, type ResolvedMihomoBinary } from '../src/main/kernel/mihomo-artifact'
 import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
-import type { ResolvedMihomoBinary } from '../src/main/kernel/mihomo-artifact'
 
 const fakeResolved: ResolvedMihomoBinary = {
   path: '/ws/mihomo.exe',
@@ -12,6 +15,7 @@ const fakeResolved: ResolvedMihomoBinary = {
     filename: 'mihomo-windows-amd64-v1.19.30.zip',
     url: 'https://example.invalid/asset.zip',
     sha256: 'a'.repeat(64),
+    size: 1,
     kind: 'zip',
     innerName: 'mihomo-windows-amd64.exe'
   },
@@ -20,43 +24,113 @@ const fakeResolved: ResolvedMihomoBinary = {
   reused: false
 }
 
+const wi = () => mkdtemp(join(tmpdir(), 'mihomo-resolver-'))
+
 describe('MihomoKernelResolver', () => {
   it('refuses to resolve a real binary when not explicitly enabled', async () => {
     const resolver = new MihomoKernelResolver({ allowReal: false, workspaceDir: '/ws' })
     await expect(resolver.resolve()).rejects.toMatchObject({ code: ProtocolErrorCode.UNSUPPORTED })
   })
 
-  it('returns a pre-resolved binary path when binaryPath is supplied', async () => {
+  it('refuses a binaryPath without expectedSha256 (unverifiable)', async () => {
     const resolver = new MihomoKernelResolver({
       allowReal: true,
       workspaceDir: '/ws',
-      binaryPath: '/opt/tools/mihomo.exe',
-      version: '1.19.30'
+      binaryPath: '/opt/tools/mihomo.exe'
+    })
+    await expect(resolver.resolve()).rejects.toMatchObject({ code: ProtocolErrorCode.UNSUPPORTED })
+  })
+
+  it('resolves a verified binaryPath after hashing the file', async () => {
+    const dir = await wi()
+    const binPath = join(dir, 'mihomo.exe')
+    await writeFile(binPath, 'verified bytes')
+    const expected = await sha256File(binPath)
+    const resolver = new MihomoKernelResolver({
+      allowReal: true,
+      workspaceDir: '/ws',
+      binaryPath: binPath,
+      expectedSha256: expected,
+      version: '1.19.30',
+      platform: 'win32',
+      arch: 'x64'
     })
     const binary = await resolver.resolve()
-    expect(binary.command).toBe('/opt/tools/mihomo.exe')
+    expect(binary.command).toBe(binPath)
     expect(binary.args).toEqual([])
     expect(binary.version).toBe('1.19.30')
+    expect(binary.env).toMatchObject({ MIHOMO_PLATFORM: 'win32', MIHOMO_ARCH: 'x64' })
+  })
+
+  it('rejects a binaryPath whose bytes do not match expectedSha256', async () => {
+    const dir = await wi()
+    const binPath = join(dir, 'mihomo.exe')
+    await writeFile(binPath, 'different bytes')
+    const resolver = new MihomoKernelResolver({
+      allowReal: true,
+      workspaceDir: '/ws',
+      binaryPath: binPath,
+      expectedSha256: 'f'.repeat(64)
+    })
+    await expect(resolver.resolve()).rejects.toMatchObject({ code: ProtocolErrorCode.ARTIFACT_HASH_MISMATCH })
+  })
+
+  it('rejects a relative binaryPath', async () => {
+    const resolver = new MihomoKernelResolver({
+      allowReal: true,
+      workspaceDir: '/ws',
+      binaryPath: 'relative/mihomo.exe',
+      expectedSha256: 'a'.repeat(64)
+    })
+    await expect(resolver.resolve()).rejects.toMatchObject({ code: ProtocolErrorCode.INVALID_ARGUMENT })
+  })
+
+  it('rejects a binaryPath that is a symlink', async () => {
+    const dir = await wi()
+    const target = join(dir, 'real.exe')
+    const link = join(dir, 'link.exe')
+    await writeFile(target, 'bytes')
+    await symlink(target, link)
+    const expected = await sha256File(target)
+    const resolver = new MihomoKernelResolver({
+      allowReal: true,
+      workspaceDir: '/ws',
+      binaryPath: link,
+      expectedSha256: expected
+    })
+    await expect(resolver.resolve()).rejects.toMatchObject({ code: ProtocolErrorCode.INVALID_ARGUMENT })
+  })
+
+  it('rejects a binaryPath that does not exist', async () => {
+    const resolver = new MihomoKernelResolver({
+      allowReal: true,
+      workspaceDir: '/ws',
+      binaryPath: '/does/not/exist.exe',
+      expectedSha256: 'a'.repeat(64)
+    })
+    await expect(resolver.resolve()).rejects.toMatchObject({ code: ProtocolErrorCode.INVALID_ARGUMENT })
   })
 
   it('maps a resolved mihomo binary onto a KernelBinary (download path)', async () => {
-    const resolveMihomo = vi.fn(async (_platform: string, _arch: string): Promise<ResolvedMihomoBinary> => fakeResolved)
+    const resolveMihomoOverride = vi.fn(
+      async (_platform: string, _arch: string): Promise<ResolvedMihomoBinary> => fakeResolved
+    )
     const resolver = new MihomoKernelResolver({
       allowReal: true,
       workspaceDir: '/ws',
       platform: 'win32',
       arch: 'x64',
-      resolveMihomo
+      resolveMihomoOverride
     })
     const binary = await resolver.resolve()
     expect(binary.command).toBe('/ws/mihomo.exe')
     expect(binary.version).toBe('1.19.30')
     expect(binary.env).toMatchObject({ MIHOMO_PLATFORM: 'win32', MIHOMO_ARCH: 'x64' })
-    expect(resolveMihomo).toHaveBeenCalledWith('win32', 'x64', { workspaceDir: '/ws' })
+    expect(resolveMihomoOverride).toHaveBeenCalledWith('win32', 'x64', { workspaceDir: '/ws' })
   })
 
   it('propagates an unsupported platform from the resolver', async () => {
-    const resolveMihomo = vi.fn(async () => {
+    const resolveMihomoOverride = vi.fn(async () => {
       throw new ProtocolError(ProtocolErrorCode.UNSUPPORTED, 'No pinned mihomo artifact')
     })
     const resolver = new MihomoKernelResolver({
@@ -64,7 +138,7 @@ describe('MihomoKernelResolver', () => {
       workspaceDir: '/ws',
       platform: 'freebsd',
       arch: 'x64',
-      resolveMihomo
+      resolveMihomoOverride
     })
     await expect(resolver.resolve()).rejects.toMatchObject({ code: ProtocolErrorCode.UNSUPPORTED })
   })

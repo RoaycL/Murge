@@ -46,3 +46,17 @@ Real network integration testing requires all of the following:
 4. Before/after evidence for settings, process, listener, route and DNS state.
 
 Absent all four conditions, stop and use mocks.
+
+## Disposable Windows real-kernel listener policy
+
+The only real mihomo execution permitted in this project is the `kernel-real-windows`
+CI job, on a disposable `windows-latest` runner (never on this Mac). That job must
+assert, fail-closed, that the controller and mixed ports each expose at least one
+listener and that every listener is **loopback** — `127.0.0.1` or `::1` (the IPv6
+loopback is accepted as loopback-equivalent). Any bind to a non-loopback address
+(`0.0.0.0`, `::`, a real interface address) fails the job, as does an empty parse
+or unavailable listener tooling. The job also captures a before/after snapshot of
+the host's WinHTTP/Internet-Settings proxy, IPv4/IPv6 default routes, DNS client
+server addresses, active adapters and firewall profile state, and fails if any
+safety-relevant value changed. Real mihomo does not run locally on the Mac, so this
+policy is only enforced by the disposable Windows job.

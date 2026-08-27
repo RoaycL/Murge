@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { mkdtemp, rm, readFile } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFile } from 'node:child_process'
@@ -11,6 +11,7 @@ import { MihomoKernelResolver } from '../src/main/kernel/resolvers'
 import { MihomoKernelConfigStore, findFreePort } from '../src/main/kernel/mihomo-config-store'
 import { MihomoClient } from '../src/main/services/mihomo-client'
 import { randomSecret } from '../src/main/kernel/mihomo-config'
+import { captureNetworkSnapshot, assertNetworkUnchanged } from './real-network-snapshot'
 import type { KernelDependencies } from '../src/main/kernel/types'
 
 const execFileAsync = promisify(execFile)
@@ -23,6 +24,20 @@ const execFileAsync = promisify(execFile)
  */
 const enabled = process.env.MURGE_RUN_REAL_KERNEL === '1'
 const run = enabled ? describe : describe.skip
+
+/**
+ * Persistent evidence for the CI watchdog (P2 #11). The PID (and the ports the
+ * test opened) are written to a runner-temp file so an `if: always()` finally
+ * step can kill exactly the recorded process and verify cleanup — even if the
+ * test crashed. Never write the controller secret here.
+ */
+const evidencePath = process.env.RUNNER_TEMP
+  ? join(process.env.RUNNER_TEMP, 'mihomo-real-kernel-evidence.json')
+  : join(tmpdir(), 'mihomo-real-kernel-evidence.json')
+
+async function writeKernelEvidence(data: Record<string, unknown>): Promise<void> {
+  await writeFile(evidencePath, JSON.stringify(data), 'utf8')
+}
 
 async function waitFor(
   cond: () => boolean,
@@ -58,26 +73,64 @@ async function waitForController(
   throw new Error('mihomo controller did not answer /version within timeout')
 }
 
-/** Enumerate the listeners bound to `port` as host strings (best effort). */
+/**
+ * Parse a `host:port` token, handling IPv6 bracket form `[::1]:8080` as well as
+ * bare IPv4 `127.0.0.1:8080` / unbracketed `::1:8080`-style tokens.
+ * Returns null when the token is not an address (state/PID/peer-wildcard).
+ */
+function parseHostPort(token: string): { host: string; port: number } | null {
+  const bracketed = token.match(/^\[([^\]]+)\]:(\d+)$/)
+  if (bracketed) return { host: bracketed[1], port: Number(bracketed[2]) }
+  const idx = token.lastIndexOf(':')
+  if (idx <= 0) return null
+  const host = token.slice(0, idx)
+  const port = Number(token.slice(idx + 1))
+  if (!Number.isInteger(port) || port <= 0) return null
+  return { host, port }
+}
+
+/**
+ * Enumerate the hosts listening on `port`, failing CLOSED when the listening
+ * tooling is unavailable or no listener matches. Non-loopback hosts are
+ * returned too so the caller can reject them — this never silently passes.
+ * Handles `127.0.0.1`, `0.0.0.0`, `::1`, `::` and `[IPv6]:port`.
+ */
 async function listenersOn(port: number): Promise<string[]> {
-  const hosts: string[] = []
+  let stdout: string
   try {
-    const { stdout } =
+    const res =
       process.platform === 'win32'
         ? await execFileAsync('netstat', ['-ano', '-p', 'TCP'])
         : await execFileAsync('ss', ['-ltna'])
-    const needle = `:${port}`
-    for (const line of stdout.split('\n')) {
-      if (!line.includes(needle)) continue
-      const token = process.platform === 'win32' ? line.trim().split(/\s+/)[1] : line.trim().split(/\s+/)[3]
-      // ss TCP row: State Recv-Q Send-Q Local-Address:Port Peer ... -> token index 3
-      const host = token?.split(':')[0]
-      if (host && host !== '*' && host !== '::') hosts.push(host.replace(/^\[|\]$/g, ''))
-    }
-  } catch {
-    // If no listener tooling is available, leave empty so callers can skip.
+    stdout = res.stdout
+  } catch (error) {
+    throw new Error(`listener tooling unavailable: ${(error as Error).message}`)
   }
-  return hosts
+  const listenState = process.platform === 'win32' ? 'LISTENING' : 'LISTEN'
+  const hosts = new Set<string>()
+  let matched = false
+  for (const raw of stdout.split('\n')) {
+    const line = raw.trim()
+    if (!line) continue
+    const tokens = line.split(/\s+/)
+    if (!tokens.includes(listenState)) continue
+    // The address token is the first token that parses as host:port on our port;
+    // the peer address for LISTEN rows is `0.0.0.0:*` / `0.0.0.0:0`, which never
+    // matches the numeric port, so we only ever pick the local address.
+    for (const token of tokens) {
+      const parsed = parseHostPort(token)
+      if (parsed && parsed.port === port) {
+        hosts.add(parsed.host)
+        matched = true
+        break
+      }
+    }
+  }
+  // Fail closed rather than "pass because nothing was parseable".
+  if (!matched || hosts.size === 0) {
+    throw new Error(`no listener found on port ${port}`)
+  }
+  return [...hosts]
 }
 
 run('mihomo real kernel integration', () => {
@@ -97,9 +150,13 @@ run('mihomo real kernel integration', () => {
 
   it('downloads, verifies, starts, serves, stops and restarts the pinned mihomo', async () => {
     workspace = await mkdtemp(join(tmpdir(), 'mihomo-real-'))
+    const before = await captureNetworkSnapshot()
     const secret = randomSecret(32)
     const mixedPort = await findFreePort()
-    const controllerPort = await findFreePort()
+    let controllerPort = await findFreePort()
+    while (controllerPort === mixedPort) {
+      controllerPort = await findFreePort()
+    }
     const configDir = join(workspace, 'config')
 
     const deps: KernelDependencies = {
@@ -131,6 +188,7 @@ run('mihomo real kernel integration', () => {
     expect(status.phase).toBe('running')
     expect(status.pid).toBeGreaterThan(0)
     expect(status.version).toBe('1.19.30')
+    await writeKernelEvidence({ pid: status.pid, controllerPort, mixedPort, workspace, configDir })
 
     const base = `http://127.0.0.1:${controllerPort}`
     const client = new MihomoClient(base, secret, { timeoutMs: 10000 })
@@ -144,18 +202,30 @@ run('mihomo real kernel integration', () => {
     const badClient = new MihomoClient(base, 'wrong-secret-0000000000000000', { timeoutMs: 5000 })
     await expect(badClient.getVersion()).rejects.toMatchObject({ code: 'UNAUTHORIZED' })
 
-    // Mode + rules evidence.
-    const configText = await readFile(join(configDir, 'config.yaml'), 'utf8')
+    // Mode + rules evidence. The config path comes from the live supervisor so
+    // it tracks the store-created workspace child (the store nests config.yaml
+    // under a randomly named child of workspaceDir).
+    const activeConfig = supervisor.getActiveConfig()
+    expect(activeConfig).not.toBeNull()
+    const configPath = activeConfig!.configPath
+    expect(configPath.startsWith(configDir)).toBe(true)
+    expect(configPath).toContain('config.yaml')
+    const configText = await readFile(configPath, 'utf8')
     expect(configText).toContain('mode: direct')
     expect(configText).toContain('  - MATCH,DIRECT')
     const configs = await client.getConfig()
     expect(configs.mode).toBe('direct')
 
-    // Loopback-only listeners (asserted when the OS exposes them).
-    const mixedListeners = await listenersOn(mixedPort)
-    const controllerListeners = await listenersOn(controllerPort)
-    for (const hosts of [mixedListeners, controllerListeners]) {
-      for (const host of hosts) expect(host).toBe('127.0.0.1')
+    // Loopback-only listeners. The controller port and the mixed port must each
+    // show at least one listener, and every listener host must be loopback. A
+    // missing listener or a non-loopback bind fails the test (fail closed).
+    const listenerGroups = [controllerPort, mixedPort]
+    for (const port of listenerGroups) {
+      const hosts = await listenersOn(port)
+      expect(hosts.length).toBeGreaterThanOrEqual(1)
+      for (const host of hosts) {
+        expect(host).toMatch(/^(127\.0\.0\.1|::1)$/)
+      }
     }
 
     // WebSocket transport to the controller authenticates + opens.
@@ -194,6 +264,7 @@ run('mihomo real kernel integration', () => {
     })
     const restarted = await supervisor.start()
     expect(restarted.phase).toBe('running')
+    await writeKernelEvidence({ pid: restarted.pid, controllerPort, mixedPort, workspace, configDir })
     await waitForController(client, supervisor)
     expect(restarted.pid).not.toBe(firstPid)
     const stoppedRestarted = await supervisor.stop()
@@ -212,6 +283,7 @@ run('mihomo real kernel integration', () => {
     })
     const crashed = await supervisor.start()
     expect(crashed.phase).toBe('running')
+    await writeKernelEvidence({ pid: crashed.pid, controllerPort, mixedPort, workspace, configDir })
     await waitForController(client, supervisor)
     const crashedPid = supervisor.getStatus().pid
     expect(crashedPid).toBeGreaterThan(0)
@@ -233,6 +305,11 @@ run('mihomo real kernel integration', () => {
     const watchdogStatus = supervisor.getStatus()
     expect(watchdogStatus.pid).not.toBe(crashedPid)
     await supervisor.stop()
+
+    // P1 #9 network integrity: the run must not have mutated the host's proxy
+    // settings, default routes, DNS or firewall.
+    const after = await captureNetworkSnapshot()
+    assertNetworkUnchanged(before, after)
   }, 180000)
 })
 

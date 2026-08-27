@@ -15,6 +15,7 @@ const EXPECTED_LICENSES = [
   'vueuse-core.txt',
   'zod.txt',
   'ws.txt',
+  'yaml.txt',
   'electron.txt',
   'electron-toolkit-utils.txt',
   'electron-toolkit-preload.txt'

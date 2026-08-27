@@ -201,17 +201,22 @@ Environment: disposable Windows VM with an independent recovery path.
 
 Entry gate: Phases 1–6 complete and explicit owner authorization for this phase.
 
-- [x] Resolve a pinned official mihomo release (v1.19.30) for win32/x64 and linux/arm64. (Step A: `src/main/kernel/mihomo-artifact.ts`; catalog holds only digest-verified platforms, others resolve to `UNSUPPORTED`.)
-- [x] Verify release checksum before execution. (Step A: streaming SHA-256 against the pinned digest; a mismatch is rejected as `ARTIFACT_HASH_MISMATCH` with no file retained, and a `.mihomo-verified` marker gates idempotent reuse.)
-- [x] Generate a random controller secret and localhost-only controller address. (Step A: `randomSecret(32)` + `external-controller: 127.0.0.1`; validated by `mihomo-config`.)
-- [x] Materialize a safe test configuration with `MATCH,DIRECT`. (Step A: `mihomo-config-store` writes and validates `mode: direct`, `allow-lan: false`, `tun.enable: false`, `dns.enable: false`, `rules: MATCH,DIRECT`, and rejects any config containing `redir-port`/`tproxy-port`/`routing-mark`/`interface-name`/`auto-route`/`auto-detect-interface`/system-proxy keys.)
-- [x] Implement controller readiness using listener check plus `/version`. (Step A: bounded supervisor + `MihomoClient.getVersion()`; the real test polls `/version` until the controller answers.)
-- [x] Integrate real REST and WebSocket transports. (Step A: `mihomo-client` REST mapping + `mihomo-stream`; the real test opens an authenticated `/traffic` WebSocket.)
-- [x] Verify graceful stop, crash handling and restart behavior. (Step A: supervisor stop/backoff/restart + a gated real test that stops and restarts with a fresh PID.)
-- [x] Verify configuration validation and activation using test profiles only. (Step A: fail-closed config validation before write + unit tests.)
-- [ ] Record binary path, version, PID, listener and endpoint evidence. (Pending Step B execution.)
+Status: in progress (the owner's Phase 7 safety review requires the hardening
+below before the phase can be accepted; the current revision implements them).
 
-> Step A (resolver, download/verify, config generator, config store + unit tests, and the gated real-kernel integration test) is implemented and green in CI. Real mihomo execution is intentionally deferred to the disposable Windows CI/disposable VM per the owner's step ordering; the current host never launches the binary.
+- [x] Resolve a pinned official mihomo release (v1.19.30) for win32/x64, win32/arm64 and linux/arm64. (Step A: `src/main/kernel/mihomo-artifact.ts`; the catalog holds only digest-verified platforms, others resolve to `UNSUPPORTED`. Platform triage: **Win x64** = runtime verified in the disposable Windows CI job; **Win arm64** = official asset + digest verification implemented, runtime verification explicitly deferred (packaging-only for now, never substituted with the linux/arm64 build); **Linux arm64** = server/dev-only support, not a Windows-arm64 delivery.)
+- [x] Verify release checksum before execution. (Step A: streaming SHA-256 against the pinned digest AND the pinned byte size; a mismatch/truncation is rejected as `ARTIFACT_HASH_MISMATCH` with no file retained. Provenance is recorded in a structured `MihomoVerifiedMarker` holding version, archive SHA-256, binary SHA-256, platform, arch; the binary is re-hashed before every reuse and a tampered, truncated, forged or mismatched binary is quarantined and re-downloaded + re-extracted from a fresh verified archive.)
+- [x] Generate a random controller secret and localhost-only controller address. (Step A: `randomSecret(32)` → 64-hex; the secret must match `/^[0-9a-f]{64}$/` and is redacted by `sanitizeMihomoConfig` so it never leaks to logs/evidence.)
+- [x] Materialize a safe test configuration with `MATCH,DIRECT`. (Step A: `mihomo-config-store` validates with a real YAML parser against an exact top-level allowlist `{mixed-port, allow-lan, mode, log-level, ipv6, external-controller, secret, tun, dns, rules}`; `tun`/`dns` may only be `enable:false`, `rules` must be exactly `MATCH,DIRECT`, ports are restricted to 1024–65535, and duplicate keys, aliases, tags, composite keys and complex objects are rejected.)
+- [x] Implement controller readiness using a listener check plus `/version`. (Step A: bounded supervisor + `MihomoClient.getVersion()`; the real test polls `/version` and asserts the controller and the mixed port each have at least one loopback listener, failing closed when tooling is unavailable.)
+- [~] Integrate real REST and WebSocket transports. (component/CI-level wiring in Step A only; production wiring is deferred until the owner wires an explicit user-triggered action.)
+- [~] Verify graceful stop, crash handling and restart behavior. (component/CI-level via a gated real test that stops and restarts with a fresh PID; production lifecycle wiring deferred.)
+- [~] Verify configuration validation and activation using test profiles only. (component/CI-level; production activation wiring deferred until the owner wires an explicit user-triggered action.)
+- [ ] Record binary path, version, PID, listener and endpoint evidence. (Pending Step B execution on the disposable Windows runner.)
+- [ ] Add a host-level before/after network-integrity snapshot and a `finally` cleanup/watchdog in the Windows job. (CI hooks implemented; expected to be exercised on Step B execution.)
+- [ ] Wire the production kernel lifecycle to an explicit user-triggered action. (Deferred by design — a real kernel is never launched automatically.)
+
+> Step A (resolver, download/verify, config generator, config store + unit tests and the gated real-kernel integration test) is implemented and green in CI. Phase 7 remains **in progress** per the owner's safety review: it is only complete once the safety fixes are landed AND Win x64 runtime evidence is recorded AND Windows arm64 is done or explicitly deferred AND the production lifecycle has explicit user-triggered wiring. Real mihomo execution stays on the disposable Windows CI / disposable VM; the current host never launches the binary.
 
 Exit criteria:
 

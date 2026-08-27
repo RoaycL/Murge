@@ -91,6 +91,11 @@ export class KernelSupervisor extends EventEmitter {
   private exitWork: Promise<void> | null = null
   private stdoutBuf = ''
 
+  /** The config the supervisor currently materialized, or null before start. */
+  getActiveConfig(): KernelConfig | null {
+    return this.config
+  }
+
   constructor(deps: KernelDependencies, options: KernelSupervisorOptions = {}) {
     super()
     this.deps = deps

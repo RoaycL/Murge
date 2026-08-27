@@ -13,7 +13,8 @@ here.
 ## Runtime dependencies
 
 The following libraries are bundled inside the application runtime. All are
-MIT-licensed. The full upstream copyright notices and license texts are shipped
+MIT-licensed except `yaml`, which is ISC-licensed (both permissive). The full
+upstream copyright notices and license texts are shipped
 alongside the application in the `licenses/` resource directory (one file per
 package) and are the authoritative copies for preserving notices.
 Each bundle is reproduced verbatim from the package's own LICENSE file, so the
@@ -27,6 +28,7 @@ copyright owners and license terms are retained exactly as published upstream.
 | @vueuse/core       | `licenses/vueuse-core.txt`   | 13.x    | MIT     |
 | zod                | `licenses/zod.txt`           | 3.x     | MIT     |
 | ws                 | `licenses/ws.txt`            | 8.x     | MIT     |
+| yaml               | `licenses/yaml.txt`          | 2.x     | ISC     |
 
 ## Electron runtime
 

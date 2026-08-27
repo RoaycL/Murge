@@ -44,6 +44,7 @@ jobs:
     name: Real mihomo kernel integration (Windows)
     needs: verify
     runs-on: windows-latest
+    timeout-minutes: 30
     env:
       MURGE_RUN_REAL_KERNEL: "1"
     steps:
@@ -66,10 +67,69 @@ jobs:
       # Safety is enforced by the config schema before any file is written:
       # mode direct, tun/dns disabled, external-controller + secret on
       # 127.0.0.1, allow-lan:false, rules MATCH,DIRECT. The test also asserts
-      # only 127.0.0.1 listeners on the two ports it opened.
+      # only 127.0.0.1 listeners on the two ports it opened, differs a host
+      # network snapshot before/after, and records the live PID + ports to
+      # $RUNNER_TEMP so the watchdog below can kill exactly that process.
       - name: Run real kernel integration test (gated)
         shell: pwsh
         run: npx vitest run tests/mihomo-kernel.integration.test.ts
+
+      # P2 #11: must run even on failure/crash. Kill ONLY the PID recorded by
+      # the test and verify the listener ports + temp config are released. The
+      # evidence file never contains the controller secret.
+      - name: Kill recorded mihomo PID & verify cleanup (finally)
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $evidence = Join-Path $env:RUNNER_TEMP 'mihomo-real-kernel-evidence.json'
+          if (-not (Test-Path $evidence)) {
+            Write-Host 'no kernel evidence file; nothing to clean up'
+            exit 0
+          }
+          $ev = Get-Content $evidence -Raw | ConvertFrom-Json
+          Write-Host "evidence: pid=$($ev.pid) controller=$($ev.controllerPort) mixed=$($ev.mixedPort)"
+          if ($ev.pid) {
+            if (Get-Process -Id $ev.pid -ErrorAction SilentlyContinue) {
+              Write-Host "stopping recorded PID $($ev.pid)"
+              Stop-Process -Id $ev.pid -Force -ErrorAction SilentlyContinue
+              Start-Sleep -Seconds 2
+            }
+            if (Get-Process -Id $ev.pid -ErrorAction SilentlyContinue) {
+              throw "recorded mihomo PID $($ev.pid) still alive after kill"
+            }
+            Write-Host "recorded mihomo PID $($ev.pid) is gone"
+          }
+          if (Get-Process -Name 'mihomo' -ErrorAction SilentlyContinue) {
+            throw 'an unexpected mihomo process remains after the recorded PID was stopped'
+          }
+          $ports = @($ev.controllerPort, $ev.mixedPort) | Where-Object { $_ }
+          if ($ports.Count -gt 0) {
+            $listen = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+              Where-Object { $_.LocalPort -in $ports }
+            if ($listen) { throw "test port still listening: $($listen.LocalPort)" }
+            Write-Host "test ports released: $($ports -join ', ')"
+          }
+          if ($ev.workspace) {
+            $configDir = Join-Path $ev.workspace 'config'
+            $children = Get-ChildItem -Path $configDir -Directory -Filter 'mihomo-workspace-*' -ErrorAction SilentlyContinue
+            if ($children) {
+              throw "store config child not cleaned: $($children.FullName)"
+            }
+            Write-Host 'temp config/secret directory cleaned'
+            # Leave the runner clean even if the test crashed before its own teardown.
+            if (Test-Path $ev.workspace) { Remove-Item $ev.workspace -Recurse -Force -ErrorAction SilentlyContinue }
+          }
+          Write-Host 'kernel watchdog: PASS'
+
+      # Sanitized evidence only (PID, ports, workspace path) — never the secret.
+      - name: Upload kernel evidence (sanitized)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-real-evidence
+          path: ${{ runner.temp }}/mihomo-real-kernel-evidence.json
+          if-no-files-found: warn
 
   package-win:
     name: Package Windows & smoke-test NSIS installer
@@ -120,7 +180,7 @@ jobs:
           if (-not $notices) { throw 'THIRD_PARTY_NOTICES.md missing from the packaged artifact' }
           Write-Host "notices: $($notices.FullName)"
           $licensesDir = Join-Path $notices.DirectoryName 'licenses'
-          $expected = @('vue.txt','vue-router.txt','pinia.txt','vueuse-core.txt','zod.txt','ws.txt','electron.txt','electron-toolkit-utils.txt','electron-toolkit-preload.txt')
+          $expected = @('vue.txt','vue-router.txt','pinia.txt','vueuse-core.txt','zod.txt','ws.txt','yaml.txt','electron.txt','electron-toolkit-utils.txt','electron-toolkit-preload.txt')
           foreach ($name in $expected) {
             if (-not (Test-Path (Join-Path $licensesDir $name))) {
               throw "license file $name missing from the packaged artifact"

@@ -1,9 +1,10 @@
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
+import { lstat } from 'node:fs/promises'
 import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
 import {
-  MIHOMO_VERSION,
   mihomoBinaryName,
   resolveMihomo,
+  sha256File,
   type MihomoDownloadRequest,
   type MihomoExtractArchive,
   type ResolvedMihomoBinary
@@ -80,17 +81,34 @@ export interface MihomoKernelResolverOptions {
   /** Node platform/arch to resolve; defaults to process.platform/process.arch. */
   platform?: string
   arch?: string
-  /** Pre-resolved binary path (skips download/extract). */
+  /**
+   * Absolute path of a local, pre-verified binary. `expectedSha256` is
+   * mandatory whenever this is set: a bare path without a digest is refused,
+   * so a user-supplied binary can never bypass the pinned verification. Only a
+   * real, regular, non-symlink file whose bytes hash to `expectedSha256` is
+   * accepted.
+   */
   binaryPath?: string
-  /** Version surfaced when binaryPath is supplied directly. */
+  /** SHA-256 of the local `binaryPath` bytes; required with `binaryPath`. */
+  expectedSha256?: string
+  /** Version surfaced for a local `binaryPath`; defaults to null when unknown. */
   version?: string
   /** Workspace where the pinned binary is resolved/extracted. */
   workspaceDir: string
   /** Download/extract overrides (tests). */
   request?: MihomoDownloadRequest
   extractArchive?: MihomoExtractArchive
-  /** Override the pinned-resolution function (tests). Defaults to `resolveMihomo`. */
-  resolveMihomo?: (platform: string, arch: string, opts: { workspaceDir: string }) => Promise<ResolvedMihomoBinary>
+  /**
+   * Test-only override of the pinned-resolution function. It exists purely so
+   * unit tests can supply a fabricated `ResolvedMihomoBinary`; it is not wired
+   * to any production config, IPC message or environment variable, so it can
+   * never be triggered by an end user.
+   */
+  resolveMihomoOverride?: (
+    platform: string,
+    arch: string,
+    opts: { workspaceDir: string }
+  ) => Promise<ResolvedMihomoBinary>
 }
 
 /**
@@ -99,7 +117,8 @@ export interface MihomoKernelResolverOptions {
  * It refuses to run unless explicitly enabled via `allowReal`, so the default
  * dev/prod build still only ever resolves the fixture. When enabled, it
  * downloads + verifies the pinned build into `workspaceDir` and returns the
- * reproducible executable; the config store appends `-f <config>` at start.
+ * reproducible executable; the config store appends `-f <config>` at start. A
+ * local `binaryPath` is only honoured when its `expectedSha256` is verified.
  */
 export class MihomoKernelResolver implements KernelBinaryResolver {
   private readonly options: MihomoKernelResolverOptions
@@ -115,21 +134,15 @@ export class MihomoKernelResolver implements KernelBinaryResolver {
         'Real kernel execution is disabled; refusing to resolve a mihomo binary.'
       )
     }
-    const workspaceDir = this.options.workspaceDir
     if (this.options.binaryPath) {
-      return {
-        command: this.options.binaryPath,
-        args: [],
-        version: this.options.version ?? MIHOMO_VERSION.replace(/^v/, ''),
-        env: { ...(this.options.platform ? { MIHOMO_PLATFORM: this.options.platform } : {}) }
-      }
+      return this.resolveLocalBinary()
     }
     const platform = this.options.platform ?? process.platform
     const arch = this.options.arch ?? process.arch
-    const bin = this.options.resolveMihomo
-      ? await this.options.resolveMihomo(platform, arch, { workspaceDir })
+    const bin = this.options.resolveMihomoOverride
+      ? await this.options.resolveMihomoOverride(platform, arch, { workspaceDir: this.options.workspaceDir })
       : await resolveMihomo(platform, arch, {
-          workspaceDir,
+          workspaceDir: this.options.workspaceDir,
           request: this.options.request,
           extractArchive: this.options.extractArchive
         })
@@ -137,6 +150,61 @@ export class MihomoKernelResolver implements KernelBinaryResolver {
       command: bin.path,
       args: [],
       version: bin.version,
+      env: { MIHOMO_PLATFORM: platform, MIHOMO_ARCH: arch }
+    }
+  }
+
+  private async resolveLocalBinary(): Promise<KernelBinary> {
+    const binPath = this.options.binaryPath as string
+    const expectedSha256 = this.options.expectedSha256
+    if (!expectedSha256) {
+      // No digest supplied => this path is unverifiable and must be refused so a
+      // local file can never bypass the pinned-verification boundary.
+      throw new ProtocolError(
+        ProtocolErrorCode.UNSUPPORTED,
+        'binaryPath requires expectedSha256; refusing an unverified local binary'
+      )
+    }
+    if (!isAbsolute(binPath)) {
+      throw new ProtocolError(
+        ProtocolErrorCode.INVALID_ARGUMENT,
+        'binaryPath must be an absolute path'
+      )
+    }
+    let st
+    try {
+      st = await lstat(binPath)
+    } catch {
+      throw new ProtocolError(
+        ProtocolErrorCode.INVALID_ARGUMENT,
+        `binaryPath does not exist: ${binPath}`
+      )
+    }
+    if (st.isSymbolicLink()) {
+      throw new ProtocolError(
+        ProtocolErrorCode.INVALID_ARGUMENT,
+        'binaryPath must not be a symlink or reparse point'
+      )
+    }
+    if (!st.isFile()) {
+      throw new ProtocolError(
+        ProtocolErrorCode.INVALID_ARGUMENT,
+        'binaryPath must be a regular file'
+      )
+    }
+    const actual = await sha256File(binPath)
+    if (actual.toLowerCase() !== expectedSha256.toLowerCase()) {
+      throw new ProtocolError(
+        ProtocolErrorCode.ARTIFACT_HASH_MISMATCH,
+        `binaryPath SHA-256 mismatch: expected ${expectedSha256}, got ${actual}`
+      )
+    }
+    const platform = this.options.platform ?? process.platform
+    const arch = this.options.arch ?? process.arch
+    return {
+      command: binPath,
+      args: [],
+      version: this.options.version ?? null,
       env: { MIHOMO_PLATFORM: platform, MIHOMO_ARCH: arch }
     }
   }

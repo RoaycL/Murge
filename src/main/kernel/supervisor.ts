@@ -222,6 +222,7 @@ export class KernelSupervisor extends EventEmitter {
     try {
       handle = this.deps.adapter.spawn({
         ...binary,
+        args: [...binary.args, ...(config.args ?? [])],
         cwd: config.rootDir,
         env: { ...(binary.env ?? {}), ...(config.env ?? {}) }
       })

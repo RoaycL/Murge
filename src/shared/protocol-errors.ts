@@ -40,6 +40,12 @@ export const ProtocolErrorCode = {
   NOT_FOUND: 'NOT_FOUND',
   /** A kernel process is still alive and must be stopped before starting again. */
   KERNEL_RUNNING: 'KERNEL_RUNNING',
+  /** The fixed kernel artifact could not be downloaded. */
+  ARTIFACT_DOWNLOAD_FAILED: 'ARTIFACT_DOWNLOAD_FAILED',
+  /** The downloaded kernel artifact did not match its pinned SHA-256 digest. */
+  ARTIFACT_HASH_MISMATCH: 'ARTIFACT_HASH_MISMATCH',
+  /** A downloaded kernel archive could not be extracted safely. */
+  ARTIFACT_EXTRACT_FAILED: 'ARTIFACT_EXTRACT_FAILED',
   /** An unexpected internal failure. */
   INTERNAL: 'INTERNAL'
 } as const

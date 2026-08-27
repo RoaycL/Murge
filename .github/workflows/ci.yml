@@ -40,6 +40,37 @@ jobs:
       - name: Build
         run: npm run build
 
+  kernel-real-windows:
+    name: Real mihomo kernel integration (Windows)
+    needs: verify
+    runs-on: windows-latest
+    env:
+      MURGE_RUN_REAL_KERNEL: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies (including development)
+        run: npm ci --include=dev
+        env:
+          NODE_ENV: development
+
+      # Downloads and SHA-256-verifies the pinned official mihomo (win32/x64),
+      # then starts/stops/restarts it against an isolated loopback-only config.
+      # Safety is enforced by the config schema before any file is written:
+      # mode direct, tun/dns disabled, external-controller + secret on
+      # 127.0.0.1, allow-lan:false, rules MATCH,DIRECT. The test also asserts
+      # only 127.0.0.1 listeners on the two ports it opened.
+      - name: Run real kernel integration test (gated)
+        shell: pwsh
+        run: npx vitest run tests/mihomo-kernel.integration.test.ts
+
   package-win:
     name: Package Windows & smoke-test NSIS installer
     needs: verify

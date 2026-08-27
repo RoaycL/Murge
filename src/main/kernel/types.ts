@@ -51,6 +51,13 @@ export interface KernelConfig {
   rootDir: string
   /** Extra environment variables the child needs. */
   env?: Record<string, string>
+  /**
+   * Extra command-line arguments appended to the binary's own args when the
+   * materialized config must be passed positionally (e.g. mihomo `-f <path>`).
+   * Appended after the resolver's fixed args so a real kernel always reads the
+   * freshly written, isolated config.
+   */
+  args?: string[]
 }
 
 /**

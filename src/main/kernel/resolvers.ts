@@ -1,5 +1,13 @@
 import { join } from 'node:path'
 import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
+import {
+  MIHOMO_VERSION,
+  mihomoBinaryName,
+  resolveMihomo,
+  type MihomoDownloadRequest,
+  type MihomoExtractArchive,
+  type ResolvedMihomoBinary
+} from './mihomo-artifact'
 import type { KernelBinary, KernelBinaryResolver, KernelResolveOptions } from './types'
 
 export interface FixtureKernelResolverOptions {
@@ -63,4 +71,78 @@ export function createKernelResolver(options: {
     })
   }
   return new DisabledKernelResolver()
+}
+
+export interface MihomoKernelResolverOptions {
+  /** When false (the default), resolve() throws UNSUPPORTED and never probes a
+   * real binary, so the app's default lifecycle cannot accidentally execute one. */
+  allowReal: boolean
+  /** Node platform/arch to resolve; defaults to process.platform/process.arch. */
+  platform?: string
+  arch?: string
+  /** Pre-resolved binary path (skips download/extract). */
+  binaryPath?: string
+  /** Version surfaced when binaryPath is supplied directly. */
+  version?: string
+  /** Workspace where the pinned binary is resolved/extracted. */
+  workspaceDir: string
+  /** Download/extract overrides (tests). */
+  request?: MihomoDownloadRequest
+  extractArchive?: MihomoExtractArchive
+  /** Override the pinned-resolution function (tests). Defaults to `resolveMihomo`. */
+  resolveMihomo?: (platform: string, arch: string, opts: { workspaceDir: string }) => Promise<ResolvedMihomoBinary>
+}
+
+/**
+ * Resolves the pinned official mihomo binary for the real-kernel milestone.
+ *
+ * It refuses to run unless explicitly enabled via `allowReal`, so the default
+ * dev/prod build still only ever resolves the fixture. When enabled, it
+ * downloads + verifies the pinned build into `workspaceDir` and returns the
+ * reproducible executable; the config store appends `-f <config>` at start.
+ */
+export class MihomoKernelResolver implements KernelBinaryResolver {
+  private readonly options: MihomoKernelResolverOptions
+
+  constructor(options: MihomoKernelResolverOptions) {
+    this.options = options
+  }
+
+  async resolve(_options?: KernelResolveOptions): Promise<KernelBinary> {
+    if (!this.options.allowReal) {
+      throw new ProtocolError(
+        ProtocolErrorCode.UNSUPPORTED,
+        'Real kernel execution is disabled; refusing to resolve a mihomo binary.'
+      )
+    }
+    const workspaceDir = this.options.workspaceDir
+    if (this.options.binaryPath) {
+      return {
+        command: this.options.binaryPath,
+        args: [],
+        version: this.options.version ?? MIHOMO_VERSION.replace(/^v/, ''),
+        env: { ...(this.options.platform ? { MIHOMO_PLATFORM: this.options.platform } : {}) }
+      }
+    }
+    const platform = this.options.platform ?? process.platform
+    const arch = this.options.arch ?? process.arch
+    const bin = this.options.resolveMihomo
+      ? await this.options.resolveMihomo(platform, arch, { workspaceDir })
+      : await resolveMihomo(platform, arch, {
+          workspaceDir,
+          request: this.options.request,
+          extractArchive: this.options.extractArchive
+        })
+    return {
+      command: bin.path,
+      args: [],
+      version: bin.version,
+      env: { MIHOMO_PLATFORM: platform, MIHOMO_ARCH: arch }
+    }
+  }
+}
+
+/** Convenience: the expected executable basename for a given platform. */
+export function mihomoExecutableName(platform: string): string {
+  return mihomoBinaryName(platform)
 }

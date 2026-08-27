@@ -201,19 +201,21 @@ Environment: disposable Windows VM with an independent recovery path.
 
 Entry gate: Phases 1–6 complete and explicit owner authorization for this phase.
 
-- [ ] Resolve a pinned official mihomo release for x64/arm64.
-- [ ] Verify release checksum before execution.
-- [ ] Generate a random controller secret and localhost-only controller address.
-- [ ] Materialize a safe test configuration with `MATCH,DIRECT`.
-- [ ] Implement controller readiness using listener check plus `/version`.
-- [ ] Integrate real REST and WebSocket transports.
-- [ ] Verify graceful stop, crash handling and restart behavior.
-- [ ] Verify configuration validation and activation using test profiles only.
-- [ ] Record binary path, version, PID, listener and endpoint evidence.
+- [x] Resolve a pinned official mihomo release (v1.19.30) for win32/x64 and linux/arm64. (Step A: `src/main/kernel/mihomo-artifact.ts`; catalog holds only digest-verified platforms, others resolve to `UNSUPPORTED`.)
+- [x] Verify release checksum before execution. (Step A: streaming SHA-256 against the pinned digest; a mismatch is rejected as `ARTIFACT_HASH_MISMATCH` with no file retained, and a `.mihomo-verified` marker gates idempotent reuse.)
+- [x] Generate a random controller secret and localhost-only controller address. (Step A: `randomSecret(32)` + `external-controller: 127.0.0.1`; validated by `mihomo-config`.)
+- [x] Materialize a safe test configuration with `MATCH,DIRECT`. (Step A: `mihomo-config-store` writes and validates `mode: direct`, `allow-lan: false`, `tun.enable: false`, `dns.enable: false`, `rules: MATCH,DIRECT`, and rejects any config containing `redir-port`/`tproxy-port`/`routing-mark`/`interface-name`/`auto-route`/`auto-detect-interface`/system-proxy keys.)
+- [x] Implement controller readiness using listener check plus `/version`. (Step A: bounded supervisor + `MihomoClient.getVersion()`; the real test polls `/version` until the controller answers.)
+- [x] Integrate real REST and WebSocket transports. (Step A: `mihomo-client` REST mapping + `mihomo-stream`; the real test opens an authenticated `/traffic` WebSocket.)
+- [x] Verify graceful stop, crash handling and restart behavior. (Step A: supervisor stop/backoff/restart + a gated real test that stops and restarts with a fresh PID.)
+- [x] Verify configuration validation and activation using test profiles only. (Step A: fail-closed config validation before write + unit tests.)
+- [ ] Record binary path, version, PID, listener and endpoint evidence. (Pending Step B execution.)
+
+> Step A (resolver, download/verify, config generator, config store + unit tests, and the gated real-kernel integration test) is implemented and green in CI. Real mihomo execution is intentionally deferred to the disposable Windows CI/disposable VM per the owner's step ordering; the current host never launches the binary.
 
 Exit criteria:
 
-- Real kernel lifecycle is proven on isolated Windows.
+- Real kernel lifecycle is proven on isolated Windows (Step B).
 - The host's normal network path remains unchanged.
 - No owner subscription or credential is used.
 

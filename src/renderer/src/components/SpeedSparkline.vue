@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import SurfaceCard from './SurfaceCard.vue'
 
 const props = defineProps<{
   kind: 'upload' | 'download'

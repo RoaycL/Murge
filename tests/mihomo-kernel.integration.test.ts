@@ -343,10 +343,26 @@ run('mihomo real kernel integration', () => {
     // Final enriched evidence write: capture the complete verification facts
     // (binary path, mihomo version, both listener host:port, /version success and
     // network-diff PASS) for the artifact. The PID is the last live one the
-    // supervisor reported. The controller secret is never written.
-    await evidence
-      .update({ pid: lastLivePid, controllerPort, mixedPort, workspace, configDir, ...facts })
-      .catch(() => undefined)
+    // supervisor reported. The controller secret is never written. This write is
+    // awaited WITHOUT swallowing errors: the acceptance artifact must never be
+    // silently stale, so a failed durable write propagates and fails the test.
+    await evidence.update({ pid: lastLivePid, controllerPort, mixedPort, workspace, configDir, ...facts })
+
+    // Re-read the durable artifact and assert every verification fact survived,
+    // so a partial/torn write cannot be mistaken for a complete passing run.
+    const final = await evidence.read()
+    expect(final).not.toBeNull()
+    expect(final!.pid).toBe(lastLivePid)
+    expect(final!.controllerPort).toBe(controllerPort)
+    expect(final!.mixedPort).toBe(mixedPort)
+    expect(final!.workspace).toBe(workspace)
+    expect(final!.configDir).toBe(configDir)
+    expect(final!.binaryPath).toBe(facts.binaryPath)
+    expect(final!.version).toBe(facts.version)
+    expect(final!.controllerHost).toBe(facts.controllerHost)
+    expect(final!.mixedHost).toBe(facts.mixedHost)
+    expect(final!.versionOk).toBe(true)
+    expect(final!.networkDiffPASS).toBe(true)
   }, 180000)
 })
 

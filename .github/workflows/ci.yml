@@ -125,14 +125,30 @@ jobs:
             Write-Host "test ports released: $($ports -join ', ')"
           }
           if ($ev.workspace) {
+            # The test may have hard-crashed before the store could clean its
+            # mihomo-workspace-* child (a watchdog restart creates a fresh one).
+            # This is a disposable runner, so remove the leftover config child(ren)
+            # and the whole workspace, then PROVE they are gone; if anything
+            # survives, the job must still fail.
             $configDir = Join-Path $ev.workspace 'config'
-            $children = Get-ChildItem -Path $configDir -Directory -Filter 'mihomo-workspace-*' -ErrorAction SilentlyContinue
-            if ($children) {
-              throw "store config child not cleaned: $($children.FullName)"
+            $children = @(Get-ChildItem -Path $configDir -Directory -Filter 'mihomo-workspace-*' -ErrorAction SilentlyContinue)
+            if ($children.Count -gt 0) {
+              Write-Host "removing $($children.Count) leftover store child dir(s)"
+              foreach ($child in $children) {
+                Remove-Item -Path $child.FullName -Recurse -Force -ErrorAction SilentlyContinue
+              }
             }
-            Write-Host 'temp config/secret directory cleaned'
-            # Leave the runner clean even if the test crashed before its own teardown.
-            if (Test-Path $ev.workspace) { Remove-Item $ev.workspace -Recurse -Force -ErrorAction SilentlyContinue }
+            if (Test-Path $ev.workspace) {
+              Remove-Item $ev.workspace -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            $remaining = @(Get-ChildItem -Path $configDir -Directory -Filter 'mihomo-workspace-*' -ErrorAction SilentlyContinue)
+            if ($remaining.Count -gt 0) {
+              throw "store config child not cleaned after removal: $($remaining.FullName -join ', ')"
+            }
+            if (Test-Path $ev.workspace) {
+              throw "workspace not removed: $($ev.workspace)"
+            }
+            Write-Host 'temp config/secret directory cleaned and removed'
           }
           Write-Host 'kernel watchdog: PASS'
 

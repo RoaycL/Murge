@@ -1,0 +1,119 @@
+name: Build Windows release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-windows:
+    name: Build x64 and arm64 installers
+    runs-on: windows-latest
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --include=dev
+        env:
+          NODE_ENV: development
+
+      - name: Verify tag matches package version
+        shell: pwsh
+        run: |
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          $expectedTag = "v$($package.version)"
+          if ($env:GITHUB_REF_NAME -ne $expectedTag) {
+            throw "Tag '$env:GITHUB_REF_NAME' does not match package.json version '$expectedTag'"
+          }
+
+      - name: Validate, test and build
+        run: |
+          npm run brand:check
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Package Windows installers
+        run: npx electron-builder --win --config electron-builder.config.mjs --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Verify release files and generate checksums
+        id: assets
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem -Path dist -Filter '*-Setup-*-*.exe' -File | Sort-Object Name)
+          if ($installers.Count -ne 2) {
+            throw "Expected exactly two per-architecture installers, found $($installers.Count)"
+          }
+          if (-not ($installers.Name -match '-x64\.exe$')) { throw 'x64 installer is missing' }
+          if (-not ($installers.Name -match '-arm64\.exe$')) { throw 'arm64 installer is missing' }
+
+          $checksumPath = Join-Path $PWD 'dist\SHA256SUMS.txt'
+          $lines = foreach ($file in $installers) {
+            $hash = (Get-FileHash -Algorithm SHA256 $file.FullName).Hash.ToLowerInvariant()
+            "$hash *$($file.Name)"
+          }
+          $lines | Set-Content -Path $checksumPath -Encoding ascii
+          Get-Content $checksumPath
+
+          "x64=$((($installers | Where-Object Name -Match '-x64\.exe$').FullName))" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "arm64=$((($installers | Where-Object Name -Match '-arm64\.exe$').FullName))" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "checksums=$checksumPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Create draft GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          X64_INSTALLER: ${{ steps.assets.outputs.x64 }}
+          ARM64_INSTALLER: ${{ steps.assets.outputs.arm64 }}
+          CHECKSUM_FILE: ${{ steps.assets.outputs.checksums }}
+        run: |
+          $notes = @"
+          Automated Windows build for $env:GITHUB_REF_NAME.
+
+          - x64 NSIS installer
+          - arm64 NSIS installer (packaging verified; runtime verification remains deferred)
+          - SHA256SUMS.txt
+
+          This release is created as a draft. Review the assets, signing status,
+          application license and release notes before publishing it.
+          "@
+          $notesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+          $notes | Set-Content -Path $notesPath -Encoding utf8
+
+          $existing = gh release view $env:GITHUB_REF_NAME --json isDraft --jq '.isDraft' 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            if ($existing -ne 'true') {
+              throw "Refusing to overwrite an already-published release for $env:GITHUB_REF_NAME"
+            }
+            gh release upload $env:GITHUB_REF_NAME $env:X64_INSTALLER $env:ARM64_INSTALLER $env:CHECKSUM_FILE --clobber
+          } else {
+            gh release create $env:GITHUB_REF_NAME $env:X64_INSTALLER $env:ARM64_INSTALLER $env:CHECKSUM_FILE --draft --verify-tag --title $env:GITHUB_REF_NAME --notes-file $notesPath
+          }
+
+      - name: Preserve installers as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ github.ref_name }}
+          path: |
+            dist/*-Setup-*-x64.exe
+            dist/*-Setup-*-arm64.exe
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+

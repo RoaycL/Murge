@@ -1,6 +1,20 @@
 import { join, resolve, sep } from 'node:path'
-import { mkdir, readdir, copyFile, stat, constants, mkdtemp } from 'node:fs/promises'
+import {
+  mkdir,
+  readdir,
+  copyFile,
+  stat,
+  constants,
+  mkdtemp,
+  readFile,
+  writeFile,
+  rename,
+  rm,
+  access,
+  unlink
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { randomUUID } from 'node:crypto'
 import { brand } from '@shared/brand'
 
 /**
@@ -118,44 +132,72 @@ async function isEmptyDirectory(path: string): Promise<boolean> {
 }
 
 /**
- * Names Electron may create under the userData namespace before the migration
- * runs (GPU/disk caches, Local Storage, session state). These are runtime
- * artifacts, not user data, so they must not count as "the user already has
- * data here" when deciding whether a legacy import is still safe.
+ * Migration-marker metadata. Whether a legacy namespace still needs to be
+ * imported is decided exclusively by this file and the migration version — never
+ * by inspecting what the target namespace "looks like". Electron creates runtime
+ * files (`Preferences`, `Local State`, `Local Storage`, ...) under the namespace
+ * before `ready`, so a filename whitelist can never reliably separate "user
+ * data" from "runtime caches"; the marker can.
  */
-const RUNTIME_ONLY_ENTRIES = new Set([
-  'GPUCache',
-  'DawnGraphiteCache',
-  'DawnWebGPUCache',
-  'Code Cache',
-  'Cache',
-  'Local Storage',
-  'Session Storage',
-  'IndexedDB',
-  'Cookies',
-  'Cookies-journal',
-  'Network',
-  'Partitions',
-  'blob_storage',
-  'Shared Dictionary',
-  'Crashpad'
-])
+export const MIGRATION_STATE_FILE = 'migration-state.json'
+export const MIGRATION_STATE_VERSION = 1
+export const MIGRATION_STATUSES = ['pending', 'completed', 'failed'] as const
+export type MigrationStatus = (typeof MIGRATION_STATUSES)[number]
+
+export interface MigrationState {
+  version: number
+  /** Per-source status keyed by the legacy namespace folder name. */
+  sources: Record<string, MigrationStatus>
+  updatedAt: string
+}
 
 /**
- * True when the destination namespace already holds real user data. The guard
- * ignores the runtime cache/session entries Electron creates on first launch
- * (see {@link RUNTIME_ONLY_ENTRIES}); only a non-runtime entry — above all the
- * profiles sub-directory — means the user has already written data under the
- * new namespace and the legacy import must yield to it.
+ * Read the migration marker. An absent, unreadable or stale-version marker is
+ * treated as "no migration decided yet", so a migration may (re)run.
  */
-async function hasUserData(dir: string): Promise<boolean> {
-  let entries: string[]
+export async function readMigrationState(appDataBase: string): Promise<MigrationState> {
+  const file = join(appDataRoot(appDataBase), MIGRATION_STATE_FILE)
   try {
-    entries = await readdir(dir)
+    const parsed: unknown = JSON.parse(await readFile(file, 'utf8'))
+    if (parsed && typeof parsed === 'object') {
+      const record = parsed as { version?: unknown; sources?: unknown; updatedAt?: unknown }
+      if (record.version === MIGRATION_STATE_VERSION && record.sources && typeof record.sources === 'object') {
+        const sources: Record<string, MigrationStatus> = {}
+        for (const [name, status] of Object.entries(record.sources as Record<string, unknown>)) {
+          if ((MIGRATION_STATUSES as readonly unknown[]).includes(status)) {
+            sources[name] = status as MigrationStatus
+          }
+        }
+        return {
+          version: MIGRATION_STATE_VERSION,
+          sources,
+          updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : ''
+        }
+      }
+    }
   } catch {
-    return false
+    // Fall through to "empty" below.
   }
-  return entries.some((name) => !RUNTIME_ONLY_ENTRIES.has(name))
+  return { version: MIGRATION_STATE_VERSION, sources: {}, updatedAt: '' }
+}
+
+/**
+ * Write the migration marker atomically: the payload is written to a temp file in
+ * the same directory and renamed over the marker, so a concurrent reader never
+ * observes a half-written marker (atomic on a single filesystem).
+ */
+export async function writeMigrationState(appDataBase: string, state: MigrationState): Promise<void> {
+  const dir = appDataRoot(appDataBase)
+  await mkdir(dir, { recursive: true })
+  const file = join(dir, MIGRATION_STATE_FILE)
+  const tmp = join(dir, `.${MIGRATION_STATE_FILE}.${randomUUID()}.tmp`)
+  const payload = JSON.stringify(
+    { version: state.version, sources: state.sources, updatedAt: new Date().toISOString() },
+    null,
+    2
+  ) + '\n'
+  await writeFile(tmp, payload, 'utf8')
+  await rename(tmp, file)
 }
 
 /**
@@ -178,6 +220,10 @@ type CopyFn = (src: string, dest: string) => Promise<number>
  * never clobbers newer user data), and symlinks/special files are skipped. The
  * copy is bounded to an arbitrary depth and never follows a path outside the two
  * caller-verified roots. Returns the number of files actually copied.
+ *
+ * Used to stage a full legacy tree into a fresh sibling directory before commit,
+ * so the destination above (`dest` here) is always empty and `COPYFILE_EXCL`
+ * never actually collides.
  */
 async function copyTreeSafe(src: string, dest: string): Promise<number> {
   let copied = 0
@@ -201,58 +247,218 @@ async function copyTreeSafe(src: string, dest: string): Promise<number> {
   return copied
 }
 
+interface CommitResult {
+  moved: number
+  conflicts: string[]
+}
+
+type CommitFn = (stagingDir: string, targetDir: string) => Promise<CommitResult>
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function moveFile(src: string, dest: string): Promise<void> {
+  try {
+    await rename(src, dest)
+  } catch (error) {
+    // rename is atomic on a single filesystem; across filesystems it fails with
+    // EXDEV, in which case fall back to a copy+unlink.
+    if ((error as NodeJS.ErrnoException).code !== 'EXDEV') throw error
+    await copyFile(src, dest, constants.COPYFILE_EXCL)
+    await unlink(src)
+  }
+}
+
+async function commitDirectory(
+  srcDir: string,
+  destDir: string,
+  conflicts: string[],
+  rel: string
+): Promise<number> {
+  let moved = 0
+  await mkdir(destDir, { recursive: true })
+  for (const entry of await readdir(srcDir, { withFileTypes: true })) {
+    if (entry.isSymbolicLink()) continue
+    const srcPath = join(srcDir, entry.name)
+    const destPath = join(destDir, entry.name)
+    const relPath = rel ? `${rel}/${entry.name}` : entry.name
+    if (entry.isDirectory()) {
+      moved += await commitDirectory(srcPath, destPath, conflicts, relPath)
+    } else if (entry.isFile()) {
+      if (await pathExists(destPath)) {
+        // Never overwrite an entry that is already in the target — above all a
+        // profile the user may already have written under the new namespace.
+        // Record the collision so the caller can surface it.
+        conflicts.push(relPath)
+      } else {
+        await moveFile(srcPath, destPath)
+        moved += 1
+      }
+    }
+  }
+  return moved
+}
+
 /**
- * Copy any present data from every legacy namespace in the migration map into the
- * current namespace, leaving the legacy source untouched (the source is never
- * deleted so a rollback is always possible). The operation is a no-op when the
- * current namespace already holds user data, so a re-run (or a race between two
- * instances) never overwrites newer user data. Runtime caches Electron creates
- * before this runs (GPU cache, Local Storage, ...) do not count as user data —
- * judging "already migrated" by directory emptiness would let those caches
- * silently suppress the import forever.
+ * Merge a fully-staged legacy tree into the target namespace, never overwriting
+ * an existing target entry. Collisions (existing target files) are collected and
+ * returned, not overwritten, so a legacy namespace is never silently skipped.
+ */
+async function commitStaging(stagingDir: string, targetDir: string): Promise<CommitResult> {
+  const conflicts: string[] = []
+  const moved = await commitDirectory(stagingDir, targetDir, conflicts, '')
+  return { moved, conflicts }
+}
+
+function randomSuffix(): string {
+  return randomUUID().replace(/-/g, '').slice(0, 12)
+}
+
+/** Remove any stale migration staging directories left by a crashed launch. */
+async function pruneStaleStaging(appDataBase: string): Promise<void> {
+  const prefix = `${APP_DATA_NAMESPACE}.migration-`
+  let entries: string[]
+  try {
+    entries = await readdir(appDataBase)
+  } catch {
+    return
+  }
+  await Promise.all(
+    entries
+      .filter((name) => name.startsWith(prefix))
+      .map((name) => rm(join(appDataBase, name), { recursive: true, force: true }).catch(() => {}))
+  )
+}
+
+export interface MigrationResult {
+  /** Legacy namespaces fully migrated in this call (committed + marker set). */
+  imported: string[]
+  /** Existing target entries kept over legacy data (never overwritten). */
+  conflicts: string[]
+}
+
+export interface MigrateLegacyOptions {
+  migrationMap?: Readonly<Record<string, string>>
+  copy?: CopyFn
+  commit?: CommitFn
+  readState?: (base: string) => Promise<MigrationState>
+  writeState?: (base: string, state: MigrationState) => Promise<void>
+  stagingDir?: string
+}
+
+/**
+ * Transactionally migrate any present data from each legacy namespace into the
+ * current namespace.
  *
- * Each namespace is only reported as imported after its subtree has been copied
- * without error; a copy that fails part-way is logged and skipped (never reported
- * as success) and can be retried, because the source is preserved and existing
- * destination files are never overwritten.
+ * The migration is staged and committed in two phases so a partial failure can
+ * never pollute the real target:
  *
- * Returns the list of legacy namespaces that were actually imported from, so the
- * caller can log the outcome. Never throws for a missing or empty legacy dir.
+ *  1. STAGE — copy the entire legacy subtree into a fresh sibling staging
+ *     directory (`io.murge.desktop.migration-<random>`) under the same app-data
+ *     root. The target namespace is not touched yet; if this copy fails the
+ *     staging directory is removed and the source is kept intact.
+ *  2. COMMIT — once the staging copy is complete, merge staging into the target
+ *     namespace. Existing target entries are never overwritten (above all
+ *     profiles the user may already have written); collisions are recorded as
+ *     conflicts and reported. A failed commit is marked for retry.
+ *
+ * Whether a namespace still needs to be imported is decided exclusively by the
+ * migration marker (`migration-state.json`) and its migration version — never by
+ * inspecting which files the target already holds. Electron creates runtime
+ * files like `Preferences`, `Local State` and `Local Storage` under the namespace
+ * before `ready`, so a filename whitelist can never reliably distinguish "user
+ * data" from "runtime caches"; the marker can. `Local Storage` / `IndexedDB` can
+ * hold real app settings and are treated as ordinary data.
+ *
+ * The source directory is always preserved so a rollback stays possible.
  *
  * @param appDataBase platform app-data root (e.g. `app.getPath('appData')`).
+ * @returns the namespaces imported and the conflicts that were kept.
  */
 export async function migrateLegacyAppData(
   appDataBase: string,
-  options: { migrationMap?: Readonly<Record<string, string>>; copy?: CopyFn } = {}
-): Promise<string[]> {
+  options: MigrateLegacyOptions = {}
+): Promise<MigrationResult> {
   const map = options.migrationMap ?? APP_DATA_MIGRATION_MAP
   const copy = options.copy ?? copyTreeSafe
-  const imported: string[] = []
+  const commit = options.commit ?? commitStaging
+  const readState = options.readState ?? readMigrationState
+  const writeState = options.writeState ?? writeMigrationState
+  const stagingDirOverride = options.stagingDir
 
-  for (const [legacyName, migrateTo] of Object.entries(map)) {
-    // Guard against a self-migration (namespace equal to its own source).
-    if (legacyName === migrateTo) continue
-    const currentDir = join(appDataBase, migrateTo)
-    const legacyDir = join(appDataBase, legacyName)
+  await pruneStaleStaging(appDataBase)
+
+  const imported: string[] = []
+  const conflicts: string[] = []
+  const state = await readState(appDataBase)
+
+  for (const [source, target] of Object.entries(map)) {
+    if (source === target) continue
+    if (state.sources[source] === 'completed') continue
+
+    const currentDir = join(appDataBase, target)
+    const legacyDir = join(appDataBase, source)
     assertInsideBase(appDataBase, currentDir)
     assertInsideBase(appDataBase, legacyDir)
+
+    // Nothing to do if the legacy namespace is absent or empty.
     if (!(await isDirectory(legacyDir))) continue
     if (await isEmptyDirectory(legacyDir)) continue
-    if (await hasUserData(currentDir)) continue
 
-    await mkdir(currentDir, { recursive: true })
+    // Announce the in-flight migration so a crash mid-way is recoverable: a
+    // 'pending' status is not 'completed', so the next launch retries.
+    state.sources[source] = 'pending'
+    await writeState(appDataBase, state)
+
+    const staging = stagingDirOverride ?? join(appDataBase, `${APP_DATA_NAMESPACE}.migration-${randomSuffix()}`)
+
+    // Phase 1 — full copy into staging (the target namespace is untouched).
     try {
-      const copied = await copy(legacyDir, currentDir)
-      if (copied > 0) imported.push(legacyName)
+      await rm(staging, { recursive: true, force: true })
+      await mkdir(staging, { recursive: true })
+      await copy(legacyDir, staging)
     } catch (error) {
-      // A partial copy must not be reported as a successful import. The source
-      // is kept and existing destination files are never overwritten, so a
-      // retry either converges or the namespace is left for a manual merge.
-      console.warn(`[app-data] failed to import legacy namespace "${legacyName}":`, error)
+      state.sources[source] = 'failed'
+      await writeState(appDataBase, state)
+      console.warn(`[app-data] legacy migration for "${source}" failed while staging a copy:`, error)
+      await rm(staging, { recursive: true, force: true }).catch(() => {})
+      continue
+    }
+
+    // Phase 2 — controlled commit into the target namespace.
+    try {
+      await mkdir(currentDir, { recursive: true })
+      const result = await commit(staging, currentDir)
+      imported.push(source)
+      conflicts.push(...result.conflicts)
+      if (result.conflicts.length > 0) {
+        console.warn(
+          `[app-data] legacy migration for "${source}" kept ${result.conflicts.length} existing file(s) over legacy data (not overwritten): ${result.conflicts
+            .slice(0, 20)
+            .join(', ')}`
+        )
+      }
+      state.sources[source] = 'completed'
+      await writeState(appDataBase, state)
+    } catch (error) {
+      // A failure while merging may have left some entries in the target. The
+      // marker stays 'failed', so the next launch re-stages from the preserved
+      // source; the merge skips entries already present, so it converges.
+      state.sources[source] = 'failed'
+      await writeState(appDataBase, state)
+      console.warn(`[app-data] legacy migration for "${source}" failed while committing:`, error)
+    } finally {
+      await rm(staging, { recursive: true, force: true }).catch(() => {})
     }
   }
 
-  return imported
+  return { imported, conflicts }
 }
 
 /** True when a legacy namespace exists in the map for the given source name. */

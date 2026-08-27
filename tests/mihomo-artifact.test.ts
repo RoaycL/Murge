@@ -232,7 +232,7 @@ describe('extractMihomo', () => {
     expect(await readFile(target, 'utf8')).toBe('ELF')
   })
 
-  it('makes the extracted binary executable on non-Windows', async () => {
+  it.skipIf(process.platform === 'win32')('makes the extracted binary executable on non-Windows', async () => {
     const dir = await wi()
     const asset = fakeAsset(Buffer.from('payload'), { platform: 'linux', arch: 'arm64', kind: 'gz', innerName: 'mihomo-linux-arm64' })
     const extractArchive = async (_asset: MihomoAsset, _archive: string, destDir: string) => {

@@ -82,7 +82,7 @@ jobs:
       - name: Kill recorded mihomo PID & verify cleanup (finally)
         if: always()
         shell: pwsh
-        run: node scripts/kernel-watchdog-cleanup.mjs --evidence "$env:RUNNER_TEMP\mihomo-real-kernel-evidence.json" --require-evidence
+        run: node scripts/kernel-watchdog-cleanup.mjs --evidence "$env:RUNNER_TEMP\mihomo-real-kernel-evidence.json" --require-evidence --allowed-workspace-roots "$env:TEMP" --allowed-workspace-roots "$env:TMP" --allowed-workspace-roots "$env:RUNNER_TEMP"
 
       # Sanitized evidence only (PID, ports, workspace path) — never the secret.
       - name: Upload kernel evidence (sanitized)
@@ -123,7 +123,7 @@ jobs:
             Write-Error "fault evidence file missing: $faultEvidence"
             exit 1
           }
-          $cleanupLog = node scripts/kernel-watchdog-cleanup.mjs --evidence $faultEvidence --require-evidence 2>&1
+          $cleanupLog = node scripts/kernel-watchdog-cleanup.mjs --evidence $faultEvidence --require-evidence --allowed-workspace-roots "$env:TEMP" --allowed-workspace-roots "$env:TMP" --allowed-workspace-roots "$env:RUNNER_TEMP" 2>&1
           Write-Output $cleanupLog
           if ($LASTEXITCODE -ne 0) {
             Write-Error 'watchdog cleanup failed during fault injection'

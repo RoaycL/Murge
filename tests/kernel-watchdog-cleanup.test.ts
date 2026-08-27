@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile, access } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -7,7 +7,8 @@ import {
   isMihomoName,
   binaryPathMatchesName,
   mihomoPids,
-  portHasListener
+  portHasListener,
+  validateEvidenceSchema
 } from '../scripts/kernel-watchdog-cleanup.mjs'
 
 /**
@@ -512,5 +513,228 @@ describe('cleanupKernel — Unix (ps/ss) probe path', () => {
       }
     })
     await expect(portHasListener(63001, runner)).rejects.toThrow(/returned no parseable output/)
+  })
+})
+
+describe('validateEvidenceSchema — strict schema & path ownership', () => {
+  it('rejects a pid that is not a positive integer', () => {
+    const base = JSON.parse(validEvidence())
+    for (const bad of ['abc', -1, 0, 1.5, null, undefined, '']) {
+      const problems = validateEvidenceSchema({ ...base, pid: bad })
+      expect(problems.some((p) => p.startsWith('pid must be a positive integer'))).toBe(true)
+    }
+  })
+
+  it('rejects out-of-range / non-integer ports and unequal requirement', () => {
+    const base = JSON.parse(validEvidence())
+    for (const [field, value] of [
+      ['controllerPort', 0],
+      ['controllerPort', 1000],
+      ['controllerPort', 70000],
+      ['controllerPort', 'abc'],
+      ['controllerPort', null],
+      ['mixedPort', 1]
+    ] as Array<[string, unknown]>) {
+      const problems = validateEvidenceSchema({
+        ...base,
+        [field]: value,
+        mixedPort: field === 'mixedPort' ? value : base.mixedPort
+      })
+      expect(problems.some((p) => p.includes(`${field} must be an integer in 1024-65535`))).toBe(true)
+    }
+    const equal = validateEvidenceSchema({ ...base, controllerPort: 63001, mixedPort: 63001 })
+    expect(equal.some((p) => p.includes('must be different ports'))).toBe(true)
+  })
+
+  it('rejects a workspace that is relative, a filesystem root, or a wrong prefix', () => {
+    const base = JSON.parse(validEvidence())
+    expect(
+      validateEvidenceSchema({ ...base, workspace: 'mihomo-real-x' }).some((p) => p.includes('absolute path'))
+    ).toBe(true)
+    expect(
+      validateEvidenceSchema({ ...base, workspace: '/' }).some((p) => p.includes('filesystem root'))
+    ).toBe(true)
+    expect(
+      validateEvidenceSchema({ ...base, workspace: '/tmp/mihomo-ui-x' }).some((p) => p.includes('workspace basename'))
+    ).toBe(true)
+  })
+
+  it('rejects `..` segments and a configDir escaping or outside the workspace', () => {
+    const base = JSON.parse(validEvidence())
+    expect(
+      validateEvidenceSchema({ ...base, workspace: '/tmp/mihomo-real-x/../mihomo-real-y' }).some((p) =>
+        p.includes("'..'")
+      )
+    ).toBe(true)
+    expect(
+      validateEvidenceSchema({ ...base, workspace: '/tmp/mihomo-real-x' }).some((p) => p.includes("'..'"))
+    ).toBe(false)
+    expect(
+      validateEvidenceSchema({ ...base, configDir: '/tmp/mihomo-real-other/config' }).some((p) =>
+        p.includes('within workspace')
+      )
+    ).toBe(true)
+    expect(
+      validateEvidenceSchema({ ...base, configDir: '/tmp/mihomo-real-xxxx/../config' }).some((p) =>
+        p.includes("'..'")
+      )
+    ).toBe(true)
+    expect(
+      validateEvidenceSchema({ ...base, configDir: 'config' }).some((p) => p.includes('absolute path'))
+    ).toBe(true)
+  })
+
+  it('accepts a fully valid document and enforces allowedWorkspaceRoots containment', () => {
+    const base = JSON.parse(validEvidence())
+    expect(validateEvidenceSchema(base)).toEqual([])
+    expect(validateEvidenceSchema(base, { allowedWorkspaceRoots: ['/tmp'] })).toEqual([])
+    expect(
+      validateEvidenceSchema(base, { allowedWorkspaceRoots: ['/definitely/not/allowed'] }).some((p) =>
+        p.includes('outside allowed roots')
+      )
+    ).toBe(true)
+  })
+})
+
+describe('strict mihomo naming & binaryPath mismatch', () => {
+  it('Windows tasklist: enumerates ONLY exact mihomo/mihomo.exe, never approximate names', async () => {
+    const dump = tasklistCsv([
+      ['mihomo.exe', 100],
+      ['mihomo', 200],
+      ['Mihomo.EXE', 700],
+      ['mihomo-helper.exe', 300],
+      ['mihomo-ui.exe', 400],
+      ['mihomo.old', 500],
+      ['not-mihomo', 600]
+    ])
+    const runner = makeRunner({
+      isWin: true,
+      handler: (tool) => (tool === 'tasklist' ? dump : (() => { throw new Error('unexpected') })())
+    })
+    await expect(mihomoPids(runner)).resolves.toEqual([100, 200, 700])
+  })
+
+  it('Unix ps: enumerates ONLY exact mihomo, never approximate names', async () => {
+    const runner = makeRunner({
+      isWin: false,
+      handler: (tool) =>
+        tool === 'ps'
+          ? '1235 mihomo\n900 mihomo-helper\n901 mihomo.old\n902 not-mihomo\n610 mihomo\n'
+          : (() => { throw new Error('unexpected') })()
+    })
+    await expect(mihomoPids(runner)).resolves.toEqual([1235, 610])
+  })
+
+  it('cleanupKernel never signals a process whose name merely approximates mihomo', async () => {
+    await withEvidence(validEvidence(), async (path) => {
+      const runner = makeRunner({
+        isWin: true,
+        pidAlive: () => false,
+        handler: (tool, args) => {
+          if (tool === 'tasklist') {
+            return tasklistCsv([
+              ['mihomo-helper.exe', 300],
+              ['mihomo-ui.exe', 400],
+              ['mihomo.old', 500],
+              ['not-mihomo', 600]
+            ])
+          }
+          if (tool === 'netstat') return netstatOut([])
+          if (tool === 'taskkill') return ''
+          throw new Error(`unexpected ${tool}`)
+        }
+      })
+      const result = await cleanupKernel(path, { runner, log: () => undefined })
+      expect(result.action).toBe('cleaned')
+      expect(runner.calls.filter((c) => c.tool === 'taskkill')).toEqual([])
+    })
+  })
+
+  it('refuses to kill the recorded PID when binaryPath basename does not match the observed process', async () => {
+    await withEvidence(validEvidence({ binaryPath: 'C:\\tools\\evil.exe' }), async (path) => {
+      const guard = pidGuard(4444)
+      const logs: string[] = []
+      const runner = makeRunner({
+        isWin: true,
+        pidAlive: guard.pidAlive,
+        handler: (tool, args) => {
+          if (tool === 'taskkill') {
+            guard.markKilled(tool, args)
+            return ''
+          }
+          if (tool === 'tasklist') {
+            if (args.includes('/FI')) return tasklistCsv([['mihomo.exe', 4444]])
+            return tasklistCsv([['svchost.exe', 100]])
+          }
+          if (tool === 'netstat') return netstatOut([])
+          throw new Error(`unexpected ${tool}`)
+        }
+      })
+      const result = await cleanupKernel(path, { runner, log: (m) => logs.push(m) })
+      expect(result.action).toBe('cleaned')
+      expect(runner.calls.some((c) => c.tool === 'taskkill' && c.args.includes('4444'))).toBe(false)
+      expect(logs.some((l) => l.includes('refusing to terminate (stale/reused PID)'))).toBe(true)
+      expect(logs.some((l) => l.includes('stopping recorded PID 4444'))).toBe(false)
+    })
+  })
+})
+
+describe('path-escape evidence must never reach rm', () => {
+  it('still sweeps residual mihomo by exact name, then fails require-evidence on a `..` workspace', async () => {
+    const ev = JSON.parse(
+      validEvidence({ workspace: '/tmp/mihomo-real-x/../bad', configDir: '/tmp/mihomo-real-x/config' })
+    )
+    await withEvidence(JSON.stringify(ev), async (path) => {
+      const guard = pidGuard(999)
+      let probeCount = 0
+      const runner = makeRunner({
+        isWin: true,
+        pidAlive: guard.pidAlive,
+        handler: (tool, args) => {
+          if (tool === 'taskkill') {
+            guard.markKilled(tool, args)
+            return ''
+          }
+          if (tool === 'tasklist') {
+            probeCount++
+            return probeCount === 1
+              ? tasklistCsv([['mihomo.exe', 999], ['mihomo-helper.exe', 300]])
+              : tasklistCsv([])
+          }
+          if (tool === 'netstat') return netstatOut([])
+          throw new Error(`unexpected ${tool}`)
+        }
+      })
+      await expect(cleanupKernel(path, { requireEvidence: true, runner })).rejects.toThrow()
+      expect(runner.calls.some((c) => c.tool === 'taskkill' && c.args.includes('999'))).toBe(true)
+      expect(runner.calls.some((c) => c.tool === 'taskkill' && c.args.includes('300'))).toBe(false)
+    })
+  })
+
+  it('never removes a directory when the workspace is outside allowedWorkspaceRoots', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'mihomo-real-'))
+    const sentinel = join(outside, 'sentinel.txt')
+    await writeFile(sentinel, 'keep me', 'utf8')
+    cleanupDirs.push(outside)
+    const ev = JSON.parse(validEvidence({ workspace: outside, configDir: join(outside, 'config') }))
+    await withEvidence(JSON.stringify(ev), async (path) => {
+      const runner = makeRunner({
+        isWin: true,
+        pidAlive: () => false,
+        handler: (tool) => {
+          if (tool === 'tasklist') return tasklistCsv([])
+          if (tool === 'netstat') return netstatOut([])
+          throw new Error(`unexpected ${tool}`)
+        }
+      })
+      await expect(
+        cleanupKernel(path, {
+          requireEvidence: true,
+          runner,
+          allowedWorkspaceRoots: ['/definitely/not/allowed']
+        })
+      ).rejects.toThrow(/outside allowed roots/)
+      await expect(access(sentinel)).resolves.toBeUndefined()
+    })
   })
 })

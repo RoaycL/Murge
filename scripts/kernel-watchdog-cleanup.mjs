@@ -14,17 +14,26 @@
 // its executable is still `mihomo`/`mihomo.exe`, so a recycled PID can never take
 // down an unrelated runner process.
 //
-// Evidence handling: by default a missing/corrupt evidence file is reported
-// honestly (no "nothing to clean up" PASS) after sweeping residual mihomo. With
-// `--require-evidence` (used by CI and the fault-injection step) a missing,
-// corrupt or field-incomplete evidence file FAILS the run, while still leaving the
-// disposable runner free of residual mihomo.
+// Evidence handling: the document is validated with a STRICT schema before any
+// directory removal — pid must be a positive integer, both ports distinct
+// integers in 1024-65535, workspace/configDir absolute non-root paths with a
+// controlled `mihomo-real-*`/`mihomo-cleanup-fault-*` basename and configDir
+// contained within workspace — so a crafted evidence file can never widen the
+// `rm` scope. `--allowed-workspace-roots` adds a further root-containment check
+// (CI passes the disposable runner's temp dir). On a schema/path problem the
+// script still sweeps and reaps residual mihomo by exact name, but NEVER removes
+// a directory, and with `--require-evidence` (used by CI and the fault-injection
+// step) the run FAILS. Without `--require-evidence` a missing/corrupt evidence
+// file is reported honestly (no "nothing to clean up" PASS) after the sweep.
+// Residual mihomo (and the recorded PID) are matched only by the strict
+// `isMihomoName` (mihomo/mihomo.exe), never by a prefix, so an approximate name
+// like mihomo-helper.exe or mihomo-ui.exe can never be signalled.
 //
 // CLI:
-//   node scripts/kernel-watchdog-cleanup.mjs --evidence <path> [--require-evidence]
+//   node scripts/kernel-watchdog-cleanup.mjs --evidence <path> [--require-evidence] [--allowed-workspace-roots <dir>]
 // Or import { cleanupKernel } from a test (tests inject a mock `runner`).
 import { readFile, rm, readdir, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve, relative, basename, isAbsolute, parse } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { pathToFileURL } from 'node:url'
@@ -72,6 +81,97 @@ export function binaryPathMatchesName(binaryPath, name) {
 export function validateEvidence(ev) {
   if (!ev || typeof ev !== 'object') return ['<evidence-not-an-object>']
   return REQUIRED_EVIDENCE_FIELDS.filter((f) => ev[f] === undefined || ev[f] === null || ev[f] === '')
+}
+
+/** Only a workspace whose basename starts with one of these may be removed. */
+const WORKSPACE_PREFIXES = ['mihomo-real-', 'mihomo-cleanup-fault-']
+
+/** True when `child` resolves inside `parent` (equal is accepted). */
+function isWithin(parent, child) {
+  const rel = relative(resolve(parent), resolve(child))
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+}
+
+/** True when `p` contains a literal `..` path segment (either separator). */
+function hasDotDotSegment(p) {
+  return /(^|[\\/])\.\.([\\/]|$)/.test(p)
+}
+
+/**
+ * Strict schema + path-ownership validation of an evidence document. Returns a
+ * list of problem strings (empty = safe to proceed). Unlike the presence-only
+ * `validateEvidence`, this checks types, ranges and that the workspace/configDir
+ * point at a controlled, non-root absolute path. Path problems are detected
+ * BEFORE any directory removal so a crafted evidence file can never widen the
+ * `rm` scope.
+ */
+export function validateEvidenceSchema(ev, opts = {}) {
+  const problems = []
+  if (!ev || typeof ev !== 'object') return ['<evidence-not-an-object>']
+  const allowedRoots = Array.isArray(opts.allowedWorkspaceRoots) ? opts.allowedWorkspaceRoots : []
+
+  // pid must be a positive integer number.
+  if (!Number.isInteger(ev.pid) || ev.pid <= 0) {
+    problems.push(`pid must be a positive integer; got ${JSON.stringify(ev.pid)}`)
+  }
+
+  // Both ports must be distinct integers in the ephemeral range.
+  for (const key of ['controllerPort', 'mixedPort']) {
+    const v = ev[key]
+    if (!Number.isInteger(v) || v < 1024 || v > 65535) {
+      problems.push(`${key} must be an integer in 1024-65535; got ${JSON.stringify(v)}`)
+    }
+  }
+  if (
+    Number.isInteger(ev.controllerPort) &&
+    Number.isInteger(ev.mixedPort) &&
+    ev.controllerPort === ev.mixedPort
+  ) {
+    problems.push('controllerPort and mixedPort must be different ports')
+  }
+
+  // workspace: absolute, non-root, controlled basename, no `..`, under an allowed root.
+  if (typeof ev.workspace !== 'string' || !ev.workspace) {
+    problems.push('workspace must be a non-empty absolute path')
+  } else if (!isAbsolute(ev.workspace)) {
+    problems.push(`workspace must be an absolute path; got ${ev.workspace}`)
+  } else {
+    const ws = resolve(ev.workspace)
+    const base = basename(ws)
+    if (parse(ws).root === ws) {
+      problems.push(`workspace must not be a filesystem root; got ${ev.workspace}`)
+    } else if (!WORKSPACE_PREFIXES.some((p) => base.startsWith(p))) {
+      problems.push(
+        `workspace basename must start with '${WORKSPACE_PREFIXES.join("' or '")}'; got '${base}'`
+      )
+    } else if (hasDotDotSegment(ev.workspace)) {
+      problems.push(`workspace must not contain '..'; got ${ev.workspace}`)
+    } else if (allowedRoots.length && !allowedRoots.some((root) => isWithin(root, ws))) {
+      problems.push(`workspace is outside allowed roots: ${ev.workspace}`)
+    }
+  }
+
+  // configDir: absolute, non-root, no `..`, and contained within workspace.
+  if (typeof ev.configDir !== 'string' || !ev.configDir) {
+    problems.push('configDir must be a non-empty absolute path')
+  } else if (!isAbsolute(ev.configDir)) {
+    problems.push(`configDir must be an absolute path; got ${ev.configDir}`)
+  } else {
+    const cfg = resolve(ev.configDir)
+    if (parse(cfg).root === cfg) {
+      problems.push(`configDir must not be a filesystem root; got ${ev.configDir}`)
+    } else if (hasDotDotSegment(ev.configDir)) {
+      problems.push(`configDir must not contain '..'; got ${ev.configDir}`)
+    } else if (
+      typeof ev.workspace === 'string' &&
+      isAbsolute(ev.workspace) &&
+      !isWithin(resolve(ev.workspace), cfg)
+    ) {
+      problems.push(`configDir must be within workspace; got ${ev.configDir}`)
+    }
+  }
+
+  return problems
 }
 
 /** Parse a `host:port` token, including IPv6 bracket form `[::1]:8080`. */
@@ -219,7 +319,7 @@ export async function mihomoPids(runner = defaultRunner()) {
         throw new Error(`tasklist process probe output unparseable row: ${JSON.stringify(trimmed)}`)
       }
       if (pid <= 0) continue
-      if (/^mihomo/i.test(name)) pids.push(pid)
+      if (isMihomoName(name)) pids.push(pid)
     }
   } else {
     let sawData = false
@@ -236,7 +336,7 @@ export async function mihomoPids(runner = defaultRunner()) {
         throw new Error(`ps process probe output unparseable row: ${JSON.stringify(trimmed)}`)
       }
       const name = match[2].trim().split('/').pop()
-      if (/^mihomo/i.test(name)) pids.push(Number(match[1]))
+      if (isMihomoName(name)) pids.push(Number(match[1]))
     }
     if (!sawData) {
       throw new Error(`${tool} process probe returned no parseable process rows; cannot prove no residual mihomo`)
@@ -331,6 +431,10 @@ export async function cleanupKernel(evidencePath, opts = {}) {
   const requireEvidence = opts.requireEvidence === true
   const runner = opts.runner ?? defaultRunner()
   const aliveCheck = runner.pidAlive || pidAlive
+  // Controlled roots: when provided, the evidence workspace must resolve inside
+  // at least one of them. CI passes the disposable runner's temp directory so a
+  // crafted evidence file can never widen the `rm` scope.
+  const allowedWorkspaceRoots = Array.isArray(opts.allowedWorkspaceRoots) ? opts.allowedWorkspaceRoots : []
 
   // --- Load + validate evidence ------------------------------------------------
   let ev = null
@@ -352,6 +456,15 @@ export async function cleanupKernel(evidencePath, opts = {}) {
     }
   }
   if (ev && !evidenceProblem) {
+    const schemaProblems = validateEvidenceSchema(ev, { allowedWorkspaceRoots })
+    if (schemaProblems.length) {
+      evidenceProblem = new Error(
+        `kernel evidence '${evidencePath}' fails schema validation: ${schemaProblems.join('; ')}`
+      )
+      log(evidenceProblem.message)
+    }
+  }
+  if (ev && !evidenceProblem) {
     log(`evidence: pid=${ev.pid} controller=${ev.controllerPort} mixed=${ev.mixedPort}`)
   }
 
@@ -364,19 +477,23 @@ export async function cleanupKernel(evidencePath, opts = {}) {
         const name = identity ? identity.name : null
         if (name && isMihomoName(name)) {
           if (ev.binaryPath && !binaryPathMatchesName(ev.binaryPath, name)) {
+            // The evidence claims a different binary than the process actually is.
+            // Treat the recorded PID as stale/reused: do NOT trust it for the kill.
+            // The exact-name residual sweep below still reaps a real mihomo.
             log(
-              `warning: recorded PID ${recordedPid} is ${name} but binaryPath basename is ${String(
+              `recorded PID ${recordedPid} is ${name} but binaryPath basename is '${String(
                 ev.binaryPath
-              ).split(/[\\/]/).pop()}; continuing (name is mihomo)`
+              ).split(/[\\/]/).pop()}'; refusing to terminate (stale/reused PID)`
             )
+          } else {
+            log(`stopping recorded PID ${recordedPid}`)
+            await killPid(recordedPid, runner)
+            await (runner.sleep || sleep)(2000)
+            if (aliveCheck(recordedPid)) {
+              throw new Error(`recorded mihomo PID ${recordedPid} still alive after kill`)
+            }
+            log(`recorded mihomo PID ${recordedPid} is gone`)
           }
-          log(`stopping recorded PID ${recordedPid}`)
-          await killPid(recordedPid, runner)
-          await (runner.sleep || sleep)(2000)
-          if (aliveCheck(recordedPid)) {
-            throw new Error(`recorded mihomo PID ${recordedPid} still alive after kill`)
-          }
-          log(`recorded mihomo PID ${recordedPid} is gone`)
         } else {
           // Alive but its identity is NOT mihomo (or could not be read): this is a
           // recycled/stale PID. NEVER kill an unrelated runner process.
@@ -450,25 +567,32 @@ export async function cleanupKernel(evidencePath, opts = {}) {
 }
 
 function parseCli(argv) {
-  const opts = { evidencePath: null, requireEvidence: false }
+  const opts = { evidencePath: null, requireEvidence: false, allowedWorkspaceRoots: [] }
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '--evidence') opts.evidencePath = argv[++i]
     else if (argv[i] === '--require-evidence') opts.requireEvidence = true
+    else if (argv[i] === '--allowed-workspace-roots') {
+      const value = String(argv[++i] || '').trim()
+      if (value) for (const root of value.split(',')) if (root.trim()) opts.allowedWorkspaceRoots.push(root.trim())
+    }
   }
   return opts
 }
 
 async function main() {
-  const { evidencePath, requireEvidence } = parseCli(process.argv)
+  const { evidencePath, requireEvidence, allowedWorkspaceRoots } = parseCli(process.argv)
   if (!evidencePath) {
-    process.stderr.write('usage: node scripts/kernel-watchdog-cleanup.mjs --evidence <path> [--require-evidence]\n')
+    process.stderr.write(
+      'usage: node scripts/kernel-watchdog-cleanup.mjs --evidence <path> [--require-evidence] [--allowed-workspace-roots <dir>]\n'
+    )
     process.exitCode = 1
     return
   }
   try {
     await cleanupKernel(evidencePath, {
       log: (msg) => process.stdout.write(`[cleanup] ${msg}\n`),
-      requireEvidence
+      requireEvidence,
+      allowedWorkspaceRoots
     })
   } catch (error) {
     process.stderr.write(`[cleanup] FAIL: ${error.message}\n`)

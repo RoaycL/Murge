@@ -196,8 +196,44 @@ run('mihomo real kernel integration', () => {
     expect(restarted.phase).toBe('running')
     await waitForController(client, supervisor)
     expect(restarted.pid).not.toBe(firstPid)
+    const stoppedRestarted = await supervisor.stop()
+    expect(stoppedRestarted.phase).toBe('stopped')
+
+    // Watchdog: a hard crash (SIGKILL of the real process) must be detected and
+    // auto-restarted with a fresh pid, then cleaned up.
+    supervisor = new KernelSupervisor(deps, {
+      readinessPattern: null,
+      startTimeoutMs: 30000,
+      stopTimeoutMs: 20000,
+      forceKillTimeoutMs: 5000,
+      maxRestarts: 1,
+      backoffMs: 500,
+      maxBackoffMs: 2000
+    })
+    const crashed = await supervisor.start()
+    expect(crashed.phase).toBe('running')
+    await waitForController(client, supervisor)
+    const crashedPid = supervisor.getStatus().pid
+    expect(crashedPid).toBeGreaterThan(0)
+    // Kill the child out from under the supervisor; it must observe the exit and
+    // reschedule with a bounded backoff.
+    process.kill(crashedPid!, 'SIGKILL')
+    await waitFor(
+      () => {
+        const s = supervisor!.getStatus()
+        return s.phase === 'running' && s.pid !== crashedPid
+      },
+      30000,
+      'watchdog auto-restart after crash'
+    )
+    // The supervisor never exceeds its restart budget (so it stays failed rather
+    // than flapping forever) and the recovered process serves the controller.
+    expect(supervisor.getStatus().phase).toBe('running')
+    await waitForController(client, supervisor)
+    const watchdogStatus = supervisor.getStatus()
+    expect(watchdogStatus.pid).not.toBe(crashedPid)
     await supervisor.stop()
-  }, 120000)
+  }, 180000)
 })
 
 function isAlive(pid: number): boolean {

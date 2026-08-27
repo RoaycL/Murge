@@ -1,10 +1,22 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { mkdir, readFile, writeFile, stat, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { MihomoKernelConfigStore } from '../src/main/kernel/mihomo-config-store'
 import { validateMihomoConfigYaml } from '../src/main/kernel/mihomo-config'
 import { ProtocolErrorCode } from '@shared/protocol-errors'
+
+// Wrap `writeFile` in a mock that passes through to the real implementation by
+// default, so the store can be driven to fail its config write in a targeted
+// test (P2: a failure after the workspace is created must clean it up). The
+// default passthrough keeps every other test writing sentinel files normally.
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    writeFile: vi.fn(actual.writeFile)
+  }
+})
 
 const secret = 'b'.repeat(64)
 
@@ -78,5 +90,67 @@ describe('MihomoKernelConfigStore', () => {
     await expect(stat(join(parent, 'keep.txt'))).resolves.toBeTruthy()
     await expect(stat(config.rootDir)).rejects.toThrow()
     expect(await readdir(parent)).toContain('keep.txt')
+  })
+
+  it('does not leak a workspace child when materialize fails on the secret', async () => {
+    // P2: validation must happen BEFORE the per-run directory is created, so a
+    // missing/malformed secret leaves no `mihomo-workspace-*` child behind.
+    const parent = join(tmpdir(), `mihomo-leak-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    await mkdir(parent, { recursive: true })
+    const store = new MihomoKernelConfigStore({
+      mixedPort: 24000,
+      controllerPort: 24001,
+      workspaceDir: parent
+    })
+    await expect(
+      store.materialize({ command: '/bin/mihomo', args: [] }, '')
+    ).rejects.toMatchObject({ code: ProtocolErrorCode.INVALID_ARGUMENT })
+    await expect(
+      store.materialize({ command: '/bin/mihomo', args: [] }, 'short')
+    ).rejects.toMatchObject({ code: ProtocolErrorCode.INVALID_ARGUMENT })
+    const children = (await readdir(parent)).filter((n) => n.startsWith('mihomo-workspace-'))
+    expect(children).toEqual([])
+  })
+
+  it('cleans up its own workspace child when the config write fails', async () => {
+    // P2: a failure AFTER the directory is created (the config write) must make
+    // the store delete exactly the child it just created before rethrowing.
+    const parent = join(tmpdir(), `mihomo-writefail-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    await mkdir(parent, { recursive: true })
+    const store = new MihomoKernelConfigStore({
+      mixedPort: 24100,
+      controllerPort: 24101,
+      workspaceDir: parent
+    })
+    // Fail exactly the store's single config write; later calls (other tests'
+    // sentinel files) fall through to the real implementation.
+    vi.mocked(writeFile).mockRejectedValueOnce(new Error('injected write failure'))
+    await expect(
+      store.materialize({ command: '/bin/mihomo', args: [] }, secret)
+    ).rejects.toThrow('injected write failure')
+    const children = (await readdir(parent)).filter((n) => n.startsWith('mihomo-workspace-'))
+    expect(children).toEqual([])
+  })
+
+  it('preserves the caller parent and its files when materialize fails after creation', async () => {
+    const parent = join(tmpdir(), `mihomo-keep-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    await mkdir(parent, { recursive: true })
+    const sentinel = join(parent, 'keep.txt')
+    await writeFile(sentinel, 'caller-owned, must survive')
+
+    const store = new MihomoKernelConfigStore({
+      mixedPort: 24200,
+      controllerPort: 24201,
+      workspaceDir: parent
+    })
+    vi.mocked(writeFile).mockRejectedValueOnce(new Error('injected write failure'))
+    await expect(
+      store.materialize({ command: '/bin/mihomo', args: [] }, secret)
+    ).rejects.toThrow('injected write failure')
+
+    // Parent still exists, its pre-existing file survived, and no store child remains.
+    await expect(stat(sentinel)).resolves.toBeTruthy()
+    expect(await readFile(sentinel, 'utf8')).toBe('caller-owned, must survive')
+    expect((await readdir(parent)).filter((n) => n.startsWith('mihomo-workspace-'))).toEqual([])
   })
 })

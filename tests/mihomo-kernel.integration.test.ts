@@ -13,7 +13,7 @@ import { MihomoClient } from '../src/main/services/mihomo-client'
 import { randomSecret } from '../src/main/kernel/mihomo-config'
 import { captureNetworkSnapshot, assertNetworkUnchanged } from './real-network-snapshot'
 import { listenersMatchingText } from './listener-tools'
-import { EvidenceFile } from './kernel-evidence'
+import { EvidenceFile, type KernelEvidenceData } from './kernel-evidence'
 import type { KernelDependencies } from '../src/main/kernel/types'
 
 const execFileAsync = promisify(execFile)
@@ -124,6 +124,17 @@ run('mihomo real kernel integration', () => {
     }
     const configDir = join(workspace, 'config')
 
+    // Verification facts captured progressively as the run discovers them. They
+    // are written into the evidence on the next PID change so the artifact
+    // records the binary path, mihomo version, both listener host/port, the
+    // /version result and the network-diff PASS. The controller secret is NEVER
+    // part of evidence.
+    const facts: Pick<
+      KernelEvidenceData,
+      'binaryPath' | 'version' | 'controllerHost' | 'mixedHost' | 'versionOk' | 'networkDiffPASS'
+    > = {}
+    let lastLivePid = 0
+
     // Subscribe to supervisor status so the evidence file always carries the live
     // PID. The watchdog restarts the kernel under a fresh PID after a crash; a
     // stale PID left in the evidence file would make the CI finally step unable
@@ -133,10 +144,11 @@ run('mihomo real kernel integration', () => {
       sup.onStatus((status) => {
         const pid = status.pid
         if (typeof pid === 'number' && pid > 0) {
+          lastLivePid = pid
           // A failed evidence write must not surface as an unhandled rejection in
           // the status listener; it is non-fatal to the kernel lifecycle.
           void evidence
-            .update({ pid, controllerPort, mixedPort, workspace, configDir })
+            .update({ pid, controllerPort, mixedPort, workspace, configDir, ...facts })
             .catch(() => undefined)
         }
       })
@@ -172,6 +184,12 @@ run('mihomo real kernel integration', () => {
     expect(status.phase).toBe('running')
     expect(status.pid).toBeGreaterThan(0)
     expect(status.version).toBe('1.19.30')
+    // Capture the verification facts for the evidence artifact: the resolved
+    // binary path and its mihomo version (already downloaded/verified by start,
+    // so a second resolve just re-uses the live path).
+    const resolved = await deps.resolver.resolve()
+    facts.binaryPath = resolved.command
+    facts.version = status.version ?? resolved.version ?? ''
     // The status subscription already wrote the live PID; assert it so a
     // regression in evidence tracking fails closed early.
     expect((await evidence.read())?.pid).toBe(status.pid)
@@ -183,6 +201,7 @@ run('mihomo real kernel integration', () => {
     // REST /version + auth.
     const version = await client.getVersion()
     expect(version.version).toBeTruthy()
+    facts.versionOk = true
 
     // Wrong secret must be rejected with 401 -> UNAUTHORIZED.
     const badClient = new MihomoClient(base, 'wrong-secret-0000000000000000', { timeoutMs: 5000 })
@@ -215,13 +234,17 @@ run('mihomo real kernel integration', () => {
     // show at least one listener, and every listener host must be loopback. A
     // missing listener or a non-loopback bind fails the test (fail closed).
     const listenerGroups = [controllerPort, mixedPort]
+    const listenerHosts: Record<number, string> = {}
     for (const port of listenerGroups) {
       const hosts = await listenersOn(port)
       expect(hosts.length).toBeGreaterThanOrEqual(1)
       for (const host of hosts) {
         expect(host).toMatch(/^(127\.0\.0\.1|::1)$/)
       }
+      listenerHosts[port] = hosts[0]
     }
+    facts.controllerHost = listenerHosts[controllerPort]
+    facts.mixedHost = listenerHosts[mixedPort]
 
     // WebSocket transport to the controller authenticates + opens.
     await new Promise<void>((resolve, reject) => {
@@ -316,6 +339,14 @@ run('mihomo real kernel integration', () => {
     // settings, default routes, DNS or firewall.
     const after = await captureNetworkSnapshot()
     assertNetworkUnchanged(before, after)
+    facts.networkDiffPASS = true
+    // Final enriched evidence write: capture the complete verification facts
+    // (binary path, mihomo version, both listener host:port, /version success and
+    // network-diff PASS) for the artifact. The PID is the last live one the
+    // supervisor reported. The controller secret is never written.
+    await evidence
+      .update({ pid: lastLivePid, controllerPort, mixedPort, workspace, configDir, ...facts })
+      .catch(() => undefined)
   }, 180000)
 })
 

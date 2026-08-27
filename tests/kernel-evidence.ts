@@ -5,6 +5,11 @@ import { dirname, join } from 'node:path'
  * What the CI watchdog (`if: always()` finally step) needs to reap the exact
  * mihomo process and assert cleanup. The controller secret must NEVER be stored
  * here — only the identity of the process and the ports it opened.
+ *
+ * The verification-fact fields (binary path, mihomo version, both listener
+ * host/port, /version success, network-diff PASS) are optional because they are
+ * discovered as the test progresses and a crash can happen at any point; the
+ * reaping fields (`pid`/ports/workspace) are the only required ones.
  */
 export interface KernelEvidenceData {
   pid: number
@@ -12,6 +17,18 @@ export interface KernelEvidenceData {
   mixedPort: number
   workspace: string
   configDir: string
+  /** Absolute path of the resolved mihomo executable. */
+  binaryPath?: string
+  /** mihomo version surfaced by the supervisor. */
+  version?: string
+  /** Listener host of the controller port (loopback `127.0.0.1`/`::1`). */
+  controllerHost?: string
+  /** Listener host of the mixed port (loopback `127.0.0.1`/`::1`). */
+  mixedHost?: string
+  /** Whether GET /version (with the correct secret) answered successfully. */
+  versionOk?: boolean
+  /** Whether the host network snapshot was unchanged after the run. */
+  networkDiffPASS?: boolean
 }
 
 /**

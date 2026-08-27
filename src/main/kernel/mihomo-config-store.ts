@@ -35,14 +35,13 @@ export class MihomoKernelConfigStore implements KernelConfigStore {
   constructor(private readonly options: MihomoConfigStoreOptions) {}
 
   async materialize(_binary: KernelBinary, secret: string): Promise<KernelConfig> {
-    // Always materialize into an exclusive child. `workspaceDir` (if given) is a
-    // parent; the caller's own files under it must survive a later cleanup.
-    const parent = this.options.workspaceDir
-      ? await mkdir(this.options.workspaceDir, { recursive: true }).then(() => this.options.workspaceDir!)
-      : tmpdir()
-    const rootDir = await mkdtemp(join(parent, 'mihomo-workspace-'))
-    this.ownedDir = rootDir
-    const configPath = join(rootDir, 'config.yaml')
+    // (1) Run EVERY filesystem-independent validation FIRST. The secret, the
+    // generated config and the YAML schema are all validated before any
+    // directory is created, so an invalid secret or config never leaves a
+    // stale `mihomo-workspace-*` child behind on failure. This matters because
+    // a failed materialize returns no KernelConfig, so the supervisor can never
+    // call cleanup(config) to remove the just-created directory.
+    //
     // The secret is the shared auth contract between the supervisor, the config
     // document and the controller client. It is generated exactly once at the
     // composition root and must arrive here as a valid 64-hex token: an absent or
@@ -55,21 +54,56 @@ export class MihomoKernelConfigStore implements KernelConfigStore {
         'Mihomo controller secret must be a 64-character lowercase hex string'
       )
     }
-    const effectiveSecret = secret
     const configText = generateMihomoConfig({
       mixedPort: this.options.mixedPort,
       controllerPort: this.options.controllerPort,
-      secret: effectiveSecret
+      secret
     })
     // Fail closed before writing: never persist a config that leaks a listener
     // beyond loopback or mutates the system network.
     validateMihomoConfigYaml(configText)
-    await writeFile(configPath, configText, 'utf8')
+
+    // (2) Only now create the exclusive child. `workspaceDir` (if given) is a
+    // parent; the caller's own files under it must survive a later cleanup.
+    const parent = this.options.workspaceDir
+      ? await mkdir(this.options.workspaceDir, { recursive: true }).then(() => this.options.workspaceDir!)
+      : tmpdir()
+    const rootDir = await mkdtemp(join(parent, 'mihomo-workspace-'))
+    this.ownedDir = rootDir
+    const configPath = join(rootDir, 'config.yaml')
+
+    // (3) Anything that can fail AFTER the child exists (the config write) must
+    // remove exactly that child before rethrowing the original error. The
+    // caller-provided parent — and any pre-existing file inside it — is never
+    // touched.
+    try {
+      await writeFile(configPath, configText, 'utf8')
+    } catch (error) {
+      await this.removeOwnedDir()
+      throw error
+    }
     return {
       configPath,
       rootDir,
       args: ['-f', configPath, '-d', rootDir],
       env: { MIHOMO_PLATFORM: process.platform, MIHOMO_ARCH: process.arch }
+    }
+  }
+
+  /**
+   * Delete the exact per-run child this store created and clear the ownership
+   * marker. Used only when materialize() fails AFTER creating the child but
+   * BEFORE returning a KernelConfig (so the supervisor has nothing to hand to
+   * cleanup()). Best-effort; never touches the caller-provided parent.
+   */
+  private async removeOwnedDir(): Promise<void> {
+    const dir = this.ownedDir
+    this.ownedDir = null
+    if (!dir) return
+    try {
+      await rm(dir, { recursive: true, force: true })
+    } catch {
+      // best effort — the original materialize() error is what propagates.
     }
   }
 

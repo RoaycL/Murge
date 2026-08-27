@@ -76,81 +76,13 @@ jobs:
 
       # P2 #11: must run even on failure/crash. Kill ONLY the PID recorded by
       # the test and verify the listener ports + temp config are released. The
-      # evidence file never contains the controller secret.
+      # evidence file never contains the controller secret. Reuses the same
+      # scripts/kernel-watchdog-cleanup.mjs the fault-injection test below calls,
+      # so CI is not testing a duplicate copy.
       - name: Kill recorded mihomo PID & verify cleanup (finally)
         if: always()
         shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Continue'
-          $evidence = Join-Path $env:RUNNER_TEMP 'mihomo-real-kernel-evidence.json'
-          if (-not (Test-Path $evidence)) {
-            Write-Host 'no kernel evidence file; nothing to clean up'
-            exit 0
-          }
-          $ev = Get-Content $evidence -Raw | ConvertFrom-Json
-          Write-Host "evidence: pid=$($ev.pid) controller=$($ev.controllerPort) mixed=$($ev.mixedPort)"
-          if ($ev.pid) {
-            if (Get-Process -Id $ev.pid -ErrorAction SilentlyContinue) {
-              Write-Host "stopping recorded PID $($ev.pid)"
-              Stop-Process -Id $ev.pid -Force -ErrorAction SilentlyContinue
-              Start-Sleep -Seconds 2
-            }
-            if (Get-Process -Id $ev.pid -ErrorAction SilentlyContinue) {
-              throw "recorded mihomo PID $($ev.pid) still alive after kill"
-            }
-            Write-Host "recorded mihomo PID $($ev.pid) is gone"
-          }
-          # Residual mihomo whose PID is not the recorded one (e.g. the watchdog
-          # restarted the kernel under a fresh PID right before the test crashed,
-          # so the evidence PID is dead but a newer mihomo is alive). This runs on
-          # a disposable runner, so terminate every residual mihomo, then PROVE
-          # the host is clean. If any survive, the job must still fail.
-          $residual = @(Get-Process -Name 'mihomo' -ErrorAction SilentlyContinue)
-          if ($residual.Count -gt 0) {
-            Write-Host "found $($residual.Count) residual mihomo process(es); terminating on disposable runner"
-            foreach ($p in $residual) {
-              Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-            }
-            Start-Sleep -Seconds 2
-          }
-          if (Get-Process -Name 'mihomo' -ErrorAction SilentlyContinue) {
-            throw 'a mihomo process remains after the recorded PID and residual mihomo were terminated'
-          }
-          Write-Host 'no mihomo process remains'
-          $ports = @($ev.controllerPort, $ev.mixedPort) | Where-Object { $_ }
-          if ($ports.Count -gt 0) {
-            $listen = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
-              Where-Object { $_.LocalPort -in $ports }
-            if ($listen) { throw "test port still listening: $($listen.LocalPort)" }
-            Write-Host "test ports released: $($ports -join ', ')"
-          }
-          if ($ev.workspace) {
-            # The test may have hard-crashed before the store could clean its
-            # mihomo-workspace-* child (a watchdog restart creates a fresh one).
-            # This is a disposable runner, so remove the leftover config child(ren)
-            # and the whole workspace, then PROVE they are gone; if anything
-            # survives, the job must still fail.
-            $configDir = Join-Path $ev.workspace 'config'
-            $children = @(Get-ChildItem -Path $configDir -Directory -Filter 'mihomo-workspace-*' -ErrorAction SilentlyContinue)
-            if ($children.Count -gt 0) {
-              Write-Host "removing $($children.Count) leftover store child dir(s)"
-              foreach ($child in $children) {
-                Remove-Item -Path $child.FullName -Recurse -Force -ErrorAction SilentlyContinue
-              }
-            }
-            if (Test-Path $ev.workspace) {
-              Remove-Item $ev.workspace -Recurse -Force -ErrorAction SilentlyContinue
-            }
-            $remaining = @(Get-ChildItem -Path $configDir -Directory -Filter 'mihomo-workspace-*' -ErrorAction SilentlyContinue)
-            if ($remaining.Count -gt 0) {
-              throw "store config child not cleaned after removal: $($remaining.FullName -join ', ')"
-            }
-            if (Test-Path $ev.workspace) {
-              throw "workspace not removed: $($ev.workspace)"
-            }
-            Write-Host 'temp config/secret directory cleaned and removed'
-          }
-          Write-Host 'kernel watchdog: PASS'
+        run: node scripts/kernel-watchdog-cleanup.mjs --evidence "$env:RUNNER_TEMP\mihomo-real-kernel-evidence.json"
 
       # Sanitized evidence only (PID, ports, workspace path) — never the secret.
       - name: Upload kernel evidence (sanitized)
@@ -160,6 +92,50 @@ jobs:
           name: kernel-real-evidence
           path: ${{ runner.temp }}/mihomo-real-kernel-evidence.json
           if-no-files-found: warn
+
+      # P1 acceptance gap: the finally step above never actually exercised the
+      # "find & kill the watchdog-restarted residual mihomo" branch on a green
+      # run, because the test process had already exited before the finally ran.
+      # This dedicated fault-injection step starts a REAL mihomo, triggers a
+      # watchdog restart, records the recovery PID into its own evidence file, then
+      # SIGKILLs its own worker WITHOUT calling supervisor.stop() so the recovered
+      # kernel is truly orphaned. It then runs the EXACT SAME
+      # scripts/kernel-watchdog-cleanup.mjs as the finally step and asserts it
+      # reaped a live process, freed both ports and removed the workspace.
+      - name: Fault-inject watchdog restart & verify external cleanup
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $log = npx vitest run tests/mihomo-kernel-cleanup-fault.integration.test.ts 2>&1
+          $logText = ($log | Out-String)
+          Write-Output $logText
+          # The crash-driver test intentionally SIGKILLs its own worker, so vitest
+          # exits non-zero — that is expected. The marker is what proves the test
+          # actually reached and orphaned a live restarted kernel.
+          if ($logText -notmatch 'CRASH-DRIVER-REACHED-CRASH-POINT') {
+            Write-Error 'crash marker not reached — fault injection did not orphan the kernel'
+            exit 1
+          }
+          # The recovered PID must be durably recorded before the crash point.
+          $faultEvidence = "$env:RUNNER_TEMP\mihomo-cleanup-fault-evidence.json"
+          if (-not (Test-Path $faultEvidence)) {
+            Write-Error "fault evidence file missing: $faultEvidence"
+            exit 1
+          }
+          $cleanupLog = node scripts/kernel-watchdog-cleanup.mjs --evidence $faultEvidence 2>&1
+          Write-Output $cleanupLog
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error 'watchdog cleanup failed during fault injection'
+            exit 1
+          }
+          # Prove the reaper actually killed a LIVE recorded process (not a no-op
+          # on a test that had already cleaned up).
+          if (($cleanupLog | Out-String) -notmatch 'stopping recorded PID') {
+            Write-Error 'cleanup did not reap a live recorded PID — no orphan was killed'
+            exit 1
+          }
+          Write-Output 'KERNEL_FAULT_INJECTION=PASS'
 
   package-win:
     name: Package Windows & smoke-test NSIS installer

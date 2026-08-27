@@ -36,6 +36,27 @@ for (const key of Object.keys(brand)) {
   const prop = properties[key]
   if (!prop) continue
   const value = brand[key]
+  if (Array.isArray(value)) {
+    // Array-typed brand fields are the legacy namespace catalogs. Each element
+    // must be a non-empty string that is a safe, relative directory name so the
+    // migration can never escape the app-data root via a crafted namespace.
+    if (prop.type === 'array') {
+      if (typeof prop.minItems === 'number' && value.length < prop.minItems) {
+        violations.push(`${key}: must contain at least ${prop.minItems} entr${prop.minItems === 1 ? 'y' : 'ies'}`)
+        continue
+      }
+      for (const item of value) {
+        if (typeof item !== 'string' || item.length === 0) {
+          violations.push(`${key}: each entry must be a non-empty string`)
+        } else if (/[\\/]/.test(item) || item === '.' || item === '..') {
+          violations.push(`${key}: "${item}" is not a safe directory name`)
+        }
+      }
+    } else {
+      violations.push(`${key}: must be a string`)
+    }
+    continue
+  }
   if (typeof value !== 'string') {
     violations.push(`${key}: must be a string`)
     continue
@@ -46,6 +67,25 @@ for (const key of Object.keys(brand)) {
   if (typeof prop.pattern === 'string' && !new RegExp(prop.pattern).test(value)) {
     violations.push(`${key}: "${value}" does not match ${prop.pattern}`)
   }
+}
+
+// Rename safety: the migration coverage must come from the explicit legacy
+// catalogs, never from the current product name. Require at least one usable
+// namespace so a release never ships with zero migration coverage, and so a
+// rename cannot silently drop every historical application-data folder.
+const legacyNamespaces = [
+  ...(brand.legacyProductNames ?? []),
+  ...(brand.legacyAppDataNamespaces ?? [])
+].filter((name) => name && name !== brand.appId)
+if (!legacyNamespaces.length) {
+  violations.push(
+    'legacyProductNames/legacyAppDataNamespaces: must configure at least one legacy namespace to migrate'
+  )
+}
+// A rename must never auto-change the durable namespace identity; the migration
+// coverage is tied to the explicit catalogs above, not to `productName`.
+if (brand.legacyProductNames?.includes(brand.appId)) {
+  violations.push('legacyProductNames: the appId namespace is not a legacy namespace')
 }
 
 if (violations.length) {

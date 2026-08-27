@@ -25,7 +25,9 @@ const brandConfigSchema = z
     companyName: z.string(),
     repositoryUrl: z.string(),
     supportUrl: z.string(),
-    copyright: z.string()
+    copyright: z.string(),
+    legacyProductNames: z.array(z.string().trim().min(1)),
+    legacyAppDataNamespaces: z.array(z.string().trim().min(1))
   })
   .strict()
 

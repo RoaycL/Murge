@@ -22,11 +22,23 @@ export default {
   extraResources: [
     { from: 'resources/bin', to: 'bin', filter: ['**/*'] },
     { from: 'resources/defaults', to: 'defaults', filter: ['**/*'] },
-    { from: 'resources/THIRD_PARTY_NOTICES.md', to: 'THIRD_PARTY_NOTICES.md' }
+    { from: 'resources/THIRD_PARTY_NOTICES.md', to: 'THIRD_PARTY_NOTICES.md' },
+    // Retained upstream license texts for every bundled dependency. Shipped
+    // alongside the app so the notice-preservation obligation is met by the
+    // installed artifact itself, not just the source tree.
+    { from: 'resources/licenses', to: 'licenses', filter: ['**/*'] }
   ],
   win: {
     icon: 'icon.ico',
-    target: [{ target: 'nsis', arch: ['x64', 'arm64'] }],
+    // Strategy A: ship exactly two per-arch installers (x64 + arm64) and never
+    // the combined multi-arch one. Each NSIS target is declared with a single
+    // arch so a bare `package:win` produces two installers and no ~373MB
+    // combined artifact (the combined installer only appears when one target
+    // spans several archs).
+    target: [
+      { target: 'nsis', arch: ['x64'] },
+      { target: 'nsis', arch: ['arm64'] }
+    ],
     artifactName: `${brand.productName}-Setup-${'${version}'}-${'${arch}'}.${'${ext}'}`
   },
   nsis: {
@@ -34,9 +46,10 @@ export default {
     allowToChangeInstallationDirectory: true,
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
-    // Assisted installer default keeps user data on uninstall. This is set
-    // explicitly so the preserve-user-profiles behavior is a documented,
-    // deliberate choice rather than an incidental default: user profiles live
+    // Documentary only: electron-builder's schema scopes this flag to the
+    // one-click installer, so with `oneClick: false` it is never read. It is
+    // recorded explicitly so the preserve-user-profiles behavior is a stated,
+    // deliberate choice rather than an incidental default — user profiles live
     // in the application-data namespace and must survive an uninstall.
     deleteAppDataOnUninstall: false,
     // The EULA/license page is intentionally <em>not</em> configured here: the

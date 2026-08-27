@@ -178,14 +178,14 @@ Environment: disposable Windows VM or CI runner. No network mutation required.
 
 Entry gate: Phases 1–2 complete.
 
-- [ ] Verify x64 build and NSIS installer. (A `package-win` Windows CI job was added; the actual install/launch/uninstall shell must be confirmed on a Windows runner/VM.)
-- [x] Verify arm64 build or explicitly defer it. (Packaging targets both x64 + arm64; arm64 runtime verification is deferred to the Windows VM.)
+- [ ] Verify x64 build and NSIS installer. (The `package-win` Windows CI job now installs the NSIS installer, launches a `--packaging-smoke` production probe, asserts exit 0 and no real kernel/controller listener, then uninstalls and confirms user profiles survive. It must be observed green on a real Windows runner.)
+- [x] Verify arm64 build or explicitly defer it. (Packaging strategy A: exactly two per-arch installers, x64 + arm64, never a combined multi-arch artifact. arm64 runtime verification is deferred to the Windows VM.)
 - [x] Add final application icons and Windows metadata.
 - [x] Verify brand-configured product name, executable and protocol scheme. (Wired via `brand.*` and covered by a builder-config test; runtime deep-link registration is Phase 7.)
 - [x] Define stable application-data and migration namespaces.
 - [x] Add uninstall behavior that preserves user profiles by default.
 - [x] Document code-signing inputs without committing secrets.
-- [x] Generate third-party notices and mihomo GPL compliance materials.
+- [x] Generate third-party notices and mihomo GPL compliance materials. (Placeholders removed; the every-bundled-dependency license text is retained under `licenses/` and bundled into the artifact alongside `THIRD_PARTY_NOTICES.md`, asserted by the `package-win` artifact check and the `third-party-notices` unit test.)
 - [!] Owner chooses application license before public binary release.
 
 Exit criteria:

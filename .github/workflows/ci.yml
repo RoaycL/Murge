@@ -41,7 +41,7 @@ jobs:
         run: npm run build
 
   package-win:
-    name: Package Windows installer (NSIS)
+    name: Package Windows & smoke-test NSIS installer
     needs: verify
     runs-on: windows-latest
     steps:
@@ -59,16 +59,128 @@ jobs:
         env:
           NODE_ENV: development
 
-      - name: Build and package Windows (x64 + arm64)
-        run: npm run package:win -- --publish never
+      - name: Resolve brand environment
+        shell: pwsh
+        run: |
+          $brand = Get-Content brand.config.json -Raw | ConvertFrom-Json
+          "PRODUCT_NAME=$($brand.productName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "APP_ID=$($brand.appId)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "EXECUTABLE_NAME=$($brand.executableName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # Build once, then package the two intended targets independently (x64 and
+      # arm64). Strategy A: ship exactly two installers and never the combined
+      # multi-arch one, so CI never uploads ~373MB of redundant artifacts.
+      - name: Build renderer/main
+        run: npm run build
+
+      - name: Package Windows NSIS (x64)
+        run: npx electron-builder --win --x64 --config electron-builder.config.mjs --publish never
         env:
           # Signing is intentionally disabled for CI smoke builds. Real signing
           # needs a certificate and is an owner decision — see docs/CODE_SIGNING.md.
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
+      - name: Package Windows NSIS (arm64)
+        run: npx electron-builder --win --arm64 --config electron-builder.config.mjs --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Verify notices are retained in the packaged artifact
+        shell: pwsh
+        run: |
+          # The unpacked application (produced by a package step) must contain the
+          # notices and every retained dependency license, not just the source tree.
+          $notices = Get-ChildItem -Path dist -Recurse -Filter 'THIRD_PARTY_NOTICES.md' -File | Select-Object -First 1
+          if (-not $notices) { throw 'THIRD_PARTY_NOTICES.md missing from the packaged artifact' }
+          Write-Host "notices: $($notices.FullName)"
+          $licensesDir = Join-Path $notices.DirectoryName 'licenses'
+          $expected = @('vue.txt','vue-router.txt','pinia.txt','vueuse-core.txt','zod.txt','ws.txt','electron.txt','electron-toolkit-utils.txt','electron-toolkit-preload.txt')
+          foreach ($name in $expected) {
+            if (-not (Test-Path (Join-Path $licensesDir $name))) {
+              throw "license file $name missing from the packaged artifact"
+            }
+          }
+          Write-Host "retained license files: $($expected.Count)"
+
+      - name: Install, launch, verify & uninstall Windows NSIS (x64)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Get-ChildItem -Path 'dist' -Filter "*Setup-*-x64.exe" -File | Select-Object -First 1
+          if (-not $installer) { throw 'x64 NSIS installer not found' }
+          Write-Host "installer: $($installer.FullName)"
+
+          # Install silently (assisted NSIS accepts /S; per-user, no elevation).
+          Start-Process -FilePath $installer.FullName -ArgumentList '/S' -Wait
+          Start-Sleep -Seconds 3
+
+          # Locate the installed executable. Per-user NSIS default install dir;
+          # fall back to the uninstall registry entry, then a final search.
+          $installDir = Join-Path $env:LOCALAPPDATA "Programs\$env:PRODUCT_NAME"
+          $exe = Join-Path $installDir "$env:EXECUTABLE_NAME.exe"
+          if (-not (Test-Path $exe)) {
+            $unreg = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$env:APP_ID" -ErrorAction SilentlyContinue
+            if ($unreg.InstallLocation) {
+              $installDir = $unreg.InstallLocation
+              $exe = Join-Path $installDir "$env:EXECUTABLE_NAME.exe"
+            }
+          }
+          if (-not (Test-Path $exe)) {
+            $exe = (Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter "$env:EXECUTABLE_NAME.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+            if (-not $exe) { throw 'murge.exe not found after install' }
+            $installDir = Split-Path -Parent $exe
+          }
+          Write-Host "install dir: $installDir"
+          Write-Host "murge.exe: $exe"
+          if (-not (Test-Path (Join-Path $installDir 'app.ico'))) { Write-Host 'note: no app.ico in install dir (icon name may vary)' }
+          $version = (Get-Item $exe).VersionInfo
+          Write-Host "ProductName=$($version.ProductName) ProductVersion=$($version.ProductVersion)"
+          if ($version.ProductName -ne $env:PRODUCT_NAME) { throw "installed ProductName '$($version.ProductName)' != '$env:PRODUCT_NAME'" }
+
+          $sentinelRoot = Join-Path $env:APPDATA $env:APP_ID 'profiles'
+          Remove-Item (Join-Path $sentinelRoot '.packaging-smoke-sentinel') -ErrorAction SilentlyContinue
+
+          # Snapshot listening ports so we can prove the smoke created no listener.
+          $beforePorts = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalPort
+
+          # Launch the CI-only production probe (no window, no kernel, no socket).
+          $p = Start-Process -FilePath $exe -ArgumentList '--packaging-smoke' -PassThru -Wait
+          Write-Host "packaging-smoke exit code: $($p.ExitCode) (expected 0)"
+          if ($p.ExitCode -ne 0) { throw "packaging-smoke exited with code $($p.ExitCode)" }
+
+          $sentinel = Join-Path $sentinelRoot '.packaging-smoke-sentinel'
+          if (-not (Test-Path $sentinel)) { throw "sentinel profile not written at $sentinel" }
+          Write-Host "sentinel profile: $sentinel"
+
+          # No real kernel may be running and no new proxy/controller port may listen.
+          if (Get-Process -Name 'mihomo' -ErrorAction SilentlyContinue) { throw 'a mihomo process was started during the smoke run' }
+          $afterPorts = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalPort
+          $newPorts = Compare-Object $beforePorts $afterPorts -PassThru | Where-Object { $_ -eq 9090 }
+          if ($newPorts) { throw 'controller port 9090 is listening after the smoke run' }
+          Write-Host 'no mihomo process and no new controller listener confirmed'
+
+          # Uninstall silently and confirm program files are gone but app data survives.
+          $uninstaller = Get-ChildItem -Path $installDir -Filter 'Uninstall *.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $uninstaller) {
+            $unreg = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$env:APP_ID" -ErrorAction SilentlyContinue
+            if ($unreg.UninstallString) { $uninstaller = @{ FullName = ($unreg.UninstallString -replace '^"([^"]+)".*','$1') } }
+          }
+          if (-not $uninstaller) { throw 'uninstaller not found' }
+          Write-Host "uninstaller: $($uninstaller.FullName)"
+          Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -Wait
+          Start-Sleep -Seconds 5
+
+          if (Test-Path $exe) { throw "program files still present after uninstall: $exe" }
+          if (-not (Test-Path $sentinel)) { throw 'sentinel was removed on uninstall; deleteAppDataOnUninstall must stay false' }
+          Write-Host 'uninstall removed program files but preserved user data (sentinel survives)'
+
+          # Clean up the CI-created sentinel so the runner is left clean.
+          Remove-Item $sentinel -ErrorAction SilentlyContinue
+          Write-Host 'Windows smoke: PASS'
+
       - name: List packaged artifacts
         run: |
-          Get-ChildItem -Path dist -Recurse -File | Select-Object Name, Length | Format-Table -AutoSize
+          Get-ChildItem -Path dist -Filter '*.exe' -File | Select-Object Name, Length | Format-Table -AutoSize
 
       - name: Upload installer artifacts
         uses: actions/upload-artifact@v4

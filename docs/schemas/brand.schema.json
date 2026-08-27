@@ -14,7 +14,9 @@
     "companyName",
     "repositoryUrl",
     "supportUrl",
-    "copyright"
+    "copyright",
+    "legacyProductNames",
+    "legacyAppDataNamespaces"
   ],
   "properties": {
     "$schema": { "type": "string", "description": "Path to this schema document." },
@@ -28,6 +30,17 @@
     "companyName": { "type": "string" },
     "repositoryUrl": { "type": "string" },
     "supportUrl": { "type": "string" },
-    "copyright": { "type": "string" }
+    "copyright": { "type": "string" },
+    "legacyProductNames": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1,
+      "description": "Product names a released build has used as its application-data folder. Never derived from productName so a rename cannot orphan historical data."
+    },
+    "legacyAppDataNamespaces": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Additional app-data namespaces a released build may have written under before the appId namespace was adopted."
+    }
   }
 }

@@ -10,5 +10,7 @@
   "companyName": "Murge Contributors",
   "repositoryUrl": "",
   "supportUrl": "",
-  "copyright": "Copyright © 2026 Murge Contributors"
+  "copyright": "Copyright © 2026 Murge Contributors",
+  "legacyProductNames": ["Murge"],
+  "legacyAppDataNamespaces": []
 }

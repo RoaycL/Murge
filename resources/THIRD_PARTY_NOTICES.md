@@ -6,44 +6,51 @@ distribution obligations are met without requiring a separate download.
 
 The product name, application identifiers and the licensing of the application
 itself are defined in `brand.config.json` and `docs/BRANDING.md`. This notice
-covers *third-party* components only.
+covers *third-party* components only. The application's own license is pending an
+owner decision (see `docs/ROADMAP.md` Phase 6) and is deliberately not asserted
+here.
 
 ## Runtime dependencies
 
 The following libraries are bundled inside the application runtime. All are
-MIT-licensed. Their upstream copyright notices and license texts apply and are
-reproduced in the per-package files committed in `node_modules/` and retained in
-the package lockfile. For each package: `Copyright (c) <contributors>`.
+MIT-licensed. The full upstream copyright notices and license texts are shipped
+alongside the application in the `licenses/` resource directory (one file per
+package) and are the authoritative copies for preserving notices.
+Each bundle is reproduced verbatim from the package's own LICENSE file, so the
+copyright owners and license terms are retained exactly as published upstream.
 
-| Package          | Version   | License |
-| ---------------- | --------- | ------- |
-| vue              | 3.x       | MIT     |
-| vue-router       | 4.x       | MIT     |
-| pinia            | 3.x       | MIT     |
-| @vueuse/core     | 13.x      | MIT     |
-| zod              | 3.x       | MIT     |
-| ws               | 8.x       | MIT     |
+| Package            | License file in the artifact | Version | License |
+| ------------------ | ---------------------------- | ------- | ------- |
+| vue                | `licenses/vue.txt`           | 3.x     | MIT     |
+| vue-router         | `licenses/vue-router.txt`    | 4.x     | MIT     |
+| pinia              | `licenses/pinia.txt`         | 3.x     | MIT     |
+| @vueuse/core       | `licenses/vueuse-core.txt`   | 13.x    | MIT     |
+| zod                | `licenses/zod.txt`           | 3.x     | MIT     |
+| ws                 | `licenses/ws.txt`            | 8.x     | MIT     |
 
 ## Electron runtime
 
 Electron is distributed with the packaged application and is licensed under the
-MIT License. Electron also bundles Chromium and Node.js. The licenses for those
-bundled components and their full notices are printed in the official Electron
-distribution and are the responsibility of the Electron project.
+MIT License (reproduced at `licenses/electron.txt`). Electron also bundles
+Chromium and Node.js. The licenses for those bundled components and their full
+notices are printed in the official Electron distribution and are the
+responsibility of the Electron project.
 
 ## Build-tooling dependencies
 
-The packaging toolchain (`electron`, `electron-builder`, `electron-vite`,
-`@electron-toolkit/utils`, `@electron-toolkit/preload`) is MIT-licensed and is
-used to produce the installer. It is not redistributed inside the shipped
-application binary except where the MIT notice requires it.
+The packaging toolchain (`electron-vite`, `@electron-toolkit/utils`,
+`@electron-toolkit/preload`) is MIT-licensed and, where it is linked into the
+application runtime, its notice is retained at
+`licenses/electron-toolkit-utils.txt` and `licenses/electron-toolkit-preload.txt`.
+`electron-builder` is used only to produce the installer and is not shipped as
+part of the application runtime.
 
 ## mihomo (proxy core)
 
 This application does **not** currently bundle, execute, or ship the mihomo
 proxy core. The default configuration runs against a harmless fixture process
 and a real kernel is never launched automatically. Consequently no mihomo binary
-or mihomo source is distributed in this phase and no mihomo source.offer
+or mihomo source is distributed in this phase and no mihomo source-offer
 obligation is triggered yet.
 
 mihomo is a separate project distributed under the GNU General Public License

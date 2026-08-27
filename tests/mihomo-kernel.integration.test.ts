@@ -12,6 +12,7 @@ import { MihomoKernelConfigStore, findFreePort } from '../src/main/kernel/mihomo
 import { MihomoClient } from '../src/main/services/mihomo-client'
 import { randomSecret } from '../src/main/kernel/mihomo-config'
 import { captureNetworkSnapshot, assertNetworkUnchanged } from './real-network-snapshot'
+import { listenersMatchingText } from './listener-tools'
 import type { KernelDependencies } from '../src/main/kernel/types'
 
 const execFileAsync = promisify(execFile)
@@ -74,26 +75,10 @@ async function waitForController(
 }
 
 /**
- * Parse a `host:port` token, handling IPv6 bracket form `[::1]:8080` as well as
- * bare IPv4 `127.0.0.1:8080` / unbracketed `::1:8080`-style tokens.
- * Returns null when the token is not an address (state/PID/peer-wildcard).
- */
-function parseHostPort(token: string): { host: string; port: number } | null {
-  const bracketed = token.match(/^\[([^\]]+)\]:(\d+)$/)
-  if (bracketed) return { host: bracketed[1], port: Number(bracketed[2]) }
-  const idx = token.lastIndexOf(':')
-  if (idx <= 0) return null
-  const host = token.slice(0, idx)
-  const port = Number(token.slice(idx + 1))
-  if (!Number.isInteger(port) || port <= 0) return null
-  return { host, port }
-}
-
-/**
  * Enumerate the hosts listening on `port`, failing CLOSED when the listening
  * tooling is unavailable or no listener matches. Non-loopback hosts are
  * returned too so the caller can reject them — this never silently passes.
- * Handles `127.0.0.1`, `0.0.0.0`, `::1`, `::` and `[IPv6]:port`.
+ * The parsing is split into a pure helper so it is unit-tested by default.
  */
 async function listenersOn(port: number): Promise<string[]> {
   let stdout: string
@@ -106,31 +91,7 @@ async function listenersOn(port: number): Promise<string[]> {
   } catch (error) {
     throw new Error(`listener tooling unavailable: ${(error as Error).message}`)
   }
-  const listenState = process.platform === 'win32' ? 'LISTENING' : 'LISTEN'
-  const hosts = new Set<string>()
-  let matched = false
-  for (const raw of stdout.split('\n')) {
-    const line = raw.trim()
-    if (!line) continue
-    const tokens = line.split(/\s+/)
-    if (!tokens.includes(listenState)) continue
-    // The address token is the first token that parses as host:port on our port;
-    // the peer address for LISTEN rows is `0.0.0.0:*` / `0.0.0.0:0`, which never
-    // matches the numeric port, so we only ever pick the local address.
-    for (const token of tokens) {
-      const parsed = parseHostPort(token)
-      if (parsed && parsed.port === port) {
-        hosts.add(parsed.host)
-        matched = true
-        break
-      }
-    }
-  }
-  // Fail closed rather than "pass because nothing was parseable".
-  if (!matched || hosts.size === 0) {
-    throw new Error(`no listener found on port ${port}`)
-  }
-  return [...hosts]
+  return listenersMatchingText(stdout, port, process.platform === 'win32')
 }
 
 run('mihomo real kernel integration', () => {

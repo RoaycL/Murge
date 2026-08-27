@@ -432,6 +432,26 @@ describe('cleanupKernel — probe helper contracts', () => {
     await expect(mihomoPids(runner)).rejects.toThrow(/process probe failed \(tasklist\)/)
   })
 
+  it('mihomoPids skips a healthy PID-0 system row (System Idle Process) instead of failing', async () => {
+    // A real `tasklist` dump always carries system pseudo-process rows (PID 0,
+    // PID 4) and a "Mem Usage" column containing a thousands-separator comma.
+    // These must NOT be mistaken for unparseable output.
+    const dump = [
+      '"System Idle Process","0","Services","0","8 K"',
+      '"System","4","Services","0","196 K"',
+      '"mihomo.exe","8899","Console","1","3,104 K"',
+      '"svchost.exe","1234","Services","0","20,000 K"'
+    ].join('\r\n')
+    const runner = makeRunner({
+      isWin: true,
+      handler: (tool) => {
+        if (tool === 'tasklist') return dump
+        throw new Error('unexpected')
+      }
+    })
+    await expect(mihomoPids(runner)).resolves.toEqual([8899])
+  })
+
   it('portHasListener reports a matching listener as not released', async () => {
     const runner = makeRunner({
       isWin: true,

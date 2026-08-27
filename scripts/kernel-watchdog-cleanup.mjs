@@ -208,11 +208,17 @@ export async function mihomoPids(runner = defaultRunner()) {
       const trimmed = line.trim()
       if (!trimmed) continue
       const fields = parseCsvLine(line)
-      const name = fields[0] || ''
+      const name = (fields[0] || '').trim()
       const pid = Number(fields[1])
-      if (!Number.isInteger(pid) || pid <= 0) {
+      // A healthy Windows `tasklist` dump includes pseudo-process rows like
+      // PID 0 ("System Idle Process") that are valid but never a target; skip
+      // them. Only a genuinely malformed row (fewer than the PID/name columns,
+      // or a non-numeric PID such as a stray "PID" field) is "unparseable" and
+      // must fail closed so a broken `tasklist` is never read as "no residual".
+      if (fields.length < 2 || !Number.isInteger(pid)) {
         throw new Error(`tasklist process probe output unparseable row: ${JSON.stringify(trimmed)}`)
       }
+      if (pid <= 0) continue
       if (/^mihomo/i.test(name)) pids.push(pid)
     }
   } else {

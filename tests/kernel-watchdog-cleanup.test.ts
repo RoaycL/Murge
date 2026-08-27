@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { mkdtemp, rm, writeFile, access } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile, access, symlink, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -8,7 +8,8 @@ import {
   binaryPathMatchesName,
   mihomoPids,
   portHasListener,
-  validateEvidenceSchema
+  validateEvidenceSchema,
+  validateEvidencePaths
 } from '../scripts/kernel-watchdog-cleanup.mjs'
 
 /**
@@ -735,6 +736,175 @@ describe('path-escape evidence must never reach rm', () => {
         })
       ).rejects.toThrow(/outside allowed roots/)
       await expect(access(sentinel)).resolves.toBeUndefined()
+    })
+  })
+})
+
+describe('validateEvidencePaths — lstat/realpath escape protection', () => {
+  it('accepts a workspace/configDir that does not exist (ENOENT; nothing to delete)', async () => {
+    const missingWs = join(tmpdir(), 'mihomo-real-zzz')
+    expect(await validateEvidencePaths({ workspace: missingWs, configDir: join(missingWs, 'config') })).toEqual([])
+  })
+
+  it('rejects a workspace that is a symbolic link/junction out of the allowed root', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mihomo-root-'))
+    const outside = await mkdtemp(join(tmpdir(), 'mihomo-real-'))
+    cleanupDirs.push(root, outside)
+    const wsLink = join(root, 'mihomo-real-esc')
+    await symlink(outside, wsLink, 'junction')
+    const problems = await validateEvidencePaths(
+      { workspace: wsLink, configDir: join(wsLink, 'config') },
+      { allowedWorkspaceRoots: [root] }
+    )
+    expect(problems.some((p) => p.includes('workspace is a symbolic link'))).toBe(true)
+  })
+
+  it('rejects a configDir that is a symbolic link/junction out of the workspace', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mihomo-root-'))
+    const outside = await mkdtemp(join(tmpdir(), 'mihomo-real-'))
+    cleanupDirs.push(root, outside)
+    const ws = await mkdtemp(join(root, 'mihomo-real-'))
+    const cfgLink = join(ws, 'config')
+    await symlink(outside, cfgLink, 'junction')
+    const problems = await validateEvidencePaths(
+      { workspace: ws, configDir: cfgLink },
+      { allowedWorkspaceRoots: [root] }
+    )
+    expect(problems.some((p) => p.includes('configDir is a symbolic link'))).toBe(true)
+  })
+
+  it('rejects a real workspace whose realpath resolves outside the allowed roots', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mihomo-root-'))
+    const outside = await mkdtemp(join(tmpdir(), 'mihomo-real-'))
+    cleanupDirs.push(root, outside)
+    const problems = await validateEvidencePaths(
+      { workspace: outside, configDir: join(outside, 'config') },
+      { allowedWorkspaceRoots: [root] }
+    )
+    expect(problems.some((p) => p.includes('outside allowed roots'))).toBe(true)
+  })
+
+  it('accepts a real workspace and its config dir inside an allowed root', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mihomo-root-'))
+    cleanupDirs.push(root)
+    const ws = await mkdtemp(join(root, 'mihomo-real-'))
+    const cfg = join(ws, 'config')
+    await mkdir(cfg, { recursive: true })
+    expect(await validateEvidencePaths({ workspace: ws, configDir: cfg }, { allowedWorkspaceRoots: [root] })).toEqual(
+      []
+    )
+  })
+})
+
+describe('cleanupKernel — never descends a symlink/junction into a wider rm scope', () => {
+  it('fails require-evidence and preserves the external target of a symlinked workspace', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mihomo-root-'))
+    const outside = await mkdtemp(join(tmpdir(), 'mihomo-real-'))
+    const sentinel = join(outside, 'sentinel.txt')
+    await writeFile(sentinel, 'keep me', 'utf8')
+    cleanupDirs.push(root, outside)
+    const wsLink = join(root, 'mihomo-real-esc')
+    await symlink(outside, wsLink, 'junction')
+    const ev = JSON.parse(validEvidence({ workspace: wsLink, configDir: join(wsLink, 'config') }))
+    await withEvidence(JSON.stringify(ev), async (path) => {
+      const runner = makeRunner({
+        isWin: true,
+        pidAlive: () => false,
+        handler: (tool) => {
+          if (tool === 'tasklist') return tasklistCsv([])
+          if (tool === 'netstat') return netstatOut([])
+          throw new Error(`unexpected ${tool}`)
+        }
+      })
+      await expect(
+        cleanupKernel(path, { requireEvidence: true, runner, allowedWorkspaceRoots: [root] })
+      ).rejects.toThrow(/workspace is a symbolic link|workspace real path/)
+      await expect(access(sentinel)).resolves.toBeUndefined()
+    })
+  })
+
+  it('fails require-evidence and preserves the external target of a symlinked configDir', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mihomo-root-'))
+    const outside = await mkdtemp(join(tmpdir(), 'mihomo-real-'))
+    const sentinel = join(outside, 'sentinel.txt')
+    await writeFile(sentinel, 'keep me', 'utf8')
+    cleanupDirs.push(root, outside)
+    const ws = await mkdtemp(join(root, 'mihomo-real-'))
+    const cfgLink = join(ws, 'config')
+    await symlink(outside, cfgLink, 'junction')
+    const ev = JSON.parse(validEvidence({ workspace: ws, configDir: cfgLink }))
+    await withEvidence(JSON.stringify(ev), async (path) => {
+      const runner = makeRunner({
+        isWin: true,
+        pidAlive: () => false,
+        handler: (tool) => {
+          if (tool === 'tasklist') return tasklistCsv([])
+          if (tool === 'netstat') return netstatOut([])
+          throw new Error(`unexpected ${tool}`)
+        }
+      })
+      await expect(
+        cleanupKernel(path, { requireEvidence: true, runner, allowedWorkspaceRoots: [root] })
+      ).rejects.toThrow(/configDir is a symbolic link|configDir real path/)
+      await expect(access(sentinel)).resolves.toBeUndefined()
+    })
+  })
+
+  it('removes only the link of a mihomo-workspace-* symlink child, preserving its external target', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mihomo-root-'))
+    const outside = await mkdtemp(join(tmpdir(), 'mihomo-real-'))
+    const sentinel = join(outside, 'sentinel.txt')
+    await writeFile(sentinel, 'keep me', 'utf8')
+    cleanupDirs.push(root, outside)
+    const ws = await mkdtemp(join(root, 'mihomo-real-'))
+    const cfg = join(ws, 'config')
+    await mkdir(cfg, { recursive: true })
+    const childLink = join(cfg, 'mihomo-workspace-evil')
+    await symlink(outside, childLink, 'junction')
+    const ev = JSON.parse(validEvidence({ workspace: ws, configDir: cfg }))
+    await withEvidence(JSON.stringify(ev), async (path) => {
+      const runner = makeRunner({
+        isWin: true,
+        pidAlive: () => false,
+        handler: (tool) => {
+          if (tool === 'tasklist') return tasklistCsv([])
+          if (tool === 'netstat') return netstatOut([])
+          throw new Error(`unexpected ${tool}`)
+        }
+      })
+      const result = await cleanupKernel(path, { requireEvidence: true, runner, allowedWorkspaceRoots: [root] })
+      expect(result.action).toBe('cleaned')
+      // The workspace was cleaned and the child link is gone ...
+      await expect(access(ws)).rejects.toThrow()
+      // ... but the external directory the link pointed at was never touched.
+      await expect(access(sentinel)).resolves.toBeUndefined()
+    })
+  })
+
+  it('still cleans a normal real workspace (no symlinks) end to end', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mihomo-root-'))
+    cleanupDirs.push(root)
+    const ws = await mkdtemp(join(root, 'mihomo-real-'))
+    const cfg = join(ws, 'config')
+    await mkdir(cfg, { recursive: true })
+    const child = join(cfg, 'mihomo-workspace-normal')
+    await mkdir(child, { recursive: true })
+    await writeFile(join(child, 'store.json'), '{}', 'utf8')
+    const ev = JSON.parse(validEvidence({ workspace: ws, configDir: cfg }))
+    await withEvidence(JSON.stringify(ev), async (path) => {
+      const runner = makeRunner({
+        isWin: true,
+        pidAlive: () => false,
+        handler: (tool) => {
+          if (tool === 'tasklist') return tasklistCsv([])
+          if (tool === 'netstat') return netstatOut([])
+          throw new Error(`unexpected ${tool}`)
+        }
+      })
+      const result = await cleanupKernel(path, { requireEvidence: true, runner, allowedWorkspaceRoots: [root] })
+      expect(result.action).toBe('cleaned')
+      expect(result.verified).toBe(true)
+      await expect(access(ws)).rejects.toThrow()
     })
   })
 })

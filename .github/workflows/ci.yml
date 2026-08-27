@@ -62,6 +62,16 @@ jobs:
         env:
           NODE_ENV: development
 
+      # The watchdog cleanup unit suite must actually run on Windows, not just on
+      # the ubuntu verify job: it exercises the strict exact-name matching AND the
+      # symlink/junction/reparse-point escape protection where the tests create a
+      # real junction ('junction' type) and prove the external target survives.
+      # These tests are self-contained (a mock runner, no real mihomo started), so
+      # they are safe to run on the disposable runner.
+      - name: Run watchdog cleanup & symlink/junction escape tests (Windows)
+        shell: pwsh
+        run: npx vitest run tests/kernel-watchdog-cleanup.test.ts
+
       # Downloads and SHA-256-verifies the pinned official mihomo (win32/x64),
       # then starts/stops/restarts it against an isolated loopback-only config.
       # Safety is enforced by the config schema before any file is written:

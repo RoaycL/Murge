@@ -18,13 +18,20 @@
 // directory removal — pid must be a positive integer, both ports distinct
 // integers in 1024-65535, workspace/configDir absolute non-root paths with a
 // controlled `mihomo-real-*`/`mihomo-cleanup-fault-*` basename and configDir
-// contained within workspace — so a crafted evidence file can never widen the
-// `rm` scope. `--allowed-workspace-roots` adds a further root-containment check
-// (CI passes the disposable runner's temp dir). On a schema/path problem the
-// script still sweeps and reaps residual mihomo by exact name, but NEVER removes
-// a directory, and with `--require-evidence` (used by CI and the fault-injection
-// step) the run FAILS. Without `--require-evidence` a missing/corrupt evidence
-// file is reported honestly (no "nothing to clean up" PASS) after the sweep.
+// contained within workspace. `--allowed-workspace-roots` adds a further
+// root-containment check (CI passes the disposable runner's temp dir). Because
+// resolve/relative only prove the PATH STRINGS are well-formed, the schema is
+// followed by a REAL-FILESYSTEM validation (`validateEvidencePaths`) that
+// `lstat`s the workspace/configDir (so a symbolic link / junction / reparse
+// point is never descended) and `realpath`s them (so a link that resolves
+// outside an allowed root is rejected). A path that does not exist is fine —
+// there is nothing to delete, so no link can be followed out of the root, and
+// the real-kernel test's own afterEach removes its workspace before the CI
+// `finally` cleanup runs. On a schema/path problem the script still sweeps and
+// reaps residual mihomo by exact name, but NEVER removes a directory, and with
+// `--require-evidence` (used by CI and the fault-injection step) the run FAILS.
+// Without `--require-evidence` a missing/corrupt evidence file is reported
+// honestly (no "nothing to clean up" PASS) after the sweep.
 // Residual mihomo (and the recorded PID) are matched only by the strict
 // `isMihomoName` (mihomo/mihomo.exe), never by a prefix, so an approximate name
 // like mihomo-helper.exe or mihomo-ui.exe can never be signalled.
@@ -32,7 +39,7 @@
 // CLI:
 //   node scripts/kernel-watchdog-cleanup.mjs --evidence <path> [--require-evidence] [--allowed-workspace-roots <dir>]
 // Or import { cleanupKernel } from a test (tests inject a mock `runner`).
-import { readFile, rm, readdir, stat } from 'node:fs/promises'
+import { readFile, rm, readdir, stat, lstat, realpath, unlink } from 'node:fs/promises'
 import { join, resolve, relative, basename, isAbsolute, parse } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -168,6 +175,97 @@ export function validateEvidenceSchema(ev, opts = {}) {
       !isWithin(resolve(ev.workspace), cfg)
     ) {
       problems.push(`configDir must be within workspace; got ${ev.configDir}`)
+    }
+  }
+
+  return problems
+}
+
+/**
+ * REAL-FILESYSTEM path validation of an evidence document. The synchronous
+ * `validateEvidenceSchema` only proves the path STRINGS are well formed; this
+ * follows symlinks/junctions/reparse points via `lstat`/`realpath` so the ACTUAL
+ * directory we would `rm` is proven to resolve inside an allowed root and is not
+ * a link that points out of it. Returns a list of problem strings (empty = safe
+ * to remove).
+ *
+ * Semantics:
+ *  - A path that does not exist (ENOENT) is NOT a problem: there is nothing to
+ *    delete, so no link can be followed outside the allowed root. (The real
+ *    kernel test's afterEach removes its own workspace before the CI `finally`
+ *    cleanup runs, so a missing path is the normal, not a suspicious, case.)
+ *  - A path that EXISTS but is a symbolic link / junction / reparse point IS a
+ *    problem: we refuse to descend into it, so a path that has a `mihomo-real-*`
+ *    name but links out of the root can never widen the `rm` scope.
+ *  - Realpath containment is enforced as defense-in-depth even when `lstat`
+ *    does not flag the path as a link: if the resolved target escapes an allowed
+ *    root (or the workspace), the path is rejected.
+ */
+export async function validateEvidencePaths(ev, opts = {}) {
+  const problems = []
+  if (!ev || typeof ev !== 'object') return ['<evidence-not-an-object>']
+  const allowedRoots = Array.isArray(opts.allowedWorkspaceRoots) ? opts.allowedWorkspaceRoots : []
+
+  // Resolve the real target of every allowed root. A configured root that cannot
+  // be realpath'd is not usable for containment; if NO configured root resolves,
+  // containment cannot be proven and the path is rejected. (If no roots are
+  // configured at all, containment is intentionally skipped — the caller chooses
+  // whether to enforce it, e.g. CI passes the runner's temp root.)
+  const realRoots = []
+  for (const root of allowedRoots) {
+    try {
+      realRoots.push(await realpath(root))
+    } catch {
+      // unresolvable root: ignore, checked below when nothing resolves
+    }
+  }
+  const haveRoots = allowedRoots.length > 0
+
+  // --- workspace ---------------------------------------------------------------
+  let realWorkspace = null
+  try {
+    const stats = await lstat(ev.workspace)
+    if (stats.isSymbolicLink()) {
+      problems.push(`workspace is a symbolic link/reparse point; refusing to descend: ${ev.workspace}`)
+      return problems
+    }
+    realWorkspace = await realpath(ev.workspace)
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      problems.push(`cannot stat workspace ${ev.workspace}: ${error.message}`)
+      return problems
+    }
+    // ENOENT: already gone => nothing to delete, no escape possible.
+  }
+
+  if (realWorkspace) {
+    if (haveRoots && !realRoots.length) {
+      problems.push('allowed workspace roots configured but none resolvable; refusing to delete')
+    } else if (haveRoots && !realRoots.some((root) => isWithin(root, realWorkspace))) {
+      problems.push(
+        `workspace real path '${realWorkspace}' is outside allowed roots: ${allowedRoots.join(', ')}`
+      )
+    }
+  }
+
+  // --- configDir ---------------------------------------------------------------
+  try {
+    const stats = await lstat(ev.configDir)
+    if (stats.isSymbolicLink()) {
+      problems.push(`configDir is a symbolic link/reparse point; refusing to descend: ${ev.configDir}`)
+    } else {
+      const realConfig = await realpath(ev.configDir)
+      if (realWorkspace) {
+        if (!isWithin(realWorkspace, realConfig)) {
+          problems.push(`configDir real path '${realConfig}' is outside workspace '${realWorkspace}'`)
+        } else if (relative(realWorkspace, realConfig) !== 'config') {
+          problems.push(`configDir must be '<workspace>/config'; got ${ev.configDir}`)
+        }
+      }
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      problems.push(`cannot stat configDir ${ev.configDir}: ${error.message}`)
     }
   }
 
@@ -464,6 +562,19 @@ export async function cleanupKernel(evidencePath, opts = {}) {
       log(evidenceProblem.message)
     }
   }
+  // Real-filesystem validation: the lexical schema above cannot see through a
+  // symlink/junction/reparse point, so follow the paths with lstat/realpath and
+  // reject an existing link (or a resolved target that escapes an allowed root)
+  // BEFORE any directory removal. A path that does not exist is not a problem.
+  if (ev && !evidenceProblem) {
+    const pathProblems = await validateEvidencePaths(ev, { allowedWorkspaceRoots })
+    if (pathProblems.length) {
+      evidenceProblem = new Error(
+        `kernel evidence '${evidencePath}' fails real-path validation: ${pathProblems.join('; ')}`
+      )
+      log(evidenceProblem.message)
+    }
+  }
   if (ev && !evidenceProblem) {
     log(`evidence: pid=${ev.pid} controller=${ev.controllerPort} mixed=${ev.mixedPort}`)
   }
@@ -543,7 +654,22 @@ export async function cleanupKernel(evidencePath, opts = {}) {
     if (children.length) {
       log(`removing ${children.length} leftover store child dir(s)`)
       for (const child of children) {
-        await rm(join(configDir, child), { recursive: true, force: true }).catch(() => undefined)
+        const childPath = join(configDir, child)
+        // Never follow a symlink/junction child into its target: remove only the
+        // link itself, so a crafted `mihomo-workspace-*` link can never widen the
+        // `rm` scope to a directory it points at outside the allowed root.
+        let isLink = false
+        try {
+          isLink = (await lstat(childPath)).isSymbolicLink()
+        } catch {
+          isLink = false
+        }
+        if (isLink) {
+          log(`removing leftover store child symlink ${child}`)
+          await unlink(childPath).catch(() => undefined)
+        } else {
+          await rm(childPath, { recursive: true, force: true }).catch(() => undefined)
+        }
       }
     }
     await rm(ev.workspace, { recursive: true, force: true }).catch(() => undefined)

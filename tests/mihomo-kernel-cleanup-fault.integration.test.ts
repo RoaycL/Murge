@@ -3,28 +3,37 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { writeSync } from 'node:fs'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { KernelSupervisor } from '../src/main/kernel/supervisor'
-import { NodeKernelProcessAdapter } from '../src/main/kernel/node-adapter'
 import { MihomoKernelResolver } from '../src/main/kernel/resolvers'
 import { MihomoKernelConfigStore, findFreePort } from '../src/main/kernel/mihomo-config-store'
 import { MihomoClient } from '../src/main/services/mihomo-client'
 import { randomSecret } from '../src/main/kernel/mihomo-config'
 import { EvidenceFile } from './kernel-evidence'
-import type { KernelDependencies } from '../src/main/kernel/types'
+import type {
+  KernelBinary,
+  KernelDependencies,
+  KernelExitInfo,
+  KernelProcessAdapter,
+  KernelProcessHandle
+} from '../src/main/kernel/types'
 
 /**
  * Real-kernel fault injection for the CI watchdog (P1 acceptance gap).
  *
- * This test deliberately leaves a watchdog-RESTARTED mihomo kernel alive and
- * un-stopped, then hard-kills its own worker process (SIGKILL self) so the
- * supervisor is gone and the recovered mihomo is truly orphaned. The standalone
- * `scripts/kernel-watchdog-cleanup.mjs` — the exact script the CI `if: always()`
- * finally step calls — is then the SOLE reaper. This proves the finally branch
- * that was never actually exercised by a green CI run (where the test process
- * exited before the finally could find & kill a live restarted kernel).
+ * The goal is to prove the external `scripts/kernel-watchdog-cleanup.mjs` — the
+ * exact script the CI `if: always()` finally step runs — reaps a LIVE
+ * watchdog-restarted kernel after the process that spawned it died without
+ * calling `supervisor.stop()`.
  *
- * Gated behind MURGE_RUN_REAL_KERNEL=1 exactly like the main integration test;
- * the default `npm test` skips it entirely.
+ * On Windows a child spawned WITHOUT `detached: true` is torn down when its
+ * parent exits, so the ordinary production adapter would leave NO live orphan to
+ * reap (the just-observed CI behaviour: `recorded mihomo PID X is gone`). To make
+ * the orphan genuinely survive the worker's death we use a TEST-ONLY
+ * `DetachedKernelProcessAdapter` that spawns mihomo with `detached: true` and
+ * `stdio: 'ignore'` — the documented Windows mechanism for a child to outlive
+ * its parent. Everything else (supervisor, watchdog restart, config store,
+ * evidence) is the real production path.
  */
 const enabled = process.env.MURGE_RUN_REAL_KERNEL === '1'
 const run = enabled ? describe : describe.skip
@@ -34,6 +43,71 @@ export const CRASH_MARKER = 'CRASH-DRIVER-REACHED-CRASH-POINT'
 const evidencePath = process.env.RUNNER_TEMP
   ? join(process.env.RUNNER_TEMP, 'mihomo-cleanup-fault-evidence.json')
   : join(tmpdir(), 'mihomo-cleanup-fault-evidence.json')
+
+/** Detached spawn so the kernel survives the death of its parent (the worker). */
+class DetachedKernelProcessHandle implements KernelProcessHandle {
+  readonly pid: number | undefined
+  private readonly child: ChildProcess
+
+  constructor(child: ChildProcess) {
+    this.child = child
+    this.pid = child.pid
+  }
+
+  onStdout(listener: (text: string) => void): void {
+    this.child.stdout?.on('data', (chunk) => listener(String(chunk)))
+  }
+
+  onStderr(listener: (text: string) => void): void {
+    this.child.stderr?.on('data', (chunk) => listener(String(chunk)))
+  }
+
+  onExit(listener: (info: KernelExitInfo) => void): void {
+    this.child.on('exit', (code, signal) => listener({ code, signal }))
+  }
+
+  onError(listener: (error: Error) => void): void {
+    this.child.on('error', (error) => listener(error))
+  }
+
+  sendSignal(signal: NodeJS.Signals): boolean {
+    if (this.child.exitCode !== null || this.child.signalCode !== null) return false
+    if (this.child.pid == null) return false
+    try {
+      process.kill(this.child.pid, signal)
+      return true
+    } catch {
+      return false
+    }
+  }
+}
+
+class DetachedKernelProcessAdapter implements KernelProcessAdapter {
+  spawn(binary: KernelBinary): KernelProcessHandle {
+    const child = spawn(binary.command, binary.args, {
+      cwd: binary.cwd,
+      env: { ...process.env, ...(binary.env ?? {}) },
+      // 'ignore' (not a pipe) so the orphan is not killed by an EPIPE when the
+      // parent that owned the pipe is torn down. Readiness is polled via /version.
+      stdio: 'ignore',
+      windowsHide: true,
+      shell: false,
+      detached: true
+    })
+    child.unref()
+    return new DetachedKernelProcessHandle(child)
+  }
+
+  isProcessAlive(pid: number): boolean {
+    if (!Number.isFinite(pid) || pid <= 0) return false
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'EPERM'
+    }
+  }
+}
 
 async function waitFor(
   cond: () => boolean,
@@ -117,7 +191,7 @@ run('mihomo real kernel crash-orphan fault injection', () => {
         arch: process.arch
       }),
       configStore: new MihomoKernelConfigStore({ mixedPort, controllerPort, workspaceDir: configDir }),
-      adapter: new NodeKernelProcessAdapter(),
+      adapter: new DetachedKernelProcessAdapter(),
       secret
     }
     supervisor = new KernelSupervisor(deps, {
@@ -170,7 +244,8 @@ run('mihomo real kernel crash-orphan fault injection', () => {
 
     // Simulate a hard crash of THIS test process/worker: emit the marker, then
     // SIGKILL ourselves WITHOUT calling supervisor.stop(). The recovered mihomo
-    // is orphaned and stays alive; the shared cleanup script reaps it.
+    // is spawned detached, so it is orphaned and stays alive; the shared cleanup
+    // script reaps it.
     writeSync(1, `${CRASH_MARKER}\n`)
     process.kill(process.pid, 'SIGKILL')
   }, 180000)

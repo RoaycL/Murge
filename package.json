@@ -1,6 +1,6 @@
 {
   "name": "proxy-desktop-shell",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Brand-configurable desktop GUI shell for a mihomo-based network client.",

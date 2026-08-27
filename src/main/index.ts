@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, dialog, shell } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { brand } from '@shared/brand'
 import { parseBrandConfig } from '@shared/schemas/brand'
@@ -39,6 +39,11 @@ let mihomo: MihomoService | null = null
 let mockServer: MockMihomoServerHandle | null = null
 let disposeIpc: (() => void) | null = null
 let isQuitting = false
+// Keep a strong reference for the complete lifetime of the native window.
+// A function-local BrowserWindow can be garbage-collected after createWindow
+// returns, which is especially visible in packaged Windows builds as a running
+// background process with no window.
+let mainWindow: BrowserWindow | null = null
 
 // Deep links (murge://...) that arrive before the window exists, or while a
 // second instance hands its argv over, are queued here and flushed once the
@@ -80,7 +85,7 @@ async function createMihomoGateway(): Promise<MihomoGateway> {
   return mihomo
 }
 
-function createWindow(): void {
+function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1120,
     height: 806,
@@ -97,8 +102,27 @@ function createWindow(): void {
       nodeIntegration: false
     }
   })
+  mainWindow = window
 
-  window.on('ready-to-show', () => window.show())
+  // `ready-to-show` is an optimisation, not a visibility gate. Renderer load
+  // failures and some Windows/GPU combinations may never emit it, so also show
+  // after the document finishes loading. Both handlers are idempotent.
+  const showWindow = (): void => {
+    if (!window.isDestroyed() && !window.isVisible()) window.show()
+  }
+  window.once('ready-to-show', showWindow)
+  window.webContents.once('did-finish-load', showWindow)
+  window.on('closed', () => {
+    if (mainWindow === window) mainWindow = null
+  })
+  window.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[window] renderer process exited:', details.reason, details.exitCode)
+  })
+  window.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
+    if (!isMainFrame) return
+    console.error(`[window] failed to load ${url}: ${code} ${description}`)
+    showWindow()
+  })
   window.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url)
     return { action: 'deny' }
@@ -107,8 +131,12 @@ function createWindow(): void {
   if (is.dev && process.env.ELECTRON_RENDERER_URL) {
     void window.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
-    void window.loadFile(join(__dirname, '../renderer/index.html'))
+    void window.loadFile(join(__dirname, '../renderer/index.html')).catch((error) => {
+      console.error('[window] failed to load packaged renderer:', error)
+      showWindow()
+    })
   }
+  return window
 }
 
 /**
@@ -161,7 +189,7 @@ app.whenReady().then(async () => {
   app.on('second-instance', (_event, argv) => {
     const link = extractDeepLink(argv)
     if (link) pendingDeepLinks.push(link)
-    const window = BrowserWindow.getAllWindows()[0]
+    const window = mainWindow ?? BrowserWindow.getAllWindows()[0]
     if (window) {
       if (window.isMinimized()) window.restore()
       window.focus()
@@ -242,6 +270,13 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+}).catch((error) => {
+  const message = error instanceof Error ? `${error.message}\n\n${error.stack ?? ''}` : String(error)
+  console.error('[startup] fatal initialization failure:', error)
+  // Packaged GUI applications normally have no attached console. Surface the
+  // failure instead of leaving an invisible background process behind.
+  dialog.showErrorBox(`${brand.productName} failed to start`, message)
+  app.exit(1)
 })
 
 app.on('window-all-closed', () => {

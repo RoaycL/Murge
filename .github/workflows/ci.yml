@@ -264,6 +264,34 @@ jobs:
           if ($newPorts) { throw 'controller port 9090 is listening after the smoke run' }
           Write-Host 'no mihomo process and no new controller listener confirmed'
 
+          # Launch the REAL packaged GUI path (without --packaging-smoke) and
+          # require a visible native top-level window. The old probe explicitly
+          # skipped window creation, so an invisible background-only app could
+          # pass CI. Production still has its kernel resolver disabled here and
+          # must not start mihomo or bind the controller port.
+          $ui = Start-Process -FilePath $exe -PassThru
+          $windowReady = $false
+          try {
+            for ($attempt = 0; $attempt -lt 30; $attempt++) {
+              Start-Sleep -Seconds 1
+              $live = Get-Process -Id $ui.Id -ErrorAction SilentlyContinue
+              if (-not $live) { throw 'packaged GUI exited before creating a window' }
+              if ($live.MainWindowHandle -ne 0) {
+                $windowReady = $true
+                Write-Host "visible GUI window: pid=$($live.Id) handle=$($live.MainWindowHandle) title='$($live.MainWindowTitle)'"
+                break
+              }
+            }
+            if (-not $windowReady) { throw 'packaged GUI stayed alive but did not create a visible window within 30 seconds' }
+            if (Get-Process -Name 'mihomo' -ErrorAction SilentlyContinue) { throw 'normal GUI launch unexpectedly started mihomo' }
+            $guiPorts = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalPort
+            if ($guiPorts -contains 9090) { throw 'normal GUI launch unexpectedly bound controller port 9090' }
+          } finally {
+            Stop-Process -Id $ui.Id -Force -ErrorAction SilentlyContinue
+            Wait-Process -Id $ui.Id -Timeout 10 -ErrorAction SilentlyContinue
+          }
+          Write-Host 'packaged GUI visibility: PASS'
+
           # Uninstall silently and confirm program files are gone but app data survives.
           $uninstaller = Get-ChildItem -Path $installDir -Filter 'Uninstall *.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $uninstaller) {
@@ -293,4 +321,3 @@ jobs:
           name: windows-installer
           path: dist/*.exe
           if-no-files-found: error
-

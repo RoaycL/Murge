@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { brand } from '@shared/brand'
 
 // Read the builder config as a module so the assertions track what is actually
@@ -31,7 +32,7 @@ describe('electron-builder brand wiring (Phase 6 metadata)', () => {
   it('configures a Windows icon that exists in build resources', () => {
     expect(config.win.icon).toBeTruthy()
     // buildResources is `resources`, so a bare `icon.ico` resolves to it.
-    const resourcesDir = new URL('../resources/', import.meta.url).pathname
+    const resourcesDir = fileURLToPath(new URL('../resources/', import.meta.url))
     expect(() => readFileSync(join(resourcesDir, config.win.icon))).not.toThrow()
   })
 
@@ -43,14 +44,14 @@ describe('electron-builder brand wiring (Phase 6 metadata)', () => {
     const notices = config.extraResources.find((r) => r.from.includes('THIRD_PARTY_NOTICES'))
     expect(notices).toBeTruthy()
     expect(() =>
-      readFileSync(join(new URL('../resources/', import.meta.url).pathname, 'THIRD_PARTY_NOTICES.md'))
+      readFileSync(join(fileURLToPath(new URL('../resources/', import.meta.url)), 'THIRD_PARTY_NOTICES.md'))
     ).not.toThrow()
   })
 
   it('bundles the retained dependency license texts into the installer', () => {
     const licenses = config.extraResources.find((r) => r.from.includes('licenses'))
     expect(licenses).toBeTruthy()
-    const resourcesDir = new URL('../resources/', import.meta.url).pathname
+    const resourcesDir = fileURLToPath(new URL('../resources/', import.meta.url))
     for (const file of ['vue.txt', 'ws.txt', 'electron.txt']) {
       expect(() => readFileSync(join(resourcesDir, 'licenses', file))).not.toThrow()
     }

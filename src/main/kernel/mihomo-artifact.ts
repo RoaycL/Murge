@@ -322,7 +322,10 @@ export async function extractMihomo(
     )
   }
 
-  const isWin = asset.platform === 'win32' || process.platform === 'win32'
+  // The selected asset, rather than the host running the resolver/tests,
+  // determines its target basename and permission semantics. This also keeps
+  // cross-platform artifact tests truthful on Windows runners.
+  const isWin = asset.platform === 'win32'
   const targetName = options.binaryName ?? (isWin ? 'mihomo.exe' : 'mihomo')
   const extractedPath = join(options.destDir, asset.innerName)
   const targetPath = join(options.destDir, targetName)

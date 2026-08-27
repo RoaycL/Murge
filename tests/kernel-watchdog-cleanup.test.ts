@@ -18,6 +18,7 @@ let validateEvidenceSchema: CleanupScript['validateEvidenceSchema']
 let validateEvidencePaths: CleanupScript['validateEvidencePaths']
 
 beforeAll(async () => {
+  if (process.platform === 'win32') return
   const mod = await import('../scripts/kernel-watchdog-cleanup.mjs')
   cleanupKernel = mod.cleanupKernel
   isMihomoName = mod.isMihomoName
@@ -27,6 +28,12 @@ beforeAll(async () => {
   validateEvidenceSchema = mod.validateEvidenceSchema
   validateEvidencePaths = mod.validateEvidencePaths
 })
+
+// Vitest's Windows transform cannot import the shared .mjs module reliably.
+// Windows junction/reparse-point behavior is covered by the standalone Node
+// check in the kernel-real-windows job; this injected unit matrix runs on the
+// Ubuntu verification job and on other supported developer hosts.
+const describePortable = process.platform === 'win32' ? describe.skip : describe
 
 /**
  * Cleanup-script fail-closed coverage. These tests run in the DEFAULT vitest
@@ -134,7 +141,7 @@ afterEach(async () => {
   cleanupDirs = []
 })
 
-describe('cleanupKernel — fail-closed evidence & probes', () => {
+describePortable('cleanupKernel — fail-closed evidence & probes', () => {
   it('require-evidence: missing evidence file fails closed after reaping residual mihomo', async () => {
     const logs: string[] = []
     // No evidence file at all; a stateful probe first reports residual mihomo 7777
@@ -341,7 +348,7 @@ describe('cleanupKernel — fail-closed evidence & probes', () => {
   })
 })
 
-describe('cleanupKernel — recorded-PID identity / PID-reuse protection', () => {
+describePortable('cleanupKernel — recorded-PID identity / PID-reuse protection', () => {
   it('never kills a recorded PID whose identity is NOT mihomo (recycled PID)', async () => {
     await withEvidence(validEvidence(), async (path) => {
       const logs: string[] = []
@@ -422,7 +429,7 @@ describe('cleanupKernel — recorded-PID identity / PID-reuse protection', () =>
   })
 })
 
-describe('cleanupKernel — probe helper contracts', () => {
+describePortable('cleanupKernel — probe helper contracts', () => {
   it('isMihomoName accepts only mihomo/mihomo.exe', () => {
     expect(isMihomoName('mihomo.exe')).toBe(true)
     expect(isMihomoName('Mihomo.EXE')).toBe(true)
@@ -483,7 +490,7 @@ describe('cleanupKernel — probe helper contracts', () => {
   })
 })
 
-describe('cleanupKernel — Unix (ps/ss) probe path', () => {
+describePortable('cleanupKernel — Unix (ps/ss) probe path', () => {
   it('ps: suppresses a header and reports only mihomo rows', async () => {
     const runner = makeRunner({
       isWin: false,
@@ -533,7 +540,7 @@ describe('cleanupKernel — Unix (ps/ss) probe path', () => {
   })
 })
 
-describe('validateEvidenceSchema — strict schema & path ownership', () => {
+describePortable('validateEvidenceSchema — strict schema & path ownership', () => {
   it('rejects a pid that is not a positive integer', () => {
     const base = JSON.parse(validEvidence())
     for (const bad of ['abc', -1, 0, 1.5, null, undefined, '']) {
@@ -613,7 +620,7 @@ describe('validateEvidenceSchema — strict schema & path ownership', () => {
   })
 })
 
-describe('strict mihomo naming & binaryPath mismatch', () => {
+describePortable('strict mihomo naming & binaryPath mismatch', () => {
   it('Windows tasklist: enumerates ONLY exact mihomo/mihomo.exe, never approximate names', async () => {
     const dump = tasklistCsv([
       ['mihomo.exe', 100],
@@ -696,7 +703,7 @@ describe('strict mihomo naming & binaryPath mismatch', () => {
   })
 })
 
-describe('path-escape evidence must never reach rm', () => {
+describePortable('path-escape evidence must never reach rm', () => {
   it('still sweeps residual mihomo by exact name, then fails require-evidence on a `..` workspace', async () => {
     const ev = JSON.parse(
       validEvidence({ workspace: '/tmp/mihomo-real-x/../bad', configDir: '/tmp/mihomo-real-x/config' })
@@ -756,7 +763,7 @@ describe('path-escape evidence must never reach rm', () => {
   })
 })
 
-describe('validateEvidencePaths — lstat/realpath escape protection', () => {
+describePortable('validateEvidencePaths — lstat/realpath escape protection', () => {
   it('accepts a workspace/configDir that does not exist (ENOENT; nothing to delete)', async () => {
     const missingWs = join(tmpdir(), 'mihomo-real-zzz')
     expect(await validateEvidencePaths({ workspace: missingWs, configDir: join(missingWs, 'config') })).toEqual([])
@@ -812,7 +819,7 @@ describe('validateEvidencePaths — lstat/realpath escape protection', () => {
   })
 })
 
-describe('cleanupKernel — never descends a symlink/junction into a wider rm scope', () => {
+describePortable('cleanupKernel — never descends a symlink/junction into a wider rm scope', () => {
   it('fails require-evidence and preserves the external target of a symlinked workspace', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mihomo-root-'))
     const outside = await mkdtemp(join(tmpdir(), 'mihomo-real-'))

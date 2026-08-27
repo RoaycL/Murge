@@ -40,12 +40,21 @@ jobs:
             throw "Tag '$env:GITHUB_REF_NAME' does not match package.json version '$expectedTag'"
           }
 
-      - name: Validate, test and build
-        run: |
-          npm run brand:check
-          npm run typecheck
-          npm test
-          npm run build
+      # Keep each native command in its own step. PowerShell does not
+      # necessarily stop a multiline script when an earlier external command
+      # exits non-zero; that previously allowed Windows test failures to become
+      # annotations while a later successful build made the release green.
+      - name: Validate brand configuration
+        run: npm run brand:check
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
 
       - name: Package Windows installers
         run: npx electron-builder --win --config electron-builder.config.mjs --publish never
@@ -116,4 +125,3 @@ jobs:
             dist/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
-

@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFile } from 'node:child_process'
@@ -13,6 +13,7 @@ import { MihomoClient } from '../src/main/services/mihomo-client'
 import { randomSecret } from '../src/main/kernel/mihomo-config'
 import { captureNetworkSnapshot, assertNetworkUnchanged } from './real-network-snapshot'
 import { listenersMatchingText } from './listener-tools'
+import { EvidenceFile } from './kernel-evidence'
 import type { KernelDependencies } from '../src/main/kernel/types'
 
 const execFileAsync = promisify(execFile)
@@ -36,9 +37,12 @@ const evidencePath = process.env.RUNNER_TEMP
   ? join(process.env.RUNNER_TEMP, 'mihomo-real-kernel-evidence.json')
   : join(tmpdir(), 'mihomo-real-kernel-evidence.json')
 
-async function writeKernelEvidence(data: Record<string, unknown>): Promise<void> {
-  await writeFile(evidencePath, JSON.stringify(data), 'utf8')
-}
+// Atomic evidence store (P2 #11 + P1): the CI `if: always()` finally step kills
+// the process recorded here, so it must always carry the CURRENT supervisor PID
+// (updated on every PID change) and be replaced atomically (temp + rename) so a
+// crash never leaves a stale or half-written value. The controller secret is
+// NEVER recorded.
+const evidence = new EvidenceFile(evidencePath)
 
 async function waitFor(
   cond: () => boolean,
@@ -120,6 +124,24 @@ run('mihomo real kernel integration', () => {
     }
     const configDir = join(workspace, 'config')
 
+    // Subscribe to supervisor status so the evidence file always carries the live
+    // PID. The watchdog restarts the kernel under a fresh PID after a crash; a
+    // stale PID left in the evidence file would make the CI finally step unable
+    // to reap the recovered process. Only positive PIDs are recorded (a
+    // stopping/starting/failed supervisor reports pid null).
+    const trackPid = (sup: KernelSupervisor): void => {
+      sup.onStatus((status) => {
+        const pid = status.pid
+        if (typeof pid === 'number' && pid > 0) {
+          // A failed evidence write must not surface as an unhandled rejection in
+          // the status listener; it is non-fatal to the kernel lifecycle.
+          void evidence
+            .update({ pid, controllerPort, mixedPort, workspace, configDir })
+            .catch(() => undefined)
+        }
+      })
+    }
+
     const deps: KernelDependencies = {
       resolver: new MihomoKernelResolver({
         allowReal: true,
@@ -144,12 +166,15 @@ run('mihomo real kernel integration', () => {
       backoffMs: 500,
       maxBackoffMs: 2000
     })
+    trackPid(supervisor)
 
     const status = await supervisor.start()
     expect(status.phase).toBe('running')
     expect(status.pid).toBeGreaterThan(0)
     expect(status.version).toBe('1.19.30')
-    await writeKernelEvidence({ pid: status.pid, controllerPort, mixedPort, workspace, configDir })
+    // The status subscription already wrote the live PID; assert it so a
+    // regression in evidence tracking fails closed early.
+    expect((await evidence.read())?.pid).toBe(status.pid)
 
     const base = `http://127.0.0.1:${controllerPort}`
     const client = new MihomoClient(base, secret, { timeoutMs: 10000 })
@@ -176,6 +201,15 @@ run('mihomo real kernel integration', () => {
     expect(configText).toContain('  - MATCH,DIRECT')
     const configs = await client.getConfig()
     expect(configs.mode).toBe('direct')
+
+    // The config document's secret must be EXACTLY the composition-root secret
+    // that this same `secret` variable handed to MihomoClient and the WebSocket
+    // token. A silent replacement in the store would split config auth from
+    // client auth and break /version + WS.
+    const configSecret = configText.match(/^secret: (.+)$/m)
+    expect(configSecret).not.toBeNull()
+    expect(configSecret![1]).toBe(secret)
+    await client.getVersion()
 
     // Loopback-only listeners. The controller port and the mixed port must each
     // show at least one listener, and every listener host must be loopback. A
@@ -223,9 +257,9 @@ run('mihomo real kernel integration', () => {
       backoffMs: 500,
       maxBackoffMs: 2000
     })
+    trackPid(supervisor)
     const restarted = await supervisor.start()
     expect(restarted.phase).toBe('running')
-    await writeKernelEvidence({ pid: restarted.pid, controllerPort, mixedPort, workspace, configDir })
     await waitForController(client, supervisor)
     expect(restarted.pid).not.toBe(firstPid)
     const stoppedRestarted = await supervisor.stop()
@@ -242,9 +276,9 @@ run('mihomo real kernel integration', () => {
       backoffMs: 500,
       maxBackoffMs: 2000
     })
+    trackPid(supervisor)
     const crashed = await supervisor.start()
     expect(crashed.phase).toBe('running')
-    await writeKernelEvidence({ pid: crashed.pid, controllerPort, mixedPort, workspace, configDir })
     await waitForController(client, supervisor)
     const crashedPid = supervisor.getStatus().pid
     expect(crashedPid).toBeGreaterThan(0)
@@ -265,7 +299,18 @@ run('mihomo real kernel integration', () => {
     await waitForController(client, supervisor)
     const watchdogStatus = supervisor.getStatus()
     expect(watchdogStatus.pid).not.toBe(crashedPid)
+    // The watchdog gave the kernel a fresh PID: the evidence file MUST now carry
+    // that recovered PID (never the stale crashed one), so an `if: always()`
+    // finally step can reap exactly this process if the test hard-crashes here —
+    // this is the fault-injection guard for the restart path.
+    const watchdogEvidence = await evidence.read()
+    expect(watchdogEvidence).not.toBeNull()
+    expect(watchdogEvidence!.pid).toBe(watchdogStatus.pid)
+    expect(watchdogEvidence!.pid).not.toBe(crashedPid)
+    // The recorded value is a live process (what the finally step will kill).
+    expect(isAlive(watchdogStatus.pid!)).toBe(true)
     await supervisor.stop()
+    await waitFor(() => !isAlive(watchdogStatus.pid!), 5000, 'recovered pid exit after stop')
 
     // P1 #9 network integrity: the run must not have mutated the host's proxy
     // settings, default routes, DNS or firewall.

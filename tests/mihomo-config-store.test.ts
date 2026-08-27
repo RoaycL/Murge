@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { MihomoKernelConfigStore } from '../src/main/kernel/mihomo-config-store'
 import { validateMihomoConfigYaml } from '../src/main/kernel/mihomo-config'
+import { ProtocolErrorCode } from '@shared/protocol-errors'
 
 const secret = 'b'.repeat(64)
 
@@ -19,30 +20,39 @@ describe('MihomoKernelConfigStore', () => {
     expect(() => validateMihomoConfigYaml(text)).not.toThrow()
     expect(text).toContain(`mixed-port: 21000`)
     expect(text).toContain(`external-controller: 127.0.0.1:21001`)
+    // The caller's secret must be written through verbatim — the store must not
+    // mint its own, or the config auth would diverge from the client auth.
     expect(text).toContain(`secret: ${secret}`)
 
     await store.cleanup(config)
     await expect(stat(config.rootDir)).rejects.toThrow()
   })
 
-  it('uses a generated secret when none is provided', async () => {
+  it('fails closed when materialize is called without any secret', async () => {
     const store = new MihomoKernelConfigStore({ mixedPort: 22000, controllerPort: 22001 })
-    const config = await store.materialize({ command: '/bin/mihomo', args: [] })
+    await expect(
+      store.materialize({ command: '/bin/mihomo', args: [] }, '')
+    ).rejects.toMatchObject({ code: ProtocolErrorCode.INVALID_ARGUMENT })
+  })
+
+  it('fails closed on a non-conforming caller secret instead of silently replacing it', async () => {
+    const store = new MihomoKernelConfigStore({ mixedPort: 22500, controllerPort: 22501 })
+    // A short/attacker secret must never be accepted NOR silently replaced with a
+    // fresh one: an invalid explicit secret is a programming error between the
+    // composition root, the config store and the client.
+    await expect(
+      store.materialize({ command: '/bin/mihomo', args: [] }, 'short')
+    ).rejects.toMatchObject({ code: ProtocolErrorCode.INVALID_ARGUMENT })
+  })
+
+  it('reflects the exact caller secret in the written config document', async () => {
+    const callerSecret = 'c'.repeat(64)
+    const store = new MihomoKernelConfigStore({ mixedPort: 22600, controllerPort: 22601 })
+    const config = await store.materialize({ command: '/bin/mihomo', args: [] }, callerSecret)
     const text = await readFile(config.configPath, 'utf8')
     const match = text.match(/^secret: (.+)$/m)
     expect(match).not.toBeNull()
-    expect(match![1]).toMatch(/^[0-9a-f]{64}$/)
-    await store.cleanup(config)
-  })
-
-  it('replaces a non-conforming caller secret with a fresh one (injection guard)', async () => {
-    const store = new MihomoKernelConfigStore({ mixedPort: 22500, controllerPort: 22501 })
-    const config = await store.materialize({ command: '/bin/mihomo', args: [] }, 'short')
-    const text = await readFile(config.configPath, 'utf8')
-    // A short/attacker secret must never be written through.
-    expect(text).not.toContain('secret: short')
-    const match = text.match(/^secret: (.+)$/m)
-    expect(match![1]).toMatch(/^[0-9a-f]{64}$/)
+    expect(match![1]).toBe(callerSecret)
     await store.cleanup(config)
   })
 

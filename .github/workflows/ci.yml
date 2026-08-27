@@ -100,9 +100,23 @@ jobs:
             }
             Write-Host "recorded mihomo PID $($ev.pid) is gone"
           }
-          if (Get-Process -Name 'mihomo' -ErrorAction SilentlyContinue) {
-            throw 'an unexpected mihomo process remains after the recorded PID was stopped'
+          # Residual mihomo whose PID is not the recorded one (e.g. the watchdog
+          # restarted the kernel under a fresh PID right before the test crashed,
+          # so the evidence PID is dead but a newer mihomo is alive). This runs on
+          # a disposable runner, so terminate every residual mihomo, then PROVE
+          # the host is clean. If any survive, the job must still fail.
+          $residual = @(Get-Process -Name 'mihomo' -ErrorAction SilentlyContinue)
+          if ($residual.Count -gt 0) {
+            Write-Host "found $($residual.Count) residual mihomo process(es); terminating on disposable runner"
+            foreach ($p in $residual) {
+              Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            }
+            Start-Sleep -Seconds 2
           }
+          if (Get-Process -Name 'mihomo' -ErrorAction SilentlyContinue) {
+            throw 'a mihomo process remains after the recorded PID and residual mihomo were terminated'
+          }
+          Write-Host 'no mihomo process remains'
           $ports = @($ev.controllerPort, $ev.mixedPort) | Where-Object { $_ }
           if ($ports.Count -gt 0) {
             $listen = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |

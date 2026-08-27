@@ -2,8 +2,9 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
+import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
 import type { KernelBinary, KernelConfig, KernelConfigStore } from './types'
-import { generateMihomoConfig, randomSecret, validateMihomoConfigYaml, SECRET_PATTERN } from './mihomo-config'
+import { generateMihomoConfig, validateMihomoConfigYaml, SECRET_PATTERN } from './mihomo-config'
 
 export interface MihomoConfigStoreOptions {
   mixedPort: number
@@ -33,7 +34,7 @@ export class MihomoKernelConfigStore implements KernelConfigStore {
 
   constructor(private readonly options: MihomoConfigStoreOptions) {}
 
-  async materialize(_binary: KernelBinary, secret?: string): Promise<KernelConfig> {
+  async materialize(_binary: KernelBinary, secret: string): Promise<KernelConfig> {
     // Always materialize into an exclusive child. `workspaceDir` (if given) is a
     // parent; the caller's own files under it must survive a later cleanup.
     const parent = this.options.workspaceDir
@@ -42,10 +43,19 @@ export class MihomoKernelConfigStore implements KernelConfigStore {
     const rootDir = await mkdtemp(join(parent, 'mihomo-workspace-'))
     this.ownedDir = rootDir
     const configPath = join(rootDir, 'config.yaml')
-    // Prefer a passed secret only when it is already a valid 64-hex token;
-    // otherwise mint a fresh high-entropy one so a caller can never inject a
-    // malformed or non-conforming bearer token.
-    const effectiveSecret = secret && SECRET_PATTERN.test(secret) ? secret : randomSecret(32)
+    // The secret is the shared auth contract between the supervisor, the config
+    // document and the controller client. It is generated exactly once at the
+    // composition root and must arrive here as a valid 64-hex token: an absent or
+    // malformed secret is a programming error and must fail closed, not be
+    // silently replaced with a secret the caller never sees (which would split
+    // the config auth from the client auth and break /version + WS auth).
+    if (typeof secret !== 'string' || !SECRET_PATTERN.test(secret)) {
+      throw new ProtocolError(
+        ProtocolErrorCode.INVALID_ARGUMENT,
+        'Mihomo controller secret must be a 64-character lowercase hex string'
+      )
+    }
+    const effectiveSecret = secret
     const configText = generateMihomoConfig({
       mixedPort: this.options.mixedPort,
       controllerPort: this.options.controllerPort,

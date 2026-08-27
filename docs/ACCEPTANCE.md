@@ -1,22 +1,23 @@
-# Framework acceptance criteria
+# Phase 1–7 acceptance criteria
 
 ## Current milestone
 
-- [ ] Default development commands do not start a real kernel or mutate system networking.
-- [ ] macOS system proxy and TUN implementations are absent or explicitly blocked.
-- [ ] `npm install` completes.
-- [ ] `npm run typecheck` passes.
-- [ ] `npm run build` passes.
-- [ ] `npm run brand:check` passes.
-- [ ] Development window opens at no less than 934×672.
-- [ ] Default route is Activity.
-- [ ] Activity geometry matches `UI_SPEC.md`.
-- [ ] A 934×672 screenshot has been compared directly with `ui-reference/murge-ui-preview.html` and all deviations are documented.
-- [ ] Overview switches are local visual prototypes only.
-- [ ] Navigation placeholders render without errors.
-- [ ] Renderer has no Node access.
-- [ ] The kernel lifecycle remains visibly marked as unimplemented.
-- [ ] API and handoff documents identify source references and uncertainty.
+- [x] Default development commands do not start a real kernel or mutate system networking.
+- [x] macOS system proxy and TUN implementations are absent or explicitly blocked.
+- [x] `npm ci` completes in CI.
+- [x] `npm run typecheck` passes.
+- [x] `npm run build` passes.
+- [x] `npm run brand:check` passes.
+- [x] Development window opens at no less than 934×672.
+- [x] Default route is Activity.
+- [ ] Activity and all secondary pages pass the final raw-pixel visual review; remaining deltas are tracked in `UI_DEBT.md`.
+- [x] A 934×672 Activity screenshot has been compared directly with `ui-reference/murge-ui-preview.html` and deviations are documented.
+- [x] Overview never reports unimplemented system proxy, TUN or LAN controls as active.
+- [x] Navigation pages render and the Phase 4–5 pages use typed live/mock gateways.
+- [x] Renderer has no Node access.
+- [x] Packaged Windows kernel start is explicit, authenticated, loopback-only and safe-direct.
+- [x] API and handoff documents identify source references and uncertainty.
+- [ ] Owner-selected application license is present and `npm run license:check` passes.
 
 ## Future runtime evidence
 

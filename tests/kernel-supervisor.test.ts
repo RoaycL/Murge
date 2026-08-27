@@ -281,6 +281,38 @@ describe('KernelSupervisor lifecycle', () => {
     expect(h.store.cleanupCalls.length).toBe(1)
   })
 
+  it('cleans the secret-bearing config after an asynchronous spawn error', async () => {
+    const h = createHarness()
+    const start = h.supervisor.start()
+    await waitFor(() => (h.supervisor as unknown as { readiness: unknown }).readiness != null)
+    const handle = h.adapter.lastHandle!
+    h.adapter.alivePids.delete(handle.pid!)
+    handle.emitError(new Error('async ENOENT'))
+
+    await expect(start).rejects.toMatchObject({ code: ProtocolErrorCode.KERNEL_SPAWN_FAILED })
+    await waitFor(() => h.store.cleanupCalls.length === 1)
+    expect(h.supervisor.getActiveConfig()).toBeNull()
+    expect(h.supervisor.getStatus()).toMatchObject({ phase: 'failed', pid: null })
+
+    await expect(h.supervisor.stop()).resolves.toMatchObject({ phase: 'stopped' })
+    expect(h.store.cleanupCalls.length).toBe(1)
+  })
+
+  it('keeps a live process tracked when it emits an operational error', async () => {
+    const h = createHarness()
+    await startToRunning(h)
+    const handle = h.adapter.lastHandle!
+    handle.emitError(new Error('signal operation failed'))
+
+    expect(h.supervisor.getStatus()).toMatchObject({ phase: 'failed', pid: handle.pid })
+    expect((h.supervisor as unknown as { handle: unknown }).handle).toBe(handle)
+    expect(h.store.cleanupCalls.length).toBe(0)
+    await expect(h.supervisor.start()).rejects.toMatchObject({ code: ProtocolErrorCode.KERNEL_RUNNING })
+
+    await expect(h.supervisor.stop()).resolves.toMatchObject({ phase: 'stopped' })
+    expect(h.store.cleanupCalls.length).toBe(1)
+  })
+
   it('throws KERNEL_START_TIMEOUT when readiness never arrives', async () => {
     const h = createHarness({ startTimeoutMs: 20 })
     await expect(h.supervisor.start()).rejects.toMatchObject({ code: ProtocolErrorCode.KERNEL_START_TIMEOUT })

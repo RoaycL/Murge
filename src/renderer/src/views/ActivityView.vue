@@ -57,14 +57,9 @@ const connStateLabel = computed(() => {
   return ''
 })
 
-// STATIC PLACEHOLDER — see docs/UI_DEBT.md UI-DEBT-004.
-// The hourly-traffic series is NOT live data. `/traffic` only reports the
-// instantaneous rate plus cumulative totals, so a truthful hourly chart needs
-// durable sampled deltas the app does not persist yet. This literal exists only
-// to hold the 934×672 geometry; do not present it as real traffic history and do
-// not reuse it as a shared contract. The latency card and the DHCP figure in the
-// template are hardcoded for the same reason.
-const bars = [18, 29, 52, 63, 48, 36, 20, 25, 31, 82, 15, 13, 12, 9, 10, 6, 5, 8, 7, 6, 7, 8, 7]
+// Keep the chart geometry without inventing history. Durable hourly samples are
+// not available yet, so every bucket renders as an explicit empty state.
+const bars = Array.from({ length: 23 }, () => 0)
 </script>
 
 <template>
@@ -82,13 +77,13 @@ const bars = [18, 29, 52, 63, 48, 36, 20, 25, 31, 82, 15, 13, 12, 9, 10, 6, 5, 8
 
     <section class="dashboard-grid">
       <SurfaceCard class="latency-card">
-        <span class="metric-label">INTERNET 延迟　↻</span>
-        <button type="button" class="quiet-button">网络诊断</button>
-        <div class="large-metric">6<span>ms</span></div>
+        <span class="metric-label">INTERNET 延迟</span>
+        <button type="button" class="quiet-button" disabled>尚未支持</button>
+        <div class="large-metric">—</div>
         <div class="latency-breakdown">
-          <div><span>路由</span><strong>≤1 ms</strong></div>
-          <div><span>DNS</span><strong>11 ms</strong></div>
-          <div><span>Hong Kong 01</span><strong>73 ms</strong></div>
+          <div><span>路由</span><strong>—</strong></div>
+          <div><span>DNS</span><strong>—</strong></div>
+          <div><span>当前策略</span><strong>—</strong></div>
         </div>
       </SurfaceCard>
 
@@ -103,7 +98,7 @@ const bars = [18, 29, 52, 63, 48, 36, 20, 25, 31, 82, 15, 13, 12, 9, 10, 6, 5, 8
         <div class="connection-breakdown">
           <div><strong>{{ processCount }}</strong><span>进程</span></div>
           <div><strong>{{ deviceCount }}</strong><span>设备</span></div>
-          <div><strong>1</strong><span>DHCP 设备</span></div>
+          <div><strong>—</strong><span>DHCP 设备</span></div>
         </div>
       </SurfaceCard>
 
@@ -124,7 +119,7 @@ const bars = [18, 29, 52, 63, 48, 36, 20, 25, 31, 82, 15, 13, 12, 9, 10, 6, 5, 8
       </SurfaceCard>
 
       <SurfaceCard class="total-card">
-        <div class="card-title-row"><span class="metric-label">总计</span><div class="segmented"><button class="selected">今日</button><button>本月</button></div></div>
+        <div class="card-title-row"><span class="metric-label">总计</span><div class="segmented"><button class="selected">当前</button><button disabled>历史</button></div></div>
         <div class="large-metric">{{ total.value }}<span>{{ total.unit }}</span></div>
         <div class="total-labels"><div><span>DIRECT</span><strong>{{ direct.value }} {{ direct.unit }}</strong></div><div><span>代理</span><strong>{{ proxy.value }} {{ proxy.unit }}</strong></div></div>
         <div class="total-bar"><i :style="{ width: `${directPct}%` }" /><i :style="{ width: `${100 - directPct}%` }" /></div>

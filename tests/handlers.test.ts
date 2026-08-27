@@ -82,6 +82,32 @@ describe('buildIpcHandlers', () => {
     })
   })
 
+  describe('profile argument validation', () => {
+    it('rejects a non-string validation document before reaching the gateway', async () => {
+      await expect(handlers[IPC.profilesValidate](null, { yaml: true })).rejects.toMatchObject({
+        code: ProtocolErrorCode.INVALID_ARGUMENT
+      })
+    })
+
+    it('rejects an invalid subscription URL before reaching the gateway', async () => {
+      await expect(
+        handlers[IPC.profilesImportFromUrl](null, 'Profile', 'file:///etc/passwd', false)
+      ).rejects.toMatchObject({ code: ProtocolErrorCode.INVALID_ARGUMENT })
+    })
+
+    it('rejects a non-boolean activate flag instead of coercing it', async () => {
+      await expect(
+        handlers[IPC.profilesImportFromUrl](null, 'Profile', 'https://example.com/sub', 'false')
+      ).rejects.toMatchObject({ code: ProtocolErrorCode.INVALID_ARGUMENT })
+    })
+
+    it('uses a typed error for a malformed edits collection', async () => {
+      await expect(handlers[IPC.profilesEditDocument](null, 'profile-id', {})).rejects.toMatchObject({
+        code: ProtocolErrorCode.INVALID_ARGUMENT
+      })
+    })
+  })
+
   describe('mihomo Phase 4 provider and delay channels', () => {
     it('forwards a delay test to the gateway', async () => {
       container.mihomo.delayResults['香港 01'] = { delay: 42 }

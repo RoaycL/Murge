@@ -1,8 +1,16 @@
 import { IPC } from '@shared/ipc'
 import type { IpcDeps } from '@shared/gateways'
 import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions } from '@shared/schemas/ipc'
-import { parseConfigEdit, parseImportRequest, parseProfileName } from '@shared/schemas/profiles'
+import {
+  parseConfigEdit,
+  parseImportRequest,
+  parseOptionalBoolean,
+  parseProfileDocument,
+  parseProfileName,
+  parseSubscriptionUrl
+} from '@shared/schemas/profiles'
 import type { ConfigEdit } from '@shared/profiles'
+import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
 
 /** A single IPC handler. The event is opaque to keep the factory Electron-free. */
 export type IpcHandler = (event: unknown, ...args: unknown[]) => unknown | Promise<unknown>
@@ -50,17 +58,23 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
     [IPC.profilesGet]: async (_event, id) => profiles.getProfile(parseProfileName(id)),
     [IPC.profilesImport]: async (_event, request) => profiles.importProfile(parseImportRequest(request)),
     [IPC.profilesImportFromUrl]: async (_event, name, url, activate) =>
-      profiles.importFromUrl(parseProfileName(name), parseProfileName(url), activate === true),
+      profiles.importFromUrl(
+        parseProfileName(name),
+        parseSubscriptionUrl(url),
+        parseOptionalBoolean(activate, 'activate')
+      ),
     [IPC.profilesActivate]: async (_event, id) => profiles.activateProfile(parseProfileName(id)),
     [IPC.profilesDelete]: async (_event, id) => profiles.deleteProfile(parseProfileName(id)),
     [IPC.profilesRename]: async (_event, id, name) => profiles.renameProfile(parseProfileName(id), parseProfileName(name)),
     [IPC.profilesEditDocument]: async (_event, id, edits) =>
       profiles.editDocument(parseProfileName(id), parseEditsArray(edits)),
-    [IPC.profilesValidate]: async (_event, document) => profiles.validateDocument(String(document))
+    [IPC.profilesValidate]: async (_event, document) => profiles.validateDocument(parseProfileDocument(document))
   }
 }
 
 function parseEditsArray(input: unknown): ConfigEdit[] {
-  if (!Array.isArray(input)) throw new Error('config edits must be an array')
+  if (!Array.isArray(input)) {
+    throw new ProtocolError(ProtocolErrorCode.INVALID_ARGUMENT, 'config edits must be an array')
+  }
   return input.map(parseConfigEdit)
 }

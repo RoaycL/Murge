@@ -117,8 +117,41 @@ const profilePatchSchema = z
 
 /** Validate a profile id or name used as a path segment / identifier. */
 export function parseProfileName(name: unknown): string {
-  if (!(typeof name === 'string' && name.trim().length > 0)) throw invalid('profile name/id must be a non-empty string')
+  if (!(typeof name === 'string' && name.trim().length > 0 && name.length <= 256)) {
+    throw invalid('profile name/id must be a non-empty string of at most 256 characters')
+  }
+  if (name.includes('\n') || name.includes('\r') || name.includes('\0')) {
+    throw invalid('profile name/id contains invalid control characters')
+  }
   return name
+}
+
+/** Validate a subscription URL before it reaches the privileged fetch service. */
+export function parseSubscriptionUrl(input: unknown): string {
+  if (typeof input !== 'string' || input.length === 0 || input.length > 2048) {
+    throw invalid('subscription URL must be a non-empty string of at most 2048 characters')
+  }
+  let parsed: URL
+  try {
+    parsed = new URL(input)
+  } catch {
+    throw invalid('subscription URL is invalid')
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw invalid('subscription URL must use http or https')
+  }
+  return input
+}
+
+export function parseOptionalBoolean(input: unknown, field: string): boolean {
+  if (input === undefined) return false
+  if (typeof input !== 'boolean') throw invalid(`${field} must be a boolean when provided`)
+  return input
+}
+
+export function parseProfileDocument(input: unknown): string {
+  if (typeof input !== 'string') throw invalid('profile document must be a string')
+  return input
 }
 
 /** Validate an import request object. Returns a typed record for the service. */

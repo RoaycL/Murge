@@ -72,6 +72,41 @@ describe('redactCredentials', () => {
 })
 
 describe('SubscriptionFetcher', () => {
+  it('rejects a hostname whose DNS answers include a private address', async () => {
+    let fetchCalls = 0
+    const fetcher = new SubscriptionFetcher({
+      resolveHost: async () => ['127.0.0.1'],
+      fetchFn: async () => {
+        fetchCalls += 1
+        return { ok: true, status: 200, text: async () => 'mode: rule\n' }
+      }
+    })
+    await expect(fetcher.fetch('https://subscription.example/config')).rejects.toMatchObject({
+      code: 'INVALID_ARGUMENT'
+    })
+    expect(fetchCalls).toBe(0)
+  })
+
+  it('rejects a redirect hostname that resolves into private space', async () => {
+    let fetchCalls = 0
+    const fetcher = new SubscriptionFetcher({
+      resolveHost: async (hostname) => hostname === 'private.example' ? ['192.168.1.5'] : ['93.184.216.34'],
+      fetchFn: async () => {
+        fetchCalls += 1
+        return {
+          ok: true,
+          status: 302,
+          headers: { has: () => true, get: () => 'https://private.example/config' },
+          text: async () => ''
+        }
+      }
+    })
+    await expect(fetcher.fetch('https://public.example/redirect')).rejects.toMatchObject({
+      code: 'INVALID_ARGUMENT'
+    })
+    expect(fetchCalls).toBe(1)
+  })
+
   it('fetches a subscription and persists only the redacted URL', async () => {
     const fetcher = new SubscriptionFetcher({
       fetchFn: async () => ({ ok: true, status: 200, text: async () => 'proxies: []\n' })

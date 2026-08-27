@@ -7,8 +7,11 @@ import { parseBrandConfig } from '@shared/schemas/brand'
 import { migrateLegacyAppData, appDataRoot, resolveRuntimeProfileRoot } from './storage/app-data'
 import { registerIpc } from './ipc/register-ipc'
 import { KernelSupervisor } from './kernel/supervisor'
-import { createKernelResolver } from './kernel/resolvers'
+import { createKernelResolver, MihomoKernelResolver } from './kernel/resolvers'
 import { TempKernelConfigStore } from './kernel/config-store'
+import { findFreePort, MihomoKernelConfigStore } from './kernel/mihomo-config-store'
+import { randomSecret } from './kernel/mihomo-config'
+import { ControllerReadyKernelGateway } from './kernel/controller-ready-gateway'
 import { NodeKernelProcessAdapter } from './kernel/node-adapter'
 import { MihomoClient } from './services/mihomo-client'
 import { MihomoService } from './services/mihomo-service'
@@ -20,8 +23,8 @@ import { startMockMihomoServer, type MockMihomoServerHandle } from './testing/mo
 import type { MihomoGateway } from '@shared/gateways'
 import { ProtocolError, ProtocolErrorCode } from '../shared/protocol-errors'
 
-const controllerUrl = process.env.MURGE_DEV_CONTROLLER ?? 'http://127.0.0.1:9090'
-const controllerSecret = process.env.MURGE_DEV_SECRET ?? ''
+const devControllerUrl = process.env.MURGE_DEV_CONTROLLER ?? 'http://127.0.0.1:9090'
+const devControllerSecret = process.env.MURGE_DEV_SECRET ?? ''
 
 // Production pins the application-data directory to a stable, product-name-free
 // namespace (see storage/app-data.ts) so a future rename never orphans user
@@ -66,23 +69,41 @@ if (!hasSingleInstanceLock) {
 /**
  * Build the controller gateway. Development builds run the in-process localhost
  * mock controller so the renderer can be exercised without a real binary or any
- * network change. Production keeps the REST surface but leaves push streams
- * closed: a real controller is a later, opt-in milestone.
+ * network change. Production targets the randomized loopback controller used by
+ * the opt-in safe-direct kernel lifecycle; no system-network setting is changed.
  */
-async function createMihomoGateway(): Promise<MihomoGateway> {
+async function createMihomoGateway(
+  productionController?: { url: string; secret: string }
+): Promise<MihomoGateway> {
   if (is.dev) {
-    const secret = controllerSecret || 'dev-mock-secret'
+    const secret = devControllerSecret || 'dev-mock-secret'
     mockServer = await startMockMihomoServer({ secret })
     const client = new MihomoClient(mockServer.baseUrl, secret)
     mihomo = new MihomoService(client, { wsBaseUrl: mockServer.wsBaseUrl, secret, enabled: true })
   } else {
-    const client = new MihomoClient(controllerUrl, controllerSecret)
+    if (!productionController) {
+      throw new ProtocolError(ProtocolErrorCode.INTERNAL, 'Production controller configuration is missing')
+    }
+    const client = new MihomoClient(productionController.url, productionController.secret)
     mihomo = new MihomoService(
       client,
-      { wsBaseUrl: controllerUrl.replace(/^http/, 'ws'), secret: controllerSecret, enabled: false }
+      {
+        wsBaseUrl: productionController.url.replace(/^http/, 'ws'),
+        secret: productionController.secret,
+        enabled: true
+      }
     )
   }
   return mihomo
+}
+
+async function allocateProductionPorts(): Promise<{ controller: number; mixed: number }> {
+  const controller = await findFreePort()
+  let mixed = await findFreePort()
+  // Port reservations are released before mihomo starts, so the OS may return
+  // the same ephemeral port twice. Keep asking until both config fields differ.
+  while (mixed === controller) mixed = await findFreePort()
+  return { controller, mixed }
 }
 
 function createWindow(): BrowserWindow {
@@ -221,21 +242,51 @@ app.whenReady().then(async () => {
     return
   }
 
-  // Development/builds always use the harmless fixture process; a real kernel
-  // is never resolved or executed until a later milestone enables it opt-in.
+  // Development always uses the harmless fixture process. A packaged Windows
+  // build is composed with the verified real resolver, but KernelSupervisor is
+  // lazy: resolve/download/spawn happen only after the renderer invokes
+  // `kernel:start`. Non-Windows production builds remain fail-closed.
+  const productionSecret = is.dev ? null : randomSecret(32)
+  const productionPorts = is.dev ? null : await allocateProductionPorts()
+  const productionControllerPort = productionPorts?.controller ?? null
+  const productionMixedPort = productionPorts?.mixed ?? null
+  const productionKernelRoot = join(profileRoot, 'kernel')
   const kernelInstance = new KernelSupervisor(
     {
-      resolver: createKernelResolver({ appPath: app.getAppPath(), mode: is.dev ? 'fixture' : 'disabled' }),
-      configStore: new TempKernelConfigStore(),
+      resolver: is.dev
+        ? createKernelResolver({ appPath: app.getAppPath(), mode: 'fixture' })
+        : process.platform === 'win32'
+          ? new MihomoKernelResolver({ allowReal: true, workspaceDir: productionKernelRoot })
+          : createKernelResolver({ appPath: app.getAppPath(), mode: 'disabled' }),
+      configStore: is.dev
+        ? new TempKernelConfigStore()
+        : new MihomoKernelConfigStore({
+            mixedPort: productionMixedPort!,
+            controllerPort: productionControllerPort!,
+            workspaceDir: join(productionKernelRoot, 'runtime')
+          }),
       adapter: new NodeKernelProcessAdapter(),
-      secret: controllerSecret
+      secret: is.dev ? devControllerSecret : productionSecret!
     },
-    { readinessPattern: /fixture-ready/ }
+    { readinessPattern: is.dev ? /fixture-ready/ : null }
   )
   kernel = kernelInstance
   // Await the (mock or disabled) controller gateway before wiring IPC so the
   // renderer's first pull always sees a live controller in dev.
-  const gateway = await createMihomoGateway()
+  const gateway = await createMihomoGateway(
+    is.dev
+      ? undefined
+      : {
+          url: `http://127.0.0.1:${productionControllerPort}`,
+          secret: productionSecret!
+        }
+  )
+  const ipcKernel = !is.dev && mihomo
+    ? new ControllerReadyKernelGateway(
+        kernelInstance,
+        new MihomoClient(`http://127.0.0.1:${productionControllerPort}`, productionSecret!, { timeoutMs: 750 })
+      )
+    : kernelInstance
   const validator = createConfigValidator({ requireProxySections: false })
   
   // SECURITY: In development builds, block all outbound network requests for subscriptions
@@ -261,7 +312,7 @@ app.whenReady().then(async () => {
     subscriptionFetcher
   )
   disposeIpc = registerIpc({
-    kernel: kernelInstance,
+    kernel: ipcKernel,
     mihomo: gateway,
     profiles: profileService
   })

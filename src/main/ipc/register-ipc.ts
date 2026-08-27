@@ -62,10 +62,13 @@ export function registerIpc({ kernel, mihomo, profiles }: IpcDependencies): () =
     })
   }
 
-  const trafficUnsub = forward(IPC.mihomoTrafficEvent, mihomo.onTraffic)
-  const connectionsUnsub = forward(IPC.mihomoConnectionsEvent, mihomo.onConnections)
-  const logsUnsub = forward(IPC.mihomoLogEvent, mihomo.onLogs)
-  const streamErrorUnsub = forward(IPC.mihomoStreamErrorEvent, mihomo.onStreamError)
+  // Preserve the gateway receiver. Passing class methods as bare callbacks
+  // loses `this` at runtime and previously made packaged/dev startup fail before
+  // createWindow(), leaving only an invisible background process.
+  const trafficUnsub = forward(IPC.mihomoTrafficEvent, (listener) => mihomo.onTraffic(listener))
+  const connectionsUnsub = forward(IPC.mihomoConnectionsEvent, (listener) => mihomo.onConnections(listener))
+  const logsUnsub = forward(IPC.mihomoLogEvent, (listener) => mihomo.onLogs(listener))
+  const streamErrorUnsub = forward(IPC.mihomoStreamErrorEvent, (listener) => mihomo.onStreamError(listener))
 
   // Forward kernel status transitions to every open renderer window.
   const statusUnsub = kernel.onStatus((status) => {

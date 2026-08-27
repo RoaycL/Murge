@@ -40,6 +40,9 @@ jobs:
             throw "Tag '$env:GITHUB_REF_NAME' does not match package.json version '$expectedTag'"
           }
 
+      - name: Verify owner-approved application license
+        run: npm run license:check
+
       # Keep each native command in its own step. PowerShell does not
       # necessarily stop a multiline script when an earlier external command
       # exits non-zero; that previously allowed Windows test failures to become

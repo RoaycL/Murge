@@ -1,5 +1,7 @@
 import type { ProfileSubscription } from '../../shared/profiles'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
+import { lookup } from 'node:dns/promises'
+import { isIP } from 'node:net'
 
 /**
  * Subscription fetch abstraction.
@@ -49,6 +51,8 @@ export interface SubscriptionFetcherOptions {
   maxRedirects?: number
   /** Request timeout in milliseconds (default: 30000). */
   timeoutMs?: number
+  /** DNS resolver used to reject hostnames that resolve into private space. */
+  resolveHost?: (hostname: string) => Promise<string[]>
 }
 
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024
@@ -126,6 +130,31 @@ function isPrivateOrInternalHost(host: string): boolean {
     if (a === 169 && b === 254) return true
   }
 
+  return false
+}
+
+function isPublicAddress(address: string): boolean {
+  const normalized = address.toLowerCase().split('%')[0]
+  if (isPrivateOrInternalHost(normalized)) return false
+  if (isIP(normalized) === 4) {
+    const parts = normalized.split('.').map(Number)
+    const [a, b] = parts
+    if (parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false
+    if (a === 0 || a === 10 || a === 127 || a >= 224) return false
+    if (a === 100 && b >= 64 && b <= 127) return false
+    if (a === 169 && b === 254) return false
+    if (a === 172 && b >= 16 && b <= 31) return false
+    if (a === 192 && (b === 0 || b === 168)) return false
+    if (a === 198 && (b === 18 || b === 19 || b === 51)) return false
+    if (a === 203 && b === 0) return false
+    return true
+  }
+  if (isIP(normalized) === 6) {
+    if (normalized === '::' || normalized === '::1') return false
+    if (/^f[cd]/.test(normalized) || /^fe[89ab]/.test(normalized) || /^ff/.test(normalized)) return false
+    if (/^2001:db8(?::|$)/.test(normalized)) return false
+    return true
+  }
   return false
 }
 
@@ -214,6 +243,7 @@ export class SubscriptionFetcher {
   private readonly strictUrlValidation: boolean
   private readonly maxRedirects: number
   private readonly timeoutMs: number
+  private readonly resolveHost: (hostname: string) => Promise<string[]>
 
   constructor(options: SubscriptionFetcherOptions = {}) {
     // The default transport MUST forward `signal` (so the timeout can actually
@@ -246,6 +276,15 @@ export class SubscriptionFetcher {
     this.strictUrlValidation = options.strictUrlValidation !== false // default to true
     this.maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+    this.resolveHost = options.resolveHost ?? (options.fetchFn
+      // An injected transport may not use DNS at all. Tests that exercise DNS
+      // policy inject resolveHost explicitly; production's default transport
+      // always performs the real lookup below.
+      ? async () => ['93.184.216.34']
+      : async (hostname) => {
+          const records = await lookup(hostname, { all: true, verbatim: true })
+          return records.map((record) => record.address)
+        })
   }
 
   /**
@@ -260,7 +299,7 @@ export class SubscriptionFetcher {
   }
 
   /** Validate a URL against SSRF protections. */
-  private validateUrl(url: string): void {
+  private async validateUrl(url: string): Promise<void> {
     if (!this.strictUrlValidation) return
     
     try {
@@ -280,6 +319,19 @@ export class SubscriptionFetcher {
           ProtocolErrorCode.INVALID_ARGUMENT,
           `禁止访问内部地址：${redactCredentials(url)}`
         )
+      }
+      // A harmless-looking hostname can still resolve to loopback/private
+      // space. Resolve every redirect hop immediately before requesting it and
+      // reject the hop unless every returned address is globally routable.
+      // Literal IPs are already normalized by WHATWG URL and checked above.
+      if (isIP(parsed.hostname) === 0) {
+        const addresses = await this.resolveHost(parsed.hostname)
+        if (addresses.length === 0 || addresses.some((address) => !isPublicAddress(address))) {
+          throw new ProtocolError(
+            ProtocolErrorCode.INVALID_ARGUMENT,
+            `订阅域名解析到非公网地址：${redactCredentials(url)}`
+          )
+        }
       }
     } catch (error) {
       if (error instanceof ProtocolError) throw error
@@ -304,7 +356,7 @@ export class SubscriptionFetcher {
     try {
       while (true) {
         // Validate current URL before each request
-        this.validateUrl(currentUrl)
+        await this.validateUrl(currentUrl)
         
         // Use manual redirect mode to detect 3xx responses
         response = await this.fetchFn(currentUrl, { signal, redirect: 'manual' })
@@ -333,7 +385,7 @@ export class SubscriptionFetcher {
           }
           
           // Validate the redirect target
-          this.validateUrl(nextUrl)
+          await this.validateUrl(nextUrl)
           currentUrl = nextUrl
           continue
         }

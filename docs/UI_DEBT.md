@@ -9,6 +9,8 @@ shared capture environment). Do NOT fix these items in feature phases.
 
 ## UI-DEBT-001 — Total-card ratio bar whitespace
 
+Resolved: the bar now uses a single flex/percentage sizing model.
+
 The 总计 card's ratio bar uses a `grid` with fixed `fr` column tracks
 (`grid-template-columns: 68fr 32fr`) *and* each child also declares its own
 percentage width. The two width models stack, producing a visible blank gap
@@ -22,6 +24,9 @@ between the DIRECT and 代理 segments (and/or clipping at the trailing edge).
 - Do not treat the current 68/32 split as final.
 
 ## UI-DEBT-002 — "今日" is not a cumulative statistic
+
+Resolved for truthful presentation: the tab is now labelled “当前”; unavailable
+history is disabled rather than presented as cumulative data.
 
 The 今日 / 总计 figure currently derives from the *active-connection* summary
 (`connections.summary.directDownload + proxyDownload`), which is a live
@@ -46,6 +51,10 @@ margins differ by a few px).
   comparison is fine as a diagnostic, never as the accept gate.
 
 ## UI-DEBT-004 — Activity latency card and hourly bars are still hardcoded
+
+Resolved for truthful presentation: invented latency/DHCP numbers were replaced
+with `—`, diagnostics are disabled, and hourly buckets render empty until a
+durable history source exists.
 
 Phase 3 wired the Activity speed cards, active-connection counts, process/domain
 ranking and the 总计 breakdown to live mock IPC data, but three regions of
@@ -101,6 +110,9 @@ Defer the visual pass to the unified visual-acceptance phase. Functional behavio
 must not be reworked for layout reasons.
 
 ## UI-DEBT-006 — Profile storage uses mkdtemp (ephemeral per-launch)
+
+Resolved for production: packaged builds use the stable app-id-derived profile
+root. Only development intentionally uses a fresh isolated temporary root.
 
 Phase 5 stores profiles in a `mkdtemp` directory under `/tmp` (`index.ts:113`).
 This means:

@@ -2,7 +2,10 @@
 
 An Electron + Vue 3 framework for a Windows-first network client powered by a separately supervised mihomo process.
 
-This milestone intentionally contains the application shell, visual language, typed IPC boundaries, mihomo HTTP client foundation and implementation specifications. It does **not** claim production-ready proxy, TUN, update or service-management behavior.
+The project currently implements the Phase 1–7 application shell, typed IPC,
+profiles, mihomo REST/WebSocket transport, Windows packaging, and an explicitly
+user-triggered safe-direct kernel lifecycle. System proxy, TUN, DNS takeover,
+automatic updates and service management are **not** implemented yet.
 
 ## Start the UI development build
 
@@ -11,7 +14,11 @@ npm install
 npm run dev
 ```
 
-The default Activity page uses deterministic fixture values so visual work does not depend on a running kernel. Set `MURGE_DEV_CONTROLLER` and `MURGE_DEV_SECRET` only while an implementation agent is wiring real data.
+Development uses an in-process loopback mock controller and a harmless fixture
+process. It never starts real mihomo or changes system networking. Packaged
+Windows builds also start stopped; the verified kernel is downloaded and run
+only after the user presses “启动” in Overview, with a loopback-only
+`MATCH,DIRECT` configuration.
 
 ## Handoff reading order
 
@@ -29,13 +36,14 @@ The default Activity page uses deterministic fixture values so visual work does 
 
 ## Project status
 
-- Electron security defaults: scaffolded
-- Vue router and application shell: scaffolded
-- Activity and Overview reference UI: scaffolded
-- Typed renderer/preload/main IPC contract: scaffolded
-- Basic mihomo REST client: scaffolded
-- Kernel process supervisor: interface only
-- WebSocket streams: specification only
+- Electron security defaults: implemented
+- Vue router and application shell: implemented
+- Activity and Overview UI: implemented; final cross-page pixel pass pending
+- Typed renderer/preload/main IPC contract: implemented and runtime-validated
+- Mihomo REST/WebSocket transport: implemented
+- Kernel process supervisor: implemented; real Windows start is explicit only
+- Profiles/subscriptions and stable production storage: implemented
+- Windows x64/arm64 packaging and GitHub draft releases: implemented
 - Windows system proxy and TUN: specification only
 - Installer signing and update channel: not implemented
 
@@ -45,4 +53,7 @@ The product name is not an architectural identifier. Rename the project through 
 
 ## Licensing note
 
-The application license has intentionally not been selected in this framework milestone. The bundled or distributed mihomo binary is GPL-3.0 licensed and must be accompanied by the notices and corresponding-source access required by that license. Obtain project-owner approval before adding a repository license or publishing binary releases.
+The application license has not yet been selected. Tagged release builds now
+fail closed unless both a root `LICENSE` and a matching `package.json` SPDX
+identifier exist. The bundled or distributed mihomo binary is GPL-3.0 licensed
+and remains covered by the included notices and corresponding-source offer.

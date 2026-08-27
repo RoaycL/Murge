@@ -298,8 +298,7 @@ export class KernelSupervisor extends EventEmitter {
     })
     handle.onError((error) => {
       if (this.handle !== handle) return
-      this.handle = null
-      this.handleError(error)
+      this.handleError(handle, error)
     })
   }
 
@@ -363,9 +362,35 @@ export class KernelSupervisor extends EventEmitter {
     })()
   }
 
-  private handleError(error: Error): void {
-    this.rejectReadiness(new ProtocolError(ProtocolErrorCode.KERNEL_SPAWN_FAILED, error.message))
-    this.setStatus({ phase: 'failed', pid: null, lastError: `Kernel spawn failed: ${error.message}` })
+  private handleError(handle: KernelProcessHandle, error: Error): void {
+    const protocolError = new ProtocolError(ProtocolErrorCode.KERNEL_SPAWN_FAILED, error.message)
+    this.rejectReadiness(protocolError)
+
+    // ChildProcess can emit `error` both when spawn failed and when an operation
+    // on an already-running child failed. Never drop a handle for a PID that is
+    // still alive: keeping it tracked prevents a second kernel from starting
+    // and lets stop() retry termination without deleting a config the process
+    // may still be reading.
+    const pid = handle.pid
+    if (pid != null && this.deps.adapter.isProcessAlive(pid)) {
+      this.setStatus({ phase: 'failed', pid, lastError: `Kernel process error: ${error.message}` })
+      return
+    }
+
+    this.handle = null
+    // A failed spawn has no later `exit` event on which cleanup can safely rely.
+    // Mirror handleExit's awaited cleanup contract so start()/stop()/quit never
+    // finish while the secret-bearing workspace remains on disk.
+    this.exitWork = (async () => {
+      await this.cleanupConfig()
+      if (this.exitWait) {
+        clearTimeout(this.exitWait.timer)
+        const waiter = this.exitWait
+        this.exitWait = null
+        waiter.resolve(true)
+      }
+      this.setStatus({ phase: 'failed', pid: null, lastError: `Kernel spawn failed: ${error.message}` })
+    })()
   }
 
   private scheduleRestart(reason: string): void {

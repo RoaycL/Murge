@@ -117,6 +117,9 @@ function createWindow(): BrowserWindow {
     title: brand.productName,
     backgroundColor: '#eef3f8',
     webPreferences: {
+      // Keep this aligned with electron.vite.config.ts. Sandboxed Electron
+      // preloads must use the CommonJS-compatible output; an ESM .mjs preload
+      // leaves `window.desktop` undefined and every IPC-backed view stuck.
       preload: join(__dirname, '../preload/index.js'),
       sandbox: true,
       contextIsolation: true,
@@ -133,6 +136,22 @@ function createWindow(): BrowserWindow {
   }
   window.once('ready-to-show', showWindow)
   window.webContents.once('did-finish-load', showWindow)
+  if (process.argv.includes('--ui-smoke')) {
+    window.webContents.once('did-finish-load', () => {
+      void window.webContents.executeJavaScript(
+        `window.desktop.app.getBrand().then((value) => ({ productName: value.productName, hasMihomo: typeof window.desktop.mihomo?.getConnections === 'function' }))`
+      ).then((result: { productName?: string; hasMihomo?: boolean }) => {
+        if (result.productName !== brand.productName || result.hasMihomo !== true) {
+          throw new Error('preload API did not expose the expected typed desktop bridge')
+        }
+        console.log(`[ui-smoke] preload IPC ready for ${result.productName}`)
+        app.exit(0)
+      }).catch((error) => {
+        console.error('[ui-smoke] preload IPC failed:', error)
+        app.exit(1)
+      })
+    })
+  }
   window.on('closed', () => {
     if (mainWindow === window) mainWindow = null
   })

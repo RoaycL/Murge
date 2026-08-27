@@ -264,6 +264,13 @@ jobs:
           if ($newPorts) { throw 'controller port 9090 is listening after the smoke run' }
           Write-Host 'no mihomo process and no new controller listener confirmed'
 
+          # Load the real renderer + sandboxed preload and perform one typed IPC
+          # round-trip. A visible static shell alone is insufficient: a missing
+          # preload previously left every live view stuck while this job passed.
+          $bridge = Start-Process -FilePath $exe -ArgumentList '--ui-smoke' -PassThru -Wait
+          Write-Host "ui-smoke exit code: $($bridge.ExitCode) (expected 0)"
+          if ($bridge.ExitCode -ne 0) { throw "preload IPC smoke exited with code $($bridge.ExitCode)" }
+
           # Launch the REAL packaged GUI path (without --packaging-smoke) and
           # require a visible native top-level window. The old probe explicitly
           # skipped window creation, so an invisible background-only app could

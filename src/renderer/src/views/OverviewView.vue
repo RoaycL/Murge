@@ -30,7 +30,7 @@ async function toggleKernel(): Promise<void> {
       <SurfaceCard><div class="setting-head"><div><h3>TUN 模式</h3><p>接管不遵循系统代理设置的应用流量，需要系统权限和正确安装的服务组件。</p></div><button class="switch" disabled aria-label="TUN 模式尚未实现" /></div><div class="setting-status"><i />阶段 9 尚未实现，当前未启用</div></SurfaceCard>
     </div></section>
     <section><h2>局域网设备接管</h2><div class="overview-grid">
-      <SurfaceCard><div class="setting-head"><div><h3>HTTP & SOCKS5 代理</h3><p>安全直连配置强制只监听本机；开放局域网将在独立安全阶段实现。</p></div><button class="switch" disabled aria-label="局域网接管尚未实现" /></div><div class="setting-status"><i />当前仅监听 127.0.0.1</div></SurfaceCard>
+      <SurfaceCard><div class="setting-head"><div><h3>HTTP & SOCKS5 代理</h3><p>安全直连配置强制只监听本机；开放局域网将在独立安全阶段实现。</p></div><button class="switch" disabled aria-label="局域网接管尚未实现" /></div><div class="setting-status"><i />未开放局域网；启动后仅监听 127.0.0.1</div></SurfaceCard>
     </div></section>
   </div>
 </template>

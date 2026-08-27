@@ -56,10 +56,12 @@ describe('electron-builder brand wiring (Phase 6 metadata)', () => {
     }
   })
 
-  it('builds exactly two per-arch NSIS targets (strategy A, no combined installer)', () => {
-    expect(config.win.target).toHaveLength(2)
-    config.win.target.forEach((t) => expect(t.target).toBe('nsis'))
-    expect(config.win.target.map((t) => t.arch[0]).sort()).toEqual(['arm64', 'x64'])
+  it('produces exactly two per-arch NSIS installers (strategy A, no combined)', () => {
+    // Strategy A: x64 + arm64 only, never the combined/universal installer.
+    expect(config.nsis.buildUniversalInstaller).toBe(false)
+    expect(config.win.target).toHaveLength(1)
+    expect(config.win.target[0].target).toBe('nsis')
+    expect(config.win.target[0].arch).toEqual(['x64', 'arm64'])
     // The artifact name is arch-suffixed so each install file is distinguishable.
     expect(config.win.artifactName).toContain('${arch}')
   })

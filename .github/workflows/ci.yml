@@ -67,22 +67,17 @@ jobs:
           "APP_ID=$($brand.appId)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "EXECUTABLE_NAME=$($brand.executableName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      # Build once, then package the two intended targets independently (x64 and
-      # arm64). Strategy A: ship exactly two installers and never the combined
-      # multi-arch one, so CI never uploads ~373MB of redundant artifacts.
+      # Build once, then package. Strategy A: `buildUniversalInstaller: false`
+      # produces exactly two per-arch installers (x64 + arm64) and never the
+      # combined multi-arch one, so CI never uploads ~373MB of redundant files.
       - name: Build renderer/main
         run: npm run build
 
-      - name: Package Windows NSIS (x64)
-        run: npx electron-builder --win --x64 --config electron-builder.config.mjs --publish never
+      - name: Package Windows NSIS (x64 + arm64)
+        run: npx electron-builder --win --config electron-builder.config.mjs --publish never
         env:
           # Signing is intentionally disabled for CI smoke builds. Real signing
           # needs a certificate and is an owner decision — see docs/CODE_SIGNING.md.
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
-
-      - name: Package Windows NSIS (arm64)
-        run: npx electron-builder --win --arm64 --config electron-builder.config.mjs --publish never
-        env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
       - name: Verify notices are retained in the packaged artifact

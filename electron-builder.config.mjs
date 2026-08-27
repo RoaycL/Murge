@@ -31,18 +31,19 @@ export default {
   win: {
     icon: 'icon.ico',
     // Strategy A: ship exactly two per-arch installers (x64 + arm64) and never
-    // the combined multi-arch one. Each NSIS target is declared with a single
-    // arch so a bare `package:win` produces two installers and no ~373MB
-    // combined artifact (the combined installer only appears when one target
-    // spans several archs).
-    target: [
-      { target: 'nsis', arch: ['x64'] },
-      { target: 'nsis', arch: ['arm64'] }
-    ],
+    // the combined multi-arch one. The combined artifact is produced by the NSIS
+    // universal-installer path, so it is disabled here via `buildUniversalInstaller:
+    // false`; the arch-suffixed artifact name then yields exactly
+    // `-x64.exe` and `-arm64.exe` and no ~373MB combined file.
+    target: [{ target: 'nsis', arch: ['x64', 'arm64'] }],
     artifactName: `${brand.productName}-Setup-${'${version}'}-${'${arch}'}.${'${ext}'}`
   },
   nsis: {
     oneClick: false,
+    // Never build the NSIS universal/combined installer. Produces one file per
+    // arch (see `win.target`) instead of a big combined one, so a full build
+    // yields exactly two distributable installers.
+    buildUniversalInstaller: false,
     allowToChangeInstallationDirectory: true,
     createDesktopShortcut: true,
     createStartMenuShortcut: true,

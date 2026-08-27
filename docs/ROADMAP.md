@@ -178,11 +178,12 @@ Environment: disposable Windows VM or CI runner. No network mutation required.
 
 Entry gate: Phases 1–2 complete.
 
-- [ ] Verify x64 build and NSIS installer. (The `package-win` Windows CI job now installs the NSIS installer, launches a `--packaging-smoke` production probe, asserts exit 0 and no real kernel/controller listener, then uninstalls and confirms user profiles survive. It must be observed green on a real Windows runner.)
+- [x] Verify x64 build and NSIS installer. (The `package-win` Windows CI job installs the NSIS installer, launches a `--packaging-smoke` production probe, asserts exit 0 and no real kernel/controller listener, then uninstalls and confirms user profiles survive. Observed green on a real Windows runner — CI run [33047258615](https://github.com/RoaycL/Murge/actions/runs/33047258615), Windows job `98434183222` — producing `Murge-Setup-0.1.0-x64.exe` and `Murge-Setup-0.1.0-arm64.exe`; arm64 is packaging-only with runtime verification explicitly deferred to the Windows VM. This run also shipped the transactional, marker-based legacy-data migration.)
 - [x] Verify arm64 build or explicitly defer it. (Packaging strategy A: exactly two per-arch installers, x64 + arm64, never a combined multi-arch artifact. arm64 runtime verification is deferred to the Windows VM.)
 - [x] Add final application icons and Windows metadata.
 - [x] Verify brand-configured product name, executable and protocol scheme. (Wired via `brand.*` and covered by a builder-config test; runtime deep-link registration is Phase 7.)
-- [x] Define stable application-data and migration namespaces.
+- [x] Define stable application-data and migration namespaces. (The namespace is derived from `appId`, never the cosmetic product name, and legacy data is imported through a transactional staging + `migration-state.json` marker flow: a full copy Staged into a sibling directory, committed with an explicit no-overwrite conflict policy, and recoverable on the next launch after a partial failure.)
+- [x] Migrate legacy data without a filename whitelist. (Whether a namespace still needs importing is decided by the migration marker and version, not by judging which files the target already holds, so Chromium runtime files — `Preferences`, `Local State`, `Local Storage` — never suppress the import; the marker is written atomically and existing newer profiles are never overwritten.)
 - [x] Add uninstall behavior that preserves user profiles by default.
 - [x] Document code-signing inputs without committing secrets.
 - [x] Generate third-party notices and mihomo GPL compliance materials. (Placeholders removed; the every-bundled-dependency license text is retained under `licenses/` and bundled into the artifact alongside `THIRD_PARTY_NOTICES.md`, asserted by the `package-win` artifact check and the `third-party-notices` unit test.)

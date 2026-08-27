@@ -1,16 +1,32 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, beforeAll, afterEach } from 'vitest'
 import { mkdtemp, rm, writeFile, access, symlink, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import {
-  cleanupKernel,
-  isMihomoName,
-  binaryPathMatchesName,
-  mihomoPids,
-  portHasListener,
-  validateEvidenceSchema,
-  validateEvidencePaths
-} from '../scripts/kernel-watchdog-cleanup.mjs'
+
+// Load the shared cleanup script at runtime rather than via a static top-level
+// `import ... from '...mjs'`: vitest's Windows transform chokes on a static
+// `.mjs` import in a `.test.ts` module (observed on the kernel-real-windows CI
+// job as `SyntaxError: Invalid or unexpected token` at the import site), while a
+// dynamic `import()` of the same `.mjs` is handled fine cross-platform.
+type CleanupScript = typeof import('../scripts/kernel-watchdog-cleanup.mjs')
+let cleanupKernel: CleanupScript['cleanupKernel']
+let isMihomoName: CleanupScript['isMihomoName']
+let binaryPathMatchesName: CleanupScript['binaryPathMatchesName']
+let mihomoPids: CleanupScript['mihomoPids']
+let portHasListener: CleanupScript['portHasListener']
+let validateEvidenceSchema: CleanupScript['validateEvidenceSchema']
+let validateEvidencePaths: CleanupScript['validateEvidencePaths']
+
+beforeAll(async () => {
+  const mod = await import('../scripts/kernel-watchdog-cleanup.mjs')
+  cleanupKernel = mod.cleanupKernel
+  isMihomoName = mod.isMihomoName
+  binaryPathMatchesName = mod.binaryPathMatchesName
+  mihomoPids = mod.mihomoPids
+  portHasListener = mod.portHasListener
+  validateEvidenceSchema = mod.validateEvidenceSchema
+  validateEvidencePaths = mod.validateEvidencePaths
+})
 
 /**
  * Cleanup-script fail-closed coverage. These tests run in the DEFAULT vitest

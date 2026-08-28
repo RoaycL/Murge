@@ -6,8 +6,9 @@ import type {
   SystemProxyWrittenState
 } from '../types'
 
-export type FakeApplyBehavior = 'write' | 'reject' | 'write-other'
-export type FakeRestoreBehavior = 'restore' | 'reject'
+export type FakeApplyBehavior = 'write' | 'reject' | 'write-other' | 'partial'
+export type FakeRestoreBehavior = 'restore' | 'reject' | 'restore-mismatch'
+export type FakeRefreshBehavior = 'refresh' | 'reject'
 
 export interface FakeSystemProxyAdapterOptions {
   /** Default true. When false, `apply` reports unsupported. */
@@ -18,6 +19,8 @@ export interface FakeSystemProxyAdapterOptions {
   applyBehavior?: FakeApplyBehavior
   /** What `restore` does (default `restore`). */
   restoreBehavior?: FakeRestoreBehavior
+  /** What `refresh` does (default `refresh`). */
+  refreshBehavior?: FakeRefreshBehavior
 }
 
 export type FakeSystemProxyCall =
@@ -27,8 +30,7 @@ export type FakeSystemProxyCall =
   | { op: 'refresh' }
   | { op: 'mutate'; keys: (keyof SystemProxyRegistryState)[] }
 
-const ABSENT_DWORD: RegistryValue = { exists: false, type: 'dword', value: null }
-const ABSENT_STRING: RegistryValue = { exists: false, type: 'string', value: null }
+const ABSENT: RegistryValue = { exists: false, type: 'none', value: null }
 
 /**
  * In-memory registry stand-in for unit tests, the Mac dev box and static checks.
@@ -46,15 +48,17 @@ export class FakeSystemProxyAdapter implements SystemProxyAdapter {
   private keys: SystemProxyRegistryState
   private applyBehavior: FakeApplyBehavior
   private restoreBehavior: FakeRestoreBehavior
+  private refreshBehavior: FakeRefreshBehavior
 
   constructor(options: FakeSystemProxyAdapterOptions = {}) {
     this.supported = options.supported ?? true
     this.applyBehavior = options.applyBehavior ?? 'write'
     this.restoreBehavior = options.restoreBehavior ?? 'restore'
+    this.refreshBehavior = options.refreshBehavior ?? 'refresh'
     this.keys = {
-      proxyEnable: options.initial?.proxyEnable ?? { ...ABSENT_DWORD },
-      proxyServer: options.initial?.proxyServer ?? { ...ABSENT_STRING },
-      proxyOverride: options.initial?.proxyOverride ?? { ...ABSENT_STRING }
+      proxyEnable: options.initial?.proxyEnable ?? { ...ABSENT },
+      proxyServer: options.initial?.proxyServer ?? { ...ABSENT },
+      proxyOverride: options.initial?.proxyOverride ?? { ...ABSENT }
     }
   }
 
@@ -71,10 +75,20 @@ export class FakeSystemProxyAdapter implements SystemProxyAdapter {
     if (this.applyBehavior === 'reject') {
       return Promise.reject(new Error('simulated apply failure'))
     }
+    if (this.applyBehavior === 'partial') {
+      // Simulate a mid-apply failure: a subset is written, the rest is not, then
+      // the command fails. This matches a `reg add` sequence that dies part-way.
+      this.keys = {
+        proxyEnable: { ...written.proxyEnable },
+        proxyServer: { ...written.proxyServer },
+        proxyOverride: { ...this.keys.proxyOverride }
+      }
+      return Promise.reject(new Error('simulated partial apply failure'))
+    }
     if (this.applyBehavior === 'write-other') {
       this.keys = {
         proxyEnable: written.proxyEnable,
-        proxyServer: { exists: true, type: 'string', value: 'http=127.0.0.1:1;https=127.0.0.1:1;socks=127.0.0.1:1' },
+        proxyServer: { exists: true, type: 'REG_SZ', value: 'http=127.0.0.1:1;https=127.0.0.1:1;socks=127.0.0.1:1' },
         proxyOverride: written.proxyOverride
       }
       return Promise.resolve()
@@ -92,12 +106,25 @@ export class FakeSystemProxyAdapter implements SystemProxyAdapter {
     if (this.restoreBehavior === 'reject') {
       return Promise.reject(new Error('simulated restore failure'))
     }
+    if (this.restoreBehavior === 'restore-mismatch') {
+      // Simulate a restore that writes the wrong value, so the read-back
+      // verification cannot prove the operation succeeded.
+      this.keys = {
+        proxyEnable: { ...previous.proxyEnable },
+        proxyServer: { exists: true, type: 'REG_SZ', value: 'http=127.0.0.1:9;https=127.0.0.1:9;socks=127.0.0.1:9' },
+        proxyOverride: { ...previous.proxyOverride }
+      }
+      return Promise.resolve()
+    }
     this.keys = { ...previous }
     return Promise.resolve()
   }
 
   refresh(): Promise<void> {
     this.calls.push({ op: 'refresh' })
+    if (this.refreshBehavior === 'reject') {
+      return Promise.reject(new Error('simulated refresh failure'))
+    }
     return Promise.resolve()
   }
 

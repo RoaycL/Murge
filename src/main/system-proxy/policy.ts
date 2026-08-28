@@ -55,32 +55,46 @@ export function mergeProxyOverride(original: string | null | undefined): string 
   return Array.from(merged).join(';')
 }
 
+/** The raw registry types we can faithfully restore via `reg.exe`. */
+export const RESTORABLE_REGISTRY_TYPES = ['REG_DWORD', 'REG_SZ', 'REG_EXPAND_SZ', 'REG_BINARY'] as const
+
+function isRestorableType(type: RegistryValue['type']): boolean {
+  return type !== 'none' && (RESTORABLE_REGISTRY_TYPES as readonly RegistryValue['type'][]).includes(type)
+}
+
 /** Build the value set the app owns while the system proxy is enabled. */
 export function buildWrittenState(
   target: SystemProxyTarget,
   observed: SystemProxyRegistryState
 ): SystemProxyWrittenState {
   return {
-    proxyEnable: { exists: true, type: 'dword', value: 1 },
-    proxyServer: { exists: true, type: 'string', value: buildProxyServerValue(target) },
-    proxyOverride: { exists: true, type: 'string', value: mergeProxyOverride(observed.proxyOverride.value as string | null) }
+    proxyEnable: { exists: true, type: 'REG_DWORD', value: 1 },
+    proxyServer: { exists: true, type: 'REG_SZ', value: buildProxyServerValue(target) },
+    proxyOverride: { exists: true, type: 'REG_SZ', value: mergeProxyOverride(observed.proxyOverride.value as string | null) }
   }
 }
 
-function normalizedString(value: RegistryValue): string | null {
-  return value.exists && typeof value.value === 'string' ? value.value : null
-}
-
-function normalizedDword(value: RegistryValue): number | null {
-  return value.exists && typeof value.value === 'number' ? value.value : null
+/**
+ * Strict registry-value equality: a value only matches when both `exists`, the
+ * *literal* registry type, and the value all agree. Previously this compared the
+ * bare value, so an `REG_SZ` value could masquerade as an `REG_EXPAND_SZ` (or an
+ * `REG_BINARY` be read as a string) and ownership / restore verification passed
+ * when it should not have.
+ */
+export function sameRegistryValue(a: RegistryValue, b: RegistryValue): boolean {
+  if (a.exists !== b.exists) return false
+  if (!a.exists) {
+    return a.type === 'none' && b.type === 'none' && a.value === null && b.value === null
+  }
+  return a.type === b.type && a.value === b.value
 }
 
 /** The set of proxy keys whose observed value differs from what the app wrote. */
 export function differingKeys(observed: SystemProxyRegistryState, written: SystemProxyWrittenState): string[] {
   const differing: string[] = []
-  if (normalizedDword(observed.proxyEnable) !== normalizedDword(written.proxyEnable)) differing.push('ProxyEnable')
-  if (normalizedString(observed.proxyServer) !== normalizedString(written.proxyServer)) differing.push('ProxyServer')
-  if (normalizedString(observed.proxyOverride) !== normalizedString(written.proxyOverride)) differing.push('ProxyOverride')
+  if (!sameRegistryValue(observed.proxyEnable, written.proxyEnable)) differing.push('ProxyEnable')
+  if (!sameRegistryValue(observed.proxyServer, written.proxyServer)) differing.push('ProxyServer')
+  if (!sameRegistryValue(observed.proxyOverride, written.proxyOverride)) differing.push('ProxyOverride')
   return differing
 }
 
@@ -98,6 +112,40 @@ export function conflictDetail(observed: SystemProxyRegistryState, written: Syst
 /** Whether the current registry exactly matches the pre-enable snapshot. */
 export function matchesPrevious(observed: SystemProxyRegistryState, previous: SystemProxyRegistryState): boolean {
   return isOwned(observed, previous)
+}
+
+/**
+ * Refuse to enable *before* any registry write if the pre-enable state contains a
+ * value we cannot faithfully restore, or a structurally inconsistent value. This
+ * is fail-closed: we would rather leave the system proxy untouched than enable on
+ * top of a state we could not put back.
+ */
+export function validateRestorable(previous: SystemProxyRegistryState): void {
+  const entries = Object.entries(previous) as [keyof SystemProxyRegistryState, RegistryValue][]
+  for (const [name, value] of entries) {
+    if (!value.exists) {
+      if (value.type !== 'none' || value.value !== null) {
+        throw new ProtocolError(
+          ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED,
+          `系统代理项 ${name} 的备份状态不一致，已拒绝启用`
+        )
+      }
+      continue
+    }
+    if (!isRestorableType(value.type)) {
+      throw new ProtocolError(
+        ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED,
+        `系统代理项 ${name} 的类型 ${value.type} 无法安全还原，已拒绝启用`
+      )
+    }
+    if (value.type === 'REG_DWORD' || value.type === 'REG_QWORD') {
+      if (typeof value.value !== 'number' || !Number.isInteger(value.value) || value.value < 0) {
+        throw new ProtocolError(ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED, `系统代理项 ${name} 的数值无效`)
+      }
+    } else if (typeof value.value !== 'string') {
+      throw new ProtocolError(ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED, `系统代理项 ${name} 的字符串值无效`)
+    }
+  }
 }
 
 /** Hard validation of a target. Throws INVALID_ARGUMENT for a bad host/port. */

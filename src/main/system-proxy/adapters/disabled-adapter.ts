@@ -2,9 +2,9 @@ import { ProtocolError, ProtocolErrorCode } from '../../../shared/protocol-error
 import type { SystemProxyAdapter, SystemProxyRegistryState, SystemProxyWrittenState } from '../types'
 
 const ABSENT: SystemProxyRegistryState = {
-  proxyEnable: { exists: false, type: 'dword', value: null },
-  proxyServer: { exists: false, type: 'string', value: null },
-  proxyOverride: { exists: false, type: 'string', value: null }
+  proxyEnable: { exists: false, type: 'none', value: null },
+  proxyServer: { exists: false, type: 'none', value: null },
+  proxyOverride: { exists: false, type: 'none', value: null }
 }
 
 function unsupported(message: string): ProtocolError {

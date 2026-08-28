@@ -9,6 +9,7 @@ import {
   formatAddress,
   isOwned,
   matchesPrevious,
+  validateRestorable,
   validateTarget
 } from './policy'
 import type {
@@ -135,8 +136,11 @@ export class SystemProxyService implements SystemProxyGateway {
       }
 
       // Fresh enable: snapshot the pre-enable registry, persist the owned bundle
-      // BEFORE applying so a crash mid-apply is recoverable next launch.
+      // BEFORE applying so a crash mid-apply is recoverable next launch. Refuse
+      // up front if the pre-enable state holds a value we could not faithfully
+      // restore — never enable on an un-restorable state.
       const observed = await this.adapter.read()
+      validateRestorable(observed)
       const written = buildWrittenState(target, observed)
       const bundle: SystemProxyBackup = {
         schemaVersion: SYSTEM_PROXY_BACKUP_SCHEMA_VERSION,
@@ -153,23 +157,24 @@ export class SystemProxyService implements SystemProxyGateway {
       }
 
       this.transition('enabling')
-      let applied = false
       try {
         await this.adapter.apply(written)
-        applied = true
         await this.adapter.refresh()
         const readback = await this.adapter.read()
         if (!isOwned(readback, written)) {
-          await this.rollback(bundle)
-          return this.fail('disabled', ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED, '系统代理写入后校验不一致，已还原')
+          throw new Error('read-back mismatch after apply')
         }
       } catch (error) {
-        if (applied) {
-          await this.rollback(bundle).catch(() => {})
-        } else {
-          await this.backup.delete().catch(() => {})
+        // `apply` may have written a subset before failing (a `reg add` sequence
+        // that dies part-way), so always attempt a *confirmed* restore. Only a
+        // restored + verified + read-back state may delete the bundle; a rollback
+        // failure is surfaced as restore-failed, never swallowed into `disabled`.
+        try {
+          await this.rollback(bundle)
+        } catch (rollbackError) {
+          return this.fail('restore-failed', ProtocolErrorCode.SYSTEM_PROXY_RESTORE_FAILED, '系统代理启用失败且无法还原，已保留备份', null, rollbackError)
         }
-        return this.fail('disabled', ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED, '系统代理启用失败', null, error)
+        return this.fail('disabled', ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED, '系统代理启用失败，已还原', null, error)
       }
 
       return this.transition('enabled', { address: formatAddress(target), port: target.port })
@@ -272,14 +277,14 @@ export class SystemProxyService implements SystemProxyGateway {
     await this.backup.delete()
   }
 
-  /** Roll back a partially-applied enable: restore the pre-enable state, then drop the bundle. */
+  /**
+   * Roll back a partially-applied enable. Reuses the strict restore path
+   * (restore → refresh → read-back verify → delete-on-success) so a failed
+   * rollback keeps the bundle for a later retry / crash recovery, and throws
+   * rather than being swallowed by the caller.
+   */
   private async rollback(backup: SystemProxyBackup): Promise<void> {
-    try {
-      await this.adapter.restore(backup.previous)
-      await this.adapter.refresh()
-    } finally {
-      await this.backup.delete().catch(() => {})
-    }
+    await this.restoreBackupStrict(backup)
   }
 
   private buildStatus(phase: SystemProxyPhase, extra: Partial<SystemProxyStatus> = {}): SystemProxyStatus {

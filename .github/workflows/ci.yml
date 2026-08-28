@@ -172,6 +172,23 @@ jobs:
         env:
           NODE_ENV: development
 
+      # Record the pre-run per-user HKCU proxy baseline so the `if: always()`
+      # final step can prove the proxy was restored to its ORIGINAL state rather
+      # than merely "left some value". A fresh Windows runner normally has it
+      # disabled (ProxyEnable=0/absent), but capturing the real baseline removes
+      # any flakiness from a runner image that already had a proxy configured.
+      - name: Capture pre-run HKCU system-proxy baseline
+        shell: pwsh
+        run: |
+          $k = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
+          $e = Get-ItemPropertyValue $k -Name ProxyEnable -ErrorAction SilentlyContinue
+          if ($null -eq $e) { $e = 0 }
+          $s = Get-ItemPropertyValue $k -Name ProxyServer -ErrorAction SilentlyContinue
+          $o = Get-ItemPropertyValue $k -Name ProxyOverride -ErrorAction SilentlyContinue
+          $baseline = [ordered]@{ proxyEnable = [int]$e; proxyServer = "$s"; proxyOverride = "$o" }
+          $baseline | ConvertTo-Json -Compress | Out-File -FilePath "$env:RUNNER_TEMP\system-proxy-baseline.json" -Encoding utf8
+          Write-Host "baseline: $($baseline | ConvertTo-Json -Compress)"
+
       # Registers the per-user HKCU system proxy (ProxyServer/ProxyEnable/
       # ProxyOverride on 127.0.0.1), then proves WinHTTP, default routes, DNS,
       # adapters and firewall profiles were NOT touched — only the HKCU Internet
@@ -179,10 +196,44 @@ jobs:
       # in a `finally` block, so a failing assertion can never leave the host's
       # proxy changed. No socket is bound (nothing is actually served), so no real
       # traffic is proxied. The integration test is gated inside itself by the
-      # MURGE_RUN_REAL_SYSTEM_PROXY env var + win32, so it only runs here.
+      # MURGE_RUN_REAL_SYSTEM_PROXY env var + win32, so it only runs here. It also
+      # forces-kills an owner process mid-apply and verifies the STANDALONE
+      # scripts/recover-system-proxy.mjs helper restores it (see the test body).
       - name: Run real system-proxy enable/restore test (gated)
         shell: pwsh
         run: npx vitest run tests/system-proxy-real.integration.test.ts
+
+      # P1 #5: must run even on failure/crash. Run the SAME standalone
+      # recover-system-proxy.mjs the test uses, against the real default app-data
+      # owned backup. If the test crashed mid-apply and left the proxy enabled,
+      # this restores it; if the test already restored and deleted the backup it is
+      # a safe no-op (disabled, exit 0). Then prove the HKCU proxy is back to the
+      # exact pre-run baseline. A genuine restore failure (exit 1) fails CI.
+      - name: Restore orphaned system proxy & verify final consistency (finally)
+        if: always()
+        shell: pwsh
+        run: |
+          $restoreLog = node scripts/recover-system-proxy.mjs 2>&1
+          Write-Output $restoreLog
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error 'external system-proxy restore failed'
+            exit 1
+          }
+          $k = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
+          $e = Get-ItemPropertyValue $k -Name ProxyEnable -ErrorAction SilentlyContinue
+          if ($null -eq $e) { $e = 0 }
+          $s = Get-ItemPropertyValue $k -Name ProxyServer -ErrorAction SilentlyContinue
+          $o = Get-ItemPropertyValue $k -Name ProxyOverride -ErrorAction SilentlyContinue
+          $now = [ordered]@{ proxyEnable = [int]$e; proxyServer = "$s"; proxyOverride = "$o" }
+          $baseline = Get-Content "$env:RUNNER_TEMP\system-proxy-baseline.json" -Raw | ConvertFrom-Json
+          Write-Host "current:  $($now | ConvertTo-Json -Compress)"
+          Write-Host "baseline: $($baseline | ConvertTo-Json -Compress)"
+          if ($now.proxyEnable -ne $baseline.proxyEnable -or $now.proxyServer -ne $baseline.proxyServer -or $now.proxyOverride -ne $baseline.proxyOverride) {
+            Write-Error 'final system-proxy state does not match the pre-run baseline'
+            exit 1
+          }
+          Write-Host 'SYSTEM_PROXY_FINAL_CONSISTENCY=PASS'
+
 
   package-win:
     name: Package Windows & smoke-test NSIS installer
@@ -345,6 +396,26 @@ jobs:
           }
           Write-Host 'packaged GUI visibility: PASS'
 
+          # --- install -> enable -> uninstall -> exact-restore (P1 #6) ---
+          # Capture the pre-install HKCU proxy baseline. The uninstaller's NSIS
+          # hook must restore the proxy to exactly this state.
+          $spBase = Get-ItemPropertyValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -Name ProxyEnable -ErrorAction SilentlyContinue
+          if ($null -eq $spBase) { $spBase = 0 }
+          Write-Host "pre-install ProxyEnable baseline: $spBase"
+
+          # Headlessly enable the per-user HKCU proxy via the installed app. This
+          # writes the owned app-data backup at %APPDATA%\system-proxy\owned-backup.json
+          # and applies the registry, leaving the proxy pointing at a now-dead
+          # loopback port — the exact "orphaned proxy" the uninstaller must undo.
+          $enableProbe = Start-Process -FilePath $exe -ArgumentList '--system-proxy-enable' -PassThru -Wait
+          Write-Host "system-proxy-enable exit code: $($enableProbe.ExitCode) (expected 0)"
+          if ($enableProbe.ExitCode -ne 0) { throw "system-proxy-enable exited with code $($enableProbe.ExitCode)" }
+          $spEnabled = Get-ItemPropertyValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -Name ProxyEnable -ErrorAction SilentlyContinue
+          if ($spEnabled -ne 1) { throw "ProxyEnable not set to 1 after headless enable (got '$spEnabled')" }
+          $ownedBackup = Join-Path $env:APPDATA 'system-proxy\owned-backup.json'
+          if (-not (Test-Path $ownedBackup)) { throw "owned system-proxy backup not written at $ownedBackup" }
+          Write-Host "owned system-proxy backup: $ownedBackup"
+
           # Uninstall silently and confirm program files are gone but app data survives.
           $uninstaller = Get-ChildItem -Path $installDir -Filter 'Uninstall *.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $uninstaller) {
@@ -360,9 +431,44 @@ jobs:
           if (-not (Test-Path $sentinel)) { throw 'sentinel was removed on uninstall; deleteAppDataOnUninstall must stay false' }
           Write-Host 'uninstall removed program files but preserved user data (sentinel survives)'
 
+          # The NSIS hook ran the installed app's `--restore-system-proxy` BEFORE
+          # deleting the files, so the exact pre-enable HKCU proxy must be back and
+          # the owned backup deleted. Prove it; the if:always() step below is the
+          # final net on a mid-step failure.
+          $spRestored = Get-ItemPropertyValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -Name ProxyEnable -ErrorAction SilentlyContinue
+          if ($null -eq $spRestored) { $spRestored = 0 }
+          Write-Host "post-uninstall ProxyEnable: $spRestored (baseline $spBase)"
+          if ($spRestored -ne $spBase) { throw "proxy was not restored to baseline ($spBase) after uninstall (got $spRestored)" }
+          if (Test-Path $ownedBackup) { throw "owned system-proxy backup still present after uninstall: $ownedBackup" }
+          Write-Host 'uninstall restored the owned system proxy to its pre-enable state: PASS'
+
           # Clean up the CI-created sentinel so the runner is left clean.
           Remove-Item $sentinel -ErrorAction SilentlyContinue
           Write-Host 'Windows smoke: PASS'
+
+      # P1 #6: run even on failure. If the install/enable/uninstall step failed
+      # part-way and left the owned proxy enabled (e.g. after `--system-proxy-enable`
+      # but before the uninstaller's restore), the app's owned backup is still in
+      # the brand-independent app-data namespace. Run the STANDALONE recovery
+      # helper against that path so the HKCU proxy is never left pointing at a dead
+      # port, and confirm the proxy is not left enabled. No backup => safe no-op
+      # (disabled, exit 0).
+      - name: External system-proxy restore & cleanup (finally)
+        if: always()
+        shell: pwsh
+        run: |
+          $restoreLog = node scripts/recover-system-proxy.mjs 2>&1
+          Write-Output $restoreLog
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error 'external system-proxy restore failed after uninstall smoke'
+            exit 1
+          }
+          $e = Get-ItemPropertyValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -Name ProxyEnable -ErrorAction SilentlyContinue
+          if ($null -ne $e -and $e -ne 0) {
+            Write-Error "HKCU ProxyEnable left enabled ($e) after external restore"
+            exit 1
+          }
+          Write-Host 'EXTERNAL_SYSTEM_PROXY_RESTORE=PASS'
 
       - name: List packaged artifacts
         run: |

@@ -7,10 +7,14 @@ import {
   regQueryValueArgs,
   regAddDwordArgs,
   regAddStringArgs,
+  regAddExpandStringArgs,
+  regAddBinaryArgs,
+  regAddArgsFor,
   regDeleteValueArgs,
   parseRegQueryValue,
   buildWinInetRefreshScript
 } from '../src/main/system-proxy/adapters/windows-helpers'
+import type { RegistryValue } from '../src/main/system-proxy/types'
 
 describe('windows system-proxy helpers', () => {
   it('targets the HKCU Internet Settings key and exposes its value names', () => {
@@ -58,6 +62,34 @@ describe('windows system-proxy helpers', () => {
       ])
     })
 
+    it('builds a REG_EXPAND_SZ add argv', () => {
+      expect(regAddExpandStringArgs(PROXY_SERVER_VALUE, '%PATH%\\p')).toEqual([
+        'add',
+        WIN_INTERNET_SETTINGS_KEY,
+        '/v',
+        PROXY_SERVER_VALUE,
+        '/t',
+        'REG_EXPAND_SZ',
+        '/d',
+        '%PATH%\\p',
+        '/f'
+      ])
+    })
+
+    it('builds a REG_BINARY add argv', () => {
+      expect(regAddBinaryArgs(PROXY_SERVER_VALUE, 'DEADBEEF')).toEqual([
+        'add',
+        WIN_INTERNET_SETTINGS_KEY,
+        '/v',
+        PROXY_SERVER_VALUE,
+        '/t',
+        'REG_BINARY',
+        '/d',
+        'DEADBEEF',
+        '/f'
+      ])
+    })
+
     it('builds a delete argv that removes the value entirely', () => {
       expect(regDeleteValueArgs(PROXY_OVERRIDE_VALUE)).toEqual([
         'delete',
@@ -67,34 +99,52 @@ describe('windows system-proxy helpers', () => {
         '/f'
       ])
     })
+
+    it('maps a RegistryValue to the restore argv that preserves its exact type', () => {
+      const value = (v: RegistryValue): string[] => regAddArgsFor(PROXY_ENABLE_VALUE, v)
+      expect(value({ exists: false, type: 'none', value: null })).toEqual(regDeleteValueArgs(PROXY_ENABLE_VALUE))
+      expect(value({ exists: true, type: 'REG_DWORD', value: 1 })).toEqual(regAddDwordArgs(PROXY_ENABLE_VALUE, 1))
+      expect(value({ exists: true, type: 'REG_SZ', value: 'x' })).toEqual(regAddStringArgs(PROXY_ENABLE_VALUE, 'x'))
+      expect(value({ exists: true, type: 'REG_EXPAND_SZ', value: '%x%' })).toEqual(
+        regAddExpandStringArgs(PROXY_ENABLE_VALUE, '%x%')
+      )
+      expect(value({ exists: true, type: 'REG_BINARY', value: 'FF' })).toEqual(regAddBinaryArgs(PROXY_ENABLE_VALUE, 'FF'))
+      // An unrestorable type must never silently downgrade; it throws.
+      expect(() => value({ exists: true, type: 'REG_MULTI_SZ', value: 'a;b' })).toThrow()
+    })
   })
 
   describe('parseRegQueryValue', () => {
-    it('parses a REG_DWORD hex value into a number', () => {
+    it('parses a REG_DWORD hex value into a number, preserving the type', () => {
       const value = parseRegQueryValue(`    ProxyEnable    REG_DWORD    0x1`)
-      expect(value).toEqual({ exists: true, type: 'dword', value: 1 })
+      expect(value).toEqual({ exists: true, type: 'REG_DWORD', value: 1 })
     })
 
-    it('parses a REG_SZ value into a string', () => {
+    it('parses a REG_SZ value into a string, preserving the type', () => {
       const value = parseRegQueryValue(`    ProxyServer    REG_SZ    http=127.0.0.1:7890;https=127.0.0.1:7890`)
       expect(value).toEqual({
         exists: true,
-        type: 'string',
+        type: 'REG_SZ',
         value: 'http=127.0.0.1:7890;https=127.0.0.1:7890'
       })
     })
 
-    it('treats REG_EXPAND_SZ as a string', () => {
+    it('preserves REG_EXPAND_SZ (never collapses it to plain REG_SZ)', () => {
       const value = parseRegQueryValue(`    ProxyOverride    REG_EXPAND_SZ    <local>`)
-      expect(value).toEqual({ exists: true, type: 'string', value: '<local>' })
+      expect(value).toEqual({ exists: true, type: 'REG_EXPAND_SZ', value: '<local>' })
     })
 
-    it('surfaces binary values without parsing them', () => {
+    it('preserves REG_BINARY as a hex string without parsing it', () => {
       const value = parseRegQueryValue(`    SomeValue    REG_BINARY    DEADBEEF`)
-      expect(value).toEqual({ exists: true, type: 'binary', value: 'DEADBEEF' })
+      expect(value).toEqual({ exists: true, type: 'REG_BINARY', value: 'DEADBEEF' })
     })
 
-    it('reports a missing value as absent', () => {
+    it('preserves the empty string for an empty REG_SZ (not a missing value)', () => {
+      const value = parseRegQueryValue(`    ProxyOverride    REG_SZ    `)
+      expect(value).toEqual({ exists: true, type: 'REG_SZ', value: '' })
+    })
+
+    it('reports a value-not-found line as absent', () => {
       expect(parseRegQueryValue('ERROR: The system was unable to find the specified registry key or value.')).toEqual({
         exists: false,
         type: 'none',
@@ -104,17 +154,28 @@ describe('windows system-proxy helpers', () => {
 
     it('defaults an unparseable dword to 0 instead of NaN', () => {
       const value = parseRegQueryValue(`    ProxyEnable    REG_DWORD    0xzz`)
-      expect(value).toEqual({ exists: true, type: 'dword', value: 0 })
+      expect(value).toEqual({ exists: true, type: 'REG_DWORD', value: 0 })
     })
   })
 
   describe('buildWinInetRefreshScript', () => {
-    it('signals WinINet to reload the per-user proxy settings and exits 0', () => {
+    it('signals WinINet to reload the per-user proxy settings', () => {
       const script = buildWinInetRefreshScript()
       expect(script).toContain('InternetSetOption')
       expect(script).toContain('39')
       expect(script).toContain('37')
+    })
+
+    it('reports failure (non-zero exit) when InternetSetOption returns false or last-error is non-zero', () => {
+      const script = buildWinInetRefreshScript()
+      // It must capture both bool returns and the Win32 last-error, and surface
+      // failure via a non-zero exit rather than always exiting 0.
+      expect(script).toContain('$b1 = $t::InternetSetOption(0, 39, 0, 0)')
+      expect(script).toContain('$b2 = $t::InternetSetOption(0, 37, 0, 0)')
+      expect(script).toContain('GetLastWin32Error')
+      expect(script).toContain('exit 2')
       expect(script).toContain('exit 0')
+      expect(script).toContain('Write-Error')
     })
   })
 })

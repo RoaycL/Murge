@@ -2,13 +2,33 @@ import type { SystemProxyTarget } from '../../shared/system-proxy'
 
 export type { SystemProxyTarget } from '../../shared/system-proxy'
 
-/** Backing type of a single registry value as read from the target key. */
-export type RegistryValueType = 'string' | 'dword' | 'binary' | 'none'
+/**
+ * Registry value type as reported by `reg.exe` and preserved in the backup.
+ *
+ * The name is the raw registry type so `REG_SZ`, `REG_EXPAND_SZ` and
+ * `REG_BINARY` are never collapsed into a single bucket — they must be restored
+ * with the exact same `/t` type and an unchanged original value. `none` is the
+ * sentinel for a value that does not exist. Types we cannot faithfully restore
+ * (`REG_MULTI_SZ`, `REG_QWORD`) are still surfaced so the controller can refuse
+ * to enable *before* it mutates anything rather than discovering the problem
+ * after a write.
+ */
+export type RegistryValueType =
+  | 'REG_DWORD'
+  | 'REG_SZ'
+  | 'REG_EXPAND_SZ'
+  | 'REG_MULTI_SZ'
+  | 'REG_BINARY'
+  | 'REG_QWORD'
+  | 'none'
 
 export interface RegistryValue {
   exists: boolean
   type: RegistryValueType
-  /** string → raw text; dword → number (0..0xFFFFFFFF); binary/none → hex string. */
+  /**
+   * REG_DWORD → number (0..0xFFFFFFFF); REG_QWORD → number (best-effort);
+   * REG_SZ / REG_EXPAND_SZ / REG_MULTI_SZ / REG_BINARY → string; none → null.
+   */
   value: string | number | null
 }
 

@@ -38,8 +38,9 @@ const kernelRequired = (): Promise<SystemProxyTarget> =>
 
 interface MakeOptions {
   supported?: boolean
-  applyBehavior?: 'write' | 'reject' | 'write-other'
-  restoreBehavior?: 'restore' | 'reject'
+  applyBehavior?: 'write' | 'reject' | 'write-other' | 'partial'
+  restoreBehavior?: 'restore' | 'reject' | 'restore-mismatch'
+  refreshBehavior?: 'refresh' | 'reject'
   initial?: ConstructorParameters<typeof FakeSystemProxyAdapter>[0]['initial']
   probe?: SystemProxyKernelProbe
   backup?: SystemProxyBackupStore
@@ -50,6 +51,7 @@ function makeService(options: MakeOptions = {}) {
     supported: options.supported,
     applyBehavior: options.applyBehavior,
     restoreBehavior: options.restoreBehavior,
+    refreshBehavior: options.refreshBehavior,
     initial: options.initial
   })
   const backup = options.backup ?? new InMemorySystemProxyBackupStore()
@@ -126,7 +128,7 @@ describe('SystemProxyService', () => {
     it('throws state-conflict and does not apply when an owned backup was mutated externally', async () => {
       const { service, adapter, backup } = makeService()
       await service.enable()
-      adapter.mutate({ proxyServer: { exists: true, type: 'string', value: 'http=1.2.3.4:5' } })
+      adapter.mutate({ proxyServer: { exists: true, type: 'REG_SZ', value: 'http=1.2.3.4:5' } })
       const applyCount = adapter.calls.filter((c) => c.op === 'apply').length
       await expectReject(service.enable(), ProtocolErrorCode.SYSTEM_PROXY_STATE_CONFLICT)
       expect(adapter.calls.filter((c) => c.op === 'apply').length).toBe(applyCount)
@@ -156,6 +158,48 @@ describe('SystemProxyService', () => {
       await expectReject(service.enable(), ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED)
       expect(service.getStatus().phase).toBe('disabled')
     })
+
+    it('refuses to enable BEFORE writing anything when a previous value is unrestorable', async () => {
+      const { service, adapter, backup } = makeService({
+        initial: { proxyServer: { exists: true, type: 'REG_MULTI_SZ', value: 'a;b' } }
+      })
+      await expectReject(service.enable(), ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED)
+      // No apply was attempted and no backup was persisted — nothing was mutated.
+      expect(adapter.calls.some((c) => c.op === 'apply')).toBe(false)
+      await expect(backup.read()).resolves.toBeNull()
+      expect(service.getStatus().phase).toBe('disabled')
+    })
+
+    it('still enforces a confirmed rollback: partial apply + restore failure keeps the backup', async () => {
+      const { service, backup } = makeService({ applyBehavior: 'partial', restoreBehavior: 'reject' })
+      await expectReject(service.enable(), ProtocolErrorCode.SYSTEM_PROXY_RESTORE_FAILED)
+      expect(service.getStatus().phase).toBe('restore-failed')
+      expect(service.getStatus().errorMessage).toBe('系统代理启用失败且无法还原，已保留备份')
+      await expect(backup.read()).resolves.not.toBeNull()
+    })
+
+    it('keeps the backup and flags restore-failed when refresh fails during rollback', async () => {
+      const { service, backup } = makeService({ refreshBehavior: 'reject' })
+      await expectReject(service.enable(), ProtocolErrorCode.SYSTEM_PROXY_RESTORE_FAILED)
+      expect(service.getStatus().phase).toBe('restore-failed')
+      await expect(backup.read()).resolves.not.toBeNull()
+    })
+
+    it('keeps the backup and flags restore-failed when a read-back mismatch cannot be proven', async () => {
+      const { service, backup } = makeService({ applyBehavior: 'write-other', restoreBehavior: 'restore-mismatch' })
+      await expectReject(service.enable(), ProtocolErrorCode.SYSTEM_PROXY_RESTORE_FAILED)
+      expect(service.getStatus().phase).toBe('restore-failed')
+      await expect(backup.read()).resolves.not.toBeNull()
+    })
+
+    it('accepts a restoreable REG_EXPAND_SZ previous value and enables cleanly', async () => {
+      const { service, backup } = makeService({
+        initial: { proxyServer: { exists: true, type: 'REG_EXPAND_SZ', value: '%PROGRAMFILES%\\proxy' } }
+      })
+      const status = await service.enable()
+      expect(status.phase).toBe('enabled')
+      await expect(backup.read()).resolves.not.toBeNull()
+    })
   })
 
   describe('disable (ownership-aware)', () => {
@@ -168,7 +212,7 @@ describe('SystemProxyService', () => {
 
     it('restores the pre-enable snapshot and clears the backup', async () => {
       const { service, adapter, backup } = makeService({
-        initial: { proxyEnable: { exists: true, type: 'dword', value: 0 } }
+        initial: { proxyEnable: { exists: true, type: 'REG_DWORD', value: 0 } }
       })
       await service.enable()
       const status = await service.disable()
@@ -181,7 +225,7 @@ describe('SystemProxyService', () => {
     it('throws state-conflict and keeps the backup when the proxy was mutated externally', async () => {
       const { service, adapter, backup } = makeService()
       await service.enable()
-      adapter.mutate({ proxyServer: { exists: true, type: 'string', value: 'http=9.9.9.9:1' } })
+      adapter.mutate({ proxyServer: { exists: true, type: 'REG_SZ', value: 'http=9.9.9.9:1' } })
       await expectReject(service.disable(), ProtocolErrorCode.SYSTEM_PROXY_STATE_CONFLICT)
       expect(service.getStatus().phase).toBe('conflict')
       await expect(backup.read()).resolves.not.toBeNull()
@@ -218,7 +262,7 @@ describe('SystemProxyService', () => {
     it('treats a conflict as safe and reports it (no registry mutation)', async () => {
       const { service, adapter, backup } = makeService()
       await service.enable()
-      adapter.mutate({ proxyServer: { exists: true, type: 'string', value: 'http=5.5.5.5:1' } })
+      adapter.mutate({ proxyServer: { exists: true, type: 'REG_SZ', value: 'http=5.5.5.5:1' } })
       await expect(service.restoreBeforeKernelUnavailable()).resolves.toBeUndefined()
       expect(service.getStatus().phase).toBe('conflict')
       expect(adapter.calls.some((c) => c.op === 'restore')).toBe(false)
@@ -270,7 +314,7 @@ describe('SystemProxyService', () => {
       const backup = new InMemorySystemProxyBackupStore()
       const first = new SystemProxyService({ adapter, probe: new StaticSystemProxyProbe(TARGET), backup, instanceId: 'owner' })
       await first.enable()
-      adapter.mutate({ proxyEnable: { exists: true, type: 'dword', value: 0 } })
+      adapter.mutate({ proxyEnable: { exists: true, type: 'REG_DWORD', value: 0 } })
       const next = new SystemProxyService({ adapter, probe: new StaticSystemProxyProbe(TARGET), backup, instanceId: 'growth-2' })
       const status = await next.init()
       expect(status.phase).toBe('conflict')

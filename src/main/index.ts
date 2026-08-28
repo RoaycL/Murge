@@ -13,7 +13,12 @@ import { findFreePort, MihomoKernelConfigStore } from './kernel/mihomo-config-st
 import { randomSecret } from './kernel/mihomo-config'
 import { ControllerReadyKernelGateway } from './kernel/controller-ready-gateway'
 import { createSystemProxy } from './system-proxy/factory'
-import type { SystemProxyService } from './system-proxy/service'
+import { SystemProxyService } from './system-proxy/service'
+import { WindowsSystemProxyAdapter } from './system-proxy/adapters/windows-adapter'
+import { DisabledSystemProxyAdapter } from './system-proxy/adapters/disabled-adapter'
+import { FileSystemProxyBackupStore } from './system-proxy/backup-store'
+import { StaticSystemProxyProbe } from './system-proxy/probe'
+import { SYSTEM_PROXY_LOOPBACK_HOST } from '../shared/system-proxy'
 import { SystemProxyOrderedKernelGateway } from './system-proxy/ordered-kernel-gateway'
 import { NodeKernelProcessAdapter } from './kernel/node-adapter'
 import { MihomoClient } from './services/mihomo-client'
@@ -25,6 +30,7 @@ import { SubscriptionFetcher } from './subscriptions/subscription-fetcher'
 import { startMockMihomoServer, type MockMihomoServerHandle } from './testing/mock-mihomo-server'
 import type { MihomoGateway } from '@shared/gateways'
 import { ProtocolError, ProtocolErrorCode } from '../shared/protocol-errors'
+import { runQuitFlow } from './quit-guard'
 
 const devControllerUrl = process.env.MURGE_DEV_CONTROLLER ?? 'http://127.0.0.1:9090'
 const devControllerSecret = process.env.MURGE_DEV_SECRET ?? ''
@@ -223,6 +229,84 @@ async function runPackagingSmoke(profileRoot: string): Promise<void> {
   app.exit(0)
 }
 
+/**
+ * CI / NSIS-uninstall shutdown hook. Runs the system-proxy restore in a headless
+ * process: no window, no kernel, no socket. It reads the brand-independent
+ * owned backup from app-data and restores the exact pre-enable registry values
+ * (with the precise type preserved), deleting the backup only on a confirmed
+ * restore. A conflict is reported without overwriting; a corrupted backup fails
+ * closed without ever entering the restore-write path.
+ */
+async function runSystemProxyRestore(): Promise<void> {
+  const service = new SystemProxyService({
+    adapter:
+      process.platform === 'win32'
+        ? new WindowsSystemProxyAdapter()
+        : new DisabledSystemProxyAdapter(process.platform),
+    probe: new StaticSystemProxyProbe({ host: SYSTEM_PROXY_LOOPBACK_HOST, port: 1 }),
+    backup: FileSystemProxyBackupStore.forAppDataBase(app.getPath('appData')),
+    instanceId: 'restore-cli'
+  })
+  try {
+    const status = await service.init()
+    // `disabled` = restored (or nothing owned); `conflict` = registry no longer
+    // matches the written state, so we intentionally did NOT overwrite.
+    const ok = status.phase === 'disabled' || status.phase === 'conflict'
+    console.log(
+      `[restore-system-proxy] ${JSON.stringify({
+        phase: status.phase,
+        ok,
+        errorMessage: status.errorMessage ?? null,
+        conflictDetail: status.conflictDetail ?? null
+      })}`
+    )
+    app.exit(ok ? 0 : 1)
+  } catch (error) {
+    console.error('[restore-system-proxy] FAILED:', error)
+    app.exit(1)
+  }
+}
+
+/**
+ * CI-only installed-artifact probe: enable the per-user HKCU system proxy
+ * headlessly (writes the owned app-data backup) and exit. Used by the
+ * `package-win` job to prove the install -> enable -> uninstall -> exact-restore
+ * path. This deliberately does NOT start a kernel: it uses the static loopback
+ * target so a backup + applied registry state is produced without binding any
+ * socket, which is exactly the "orphaned proxy" the uninstaller must undo. The
+ * target is fix-port loopback, so the enabled state is safe to leave behind for
+ * the uninstaller or the external recovery helper to restore.
+ */
+async function runSystemProxyEnable(): Promise<void> {
+  const service = new SystemProxyService({
+    adapter:
+      process.platform === 'win32'
+        ? new WindowsSystemProxyAdapter()
+        : new DisabledSystemProxyAdapter(process.platform),
+    probe: new StaticSystemProxyProbe(),
+    backup: FileSystemProxyBackupStore.forAppDataBase(app.getPath('appData')),
+    instanceId: 'enable-cli'
+  })
+  try {
+    const status = await service.enable()
+    // `enabled` = the proxy is now owned by us; `conflict` = the registry already
+    // held a different value (idempotent/owned), so we did not overwrite.
+    const ok = status.phase === 'enabled' || status.phase === 'conflict'
+    console.log(
+      `[system-proxy-enable] ${JSON.stringify({
+        phase: status.phase,
+        ok,
+        errorMessage: status.errorMessage ?? null,
+        conflictDetail: status.conflictDetail ?? null
+      })}`
+    )
+    app.exit(ok ? 0 : 1)
+  } catch (error) {
+    console.error('[system-proxy-enable] FAILED:', error)
+    app.exit(1)
+  }
+}
+
 app.whenReady().then(async () => {
   try {
     parseBrandConfig(brand)
@@ -274,6 +358,22 @@ app.whenReady().then(async () => {
   // opening a window, starting a kernel, or binding any socket.
   if (process.argv.includes('--packaging-smoke')) {
     await runPackagingSmoke(profileRoot)
+    return
+  }
+
+  // Headless system-proxy restore (see runSystemProxyRestore). Used by the
+  // uninstaller and CI whenever the GUI must not be started.
+  if (process.argv.includes('--restore-system-proxy')) {
+    await runSystemProxyRestore()
+    return
+  }
+
+  // CI-only installed-artifact probe: enable the system proxy headlessly so the
+  // `package-win` job can drive the install -> enable -> uninstall -> restore
+  // path (see runSystemProxyEnable). Never runs in dev so a developer cannot
+  // accidentally mutate the real registry.
+  if (!is.dev && process.argv.includes('--system-proxy-enable')) {
+    await runSystemProxyEnable()
     return
   }
 
@@ -422,34 +522,78 @@ app.on('window-all-closed', () => {
 // before the process exits. Without this the child could outlive the GUI and
 // keep a port (and a secret-bearing temp dir) behind. The guard flag makes the
 // flow idempotent: block the first quit, stop the kernel, then really quit.
+const MAX_QUIT_RESTORE_ATTEMPTS = 3
+const QUIT_RESTORE_RETRY_DELAY_MS = 250
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Restore a owned system proxy (if any) before tearing down the controller. The
+ * proxy must never be left pointing at a port that is about to close, so restore
+ * happens first; a genuine failure is retried a bounded number of times. Returns
+ * true once the proxy is confirmed restored (or there was nothing owned — conflict
+ * is treated as safe, since the proxy no longer points at us). Returns false when
+ * the owned proxy could NOT be restored.
+ */
+async function restoreSystemProxyBeforeQuit(): Promise<boolean> {
+  if (!systemProxy) return true
+  for (let attempt = 1; attempt <= MAX_QUIT_RESTORE_ATTEMPTS; attempt++) {
+    try {
+      await systemProxy.restoreBeforeKernelUnavailable()
+      return true
+    } catch (error) {
+      console.error(
+        `[system-proxy] restore during quit failed (attempt ${attempt}/${MAX_QUIT_RESTORE_ATTEMPTS}):`,
+        error
+      )
+      if (attempt < MAX_QUIT_RESTORE_ATTEMPTS) await delay(QUIT_RESTORE_RETRY_DELAY_MS)
+    }
+  }
+  return false
+}
+
 app.on('before-quit', (event) => {
   if (isQuitting) return
   event.preventDefault()
   isQuitting = true
   void (async () => {
-    try {
-      // Restore a owned system proxy before tearing down the controller so the
-      // OS proxy is never left pointing at a port that is about to close. A
-      // failure here is logged; the owned backup survives for the next launch's
-      // `init()` recovery rather than being silently dropped now.
-      await systemProxy?.restoreBeforeKernelUnavailable()
-    } catch (error) {
-      console.error('[system-proxy] failed to restore during quit:', error)
+    // Restore a owned system proxy FIRST, so the OS proxy is never left pointing
+    // at a controller port that is about to close. If the restore cannot be
+    // confirmed, we must NOT stop the kernel and must NOT quit: leaving a
+    // dead-port proxy behind is worse than holding the app open. Reset the
+    // guard, keep the window + kernel alive, surface the failure (the system
+    // proxy onStatus listener already broadcast restore-failed to the renderer),
+    // and let the user fix it before retrying the quit.
+    const result = await runQuitFlow({
+      restore: restoreSystemProxyBeforeQuit,
+      stopKernel: async () => {
+        await kernel?.stop()
+      },
+      dispose: async () => {
+        try {
+          disposeIpc?.()
+          mihomo?.dispose()
+          await mockServer?.close()
+        } catch (error) {
+          console.error('[mihomo] failed to stop mock controller during quit:', error)
+        } finally {
+          disposeIpc = null
+        }
+      },
+      quit: () => app.quit(),
+      onCleanupError: (error, step) => console.error(`[quit-guard] ${step} failed during quit:`, error)
+    })
+    if (result === 'restore-failed') {
+      isQuitting = false
+      const window = mainWindow ?? BrowserWindow.getAllWindows()[0]
+      if (window && !window.isDestroyed()) {
+        if (window.isMinimized()) window.restore()
+        window.show()
+        window.focus()
+      }
+      return
     }
-    try {
-      await kernel?.stop()
-    } catch (error) {
-      console.error('[kernel] failed to stop during quit:', error)
-    }
-    try {
-      disposeIpc?.()
-      mihomo?.dispose()
-      await mockServer?.close()
-    } catch (error) {
-      console.error('[mihomo] failed to stop mock controller during quit:', error)
-    } finally {
-      disposeIpc = null
-    }
-    app.quit()
   })()
 })

@@ -12,9 +12,9 @@ import {
   PROXY_SERVER_VALUE,
   buildWinInetRefreshScript,
   parseRegQueryValue,
+  regAddArgsFor,
   regAddDwordArgs,
   regAddStringArgs,
-  regDeleteValueArgs,
   regQueryValueArgs
 } from './windows-helpers'
 
@@ -35,9 +35,9 @@ function defaultRunner(command: string, args: string[]): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     execFile(command, args, { timeout: DEFAULT_TIMEOUT_MS, windowsHide: true, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
       const code = error ? (error as NodeJS.ErrnoException & { code?: number }).code : 0
-      // `reg query` returns a non-zero exit (code 1) when the value is absent —
-      // that is a *normal* "missing value" signal, so surface it via `code` rather
-      // than rejecting. Real transport errors are `code` strings, which reject.
+      // Real transport errors (command not found / timeout) are carried as a
+      // string `code` by Node; those MUST reject so the caller sees a typed error
+      // instead of a phantom "value absent".
       if (typeof error?.code === 'string') {
         reject(new Error(`${error.code}: ${error.message}`))
         return
@@ -45,6 +45,12 @@ function defaultRunner(command: string, args: string[]): Promise<RunResult> {
       resolve({ stdout: String(stdout ?? ''), stderr: String(stderr ?? ''), code: typeof code === 'number' ? code : 0 })
     })
   })
+}
+
+/** Whether the output signals a registry access/authorization failure (never "absent"). */
+function looksLikeAccessDenied(result: RunResult): boolean {
+  const text = `${result.stderr}\n${result.stdout}`.toLowerCase()
+  return /access\s+is\s+denied|access.*denied|denied|拒绝访问|无法打开|permission denied/i.test(text)
 }
 
 /**
@@ -60,12 +66,48 @@ export class WindowsSystemProxyAdapter implements SystemProxyAdapter {
 
   constructor(private readonly run: CommandRunner = defaultRunner) {}
 
-  private async readValue(valueName: string): Promise<RegistryValue> {
-    const result = await this.run(REG_COMMAND, regQueryValueArgs(valueName))
+  /** Run a command and surface a non-zero exit / transport error as a typed error. */
+  private async runChecked(
+    command: string,
+    args: string[],
+    failCode: ProtocolErrorCode,
+    message: string
+  ): Promise<RunResult> {
+    let result: RunResult
+    try {
+      result = await this.run(command, args)
+    } catch (error) {
+      // Transport failure (e.g. reg.exe / powershell not on PATH, timeout).
+      throw new ProtocolError(failCode, `${message}：${(error as Error).message}`)
+    }
     if (result.code !== 0) {
+      const detail = result.stderr.trim() || result.stdout.trim() || `exit ${result.code}`
+      throw new ProtocolError(failCode, `${message}：${detail}`)
+    }
+    return result
+  }
+
+  async readValue(valueName: string): Promise<RegistryValue> {
+    let result: RunResult
+    try {
+      result = await this.run(REG_COMMAND, regQueryValueArgs(valueName))
+    } catch (error) {
+      // reg.exe could not be executed at all — that is an error, not "absent".
+      throw new ProtocolError(ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED, `无法执行 reg.exe 读取注册表项 ${valueName}：${(error as Error).message}`)
+    }
+    if (result.code === 0) {
+      return parseRegQueryValue(result.stdout, valueName)
+    }
+    if (looksLikeAccessDenied(result)) {
+      throw new ProtocolError(ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED, `读取注册表项 ${valueName} 被拒绝（权限不足）`)
+    }
+    // `reg query` signals a missing value with exit code 1 — that is the only
+    // outcome the controller treats as "value absent". Any other non-zero code
+    // (e.g. access denied on another hive) is an error, never a phantom absence.
+    if (result.code === 1) {
       return { exists: false, type: 'none', value: null }
     }
-    return parseRegQueryValue(result.stdout)
+    throw new ProtocolError(ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED, `读取注册表项 ${valueName} 失败 (${result.code})`)
   }
 
   async read(): Promise<SystemProxyRegistryState> {
@@ -81,9 +123,9 @@ export class WindowsSystemProxyAdapter implements SystemProxyAdapter {
     if (!written.proxyServer.exists || typeof written.proxyServer.value !== 'string') {
       throw new ProtocolError(ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED, '系统代理目标值无效')
     }
-    await this.run(REG_COMMAND, regAddDwordArgs(PROXY_ENABLE_VALUE, 1))
-    await this.run(REG_COMMAND, regAddStringArgs(PROXY_SERVER_VALUE, written.proxyServer.value))
-    await this.run(REG_COMMAND, regAddStringArgs(PROXY_OVERRIDE_VALUE, written.proxyOverride.value as string))
+    await this.runChecked(REG_COMMAND, regAddDwordArgs(PROXY_ENABLE_VALUE, 1), ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED, '写入 ProxyEnable 失败')
+    await this.runChecked(REG_COMMAND, regAddStringArgs(PROXY_SERVER_VALUE, written.proxyServer.value), ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED, '写入 ProxyServer 失败')
+    await this.runChecked(REG_COMMAND, regAddStringArgs(PROXY_OVERRIDE_VALUE, written.proxyOverride.value as string), ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED, '写入 ProxyOverride 失败')
   }
 
   async restore(previous: SystemProxyRegistryState): Promise<void> {
@@ -93,29 +135,18 @@ export class WindowsSystemProxyAdapter implements SystemProxyAdapter {
   }
 
   private async restoreValue(valueName: string, value: RegistryValue): Promise<void> {
-    if (!value.exists) {
-      // The value did not exist before the app enabled the proxy — delete it so the
-      // user's registry is byte-for-byte back to its original state.
-      await this.run(REG_COMMAND, regDeleteValueArgs(valueName))
-      return
-    }
-    if (value.type === 'dword' && typeof value.value === 'number') {
-      await this.run(REG_COMMAND, regAddDwordArgs(valueName, value.value))
-      return
-    }
-    if (typeof value.value === 'string') {
-      await this.run(REG_COMMAND, regAddStringArgs(valueName, value.value))
-      return
-    }
-    // A type we cannot faithfully re-write (e.g. REG_BINARY) is surfaced rather
-    // than silently dropped.
-    throw new ProtocolError(
-      ProtocolErrorCode.SYSTEM_PROXY_RESTORE_FAILED,
-      `系统代理项 ${valueName} 的类型无法还原（${value.type}）`
-    )
+    const args = regAddArgsFor(valueName, value)
+    await this.runChecked(REG_COMMAND, args, ProtocolErrorCode.SYSTEM_PROXY_RESTORE_FAILED, `还原注册表项 ${valueName} 失败`)
   }
 
   async refresh(): Promise<void> {
-    await this.run(POWERSHELL_COMMAND, ['-NoProfile', '-NonInteractive', '-Command', buildWinInetRefreshScript()])
+    // The script exits non-zero (or throws) when either InternetSetOption call
+    // failed, so a WinINet failure is surfaced and can trigger a rollback.
+    await this.runChecked(
+      POWERSHELL_COMMAND,
+      ['-NoProfile', '-NonInteractive', '-Command', buildWinInetRefreshScript()],
+      ProtocolErrorCode.SYSTEM_PROXY_RESTORE_FAILED,
+      '刷新 WinINet 代理设置失败'
+    )
   }
 }

@@ -10,6 +10,8 @@ import {
   isOwned,
   conflictDetail,
   matchesPrevious,
+  sameRegistryValue,
+  validateRestorable,
   validateTarget
 } from '../src/main/system-proxy/policy'
 import type {
@@ -18,17 +20,18 @@ import type {
   SystemProxyWrittenState
 } from '../src/main/system-proxy/types'
 
-const ABSENT: RegistryValue = { exists: false, type: 'dword', value: null }
-const ABSENT_STR: RegistryValue = { exists: false, type: 'string', value: null }
-const dword = (value: number): RegistryValue => ({ exists: true, type: 'dword', value })
-const str = (value: string): RegistryValue => ({ exists: true, type: 'string', value })
+const ABSENT: RegistryValue = { exists: false, type: 'none', value: null }
+const dword = (value: number): RegistryValue => ({ exists: true, type: 'REG_DWORD', value })
+const str = (value: string): RegistryValue => ({ exists: true, type: 'REG_SZ', value })
+const expandStr = (value: string): RegistryValue => ({ exists: true, type: 'REG_EXPAND_SZ', value })
+const bin = (value: string): RegistryValue => ({ exists: true, type: 'REG_BINARY', value })
 
 const TARGET = { host: SYSTEM_PROXY_LOOPBACK_HOST, port: 7890 }
 
 const state = (overrides: Partial<SystemProxyRegistryState> = {}): SystemProxyRegistryState => ({
   proxyEnable: { ...ABSENT },
-  proxyServer: { ...ABSENT_STR },
-  proxyOverride: { ...ABSENT_STR },
+  proxyServer: { ...ABSENT },
+  proxyOverride: { ...ABSENT },
   ...overrides
 })
 
@@ -115,6 +118,60 @@ describe('system-proxy policy', () => {
       expect(written.proxyEnable).toEqual(dword(1))
       expect(written.proxyServer.value).toBe('http=127.0.0.1:7890;https=127.0.0.1:7890;socks=127.0.0.1:7890')
       expect(written.proxyOverride.value).toBe(mergeProxyOverride('a.com'))
+    })
+  })
+
+  describe('sameRegistryValue', () => {
+    it('requires exists, type and value to all match', () => {
+      expect(sameRegistryValue(str('x'), str('x'))).toBe(true)
+      expect(sameRegistryValue(str('x'), { ...str('x'), value: 'y' })).toBe(false)
+      // REG_EXPAND_SZ is not REG_SZ even with the same bytes.
+      expect(sameRegistryValue(expandStr('%PATH%'), str('%PATH%'))).toBe(false)
+      expect(sameRegistryValue(bin('DEADBEEF'), str('DEADBEEF'))).toBe(false)
+      // Absent values only match when both sides are the `none` triple.
+      expect(sameRegistryValue(ABSENT, { exists: false, type: 'none', value: null })).toBe(true)
+      expect(sameRegistryValue(ABSENT, { exists: false, type: 'REG_SZ', value: null })).toBe(false)
+      expect(sameRegistryValue(ABSENT, { exists: true, type: 'none', value: null })).toBe(false)
+    })
+  })
+
+  describe('validateRestorable', () => {
+    it('accepts a state where every present value has a restorable type and shape', () => {
+      expect(() =>
+        validateRestorable(
+          state({
+            proxyEnable: dword(0),
+            proxyServer: str('http=127.0.0.1:1'),
+            proxyOverride: expandStr('')
+          })
+        )
+      ).not.toThrow()
+      // An empty REG_SZ is valid (must not be rejected as "missing").
+      expect(() => validateRestorable(state({ proxyOverride: str('') }))).not.toThrow()
+    })
+
+    it('rejects an unrestorable type (REG_MULTI_SZ) before anything is written', () => {
+      expect(() =>
+        validateRestorable(state({ proxyServer: { exists: true, type: 'REG_MULTI_SZ', value: 'a;b' } }))
+      ).toThrow(ProtocolError)
+    })
+
+    it('rejects a structurally inconsistent value (present but typed none)', () => {
+      expect(() =>
+        validateRestorable(state({ proxyEnable: { exists: true, type: 'none', value: null } }))
+      ).toThrow(ProtocolError)
+    })
+
+    it('rejects a present value with a null string value', () => {
+      expect(() =>
+        validateRestorable(state({ proxyOverride: { exists: true, type: 'REG_SZ', value: null } }))
+      ).toThrow(ProtocolError)
+    })
+
+    it('rejects an absent value that carries a non-none type', () => {
+      expect(() =>
+        validateRestorable(state({ proxyServer: { exists: false, type: 'REG_SZ', value: null } }))
+      ).toThrow(ProtocolError)
     })
   })
 

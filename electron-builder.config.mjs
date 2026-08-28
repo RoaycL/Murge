@@ -44,6 +44,12 @@ export default {
   },
   nsis: {
     oneClick: false,
+    // Restore an owned system proxy before the uninstaller deletes the app files
+    // (see resources/nsis/uninstall-restore.nsh). The installed app's headless
+    // `--restore-system-proxy` CLI reads its owned backup from app-data and puts
+    // the HKCU Internet Settings proxy back to the exact pre-enable values only
+    // if the registry still matches the enabled state.
+    include: 'resources/nsis/uninstall-restore.nsh',
     // Never build the NSIS universal/combined installer. Produces one file per
     // arch (see `win.target`) instead of a big combined one, so a full build
     // yields exactly two distributable installers.

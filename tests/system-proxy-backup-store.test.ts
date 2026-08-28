@@ -16,13 +16,13 @@ import type {
   SystemProxyRegistryState
 } from '../src/main/system-proxy/types'
 
-const dword = (value: number): RegistryValue => ({ exists: true, type: 'dword', value })
-const str = (value: string): RegistryValue => ({ exists: true, type: 'string', value })
+const dword = (value: number): RegistryValue => ({ exists: true, type: 'REG_DWORD', value })
+const str = (value: string): RegistryValue => ({ exists: true, type: 'REG_SZ', value })
 
 const previous: SystemProxyRegistryState = {
   proxyEnable: dword(0),
-  proxyServer: { exists: false, type: 'string', value: null },
-  proxyOverride: { exists: false, type: 'string', value: null }
+  proxyServer: { exists: false, type: 'none', value: null },
+  proxyOverride: { exists: false, type: 'none', value: null }
 }
 
 const written: SystemProxyRegistryState = {
@@ -120,6 +120,56 @@ describe('FileSystemProxyBackupStore', () => {
     const store = FileSystemProxyBackupStore.forAppDataBase(tempDir)
     await store.write(makeBackup())
     await expect(store.read()).resolves.toEqual(makeBackup())
+  })
+
+  it('rejects a backup whose target host is not the loopback host', async () => {
+    const { store, file } = await freshStore()
+    await store.write(makeBackup())
+    const bad = { ...makeBackup(), target: { host: '0.0.0.0', port: 7890 } }
+    await import('node:fs/promises').then(({ writeFile }) => writeFile(file, JSON.stringify(bad), 'utf8'))
+    await expect(store.read()).rejects.toMatchObject({ code: ProtocolErrorCode.SYSTEM_PROXY_RESTORE_FAILED })
+  })
+
+  it('rejects a backup with an out-of-range port', async () => {
+    const { store, file } = await freshStore()
+    await store.write(makeBackup())
+    const bad = { ...makeBackup(), target: { host: SYSTEM_PROXY_LOOPBACK_HOST, port: 0 } }
+    await import('node:fs/promises').then(({ writeFile }) => writeFile(file, JSON.stringify(bad), 'utf8'))
+    await expect(store.read()).rejects.toMatchObject({ code: ProtocolErrorCode.SYSTEM_PROXY_RESTORE_FAILED })
+  })
+
+  it('rejects a backup with an internally inconsistent registry value', async () => {
+    const { store, file } = await freshStore()
+    await store.write(makeBackup())
+    const bad = {
+      ...makeBackup(),
+      previous: { ...previous, proxyServer: { exists: true, type: 'REG_SZ', value: null } }
+    }
+    await import('node:fs/promises').then(({ writeFile }) => writeFile(file, JSON.stringify(bad), 'utf8'))
+    await expect(store.read()).rejects.toMatchObject({ code: ProtocolErrorCode.SYSTEM_PROXY_RESTORE_FAILED })
+  })
+
+  it('rejects a backup whose schemaVersion is not the exact literal', async () => {
+    const { store, file } = await freshStore()
+    await store.write(makeBackup())
+    const bad = { ...makeBackup(), schemaVersion: '1' }
+    await import('node:fs/promises').then(({ writeFile }) => writeFile(file, JSON.stringify(bad), 'utf8'))
+    await expect(store.read()).rejects.toMatchObject({ code: ProtocolErrorCode.SYSTEM_PROXY_RESTORE_FAILED })
+  })
+
+  it('round-trips a REG_EXPAND_SZ / REG_BINARY pair without collapsing the type', async () => {
+    const { store, file } = await freshStore()
+    const expandPrevious: SystemProxyRegistryState = {
+      proxyEnable: dword(0),
+      proxyServer: { exists: true, type: 'REG_EXPAND_SZ', value: '%PROGRAMFILES%\\proxy' },
+      proxyOverride: { exists: true, type: 'REG_BINARY', value: 'DEADBEEF' }
+    }
+    const backup = { ...makeBackup(), previous: expandPrevious }
+    await store.write(backup)
+    await expect(store.read()).resolves.toEqual(backup)
+    const raw = JSON.parse(await import('node:fs/promises').then(({ readFile }) => readFile(file, 'utf8')))
+    expect(raw.previous.proxyServer.type).toBe('REG_EXPAND_SZ')
+    expect(raw.previous.proxyOverride.type).toBe('REG_BINARY')
   })
 })
 

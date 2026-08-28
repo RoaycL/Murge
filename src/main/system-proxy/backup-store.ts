@@ -2,9 +2,10 @@ import { join, dirname } from 'node:path'
 import { readFile, writeFile, rename, mkdir, unlink } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
+import { SYSTEM_PROXY_BACKUP_SCHEMA_VERSION, systemProxyBackupSchema } from './backup-schema'
 import type { SystemProxyBackup, SystemProxyBackupStore } from './types'
 
-export const SYSTEM_PROXY_BACKUP_SCHEMA_VERSION = 1
+export { SYSTEM_PROXY_BACKUP_SCHEMA_VERSION } from './backup-schema'
 
 export const SYSTEM_PROXY_BACKUP_SUBDIR = 'system-proxy'
 export const SYSTEM_PROXY_BACKUP_FILE = 'owned-backup.json'
@@ -12,20 +13,6 @@ export const SYSTEM_PROXY_BACKUP_FILE = 'owned-backup.json'
 /** Resolve the owned-backup file path under a brand-independent app-data base. */
 export function resolveSystemProxyBackupPath(appDataBase: string): string {
   return join(appDataBase, SYSTEM_PROXY_BACKUP_SUBDIR, SYSTEM_PROXY_BACKUP_FILE)
-}
-
-function isBackupShape(value: unknown): value is SystemProxyBackup {
-  if (!value || typeof value !== 'object') return false
-  const backup = value as Record<string, unknown>
-  return (
-    typeof backup.schemaVersion === 'number' &&
-    typeof backup.instanceId === 'string' &&
-    typeof backup.createdAt === 'string' &&
-    !!backup.target &&
-    typeof (backup.target as Record<string, unknown>).port === 'number' &&
-    !!backup.previous &&
-    !!backup.written
-  )
 }
 
 /**
@@ -59,16 +46,11 @@ export class FileSystemProxyBackupStore implements SystemProxyBackupStore {
     } catch {
       throw new ProtocolError(ProtocolErrorCode.SYSTEM_PROXY_RESTORE_FAILED, '系统代理备份文件已损坏')
     }
-    if (!isBackupShape(parsed)) {
+    const validated = systemProxyBackupSchema.safeParse(parsed)
+    if (!validated.success) {
       throw new ProtocolError(ProtocolErrorCode.SYSTEM_PROXY_RESTORE_FAILED, '系统代理备份文件格式无效')
     }
-    if (parsed.schemaVersion !== SYSTEM_PROXY_BACKUP_SCHEMA_VERSION) {
-      throw new ProtocolError(
-        ProtocolErrorCode.SYSTEM_PROXY_RESTORE_FAILED,
-        `系统代理备份版本不匹配（期望 v${SYSTEM_PROXY_BACKUP_SCHEMA_VERSION}）`
-      )
-    }
-    return parsed
+    return validated.data
   }
 
   async write(backup: SystemProxyBackup): Promise<void> {

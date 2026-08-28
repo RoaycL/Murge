@@ -222,25 +222,35 @@ export function restoreArgs(valueName, value) {
   return ['add', KEY, '/v', valueName, '/t', value.type, '/d', String(value.value), '/f']
 }
 
-/** Parse one `reg query` stdout line into a typed value. */
+/**
+ * Parse `reg query` stdout into a typed value.
+ *
+ * `reg.exe query <key> /v <name>` prints a key-path header line followed by one
+ * value line (e.g. `    ProxyEnable    REG_DWORD    0x1`). The whole stdout is
+ * passed here, so we scan line-by-line for the value line and ignore the header
+ * (the header never starts with a REG_* label). A value-not-found line is
+ * treated as absent; anything with a non-zero exit never reaches here (the
+ * caller maps it to absence or a failure first).
+ */
 export function parseRegQueryValue(raw) {
-  const line = String(raw || '').trim()
-  const m = line.match(/^\s*(\S+)\s+((?:REG|QWORD)[A-Z_]*)\s+(.*)$/)
-  if (!m) {
-    return ABSENT
+  const text = String(raw || '')
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^\s*(\S+)\s+((?:REG|QWORD)[A-Z_]*)\s+(.*)$/)
+    if (!m) continue
+    if (/error|unable|not\s+found|cannot/i.test(line)) {
+      // A value-not-found line is absent; anything else with a non-zero exit is
+      // surfaced as a failure by the caller (it never reaches here on error).
+      return ABSENT
+    }
+    const type = m[2]
+    const rawValue = m[3].trim()
+    if (type === 'REG_DWORD' || type === 'REG_QWORD') {
+      const n = parseInt(rawValue, 16)
+      return { exists: true, type, value: Number.isFinite(n) ? n : 0 }
+    }
+    return { exists: true, type, value: rawValue }
   }
-  if (/error|unable|not\s+found|cannot/i.test(line)) {
-    // A value-not-found line is absent; anything else with a non-zero exit is
-    // surfaced as a failure by the caller (it never reaches here on error).
-    return ABSENT
-  }
-  const type = m[2]
-  let rawValue = m[3].trim()
-  if (type === 'REG_DWORD' || type === 'REG_QWORD') {
-    const n = parseInt(rawValue, 16)
-    return { exists: true, type, value: Number.isFinite(n) ? n : 0 }
-  }
-  return { exists: true, type, value: rawValue }
+  return ABSENT
 }
 
 function looksLikeAccessDenied(text) {

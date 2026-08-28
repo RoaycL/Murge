@@ -58,7 +58,9 @@ function makeRegistry(initial: Record<string, V> = {}) {
     let raw: string
     if (v.type === 'REG_DWORD') raw = `0x${(v.value as number).toString(16)}`
     else raw = String(v.value)
-    return { stdout: `    ${name}    ${v.type}    ${raw}`, stderr: '', code: 0 }
+    // Real reg.exe prints a key-path header line ahead of the value line; the
+    // parser must ignore it (this reproduces that exact multi-line stdout).
+    return { stdout: `HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings\n    ${name}    ${v.type}    ${raw}`, stderr: '', code: 0 }
   }
 
   const exec = async (command: string, args: string[]) => {

@@ -1,8 +1,10 @@
 import { isAbsolute, join } from 'node:path'
-import { lstat } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { access, lstat } from 'node:fs/promises'
 import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
 import {
   mihomoBinaryName,
+  mihomoAssetFor,
   resolveMihomo,
   sha256File,
   type MihomoDownloadRequest,
@@ -95,6 +97,8 @@ export interface MihomoKernelResolverOptions {
   version?: string
   /** Workspace where the pinned binary is resolved/extracted. */
   workspaceDir: string
+  /** Directory containing the installer-bundled, checksum-pinned archive. */
+  bundledArchiveDir?: string
   /** Download/extract overrides (tests). */
   request?: MihomoDownloadRequest
   extractArchive?: MihomoExtractArchive
@@ -139,11 +143,12 @@ export class MihomoKernelResolver implements KernelBinaryResolver {
     }
     const platform = this.options.platform ?? process.platform
     const arch = this.options.arch ?? process.arch
+    const bundledRequest = await this.bundledRequest(platform, arch)
     const bin = this.options.resolveMihomoOverride
       ? await this.options.resolveMihomoOverride(platform, arch, { workspaceDir: this.options.workspaceDir })
       : await resolveMihomo(platform, arch, {
           workspaceDir: this.options.workspaceDir,
-          request: this.options.request,
+          request: this.options.request ?? bundledRequest,
           extractArchive: this.options.extractArchive
         })
     return {
@@ -152,6 +157,25 @@ export class MihomoKernelResolver implements KernelBinaryResolver {
       version: bin.version,
       env: { MIHOMO_PLATFORM: platform, MIHOMO_ARCH: arch }
     }
+  }
+
+  private async bundledRequest(platform: string, arch: string): Promise<MihomoDownloadRequest | undefined> {
+    if (!this.options.bundledArchiveDir) return undefined
+    const asset = mihomoAssetFor(platform, arch)
+    if (!asset) return undefined
+    const archivePath = join(this.options.bundledArchiveDir, asset.filename)
+    try {
+      await access(archivePath)
+    } catch {
+      throw new ProtocolError(
+        ProtocolErrorCode.ARTIFACT_DOWNLOAD_FAILED,
+        `Bundled mihomo archive is missing: ${asset.filename}`
+      )
+    }
+    // resolveMihomo still streams, size-checks and hashes every byte before it
+    // extracts anything. The installer archive is therefore not trusted merely
+    // because it exists on disk.
+    return async () => createReadStream(archivePath)
   }
 
   private async resolveLocalBinary(): Promise<KernelBinary> {

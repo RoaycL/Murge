@@ -142,6 +142,21 @@ describe('MihomoKernelResolver', () => {
     })
     await expect(resolver.resolve()).rejects.toMatchObject({ code: ProtocolErrorCode.UNSUPPORTED })
   })
+
+  it('fails clearly when the installer-bundled archive is missing', async () => {
+    const dir = await wi()
+    const resolver = new MihomoKernelResolver({
+      allowReal: true,
+      workspaceDir: join(dir, 'workspace'),
+      bundledArchiveDir: join(dir, 'empty-bin'),
+      platform: 'win32',
+      arch: 'x64'
+    })
+    await expect(resolver.resolve()).rejects.toMatchObject({
+      code: ProtocolErrorCode.ARTIFACT_DOWNLOAD_FAILED,
+      message: expect.stringContaining('Bundled mihomo archive is missing')
+    })
+  })
 })
 
 describe('mihomoExecutableName', () => {

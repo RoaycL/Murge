@@ -8,6 +8,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { createGunzip } from 'node:zlib'
 import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
+import manifest from '../../../resources/mihomo-assets.json'
 
 const execFileAsync = promisify(execFile)
 
@@ -22,9 +23,8 @@ const execFileAsync = promisify(execFile)
  * official release are listed; unsupported platforms resolve to UNSUPPORTED
  * rather than to an unverified digest.
  */
-export const MIHOMO_VERSION = 'v1.19.30'
-export const MIHOMO_RELEASE_BASE =
-  'https://github.com/MetaCubeX/mihomo/releases/download/v1.19.30'
+export const MIHOMO_VERSION = manifest.version
+export const MIHOMO_RELEASE_BASE = manifest.releaseBase
 
 /** Archive sort. `gz` is a single raw gzipped binary; `zip` is a Windows zip. */
 export type MihomoArtifactKind = 'zip' | 'gz'
@@ -51,38 +51,11 @@ export interface MihomoAsset {
 /** Normalised arch values (Node reports `arm64`/`x64`/`x86`/`arm`/`riscv64`). */
 export type MihomoArch = 'x64' | 'arm64' | 'x86' | 'arm' | 'riscv64' | string
 
-const ASSETS: MihomoAsset[] = [
-  {
-    platform: 'win32',
-    arch: 'x64',
-    filename: 'mihomo-windows-amd64-v1.19.30.zip',
-    url: `${MIHOMO_RELEASE_BASE}/mihomo-windows-amd64-v1.19.30.zip`,
-    sha256: '22c09fd67673895ef7cd6b1820563918275c3d316f2462b306208675118db3c0',
-    size: 18499620,
-    kind: 'zip',
-    innerName: 'mihomo-windows-amd64.exe'
-  },
-  {
-    platform: 'win32',
-    arch: 'arm64',
-    filename: 'mihomo-windows-arm64-v1.19.30.zip',
-    url: `${MIHOMO_RELEASE_BASE}/mihomo-windows-arm64-v1.19.30.zip`,
-    sha256: 'b37c4b0259e85b020edc4215aa4c86052e21071cf520d4800364b21b4e2fc162',
-    size: 16344535,
-    kind: 'zip',
-    innerName: 'mihomo-windows-arm64.exe'
-  },
-  {
-    platform: 'linux',
-    arch: 'arm64',
-    filename: 'mihomo-linux-arm64-v1.19.30.gz',
-    url: `${MIHOMO_RELEASE_BASE}/mihomo-linux-arm64-v1.19.30.gz`,
-    sha256: '58896873736d28628f66de3677c8654fa0f180662523148e136cff4f6e890069',
-    size: 16965828,
-    kind: 'gz',
-    innerName: 'mihomo-linux-arm64'
-  }
-]
+const ASSETS: MihomoAsset[] = manifest.assets.map((asset) => ({
+  ...asset,
+  kind: asset.kind as MihomoArtifactKind,
+  url: `${MIHOMO_RELEASE_BASE}/${asset.filename}`
+}))
 
 /** Resolve the pinned asset for a platform/arch pair, or null when unsupported. */
 export function mihomoAssetFor(platform: string, arch: string): MihomoAsset | null {

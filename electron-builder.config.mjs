@@ -20,7 +20,10 @@ export default {
   },
   copyright: brand.copyright,
   extraResources: [
-    { from: 'resources/bin', to: 'bin', filter: ['**/*'] },
+    // Each installer carries only its own architecture's pinned mihomo archive.
+    // The archive is verified before packaging and re-verified at runtime before
+    // extraction, so first launch never depends on GitHub availability.
+    { from: `resources/bin/${'${arch}'}`, to: 'bin', filter: ['*.zip'] },
     { from: 'resources/defaults', to: 'defaults', filter: ['**/*'] },
     { from: 'LICENSE', to: 'LICENSE.txt' },
     { from: 'resources/THIRD_PARTY_NOTICES.md', to: 'THIRD_PARTY_NOTICES.md' },

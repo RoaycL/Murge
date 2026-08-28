@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, watch } from 'vue'
 import { useRulesStore, type RulesSortKey } from '../stores/rules'
 import { useProvidersStore } from '../stores/providers'
+import { useKernelStore } from '../stores/kernel'
 
 const rules = useRulesStore()
 const providers = useProvidersStore()
+const kernel = useKernelStore()
 
 const COLUMNS: Array<{ key: RulesSortKey | null; label: string; className?: string }> = [
   { key: null, label: '' },
@@ -34,12 +36,18 @@ function formatUpdatedAt(value?: string): string {
 }
 
 async function init(): Promise<void> {
+  await kernel.refresh()
+  if (kernel.status.phase !== 'running') return
   await rules.load()
   void providers.loadRuleProviders()
 }
 
 onMounted(() => {
   void init()
+})
+
+watch(() => kernel.status.phase, (phase, previous) => {
+  if (phase === 'running' && previous !== 'running') void init()
 })
 </script>
 
@@ -57,7 +65,12 @@ onMounted(() => {
       共 {{ rules.summary.total }} 条规则<span v-if="rules.summary.totalHits !== null"> · 命中 {{ rules.summary.totalHits }} 次</span>
     </div>
 
-    <div v-if="rules.status === 'error'" class="empty-state">
+    <div v-if="kernel.status.phase !== 'running'" class="empty-state">
+      <p>内核尚未运行</p>
+      <span>请先在“概览”中启动安全直连内核，规则将在 Controller 就绪后自动载入。</span>
+    </div>
+
+    <div v-else-if="rules.status === 'error'" class="empty-state">
       <p>无法读取规则</p>
       <span>{{ rules.lastError }}</span>
       <button type="button" @click="init">重试</button>

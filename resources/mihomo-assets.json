@@ -1,0 +1,33 @@
+{
+  "version": "v1.19.30",
+  "releaseBase": "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.30",
+  "assets": [
+    {
+      "platform": "win32",
+      "arch": "x64",
+      "filename": "mihomo-windows-amd64-v1.19.30.zip",
+      "sha256": "22c09fd67673895ef7cd6b1820563918275c3d316f2462b306208675118db3c0",
+      "size": 18499620,
+      "kind": "zip",
+      "innerName": "mihomo-windows-amd64.exe"
+    },
+    {
+      "platform": "win32",
+      "arch": "arm64",
+      "filename": "mihomo-windows-arm64-v1.19.30.zip",
+      "sha256": "b37c4b0259e85b020edc4215aa4c86052e21071cf520d4800364b21b4e2fc162",
+      "size": 16344535,
+      "kind": "zip",
+      "innerName": "mihomo-windows-arm64.exe"
+    },
+    {
+      "platform": "linux",
+      "arch": "arm64",
+      "filename": "mihomo-linux-arm64-v1.19.30.gz",
+      "sha256": "58896873736d28628f66de3677c8654fa0f180662523148e136cff4f6e890069",
+      "size": 16965828,
+      "kind": "gz",
+      "innerName": "mihomo-linux-arm64"
+    }
+  ]
+}

@@ -23,7 +23,7 @@ async function toggleKernel(): Promise<void> {
   <div class="page-shell overview-view">
     <h1>概览</h1>
     <section><h2>内核</h2><div class="overview-grid">
-      <SurfaceCard><div class="setting-head"><div><h3>安全直连内核</h3><p>仅启动本机 mihomo 与回环控制器；不会启用系统代理、TUN 或 DNS 接管。</p></div><button type="button" class="primary-button" :disabled="busy" @click="toggleKernel">{{ busy ? '处理中…' : running ? '停止' : '启动' }}</button></div><div class="setting-status"><i :class="{ active: running }" />{{ running ? `运行中 · PID ${kernel.status.pid ?? '—'}` : kernel.status.phase === 'failed' ? '启动失败' : '未运行（需手动启动）' }}</div><p v-if="actionError" class="inline-error">{{ actionError }}</p></SurfaceCard>
+      <SurfaceCard><div class="setting-head"><div><h3>安全直连内核</h3><p>仅启动本机 mihomo 与回环控制器；不会启用系统代理、TUN 或 DNS 接管。</p></div><button type="button" class="primary-button" :disabled="busy" @click="toggleKernel">{{ busy ? '处理中…' : running ? '停止' : '启动' }}</button></div><div class="setting-status"><i :class="{ active: running }" />{{ running ? `运行中 · PID ${kernel.status.pid ?? '—'}` : kernel.status.phase === 'starting' ? '正在校验并准备内置内核…' : kernel.status.phase === 'stopping' ? '正在停止内核…' : kernel.status.phase === 'failed' ? '启动失败' : '未运行（需手动启动）' }}</div><p v-if="actionError || kernel.status.lastError" class="inline-error">{{ actionError || kernel.status.lastError }}</p></SurfaceCard>
     </div></section>
     <section><h2>网络接管</h2><div class="overview-grid">
       <SurfaceCard><div class="setting-head"><div><h3>系统代理</h3><p>大多数应用的流量可以通过将系统代理指向本应用，具有最佳的兼容性和性能。</p></div><button class="switch" disabled aria-label="系统代理尚未实现" /></div><div class="setting-status"><i />阶段 8 尚未实现，当前未启用</div></SurfaceCard>

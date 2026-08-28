@@ -12,5 +12,8 @@ and arm64 NSIS installers plus `SHA256SUMS.txt`.
 
 The workflow refuses a tag that does not exactly equal `v` plus the
 `package.json` version. Re-running a draft build replaces its assets, but it
-refuses to overwrite an already-published release. It never downloads or starts
-mihomo and does not modify system proxy, TUN, DNS, routes or firewall settings.
+refuses to overwrite an already-published release. Packaging downloads and
+SHA-256-verifies the pinned official mihomo archives for inclusion in the two
+installers; it does not modify system proxy, TUN, DNS, routes or firewall
+settings. The main CI job separately runs the installed x64 archive against the
+loopback-only safe-direct configuration and proves cleanup.

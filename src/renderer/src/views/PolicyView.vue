@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { usePoliciesStore, POLICY_MODE_OPTIONS, type PolicyMode } from '../stores/policies'
 import { useProvidersStore } from '../stores/providers'
 import type { MihomoProxy } from '@shared/mihomo-api'
+import { useKernelStore } from '../stores/kernel'
 
 const policies = usePoliciesStore()
 const providers = useProvidersStore()
+const kernel = useKernelStore()
 
 const MODE_LABELS: Record<PolicyMode, string> = {
   direct: '直接连接',
@@ -60,6 +62,8 @@ function formatUpdatedAt(value?: string): string {
 }
 
 async function init(): Promise<void> {
+  await kernel.refresh()
+  if (kernel.status.phase !== 'running') return
   await policies.load()
   void policies.testAll()
   void providers.loadProxyProviders()
@@ -76,6 +80,10 @@ async function init(): Promise<void> {
 onMounted(() => {
   void init()
 })
+
+watch(() => kernel.status.phase, (phase, previous) => {
+  if (phase === 'running' && previous !== 'running') void init()
+})
 </script>
 
 <template>
@@ -88,6 +96,7 @@ onMounted(() => {
         :key="option"
         :class="{ selected: policies.mode === option }"
         type="button"
+        :disabled="kernel.status.phase !== 'running'"
         @click="policies.setMode(option)"
       >{{ MODE_LABELS[option] }}</button>
     </div>
@@ -102,9 +111,14 @@ onMounted(() => {
       >{{ group.name }}</button>
     </div>
 
-    <div class="section-caption"><span>代理</span><button type="button" @click="policies.testAll()">测试全部</button></div>
+    <div class="section-caption"><span>代理</span><button type="button" :disabled="kernel.status.phase !== 'running'" @click="policies.testAll()">测试全部</button></div>
 
-    <div v-if="policies.status === 'error'" class="empty-state">
+    <div v-if="kernel.status.phase !== 'running'" class="empty-state">
+      <p>内核尚未运行</p>
+      <span>请先在“概览”中启动安全直连内核，策略将在 Controller 就绪后自动载入。</span>
+    </div>
+
+    <div v-else-if="policies.status === 'error'" class="empty-state">
       <p>无法读取策略</p>
       <span>{{ policies.lastError }}</span>
       <button type="button" @click="init">重试</button>

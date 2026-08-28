@@ -203,9 +203,10 @@ Environment: disposable Windows VM with an independent recovery path.
 
 Entry gate: Phases 1–6 complete and explicit owner authorization for this phase.
 
-Status: complete. The real lifecycle remains opt-in: application startup only
-composes the resolver and controller client; download, verification and spawn
-begin exclusively in response to the renderer's `kernel:start` action.
+Status: complete. The real lifecycle remains opt-in: the installer carries the
+architecture-matched official archive, while verification, extraction and spawn
+begin exclusively in response to the renderer's `kernel:start` action. First
+launch therefore does not depend on GitHub availability.
 
 Step B (Win x64 real mihomo on the disposable Windows CI job) has now executed
 multiple times — the two latest green runs (fault-injection step verified):

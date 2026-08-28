@@ -183,6 +183,9 @@ jobs:
       - name: Build renderer/main
         run: npm run build
 
+      - name: Download and verify installer-bundled mihomo archives
+        run: npm run kernel:prepare
+
       - name: Package Windows NSIS (x64 + arm64)
         run: npx electron-builder --win --config electron-builder.config.mjs --publish never
         env:
@@ -264,6 +267,15 @@ jobs:
           if ($newPorts) { throw 'controller port 9090 is listening after the smoke run' }
           Write-Host 'no mihomo process and no new controller listener confirmed'
 
+          # Exercise the installed artifact's bundled kernel end to end. This
+          # must not download anything: it verifies and extracts the archive
+          # shipped in resources/bin, starts the loopback-only direct config,
+          # authenticates /version, then stops and cleans up.
+          $kernelProbe = Start-Process -FilePath $exe -ArgumentList '--kernel-smoke' -PassThru -Wait
+          Write-Host "kernel-smoke exit code: $($kernelProbe.ExitCode) (expected 0)"
+          if ($kernelProbe.ExitCode -ne 0) { throw "bundled kernel smoke exited with code $($kernelProbe.ExitCode)" }
+          if (Get-Process -Name 'mihomo' -ErrorAction SilentlyContinue) { throw 'mihomo remained after bundled kernel smoke' }
+
           # Load the real renderer + sandboxed preload and perform one typed IPC
           # round-trip. A visible static shell alone is insufficient: a missing
           # preload previously left every live view stuck while this job passed.
@@ -271,11 +283,11 @@ jobs:
           Write-Host "ui-smoke exit code: $($bridge.ExitCode) (expected 0)"
           if ($bridge.ExitCode -ne 0) { throw "preload IPC smoke exited with code $($bridge.ExitCode)" }
 
-          # Launch the REAL packaged GUI path (without --packaging-smoke) and
+          # Launch the REAL packaged GUI path (without a smoke flag) and
           # require a visible native top-level window. The old probe explicitly
           # skipped window creation, so an invisible background-only app could
-          # pass CI. Production still has its kernel resolver disabled here and
-          # must not start mihomo or bind the controller port.
+          # pass CI. Normal launch remains lazy and must not start mihomo or bind
+          # a controller until the user explicitly clicks Start.
           $ui = Start-Process -FilePath $exe -PassThru
           $windowReady = $false
           try {

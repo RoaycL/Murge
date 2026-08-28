@@ -49,18 +49,10 @@ part of the application runtime.
 
 ## mihomo (proxy core)
 
-This application does **not** currently bundle, execute, or ship the mihomo
-proxy core. The default configuration runs against a harmless fixture process
-and a real kernel is never launched automatically. Consequently no mihomo binary
-or mihomo source is distributed in this phase and no mihomo source-offer
-obligation is triggered yet.
-
-mihomo is a separate project distributed under the GNU General Public License
-version 3 (GPL-3.0). When a later milestone enables and distributes a real
-mihomo binary, this notice must be updated to provide the corresponding GPL
-compliance materials: the exact license text, a written offer to supply source
-(or the source itself), and any corresponding source used to build the shipped
-binary. See `docs/MIHOMO_API.md` for the integration boundary. This separation
-is intentional: the proxy core runs as an independent child process and is not
-linked into the application's own code, so the application's own source and
-license remain independent of mihomo's GPL terms.
+The Windows installers include the official, unmodified mihomo v1.19.30 archive
+for the installer's architecture. Murge verifies the pinned archive SHA-256
+again before extracting or executing it, and execution remains an explicit user
+action. mihomo is licensed under GPL-3.0; the corresponding source for the exact
+distributed version is available from
+<https://github.com/MetaCubeX/mihomo/tree/v1.19.30>. The complete GPLv3 text is
+installed as `LICENSE.txt`.

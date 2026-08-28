@@ -57,6 +57,14 @@ describe('electron-builder brand wiring (Phase 6 metadata)', () => {
     }
   })
 
+  it('bundles only the current installer architecture mihomo archive', () => {
+    expect(config.extraResources).toContainEqual({
+      from: 'resources/bin/${arch}',
+      to: 'bin',
+      filter: ['*.zip']
+    })
+  })
+
   it('produces exactly two per-arch NSIS installers (strategy A, no combined)', () => {
     // Strategy A: x64 + arm64 only, never the combined/universal installer.
     expect(config.nsis.buildUniversalInstaller).toBe(false)

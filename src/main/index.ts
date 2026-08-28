@@ -287,7 +287,11 @@ app.whenReady().then(async () => {
       resolver: is.dev
         ? createKernelResolver({ appPath: app.getAppPath(), mode: 'fixture' })
         : process.platform === 'win32'
-          ? new MihomoKernelResolver({ allowReal: true, workspaceDir: productionKernelRoot })
+          ? new MihomoKernelResolver({
+              allowReal: true,
+              workspaceDir: productionKernelRoot,
+              bundledArchiveDir: join(process.resourcesPath, 'bin')
+            })
           : createKernelResolver({ appPath: app.getAppPath(), mode: 'disabled' }),
       configStore: is.dev
         ? new TempKernelConfigStore()
@@ -318,6 +322,21 @@ app.whenReady().then(async () => {
         new MihomoClient(`http://127.0.0.1:${productionControllerPort}`, productionSecret!, { timeoutMs: 750 })
       )
     : kernelInstance
+
+  // CI-only installed-artifact probe. Unlike --packaging-smoke, this exercises
+  // the complete opt-in production path: bundled archive verification,
+  // extraction, process spawn, authenticated /version readiness and cleanup.
+  // The generated config is loopback-only/direct with TUN and DNS disabled.
+  if (!is.dev && process.argv.includes('--kernel-smoke')) {
+    const started = await ipcKernel.start()
+    if (started.phase !== 'running') {
+      throw new ProtocolError(ProtocolErrorCode.KERNEL_START_TIMEOUT, 'Packaged kernel did not reach running state')
+    }
+    await ipcKernel.stop()
+    console.log('[kernel-smoke] bundled kernel lifecycle: PASS')
+    app.quit()
+    return
+  }
   const validator = createConfigValidator({ requireProxySections: false })
   
   // SECURITY: In development builds, block all outbound network requests for subscriptions

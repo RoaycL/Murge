@@ -8,6 +8,7 @@
   --app-faint: #c4c8cf;
   --app-sidebar-selected: rgba(215, 220, 228, 0.76);
   --app-surface: rgba(255, 255, 255, 0.82);
+  --app-surface-border: rgba(255, 255, 255, 0.82);
   --app-surface-solid: #fbfbfc;
   --app-divider: rgba(130, 136, 146, 0.2);
   --app-shadow: 0 8px 24px rgba(34, 42, 55, 0.075);
@@ -18,7 +19,7 @@
   --app-blue: #1587f8;
   --radius-large: 19px;
   --radius-control: 7px;
-  --sidebar-width: 201px;
+  --sidebar-width: 205px;
   --content-max-width: 709px;
   --activity-content-width: 695px;
   --frame-radius: 12px;
@@ -36,6 +37,7 @@
     --app-faint: #5d6470;
     --app-sidebar-selected: rgba(68, 73, 84, 0.72);
     --app-surface: rgba(39, 42, 51, 0.94);
+    --app-surface-border: rgba(255, 255, 255, 0.05);
     --app-surface-solid: #292c34;
     --app-divider: rgba(190, 196, 206, 0.16);
     --app-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);

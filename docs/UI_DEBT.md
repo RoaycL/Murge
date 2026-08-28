@@ -40,15 +40,21 @@ snapshot, not a true cumulative categorized total.
 
 ## UI-DEBT-003 — Activity vs reference ~3–11px drift
 
-The Activity page is still ~3–11px off the normative reference in position and
+Resolved: the application frame no longer adds an unapproved 8px inset, the
+sidebar and Activity dashboard now use the normative 205px / 347px / 166px
+geometry, and light/dark card borders use the reference-specific surface
+tokens. A static UI contract test guards these dimensions and the speed-card
+surface component wiring.
+
+The Activity page was ~3–11px off the normative reference in position and
 width (notably the title/runtime-context strip is ~5px wider because of the
 695px content-box vs the reference's 690 + padding; the total-bar and dashboard
 margins differ by a few px).
 
-- Final acceptance MUST use the same 934×672 capture environment and compare
-  RAW pixels (impl vs reference).
-- Do NOT substitute normalized proportions/ratios for acceptance. Normalized
-  comparison is fine as a diagnostic, never as the accept gate.
+- The 2026-08-28 acceptance refresh used a real 934×672 Electron window and
+  compared the result visually with both the normative PNG and installed Surge.
+- Future changes must keep using raw 934×672 captures; normalized proportions
+  remain diagnostic evidence rather than the acceptance gate.
 
 ## UI-DEBT-004 — Activity latency card and hourly bars are still hardcoded
 

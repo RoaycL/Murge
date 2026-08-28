@@ -108,10 +108,22 @@ async function allocateProductionPorts(): Promise<{ controller: number; mixed: n
 
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
-    width: 1120,
-    height: 806,
+    // The approved Surge-derived reference is a 934 x 672 content viewport.
+    // Keep the initial window on that exact canvas; users may still enlarge it.
+    width: 934,
+    height: 672,
+    useContentSize: true,
     minWidth: 934,
     minHeight: 672,
+    // Surge places its content beneath the traffic-light/title-bar region.
+    // The renderer already owns a draggable strip; keep native window controls
+    // as an overlay on Windows while avoiding a second 30px layout offset.
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#00000000',
+      symbolColor: '#858b95',
+      height: 34
+    },
     show: false,
     autoHideMenuBar: true,
     title: brand.productName,

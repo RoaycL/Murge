@@ -7,7 +7,7 @@ button:disabled { cursor: default; opacity: 0.55; }
 .primary-button { min-width: 64px; height: 30px; padding: 0 14px; border: 0; border-radius: 7px; color: white; background: var(--app-blue); cursor: pointer; }
 .inline-error { margin: 8px 0 0; color: #d64f4f; font-size: 11px; overflow-wrap: anywhere; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-.app-window { position: relative; width: 100%; height: 100%; padding: 8px; overflow: hidden; }
+.app-window { position: relative; width: 100%; height: 100%; overflow: hidden; }
 .app-frame { display: grid; grid-template-columns: var(--sidebar-width) 1fr; width: 100%; height: 100%; border-radius: var(--frame-radius); border: 1px solid var(--frame-border); background: linear-gradient(135deg, var(--app-background-start), var(--app-background-end)); box-shadow: var(--frame-shadow); overflow: hidden; }
 .app-sidebar { position: relative; height: 100%; padding: 54px 10px 12px; border-right: 1px solid rgba(127, 127, 127, 0.08); }
 .window-drag-region { position: absolute; inset: 0 0 auto; height: 42px; -webkit-app-region: drag; }
@@ -21,9 +21,9 @@ button:disabled { cursor: default; opacity: 0.55; }
 .sidebar-footer { position: absolute; left: 10px; right: 10px; bottom: 11px; padding-top: 9px; border-top: 1px solid var(--app-divider); }
 .sidebar-button { cursor: pointer; }
 .app-content { min-width: 0; height: 100%; overflow: auto; }
-.page-shell { width: 100%; min-height: 0; padding: 45px 15px 0 5px; }
+.page-shell { width: 100%; min-height: 0; padding: 45px 34px 0 5px; }
 h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font-weight: 700; }
-.surface-card { background: var(--app-surface); border: 1px solid rgba(255, 255, 255, 0.5); border-radius: var(--radius-large); box-shadow: var(--app-shadow); overflow: hidden; }
+.surface-card { background: var(--app-surface); border: 1px solid var(--app-surface-border); border-radius: var(--radius-large); box-shadow: var(--app-shadow); overflow: hidden; }
 .activity-header { width: var(--activity-content-width); }
 .status-pills { display: flex; gap: 12px; }
 .status-pill { display: flex; align-items: center; justify-content: center; min-width: 122px; height: 23px; border-radius: 12px; color: #4f535a; background: rgba(220, 221, 224, 0.9); font-size: 12px; }
@@ -32,7 +32,7 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .runtime-context div { display: flex; flex-direction: column; }
 .runtime-context span, .metric-label { color: var(--app-muted); font-size: 11px; }
 .runtime-context strong { margin-top: 3px; font-size: 16px; line-height: 19px; font-weight: 650; }
-.dashboard-grid { display: grid; grid-template-columns: 340px 340px; grid-template-rows: 162px 162px 162px; gap: 15px; width: var(--activity-content-width); }
+.dashboard-grid { display: grid; grid-template-columns: 347px 347px; grid-template-rows: 166px 165px 165px; gap: 15px; width: 709px; }
 .latency-card { padding: 15px 16px 13px; }
 .quiet-button { float: right; width: 100px; height: 28px; margin-top: -5px; border: 1px solid var(--app-divider); border-radius: 6px; background: transparent; font-size: 12px; cursor: pointer; }
 .large-metric { margin-top: 5px; font-size: 34px; line-height: 37px; font-weight: 650; }

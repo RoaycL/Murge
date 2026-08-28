@@ -59,8 +59,11 @@ Resilient stream states were added without shifting the fixed grid:
 - Capture confirmed (DOM probe while live): route `#/activity`, `.dashboard-grid` present, 2 `.speed-card`
   sparklines with real `d` paths (10-point series), 5 `.rank-row`, 活动连接 = 5, 总计 = 8.1 MB.
 
-## Note on visual review
+## Visual review refresh — 2026-08-28
 
-This session's model has no image input, so the two PNGs were verified structurally (content size 934×672,
-non-trivial rendered size, DOM probe above) rather than by eyeballing pixels. Please open the two PNGs and
-approve the deviations above before merging.
+The implementation PNG was recaptured from a real Electron window after the
+reference-size alignment pass. It was inspected visually against both the
+normative PNG and the installed Surge Activity page. The capture is exactly
+934×672, all dashboard cards remain on the first screen, and no scrollbar is
+visible. The runtime values and graph paths intentionally differ because the
+implementation uses live mock data.

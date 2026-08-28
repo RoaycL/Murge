@@ -168,14 +168,40 @@ describe('windows system-proxy helpers', () => {
 
     it('reports failure (non-zero exit) when InternetSetOption returns false or last-error is non-zero', () => {
       const script = buildWinInetRefreshScript()
-      // It must capture both bool returns and the Win32 last-error, and surface
-      // failure via a non-zero exit rather than always exiting 0.
-      expect(script).toContain('$b1 = $t::InternetSetOption(0, 39, 0, 0)')
-      expect(script).toContain('$b2 = $t::InternetSetOption(0, 37, 0, 0)')
+      // It must P/Invoke the real WinINet entry point (never the fragile
+      // [type]::GetType("Microsoft.Win32.NativeMethods")), capture the bool result
+      // and the Win32 last-error per call, and surface failure via a non-zero exit
+      // rather than always exiting 0.
+      expect(script).toContain('[SystemProxy.WinInet]::InternetSetOption([IntPtr]::Zero, 39, [IntPtr]::Zero, 0)')
+      expect(script).toContain('[SystemProxy.WinInet]::InternetSetOption([IntPtr]::Zero, 37, [IntPtr]::Zero, 0)')
       expect(script).toContain('GetLastWin32Error')
+      expect(script).toContain('$e1 = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()')
+      expect(script).toContain('$e2 = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()')
       expect(script).toContain('exit 2')
       expect(script).toContain('exit 0')
       expect(script).toContain('Write-Error')
+      // The last-error must be read per call (inside the branch where THAT call
+      // returned false) — never cached after a successful call.
+      expect(script).not.toContain('$e = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()')
+      expect(script).toContain('if (-not $b1)')
+      expect(script).toContain('if (-not $b2)')
+    })
+  })
+
+  describe('WinINet refresh script parity with the standalone recovery helper', () => {
+    it('is byte-identical to scripts/recover-system-proxy.mjs buildRefreshScript() (via subprocess)', async () => {
+      const { execFile } = await import('node:child_process')
+      const { promisify } = await import('node:util')
+      const { fileURLToPath } = await import('node:url')
+      const path = await import('node:path')
+      const execFileAsync = promisify(execFile)
+      const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+      const { stdout } = await execFileAsync(
+        process.execPath,
+        ['scripts/recover-system-proxy.mjs', '--print-refresh-script'],
+        { cwd: repoRoot }
+      )
+      expect(buildWinInetRefreshScript()).toBe(stdout)
     })
   })
 })

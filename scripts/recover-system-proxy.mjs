@@ -45,7 +45,9 @@ const STATE_KEYS = Object.values(REG_STATE_KEYS)
 
 const SCHEMA_VERSION = 1
 const LOOPBACK_HOST = '127.0.0.1'
-// Exact registry types the backup may carry. Anything else is un-restorable.
+// Every registry type the shared backup schema may carry (structural validity).
+const REGISTRY_TYPES = ['REG_DWORD', 'REG_SZ', 'REG_EXPAND_SZ', 'REG_MULTI_SZ', 'REG_BINARY', 'REG_QWORD', 'none']
+// Exact registry types the backup may *restore*. Anything else is un-restorable.
 const RESTORABLE_TYPES = ['REG_DWORD', 'REG_SZ', 'REG_EXPAND_SZ', 'REG_BINARY']
 
 const ABSENT = { exists: false, type: 'none', value: null }
@@ -56,54 +58,145 @@ export function backupPath(env = process.env, base = process.platform === 'win32
   return join(base, 'system-proxy', 'owned-backup.json')
 }
 
-/** Structurally validate the backup; returns a list of problem strings (empty = ok). */
+function isPlainObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v)
+}
+
+function isSafeInteger(n) {
+  return Number.isSafeInteger(n)
+}
+
+function isLeapYear(y) {
+  return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0
+}
+
+// Matches the Zod `.datetime({ offset: true })` surface exactly: a full ISO-8601
+// `YYYY-MM-DDTHH:mm:ss(.fraction)?(Z|±HH:MM)` with real calendar validity (no
+// `2024-13-45`, no `24:00:00`, no leap second `:60`) and a mandatory offset. This
+// is deliberately re-derived here rather than importing zod, and it is pinned by
+// the schema-alignment test so it can never drift from the TypeScript schema.
+const ISO_DATETIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(Z|[+-]\d{2}:\d{2})$/
+
+function isIsoDatetime(s) {
+  if (typeof s !== 'string') return false
+  const m = ISO_DATETIME.exec(s)
+  if (!m) return false
+  const year = +m[1]
+  const month = +m[2]
+  const day = +m[3]
+  const hour = +m[4]
+  const minute = +m[5]
+  const second = +m[6]
+  if (month < 1 || month > 12) return false
+  const daysInMonth = [31, isLeapYear(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+  if (day < 1 || day > daysInMonth[month - 1]) return false
+  if (hour > 23 || minute > 59 || second > 59) return false
+  return true
+}
+
+function hasOnlyKeys(obj, keys) {
+  const allowed = new Set(keys)
+  return Object.keys(obj).every((k) => allowed.has(k))
+}
+
+/**
+ * Structural validation that mirrors the TS/Zod `systemProxyBackupSchema`
+ * exactly (the single source of truth). It does NOT pass judgment on whether a
+ * type is restorable — that is a separate {@link validateRestorableState} check,
+ * matching the two-stage validation the app performs (Zod schema, then
+ * `validateRestorable`). Returns a list of problem strings (empty = valid).
+ */
 export function validateBackupShape(backup) {
   const problems = []
-  if (!backup || typeof backup !== 'object') return ['<backup-not-an-object>']
+  if (!isPlainObject(backup)) return ['<backup-not-an-object>']
+  if (!hasOnlyKeys(backup, ['schemaVersion', 'instanceId', 'createdAt', 'target', 'previous', 'written'])) {
+    problems.push('unknown top-level key(s) in backup')
+  }
   if (backup.schemaVersion !== SCHEMA_VERSION) {
     problems.push(`schemaVersion must be exactly ${SCHEMA_VERSION}; got ${JSON.stringify(backup.schemaVersion)}`)
   }
   if (typeof backup.instanceId !== 'string' || !backup.instanceId) problems.push('instanceId must be a non-empty string')
-  if (typeof backup.createdAt !== 'string' || !backup.createdAt) problems.push('createdAt must be a non-empty string')
-  if (!backup.target || backup.target.host !== LOOPBACK_HOST) {
-    problems.push(`target.host must be loopback '${LOOPBACK_HOST}'; got ${JSON.stringify(backup.target?.host)}`)
-  }
-  if (!Number.isInteger(backup.target?.port) || backup.target.port < 1 || backup.target.port > 65535) {
-    problems.push(`target.port must be an integer in 1-65535; got ${JSON.stringify(backup.target?.port)}`)
+  if (!isIsoDatetime(backup.createdAt)) problems.push('createdAt must be an ISO-8601 datetime with an offset')
+  if (!isPlainObject(backup.target)) {
+    problems.push('target must be an object')
+  } else {
+    if (!hasOnlyKeys(backup.target, ['host', 'port'])) problems.push('unknown key(s) in target')
+    if (backup.target.host !== LOOPBACK_HOST) {
+      problems.push(`target.host must be loopback '${LOOPBACK_HOST}'; got ${JSON.stringify(backup.target.host)}`)
+    }
+    if (!isSafeInteger(backup.target.port) || backup.target.port < 1 || backup.target.port > 65535) {
+      problems.push(`target.port must be a safe integer in 1-65535; got ${JSON.stringify(backup.target.port)}`)
+    }
   }
   for (const key of ['previous', 'written']) {
     const state = backup[key]
-    if (!state || typeof state !== 'object') {
+    if (!isPlainObject(state)) {
       problems.push(`${key} must be a registry state object`)
       continue
     }
+    if (!hasOnlyKeys(state, STATE_KEYS)) problems.push(`unknown key(s) in ${key}`)
     for (const name of STATE_KEYS) {
-      const v = state[name]
-      if (!v || typeof v !== 'object') {
-        problems.push(`${key}.${name} must be a registry value object`)
-        continue
-      }
-      const typeProblem = validateRegistryValueShape(v)
-      if (typeProblem) problems.push(`${key}.${name}: ${typeProblem}`)
+      const shapeProblem = validateRegistryValueShape(state[name])
+      if (shapeProblem) problems.push(`${key}.${name}: ${shapeProblem}`)
     }
   }
   return problems
 }
 
 function validateRegistryValueShape(v) {
+  if (!isPlainObject(v)) return 'must be a registry value object'
+  if (typeof v.exists !== 'boolean') return 'exists must be a boolean'
+  if (!REGISTRY_TYPES.includes(v.type)) return `unknown registry type '${v.type}'`
+  if (!Object.prototype.hasOwnProperty.call(v, 'value')) return 'value must be present'
   if (v.exists === false) {
     if (v.type !== 'none' || v.value !== null) return 'absent value must be {type:"none", value:null}'
     return null
   }
-  if (v.exists !== true) return 'exists must be a boolean'
-  if (v.type === 'none') return 'present value cannot have type "none"'
-  if (!RESTORABLE_TYPES.includes(v.type)) return `unrestorable type '${v.type}'`
-  if (v.type === 'REG_DWORD') {
-    if (!Number.isInteger(v.value) || v.value < 0) return 'REG_DWORD value must be a non-negative integer'
+  if (v.exists === true) {
+    if (v.type === 'none') return 'present value cannot have type "none"'
+    const numeric = v.type === 'REG_DWORD' || v.type === 'REG_QWORD'
+    if (numeric) {
+      if (typeof v.value !== 'number' || !isSafeInteger(v.value) || v.value < 0) {
+        return `${v.type} value must be a non-negative safe integer`
+      }
+    } else if (typeof v.value !== 'string') {
+      return `${v.type} value must be a string`
+    }
     return null
   }
-  if (typeof v.value !== 'string') return `${v.type} value must be a string`
-  return null
+  return 'exists must be a boolean'
+}
+
+/**
+ * Restorability check mirroring the app's `validateRestorable`: reg.exe can only
+ * faithfully restore the types in {@link RESTORABLE_TYPES}, so a `previous` (or
+ * `written`) state carrying anything else must refuse to restore rather than
+ * guess. This is deliberately a *separate* concern from structural validity.
+ */
+export function validateRestorableState(state) {
+  const problems = []
+  if (!isPlainObject(state)) return ['<state-not-an-object>']
+  for (const name of STATE_KEYS) {
+    const v = state[name]
+    if (!isPlainObject(v)) {
+      problems.push(`${name}: must be a registry value object`)
+      continue
+    }
+    if (v.exists === false) {
+      if (v.type !== 'none' || v.value !== null) problems.push(`${name}: absent value must be {type:"none", value:null}`)
+      continue
+    }
+    if (!RESTORABLE_TYPES.includes(v.type)) {
+      problems.push(`${name}: type '${v.type}' cannot be faithfully restored`)
+      continue
+    }
+    if (v.type === 'REG_DWORD') {
+      if (!isSafeInteger(v.value) || v.value < 0) problems.push(`${name}: REG_DWORD value must be a non-negative safe integer`)
+      continue
+    }
+    if (typeof v.value !== 'string') problems.push(`${name}: ${v.type} value must be a string`)
+  }
+  return problems
 }
 
 /** Two registry values are equal only when exists, type and value all match. */
@@ -204,6 +297,19 @@ export async function runRecovery(backupFile, opts = {}) {
       conflictDetail: problems.join('; ')
     }
   }
+  // Mirror the app's two-stage validation: a structurally valid backup may still
+  // carry a registry type reg.exe cannot restore (e.g. REG_MULTI_SZ). Refuse
+  // before any write rather than guessing.
+  const restorableProblems = validateRestorableState(backup.previous)
+  if (restorableProblems.length) {
+    log(`backup not restorable: ${restorableProblems.join('; ')}`)
+    return {
+      phase: 'conflict',
+      ok: false,
+      errorMessage: '系统代理备份含无法安全还原的注册表项',
+      conflictDetail: restorableProblems.join('; ')
+    }
+  }
 
   // --- 2) Only auto-restore when the registry still matches our written state ---
   let observed
@@ -217,6 +323,27 @@ export async function runRecovery(backupFile, opts = {}) {
       errorMessage: '无法读取注册表以确认系统代理状态',
       conflictDetail: error.message
     }
+  }
+  // A prior run may have restored the registry but failed to delete the backup
+  // (e.g. a transient file lock). Detect that state and just retry cleanup so a
+  // stale backup is never mistaken for a live ownership conflict on next launch.
+  if (isOwned(observed, backup.previous)) {
+    log('registry already matches the pre-enable state; retrying cleanup of the stale backup')
+    if (!dryRun) {
+      try {
+        await runner.fs.unlink(backupFile)
+      } catch (error) {
+        log(`stale-backup cleanup failed: ${error.message}`)
+        return {
+          phase: 'restore-failed',
+          ok: false,
+          errorMessage: '系统代理先前已还原，但备份文件删除失败，请重试清理',
+          conflictDetail: error.message
+        }
+      }
+    }
+    log('stale backup cleared')
+    return { phase: 'disabled', ok: true }
   }
   if (!isOwned(observed, backup.written)) {
     log('registry no longer matches the written state; reporting conflict without overwrite')
@@ -255,7 +382,20 @@ export async function runRecovery(backupFile, opts = {}) {
       }
     }
     if (!dryRun) {
-      await runner.fs.unlink(backupFile).catch(() => undefined)
+      try {
+        await runner.fs.unlink(backupFile)
+      } catch (error) {
+        // The registry is already restored and verified; a failure to remove the
+        // backup is surfaced (not swallowed) so the caller can react, and marks
+        // the next launch to retry cleanup rather than report a false conflict.
+        log(`restore verified but backup delete failed: ${error.message}`)
+        return {
+          phase: 'restore-failed',
+          ok: false,
+          errorMessage: '系统代理已还原成功，但备份文件删除失败，请重试清理',
+          conflictDetail: error.message
+        }
+      }
     }
     log('restore verified and backup removed')
     return { phase: 'disabled', ok: true }
@@ -312,19 +452,46 @@ async function refreshWinInet(runner) {
   return res.code === 0
 }
 
-/** The PowerShell refresh script with the Win32 last-error check. */
+/**
+ * The canonical WinINet refresh script, shared byte-for-byte with the TypeScript
+ * `buildWinInetRefreshScript()` in the main app (see the static equality test in
+ * `tests/system-proxy-windows-helpers.test.ts`). It intentionally does NOT cache
+ * the last Win32 error after a *successful* call — a stale non-zero last-error
+ * from an unrelated prior call would otherwise be misread as a failure. Each call
+ * reads `GetLastWin32Error()` only in the branch where that call returned false,
+ * and a failure exits non-zero so the caller (adapter / recovery) treats the
+ * refresh as failed.
+ */
+export const WIN_INET_REFRESH_SCRIPT = `$ErrorActionPreference = 'Stop'
+if (-not ('SystemProxy.WinInet' -as [type])) {
+  Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace SystemProxy {
+  public static class WinInet {
+    [DllImport("wininet.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    public static extern bool InternetSetOption(IntPtr hInternet, int dwOption, IntPtr lpBuffer, int dwBufferLength);
+  }
+}
+'@
+}
+$b1 = [SystemProxy.WinInet]::InternetSetOption([IntPtr]::Zero, 39, [IntPtr]::Zero, 0)
+if (-not $b1) {
+  $e1 = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+  Write-Error ('InternetSetOption(INTERNET_OPTION_SETTINGS_CHANGED) failed; last-error={0}' -f $e1)
+  exit 2
+}
+$b2 = [SystemProxy.WinInet]::InternetSetOption([IntPtr]::Zero, 37, [IntPtr]::Zero, 0)
+if (-not $b2) {
+  $e2 = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+  Write-Error ('InternetSetOption(INTERNET_OPTION_REFRESH) failed; last-error={0}' -f $e2)
+  exit 2
+}
+exit 0
+`
+
 export function buildRefreshScript() {
-  return [
-    '$ErrorActionPreference = "Stop";',
-    '$t = [type]::GetType("Microsoft.Win32.NativeMethods")',
-    'if (-not $t) { [System.Reflection.Assembly]::LoadWithPartialName("System") | Out-Null; $t = [type]::GetType("Microsoft.Win32.NativeMethods") }',
-    'if (-not $t) { Write-Error "WinINet P/Invoke type unavailable"; exit 3 }',
-    '$b1 = $t::InternetSetOption(0, 39, 0, 0)',
-    '$b2 = $t::InternetSetOption(0, 37, 0, 0)',
-    '$e = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()',
-    'if (-not ($b1 -and $b2) -or $e -ne 0) { Write-Error "InternetSetOption failed ($b1/$b2, last-error=$e)"; exit 2 }',
-    'exit 0'
-  ].join(' ')
+  return WIN_INET_REFRESH_SCRIPT
 }
 
 /** Default runner over the real Windows tools. Tests inject a mock. */
@@ -361,16 +528,58 @@ export function defaultRunner() {
 }
 
 function parseCli(argv) {
-  const opts = { backupPath: null, dryRun: false }
+  const opts = { backupPath: null, dryRun: false, printRefreshScript: false, validate: null }
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '--backup') opts.backupPath = argv[++i]
     else if (argv[i] === '--dry-run') opts.dryRun = true
+    else if (argv[i] === '--print-refresh-script') opts.printRefreshScript = true
+    else if (argv[i] === '--validate') opts.validate = argv[++i]
   }
   return opts
 }
 
 async function main() {
   const opts = parseCli(process.argv)
+
+  if (opts.printRefreshScript) {
+    process.stdout.write(buildRefreshScript())
+    return
+  }
+
+  // Cross-check mode used by the schema-alignment test: validate an arbitrary
+  // backup payload (a JSON string or a path to a JSON file) and print the
+  // structural + restorability problems. Exits 0 when structurally valid and
+  // restorable, 1 otherwise.
+  if (opts.validate !== null) {
+    let input = opts.validate
+    if (input !== '-' && (input.startsWith('{') || input.startsWith('['))) {
+      // Already an inline JSON string.
+    } else {
+      try {
+        input = await readFile(input, 'utf8')
+      } catch (error) {
+        process.stderr.write(`[recover] --validate cannot read ${opts.validate}: ${error.message}\n`)
+        process.exitCode = 1
+        return
+      }
+    }
+    let payload
+    try {
+      payload = JSON.parse(input)
+    } catch (error) {
+      process.stdout.write(JSON.stringify({ parseError: `not valid JSON: ${error.message}` }))
+      process.exitCode = 1
+      return
+    }
+    const structural = validateBackupShape(payload)
+    const restorable = validateRestorableState(payload?.previous)
+    const verdict = { structural, restorable, valid: structural.length === 0 && restorable.length === 0 }
+    process.stdout.write(JSON.stringify(verdict, null, 2))
+    process.stdout.write('\n')
+    process.exitCode = verdict.valid ? 0 : 1
+    return
+  }
+
   const path = opts.backupPath ?? backupPath()
   try {
     const verdict = await runRecovery(path, {

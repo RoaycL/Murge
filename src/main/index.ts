@@ -17,7 +17,8 @@ import { SystemProxyService } from './system-proxy/service'
 import { WindowsSystemProxyAdapter } from './system-proxy/adapters/windows-adapter'
 import { DisabledSystemProxyAdapter } from './system-proxy/adapters/disabled-adapter'
 import { FileSystemProxyBackupStore } from './system-proxy/backup-store'
-import { StaticSystemProxyProbe } from './system-proxy/probe'
+import { StaticSystemProxyProbe, LiveSystemProxyKernelProbe, type LiveProbeMihomo } from './system-proxy/probe'
+import type { KernelGateway } from '../shared/gateways'
 import { SYSTEM_PROXY_LOOPBACK_HOST } from '../shared/system-proxy'
 import { SystemProxyOrderedKernelGateway } from './system-proxy/ordered-kernel-gateway'
 import { NodeKernelProcessAdapter } from './kernel/node-adapter'
@@ -238,20 +239,37 @@ async function runPackagingSmoke(profileRoot: string): Promise<void> {
  * closed without ever entering the restore-write path.
  */
 async function runSystemProxyRestore(): Promise<void> {
+  const backupStore = FileSystemProxyBackupStore.forAppDataBase(app.getPath('appData'))
   const service = new SystemProxyService({
     adapter:
       process.platform === 'win32'
         ? new WindowsSystemProxyAdapter()
         : new DisabledSystemProxyAdapter(process.platform),
     probe: new StaticSystemProxyProbe({ host: SYSTEM_PROXY_LOOPBACK_HOST, port: 1 }),
-    backup: FileSystemProxyBackupStore.forAppDataBase(app.getPath('appData')),
+    backup: backupStore,
     instanceId: 'restore-cli'
   })
   try {
     const status = await service.init()
-    // `disabled` = restored (or nothing owned); `conflict` = registry no longer
+    // `disabled` = restored (or nothing owned); `conflict` = the registry no longer
     // matches the written state, so we intentionally did NOT overwrite.
-    const ok = status.phase === 'disabled' || status.phase === 'conflict'
+    let ok = status.phase === 'disabled'
+    if (status.phase === 'conflict') {
+      // The uninstaller aborts on a non-zero restore exit *only* when the owned
+      // proxy could not be put back. `init()` collapses both an external-edit
+      // conflict (safe — leave the registry untouched) and a corrupt / unreadable
+      // backup into `conflict`, so re-read the backup to tell them apart: a backup
+      // that still parses is an external edit (continue the uninstall, exit 0); a
+      // backup that no longer reads is corrupt and restore has to fail (exit 1).
+      try {
+        await backupStore.read()
+        // A parseable bundle (or none at all) means the registry was simply edited
+        // externally; safe to continue.
+        ok = true
+      } catch {
+        ok = false
+      }
+    }
     console.log(
       `[restore-system-proxy] ${JSON.stringify({
         phase: status.phase,
@@ -268,26 +286,42 @@ async function runSystemProxyRestore(): Promise<void> {
 }
 
 /**
- * CI-only installed-artifact probe: enable the per-user HKCU system proxy
- * headlessly (writes the owned app-data backup) and exit. Used by the
- * `package-win` job to prove the install -> enable -> uninstall -> exact-restore
- * path. This deliberately does NOT start a kernel: it uses the static loopback
- * target so a backup + applied registry state is produced without binding any
- * socket, which is exactly the "orphaned proxy" the uninstaller must undo. The
- * target is fix-port loopback, so the enabled state is safe to leave behind for
- * the uninstaller or the external recovery helper to restore.
+ * CI-only installed-artifact probe: start the bundled kernel, read the *live*
+ * mixed-port, socket-prove it (TCP / HTTP CONNECT / SOCKS5), then enable the
+ * per-user HKCU system proxy headlessly (writes the owned app-data backup) and
+ * exit. Used by the `package-win` job to prove the install -> enable -> uninstall
+ * -> exact-restore path.
+ *
+ * This is intentionally gated behind a CI marker so a packaged Windows build can
+ * never let an arbitrary user manufacture a dead-proxy registry state: the probe
+ * refuses to run unless BOTH `MURGE_CI_SYSTEM_PROXY_ENABLE=1` and the GitHub
+ * Actions runner (enabled + uninstallable) are set. The kernel is started and
+ * stopped here; only the proxy registry state (and the owned backup) are left
+ * behind for the uninstaller / external recovery helper to restore.
  */
-async function runSystemProxyEnable(): Promise<void> {
+async function runSystemProxyEnable(
+  kernel: KernelGateway,
+  mihomo: LiveProbeMihomo
+): Promise<void> {
+  if (process.env.MURGE_CI_SYSTEM_PROXY_ENABLE !== '1' || process.env.GITHUB_ACTIONS !== 'true') {
+    console.error('[system-proxy-enable] refused: not a gated CI run (GITHUB_ACTIONS/MURGE_CI_SYSTEM_PROXY_ENABLE)')
+    app.exit(1)
+    return
+  }
   const service = new SystemProxyService({
     adapter:
       process.platform === 'win32'
         ? new WindowsSystemProxyAdapter()
         : new DisabledSystemProxyAdapter(process.platform),
-    probe: new StaticSystemProxyProbe(),
+    probe: new LiveSystemProxyKernelProbe(kernel, mihomo),
     backup: FileSystemProxyBackupStore.forAppDataBase(app.getPath('appData')),
     instanceId: 'enable-cli'
   })
   try {
+    const started = await kernel.start()
+    if (started.phase !== 'running') {
+      throw new ProtocolError(ProtocolErrorCode.KERNEL_START_TIMEOUT, 'Kernel did not reach running state to enable the system proxy')
+    }
     const status = await service.enable()
     // `enabled` = the proxy is now owned by us; `conflict` = the registry already
     // held a different value (idempotent/owned), so we did not overwrite.
@@ -296,13 +330,20 @@ async function runSystemProxyEnable(): Promise<void> {
       `[system-proxy-enable] ${JSON.stringify({
         phase: status.phase,
         ok,
+        address: status.address ?? null,
+        port: status.port ?? null,
         errorMessage: status.errorMessage ?? null,
         conflictDetail: status.conflictDetail ?? null
       })}`
     )
+    // Stop the kernel before exiting so no mihomo child lingers and the proxy is
+    // left pointing at a now-dead loopback port — the orphan only the uninstaller
+    // / recovery helper must undo. Restore runs standalone and does not need it.
+    await kernel.stop().catch(() => undefined)
     app.exit(ok ? 0 : 1)
   } catch (error) {
     console.error('[system-proxy-enable] FAILED:', error)
+    await kernel.stop().catch(() => undefined)
     app.exit(1)
   }
 }
@@ -368,15 +409,6 @@ app.whenReady().then(async () => {
     return
   }
 
-  // CI-only installed-artifact probe: enable the system proxy headlessly so the
-  // `package-win` job can drive the install -> enable -> uninstall -> restore
-  // path (see runSystemProxyEnable). Never runs in dev so a developer cannot
-  // accidentally mutate the real registry.
-  if (!is.dev && process.argv.includes('--system-proxy-enable')) {
-    await runSystemProxyEnable()
-    return
-  }
-
   // Development always uses the harmless fixture process. A packaged Windows
   // build is composed with the verified real resolver, but KernelSupervisor is
   // lazy: resolve/download/spawn happen only after the renderer invokes
@@ -439,6 +471,20 @@ app.whenReady().then(async () => {
     await ipcKernel.stop()
     console.log('[kernel-smoke] bundled kernel lifecycle: PASS')
     app.quit()
+    return
+  }
+
+  // CI-only installed-artifact probe: enable the per-user HKCU system proxy
+  // headlessly so the `package-win` job can drive the install -> enable ->
+  // uninstall -> restore path. Never runs in dev so a developer cannot
+  // accidentally mutate the real registry, and it is further gated on the GitHub
+  // Actions CI marker inside runSystemProxyEnable so a packaged Windows build
+  // can never be used by an arbitrary user to manufacture a dead-proxy state.
+  // Because the live probe needs a running kernel, this is handled AFTER the
+  // kernel + gateway are wired (the probe reads the real mixed-port and proves it
+  // with a TCP / HTTP / SOCKS socket check before the registry is touched).
+  if (!is.dev && process.argv.includes('--system-proxy-enable')) {
+    await runSystemProxyEnable(ipcKernel, gateway)
     return
   }
 

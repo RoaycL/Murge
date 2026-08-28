@@ -8,6 +8,7 @@ import { join } from 'node:path'
 type RecoveryScript = typeof import('../scripts/recover-system-proxy.mjs')
 let runRecovery: RecoveryScript['runRecovery']
 let validateBackupShape: RecoveryScript['validateBackupShape']
+let validateRestorableState: RecoveryScript['validateRestorableState']
 let sameRegistryValue: RecoveryScript['sameRegistryValue']
 let isOwned: RecoveryScript['isOwned']
 let restoreArgs: RecoveryScript['restoreArgs']
@@ -17,6 +18,7 @@ beforeAll(async () => {
   const mod = await import('../scripts/recover-system-proxy.mjs')
   runRecovery = mod.runRecovery
   validateBackupShape = mod.validateBackupShape
+  validateRestorableState = mod.validateRestorableState
   sameRegistryValue = mod.sameRegistryValue
   isOwned = mod.isOwned
   restoreArgs = mod.restoreArgs
@@ -150,9 +152,24 @@ describePortable('recover-system-proxy', () => {
       expect(validateBackupShape(backupJson({ target: { host: '127.0.0.1', port: 0 } })).length).toBeGreaterThan(0)
     })
 
-    it('rejects a present value with an unrestorable type', () => {
+    it('rejects a non-ISO createdAt and an unknown top-level key', () => {
+      expect(validateBackupShape(backupJson({ createdAt: '2024-01-01' })).length).toBeGreaterThan(0)
+      expect(validateBackupShape(backupJson({ extra: true })).length).toBeGreaterThan(0)
+    })
+
+    it('rejects a non-safe-integer port (float)', () => {
+      expect(validateBackupShape(backupJson({ target: { host: '127.0.0.1', port: 7890.5 } })).length).toBeGreaterThan(0)
+    })
+
+    it('treats a present REG_MULTI_SZ as structurally valid but NOT restorable', () => {
       const bad = backupJson({ previous: { ...previous, proxyServer: { exists: true, type: 'REG_MULTI_SZ', value: 'a;b' } } })
-      expect(validateBackupShape(bad).length).toBeGreaterThan(0)
+      // Structural validity now mirrors the shared Zod schema (REG_MULTI_SZ is a
+      // legal registry type), so the shape check passes...
+      expect(validateBackupShape(bad)).toEqual([])
+      // ...but restorability refuses it (reg.exe cannot faithfully restore it),
+      // mirroring the app's validateRestorable.
+      const restorable = validateRestorableState(bad.previous as never)
+      expect(restorable.some((p) => p.includes('REG_MULTI_SZ'))).toBe(true)
     })
   })
 
@@ -262,6 +279,42 @@ describePortable('recover-system-proxy', () => {
       }
       const verdict = await runRecovery(backupFile, opts())
       expect(verdict).toMatchObject({ phase: 'restore-failed', ok: false })
+      await expect(readFile(backupFile, 'utf8')).resolves.toBeTruthy()
+    })
+
+    it('detects an already-restored state and retries cleanup (no false conflict)', async () => {
+      await writeBackup(backupJson())
+      // The registry already matches `previous` (the pre-enable snapshot) — the
+      // signature of a restored-but-not-cleaned backup. runRecovery must retry the
+      // delete and report 'disabled', never 'conflict'.
+      runner = makeRegistry({ ProxyEnable: dword(0), ProxyServer: str('http=127.0.0.1:1'), ProxyOverride: str('<local>') })
+      const verdict = await runRecovery(backupFile, opts())
+      expect(verdict).toMatchObject({ phase: 'disabled', ok: true })
+      await expect(readFile(backupFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+
+    it('surfaces restore-failed when a confirmed restore cannot delete the backup', async () => {
+      await writeBackup(backupJson())
+      runner = makeRegistry({ ProxyEnable: dword(1), ProxyServer: str('http=127.0.0.1:7890'), ProxyOverride: str('<local>;localhost') })
+      const verdict = await runRecovery(backupFile, opts({
+        runner: {
+          isWin: true,
+          exec: (c: string, a: string[]) => runner.exec(c, a),
+          fs: { readFile: (p: string, e: string) => readFile(p, e as BufferEncoding), unlink: () => Promise.reject(new Error('EBUSY: file is locked')) }
+        }
+      }))
+      expect(verdict).toMatchObject({ phase: 'restore-failed', ok: false })
+      // The backup is deliberately kept so the caller can retry cleanup.
+      await expect(readFile(backupFile, 'utf8')).resolves.toBeTruthy()
+    })
+
+    it('refuses (conflict) a backup whose previous state carries an unrestorable type', async () => {
+      await writeBackup(backupJson({ previous: { ...previous, proxyServer: { exists: true, type: 'REG_MULTI_SZ', value: 'a;b' } } }))
+      runner = makeRegistry({ ProxyEnable: dword(1), ProxyServer: str('http=127.0.0.1:7890'), ProxyOverride: str('<local>;localhost') })
+      const verdict = await runRecovery(backupFile, opts())
+      expect(verdict).toMatchObject({ phase: 'conflict', ok: false })
+      // Nothing was restored or deleted.
+      expect(runner.calls.filter((c) => c.args[0] === 'delete' || c.args[0] === 'add').length).toBe(0)
       await expect(readFile(backupFile, 'utf8')).resolves.toBeTruthy()
     })
   })

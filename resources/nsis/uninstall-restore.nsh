@@ -16,14 +16,25 @@
 ; exits 0 both when it restored and when it reported a safe conflict (so it never
 ; overwrites an external edit).
 ;
-; The restore is best-effort and must NOT block or fail the uninstall: if the app
-; binary is missing or the restore errors we log it and let the uninstaller
-; continue, so the user is never stuck mid-uninstall. The restore exit code is
-; surfaced in the installer log for CI.
+; The restore is fail-closed for the uninstall path: exit 0 means disabled /
+; restored / safe-conflict (an external edit was left intact), so the uninstaller
+; continues normally. A non-zero exit means the restore could not be applied —
+; most commonly the backup was corrupted or unreadable, so we would otherwise
+; leave the OS pointing at a now-removed port. In that case we ABORT the whole
+; uninstall (this runs inside the required "Uninstall" section, so `Abort` stops
+; the uninstaller before it deletes the installed files), keeping the app binary
+; and its restore tool so the user can retry, and surface a message. This is the
+; only way to guarantee the system proxy is never left broken by a failed uninstall.
 !macro customUnInstall
   IfFileExists "$INSTDIR\${APP_EXECUTABLE_FILENAME}" 0 SystemProxyUninstallRestoreDone
     DetailPrint "Restoring owned system proxy before uninstall..."
     ExecWait '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" --restore-system-proxy' $R0
     DetailPrint "system-proxy restore exit code: $R0"
+    StrCmp $R0 0 SystemProxyUninstallRestoreDone SystemProxyUninstallRestoreFailed
+    SystemProxyUninstallRestoreFailed:
+      DetailPrint "system-proxy restore failed; aborting uninstall to protect the OS proxy settings"
+      MessageBox MB_ICONSTOP|MB_OK "卸载前检查：未能安全还原系统代理设置，已中止卸载以保留程序与还原工具。请关闭代理相关的提示后重试。"
+      SetErrorLevel 1
+      Abort
   SystemProxyUninstallRestoreDone:
 !macroend

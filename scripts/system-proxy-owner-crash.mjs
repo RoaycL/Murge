@@ -21,31 +21,34 @@ import { pathToFileURL } from 'node:url'
 import { readRegistry, applyRegistry, defaultRunner } from './recover-system-proxy.mjs'
 
 export const OWNER_CRASH_MARKER = 'SYSTEM-PROXY-OWNER-CRASHED'
-export const TARGET = { host: '127.0.0.1', port: 7890 }
+export const DEFAULT_TARGET = { host: '127.0.0.1', port: 7890 }
 
-export const WRITTEN = {
-  proxyEnable: { exists: true, type: 'REG_DWORD', value: 1 },
-  proxyServer: {
-    exists: true,
-    type: 'REG_SZ',
-    value: 'http=127.0.0.1:7890;https=127.0.0.1:7890;socks=127.0.0.1:7890'
-  },
-  proxyOverride: { exists: true, type: 'REG_SZ', value: '<local>;localhost' }
+function buildProxyServerValue({ host, port }) {
+  return `http=${host}:${port};https=${host}:${port};socks=${host}:${port}`
+}
+
+function buildWritten(target) {
+  return {
+    proxyEnable: { exists: true, type: 'REG_DWORD', value: 1 },
+    proxyServer: { exists: true, type: 'REG_SZ', value: buildProxyServerValue(target) },
+    proxyOverride: { exists: true, type: 'REG_SZ', value: '<local>;localhost' }
+  }
 }
 
 /**
  * Run the owner crash once. Writes the backup + evidence first, applies the
  * enabled proxy, then hard-kills this process. Never returns on success.
  *
- * @param {{ backupFile: string, evidenceFile: string, runner?: object, log?: (m:string)=>void }} opts
+ * @param {{ backupFile: string, evidenceFile: string, target?: {host:string,port:number}, runner?: object, log?: (m:string)=>void }} opts
  */
-export async function runOwnerCrash({ backupFile, evidenceFile, runner = defaultRunner(), log }) {
+export async function runOwnerCrash({ backupFile, evidenceFile, target = DEFAULT_TARGET, runner = defaultRunner(), log }) {
   const out = log ?? ((m) => process.stdout.write(`[owner-crash] ${m}\n`))
   if (runner.isWin === false) {
     out('not a Windows host; refusing to run the owner-crash worker')
     process.exitCode = 2
     return
   }
+  const written = buildWritten(target)
 
   // Pre-enable snapshot is the thing the recovery helper must restore to.
   const previous = await readRegistry(runner)
@@ -54,9 +57,9 @@ export async function runOwnerCrash({ backupFile, evidenceFile, runner = default
     schemaVersion: 1,
     instanceId: 'owner-crash-worker',
     createdAt: new Date().toISOString(),
-    target: TARGET,
+    target,
     previous,
-    written: WRITTEN
+    written
   }
 
   // Persist the backup BEFORE touching the registry so a crash at any later point
@@ -64,13 +67,13 @@ export async function runOwnerCrash({ backupFile, evidenceFile, runner = default
   await mkdir(dirname(backupFile), { recursive: true })
   await writeFile(backupFile, JSON.stringify(backup, null, 2) + '\n', 'utf8')
 
-  await applyRegistry(runner, WRITTEN)
+  await applyRegistry(runner, written)
   const now = await readRegistry(runner)
 
   await mkdir(dirname(evidenceFile), { recursive: true })
   await writeFile(
     evidenceFile,
-    JSON.stringify({ marker: OWNER_CRASH_MARKER, backupFile, previous, written: WRITTEN, observedAfterEnable: now, target: TARGET }, null, 2) + '\n',
+    JSON.stringify({ marker: OWNER_CRASH_MARKER, backupFile, previous, written, observedAfterEnable: now, target }, null, 2) + '\n',
     'utf8'
   )
   out(OWNER_CRASH_MARKER)
@@ -81,17 +84,23 @@ export async function runOwnerCrash({ backupFile, evidenceFile, runner = default
 }
 
 function parseCli(argv) {
-  const opts = { backupPath: null, evidencePath: null }
+  const opts = { backupPath: null, evidencePath: null, host: '127.0.0.1', port: 7890 }
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '--backup') opts.backupPath = argv[++i]
     else if (argv[i] === '--evidence') opts.evidencePath = argv[++i]
+    else if (argv[i] === '--host') opts.host = argv[++i]
+    else if (argv[i] === '--port') opts.port = Number(argv[++i])
   }
   return opts
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
   const opts = parseCli(process.argv)
-  runOwnerCrash({ backupFile: opts.backupPath, evidenceFile: opts.evidencePath }).catch((error) => {
+  runOwnerCrash({
+    backupFile: opts.backupPath,
+    evidenceFile: opts.evidencePath,
+    target: { host: opts.host, port: opts.port }
+  }).catch((error) => {
     process.stderr.write(`[owner-crash] FAIL: ${error.message}\n`)
     process.exitCode = 1
   })

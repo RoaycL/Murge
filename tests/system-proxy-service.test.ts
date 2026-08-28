@@ -327,6 +327,29 @@ describe('SystemProxyService', () => {
       expect(status.phase).toBe('conflict')
       expect(service.getStatus().errorMessage).toBe('系统代理备份无效，请手动恢复')
     })
+
+    it('cleans up a stale bundle whose restore already completed (matches previous, not owned)', async () => {
+      // Simulate a restore that finished but whose backup-delete was interrupted
+      // (a crash between restore and delete): the registry now equals the
+      // pre-enable snapshot while the owned bundle is still on disk. On the next
+      // launch `init()` must drop the stale bundle and report `disabled`, never a
+      // misleading `conflict` that recurses every boot.
+      const adapter = new FakeSystemProxyAdapter()
+      const backup = new InMemorySystemProxyBackupStore()
+      const first = new SystemProxyService({ adapter, probe: new StaticSystemProxyProbe(TARGET), backup, instanceId: 'owner' })
+      await first.enable()
+      const bundle = await backup.read()
+      expect(bundle).not.toBeNull()
+      await adapter.restore(bundle!.previous) // registry is already restored to previous
+      const restoreCallsBefore = adapter.calls.filter((c) => c.op === 'restore').length
+
+      const next = new SystemProxyService({ adapter, probe: new StaticSystemProxyProbe(TARGET), backup, instanceId: 'growth-2' })
+      const status = await next.init()
+      expect(status.phase).toBe('disabled')
+      await expect(backup.read()).resolves.toBeNull()
+      // Nothing owed: init must not re-apply a restore for an already-restored state.
+      expect(adapter.calls.filter((c) => c.op === 'restore').length).toBe(restoreCallsBefore)
+    })
   })
 
   describe('concurrency', () => {

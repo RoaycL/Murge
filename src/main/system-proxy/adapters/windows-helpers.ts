@@ -116,15 +116,43 @@ export function parseRegQueryValue(raw: string, valueName = ''): RegistryValue {
  * Win32 last-error must be zero; otherwise the script exits non-zero so the
  * adapter treats the refresh as failed (and can trigger a rollback).
  */
+/**
+ * The canonical WinINet refresh script, shared byte-for-byte with the standalone
+ * recovery helper (`scripts/recover-system-proxy.mjs`). It intentionally does NOT
+ * cache the Win32 last-error after a *successful* call — a stale non-zero
+ * last-error from an unrelated prior call would otherwise be misread as a
+ * failure. Each call reads `GetLastWin32Error()` only in the branch where that
+ * call returned false, and a failure exits non-zero so the adapter treats the
+ * refresh as failed (and can trigger a rollback).
+ */
+export const WIN_INET_REFRESH_SCRIPT = `$ErrorActionPreference = 'Stop'
+if (-not ('SystemProxy.WinInet' -as [type])) {
+  Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace SystemProxy {
+  public static class WinInet {
+    [DllImport("wininet.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    public static extern bool InternetSetOption(IntPtr hInternet, int dwOption, IntPtr lpBuffer, int dwBufferLength);
+  }
+}
+'@
+}
+$b1 = [SystemProxy.WinInet]::InternetSetOption([IntPtr]::Zero, 39, [IntPtr]::Zero, 0)
+if (-not $b1) {
+  $e1 = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+  Write-Error ('InternetSetOption(INTERNET_OPTION_SETTINGS_CHANGED) failed; last-error={0}' -f $e1)
+  exit 2
+}
+$b2 = [SystemProxy.WinInet]::InternetSetOption([IntPtr]::Zero, 37, [IntPtr]::Zero, 0)
+if (-not $b2) {
+  $e2 = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+  Write-Error ('InternetSetOption(INTERNET_OPTION_REFRESH) failed; last-error={0}' -f $e2)
+  exit 2
+}
+exit 0
+`
+
 export function buildWinInetRefreshScript(): string {
-  return [
-    '$sig = \'[DllImport("wininet.dll", SetLastError = true, CharSet = CharSet.Auto)] public static extern bool InternetSetOption(IntPtr hInternet, int dwOption, IntPtr lpBuffer, int dwBufferLength);\'',
-    '$t = Add-Type -MemberDefinition $sig -Name "SystemProxyWinINet" -Namespace "SystemProxy" -PassThru',
-    'if ($null -eq $t) { Write-Error "Add-Type failed"; exit 1 }',
-    '$b1 = $t::InternetSetOption(0, 39, 0, 0)',
-    '$b2 = $t::InternetSetOption(0, 37, 0, 0)',
-    '$e = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()',
-    'if (-not ($b1 -and $b2) -or $e -ne 0) { Write-Error ("InternetSetOption failed: b1={0} b2={1} err={2}" -f $b1, $b2, $e); exit 2 }',
-    'exit 0'
-  ].join('; ')
+  return WIN_INET_REFRESH_SCRIPT
 }

@@ -89,6 +89,21 @@ export class SystemProxyService implements SystemProxyGateway {
       if (!backup) return this.transition('disabled')
 
       const observed = await this.adapter.read()
+      // The registry already matches the *pre-enable* snapshot: a prior restore
+      // completed but its backup-delete failed (a crash between restore and
+      // delete), so this is a stale owned bundle, not an external edit. Drop it
+      // and report disabled instead of surfacing a misleading conflict that would
+      // otherwise recurse every launch.
+      if (matchesPrevious(observed, backup.previous)) {
+        try {
+          await this.backup.delete()
+        } catch {
+          // Deleting the stale bundle failed; the proxy is still correctly off,
+          // so report disabled and let the next launch (or the standalone
+          // recovery helper) retry the cleanup.
+        }
+        return this.transition('disabled')
+      }
       if (!isOwned(observed, backup.written)) {
         return this.transition('conflict', {
           errorMessage: CONFLICT_MSG,

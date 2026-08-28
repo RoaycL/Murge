@@ -105,7 +105,7 @@ Include:
 
 Ask the owner before:
 
-- choosing the application license;
+- changing the owner-approved application license;
 - publishing a GitHub release;
 - changing `appId` or storage namespace;
 - installing a privileged service or driver;

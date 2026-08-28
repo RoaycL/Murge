@@ -4,11 +4,11 @@ This file lists the third-party software distributed with the Windows installer
 and the application runtime. It is bundled into the installer artifacts so that
 distribution obligations are met without requiring a separate download.
 
-The product name, application identifiers and the licensing of the application
-itself are defined in `brand.config.json` and `docs/BRANDING.md`. This notice
-covers *third-party* components only. The application's own license is pending an
-owner decision (see `docs/ROADMAP.md` Phase 6) and is deliberately not asserted
-here.
+The product name and application identifiers are defined in
+`brand.config.json` and `docs/BRANDING.md`. Murge itself is licensed under
+GPL-3.0-only; the complete application license is installed as `LICENSE.txt`.
+This notice covers *third-party* components only and does not replace their
+individual license texts.
 
 ## Runtime dependencies
 

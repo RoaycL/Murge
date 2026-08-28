@@ -187,7 +187,9 @@ Entry gate: Phases 1–2 complete.
 - [x] Add uninstall behavior that preserves user profiles by default.
 - [x] Document code-signing inputs without committing secrets.
 - [x] Generate third-party notices and mihomo GPL compliance materials. (Placeholders removed; the every-bundled-dependency license text is retained under `licenses/` and bundled into the artifact alongside `THIRD_PARTY_NOTICES.md`, asserted by the `package-win` artifact check and the `third-party-notices` unit test.)
-- [!] Owner chooses application license before public binary release.
+- [x] Owner chose GPL-3.0-only for the application before public binary release;
+  the complete license is retained in the repository and installed artifact,
+  with a fail-closed release check for the SPDX identifier and license text.
 
 Exit criteria:
 
@@ -333,7 +335,7 @@ Exit criteria:
 
 ## Owner decision backlog
 
-- [ ] Choose the application open-source license.
+- [x] Choose the application open-source license: GPL-3.0-only.
 - [ ] Decide whether Windows arm64 is required for the first release.
 - [ ] Decide whether HTTPS decryption and rewrite pages remain visible, experimental or removed.
 - [ ] Decide whether TUN is part of v1 or a later release.

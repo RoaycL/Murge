@@ -103,7 +103,7 @@ jobs:
           - SHA256SUMS.txt
 
           This release is created as a draft. Review the assets, signing status,
-          application license and release notes before publishing it.
+          signing status, packaged GPL-3.0-only license and release notes before publishing it.
           "@
           $notesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
           $notes | Set-Content -Path $notesPath -Encoding utf8

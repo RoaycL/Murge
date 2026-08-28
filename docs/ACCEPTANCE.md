@@ -17,7 +17,7 @@
 - [x] Renderer has no Node access.
 - [x] Packaged Windows kernel start is explicit, authenticated, loopback-only and safe-direct.
 - [x] API and handoff documents identify source references and uncertainty.
-- [ ] Owner-selected application license is present and `npm run license:check` passes.
+- [x] Owner-selected GPL-3.0-only application license is present and `npm run license:check` passes.
 
 ## Future runtime evidence
 

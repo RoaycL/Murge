@@ -22,6 +22,7 @@ export default {
   extraResources: [
     { from: 'resources/bin', to: 'bin', filter: ['**/*'] },
     { from: 'resources/defaults', to: 'defaults', filter: ['**/*'] },
+    { from: 'LICENSE', to: 'LICENSE.txt' },
     { from: 'resources/THIRD_PARTY_NOTICES.md', to: 'THIRD_PARTY_NOTICES.md' },
     // Retained upstream license texts for every bundled dependency. Shipped
     // alongside the app so the notice-preservation obligation is met by the
@@ -53,10 +54,10 @@ export default {
     // deliberate choice rather than an incidental default — user profiles live
     // in the application-data namespace and must survive an uninstall.
     deleteAppDataOnUninstall: false,
-    // The EULA/license page is intentionally <em>not</em> configured here: the
-    // application license is pending an owner decision (see docs/ROADMAP.md
-    // Phase 6). The third-party notices are shipped as a bundled resource
-    // instead of being presented as a license agreement.
+    // GPL-3.0-only is a grant of software freedom, not an installer EULA that
+    // users must accept. Its complete text and the third-party notices are
+    // shipped as installed resources instead of being shown as click-through
+    // contract terms.
   },
   protocols: [{ name: brand.productName, schemes: [brand.protocolScheme] }]
 }

@@ -67,7 +67,8 @@ describe('electron-builder brand wiring (Phase 6 metadata)', () => {
     expect(config.win.artifactName).toContain('${arch}')
   })
 
-  it('does NOT configure a license page (app license is pending owner decision)', () => {
+  it('bundles the GPL text without configuring an installer clickthrough page', () => {
+    expect(config.extraResources).toContainEqual({ from: 'LICENSE', to: 'LICENSE.txt' })
     expect(config.nsis.license).toBeUndefined()
   })
 })

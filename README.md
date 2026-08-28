@@ -53,7 +53,8 @@ The product name is not an architectural identifier. Rename the project through 
 
 ## Licensing note
 
-The application license has not yet been selected. Tagged release builds now
-fail closed unless both a root `LICENSE` and a matching `package.json` SPDX
-identifier exist. The bundled or distributed mihomo binary is GPL-3.0 licensed
-and remains covered by the included notices and corresponding-source offer.
+Murge is free software licensed under the
+[GNU General Public License version 3 only](LICENSE) (`GPL-3.0-only`). Tagged
+release builds fail closed unless the complete root license and matching
+`package.json` SPDX identifier are present. Third-party components remain under
+their respective licenses; see [`resources/THIRD_PARTY_NOTICES.md`](resources/THIRD_PARTY_NOTICES.md).

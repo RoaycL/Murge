@@ -150,6 +150,40 @@ jobs:
           }
           Write-Output 'KERNEL_FAULT_INJECTION=PASS'
 
+  system-proxy-real-windows:
+    name: Real system-proxy enable/restore (Windows)
+    needs: verify
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      MURGE_RUN_REAL_SYSTEM_PROXY: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies (including development)
+        run: npm ci --include=dev
+        env:
+          NODE_ENV: development
+
+      # Registers the per-user HKCU system proxy (ProxyServer/ProxyEnable/
+      # ProxyOverride on 127.0.0.1), then proves WinHTTP, default routes, DNS,
+      # adapters and firewall profiles were NOT touched — only the HKCU Internet
+      # Settings proxy field changed. The test restores the exact original values
+      # in a `finally` block, so a failing assertion can never leave the host's
+      # proxy changed. No socket is bound (nothing is actually served), so no real
+      # traffic is proxied. The integration test is gated inside itself by the
+      # MURGE_RUN_REAL_SYSTEM_PROXY env var + win32, so it only runs here.
+      - name: Run real system-proxy enable/restore test (gated)
+        shell: pwsh
+        run: npx vitest run tests/system-proxy-real.integration.test.ts
+
   package-win:
     name: Package Windows & smoke-test NSIS installer
     needs: verify

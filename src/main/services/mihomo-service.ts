@@ -9,7 +9,8 @@ import type {
   MihomoProxyProvidersResponse,
   MihomoRuleProvidersResponse,
   MihomoRulesResponse,
-  MihomoStreamError
+  MihomoStreamError,
+  MihomoVersion
 } from '@shared/mihomo-api'
 import type { TrafficSample } from '@shared/runtime'
 import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
@@ -71,6 +72,10 @@ export class MihomoService implements MihomoGateway {
 
   getConfig(): Promise<MihomoConfigSnapshot> {
     return this.client.getConfig()
+  }
+
+  getVersion(): Promise<MihomoVersion> {
+    return this.client.getVersion()
   }
 
   patchConfig(patch: Partial<MihomoConfigSnapshot>): Promise<void> {

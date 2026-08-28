@@ -25,7 +25,7 @@ export type IpcHandler = (event: unknown, ...args: unknown[]) => unknown | Promi
  * the semantics Electron uses for `ipcMain.handle`.
  */
 export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
-  const { brand, kernel, mihomo, runtime, profiles } = deps
+  const { brand, kernel, mihomo, runtime, profiles, systemProxy } = deps
 
   return {
     [IPC.appGetBrand]: async () => brand,
@@ -68,7 +68,11 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
     [IPC.profilesRename]: async (_event, id, name) => profiles.renameProfile(parseProfileName(id), parseProfileName(name)),
     [IPC.profilesEditDocument]: async (_event, id, edits) =>
       profiles.editDocument(parseProfileName(id), parseEditsArray(edits)),
-    [IPC.profilesValidate]: async (_event, document) => profiles.validateDocument(parseProfileDocument(document))
+    [IPC.profilesValidate]: async (_event, document) => profiles.validateDocument(parseProfileDocument(document)),
+
+    [IPC.systemProxyGetStatus]: async () => systemProxy.getStatus(),
+    [IPC.systemProxyEnable]: async () => systemProxy.enable(),
+    [IPC.systemProxyDisable]: async () => systemProxy.disable()
   }
 }
 

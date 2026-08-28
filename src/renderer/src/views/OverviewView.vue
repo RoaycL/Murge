@@ -2,8 +2,10 @@
 import { computed, ref } from 'vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 import { useKernelStore } from '../stores/kernel'
+import { useSystemProxyStore } from '../stores/system-proxy'
 
 const kernel = useKernelStore()
+const systemProxy = useSystemProxyStore()
 const actionError = ref('')
 const busy = computed(() => kernel.status.phase === 'starting' || kernel.status.phase === 'stopping')
 const running = computed(() => kernel.status.phase === 'running')
@@ -17,6 +19,46 @@ async function toggleKernel(): Promise<void> {
     actionError.value = error instanceof Error ? error.message : String(error)
   }
 }
+
+const sp = computed(() => systemProxy.status)
+const spBusy = computed(() => sp.value.phase === 'enabling' || sp.value.phase === 'restoring')
+const spEnabled = computed(() => sp.value.phase === 'enabled')
+// Enabling requires a running kernel + ready controller; disabling an owned
+// proxy is always allowed (even if the kernel just stopped), so a stale proxy can
+// always be turned off.
+const spSwitchDisabled = computed(
+  () => spBusy.value || !sp.value.supported || (!spEnabled.value && !running.value)
+)
+const spPhaseLabel = computed(() => {
+  switch (sp.value.phase) {
+    case 'enabled':
+      return `已启用 · ${sp.value.address ?? '127.0.0.1'}${sp.value.port ? `:${sp.value.port}` : ''}`
+    case 'enabling':
+      return '正在启用系统代理…'
+    case 'disabled':
+      return sp.value.errorMessage ?? (running.value ? '未启用' : '未启用 · 需先启动内核')
+    case 'restoring':
+      return '正在还原系统代理…'
+    case 'restore-failed':
+      return '系统代理还原失败'
+    case 'conflict':
+      return sp.value.conflictDetail ?? '系统代理状态与外部冲突'
+    case 'unsupported':
+      return sp.value.errorMessage ?? '仅 Windows 支持接管系统代理'
+    default:
+      return '未知状态'
+  }
+})
+
+async function toggleSystemProxy(): Promise<void> {
+  actionError.value = ''
+  try {
+    if (spEnabled.value) await systemProxy.disable()
+    else await systemProxy.enable()
+  } catch (error) {
+    actionError.value = error instanceof Error ? error.message : String(error)
+  }
+}
 </script>
 
 <template>
@@ -26,7 +68,7 @@ async function toggleKernel(): Promise<void> {
       <SurfaceCard><div class="setting-head"><div><h3>安全直连内核</h3><p>仅启动本机 mihomo 与回环控制器；不会启用系统代理、TUN 或 DNS 接管。</p></div><button type="button" class="primary-button" :disabled="busy" @click="toggleKernel">{{ busy ? '处理中…' : running ? '停止' : '启动' }}</button></div><div class="setting-status"><i :class="{ active: running }" />{{ running ? `运行中 · PID ${kernel.status.pid ?? '—'}` : kernel.status.phase === 'starting' ? '正在校验并准备内置内核…' : kernel.status.phase === 'stopping' ? '正在停止内核…' : kernel.status.phase === 'failed' ? '启动失败' : '未运行（需手动启动）' }}</div><p v-if="actionError || kernel.status.lastError" class="inline-error">{{ actionError || kernel.status.lastError }}</p></SurfaceCard>
     </div></section>
     <section><h2>网络接管</h2><div class="overview-grid">
-      <SurfaceCard><div class="setting-head"><div><h3>系统代理</h3><p>大多数应用的流量可以通过将系统代理指向本应用，具有最佳的兼容性和性能。</p></div><button class="switch" disabled aria-label="系统代理尚未实现" /></div><div class="setting-status"><i />阶段 8 尚未实现，当前未启用</div></SurfaceCard>
+      <SurfaceCard><div class="setting-head"><div><h3>系统代理</h3><p>大多数应用的流量可以通过将系统代理指向本应用，具有最佳的兼容性和性能。</p></div><button type="button" class="switch" :class="{ on: spEnabled }" :aria-checked="spEnabled" :disabled="spSwitchDisabled" aria-label="切换系统代理" @click="toggleSystemProxy" /></div><div class="setting-status"><i :class="{ active: spEnabled }" />{{ spPhaseLabel }}</div><p v-if="actionError" class="inline-error">{{ actionError }}</p></SurfaceCard>
       <SurfaceCard><div class="setting-head"><div><h3>TUN 模式</h3><p>接管不遵循系统代理设置的应用流量，需要系统权限和正确安装的服务组件。</p></div><button class="switch" disabled aria-label="TUN 模式尚未实现" /></div><div class="setting-status"><i />阶段 9 尚未实现，当前未启用</div></SurfaceCard>
     </div></section>
     <section><h2>局域网设备接管</h2><div class="overview-grid">

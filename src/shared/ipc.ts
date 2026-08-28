@@ -13,6 +13,7 @@ import type {
 } from './mihomo-api'
 import type { ConfigEdit, ImportRequest, Profile, ProfileMeta, ValidationResult } from './profiles'
 import type { KernelStatus, RuntimeSummary, TrafficSample } from './runtime'
+import type { SystemProxyStatus } from './system-proxy'
 
 export const IPC = {
   appGetBrand: 'app:get-brand',
@@ -47,7 +48,11 @@ export const IPC = {
   profilesRename: 'profiles:rename',
   profilesEditDocument: 'profiles:edit-document',
   profilesValidate: 'profiles:validate',
-  kernelStatusEvent: 'kernel:status-event'
+  kernelStatusEvent: 'kernel:status-event',
+  systemProxyGetStatus: 'system-proxy:get-status',
+  systemProxyEnable: 'system-proxy:enable',
+  systemProxyDisable: 'system-proxy:disable',
+  systemProxyStatusEvent: 'system-proxy:status-event'
 } as const
 
 export interface DesktopApi {
@@ -93,5 +98,11 @@ export interface DesktopApi {
     rename(id: string, name: string): Promise<ProfileMeta>
     editDocument(id: string, edits: ConfigEdit[]): Promise<ProfileMeta>
     validate(document: string): Promise<ValidationResult>
+  }
+  systemProxy: {
+    getStatus(): Promise<SystemProxyStatus>
+    enable(): Promise<SystemProxyStatus>
+    disable(): Promise<SystemProxyStatus>
+    onStatus(listener: (status: SystemProxyStatus) => void): () => void
   }
 }

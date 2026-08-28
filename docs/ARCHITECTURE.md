@@ -75,11 +75,13 @@ Responsibilities:
 
 ### SystemProxyService
 
-- Windows-only implementation behind an interface.
-- Store the exact previous proxy state before enabling.
-- Restore only values owned by this application.
-- Recover stale owned state after a crash.
-- Do not mutate system proxy settings from the renderer.
+- Windows-only implementation behind an interface. (`WindowsSystemProxyAdapter` owns the three HKCU Internet Settings values via `reg.exe` and then tells WinINet to re-read them; `FakeSystemProxyAdapter` backs the dev/test path; `DisabledSystemProxyAdapter` makes every non-win32 production build fail closed.)
+- Store the exact previous proxy state before enabling. (The `FileSystemProxyBackupStore` writes a schema-versioned snapshot atomically (temp+rename) BEFORE any registry change, keyed by instance, so a crash right after `enable()` is recoverable from the committed backup.)
+- Restore only values owned by this application. (`isOwned`/`matchesPrevious` treat the proxy as owned only when all three keys exactly match the written target; a conflict (external modification or a conflicting existing proxy) surfaces `SYSTEM_PROXY_STATE_CONFLICT` with a structured `conflictDetail` and performs no mutation.)
+- Recover stale owned state after a crash. (`SystemProxyService.init()` runs on boot; the ordered kernel gateway restores before the kernel stops so proxy state is never left dangling when the kernel becomes unavailable; the main-process `before-quit` also restores.)
+- Do not mutate system proxy settings from the renderer. (The UI reads the main-process `status` and never flips optimistically; `enable`/`disable` are serialized in the main process through a promise-queue mutex.)
+
+Layers: `service.ts` (state machine + serialized operations + kernel probe + backup) → `policy.ts` (pure ownership/merge/format helpers) → `adapters/{windows,disabled,fake}-adapter.ts` (platform I/O) with `adapters/windows-helpers.ts` providing the `reg` argv builders, `reg query` parser and the WinINet refresh script. The stage is deliberately limited to the per-user HKCU Internet Settings key — no TUN, DNS, routes, LAN proxy or firewall changes.
 
 ### TunService
 

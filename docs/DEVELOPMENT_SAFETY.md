@@ -60,3 +60,25 @@ the host's WinHTTP/Internet-Settings proxy, IPv4/IPv6 default routes, DNS client
 server addresses, active adapters and firewall profile state, and fails if any
 safety-relevant value changed. Real mihomo does not run locally on the Mac, so this
 policy is only enforced by the disposable Windows job.
+
+## Disposable Windows real system-proxy policy
+
+The only real per-user proxy mutation permitted in this project is the
+`system-proxy-real-windows` CI job, on a disposable `windows-latest` runner (never
+on this Mac). That job runs the gated `tests/system-proxy-real.integration.test.ts`
+which is skipped unless BOTH `MURGE_RUN_REAL_SYSTEM_PROXY=1` AND `win32`, so it can
+never run in the default `npm test`. The test:
+
+- registers the three HKCU Internet Settings values (ProxyEnable, ProxyServer,
+  ProxyOverride) pointing at `127.0.0.1:<port>` — it does NOT bind a socket, so no
+  real traffic is proxied, and it does not touch TUN, DNS, routes, LAN proxy or
+  firewall;
+- captures a host `NetworkSnapshot` before and after and fails closed if anything
+  other than the HKCU Internet Settings proxy field changed (WinHTTP, default
+  routes, DNS, adapters and firewall profiles must stay byte-identical);
+- restores the exact original values in a `finally` block, so a failing assertion
+  can never leave the runner's proxy changed.
+
+No system-proxy mutation may be invoked from this Mac. All Windows proxy behavior
+is verified through unit/component tests using `FakeSystemProxyAdapter` and, for
+the real path, only the gated disposable job above.

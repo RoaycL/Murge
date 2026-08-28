@@ -9,7 +9,8 @@ import type {
   MihomoProxyProvidersResponse,
   MihomoRuleProvidersResponse,
   MihomoRulesResponse,
-  MihomoStreamError
+  MihomoStreamError,
+  MihomoVersion
 } from './mihomo-api'
 import type {
   ConfigEdit,
@@ -19,6 +20,7 @@ import type {
   ValidationResult
 } from './profiles'
 import type { KernelStatus, RuntimeSummary, TrafficSample } from './runtime'
+import type { SystemProxyStatus } from './system-proxy'
 
 /**
  * Narrow, testable service boundaries. Main-process services implement these
@@ -35,6 +37,7 @@ export interface KernelGateway {
 }
 
 export interface MihomoGateway {
+  getVersion(): Promise<MihomoVersion>
   getConfig(): Promise<MihomoConfigSnapshot>
   patchConfig(patch: Partial<MihomoConfigSnapshot>): Promise<void>
   getProxies(): Promise<MihomoProxiesResponse>
@@ -61,6 +64,20 @@ export interface RuntimeGateway {
 }
 
 /**
+ * System-proxy ownership boundary. Implementations read/apply/restore the
+ * *platform* system proxy (on Windows the HKCU Internet Settings values) while
+ * keeping the decision logic (ownership, backup, kernel ordering) in the
+ * injectable `SystemProxyService`.
+ */
+export interface SystemProxyGateway {
+  getStatus(): SystemProxyStatus | Promise<SystemProxyStatus>
+  enable(): Promise<SystemProxyStatus>
+  disable(): Promise<SystemProxyStatus>
+  /** Subscribe to status transitions; returns an unsubscribe function. */
+  onStatus(listener: (status: SystemProxyStatus) => void): () => void
+}
+
+/**
  * Profile/subscription management boundary. Implementations manage an isolated
  * profile directory with atomic writes and never touch the live mihomo config.
  */
@@ -83,4 +100,5 @@ export interface IpcDeps {
   mihomo: MihomoGateway
   runtime: RuntimeGateway
   profiles: ProfileGateway
+  systemProxy: SystemProxyGateway
 }

@@ -199,6 +199,8 @@ interface MihomoRuleProvider {
 
 Change only allowlisted fields through `PATCH /configs`. Full profile activation uses `PUT /configs?force=true` with `{ path, payload }` and must stay in main process. Paths outside the working directory may require upstream `SAFE_PATHS`; prefer keeping managed profiles inside the kernel working directory.
 
+`GET /version` and `GET /configs` are re-used by the Windows system-proxy live probe (`src/main/system-proxy/probe.ts`): before enabling the per-user proxy it reads `/version` (kernel must be running) and the `mixed-port` from `/configs`, and refuses to enable unless that mixed-port is a valid loopback port (`127.0.0.1`). The proxy is registered against the loopback mixed-port; no new controller or proxy listener is opened by the system-proxy feature itself.
+
 ### Rules
 
 `GET /rules` returns:

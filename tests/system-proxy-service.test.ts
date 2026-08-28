@@ -1,0 +1,295 @@
+import { describe, it, expect } from 'vitest'
+import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
+import { SYSTEM_PROXY_LOOPBACK_HOST } from '@shared/system-proxy'
+import { SystemProxyService } from '../src/main/system-proxy/service'
+import { StaticSystemProxyProbe } from '../src/main/system-proxy/probe'
+import { FakeSystemProxyAdapter } from '../src/main/system-proxy/adapters/fake-adapter'
+import { InMemorySystemProxyBackupStore } from '../src/main/system-proxy/backup-store'
+import type {
+  SystemProxyBackupStore,
+  SystemProxyKernelProbe,
+  SystemProxyStatus,
+  SystemProxyTarget
+} from '../src/main/system-proxy/types'
+
+const TARGET: SystemProxyTarget = { host: SYSTEM_PROXY_LOOPBACK_HOST, port: 7890 }
+
+class ConfigurableProbe implements SystemProxyKernelProbe {
+  constructor(private readonly behavior: () => Promise<SystemProxyTarget>) {}
+  resolveTarget(): Promise<SystemProxyTarget> {
+    return this.behavior()
+  }
+}
+
+class ThrowingBackupStore implements SystemProxyBackupStore {
+  read(): Promise<never> {
+    return Promise.reject(new ProtocolError(ProtocolErrorCode.SYSTEM_PROXY_RESTORE_FAILED, '损坏的备份'))
+  }
+  write(): Promise<void> {
+    return Promise.resolve()
+  }
+  delete(): Promise<void> {
+    return Promise.resolve()
+  }
+}
+
+const kernelRequired = (): Promise<SystemProxyTarget> =>
+  Promise.reject(new ProtocolError(ProtocolErrorCode.SYSTEM_PROXY_KERNEL_REQUIRED, '内核未运行'))
+
+interface MakeOptions {
+  supported?: boolean
+  applyBehavior?: 'write' | 'reject' | 'write-other'
+  restoreBehavior?: 'restore' | 'reject'
+  initial?: ConstructorParameters<typeof FakeSystemProxyAdapter>[0]['initial']
+  probe?: SystemProxyKernelProbe
+  backup?: SystemProxyBackupStore
+}
+
+function makeService(options: MakeOptions = {}) {
+  const adapter = new FakeSystemProxyAdapter({
+    supported: options.supported,
+    applyBehavior: options.applyBehavior,
+    restoreBehavior: options.restoreBehavior,
+    initial: options.initial
+  })
+  const backup = options.backup ?? new InMemorySystemProxyBackupStore()
+  const probe = options.probe ?? new StaticSystemProxyProbe(TARGET)
+  const service = new SystemProxyService({ adapter, probe, backup, instanceId: 'test-instance' })
+  return { service, adapter, backup }
+}
+
+const expectReject = (promise: Promise<unknown>, code: ProtocolErrorCode) =>
+  expect(promise).rejects.toMatchObject({ code })
+
+describe('SystemProxyService', () => {
+  describe('construction & status', () => {
+    it('starts disabled on a supported adapter', () => {
+      const { service } = makeService()
+      expect(service.getStatus().phase).toBe('disabled')
+      expect(service.getStatus().supported).toBe(true)
+    })
+
+    it('starts unsupported on a non-supported adapter', () => {
+      const { service } = makeService({ supported: false })
+      expect(service.getStatus().phase).toBe('unsupported')
+      expect(service.getStatus().supported).toBe(false)
+    })
+
+    it('onStatus reports transitions', async () => {
+      const { service } = makeService()
+      const seen: string[] = []
+      service.onStatus((s: SystemProxyStatus) => seen.push(s.phase))
+      await service.enable()
+      expect(seen).toContain('enabling')
+      expect(seen[seen.length - 1]).toBe('enabled')
+    })
+  })
+
+  describe('enable', () => {
+    it('enables the proxy and reports the live target', async () => {
+      const { service } = makeService()
+      const status = await service.enable()
+      expect(status.phase).toBe('enabled')
+      expect(status.address).toBe('127.0.0.1:7890')
+      expect(status.port).toBe(7890)
+    })
+
+    it('writes the backup BEFORE applying and keeps it on success', async () => {
+      const { service, adapter, backup } = makeService()
+      await service.enable()
+      await expect(backup.read()).resolves.not.toBeNull()
+      const ops = adapter.calls.map((c) => c.op)
+      expect(ops).toEqual(['read', 'apply', 'refresh', 'read'])
+    })
+
+    it('is idempotent: an already-owned proxy is re-enabled without re-applying', async () => {
+      const { service, adapter } = makeService()
+      await service.enable()
+      const applyCount = adapter.calls.filter((c) => c.op === 'apply').length
+      await service.enable()
+      expect(adapter.calls.filter((c) => c.op === 'apply').length).toBe(applyCount)
+    })
+
+    it('throws unsupported and stays unsupported when the adapter is not supported', async () => {
+      const { service } = makeService({ supported: false })
+      await expectReject(service.enable(), ProtocolErrorCode.SYSTEM_PROXY_UNSUPPORTED)
+      expect(service.getStatus().phase).toBe('unsupported')
+    })
+
+    it('throws kernel-required and stays disabled when the kernel is not running', async () => {
+      const { service } = makeService({ probe: new ConfigurableProbe(kernelRequired) })
+      await expectReject(service.enable(), ProtocolErrorCode.SYSTEM_PROXY_KERNEL_REQUIRED)
+      expect(service.getStatus().phase).toBe('disabled')
+      expect(service.getStatus().errorMessage).toBe('请先启动内核')
+    })
+
+    it('throws state-conflict and does not apply when an owned backup was mutated externally', async () => {
+      const { service, adapter, backup } = makeService()
+      await service.enable()
+      adapter.mutate({ proxyServer: { exists: true, type: 'string', value: 'http=1.2.3.4:5' } })
+      const applyCount = adapter.calls.filter((c) => c.op === 'apply').length
+      await expectReject(service.enable(), ProtocolErrorCode.SYSTEM_PROXY_STATE_CONFLICT)
+      expect(adapter.calls.filter((c) => c.op === 'apply').length).toBe(applyCount)
+      expect(service.getStatus().phase).toBe('conflict')
+      await expect(backup.read()).resolves.not.toBeNull()
+    })
+
+    it('rolls back to disabled and clears the backup when apply fails', async () => {
+      const { service, backup } = makeService({ applyBehavior: 'reject' })
+      await expectReject(service.enable(), ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED)
+      expect(service.getStatus().phase).toBe('disabled')
+      await expect(backup.read()).resolves.toBeNull()
+    })
+
+    it('rolls back and clears the backup on a read-back mismatch', async () => {
+      const { service, adapter, backup } = makeService({ applyBehavior: 'write-other' })
+      await expectReject(service.enable(), ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED)
+      expect(service.getStatus().phase).toBe('disabled')
+      expect(adapter.calls.some((c) => c.op === 'restore')).toBe(true)
+      await expect(backup.read()).resolves.toBeNull()
+    })
+
+    it('rejects a target that is not loopback', async () => {
+      const { service } = makeService({
+        probe: new ConfigurableProbe(() => Promise.resolve({ host: '0.0.0.0', port: 7890 }))
+      })
+      await expectReject(service.enable(), ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED)
+      expect(service.getStatus().phase).toBe('disabled')
+    })
+  })
+
+  describe('disable (ownership-aware)', () => {
+    it('is a no-op when nothing is owned', async () => {
+      const { service, adapter } = makeService()
+      const status = await service.disable()
+      expect(status.phase).toBe('disabled')
+      expect(adapter.calls.some((c) => c.op === 'restore')).toBe(false)
+    })
+
+    it('restores the pre-enable snapshot and clears the backup', async () => {
+      const { service, adapter, backup } = makeService({
+        initial: { proxyEnable: { exists: true, type: 'dword', value: 0 } }
+      })
+      await service.enable()
+      const status = await service.disable()
+      expect(status.phase).toBe('disabled')
+      await expect(backup.read()).resolves.toBeNull()
+      expect(adapter.calls.some((c) => c.op === 'restore')).toBe(true)
+      expect(adapter.calls.some((c) => c.op === 'refresh')).toBe(true)
+    })
+
+    it('throws state-conflict and keeps the backup when the proxy was mutated externally', async () => {
+      const { service, adapter, backup } = makeService()
+      await service.enable()
+      adapter.mutate({ proxyServer: { exists: true, type: 'string', value: 'http=9.9.9.9:1' } })
+      await expectReject(service.disable(), ProtocolErrorCode.SYSTEM_PROXY_STATE_CONFLICT)
+      expect(service.getStatus().phase).toBe('conflict')
+      await expect(backup.read()).resolves.not.toBeNull()
+    })
+
+    it('flags restore-failed and keeps the backup when restore throws', async () => {
+      const { service, backup } = makeService({ restoreBehavior: 'reject' })
+      await service.enable()
+      await expectReject(service.disable(), ProtocolErrorCode.SYSTEM_PROXY_RESTORE_FAILED)
+      expect(service.getStatus().phase).toBe('restore-failed')
+      await expect(backup.read()).resolves.not.toBeNull()
+    })
+
+    it('throws unsupported when the adapter is not supported', async () => {
+      const { service } = makeService({ supported: false })
+      await expectReject(service.disable(), ProtocolErrorCode.SYSTEM_PROXY_UNSUPPORTED)
+    })
+
+    it('fails closed when the backup is corrupt', async () => {
+      const { service } = makeService({ backup: new ThrowingBackupStore() })
+      await expectReject(service.disable(), ProtocolErrorCode.SYSTEM_PROXY_RESTORE_FAILED)
+    })
+  })
+
+  describe('restoreBeforeKernelUnavailable', () => {
+    it('restores an owned proxy and clears the backup', async () => {
+      const { service, backup } = makeService()
+      await service.enable()
+      await service.restoreBeforeKernelUnavailable()
+      expect(service.getStatus().phase).toBe('disabled')
+      await expect(backup.read()).resolves.toBeNull()
+    })
+
+    it('treats a conflict as safe and reports it (no registry mutation)', async () => {
+      const { service, adapter, backup } = makeService()
+      await service.enable()
+      adapter.mutate({ proxyServer: { exists: true, type: 'string', value: 'http=5.5.5.5:1' } })
+      await expect(service.restoreBeforeKernelUnavailable()).resolves.toBeUndefined()
+      expect(service.getStatus().phase).toBe('conflict')
+      expect(adapter.calls.some((c) => c.op === 'restore')).toBe(false)
+      await expect(backup.read()).resolves.not.toBeNull()
+    })
+
+    it('throws and flags restore-failed when a restore genuinely fails', async () => {
+      const { service, backup } = makeService({ restoreBehavior: 'reject' })
+      await service.enable()
+      await expectReject(service.restoreBeforeKernelUnavailable(), ProtocolErrorCode.SYSTEM_PROXY_RESTORE_FAILED)
+      expect(service.getStatus().phase).toBe('restore-failed')
+      await expect(backup.read()).resolves.not.toBeNull()
+    })
+
+    it('is a no-op when nothing is owned', async () => {
+      const { service } = makeService()
+      await expect(service.restoreBeforeKernelUnavailable()).resolves.toBeUndefined()
+      expect(service.getStatus().phase).toBe('disabled')
+    })
+  })
+
+  describe('init (startup orphan recovery)', () => {
+    it('is a no-op on an unsupported adapter', async () => {
+      const { service } = makeService({ supported: false })
+      const status = await service.init()
+      expect(status.phase).toBe('unsupported')
+    })
+
+    it('is a no-op when no backup exists', async () => {
+      const { service } = makeService()
+      const status = await service.init()
+      expect(status.phase).toBe('disabled')
+    })
+
+    it('restores an orphan owned backup left by a crash', async () => {
+      const adapter = new FakeSystemProxyAdapter()
+      const backup = new InMemorySystemProxyBackupStore()
+      const first = new SystemProxyService({ adapter, probe: new StaticSystemProxyProbe(TARGET), backup, instanceId: 'owner' })
+      await first.enable() // leaves the owned bundle + applied values
+      const next = new SystemProxyService({ adapter, probe: new StaticSystemProxyProbe(TARGET), backup, instanceId: 'growth-2' })
+      const status = await next.init()
+      expect(status.phase).toBe('disabled')
+      await expect(backup.read()).resolves.toBeNull()
+      expect(adapter.calls.some((c) => c.op === 'restore')).toBe(true)
+    })
+
+    it('reports conflict and keeps the backup when the orphan is not owned', async () => {
+      const adapter = new FakeSystemProxyAdapter()
+      const backup = new InMemorySystemProxyBackupStore()
+      const first = new SystemProxyService({ adapter, probe: new StaticSystemProxyProbe(TARGET), backup, instanceId: 'owner' })
+      await first.enable()
+      adapter.mutate({ proxyEnable: { exists: true, type: 'dword', value: 0 } })
+      const next = new SystemProxyService({ adapter, probe: new StaticSystemProxyProbe(TARGET), backup, instanceId: 'growth-2' })
+      const status = await next.init()
+      expect(status.phase).toBe('conflict')
+      await expect(backup.read()).resolves.not.toBeNull()
+    })
+
+    it('reports conflict on a corrupt backup without touching the registry', async () => {
+      const { service } = makeService({ backup: new ThrowingBackupStore() })
+      const status = await service.init()
+      expect(status.phase).toBe('conflict')
+      expect(service.getStatus().errorMessage).toBe('系统代理备份无效，请手动恢复')
+    })
+  })
+
+  describe('concurrency', () => {
+    it('serializes enable/disable so the OS never sees interleaved values', async () => {
+      const { service } = makeService()
+      await Promise.all([service.enable(), service.disable()])
+      expect(service.getStatus().phase).toBe('disabled')
+    })
+  })
+})

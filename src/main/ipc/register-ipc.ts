@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { brand } from '@shared/brand'
-import type { IpcDeps, KernelGateway, MihomoGateway, ProfileGateway } from '@shared/gateways'
+import type { IpcDeps, KernelGateway, MihomoGateway, ProfileGateway, SystemProxyGateway } from '@shared/gateways'
 import type { RuntimeSummary } from '@shared/runtime'
 import { IPC } from '@shared/ipc'
 import { ProtocolError, encodeProtocolError } from '@shared/protocol-errors'
@@ -10,6 +10,7 @@ export interface IpcDependencies {
   kernel: KernelGateway
   mihomo: MihomoGateway
   profiles: ProfileGateway
+  systemProxy: SystemProxyGateway
 }
 
 /**
@@ -38,13 +39,14 @@ function buildRuntimeSummary(): RuntimeSummary {
   }
 }
 
-export function registerIpc({ kernel, mihomo, profiles }: IpcDependencies): () => void {
+export function registerIpc({ kernel, mihomo, profiles, systemProxy }: IpcDependencies): () => void {
   const deps: IpcDeps = {
     brand,
     kernel,
     mihomo,
     runtime: { getSummary: buildRuntimeSummary },
-    profiles
+    profiles,
+    systemProxy
   }
   const entries = Object.entries(buildIpcHandlers(deps))
   for (const [channel, handler] of entries) {
@@ -77,6 +79,9 @@ export function registerIpc({ kernel, mihomo, profiles }: IpcDependencies): () =
     }
   })
 
+  // Forward system-proxy status transitions to every open renderer window.
+  const systemProxyUnsub = forward(IPC.systemProxyStatusEvent, (listener) => systemProxy.onStatus(listener))
+
   // Cleanup is owned by the caller (index.ts wires it into the `app` "before-quit"
   // lifecycle event, which is the correct Electron signal — `process` has no
   // `before-quit` event). Repeated calls are harmless no-ops.
@@ -90,5 +95,6 @@ export function registerIpc({ kernel, mihomo, profiles }: IpcDependencies): () =
     logsUnsub()
     streamErrorUnsub()
     statusUnsub()
+    systemProxyUnsub()
   }
 }

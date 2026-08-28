@@ -158,3 +158,22 @@ Until then:
 - Re-importing from the original URL remains the supported way to update content.
 - Do NOT reintroduce a credential-bearing field on `ProfileSubscription` to work
   around this; that would reopen the plaintext-at-rest leak.
+
+## UI-DEBT-008 — Overview system-proxy switch is functional-only
+
+Phase 8 added a live 系统代理 toggle to `src/renderer/src/views/OverviewView.vue`
+(`toggleSystemProxy`, `spSwitchDisabled`, the `.switch` button plus a
+`spPhaseLabel` status line) using the shared `.switch` and `SurfaceCard` idioms. It
+is wired to the typed system-proxy gateway and mirrors the verified main-process
+`phase` (never optimistic), but it was NOT pixel-tuned against the 934×672
+reference:
+
+- The reference does not depict an *active* proxy toggle, so the "on" switch state,
+  the busy state and the `conflict`/`restore-failed` status text have no normative
+  geometry to compare against.
+- The `.switch` control and the status line reuse the generic SurfaceCard
+  `.setting-head` / `.setting-status` layout rather than a page-specific proxy
+  card.
+
+Deferred to the unified visual-acceptance phase. The functional wiring and the
+disabled/unsupported states must not be reworked for layout reasons.

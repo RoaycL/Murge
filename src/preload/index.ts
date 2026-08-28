@@ -66,6 +66,12 @@ const api: DesktopApi = {
     rename: (id, name) => invoke(IPC.profilesRename, id, name),
     editDocument: (id, edits) => invoke(IPC.profilesEditDocument, id, edits),
     validate: (document) => invoke(IPC.profilesValidate, document)
+  },
+  systemProxy: {
+    getStatus: () => invoke(IPC.systemProxyGetStatus),
+    enable: () => invoke(IPC.systemProxyEnable),
+    disable: () => invoke(IPC.systemProxyDisable),
+    onStatus: (listener) => listen(IPC.systemProxyStatusEvent, listener)
   }
 }
 

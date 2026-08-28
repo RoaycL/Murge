@@ -76,11 +76,13 @@ Done when a failed validation leaves the active profile and kernel unchanged.
 
 ### Task 7 — Windows system proxy
 
-- Implement behind an interface with a fake for tests.
-- Back up and restore exact prior owned state.
-- Add crash recovery.
+- Implement behind an interface with a fake for tests. (`src/main/system-proxy/{service,policy,backup-store,probe,factory,ordered-kernel-gateway}.ts` plus `adapters/{fake,disabled,windows-adapter,windows-helpers}.ts`; `WindowsSystemProxyAdapter` owns the three HKCU Internet Settings values, `FakeSystemProxyAdapter` and `DisabledSystemProxyAdapter` cover the dev and non-win32 cases.)
+- Back up and restore exact prior owned state. (`FileSystemProxyBackupStore` writes the pre-mutation snapshot atomically; `restore`/`restoreBeforeKernelUnavailable` revert it, deleting values that did not previously exist.)
+- Add crash recovery. (`SystemProxyService.init()` recovers an orphaned enable from the committed backup; the ordered kernel gateway restores before the kernel stops.)
 
 Done when registry/settings inspection proves enable and restore behavior.
+
+Completed on win32 only and fail-closed elsewhere: on non-win32 (and any dev path) the adapter reports `unsupported`, the main process exposes a disabled state and the Overview switch is disabled. The real enable/restore path is covered by the gated `tests/system-proxy-real.integration.test.ts` (`MURGE_RUN_REAL_SYSTEM_PROXY=1` + `win32`, skipped otherwise) which writes the three HKCU values, proves a host `NetworkSnapshot` changed only in the HKCU Internet Settings proxy field, and restores the exact original values in a `finally` block. Unit/component coverage: `tests/system-proxy-{service,policy,backup-store,windows-helpers,handlers,static}.test.ts`. The feature is brand-neutral (PowerShell `Add-Type` uses a generic `SystemProxy` namespace) and never binds a socket — it registers the proxy, it does not serve one.
 
 ### Task 8 — TUN helper
 

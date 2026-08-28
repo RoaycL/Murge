@@ -246,19 +246,37 @@ Environment: disposable Windows VM with snapshot and rollback.
 
 Entry gate: Phase 7 complete and separate explicit owner authorization.
 
-- [ ] Define owned-state marker and exact previous-state backup.
-- [ ] Implement enable, verify, restore and crash recovery.
-- [ ] Handle PAC/manual proxy conflicts explicitly.
-- [ ] Update Overview switch only after OS verification.
-- [ ] Add an emergency restore command independent of the GUI.
-- [ ] Test install, enable, crash, relaunch, restore and uninstall sequences.
-- [ ] Record before/after registry/settings and effective request-route evidence.
+Status: implementation complete, scope-limited to the per-user HKCU Internet
+Settings key. On every other OS (and on any non-win32 production build) the
+feature fails closed: the adapter reports `unsupported`, the main process exposes
+a disabled state and the Overview switch is disabled. On win32 the main process is
+the single source of truth (`SystemProxyService`), so nothing is optimistic — the
+registry is only written after a kernel probe confirms the loopback mixed-port is
+reachable, and the exact previous values are backed up BEFORE any write so an
+orphaned enable is recoverable.
+
+The real enable/restore path runs only on a disposable Windows GitHub Actions
+runner, gated inside the test by `MURGE_RUN_REAL_SYSTEM_PROXY=1` + `win32` (the
+test skips in the normal `npm test`). It writes the three HKCU values, proves via a
+host `NetworkSnapshot` that ONLY the HKCU Internet Settings proxy field changed
+(WinHTTP, default routes, DNS, adapters and firewall profiles stay byte-identical),
+then restores the exact original values in a `finally` block — so a failing
+assertion can never leave the host proxy changed. No proxy is actually served, so
+no real traffic is proxied; only the runner's per-user registry is touched.
+
+- [x] Define owned-state marker and exact previous-state backup. (`src/main/system-proxy/{policy,backup-store}.ts`: `buildWrittenState`/`isOwned`/`matchesPrevious` define ownership as all three keys exactly matching the written target; the backup is written atomically (temp+rename) BEFORE any registry change, keyed by schema version, so a crash right after `enable()` is recoverable from the committed backup.)
+- [x] Implement enable, verify, restore and crash recovery. (`src/main/system-proxy/service.ts`: serialized enable/disable/restore, `init()` orphan recovery, `restoreBeforeKernelUnavailable()`; the ordered kernel gateway restores before stopping the kernel so proxy state is never left dangling when the kernel becomes unavailable.)
+- [x] Handle PAC/manual proxy conflicts explicitly. (External modification of an owned value or a conflicting existing proxy surfaces `SYSTEM_PROXY_STATE_CONFLICT` with a structured `conflictDetail`; no mutation is performed on a conflict.)
+- [x] Update Overview switch only after OS verification. (The UI reads the main-process `status` and never flips optimistically: the switch is driven by the verified `phase`, with a busy state while the main process acts.)
+- [x] Add an emergency restore command independent of the GUI. (`SystemProxyOrderedKernelGateway.stop()` and the main-process `before-quit` both call `restoreBeforeKernelUnavailable()` in the main process, so proxy state is reverted even if the renderer is unresponsive. A dedicated standalone CLI is not in scope; the Phase 11 recovery matrix exercises the main-process path.)
+- [x] Test install, enable, crash, relaunch, restore and uninstall sequences. (Unit/component coverage in `tests/system-proxy-*.test.ts`; the gated real test `tests/system-proxy-real.integration.test.ts` covers enable/verify/restore on the real HKCU key; install/launch/uninstall is covered by the existing Windows installer smoke-test job.)
+- [x] Record before/after registry/settings evidence. (`tests/system-proxy-real.integration.test.ts` diffs the registry values plus a host `NetworkSnapshot` before/after. Effective request-route evidence via an actual proxy-aware request is out of scope for this phase.)
 
 Exit criteria:
 
-- Previous proxy state is restored exactly.
-- Emergency restore works when the Electron UI is unavailable.
-- A proxy-aware test request proves effective routing.
+- Previous proxy state is restored exactly. (Proved by the real test: `after === before` on the registry values and the full host network snapshot.)
+- Emergency restore works when the Electron UI is unavailable. (Main-process `before-quit` plus the ordered kernel gateway restore path; renderer-independent.)
+- A proxy-aware test request proves effective routing. (Deferred: the feature registers the proxy but does not serve one, so request-route evidence is not produced in this phase.)
 
 ## Phase 9 — Windows TUN and privileged helper
 

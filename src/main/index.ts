@@ -12,6 +12,9 @@ import { TempKernelConfigStore } from './kernel/config-store'
 import { findFreePort, MihomoKernelConfigStore } from './kernel/mihomo-config-store'
 import { randomSecret } from './kernel/mihomo-config'
 import { ControllerReadyKernelGateway } from './kernel/controller-ready-gateway'
+import { createSystemProxy } from './system-proxy/factory'
+import type { SystemProxyService } from './system-proxy/service'
+import { SystemProxyOrderedKernelGateway } from './system-proxy/ordered-kernel-gateway'
 import { NodeKernelProcessAdapter } from './kernel/node-adapter'
 import { MihomoClient } from './services/mihomo-client'
 import { MihomoService } from './services/mihomo-service'
@@ -39,6 +42,7 @@ if (!is.dev) {
 // Created inside app.whenReady; held here so the quit path can stop it.
 let kernel: KernelSupervisor | null = null
 let mihomo: MihomoService | null = null
+let systemProxy: SystemProxyService | null = null
 let mockServer: MockMihomoServerHandle | null = null
 let disposeIpc: (() => void) | null = null
 let isQuitting = false
@@ -337,6 +341,35 @@ app.whenReady().then(async () => {
     app.quit()
     return
   }
+
+  // System-proxy controller. The probe reads the *live* mixed-port from the
+  // controller (never a hard-coded value); the backup store lives in the stable
+  // brand-independent app-data namespace so a crash mid-apply is recoverable.
+  // `init()` restores any orphan from a previous crash before the UI is usable.
+  const systemProxyService = createSystemProxy({
+    appDataBase: app.getPath('appData'),
+    isDev: is.dev,
+    kernel: ipcKernel,
+    mihomo: gateway
+  })
+  systemProxy = systemProxyService
+  await systemProxyService.init()
+
+  // Order the proxy restore ahead of kernel shutdown: a user stop restores the
+  // system proxy first and aborts the stop if that restoration genuinely fails,
+  // so the proxy never points at a dead port.
+  const orderedKernel = new SystemProxyOrderedKernelGateway(ipcKernel, systemProxyService)
+
+  // Crash the controller while the proxy was owned: the port is now dead, so
+  // restore the proxy immediately (conflict is safe — the proxy is not ours —
+  // while a real restore failure stays visible as `restore-failed`).
+  orderedKernel.onStatus((status) => {
+    if (status.phase !== 'failed') return
+    void systemProxyService.restoreBeforeKernelUnavailable().catch((error) => {
+      console.error('[system-proxy] kernel crash recovery failed:', error)
+    })
+  })
+
   const validator = createConfigValidator({ requireProxySections: false })
   
   // SECURITY: In development builds, block all outbound network requests for subscriptions
@@ -362,9 +395,10 @@ app.whenReady().then(async () => {
     subscriptionFetcher
   )
   disposeIpc = registerIpc({
-    kernel: ipcKernel,
+    kernel: orderedKernel,
     mihomo: gateway,
-    profiles: profileService
+    profiles: profileService,
+    systemProxy: systemProxyService
   })
   createWindow()
 
@@ -393,6 +427,15 @@ app.on('before-quit', (event) => {
   event.preventDefault()
   isQuitting = true
   void (async () => {
+    try {
+      // Restore a owned system proxy before tearing down the controller so the
+      // OS proxy is never left pointing at a port that is about to close. A
+      // failure here is logged; the owned backup survives for the next launch's
+      // `init()` recovery rather than being silently dropped now.
+      await systemProxy?.restoreBeforeKernelUnavailable()
+    } catch (error) {
+      console.error('[system-proxy] failed to restore during quit:', error)
+    }
     try {
       await kernel?.stop()
     } catch (error) {

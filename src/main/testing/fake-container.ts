@@ -1,4 +1,5 @@
-import type { KernelGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps } from '@shared/gateways'
+import type { KernelGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway } from '@shared/gateways'
+import type { SystemProxyStatus } from '@shared/system-proxy'
 import type {
   MihomoConfigSnapshot,
   MihomoConnectionsSnapshot,
@@ -9,7 +10,8 @@ import type {
   MihomoProxyProvidersResponse,
   MihomoRuleProvidersResponse,
   MihomoRulesResponse,
-  MihomoStreamError
+  MihomoStreamError,
+  MihomoVersion
 } from '@shared/mihomo-api'
 import type { ConfigEdit, ImportRequest, Profile, ProfileMeta, ValidationResult } from '@shared/profiles'
 import type { KernelStatus, RuntimeSummary, TrafficSample } from '@shared/runtime'
@@ -76,6 +78,10 @@ export class FakeMihomoGateway implements MihomoGateway {
   refreshRuleProviderCalls: string[] = []
   getConnectionsCalls = 0
   closeConnectionCalls: string[] = []
+
+  getVersion(): Promise<MihomoVersion> {
+    return Promise.resolve({ version: '1.18.0', meta: false })
+  }
 
   /** Configurable results for the delay APIs. */
   delayResults: Record<string, MihomoDelayResult> = {}
@@ -277,12 +283,59 @@ export class FakeProfileGateway implements ProfileGateway {
   }
 }
 
+export class FakeSystemProxyGateway implements SystemProxyGateway {
+  status: SystemProxyStatus = {
+    supported: true,
+    phase: 'disabled',
+    address: null,
+    port: null,
+    errorMessage: null,
+    conflictDetail: null,
+    updatedAt: ''
+  }
+  getStatusCalls = 0
+  enableCalls = 0
+  disableCalls = 0
+  enableError: Error | null = null
+  disableError: Error | null = null
+  private readonly listeners = new Set<(status: SystemProxyStatus) => void>()
+
+  getStatus(): Promise<SystemProxyStatus> {
+    this.getStatusCalls += 1
+    return Promise.resolve({ ...this.status })
+  }
+
+  enable(): Promise<SystemProxyStatus> {
+    this.enableCalls += 1
+    if (this.enableError) return Promise.reject(this.enableError)
+    return Promise.resolve({ ...this.status })
+  }
+
+  disable(): Promise<SystemProxyStatus> {
+    this.disableCalls += 1
+    if (this.disableError) return Promise.reject(this.disableError)
+    return Promise.resolve({ ...this.status })
+  }
+
+  onStatus(listener: (status: SystemProxyStatus) => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  /** Test helper: publish a status transition to subscribers. */
+  emitStatus(status: SystemProxyStatus): void {
+    this.status = { ...status }
+    for (const listener of this.listeners) listener({ ...status })
+  }
+}
+
 export interface FakeContainer {
   deps: IpcDeps
   kernel: FakeKernelGateway
   mihomo: FakeMihomoGateway
   runtime: FakeRuntimeGateway
   profiles: FakeProfileGateway
+  systemProxy: FakeSystemProxyGateway
 }
 
 export function createFakeContainer(brand: BrandConfig): FakeContainer {
@@ -290,11 +343,13 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
   const mihomo = new FakeMihomoGateway()
   const runtime = new FakeRuntimeGateway()
   const profiles = new FakeProfileGateway()
+  const systemProxy = new FakeSystemProxyGateway()
   return {
     kernel,
     mihomo,
     runtime,
     profiles,
-    deps: { brand, kernel, mihomo, runtime, profiles }
+    systemProxy,
+    deps: { brand, kernel, mihomo, runtime, profiles, systemProxy }
   }
 }

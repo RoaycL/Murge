@@ -46,6 +46,18 @@ export const ProtocolErrorCode = {
   ARTIFACT_HASH_MISMATCH: 'ARTIFACT_HASH_MISMATCH',
   /** A downloaded kernel archive could not be extracted safely. */
   ARTIFACT_EXTRACT_FAILED: 'ARTIFACT_EXTRACT_FAILED',
+  /** The current platform/build cannot own the system proxy. */
+  SYSTEM_PROXY_UNSUPPORTED: 'SYSTEM_PROXY_UNSUPPORTED',
+  /** The system proxy could not be enabled because the kernel is not ready. */
+  SYSTEM_PROXY_KERNEL_REQUIRED: 'SYSTEM_PROXY_KERNEL_REQUIRED',
+  /** Enabling the system proxy failed (apply, read-back or refresh error). */
+  SYSTEM_PROXY_ENABLE_FAILED: 'SYSTEM_PROXY_ENABLE_FAILED',
+  /** Disabling the system proxy failed (restore or refresh error). */
+  SYSTEM_PROXY_DISABLE_FAILED: 'SYSTEM_PROXY_DISABLE_FAILED',
+  /** A value the app owns was modified externally; restore was refused. */
+  SYSTEM_PROXY_STATE_CONFLICT: 'SYSTEM_PROXY_STATE_CONFLICT',
+  /** Restoring the previous system-proxy state failed. */
+  SYSTEM_PROXY_RESTORE_FAILED: 'SYSTEM_PROXY_RESTORE_FAILED',
   /** An unexpected internal failure. */
   INTERNAL: 'INTERNAL'
 } as const

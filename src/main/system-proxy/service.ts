@@ -274,6 +274,7 @@ export class SystemProxyService implements SystemProxyGateway {
       await this.restoreBackupStrict(backup)
     } catch (error) {
       // Keep the bundle so a retry / recovery can still restore it.
+      console.error('[system-proxy] restore failed:', error instanceof Error ? error.message : error)
       return this.fail('restore-failed', ProtocolErrorCode.SYSTEM_PROXY_RESTORE_FAILED, '系统代理还原失败', null, error)
     }
     return this.transition('disabled')
@@ -287,7 +288,8 @@ export class SystemProxyService implements SystemProxyGateway {
     if (!matchesPrevious(readback, backup.previous)) {
       // A read-back mismatch means we cannot prove the restore worked. Keep the
       // bundle so a later retry / crash recovery still has the original values.
-      throw new Error('restore read-back mismatch')
+      const why = conflictDetail(readback, backup.previous)
+      throw new Error(`restore read-back mismatch: ${why || 'no differing keys'}`)
     }
     await this.backup.delete()
   }

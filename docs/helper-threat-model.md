@@ -167,13 +167,17 @@ These are decisions the threat model assumes; each has an owner-decision flag in
   holds the session handle. The helper's privilege role is to call
   `WintunCreateAdapter(Name, TunnelType, RequestedGUID)` (which installs/loads the
   driver on demand and creates the adapter, with the app-supplied `RequestedGUID`
-  giving a **stable, recoverable identity**; see the design doc §3.0/§3.2) and to perform
-  the **sole** OS-level route/DNS/interface mutation + verification/recovery, plus the
-  **explicit** `WintunDeleteAdapter` on disable (handle `RebootRequired`). **Whether mihomo
-  can open and reuse the helper-created adapter is **G1 — an unproven hypothesis** that must
-  be proven by a **minimal, one-shot disposable Windows probe** (create adapter → verify same
-  GUID/LUID → delete + restore) before any Phase 9 helper implementation begins (design doc
-  §12).** No component other than mihomo may enable the `tun` data plane.
+  giving a **stable, recoverable identity**; see the design doc §3.0/§3.2), to hold the
+  **creator handle** (the adapter's lifetime anchor), and to perform the **sole**
+  OS-level route/DNS/interface mutation + verification/recovery. On disable the adapter is
+  removed **only** by `WintunCloseAdapter(creatorHandle)` — there is **no**
+  `WintunDeleteAdapter` and no `RebootRequired`/`delete-pending`. **Whether mihomo can open
+  and reuse the helper-created adapter, and whether the adapter survives the helper closing
+  the creator handle, is **G1 — an unproven hypothesis** that must be proven by the **G1
+  lifecycle probe** (create + hold creator handle → mihomo opens by Name + starts a session →
+  helper closes the creator handle/exits → verify session + adapter persist; design doc
+  §3.3/§12) before any Phase 9 helper implementation begins.** No component other than mihomo
+  may enable the `tun` data plane.
 
 ---
 
@@ -244,16 +248,20 @@ process running as the *same user* can impersonate the app, and `runas`/`ShellEx
 uses the **Microsoft-sanctioned COM Elevation Moniker** flow: the app activates an elevated,
 out-of-proc COM server (the helper) with `CoGetObject(L"Elevation:Administrator!new:{CLSID}",
 BIND_OPTS3, ...)` where the elevation broker authenticates and mediates the rendezvous, and
-**each activation is a fresh, short-lived, per-activation server**. The contract requires all
-of the following; failure in any one ⇒ close + fail closed:
+**each activation is a fresh, per-activation server** (its process lifetime bound to the
+enabled TUN window, holding the creator handle — see design doc §3.3, B1/B2). The contract
+requires all of the following; failure in any one ⇒ close + fail closed:
 
 - **Elevation-moniker registration (machine-wide HKLM).** `CLSID` default +
-  `LocalizedString=@...helper.exe,-101` + `Elevation` (default = `Enabled`) +
+  `LocalizedString=@...helper.exe,-101` + `Elevation\Enabled` = **REG_DWORD `1`** +
   `LocalServer32` (default = **absolute helper path**, plus `ServerExecutable` = absolute
-  path, `ThreadingModel = Both`, `AppID`) + `AppID` (default + `RunAs = "Interactive User"`,
-  restrictive `LaunchPermission`/`AccessPermission` DACLs denying `Everyone`/`Users` and
-  granting only the authorized interactive-user principal + SYSTEM). Registration is done by
-  the installer **and re-verified by the app's probe**, never by an unprivileged path.
+  path, `AppID`) + `AppID` (default + `RunAs = "Interactive User"`, restrictive
+  `LaunchPermission`/`AccessPermission` DACLs denying `Everyone`/`Users` and granting only
+  the authorized interactive-user principal + SYSTEM). There is **no** `ThreadingModel`
+  under `LocalServer32` and **no** `Elevation` string value. Registration is in the registry
+  **view matching the helper bitness** (64-bit helper → 64-bit view; a 32-bit helper would
+  be under `HKLM\Software\WOW6432Node\Software\Classes\CLSID`) and is done by the
+  installer **and re-verified by the app's probe**, never by an unprivileged path.
 - **Transport is an authenticated, encrypted COM channel with mutual auth + packet
   privacy.** The app calls `CoInitializeSecurity(..., RPC_C_AUTHN_LEVEL_PKT_PRIVACY,
   RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_SECURE_REFS|EOAC_STATIC_CLOAKING, NULL)` and does
@@ -284,11 +292,13 @@ of the following; failure in any one ⇒ close + fail closed:
   SHA-256 + Authenticode publisher match the pinned helper. A per-user registration that
   tried to divert the CLSID fails this check and is refused.
 - **Per-activation, single-client server (§5.5 of the design doc).** Each enable uses
-  `Elevation:Administrator!new` so a **fresh, short-lived elevated server** is created. It
+  `Elevation:Administrator!new` so a **fresh per-activation server** is created. It
   **binds to the first verified client** and **rejects every other client** — including a
   second Murge process with the identical binary (same path, same Authenticode, same
-  SHA-256), because the first client has already been bound. The server **exits** on
-  transaction complete/cancel/timeout/bound-client-exit. No already-running helper is reused.
+  SHA-256), because the first client has already been bound. Its process **lifetime is bound
+  to the enabled TUN window** (it holds the creator handle; design doc §3.3 B1 baseline), and
+  it **exits** on disable/rollback, transaction failure, cancel/timeout or bound-client-exit.
+  No already-running helper is reused.
 - **One-time `launchSecret` exchanged inside the authenticated channel** — never on a command
   line, env, regular file or user-readable registry value (all readable by a same-user
   process). It is used to derive the `sessionKey` and is `RtlSecureZeroMemory`-zeroized right
@@ -302,10 +312,11 @@ of the following; failure in any one ⇒ close + fail closed:
   `sessionKey` **zeroized** on channel close, task end and helper exit (never logged).
 - **Typed, schema-validated message with a fixed allowlist.** Operation identifiers from a
   **fixed allowlist** (`probe_integrity`, `create_adapter`, `apply_network_state`,
-  `snapshot`, `restore`, `get_status`, `health`, `delete_adapter`); a per-operation
+  `snapshot`, `restore`, `get_status`, `health`, `close_creator_handle`); a per-operation
   monotonic `requestId` (idempotency/replay guard); JSON-schema validation in the helper
   (mirror the "validate every IPC arg" rule; TS types are not runtime validation); a strict
-  size cap.
+  size cap. There is **no** `delete_adapter`/`WintunDeleteAdapter` in the model or the
+  allowlist.
 - The helper authorizes **each** operation by policy; it does not trust the app as a blanket
   admin. `apply_network_state` carries the typed, validated `DesiredNetworkState` (never raw
   command text).
@@ -325,8 +336,9 @@ of the following; failure in any one ⇒ close + fail closed:
   **fsync'd before** the OS is touched) → perform the mutation → **`APPLIED`** record. This
   includes **`CREATE_ADAPTER/PREPARED`** written + fsync'd **before** `WintunCreateAdapter`
   (carrying `name`/`TunnelType`/`RequestedGUID` for a recoverable identity) so a crash
-  between the two records leaves a durable intent that recovery **reconciles by enumerating
-  the product adapter / current OS state** — never by assuming. A failure to write/verify
+  between the two records leaves a durable intent that recovery **reconciles by
+  `WintunOpenAdapter(Name)` + identity verification** (`WintunGetAdapterLUID` +
+  `ConvertInterfaceLuidToGuid`/SetupAPI) — **never by assuming**. A failure to write/verify
   the snapshot or journal **aborts** with zero mutation.
 - Restore is **per-item owned-only**: each item is compared against `WrittenState`
   and reverted to its baseline only if the current value still equals what the app
@@ -339,17 +351,20 @@ of the following; failure in any one ⇒ close + fail closed:
 
 - No auto-elevation. Activation is triggered only by an explicit user action.
 - The app opens the helper through an explicit consent the user sees (a UAC prompt shown by
-  the COM elevation broker); each activation is a **fresh, short-lived per-activation server**
-  (C3). The helper runs **High IL** but with a **restricted token** whose enabled privileges
+  the COM elevation broker); each activation is a **fresh, per-activation server** whose
+  **process lifetime is bound to the enabled TUN window** (it holds the creator handle;
+  design doc §3.3, B1 baseline; re-choose to exit-on-transaction only if the G1 probe
+  measures B2). The helper runs **High IL** but with a **restricted token** whose enabled privileges
   are exactly those needed (e.g. `SeLoadDriverPrivilege` for the
   `WintunCreateAdapter(Name, TunnelType, RequestedGUID)` call; route add/delete are granted
   via the DNS/route APIs rather than blanket admin).
-- Adapter lifecycle is **explicit** (design doc §3.3): on disable mihomo ends its session,
-  the helper enumerates + verifies the **product-owned** adapter, calls
-  `WintunDeleteAdapter`, and handles `ERROR_REBOOT_REQUIRED` as `delete-pending`
-  (retried by the next `init()`/`--recover`). It deletes **only** an adapter it provably
-  created (own `Name`/`RequestedGUID`), never a pre-existing/shared adapter or driver (C9).
-  There is **no** automatic-delete-on-session-close claim.
+- Adapter lifecycle is **explicit** (design doc §3.3): on disable mihomo ends its session and
+  closes its open handle, then the helper verifies ownership (`Name`/`RequestedGUID`/LUID)
+  and calls **`WintunCloseAdapter(creatorHandle)`** — the **only** operation that removes a
+  create-created adapter. There is **no** `WintunDeleteAdapter`, **no**
+  `ERROR_REBOOT_REQUIRED` adapter-delete return, and **no** `delete-pending` state. It
+  removes **only** an adapter it provably created (own `Name`/`RequestedGUID`), never a
+  pre-existing/shared adapter or driver (C9); **`WintunDeleteDriver` is never called**.
 - The helper is a dedicated process without a console, no network listener of its
   own (other than its IPC), and no accidental admin shell. It never creates/holds
   the Wintun packet session — mihomo owns the data plane (A8), and whether mihomo can
@@ -500,12 +515,17 @@ Resolved by the owner (in force for implementation):
 
 Still to decide before implementation starts:
 
-5. **G1 — mihomo reuses the helper-created adapter.** Whether mihomo can
-   `WintunOpenAdapter` the adapter the helper creates. **Unproven hypothesis; must be
-   proven by a minimal, one-shot disposable Windows probe** (create the adapter → verify
-   mihomo reuses the same GUID/LUID → immediately delete + restore; T0) **before any Phase 9
-   helper implementation begins**. If it fails, stop and return to the owner for a revised
-   ownership decision — do not fall back to dual ownership.
+5. **G1 — mihomo reuses the helper-created adapter, and the adapter survives the helper
+   closing its creator handle.** **Unproven hypothesis; must be proven by the **G1 lifecycle
+   probe** (design doc §3.3, §12): (a) helper creates + holds the **creator handle**;
+   (b) mihomo `WintunOpenAdapter(Name)` + `WintunStartSession`; (c) helper
+   `WintunCloseAdapter(creatorHandle)` / exits; (d) observe whether the session + adapter
+   persist. Two branches B1 (adapter removed ⇒ helper lifetime bound to the enabled TUN
+   window) / B2 (adapter survives ⇒ short-lived standalone helper viable). It runs on a
+   snapshot-able, out-of-band-recoverable Windows VM in gated CI (T0) **before any Phase 9
+   helper implementation begins** and **never on this dev machine**. If it fails/remains
+   unresolved, stop and return to the owner for a revised ownership decision — do not fall
+   back to dual ownership.
 6. **Certificate provider & trust model.** Which CA/cert for the helper and driver;
    wintun is already signed by a vendor — confirm this is the relied-on artifact and
    that we pin its publisher. (Affects C1 — see `CODE_SIGNING.md`.)

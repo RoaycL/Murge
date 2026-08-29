@@ -44,13 +44,25 @@ Conventions referenced: `src/shared/system-proxy.ts`, `src/shared/ipc.ts`,
 
 | # | Finding | Resolution (this document) |
 |---|---|---|
-| 1 | Wintun ABI wrong: `WintunCreateAdapter(LUID*, Name, TunnelType, Session*)` is an incorrect signature | **Fixed verbatim from the official `wintun.h`** (§3.0, pinned **0.14.1**, recorded arch/exported-symbols/header-source): `WintunCreateAdapter(Name, TunnelType, RequestedGUID) -> WINTUN_ADAPTER_HANDLE`; `WintunGetAdapterLUID(Adapter, &Luid)`; `WintunStartSession(Adapter, Capacity)` creates the packet session; `WintunEndSession`/`WintunCloseAdapter`/`WintunDeleteAdapter` are distinct. The "**Wintun has no RequestedGUID parameter**" assertion is **withdrawn** — `RequestedGUID` is a real parameter (§3.0, §3.2). Pinned version + arch + exported symbols + header source recorded. |
-| 2 | Elevation bootstrap used plain `CoCreateInstance` + `requireAdministrator` instead of the official COM elevation moniker | **Rewritten to the COM Elevation Moniker flow** (§5.1–§5.2): client uses `CoGetObject("Elevation:Administrator!new:{CLSID}", BIND_OPTS3, ...)`; full HKLM `CLSID`/`LocalizedString`/`Elevation`/`LocalServer32` (absolute path + `ServerExecutable`)/`AppID`/`LaunchPermission`/`AccessPermission` listed; `RunAs = "Interactive User"` (Activate-as-Activator); explicit `CoInitializeSecurity`/`CoSetProxyBlanket` authn/impersonation/packet-privacy params. |
+| 1 | Wintun ABI wrong: `WintunCreateAdapter(LUID*, Name, TunnelType, Session*)` is an incorrect signature | **Fixed verbatim from the official `wintun.h`** (§3.0, pinned **0.14.1**, recorded arch/exported-symbols/header-source): `WintunCreateAdapter(Name, TunnelType, RequestedGUID) -> WINTUN_ADAPTER_HANDLE`; `WintunGetAdapterLUID(Adapter, &Luid)`; `WintunStartSession(Adapter, Capacity)` creates the packet session; `WintunEndSession` ends a session; `WintunCloseAdapter` releases a handle (and, for a create-created adapter, removes it). The "**Wintun has no RequestedGUID parameter**" assertion is **withdrawn** — `RequestedGUID` is a real parameter (§3.0, §3.2). Pinned version + arch + exported symbols + header source recorded. |
+| 2 | Elevation bootstrap used plain `CoCreateInstance` + `requireAdministrator` instead of the official COM elevation moniker | **Rewritten to the COM Elevation Moniker flow** (§5.1–§5.2): client uses `CoGetObject("Elevation:Administrator!new:{CLSID}", BIND_OPTS3, ...)`; full HKLM `CLSID`/`LocalizedString`/`Elevation`/`LocalServer32` (absolute path + `ServerExecutable`)/`AppID`/`LaunchPermission`/`AccessPermission` listed; `RunAs = "Interactive User"` (Activate-as-Activator); explicit `CoInitializeSecurity`/`CoSetProxyBlanket` authn/impersonation/packet-privacy params. **Round-4 correction below** (`Elevation\Enabled = REG_DWORD 1`, `ThreadingModel` removed, WOW64/bitness location noted). |
 | 3 | RPC client PID wrong: used `RPC_CALL_ATTRIBUTES_V2.ClientProcessId` | **Fixed to `RPC_CALL_ATTRIBUTES_V2.ClientPID`** with `Flags = RPC_QUERY_CLIENT_PID`; assert the call arrived over local **`ncalrpc`**; the PID is used **only to open and validate the process object** (path/digest/publisher/session-key), never as identity by itself (§5.2, §5.4). |
 | 4 | Journal not truly write-ahead (the adapter was created, then the journal intent written) | **True write-ahead journal** (§8.3–§8.4): `BaselineSnapshot` committed first; `CREATE_ADAPTER/PREPARED` (fsync'd **before** `WintunCreateAdapter`); `CREATE_ADAPTER/APPLIED` after; every route/DNS op is `PREPARED` → mutate → `APPLIED`; crash between any two records is reconciled by **enumerating the product adapter / current OS state** (PREPARED-but-unknown). |
-| 5 | No explicit adapter deletion; claimed last-session/handle close auto-deletes | **Explicit deletion** (§3.3): mihomo ends the session; helper enumerates + verifies the **product-owned** adapter; `WintunDeleteAdapter`; `RebootRequired` handled as `delete-pending`; only own-instance/product adapters deleted; `DELETE_ADAPTER/RECONCILED` written on success. The automatic-deletion claim is **removed**. |
-| 6 | Reusable elevated helper let a second process attach | **Per-activation, short-lived elevated server** (§5.5): each enable uses `Elevation:Administrator!new` to create a fresh server that **binds to the first verified client**, **rejects all other clients** (including a second Murge process with identical path/signature/hash), and **exits** on transaction complete/cancel/timeout. Second-instance race test added (§13). |
-| 7 | G1 still un-proven | Keep as a **hard pre-implementation gate**. A **minimal, one-shot disposable Windows probe** (create adapter → verify same GUID/LUID → delete + restore) runs first; it does **not** expand into full Phase 9 implementation (§12, §13). |
+| 5 | No explicit adapter deletion; claimed last-session/handle close auto-deletes | **Corrected to the real 0.14.1 lifecycle** (§3.3): there is **no `WintunDeleteAdapter`**; an adapter created by `WintunCreateAdapter` is removed **only** by `WintunCloseAdapter(creatorHandle)`; there is **no `RebootRequired` adapter-delete return and no `delete-pending`** state (the only reboot-visible artifact is the Wintun driver, which we never delete). Because the creator handle is the adapter's lifetime anchor, the short-lived-helper model is **proven, not assumed**, by the **G1 lifecycle probe** (B1/B2 branches, §3.3). The automatic-deletion and the explicit-`WintunDeleteAdapter` claims are both **removed**. |
+| 6 | Reusable elevated helper let a second process attach | **Per-activation, single-client elevated server** (§5.5): each enable uses `Elevation:Administrator!new` to create a fresh server that **binds to the first verified client** and **rejects all other clients** (including a second Murge process with identical path/signature/hash). **Round-4 correction**: the server's **process lifetime is bound to the enabled TUN window** (it holds the creator handle), not to one IPC command — it is freshly activated per enable and exits on disable/rollback (B1 baseline; re-choose to exit-on-transaction only if the G1 probe measures B2). Second-instance race test added (§13). |
+| 7 | G1 still un-proven | Keep as a **hard pre-implementation gate**. The probe is now the **G1 lifecycle probe** (§3.3, §12, §13): create + hold creator handle → mihomo opens by Name + starts a session → helper closes the creator handle/exits → verify session + adapter persist; two branches B1/B2. It runs **only** in gated disposable `windows-latest` CI on a snapshot-able, out-of-band-recoverable VM with separate owner authorization — **never on this dev machine**. |
+
+### 0.3 Round 4 review fixes (this revision)
+
+| # | Finding | Resolution (this document) |
+|---|---|---|
+| 1 | Mixed a nonexistent `WintunDeleteAdapter` (+ `RebootRequired`/`delete-pending`) into the pinned 0.14.1 ABI | **Deleted from the whole design.** The **official 0.14.1 `wintun.h` is the ONLY ABI source**. Removal is `WintunCloseAdapter(creatorHandle)`, which "removes adapter" only for a create-created adapter; there is no `WintunDeleteAdapter`, no `WintunFreeSendPacket`, no `RebootRequired` adapter-delete return, no `delete-pending` state (§3.0, §3.3). |
+| 2 | `WintunDeleteDriver` semantics mis-stated | The symbol **is** exported (`BOOL WINAPI (VOID)`) but production policy **forbids calling it** — it removes the shared Wintun driver if no adapters are in use and would affect other Wintun consumers (D5). Noted in the export table (§3.0) and never called. |
+| 3 | Short-lived-helper vs creator-handle-lifetime contradiction unresolved | **Resolved by the G1 lifecycle probe** (§3.3): because the creator handle is the adapter's lifetime anchor, the model is **proven, not assumed**. Probe exercises a–d; two branches — **B1** (adapter removed when creator handle closes ⇒ helper lifetime must be bound to the TUN enabled window) and **B2** (adapter survives while mihomo holds its own open handle ⇒ short-lived standalone helper viable). Baseline adopts B1 and re-chooses to B2 only if measured otherwise. G1 stays a **hard gate**. |
+| 4 | COM elevation `Elevation` default was the string `"Enabled"`; unexplained `ThreadingModel`; no bitness/WOW64 note | **Fixed** (§5.1): `Elevation\Enabled` is a **REG_DWORD `1`** (not a string); `LocalServer32\ThreadingModel` **removed**; the **bitness/WOW64 registration location** is documented (64-bit helper under the 64-bit view; a 32-bit helper under `HKLM\Software\WOW6432Node\Software\Classes\CLSID`). |
+| 5 | WAL delete/recovery still referred to deletion of the adapter | **Rewritten** (§8.3–§8.4): `CREATE_ADAPTER/APPLIED` stores `{Name, RequestedGUID, LUID}`; recovery **re-opens by `WintunOpenAdapter(Name)`** and verifies `RequestedGUID` via `WintunGetAdapterLUID` + `ConvertInterfaceLuidToGuid`/SetupAPI; only close the creator handle / run product lifecycle cleanup on an **exact identity match**; if the creator handle is already closed by a crash, **observe whether the adapter auto-disappeared** before marking `RECONCILED`. No `WintunDeleteAdapter`. |
+| 6 | Export table out of sync; no ABI-check artifact | Export table is the **verbatim 0.14.1 `Wintun_*_FUNC` set** (§3.0) including `WintunOpenAdapter`, `WintunGetRunningDriverVersion`, `WintunSetLogger`, and exported-but-forbidden `WintunDeleteDriver`; removed the non-existent `WintunFreeSendPacket`. **Build-time `dumpbin`/`GetProcAddress` ABI check** added (§3.0, §13). |
+| 7 | G1 probe wording was "one-shot minimal" | **Renamed/expanded to the G1 lifecycle probe** (§3.3, §12, §13): create + hold creator handle → mihomo opens by Name + starts a session → helper closes the creator handle/exits → verify session + adapter persist; the probe **never runs on this machine** (needs a snapshot-able, out-of-band-recoverable Windows VM + gated CI + separate owner authorization). |
 
 ---
 
@@ -242,69 +254,96 @@ and calling-convention assumptions cannot drift from the SDK.
 | Calling convention | `WINAPI` (`__stdcall`) on x86-64 (x64 ignores but keep correct for correctness); exported by name (DLL export table) |
 | Handle types | `WINTUN_ADAPTER_HANDLE`, `WINTUN_SESSION_HANDLE` (opaque pointers; do not reinterpret elsewhere) |
 | `NET_LUID` | 64-bit `NET_LUID` union; serialized as a **canonical hex string** in JSON (§8.1) |
+| ABI source of record | **Official `wintun.h` at tag `0.14.1`** (checked into the repo verbatim; DO NOT hand-declare any symbol) — copy the exact `WINTUN_*_FUNC` typedefs into `src/main/tun/wintun-abi.ts` |
+| Build-time ABI check | A build step runs `dumpbin /exports` (MSVC) or `llvm-readobj --coff-exports` against the pinned `wintun.dll` and asserts the **exported symbol name set exactly matches** the table above; a runtime check additionally resolves each name via `GetProcAddress` and asserts non-null before first use. A mismatch fails the build (no runtime fallback). |
 
-**Exported symbols (pinned from the official `wintun.def`/exports)**
+**RequestedGUID note.** There **is** a user-supplied `RequestedGUID` parameter: passing a
+product-specific, stable GUID makes the adapter addressable by that GUID for recovery.
+If the GUID is already in use, `WintunCreateAdapter` fails (→ `conflict`, no mutation).
+The stable identity for recovery is **`RequestedGUID` + `Name`**, and the wire identity is
+the associated **`NET_LUID`**.
+
+**Exported symbols (pinned from the official `wintun.h` of Wintun 0.14.1 — the single ABI source)**
+
+The declarations in the 0.14.1 `wintun.h` are written as function-pointer `typedef`s
+(`WINTUN_*_FUNC`); each has a `WINAPI` (`__stdcall`) calling convention. The functions
+are:
 
 ```
-WintunCreateAdapter
-WintunOpenAdapter
-WintunCloseAdapter
-WintunDeleteAdapter
-WintunGetAdapterLUID
-WintunStartSession
-WintunEndSession
-WintunGetReadWaitEvent
-WintunReceivePacket
-WintunReleaseReceivePacket
-WintunAllocateSendPacket
-WintunSendPacket
-WintunFreeSendPacket
+WintunCreateAdapter          WINTUN_ADAPTER_HANDLE WINAPI (Name, TunnelType, RequestedGUID)
+WintunOpenAdapter            WINTUN_ADAPTER_HANDLE WINAPI (Name)
+WintunCloseAdapter           VOID WINAPI (Adapter)
+WintunDeleteDriver           BOOL WINAPI (VOID)             // exported, production policy FORBIDS it
+WintunGetAdapterLUID         VOID WINAPI (Adapter, NET_LUID *Luid)
+WintunGetRunningDriverVersion DWORD WINAPI (VOID)
+WintunSetLogger              VOID WINAPI (WINTUN_LOGGER_CALLBACK)
+WintunStartSession           WINTUN_SESSION_HANDLE WINAPI (Adapter, DWORD Capacity)
+WintunEndSession             VOID WINAPI (Session)
+WintunGetReadWaitEvent       HANDLE WINAPI (Session)
+WintunReceivePacket          BYTE *WINAPI (Session, DWORD *PacketSize)
+WintunReleaseReceivePacket   VOID WINAPI (Session, const BYTE *Packet)
+WintunAllocateSendPacket     BYTE *WINAPI (Session, DWORD PacketSize)
+WintunSendPacket             VOID WINAPI (Session, const BYTE *Packet)
 ```
 
-**Pinned signatures (from official `wintun.h`, Wintun 0.14.x)**
+There is **no `WintunDeleteAdapter`** and **no `WintunFreeSendPacket`** in 0.14.1; either
+must never appear in our code, ABI record or calls. `WintunOpenAdapter` **is** exported and
+is how a second process (mihomo) opens an existing adapter by name.
+`WintunDeleteDriver` **is** exported but the production policy **forbids calling it** — a
+Wintun driver is a **shared system resource** that other Wintun consumers (e.g. the
+WireGuard app) rely on; we must never remove a driver a pre-existing adapter or another
+user may be using (D5).
+
+**Pinned signatures (verbatim from the official 0.14.1 `wintun.h`)**
 
 ```c
-typedef struct _WINTUN_ADAPTER_HANDLE__ *WINTUN_ADAPTER_HANDLE;
-typedef struct _WINTUN_SESSION_HANDLE__ *WINTUN_SESSION_HANDLE;
+typedef struct _WINTUN_ADAPTER *WINTUN_ADAPTER_HANDLE;
+typedef struct _TUN_SESSION *WINTUN_SESSION_HANDLE;
 
-// Creates (and installs/loads the driver for) an adapter. RequestedGUID may be NULL
-// for an OS-assigned GUID. Requires elevation. Returns a handle, else NULL.
-WINTUN_ADAPTER_HANDLE WINAPI WintunCreateAdapter(
-    _In_ const WCHAR *Name,
-    _In_ const WCHAR *TunnelType,
-    _In_opt_ const GUID *RequestedGUID);
+// Creates a new Wintun adapter. RequestedGUID NULL => system-assigned GUID.
+// Returns the adapter handle, else NULL (call GetLastError). Must be released with WintunCloseAdapter.
+WINTUN_ADAPTER_HANDLE(WINAPI WINTUN_CREATE_ADAPTER_FUNC)(_In_z_ LPCWSTR Name, _In_z_ LPCWSTR TunnelType, _In_opt_ const GUID *RequestedGUID);
 
-void WINAPI WintunCloseAdapter(_In_ WINTUN_ADAPTER_HANDLE Adapter);      // close handle; adapter persists
-void WINAPI WintunDeleteAdapter(_In_ WINTUN_ADAPTER_HANDLE Adapter);     // remove the adapter (may require reboot)
-void WINAPI WintunGetAdapterLUID(_In_ WINTUN_ADAPTER_HANDLE Adapter, _Out_ NET_LUID *Luid);
+// Opens an existing Wintun adapter by name. Returns a handle, else NULL. Must be released with WintunCloseAdapter.
+WINTUN_ADAPTER_HANDLE(WINAPI WINTUN_OPEN_ADAPTER_FUNC)(_In_z_ LPCWSTR Name);
 
-// Starts the packet session. Returns a session handle, else NULL.
-WINTUN_SESSION_HANDLE WINAPI WintunStartSession(_In_ WINTUN_ADAPTER_HANDLE Adapter, _In_ DWORD Capacity);
-void WINAPI WintunEndSession(_In_ WINTUN_SESSION_HANDLE Session);
+// Releases adapter resources AND, if the adapter was created with WintunCreateAdapter, REMOVES the adapter.
+VOID(WINAPI WINTUN_CLOSE_ADAPTER_FUNC)(_In_opt_ WINTUN_ADAPTER_HANDLE Adapter);
+
+// Deletes the Wintun driver if there are no more adapters in use. Exported; FORBIDDEN by production policy.
+BOOL(WINAPI WINTUN_DELETE_DRIVER_FUNC)(VOID);
+
+VOID(WINAPI WINTUN_GET_ADAPTER_LUID_FUNC)(_In_ WINTUN_ADAPTER_HANDLE Adapter, _Out_ NET_LUID *Luid);
+
+DWORD(WINAPI WINTUN_GET_RUNNING_DRIVER_VERSION_FUNC)(VOID);
 ```
 
-**Semantics that must never be conflated**
+> The 0.14.1 header declares these as **function-pointer typedefs** named `WINTUN_*_FUNC`
+> (the `WINTUN_ADAPTER_HANDLE(WINAPI ...)` form). The **exported DLL symbols** resolved at
+> runtime by `GetProcAddress` are the `Wintun*` names in the export table above
+> (`WintunCreateAdapter`, `WintunOpenAdapter`, …). The build-time ABI check (§3.0 / §13)
+> resolves each `Wintun*` symbol in `wintun.dll` and asserts its address matches the
+> corresponding `WINTUN_*_FUNC` signature.
 
-- `WintunCreateAdapter(Name, TunnelType, RequestedGUID)` → `WINTUN_ADAPTER_HANDLE`.
-  **This is the only function that installs/loads the signed driver** (on demand), and it
-  returns the adapter **handle** (NOT a LUID and NOT a session).
-- `WintunGetAdapterLUID(Adapter, &Luid)` — the **only** way to get the adapter's
-  `NET_LUID` (routes/DNS/interface key). It is a `_Out_` param on an adapter **handle**,
-  not a return value and not a session call.
-- `WintunStartSession(Adapter, Capacity)` — **this** creates the packet session; the
-  parameter is a **capacity** (ring-buffer bytes), not a `LUID*`/`Session*`. The session is
-  the data-plane transfer handle; the **helper does not use it** (§1.1).
-- `WintunEndSession(Session)` ends a session; `WintunCloseAdapter(Adapter)` **closes the
-  handle only** (the adapter **remains** registered and usable by other processes by
-  name/LUID); `WintunDeleteAdapter(Adapter)` **removes the adapter** (and may return
-  `ERROR_DRIVER_COMMAND`/warn a reboot). These are distinct — **closing the last session
-  or handle does NOT delete the adapter** (§3.3).
+**Creator-handle lifecycle (the real 0.14.1 semantics)**
 
-> **Corrected from the earlier draft.** There is a **user-supplied `RequestedGUID`
-> parameter**: passing a product-specific, stable GUID attempts to make the adapter
-> addressable by that GUID. If the GUID is already in use, `WintunCreateAdapter` fails
-> (→ `conflict`, no mutation). The stable identity for recovery is the **RequestedGUID +
-> Name**, and the wire identity is the associated **`NET_LUID`**.
+- `WintunCreateAdapter` returns the **creator handle**. This handle is the **lifetime
+  anchor** of the adapter: per the 0.14.1 header, `WintunCloseAdapter` "releases
+  resources and, **if adapter was created with `WintunCreateAdapter`, removes adapter**."
+  There is **no** `WintunDeleteAdapter` and **no** `ERROR_REBOOT_REQUIRED`/`delete-pending`
+  for adapter removal — removal is **closing the creator handle**, and the only
+  reboot-visible artifact is the Wintun **driver** (which we never delete).
+- `WintunOpenAdapter(Name)` — a **second** process (mihomo) opens **another handle** by name
+  and calls `WintunStartSession(Adapter, Capacity)` to get its own packet session. The
+  creator **handle** and the opened **handle** are distinct; both are released by
+  `WintunCloseAdapter`.
+- `WintunGetAdapterLUID(Adapter, &Luid)` derives the `NET_LUID` (routes/DNS key) from an
+  adapter handle.
+- **The data plane is owned by mihomo** (§1.1). The helper never opens a session; it only
+  holds the **creator handle** for as long as TUN is enabled and releases it (closing =
+  removing the adapter) at disable/rollback.
+- **`WintunDeleteDriver` is never called.** We ship no `.sys` and never remove a driver that
+  another adapter/user may rely on (D5).
 
 ### 3.1 Official distribution model
 
@@ -344,7 +383,7 @@ void WINAPI WintunEndSession(_In_ WINTUN_SESSION_HANDLE Session);
 The `load_driver` op and every "load the driver once" step are **deleted**. The
 installation of the Wintun driver is a **side effect of `WintunCreateAdapter`**, which
 requires elevation and is called by the helper. There is therefore no op whose purpose
-is "load the driver"; there is only `create_adapter` (and its delete counterpart).
+is "load the driver"; there is only `create_adapter`.
 
 - **`create_adapter`** (helper, elevated). `LoadLibraryEx` the official DLL (absolute path,
   safe flags) → resolve the pinned exports (§3.0) → call:
@@ -360,55 +399,96 @@ is "load the driver"; there is only `create_adapter` (and its delete counterpart
   - `RequestedGUID` is a **product-specific stable GUID** so the adapter is addressable by
     a deterministic GUID for recovery (§3.3). If the GUID is already in use,
     `WintunCreateAdapter` **fails** → `conflict`, **zero mutation**.
-  - The returned **`WINTUN_ADAPTER_HANDLE`** is the **only** durable object to derive the
-    identity from. Do **not** reinterpret it as a LUID or a session.
+  - The returned **`WINTUN_ADAPTER_HANDLE` is the creator handle**, and is **the sole
+    lifetime anchor of the adapter** (§3.3). Do **not** reinterpret it as a LUID or a
+    session.
 - **Derive the LUID (routes/DNS key).** `WintunGetAdapterLUID(h, &luid)` (a `_Out_` param,
   on the adapter handle). Publish `{ name, requestedGuid, luid }` with `luid` as a
   **canonical hex string** (§8.1) — this is the key for routes/DNS/interface.
 - **Do NOT start a session here.** The helper must **not** open a packet session
-  (`WintunStartSession`). The data plane is owned by mihomo (§1.1), which will start the
-  session. The helper **keeps the adapter handle open but never the session**; it releases
-  the handle only at teardown (§3.3).
+  (`WintunStartSession`). The data plane is owned by mihomo (§1.1), which will open its own
+  handle with `WintunOpenAdapter(Name)` and start the session. The helper **keeps the
+  creator handle open but never the session**.
 - **Uniqueness / reservation.** Enumerate Wintun adapters; assert exactly one Murge adapter
   and that no foreign adapter already holds the reserved `Name`/`RequestedGUID`. Otherwise ⇒
   `conflict`, no mutation.
 - **Recovery identity.** On restart/recovery, enumerate Wintun adapters and reconcile by
   **`Name` + `RequestedGUID`** (the GUID is the stable address; the LUID is derived per
   adapter). A leftover adapter from an un-applied `create_adapter` is recognized and either
-  adopted (if it is this product's) or renamed/removed only if provably owned (§3.3, §8.4).
-- **Life cycle.** Created at enable; **removed** at disable / rollback via
-  `WintunDeleteAdapter` (§3.3), **not** by simply closing the last handle/session. The
-  routes/DNS written by the helper are always restored by the helper (it owns them and
-  records the baseline **before** changing them, §8).
+  adopted (if it is this product's) or reconciled without mutation if not provably owned
+  (§3.3, §8.4).
 - **`probe_integrity`** verifies the helper digest/publisher + the `wintun.dll` digest; it
   does **not** load the driver and does **not** require elevation.
 
-### 3.3 Adapter deletion — explicit, product-owned, reboot-aware
+### 3.3 Handle lifecycle, handoff and the G1 ownership probe
 
-Closing the last session/handle does **not** delete the Wintun adapter. Deletion is an
-explicit, owned, verified act:
+**There is no `WintunDeleteAdapter`.** The **only** way a `WintunCreateAdapter`-created
+adapter is removed is by calling **`WintunCloseAdapter(creatorHandle)`** — per the 0.14.1
+header, closing an adapter handle "releases resources and, if adapter was created with
+`WintunCreateAdapter`, **removes adapter**". There is **no `ERROR_REBOOT_REQUIRED`**
+adapter-delete return and **no `delete-pending`** journal state (the only reboot-visible
+artifact is the Wintun **driver**, which we never delete, and a route/DNS change, which the
+helper always restores).
 
-1. **mihomo ends the session.** The data-plane owner calls `WintunEndSession` on its
-   session and releases the adapter handle. (The helper never held a session.)
-2. **Helper enumerates + verifies ownership.** The helper enumerates Wintun adapters,
-   finds the one it created for this enable (matched by `Name` + `RequestedGUID`, with the
-   derived LUID), and **proves it belongs to this product/instance** (not a pre-existing or
-   foreign adapter). If it cannot prove ownership, it does **not** delete.
-3. **`WintunDeleteAdapter(h)`.** On success the adapter is removed.
-4. **`RebootRequired` handling.** If Windows reports that a reboot is required before the
-   adapter fully clears (`ERROR_REBOOT_REQUIRED` / the delete is deferred), the helper
-   records `delete-pending` in the journal so the next `init()`/`--recover` retries the
-   delete (idempotent) rather than reporting the adapter as gone.
-5. **Only own-instance/product adapters are ever deleted.** A pre-existing or shared Wintun
-   adapter is left in place (D5, recommended: never remove a pre-existing driver/adapter).
-6. **Journal.** After a confirmed delete, write the journal `DELETE_ADAPTER/RECONCILED`
-   record (§8). A delete that is not yet confirmed stays `DELETE_ADAPTER/PREPARED` (or
-   `delete-pending`) so recovery can re-run it against the current OS state.
+**The creator handle is the adapter's lifetime anchor — this is the central design fact.**
 
-**No claim of automatic deletion.** The design does **not** state that closing the last
-session or handle auto-deletes the adapter; the driver releases a session when the last
-session/handle closes, but the **adapter object persists until `WintunDeleteAdapter`** is
-called for it.
+The helper creates the adapter, so it owns the **creator handle**. If the helper closes that
+handle while TUN is still enabled, the adapter is removed. This is in **direct tension**
+with a "short-lived per-activation helper" that exits as soon as the enable transaction
+finishes: **if the helper exits, it closes its creator handle, and the adapter disappears.**
+
+We therefore do **not** hard-code either the enable or disable order until the **G1
+lifecycle probe** has measured the real behaviour. G1 is a **hard gate before any real TUN
+work** (§12). It runs only in the gated disposable `windows-latest` CI
+(`MURGE_RUN_REAL_TUN=1` + `win32`) on a snapshot-able, out-of-band-recoverable VM, with
+separate owner authorization; it never runs on this dev machine (§0.0 / DEVELOPMENT_SAFETY).
+
+**G1 lifecycle probe (defines the ownership model).** The probe exercises a-d and records
+whether the adapter survives step (c):
+
+1. **(a)** helper `WintunCreateAdapter` → holds the **creator handle**; `${name}` exists.
+2. **(b)** mihomo `WintunOpenAdapter(name)` → **second handle** + `WintunStartSession` ⇒ a
+   live data plane; `${name}` + LUID stable.
+3. **(c)** helper **`WintunCloseAdapter(creatorHandle)`** → helper exits.
+4. **(d)** observe: does mihomo's session and the adapter `${name}` **still exist**?
+
+**The probe has exactly two conclusions, and each selects a different architecture**:
+
+- **Branch B1 — the adapter is removed when the creator handle closes (this is what the
+  0.14.1 header's wording implies; likely conclusion).** Then a short-lived standalone
+  per-activation helper **cannot own the TUN lifetime**: the moment it exits, the adapter
+  vanishes. The correct model is **B2**: a helper/service **whose lifetime is bound to the
+  TUN enabled window**, holding the creator handle from `create_adapter` (enable) until
+  `disable`/rollback, and only then closing it (removing the adapter). The helper's process
+  lifetime = TUN enabled lifetime, and it is **freshly activated per enable** (never reused
+  across enables) with a single bound client (§5.3) — which still satisfies the
+  per-activation requirement, just with the process lifetime tied to the interface, not to a
+  single IPC command.
+- **Branch B2 — the adapter survives the creator-handle close while mihomo holds its own
+  open handle.** Then a **short-lived standalone helper** is viable: it creates the adapter,
+  hands off, and exits; mihomo's handle keeps the adapter alive. This is the only branch
+  under which the original "helper exits after enable" model holds.
+
+Because the header text points to B1 and the reviewer requires the model to be proven not
+assumed, the design **adopts B2 as the baseline and re-chooses to B1 only if** the probe
+measures otherwise. Concretely:
+
+- **Enable / valid lifetime.** The helper is activated per enable; mihomo opens a second
+  handle + session. The helper **keeps the creator handle open** for the whole enabled
+  window and does **not** exit on transaction completion — it enters a resident-idle phase
+  until `disable` (B1 baseline). If the probe shows the adapter survives the helper exit
+  (B2), the helper may be allowed to exit on enable-completion instead; the enable/disable
+  order is **measured and re-documented**, not assumed.
+- **Disable / teardown.** mihomo calls `WintunEndSession` and `WintunCloseAdapter` on its
+  open handle; the helper then `WintunCloseAdapter(creatorHandle)` — **which removes the
+  adapter**. If the probe shows the helper must hold the handle to keep the adapter alive,
+  the helper closes it last (after mihomo's session ends). No `WintunDeleteAdapter`, no
+  `WintunDeleteDriver`.
+- **Ownership verification is mandatory.** Before the helper closes the creator handle, it
+  re-verifies the adapter is **this product's/instance's** (by `Name` + `RequestedGUID`, and
+  the derived LUID); if it cannot prove ownership it **does not** touch the adapter and
+  instead records `RECONCILED` with no mutation (§8.4). Pre-existing/shared adapters are
+  never removed (D5).
 
 ---
 
@@ -446,7 +526,7 @@ type HelperOp =
   | 'probe_integrity'    // verify helper+wintun digest/publisher (no mutation, no elevation)
   | 'create_adapter'     // WintunCreateAdapter: installs/loads driver + creates adapter (WAL)
   | 'apply_network_state'// apply the typed DesiredNetworkState (routes/DNS/interface) (WAL)
-  | 'delete_adapter'     // WintunDeleteAdapter, product-owned-only, reboot-aware (WAL)
+  | 'close_creator_handle'// WintunCloseAdapter(creatorHandle): REMOVES a create-created adapter (§3.3) (WAL)
   | 'snapshot'           // capture/save the BaselineSnapshot BEFORE mutation
   | 'restore'            // per-item owned-only restore, reverse journal order (§8.4)
   | 'get_status'
@@ -545,9 +625,9 @@ override it) as an out-of-proc COM server under a dedicated **`AppID`**:
 | `LocalizedString` | `@C:\Program Files\Murge\resources\bin\helper.exe,-101` |
 | `LocalServer32` (default) | `C:\Program Files\Murge\resources\bin\helper.exe` — **absolute path** |
 | `LocalServer32\ServerExecutable` | `C:\Program Files\Murge\resources\bin\helper.exe` — explicit module name for the moniker |
-| `LocalServer32\ThreadingModel` | `Both` |
 | `LocalServer32\AppID` | `{AppID_PrivilegedHelper}` |
-| `Elevation` (subkey, default value) | `Enabled` |
+| `Elevation\Enabled` | **REG_DWORD `1`** (elevation allowed by the moniker) |
+| `Elevation\IconReference` | `@C:\Program Files\Murge\resources\bin\helper.exe,0` — **optional** (custom UAC icon) |
 
 **`HKLM\Software\Classes\AppID\{AppID_PrivilegedHelper}`**
 
@@ -566,8 +646,21 @@ override it) as an out-of-proc COM server under a dedicated **`AppID`**:
 >
 > The `LocalServer32` path and the optional `ServerExecutable` value must be **absolute and
 > in the non-writable install dir**, so a search-path/DLL hijack cannot substitute a binary.
-> `Elevation` is a **subkey** whose default value is `Enabled` — without it the moniker
-> cannot request elevation.
+> `Elevation\Enabled` is a **REG_DWORD `1`**, NOT the string `"Enabled"` (a string value is
+> not honored by the COM elevation broker). There is **no `ThreadingModel`** under
+> `LocalServer32` for an out-of-proc server — it is not a documented/meaningful value here,
+> so it must not be emitted.
+>
+> **Bitness / WOW64 registration location.** Registration is in the **registry view that
+> matches the helper binary's bitness**. A **64-bit** `helper.exe` registers under the
+> **64-bit view** (`HKLM\Software\Classes\CLSID\{...}`); a **32-bit** helper would register
+> under `HKLM\Software\WOW6432Node\Software\Classes\CLSID\{...}` (the
+> `WOW6432Node` subtree). The installer writes **all registration from a 64-bit installer
+> using the 64-bit view**, and the running helper is **the same bitness as the Wintun DLL
+> it loads** (per-arch `wintun-amd64.dll`/`wintun-arm64.dll`, §3.1). If the app were ever
+> 32-bit, its activation moniker must target the 32-bit helper under `WOW6432Node`; mixing
+> bitness (a 32-bit moniker against a 64-bit registration or vice versa) is a registration
+> mismatch the installer must never produce.
 
 ### 5.2 Steps (each: process, API, who creates/connects, UAC API, handle inheritance)
 
@@ -667,7 +760,7 @@ implementation, because no live lookup was done this session:
   chosen release (export names, `WINAPI` calling convention, handle types, `NET_LUID`), and
   **`WintunCreateAdapter` installs/loads the driver on demand** and accepts a **`RequestedGUID`**.
 - Whether mihomo can **open/reuse a helper-created adapter** by LUID/GUID is exactly the
-  **G1** question — **not** answered here, and **gated** by the one-shot probe (§12).
+  **G1** question — **not** answered here, and **gated** by the **G1 lifecycle probe** (§12).
 
 These checks are a pre-implementation prerequisite and keep the design honest rather than
 asserting unverified OS behavior. The design stands on the round-3 fixes regardless; the
@@ -855,10 +948,15 @@ may not have happened. Recovery must **reconcile by enumeration**, not assume:
     then write the matching `RECONCILED` record.
   - **PREPARED without APPLIED** → the mutation's success is **unknown**. Do **not** assume
     it happened or did not. Instead **reconcile against the current OS state**:
-    - for `CREATE_ADAPTER`: **enumerate Wintun adapters** and find the product adapter by
-      `Name` + `RequestedGUID`. If present, the create happened (adopt it, record
-      `CREATE_ADAPTER/RECONCILED` and delete it or keep it per ownership); if absent, the
-      create did not happen (record `RECONCILED`, nothing to undo).
+    - for `CREATE_ADAPTER`: **`WintunOpenAdapter(Name)`** the product adapter by name and
+      verify identity — compare `RequestedGUID` against `WintunGetAdapterLUID(handle,
+      &luid)` + `ConvertInterfaceLuidToGuid` (and/or a SetupAPI device match). Only on an
+      **exact identity match** do we close the creator handle / run product lifecycle
+      cleanup; if the creator handle is already closed (a crash between `APPLIED` and
+      cleanup), first **observe whether the adapter auto-disappeared** — if it did, mark
+      `RECONCILED` (nothing to undo); if it still exists, it is now just an orphan we never
+      created a handle for, so reconcile by name+identity and record `RECONCILED` without
+      making an unwanted change. No `WintunDeleteAdapter`.
     - for a route/DNS op: **read the current OS state** for that LUID/prefix; if it matches
       the op's `after`, undo it back to `before`; if it never took effect, mark
       `RECONCILED` (nothing to undo).
@@ -871,11 +969,15 @@ may not have happened. Recovery must **reconcile by enumeration**, not assume:
   added after an interface metric) is torn down before the dependency it relied on. A
   crash mid-recovery re-runs idempotently (each undo is guarded by the existing
   `RECONCILED` marker).
-- **`DELETE_ADAPTER` (commit point).** The delete of the adapter is the **last** undo step
-  and is itself WAL: `DELETE_ADAPTER/PREPARED` → `WintunDeleteAdapter` →
-  `DELETE_ADAPTER/APPLIED` (→ `RECONCILED`). If the delete needs a reboot
-  (`ERROR_REBOOT_REQUIRED`), record `delete-pending` so the next `init()`/`--recover`
-  retries it idempotently; the adapter is only reported gone once the delete is confirmed.
+- **`CLOSE_CREATOR_HANDLE` (commit point).** The adapter is removed **only** by closing the
+  creator handle — and this is the **last** undo step, itself WAL:
+  `CLOSE_CREATOR_HANDLE/PREPARED` → verify ownership by `Name` + `RequestedGUID` (and the
+  derived LUID) → ensure mihomo has already ended its session and closed its open handle →
+  `WintunCloseAdapter(creatorHandle)` → `CLOSE_CREATOR_HANDLE/APPLIED` (→ `RECONCILED`).
+  There is **no** `WintunDeleteAdapter`, **no** `ERROR_REBOOT_REQUIRED` adapter-delete
+  return, and **no** `delete-pending` state. The adapter is reported gone once the handle is
+  closed. If ownership cannot be proven, do **not** close the handle; record a per-item
+  `conflict` and leave it (D5).
 
 ### 8.5 Per-item owned-only restore rule
 
@@ -934,7 +1036,7 @@ mutation is **write-ahead**: its `PREPARED` record is durable **before** the OS 
  5 create adapter    helper calls WintunCreateAdapter(Name, TunnelType, RequestedGUID);
                      installs/loads driver on demand + creates adapter; WintunGetAdapterLUID
                      derives the LUID; assert exactly one Murge adapter (Name+RequestedGUID)
- 6 CREATE_ADAPTER/APPLIED  write {luid, handle-derived GUID} and pin the canonical-hex LUID
+ 6 CREATE_ADAPTER/APPLIED  write {adapterName, requestedGuid, luid} and pin the canonical-hex LUID
 7 apply routes/DNS  for each op: write ${op}/PREPARED -> mutate OS -> write ${op}/APPLIED
 8 start mihomo     mihomo opens/reuses the adapter (G1) and starts its packet session
  9 readiness probe  probe the TUN/loopback path is live; assert routes/DNS present
@@ -946,16 +1048,21 @@ mutation is **write-ahead**: its `PREPARED` record is durable **before** the OS 
 - **`CREATE_ADAPTER` is write-ahead**: the `PREPARED` record (steps 4) is fsync'd **before**
   `WintunCreateAdapter` (step 5) and the `APPLIED` record (step 6) is written only after it
   succeeds. A crash between 4 and 6 leaves a `CREATE_ADAPTER/PREPARED` record that recovery
-  reconciles by **enumerating Wintun adapters** for `Name`+`RequestedGUID` (§8.4).
+  reconciles by **`WintunOpenAdapter(Name)`** + identity verification (§8.4).
 - **Any failure at any step recovers in reverse journal order** (§8.4), reconciling each
   PREPARED-but-unknown op against the current OS state: failure at step 9 undoes steps 7–6
-  then the adapter (§3.3); failure at step 5 (or between 4–6) reconciles the adapter by
-  enumeration; failure at step 2 (UAC cancelled / timeout) leaves **zero mutation**.
-- **Disable is the mirror, with explicit adapter deletion (§3.3):** teardown mihomo
-  (`WintunEndSession`) → restore routes/DNS per item (reverse WAL order) →
-  **`DELETE_ADAPTER/PREPARED` → `WintunDeleteAdapter` (product-owned, verified) →
-  `DELETE_ADAPTER/APPLIED`/`RECONCILED`**, handling `RebootRequired` as `delete-pending` →
-  reconcile journal → `configured`.
+  then the adapter (closes the creator handle, §3.3); failure at step 5 (or between 4–6)
+  reconciles the adapter by `WintunOpenAdapter(Name)` + identity; failure at step 2 (UAC
+  cancelled / timeout) leaves **zero mutation**.
+- **Disable is the mirror (§3.3):** mihomo ends its session (`WintunEndSession`) and closes
+  its open handle → restore routes/DNS per item (reverse WAL order) →
+  **`CLOSE_CREATOR_HANDLE/PREPARED` → verify ownership by `Name`+`RequestedGUID`+LUID →
+  `WintunCloseAdapter(creatorHandle)` (removes the adapter) →
+  `CLOSE_CREATOR_HANDLE/APPLIED`/`RECONCILED`** → reconcile journal → `configured`. There is
+  **no** `WintunDeleteAdapter` and **no** `delete-pending`/`RebootRequired` path; the exact
+  close order (whether the helper must hold the creator handle for the whole enabled window)
+  is **confirmed by the G1 lifecycle probe** (B1/B2, §3.3) and the disable order documented
+  to match the measured result, not assumed.
 
 ### 10.2 Transition table
 
@@ -1010,14 +1117,25 @@ or via `--recover`.
 
 **Hard gates that must pass / be decided first:**
 
-- **G1 (adapter handoff) — unproven, and it is a hard pre-implementation gate.** Before any
-  Phase 9 implementation of the handoff path, run a **minimal, one-shot, disposable Windows
-  probe** in the gated job that only: creates the adapter (`WintunCreateAdapter`),
-  **verifies mihomo can reuse it by the same GUID/LUID**, then **immediately deletes the
-  adapter and restores**, leaving the machine clean. The probe must **not** expand into full
-  Phase 9 implementation (no helper service, no routes/DNS, no persistence, no UAC-bootstrap
-  machinery). **If G1 fails, stop and return to the owner** for a revised ownership
-  decision; do not fall back to dual ownership.
+- **G1 (adapter handoff + creator-handle lifetime) — unproven, and it is a hard
+  pre-implementation gate.** Before any Phase 9 implementation of the handoff path, run the
+  **G1 lifecycle probe** in the gated job, which exercises four steps on a disposable,
+  snapshot-able Windows VM and records one decisive fact:
+  1. **(a)** helper `WintunCreateAdapter` → holds the **creator handle**; `${name}` exists;
+  2. **(b)** mihomo `WintunOpenAdapter(name)` → **second handle** + `WintunStartSession` ⇒
+     live data plane;
+  3. **(c)** helper `WintunCloseAdapter(creatorHandle)` → helper exits;
+  4. **(d)** does mihomo's session **and** the adapter `${name}` **still exist**?
+  The probe must **not** expand into full Phase 9 implementation (no helper service, no
+  routes/DNS, no persistence, no UAC-bootstrap machinery), and it **never runs on this dev
+  machine** (it needs a snapshot-able, out-of-band-recoverable Windows VM + gated CI + a
+  separate owner-authorization record — §0.0 / DEVELOPMENT_SAFETY). **Two conclusions**: if
+  the adapter disappears at (c) → **B1**, the short-lived standalone helper is **infeasible**
+  and the helper/service/ownership model must be **re-chosen** (a helper/service whose
+  lifetime is bound to the enabled TUN window, holding the creator handle); if it survives →
+  **B2**, the short-lived standalone helper is viable. **If G1 fails / cannot be completed,
+  stop and return to the owner** for the revised ownership decision; do not fall back to
+  dual ownership (§3.3).
 - **D4:** helper boot/auto-start for the emergency path. Recommended: **no self-start**;
   `--recover` is run manually. (D2 = standalone helper, so a service is not assumed.)
 - **D5:** whether a Wintun **driver/adapter** that pre-existed is ever removed on uninstall.
@@ -1041,7 +1159,7 @@ All real behavior runs only in the gated `windows-latest` job
 
 | # | Test | Assertion | Evidence |
 |---|---|---|---|
-| T0 | **G1 one-shot probe (minimal, disposable)** | `WintunCreateAdapter` → mihomo **reuses the same GUID/LUID** → immediately `WintunDeleteAdapter`; machine restored. Runs **before** any Phase 9 helper work | adapter enumerate before/after; assert mihomo session bound the same LUID; assert clean delete |
+| T0 | **G1 lifecycle probe (disposable, hard gate)** | (a) helper `WintunCreateAdapter` holds the creator handle; (b) mihomo `WintunOpenAdapter` + `WintunStartSession` ⇒ live data plane; (c) helper `WintunCloseAdapter(creatorHandle)` / exits; (d) assert **whether the adapter/session still exist**. On a snapshot-able VM that is restored out-of-band afterwards | enumerate adapter + session presence at each of a/b/c/d; assert the observed branch (B1 vs B2) and record it; machine restored |
 | T1 | **Single-owner data plane / adapter handoff (G1)** | After the helper creates the adapter, mihomo **reuses the same GUID/LUID** (RequestedGUID is the stable identity) and there is exactly **one Murge adapter** in the system | enumerate adapter by Name/RequestedGUID/LUID before/after; assert count==1; assert mihomo session binds the same LUID |
 | T2 | Ordering: routes/DNS after adapter creation | routes/DNS/interface are written **only after** the adapter exists; a failure before adapter creation leaves zero routes/DNS | journal seq + adapter existence at each step; assert no route/DNS op precedes `createAdapter` |
 | T3 | **mihomo emits no route/DNS change** | With `auto-route:false`, `auto-detect-interface:false`, `dns-hijack:false`, mihomo adds/removes **no** route/DNS/interface outside the helper | route/DNS snapshot before+after mihomo start, diff == helper-written set only |
@@ -1051,10 +1169,10 @@ All real behavior runs only in the gated `windows-latest` job
 | T6 | **PID reuse** | A client PID whose process object was reused (exited + replaced) is rejected because path/digest/session-key no longer match | exit the app, let a reused PID connect; assert reject |
 | T7 | **Process exit / timeout** | Handshake/command timeout and helper process exit zeroize `launchSecret`/`sessionKey` and leave zero mutation, and the per-activation server **exits** | timeout injection; assert no mutation + secrets zeroed (assert via cleanup path) + helper process gone |
 | T8 | **Replay** | Replayed `HelperCommand` with a stale `requestId` is rejected | replay recorded frame; assert reject |
-| T9 | **Crash injection at every journal record boundary (WAL)** | Force-kill the helper at **each durable-journal boundary** (pre-snapshot, post-snapshot, `CREATE_ADAPTER/PREPARED`-written, **mid-`WintunCreateAdapter`**, post-`CREATE_ADAPTER/APPLIED`, pre-`${op}/PREPARED`, mid-route/DNS mutate, post-`${op}/APPLIED`, pre-mihomo, post-probe, `DELETE_ADAPTER/*`); assert next `init()`/`--recover` reconciles each record against the current OS state and restores the baseline | journal replay + before/after route/DNS diff per boundary; enumerate adapter for `CREATE_ADAPTER` PREPARED-but-unknown |
+| T9 | **Crash injection at every journal record boundary (WAL)** | Force-kill the helper at **each durable-journal boundary** (pre-snapshot, post-snapshot, `CREATE_ADAPTER/PREPARED`-written, **mid-`WintunCreateAdapter`**, post-`CREATE_ADAPTER/APPLIED`, pre-`${op}/PREPARED`, mid-route/DNS mutate, post-`${op}/APPLIED`, pre-mihomo, post-probe, `CLOSE_CREATOR_HANDLE/*`); assert next `init()`/`--recover` reconciles each record against the current OS state and restores the baseline | journal replay + before/after route/DNS diff per boundary; for `CREATE_ADAPTER` PREPARED-but-unknown, reconcile by `WintunOpenAdapter(Name)` + identity |
 | T10 | Crash recovery restores exact prior state | After a forced kill mid-activation, disable restores routes/DNS to the exact pre-enable state | route/DNS diff vs baseline |
 | T11 | Only-one-Murge-adapter uniqueness + RequestedGUID conflict | A foreign adapter holding the reserved `Name`/`RequestedGUID` blocks activation with `conflict`, zero mutation | adapter pre-created with the reserved identity; assert `conflict` |
-| T12 | **Adapter deletion is explicit + reboot-aware** | After disable, the product adapter is gone; if `WintunDeleteAdapter` reports `RebootRequired`, the journal records `delete-pending` and the next `init()`/`--recover` retries; a **pre-existing/foreign** adapter is never deleted | enumerate adapters; assert product adapter deleted and foreign adapter present; assert delete-pending journal record |
+| T12 | **Adapter removal via creator-handle close (no `WintunDeleteAdapter`)** | After disable, the product adapter is gone **because `WintunCloseAdapter(creatorHandle)` was called** (the only removal path); there is **no** `RebootRequired`/`delete-pending` state; a **pre-existing/foreign** adapter is never removed and is verified by `Name`+`RequestedGUID`+LUID before any close | enumerate adapters; assert product adapter removed only after ownership verified and mihomo session ended; assert foreign adapter present |
 | T13 | Uninstall restore runs before deletion | Uninstall runs `--recover`, restores routes/DNS, aborts on corrupt snapshot | `NetworkSnapshot` diff; exit code / `Abort` path |
 | T14 | Emergency `--recover` independent of GUI | Kill the app, run `--recover`, assert restored | restored state |
 | T15 | Non-Windows / no helper ⇒ unsupported | Non-Windows or no verified helper returns `{supported:false, phase:'unsupported'}`, zero mutation | status probe unit + CI |

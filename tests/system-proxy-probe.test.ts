@@ -35,6 +35,16 @@ function fakeMihomo(config: MihomoConfigSnapshot): {
   }
 }
 
+/** Listen a net server on an ephemeral loopback port and return it. */
+function listenPort(server: Server): Promise<number> {
+  return new Promise((resolve) => {
+    server.listen(0, SYSTEM_PROXY_LOOPBACK_HOST, () => {
+      const address = server.address() as { port: number }
+      resolve(address.port)
+    })
+  })
+}
+
 /** Answer the SOCKS5 no-auth greeting and accept an HTTP CONNECT (like a mixed-port). */
 function startMixedServer(): Promise<{ server: Server; port: number }> {
   return new Promise((resolve) => {
@@ -229,5 +239,50 @@ describe('probeSocks', () => {
     })
     servers.push(server)
     await expect(probeSocks(port, 400)).rejects.toThrow(/unexpected SOCKS5 greeting reply/)
+  })
+
+  it('accepts the `05 00` reply split across two TCP chunks (P2-1)', async () => {
+    // A real mixed-port may deliver the 2-byte greeting as two separate segments.
+    // The OLD probe read only the first chunk (a lone `05`) and rejected it as an
+    // unexpected reply; the fix accumulates until at least 2 bytes arrive.
+    const server = createServer((socket: Socket) => {
+      socket.on('error', () => {})
+      socket.on('data', () => {
+        socket.write(Buffer.from([0x05]))
+        setTimeout(() => {
+          if (socket.writable) socket.write(Buffer.from([0x00]))
+        }, 25)
+      })
+    })
+    const port = await listenPort(server)
+    servers.push(server)
+    await expect(probeSocks(port, 1000)).resolves.toBeUndefined()
+  })
+
+  it('fails at the TOTAL timeout when the reply is an incomplete `05` and the connection stays open (P2-1)', async () => {
+    // The proxy answers only the first byte then holds the connection open with no
+    // further data and no close. The probe must wait out the whole exchange timer
+    // (it must NOT reject instantly on a partial chunk, which would misjudge a
+    // slow-but-real mixed-port).
+    const server = createServer((socket: Socket) => {
+      socket.on('data', () => socket.write(Buffer.from([0x05])))
+    })
+    const port = await listenPort(server)
+    servers.push(server)
+    await expect(probeSocks(port, 250)).rejects.toThrow(/timed out/)
+  })
+
+  it('settles exactly once when the proxy answers `05 00` then immediately closes', async () => {
+    const server = createServer((socket: Socket) => {
+      socket.on('data', () => {
+        socket.write(Buffer.from([0x05, 0x00]))
+        socket.end()
+      })
+    })
+    const port = await listenPort(server)
+    servers.push(server)
+    // Must not double-reject with a spurious "closed without a greeting reply"
+    // after the reply already satisfied the probe (the `finish` guard).
+    await expect(probeSocks(port, 400)).resolves.toBeUndefined()
   })
 })

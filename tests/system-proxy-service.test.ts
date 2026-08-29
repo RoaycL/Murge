@@ -6,10 +6,14 @@ import { StaticSystemProxyProbe } from '../src/main/system-proxy/probe'
 import { FakeSystemProxyAdapter } from '../src/main/system-proxy/adapters/fake-adapter'
 import { InMemorySystemProxyBackupStore } from '../src/main/system-proxy/backup-store'
 import type {
+  SystemProxyAdapter,
+  SystemProxyBackup,
   SystemProxyBackupStore,
   SystemProxyKernelProbe,
+  SystemProxyRegistryState,
   SystemProxyStatus,
-  SystemProxyTarget
+  SystemProxyTarget,
+  SystemProxyWrittenState
 } from '../src/main/system-proxy/types'
 
 const TARGET: SystemProxyTarget = { host: SYSTEM_PROXY_LOOPBACK_HOST, port: 7890 }
@@ -35,6 +39,40 @@ class ThrowingBackupStore implements SystemProxyBackupStore {
 
 const kernelRequired = (): Promise<SystemProxyTarget> =>
   Promise.reject(new ProtocolError(ProtocolErrorCode.SYSTEM_PROXY_KERNEL_REQUIRED, '内核未运行'))
+
+/** Adapter whose registry `read()` always fails — used to prove fail-closed ordering. */
+class ReadThrowingAdapter implements SystemProxyAdapter {
+  readonly platform = 'fake'
+  readonly supported = true
+  readonly delegate = new FakeSystemProxyAdapter()
+  read(): Promise<SystemProxyRegistryState> {
+    return Promise.reject(new ProtocolError(ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED, '读取注册表值失败'))
+  }
+  apply(written: SystemProxyWrittenState): Promise<void> {
+    return this.delegate.apply(written)
+  }
+  restore(previous: SystemProxyRegistryState): Promise<void> {
+    return this.delegate.restore(previous)
+  }
+  refresh(): Promise<void> {
+    return this.delegate.refresh()
+  }
+}
+
+/** Backup store that records whether `write` was ever reached. */
+class RecordingBackupStore implements SystemProxyBackupStore {
+  writeCalls = 0
+  read(): Promise<SystemProxyBackup | null> {
+    return Promise.resolve(null)
+  }
+  write(): Promise<void> {
+    this.writeCalls += 1
+    return Promise.resolve()
+  }
+  delete(): Promise<void> {
+    return Promise.resolve()
+  }
+}
 
 interface MakeOptions {
   supported?: boolean
@@ -123,6 +161,23 @@ describe('SystemProxyService', () => {
       await expectReject(service.enable(), ProtocolErrorCode.SYSTEM_PROXY_KERNEL_REQUIRED)
       expect(service.getStatus().phase).toBe('disabled')
       expect(service.getStatus().errorMessage).toBe('请先启动内核')
+    })
+
+    it('aborts before any backup.write or apply when the pre-enable registry read fails (P1 fail-closed)', async () => {
+      // A fail-closed registry reader must surface a read failure, so enable() can
+      // never observe a phantom "all absent" snapshot and must not back it up or
+      // write it — otherwise a real unreadable value could be deleted on restore.
+      const adapter = new ReadThrowingAdapter()
+      const backup = new RecordingBackupStore()
+      const service = new SystemProxyService({
+        adapter,
+        probe: new StaticSystemProxyProbe(TARGET),
+        backup,
+        instanceId: 'test-instance'
+      })
+      await expectReject(service.enable(), ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED)
+      expect(backup.writeCalls).toBe(0)
+      expect(adapter.delegate.calls.some((c) => c.op === 'apply')).toBe(false)
     })
 
     it('throws state-conflict and does not apply when an owned backup was mutated externally', async () => {

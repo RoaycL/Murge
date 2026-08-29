@@ -231,6 +231,35 @@ describe('windows system-proxy helpers', () => {
     })
   })
 
+  describe('REGISTRY_READ_SCRIPT fail-closed (P1)', () => {
+    it('decides true absence from GetValueNames(), not from a swallowed exception', () => {
+      const script = buildRegistryReadScript()
+      expect(script).toContain('GetValueNames()')
+      expect(script).toContain('-notcontains $name')
+      expect(script).toContain("{ exists = $false; type = 'none'; value = $null }")
+    })
+
+    it('never swallows GetValueKind / GetValue exceptions as absent (no broad catch)', () => {
+      const script = buildRegistryReadScript()
+      // The buggy reader hid ANY exception (UnauthorizedAccess, Security, IO,
+      // object-state) behind a `catch { exists = false }`, so a real unreadable
+      // value was backed up as absent and could be DELETED on restore. A
+      // fail-closed reader must not contain a per-value catch that swallows it.
+      expect(script).not.toMatch(/^\s*catch\s*\{/m)
+    })
+
+    it('exits non-zero when the subkey cannot be opened instead of reporting all-absent', () => {
+      const script = buildRegistryReadScript()
+      expect(script).toMatch(/\$null -eq \$subKey/)
+      expect(script).toContain('exit 3')
+    })
+
+    it('throws on an unknown RegistryValueKind rather than masking it as absent', () => {
+      const script = buildRegistryReadScript()
+      expect(script).toMatch(/default\s*\{[^}]*throw \('unknown registry value kind:/)
+    })
+  })
+
   describe('coerceRegistrySnapshot', () => {
     it('is byte-identical to scripts/recover-system-proxy.mjs buildRegistryReadScript() (via subprocess)', async () => {
       const { execFile } = await import('node:child_process')

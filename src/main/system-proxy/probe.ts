@@ -45,27 +45,45 @@ export function openTcp(port: number, timeoutMs = PROBE_TIMEOUT_MS): Promise<Soc
   })
 }
 
-/** Probe the SOCKS5 layer: send a no-auth greeting and require `05 00` back. */
+/**
+ * Probe the SOCKS5 layer: send a no-auth greeting and require `05 00` back.
+ *
+ * The reply is accumulated across data chunks (P2-1): a healthy mixed-port
+ * commonly returns the 2 bytes `05 00` split into two segments, so we wait until
+ * at least 2 bytes arrive rather than demanding them in the first chunk. The total
+ * timeout is kept for the whole exchange — a partial chunk must NOT clear it. A
+ * single guarded `finish` settles the promise exactly once across `data` /
+ * `error` / `close` / timeout, so an immediate close after success can never
+ * double-reject.
+ */
 export function probeSocks(port: number, timeoutMs = PROBE_TIMEOUT_MS): Promise<void> {
   return new Promise((resolve, reject) => {
     openTcp(port, timeoutMs)
       .then((socket) => {
         let settled = false
+        let timer: ReturnType<typeof setTimeout> | null = null
         const finish = (err?: Error) => {
           if (settled) return
           settled = true
-          clearTimeout(timer)
+          if (timer) clearTimeout(timer)
           socket.destroy()
           if (err) reject(err)
           else resolve()
         }
-        const timer = setTimeout(() => finish(new Error('SOCKS5 greeting timed out')), timeoutMs)
+        timer = setTimeout(() => finish(new Error('SOCKS5 greeting timed out')), timeoutMs)
         socket.once('error', (err) => finish(err))
-        // Greeting: version 5, 1 offered method (0x00 no-auth). Expect `05 00`.
-        socket.once('data', (buf) => {
-          if (buf.length >= 2 && buf[0] === 0x05 && buf[1] === 0x00) finish()
-          else finish(new Error(`unexpected SOCKS5 greeting reply: ${buf.toString('hex')}`))
+        // Accumulate the greeting reply — wait on <2 bytes, validate once >=2.
+        let buffer = Buffer.alloc(0)
+        socket.on('data', (chunk) => {
+          if (settled) return
+          buffer = Buffer.concat([buffer, chunk])
+          if (buffer.length < 2) return
+          if (buffer[0] === 0x05 && buffer[1] === 0x00) finish()
+          else finish(new Error(`unexpected SOCKS5 greeting reply: ${buffer.subarray(0, 2).toString('hex')}`))
         })
+        // A proxy that closes without a valid greeting is not speaking SOCKS5.
+        socket.once('close', () => finish(new Error('SOCKS5 closed without a greeting reply')))
+        // Greeting: version 5, 1 offered method (0x00 no-auth). Expect `05 00`.
         socket.write(Buffer.from([0x05, 0x01, 0x00]))
       })
       .catch(reject)

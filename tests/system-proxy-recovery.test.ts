@@ -217,6 +217,26 @@ describePortable('recover-system-proxy', () => {
       expect(state.proxyServer).toEqual(ABSENT)
       expect(state.proxyOverride).toEqual(ABSENT)
     })
+
+    it('fails closed (throws) on a non-zero read-script exit instead of reporting all-absent', async () => {
+      // A permission / access error on GetValueKind / GetValue, or a subkey that
+      // refuses to open, must surface as a read failure — never as `exists:false`,
+      // which would let a restore DELETE the real value.
+      const calls: Array<{ command: string; args: string[] }> = []
+      const failingRunner = {
+        isWin: true,
+        exec: async (command: string, args: string[]) => {
+          calls.push({ command, args })
+          if (command === 'powershell') return { stdout: '', stderr: 'ERROR: Access is denied.', code: 3 }
+          if (command === 'reg.exe' && args[0] === 'query') return { stdout: '', stderr: '', code: 0 }
+          return { stdout: '', stderr: '', code: 0 }
+        },
+        fs
+      }
+      await expect(readRegistry(failingRunner)).rejects.toThrow(/access denied|failed/)
+      // The failing read must not fall through to a reg.exe query that returns absent.
+      expect(calls.filter((c) => c.command === 'reg.exe')).toHaveLength(0)
+    })
   })
 
   describe('runRecovery', () => {

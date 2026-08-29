@@ -28,50 +28,41 @@ $subKeyPath = $Key
 if ($subKeyPath -match '^HKCU\\(.+)$') { $subKeyPath = $Matches[1] }
 
 $subKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($subKeyPath)
+if ($null -eq $subKey) {
+  [Console]::Error.WriteLine('could not open the Internet Settings subkey: ' + $subKeyPath)
+  exit 3
+}
+$presentNames = @($subKey.GetValueNames())
 
 $snapshot = [ordered]@{}
 foreach ($name in $names) {
-  $exists = $false
-  $type = 'none'
-  $value = $null
-  if ($null -ne $subKey) {
-    try {
-      $kind = $subKey.GetValueKind($name)
-      $raw = $subKey.GetValue($name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-      $exists = $true
-      $type = switch ([string]$kind) {
-        'String'       { 'REG_SZ' }
-        'ExpandString' { 'REG_EXPAND_SZ' }
-        'MultiString'  { 'REG_MULTI_SZ' }
-        'Binary'       { 'REG_BINARY' }
-        'DWord'        { 'REG_DWORD' }
-        'QWord'        { 'REG_QWORD' }
-        default        { 'none' }
-      }
-      if ($type -eq 'none') {
-        $exists = $false
-        $value = $null
-      } elseif ($null -eq $raw) {
-        # A present value with no data (e.g. an empty REG_SZ) — never a number.
-        $exists = $true
-        $value = ''
-      } else {
-        $value = switch ($type) {
-          'REG_DWORD'    { [int64]$raw }
-          'REG_QWORD'    { [int64]$raw }
-          'REG_BINARY'   { ([System.BitConverter]::ToString([byte[]]$raw) -replace '-', '') }
-          'REG_MULTI_SZ' { ([string[]]$raw) -join ';' }
-          default        { [string]$raw }
-        }
-      }
-    } catch {
-      # GetValueKind throws for a named value that is not present -> absent.
-      $exists = $false
-      $type = 'none'
-      $value = $null
+  if ($presentNames -notcontains $name) {
+    $snapshot[$name] = @{ exists = $false; type = 'none'; value = $null }
+    continue
+  }
+  $kind = $subKey.GetValueKind($name)
+  $type = switch ([string]$kind) {
+    'String'       { 'REG_SZ' }
+    'ExpandString' { 'REG_EXPAND_SZ' }
+    'MultiString'  { 'REG_MULTI_SZ' }
+    'Binary'       { 'REG_BINARY' }
+    'DWord'        { 'REG_DWORD' }
+    'QWord'        { 'REG_QWORD' }
+    default        { throw ('unknown registry value kind: ' + [string]$kind + ' for ' + $name) }
+  }
+  $raw = $subKey.GetValue($name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+  if ($null -eq $raw) {
+    $value = ''
+  } else {
+    $value = switch ($type) {
+      'REG_DWORD'    { [int64]$raw }
+      'REG_QWORD'    { [int64]$raw }
+      'REG_BINARY'   { ([System.BitConverter]::ToString([byte[]]$raw) -replace '-', '') }
+      'REG_MULTI_SZ' { ([string[]]$raw) -join ';' }
+      default        { [string]$raw }
     }
   }
-  $snapshot[$name] = @{ exists = $exists; type = $type; value = $value }
+  $snapshot[$name] = @{ exists = $true; type = $type; value = $value }
 }
 
 $snapshot | ConvertTo-Json -Depth 5 -Compress

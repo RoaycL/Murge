@@ -292,10 +292,11 @@ Environment: disposable Windows VM with snapshot and out-of-band recovery.
 
 Entry gate: Phase 8 complete, design review approved, separate owner authorization.
 
-Status: in progress — design deliverables drafted; **implementation gate NOT met** (design-review approval and separate owner authorization still required).
+Status: in progress — design-review package drafted and owner decisions D1–D3 resolved; **implementation gate NOT met** (design-review sign-off and separate owner authorization still required, plus D4/D5 and certificate-provider decision).
 
-- [~] Write and approve helper/privilege threat model. (draft → `docs/helper-threat-model.md`; approval pending)
+- [~] Write and approve helper/privilege threat model. (draft → `docs/helper-threat-model.md`; approval pending — D1–D3 resolved)
 - [~] Define install, upgrade, rollback and uninstall behavior. (draft → `docs/helper-install-upgrade-rollback.md`; approval pending)
+- [~] Design review package. (draft → `docs/helper-design.md`: shared TUN contract, IPC/envelope schema, elevation flow, driver-integrity procedure, TUN state machine, module layout, config-gating design; D4/D5 + certificate provider still open)
 - [ ] Implement explicit elevation flow.
 - [ ] Verify driver/helper signature and binary integrity.
 - [ ] Implement TUN configured, starting, active and failed states.

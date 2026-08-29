@@ -349,27 +349,36 @@ Groups integrate with (and reuse) existing project patterns.
 
 ---
 
-## 10. Remaining owner decisions (blocking / for design review)
+## 10. Owner decisions (resolved + remaining)
 
-These must be decided before implementation starts; each is flagged in the ROADMAP
-owner backlog or is new here.
+Resolved by the owner (in force for implementation):
 
-1. **Device model.** Signed wintun (WireGuard) vs. a userspace-only implementation.
-   (Affects A1, C1, C2.)
-2. **Helper shape.** Standalone elevated helper vs. a Windows service; which account
-   / service SID, and whether it is per-user or per-machine. (Affects A2, C2, C5.)
-3. **Certificate provider & trust model.** Which CA/cert for the helper and driver;
+1. **D1 — Device model:** **Signed wintun (WireGuard model).** (A1, C1, C2.)
+2. **D2 — Helper shape:** **Standalone elevated helper** process, not a Windows
+   service. (A2, C2, C5.) Note: changing D2 to a service later would require revoking
+   this because the design-review package (`docs/helper-design.md`) assumes a
+   standalone helper.
+3. **D3 — Driver install timing:** **On first enable** (staged from the installer at
+   install time, installed at the user's first explicit enable). (A3.)
+
+Still to decide before implementation starts:
+
+4. **Certificate provider & trust model.** Which CA/cert for the helper and driver;
    wintun is already signed by a vendor — confirm this is the relied-on artifact and
    that we pin its publisher. (Affects C1 — see `CODE_SIGNING.md`.)
 4. **DNS hijack scope.** Whether DNS is delegated to mihomo's dns-hijack, to the
    helper, or left to the system-proxy path, and the exclusion list. (Affects C11.)
-5. **HTTPS decryption/rewrite visibility.** Whether these pages remain visible /
+5. **D4 — emergency/boot behavior.** Whether the helper is allowed to start on boot
+   to service the emergency path (recommended: no auto-start; `--recover` run
+   manually). (Affects C9.)
+6. **D5 — pre-existing driver removal.** Whether a wintun driver that **pre-existed**
+   the app is ever removed on uninstall (recommended: never remove a pre-existing/
+   shared driver). (Affects §5.2 of the install doc.)
+7. **HTTPS decryption/rewrite visibility.** Whether these pages remain visible /
    experimental / removed in v1 (already in the owner backlog; affects whether the
    TUN device also covers proxied HTTPS or only transparent/non-proxy-aware flows).
-6. **Sleep/wake and network-change reconciliation depth.** (Affects C11; a test
+8. **Sleep/wake and network-change reconciliation depth.** (Affects C11; a test
    plan is required before implementation.)
-7. **Emergency disable surface.** The exact owner-runnable recovery mechanism and
-   whether the helper is allowed to start on boot to perform it.
 
 ---
 

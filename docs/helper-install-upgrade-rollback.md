@@ -151,15 +151,21 @@ Mirrors `resources/nsis/uninstall-restore.nsh`, extended for TUN.
 ## 7. Decision/authorization flags for design review
 
 These are the decisions the install/upgrade/rollback behavior depends on (carried
-from threat-model §10; the owner must confirm before implementation):
+from threat-model §10). **D1–D3 are resolved** and in force; **D4–D5 remain open**
+until design-review sign-off:
 
-| # | Decision | Impact on this spec |
-|---|---|---|
-| D1 | Device model: signed wintun vs userspace-only | Driver install/rollback path differs |
-| D2 | Helper shape: standalone elevated process vs Windows service (and account/service SID) | Service register/upgrade/remove steps differ |
-| D3 | Driver install timing: at app install vs deferred to first enable | §2.3 / §2.4 |
-| D4 | Whether the helper is allowed to start on boot for the emergency path | Auto-start vs manual service (C9) |
-| D5 | Whether a wintun driver that pre-exists the app is ever removed | §5.2 |
+| # | Decision | Status | Impact on this spec |
+|---|---|---|---|
+| D1 | Device model: signed wintun vs userspace-only | **Resolved: signed wintun** | Driver install/rollback path uses wintun |
+| D2 | Helper shape: standalone elevated process vs Windows service | **Resolved: standalone elevated helper** | No service register/upgrade/remove steps; §3.4/§5.2 drop the service path (but are kept as a documented alternative) |
+| D3 | Driver install timing: at app install vs deferred to first enable | **Resolved: on first enable** | §2.3 stages at install; §2.4 installs on first enable |
+| D4 | Whether the helper is allowed to start on boot for the emergency path | Open (recommended: no auto-start) | Auto-start vs manual `--recover` (C9) |
+| D5 | Whether a wintun driver that pre-exists the app is ever removed | Open (recommended: never) | §5.2 |
+
+> Because D2 resolved to a **standalone helper (not a service)**, §5.2's
+> "delete the helper service" step applies only if a later owner decision revokes
+> D2; the driver-removal rule (ours-only, not-in-use, never-a-preexisting-shared
+> driver) remains regardless.
 
 ---
 

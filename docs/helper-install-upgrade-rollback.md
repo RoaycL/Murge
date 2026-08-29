@@ -59,11 +59,16 @@
    driver is never overwritten or removed.
 4. **Enable order (single OS-config owner).** At enable, before any OS mutation, the
    helper writes and verifies the **BaselineSnapshot**; then it calls
-   `WintunCreateAdapter` (driver on demand + adapter created + LUID pinned); **then**
+   `WintunCreateAdapter(Name, TunnelType, RequestedGUID)` (driver on demand + adapter created), then writes **`CREATE_ADAPTER/APPLIED`** with the LUID (pinned — re-derived to assert exactly one Murge adapter); **then**
    it applies routes/DNS/interface (they are always written **after** the adapter exists).
    mihomo's runtime config has `auto-route:false`/`auto-detect-interface:false`/
    `dns-hijack:false`, so mihomo adds no route/DNS of its own (single modifier = the
-   helper). Any failure recovers in reverse journal order.
+   helper). Any failure recovers by reconciling each `PREPARED-but-unknown` record against the
+   current OS state, in reverse journal order. **Disable is explicit:** teardown mihomo's
+   session, restore routes/DNS per item, write `DELETE_ADAPTER/PREPARED` →
+   `WintunDeleteAdapter` (product-owned only) → `DELETE_ADAPTER/APPLIED`/`RECONCILED`,
+   treating `RebootRequired` as `delete-pending`. There is **no automatic delete on
+   last-session/handle close**.
 5. **Service registration** (only if the helper is a service, i.e. D2 is revoked):
    create with a restrictive DACL and the least set of privileges (C5); start it
    **disabled/manual**, not auto-start, unless the emergency path needs it (C9 —
@@ -148,7 +153,9 @@ Mirrors `resources/nsis/uninstall-restore.nsh`, extended for TUN.
    service** to delete; if D2 is later revoked to a service, delete it **only** after
    the pre-uninstall restore completed. We do **not** ship a driver file to delete;
    the signed Wintun kernel driver is loaded through `wintun.dll`, and a
-   pre-existing/shared Wintun driver is left in place.
+   pre-existing/shared Wintun driver is left in place. The helper deletes **only** the
+   product-owned adapter (via `WintunDeleteAdapter`, after its session is ended) and leaves
+   any pre-existing adapter untouched (C9).
 3. **Preserve user data.** `deleteAppDataOnUninstall:false` keeps profiles and the
    `BaselineSnapshot`/`WrittenState`/journal so an aborted or partial uninstall is
    recoverable. If the owner later wants a "remove all data" option, it is a
@@ -165,8 +172,10 @@ Mirrors `resources/nsis/uninstall-restore.nsh`, extended for TUN.
   owner can run from a console to restore the baseline snapshot **without** the
   renderer or the mihomo process (C9). It must not depend on the network it is
   about to fix.
-- The helper records a mutation **journal** on disk so recovery can reconcile even
-  after a crash during activation (C10).
+- The helper records a **write-ahead** mutation **journal** on disk (each op is
+  `PREPARED` → mutate → `APPLIED`; `CREATE_ADAPTER/PREPARED`/`DELETE_ADAPTER/PREPARED`
+  fsync'd before the OS is touched) so recovery can reconcile even after a crash during
+  activation, by enumerating the current OS state rather than assuming (C10).
 - Recovery is idempotent and safe to re-run; it never re-applies a mutation that is
   already reverted.
 
@@ -186,7 +195,7 @@ certificate provider** remain open until design-review sign-off:
 | D6 | OS network-config owner | **Resolved: helper is the sole modifier (Option A)** | mihomo runtime config has `auto-route:false`/`auto-detect-interface:false`/`dns-hijack:false`; the helper applies the typed `DesiredNetworkState`; routes/DNS are written only after the adapter exists |
 | D4 | Whether the helper is allowed to start on boot for the emergency path | Open (recommended: no auto-start) | Auto-start vs manual `--recover` (C9) |
 | D5 | Whether a wintun driver that pre-exists the app is ever removed | Open (recommended: never) | §5.2 |
-| G1 | Whether mihomo can reuse the helper-created adapter | **Open (unproven hypothesis)** | Blocking gate tested on the real Windows path (adapter-handoff / single-adapter test) |
+| G1 | Whether mihomo can reuse the helper-created adapter | **Open (unproven hypothesis)** | Blocking gate: a minimal one-shot disposable Windows probe (create adapter → verify same GUID/LUID → delete + restore) must pass before any Phase 9 helper implementation |
 
 > Because D2 resolved to a **standalone helper (not a service)**, §5.2's
 > "delete the helper service" step applies only if a later owner decision revokes
@@ -201,16 +210,17 @@ certificate provider** remain open until design-review sign-off:
 |---|---|---|
 | Install stages files, no network mutation | snapshot before/after install, assert unchanged | `NetworkSnapshot` diff |
 | First enable requires explicit action | assert no TUN active on launch | status phase = configured |
-| Adapter/driver created on first enable (no separate load) | at first enable the helper calls `WintunCreateAdapter`; assert the driver appears only then, and no "load driver" op exists | driver/adapter presence before vs at enable; journal has no `load_driver` op |
-| Adapter handoff + single adapter (G1) | after the helper creates the adapter, mihomo reuses the **same LUID** and there is exactly **one** Murge adapter | enumerate by name/LUID before/after; assert count==1 and same LUID |
+| Adapter/driver created on first enable (no separate load) | at first enable the helper calls `WintunCreateAdapter(Name, TunnelType, RequestedGUID)`; assert the driver appears only then, and no "load driver" op exists | driver/adapter presence before vs at enable; journal has no `load_driver` op |
+| **G1 one-shot probe (disposable, minimal)** | create adapter → mihomo reuses the same GUID/LUID → immediately delete + restore; machine clean | adapter enumerate before/after; assert same GUID/LUID + clean delete |
+| Adapter handoff + single adapter (G1) | after the helper creates the adapter, mihomo reuses the same **RequestedGUID/LUID** and there is exactly **one** Murge adapter | enumerate by Name/RequestedGUID/LUID before/after; assert count==1 and same LUID |
 | Routes/DNS always written after adapter creation | assert a route/DNS journal op never precedes `createAdapter`; failure before adapter leaves zero routes/DNS | journal seq |
 | mihomo emits no route/DNS change | with `auto-route:false`/`auto-detect-interface:false`/`dns-hijack:false`, mihomo adds/removes no route/DNS outside the helper | route/DNS snapshot before+after mihomo start, diff == helper-written set only |
 | Upgrade preserves data + reconciles | enable TUN, upgrade, assert prior state restored/consistent | journal + snapshot digest |
 | Rollback restores prior release | enable, rollback, assert baseline | route/DNS diff vs baseline |
-| Uninstall restores routes/DNS | uninstall, assert routes/DNS == baseline; we never delete a shipped/`pre-existing` driver | before/after snapshot |
+| Uninstall restores routes/DNS and removes the product adapter | uninstall, assert routes/DNS == baseline; helper deletes **only** the product-owned adapter via `WintunDeleteAdapter` (reboot-aware); never a shipped/`pre-existing` driver or adapter | before/after snapshot; adapter enumerate |
 | Uninstall abort on corrupt snapshot | corrupt snapshot, uninstall, assert abort + binary retained | exit code, `Abort` path |
 | Emergency `--recover` independent of GUI | kill app, run `--recover`, assert restored | restored state |
-| Crash mid-activation reconciliation | force-kill helper at each phase, assert `init()` reconciles in **reverse journal order** | journal replay |
+| Crash mid-activation reconciliation (WAL) | force-kill helper at **each durable-journal record** (pre-snapshot, `CREATE_ADAPTER/PREPARED`, mid-create, `APPLIED`, each route/DNS `PREPARED`→`APPLIED`, `DELETE_ADAPTER/*`), assert `init()`/`--recover` reconciles each PREPARED-but-unknown record against the current OS state | journal replay + route/DNS diff + adapter enumerate |
 
 All of the above run only in the gated `windows-latest` job (skipped unless
 `MURGE_RUN_REAL_TUN=1` **and** `win32`) and never in default `npm test`.

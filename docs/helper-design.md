@@ -26,17 +26,31 @@ Conventions referenced: `src/shared/system-proxy.ts`, `src/shared/ipc.ts`,
 
 ---
 
-## 0. Review resolutions (summary of the seven fixes)
+## 0. Review resolutions
+
+### 0.1 Round 2 review fixes (rev.3 — retained)
+
+| # | Finding / resolution |
+|---|---|
+| 1 | Fictitious standalone `load_driver` op removed; driver installed/loaded **inside `WintunCreateAdapter`**; adapter identity by name; **G1** flagged as unproven (§1.3, §12). |
+| 2 | Enable order fixed so routes/DNS follow adapter creation; recovery in reverse journal order (§10.1, §8.4). |
+| 3 | Single OS-config owner **Option A**; mihomo `auto-route:false`/`auto-detect-interface:false`/`dns-hijack:false`; typed `DesiredNetworkState` (§1.1, §9). |
+| 4 | Elevation bootstrap rewritten as an executable **COM elevation-moniker** sequence; `runas` cannot inherit handles (§5). |
+| 5 | Key lifecycle: zero only `launchSecret` post-handshake; retain `sessionKey` to channel close/task end; `RtlSecureZeroMemory` on all paths; length-prefixed canonical MAC (§4.2, §4.3). |
+| 6 | Type fixes: `dnsSets` closing `>`; `NET_LUID` as canonical hex string; `requestId` monotonic uint64 decimal string (§8.1). |
+| 7 | Expanded test/evidence matrix (§13). |
+
+### 0.2 Round 3 review fixes (rev.4 — this revision)
 
 | # | Finding | Resolution (this document) |
 |---|---|---|
-| 1 | Fictitious standalone `load_driver` step; `LoadLibraryEx(wintun.dll)` claimed to pre-install the driver | **Removed.** The driver is installed/loaded **inside `WintunCreateAdapter`** (§3). The helper elevates then calls `WintunCreateAdapter` with a product-specific adapter **name + tunnel type** and a stable **name→LUID** identity; it obtains and pins the **LUID before** the network-config phase. **mihomo-reuse-of-the-pre-created-adapter is G1 — an unproven hypothesis** that must be proven by a real mihomo Windows integration test before it is treated as a settled contract (§1.3, §12). |
-| 2 | Enable order wrong; no guarantee routes/DNS follow adapter creation | New fixed order in §10.1: verify → elevate/bootstrap → BaselineSnapshot → helper creates adapter → get & pin LUID → write MutationJournal intent → apply routes/DNS → start mihomo/open adapter → readiness probe → active. **Any failure recovers in reverse journal order** (§8.4). |
-| 3 | Dual OS-network-config ownership (helper `apply_routes`/`apply_dns` **and** mihomo `auto-route`/`dns-hijack`) | **One owner only — Option A.** The helper is the **sole** route/DNS/interface modifier; mihomo's runtime config is synthesized with `auto-route:false`, `auto-detect-interface:false`, `dns-hijack:false` so mihomo **never** touches routes/DNS; the main process generates a precise **typed `DesiredNetworkState`** that the helper applies verbatim (§1.1, §9). |
-| 4 | IPC/UAC bootstrap self-contradictory (app creates both ends + helper inherits client end, yet helper is server calling `GetNamedPipeClientProcessId`; `expectedHelperPid`/`expectedAppPid` swapped); `runas` cannot inherit handles | **Rewritten as an executable Win32 sequence** using the **officially-supported elevation-COM-server bootstrap**. `runas`/`ShellExecuteEx` cannot propagate an inheritable-handle list, so the inherited-handle scheme is removed. §5 gives process, API, server/client roles, UAC API, handle-inheritance answer, and app/helper PID binding via `RpcServerInqCallAttributes(...).ClientProcessId` + token + signature. |
-| 5 | Key lifecycle wrong (zeroed launchSecret at the wrong time / not retaining sessionKey); MAC used ambiguous `v\|op\|requestId\|payload` concatenation | Zero **only `launchSecret`** after handshake; **retain `sessionKey`** until channel close/task end; `RtlSecureZeroMemory` on **all** paths (normal, timeout, exception, helper exit). MAC now uses **length-prefixed canonical encoding** (§4.2, §4.3). |
-| 6 | `dnsSets` missing `>`; `NET_LUID` as a JS number; `requestId` a UUID/string mix | Fixed in §8.1: `dnsSets: DnsSet[]` (closing `>`); **LUID as a canonical hex string** (never a JS number — a 64-bit value); `requestId` as a **monotonic uint64 decimal string** with an explicit per-session sequence. |
-| 7 | Test matrix incomplete | Expanded in §13: single-Murge-adapter + same GUID/LUID reuse; routes/DNS always after adapter creation; mihomo emits no route/DNS change outside the helper; UAC-bootstrap adversarial tests (same-user race-connect, PID reuse, process exit, timeout, replay); crash injection at every journal boundary. |
+| 1 | Wintun ABI wrong: `WintunCreateAdapter(LUID*, Name, TunnelType, Session*)` is an incorrect signature | **Fixed verbatim from the official `wintun.h`** (§3.0, pinned **0.14.1**, recorded arch/exported-symbols/header-source): `WintunCreateAdapter(Name, TunnelType, RequestedGUID) -> WINTUN_ADAPTER_HANDLE`; `WintunGetAdapterLUID(Adapter, &Luid)`; `WintunStartSession(Adapter, Capacity)` creates the packet session; `WintunEndSession`/`WintunCloseAdapter`/`WintunDeleteAdapter` are distinct. The "**Wintun has no RequestedGUID parameter**" assertion is **withdrawn** — `RequestedGUID` is a real parameter (§3.0, §3.2). Pinned version + arch + exported symbols + header source recorded. |
+| 2 | Elevation bootstrap used plain `CoCreateInstance` + `requireAdministrator` instead of the official COM elevation moniker | **Rewritten to the COM Elevation Moniker flow** (§5.1–§5.2): client uses `CoGetObject("Elevation:Administrator!new:{CLSID}", BIND_OPTS3, ...)`; full HKLM `CLSID`/`LocalizedString`/`Elevation`/`LocalServer32` (absolute path + `ServerExecutable`)/`AppID`/`LaunchPermission`/`AccessPermission` listed; `RunAs = "Interactive User"` (Activate-as-Activator); explicit `CoInitializeSecurity`/`CoSetProxyBlanket` authn/impersonation/packet-privacy params. |
+| 3 | RPC client PID wrong: used `RPC_CALL_ATTRIBUTES_V2.ClientProcessId` | **Fixed to `RPC_CALL_ATTRIBUTES_V2.ClientPID`** with `Flags = RPC_QUERY_CLIENT_PID`; assert the call arrived over local **`ncalrpc`**; the PID is used **only to open and validate the process object** (path/digest/publisher/session-key), never as identity by itself (§5.2, §5.4). |
+| 4 | Journal not truly write-ahead (the adapter was created, then the journal intent written) | **True write-ahead journal** (§8.3–§8.4): `BaselineSnapshot` committed first; `CREATE_ADAPTER/PREPARED` (fsync'd **before** `WintunCreateAdapter`); `CREATE_ADAPTER/APPLIED` after; every route/DNS op is `PREPARED` → mutate → `APPLIED`; crash between any two records is reconciled by **enumerating the product adapter / current OS state** (PREPARED-but-unknown). |
+| 5 | No explicit adapter deletion; claimed last-session/handle close auto-deletes | **Explicit deletion** (§3.3): mihomo ends the session; helper enumerates + verifies the **product-owned** adapter; `WintunDeleteAdapter`; `RebootRequired` handled as `delete-pending`; only own-instance/product adapters deleted; `DELETE_ADAPTER/RECONCILED` written on success. The automatic-deletion claim is **removed**. |
+| 6 | Reusable elevated helper let a second process attach | **Per-activation, short-lived elevated server** (§5.5): each enable uses `Elevation:Administrator!new` to create a fresh server that **binds to the first verified client**, **rejects all other clients** (including a second Murge process with identical path/signature/hash), and **exits** on transaction complete/cancel/timeout. Second-instance race test added (§13). |
+| 7 | G1 still un-proven | Keep as a **hard pre-implementation gate**. A **minimal, one-shot disposable Windows probe** (create adapter → verify same GUID/LUID → delete + restore) runs first; it does **not** expand into full Phase 9 implementation (§12, §13). |
 
 ---
 
@@ -123,24 +137,31 @@ adapter that the helper created via `WintunCreateAdapter`?** This is **G1**.
     network-config owner and **one** data-plane owner. The design must not silently
     fall back to dual ownership.
 - Steps the design fixes **now** (independent of the G1 outcome):
-  1. The helper calls `WintunCreateAdapter(LUID*, Name, TunnelType, Session*)` while
-     elevated. This **installs/loads the signed driver on demand** and creates the
-     adapter with the product-specific **name** (e.g. `"Murge TUN"`) and **tunnel type**
-     (a stable opaque string, e.g. `"Murge TUN"`).
-  2. The helper obtains the **LUID** from `WintunCreateAdapter` and re-derives/verifies
-     it via `WintunGetAdapterLUID(Name, &luid)` so the name→LUID mapping is stable.
-     The helper **closes its own session handle** (`WintunEndSession`/`WintunCloseAdapter`,
-     keeping the adapter alive by name/LUID) so it never holds a packet session.
+  1. The helper calls `WintunCreateAdapter(Name, TunnelType, RequestedGUID)` while
+     elevated (official ABI, §3.0). It returns a `WINTUN_ADAPTER_HANDLE`; this is the
+     **only** call that **installs/loads the signed driver on demand** and creates the
+     adapter, addressed by the product-specific **name** (e.g. `"Murge TUN"`), **tunnel
+     type**, and a product-specific stable **`RequestedGUID`**.
+  2. The helper derives the **LUID** via `WintunGetAdapterLUID(Adapter, &luid)` (a `_Out_`
+     param on the adapter handle) so the name/GUID→LUID mapping is obtained; it publishes
+     `{ name, requestedGuid, luid }`. The helper **never opens a packet session**
+     (`WintunStartSession`) and keeps only the adapter handle (not a session) so it never
+     touches a packet buffer.
   3. The helper **pins + verifies** the LUID **before** the network-config phase (§10.1).
   4. The network-config phase applies routes/DNS/interface (§10.1). Routes/DNS are always
      written **after** the adapter exists (its LUID/index are known).
   5. mihomo opens/reuses the adapter and becomes the sole packet-I/O owner. **This is G1.**
 
-> The Wintun API has **no user-supplied GUID parameter**; `WintunCreateAdapter` returns
-> a driver-assigned 64-bit **LUID**. A "stable GUID" is therefore realized as a **stable
-> adapter name** whose LUID is re-derivable and **unique**: the helper asserts exactly
-> one Murge adapter exists (enumerate Wintun adapters by name; if more than one or if a
-> foreign adapter already holds the name, fail closed for `conflict`).
+> **Corrected from the earlier draft.** The Wintun API **does have a user-supplied
+> `RequestedGUID` parameter** on `WintunCreateAdapter`. A "stable GUID" is therefore
+> realized by passing a **product-specific, stable `RequestedGUID`**, so the adapter is
+> addressable by a deterministic GUID for recovery (§3.2, §3.3); the **LUID** is derived
+> from the adapter handle (`WintunGetAdapterLUID`) and is used as the routes/DNS/interface
+> key. `WintunCreateAdapter` **fails** if the requested GUID is already in use (→
+> `conflict`, zero mutation). The earlier claim that "Wintun has no user-supplied GUID
+> parameter" is **withdrawn**. The uniqueness invariant stands: the helper enumerates
+> Wintun adapters, asserts exactly one Murge adapter by `Name`+`RequestedGUID`, and fails
+> closed if a foreign adapter already holds that identity.
 
 ---
 
@@ -203,6 +224,88 @@ export interface TunGateway {
 
 ## 3. Wintun distribution and on-demand adapter creation (items 1, 2)
 
+### 3.0 Pinned ABI — fixed verbatim from the official wintun.h of the chosen version
+
+The ABI is **pinned to Wintun **0.14.1**** (chosen stable release; the exact release
+and its manifest hash are recorded in the release manifest and third-party notice —
+**to be re-confirmed against the pinned release's `wintun.h` at implementation time**).
+The contract below is copied from the **official `wintun.h`** so that our exported-symbol
+and calling-convention assumptions cannot drift from the SDK.
+
+**Source of record**
+
+| Field | Value |
+|---|---|
+| Header | `wintun.h` from the official Wintun source/release (wintun.net; `git.zx2c4.com/wintun`); copy the exact `typedef`/prototypes into `src/main/tun/wintun-abi.ts` + a pinned `wintun.def` |
+| Version | **0.14.1** |
+| Architecture | per-arch DLL: `amd64`, `arm64`; **one DLL per arch, ABI fixed for that arch** (never cross-bundle) |
+| Calling convention | `WINAPI` (`__stdcall`) on x86-64 (x64 ignores but keep correct for correctness); exported by name (DLL export table) |
+| Handle types | `WINTUN_ADAPTER_HANDLE`, `WINTUN_SESSION_HANDLE` (opaque pointers; do not reinterpret elsewhere) |
+| `NET_LUID` | 64-bit `NET_LUID` union; serialized as a **canonical hex string** in JSON (§8.1) |
+
+**Exported symbols (pinned from the official `wintun.def`/exports)**
+
+```
+WintunCreateAdapter
+WintunOpenAdapter
+WintunCloseAdapter
+WintunDeleteAdapter
+WintunGetAdapterLUID
+WintunStartSession
+WintunEndSession
+WintunGetReadWaitEvent
+WintunReceivePacket
+WintunReleaseReceivePacket
+WintunAllocateSendPacket
+WintunSendPacket
+WintunFreeSendPacket
+```
+
+**Pinned signatures (from official `wintun.h`, Wintun 0.14.x)**
+
+```c
+typedef struct _WINTUN_ADAPTER_HANDLE__ *WINTUN_ADAPTER_HANDLE;
+typedef struct _WINTUN_SESSION_HANDLE__ *WINTUN_SESSION_HANDLE;
+
+// Creates (and installs/loads the driver for) an adapter. RequestedGUID may be NULL
+// for an OS-assigned GUID. Requires elevation. Returns a handle, else NULL.
+WINTUN_ADAPTER_HANDLE WINAPI WintunCreateAdapter(
+    _In_ const WCHAR *Name,
+    _In_ const WCHAR *TunnelType,
+    _In_opt_ const GUID *RequestedGUID);
+
+void WINAPI WintunCloseAdapter(_In_ WINTUN_ADAPTER_HANDLE Adapter);      // close handle; adapter persists
+void WINAPI WintunDeleteAdapter(_In_ WINTUN_ADAPTER_HANDLE Adapter);     // remove the adapter (may require reboot)
+void WINAPI WintunGetAdapterLUID(_In_ WINTUN_ADAPTER_HANDLE Adapter, _Out_ NET_LUID *Luid);
+
+// Starts the packet session. Returns a session handle, else NULL.
+WINTUN_SESSION_HANDLE WINAPI WintunStartSession(_In_ WINTUN_ADAPTER_HANDLE Adapter, _In_ DWORD Capacity);
+void WINAPI WintunEndSession(_In_ WINTUN_SESSION_HANDLE Session);
+```
+
+**Semantics that must never be conflated**
+
+- `WintunCreateAdapter(Name, TunnelType, RequestedGUID)` → `WINTUN_ADAPTER_HANDLE`.
+  **This is the only function that installs/loads the signed driver** (on demand), and it
+  returns the adapter **handle** (NOT a LUID and NOT a session).
+- `WintunGetAdapterLUID(Adapter, &Luid)` — the **only** way to get the adapter's
+  `NET_LUID` (routes/DNS/interface key). It is a `_Out_` param on an adapter **handle**,
+  not a return value and not a session call.
+- `WintunStartSession(Adapter, Capacity)` — **this** creates the packet session; the
+  parameter is a **capacity** (ring-buffer bytes), not a `LUID*`/`Session*`. The session is
+  the data-plane transfer handle; the **helper does not use it** (§1.1).
+- `WintunEndSession(Session)` ends a session; `WintunCloseAdapter(Adapter)` **closes the
+  handle only** (the adapter **remains** registered and usable by other processes by
+  name/LUID); `WintunDeleteAdapter(Adapter)` **removes the adapter** (and may return
+  `ERROR_DRIVER_COMMAND`/warn a reboot). These are distinct — **closing the last session
+  or handle does NOT delete the adapter** (§3.3).
+
+> **Corrected from the earlier draft.** There is a **user-supplied `RequestedGUID`
+> parameter**: passing a product-specific, stable GUID attempts to make the adapter
+> addressable by that GUID. If the GUID is already in use, `WintunCreateAdapter` fails
+> (→ `conflict`, no mutation). The stable identity for recovery is the **RequestedGUID +
+> Name**, and the wire identity is the associated **`NET_LUID`**.
+
 ### 3.1 Official distribution model
 
 - **Ship the official per-arch `wintun.dll`, never a bare driver file.** The Wintun
@@ -236,32 +339,76 @@ export interface TunGateway {
   `SetDefaultDllDirectories`), never by short name, so a search-path hijack cannot
   substitute a DLL.
 
-### 3.2 Adapter creation (the helper's elevated act) — no `load_driver` op
+### 3.2 Adapter creation (the helper's elevated act) — correct ABI, no `load_driver` op
 
 The `load_driver` op and every "load the driver once" step are **deleted**. The
 installation of the Wintun driver is a **side effect of `WintunCreateAdapter`**, which
 requires elevation and is called by the helper. There is therefore no op whose purpose
-is "load the driver"; there is only `create_adapter`.
+is "load the driver"; there is only `create_adapter` (and its delete counterpart).
 
-- **`create_adapter`** (helper, elevated):
-  `LoadLibraryEx` the official DLL (absolute path, safe flags) → `WintunCreateAdapter(
-  &luid, L"Murge TUN", L"Murge TUN", &session)`.
-  - Product-specific, **stable adapter name** and **tunnel type** string.
-  - Returns the 64-bit **LUID** and a session handle. The helper **does not keep the
-    session** for packet I/O; it obtains the LUID, verifies name→LUID via
-    `WintunGetAdapterLUID`, closes its session, and publishes
-    `{ name, luid }` (luid as a canonical hex string).
-  - **Uniqueness:** enumerate Wintun adapters; assert exactly one Murge adapter and that
-    no foreign adapter holds the reserved name. Otherwise ⇒ `conflict`, no mutation.
-- **Adapter identity type.** LUID is a 64-bit `NET_LUID` union. Over the wire (and in
-  every JSON record) it is serialized as a **canonical hex string** (e.g.
-  `"0x0000000000000001"`), never a JS number (a 64-bit value exceeds `Number.MAX_SAFE_INTEGER`).
-- **Life cycle.** Create at enable (inside `WintunCreateAdapter`), teardown at disable /
-  process exit; when the last session handle closes the driver releases the adapter. The
-  OS-level routes/DNS written by the helper are restored by the helper (it owns them and
-  records the baseline before changing them, §8).
-- **`probe_integrity`** now verifies the helper digest/publisher + the `wintun.dll` digest;
-  it does **not** load the driver and does **not** require elevation.
+- **`create_adapter`** (helper, elevated). `LoadLibraryEx` the official DLL (absolute path,
+  safe flags) → resolve the pinned exports (§3.0) → call:
+
+  ```c
+  WINTUN_ADAPTER_HANDLE h = WintunCreateAdapter(
+      L"Murge TUN",          // product-specific, stable adapter name
+      L"Murge TUN",          // stable opaque tunnel-type string
+      &kProductRequestedGuid);// product-specific, stable RequestedGUID (never NULL)
+  ```
+
+  - `Name` and `TunnelType` are the **stable, product-specific** values.
+  - `RequestedGUID` is a **product-specific stable GUID** so the adapter is addressable by
+    a deterministic GUID for recovery (§3.3). If the GUID is already in use,
+    `WintunCreateAdapter` **fails** → `conflict`, **zero mutation**.
+  - The returned **`WINTUN_ADAPTER_HANDLE`** is the **only** durable object to derive the
+    identity from. Do **not** reinterpret it as a LUID or a session.
+- **Derive the LUID (routes/DNS key).** `WintunGetAdapterLUID(h, &luid)` (a `_Out_` param,
+  on the adapter handle). Publish `{ name, requestedGuid, luid }` with `luid` as a
+  **canonical hex string** (§8.1) — this is the key for routes/DNS/interface.
+- **Do NOT start a session here.** The helper must **not** open a packet session
+  (`WintunStartSession`). The data plane is owned by mihomo (§1.1), which will start the
+  session. The helper **keeps the adapter handle open but never the session**; it releases
+  the handle only at teardown (§3.3).
+- **Uniqueness / reservation.** Enumerate Wintun adapters; assert exactly one Murge adapter
+  and that no foreign adapter already holds the reserved `Name`/`RequestedGUID`. Otherwise ⇒
+  `conflict`, no mutation.
+- **Recovery identity.** On restart/recovery, enumerate Wintun adapters and reconcile by
+  **`Name` + `RequestedGUID`** (the GUID is the stable address; the LUID is derived per
+  adapter). A leftover adapter from an un-applied `create_adapter` is recognized and either
+  adopted (if it is this product's) or renamed/removed only if provably owned (§3.3, §8.4).
+- **Life cycle.** Created at enable; **removed** at disable / rollback via
+  `WintunDeleteAdapter` (§3.3), **not** by simply closing the last handle/session. The
+  routes/DNS written by the helper are always restored by the helper (it owns them and
+  records the baseline **before** changing them, §8).
+- **`probe_integrity`** verifies the helper digest/publisher + the `wintun.dll` digest; it
+  does **not** load the driver and does **not** require elevation.
+
+### 3.3 Adapter deletion — explicit, product-owned, reboot-aware
+
+Closing the last session/handle does **not** delete the Wintun adapter. Deletion is an
+explicit, owned, verified act:
+
+1. **mihomo ends the session.** The data-plane owner calls `WintunEndSession` on its
+   session and releases the adapter handle. (The helper never held a session.)
+2. **Helper enumerates + verifies ownership.** The helper enumerates Wintun adapters,
+   finds the one it created for this enable (matched by `Name` + `RequestedGUID`, with the
+   derived LUID), and **proves it belongs to this product/instance** (not a pre-existing or
+   foreign adapter). If it cannot prove ownership, it does **not** delete.
+3. **`WintunDeleteAdapter(h)`.** On success the adapter is removed.
+4. **`RebootRequired` handling.** If Windows reports that a reboot is required before the
+   adapter fully clears (`ERROR_REBOOT_REQUIRED` / the delete is deferred), the helper
+   records `delete-pending` in the journal so the next `init()`/`--recover` retries the
+   delete (idempotent) rather than reporting the adapter as gone.
+5. **Only own-instance/product adapters are ever deleted.** A pre-existing or shared Wintun
+   adapter is left in place (D5, recommended: never remove a pre-existing driver/adapter).
+6. **Journal.** After a confirmed delete, write the journal `DELETE_ADAPTER/RECONCILED`
+   record (§8). A delete that is not yet confirmed stays `DELETE_ADAPTER/PREPARED` (or
+   `delete-pending`) so recovery can re-run it against the current OS state.
+
+**No claim of automatic deletion.** The design does **not** state that closing the last
+session or handle auto-deletes the adapter; the driver releases a session when the last
+session/handle closes, but the **adapter object persists until `WintunDeleteAdapter`** is
+called for it.
 
 ---
 
@@ -297,8 +444,9 @@ interface HelperCommand {
 }
 type HelperOp =
   | 'probe_integrity'    // verify helper+wintun digest/publisher (no mutation, no elevation)
-  | 'create_adapter'     // WintunCreateAdapter: installs/loads driver + creates adapter
-  | 'apply_network_state'// apply the typed DesiredNetworkState (routes/DNS/interface)
+  | 'create_adapter'     // WintunCreateAdapter: installs/loads driver + creates adapter (WAL)
+  | 'apply_network_state'// apply the typed DesiredNetworkState (routes/DNS/interface) (WAL)
+  | 'delete_adapter'     // WintunDeleteAdapter, product-owned-only, reboot-aware (WAL)
   | 'snapshot'           // capture/save the BaselineSnapshot BEFORE mutation
   | 'restore'            // per-item owned-only restore, reverse journal order (§8.4)
   | 'get_status'
@@ -373,69 +521,121 @@ across elevation** (this is the officially-supported alternative), and **no same
 secret is placed in a user-readable medium** (the secret is exchanged inside the
 authenticated COM call).
 
-### 5.1 Parties and registration
+### 5.1 Parties and registration (COM Elevation Moniker)
+
+The helper is an **elevated, out-of-proc COM server**; the app is the COM **client**;
+the **Windows elevation broker (AppInfo)** is the rendezvous. The client activates the
+server through the **COM Elevation Moniker** — the officially documented way to request an
+elevated COM server — **not** by a plain `CoCreateInstance` on a `requireAdministrator`
+server.
 
 | Side | IL | Role | Build |
 |---|---|---|---|
 | `.exe` main app (`electron` main) | Medium | COM **client**; the only holder of the `PrivilegedHelperClient` | Electron main |
 | `helper.exe` | High (elevated) | COM **server**; the elevated broker | Native, `requireAdministrator`, no console, no network listener |
 
-`helper.exe` is registered machine-wide (HKLM, so a per-user `HKCU` registration cannot
-override it) as an out-of-proc COM server under a dedicated `AppID`, with:
-- a `<requestedExecutionLevel level="requireAdministrator"/>` manifest, and
-- a restrictive `LaunchPermission`/`AccessPermission` DACL (deny `Everyone`/`Users`;
-  grant only the elevated helper identity + the authorized app principal), and
-- `AuthenticationLevel`/`ImpersonationLevel` set so the channel runs with **mutual auth +
-  packet privacy**.
+`helper.exe` is registered **machine-wide** (HKLM, so a per-user `HKCU` registration cannot
+override it) as an out-of-proc COM server under a dedicated **`AppID`**:
+
+**`HKLM\Software\Classes\CLSID\{CLSID_PrivilegedHelper}`**
+
+| Value | Value |
+|---|---|
+| (default) | `Murge Privileged Helper (elevated)` |
+| `LocalizedString` | `@C:\Program Files\Murge\resources\bin\helper.exe,-101` |
+| `LocalServer32` (default) | `C:\Program Files\Murge\resources\bin\helper.exe` — **absolute path** |
+| `LocalServer32\ServerExecutable` | `C:\Program Files\Murge\resources\bin\helper.exe` — explicit module name for the moniker |
+| `LocalServer32\ThreadingModel` | `Both` |
+| `LocalServer32\AppID` | `{AppID_PrivilegedHelper}` |
+| `Elevation` (subkey, default value) | `Enabled` |
+
+**`HKLM\Software\Classes\AppID\{AppID_PrivilegedHelper}`**
+
+| Value | Value |
+|---|---|
+| (default) | `Murge Privileged Helper` |
+| `RunAs` | **`Interactive User`** — required so the server is activated as the current interactive user's high-integrity token (Activate-as-Activator / Interactive User semantics, per the elevation moniker). **Not** a named/known account. |
+| `LaunchPermission` | **Restrictive DACL**: deny `Everyone`/`Users`; grant `Launch` only to the authorized interactive-user principal + `SYSTEM` (the SCM/RPCSS must launch it). |
+| `AccessPermission` | **Restrictive DACL**: deny `Everyone`/`Users`; grant access only to the authorized interactive-user principal + `SYSTEM`. |
+
+> Because the server is activated via the **elevation moniker**, `RunAs` must be
+> **`Interactive User`** (the moniker's Activate-as-Activator / interactive-user model).
+> If you instead configured a specific account in `RunAs`, the elevation moniker would not
+> operate in the documented interactive-user fashion; the design therefore explicitly
+> rejects a named-account `RunAs`.
+>
+> The `LocalServer32` path and the optional `ServerExecutable` value must be **absolute and
+> in the non-writable install dir**, so a search-path/DLL hijack cannot substitute a binary.
+> `Elevation` is a **subkey** whose default value is `Enabled` — without it the moniker
+> cannot request elevation.
 
 ### 5.2 Steps (each: process, API, who creates/connects, UAC API, handle inheritance)
 
-1. **Client side (app, Medium).** `CoInitializeEx(NULL, COINIT_APARTMENTTHREADED)`;
-   `CoInitializeSecurity(..., RPC_C_AUTHN_LEVEL_PKT_PRIVACY, RPC_C_IMP_LEVEL_IMPERSONATE,
-   EOAC_SECURE_REFS | EOAC_STATIC_CLOAKING, NULL, ...)`.
-2. **Activation (UAC is the elevation API).** The app calls
-   `CoCreateInstance(CLSID_MurgeTunHelper, NULL, CLSCTX_LOCAL_SERVER, IID_IMurgeTunHelper,
-   &iface)`. Because `helper.exe` declares `requireAdministrator`, the **elevation broker
-   (AppInfo)** shows UAC and starts `helper.exe` at **High IL**. This is the exact point
-   where elevation is requested — triggered only by an explicit user action (§10.1 enable).
-   The app does **not** pre-launch the helper for UAC (no `runas`/`ShellExecuteEx`).
-3. **Server side (helper, High).** Registers its class factory; on activation it is running
-   high-IL. **Handle inheritance:** the design **does not** use `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`;
-   it requires **no inherited handle** — `runas`/elevated activation cannot propagate one.
-4. **Channel.** The authenticated COM interface **is** the channel. Each request is a
-   schema-validated `HelperCommand` envelope (§4) passed as the interface parameter (a
-   length-prefixed, size-capped byte blob / `IStream`). There is **no app-created named
-   pipe** and **no** endpoint name to leak into a user-readable medium.
-5. **Helper authenticates the app (identity binding).** On each privileged method call the
-   helper:
-   - `RpcImpersonateClient()` (COM) / `CoImpersonateClient()`, then
-   - `RpcServerInqCallAttributes(..., RPC_CALL_ATTRIBUTES_V2, &atts)`; assert
-     `atts.ClientProcessId` (Win8.1+) is set → **client (app) PID**.
+1. **Client COM init (app, Medium).** `CoInitializeEx(NULL, COINIT_APARTMENTTHREADED)`;
+   `CoInitializeSecurity(NULL, -1, NULL, NULL, RPC_C_AUTHN_LEVEL_PKT_PRIVACY,
+   RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_SECURE_REFS | EOAC_STATIC_CLOAKING, NULL)`.
+   This pins **packet-privacy authentication** and **impersonation** for the activating
+   process. The app does **not** pre-launch the helper and does **not** use
+   `runas`/`ShellExecuteEx` — it activates the COM server (step 2) and the OS requests
+   elevation.
+2. **Activation via the Elevation Moniker (UAC is the elevation API).**
+   ```c
+   BIND_OPTS3 bo = {};
+   bo.cbStruct  = sizeof(bo);
+   bo.hwnd      = hwnd;                    // parent window that owns the UAC prompt
+   bo.dwClassContext = CLSCTX_LOCAL_SERVER;
+   HRESULT hr = CoGetObject(
+       L"Elevation:Administrator!new:{<CLSID_PrivilegedHelper>}",
+       &bo, IID_PPV_ARGS(&pHelper));
+   ```
+   `CoGetObject` with the **`Elevation:Administrator!new:{CLSID}`** moniker is the
+   elevation-request point — triggered only by an explicit user action (§10.1 enable).
+   The **elevation broker (AppInfo)** shows UAC and starts `helper.exe` at **High IL** by
+   the (interactive-user) object the moniker names, honoring the manifest's
+   `requireAdministrator`.
+3. **Server side (helper, High).** Registers its class factory under its CLSID/AppID, runs
+   at High IL. **Handle inheritance:** the design does **not** use
+   `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`; it requires **no inherited handle** (elevated
+   activation via the moniker cannot propagate one).
+4. **Channel.** The authenticated COM interface **is** the channel; each request is the
+   schema-validated `HelperCommand` envelope (§4) passed as a length-prefixed, size-capped
+   byte blob/`IStream`. **No app-created named pipe** and hence no endpoint name leaked to a
+   user-readable medium. Before servicing a call the server enforces privacy on the proxy:
+   `CoInitializeSecurity(..., RPC_C_AUTHN_LEVEL_PKT_PRIVACY,
+   RPC_C_IMP_LEVEL_IMPERSONATE, ...)`; the client sets the same on its proxy with
+   `CoSetProxyBlanket(pHelper, RPC_C_AUTHN_WINNT, RPC_C_AUTHZ_NONE, NULL,
+   RPC_C_AUTHN_LEVEL_PKT_PRIVACY, RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_NONE)`.
+5. **Helper authenticates the app (identity binding).** On each privileged call the helper:
+   - `CoImpersonateClient()` (and `RpcImpersonateClient()` for pure-RPC parity), then
+   - `RpcServerInqCallAttributes(call, RPC_CALL_ATTRIBUTES_V2, &atts)` with
+     `atts.Version = 2` and **`atts.Flags = RPC_QUERY_CLIENT_PID`**; read
+     **`atts.ClientPID`** (not a field the caller must name differently) → **client PID**.
+   - **Transport.** Assert the call arrived over the **local `ncalrpc`** LPC transport
+     (LRPC) used by a LocalServer in the same session; reject any `ncacn_ip_tcp`/remote
+     transport. (Local RPC is the only protocol the moniker LocalServer uses.)
    - `GetTokenInformation(TokenUser/TokenStatistics/TokenIntegrityLevel)` on the
      impersonation token: assert same **logon session**, same **user SID**, **Medium IL**,
-     **token type** (primary/impersonation). A Medium-IL same-user process that is not the
-     genuine app is still rejected because it cannot satisfy the path/digest/publisher
-     check and does not present the **session key**.
-   - `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, appPid)` + `QueryFullProcessImageName`
-     → **normalized canonical path**; verify that path's **SHA-256 digest** and
-     **Authenticode publisher** match the pinned app identity. A same-user impostor with a
-     different path/digest/signer is rejected.
+     **token type** (primary/impersonation).
+   - The **PID is used only to open and validate the process object**, never as identity by
+     itself: `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, clientPid)` +
+     `QueryFullProcessImageName` → **normalized canonical path**; verify that path's
+     **SHA-256 digest** and **Authenticode publisher** match the pinned app identity. A
+     same-user impostor — even one with a **reused PID** — fails the path/digest check and
+     does not present the **session key**.
    - `CoRevertToSelf()` / `RpcRevertToSelf()` after the check.
-6. **App authenticates the helper.** Because COM activation is machine-wide and elevation-
-   mediated, the app verifies it activated the genuine helper: the first method call
-   (`bootstrap`) returns the **helper PID** and the app then `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,
-   helperPid)` + `QueryFullProcessImageName` + `Get-AuthenticodeSignature`-equivalent and
-   asserts the helper's canonical path + SHA-256 + publisher match the pinned helper. If a
-   per-user registration tried to divert the CLSID, the resulting medium-IL server fails
-   this check, so the app refuses to trust it.
+6. **App authenticates the helper.** The `bootstrap` method returns the **helper PID**; the
+   app `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, helperPid)` +
+   `QueryFullProcessImageName` + Authenticode and asserts the helper's canonical path +
+   SHA-256 + publisher match the pinned helper. A diverted/per-user registration that
+   yields a medium-IL server fails this check, so the app refuses to trust it.
 7. **Handshake + key.** Over the authenticated channel the two sides derive `sessionKey`
-   (HKDF). The `launchSecret` is exchanged **inside** the authenticated call (never on a
-   cmdline/env/file), and is `RtlSecureZeroMemory`-zeroized right after the handshake
-   (§4.3). The `sessionKey` is retained for the channel life and zeroized on close/exit.
+   (HKDF); the `launchSecret` is exchanged **inside** the authenticated call (never on a
+   cmdline/env/file) and `RtlSecureZeroMemory`-zeroized right after the handshake (§4.3).
+   The `sessionKey` is retained for the channel life and zeroized on close/exit.
 
-This yields a self-consistent, executable sequence. Because the transport itself is
-mutually authenticated and encrypted, the same-user-spoofing threat that motivated the
-old pipe inheritance is closed by the OS rather than by a secret in a readable medium.
+This is a self-consistent, executable sequence using the **documented elevation-moniker
+bootstrap**. Because the transport is mutually authenticated and privacy-encrypted, the
+same-user-spoofing threat is closed by the OS rather than by a secret in a readable medium.
 
 ### 5.3 Least privilege
 
@@ -449,30 +649,55 @@ old pipe inheritance is closed by the OS rather than by a secret in a readable m
 
 ### 5.4 Facts to confirm against the pinned Windows target before implementation
 
-The following are asserted from the general, documented Windows model and must be
-**re-checked against the exact pinned Windows SDK / minimum-OS target and the exact Wintun
-release** before any implementation, because no live lookup was done this session:
+The following are asserted from the general Windows model and must be **re-checked against
+the exact pinned Windows SDK / minimum-OS target and the exact Wintun release** before any
+implementation, because no live lookup was done this session:
 
-- **Elevated out-of-proc COM activation over `requireAdministrator` + a dedicated HKLM
-  `AppID`** is accepted by the OS and triggers the UAC prompt (rather than requiring a
-  `RunAs` AppID account). Confirm the exact registration key/value set that yields an
-  elevation prompt for a Medium-IL `CoCreateInstance` client.
-- `RpcServerInqCallAttributes` with `RPC_CALL_ATTRIBUTES_V2.ClientProcessId` is **available
-  and populated** on the target (Windows 8.1+); if not, fall back to the documented
-  `RpcImpersonateClient` + `QuerySecurityContextToken`/token checks and obtain the client
-  PID another way.
-- The Wintun API surface (`WintunCreateAdapter`/`WintunGetAdapterLUID`/`WintunOpenAdapter`/
-  session life cycle) and its exact signature/semantics for the pinned release; in
-  particular that **`WintunCreateAdapter` installs/loads the driver on demand** (so no
-  separate `load_driver` op is needed) and that the **LUID is driver-assigned** (Wintun
-  accepts no user-supplied GUID). If the pinned version differs, re-document §3 accordingly.
-- Whether mihomo can **open/reuse a helper-created adapter** by LUID/name is exactly the
-  **G1** question and is **not** answered here — it is a blocking gate to be proven by the
-  real Windows integration test.
+- The **elevation-moniker** activation (`CoGetObject("Elevation:Administrator!new:{CLSID}",
+  BIND_OPTS3, ...)`) triggers UAC and starts a `requireAdministrator` LocalServer. Confirm
+  the exact HKLM `CLSID`/`AppID`/`Elevation`/`LocalServer32` key + value set that produces
+  a high-IL `helper.exe` for a Medium-IL activation, and that **`RunAs = "Interactive User"`**
+  is the correct setting (the moniker's Activate-as-Activator / interactive-user model).
+- **`RPC_CALL_ATTRIBUTES_V2.ClientPID`** with **`Flags = RPC_QUERY_CLIENT_PID`** is available
+  and populated on the target; and the client call arrives over the local **`ncalrpc`** LPC
+  transport. If the target cannot report the transport/`ClientPID`, fall back to
+  `CoImpersonateClient` + `RpcServerInqCallAttributes` on the `RPC_CALL_ATTRIBUTES_V1` +
+  token checks and document the exact alternative.
+- The **Wintun ABI** pinned in §3.0 matches the shipped `wintun.h`/`wintun.def` for the
+  chosen release (export names, `WINAPI` calling convention, handle types, `NET_LUID`), and
+  **`WintunCreateAdapter` installs/loads the driver on demand** and accepts a **`RequestedGUID`**.
+- Whether mihomo can **open/reuse a helper-created adapter** by LUID/GUID is exactly the
+  **G1** question — **not** answered here, and **gated** by the one-shot probe (§12).
 
 These checks are a pre-implementation prerequisite and keep the design honest rather than
-asserting unverified OS behavior. The design stands on the round-2 fixes regardless; the
+asserting unverified OS behavior. The design stands on the round-3 fixes regardless; the
 checks only pin down which exact OS API calls to make.
+
+### 5.5 Per-activation server lifetime and single-client binding (item 6)
+
+Each `enable`/`disable` creates a **fresh, short-lived** elevated COM server via
+`Elevation:Administrator!new:{CLSID}` — the same CLSID does **not** yield a reusable
+long-lived helper.
+
+- **Bound to one client.** On activation the helper registers its class factory and
+  accepts **only the first client that passes the identity check** (steps 5–6). Every
+  subsequent activation client is **rejected** — including a **second Murge process** that
+  is byte-for-byte identical (same path, same Authenticode signature, same SHA-256) but is a
+  different process: the helper already bound to the first verified client's
+  `ClientPID`+logon-session+session-key and refuses a second `ProcessId`.
+- **Exit conditions.** The server exits when: the transaction (enable or disable) completes,
+  the user cancels/declines or the activation times out, the channel idles past a timeout,
+  or the bound client's process handle signals exit (helper watches the client PID). No
+  keep-alive; no indefinite wait.
+- **Why not reuse.** A reusable helper would let an unrelated process (or a restarted app
+  with the same binary) attach to a privileged instance. Per-activation creation + client
+  binding + exit-on-idle closes that; the OS also unloads the elevated process when it
+  exits, so there is no lingering High-IL process.
+- **No double-activation.** If a `requestEnable` is already in flight (promise-queue
+  serialization, §10), the main process does not issue a second activation; a second app
+  instance that tries to activate independently is rejected by the client-binding rule
+  (and the second instance is already gated by the single-instance app rule where
+  applicable).
 
 ---
 
@@ -552,15 +777,23 @@ interface WrittenState {
   metricSets: Array<{ luid: string; metric: number }>
 }
 
-// MutationJournal — append-only, ordered log of every mutation (crash recovery)
+// MutationJournal — WRITE-AHEAD, append-only, ordered log (crash recovery)
+// Every mutation is a two-phase record: PREPARED (fsync'd BEFORE the mutation) then
+// APPLIED. The journal is the authoritative recovery log; the OS is never mutated before
+// its PREPARED record is durable on disk (§8.3, §8.4).
 interface MutationJournalEntry {
   seq: number
   at: string
-  op: string            // createAdapter | addRoute | delRoute | setDns | setMetric | ...
-  luid: string          // canonical hex NET_LUID string
+  journalType: 'PREPARED' | 'APPLIED' | 'RECONCILED'
+  op: string            // createAdapter | deleteAdapter | addRoute | delRoute |
+                        // setDns | setMetric | ...
+  // target identity, all as canonical types so an un-applied op is recoverable:
+  adapterName: string | null       // product adapter name
+  requestedGuid: string | null     // product RequestedGUID (stable identity)
+  luid: string | null              // canonical hex NET_LUID string (64-bit, not a JS number)
   before: unknown
-  after: unknown
-  baselineFingerprint: string   // sha256 of the BaselineSnapshot
+  after: unknown       // expected value (for APPLIED); null for a not-yet-applied PREPARED
+  baselineFingerprint: string   // sha256 of the committed BaselineSnapshot
 }
 ```
 
@@ -577,6 +810,7 @@ interface DesiredNetworkState {
   adapter: {
     name: string          // stable product adapter name ("Murge TUN")
     tunnelType: string    // stable opaque tunnel-type string ("Murge TUN")
+    requestedGuid: string // stable product RequestedGUID (identity for create/recover)
   }
   routes: Array<{ family: 4 | 6; destination: string; prefixLength: number;
                   nextHop: string | null; metric: number; routeStore: 'active'|'persistent' }>
@@ -590,35 +824,71 @@ from the validated runtime config, and applied verbatim by the helper. Because
 `auto-route`/`dns-hijack` are disabled in the runtime config, this is the **only** source
 of route/DNS/interface changes.
 
-### 8.3 Per-item owned-only restore (never all-or-nothing)
+### 8.3 Write-ahead journal (WAL) — record intent durable BEFORE mutating
 
-- Before the first mutation the helper writes the `BaselineSnapshot` (atomically:
-  temp → validate → rename) and aborts with zero mutation if it cannot.
-- Every mutation is appended to the `MutationJournal`, and its exact resulting values are
-  recorded in `WrittenState`.
-- Restore compares the current OS state against `WrittenState` **per item** (per LUID, per
-  family, per field):
-  - If the current value still equals what `WrittenState` says we wrote, restore it to the
-    `BaselineSnapshot` value.
-  - If the current value was changed externally, do not overwrite; record a **per-item
-    conflict** (`conflictDetail`: LUID/index, family, field, expected vs current).
-  - Unrelated items are unaffected. The phase becomes `conflict` only if any owned item was
-    externally modified; otherwise restore completes to `configured`.
+The journal is **write-ahead**: the OS is **never mutated before its PREPARED record is
+durable on disk**.
 
-### 8.4 Reverse-journal-order recovery (item 2)
+- **`BaselineSnapshot` is committed first.** Before any mutation — and before
+  `create_adapter` — the helper writes + validates + fsyncs the full `BaselineSnapshot`
+  (atomically: temp → validate → rename). If it cannot, it aborts with **zero mutation**.
+- **`create_adapter` is itself WAL.** Before calling `WintunCreateAdapter`, the helper
+  writes + fsyncs `CREATE_ADAPTER/PREPARED` carrying `{ adapterName, tunnelType,
+  requestedGuid }` (the recoverable identity). Only after that record is durable does it
+  call `WintunCreateAdapter`. On success it writes `CREATE_ADAPTER/APPLIED` with the
+  derived `luid` (from `WintunGetAdapterLUID`) + the handle-derived GUID.
+- **Every route/DNS/interface mutation is a two-phase record.** For each op
+  (`addRoute`, `delRoute`, `setDns`, `setMetric`): write + fsync the `${op}/PREPARED`
+  record with its target identity and expected `after`; mutate the OS; then write
+  `${op}/APPLIED` recording the exact resulting values (this is also `WrittenState`).
+- **The journal is append-only and ordered.** Crash can occur **between any two records**;
+  the durable record stream, not assumptions, is what recovery replays.
 
-- The `MutationJournal` is the **authoritative undo log**. On any failure during activation
-  (adapter create, LUID pin, route/DNS apply, mihomo open, readiness probe), the helper
-  walks the journal **in reverse order** and undoes each recorded op back to its `before`
-  value, **per item** and subject to the per-item owned-only rule above. It does **not**
-  skip around; the reverse order guarantees a foreign dependency (e.g. a route added after
-  an interface metric) is torn down before the dependency it relied on.
-- **Crash recovery:** on next boot, `TunService.init()` reads the `MutationJournal` +
-  `BaselineSnapshot`; if the journal is non-empty and not reconciled, it replays the reverse
-  of each op (or restores from baseline where the current state still matches
-  `WrittenState`). The owner can also run the emergency `--recover` path.
-- **Crash-injection boundaries** are enumerated in §13 so that reverse-order recovery is
-  tested at every step boundary, not just at the end.
+### 8.4 Recovery: reconcile PREPARED-but-unknown against the current OS state
+
+A crash can leave a **PREPARED** record with no matching **APPLIED** — the mutation may or
+may not have happened. Recovery must **reconcile by enumeration**, not assume:
+
+- **On next boot / `--recover`.** `TunService.init()`/`--recover` loads `BaselineSnapshot` +
+  the journal. For each op from the end backwards:
+  - **APPLIED** → undo (reverse the op) subject to the per-item owned-only rule (§8.5);
+    then write the matching `RECONCILED` record.
+  - **PREPARED without APPLIED** → the mutation's success is **unknown**. Do **not** assume
+    it happened or did not. Instead **reconcile against the current OS state**:
+    - for `CREATE_ADAPTER`: **enumerate Wintun adapters** and find the product adapter by
+      `Name` + `RequestedGUID`. If present, the create happened (adopt it, record
+      `CREATE_ADAPTER/RECONCILED` and delete it or keep it per ownership); if absent, the
+      create did not happen (record `RECONCILED`, nothing to undo).
+    - for a route/DNS op: **read the current OS state** for that LUID/prefix; if it matches
+      the op's `after`, undo it back to `before`; if it never took effect, mark
+      `RECONCILED` (nothing to undo).
+- **Per-item owned-only rule (never all-or-nothing).** Undo is per LUID/family/field. If the
+  current value still equals what we wrote, restore it to the baseline; if it was changed
+  externally, do **not** overwrite — record a **per-item `conflict`** (`conflictDetail`) and
+  leave that item. Unrelated items are unaffected; the phase becomes `conflict` only if an
+  owned item was externally modified, otherwise restore completes to `configured`.
+- **Reverse order.** Undo walks the journal **in reverse** so a dependent op (e.g. a route
+  added after an interface metric) is torn down before the dependency it relied on. A
+  crash mid-recovery re-runs idempotently (each undo is guarded by the existing
+  `RECONCILED` marker).
+- **`DELETE_ADAPTER` (commit point).** The delete of the adapter is the **last** undo step
+  and is itself WAL: `DELETE_ADAPTER/PREPARED` → `WintunDeleteAdapter` →
+  `DELETE_ADAPTER/APPLIED` (→ `RECONCILED`). If the delete needs a reboot
+  (`ERROR_REBOOT_REQUIRED`), record `delete-pending` so the next `init()`/`--recover`
+  retries it idempotently; the adapter is only reported gone once the delete is confirmed.
+
+### 8.5 Per-item owned-only restore rule
+
+Restore is **never all-or-nothing**. Treating the whole snapshot as one unit would either
+fail everything because one item was externally changed, or overwrite a user's change.
+Instead each item is decided independently:
+
+- Compare the **current** OS value against what we wrote (the op's `after`/`WrittenState`).
+- If it still equals what we wrote → restore to the `BaselineSnapshot` value.
+- If it was **changed externally** → **do not overwrite**; record a per-item `conflict`
+  (`conflictDetail`: LUID/index, family, field, expected vs current) and leave it.
+- Unrelated items are unaffected; the phase becomes `conflict` only if an owned item was
+  externally modified, otherwise restore completes to `configured`.
 
 ---
 
@@ -648,34 +918,43 @@ Today `mihomo-config.ts` asserts, for every document, that `tun`/`dns` contain o
 
 ## 10. TUN state machine, enable order and UI copy
 
-### 10.1 Enable order (fixed, item 2)
+### 10.1 Enable order (fixed, item 2) — write-ahead
 
-The enable operation runs inside the main-process `promise-queue` (serialized). The exact
-order is:
+The enable operation runs inside the main-process `promise-queue` (serialized). Every
+mutation is **write-ahead**: its `PREPARED` record is durable **before** the OS is touched
+(§8.3). The exact order is:
 
 ```
  1 verify            probe_integrity (helper + wintun digest/publisher); no elevation, no mutation
- 2 elevate/bootstrap show UAC via elevation-COM activation; handshake + derive sessionKey
- 3 BaselineSnapshot  helper writes + verifies the FULL baseline BEFORE any OS mutation
- 4 create adapter    helper (elevated) calls WintunCreateAdapter → installs/loads driver
-                     + creates adapter (name + tunnel type) + returns LUID
- 5 pin & verify LUID helper re-derives via WintunGetAdapterLUID(name), asserts exactly one
-                     Murge adapter, pins the canonical-hex LUID; aborts if ambiguous
- 6 write journal intent helper appends createAdapter + the intended DesiredNetworkState to
-                     the MutationJournal (undo target recorded before applying)
- 7 apply routes/DNS helper applies DesiredNetworkState (routes, per-interface DNS, metrics)
- 8 start mihomo     mihomo opens/reuses the adapter (G1) and starts its packet session
+ 2 elevate/bootstrap activate helper via Elevation:Administrator!new; handshake + sessionKey
+ 3 BaselineSnapshot  helper writes + fsyncs + verifies the FULL baseline BEFORE any mutation;
+                     abort with zero mutation if it cannot
+ 4 CREATE_ADAPTER/PREPARED  helper writes + fsyncs {adapterName, tunnelType, requestedGuid}
+                     BEFORE calling WintunCreateAdapter (recoverable identity)
+ 5 create adapter    helper calls WintunCreateAdapter(Name, TunnelType, RequestedGUID);
+                     installs/loads driver on demand + creates adapter; WintunGetAdapterLUID
+                     derives the LUID; assert exactly one Murge adapter (Name+RequestedGUID)
+ 6 CREATE_ADAPTER/APPLIED  write {luid, handle-derived GUID} and pin the canonical-hex LUID
+7 apply routes/DNS  for each op: write ${op}/PREPARED -> mutate OS -> write ${op}/APPLIED
+8 start mihomo     mihomo opens/reuses the adapter (G1) and starts its packet session
  9 readiness probe  probe the TUN/loopback path is live; assert routes/DNS present
 10 active           phase → active; renderer gets the true status
 ```
 
-- **Routes/DNS are always written after adapter creation** (steps 6–7 follow step 4–5) so
+- **Routes/DNS are always written after adapter creation** (steps 7+ follow step 5–6) so
   their target interface LUID/index already exists.
-- **Any failure at any step recovers in reverse journal order** (§8.4): e.g. failure at
-  step 9 undoes step 7, 6, 5, 4 (adapter) in that reverse order, then the baseline is
-  intact; failure at step 4 undoes the adapter; failure at step 2 (UAC cancelled / timeout)
-  leaves zero mutation.
-- Disable is the mirror: teardown mihomo → restore routes/DNS per item → close adapter →
+- **`CREATE_ADAPTER` is write-ahead**: the `PREPARED` record (steps 4) is fsync'd **before**
+  `WintunCreateAdapter` (step 5) and the `APPLIED` record (step 6) is written only after it
+  succeeds. A crash between 4 and 6 leaves a `CREATE_ADAPTER/PREPARED` record that recovery
+  reconciles by **enumerating Wintun adapters** for `Name`+`RequestedGUID` (§8.4).
+- **Any failure at any step recovers in reverse journal order** (§8.4), reconciling each
+  PREPARED-but-unknown op against the current OS state: failure at step 9 undoes steps 7–6
+  then the adapter (§3.3); failure at step 5 (or between 4–6) reconciles the adapter by
+  enumeration; failure at step 2 (UAC cancelled / timeout) leaves **zero mutation**.
+- **Disable is the mirror, with explicit adapter deletion (§3.3):** teardown mihomo
+  (`WintunEndSession`) → restore routes/DNS per item (reverse WAL order) →
+  **`DELETE_ADAPTER/PREPARED` → `WintunDeleteAdapter` (product-owned, verified) →
+  `DELETE_ADAPTER/APPLIED`/`RECONCILED`**, handling `RebootRequired` as `delete-pending` →
   reconcile journal → `configured`.
 
 ### 10.2 Transition table
@@ -683,7 +962,7 @@ order is:
 | Phase | Entry | Allowed actions | On failure |
 |---|---|---|---|
 | `configured` | init/recovery, end of disable | enable | — |
-| `starting` | `requestEnable` intent | verify → snapshot → create_adapter → pin LUID → apply_network_state → mihomo open → probe | → `restoring` (reverse journal order) → `restore-failed`/`failed` |
+| `starting` | `requestEnable` intent | verify → snapshot → `create_adapter`/PREPARED→APPLIED → pin LUID → `apply_network_state` (each op PREPARED→APPLIED) → mihomo open → probe | → `restoring` (reverse WAL order) → `restore-failed`/`failed` |
 | `active` | routes/DNS applied + mihomo TUN up | disable, teardown | → `restoring` |
 | `restoring` | disable/teardown/rollback | per-item owned-only restore, reverse journal order | → `conflict` (per-item) or `restore-failed` (corruption) |
 | `failed` | non-recoverable integrity/adapter/capture | retry / report | — |
@@ -731,15 +1010,19 @@ or via `--recover`.
 
 **Hard gates that must pass / be decided first:**
 
-- **G1 (adapter handoff) — unproven.** Prove with a real mihomo Windows integration test
-  that mihomo can open and reuse the helper-created adapter (by LUID/name). Until it
-  passes, the handoff is **not** a settled contract and Phase 9 implementation of the
-  handoff path must not start. **If G1 fails, stop and return to the owner** for a revised
-  ownership decision; do not fall back to dual ownership.
+- **G1 (adapter handoff) — unproven, and it is a hard pre-implementation gate.** Before any
+  Phase 9 implementation of the handoff path, run a **minimal, one-shot, disposable Windows
+  probe** in the gated job that only: creates the adapter (`WintunCreateAdapter`),
+  **verifies mihomo can reuse it by the same GUID/LUID**, then **immediately deletes the
+  adapter and restores**, leaving the machine clean. The probe must **not** expand into full
+  Phase 9 implementation (no helper service, no routes/DNS, no persistence, no UAC-bootstrap
+  machinery). **If G1 fails, stop and return to the owner** for a revised ownership
+  decision; do not fall back to dual ownership.
 - **D4:** helper boot/auto-start for the emergency path. Recommended: **no self-start**;
   `--recover` is run manually. (D2 = standalone helper, so a service is not assumed.)
-- **D5:** whether a Wintun **driver** that pre-existed is ever removed on uninstall.
-  Recommended: **never** remove a pre-existing/shared driver; we never ship a `.sys`.
+- **D5:** whether a Wintun **driver/adapter** that pre-existed is ever removed on uninstall.
+  Recommended: **never** remove a pre-existing/shared driver; we never ship a `.sys`, and we
+  only ever delete an adapter we provably created (§3.3).
 - **Certificate provider / trusted publisher** for `helper.exe` (see `CODE_SIGNING.md`).
 - **Independent owner authorization** record (who, what, when) before any implementation.
 - **DNS-hijack scope**, HTTPS decryption/rewrite visibility, sleep/wake + network-change
@@ -758,17 +1041,20 @@ All real behavior runs only in the gated `windows-latest` job
 
 | # | Test | Assertion | Evidence |
 |---|---|---|---|
-| T1 | **Single-owner data plane / adapter handoff (G1)** | After the helper creates the adapter, mihomo **reuses the same LUID** (Wintun has no user-supplied GUID for the app to pin; stable identity is name→LUID) and there is exactly **one Murge adapter** in the system | enumerate adapter by name/LUID before/after; assert count==1; assert mihomo session binds the same LUID |
+| T0 | **G1 one-shot probe (minimal, disposable)** | `WintunCreateAdapter` → mihomo **reuses the same GUID/LUID** → immediately `WintunDeleteAdapter`; machine restored. Runs **before** any Phase 9 helper work | adapter enumerate before/after; assert mihomo session bound the same LUID; assert clean delete |
+| T1 | **Single-owner data plane / adapter handoff (G1)** | After the helper creates the adapter, mihomo **reuses the same GUID/LUID** (RequestedGUID is the stable identity) and there is exactly **one Murge adapter** in the system | enumerate adapter by Name/RequestedGUID/LUID before/after; assert count==1; assert mihomo session binds the same LUID |
 | T2 | Ordering: routes/DNS after adapter creation | routes/DNS/interface are written **only after** the adapter exists; a failure before adapter creation leaves zero routes/DNS | journal seq + adapter existence at each step; assert no route/DNS op precedes `createAdapter` |
 | T3 | **mihomo emits no route/DNS change** | With `auto-route:false`, `auto-detect-interface:false`, `dns-hijack:false`, mihomo adds/removes **no** route/DNS/interface outside the helper | route/DNS snapshot before+after mihomo start, diff == helper-written set only |
 | T4 | Isolate dual-ownership regressions | Assert the runtime config never contains `auto-route:true`/`auto-detect-interface:true`/`dns-hijack:true` when the helper owns OS config | config-validator unit + integration grep |
-| T5 | **UAC bootstrap: same-user malicious race-connect** | A second Medium-IL process cannot open/activate the helper while the app is connected, and cannot impersonate the app | attempt activation/connect from a second medium process; assert rejected (identity binding) |
-| T6 | **UAC bootstrap: PID reuse** | A client PID whose process object was reused (exited + replaced) is rejected because path/digest/session-key no longer match | exit the app, let a reused PID connect; assert reject |
-| T7 | **UAC bootstrap: process exit / timeout** | Handshake/command timeout and helper process exit zeroize `launchSecret`/`sessionKey` and leave zero mutation | timeout injection; assert no mutation + secrets zeroed (hard-to-verify locally; assert via cleanup path) |
-| T8 | **UAC bootstrap: replay** | Replayed `HelperCommand` with a stale `requestId` is rejected | replay recorded frame; assert reject |
-| T9 | **Crash injection at every journal boundary** | Force-kill the helper at each of the §10.1 step boundaries (pre-snapshot, post-snapshot, pre-createAdapter, post-createAdapter, pre-apply, mid-apply, post-apply, pre-mihomo, post-probe); assert next `init()`/`--recover` reverses the journal in order and restores the baseline | journal replay + before/after route/DNS diff per boundary |
+| T5 | **Elevation moniker bootstrap: same-user malicious race-connect** | A second Medium-IL process cannot activate/connect to the running elevated helper while the app is connected, and cannot impersonate the app | attempt activation/connect from a second medium process; assert rejected (identity binding) |
+| T5b | **Second Murge instance race (same path/signature/hash)** | A **second Murge process** — byte-for-byte identical binary (same path, same Authenticode, same SHA-256) — attempts to connect to the running per-activation helper; the helper has already bound the first verified client and **rejects** the second | launch second app; assert its activation/connect is rejected; assert it cannot drive the helper |
+| T6 | **PID reuse** | A client PID whose process object was reused (exited + replaced) is rejected because path/digest/session-key no longer match | exit the app, let a reused PID connect; assert reject |
+| T7 | **Process exit / timeout** | Handshake/command timeout and helper process exit zeroize `launchSecret`/`sessionKey` and leave zero mutation, and the per-activation server **exits** | timeout injection; assert no mutation + secrets zeroed (assert via cleanup path) + helper process gone |
+| T8 | **Replay** | Replayed `HelperCommand` with a stale `requestId` is rejected | replay recorded frame; assert reject |
+| T9 | **Crash injection at every journal record boundary (WAL)** | Force-kill the helper at **each durable-journal boundary** (pre-snapshot, post-snapshot, `CREATE_ADAPTER/PREPARED`-written, **mid-`WintunCreateAdapter`**, post-`CREATE_ADAPTER/APPLIED`, pre-`${op}/PREPARED`, mid-route/DNS mutate, post-`${op}/APPLIED`, pre-mihomo, post-probe, `DELETE_ADAPTER/*`); assert next `init()`/`--recover` reconciles each record against the current OS state and restores the baseline | journal replay + before/after route/DNS diff per boundary; enumerate adapter for `CREATE_ADAPTER` PREPARED-but-unknown |
 | T10 | Crash recovery restores exact prior state | After a forced kill mid-activation, disable restores routes/DNS to the exact pre-enable state | route/DNS diff vs baseline |
-| T11 | Verifies only-one-Murge-adapter uniqueness | A foreign adapter holding the reserved name blocks activation with `conflict`, zero mutation | adapter pre-created with the reserved name; assert `conflict` |
-| T12 | Uninstall restore runs before deletion | Uninstall runs `--recover`, restores routes/DNS, aborts on corrupt snapshot | `NetworkSnapshot` diff; exit code / `Abort` path |
-| T13 | Emergency `--recover` independent of GUI | Kill the app, run `--recover`, assert restored | restored state |
-| T14 | Non-Windows / no helper ⇒ unsupported | Non-Windows or no verified helper returns `{supported:false, phase:'unsupported'}`, zero mutation | status probe unit + CI |
+| T11 | Only-one-Murge-adapter uniqueness + RequestedGUID conflict | A foreign adapter holding the reserved `Name`/`RequestedGUID` blocks activation with `conflict`, zero mutation | adapter pre-created with the reserved identity; assert `conflict` |
+| T12 | **Adapter deletion is explicit + reboot-aware** | After disable, the product adapter is gone; if `WintunDeleteAdapter` reports `RebootRequired`, the journal records `delete-pending` and the next `init()`/`--recover` retries; a **pre-existing/foreign** adapter is never deleted | enumerate adapters; assert product adapter deleted and foreign adapter present; assert delete-pending journal record |
+| T13 | Uninstall restore runs before deletion | Uninstall runs `--recover`, restores routes/DNS, aborts on corrupt snapshot | `NetworkSnapshot` diff; exit code / `Abort` path |
+| T14 | Emergency `--recover` independent of GUI | Kill the app, run `--recover`, assert restored | restored state |
+| T15 | Non-Windows / no helper ⇒ unsupported | Non-Windows or no verified helper returns `{supported:false, phase:'unsupported'}`, zero mutation | status probe unit + CI |

@@ -24,7 +24,7 @@ const PROBE_TIMEOUT_MS = 2500
 const PROBE_HOST = SYSTEM_PROXY_LOOPBACK_HOST
 
 /** Open a TCP connection to the candidate proxy port (fails fast on a dead port). */
-function openTcp(port: number, timeoutMs = PROBE_TIMEOUT_MS): Promise<Socket> {
+export function openTcp(port: number, timeoutMs = PROBE_TIMEOUT_MS): Promise<Socket> {
   return new Promise((resolve, reject) => {
     const socket = connect({ host: PROBE_HOST, port, timeout: timeoutMs })
     const onTimeout = () => {
@@ -46,23 +46,23 @@ function openTcp(port: number, timeoutMs = PROBE_TIMEOUT_MS): Promise<Socket> {
 }
 
 /** Probe the SOCKS5 layer: send a no-auth greeting and require `05 00` back. */
-function probeSocks(port: number, timeoutMs = PROBE_TIMEOUT_MS): Promise<void> {
+export function probeSocks(port: number, timeoutMs = PROBE_TIMEOUT_MS): Promise<void> {
   return new Promise((resolve, reject) => {
     openTcp(port, timeoutMs)
       .then((socket) => {
+        let settled = false
         const finish = (err?: Error) => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
           socket.destroy()
           if (err) reject(err)
           else resolve()
         }
         const timer = setTimeout(() => finish(new Error('SOCKS5 greeting timed out')), timeoutMs)
-        socket.once('error', (err) => {
-          clearTimeout(timer)
-          finish(err)
-        })
+        socket.once('error', (err) => finish(err))
         // Greeting: version 5, 1 offered method (0x00 no-auth). Expect `05 00`.
         socket.once('data', (buf) => {
-          clearTimeout(timer)
           if (buf.length >= 2 && buf[0] === 0x05 && buf[1] === 0x00) finish()
           else finish(new Error(`unexpected SOCKS5 greeting reply: ${buf.toString('hex')}`))
         })
@@ -72,41 +72,48 @@ function probeSocks(port: number, timeoutMs = PROBE_TIMEOUT_MS): Promise<void> {
   })
 }
 
-/** Probe the HTTP-proxy layer: a CONNECT must be answered with an HTTP status line. */
-function probeHttp(port: number, timeoutMs = PROBE_TIMEOUT_MS): Promise<void> {
+/**
+ * Probe the HTTP-proxy layer: a CONNECT must be answered with an HTTP status line.
+ *
+ * The target is ALWAYS the loopback literal `127.0.0.1:1` — never a public DNS
+ * name — so a misbehaving proxy can never trigger a real external CONNECT (P2-2).
+ * The total timeout is kept for the whole exchange (P2-1): a normal `data` chunk
+ * must NOT clear it, otherwise a split status line (e.g. the first chunk is just
+ * `HTT`) with no further data would leave the promise pending forever. The timer
+ * is only cleared by a single `finish`, which is guarded so `data` / `error` /
+ * `close` / timeout each settle the promise exactly once.
+ */
+export function probeHttp(port: number, timeoutMs = PROBE_TIMEOUT_MS): Promise<void> {
   return new Promise((resolve, reject) => {
     openTcp(port, timeoutMs)
       .then((socket) => {
+        let settled = false
+        let timer: ReturnType<typeof setTimeout> | null = null
         const finish = (err?: Error) => {
+          if (settled) return
+          settled = true
+          if (timer) clearTimeout(timer)
           socket.destroy()
           if (err) reject(err)
           else resolve()
         }
-        const timer = setTimeout(
-          () => finish(new Error('HTTP CONNECT response timed out')),
-          timeoutMs
-        )
-        socket.once('error', (err) => {
-          clearTimeout(timer)
-          finish(err)
-        })
+        timer = setTimeout(() => finish(new Error('HTTP CONNECT response timed out')), timeoutMs)
+        socket.once('error', (err) => finish(err))
         let buffer = ''
         socket.on('data', (chunk) => {
-          clearTimeout(timer)
+          if (settled) return
+          // Accumulate: the status line may arrive split across data chunks.
           buffer += chunk.toString('latin1')
-          if (/^(HTTP\/\d\.\d)\s+\d{3}/.test(buffer)) {
+          if (/^(?:HTTP\/\d(?:\.\d)?)\s+\d{3}/.test(buffer)) {
             // Any HTTP status line (2xx, or a proxy 4xx/5xx) proves the port
             // speaks HTTP proxying; a proxy that cannot route still answers 502.
             finish()
           }
         })
         // A proxy that closes without answering is not speaking HTTP for us.
-        socket.once('close', () => {
-          clearTimeout(timer)
-          finish(new Error('HTTP CONNECT closed without a status line'))
-        })
+        socket.once('close', () => finish(new Error('HTTP CONNECT closed without a status line')))
         socket.write(
-          'CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\nUser-Agent: system-proxy-probe\r\n\r\n'
+          'CONNECT 127.0.0.1:1 HTTP/1.1\r\nHost: 127.0.0.1:1\r\nUser-Agent: system-proxy-probe\r\n\r\n'
         )
       })
       .catch(reject)

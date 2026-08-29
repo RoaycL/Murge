@@ -231,26 +231,49 @@ export function restoreArgs(valueName, value) {
  * (the header never starts with a REG_* label). A value-not-found line is
  * treated as absent; anything with a non-zero exit never reaches here (the
  * caller maps it to absence or a failure first).
+ *
+ * This is the **legacy** text parser and is intentionally fail-closed for
+ * numeric values (P1-1): an unparseable REG_DWORD / REG_QWORD hex line is a read
+ * failure and throws rather than being silently coerced to `0`. When `valueName`
+ * is supplied only that name's line is accepted; an exit-0 result with no
+ * matching line is a read failure, never a phantom absence. (The canonical read
+ * path is the PowerShell/.NET reader in `buildRegistryReadScript()`, which also
+ * preserves exact strings that this text parser cannot.)
  */
-export function parseRegQueryValue(raw) {
+export function parseRegQueryValue(raw, valueName = '') {
   const text = String(raw || '')
+  let absent = false
+  let sawValueLine = false
   for (const line of text.split(/\r?\n/)) {
-    const m = line.match(/^\s*(\S+)\s+((?:REG|QWORD)[A-Z_]*)\s+(.*)$/)
+    const m = line.match(/^\s*(\S+)\s+((?:REG|QWORD)[A-Z0-9_]*)\s+(.*)$/)
     if (!m) continue
-    if (/error|unable|not\s+found|cannot/i.test(line)) {
-      // A value-not-found line is absent; anything else with a non-zero exit is
-      // surfaced as a failure by the caller (it never reaches here on error).
-      return ABSENT
+    if (/error|unable to find|not\s+found|cannot/i.test(line)) {
+      // A value-not-found line is absent (uncorrelated with the loop; the caller
+      // maps a non-zero exit to failure before this is reachable on error).
+      absent = true
+      continue
     }
+    if (valueName !== '' && m[1] !== valueName) continue
+    sawValueLine = true
     const type = m[2]
-    const rawValue = m[3].trim()
+    const rawValue = m[3]
     if (type === 'REG_DWORD' || type === 'REG_QWORD') {
-      const n = parseInt(rawValue, 16)
-      return { exists: true, type, value: Number.isFinite(n) ? n : 0 }
+      const hex = rawValue.trim().replace(/^0[xX]/, '')
+      if (hex === '' || !/^[0-9a-fA-F]+$/.test(hex)) {
+        throw new Error(`cannot parse ${type} hex value: ${JSON.stringify(rawValue)}`)
+      }
+      const n = parseInt(hex, 16)
+      if (!Number.isFinite(n)) throw new Error(`cannot parse ${type} hex value: ${JSON.stringify(rawValue)}`)
+      return { exists: true, type, value: n }
     }
     return { exists: true, type, value: rawValue }
   }
-  return ABSENT
+  if (absent) return { ...ABSENT }
+  if (valueName !== '') {
+    throw new Error(`reg query output had no line for value '${valueName}'`)
+  }
+  if (!sawValueLine) throw new Error('reg query output had no registry value line')
+  throw new Error('reg query output had no registry value line')
 }
 
 function looksLikeAccessDenied(text) {
@@ -420,24 +443,25 @@ export async function runRecovery(backupFile, opts = {}) {
   }
 }
 
-/** Read the three HKCU Internet Settings values into a camelCase state object. */
+/**
+ * Read the three HKCU Internet Settings values into a camelCase state object via
+ * the shared PowerShell/.NET reader (exact strings + exact registry types, P1-2).
+ * The output is strictly coerced (P1-1): a malformed value is a read failure.
+ */
 export async function readRegistry(runner) {
-  const out = {}
-  for (const regName of REG_VALUE_NAMES) {
-    const res = await runner.exec('reg.exe', ['query', KEY, '/v', regName], 'reg query')
-    if (res.code !== 0) {
-      if (res.code === 1) {
-        out[REG_STATE_KEYS[regName]] = { ...ABSENT }
-        continue
-      }
-      if (looksLikeAccessDenied(`${res.stderr}${res.stdout}`)) {
-        throw new Error(`reg query ${regName} access denied`)
-      }
-      throw new Error(`reg query ${regName} failed (${res.code})`)
+  const res = await runner.exec('powershell', ['-NoProfile', '-NonInteractive', '-Command', buildRegistryReadScript()], 'registry read')
+  if (res.code !== 0) {
+    if (looksLikeAccessDenied(`${res.stderr}${res.stdout}`)) {
+      throw new Error('registry read access denied')
     }
-    out[REG_STATE_KEYS[regName]] = parseRegQueryValue(res.stdout)
+    throw new Error(`registry read failed (${res.code})`)
   }
-  return out
+  const snapshot = coerceRegistrySnapshot(res.stdout)
+  return {
+    proxyEnable: snapshot.ProxyEnable,
+    proxyServer: snapshot.ProxyServer,
+    proxyOverride: snapshot.ProxyOverride
+  }
 }
 
 /** Apply `state` with each value's exact type (delete when absent). */
@@ -504,6 +528,116 @@ export function buildRefreshScript() {
   return WIN_INET_REFRESH_SCRIPT
 }
 
+/**
+ * The canonical .NET registry-read script, shared byte-for-byte with the main app
+ * (`buildRegistryReadScript()` in the TypeScript adapter) and the CI snapshot
+ * helper (`scripts/system-proxy-snapshot.ps1`). It reads the three HKCU Internet
+ * Settings values in ONE `[Microsoft.Win32.Registry]` call, which returns the
+ * EXACT stored string, the exact `RegistryValueKind` (REG_SZ vs REG_EXPAND_SZ vs
+ * REG_MULTI_SZ vs REG_BINARY), and never expands environment names (a
+ * REG_EXPAND_SZ keeps its `%VAR%`). It emits a single JSON object on stdout:
+ *
+ *   { "ProxyEnable":{exists,type,value}, "ProxyServer":{...}, "ProxyOverride":{...} }
+ *
+ * REG_DWORD / REG_QWORD as numbers; REG_BINARY as an UPPERCASE hex string;
+ * REG_MULTI_SZ joined with ';'; REG_SZ / REG_EXPAND_SZ as the exact string. A
+ * missing value is `{exists:false,type:'none',value:null}`.
+ */
+export const REGISTRY_READ_SCRIPT = `$ErrorActionPreference = 'Stop'
+$keyPath = 'Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'
+$names = @('ProxyEnable', 'ProxyServer', 'ProxyOverride')
+$subKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($keyPath)
+$snapshot = [ordered]@{}
+foreach ($name in $names) {
+  $exists = $false
+  $type = 'none'
+  $value = $null
+  if ($null -ne $subKey) {
+    try {
+      $kind = $subKey.GetValueKind($name)
+      $raw = $subKey.GetValue($name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+      $exists = $true
+      $type = switch ([string]$kind) {
+        'String'       { 'REG_SZ' }
+        'ExpandString' { 'REG_EXPAND_SZ' }
+        'MultiString'  { 'REG_MULTI_SZ' }
+        'Binary'       { 'REG_BINARY' }
+        'DWord'        { 'REG_DWORD' }
+        'QWord'        { 'REG_QWORD' }
+        default        { 'none' }
+      }
+      if ($type -eq 'none') {
+        $exists = $false
+        $value = $null
+      } elseif ($null -eq $raw) {
+        # A present value with no data (e.g. an empty REG_SZ) — never a number.
+        $exists = $true
+        $value = ''
+      } else {
+        $value = switch ($type) {
+          'REG_DWORD'    { [int64]$raw }
+          'REG_QWORD'    { [int64]$raw }
+          'REG_BINARY'   { ([System.BitConverter]::ToString([byte[]]$raw) -replace '-', '') }
+          'REG_MULTI_SZ' { ([string[]]$raw) -join ';' }
+          default        { [string]$raw }
+        }
+      }
+    } catch {
+      # GetValueKind throws for a named value that is not present -> absent.
+      $exists = $false
+      $type = 'none'
+      $value = $null
+    }
+  }
+  $snapshot[$name] = @{ exists = $exists; type = $type; value = $value }
+}
+$snapshot | ConvertTo-Json -Depth 5 -Compress
+`
+
+export function buildRegistryReadScript() {
+  return REGISTRY_READ_SCRIPT
+}
+
+const SNAPSHOT_KEYS = ['ProxyEnable', 'ProxyServer', 'ProxyOverride']
+
+/** Strictly coerce one value object from the registry snapshot JSON (fail-closed). */
+function coerceRegistryValue(raw, name) {
+  if (!isPlainObject(raw)) throw new Error(`registry snapshot is missing '${name}'`)
+  const { exists, type, value } = raw
+  if (typeof exists !== 'boolean') throw new Error(`registry snapshot ${name}.exists is not a boolean`)
+  if (!exists) {
+    if (type !== 'none' || value !== null) throw new Error(`registry snapshot ${name} is absent but inconsistent`)
+    return { ...ABSENT }
+  }
+  if (typeof type !== 'string' || !REGISTRY_TYPES.includes(type) || type === 'none') {
+    throw new Error(`registry snapshot ${name}.type is invalid`)
+  }
+  if (type === 'REG_DWORD' || type === 'REG_QWORD') {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw new Error(`registry snapshot ${name} is not a valid ${type} number`)
+    }
+    return { exists: true, type, value }
+  }
+  if (typeof value !== 'string') throw new Error(`registry snapshot ${name} is not a valid ${type} string`)
+  return { exists: true, type, value }
+}
+
+/** Parse the `REGISTRY_READ_SCRIPT` JSON stdout into the canonical snapshot. */
+export function coerceRegistrySnapshot(stdout) {
+  let parsed
+  try {
+    parsed = JSON.parse(String(stdout || ''))
+  } catch (error) {
+    throw new Error(`registry snapshot is not valid JSON: ${error.message}`)
+  }
+  if (!isPlainObject(parsed)) throw new Error('registry snapshot is not a JSON object')
+  const snapshot = {}
+  for (const name of SNAPSHOT_KEYS) {
+    snapshot[name] = coerceRegistryValue(parsed[name], name)
+  }
+  return snapshot
+}
+
 /** Default runner over the real Windows tools. Tests inject a mock. */
 export function defaultRunner() {
   const exec = async (command, args, what) => {
@@ -538,11 +672,12 @@ export function defaultRunner() {
 }
 
 function parseCli(argv) {
-  const opts = { backupPath: null, dryRun: false, printRefreshScript: false, validate: null }
+  const opts = { backupPath: null, dryRun: false, printRefreshScript: false, printReadScript: false, validate: null }
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '--backup') opts.backupPath = argv[++i]
     else if (argv[i] === '--dry-run') opts.dryRun = true
     else if (argv[i] === '--print-refresh-script') opts.printRefreshScript = true
+    else if (argv[i] === '--print-read-script') opts.printReadScript = true
     else if (argv[i] === '--validate') opts.validate = argv[++i]
   }
   return opts
@@ -553,6 +688,11 @@ async function main() {
 
   if (opts.printRefreshScript) {
     process.stdout.write(buildRefreshScript())
+    return
+  }
+
+  if (opts.printReadScript) {
+    process.stdout.write(buildRegistryReadScript())
     return
   }
 

@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { createServer, type Server, type Socket } from 'node:net'
 import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
 import { SYSTEM_PROXY_LOOPBACK_HOST } from '@shared/system-proxy'
-import { LiveSystemProxyKernelProbe } from '../src/main/system-proxy/probe'
+import { LiveSystemProxyKernelProbe, probeHttp, probeSocks } from '../src/main/system-proxy/probe'
 import type { KernelGateway } from '../src/shared/gateways'
 import type { MihomoConfigSnapshot } from '../src/shared/mihomo-api'
 /**
@@ -123,5 +123,111 @@ describe('LiveSystemProxyKernelProbe', () => {
         code: ProtocolErrorCode.SYSTEM_PROXY_KERNEL_REQUIRED
       })
     }
+  })
+})
+
+describe('probeHttp timeout / target safety (P2-1, P2-2)', () => {
+  const servers: Server[] = []
+  afterEach(() => {
+    for (const server of servers) server.close()
+    servers.length = 0
+  })
+
+  function listen(handler: (socket: Socket) => void): Promise<{ server: Server; port: number }> {
+    return new Promise((resolve) => {
+      const server = createServer(handler)
+      server.listen(0, SYSTEM_PROXY_LOOPBACK_HOST, () => {
+        const address = server.address() as { port: number }
+        resolve({ server, port: address.port })
+      })
+    })
+  }
+
+  it('times out on a split status line that never completes (P2-1)', async () => {
+    // The proxy answers only the first fragment `HTT`, then holds the connection
+    // open with NO further data. The OLD probe cleared its total timer on that
+    // first chunk, leaving the promise pending forever; the fix keeps the timer.
+    const { server, port } = await listen((socket) => {
+      socket.on('data', () => {
+        socket.write('HTT')
+        // intentionally: no close, no more data
+      })
+    })
+    servers.push(server)
+    await expect(probeHttp(port, 250)).rejects.toThrow(/timed out/)
+  })
+
+  it('accepts a proxy 5xx status line (502 Bad Gateway) as proof of HTTP proxying', async () => {
+    const { server, port } = await listen((socket) => {
+      socket.on('data', () => {
+        socket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n')
+      })
+    })
+    servers.push(server)
+    await expect(probeHttp(port, 400)).resolves.toBeUndefined()
+  })
+
+  it('sends its CONNECT to the explicit loopback literal, never a public host (P2-2)', async () => {
+    let connectTarget = ''
+    const { server, port } = await listen((socket) => {
+      socket.on('data', (chunk) => {
+        const text = chunk.toString('latin1')
+        const m = /^CONNECT (\S+)/.exec(text)
+        if (m) connectTarget = m[1]
+        if (/^CONNECT .* HTTP/.test(text)) socket.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+      })
+    })
+    servers.push(server)
+    await expect(probeHttp(port, 400)).resolves.toBeUndefined()
+    expect(connectTarget).toBe('127.0.0.1:1')
+  })
+
+  it('settles exactly once when a proxy answers then immediately closes', async () => {
+    const { server, port } = await listen((socket) => {
+      socket.on('data', () => {
+        socket.write('HTTP/1.1 200 OK\r\n\r\n')
+        socket.end()
+      })
+    })
+    servers.push(server)
+    // Must not reject with a spurious "closed without a status line" after the
+    // status line already satisfied the probe (the `finish` guard).
+    await expect(probeHttp(port, 400)).resolves.toBeUndefined()
+  })
+})
+
+describe('probeSocks', () => {
+  const servers: Server[] = []
+  afterEach(() => {
+    for (const server of servers) server.close()
+    servers.length = 0
+  })
+
+  it('accepts the SOCKS5 no-auth greeting reply', async () => {
+    const server = createServer((socket: Socket) => {
+      socket.on('data', () => socket.write(Buffer.from([0x05, 0x00])))
+    })
+    const port = await new Promise<number>((resolve) => {
+      server.listen(0, SYSTEM_PROXY_LOOPBACK_HOST, () => {
+        const address = server.address() as { port: number }
+        resolve(address.port)
+      })
+    })
+    servers.push(server)
+    await expect(probeSocks(port, 400)).resolves.toBeUndefined()
+  })
+
+  it('rejects when the greeting reply is not a SOCKS5 no-auth method', async () => {
+    const server = createServer((socket: Socket) => {
+      socket.on('data', () => socket.write(Buffer.from([0x05, 0xff])))
+    })
+    const port = await new Promise<number>((resolve) => {
+      server.listen(0, SYSTEM_PROXY_LOOPBACK_HOST, () => {
+        const address = server.address() as { port: number }
+        resolve(address.port)
+      })
+    })
+    servers.push(server)
+    await expect(probeSocks(port, 400)).rejects.toThrow(/unexpected SOCKS5 greeting reply/)
   })
 })

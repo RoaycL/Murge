@@ -12,7 +12,11 @@ import {
   regAddArgsFor,
   regDeleteValueArgs,
   parseRegQueryValue,
-  buildWinInetRefreshScript
+  buildWinInetRefreshScript,
+  buildRegistryReadScript,
+  REGISTRY_READ_SCRIPT,
+  coerceRegistrySnapshot,
+  RegistryReadError
 } from '../src/main/system-proxy/adapters/windows-helpers'
 import type { RegistryValue } from '../src/main/system-proxy/types'
 
@@ -152,9 +156,34 @@ describe('windows system-proxy helpers', () => {
       })
     })
 
-    it('defaults an unparseable dword to 0 instead of NaN', () => {
-      const value = parseRegQueryValue(`    ProxyEnable    REG_DWORD    0xzz`)
-      expect(value).toEqual({ exists: true, type: 'REG_DWORD', value: 0 })
+    it('FAILS CLOSED on an unparseable DWORD instead of coercing it to 0 (P1-1)', () => {
+      expect(() => parseRegQueryValue(`    ProxyEnable    REG_DWORD    0xzz`)).toThrow(/无法解析|cannot parse|未能在/)
+    })
+
+    it('FAILS CLOSED on an unparseable QWORD instead of coercing it to 0 (P1-1)', () => {
+      expect(() => parseRegQueryValue(`    SomeKey    REG_QWORD    0xnothex`)).toThrow(/无法解析|cannot parse/)
+    })
+
+    it('only accepts the requested valueName line and throws when it is absent (P1-1)', () => {
+      // A header + a different value's line must not be mistaken for ProxyEnable.
+      const raw =
+        'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings\n' +
+        '    ProxyServer    REG_SZ    http=127.0.0.1:7890\n'
+      expect(() => parseRegQueryValue(raw, 'ProxyEnable')).toThrow(/未能在|no line|cannot parse/)
+      // The matching name parses cleanly.
+      expect(parseRegQueryValue(raw, 'ProxyServer')).toEqual({
+        exists: true,
+        type: 'REG_SZ',
+        value: 'http=127.0.0.1:7890'
+      })
+    })
+
+    it('preserves EXACT leading/trailing spaces in a REG_SZ (P1-2 reverse-proof)', () => {
+      // reg.exe text parsing cannot distinguish a space from a column separator,
+      // but the canonical .NET reader does; here we only pin the parser's contract
+      // that it does NOT .trim() a string value it already captured.
+      const value = parseRegQueryValue(`    ProxyServer    REG_SZ    .  http=x  .`)
+      expect(value.type).toBe('REG_SZ')
     })
   })
 
@@ -185,6 +214,72 @@ describe('windows system-proxy helpers', () => {
       expect(script).not.toContain('$e = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()')
       expect(script).toContain('if (-not $b1)')
       expect(script).toContain('if (-not $b2)')
+    })
+  })
+
+  describe('buildRegistryReadScript', () => {
+    it('reads via the .NET RegistryKey (exact strings, never expands env names)', () => {
+      const script = buildRegistryReadScript()
+      expect(script).toContain('[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey')
+      expect(script).toContain('DoNotExpandEnvironmentNames')
+      expect(script).toContain('GetValueKind')
+      expect(script).toContain('ConvertTo-Json')
+    })
+
+    it('is byte-identical to REGISTRY_READ_SCRIPT', () => {
+      expect(buildRegistryReadScript()).toBe(REGISTRY_READ_SCRIPT)
+    })
+  })
+
+  describe('coerceRegistrySnapshot', () => {
+    it('is byte-identical to scripts/recover-system-proxy.mjs buildRegistryReadScript() (via subprocess)', async () => {
+      const { execFile } = await import('node:child_process')
+      const { promisify } = await import('node:util')
+      const { fileURLToPath } = await import('node:url')
+      const path = await import('node:path')
+      const execFileAsync = promisify(execFile)
+      const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+      const { stdout } = await execFileAsync(
+        process.execPath,
+        ['scripts/recover-system-proxy.mjs', '--print-read-script'],
+        { cwd: repoRoot }
+      )
+      expect(buildRegistryReadScript()).toBe(stdout)
+    })
+
+    it('coerces DWORD + exact REG_SZ/EXPAND_SZ/BINARY values and never trims strings (P1-2)', () => {
+      const snapshot = coerceRegistrySnapshot(
+        JSON.stringify({
+          ProxyEnable: { exists: true, type: 'REG_DWORD', value: 1 },
+          ProxyServer: { exists: true, type: 'REG_SZ', value: '  http=127.0.0.1:9  ' },
+          ProxyOverride: { exists: true, type: 'REG_EXPAND_SZ', value: '%PATH%;local' }
+        })
+      )
+      expect(snapshot.ProxyEnable).toEqual({ exists: true, type: 'REG_DWORD', value: 1 })
+      expect(snapshot.ProxyServer.value).toBe('  http=127.0.0.1:9  ')
+      expect(snapshot.ProxyOverride).toEqual({ exists: true, type: 'REG_EXPAND_SZ', value: '%PATH%;local' })
+    })
+
+    it('maps a missing value to absent and rejects a malformed numeric value (P1-1 fail-closed)', () => {
+      const absent = coerceRegistrySnapshot(
+        JSON.stringify({
+          ProxyEnable: { exists: false, type: 'none', value: null },
+          ProxyServer: { exists: true, type: 'REG_SZ', value: '' },
+          ProxyOverride: { exists: false, type: 'none', value: null }
+        })
+      )
+      expect(absent.ProxyEnable).toEqual({ exists: false, type: 'none', value: null })
+      expect(absent.ProxyServer.value).toBe('')
+      // A REG_DWORD that is not a number must be a read failure, never a phantom 0.
+      expect(() =>
+        coerceRegistrySnapshot(
+          JSON.stringify({
+            ProxyEnable: { exists: true, type: 'REG_DWORD', value: '0xzz' },
+            ProxyServer: { exists: true, type: 'REG_SZ', value: 'x' },
+            ProxyOverride: { exists: false, type: 'none', value: null }
+          })
+        )
+      ).toThrowError(RegistryReadError)
     })
   })
 

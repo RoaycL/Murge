@@ -177,10 +177,13 @@ jobs:
       # than merely "left some value". A fresh Windows runner normally has it
       # disabled (ProxyEnable=0/absent), but capturing the real baseline removes
       # any flakiness from a runner image that already had a proxy configured.
-      # Uses reg.exe query via scripts/system-proxy-snapshot.ps1 because
-      # Get-ItemPropertyValue THROWS on a missing named property in GH Actions
-      # pwsh even with -ErrorAction SilentlyContinue (P1 #1), so a never-set
-      # ProxyServer / ProxyOverride would fail the baseline capture outright.
+      # Captures the pre-run per-user HKCU proxy baseline via
+      # scripts/system-proxy-snapshot.ps1. It reads through the SAME .NET
+      # RegistryKey reader as the app/recovery helper (exact strings + exact
+      # registry types) because Get-ItemPropertyValue THROWS on a missing named
+      # property in GH Actions pwsh even with -ErrorAction SilentlyContinue
+      # (P1 #1), so a never-set ProxyServer / ProxyOverride would fail the
+      # baseline capture outright.
       - name: Capture pre-run HKCU system-proxy baseline
         shell: pwsh
         run: |

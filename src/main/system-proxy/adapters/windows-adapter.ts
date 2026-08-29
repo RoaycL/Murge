@@ -10,12 +10,12 @@ import {
   PROXY_ENABLE_VALUE,
   PROXY_OVERRIDE_VALUE,
   PROXY_SERVER_VALUE,
+  buildRegistryReadScript,
   buildWinInetRefreshScript,
-  parseRegQueryValue,
+  coerceRegistrySnapshot,
   regAddArgsFor,
   regAddDwordArgs,
-  regAddStringArgs,
-  regQueryValueArgs
+  regAddStringArgs
 } from './windows-helpers'
 
 export interface RunResult {
@@ -45,12 +45,6 @@ function defaultRunner(command: string, args: string[]): Promise<RunResult> {
       resolve({ stdout: String(stdout ?? ''), stderr: String(stderr ?? ''), code: typeof code === 'number' ? code : 0 })
     })
   })
-}
-
-/** Whether the output signals a registry access/authorization failure (never "absent"). */
-function looksLikeAccessDenied(result: RunResult): boolean {
-  const text = `${result.stderr}\n${result.stdout}`.toLowerCase()
-  return /access\s+is\s+denied|access.*denied|denied|拒绝访问|无法打开|permission denied/i.test(text)
 }
 
 /**
@@ -87,36 +81,53 @@ export class WindowsSystemProxyAdapter implements SystemProxyAdapter {
     return result
   }
 
-  async readValue(valueName: string): Promise<RegistryValue> {
-    let result: RunResult
+  /**
+   * Read all three HKCU Internet Settings values in ONE PowerShell/.NET call.
+   *
+   * The .NET reader returns the exact stored string, the exact registry type
+   * (REG_SZ vs REG_EXPAND_SZ vs REG_BINARY) and never expands environment names,
+   * so a REG_SZ carrying leading/trailing spaces or a REG_EXPAND_SZ with `%VAR%`
+   * round-trips faithfully (P1-2). The output is strictly coerced (P1-1): a
+   * malformed value is a read failure, never a phantom `0` / absent.
+   */
+  private async readRegistrySnapshot(): Promise<Record<'ProxyEnable' | 'ProxyServer' | 'ProxyOverride', RegistryValue>> {
+    const result = await this.runChecked(
+      POWERSHELL_COMMAND,
+      ['-NoProfile', '-NonInteractive', '-Command', buildRegistryReadScript()],
+      ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED,
+      '读取系统代理注册表值失败'
+    )
     try {
-      result = await this.run(REG_COMMAND, regQueryValueArgs(valueName))
+      return coerceRegistrySnapshot(result.stdout)
     } catch (error) {
-      // reg.exe could not be executed at all — that is an error, not "absent".
-      throw new ProtocolError(ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED, `无法执行 reg.exe 读取注册表项 ${valueName}：${(error as Error).message}`)
+      throw new ProtocolError(
+        ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED,
+        `解析系统代理注册表快照失败：${(error as Error).message}`
+      )
     }
-    if (result.code === 0) {
-      return parseRegQueryValue(result.stdout, valueName)
+  }
+
+  async readValue(valueName: string): Promise<RegistryValue> {
+    const snapshot = await this.readRegistrySnapshot()
+    switch (valueName) {
+      case PROXY_ENABLE_VALUE:
+        return snapshot.ProxyEnable
+      case PROXY_SERVER_VALUE:
+        return snapshot.ProxyServer
+      case PROXY_OVERRIDE_VALUE:
+        return snapshot.ProxyOverride
+      default:
+        throw new ProtocolError(ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED, `未知的注册表项 ${valueName}`)
     }
-    if (looksLikeAccessDenied(result)) {
-      throw new ProtocolError(ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED, `读取注册表项 ${valueName} 被拒绝（权限不足）`)
-    }
-    // `reg query` signals a missing value with exit code 1 — that is the only
-    // outcome the controller treats as "value absent". Any other non-zero code
-    // (e.g. access denied on another hive) is an error, never a phantom absence.
-    if (result.code === 1) {
-      return { exists: false, type: 'none', value: null }
-    }
-    throw new ProtocolError(ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED, `读取注册表项 ${valueName} 失败 (${result.code})`)
   }
 
   async read(): Promise<SystemProxyRegistryState> {
-    const [proxyEnable, proxyServer, proxyOverride] = await Promise.all([
-      this.readValue(PROXY_ENABLE_VALUE),
-      this.readValue(PROXY_SERVER_VALUE),
-      this.readValue(PROXY_OVERRIDE_VALUE)
-    ])
-    return { proxyEnable, proxyServer, proxyOverride }
+    const snapshot = await this.readRegistrySnapshot()
+    return {
+      proxyEnable: snapshot.ProxyEnable,
+      proxyServer: snapshot.ProxyServer,
+      proxyOverride: snapshot.ProxyOverride
+    }
   }
 
   async apply(written: SystemProxyWrittenState): Promise<void> {

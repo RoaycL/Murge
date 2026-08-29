@@ -101,6 +101,32 @@ function runCli(script: string, args: string[]): Promise<{ code: number | null; 
   })
 }
 
+/** Spawn `reg.exe` (Windows) and resolve {code, stdout, stderr} on close. */
+function runReg(args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('reg.exe', args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout?.on('data', (d) => (stdout += String(d)))
+    child.stderr?.on('data', (d) => (stderr += String(d)))
+    child.on('error', reject)
+    child.on('close', (code) => resolve({ code, stdout, stderr }))
+  })
+}
+
+const INTERNET_SETTINGS_KEY = String.raw`HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`
+
+/** Write one registry value exactly (reg.exe `/d` preserves the literal data). */
+async function regAddExact(name: string, type: string, data: string): Promise<void> {
+  const res = await runReg(['add', INTERNET_SETTINGS_KEY, '/v', name, '/t', type, '/d', data, '/f'])
+  if (res.code !== 0) {
+    throw new Error(`reg add ${name} ${type} failed (${res.code}): ${res.stderr || res.stdout}`)
+  }
+}
+
 run('real Windows system-proxy lifecycle + crash recovery (gated)', () => {
   let tempDir = ''
   let service: SystemProxyService | null = null
@@ -214,5 +240,51 @@ run('real Windows system-proxy lifecycle + crash recovery (gated)', () => {
     await expect(unlink(backupFile)).rejects.toMatchObject({ code: 'ENOENT' })
     const afterSnap = await captureNetworkSnapshot()
     expect(afterSnap).toEqual(beforeSnap)
+  }, 180000)
+
+  it('read + enable/disable round-trip preserves exact REG_SZ spaces, REG_EXPAND_SZ and REG_BINARY (P1-2)', async () => {
+    adapter = new WindowsSystemProxyAdapter()
+    tempDir = await mkdtemp(join(tmpdir(), 'murge-sysproxy-unusual-'))
+    const backup = FileSystemProxyBackupStore.forAppDataBase(tempDir)
+    service = new SystemProxyService({
+      adapter,
+      probe: new StaticSystemProxyProbe(TARGET),
+      backup,
+      instanceId: 'real-windows-unusual'
+    })
+
+    // Seed the registry with the EXACT unusual values via reg.exe `/d`
+    // (which stores the literal string, including the leading/trailing spaces and
+    // the UNEXPANDED `%PATH%`). This is precisely the state the OLD text parser
+    // corrupted: `.trim()`/`.TrimEnd()` ate the spaces and the snapshot regex
+    // `(REG_[A-Z]+)` could not match REG_EXPAND_SZ / REG_BINARY.
+    await regAddExact('ProxyEnable', 'REG_BINARY', 'CAFEBABE')
+    await regAddExact('ProxyServer', 'REG_SZ', '  http=127.0.0.1:9  ')
+    await regAddExact('ProxyOverride', 'REG_EXPAND_SZ', '%PATH%;local')
+
+    const unusualBefore: SystemProxyRegistryState = {
+      proxyEnable: { exists: true, type: 'REG_BINARY', value: 'CAFEBABE' },
+      proxyServer: { exists: true, type: 'REG_SZ', value: '  http=127.0.0.1:9  ' },
+      proxyOverride: { exists: true, type: 'REG_EXPAND_SZ', value: '%PATH%;local' }
+    }
+    before = unusualBefore
+
+    // Read-back must return the EXACT value written — no trimming, no type
+    // downgrade, no hex case change, no env-name expansion.
+    const readBack = await adapter.read()
+    expect(readBack).toEqual(unusualBefore)
+
+    // Enabled proxy over an unusual pre-enable state.
+    const status = await timePhase('enable-unusual', 60000, () => service!.enable())
+    expect(status.phase).toBe('enabled')
+    const now = await adapter.read()
+    expect(now.proxyEnable).toEqual(dword(1))
+    expect(now.proxyServer.value).toBe('http=127.0.0.1:7890;https=127.0.0.1:7890;socks=127.0.0.1:7890')
+
+    // Disable must faithfully restore the EXACT unusual pre-enable values.
+    const disabled = await timePhase('disable-unusual', 60000, () => service!.disable())
+    expect(disabled.phase).toBe('disabled')
+    const after = await adapter.read()
+    expect(after).toEqual(unusualBefore)
   }, 180000)
 })

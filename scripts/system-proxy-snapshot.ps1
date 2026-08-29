@@ -1,20 +1,20 @@
 # Snapshot the three HKCU Internet Settings system-proxy values as a JSON object.
 #
 # CI-only helper used by .github/workflows/ci.yml. It reads the registry through
-# `reg.exe query` (NOT `Get-ItemPropertyValue`) because GH Actions' pwsh throws
-# on a MISSING named property even with `-ErrorAction SilentlyContinue`, which is
-# the case for a never-set ProxyServer / ProxyOverride. It emits one JSON object
-# per value describing {exists, type, value} so the before/after comparison is the
-# exact exists + registry type + raw value triple, not a bare scalar.
+# the SAME .NET reader as the main app (`windows-helpers.ts`) and the standalone
+# recovery helper (`recover-system-proxy.mjs`) — NOT `reg.exe` text parsing and
+# NOT `Get-ItemPropertyValue` (which throws on a MISSING named property in GH
+# Actions' pwsh even with `-ErrorAction SilentlyContinue`). `[Microsoft.Win32.Registry]`
+# returns the EXACT stored string, the exact `RegistryValueKind` (REG_SZ vs
+# REG_EXPAND_SZ vs REG_BINARY), and never expands environment names, so a REG_SZ
+# with leading/trailing spaces or a REG_EXPAND_SZ with `%VAR%` round-trips.
 #
 # Output (single JSON object on stdout, nothing else):
-#   { "proxyEnable":   {exists,type,value},
-#     "proxyServer":   {exists,type,value},
-#     "proxyOverride": {exists,type,value} }
+#   { "ProxyEnable":{exists,type,value}, "ProxyServer":{...}, "ProxyOverride":{...} }
 #
-# For a value that is not present, `type` is "none" and `value` is null. REG_DWORD
-# / REG_QWORD values are emitted as numbers (hex from reg.exe is decoded), while
-# REG_SZ / REG_EXPAND_SZ / REG_MULTI_SZ / REG_BINARY are emitted as strings.
+# REG_DWORD / REG_QWORD are emitted as numbers, REG_BINARY as an UPPERCASE hex
+# string, REG_MULTI_SZ joined with ';', REG_SZ / REG_EXPAND_SZ as the exact
+# string. A missing value is `{exists:false,type:'none',value:null}`.
 param(
   [string]$Key = 'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
 )
@@ -23,64 +23,55 @@ $ErrorActionPreference = 'Stop'
 
 $names = @('ProxyEnable', 'ProxyServer', 'ProxyOverride')
 
-# Returns {exists,type,value} for a single value name, or null when absent.
-function Convert-RegValue {
-  param(
-    [string]$Name,
-    [string]$Type,
-    [string]$Data
-  )
-  $normalizedType = $Type.ToUpperInvariant()
-  switch ($normalizedType) {
-    'REG_DWORD' {
-      $hex = ($Data -replace '^0[xX]', '').Trim()
-      if ($hex -eq '') { $number = 0 } else { $number = [Convert]::ToInt64($hex, 16) }
-      return @{ exists = $true; type = $normalizedType; value = [int64]$number }
-    }
-    'REG_QWORD' {
-      $hex = ($Data -replace '^0[xX]', '').Trim()
-      if ($hex -eq '') { $number = 0 } else { $number = [Convert]::ToInt64($hex, 16) }
-      return @{ exists = $true; type = $normalizedType; value = [int64]$number }
-    }
-    'REG_MULTI_SZ' {
-      # Multi-line data is joined with ';' to keep the value a single string.
-      $parts = @()
-      foreach ($line in ($Data -split "`r?`n")) {
-        $t = $line.TrimEnd()
-        if ($t.Length -gt 0) { $parts += $t }
-      }
-      return @{ exists = $true; type = $normalizedType; value = ($parts -join ';') }
-    }
-    'REG_BINARY' {
-      return @{ exists = $true; type = $normalizedType; value = $Data.Trim() }
-    }
-    default {
-      # REG_SZ / REG_EXPAND_SZ (and any unknown REG_*): preserve the literal value.
-      return @{ exists = $true; type = $normalizedType; value = $Data.TrimEnd() }
-    }
-  }
-}
+# Translate the full HKCU\... path supplied (or its default) into the subkey path.
+$subKeyPath = $Key
+if ($subKeyPath -match '^HKCU\\(.+)$') { $subKeyPath = $Matches[1] }
 
-$raw = & reg.exe query $Key 2>$null
-$exitCode = $LASTEXITCODE
-
-$found = @{}
-if ($exitCode -eq 0 -and $null -ne $raw) {
-  foreach ($line in $raw) {
-    $m = [regex]::Match($line, '^\s+(\S+)\s+(REG_[A-Z]+)\s+(.*)$')
-    if ($m.Success) {
-      $found[$m.Groups[1].Value] = Convert-RegValue -Name $m.Groups[1].Value -Type $m.Groups[2].Value -Data $m.Groups[3].Value
-    }
-  }
-}
+$subKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($subKeyPath)
 
 $snapshot = [ordered]@{}
 foreach ($name in $names) {
-  if ($found.ContainsKey($name)) {
-    $snapshot[$name] = $found[$name]
-  } else {
-    $snapshot[$name] = @{ exists = $false; type = 'none'; value = $null }
+  $exists = $false
+  $type = 'none'
+  $value = $null
+  if ($null -ne $subKey) {
+    try {
+      $kind = $subKey.GetValueKind($name)
+      $raw = $subKey.GetValue($name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+      $exists = $true
+      $type = switch ([string]$kind) {
+        'String'       { 'REG_SZ' }
+        'ExpandString' { 'REG_EXPAND_SZ' }
+        'MultiString'  { 'REG_MULTI_SZ' }
+        'Binary'       { 'REG_BINARY' }
+        'DWord'        { 'REG_DWORD' }
+        'QWord'        { 'REG_QWORD' }
+        default        { 'none' }
+      }
+      if ($type -eq 'none') {
+        $exists = $false
+        $value = $null
+      } elseif ($null -eq $raw) {
+        # A present value with no data (e.g. an empty REG_SZ) — never a number.
+        $exists = $true
+        $value = ''
+      } else {
+        $value = switch ($type) {
+          'REG_DWORD'    { [int64]$raw }
+          'REG_QWORD'    { [int64]$raw }
+          'REG_BINARY'   { ([System.BitConverter]::ToString([byte[]]$raw) -replace '-', '') }
+          'REG_MULTI_SZ' { ([string[]]$raw) -join ';' }
+          default        { [string]$raw }
+        }
+      }
+    } catch {
+      # GetValueKind throws for a named value that is not present -> absent.
+      $exists = $false
+      $type = 'none'
+      $value = $null
+    }
   }
+  $snapshot[$name] = @{ exists = $exists; type = $type; value = $value }
 }
 
 $snapshot | ConvertTo-Json -Depth 5 -Compress

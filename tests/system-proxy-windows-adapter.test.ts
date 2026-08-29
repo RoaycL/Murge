@@ -27,22 +27,55 @@ const WRITTEN: SystemProxyWrittenState = {
 
 describe('WindowsSystemProxyAdapter', () => {
   describe('readValue / read', () => {
-    it('parses an existing REG_DWORD into a typed value', async () => {
+    it('parses an existing REG_DWORD into a typed value via the .NET reader', async () => {
       const { runner } = makeRunner({
-        reg: () => ok('    ProxyEnable    REG_DWORD    0x1')
+        powershell: () =>
+          ok(
+            JSON.stringify({
+              ProxyEnable: { exists: true, type: 'REG_DWORD', value: 1 },
+              ProxyServer: { exists: true, type: 'REG_SZ', value: 'http=127.0.0.1:7890' },
+              ProxyOverride: { exists: true, type: 'REG_SZ', value: '<local>' }
+            })
+          )
       })
       const adapter = new WindowsSystemProxyAdapter(runner)
       await expect(adapter.readValue(PROXY_ENABLE_VALUE)).resolves.toEqual({ exists: true, type: 'REG_DWORD', value: 1 })
     })
 
-    it('treats exit code 1 as an absent value (never a phantom typed value)', async () => {
-      const { runner } = makeRunner({ reg: () => exit(1) })
+    it('preserves exact REG_SZ spaces and the REG_EXPAND_SZ type (P1-2)', async () => {
+      const { runner } = makeRunner({
+        powershell: () =>
+          ok(
+            JSON.stringify({
+              ProxyEnable: { exists: true, type: 'REG_DWORD', value: 1 },
+              ProxyServer: { exists: true, type: 'REG_SZ', value: '  http=127.0.0.1:9  ' },
+              ProxyOverride: { exists: true, type: 'REG_EXPAND_SZ', value: '%PATH%;local' }
+            })
+          )
+      })
+      const adapter = new WindowsSystemProxyAdapter(runner)
+      const state = await adapter.read()
+      expect(state.proxyServer.value).toBe('  http=127.0.0.1:9  ')
+      expect(state.proxyOverride).toEqual({ exists: true, type: 'REG_EXPAND_SZ', value: '%PATH%;local' })
+    })
+
+    it('treats exists:false in the snapshot as an absent value', async () => {
+      const { runner } = makeRunner({
+        powershell: () =>
+          ok(
+            JSON.stringify({
+              ProxyEnable: { exists: false, type: 'none', value: null },
+              ProxyServer: { exists: true, type: 'REG_SZ', value: '' },
+              ProxyOverride: { exists: false, type: 'none', value: null }
+            })
+          )
+      })
       const adapter = new WindowsSystemProxyAdapter(runner)
       await expect(adapter.readValue(PROXY_ENABLE_VALUE)).resolves.toEqual({ exists: false, type: 'none', value: null })
     })
 
-    it('surfaces a non-zero, non-1 exit as a typed error instead of "absent"', async () => {
-      const { runner } = makeRunner({ reg: () => exit(2, 'boom') })
+    it('surfaces a non-zero exit as a typed error instead of "absent"', async () => {
+      const { runner } = makeRunner({ powershell: () => exit(2, 'boom') })
       const adapter = new WindowsSystemProxyAdapter(runner)
       await expect(adapter.readValue(PROXY_ENABLE_VALUE)).rejects.toMatchObject({
         code: ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED
@@ -50,16 +83,29 @@ describe('WindowsSystemProxyAdapter', () => {
     })
 
     it('surfaces an access-denied exit as an authorization error', async () => {
-      const { runner } = makeRunner({
-        reg: () => exit(5, 'ERROR: Access is denied.')
-      })
+      const { runner } = makeRunner({ powershell: () => exit(5, 'ERROR: Access is denied.') })
       const adapter = new WindowsSystemProxyAdapter(runner)
       await expect(adapter.readValue(PROXY_ENABLE_VALUE)).rejects.toMatchObject({
         code: ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED
       })
     })
 
-    it('surfaces a transport failure (reg.exe not executable) as a typed error', async () => {
+    it('surfaces a malformed snapshot (bad REG_DWORD) as a typed error (P1-1 fail-closed)', async () => {
+      const { runner } = makeRunner({
+        powershell: () =>
+          ok(
+            JSON.stringify({
+              ProxyEnable: { exists: true, type: 'REG_DWORD', value: '0xzz' },
+              ProxyServer: { exists: true, type: 'REG_SZ', value: 'x' },
+              ProxyOverride: { exists: false, type: 'none', value: null }
+            })
+          )
+      })
+      const adapter = new WindowsSystemProxyAdapter(runner)
+      await expect(adapter.read()).rejects.toMatchObject({ code: ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED })
+    })
+
+    it('surfaces a transport failure (powershell not executable) as a typed error', async () => {
       const { runner } = makeRunner({})
       const adapter = new WindowsSystemProxyAdapter(runner)
       await expect(adapter.read()).rejects.toMatchObject({ code: ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED })

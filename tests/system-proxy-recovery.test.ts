@@ -12,6 +12,7 @@ let validateRestorableState: RecoveryScript['validateRestorableState']
 let sameRegistryValue: RecoveryScript['sameRegistryValue']
 let isOwned: RecoveryScript['isOwned']
 let restoreArgs: RecoveryScript['restoreArgs']
+let readRegistry: RecoveryScript['readRegistry']
 
 beforeAll(async () => {
   if (process.platform === 'win32') return
@@ -22,6 +23,7 @@ beforeAll(async () => {
   sameRegistryValue = mod.sameRegistryValue
   isOwned = mod.isOwned
   restoreArgs = mod.restoreArgs
+  readRegistry = mod.readRegistry
 })
 
 const describePortable = process.platform === 'win32' ? describe.skip : describe
@@ -66,8 +68,18 @@ function makeRegistry(initial: Record<string, V> = {}) {
   const exec = async (command: string, args: string[]) => {
     calls.push({ command, args })
     if (command === 'powershell') {
-      // Real script exits 0 when both InternetSetOption calls "succeed" (bools
-      // both true and last-error 0). We model that as exit 0 by default.
+      // Distinguish the .NET registry READ (registry-snapshot JSON) from the
+      // WinINet REFRESH script. The read script is the only one that calls
+      // GetValueKind / DoNotExpandEnvironmentNames.
+      const isRead = args.some((a) => typeof a === 'string' && a.includes('GetValueKind'))
+      if (isRead) {
+        const out: Record<string, { exists: boolean; type: string; value: string | number | null }> = {}
+        for (const [name, v] of Object.entries(values)) {
+          out[name] = v.exists ? { exists: true, type: v.type, value: v.value } : { exists: false, type: 'none', value: null }
+        }
+        return { stdout: JSON.stringify(out), stderr: '', code: 0 }
+      }
+      // WinINet refresh: exit 0 when both InternetSetOption calls "succeed".
       return { stdout: '', stderr: '', code: refreshCode }
     }
     // command === 'reg.exe'
@@ -172,6 +184,38 @@ describePortable('recover-system-proxy', () => {
       // mirroring the app's validateRestorable.
       const restorable = validateRestorableState(bad.previous as never)
       expect(restorable.some((p) => p.includes('REG_MULTI_SZ'))).toBe(true)
+    })
+  })
+
+  describe('readRegistry (the .NET reader)', () => {
+    it('preserves exact REG_SZ spaces and the REG_EXPAND_SZ type (P1-2)', async () => {
+      runner = makeRegistry({
+        ProxyEnable: dword(1),
+        ProxyServer: { exists: true, type: 'REG_SZ', value: '  http=127.0.0.1:9  ' },
+        ProxyOverride: { exists: true, type: 'REG_EXPAND_SZ', value: '%PATH%;local' }
+      })
+      const state = await readRegistry(runner)
+      expect(state.proxyEnable).toEqual(dword(1))
+      expect(state.proxyServer).toEqual({ exists: true, type: 'REG_SZ', value: '  http=127.0.0.1:9  ' })
+      expect(state.proxyOverride).toEqual({ exists: true, type: 'REG_EXPAND_SZ', value: '%PATH%;local' })
+    })
+
+    it('round-trips a REG_BINARY value (never trimmed, never hex-lowered)', async () => {
+      runner = makeRegistry({
+        ProxyEnable: dword(0),
+        ProxyServer: { exists: true, type: 'REG_BINARY', value: 'DEADBEEF' },
+        ProxyOverride: str('<local>')
+      })
+      const state = await readRegistry(runner)
+      expect(state.proxyServer).toEqual({ exists: true, type: 'REG_BINARY', value: 'DEADBEEF' })
+    })
+
+    it('reports an absent value and never fakes a typed zero (P1-1)', async () => {
+      runner = makeRegistry({}) // all three absent
+      const state = await readRegistry(runner)
+      expect(state.proxyEnable).toEqual(ABSENT)
+      expect(state.proxyServer).toEqual(ABSENT)
+      expect(state.proxyOverride).toEqual(ABSENT)
     })
   })
 

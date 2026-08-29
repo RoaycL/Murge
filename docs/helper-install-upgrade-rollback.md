@@ -30,7 +30,7 @@
 | Component | Location | Trust | Lifecycle |
 |---|---|---|---|
 | Helper executable | app install dir (Program Files) | High IL | Installed/updated with the app; replaced only after integrity check |
-| **Per-arch official `wintun.dll`** | app install dir `resources/bin/<arch>` (never a bare driver file) | Medium/High | Bundled per-arch, digest-pinned; the signed Wintun driver is loaded *through* it on first enable, and we do **not** ship/delete a `wintun.sys` ourselves |
+| **Per-arch official `wintun.dll`** | app install dir `resources/bin/<arch>` (never a bare driver file) | Medium/High | Bundled per-arch, digest-pinned; the signed Wintun kernel driver is **installed/loaded on demand by the DLL inside `WintunCreateAdapter`** at first enable (there is **no separate driver-load step**), and we do **not** ship/delete a `wintun.sys` ourselves |
 | Optional helper service (alternative, D2) | Windows service (SERVICE_WIN32_OWN_PROCESS) | High IL / service SID | Only if the owner revokes D2 (standalone helper); registered/updated with the app; removed on uninstall after safe teardown |
 | BaselineSnapshot + WrittenState + mutation journal | app-data (helper-owned) | Medium/High | Written before first mutation; survives uninstall to enable rollback |
 | TUN restore tool (`--recover`) | app install dir | High IL | Used by the uninstall hook and the emergency path |
@@ -48,21 +48,30 @@
 2. **Integrity before first use.** On first activation (not at install) verify the
    helper SHA-256 against a pinned release manifest and its Authenticode publisher,
    and the official `wintun.dll` per-arch SHA-256 (C1). The Wintun kernel driver is
-   loaded through the DLL and is required to be a signed driver Windows will load;
-   we do not self-sign a driver or a driver cert.
-3. **Wintun driver load is deferred and explicit.** The signed Wintun driver is
-   loaded **through the official `wintun.dll`** only when the user first **enables**
-   TUN (explicit action), not at app install, unless the owner decides otherwise. We
-   never ship/install a bare `wintun.sys`; a pre-existing/shared Wintun driver is
-   never overwritten or removed.
-4. **Service registration** (only if the helper is a service, i.e. D2 is revoked):
+   installed/loaded by the DLL inside `WintunCreateAdapter` and is required to be a
+   signed driver Windows will load; we do not self-sign a driver or a driver cert.
+3. **Wintun adapter/driver creation is deferred and explicit.** The signed Wintun driver
+   is **installed/loaded on demand by the official `wintun.dll` inside
+   `WintunCreateAdapter`**, which the (elevated) helper calls only when the user first
+   **enables** TUN (an explicit action) — not at app install. `LoadLibraryEx(wintun.dll)`
+   alone does **not** install or load the driver, so there is no separate "load the
+   driver" step. We never ship/install a bare `wintun.sys`; a pre-existing/shared Wintun
+   driver is never overwritten or removed.
+4. **Enable order (single OS-config owner).** At enable, before any OS mutation, the
+   helper writes and verifies the **BaselineSnapshot**; then it calls
+   `WintunCreateAdapter` (driver on demand + adapter created + LUID pinned); **then**
+   it applies routes/DNS/interface (they are always written **after** the adapter exists).
+   mihomo's runtime config has `auto-route:false`/`auto-detect-interface:false`/
+   `dns-hijack:false`, so mihomo adds no route/DNS of its own (single modifier = the
+   helper). Any failure recovers in reverse journal order.
+5. **Service registration** (only if the helper is a service, i.e. D2 is revoked):
    create with a restrictive DACL and the least set of privileges (C5); start it
    **disabled/manual**, not auto-start, unless the emergency path needs it (C9 —
    owner decision). Under the current D2 (standalone helper) this step is skipped.
-5. **No network mutation at install.** Install must not touch routes, DNS, interfaces
+6. **No network mutation at install.** Install must not touch routes, DNS, interfaces
    or firewall. It only stages files and (if required) pre-registers a disabled
    service.
-6. **First-run gating.** The renderer shows TUN as **configured** (or
+7. **First-run gating.** The renderer shows TUN as **configured** (or
    **unsupported** on non-Windows) — never **active** — until the user explicitly
    enables and the helper reports success.
 
@@ -166,16 +175,18 @@ Mirrors `resources/nsis/uninstall-restore.nsh`, extended for TUN.
 ## 7. Decision/authorization flags for design review
 
 These are the decisions the install/upgrade/rollback behavior depends on (carried
-from threat-model §10). **D1–D3 are resolved** and in force; **D4–D5 remain open**
-until design-review sign-off:
+from threat-model §10). **D1–D3 + D6 are resolved** and in force; **D4–D5, G1 and the
+certificate provider** remain open until design-review sign-off:
 
 | # | Decision | Status | Impact on this spec |
 |---|---|---|---|
-| D1 | Device model: signed wintun vs userspace-only | **Resolved: signed wintun (official per-arch `wintun.dll`)** | Load the signed Wintun driver through the official `wintun.dll`; never ship a bare driver file or self-sign a driver cert; driver load on first enable |
+| D1 | Device model: signed wintun vs userspace-only | **Resolved: signed wintun (official per-arch `wintun.dll`)** | Load the signed Wintun driver through the official `wintun.dll`; never ship a bare driver file or self-sign a driver cert; the driver is installed/loaded **inside `WintunCreateAdapter` on first enable** |
 | D2 | Helper shape: standalone elevated process vs Windows service | **Resolved: standalone elevated helper** | No service register/upgrade/remove steps; §3.4/§5.2 drop the service path (but are kept as a documented alternative) |
-| D3 | Driver install timing: at app install vs deferred to first enable | **Resolved: on first enable** | §2.3 stages at install; §2.4 installs on first enable |
+| D3 | Adapter/driver creation timing: at app install vs deferred to first enable | **Resolved: on first enable** | §2.3 stages `wintun.dll` at install; §2.4 calls the adapter creation (driver on demand) on first enable; **no separate driver-load step** |
+| D6 | OS network-config owner | **Resolved: helper is the sole modifier (Option A)** | mihomo runtime config has `auto-route:false`/`auto-detect-interface:false`/`dns-hijack:false`; the helper applies the typed `DesiredNetworkState`; routes/DNS are written only after the adapter exists |
 | D4 | Whether the helper is allowed to start on boot for the emergency path | Open (recommended: no auto-start) | Auto-start vs manual `--recover` (C9) |
 | D5 | Whether a wintun driver that pre-exists the app is ever removed | Open (recommended: never) | §5.2 |
+| G1 | Whether mihomo can reuse the helper-created adapter | **Open (unproven hypothesis)** | Blocking gate tested on the real Windows path (adapter-handoff / single-adapter test) |
 
 > Because D2 resolved to a **standalone helper (not a service)**, §5.2's
 > "delete the helper service" step applies only if a later owner decision revokes
@@ -190,12 +201,16 @@ until design-review sign-off:
 |---|---|---|
 | Install stages files, no network mutation | snapshot before/after install, assert unchanged | `NetworkSnapshot` diff |
 | First enable requires explicit action | assert no TUN active on launch | status phase = configured |
+| Adapter/driver created on first enable (no separate load) | at first enable the helper calls `WintunCreateAdapter`; assert the driver appears only then, and no "load driver" op exists | driver/adapter presence before vs at enable; journal has no `load_driver` op |
+| Adapter handoff + single adapter (G1) | after the helper creates the adapter, mihomo reuses the **same LUID** and there is exactly **one** Murge adapter | enumerate by name/LUID before/after; assert count==1 and same LUID |
+| Routes/DNS always written after adapter creation | assert a route/DNS journal op never precedes `createAdapter`; failure before adapter leaves zero routes/DNS | journal seq |
+| mihomo emits no route/DNS change | with `auto-route:false`/`auto-detect-interface:false`/`dns-hijack:false`, mihomo adds/removes no route/DNS outside the helper | route/DNS snapshot before+after mihomo start, diff == helper-written set only |
 | Upgrade preserves data + reconciles | enable TUN, upgrade, assert prior state restored/consistent | journal + snapshot digest |
 | Rollback restores prior release | enable, rollback, assert baseline | route/DNS diff vs baseline |
-| Uninstall restores + removes our driver | uninstall, assert routes/DNS == baseline, driver removed if ours | before/after snapshot |
+| Uninstall restores routes/DNS | uninstall, assert routes/DNS == baseline; we never delete a shipped/`pre-existing` driver | before/after snapshot |
 | Uninstall abort on corrupt snapshot | corrupt snapshot, uninstall, assert abort + binary retained | exit code, `Abort` path |
 | Emergency `--recover` independent of GUI | kill app, run `--recover`, assert restored | restored state |
-| Crash mid-activation reconciliation | force-kill helper at each phase, assert `init()` reconciles | journal replay |
+| Crash mid-activation reconciliation | force-kill helper at each phase, assert `init()` reconciles in **reverse journal order** | journal replay |
 
 All of the above run only in the gated `windows-latest` job (skipped unless
 `MURGE_RUN_REAL_TUN=1` **and** `win32`) and never in default `npm test`.

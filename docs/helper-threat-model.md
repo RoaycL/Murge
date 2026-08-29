@@ -248,8 +248,9 @@ process running as the *same user* can impersonate the app, and `runas`/`ShellEx
 uses the **Microsoft-sanctioned COM Elevation Moniker** flow: the app activates an elevated,
 out-of-proc COM server (the helper) with `CoGetObject(L"Elevation:Administrator!new:{CLSID}",
 BIND_OPTS3, ...)` where the elevation broker authenticates and mediates the rendezvous, and
-**each activation is a fresh, per-activation server** (its process lifetime bound to the
-enabled TUN window, holding the creator handle — see design doc §3.3, B1/B2). The contract
+**each enable creates one per-enable single-client resident server** (design doc §5.5); its
+process lifetime is bound to the enabled TUN window and it holds the **creator handle** for
+the whole window (design doc §3.3, §3.4). The contract
 requires all of the following; failure in any one ⇒ close + fail closed:
 
 - **Elevation-moniker registration (machine-wide HKLM).** `CLSID` default +
@@ -259,9 +260,11 @@ requires all of the following; failure in any one ⇒ close + fail closed:
   `LaunchPermission`/`AccessPermission` DACLs denying `Everyone`/`Users` and granting only
   the authorized interactive-user principal + SYSTEM). There is **no** `ThreadingModel`
   under `LocalServer32` and **no** `Elevation` string value. Registration is in the registry
-  **view matching the helper bitness** (64-bit helper → 64-bit view; a 32-bit helper would
-  be under `HKLM\Software\WOW6432Node\Software\Classes\CLSID`) and is done by the
-  installer **and re-verified by the app's probe**, never by an unprivileged path.
+  **view matching the helper bitness**, selected explicitly with the
+  **`KEY_WOW64_64KEY`/`KEY_WOW64_32KEY` flags** (no literal `WOW6432Node` path). The product
+  ships **amd64/arm64 helpers only**, so we register **only the 64-bit COM view
+  (`KEY_WOW64_64KEY`)** and **do not register a 32-bit COM helper**. Registration is done by
+  the installer **and re-verified by the app's probe**, never by an unprivileged path.
 - **Transport is an authenticated, encrypted COM channel with mutual auth + packet
   privacy.** The app calls `CoInitializeSecurity(..., RPC_C_AUTHN_LEVEL_PKT_PRIVACY,
   RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_SECURE_REFS|EOAC_STATIC_CLOAKING, NULL)` and does
@@ -291,13 +294,15 @@ requires all of the following; failure in any one ⇒ close + fail closed:
   the app opens it (`PROCESS_QUERY_LIMITED_INFORMATION`) and verifies its canonical path +
   SHA-256 + Authenticode publisher match the pinned helper. A per-user registration that
   tried to divert the CLSID fails this check and is refused.
-- **Per-activation, single-client server (§5.5 of the design doc).** Each enable uses
-  `Elevation:Administrator!new` so a **fresh per-activation server** is created. It
+- **Per-enable, single-client resident server (§5.5 of the design doc).** Each enable uses
+  `Elevation:Administrator!new` so a **fresh per-enable server** is created. It
   **binds to the first verified client** and **rejects every other client** — including a
   second Murge process with the identical binary (same path, same Authenticode, same
-  SHA-256), because the first client has already been bound. Its process **lifetime is bound
-  to the enabled TUN window** (it holds the creator handle; design doc §3.3 B1 baseline), and
-  it **exits** on disable/rollback, transaction failure, cancel/timeout or bound-client-exit.
+  SHA-256), because the first client has already been bound. Its **process lifetime is bound
+  to the enabled TUN window** (it holds the creator handle for the whole window; design doc
+  §3.3/§3.4), and it **exits only** on: normal disable complete, enable-failure recovery
+  complete, bound client/kernel death after emergency restore, handshake-phase timeout, or an
+  explicit global max recovery timeout. It is **not idle-exited** while resident-active.
   No already-running helper is reused.
 - **One-time `launchSecret` exchanged inside the authenticated channel** — never on a command
   line, env, regular file or user-readable registry value (all readable by a same-user
@@ -351,10 +356,9 @@ requires all of the following; failure in any one ⇒ close + fail closed:
 
 - No auto-elevation. Activation is triggered only by an explicit user action.
 - The app opens the helper through an explicit consent the user sees (a UAC prompt shown by
-  the COM elevation broker); each activation is a **fresh, per-activation server** whose
-  **process lifetime is bound to the enabled TUN window** (it holds the creator handle;
-  design doc §3.3, B1 baseline; re-choose to exit-on-transaction only if the G1 probe
-  measures B2). The helper runs **High IL** but with a **restricted token** whose enabled privileges
+  the COM elevation broker); each enable creates a **per-enable single-client resident
+  server** whose **process lifetime is bound to the enabled TUN window** (it holds the
+  creator handle for the whole window; design doc §3.3/§3.4/§5.5). The helper runs **High IL** but with a **restricted token** whose enabled privileges
   are exactly those needed (e.g. `SeLoadDriverPrivilege` for the
   `WintunCreateAdapter(Name, TunnelType, RequestedGUID)` call; route add/delete are granted
   via the DNS/route APIs rather than blanket admin).
@@ -422,6 +426,19 @@ requires all of the following; failure in any one ⇒ close + fail closed:
   `init()` (or the emergency path) reconciles **per item** against the journal +
   baseline and restores only what the app owns. Tested with forced termination at
   each state.
+- **Distinct abnormal-exit paths (design doc §3.4).**
+  - **App or mihomo dies while TUN enabled:** the helper **duplicates and watches both** the
+    bound-app and mihomo process handles; on either abnormal exit it runs a **bounded
+    emergency restore** (routes/DNS per item first, then closes the creator handle, then
+    persists the outcome and exits). If the restore fails it **still closes the creator
+    handle** (no TUN adapter with no data plane) and **keeps the journal** for the next
+    recovery, capped by an explicit global max recovery timeout.
+  - **The helper's own crash:** Windows auto-closes its handles, so the **adapter is
+    removed** (0.14.1). The next `init()`/`--recover` launches a **new recovery helper** that
+    **does not claim** to call `WintunCloseAdapter` (it has no old creator handle), verifies
+    the adapter is gone, and restores residual routes/DNS. If the adapter still exists but the
+    new helper **cannot prove/own the creator handle**, it **marks a conflict**, **keeps
+    evidence**, and **never deletes it** (C9).
 
 ### C11 — Route/DNS/IPv4/IPv6 coexistence (no loss of connectivity)
 
@@ -515,17 +532,19 @@ Resolved by the owner (in force for implementation):
 
 Still to decide before implementation starts:
 
-5. **G1 — mihomo reuses the helper-created adapter, and the adapter survives the helper
-   closing its creator handle.** **Unproven hypothesis; must be proven by the **G1 lifecycle
-   probe** (design doc §3.3, §12): (a) helper creates + holds the **creator handle**;
-   (b) mihomo `WintunOpenAdapter(Name)` + `WintunStartSession`; (c) helper
+5. **G1 — whether mihomo reuses the helper-created adapter.** **Unproven hypothesis; must be
+   proven by the **G1 lifecycle probe** (design doc §3.3, §12): (a) helper creates + holds the
+   **creator handle**; (b) mihomo `WintunOpenAdapter(Name)` + `WintunStartSession`; (c) helper
    `WintunCloseAdapter(creatorHandle)` / exits; (d) observe whether the session + adapter
-   persist. Two branches B1 (adapter removed ⇒ helper lifetime bound to the enabled TUN
-   window) / B2 (adapter survives ⇒ short-lived standalone helper viable). It runs on a
-   snapshot-able, out-of-band-recoverable Windows VM in gated CI (T0) **before any Phase 9
-   helper implementation begins** and **never on this dev machine**. If it fails/remains
-   unresolved, stop and return to the owner for a revised ownership decision — do not fall
-   back to dual ownership.
+   persist. The two outcomes are **Observed A** (adapter removed ⇒ confirms the helper must
+   hold the creator handle for the enabled window) / **Observed B** (adapter survives while
+   mihomo holds a handle ⇒ a later optimization may let the helper exit earlier). **Neither
+   changes the fixed safety baseline** (design doc §0.4/§3.3/§5.5): the helper is a per-enable
+   single-client **resident** server holding the creator handle for the whole enabled window.
+   It runs on a snapshot-able, out-of-band-recoverable Windows VM in gated CI (T0) **before
+   any Phase 9 helper implementation begins** and **never on this dev machine**. If it
+   fails/remains unresolved, stop and return to the owner for a revised ownership decision —
+   do not fall back to dual ownership.
 6. **Certificate provider & trust model.** Which CA/cert for the helper and driver;
    wintun is already signed by a vendor — confirm this is the relied-on artifact and
    that we pin its publisher. (Affects C1 — see `CODE_SIGNING.md`.)

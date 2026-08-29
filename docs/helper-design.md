@@ -40,7 +40,7 @@ Conventions referenced: `src/shared/system-proxy.ts`, `src/shared/ipc.ts`,
 | 6 | Type fixes: `dnsSets` closing `>`; `NET_LUID` as canonical hex string; `requestId` monotonic uint64 decimal string (§8.1). |
 | 7 | Expanded test/evidence matrix (§13). |
 
-### 0.2 Round 3 review fixes (rev.4 — this revision)
+### 0.2 Round 3 review fixes (rev.4 — superseded)
 
 | # | Finding | Resolution (this document) |
 |---|---|---|
@@ -48,9 +48,9 @@ Conventions referenced: `src/shared/system-proxy.ts`, `src/shared/ipc.ts`,
 | 2 | Elevation bootstrap used plain `CoCreateInstance` + `requireAdministrator` instead of the official COM elevation moniker | **Rewritten to the COM Elevation Moniker flow** (§5.1–§5.2): client uses `CoGetObject("Elevation:Administrator!new:{CLSID}", BIND_OPTS3, ...)`; full HKLM `CLSID`/`LocalizedString`/`Elevation`/`LocalServer32` (absolute path + `ServerExecutable`)/`AppID`/`LaunchPermission`/`AccessPermission` listed; `RunAs = "Interactive User"` (Activate-as-Activator); explicit `CoInitializeSecurity`/`CoSetProxyBlanket` authn/impersonation/packet-privacy params. **Round-4 correction below** (`Elevation\Enabled = REG_DWORD 1`, `ThreadingModel` removed, WOW64/bitness location noted). |
 | 3 | RPC client PID wrong: used `RPC_CALL_ATTRIBUTES_V2.ClientProcessId` | **Fixed to `RPC_CALL_ATTRIBUTES_V2.ClientPID`** with `Flags = RPC_QUERY_CLIENT_PID`; assert the call arrived over local **`ncalrpc`**; the PID is used **only to open and validate the process object** (path/digest/publisher/session-key), never as identity by itself (§5.2, §5.4). |
 | 4 | Journal not truly write-ahead (the adapter was created, then the journal intent written) | **True write-ahead journal** (§8.3–§8.4): `BaselineSnapshot` committed first; `CREATE_ADAPTER/PREPARED` (fsync'd **before** `WintunCreateAdapter`); `CREATE_ADAPTER/APPLIED` after; every route/DNS op is `PREPARED` → mutate → `APPLIED`; crash between any two records is reconciled by **enumerating the product adapter / current OS state** (PREPARED-but-unknown). |
-| 5 | No explicit adapter deletion; claimed last-session/handle close auto-deletes | **Corrected to the real 0.14.1 lifecycle** (§3.3): there is **no `WintunDeleteAdapter`**; an adapter created by `WintunCreateAdapter` is removed **only** by `WintunCloseAdapter(creatorHandle)`; there is **no `RebootRequired` adapter-delete return and no `delete-pending`** state (the only reboot-visible artifact is the Wintun driver, which we never delete). Because the creator handle is the adapter's lifetime anchor, the short-lived-helper model is **proven, not assumed**, by the **G1 lifecycle probe** (B1/B2 branches, §3.3). The automatic-deletion and the explicit-`WintunDeleteAdapter` claims are both **removed**. |
-| 6 | Reusable elevated helper let a second process attach | **Per-activation, single-client elevated server** (§5.5): each enable uses `Elevation:Administrator!new` to create a fresh server that **binds to the first verified client** and **rejects all other clients** (including a second Murge process with identical path/signature/hash). **Round-4 correction**: the server's **process lifetime is bound to the enabled TUN window** (it holds the creator handle), not to one IPC command — it is freshly activated per enable and exits on disable/rollback (B1 baseline; re-choose to exit-on-transaction only if the G1 probe measures B2). Second-instance race test added (§13). |
-| 7 | G1 still un-proven | Keep as a **hard pre-implementation gate**. The probe is now the **G1 lifecycle probe** (§3.3, §12, §13): create + hold creator handle → mihomo opens by Name + starts a session → helper closes the creator handle/exits → verify session + adapter persist; two branches B1/B2. It runs **only** in gated disposable `windows-latest` CI on a snapshot-able, out-of-band-recoverable VM with separate owner authorization — **never on this dev machine**. |
+| 5 | No explicit adapter deletion; claimed last-session/handle close auto-deletes | **Corrected to the real 0.14.1 lifecycle** (§3.3): there is **no `WintunDeleteAdapter`**; an adapter created by `WintunCreateAdapter` is removed **only** by `WintunCloseAdapter(creatorHandle)`; there is **no `RebootRequired` adapter-delete return and no `delete-pending`** state (the only reboot-visible artifact is the Wintun driver, which we never delete). Because the creator handle is the adapter's lifetime anchor, the helper must keep the creator handle for the whole enabled window — **proven, not assumed**, by the **G1 lifecycle probe** (§3.3; the fixed resident lifecycle is in round-5, §0.4/§3.3/§5.5). The automatic-deletion and the explicit-`WintunDeleteAdapter` claims are both **removed**. |
+| 6 | Reusable elevated helper let a second process attach | **Per-activation, single-client elevated server** (§5.5): each enable uses `Elevation:Administrator!new` to create a fresh server that **binds to the first verified client** and **rejects all other clients** (including a second Murge process with identical path/signature/hash). **Round-4 correction**: the server's **process lifetime is bound to the enabled TUN window** (it holds the creator handle), not to one IPC command — it is freshly activated per enable and exits on disable/rollback (helper holds the creator handle for the whole enabled window; see round-5, §0.4/§3.3/§5.5). Second-instance race test added (§13). |
+| 7 | G1 still un-proven | Keep as a **hard pre-implementation gate**. The probe is now the **G1 lifecycle probe** (§3.3, §12, §13): create + hold creator handle → mihomo opens by Name + starts a session → helper closes the creator handle/exits → verify session + adapter persist; two **observed outcomes** (A = adapter disappears on creator close, B = it survives while mihomo holds a handle — §0.4/§3.3). Each of the previous "short-lived-helper" claims is **removed**. It runs **only** in gated disposable `windows-latest` CI on a snapshot-able, out-of-band-recoverable VM with separate owner authorization — **never on this dev machine**. |
 
 ### 0.3 Round 4 review fixes (this revision)
 
@@ -58,11 +58,23 @@ Conventions referenced: `src/shared/system-proxy.ts`, `src/shared/ipc.ts`,
 |---|---|---|
 | 1 | Mixed a nonexistent `WintunDeleteAdapter` (+ `RebootRequired`/`delete-pending`) into the pinned 0.14.1 ABI | **Deleted from the whole design.** The **official 0.14.1 `wintun.h` is the ONLY ABI source**. Removal is `WintunCloseAdapter(creatorHandle)`, which "removes adapter" only for a create-created adapter; there is no `WintunDeleteAdapter`, no `WintunFreeSendPacket`, no `RebootRequired` adapter-delete return, no `delete-pending` state (§3.0, §3.3). |
 | 2 | `WintunDeleteDriver` semantics mis-stated | The symbol **is** exported (`BOOL WINAPI (VOID)`) but production policy **forbids calling it** — it removes the shared Wintun driver if no adapters are in use and would affect other Wintun consumers (D5). Noted in the export table (§3.0) and never called. |
-| 3 | Short-lived-helper vs creator-handle-lifetime contradiction unresolved | **Resolved by the G1 lifecycle probe** (§3.3): because the creator handle is the adapter's lifetime anchor, the model is **proven, not assumed**. Probe exercises a–d; two branches — **B1** (adapter removed when creator handle closes ⇒ helper lifetime must be bound to the TUN enabled window) and **B2** (adapter survives while mihomo holds its own open handle ⇒ short-lived standalone helper viable). Baseline adopts B1 and re-chooses to B2 only if measured otherwise. G1 stays a **hard gate**. |
-| 4 | COM elevation `Elevation` default was the string `"Enabled"`; unexplained `ThreadingModel`; no bitness/WOW64 note | **Fixed** (§5.1): `Elevation\Enabled` is a **REG_DWORD `1`** (not a string); `LocalServer32\ThreadingModel` **removed**; the **bitness/WOW64 registration location** is documented (64-bit helper under the 64-bit view; a 32-bit helper under `HKLM\Software\WOW6432Node\Software\Classes\CLSID`). |
+| 3 | Short-lived-helper vs creator-handle-lifetime contradiction unresolved | **Resolved by the G1 lifecycle probe** (§3.3): because the creator handle is the adapter's lifetime anchor, the model is **proven, not assumed**. Probe exercises a–d; the two outcomes are recorded as **Observed A** (adapter removed when creator handle closes) and **Observed B** (adapter survives while mihomo holds its own open handle). **Round-5 supersedes the B1/B2 architecture framing** (§0.4/§3.3): the **safety baseline is fixed** — helper holds the creator handle for the whole enabled window — and the A/B observation only affects a potential future optimization, **never** the baseline. G1 stays a **hard gate** (it must prove mihomo reuses the same adapter). |
+| 4 | COM elevation `Elevation` default was the string `"Enabled"`; unexplained `ThreadingModel`; no bitness/WOW64 note | **Fixed** (§5.1): `Elevation\Enabled` is a **REG_DWORD `1`** (not a string); `LocalServer32\ThreadingModel` **removed**; the **bitness/WOW64 registration location** is documented via the **`KEY_WOW64_64KEY`/`KEY_WOW64_32KEY` flags** (no literal `WOW6432Node` path); since the product ships **amd64/arm64 helpers only**, we explicitly **do not register a 32-bit COM helper** (§5.1). |
 | 5 | WAL delete/recovery still referred to deletion of the adapter | **Rewritten** (§8.3–§8.4): `CREATE_ADAPTER/APPLIED` stores `{Name, RequestedGUID, LUID}`; recovery **re-opens by `WintunOpenAdapter(Name)`** and verifies `RequestedGUID` via `WintunGetAdapterLUID` + `ConvertInterfaceLuidToGuid`/SetupAPI; only close the creator handle / run product lifecycle cleanup on an **exact identity match**; if the creator handle is already closed by a crash, **observe whether the adapter auto-disappeared** before marking `RECONCILED`. No `WintunDeleteAdapter`. |
 | 6 | Export table out of sync; no ABI-check artifact | Export table is the **verbatim 0.14.1 `Wintun_*_FUNC` set** (§3.0) including `WintunOpenAdapter`, `WintunGetRunningDriverVersion`, `WintunSetLogger`, and exported-but-forbidden `WintunDeleteDriver`; removed the non-existent `WintunFreeSendPacket`. **Build-time `dumpbin`/`GetProcAddress` ABI check** added (§3.0, §13). |
 | 7 | G1 probe wording was "one-shot minimal" | **Renamed/expanded to the G1 lifecycle probe** (§3.3, §12, §13): create + hold creator handle → mihomo opens by Name + starts a session → helper closes the creator handle/exits → verify session + adapter persist; the probe **never runs on this machine** (needs a snapshot-able, out-of-band-recoverable Windows VM + gated CI + separate owner authorization). |
+
+### 0.4 Round 5 review fixes (this revision)
+
+| # | Finding | Resolution (this document) |
+|---|---|---|
+| 1 | Helper lifecycle still "a fresh helper per enable/disable"; disable can't reach the old creator handle | **Unified to one resident model** (§3.3, §5.5): one **per-enable single-client helper**. `enable` activates it; it binds the single client, creates the adapter, and holds the **creator handle for the whole enabled window** (`resident-active`, §3.4); `disable` is served by that **same instance** over the **same COM proxy**. No "fresh helper per transaction" wording remains. |
+| 2 | No definition of an app/mihomo abnormal exit | **Added** (§3.4): helper **duplicates and watches both** the bound-app and mihomo process handles; on either abnormal exit it runs a **bounded emergency restore** (routes/DNS first → close the creator handle → persist outcome → exit). On restore failure it **still closes the creator handle** and **keeps the journal** for the next recovery. Timeouts distinguish **active idle** from handshake/command timeouts; **no idle exit while resident-active**. |
+| 3 | No definition of the helper's own crash | **Added** (§3.4): on helper death **Windows auto-closes the creator handle ⇒ adapter removed** (0.14.1). The next `init()`/`--recover` **launches a new recovery helper** that **does not** claim to call `WintunCloseAdapter`, **verifies the adapter is gone**, and restores residual routes/DNS; if the adapter still exists but the new helper **can't prove/own the creator handle**, it **marks a conflict**, **keeps evidence**, and **does not delete** it (D5). |
+| 4 | Confusing B1/B2 architecture naming | **Removed** (§3.3, §12, §13). Replaced with **Observed A** (adapter disappears on creator close) / **Observed B** (mihomo handle keeps it alive). The **safety baseline is fixed** — helper holds the creator handle for the whole enabled window — and **does not depend on** the observation. G1 proves mihomo **reuses the same adapter**; the A/B observation only decides a future optimization, never the baseline. |
+| 5 | COM server labelled a "short-lived transaction server" | **Re-labelled per-enable single-client resident server** (§5.5), with an **exhaustive** exit-condition list (normal disable; enable-failure recovery; bound client/kernel death after emergency restore; handshake-phase timeout; explicit global max recovery timeout). **No idle timeout while resident-active.** |
+| 6 | WOW64 path written as `HKLM\Software\WOW6432Node\Software\Classes` | **Fixed** (§5.1): describe the view with the **`KEY_WOW64_64KEY`/`KEY_WOW64_32KEY`** flags; and since the product ships **amd64/arm64 helpers only**, we explicitly **do not register a 32-bit COM helper** (so no 32-bit/WOW64 view is ever created). |
+| 7 | State machine and tests not expanded for the resident model | **Added** (§10.2 helper `resident-active` state; §13 tests): enable → long no-IPC ⇒ adapter still present; disable uses the **same helper PID** (enable PID == disable PID recorded in evidence); three **distinct** recovery paths (app crash / mihomo crash / helper crash); new recovery helper has **no old creator handle**; helper crash ⇒ adapter gone + routes/DNS restored. |
 
 ---
 
@@ -135,10 +147,9 @@ elevation). Therefore the architecture must answer: **can mihomo open and reuse 
 adapter that the helper created via `WintunCreateAdapter`?** This is **G1**.
 
 - G1 is **NOT established**. It must be proven by a **real mihomo Windows integration
-  test** (gated `windows-latest` job) that mihomo can `WintunOpenAdapter(luid)` (or
-  otherwise bind to the existing device by its stable name) and run its packet session
-  against the adapter the helper created, with no packet handle transferred across the
-  boundary.
+  test** (gated `windows-latest` job) that mihomo can `WintunOpenAdapter(Name)` (open the
+  existing adapter by its stable product name) and run its packet session against the
+  adapter the helper created, with no packet handle transferred across the boundary.
 - Until G1 passes, the design **does not claim** the handoff works; it is a hypothesis
   with documented steps, a blocking gate, and a re-open path:
   - If G1 **passes**: mihomo opens the helper-created adapter; helper stays with the
@@ -434,12 +445,18 @@ helper always restores).
 
 The helper creates the adapter, so it owns the **creator handle**. If the helper closes that
 handle while TUN is still enabled, the adapter is removed. This is in **direct tension**
-with a "short-lived per-activation helper" that exits as soon as the enable transaction
-finishes: **if the helper exits, it closes its creator handle, and the adapter disappears.**
+with the discarded "a fresh helper per enable/disable command" idea, which would exit as soon
+as the enable transaction finishes: **if the helper exits, it closes its creator handle, and
+the adapter disappears.**
 
-We therefore do **not** hard-code either the enable or disable order until the **G1
-lifecycle probe** has measured the real behaviour. G1 is a **hard gate before any real TUN
-work** (§12). It runs only in the gated disposable `windows-latest` CI
+The **safety baseline is fixed, not conditional on the probe** (§0.4/§5.5): the helper is
+activated per enable, holds the **creator handle for the whole enabled window**, and closes it
+only as the final step of `disable` or an emergency restore. So the helper **must
+not** exit when the enable transaction completes. The **G1 lifecycle probe**'s job is to (1)
+confirm mihomo reuses the same adapter (the actual handoff) and (2) observe whether the
+adapter would survive a creator-close (Observed A/B) for a **possible future optimization
+only** — it does not gate the baseline. G1 is still a **hard gate before any real TUN work**
+(§12). It runs only in the gated disposable `windows-latest` CI
 (`MURGE_RUN_REAL_TUN=1` + `win32`) on a snapshot-able, out-of-band-recoverable VM, with
 separate owner authorization; it never runs on this dev machine (§0.0 / DEVELOPMENT_SAFETY).
 
@@ -452,43 +469,92 @@ whether the adapter survives step (c):
 3. **(c)** helper **`WintunCloseAdapter(creatorHandle)`** → helper exits.
 4. **(d)** observe: does mihomo's session and the adapter `${name}` **still exist**?
 
-**The probe has exactly two conclusions, and each selects a different architecture**:
+**Two observations — but they do NOT select the architecture.** The probe observes one of
+these at (d). Both are recorded as evidence; neither decides the safety model below, which is
+fixed:
 
-- **Branch B1 — the adapter is removed when the creator handle closes (this is what the
-  0.14.1 header's wording implies; likely conclusion).** Then a short-lived standalone
-  per-activation helper **cannot own the TUN lifetime**: the moment it exits, the adapter
-  vanishes. The correct model is **B2**: a helper/service **whose lifetime is bound to the
-  TUN enabled window**, holding the creator handle from `create_adapter` (enable) until
-  `disable`/rollback, and only then closing it (removing the adapter). The helper's process
-  lifetime = TUN enabled lifetime, and it is **freshly activated per enable** (never reused
-  across enables) with a single bound client (§5.3) — which still satisfies the
-  per-activation requirement, just with the process lifetime tied to the interface, not to a
-  single IPC command.
-- **Branch B2 — the adapter survives the creator-handle close while mihomo holds its own
-  open handle.** Then a **short-lived standalone helper** is viable: it creates the adapter,
-  hands off, and exits; mihomo's handle keeps the adapter alive. This is the only branch
-  under which the original "helper exits after enable" model holds.
+- **Observed A — the adapter is removed when the creator handle closes.** This is what the
+  0.14.1 header's wording implies and is the conservative expectation: removal is the creator
+  handle's job, so a helper that closes it drops the adapter. **Because the product's safety
+  baseline never relies on the adapter outliving the helper**, Observed A changes nothing in
+  the model — it merely confirms the helper must stay for the whole enabled window.
+- **Observed B — the adapter survives the creator-close while mihomo still holds its own open
+  handle.** The adapter lives while some handle keeps it up; mihomo holds one at (d). Under
+  Observed B it is conceivable that the helper could exit earlier — but this is a **future
+  optimization only**, never the current baseline.
 
-Because the header text points to B1 and the reviewer requires the model to be proven not
-assumed, the design **adopts B2 as the baseline and re-chooses to B1 only if** the probe
-measures otherwise. Concretely:
+**Safety baseline (fixed — set independently of the probe).** The helper is activated per
+enable, binds the single verified client, creates the adapter, and holds the **creator handle
+for the entire enabled TUN window**; it only closes that handle (removing the adapter) as the
+final step of `disable` or an emergency restore. So the helper's **process lifetime = TUN
+enabled lifetime** (§5.5), and removing it is always the helper's own explicit, owned act. The
+**G1 probe's required conclusion is that mihomo reuses the same adapter** (opens the same
+`${name}` and runs a session); the creator-close **observation (A vs B)** only records whether
+we could later optimize (e.g. let the helper exit on enable-completion), and **never** changes
+whether the current safety model holds.
 
 - **Enable / valid lifetime.** The helper is activated per enable; mihomo opens a second
-  handle + session. The helper **keeps the creator handle open** for the whole enabled
-  window and does **not** exit on transaction completion — it enters a resident-idle phase
-  until `disable` (B1 baseline). If the probe shows the adapter survives the helper exit
-  (B2), the helper may be allowed to exit on enable-completion instead; the enable/disable
-  order is **measured and re-documented**, not assumed.
-- **Disable / teardown.** mihomo calls `WintunEndSession` and `WintunCloseAdapter` on its
-  open handle; the helper then `WintunCloseAdapter(creatorHandle)` — **which removes the
-  adapter**. If the probe shows the helper must hold the handle to keep the adapter alive,
-  the helper closes it last (after mihomo's session ends). No `WintunDeleteAdapter`, no
-  `WintunDeleteDriver`.
+  handle + session. The helper **keeps the creator handle open for the whole enabled window**
+  and **does not exit** on enable-transaction completion or on idle — it enters a
+  **resident-active** phase (§3.4/§5.5) and persists until `disable` or an emergency/exit
+  condition. The enable order is therefore **fixed** and does not wait on the probe.
+- **Disable / teardown.** main calls the **same** resident helper via the same COM proxy;
+  mihomo calls `WintunEndSession` and `WintunCloseAdapter` on its open handle; the helper
+  restores routes/DNS per item; the helper then `WintunCloseAdapter(creatorHandle)` — which
+  **removes the adapter**; it writes `RECONCILED`, zeroizes keys, exits. No
+  `WintunDeleteAdapter`, no `WintunDeleteDriver`.
 - **Ownership verification is mandatory.** Before the helper closes the creator handle, it
   re-verifies the adapter is **this product's/instance's** (by `Name` + `RequestedGUID`, and
   the derived LUID); if it cannot prove ownership it **does not** touch the adapter and
   instead records `RECONCILED` with no mutation (§8.4). Pre-existing/shared adapters are
   never removed (D5).
+
+### 3.4 Helper lifetime: resident-active, abnormal exits and helper crash (items 2, 3)
+
+Two failure classes, each with an explicit **bounded** recovery path. Every path terminates
+by closing the creator handle so we **never leave a TUN adapter with no data plane**; only a
+successful restore ends without a pending journal item.
+
+**Client / kernel abnormal exit (the app or mihomo dies while TUN is enabled).** The helper
+**duplicates and watches both** the bound app process handle **and** the mihomo process
+handle (the latter obtained when the helper launches/starts the session). While
+resident-active it waits on those two handles (plus the command channel). If **either** exits
+abnormally:
+
+1. the helper enters a **bounded emergency restore** and first records the failure in the
+   journal;
+2. it **restores routes/DNS** per item (owned-only, reverse journal order, §8.3/§8.5);
+3. **only then** it **closes the creator handle** (`WintunCloseAdapter(creatorHandle)`) — the
+   adapter is removed (0.14.1 semantics), because an adapter with no data plane must not stay;
+4. it **persists the outcome** (`RECONCILED`, or `RESTORE_FAILED` + preserved journal) and
+   exits.
+
+**If the restore fails**, the helper **still closes the creator handle** (so a TUN adapter
+with no data plane is never left behind) and records `RESTORE_FAILED`, **keeping the journal**
+so the next `init()`/`--recover` can finish the route/DNS restoration. The emergency restore
+is capped by an explicit **global maximum recovery timeout**; on expiry it force-closes the
+creator handle and exits with `RESTORE_FAILED`.
+
+**The helper's own crash.** If the helper dies while resident-active, **Windows closes its
+handles automatically**, and per the 0.14.1 header the adapter is **removed** (the creator
+handle is gone). The next `init()`/`--recover` therefore launches a **new recovery helper**:
+
+- the new helper **does not have the old creator handle**, so it **must not record that it
+  called `WintunCloseAdapter`** — it did not; the adapter is gone because the OS closed the
+  handle;
+- it **verifies the adapter is gone** (enumerate by `Name`/`RequestedGUID`/LUID — absent) and
+  **restores any residual routes/DNS** item by item against the snapshot/journal (§8.4), then
+  writes `RECONCILED`;
+- if the adapter **abnormally still exists** but the new helper **cannot prove/own the
+  creator handle**, it **marks a conflict**, **preserves the evidence** (snapshot + journal +
+  adapter-enumerate result), and **does not touch or delete the adapter** — it never removes a
+  pre-existing/foreign adapter (D5). Recovery stops with a conflict, not a destructive delete.
+
+Because enable and disable share the **same helper instance** (§5.5), the creator handle it
+closes at disable is the one it owns; recovery only ever handles the cases above. The
+distinction between **active idle** and **handshake/command timeout** is explicit: timeouts
+apply only to the brief pre-bind handshake window and to individual command request/response
+(§4.4) — **never** to a resident-active helper with no IPC traffic.
 
 ---
 
@@ -584,8 +650,11 @@ byte-deterministic so both sides compute the same MAC.
   bounded replay cache keyed by `requestId` rejects duplicates; a stale/out-of-order id ⇒
   close. (A fresh session's ids never collide because the sequence resets with a fresh
   `sessionKey` and is scoped by the `sessionKey`'s HKDF salt.)
-- The helper enforces a **bootstrap handshake timeout** (e.g. 5 s) after which it exits, a
-  **per-command timeout**, and closes idle channels.
+- The helper enforces a **bootstrap handshake timeout** (e.g. 5 s, the pre-bind window) after
+  which it exits, a **per-command request/response timeout**, and a **handshake/idle-connect
+  timeout on the channel**. These timeouts apply **only** to the brief handshake window and to
+  an individual command — they are **not** an idle timeout on a resident-active helper (§3.4,
+  §5.5), which must stay up with zero IPC traffic.
 - Because the transport is an authenticated COM channel (§5), the OS already provides
   per-message integrity + privacy; the envelope MAC + `requestId` is a **second layer**
   (application-level integrity + replay defense), which is why the key lifecycle above is
@@ -651,16 +720,17 @@ override it) as an out-of-proc COM server under a dedicated **`AppID`**:
 > `LocalServer32` for an out-of-proc server — it is not a documented/meaningful value here,
 > so it must not be emitted.
 >
-> **Bitness / WOW64 registration location.** Registration is in the **registry view that
-> matches the helper binary's bitness**. A **64-bit** `helper.exe` registers under the
-> **64-bit view** (`HKLM\Software\Classes\CLSID\{...}`); a **32-bit** helper would register
-> under `HKLM\Software\WOW6432Node\Software\Classes\CLSID\{...}` (the
-> `WOW6432Node` subtree). The installer writes **all registration from a 64-bit installer
-> using the 64-bit view**, and the running helper is **the same bitness as the Wintun DLL
-> it loads** (per-arch `wintun-amd64.dll`/`wintun-arm64.dll`, §3.1). If the app were ever
-> 32-bit, its activation moniker must target the 32-bit helper under `WOW6432Node`; mixing
-> bitness (a 32-bit moniker against a 64-bit registration or vice versa) is a registration
-> mismatch the installer must never produce.
+> **Bitness / WOW64 registration location.** Registration goes into the **registry view
+> that matches the helper binary's bitness**, selected **explicitly with the
+> `KEY_WOW64_64KEY` / `KEY_WOW64_32KEY` flags** on the `RegCreateKeyEx`/`RegOpenKeyEx` calls
+> — **not** by spelling out a `WOW6432Node` path, so we never name a `HKLM\Software\Classes`
+> variant or a `HKLM\Software\WOW6432Node\Software\Classes` subtree as a literal path. The
+> product ships **amd64 and arm64 helpers only (no 32-bit helper)**, so we explicitly
+> **register only the 64-bit COM view (`KEY_WOW64_64KEY`)** and **do not register a 32-bit
+> COM helper at all**. The running helper is **the same bitness as the Wintun DLL it loads**
+> (`wintun-amd64.dll`/`wintun-arm64.dll`, §3.1); because there is no 32-bit helper there is
+> no 32-bit registration to produce, and mixing bitness (a 32-bit moniker against a 64-bit
+> registration or vice versa) is a registration mismatch the installer must never produce.
 
 ### 5.2 Steps (each: process, API, who creates/connects, UAC API, handle inheritance)
 
@@ -759,38 +829,55 @@ implementation, because no live lookup was done this session:
 - The **Wintun ABI** pinned in §3.0 matches the shipped `wintun.h`/`wintun.def` for the
   chosen release (export names, `WINAPI` calling convention, handle types, `NET_LUID`), and
   **`WintunCreateAdapter` installs/loads the driver on demand** and accepts a **`RequestedGUID`**.
-- Whether mihomo can **open/reuse a helper-created adapter** by LUID/GUID is exactly the
-  **G1** question — **not** answered here, and **gated** by the **G1 lifecycle probe** (§12).
+- Whether mihomo can **open/reuse the helper-created adapter** by name (or the derived LUID) is
+  exactly the **G1** question — **not** answered here, and **gated** by the **G1 lifecycle
+  probe** (§12).
 
 These checks are a pre-implementation prerequisite and keep the design honest rather than
 asserting unverified OS behavior. The design stands on the round-3 fixes regardless; the
 checks only pin down which exact OS API calls to make.
 
-### 5.5 Per-activation server lifetime and single-client binding (item 6)
+### 5.5 Per-enable single-client resident server (item 6)
 
-Each `enable`/`disable` creates a **fresh, short-lived** elevated COM server via
-`Elevation:Administrator!new:{CLSID}` — the same CLSID does **not** yield a reusable
-long-lived helper.
+The helper is **one instance per enabled TUN window**, not per IPC transaction. `enable`
+activates it and it stays **resident-active** (§3.4) for the whole enabled window; `disable`
+is served by that **same** instance — the main process issues both over the **same COM proxy**
+— so the helper still owns the creator handle from `create_adapter` (§3.3). It is **never**
+the old "fresh per-command helper" pattern that exits when a single command completes,
+because **disable cannot reach a process it never kept alive**.
 
-- **Bound to one client.** On activation the helper registers its class factory and
-  accepts **only the first client that passes the identity check** (steps 5–6). Every
-  subsequent activation client is **rejected** — including a **second Murge process** that
-  is byte-for-byte identical (same path, same Authenticode signature, same SHA-256) but is a
+- **Bound to one client.** On activation the helper registers its class factory and accepts
+  **only the first client that passes the identity check** (steps 5–6). Every subsequent
+  activation client is **rejected** — including a **second Murge process** that is
+  byte-for-byte identical (same path, same Authenticode signature, same SHA-256) but a
   different process: the helper already bound to the first verified client's
-  `ClientPID`+logon-session+session-key and refuses a second `ProcessId`.
-- **Exit conditions.** The server exits when: the transaction (enable or disable) completes,
-  the user cancels/declines or the activation times out, the channel idles past a timeout,
-  or the bound client's process handle signals exit (helper watches the client PID). No
-  keep-alive; no indefinite wait.
-- **Why not reuse.** A reusable helper would let an unrelated process (or a restarted app
-  with the same binary) attach to a privileged instance. Per-activation creation + client
-  binding + exit-on-idle closes that; the OS also unloads the elevated process when it
-  exits, so there is no lingering High-IL process.
+  `ClientPID`+logon-session+session-key and refuses a second `ProcessId`. This binding holds
+  for the helper's **whole lifetime** (not per command), so no other client can attach to an
+  already-resident privileged instance.
+- **Resident-active; no idle exit.** From `create_adapter` until teardown the helper holds the
+  creator handle and runs **resident-active** (internal state, §10.2). **It does not exit on
+  enable-transaction completion and is not subject to an ordinary idle timeout during the
+  active window** — the creator handle is what keeps the adapter (and thus the data plane)
+  alive, so the helper must persist as long as TUN is enabled, even with zero IPC traffic.
+- **Exit conditions (exhaustive).** The helper exits **only** on:
+  1. **normal `disable` complete** (routes/DNS restored, creator handle closed, `RECONCILED`
+     written, keys zeroized);
+  2. **enable failure + recovery complete** (adapter rolled back or reconciled cleanly);
+  3. **bound client/kernel death after emergency restore** (§3.4);
+  4. **handshake-phase timeout** (the brief pre-bind bootstrap window — distinct from the
+     active window);
+  5. an explicit **global maximum recovery timeout** (a hard cap on a stuck emergency
+     restore, §3.4).
+  **No other timer — in particular no idle timeout applies while resident-active.**
+- **Why per-enable rather than reusable.** A reusable helper would let an unrelated process
+  (or a restarted app with the same binary) attach to a privileged instance. Per-enable
+  activation + client binding + the resident-active lifetime closes that; the OS also unloads
+  the elevated process when it exits, so there is no lingering High-IL process after disable
+  or a crash.
 - **No double-activation.** If a `requestEnable` is already in flight (promise-queue
   serialization, §10), the main process does not issue a second activation; a second app
-  instance that tries to activate independently is rejected by the client-binding rule
-  (and the second instance is already gated by the single-instance app rule where
-  applicable).
+  instance that tries to activate independently is rejected by the client-binding rule (and
+  the second instance is already gated by the single-instance app rule where applicable).
 
 ---
 
@@ -1040,7 +1127,8 @@ mutation is **write-ahead**: its `PREPARED` record is durable **before** the OS 
 7 apply routes/DNS  for each op: write ${op}/PREPARED -> mutate OS -> write ${op}/APPLIED
 8 start mihomo     mihomo opens/reuses the adapter (G1) and starts its packet session
  9 readiness probe  probe the TUN/loopback path is live; assert routes/DNS present
-10 active           phase → active; renderer gets the true status
+10 active           phase → active; helper is resident-active (§3.4/§5.5): it keeps the creator
+                    handle open for the whole enabled window; renderer gets the true status
 ```
 
 - **Routes/DNS are always written after adapter creation** (steps 7+ follow step 5–6) so
@@ -1054,15 +1142,16 @@ mutation is **write-ahead**: its `PREPARED` record is durable **before** the OS 
   then the adapter (closes the creator handle, §3.3); failure at step 5 (or between 4–6)
   reconciles the adapter by `WintunOpenAdapter(Name)` + identity; failure at step 2 (UAC
   cancelled / timeout) leaves **zero mutation**.
-- **Disable is the mirror (§3.3):** mihomo ends its session (`WintunEndSession`) and closes
-  its open handle → restore routes/DNS per item (reverse WAL order) →
+- **Disable is the mirror, served by the **same resident helper** (§3.3, §5.5):** main calls
+  the same helper over the same COM proxy; mihomo ends its session (`WintunEndSession`) and
+  closes its open handle → helper restores routes/DNS per item (reverse WAL order) →
   **`CLOSE_CREATOR_HANDLE/PREPARED` → verify ownership by `Name`+`RequestedGUID`+LUID →
   `WintunCloseAdapter(creatorHandle)` (removes the adapter) →
   `CLOSE_CREATOR_HANDLE/APPLIED`/`RECONCILED`** → reconcile journal → `configured`. There is
-  **no** `WintunDeleteAdapter` and **no** `delete-pending`/`RebootRequired` path; the exact
-  close order (whether the helper must hold the creator handle for the whole enabled window)
-  is **confirmed by the G1 lifecycle probe** (B1/B2, §3.3) and the disable order documented
-  to match the measured result, not assumed.
+  **no** `WintunDeleteAdapter` and **no** `delete-pending`/`RebootRequired` path. The helper
+  **holds the creator handle for the entire enabled window** (the fixed safety baseline, §3.3),
+  so **disable reaches the same instance** that created the adapter — it never spawns a new
+  helper for disable.
 
 ### 10.2 Transition table
 
@@ -1080,6 +1169,13 @@ mutation is **write-ahead**: its `PREPARED` record is durable **before** the OS 
 Invariants: every transition re-verifies ownership + baseline digest; `restoring` is
 idempotent; a crash mid-activation reconciles from the journal + baseline on next boot,
 or via `--recover`.
+
+> This table is the **renderer-visible** product phase. Alongside it the helper has its own
+> internal state machine with a **`resident-active`** state (§3.4/§5.5): from `create_adapter`
+> through disable/emergency the helper is `resident-active`, holding the creator handle and
+> watching the bound app + mihomo process handles; it is `recovering` during a bounded
+> emergency restore; otherwise it is `booting`/`handshake` (short pre-bind window) or
+> `exiting`. The helper **never** exits on an idle timeout while `resident-active`.
 
 ### 10.3 Canonical UI copy (Chinese, matches `system-proxy` style)
 
@@ -1129,13 +1225,14 @@ or via `--recover`.
   The probe must **not** expand into full Phase 9 implementation (no helper service, no
   routes/DNS, no persistence, no UAC-bootstrap machinery), and it **never runs on this dev
   machine** (it needs a snapshot-able, out-of-band-recoverable Windows VM + gated CI + a
-  separate owner-authorization record — §0.0 / DEVELOPMENT_SAFETY). **Two conclusions**: if
-  the adapter disappears at (c) → **B1**, the short-lived standalone helper is **infeasible**
-  and the helper/service/ownership model must be **re-chosen** (a helper/service whose
-  lifetime is bound to the enabled TUN window, holding the creator handle); if it survives →
-  **B2**, the short-lived standalone helper is viable. **If G1 fails / cannot be completed,
-  stop and return to the owner** for the revised ownership decision; do not fall back to
-  dual ownership (§3.3).
+  separate owner-authorization record — §0.0 / DEVELOPMENT_SAFETY). **Two observations**: if
+  the adapter disappears at (c) → **Observed A**; if it survives while mihomo holds a handle →
+  **Observed B**. **Neither changes the safety baseline**, which is **fixed** (§0.4/§3.3/§5.5):
+  the helper holds the **creator handle for the whole enabled window** and is a **per-enable
+  single-client resident server**; the observation only tells us whether a later optimization
+  (e.g. letting the helper exit on enable-completion) is plausible. **If G1 fails / cannot be
+  completed** (mihomo cannot reuse the helper-created adapter), **stop and return to the
+  owner** for the revised ownership decision; do not fall back to dual ownership (§3.3).
 - **D4:** helper boot/auto-start for the emergency path. Recommended: **no self-start**;
   `--recover` is run manually. (D2 = standalone helper, so a service is not assumed.)
 - **D5:** whether a Wintun **driver/adapter** that pre-existed is ever removed on uninstall.
@@ -1159,15 +1256,15 @@ All real behavior runs only in the gated `windows-latest` job
 
 | # | Test | Assertion | Evidence |
 |---|---|---|---|
-| T0 | **G1 lifecycle probe (disposable, hard gate)** | (a) helper `WintunCreateAdapter` holds the creator handle; (b) mihomo `WintunOpenAdapter` + `WintunStartSession` ⇒ live data plane; (c) helper `WintunCloseAdapter(creatorHandle)` / exits; (d) assert **whether the adapter/session still exist**. On a snapshot-able VM that is restored out-of-band afterwards | enumerate adapter + session presence at each of a/b/c/d; assert the observed branch (B1 vs B2) and record it; machine restored |
+| T0 | **G1 lifecycle probe (disposable, hard gate)** | (a) helper `WintunCreateAdapter` holds the creator handle; (b) mihomo `WintunOpenAdapter` + `WintunStartSession` ⇒ live data plane; (c) helper `WintunCloseAdapter(creatorHandle)` / exits; (d) assert **whether the adapter/session still exist**. On a snapshot-able VM that is restored out-of-band afterwards | enumerate adapter + session presence at each of a/b/c/d; record **which observation** (A = disappears on creator close, B = survives while mihomo holds a handle) and assert the **fixed baseline** (no observation changes the helper-holds-creator-handle model); machine restored |
 | T1 | **Single-owner data plane / adapter handoff (G1)** | After the helper creates the adapter, mihomo **reuses the same GUID/LUID** (RequestedGUID is the stable identity) and there is exactly **one Murge adapter** in the system | enumerate adapter by Name/RequestedGUID/LUID before/after; assert count==1; assert mihomo session binds the same LUID |
 | T2 | Ordering: routes/DNS after adapter creation | routes/DNS/interface are written **only after** the adapter exists; a failure before adapter creation leaves zero routes/DNS | journal seq + adapter existence at each step; assert no route/DNS op precedes `createAdapter` |
 | T3 | **mihomo emits no route/DNS change** | With `auto-route:false`, `auto-detect-interface:false`, `dns-hijack:false`, mihomo adds/removes **no** route/DNS/interface outside the helper | route/DNS snapshot before+after mihomo start, diff == helper-written set only |
 | T4 | Isolate dual-ownership regressions | Assert the runtime config never contains `auto-route:true`/`auto-detect-interface:true`/`dns-hijack:true` when the helper owns OS config | config-validator unit + integration grep |
 | T5 | **Elevation moniker bootstrap: same-user malicious race-connect** | A second Medium-IL process cannot activate/connect to the running elevated helper while the app is connected, and cannot impersonate the app | attempt activation/connect from a second medium process; assert rejected (identity binding) |
-| T5b | **Second Murge instance race (same path/signature/hash)** | A **second Murge process** — byte-for-byte identical binary (same path, same Authenticode, same SHA-256) — attempts to connect to the running per-activation helper; the helper has already bound the first verified client and **rejects** the second | launch second app; assert its activation/connect is rejected; assert it cannot drive the helper |
+| T5b | **Second Murge instance race (same path/signature/hash)** | A **second Murge process** — byte-for-byte identical binary (same path, same Authenticode, same SHA-256) — attempts to connect to the running per-enable resident helper; the helper has already bound the first verified client and **rejects** the second | launch second app; assert its activation/connect is rejected; assert it cannot drive the helper |
 | T6 | **PID reuse** | A client PID whose process object was reused (exited + replaced) is rejected because path/digest/session-key no longer match | exit the app, let a reused PID connect; assert reject |
-| T7 | **Process exit / timeout** | Handshake/command timeout and helper process exit zeroize `launchSecret`/`sessionKey` and leave zero mutation, and the per-activation server **exits** | timeout injection; assert no mutation + secrets zeroed (assert via cleanup path) + helper process gone |
+| T7 | **Handshake/command timeout + helper exit zeroizes** | A **handshake-phase** timeout or a **command request/response** timeout zeroizes `launchSecret`/`sessionKey` and leaves zero mutation, and the helper exits; a **resident-active** helper receiving **no IPC** does **not** exit | timeout injection in the pre-bind window and per-command; assert no mutation + secrets zeroed; assert the resident-active helper stays (adapter still present) during a long IPC gap |
 | T8 | **Replay** | Replayed `HelperCommand` with a stale `requestId` is rejected | replay recorded frame; assert reject |
 | T9 | **Crash injection at every journal record boundary (WAL)** | Force-kill the helper at **each durable-journal boundary** (pre-snapshot, post-snapshot, `CREATE_ADAPTER/PREPARED`-written, **mid-`WintunCreateAdapter`**, post-`CREATE_ADAPTER/APPLIED`, pre-`${op}/PREPARED`, mid-route/DNS mutate, post-`${op}/APPLIED`, pre-mihomo, post-probe, `CLOSE_CREATOR_HANDLE/*`); assert next `init()`/`--recover` reconciles each record against the current OS state and restores the baseline | journal replay + before/after route/DNS diff per boundary; for `CREATE_ADAPTER` PREPARED-but-unknown, reconcile by `WintunOpenAdapter(Name)` + identity |
 | T10 | Crash recovery restores exact prior state | After a forced kill mid-activation, disable restores routes/DNS to the exact pre-enable state | route/DNS diff vs baseline |
@@ -1176,3 +1273,11 @@ All real behavior runs only in the gated `windows-latest` job
 | T13 | Uninstall restore runs before deletion | Uninstall runs `--recover`, restores routes/DNS, aborts on corrupt snapshot | `NetworkSnapshot` diff; exit code / `Abort` path |
 | T14 | Emergency `--recover` independent of GUI | Kill the app, run `--recover`, assert restored | restored state |
 | T15 | Non-Windows / no helper ⇒ unsupported | Non-Windows or no verified helper returns `{supported:false, phase:'unsupported'}`, zero mutation | status probe unit + CI |
+| T16 | **Resident-active survives a long IPC gap** | After `enable`, a long period with **no IPC/messages** between app and helper leaves the adapter and routes/DNS **intact** (the helper is resident-active and does not idle-exit) | wait > idle timeout; enumerate adapter + route/DNS diff vs applied; assert still present (clock-accelerated in test) |
+| T17 | **Disable uses the SAME helper instance as enable** | `disable` is served by the **same** helper process that handled `enable` (the one holding the creator handle); evidence records **enable helper PID == disable helper PID**, and disable reaches the creator handle | helper PID logged at enable + disable; assert equal; assert creator handle closed at disable |
+| T18 | **App crashes while TUN enabled ⇒ emergency restore** | Force-kill the bound **app** process; the helper (which watches the app process handle) runs the bounded emergency restore: routes/DNS first, then closes the creator handle, then persists the outcome and exits | force-kill app; assert routes/DNS restored, adapter removed, `RECONCILED` (or `RESTORE_FAILED` + journal kept), helper exited |
+| T19 | **mihomo crashes while TUN enabled ⇒ emergency restore** | Force-kill the **mihomo** process; the helper (which watches the mihomo process handle) runs the bounded emergency restore | force-kill mihomo; assert same restore sequence + outcome |
+| T20 | **Helper crashes ⇒ adapter auto-removed + next recovery** | Force-kill the **helper**; Windows closes its creator handle so the adapter is removed; the next `init()`/`--recover` launches a **new** recovery helper that **does not claim** to call `WintunCloseAdapter`, verifies the adapter is gone, and restores residual routes/DNS | force-kill helper; assert adapter gone + new recovery helper reconciles `RECONCILED`; assert it did **not** record a `WintunCloseAdapter` |
+| T21 | **New recovery helper has no old creator handle** | A recovery helper started after a crash has **no** handle from the dead helper; it must **not** try to close a creator handle and instead decides restoration from the journal + current OS adapter state | assert recovery path branches to "adapter gone / conflict" without a creator-handle close |
+| T22 | **Helper crash leaves no intact-but-orphaned adapter** | After helper crash, no Murge adapter remains with a **live data plane but no owning helper**; if an adapter is observed still present, the new helper marks a `conflict`, keeps evidence, and does **not** delete it (D5) | enumerate adapter; assert either absent or `conflict` + evidence + no delete |
+| T23 | **Foreign/preexisting adapter never removed on recover** | A pre-existing/foreign adapter sharing the reserved identity is never removed, even during recovery of an owned adapter | pre-create foreign adapter; run recover; assert it remains |

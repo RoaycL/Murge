@@ -99,8 +99,10 @@ helper runs at **High IL** (or as an elevated service) in a narrow, dedicated
 process. It must never be a shell or a general-purpose admin surface.
 
 Definition of a **clear trust boundary**: the elevated helper is the only
-component that may (a) create a TUN device, (b) add/remove routes, or (c) change
-DNS or interface metrics. The app may only *request* these as typed, validated,
+component that may (a) load the Wintun driver, (b) add/remove routes, or (c) change
+DNS or interface metrics. It does **not** create/hold the Wintun adapter for packet
+I/O — that is owned exclusively by mihomo (the single TUN data-plane owner, see §5
+A8). The app may only *request* the helper's privilege work as typed, validated,
 per-operation commands, and never carry raw PowerShell/`reg.exe`/`ip` command
 strings across the boundary (mirroring the existing no-concatenated-command rule).
 
@@ -124,18 +126,24 @@ strings across the boundary (mirroring the existing no-concatenated-command rule
 These are decisions the threat model assumes; each has an owner-decision flag in
 §10.
 
-- **A1. Device model.** TUN uses the signed **wintun** driver (WireGuard's model)
-  supplied by the project or by a vendor whose binary is checksum/signature
-  verified. A pure userspace Tap/go implementation is only acceptable if it needs
-  no kernel driver above Medium IL — otherwise specify it.
+- **A1. Device model.** TUN uses the official **wintun** distribution (WireGuard's
+  model): we ship the official per-arch **`wintun.dll`** and load the signed Wintun
+  driver through it. We never ship a bare driver file named like the driver, and we
+  do **not** self-sign a driver or a driver cert. The **TUN data plane is owned by
+  mihomo only**; the helper only loads the driver and applies OS-level routes/DNS.
 - **A2. Helper shape.** A small, purpose-built privileged **helper executable**
   (or a Windows service) rather than elevating the entire Electron app. The app
   stays Medium IL.
 - **A3. Elevation trigger.** Elevation is always **explicit user action** (UAC
   consent / a button) and never implied, auto-elevated or performed at app start.
 - **A4. Route/DNS/DNS-hijack ownership.** The helper owns route/DNS/interface
-  mutation and keeps a byte-identical, schema-versioned **baseline snapshot**
-  written **before** the first mutation (mirrors `FileSystemProxyBackupStore`).
+  mutation, keyed **per interface by LUID/index**, and keeps a schema-versioned
+  **BaselineSnapshot** (full per-interface IPv4/IPv6 routes with prefix/next-hop/
+  metric/protocol/store, ordered DNS with DHCP/static source, interface metric/
+  state) written **before** the first mutation, plus a **WrittenState** and an
+  ordered **MutationJournal**. Restore is **per-item owned-only** (compare each
+  item against what the app wrote; unrelated external changes never block or
+  overwrite other items). Mirrors `FileSystemProxyBackupStore` ownership semantics.
 - **A5. mihomo config gating.** Today `mihomo.config.ts` enforces
   `tun.enable:false` (and `dns.enable:false`) for every document. Phase 9 must
   relax this **only** on Windows, only when the helper is present and
@@ -146,6 +154,13 @@ These are decisions the threat model assumes; each has an owner-decision flag in
   fail and perform **zero** mutation.
 - **A7. Least-privilege IPC.** The helper exposes one minimal command set. Each
   command is authorized by policy in the helper; the app does not carry privilege.
+  The renderer is even more constrained: it only emits typed, parameterless intent
+  and never holds a helper handle (C6).
+- **A8. Single TUN data-plane owner.** Exactly one process owns the Wintun adapter
+  session for packet I/O: **mihomo**. The helper never reads/writes packets and
+  never holds the session handle. The helper's privilege role is limited to driver
+  load and OS-level route/DNS mutation + verification/recovery. No component other
+  than mihomo may enable the `tun` data plane.
 
 ---
 
@@ -156,8 +171,8 @@ owner decision item.
 
 | ID | STRIDE | Asset | Threat / scenario | Impact | Primary controls |
 |---|---|---|---|---|---|
-| T01 | Spoofing | IPC | A Medium-IL process impersonates the app and sends `create_tun` / `add_route` / `set_dns` to the helper. | Unauthorized network rewrite | C3, C4, C6 |
-| T02 | Spoofing | Helper binary | An attacker drops a malicious DLL/exe in place of the helper or wintun next to a writable path. | Elevation / network rewrite | C1, C2, C3 |
+| T01 | Spoofing | IPC | A Medium-IL process (or a same-user impostor) impersonates the app and sends `apply_routes` / `apply_dns` / `load_driver` to the helper. | Unauthorized network rewrite | C3, C4, C6 |
+| T02 | Spoofing | Helper/DLL | An attacker drops a malicious DLL/exe in place of the helper or the official `wintun.dll` next to a writable path. | Elevation / network rewrite | C1, C2, C3 |
 | T03 | Spoofing | Route/DNS | A remote or local actor advertises a conflicting route/DNS after activation. | Traffic redirection / blackhole | C7, C8, C11, C13 |
 | T04 | Tampering | Baseline snapshot | An attacker edits the stored pre-TUN snapshot so disable restores the *wrong* state. | Permanent misconfig / lockout | C4, C8, C9, C10, C12 |
 | T05 | Tampering | Helper/service config | Registry/service keys or helper config are modified by a lower-trust actor. | Persist / weaken the helper | C2, C3, C6, C13 |
@@ -180,73 +195,126 @@ Groups integrate with (and reuse) existing project patterns.
 
 ### C1 — Verified supply chain / signed artifacts (owner-driven)
 
-- The helper, its service and the wintun driver are **Authenticode-signed** with a
+- The helper and the helper's dependencies are **Authenticode-signed** with a
   certificate that the app trusts by pinned thumbprint, not by the OS trust store
   alone (see `CODE_SIGNING.md` inputs; certificate provider is an owner decision).
+- The official per-arch **`wintun.dll`** is validated by a **pinned SHA-256 digest**
+  in the release manifest (mirror `mihomo-artifact.ts` `sha256File`/`binarySha256`)
+  and its **license/source** are recorded in `THIRD_PARTY_NOTICES.md`. The Wintun
+  **kernel driver** is loaded through the DLL; Windows only loads a signed driver,
+  so the driver must carry a **Microsoft/attestation-signed** signature — we do
+  **not** self-sign a driver or ship a self-signed driver cert.
 - Activation verifies, **before** any mutation:
-  - the helper's SHA-256 matches a pinned release manifest (mirror
-    `mihomo-artifact.ts` `sha256File`/`binarySha256`), **and**
-  - `Get-AuthenticodeSignature` for the helper reports the expected publisher
-    (and the driver is a known-signed wintun/Store-signed device).
+  - the helper's SHA-256 matches a pinned release manifest, **and**
+  - `Get-AuthenticodeSignature` for the helper reports the expected publisher,
+  - the wintun DLL digest matches the manifest.
 - A self-signed cert is acceptable only for a CI "smoke" path and never a release
   artifact; it must not be trusted by the production activation path.
 
 ### C2 — Tamper-resistant placement
 
-- Install the helper and the driver under `Program Files` (or the per-user
-  equivalent only if the helper does not need Medium-trust-protected placement). No
-  temp-dir or per-user-writable drop of an elevated binary.
+- Install the helper and the per-arch `wintun.dll` under `Program Files` (or the
+  per-user equivalent only if the helper does not need Medium-trust-protected
+  placement). No temp-dir or per-user-writable drop of a privileged binary. The DLL
+  is never resolved from a search path a lower-trust process can influence.
 - The directory ACL protects files from Medium-IL writes; the service/registry keys
   are created with the restrictive DACL intended for an elevated object.
 - Never promote a file placed in, or a path resolved from, an attacker-writable
   directory (e.g. `%TEMP%`, app-data subfolders writable by the same user) to an
   elevated command.
 
-### C3 — Authenticated, authorized IPC
+### C3 — Authenticated, authorized, replay-safe IPC
 
-- The app→helper channel is a **named pipe** (or equivalent) created by the helper
-  with a service-specific **SDDL** that grants the pipe only to the helper and to
-  the app identity (or a dedicated service SID the app holds), and denies Everyone
-  / Users. The pipe is **not** world-readable.
-- Each request is a **typed, schema-validated message** with:
+The simple same-user-SID + random-name + nonce model is **not** sufficient because
+another process running as the *same user* can impersonate the app. The contract
+requires all of the following; failure in any one ⇒ close + fail closed:
+
+- **Endpoint not name-discoverable.** A named pipe whose name is a **per-launch
+  256-bit random** value, and whose **SDDL** denies `Everyone`/`Users` and grants
+  only the helper principal and the authorized app principal. Defense-in-depth; the
+  primary gate is the inherited handle below.
+- **Client identity validated server-side.** The helper (as the IPC server) verifies
+  the connecting client by:
+  - **PID** — `GetNamedPipeClientProcessId` equals the expected app PID,
+  - **token/session** — `ImpersonateNamedPipeClient` shows the same logon session,
+    same user SID, and the expected token type/integrity level,
+  - **canonical path + signature + hash** — `QueryFullProcessImageName` normalized
+    canonical path whose SHA-256 digest and Authenticode publisher match the pinned
+    app identity.
+  A same-user impostor (wrong PID, token, path, digest or signer) is rejected even
+  though it shares the SID.
+- **One-time bootstrap credential bound to the expected PID.** The app hands the
+  client end of the pipe to the helper by **handle inheritance**
+  (`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`) at `CreateProcess`; the endpoint is never
+  carried on a command line, env, regular file or user-readable registry value (all
+  readable by a same-user process). The app writes a **256-bit one-time
+  `launchSecret`** + the **expected helper PID** as the first message over that
+  inherited channel, then the helper zeroizes it. This is the only medium a
+  same-user or on-path process cannot observe.
+- **Replay/reflection resistance.** The helper issues a **per-session nonce**; every
+  message is bound to a **session key derived** from the `launchSecret` (HMAC) with a
+  **monotonic `requestId`**, and a **bounded replay cache** rejects duplicates or
+  out-of-order ids.
+- **Timeout/cleanup.** A **bootstrap handshake timeout** (e.g. 5 s) after which the
+  helper exits, a **per-command timeout**, idle channels closed, and the
+  `launchSecret` + session key **zeroized** on handshake complete, task end and
+  helper exit (never logged).
+- **Typed, schema-validated message with a fixed allowlist.**
   - a per-session random nonce/challenge to prevent replay and reflection,
-  - an operation identifier from a **fixed allowlist** (`create_tun`,
-    `teardown_tun`, `apply_routes`, `apply_dns`, `snapshot`, `restore`,
+  - an operation identifier from a **fixed allowlist** (`probe_integrity`,
+    `load_driver`, `apply_routes`, `apply_dns`, `snapshot`, `restore`,
     `get_status`, `health`),
   - an app-generated, once-per-operation request id (idempotency/replay guard),
   - a JSON-schema validation in the helper (mirror the "validate every IPC arg"
     rule; TS types are not runtime validation), and
   - a strict size cap to bound parsing.
 - The helper authorizes **each** operation by policy; it does not trust the app as
-  a blanket admin.
+  a blanket admin. `apply_routes`/`apply_dns` carry typed, validated route/DNS
+  structures (from mihomo config), never raw command text.
 
-### C4 — Baseline snapshot before first mutation (fail-closed)
+### C4 — Baseline + written + journal before first mutation (fail-closed)
 
-- Before the first route/DNS/interface mutation of an activation, the helper writes
-  a schema-versioned, **byte-identical** snapshot (routes, IPv4/IPv6 default
-  gateways, DNS client server addresses, interface metrics, adapter enable state,
-  firewall profile state) to a location the app reads back for the UI but that the
-  helper owns and can restore from **atomically** (write temp → validate → rename),
-  mirroring `FileSystemProxyBackupStore`.
-- A failure to write/verify the snapshot **aborts** with zero mutation.
+- Before the first route/DNS/interface mutation of an activation, the helper writes a
+  schema-versioned **BaselineSnapshot** keyed per interface by **LUID/index** that
+  holds the **full** IPv4/IPv6 route rows (prefix, prefix length, next-hop/on-link,
+  metric, protocol, route store), the **ordered per-interface DNS** with each entry's
+  **DHCP/static source**, and the interface metric/state + firewall profile. It is
+  written **atomically** (write temp → validate → rename), mirroring
+  `FileSystemProxyBackupStore`.
+- The exact set the helper writes is recorded as **WrittenState**, and every mutation
+  is appended to an ordered **MutationJournal** (with before/after values + a
+  baseline fingerprint), so crash recovery can reconcile without relying only on
+  discovery. A failure to write/verify the snapshot or journal **aborts** with zero
+  mutation.
+- Restore is **per-item owned-only**: each item is compared against `WrittenState`
+  and reverted to its baseline only if the current value still equals what the app
+  wrote. An externally-modified item is reported as a **per-item conflict**
+  (`conflictDetail`: LUID/index, family, field, expected vs current) and left
+  untouched; it does **not** block restoring other owned items and does **not**
+  trigger overwriting other externally-changed items (never all-or-nothing).
 
 ### C5 — Explicit elevation, least privilege
 
 - No auto-elevation. Activation is triggered only by an explicit user action.
 - The app opens the helper through a consent that the user sees; the helper runs
   **High IL** but with a **restricted token** whose enabled privileges are exactly
-  those needed (e.g. `SeLoadDriverPrivilege` when installing wintun, route add/delete
+  those needed (e.g. `SeLoadDriverPrivilege` when loading wintun; route add/delete
   are granted via the DNS/route APIs rather than blanket admin).
 - The helper is a dedicated process without a console, no network listener of its
-  own (other than its IPC), and no accidental admin shell.
+  own (other than its IPC), and no accidental admin shell. It never creates/holds
+  the Wintun session — mihomo owns the data plane (A8).
 
 ### C6 — Renderer/secret isolation & least surface
 
 - The helper/device handle and any helper secret **never** cross into preload/renderer.
 - The helper exposes no general-purpose command, no arbitrary path argument, and no
   raw PowerShell/command string (enforced by schema + allowlist, §C3).
-- The renderer only displays `status`/phase from `get_status`; it cannot flip state
-  optimistically (mirror the existing proxy rule).
+- The renderer only **reads** `TunStatus` from `get_status`/status events. It may
+  emit **typed, parameterless intent** (`requestEnable`/`requestDisable`) that the
+  main-process `TunService` validates and acts on; it never touches the helper,
+  passes arbitrary arguments, or mutates state itself (mirror the existing proxy
+  rule — the renderer cannot flip state optimistically). There is no
+  renderer→helper path.
 
 ### C7 — Config gating authority
 
@@ -257,13 +325,18 @@ Groups integrate with (and reuse) existing project patterns.
 - A non-Windows build must return an explicit **unsupported/blocked** result (per
   `DEVELOPMENT_SAFETY.md`), never silently enable TUN.
 
-### C8 — Owned-only restore (no clobbering)
+### C8 — Per-item owned-only restore (no clobbering, never all-or-nothing)
 
 - Disable/rollback restores only the baseline values recorded by the helper and
   only when the current values still **match** what the helper previously wrote
   (owned-state semantics, mirroring `isOwned`/`matchesPrevious` in the proxy
-  adapter). A conflict (external modification) produces a typed
-  `TUN_STATE_CONFLICT` with structured detail and performs **no** mutation.
+  adapter), evaluated **per item** (per LUID/index, per address family, per field).
+- An externally-modified item produces a typed **per-item conflict**
+  (`conflictDetail`: LUID/index, family, field, expected vs current) and is left
+  untouched, while **unrelated owned items are still restored**. Phase becomes
+  `conflict` only if any owned item was externally modified; otherwise restore
+  completes to `configured`. Restore never becomes an all-or-nothing operation based
+  on one unrelated external change, and never overwrites an externally-changed item.
 
 ### C9 — Idempotent, crash-safe disable & emergency path
 
@@ -277,10 +350,12 @@ Groups integrate with (and reuse) existing project patterns.
 
 ### C10 — Recovery after forced termination / crash
 
-- The helper records its mutations and their intended undo in an on-disk journal the
-  app reads on next boot to reconcile. If the helper is killed mid-activation, the
-  next `init()` (or the emergency path) reconciles against the journal + baseline
-  and restores. Tested with forced termination at each state.
+- The helper records its mutations and their intended undo in an on-disk **mutation
+  journal** plus the **WrittenState** and **BaselineSnapshot**, which the app reads
+  on next boot to reconcile. If the helper is killed mid-activation, the next
+  `init()` (or the emergency path) reconciles **per item** against the journal +
+  baseline and restores only what the app owns. Tested with forced termination at
+  each state.
 
 ### C11 — Route/DNS/IPv4/IPv6 coexistence (no loss of connectivity)
 
@@ -322,11 +397,13 @@ Groups integrate with (and reuse) existing project patterns.
    signature/checksum or failed IPC authentication performs zero mutation.
 2. **No snapshot, no mutation.** Baseline is written and verified before the first
    change.
-3. **Conflict ⇒ no restore.** An externally-modified route/DNS is reported, never
-   overwritten silently.
-4. **Renderer never commands.** The renderer reads status; only the serialized
+3. **Conflict ⇒ no overwrite, per item.** An externally-modified owned item is
+   reported (`conflictDetail`), never overwritten; unrelated owned items are still
+   restored (per-item, not all-or-nothing).
+4. **Renderer only intents.** The renderer reads status and may emit typed,
+   parameterless intent (`requestEnable`/`requestDisable`); only the serialized
    main-process `TunService` (promise-queue, mirroring the proxy service) issues
-   commands.
+   commands to the helper. No renderer→helper path.
 5. **No elevated shell.** No raw command strings, no arbitrary paths, a fixed
    command allowlist.
 6. **Mac/no-driver ⇒ explicit unsupported/blocked.** Non-Windows builds never
@@ -342,7 +419,7 @@ Groups integrate with (and reuse) existing project patterns.
 | Define install/upgrade/rollback/uninstall behavior | T02, T04, T05, T10 | C1, C2, C4, C8, C9, C10, C12 |
 | Implement explicit elevation flow | T12, T14 | C5, C6, C13 |
 | Verify driver/helper signature and binary integrity | T01, T02, T13 | C1, C2 |
-| Implement TUN configured/starting/active/failed states | T10, T11 | C5, C7, C13 |
+| Implement TUN configured/starting/active/failed states and recovery states (restoring / restore-failed / conflict / unsupported) | T10, T11 | C5, C7, C13 |
 | Add emergency disable and cleanup path independent of GUI | T07, T10 | C9, C10 |
 | Test DNS, IPv4, IPv6, sleep/wake, network change, crash recovery | T03, T06, T10 | C10, C11, C13 |
 | Record service/route/DNS & non-proxy-aware request evidence | T07, T08 | C12, C13 |
@@ -353,7 +430,10 @@ Groups integrate with (and reuse) existing project patterns.
 
 Resolved by the owner (in force for implementation):
 
-1. **D1 — Device model:** **Signed wintun (WireGuard model).** (A1, C1, C2.)
+1. **D1 — Device model:** **Signed wintun (official WireGuard distribution).** Ship
+   per-arch `wintun.dll` (digest-pinned) and load the signed Wintun driver through it;
+   never ship a bare driver file or self-sign a driver/cert; **mihomo owns the TUN
+   data plane** (A1, A8, C1, C2).
 2. **D2 — Helper shape:** **Standalone elevated helper** process, not a Windows
    service. (A2, C2, C5.) Note: changing D2 to a service later would require revoking
    this because the design-review package (`docs/helper-design.md`) assumes a

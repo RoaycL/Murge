@@ -292,14 +292,14 @@ Environment: disposable Windows VM with snapshot and out-of-band recovery.
 
 Entry gate: Phase 8 complete, design review approved, separate owner authorization.
 
-Status: in progress — design-review package drafted and owner decisions D1–D3 resolved; **implementation gate NOT met** (design-review sign-off and separate owner authorization still required, plus D4/D5 and certificate-provider decision).
+Status: in progress — design-review package revised per the six review items (single TUN data-plane owner = mihomo; official per-arch `wintun.dll` distribution model; hardened IPC authentication; per-interface BaselineSnapshot/WrittenState/MutationJournal + per-item owned-only restore; unified `TunPhase`; renderer intent-only contract) and **design re-review requested**; **implementation gate still NOT met** (design-review sign-off and separate owner authorization still required, plus D4/D5 and certificate-provider decision).
 
-- [~] Write and approve helper/privilege threat model. (draft → `docs/helper-threat-model.md`; approval pending — D1–D3 resolved)
-- [~] Define install, upgrade, rollback and uninstall behavior. (draft → `docs/helper-install-upgrade-rollback.md`; approval pending)
-- [~] Design review package. (draft → `docs/helper-design.md`: shared TUN contract, IPC/envelope schema, elevation flow, driver-integrity procedure, TUN state machine, module layout, config-gating design; D4/D5 + certificate provider still open)
+- [~] Write and approve helper/privilege threat model. (draft → `docs/helper-threat-model.md`; revised per the six review items; approval pending)
+- [~] Define install, upgrade, rollback and uninstall behavior. (draft → `docs/helper-install-upgrade-rollback.md`; revised per the six review items; approval pending)
+- [~] Design review package. (draft → `docs/helper-design.md`: shared TUN contract, hardened IPC/envelope schema, elevation flow, official-wintun integrity procedure, unified TUN state machine, per-item snapshot/restore model, module layout, config-gating design, renderer intent-only contract; D4/D5 + certificate provider still open)
 - [ ] Implement explicit elevation flow.
 - [ ] Verify driver/helper signature and binary integrity.
-- [ ] Implement TUN configured, starting, active and failed states.
+- [ ] Implement TUN configured/starting/active/failed states and recovery states (restoring / restore-failed / conflict / unsupported).
 - [ ] Add emergency disable and cleanup path independent of the GUI.
 - [ ] Test DNS, IPv4, IPv6, sleep/wake, network change and crash recovery.
 - [ ] Record service, route, DNS and non-proxy-aware request evidence.

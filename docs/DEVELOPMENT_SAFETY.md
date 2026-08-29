@@ -47,6 +47,14 @@ Real network integration testing requires all of the following:
 
 Absent all four conditions, stop and use mocks.
 
+## Phase 9 G1 workflow scaffold
+
+`.github/workflows/g1-probe.yml` is a manual, validation-only authorization gate. It is not
+a G1 implementation and must not be described as probe evidence. It targets only a protected
+self-hosted Windows lab environment and records `probeExecuted:false`. Replacing the
+validation-only step with native Wintun/mihomo execution requires a separate reviewed change
+and a new explicit owner authorization for the exact lab asset and snapshot.
+
 ## Disposable Windows real-kernel listener policy
 
 The only real mihomo execution permitted in this project is the `kernel-real-windows`

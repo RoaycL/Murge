@@ -67,7 +67,7 @@ Conventions referenced: `src/shared/system-proxy.ts`, `src/shared/ipc.ts`,
 | 4 | Journal not truly write-ahead (the adapter was created, then the journal intent written) | **True write-ahead journal** (§8.3–§8.4): `BaselineSnapshot` committed first; `CREATE_ADAPTER/PREPARED` (fsync'd **before** `WintunCreateAdapter`); `CREATE_ADAPTER/APPLIED` after; every route/DNS op is `PREPARED` → mutate → `APPLIED`; crash between any two records is reconciled by **enumerating the product adapter / current OS state** (PREPARED-but-unknown). |
 | 5 | No explicit adapter deletion; claimed last-session/handle close auto-deletes | **Corrected to the real 0.14.1 lifecycle** (§3.3): there is **no `WintunDeleteAdapter`**; an adapter created by `WintunCreateAdapter` is removed **only** by `WintunCloseAdapter(creatorHandle)`; there is **no `RebootRequired` adapter-delete return and no `delete-pending`** state (the only reboot-visible artifact is the Wintun driver, which we never delete). Because the creator handle is the adapter's lifetime anchor, the helper must keep the creator handle for the whole enabled window — **proven, not assumed**, by the **G1 lifecycle probe** (§3.3; the fixed resident lifecycle is in round-5, §0.4/§3.3/§5.5). The automatic-deletion and the explicit-`WintunDeleteAdapter` claims are both **removed**. |
 | 6 | Reusable elevated helper let a second process attach | **Per-activation, single-client elevated server** (§5.5): each enable uses `Elevation:Administrator!new` to create a fresh server that **binds to the first verified client** and **rejects all other clients** (including a second Murge process with identical path/signature/hash). **Round-4 correction**: the server's **process lifetime is bound to the enabled TUN window** (it holds the creator handle), not to one IPC command — it is freshly activated per enable and exits on disable/rollback (helper holds the creator handle for the whole enabled window; see round-5, §0.4/§3.3/§5.5). Second-instance race test added (§13). |
-| 7 | G1 still un-proven | Keep as a **hard pre-implementation gate**. The probe is now the **G1 lifecycle probe** (§3.3, §12, §13): create + hold creator handle → mihomo opens by Name + starts a session → helper closes the creator handle/exits → verify session + adapter persist; two **observed outcomes** (A = adapter disappears on creator close, B = it survives while mihomo holds a handle — §0.4/§3.3). Each of the previous "short-lived-helper" claims is **removed**. It runs **only** in gated disposable `windows-latest` CI on a snapshot-able, out-of-band-recoverable VM with separate owner authorization — **never on this dev machine**. |
+| 7 | G1 still un-proven | Keep as a **hard pre-implementation gate**. The probe is now the **G1 lifecycle probe** (§3.3, §12, §13): create + hold creator handle → mihomo opens by Name + starts a session → helper closes the creator handle/exits → verify session + adapter persist; two **observed outcomes** (A = adapter disappears on creator close, B = it survives while mihomo holds a handle — §0.4/§3.3). Each of the previous "short-lived-helper" claims is **removed**. It may run only on the separately authorized, snapshot-able, out-of-band-recoverable self-hosted Windows lab behind the protected `phase9-tun-lab` environment — **never on this dev machine or a general hosted runner**. |
 
 ### 0.3 Round 4 review fixes (rev.6 — retained)
 
@@ -502,8 +502,8 @@ not** exit when the enable transaction completes. The **G1 lifecycle probe**'s j
 confirm mihomo reuses the same adapter (the actual handoff) and (2) observe whether the
 adapter would survive a creator-close (Observed A/B) for a **possible future optimization
 only** — it does not gate the baseline. G1 is still a **hard gate before any real TUN work**
-(§12). It runs only in the gated disposable `windows-latest` CI
-(`MURGE_RUN_REAL_TUN=1` + `win32`) on a snapshot-able, out-of-band-recoverable VM, with
+(§12). It runs only on the gated `murge-tun-lab` self-hosted Windows runner behind the
+protected `phase9-tun-lab` environment, with a verified snapshot, out-of-band recovery and
 separate owner authorization; it never runs on this dev machine (§0.0 / DEVELOPMENT_SAFETY).
 
 **G1 lifecycle probe (defines the ownership model).** The probe exercises a-d and records
@@ -1471,17 +1471,23 @@ discovered reparse point, or schema/digest anomaly** (§8.0) ⇒ **zero network 
   (e.g. letting the helper exit on enable-completion) is plausible. **If G1 fails / cannot be
   completed** (mihomo cannot reuse the helper-created adapter), **stop and return to the
   owner** for the revised ownership decision; do not fall back to dual ownership (§3.3).
-- **D4:** helper boot/auto-start for the emergency path. Recommended: **no self-start**;
-  `--recover` is run manually. (D2 = standalone helper, so a service is not assumed.)
-- **D5:** whether a Wintun **driver/adapter** that pre-existed is ever removed on uninstall.
-  Recommended: **never** remove a pre-existing/shared driver; we never ship a `.sys`, and we
-  only ever delete an adapter we provably created (§3.3).
+- **D4 — resolved: no boot auto-start.** The standalone helper has no service, scheduled
+  task, `Run` key or other boot trigger. It starts only for an explicit in-app enable action
+  or an explicit manual `--recover`; status/probe/UI startup never elevates or launches it.
+- **D5 — resolved: never remove pre-existing/shared Wintun state.** Production never calls
+  `WintunDeleteDriver`, never deletes a pre-existing/foreign adapter, and uninstall never
+  removes a driver or adapter it did not create and continuously own. The only adapter-removal
+  action is closing this enable session's provably owned creator handle (§3.3).
 - **Certificate provider / trusted publisher** for `helper.exe` (see `CODE_SIGNING.md`).
 - **Independent owner authorization** record (who, what, when) before any implementation.
 - **DNS-hijack scope**, HTTPS decryption/rewrite visibility, sleep/wake + network-change
   reconciliation depth.
 
-Implementation/testing for the remaining lines proceeds only after design-review sign-off
+The repository contains only a **validation-only G1 workflow scaffold**
+(`.github/workflows/g1-probe.yml`): manual dispatch + exact acknowledgement + authorization,
+target, snapshot and recovery identifiers + protected `phase9-tun-lab` environment + a
+`self-hosted, windows, x64, murge-tun-lab` runner. It records `probeExecuted:false`; no native
+probe body exists yet. Implementation/testing for the remaining lines proceeds only after design-review sign-off
 and separate owner authorization, and only in the gated disposable-Windows job
 (`MURGE_RUN_REAL_TUN=1` **and** `win32`, never in default `npm test`).
 

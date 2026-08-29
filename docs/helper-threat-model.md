@@ -594,12 +594,13 @@ Still to decide before implementation starts:
 7. **DNS hijack scope.** Whether DNS is delegated to mihomo's dns-hijack, to the
    helper, or left to the system-proxy path, and the exclusion list. (Under D6 the
    helper owns DNS; the exclusion list is still to be set.) (Affects C11.)
-8. **D4 — emergency/boot behavior.** Whether the helper is allowed to start on boot
-   to service the emergency path (recommended: no auto-start; `--recover` run
-   manually). (Affects C9.)
-9. **D5 — pre-existing driver removal.** Whether a wintun driver that **pre-existed**
-   the app is ever removed on uninstall (recommended: never remove a pre-existing/
-   shared driver). (Affects §5.2 of the install doc.)
+8. **D4 — resolved: no boot auto-start.** No service, scheduled task, `Run` key or
+   background boot trigger is installed. The standalone helper starts only from an explicit
+   enable action or explicit manual `--recover`; passive startup/status checks never launch it.
+9. **D5 — resolved: never remove pre-existing/shared Wintun state.** Never call
+   `WintunDeleteDriver`; never delete a pre-existing/foreign adapter; uninstall removes no
+   shared driver/adapter. Only close the continuously held creator handle for the exact adapter
+   created and owned by the current enable session.
 10. **HTTPS decryption/rewrite visibility.** Whether these pages remain visible /
     experimental / removed in v1 (already in the owner backlog; affects whether the
     TUN device also covers proxied HTTPS or only transparent/non-proxy-aware flows).

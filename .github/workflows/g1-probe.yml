@@ -1,0 +1,99 @@
+name: Phase 9 G1 probe gate (validation only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      arm_lab_gate:
+        description: 'Arm the gated job (the current scaffold still performs validation only)'
+        required: true
+        type: boolean
+        default: false
+      acknowledgement:
+        description: 'Type exactly: I AUTHORIZE MURGE G1 WINTUN PROBE'
+        required: true
+        type: string
+      authorization_ref:
+        description: 'Owner authorization ticket/change reference'
+        required: true
+        type: string
+      target_asset_id:
+        description: 'Disposable Windows lab asset identifier'
+        required: true
+        type: string
+      snapshot_id:
+        description: 'Verified pre-run snapshot identifier'
+        required: true
+        type: string
+      recovery_method:
+        description: 'Out-of-band recovery method identifier'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase9-g1-${{ inputs.target_asset_id }}
+  cancel-in-progress: false
+
+jobs:
+  gate-inputs:
+    name: Fail-closed input validation (no probe)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      MURGE_TUN_ACKNOWLEDGEMENT: ${{ inputs.acknowledgement }}
+      MURGE_TUN_AUTHORIZATION_REF: ${{ inputs.authorization_ref }}
+      MURGE_TUN_TARGET_ASSET_ID: ${{ inputs.target_asset_id }}
+      MURGE_TUN_SNAPSHOT_ID: ${{ inputs.snapshot_id }}
+      MURGE_TUN_RECOVERY_METHOD: ${{ inputs.recovery_method }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Reject missing or malformed authorization metadata
+        run: node scripts/g1-probe-gate.mjs --validate-only --allow-non-windows-validation
+
+  validate-gate:
+    needs: gate-inputs
+    if: ${{ inputs.arm_lab_gate }}
+    name: Validate owner authorization and recovery metadata
+    runs-on: [self-hosted, windows, x64, murge-tun-lab]
+    environment: phase9-tun-lab
+    timeout-minutes: 10
+    env:
+      MURGE_TUN_ACKNOWLEDGEMENT: ${{ inputs.acknowledgement }}
+      MURGE_TUN_AUTHORIZATION_REF: ${{ inputs.authorization_ref }}
+      MURGE_TUN_TARGET_ASSET_ID: ${{ inputs.target_asset_id }}
+      MURGE_TUN_SNAPSHOT_ID: ${{ inputs.snapshot_id }}
+      MURGE_TUN_RECOVERY_METHOD: ${{ inputs.recovery_method }}
+    steps:
+      - name: Checkout the authorized revision
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate G1 gate metadata (no Wintun execution)
+        shell: pwsh
+        run: node scripts/g1-probe-gate.mjs --validate-only --evidence "$env:RUNNER_TEMP\g1-gate-evidence.json"
+
+      - name: Prove this revision cannot execute the probe
+        shell: pwsh
+        run: |
+          $evidence = Get-Content "$env:RUNNER_TEMP\g1-gate-evidence.json" -Raw | ConvertFrom-Json
+          if ($evidence.mode -ne 'validation-only' -or $evidence.probeExecuted -ne $false) {
+            throw 'G1 scaffold unexpectedly claims that a probe executed'
+          }
+          Write-Host 'G1_PROBE_EXECUTED=false'
+
+      - name: Upload sanitized gate evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: g1-gate-${{ github.run_id }}
+          path: ${{ runner.temp }}/g1-gate-evidence.json
+          if-no-files-found: error
+          retention-days: 30

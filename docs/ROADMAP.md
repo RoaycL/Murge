@@ -292,8 +292,10 @@ Environment: disposable Windows VM with snapshot and out-of-band recovery.
 
 Entry gate: Phase 8 complete, design review approved, separate owner authorization.
 
-- [ ] Write and approve helper/privilege threat model.
-- [ ] Define install, upgrade, rollback and uninstall behavior.
+Status: in progress — design deliverables drafted; **implementation gate NOT met** (design-review approval and separate owner authorization still required).
+
+- [~] Write and approve helper/privilege threat model. (draft → `docs/helper-threat-model.md`; approval pending)
+- [~] Define install, upgrade, rollback and uninstall behavior. (draft → `docs/helper-install-upgrade-rollback.md`; approval pending)
 - [ ] Implement explicit elevation flow.
 - [ ] Verify driver/helper signature and binary integrity.
 - [ ] Implement TUN configured, starting, active and failed states.

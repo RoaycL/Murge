@@ -1,6 +1,6 @@
-# Phase 9 — Windows TUN privileged helper: design review package (rev. 6)
+# Phase 9 — Windows TUN privileged helper: design review package (rev. 7)
 
-> Status: **draft for design review (rev. 6).** Design/contract level only. No code
+> Status: **draft for design review (rev. 7).** Design/contract level only. No code
 > execution, no network mutation, no driver/route/DNS change performed on this
 > machine. This revision resolves the seven must-fix items from the second review
 > (round-5, §0.4): unified per-enable single-client resident helper, Observed A/B,
@@ -9,7 +9,13 @@
 > (§5.1, §8.0, §8.3, §13): a **pure allow-list COM/DACL/SDDL contract** and a
 > **trusted, High-integrity, directory-substitution-resistant recovery state store**
 > with a **deterministic integrity contract** (the integrity term "HMAC/digest or at
-> least digest" is removed — C12). The implementation gate remains **NOT met** and
+> least digest" is removed — C12). **Round-7 corrects the actual Windows
+> security-descriptor contract** (§5.1, §8.0, §13, install doc §2/§8): the COM ACLs
+> use **explicit COM rights masks** (`0xB`/`0x3`, **no generic `GX`**), no extra
+> `DENY`, and the state directory uses one **resolvable, complete SDDL**
+> (`O:SYG:SYD:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)` + `S:(ML;OICI;NW;;;HI)`), with
+> **no owner-SID file ACE** (the Medium UI has no raw-read path). The implementation
+> gate remains **NOT met** and
 > requires design-review sign-off plus separate owner authorization before any
 > Windows implementation. In particular **G1 (mihomo reuses the helper-created
 > adapter) is an unproven hypothesis** and is a hard blocking gate, not an
@@ -83,15 +89,24 @@ Conventions referenced: `src/shared/system-proxy.ts`, `src/shared/ipc.ts`,
 | 6 | WOW64 path written as `HKLM\Software\WOW6432Node\Software\Classes` | **Fixed** (§5.1): describe the view with the **`KEY_WOW64_64KEY`/`KEY_WOW64_32KEY`** flags; and since the product ships **amd64/arm64 helpers only**, we explicitly **do not register a 32-bit COM helper** (so no 32-bit/WOW64 view is ever created). |
 | 7 | State machine and tests not expanded for the resident model | **Added** (§10.2 helper `resident-active` state; §13 tests): enable → long no-IPC ⇒ adapter still present; disable uses the **same helper PID** (enable PID == disable PID recorded in evidence); three **distinct** recovery paths (app crash / mihomo crash / helper crash); new recovery helper has **no old creator handle**; helper crash ⇒ adapter gone + routes/DNS restored. |
 
-### 0.5 Round 6 review fixes — the two security blockers (this revision)
+### 0.5 Round 6 review fixes — the two security blockers (rev.6 — retained)
 
 | # | Finding (blocker) | Resolution (this document) |
 |---|---|---|
-| 1 | COM ACL/SDDL used `DENY Everyone` + `DENY built-in Users` + `ALLOW some-interactive-user-SID`, which locks the legitimate user out (the owner is a member of Everyone and Users) | **Pure allow-list DACL** (§5.1): `LaunchPermission` `D:(A;;GX;;;S-1-5-18)(A;;GX;;;S-1-5-32-544)(A;;GX;;;<owner SID>)`; `AccessPermission` `D:(A;;GX;;;S-1-5-18)(A;;GX;;;<owner SID>)`. **No** `DENY Everyone`/`DENY built-in Users`, **no** `Everyone`/`Users`/`Authenticated Users`. If an explicit deny is needed it is **only** for principals that never include the local user — `ANONYMOUS LOGON`/`NETWORK`. SYSTEM (local start/activate/access); the install-time owner SID (Local Launch/Activate/Access); Administrators only for install/repair and **not** in `AccessPermission`. **Per-ACE table** (object SID / allow-deny / permission bits) + **AccessCheck** verification (test `T24`). |
-| 2 | Trusted recovery state was "app-data (Medium/High)" — vague and user-writable | **Deterministic store** (§8.0): `%ProgramData%\<brand-independent-id>\tun-state\<ownerSid>\`. Created by the **elevated helper**; owner = SYSTEM; **pure allow-list DACL**; **`High` mandatory-integrity label** (`NO_WRITE_UP`) — the **real** same-user boundary (the helper runs as the owner's High token via `RunAs = Interactive User`, so ACL alone cannot separate the Medium/High instances of one SID). The owner UI reads **sanitized** state **only** via helper COM (never raw baseline/journal). Every record written by the helper only; each file opened with `FILE_FLAG_OPEN_REPARSE_POINT` (+ `FILE_FLAG_BACKUP_SEMANTICS`), **rejects** symlink/junction/mount/reparse point, reuses a held handle + `FileIdInfo` re-verify (never re-opens by string path), writes temp → `FlushFileBuffers` → `ReplaceFile`/atomic rename, and **never follows a user-controllable path**. Upgrade/uninstall **retain** the dir, cleaned only after a safe recovery completes. |
+| 1 | COM ACL/SDDL used `DENY Everyone` + `DENY built-in Users` + `ALLOW some-interactive-user-SID`, which locks the legitimate user out (the owner is a member of Everyone and Users) | **Pure allow-list DACL** (§5.1): `LaunchPermission` `D:P(A;;0xB;;;SY)(A;;0xB;;;BA)(A;;0xB;;;<ownerSid>)`; `AccessPermission` `D:P(A;;0x3;;;SY)(A;;0x3;;;<ownerSid>)` (**explicit COM rights masks** `0xB` = EXECUTE|EXECUTE_LOCAL|ACTIVATE_LOCAL; `0x3` = EXECUTE|EXECUTE_LOCAL; **no generic `GX`**). **No** `DENY Everyone`/`DENY built-in Users`, **no** `Everyone`/`Users`/`Authenticated Users`. **No `DENY` at all** (a complete pure allow-list denies by absence; `ANONYMOUS LOGON`/`NETWORK` are denied that way too). SYSTEM (local start/activate/access); the install-time owner SID (Local Launch/Activate/Access); Administrators only for install/repair and **not** in `AccessPermission`. **Per-ACE table** (object SID / allow-deny / permission bits) + **AccessCheck** verification (test `T24`). |
+| 2 | Trusted recovery state was "app-data (Medium/High)" — vague and user-writable | **Deterministic store** (§8.0): `%ProgramData%\<brand-independent-id>\tun-state\<ownerSid>\`. Created by the **elevated helper**; owner = SYSTEM; **resolvable pure allow-list SDDL** `O:SYG:SYD:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)` + `S:(ML;OICI;NW;;;HI)` (owner SYSTEM; `SY`/`BA` `GA`; **no owner SID ACE** — helper reaches it via `BA` since it runs as an admin; Medium has `BA` deny-only + no ACE + High label); **`High` mandatory-integrity label** (`NW`/`NO_WRITE_UP`, `HI` = `S-1-16-12288`) — the Medium/High split requires MIC + the missing owner ACE (the helper and the Medium UI share one SID, so the ACL alone cannot separate them). The owner UI reads **sanitized** state **only** via helper COM (never raw baseline/journal). Every record written by the helper only; each file opened with `FILE_FLAG_OPEN_REPARSE_POINT` (+ `FILE_FLAG_BACKUP_SEMANTICS`), **rejects** symlink/junction/mount/reparse point, reuses a held handle + `FileIdInfo` re-verify (never re-opens by string path), writes temp → `FlushFileBuffers` → `ReplaceFile`/atomic rename, and **never follows a user-controllable path**. Upgrade/uninstall **retain** the dir, cleaned only after a safe recovery completes. |
 | 3 | Integrity phrased as "HMAC/digest or at least digest" (optional) | **Deterministic integrity contract** (§8.0, C12): the primary security boundary is the **Medium-unwritable DACL + integrity label**, not a digest a same-user attacker can re-write; records still carry `schemaVersion` + SHA-256 to detect **corruption**; the **HMAC claim is removed** (no key location/generation/DPAPI/rotation/upgrade-read path exists); the channel envelope MAC (§4.3) is a separate per-message authenticator, not a disk-state claim. Any read failure, wrong ACL, wrong owner, discovered reparse point, or schema/digest anomaly ⇒ **zero network mutation** + `restore-failed`. |
 | 4 | WAL not defended against directory substitution | **Directory-replacement defense** (§8.0, §8.3): on `init`/`--recover` validate the store dir owner/DACL/reparse; before each `PREPARED`/`APPLIED`/`RECONCILED` append re-verify the already-open handle still points to the same file/dir (file ID) — **never** re-open via string path; tests added for crash-then-truncation, tampering, junction/symlink, ACL-changed, and directory-swapped (`T25`–`T30`). |
 | 5 | Threat-model C12 said "snapshot and journal are HMAC/digest-protected or at least digest" | **C12 rewritten** to the deterministic contract (above), and C2/C3 harmonized to the **pure allow-list** ACL (no `DENY Everyone`/`DENY Users`); a same-user Medium attacker **cannot write** the state directory (only the High helper can); tamper/corruption always **fail closed**. |
+
+### 0.6 Round 7 review fixes — security-descriptor contract (rev.7 — this revision)
+
+| # | Finding (round 7) | Resolution (this revision) |
+|---|---|---|
+| 1 | COM `LaunchPermission`/`AccessPermission` used a generic `GX` and relied on a hand-interpreted `GX → COM rights` mapping (and allowed an extra `DENY ANONYMOUS LOGON`/`NETWORK`) | **Explicit COM rights masks** (§5.1): `Launch` `D:P(A;;0xB;;;SY)(A;;0xB;;;BA)(A;;0xB;;;<ownerSid>)` (`0xB` = `EXECUTE 0x1 | EXECUTE_LOCAL 0x2 | ACTIVATE_LOCAL 0x8`); `Access` `D:P(A;;0x3;;;SY)(A;;0x3;;;<ownerSid>)` (`0x3` = `EXECUTE | EXECUTE_LOCAL`). Each ACL uses **one uniform new-style mask**, every ACE **contains `0x1`**, and there are **no `DENY` ACEs** (a complete allow-list denies by absence). |
+| 2 | State-directory ACL was described per-ACE with `GR → GW` + traverse arrows and a wrong-number-of-semicolons SACL | **One resolvable complete SDDL** (§8.0): `O:SYG:SYD:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)` + `S:(ML;OICI;NW;;;HI)`; **no owner-SID file ACE** (Medium has no raw read; UI is COM-sanitized only), no arrows, exact mask `GA` for `SY`/`BA`, `HI` = `S-1-16-12288`, `NW` = `NO_WRITE_UP`, `OICI` inheritance. |
+| 3 | No tests proved the descriptor-build/verification chain | **Descriptor-build tests** (§13): `ConvertStringSecurityDescriptorToSecurityDescriptor` succeeds; `MakeSelfRelativeSD` succeeds; the `REG_BINARY` value round-trips byte-identical; `GetSecurityInfo` reads back the DACL/SACL; `AccessCheck` verifies Launch (owner=allow, second user=deny, SYSTEM=allow) and Access (owner=allow, second user=deny); every COM ACE mask is **strictly** `0xB`/`0x3` and **contains `0x1`**; directory **High** mandatory label present with `NO_WRITE_UP`; **Medium** owner write/delete/change-ACL **fails** while **High** helper **succeeds**. |
+| 4 | Install doc component table split the state into "app-data (Medium/High)" vs the `%ProgramData%` store | **Unified** (install doc §1): `BaselineSnapshot`/`WrittenState`/`MutationJournal` + ownership/version manifest all live in `%ProgramData%\<brand-independent-id>\tun-state\<ownerSid>\`, helper-owned / SYSTEM owner / **High integrity** / **Medium-not-writable**; the stale "app-data (Medium/High)" description is deleted. |
 
 
 ---
@@ -722,58 +737,65 @@ override it) as an out-of-proc COM server under a dedicated **`AppID`**:
 |---|---|
 | (default) | `Murge Privileged Helper` |
 | `RunAs` | **`Interactive User`** — required so the server is activated as the current interactive user's high-integrity token (Activate-as-Activator / Interactive User semantics, per the elevation moniker). **Not** a named/known account. |
-| `LaunchPermission` | **Pure allow-list DACL** (no `Everyone`/`Users`/`Authenticated Users`, no deny that shadows the owner). Grants local launch + local activation to the authorized user principal, `SYSTEM`, and `Administrators` (install/repair) only. See the exact SDDL + ACE table in the round-6 note below. |
-| `AccessPermission` | **Pure allow-list DACL** — grants local access (call/connect) to the authorized user principal + `SYSTEM` only. `Administrators` is **not** granted ordinary call access (it is in the launch list only for install/repair). See the exact SDDL + ACE table below. |
+| `LaunchPermission` | **Pure allow-list DACL** with **explicit COM rights mask `0xB`** (`EXECUTE|EXECUTE_LOCAL|ACTIVATE_LOCAL`), no `Everyone`/`Users`/`Authenticated Users`, no deny that shadows the owner. Grants local launch + local activation to the authorized user principal, `SYSTEM`, and `Administrators` (install/repair) only. See the exact SDDL + ACE table (+ descriptor-build tests) below. |
+| `AccessPermission` | **Pure allow-list DACL** with **explicit COM rights mask `0x3`** (`EXECUTE|EXECUTE_LOCAL`) — grants local access (call/connect) to the authorized user principal + `SYSTEM` only. `Administrators` is **not** granted ordinary call access (it is in the launch list only for install/repair). See the exact SDDL + ACE table below. |
 
-> **Round-6 — the DACL is a pure allow-list, never a deny-then-allow.** A
-> `DENY Everyone` + `DENY Users` + `ALLOW <ownerSID>` pattern is **rejected**: the authorized
-> user is a member of both `Everyone` and `Users`, so the explicit `DENY` entries win over the
-> `ALLOW` and the legitimate owner is locked out of activating/calling the helper. Instead the
-> DACL is a **complete allow-list** of positive ACEs only — absent SIDs get **no effective
-> access** (deny-by-default on a complete DACL). Explicit `DENY` is used **only** for
-> well-known principals that can never be the owner's interactive user, so it can never shadow
-> the owner's `ALLOW`:
+> **Round-6/7 — the DACL is a pure allow-list, never a deny-then-allow, and carries no `DENY`
+> at all.** A `DENY Everyone` + `DENY Users` + `ALLOW <ownerSID>` pattern is **rejected**: the
+> authorized user is a member of both `Everyone` and `Users`, so the explicit `DENY` entries win
+> over the `ALLOW` and the legitimate owner is locked out of activating/calling the helper.
+> Instead the DACL is a **complete allow-list** of positive ACEs only — absent SIDs get **no
+> effective access** (deny-by-default on a complete DACL). Because the allow-list is complete,
+> **no `DENY` ACE is added** (not even `ANONYMOUS LOGON`/`NETWORK`): adding a `DENY` only
+> introduces ACE-order / deny-override risk and is unnecessary here, since principals with no
+> `ALLOW` ACE already get no access.
 >
-> **LaunchPermission SDDL** (units: local launch + local activation; no remote bit is granted):
+> **LaunchPermission SDDL** — `D:P` (protected, no inheritance); every ACE uses the **explicit COM rights mask `0xB`** (a single, uniform format; **no** generic `GX`):
 > ```
-> D:(A;;GX;;;S-1-5-18)(A;;GX;;;S-1-5-32-544)(A;;GX;;;<owner SID>)
+> D:P(A;;0xB;;;SY)(A;;0xB;;;BA)(A;;0xB;;;<ownerSid>)
 > ```
-> **AccessPermission SDDL** (units: local access/call; no remote bit is granted):
+> where each `A;;0xB;;;…` = **Allow** with `COM_RIGHTS_EXECUTE (0x1) | COM_RIGHTS_EXECUTE_LOCAL (0x2) | COM_RIGHTS_ACTIVATE_LOCAL (0x8)`.
+>
+> **AccessPermission SDDL** — `D:P` protected; every ACE uses the **explicit COM rights mask `0x3`** (single uniform format):
 > ```
-> D:(A;;GX;;;S-1-5-18)(A;;GX;;;<owner SID>)
+> D:P(A;;0x3;;;SY)(A;;0x3;;;<ownerSid>)
 > ```
+> where each `A;;0x3;;;…` = **Allow** with `COM_RIGHTS_EXECUTE (0x1) | COM_RIGHTS_EXECUTE_LOCAL (0x2)`.
+>
+> **No mix of old and new ACEs, and no extra `DENY`.** Every ACE in an ACL uses the **same
+> new-style mask** and every one contains **`0x1`** (`COM_RIGHTS_EXECUTE`) — there is **no**
+> legacy `0x1`-only ACE mixed alongside a `0x3`/`0xB` ACE. The DACL is a **complete pure
+> allow-list**; absent SIDs get **no effective access** (deny-by-default), so **no `DENY`
+> `ANONYMOUS LOGON`/`NETWORK` ACE is added** (that only adds ACE-order / deny-override risk and
+> is unnecessary on a complete allow-list). `SY` = `S-1-5-18`, `BA` = `S-1-5-32-544`, and
+> `<ownerSid>` is the interactive-user SID (`S-1-5-21-<dom>-<rid>`) resolved at install.
+>
 > These registry values are a **binary `SECURITY_DESCRIPTOR`** (the SDDL string above is the
 > `ConvertStringSecurityDescriptorToSecurityDescriptor` source form, `SDDL_REVISION_1`). The
-> COM runtime maps the **generic `GX` (GENERIC_EXECUTE)** to the corresponding **COM rights**:
-> local launch/activate on `LaunchPermission`, local call/connect on `AccessPermission`.
-> Because **no `GA`/`GW`/remote bits are granted**, a network/remote activation or access is
-> denied by DCOM, which also backs the "local `ncalrpc` only" requirement in §5.2.
+> mask is the **actual COM rights mask**, so there is **no generic-rights → COM-rights
+> translation to assume**; the value is written verbatim. Launch grants launch+activate-local;
+> Access grants call/connect local. Because **no `COM_RIGHTS_*_REMOTE` bit and no `GA`/`GW` are
+> granted**, a network/remote activation or access is denied by DCOM, which also backs the
+> "local `ncalrpc` only" requirement in §5.2.
 >
-> **Per-ACE table** (each `A;;` entry = **Allow**; the DACL contains **no `DENY`** except the
-> two "clean" principals noted at the end; the *owner* ACE is the one a `SetupAccountSid`/
-> installer resolves to the actual interactive-user SID, e.g. `S-1-5-21-<dom>-<rid>`):
+> **Per-ACE table** (each `A;;` = Allow; the DACL contains **no `DENY`**):
 
-> | SDDL | ACE | Object SID (well-known / variable) | allow / deny | SDDL rights | Effective COM access-mask | Why |
+> | SDDL | ACE | Object SID | allow / deny | COM rights mask | Effective COM rights | Why |
 > |---|---|---|---|---|---|---|
-> | `Launch` `D:(A;;GX;;;S-1-5-18)…` | `A` | `SYSTEM` `S-1-5-18` | **allow** | `GX` (GENERIC_EXECUTE) | `COM_RIGHTS_EXECUTE_LOCAL` (0x2) + `COM_RIGHTS_ACTIVATE_LOCAL` (0x8) — local launch + local activation; **no remote bit** | The SCM/RPCSS must be able to launch the out-of-proc server; no remote activation. |
-> | `Launch` `…(A;;GX;;;S-1-5-32-544)…` | `A` | `Administrators` `S-1-5-32-544` | **allow** | `GX` | `COM_RIGHTS_EXECUTE_LOCAL` + `COM_RIGHTS_ACTIVATE_LOCAL` | Install/repair can launch/activate; **not** granted ordinary call access (it is absent from `AccessPermission`). |
-> | `Launch` `…(A;;GX;;;<owner SID>)` | `A` | Owner user SID `S-1-5-21-<dom>-<rid>` (resolved at install) | **allow** | `GX` | `COM_RIGHTS_EXECUTE_LOCAL` + `COM_RIGHTS_ACTIVATE_LOCAL` | The **only** interactive user that may launch/activate the helper. |
-> | `Access` `D:(A;;GX;;;S-1-5-18)…` | `A` | `SYSTEM` `S-1-5-18` | **allow** | `GX` | `COM_RIGHTS_EXECUTE` (0x1) — local call/connect | The SCM may complete the connect; local only. |
-> | `Access` `…(A;;GX;;;<owner SID>)` | `A` | Owner user SID `S-1-5-21-<dom>-<rid>` | **allow** | `GX` | `COM_RIGHTS_EXECUTE` — local call/connect | The **only** interactive user that may call the helper. `Administrators`, `Everyone`, `Users`, `Authenticated Users` are **absent** ⇒ no effective access. |
+> | `Launch` `D:P(A;;0xB;;;SY)…` | `A` | `SYSTEM` `S-1-5-18` | **allow** | `0xB` | `EXECUTE (0x1) + EXECUTE_LOCAL (0x2) + ACTIVATE_LOCAL (0x8)` | The SCM/RPCSS must be able to launch + activate the out-of-proc server; local only. |
+> | `Launch` `…(A;;0xB;;;BA)…` | `A` | `Administrators` `S-1-5-32-544` | **allow** | `0xB` | `EXECUTE + EXECUTE_LOCAL + ACTIVATE_LOCAL` | Install/repair can launch/activate (`BA`); **not** granted ordinary call access (absent from `AccessPermission`). |
+> | `Launch` `…(A;;0xB;;;<ownerSid>)…` | `A` | Owner user SID `S-1-5-21-<dom>-<rid>` (resolved at install) | **allow** | `0xB` | `EXECUTE + EXECUTE_LOCAL + ACTIVATE_LOCAL` | The **only** interactive user that may launch/activate the helper. |
+> | `Access` `D:P(A;;0x3;;;SY)…` | `A` | `SYSTEM` `S-1-5-18` | **allow** | `0x3` | `EXECUTE (0x1) + EXECUTE_LOCAL (0x2)` | The SCM may complete the connect; local only. |
+> | `Access` `…(A;;0x3;;;<ownerSid>)…` | `A` | Owner user SID `S-1-5-21-<dom>-<rid>` | **allow** | `0x3` | `EXECUTE + EXECUTE_LOCAL` | The **only** interactive user that may call the helper. `Administrators`, `Everyone`, `Users`, `Authenticated Users` are **absent** ⇒ no effective access. |
 >
-> **Optional clean `DENY` (never shadow the owner).** Used only for principals that can
-> **never** be the owner's interactive user, so the `DENY` cannot override the owner's `ALLOW`:
->
-> | SDDL | ACE | Object SID | allow / deny | SDDL rights | Effective COM access-mask | Why |
-> |---|---|---|---|---|---|---|
-> | `Access` (optional) | `D` | `ANONYMOUS LOGON` `S-1-5-7` | **deny** | `GX` | `COM_RIGHTS_EXECUTE` | Anonymous callers can never be the owner; harmless explicit reject. |
-> | `Access` (optional) | `D` | `NETWORK` `S-1-5-2` | **deny** | `GX` | `COM_RIGHTS_EXECUTE` | Remote/network callers can never be the owner; reinforces `ncalrpc`-local-only. **Do not** add `DENY Everyone`/`DENY Users` — those do contain the owner. |
->
-> **Verification is `AccessCheck`, and it is a required test (see §13 `T24`).** Build the
-> actual `SECURITY_DESCRIPTOR` from the stored binary value (or the SDDL above) and assert:
-> **owner SID allowed**, **a second normal user denied**, **ANONYMOUS LOGON denied**,
-> **NETWORK denied**, **SYSTEM allowed** — for both `LaunchPermission` and
-> `AccessPermission`, and (if present) for the helper state-directory DACL.
+> **`AccessCheck` verification is required (see §13 descriptor-build tests).** Build the actual
+> `SECURITY_DESCRIPTOR` from the stored binary value (or the SDDL above) and assert:
+> **owner SID allowed**, **a second normal user denied**, **SYSTEM allowed** for both
+> `LaunchPermission` and `AccessPermission`; every COM ACE mask is **strictly** `0xB` or `0x3`
+> and **contains `0x1`**; `ConvertStringSecurityDescriptorToSecurityDescriptor` and
+> `MakeSelfRelativeSD` succeed; the `REG_BINARY` value round-trips byte-identical; and
+> `GetSecurityInfo` reads back the same DACL. (No `ANONYMOUS LOGON`/`NETWORK` ACE is present;
+> they are denied by absence on the complete allow-list.)
 
 
 
@@ -1000,36 +1022,57 @@ because **disable cannot reach a process it never kept alive**.
   layout.** The `<brand-independent-id>` (e.g. `Murge` — a stable, brand-independent token, so
   a rename does not lose recovery state) and the `<ownerSid>` (the authorized user's SID,
   hex/`S-1-5-21-…`) separate per-owner state so one account cannot see or corrupt another's.
-- **Owner is `SYSTEM`** (S-1-5-18) — or `Administrators` if the install policy requires. The
-  DACL is a **pure allow-list** with **no inheritance** and **no deny-that-shadows-owner**:
-  * `SYSTEM` — full control (create/read/write/delete/change-ACL);
-  * `Administrators` — full control (install/repair/recovery);
-  * the **owner user SID** — the rights the elevated helper needs (read/write/traverse); it is
-    **not** granted to `Everyone`/`Users`/`Authenticated Users`.
+- **Owner is `SYSTEM`** (S-1-5-18). The DACL is a **pure allow-list** with **no inheritance**
+  and **no deny-that-shadows-owner**:
+  * `SYSTEM` — `GA` (full control: create/read/write/delete/change-ACL);
+  * `Administrators` — `GA` (full control: install/repair/recovery);
+  * **no `owner user SID` ACE** (see below), and it is **not** granted to `Everyone`/`Users`/
+    `Authenticated Users`.
 
-  **State-directory DACL (per-ACE).** Owner text `SYSTEM` (`O:SY`), protected (no inheritance,
-  `P:`), a **pure allow-list**, no deny-that-shadows-owner. Each `A;;` = **Allow**; the registry
-  `sacl`/`dacl` label `S:ML` carries the mandatory-integrity `High` label plus `NO_WRITE_UP`.
+  **State-directory DACL (the resolvable SDDL).** Owner `SYSTEM` (`O:SY`), primary group
+  `SYSTEM` (`G:SY`), **protected** (`D:P`), **container/object inherit** (`OICI`), a **complete
+  pure allow-list** with **no `DENY`**, carrying the **High mandatory-integrity label** with
+  `NO_WRITE_UP` (`NW`) and inherit (`OICI`):
 
-  | Object SID | allow / deny | SDDL rights | Access-mask bits | Why |
-  |---|---|---|---|---|
-  | `SYSTEM` `S-1-5-18` | **allow** | `GA` (generic all) | generic-all (0x1F01FF) | Full control — create/read/write/delete/change-ACL. |
-  | `Administrators` `S-1-5-32-544` | **allow** | `GA` | generic-all (0x1F01FF) | Install/repair/recovery; full control so a repair can rebuild the store. |
-  | Owner user SID `S-1-5-21-<dom>-<rid>` | **allow** | `GR` → `GW` + traverse | `FILE_READ_*` + `FILE_WRITE_*` + `FILE_EXECUTE` (traverse) | The rights the **High** helper needs to read/write its own store. The Medium surface is blocked by the mandatory label, not by absence of this ACE. |
-  | `Everyone` / `Users` / `Authenticated Users` | **absent (no ACE)** | — | none | Deny-by-default on a complete ACL ⇒ no access. Never granted. |
-  | `ANONYMOUS LOGON` `S-1-5-7` (optional) | **deny** | `GA` | generic-all | Clean reject; can never be the owner SID so it cannot shadow the owner. |
-  | `NETWORK` `S-1-5-2` (optional) | **deny** | `GA` | generic-all | Clean reject (remote); can never be the owner SID. |
+  ```
+  O:SYG:SYD:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)
+  S:(ML;OICI;NW;;;HI)
+  ```
 
-- **Medium-IL owner is blocked by a mandatory integrity label, and this is the *real* boundary
-  — ACL alone cannot separate the Medium and High instances of the same SID.** Because the
-  helper runs as the **owner's high-integrity token** (`RunAs = Interactive User`), it and the
-  Medium UI share the **same user SID**, so an ACL that lets the helper write also lets the
-  Medium surface write. The separation is **mandatory integrity control**: the `tun-state` and
-  `<ownerSid>` directories carry a **`High` mandatory label** (`S:(ML;CIOI;NW;;;;;S-1-16-12288`
-  with `NO_WRITE_UP`). A **Medium** token of that SID is denied **write / delete / ACL change**
-  (MIC write-up), while the **High** helper of the same SID passes. The Medium surface is
-  therefore **incapable** of writing, deleting or re-ACLing the state dir/files — the property
-  the round-6 reviewer requires.
+  | SDDL ACE | Object SID | allow / deny | Access mask | Inherit | Why |
+  |---|---|---|---|---|---|
+  | `(A;OICI;GA;;;SY)` | `SYSTEM` `S-1-5-18` | **allow** | `GA` generic-all (0x1F01FF) | object + container | Full control — create/read/write/delete/change-ACL of the store tree. |
+  | `(A;OICI;GA;;;BA)` | `Administrators` `S-1-5-32-544` | **allow** | `GA` generic-all (0x1F01FF) | object + container | Install/repair/recovery; full control so a repair can rebuild the store. |
+  | (none) | owner user SID `S-1-5-21-<dom>-<rid>` | **absent (no ACE)** | — | — | The Medium owner gets **no raw read** (as required) so the **owner SID ACE is omitted**; the UI reads only the **sanitized** state via helper COM (below). |
+  | (none) | `Everyone` / `Users` / `Authenticated Users` | **absent (no ACE)** | — | — | Deny-by-default on a complete ACL ⇒ no access; never granted. |
+  | `(ML;OICI;NW;;;HI)` | `High` `S-1-16-12288` (label ACE) | — | `NW` = `NO_WRITE_UP` | object + container | The mandatory-integrity `High` label, inherited, with `NO_WRITE_UP`; `HI` = `S-1-16-12288`. |
+
+  **Why there is **no** `owner SID` ACE (the Medium surface never opens raw files).** The
+  helper (activated as the **owner's high-integrity token** via `RunAs = Interactive User`) is a
+  member of **`Administrators`** (the COM elevation moniker only runs when the interactive user
+  is an administrator or supplies admin credentials), so its token carries **`BA` enabled** and
+  reaches the store through the `BA` ACE (`GA`). The **Medium** token of the same user has
+  `Administrators` as **deny-only/restricted** (UAC Admin Approval Mode) and has **no** `owner SID`
+  ACE, so it is denied **read, write, delete and change-ACL** by **both** the DACL and the **High
+  mandatory label** (`NO_WRITE_UP`). The Medium UI reads **only** the sanitized state via helper
+  COM and **never** opens a raw `baseline.json`/`journal.json`. This is the **preferred** case the
+  reviewer called out — because the Medium surface needs **no raw read**, no `owner SID` file ACE
+  is added, and the UI rides COM-sanitized status only. (If a future non-admin helper had to write
+  the store, the exact file mask would be asserted by the descriptor-build tests in §13; that is
+  not the design here.)
+
+- **The same-user Medium/High split is the point of the store contract.** The helper runs as the
+  **owner's high-integrity token** (`RunAs = Interactive User`), which is a member of
+  **`Administrators`** (elevation moniker ⇒ the interactive user is an admin or supplied admin
+  credentials), so it reaches the store through the **`BA` (`GA`) ACE**. The Medium UI token of
+  **the same user SID** has `Administrators` as **deny-only/restricted** (UAC Admin Approval Mode)
+  and has **no** `owner SID` ACE in the DACL, so it is denied by the DACL **and** by the
+  **`High` mandatory label**. The separation is **mandatory integrity control + the missing owner
+  ACE**: the `tun-state` and `<ownerSid>` directories carry the **`High` mandatory label**
+  (`S:(ML;OICI;NW;;;HI)`, `HI` = `S-1-16-12288`, `NW` = `NO_WRITE_UP`). A **Medium** token of that
+  SID is denied **write / delete / ACL change** (MIC write-up), while the **High** helper passes.
+  The Medium surface is therefore **incapable** of writing, deleting or re-ACLing the state
+  dir/files — the property the round-6 reviewer requires.
 - **Owner reads only the sanitized state via helper COM.** To get state, the helper exposes
   `get_status`/`get_state`, which returns a **sanitized projection** (the current `WrittenState`
   fields the renderer needs, **no** raw `BaselineSnapshot`/`MutationJournal` records, no
@@ -1429,7 +1472,11 @@ and separate owner authorization, and only in the gated disposable-Windows job
 ## 13. Test / evidence matrix (item 7)
 
 All real behavior runs only in the gated `windows-latest` job
-(`MURGE_RUN_REAL_TUN=1` **and** `win32`), never in default `npm test`.
+(`MURGE_RUN_REAL_TUN=1` **and** `win32`), never in default `npm test`. The **access-control /
+descriptor-build** rows (`T24`, `T38`–`T40`, and the state-dir DACL/SACL reads) are
+**Windows-only unit tests that need no real TUN, no network mutation and no elevated helper** —
+they build the `SECURITY_DESCRIPTOR` in-process, so they run in the `win32` job without
+`MURGE_RUN_REAL_TUN`.
 
 | # | Test | Assertion | Evidence |
 |---|---|---|---|
@@ -1459,7 +1506,7 @@ All real behavior runs only in the gated `windows-latest` job
 | T22 | **Helper crash leaves no intact-but-orphaned adapter** | After helper crash, no Murge adapter remains with a **live data plane but no owning helper**; if an adapter is observed still present, the new helper marks a `conflict`, keeps evidence, and does **not** delete it (D5) | enumerate adapter; assert either absent or `conflict` + evidence + no delete |
 | T23 | **Foreign/preexisting adapter never removed on recover** | A pre-existing/foreign adapter sharing the reserved identity is never removed, even during recovery of an owned adapter | pre-create foreign adapter; run recover; assert it remains |
 
-| T24 | **COM ACL is a pure allow-list (AccessCheck)** | The stored `LaunchPermission`/`AccessPermission` (+ state-dir DACL) `SECURITY_DESCRIPTOR` gives **owner SID allowed**, **second normal user denied**, **ANONYMOUS LOGON denied**, **NETWORK denied**, **SYSTEM allowed**, and grants **no** `Everyone`/`Users`/`Authenticated Users` | `AccessCheck` against the built descriptor for each SID/token; assert the matrix (owner=allow, second-user=deny, anonymous=deny, network=deny, system=allow); assert no `Everyone`/`Users`/`AuthUsers` ACE |
+| T24 | **COM ACL is a pure allow-list (AccessCheck)** | The stored `LaunchPermission`/`AccessPermission` (+ state-dir DACL) `SECURITY_DESCRIPTOR` gives **owner SID allowed**, **second normal user denied**, **SYSTEM allowed**, and grants **no** `Everyone`/`Users`/`Authenticated Users` ACE (and **no** `DENY` ACE — `ANONYMOUS LOGON`/`NETWORK` are denied by absence, not by a `DENY`). The exact COM-mask assertions are the descriptor-build group below (`T32`–`T40`) | `AccessCheck` against the built descriptor for owner / second-user / SYSTEM tokens; assert the matrix (owner=allow, second-user=deny, system=allow); assert no `Everyone`/`Users`/`AuthUsers` ACE and no `DENY` ACE |
 | T25 | **State-dir owner/DACL/reparse validated on startup** | On `init`/`--recover` the helper validates the store dir owner = SYSTEM, the allow-list DACL and reparse state; a **wrong owner** or **wrong ACL** ⇒ **zero network mutation** + `restore-failed` | pre-set wrong owner/ACL on the dir; start recovery; assert no route/DNS change + `restore-failed` + store retained |
 | T26 | **Reparse point on the store path is rejected** | A **symlink / junction / mount point** planted on the store path (dir or a record file) is detected (`FILE_FLAG_OPEN_REPARSE_POINT` + reparse-tag query) and the operation **fails closed** | create junction/symlink/mount on `tun-state\<ownerSid>` or on a record file; assert detection + fail-closed + no mutation |
 | T27 | **WAL handle/file-ID re-verify (directory swap)** | If the journal **directory** is swapped between appends (replaced with another dir of the same name), the already-open handle's **file ID** no longer matches the recorded one ⇒ the next `PREPARED`/`APPLIED`/`RECONCILED` append **fails closed** | record file ID; swap the dir; append; assert mismatch → fail-closed, no mutation, no re-open-by-string |
@@ -1467,4 +1514,13 @@ All real behavior runs only in the gated `windows-latest` job
 | T29 | **State-dir ACL modified by a lower-trust process** | Changing the state-dir DACL to add a user/Everyone ACE, or to remove the owner ACE, is **not** possible from Medium (MIC write-up) and, if observed, the helper **fails closed** | attempt ACL change from Medium; assert blocked (MIC); assert helper re-verifies ACL and fails closed |
 | T30 | **Medium-IL owner cannot write/delete/change-ACL the store** | The same user's **Medium** token cannot create/modify/delete/ACL a file in the High-labeled store (MIC write-up) while the **High** helper can | attempt create/write/delete/SetSecurity from a Medium token; assert denied (access denied / MIC); assert the High helper can |
 | T31 | **Uninstall retains store until safe recovery** | Uninstall retains `%ProgramData%\<id>\tun-state\<ownerSid>\` and cleans it **only** after a safe recovery completes (no pending record + routes/DNS back to baseline) | simulate pending `PREPARED`; run uninstall; assert store retained + no cleanup; after clean recovery assert cleanup |
+| T32 | **Descriptor-build: SDDL → `SECURITY_DESCRIPTOR`** | `ConvertStringSecurityDescriptorToSecurityDescriptor` succeeds on the `LaunchPermission` SDDL, the `AccessPermission` SDDL **and** the state-dir SDDL (`O:SYG:SYD:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)S:(ML;OICI;NW;;;HI)`), yielding a valid descriptor | call the API on each SDDL string; assert success + non-null descriptor + `GetSecurityDescriptorLength` reasonable |
+| T33 | **Descriptor-build: `MakeSelfRelativeSD`** | The converted descriptor converts to **self-relative** form (required for `REG_BINARY`) without error | call `MakeSelfRelativeSD`; assert success + output length set + non-null |
+| T34 | **Descriptor-build: `REG_BINARY` round-trip** | Writing the self-relative descriptor as a `REG_BINARY` value then reading it back yields **byte-identical** data | write bytes to the registry `LaunchPermission`/`AccessPermission`/state key; read back; assert byte equality (and that it is `REG_BINARY`) |
+| T35 | **Descriptor-build: `GetSecurityInfo` readback** | `GetSecurityInfo` on the created state dir reads back a DACL/SACL **matching** the descriptor we set (owner SYSTEM, allow-list DACL, `High` label with `NO_WRITE_UP`) | apply the SDDL, then `GetSecurityInfo`; assert owner SID + DACL ACE count + SACL label |
+| T36 | **`AccessCheck` — `LaunchPermission`** | The built Launch descriptor grants **owner SID = allow**, a **second normal user = deny**, **SYSTEM = allow**; no `Everyone`/`Users`/`Authenticated Users` ACE grants access | `AccessCheck` with tokens for owner / second normal user / SYSTEM; assert the allow/deny matrix + no other ACE grants |
+| T37 | **`AccessCheck` — `AccessPermission`** | The built Access descriptor grants **owner SID = allow**, **second normal user = deny** (SYSTEM is granted launch/activate but is **not** given ordinary call access) | `AccessCheck` with owner + second-user tokens; assert owner allow, second-user deny |
+| T38 | **COM ACE mask equality** | Every ACE in `LaunchPermission` has mask **strictly `0xB`**; every ACE in `AccessPermission` has mask **strictly `0x3`**; **no** generic `GX`/`GA` ACE; and **every** COM ACE contains the `0x1` (`COM_RIGHTS_EXECUTE`) bit | enumerate ACEs on the built descriptors; assert each mask == `0xB` or `0x3` and `mask & 0x1 == 0x1` |
+| T39 | **State-dir High mandatory label + `NO_WRITE_UP`** | The store dir carries the **`High`** mandatory-integrity label (`S:(ML;OICI;NW;;;HI)`, `HI` = `S-1-16-12288`) with `NW`/`NO_WRITE_UP` and `OICI` inheritance | `GetSecurityInfo` SACL readback; assert a `SYSTEM_MANDATORY_LABEL_ACE` with the `S-1-16-12288` SID and `NO_WRITE_UP` |
+| T40 | **Store dir Medium vs High** | A **Medium** token of the owner SID **cannot write / delete / change-ACL** a file in the `tun-state` dir, while the **High** helper token can (covered by MIC + the missing owner ACE) | try create/write/delete/SetSecurity from a Medium token (assert access denied / MIC); assert the High helper can; cross-refs T25/T29/T30 |
 

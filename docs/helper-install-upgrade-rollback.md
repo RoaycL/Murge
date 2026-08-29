@@ -32,9 +32,9 @@
 | Helper executable | app install dir (Program Files) | High IL | Installed/updated with the app; replaced only after integrity check |
 | **Per-arch official `wintun.dll`** | app install dir `resources/bin/<arch>` (never a bare driver file) | Medium/High | Bundled per-arch, digest-pinned; the signed Wintun kernel driver is **installed/loaded on demand by the DLL inside `WintunCreateAdapter`** at first enable (there is **no separate driver-load step**), and we do **not** ship/delete a `wintun.sys` ourselves |
 | Optional helper service (alternative, D2) | Windows service (SERVICE_WIN32_OWN_PROCESS) | High IL / service SID | Only if the owner revokes D2 (standalone helper); registered/updated with the app; removed on uninstall after safe teardown |
-| BaselineSnapshot + WrittenState + mutation journal | app-data (helper-owned) | Medium/High | Written before first mutation; survives uninstall to enable rollback |
+| BaselineSnapshot + WrittenState + mutation journal | `%ProgramData%\<brand-independent-id>\tun-state\<ownerSid>\` (helper-owned; owner = SYSTEM; **High** integrity → **Medium-not-writable**) | High | Written before first mutation; survives uninstall to enable rollback |
 | TUN restore tool (`--recover`) | app install dir | High IL | Used by the uninstall hook and the emergency path |
-| Ownership/version manifest markers | app-data | Medium | Records which helper+dll version installed/loaded what, for upgrade/rollback |
+| Ownership/version manifest markers | `%ProgramData%\<brand-independent-id>\tun-state\<ownerSid>\` (`state.manifest` — helper-owned; owner = SYSTEM; High integrity → Medium-not-writable) | High | Records which helper+dll version installed/loaded what, for upgrade/rollback |
 
 ---
 
@@ -50,13 +50,18 @@
    (no inheritance into the per-owner subtree); the **per-owner**
    `tun-state\<ownerSid>\` subtree is **created by the elevated helper** at first enable
    with the pure-allow-list DACL + **High** mandatory-integrity label (design doc §8.0).
-1b. **COM registration ACLs (pure allow-list).** Register `LaunchPermission` /
-   `AccessPermission` as **pure allow-list** DACLs (local launch/activate/access to the
-   owner user SID + `SYSTEM`, + `Administrators` in `LaunchPermission` for install/repair;
-   **no** `DENY Everyone`/`DENY Users`, **no** `Everyone`/`Users`/`Authenticated Users`; an
-   optional clean `DENY` only for `ANONYMOUS LOGON`/`NETWORK`). The installer writes the
-   binary `SECURITY_DESCRIPTOR` (SDDL shown in design doc §5.1) and the app re-verifies with
-   `AccessCheck` (design doc §13 `T24`).
+1b. **COM registration ACLs (pure allow-list, exact COM rights masks).** Register
+   `LaunchPermission` / `AccessPermission` as **pure allow-list** DACLs with the **explicit COM
+   rights masks** from design doc §5.1 — `Launch` `D:P(A;;0xB;;;SY)(A;;0xB;;;BA)(A;;0xB;;;<ownerSid>)`
+   and `Access` `D:P(A;;0x3;;;SY)(A;;0x3;;;<ownerSid>)` (`0xB` = `EXECUTE 0x1 | EXECUTE_LOCAL 0x2 |
+   ACTIVATE_LOCAL 0x8`; `0x3` = `EXECUTE 0x1 | EXECUTE_LOCAL 0x2`) — granting local launch/activate/
+   access to the **owner user SID** + `SYSTEM` (+ `Administrators` in `LaunchPermission` for
+   install/repair; **not** in `AccessPermission`). **No** `DENY Everyone`/`DENY Users`, **no**
+   `Everyone`/`Users`/`Authenticated Users`, and **no `DENY` at all** (a complete allow-list denies
+   by absence). The installer writes the binary `SECURITY_DESCRIPTOR` (SDDL above) and the app
+   re-verifies it with the **descriptor-build tests** (design doc §13 `T32`–`T40`/
+   `ConvertStringSecurityDescriptor…`/`MakeSelfRelativeSD`/`REG_BINARY` round-trip/
+   `GetSecurityInfo`/`AccessCheck`).
 2. **Integrity before first use.** On first activation (not at install) verify the
    helper SHA-256 against a pinned release manifest and its Authenticode publisher,
    and the official `wintun.dll` per-arch SHA-256 (C1). The Wintun kernel driver is
@@ -111,9 +116,10 @@
 
 An upgrade must never leave the machine in a half-updated TUN state.
 
-1. **Preserve user data.** Profiles, snapshots, journal and logs survive the
-   upgrade (they live in app-data). The helper binary/driver version changes, not
-   the user's data namespace.
+1. **Preserve user data.** Profiles and logs (app-data) plus the **recovery state** — the
+   `BaselineSnapshot`/`WrittenState`/mutation journal in
+   `%ProgramData%\<brand-independent-id>\tun-state\<ownerSid>\` — survive the
+   upgrade. The helper binary/driver version changes, not the user's data namespace.
 2. **Reconcile in-flight TUN before replacement.** If TUN is active at upgrade time,
    the new build must first run the **teardown/recovery** path (reading the
    `BaselineSnapshot` + `WrittenState` + mutation journal recorded by the old
@@ -259,7 +265,12 @@ certificate provider** remain open until design-review sign-off:
 | **New recovery helper has no old creator handle** | a recovery helper started after a crash has no handle from the dead helper and must not close a creator handle; it decides restoration from journal + current OS adapter state | recovery branches to "adapter gone / conflict" without a creator-handle close |
 | **Helper crash leaves no orphaned adapter / no delete of foreign** | after helper crash, if an adapter is observed still present the new helper marks a `conflict`, keeps evidence, and does **not** delete it (D5) | adapter absent or `conflict` + evidence + no delete |
 
-| **COM ACL is a pure allow-list (AccessCheck)** | the stored `LaunchPermission`/`AccessPermission` (+ state-dir DACL) descriptor → **owner SID allowed**, **second normal user denied**, **ANONYMOUS LOGON denied**, **NETWORK denied**, **SYSTEM allowed**; **no** `Everyone`/`Users`/`Authenticated Users` ACE | `AccessCheck` for each SID/token; assert the matrix |
+| **COM ACL is a pure allow-list (AccessCheck)** | the stored `LaunchPermission`/`AccessPermission` (+ state-dir DACL) descriptor → **owner SID allowed**, **second normal user denied**, **SYSTEM allowed**; **no** `Everyone`/`Users`/`Authenticated Users` ACE and **no `DENY` ACE** (`ANONYMOUS LOGON`/`NETWORK` are denied by absence, not by a `DENY`) | `AccessCheck` for owner / second-user / SYSTEM tokens; assert the matrix; enumerate ACEs (no `Everyone`/`Users`/`AuthUsers`, no `DENY`) |
+| **Descriptor-build: SDDL → descriptor** | `ConvertStringSecurityDescriptorToSecurityDescriptor` succeeds on the `LaunchPermission`, `AccessPermission` and state-dir SDDL (`O:SYG:SYD:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)S:(ML;OICI;NW;;;HI)`), then `MakeSelfRelativeSD` succeeds | call the API on each SDDL; assert success + non-null + self-relative |
+| **Descriptor-build: `REG_BINARY` round-trip** | writing the descriptor as `REG_BINARY` then reading it back yields **byte-identical** data | write/read the registry value; assert byte equality + `REG_BINARY` type |
+| **Descriptor-build: `GetSecurityInfo` readback** | `GetSecurityInfo` on the created store dir reads back owner SYSTEM, the allow-list DACL and the `High` `NO_WRITE_UP` label | apply SDDL; `GetSecurityInfo`; assert owner/DACL/SACL |
+| **Descriptor-build: COM mask equality + `0x1`** | every `LaunchPermission` ACE mask is **strictly `0xB`**, every `AccessPermission` ACE mask is **strictly `0x3`**, **no** generic `GX`/`GA`, and every COM ACE contains `0x1` | enumerate ACEs; assert each mask == `0xB`/`0x3` and `mask & 0x1 == 0x1` |
+| **State-dir High label + `NO_WRITE_UP`** | the store dir carries the `High` mandatory label (`S-1-16-12288`) with `NO_WRITE_UP` and `OICI` inheritance | `GetSecurityInfo` SACL; assert `SYSTEM_MANDATORY_LABEL_ACE` with `S-1-16-12288` + `NO_WRITE_UP` |
 | **State store validated on startup (owner/DACL/reparse)** | on `init`/`--recover` the helper validates the store dir owner = SYSTEM, the allow-list DACL and reparse state; a wrong owner/ACL or a planted symlink/junction/mount point ⇒ **zero network mutation** + `restore-failed` | pre-set wrong owner/ACL / create junction; assert fail-closed + store retained + no route/DNS change |
 | **WAL handle file-ID re-verify (dir swap)** | swapping the journal **directory** between appends makes the open handle's file ID mismatch the recorded one, so the next `PREPARED`/`APPLIED`/`RECONCILED` append **fails closed** (no string-path re-open) | record file ID; swap dir; append; assert mismatch → fail-closed |
 | **Journal truncation/tamper/schema+digest anomaly** | a truncated, tampered or schema/digest-mismatched journal/manifest is detected and **zero network modification** occurs; recovery enters `restore-failed` | truncate/tamper `journal.json`/`state.manifest`; assert detect + no mutation + `restore-failed` |
@@ -269,7 +280,10 @@ certificate provider** remain open until design-review sign-off:
 
 All of the above run only in the gated `windows-latest` job (skipped unless
 `MURGE_RUN_REAL_TUN=1` **and** `win32`) and never in default `npm test`. The **ACL/state-store
-structural tests** (COM `AccessCheck`, store owner/DACL/reparse validation, WAL handle file-ID
+structural tests** (the **descriptor-build** group — `ConvertStringSecurityDescriptorToSecurityDescriptor`,
+`MakeSelfRelativeSD`, `REG_BINARY` round-trip, `GetSecurityInfo` readback, the `AccessCheck`
+matrices, COM mask equality `0xB`/`0x3` + `0x1`, state-dir `High` `NO_WRITE_UP` label — and the
+COM `AccessCheck`, store owner/DACL/reparse validation, WAL handle file-ID
 re-verify, journal schema/digest anomaly, Medium-vs-High MIC blocking, uninstall-retains-store)
 are **Windows-only unit tests** (COM + `SecurityDescriptor` + reparse/`FileIdInfo` + token IL
 are Windows concepts) but do **not** require a real TUN adapter/network mutation, so they can

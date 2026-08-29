@@ -265,9 +265,11 @@ requires all of the following; failure in any one ⇒ close + fail closed:
   path, `AppID`) + `AppID` (default + `RunAs = "Interactive User"`, **pure allow-list**
   `LaunchPermission`/`AccessPermission` DACLs granting local launch/activate/access **only** to
   the authorized interactive-user principal + `SYSTEM` (+ `Administrators` in `LaunchPermission`
-  for install/repair) — **no** `DENY Everyone`/`DENY Users`, **no** `Everyone`/`Users`/
-  `Authenticated Users` ACE; an optional clean `DENY` is used only for `ANONYMOUS LOGON`/
-  `NETWORK`, which can never be the owner SID; verified by `AccessCheck`, design doc §5.1). There is **no** `ThreadingModel`
+  for install/repair), using the **explicit COM rights masks** `D:P(A;;0xB;;;SY)(A;;0xB;;;BA)`
+  (launch) and `D:P(A;;0x3;;;SY)(A;;0x3;;;<ownerSid>)` (access) — **no** `DENY Everyone`/
+  `DENY Users`, **no** `Everyone`/`Users`/`Authenticated Users` ACE, and **no `DENY` at all**
+  (a complete allow-list denies by absence; `ANONYMOUS LOGON`/`NETWORK` are denied that way);
+  verified by the descriptor-build `AccessCheck` tests, design doc §5.1/§13). There is **no** `ThreadingModel`
   under `LocalServer32` and **no** `Elevation` string value. Registration is in the registry
   **view matching the helper bitness**, selected explicitly with the
   **`KEY_WOW64_64KEY`/`KEY_WOW64_32KEY` flags** (no literal `WOW6432Node` path). The product
@@ -470,11 +472,16 @@ requires all of the following; failure in any one ⇒ close + fail closed:
   least digest" wording.** The integrity boundary is **the store DACL + mandatory integrity
   label**, not a cryptographic digest that a same-user attacker could also rewrite:
   - The recovery state lives in **`%ProgramData%\<brand-independent-id>\tun-state\<ownerSid>\`**
-    (design doc §8.0), created by the **elevated helper**, **owner = SYSTEM**, with a **pure
-    allow-list DACL** and a **`High` mandatory label** (`NO_WRITE_UP`). A **same-user
-    Medium-IL attacker cannot write, delete or re-ACL the store** (MIC write-up blocks it even
-    though it shares the owner's SID), so the store is **not user-writable** at all. **Only the
-    High-IL helper can write** it.
+    (design doc §8.0), created by the **elevated helper**, **owner = SYSTEM**, with the
+    **resolvable pure allow-list SDDL**
+    `O:SYG:SYD:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)` + `S:(ML;OICI;NW;;;HI)` — **no `DENY`**, and
+    **no owner-SID ACE** (the Medium UI has no raw-read path; it reads the sanitized state via
+    helper COM), plus a **`High` mandatory label** (`NO_WRITE_UP`, `HI` = `S-1-16-12288`). A
+    **same-user Medium-IL attacker cannot read, write, delete or re-ACL the store**: it has no
+    owner-SID ACE, its `Administrators` member is deny-only under UAC, and MIC write-up blocks it
+    even though it shares the owner's SID — so the store is **not user-writable** at all. **Only
+    the High-IL helper can access it** (its token has the `Administrators` group enabled, so it
+    reaches it via the `BA` ACE).
   - Inside that boundary, each record carries **`schemaVersion` + a SHA-256 digest**
     (`state.manifest`) and is written by the **helper only** (the owner's Medium UI never opens
     the raw files; it reads only the **sanitized** state via helper COM). The digest detects

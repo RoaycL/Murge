@@ -58,6 +58,12 @@ export const ProtocolErrorCode = {
   SYSTEM_PROXY_STATE_CONFLICT: 'SYSTEM_PROXY_STATE_CONFLICT',
   /** Restoring the previous system-proxy state failed. */
   SYSTEM_PROXY_RESTORE_FAILED: 'SYSTEM_PROXY_RESTORE_FAILED',
+  /** A requested TUN lifecycle transition is not allowed by the reviewed state machine. */
+  TUN_INVALID_TRANSITION: 'TUN_INVALID_TRANSITION',
+  /** A TUN helper security-descriptor source contract is malformed. */
+  TUN_SECURITY_DESCRIPTOR_INVALID: 'TUN_SECURITY_DESCRIPTOR_INVALID',
+  /** The privileged TUN path remains deliberately disabled until its external gates pass. */
+  TUN_IMPLEMENTATION_GATED: 'TUN_IMPLEMENTATION_GATED',
   /** An unexpected internal failure. */
   INTERNAL: 'INTERNAL'
 } as const

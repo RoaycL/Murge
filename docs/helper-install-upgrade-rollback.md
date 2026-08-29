@@ -44,7 +44,19 @@
    restore tool under `Program Files` (or the approved equivalent). The directory
    DACL blocks Medium-IL writes (C2). Never stage a privileged binary or the DLL in
    `%TEMP%` or an attacker-writable per-user path; never load the DLL from a search
-   path a lower-trust process can influence (C2).
+   path a lower-trust process can influence (C2). The installer also reserves the
+   **trusted state store** base
+   `%ProgramData%\<brand-independent-id>\tun-state\` with an **Admin-only base DACL**
+   (no inheritance into the per-owner subtree); the **per-owner**
+   `tun-state\<ownerSid>\` subtree is **created by the elevated helper** at first enable
+   with the pure-allow-list DACL + **High** mandatory-integrity label (design doc §8.0).
+1b. **COM registration ACLs (pure allow-list).** Register `LaunchPermission` /
+   `AccessPermission` as **pure allow-list** DACLs (local launch/activate/access to the
+   owner user SID + `SYSTEM`, + `Administrators` in `LaunchPermission` for install/repair;
+   **no** `DENY Everyone`/`DENY Users`, **no** `Everyone`/`Users`/`Authenticated Users`; an
+   optional clean `DENY` only for `ANONYMOUS LOGON`/`NETWORK`). The installer writes the
+   binary `SECURITY_DESCRIPTOR` (SDDL shown in design doc §5.1) and the app re-verifies with
+   `AccessCheck` (design doc §13 `T24`).
 2. **Integrity before first use.** On first activation (not at install) verify the
    helper SHA-256 against a pinned release manifest and its Authenticode publisher,
    and the official `wintun.dll` per-arch SHA-256 (C1). The Wintun kernel driver is
@@ -58,7 +70,11 @@
    driver" step. We never ship/install a bare `wintun.sys`; a pre-existing/shared Wintun
    driver is never overwritten or removed.
 4. **Enable order (single OS-config owner).** At enable, before any OS mutation, the
-   helper writes and verifies the **BaselineSnapshot**; then it writes (and **fsyncs**)
+   helper first **creates/validates the trusted state store**
+   `%ProgramData%\<id>\tun-state\<ownerSid>\` (owner = SYSTEM, pure allow-list DACL, **High**
+   mandatory label, **no reparse point**; design doc §8.0) and writes and verifies the
+   **BaselineSnapshot** there; a store/ACL/reparse/integrity anomaly ⇒ **zero network
+   mutation** + `restore-failed`. Then it writes (and **fsyncs**)
    **`CREATE_ADAPTER/PREPARED`** so recovery knows a create is in flight; **then** it calls
    `WintunCreateAdapter(Name, TunnelType, RequestedGUID)` (driver on demand + adapter created),
    and **only then** writes **`CREATE_ADAPTER/APPLIED`** with the LUID (pinned — re-derived to
@@ -168,7 +184,12 @@ Mirrors `resources/nsis/uninstall-restore.nsh`, extended for TUN.
 3. **Preserve user data.** `deleteAppDataOnUninstall:false` keeps profiles and the
    `BaselineSnapshot`/`WrittenState`/journal so an aborted or partial uninstall is
    recoverable. If the owner later wants a "remove all data" option, it is a
-   separate, explicit choice and must still run the TUN restore first.
+   separate, explicit choice and must still run the TUN restore first. The **trusted
+   state store** (`tun-state\<ownerSid>\`, design doc §8.0) is **retained** on upgrade and
+   uninstall and is removed **only** after a safe recovery completes (no pending
+   `PREPARED`/`APPLIED` record and routes/DNS are back to baseline); losing it first could
+   orphan a still-created adapter or a route/DNS change (see the "Uninstall retains store
+   until safe recovery" test).
 4. **Fail-closed abort.** The uninstall hook treats a non-zero restore exit as a
    reason to stop (same behavior as the proxy hook), so a broken TUN never survives
    as an OS-level dangling route/DNS after the app is gone.
@@ -238,5 +259,18 @@ certificate provider** remain open until design-review sign-off:
 | **New recovery helper has no old creator handle** | a recovery helper started after a crash has no handle from the dead helper and must not close a creator handle; it decides restoration from journal + current OS adapter state | recovery branches to "adapter gone / conflict" without a creator-handle close |
 | **Helper crash leaves no orphaned adapter / no delete of foreign** | after helper crash, if an adapter is observed still present the new helper marks a `conflict`, keeps evidence, and does **not** delete it (D5) | adapter absent or `conflict` + evidence + no delete |
 
+| **COM ACL is a pure allow-list (AccessCheck)** | the stored `LaunchPermission`/`AccessPermission` (+ state-dir DACL) descriptor → **owner SID allowed**, **second normal user denied**, **ANONYMOUS LOGON denied**, **NETWORK denied**, **SYSTEM allowed**; **no** `Everyone`/`Users`/`Authenticated Users` ACE | `AccessCheck` for each SID/token; assert the matrix |
+| **State store validated on startup (owner/DACL/reparse)** | on `init`/`--recover` the helper validates the store dir owner = SYSTEM, the allow-list DACL and reparse state; a wrong owner/ACL or a planted symlink/junction/mount point ⇒ **zero network mutation** + `restore-failed` | pre-set wrong owner/ACL / create junction; assert fail-closed + store retained + no route/DNS change |
+| **WAL handle file-ID re-verify (dir swap)** | swapping the journal **directory** between appends makes the open handle's file ID mismatch the recorded one, so the next `PREPARED`/`APPLIED`/`RECONCILED` append **fails closed** (no string-path re-open) | record file ID; swap dir; append; assert mismatch → fail-closed |
+| **Journal truncation/tamper/schema+digest anomaly** | a truncated, tampered or schema/digest-mismatched journal/manifest is detected and **zero network modification** occurs; recovery enters `restore-failed` | truncate/tamper `journal.json`/`state.manifest`; assert detect + no mutation + `restore-failed` |
+| **Medium-IL owner cannot write/delete/change-ACL the store** | the **same user's Medium** token cannot create/modify/delete/ACL the High-labeled store (MIC write-up) while the **High** helper can | attempt create/write/delete/`SetSecurity` from Medium; assert denied; assert the High helper can |
+| **Uninstall retains store until safe recovery** | uninstall retains `%ProgramData%\<id>\tun-state\<ownerSid>\` and cleans it **only** after a safe recovery completes (no pending record + routes/DNS back to baseline) | simulate pending `PREPARED`; run uninstall; assert store retained + no cleanup; after clean recovery assert cleanup |
+
+
 All of the above run only in the gated `windows-latest` job (skipped unless
-`MURGE_RUN_REAL_TUN=1` **and** `win32`) and never in default `npm test`.
+`MURGE_RUN_REAL_TUN=1` **and** `win32`) and never in default `npm test`. The **ACL/state-store
+structural tests** (COM `AccessCheck`, store owner/DACL/reparse validation, WAL handle file-ID
+re-verify, journal schema/digest anomaly, Medium-vs-High MIC blocking, uninstall-retains-store)
+are **Windows-only unit tests** (COM + `SecurityDescriptor` + reparse/`FileIdInfo` + token IL
+are Windows concepts) but do **not** require a real TUN adapter/network mutation, so they can
+run in a lighter Windows CI job (still `win32`, not default `npm test`).

@@ -235,10 +235,16 @@ Groups integrate with (and reuse) existing project patterns.
   placement). No temp-dir or per-user-writable drop of a privileged binary. The DLL
   is never resolved from a search path a lower-trust process can influence.
 - The directory ACL protects files from Medium-IL writes; the service/registry keys
-  are created with the restrictive DACL intended for an elevated object.
+  are created with the **pure allow-list DACL** intended for an elevated object (design doc
+  §5.1 — **no** `DENY Everyone`/`DENY Users` shadowing the owner's `ALLOW`). The recovery
+  state store is further protected by a **`High` mandatory-integrity label** so the same-user
+  **Medium-IL** owner cannot write/delete/change-ACL it even though it shares the owner's SID
+  (design doc §8.0).
 - Never promote a file placed in, or a path resolved from, an attacker-writable
   directory (e.g. `%TEMP%`, app-data subfolders writable by the same user) to an
-  elevated command.
+  elevated command. The trusted recovery state is **never** written to such a path; it lives in
+  the High-IL-only `%ProgramData%\<brand-independent-id>\tun-state\<ownerSid>\` (design doc
+  §8.0).
 
 ### C3 — Authenticated, authorized, replay-safe IPC (COM elevation-moniker bootstrap)
 
@@ -256,9 +262,12 @@ requires all of the following; failure in any one ⇒ close + fail closed:
 - **Elevation-moniker registration (machine-wide HKLM).** `CLSID` default +
   `LocalizedString=@...helper.exe,-101` + `Elevation\Enabled` = **REG_DWORD `1`** +
   `LocalServer32` (default = **absolute helper path**, plus `ServerExecutable` = absolute
-  path, `AppID`) + `AppID` (default + `RunAs = "Interactive User"`, restrictive
-  `LaunchPermission`/`AccessPermission` DACLs denying `Everyone`/`Users` and granting only
-  the authorized interactive-user principal + SYSTEM). There is **no** `ThreadingModel`
+  path, `AppID`) + `AppID` (default + `RunAs = "Interactive User"`, **pure allow-list**
+  `LaunchPermission`/`AccessPermission` DACLs granting local launch/activate/access **only** to
+  the authorized interactive-user principal + `SYSTEM` (+ `Administrators` in `LaunchPermission`
+  for install/repair) — **no** `DENY Everyone`/`DENY Users`, **no** `Everyone`/`Users`/
+  `Authenticated Users` ACE; an optional clean `DENY` is used only for `ANONYMOUS LOGON`/
+  `NETWORK`, which can never be the owner SID; verified by `AccessCheck`, design doc §5.1). There is **no** `ThreadingModel`
   under `LocalServer32` and **no** `Elevation` string value. Registration is in the registry
   **view matching the helper bitness**, selected explicitly with the
   **`KEY_WOW64_64KEY`/`KEY_WOW64_32KEY` flags** (no literal `WOW6432Node` path). The product
@@ -344,7 +353,11 @@ requires all of the following; failure in any one ⇒ close + fail closed:
   between the two records leaves a durable intent that recovery **reconciles by
   `WintunOpenAdapter(Name)` + identity verification** (`WintunGetAdapterLUID` +
   `ConvertInterfaceLuidToGuid`/SetupAPI) — **never by assuming**. A failure to write/verify
-  the snapshot or journal **aborts** with zero mutation.
+  the snapshot or journal **aborts** with zero mutation. The snapshot/journal live in the
+  **High-IL-only trusted store** (`%ProgramData%\<brand-independent-id>\tun-state\<ownerSid>`,
+  design doc §8.0), which the helper **validates on startup** (owner/DACL/reparse) and whose
+  journal **handle file-ID is re-verified before each `PREPARED`/`APPLIED`/`RECONCILED`
+  append** (no string-path re-open) — a store/ACL/reparse/integrity anomaly **fails closed**.
 - Restore is **per-item owned-only**: each item is compared against `WrittenState`
   and reverted to its baseline only if the current value still equals what the app
   wrote. An externally-modified item is reported as a **per-item conflict**
@@ -453,10 +466,30 @@ requires all of the following; failure in any one ⇒ close + fail closed:
 
 ### C12 — Integrity/authenticity of evidence
 
+- **Deterministic contract (round-6), replacing the former "HMAC/digest-protected or at
+  least digest" wording.** The integrity boundary is **the store DACL + mandatory integrity
+  label**, not a cryptographic digest that a same-user attacker could also rewrite:
+  - The recovery state lives in **`%ProgramData%\<brand-independent-id>\tun-state\<ownerSid>\`**
+    (design doc §8.0), created by the **elevated helper**, **owner = SYSTEM**, with a **pure
+    allow-list DACL** and a **`High` mandatory label** (`NO_WRITE_UP`). A **same-user
+    Medium-IL attacker cannot write, delete or re-ACL the store** (MIC write-up blocks it even
+    though it shares the owner's SID), so the store is **not user-writable** at all. **Only the
+    High-IL helper can write** it.
+  - Inside that boundary, each record carries **`schemaVersion` + a SHA-256 digest**
+    (`state.manifest`) and is written by the **helper only** (the owner's Medium UI never opens
+    the raw files; it reads only the **sanitized** state via helper COM). The digest detects
+    **accidental corruption/truncation** — it is **not** presented as tamper-proof authenticity.
+  - **No disk-state HMAC is claimed.** An HMAC would require a key location, key generation,
+    **DPAPI** protection, rotation and an upgrade/recovery read path, which are **not**
+    provided, so the HMAC language is removed; the channel envelope MAC (IPC, design doc §4.3)
+    is a **separate, per-message** authenticator over the authenticated COM channel, not a
+    disk-state claim.
+  - **Fail closed.** On read failure, incorrect ACL, wrong owner, discovered reparse point, or
+    schema/digest anomaly the helper performs **zero network modification** and enters
+    **`restore-failed`**, retaining the store for a human/`--recover` decision.
 - A structured, machine-readable record (`service`, route, DNS, TUN device, phase
-  transitions, snapshot digests) is written at each transition; the snapshot and
-  journal are HMAC/digest-protected or at least digest-verified on read so a
-  tampered baseline is detected (C04/C07 mitigation) rather than silently trusted.
+  transitions, snapshot digests) is written at each transition into the trusted store
+  (C04/C07 mitigation).
 - Logs must not contain credentials, subscription URLs, controller secrets, or
   plaintext helper secrets.
 

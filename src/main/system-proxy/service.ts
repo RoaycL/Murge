@@ -289,7 +289,9 @@ export class SystemProxyService implements SystemProxyGateway {
       // A read-back mismatch means we cannot prove the restore worked. Keep the
       // bundle so a later retry / crash recovery still has the original values.
       const why = conflictDetail(readback, backup.previous)
-      throw new Error(`restore read-back mismatch: ${why || 'no differing keys'}`)
+      throw new Error(
+        `restore read-back mismatch: ${why || 'no differing keys'} | previous=${JSON.stringify(backup.previous)} | readback=${JSON.stringify(readback)}`
+      )
     }
     await this.backup.delete()
   }

@@ -374,9 +374,12 @@ requires all of the following; failure in any one ⇒ close + fail closed:
   the COM elevation broker); each enable creates a **per-enable single-client resident
   server** whose **process lifetime is bound to the enabled TUN window** (it holds the
   creator handle for the whole window; design doc §3.3/§3.4/§5.5). The helper runs **High IL** but with a **restricted token** whose enabled privileges
-  are exactly those needed (e.g. `SeLoadDriverPrivilege` for the
+  are exactly those needed. The restriction **retains the `Administrators` (`BA`) group SID enabled
+  and not deny-only**, because the trusted-state DACL authorizes the helper through that ACE; the
+  helper verifies this token property at startup and fails closed before network mutation if it is
+  absent. Required privileges include `SeLoadDriverPrivilege` for the
   `WintunCreateAdapter(Name, TunnelType, RequestedGUID)` call; route add/delete are granted
-  via the DNS/route APIs rather than blanket admin).
+  via the DNS/route APIs rather than blanket admin.
 - Adapter lifecycle is **explicit** (design doc §3.3): on disable mihomo ends its session and
   closes its open handle, then the helper verifies ownership (`Name`/`RequestedGUID`/LUID)
   and calls **`WintunCloseAdapter(creatorHandle)`** — the **only** operation that removes a

@@ -1,6 +1,6 @@
-# Phase 9 — Windows TUN privileged helper: design review package (rev. 7)
+# Phase 9 — Windows TUN privileged helper: design review package (rev. 8)
 
-> Status: **draft for design review (rev. 7).** Design/contract level only. No code
+> Status: **draft for design review (rev. 8).** Design/contract level only. No code
 > execution, no network mutation, no driver/route/DNS change performed on this
 > machine. This revision resolves the seven must-fix items from the second review
 > (round-5, §0.4): unified per-enable single-client resident helper, Observed A/B,
@@ -14,7 +14,11 @@
 > use **explicit COM rights masks** (`0xB`/`0x3`, **no generic `GX`**), no extra
 > `DENY`, and the state directory uses one **resolvable, complete SDDL**
 > (`O:SYG:SYD:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)` + `S:(ML;OICI;NW;;;HI)`), with
-> **no owner-SID file ACE** (the Medium UI has no raw-read path). The implementation
+> **no owner-SID file ACE** (the Medium UI has no raw-read path). **Round-8 corrects
+> the descriptor conversion/persistence contract**: SDDL conversion already returns
+> self-relative data; registry `REG_BINARY` applies only to the COM descriptors; filesystem
+> APIs apply/read the state-directory descriptor; SYSTEM is allowed by both COM ACLs; and the
+> restricted helper must retain an enabled, non-deny-only `BA` SID. The implementation
 > gate remains **NOT met** and
 > requires design-review sign-off plus separate owner authorization before any
 > Windows implementation. In particular **G1 (mihomo reuses the helper-created
@@ -99,14 +103,23 @@ Conventions referenced: `src/shared/system-proxy.ts`, `src/shared/ipc.ts`,
 | 4 | WAL not defended against directory substitution | **Directory-replacement defense** (§8.0, §8.3): on `init`/`--recover` validate the store dir owner/DACL/reparse; before each `PREPARED`/`APPLIED`/`RECONCILED` append re-verify the already-open handle still points to the same file/dir (file ID) — **never** re-open via string path; tests added for crash-then-truncation, tampering, junction/symlink, ACL-changed, and directory-swapped (`T25`–`T30`). |
 | 5 | Threat-model C12 said "snapshot and journal are HMAC/digest-protected or at least digest" | **C12 rewritten** to the deterministic contract (above), and C2/C3 harmonized to the **pure allow-list** ACL (no `DENY Everyone`/`DENY Users`); a same-user Medium attacker **cannot write** the state directory (only the High helper can); tamper/corruption always **fail closed**. |
 
-### 0.6 Round 7 review fixes — security-descriptor contract (rev.7 — this revision)
+### 0.6 Round 7 review fixes — security-descriptor contract (rev.7 — retained)
 
 | # | Finding (round 7) | Resolution (this revision) |
 |---|---|---|
 | 1 | COM `LaunchPermission`/`AccessPermission` used a generic `GX` and relied on a hand-interpreted `GX → COM rights` mapping (and allowed an extra `DENY ANONYMOUS LOGON`/`NETWORK`) | **Explicit COM rights masks** (§5.1): `Launch` `D:P(A;;0xB;;;SY)(A;;0xB;;;BA)(A;;0xB;;;<ownerSid>)` (`0xB` = `EXECUTE 0x1 | EXECUTE_LOCAL 0x2 | ACTIVATE_LOCAL 0x8`); `Access` `D:P(A;;0x3;;;SY)(A;;0x3;;;<ownerSid>)` (`0x3` = `EXECUTE | EXECUTE_LOCAL`). Each ACL uses **one uniform new-style mask**, every ACE **contains `0x1`**, and there are **no `DENY` ACEs** (a complete allow-list denies by absence). |
 | 2 | State-directory ACL was described per-ACE with `GR → GW` + traverse arrows and a wrong-number-of-semicolons SACL | **One resolvable complete SDDL** (§8.0): `O:SYG:SYD:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)` + `S:(ML;OICI;NW;;;HI)`; **no owner-SID file ACE** (Medium has no raw read; UI is COM-sanitized only), no arrows, exact mask `GA` for `SY`/`BA`, `HI` = `S-1-16-12288`, `NW` = `NO_WRITE_UP`, `OICI` inheritance. |
-| 3 | No tests proved the descriptor-build/verification chain | **Descriptor-build tests** (§13): `ConvertStringSecurityDescriptorToSecurityDescriptor` succeeds; `MakeSelfRelativeSD` succeeds; the `REG_BINARY` value round-trips byte-identical; `GetSecurityInfo` reads back the DACL/SACL; `AccessCheck` verifies Launch (owner=allow, second user=deny, SYSTEM=allow) and Access (owner=allow, second user=deny); every COM ACE mask is **strictly** `0xB`/`0x3` and **contains `0x1`**; directory **High** mandatory label present with `NO_WRITE_UP`; **Medium** owner write/delete/change-ACL **fails** while **High** helper **succeeds**. |
+| 3 | No tests proved the descriptor-build/verification chain | **Descriptor-build tests** (§13): `ConvertStringSecurityDescriptorToSecurityDescriptor` succeeds and returns a valid descriptor with `SE_SELF_RELATIVE`; only the COM `LaunchPermission`/`AccessPermission` descriptors round-trip byte-identically as registry `REG_BINARY`; the state-directory descriptor is applied with `SECURITY_ATTRIBUTES`/`SetNamedSecurityInfo` and read back with `GetNamedSecurityInfo`/`GetSecurityInfo`; `AccessCheck` verifies Launch and Access (owner=allow, second user=deny, SYSTEM=allow); every COM ACE mask is **strictly** `0xB`/`0x3` and **contains `0x1`**; directory **High** mandatory label present with `NO_WRITE_UP`; **Medium** owner write/delete/change-ACL **fails** while the **High helper token with `BA` enabled (not deny-only)** succeeds. |
 | 4 | Install doc component table split the state into "app-data (Medium/High)" vs the `%ProgramData%` store | **Unified** (install doc §1): `BaselineSnapshot`/`WrittenState`/`MutationJournal` + ownership/version manifest all live in `%ProgramData%\<brand-independent-id>\tun-state\<ownerSid>\`, helper-owned / SYSTEM owner / **High integrity** / **Medium-not-writable**; the stale "app-data (Medium/High)" description is deleted. |
+
+### 0.7 Round 8 review fixes — descriptor API and token contract (rev.8 — this revision)
+
+| # | Finding (round 8) | Resolution (this revision) |
+|---|---|---|
+| 1 | The test chain passed the already self-relative output of `ConvertStringSecurityDescriptorToSecurityDescriptor` directly to `MakeSelfRelativeSD`, whose input must be absolute | **Fixed** (§5.1, §13, install doc): validate `SE_SELF_RELATIVE` on the returned descriptor and persist it directly. An optional absolute/self-relative conversion test must call `MakeAbsoluteSD` first and compare semantic fields, not demand identical re-encoding. |
+| 2 | `REG_BINARY` round-trip incorrectly included a filesystem “state key” | **Separated**: byte-identical registry round-trip applies only to COM `LaunchPermission`/`AccessPermission`; the state-directory descriptor is applied/read with filesystem security APIs and compared semantically. |
+| 3 | T37 denied SYSTEM ordinary access despite the explicit `SY` `0x3` Access ACE | **Aligned**: both Launch and Access `AccessCheck` matrices require owner=allow, second-user=deny, SYSTEM=allow. |
+| 4 | “restricted token” did not state the group property required by the state-store `BA` ACE | **Made fail-closed** (§5.3, §13): the High helper token must retain `BA` enabled and not deny-only; startup and T40 verify it before any network mutation. |
 
 
 ---
@@ -792,9 +805,10 @@ override it) as an out-of-proc COM server under a dedicated **`AppID`**:
 > `SECURITY_DESCRIPTOR` from the stored binary value (or the SDDL above) and assert:
 > **owner SID allowed**, **a second normal user denied**, **SYSTEM allowed** for both
 > `LaunchPermission` and `AccessPermission`; every COM ACE mask is **strictly** `0xB` or `0x3`
-> and **contains `0x1`**; `ConvertStringSecurityDescriptorToSecurityDescriptor` and
-> `MakeSelfRelativeSD` succeed; the `REG_BINARY` value round-trips byte-identical; and
-> `GetSecurityInfo` reads back the same DACL. (No `ANONYMOUS LOGON`/`NETWORK` ACE is present;
+> and **contains `0x1`**. `ConvertStringSecurityDescriptorToSecurityDescriptor` returns an
+> already **self-relative** descriptor; verify `SE_SELF_RELATIVE` and write those returned bytes
+> directly as the COM `REG_BINARY` value. `GetSecurityInfo` reads back the same DACL. (No
+> `ANONYMOUS LOGON`/`NETWORK` ACE is present;
 > they are denied by absence on the complete allow-list.)
 
 
@@ -897,9 +911,13 @@ same-user-spoofing threat is closed by the OS rather than by a secret in a reada
 
 - UAC is shown only on first enable (explicit user action). `probe_integrity`/`get_status`/
   `health` never prompt UAC.
-- The helper runs **High IL but with a restricted token** (the minimal enabled-privilege
-  set: `SeLoadDriverPrivilege` for `WintunCreateAdapter`; route/DNS/interface changes via
-  the `IP Helper`/`netsh`-equivalent APIs rather than blanket admin).
+- The helper runs **High IL but with a restricted token**. Restriction removes unnecessary
+  privileges, but it **must retain the `Administrators` (`BA`) SID as enabled, not deny-only**, because
+  the trusted-store DACL deliberately grants the helper through its `BA` ACE. Startup verifies this
+  token property before opening or mutating the store; failure is fail-closed with zero network
+  modification. The minimal enabled-privilege set includes `SeLoadDriverPrivilege` for
+  `WintunCreateAdapter`; route/DNS/interface changes use the `IP Helper`/`netsh`-equivalent APIs
+  rather than blanket admin.
 - The helper is a dedicated process: no console, no network listener of its own, no
   accidental admin shell, and **no** packet session (§1).
 
@@ -1512,15 +1530,14 @@ they build the `SECURITY_DESCRIPTOR` in-process, so they run in the `win32` job 
 | T27 | **WAL handle/file-ID re-verify (directory swap)** | If the journal **directory** is swapped between appends (replaced with another dir of the same name), the already-open handle's **file ID** no longer matches the recorded one ⇒ the next `PREPARED`/`APPLIED`/`RECONCILED` append **fails closed** | record file ID; swap the dir; append; assert mismatch → fail-closed, no mutation, no re-open-by-string |
 | T28 | **Journal truncation / tamper / schema+digest anomaly** | A truncated, tampered or schema/digest-mismatched journal (or `state.manifest` mismatch) is detected and **zero network modification** occurs; recovery enters `restore-failed` | truncate/tamper `journal.json` / `state.manifest`; assert detect + no mutation + `restore-failed` |
 | T29 | **State-dir ACL modified by a lower-trust process** | Changing the state-dir DACL to add a user/Everyone ACE, or to remove the owner ACE, is **not** possible from Medium (MIC write-up) and, if observed, the helper **fails closed** | attempt ACL change from Medium; assert blocked (MIC); assert helper re-verifies ACL and fails closed |
-| T30 | **Medium-IL owner cannot write/delete/change-ACL the store** | The same user's **Medium** token cannot create/modify/delete/ACL a file in the High-labeled store (MIC write-up) while the **High** helper can | attempt create/write/delete/SetSecurity from a Medium token; assert denied (access denied / MIC); assert the High helper can |
+| T30 | **Medium-IL owner cannot write/delete/change-ACL the store** | The same user's **Medium** token cannot create/modify/delete/ACL a file in the High-labeled store while the **High restricted helper with enabled, non-deny-only `BA`** can | attempt create/write/delete/SetSecurity from Medium; assert denied; assert the verified High helper token succeeds |
 | T31 | **Uninstall retains store until safe recovery** | Uninstall retains `%ProgramData%\<id>\tun-state\<ownerSid>\` and cleans it **only** after a safe recovery completes (no pending record + routes/DNS back to baseline) | simulate pending `PREPARED`; run uninstall; assert store retained + no cleanup; after clean recovery assert cleanup |
 | T32 | **Descriptor-build: SDDL → `SECURITY_DESCRIPTOR`** | `ConvertStringSecurityDescriptorToSecurityDescriptor` succeeds on the `LaunchPermission` SDDL, the `AccessPermission` SDDL **and** the state-dir SDDL (`O:SYG:SYD:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)S:(ML;OICI;NW;;;HI)`), yielding a valid descriptor | call the API on each SDDL string; assert success + non-null descriptor + `GetSecurityDescriptorLength` reasonable |
-| T33 | **Descriptor-build: `MakeSelfRelativeSD`** | The converted descriptor converts to **self-relative** form (required for `REG_BINARY`) without error | call `MakeSelfRelativeSD`; assert success + output length set + non-null |
-| T34 | **Descriptor-build: `REG_BINARY` round-trip** | Writing the self-relative descriptor as a `REG_BINARY` value then reading it back yields **byte-identical** data | write bytes to the registry `LaunchPermission`/`AccessPermission`/state key; read back; assert byte equality (and that it is `REG_BINARY`) |
-| T35 | **Descriptor-build: `GetSecurityInfo` readback** | `GetSecurityInfo` on the created state dir reads back a DACL/SACL **matching** the descriptor we set (owner SYSTEM, allow-list DACL, `High` label with `NO_WRITE_UP`) | apply the SDDL, then `GetSecurityInfo`; assert owner SID + DACL ACE count + SACL label |
+| T33 | **Descriptor-build: returned form** | `ConvertStringSecurityDescriptorToSecurityDescriptor` already returns a **self-relative** descriptor suitable for persistent bytes | call `GetSecurityDescriptorControl`; assert `SE_SELF_RELATIVE`. Do **not** pass this result directly to `MakeSelfRelativeSD` (that API requires an absolute input). An optional conversion test must use `MakeAbsoluteSD` first, then `MakeSelfRelativeSD`, and compare descriptor semantics rather than requiring identical byte layout |
+| T34 | **Descriptor-build: COM `REG_BINARY` round-trip** | Writing each returned self-relative **COM** descriptor as the `LaunchPermission`/`AccessPermission` `REG_BINARY` value then reading it back yields **byte-identical** data | write only the two COM registry values; read back; assert byte equality and `REG_BINARY` type. The state-directory descriptor is not a registry value and is excluded |
+| T35 | **Descriptor-build: state-directory security readback** | Applying the state-directory descriptor through directory security APIs and reading it back yields matching owner/DACL/SACL semantics (owner SYSTEM, allow-list DACL, `High` label with `NO_WRITE_UP`) | create with `SECURITY_ATTRIBUTES` or apply with `SetNamedSecurityInfo`/`SetSecurityInfo`; read with `GetNamedSecurityInfo`/`GetSecurityInfo`; assert owner SID + DACL ACEs + SACL label |
 | T36 | **`AccessCheck` — `LaunchPermission`** | The built Launch descriptor grants **owner SID = allow**, a **second normal user = deny**, **SYSTEM = allow**; no `Everyone`/`Users`/`Authenticated Users` ACE grants access | `AccessCheck` with tokens for owner / second normal user / SYSTEM; assert the allow/deny matrix + no other ACE grants |
-| T37 | **`AccessCheck` — `AccessPermission`** | The built Access descriptor grants **owner SID = allow**, **second normal user = deny** (SYSTEM is granted launch/activate but is **not** given ordinary call access) | `AccessCheck` with owner + second-user tokens; assert owner allow, second-user deny |
+| T37 | **`AccessCheck` — `AccessPermission`** | The built Access descriptor grants **owner SID = allow**, **second normal user = deny**, **SYSTEM = allow**, matching the explicit `SY` `0x3` ACE | `AccessCheck` with owner, second-user and SYSTEM tokens; assert owner allow, second-user deny, SYSTEM allow |
 | T38 | **COM ACE mask equality** | Every ACE in `LaunchPermission` has mask **strictly `0xB`**; every ACE in `AccessPermission` has mask **strictly `0x3`**; **no** generic `GX`/`GA` ACE; and **every** COM ACE contains the `0x1` (`COM_RIGHTS_EXECUTE`) bit | enumerate ACEs on the built descriptors; assert each mask == `0xB` or `0x3` and `mask & 0x1 == 0x1` |
 | T39 | **State-dir High mandatory label + `NO_WRITE_UP`** | The store dir carries the **`High`** mandatory-integrity label (`S:(ML;OICI;NW;;;HI)`, `HI` = `S-1-16-12288`) with `NW`/`NO_WRITE_UP` and `OICI` inheritance | `GetSecurityInfo` SACL readback; assert a `SYSTEM_MANDATORY_LABEL_ACE` with the `S-1-16-12288` SID and `NO_WRITE_UP` |
-| T40 | **Store dir Medium vs High** | A **Medium** token of the owner SID **cannot write / delete / change-ACL** a file in the `tun-state` dir, while the **High** helper token can (covered by MIC + the missing owner ACE) | try create/write/delete/SetSecurity from a Medium token (assert access denied / MIC); assert the High helper can; cross-refs T25/T29/T30 |
-
+| T40 | **Store dir Medium vs High + helper-token group state** | A **Medium** token of the owner SID **cannot write / delete / change-ACL** a file in the `tun-state` dir, while the **High restricted helper token retains `BA` enabled (not deny-only)** and can perform those operations | inspect the helper token with `GetTokenInformation(TokenGroups)` and assert the `BA` SID is enabled and not `SE_GROUP_USE_FOR_DENY_ONLY`; try create/write/delete/SetSecurity from Medium (deny) and High helper (allow); a missing/deny-only `BA` fails closed before any network mutation; cross-refs T25/T29/T30 |

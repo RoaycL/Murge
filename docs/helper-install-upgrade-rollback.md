@@ -59,9 +59,9 @@
    install/repair; **not** in `AccessPermission`). **No** `DENY Everyone`/`DENY Users`, **no**
    `Everyone`/`Users`/`Authenticated Users`, and **no `DENY` at all** (a complete allow-list denies
    by absence). The installer writes the binary `SECURITY_DESCRIPTOR` (SDDL above) and the app
-   re-verifies it with the **descriptor-build tests** (design doc §13 `T32`–`T40`/
-   `ConvertStringSecurityDescriptor…`/`MakeSelfRelativeSD`/`REG_BINARY` round-trip/
-   `GetSecurityInfo`/`AccessCheck`).
+   re-verifies it with the **descriptor-build tests** (design doc §13 `T32`–`T40`:
+   `ConvertStringSecurityDescriptor…` returns `SE_SELF_RELATIVE`; COM-only `REG_BINARY`
+   round-trip; state-directory `SetNamedSecurityInfo`/`GetSecurityInfo`; `AccessCheck`).
 2. **Integrity before first use.** On first activation (not at install) verify the
    helper SHA-256 against a pinned release manifest and its Authenticode publisher,
    and the official `wintun.dll` per-arch SHA-256 (C1). The Wintun kernel driver is
@@ -266,22 +266,22 @@ certificate provider** remain open until design-review sign-off:
 | **Helper crash leaves no orphaned adapter / no delete of foreign** | after helper crash, if an adapter is observed still present the new helper marks a `conflict`, keeps evidence, and does **not** delete it (D5) | adapter absent or `conflict` + evidence + no delete |
 
 | **COM ACL is a pure allow-list (AccessCheck)** | the stored `LaunchPermission`/`AccessPermission` (+ state-dir DACL) descriptor → **owner SID allowed**, **second normal user denied**, **SYSTEM allowed**; **no** `Everyone`/`Users`/`Authenticated Users` ACE and **no `DENY` ACE** (`ANONYMOUS LOGON`/`NETWORK` are denied by absence, not by a `DENY`) | `AccessCheck` for owner / second-user / SYSTEM tokens; assert the matrix; enumerate ACEs (no `Everyone`/`Users`/`AuthUsers`, no `DENY`) |
-| **Descriptor-build: SDDL → descriptor** | `ConvertStringSecurityDescriptorToSecurityDescriptor` succeeds on the `LaunchPermission`, `AccessPermission` and state-dir SDDL (`O:SYG:SYD:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)S:(ML;OICI;NW;;;HI)`), then `MakeSelfRelativeSD` succeeds | call the API on each SDDL; assert success + non-null + self-relative |
-| **Descriptor-build: `REG_BINARY` round-trip** | writing the descriptor as `REG_BINARY` then reading it back yields **byte-identical** data | write/read the registry value; assert byte equality + `REG_BINARY` type |
-| **Descriptor-build: `GetSecurityInfo` readback** | `GetSecurityInfo` on the created store dir reads back owner SYSTEM, the allow-list DACL and the `High` `NO_WRITE_UP` label | apply SDDL; `GetSecurityInfo`; assert owner/DACL/SACL |
+| **Descriptor-build: SDDL → descriptor** | `ConvertStringSecurityDescriptorToSecurityDescriptor` succeeds on the `LaunchPermission`, `AccessPermission` and state-dir SDDL and returns a valid **self-relative** descriptor | call the API; assert success/non-null and `SE_SELF_RELATIVE` via `GetSecurityDescriptorControl`; do not call `MakeSelfRelativeSD` directly on this result |
+| **Descriptor-build: COM `REG_BINARY` round-trip** | writing the returned `LaunchPermission` and `AccessPermission` descriptors as `REG_BINARY` then reading them back yields **byte-identical** data | write/read only those two COM registry values; assert byte equality + `REG_BINARY` type |
+| **Descriptor-build: state-dir security readback** | applying the state-dir descriptor with directory security APIs and reading it back yields owner SYSTEM, the allow-list DACL and the `High` `NO_WRITE_UP` label | use `SECURITY_ATTRIBUTES` or `SetNamedSecurityInfo`/`SetSecurityInfo`, then `GetNamedSecurityInfo`/`GetSecurityInfo`; assert owner/DACL/SACL semantics |
 | **Descriptor-build: COM mask equality + `0x1`** | every `LaunchPermission` ACE mask is **strictly `0xB`**, every `AccessPermission` ACE mask is **strictly `0x3`**, **no** generic `GX`/`GA`, and every COM ACE contains `0x1` | enumerate ACEs; assert each mask == `0xB`/`0x3` and `mask & 0x1 == 0x1` |
 | **State-dir High label + `NO_WRITE_UP`** | the store dir carries the `High` mandatory label (`S-1-16-12288`) with `NO_WRITE_UP` and `OICI` inheritance | `GetSecurityInfo` SACL; assert `SYSTEM_MANDATORY_LABEL_ACE` with `S-1-16-12288` + `NO_WRITE_UP` |
 | **State store validated on startup (owner/DACL/reparse)** | on `init`/`--recover` the helper validates the store dir owner = SYSTEM, the allow-list DACL and reparse state; a wrong owner/ACL or a planted symlink/junction/mount point ⇒ **zero network mutation** + `restore-failed` | pre-set wrong owner/ACL / create junction; assert fail-closed + store retained + no route/DNS change |
 | **WAL handle file-ID re-verify (dir swap)** | swapping the journal **directory** between appends makes the open handle's file ID mismatch the recorded one, so the next `PREPARED`/`APPLIED`/`RECONCILED` append **fails closed** (no string-path re-open) | record file ID; swap dir; append; assert mismatch → fail-closed |
 | **Journal truncation/tamper/schema+digest anomaly** | a truncated, tampered or schema/digest-mismatched journal/manifest is detected and **zero network modification** occurs; recovery enters `restore-failed` | truncate/tamper `journal.json`/`state.manifest`; assert detect + no mutation + `restore-failed` |
-| **Medium-IL owner cannot write/delete/change-ACL the store** | the **same user's Medium** token cannot create/modify/delete/ACL the High-labeled store (MIC write-up) while the **High** helper can | attempt create/write/delete/`SetSecurity` from Medium; assert denied; assert the High helper can |
+| **Medium-IL owner cannot write/delete/change-ACL the store** | the **same user's Medium** token cannot create/modify/delete/ACL the High-labeled store, while the **High restricted helper token retains `BA` enabled (not deny-only)** and can | inspect helper `TokenGroups`; assert enabled non-deny-only `BA`; attempt operations from Medium (deny) and High helper (allow); missing/deny-only `BA` fails closed before network mutation |
 | **Uninstall retains store until safe recovery** | uninstall retains `%ProgramData%\<id>\tun-state\<ownerSid>\` and cleans it **only** after a safe recovery completes (no pending record + routes/DNS back to baseline) | simulate pending `PREPARED`; run uninstall; assert store retained + no cleanup; after clean recovery assert cleanup |
 
 
 All of the above run only in the gated `windows-latest` job (skipped unless
 `MURGE_RUN_REAL_TUN=1` **and** `win32`) and never in default `npm test`. The **ACL/state-store
-structural tests** (the **descriptor-build** group — `ConvertStringSecurityDescriptorToSecurityDescriptor`,
-`MakeSelfRelativeSD`, `REG_BINARY` round-trip, `GetSecurityInfo` readback, the `AccessCheck`
+structural tests** (the **descriptor-build** group — `ConvertStringSecurityDescriptorToSecurityDescriptor`
+return-form validation, COM-only `REG_BINARY` round-trip, state-dir security API readback, the `AccessCheck`
 matrices, COM mask equality `0xB`/`0x3` + `0x1`, state-dir `High` `NO_WRITE_UP` label — and the
 COM `AccessCheck`, store owner/DACL/reparse validation, WAL handle file-ID
 re-verify, journal schema/digest anomaly, Medium-vs-High MIC blocking, uninstall-retains-store)

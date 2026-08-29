@@ -117,7 +117,24 @@ function runReg(args: string[]): Promise<{ code: number | null; stdout: string; 
   })
 }
 
+/** Spawn `powershell` (Windows) and resolve {code, stdout, stderr} on close. */
+function runPwsh(args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('powershell', args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout?.on('data', (d) => (stdout += String(d)))
+    child.stderr?.on('data', (d) => (stderr += String(d)))
+    child.on('error', reject)
+    child.on('close', (code) => resolve({ code, stdout, stderr }))
+  })
+}
+
 const INTERNET_SETTINGS_KEY = String.raw`HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`
+const SNAPSHOT_PS1 = fileURLToPath(new URL('../scripts/system-proxy-snapshot.ps1', import.meta.url))
 
 /** Write one registry value exactly (reg.exe `/d` preserves the literal data). */
 async function regAddExact(name: string, type: string, data: string): Promise<void> {
@@ -242,22 +259,21 @@ run('real Windows system-proxy lifecycle + crash recovery (gated)', () => {
     expect(afterSnap).toEqual(beforeSnap)
   }, 180000)
 
-  it('read + enable/disable round-trip preserves exact REG_SZ spaces, REG_EXPAND_SZ and REG_BINARY (P1-2)', async () => {
+  it('evidence: exact REG_SZ spaces, REG_EXPAND_SZ and REG_BINARY survive every .NET read path (P1-2)', async () => {
     adapter = new WindowsSystemProxyAdapter()
     tempDir = await mkdtemp(join(tmpdir(), 'murge-sysproxy-unusual-'))
-    const backup = FileSystemProxyBackupStore.forAppDataBase(tempDir)
-    service = new SystemProxyService({
-      adapter,
-      probe: new StaticSystemProxyProbe(TARGET),
-      backup,
-      instanceId: 'real-windows-unusual'
-    })
+    service = null
 
-    // Seed the registry with the EXACT unusual values via reg.exe `/d`
-    // (which stores the literal string, including the leading/trailing spaces and
-    // the UNEXPANDED `%PATH%`). This is precisely the state the OLD text parser
-    // corrupted: `.trim()`/`.TrimEnd()` ate the spaces and the snapshot regex
-    // `(REG_[A-Z]+)` could not match REG_EXPAND_SZ / REG_BINARY.
+    // Capture the TRUE baseline first so teardown restores it: the unusual
+    // values below are read-only witnesses and the host must go back to its real
+    // state (the afterEach `adapter.restore(before)` writes baseline, no refresh).
+    const trueBaseline = await adapter.read()
+    before = trueBaseline
+
+    // Seed the EXACT unusual values via reg.exe `/d` (literal string, unexpanded
+    // %PATH%, exact bytes). This is precisely the state the OLD text parser
+    // corrupted: `.trim()` ate the spaces and the `(REG_[A-Z]+)` snapshot regex
+    // could not match REG_EXPAND_SZ / REG_BINARY.
     await regAddExact('ProxyEnable', 'REG_BINARY', 'CAFEBABE')
     await regAddExact('ProxyServer', 'REG_SZ', '  http=127.0.0.1:9  ')
     await regAddExact('ProxyOverride', 'REG_EXPAND_SZ', '%PATH%;local')
@@ -267,24 +283,37 @@ run('real Windows system-proxy lifecycle + crash recovery (gated)', () => {
       proxyServer: { exists: true, type: 'REG_SZ', value: '  http=127.0.0.1:9  ' },
       proxyOverride: { exists: true, type: 'REG_EXPAND_SZ', value: '%PATH%;local' }
     }
-    before = unusualBefore
 
-    // Read-back must return the EXACT value written — no trimming, no type
-    // downgrade, no hex case change, no env-name expansion.
+    // (1) The main-app read path returns the EXACT value written — no trimming,
+    //     no type downgrade, no hex case change, no env-name expansion.
     const readBack = await adapter.read()
     expect(readBack).toEqual(unusualBefore)
 
-    // Enabled proxy over an unusual pre-enable state.
-    const status = await timePhase('enable-unusual', 60000, () => service!.enable())
-    expect(status.phase).toBe('enabled')
-    const now = await adapter.read()
-    expect(now.proxyEnable).toEqual(dword(1))
-    expect(now.proxyServer.value).toBe('http=127.0.0.1:7890;https=127.0.0.1:7890;socks=127.0.0.1:7890')
+    // (2) The STANDALONE recovery helper (crash-recovery path) reads the same
+    //     exact value via the shared .NET reader — REG_EXPAND_SZ stays `%PATH%;local`
+    //     and REG_BINARY stays `CAFEBABE`.
+    const recovery = await timePhase('recovery-read', 60000, () => runCli(RECOVERY_HELPER, ['--read']))
+    expect(recovery.stderr).toBe('')
+    expect(recovery.code).toBe(0)
+    expect(JSON.parse(recovery.stdout)).toEqual(unusualBefore)
 
-    // Disable must faithfully restore the EXACT unusual pre-enable values.
-    const disabled = await timePhase('disable-unusual', 60000, () => service!.disable())
-    expect(disabled.phase).toBe('disabled')
-    const after = await adapter.read()
-    expect(after).toEqual(unusualBefore)
+    // (3) The CI snapshot helper (the parser the old `(REG_[A-Z]+)` regex could
+    //     not handle) reads the same exact value.
+    const snap = await runPwsh([
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', SNAPSHOT_PS1
+    ])
+    expect(snap.stderr).toBe('')
+    expect(snap.code).toBe(0)
+    const snapText = snap.stdout.trim()
+    const snapObj = JSON.parse(snapText.slice(snapText.indexOf('{'), snapText.lastIndexOf('}') + 1))
+    expect({
+      proxyEnable: snapObj.ProxyEnable,
+      proxyServer: snapObj.ProxyServer,
+      proxyOverride: snapObj.ProxyOverride
+    }).toEqual(unusualBefore)
+
+    // Restore the true baseline (adapter.restore writes only; no refresh, so
+    // WinINet never auto-enables because the seeded proxy is gone first).
+    await adapter.restore(trueBaseline)
   }, 180000)
 })

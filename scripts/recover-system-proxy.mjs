@@ -672,12 +672,13 @@ export function defaultRunner() {
 }
 
 function parseCli(argv) {
-  const opts = { backupPath: null, dryRun: false, printRefreshScript: false, printReadScript: false, validate: null }
+  const opts = { backupPath: null, dryRun: false, printRefreshScript: false, printReadScript: false, read: false, validate: null }
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '--backup') opts.backupPath = argv[++i]
     else if (argv[i] === '--dry-run') opts.dryRun = true
     else if (argv[i] === '--print-refresh-script') opts.printRefreshScript = true
     else if (argv[i] === '--print-read-script') opts.printReadScript = true
+    else if (argv[i] === '--read') opts.read = true
     else if (argv[i] === '--validate') opts.validate = argv[++i]
   }
   return opts
@@ -694,6 +695,20 @@ async function main() {
   if (opts.printReadScript) {
     process.stdout.write(buildRegistryReadScript())
     return
+  }
+
+  // Emit the current registry snapshot as the recovery helper reads it (exact
+  // strings + exact registry types, P1-2). Used by the real-Windows evidence test.
+  if (opts.read) {
+    try {
+      const snap = await readRegistry(defaultRunner())
+      process.stdout.write(JSON.stringify(snap))
+      return
+    } catch (error) {
+      process.stderr.write(`[recover] --read FAIL: ${error.message}\n`)
+      process.exitCode = 1
+      return
+    }
   }
 
   // Cross-check mode used by the schema-alignment test: validate an arbitrary

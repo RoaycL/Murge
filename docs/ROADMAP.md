@@ -329,7 +329,7 @@ Entry gate: relevant preceding service phase complete.
 - [ ] Start-on-login with explicit user opt-in.
 - [ ] Connection detail and close actions.
 - [ ] Process/device detail panes.
-- [ ] Logs viewer, filtering, export and redaction.
+- [x] Logs viewer, filtering, export and redaction. (A bounded 2,000-entry Pinia store consumes the existing shared `/logs` stream, exposes connection/error state and level/text filtering, and the renderer-only export path re-applies credential redaction at the file boundary. The page is reached through Settings → Logs so the fixed-height 934×672 sidebar geometry is unchanged. Unit tests cover bearer/basic credentials, URL user-info, sensitive query/assignment values, normalization and export-time defense-in-depth.)
 - [ ] DNS diagnostic and cache actions.
 - [ ] Theme, reduced motion, keyboard navigation and high contrast.
 - [ ] About, diagnostics bundle and support links.

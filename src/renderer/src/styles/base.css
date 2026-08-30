@@ -168,6 +168,21 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .settings-menu i { width: 44px; height: 44px; margin-bottom: 24px; border-radius: 12px; background: linear-gradient(145deg,#5e7ff1,#5fd7ed); }
 .settings-menu button:nth-child(2n) i { background: linear-gradient(145deg,#6952ef,#ef58b7); }.settings-menu button:nth-child(3n) i{background:linear-gradient(145deg,#ffb44b,#ff7645)}
 .settings-menu strong { margin-bottom: 4px; font-size: 16px; }.settings-menu span{color:var(--app-muted);font-size:10px;line-height:1.4}
+.logs-view { padding-right: 29px; }
+.logs-header { display: flex; align-items: center; justify-content: space-between; width: 695px; }
+.logs-header p { margin: 2px 0 0; color: var(--app-muted); font-size: 11px; }
+.logs-actions { display: flex; gap: 8px; }
+.logs-actions button { height: 28px; padding: 0 12px; border: 0; border-radius: 6px; background: rgba(127,127,127,.13); cursor: pointer; }
+.logs-toolbar { display: flex; gap: 10px; width: 695px; margin: 17px 0 12px; }
+.logs-toolbar input { flex: 1; height: 29px; padding: 0 12px; border: 1px solid var(--app-divider); border-radius: 7px; background: rgba(255,255,255,.24); color: inherit; }
+.logs-toolbar select { width: 112px; height: 29px; padding: 0 8px; border: 0; border-radius: 7px; background: rgba(127,127,127,.13); color: inherit; }
+.logs-panel { width: 695px; height: 515px; overflow: auto; border-radius: 8px; }
+.log-row { display: grid; grid-template-columns: 72px 62px 1fr; align-items: start; min-height: 29px; padding: 6px 10px; border-bottom: 1px solid var(--app-divider); font-size: 11px; }
+.log-row time { color: var(--app-muted); font-variant-numeric: tabular-nums; }
+.log-row code { color: inherit; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.log-level { font-size: 10px; text-transform: uppercase; }
+.level-debug { color: var(--app-muted); }.level-info { color: var(--app-blue); }.level-warning { color: #d88924; }.level-error { color: #d64f4f; }
+.logs-empty { display: grid; place-items: center; height: 100%; color: var(--app-muted); font-size: 12px; }
 
 @media (min-width: 1120px) {
   .page-shell { margin-left: 0; }

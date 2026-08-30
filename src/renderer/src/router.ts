@@ -11,6 +11,7 @@ import RewriteView from './views/RewriteView.vue'
 import ConfigView from './views/ConfigView.vue'
 import ProviderSettingsView from './views/ProviderSettingsView.vue'
 import MoreView from './views/MoreView.vue'
+import LogsView from './views/LogsView.vue'
 import PlaceholderView from './views/PlaceholderView.vue'
 
 const placeholder = (title: string) => ({ component: PlaceholderView, props: { title } })
@@ -31,6 +32,7 @@ export const router = createRouter({
     { path: '/config', component: ConfigView },
     { path: '/providers', component: ProviderSettingsView },
     { path: '/more', component: MoreView },
+    { path: '/logs', component: LogsView },
     { path: '/panel', ...placeholder('面板') }
   ]
 })

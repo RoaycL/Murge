@@ -1,0 +1,50 @@
+<script setup lang="ts">
+import { onMounted, onUnmounted } from 'vue'
+import { storeToRefs } from 'pinia'
+import { useLogsStore } from '../stores/logs'
+import { serializeLogs } from '../lib/logs'
+
+const store = useLogsStore()
+const { status, lastError, search, level, visibleEntries } = storeToRefs(store)
+
+function exportLogs(): void {
+  const blob = new Blob([serializeLogs(visibleEntries.value)], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `mihomo-logs-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
+onMounted(store.connect)
+onUnmounted(store.disconnect)
+</script>
+
+<template>
+  <div class="page-shell logs-view">
+    <header class="logs-header">
+      <div><h1>日志</h1><p>{{ status === 'live' ? '实时' : status === 'loading' ? '连接中' : '已断开' }} · {{ visibleEntries.length }} 条</p></div>
+      <div class="logs-actions">
+        <button type="button" @click="store.clear">清空</button>
+        <button type="button" :disabled="!visibleEntries.length" @click="exportLogs">导出</button>
+      </div>
+    </header>
+    <div class="logs-toolbar">
+      <input v-model="search" type="search" placeholder="筛选日志" aria-label="筛选日志" />
+      <select v-model="level" aria-label="日志级别">
+        <option value="all">所有级别</option><option value="debug">调试</option><option value="info">信息</option><option value="warning">警告</option><option value="error">错误</option>
+      </select>
+    </div>
+    <p v-if="lastError" class="inline-error">{{ lastError }}</p>
+    <section class="surface-card logs-panel" aria-live="polite">
+      <div v-if="!visibleEntries.length" class="logs-empty">{{ status === 'loading' ? '正在等待日志…' : '没有匹配的日志' }}</div>
+      <div v-for="entry in visibleEntries" :key="entry.id" class="log-row">
+        <time>{{ new Date(entry.time).toLocaleTimeString([], { hour12: false }) }}</time>
+        <span class="log-level" :class="`level-${entry.level}`">{{ entry.level }}</span>
+        <code>{{ entry.message }}</code>
+      </div>
+    </section>
+  </div>
+</template>
+

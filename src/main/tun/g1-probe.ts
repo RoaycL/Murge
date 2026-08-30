@@ -2,16 +2,34 @@
  * G1 probe execution body + test frameworks — the pure, driver-driven core.
  *
  * This module implements the Windows G1 lifecycle probe as a **sequence of
- * injected driver steps** (a–j) with zero OS side effects of its own. The
- * driver (`g1-driver.ts`) supplies the Wintun / mihomo / network primitives and
- * is what a test fakes. Everything here is platform-neutral and never blocks:
- * the default `npm test` / `npm run build` / app start / preload / IPC paths
- * never import this module (a static isolation test enforces it), so the probe
- * can never run on the Linux/Mac dev host or in normal CI.
+ * injected driver steps** with zero OS side effects of its own. The driver
+ * (`g1-driver.ts`) supplies the Wintun / mihomo / network primitives and is what
+ * a test fakes. Everything here is platform-neutral and never blocks: the default
+ * `npm test` / `npm run build` / app start / preload / IPC paths never import this
+ * module (a static isolation test enforces it), so the probe can never run on the
+ * Linux/Mac dev host or in normal CI.
  *
  * Hard gates (deliverable B) fail closed **before** any driver primitive is
  * called, so no DLL is loaded, no mihomo is spawned and the OS is untouched
  * unless every gate is satisfied.
+ *
+ * Corrected observation order (round-1 review P1-1):
+ *   0. read-only preflight conflict check (P1-6) — zero change on any conflict;
+ *   a. pinned DLL integrity (verified before the loader is reached);
+ *   b. create the adapter and HOLD THE EXACT creator handle (P1-2);
+ *   c. read the canonical identity from that handle (the cleanup key);
+ *   d. mihomo opens the SAME adapter and establishes a provably active session — kept running;
+ *   e. exactly one adapter matching the identity;
+ *   f. confirm mihomo reused the SAME GUID+LUID with a live session;
+ *   g. helper closes ITS OWN creator handle — mihomo KEEPS RUNNING;
+ *   h. observe SIMULTANEOUSLY: adapter still present? session still active? still the same GUID+LUID?;
+ *      Observed B is only valid when the creator handle is closed AND the session is still active (P1-1);
+ *   i. stop mihomo (bounded graceful; exact PID);
+ *   j. explicitly: stop mihomo -> read live identity -> close the exact handle only on strict match
+ *      -> adapter presence + read-only network snapshot diff (P1-5).
+ *
+ * The orchestrator owns every timeout (P1-7) and maps every failure to an accurate
+ * error code rather than degrading everything to `crash`.
  *
  * @see docs/helper-design.md §3.3 (G1 ownership probe), §12 (gates)
  */
@@ -86,118 +104,169 @@ export interface G1AdapterIdentity {
 export type G1ProbeIdentityTarget = Pick<G1AdapterIdentity, 'name' | 'requestedGuid'>
 
 /**
- * Strict identity match — the ONLY predicate under which the probe may remove
- * or close a Wintun resource. The **current** live identity (read back from the
- * still-open creator handle) must equal the **recorded** creation identity on
- * Name + RequestedGUID + canonical LUID (GUID comparison is case-insensitive;
- * LUID is strict). If either side is missing or any field differs, the resource
- * at that identity is NOT the one we created and the probe refuses to touch it
- * (it records a conflict and never deletes).
+ * A Wintun adapter handle as an opaque value. The real handle is a native pointer
+ * carried by the binding; TS must NEVER re-derive its width or how it is passed
+ * (P1-3). Only the binding creates and consumes it.
+ */
+export interface G1OpaqueHandle {
+  readonly __g1OpaqueHandle: 'wintun-adapter'
+}
+
+/** The exact error a probe step can fail with. */
+export const G1ErrorCode = {
+  none: 'none',
+  gateDenied: 'gate-denied',
+  dllHashMismatch: 'dll-hash-mismatch',
+  unsupported: 'unsupported',
+  timeout: 'timeout',
+  internal: 'internal',
+  crash: 'crash',
+  conflictPreflight: 'conflict-preflight',
+  conflictDuplicate: 'conflict-duplicate',
+  g1Failed: 'g1-failed',
+  identityConflict: 'identity-conflict',
+  networkMutated: 'network-mutated'
+} as const
+export type G1ErrorCode = (typeof G1ErrorCode)[keyof typeof G1ErrorCode]
+
+/** A typed probe error so the orchestrator can map failures to accurate codes. */
+export class G1ProbeError extends Error {
+  constructor(
+    public readonly code: G1ErrorCode,
+    message: string
+  ) {
+    super(message)
+    this.name = 'G1ProbeError'
+  }
+}
+
+/** Read-only network snapshot (routes/DNS/proxy/firewall) — never mutated by the probe. */
+export interface G1NetworkSnapshot {
+  winhttpProxy: string
+  internetSettingsProxy: string
+  ipv4DefaultRoute: string
+  ipv6DefaultRoute: string
+  dnsServers: string
+  activeAdapters: string
+  firewallProfiles: string
+}
+
+/** Result of confirming mihomo reused the SAME adapter with a live session. */
+export interface G1ReuseResult {
+  reused: boolean
+  pid: number | null
+  sessionActive: boolean
+  sameGuidLuid: boolean
+}
+
+/** Read-only, zero-change conflict preflight report (before any adapter is created). */
+export interface G1ConflictReport {
+  conflict: boolean
+  reason: string | null
+  sameNameCount: number
+  sameGuidCount: number
+  namePrefixCount: number
+  leftoverProbeResources: number
+}
+
+export const G1_EMPTY_CONFLICT_REPORT: G1ConflictReport = {
+  conflict: false,
+  reason: null,
+  sameNameCount: 0,
+  sameGuidCount: 0,
+  namePrefixCount: 0,
+  leftoverProbeResources: 0
+}
+
+/**
+ * Strict identity match — the ONLY predicate under which the probe may remove or
+ * close a Wintun resource. The **current** live identity (read from the still-open
+ * creator handle) must agree on Name + RequestedGUID (case-insensitive) +
+ * canonical LUID. Any mismatch => no delete, record a conflict.
  */
 export function cleanupAllowed(
   current: G1AdapterIdentity | null,
   recorded: G1AdapterIdentity | null
 ): boolean {
   if (!current || !recorded) return false
-  if (current.name !== recorded.name) return false
-  if (current.requestedGuid?.toLowerCase() !== recorded.requestedGuid.toLowerCase()) return false
-  if (current.canonicalLuid !== recorded.canonicalLuid) return false
-  return true
+  return (
+    current.name === recorded.name &&
+    current.requestedGuid.toLowerCase() === recorded.requestedGuid.toLowerCase() &&
+    current.canonicalLuid === recorded.canonicalLuid
+  )
 }
 
-/** Normalize a GUID string to its canonical lowercase form, or null when invalid. */
-export function canonicalizeGuid(guid: string): string | null {
-  const value = guid.trim().toLowerCase()
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)) {
-    return null
-  }
-  return value
-}
-
-/**
- * The set of machine-readable outcomes the probe can record. `none` means the
- * probe ran to completion without an error. Everything else is a fail-closed
- * terminal state whose evidence still carries the full audit trail.
- */
-export const G1ErrorCode = {
-  none: 'none',
-  gateDenied: 'gate-denied',
-  dllHashMismatch: 'dll-hash-mismatch',
-  unsupported: 'unsupported',
-  g1Failed: 'g1-failed',
-  conflictDuplicate: 'conflict-duplicate',
-  identityConflict: 'identity-conflict',
-  orphanAdapter: 'orphan-adapter',
-  networkMutated: 'network-mutated',
-  timeout: 'timeout',
-  crash: 'crash',
-  internal: 'internal'
-} as const
-
-export type G1ErrorCode = (typeof G1ErrorCode)[keyof typeof G1ErrorCode]
-
-/** A read-only network snapshot (keys are stable, values are comparable strings). */
-export type G1NetworkSnapshot = Readonly<Record<string, string>>
-
-/** The result of the mihomo handoff check. */
-export interface G1ReuseResult {
-  /** True when mihomo opened the same adapter (GUID + LUID all match). */
-  reused: boolean
-  pid: number
+/** Canonicalize a GUID string to lowercase form, or return null when invalid. */
+export function canonicalizeGuid(value: string): string | null {
+  const hex = value.replace(/[^0-9a-fA-F]/g, '')
+  if (hex.length !== 32) return null
+  const version = parseInt(hex.slice(12, 14), 16)
+  const variant = parseInt(hex.slice(16, 18), 16)
+  if ((version & 0xf0) !== 0x40) return null // must be RFC-4122 version 4
+  if ((variant & 0xc0) !== 0x80) return null // must be RFC-4122 variant 8/9/a/b
+  const groups = [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20, 32)
+  ]
+  return groups.join('-').toLowerCase()
 }
 
 /**
- * The injected driver surface. A real driver (`g1-driver.ts`) binds the pinned
- * Wintun ABI; tests supply a fake. None of these methods may be invoked by the
- * orchestrator unless the gates passed.
+ * The driver seam — supplies every Wintun / mihomo / network primitive as a
+ * high-level, opaque call (P1-3). No GUID/NET_LUID/pointer width is re-derived in
+ * TS; the native binding is the only ABI owner. Test drivers implement this
+ * interface; the real driver fails closed to `unsupported`.
  */
 export interface G1ProbeDriver {
-  /** Process architecture tag for evidence (e.g. 'x64', 'arm64'). */
   readonly architecture: string
-  /** PID of the probe/helper process for evidence. */
   readonly pid: number
 
-  /** (a) Verify the pinned per-arch wintun.dll SHA-256; only on match load it. */
+  /** Read-only preflight conflict enumeration; zero change. */
+  preflightConflictCheck(target: G1ProbeIdentityTarget): Promise<G1ConflictReport>
+
+  /** (a) Verify the pinned DLL digest. Returns `verified:false` => never load. */
   loadPinnedWintun(): Promise<{ verified: boolean; digest: string }>
 
-  /** (b) WintunCreateAdapter(Name, TunnelType, RequestedGUID); hold the creator handle. */
-  createAdapter(target: G1ProbeIdentityTarget & { tunnelType: string }): Promise<void>
+  /** (b) Create the adapter and HOLD the exact creator handle. */
+  createAdapter(target: G1ProbeIdentityTarget & { tunnelType: string }): Promise<G1OpaqueHandle>
 
-  /** (c) Read the created adapter's Name/GUID/LUID (used as the cleanup identity). */
-  readAdapterIdentity(): Promise<G1AdapterIdentity>
+  /** (c) Read the canonical identity (the cleanup key) from the handle. */
+  readAdapterIdentity(handle: G1OpaqueHandle): Promise<G1AdapterIdentity>
 
-  /** Read the identity of the adapter behind the still-open creator handle, or null if none. */
-  liveAdapterIdentity(): Promise<G1AdapterIdentity | null>
+  /** Re-read the live identity behind a still-open handle (null when closed). */
+  liveAdapterIdentity(handle: G1OpaqueHandle): Promise<G1AdapterIdentity | null>
 
-  /** (d) Spawn the isolated mihomo probe that tries to reuse the same adapter. */
-  startMihomoProbe(): Promise<number>
+  /** (d) Spawn the isolated mihomo that opens the SAME adapter; keep it running. */
+  startMihomoProbe(identity: G1AdapterIdentity): Promise<{ pid: number }>
 
-  /** (e) Count adapters matching Name + RequestedGUID + LUID. */
+  /** (e) Count adapters matching the identity. */
   matchingAdapterCount(identity: G1AdapterIdentity): Promise<number>
 
-  /** (f) Poll until mihomo shows a live session on the same adapter (or times out). */
+  /** (f) Confirm mihomo reused the SAME adapter with a live session. */
   pollMihomoReuse(identity: G1AdapterIdentity, timeoutMs: number): Promise<G1ReuseResult>
 
-  /** (g) End the mihomo session and process. */
-  stopMihomoProbe(): Promise<void>
+  /** (i) Bounded graceful stop; terminates the exact recorded PID and waits on timeout. */
+  stopMihomoProbe(timeoutMs: number): Promise<boolean>
 
-  /** (h) Close the probe's own creator handle (removes a CreateAdapter-created adapter). */
-  closeCreatorHandle(): Promise<void>
+  /** (g) Close the EXACT creator handle (clears on success; idempotent). */
+  closeCreatorHandle(handle: G1OpaqueHandle): Promise<void>
 
-  /** (i) Is the probe-created adapter still present after the creator handle closed? */
+  /** (h) Is the adapter still present after the creator handle is closed? */
   adapterStillPresent(identity: G1AdapterIdentity): Promise<boolean>
 
-  /**
-   * finally-cleanup. The orchestrator only triggers a destructive action when
-   * `identityMatch` is true (strict Name+GUID+LUID match); otherwise the driver
-   * fails closed to a no-op and records the conflict. Never throws.
-   */
-  cleanup(identityMatch: boolean): Promise<void>
+  /** (h) Is the mihomo session still active after the creator handle close? */
+  mihomoSessionActive(): Promise<boolean>
 
-  /** Read-only before/after network snapshot (routes/DNS/proxy/firewall). */
+  /** (h) Is mihomo still bound to the same GUID+LUID? */
+  mihomoStillBoundTo(identity: G1AdapterIdentity): Promise<boolean>
+
+  /** Read-only network snapshot (never mutated by the probe). */
   captureNetworkSnapshot(): Promise<G1NetworkSnapshot>
 
-  /** Compare before/after snapshots. Returns the list of changed field names ([] = unchanged). */
+  /** Compare before/after snapshots. Returns changed field names ([] = unchanged). */
   networkDiff(before: G1NetworkSnapshot, after: G1NetworkSnapshot): string[]
 }
 
@@ -223,20 +292,15 @@ export interface G1Evidence {
   observed: 'A' | 'B' | null
   creatorHandleClosed: boolean
   adapterGone: boolean | null
+  mihomoSessionActiveAfterClose: boolean | null
+  mihomoStillSameGuidLuidAfterClose: boolean | null
+  preflightConflict: boolean
+  conflictReason: string | null
   networkUnchanged: boolean | null
   cleanupSucceeded: boolean | null
   startedAt: string | null
   finishedAt: string | null
   errorCode: string
-}
-
-interface ProbeState {
-  creatorCreated: boolean
-  creatorClosed: boolean
-  mihomoStarted: boolean
-  mihomoStopped: boolean
-  identity: G1AdapterIdentity | null
-  pid: number | null
 }
 
 type EvidenceDraft = Omit<
@@ -255,10 +319,10 @@ type EvidenceDraft = Omit<
 >
 
 /**
- * Build a completed evidence record from a draft + the two fields that can only
- * be resolved after cleanup/network comparison. This is the only place evidence
- * fields are assembled, so the shape is always complete and the no-secret
- * invariant holds (the orchestrator never writes the controller secret).
+ * Build a completed evidence record from a draft + the fields resolved only after
+ * cleanup/network comparison. This is the only place evidence fields are
+ * assembled, so the shape is always complete and the no-secret invariant holds
+ * (the orchestrator never writes the controller secret).
  */
 export function buildG1Evidence(
   ids: { authorizationRef: string; targetAssetId: string; snapshotId: string; recoveryMethod: string },
@@ -290,6 +354,10 @@ export function buildG1Evidence(
     observed: draft.observed,
     creatorHandleClosed: draft.creatorHandleClosed,
     adapterGone: draft.adapterGone,
+    mihomoSessionActiveAfterClose: draft.mihomoSessionActiveAfterClose,
+    mihomoStillSameGuidLuidAfterClose: draft.mihomoStillSameGuidLuidAfterClose,
+    preflightConflict: draft.preflightConflict,
+    conflictReason: draft.conflictReason,
     networkUnchanged,
     cleanupSucceeded,
     startedAt: draft.startedAt,
@@ -311,6 +379,10 @@ const emptyDraft = (): EvidenceDraft => ({
   observed: null,
   creatorHandleClosed: false,
   adapterGone: null,
+  mihomoSessionActiveAfterClose: null,
+  mihomoStillSameGuidLuidAfterClose: null,
+  preflightConflict: false,
+  conflictReason: null,
   startedAt: null,
   errorCode: ''
 })
@@ -320,34 +392,81 @@ export interface G1RunOptions {
   gates: G1GateCheck
   /** The safety identifiers that must appear in evidence. */
   identifiers: { authorizationRef: string; targetAssetId: string; snapshotId: string; recoveryMethod: string }
-  /** The adapter identity target (Name + fixed RequestedGUID + canonical LUID). */
+  /** The adapter identity target (Name + fixed RequestedGUID). */
   target: G1ProbeIdentityTarget
   /** The tunnel type string. */
   tunnelType: string
   /** Timeout for the mihomo reuse poll. */
   reuseTimeoutMs: number
+  /** Orchestrator-owned bound for every non-reuse step (P1-7). */
+  stepTimeoutMs?: number
   /** Injectable clock for deterministic tests. */
   now?: () => Date
 }
 
+interface ProbeState {
+  creatorCreated: boolean
+  creatorClosed: boolean
+  handle: G1OpaqueHandle | null
+  identity: G1AdapterIdentity | null
+  mihomoAttempted: boolean
+  mihomoStarted: boolean
+  mihomoStopped: boolean
+  mihomoPid: number | null
+}
+
+const DEFAULT_STEP_TIMEOUT_MS = 15_000
+
+/** Run one step with an orchestrator-owned bound; a timeout throws `timeout`. */
+async function runStep<T>(
+  label: string,
+  timeoutMs: number,
+  fn: () => T | Promise<T>
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new G1ProbeError(G1ErrorCode.timeout, `${label} timed out after ${timeoutMs}ms`)),
+      timeoutMs
+    )
+  })
+  try {
+    return await Promise.race([Promise.resolve(fn()), timeout])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
+/** Map a thrown value to an accurate error code, or null when unrecognised. */
+function classifyStepError(err: unknown): G1ErrorCode | null {
+  if (err instanceof G1ProbeError) return err.code
+  const msg = err instanceof Error ? err.message : String(err)
+  for (const code of Object.values(G1ErrorCode)) {
+    if (code === 'none') continue
+    if (msg.startsWith(code)) return code
+  }
+  if (/timed out|timeout/i.test(msg)) return G1ErrorCode.timeout
+  return null
+}
+
 /**
- * Run the G1 probe against an injected driver. This is the canonical a–j
- * sequence; it never performs an OS operation itself and it ALWAYS enters the
- * finally-cleanup on any failure, timeout or crash.
+ * Run the G1 probe against an injected driver. This is the canonical a–j sequence
+ * (P1-1). It never performs an OS operation itself and ALWAYS enters the explicit
+ * finally-teardown (P1-5) on any failure, timeout or crash.
  *
  * - Gate denial returns immediately (`probeExecuted:false`) with no driver call.
- * - A DLL hash mismatch is detected *before* the DLL is loaded (a) and aborts.
- * - If mihomo cannot be shown to reuse the SAME adapter (Name+GUID+LUID), the
+ * - A DLL hash mismatch is detected *before* the DLL is loaded and aborts.
+ * - A read-only conflict preflight aborts with zero change before any creation.
+ * - If mihomo cannot be shown to reuse the SAME adapter with a live session, the
  *   probe stops with `g1-failed` and never lets mihomo create a second adapter.
- * - Any destructive teardown requires a strict identity match.
+ * - Destructive teardown requires a strict identity match and closes the EXACT
+ *   creator handle once (P1-2).
  */
-export async function runG1Probe(
-  driver: G1ProbeDriver,
-  opts: G1RunOptions
-): Promise<G1Evidence> {
+export async function runG1Probe(driver: G1ProbeDriver, opts: G1RunOptions): Promise<G1Evidence> {
   const now = opts.now ?? (() => new Date())
   const startedAt = now().toISOString()
   const finishedAt = (): string => now().toISOString()
+  const stepTimeoutMs = opts.stepTimeoutMs ?? DEFAULT_STEP_TIMEOUT_MS
 
   // Gate denial: return immediately, before any driver primitive (deliverable B).
   if (!opts.gates.allowed) {
@@ -365,141 +484,228 @@ export async function runG1Probe(
   const state: ProbeState = {
     creatorCreated: false,
     creatorClosed: false,
+    handle: null,
+    identity: null,
+    mihomoAttempted: false,
     mihomoStarted: false,
     mihomoStopped: false,
-    identity: null,
-    pid: null
+    mihomoPid: null
   }
+  let observed: 'A' | 'B' | null = null
   let adapterGone: boolean | null = null
   let matchingAdapterCount: number | null = null
-  let cleanupSucceeded = false
-  let networkUnchanged = false
-  let errorCode: string = G1ErrorCode.none
-  let draft: EvidenceDraft = emptyDraft()
+  let mihomoSessionActiveAfterClose: boolean | null = null
+  let mihomoStillSameGuidLuidAfterClose: boolean | null = null
+  let mihomoReusedSameGuidLuid: boolean | null = null
+  let conflictReport: G1ConflictReport = G1_EMPTY_CONFLICT_REPORT
+  let dll = { verified: false, digest: '' }
+  let errorCode: G1ErrorCode = G1ErrorCode.none
+  let networkBefore: G1NetworkSnapshot | null = null
 
-  const networkBefore = await driver.captureNetworkSnapshot()
+  // Read-only baseline snapshot. A fault here just leaves the diff unverifiable
+  // (networkUnchanged=null); it does not fail the probe, so the OS is never
+  // touched on the basis of a snapshot helper.
+  try {
+    networkBefore = await runStep('captureNetworkSnapshot', stepTimeoutMs, () =>
+      driver.captureNetworkSnapshot()
+    )
+  } catch {
+    networkBefore = null
+  }
 
   try {
+    // (0) read-only preflight conflict check BEFORE any creation (P1-6).
+    conflictReport = await runStep('preflightConflictCheck', stepTimeoutMs, () =>
+      driver.preflightConflictCheck(opts.target)
+    )
+    if (conflictReport.conflict) {
+      errorCode = G1ErrorCode.conflictPreflight
+      throw new G1ProbeError(G1ErrorCode.conflictPreflight, conflictReport.reason ?? 'preflight conflict')
+    }
+    if (!conflictReport.conflict) {
+      conflictReport = { ...G1_EMPTY_CONFLICT_REPORT } // normalise for evidence
+    }
+
     // (a) pinned DLL integrity — verified before the loader is touched.
-    const dll = await driver.loadPinnedWintun()
+    const stepDll = await runStep('loadPinnedWintun', stepTimeoutMs, () => driver.loadPinnedWintun())
+    dll = stepDll
     if (!dll.verified) {
-      // Hash mismatch: fail closed, never load the DLL, never create an adapter.
+      // Fail closed: never load the DLL, never create an adapter (deliverable B).
       errorCode = G1ErrorCode.dllHashMismatch
-      draft = { ...emptyDraft(), startedAt, wintunDllSha256: dll.digest, wintunDllSha256Verified: false, helperPid: driver.pid, errorCode }
-    } else {
-      // (b) create the adapter and hold the creator handle.
-      await driver.createAdapter({ ...opts.target, tunnelType: opts.tunnelType })
-      state.creatorCreated = true
+      throw new G1ProbeError(G1ErrorCode.dllHashMismatch, 'pinned DLL digest did not verify')
+    }
 
-      // (c) read the canonical identity — this becomes the cleanup key.
-      const identity = await driver.readAdapterIdentity()
-      state.identity = identity
+    // (b) create the adapter and HOLD the exact creator handle (P1-2).
+    const handle = await runStep('createAdapter', stepTimeoutMs, () =>
+      driver.createAdapter({ ...opts.target, tunnelType: opts.tunnelType })
+    )
+    state.handle = handle
+    state.creatorCreated = true
 
-      // (d) spawn the isolated mihomo probe that tries to reuse the same adapter.
-      state.mihomoStarted = true
-      const mihomoPid = await driver.startMihomoProbe()
-      state.pid = mihomoPid
+    // (c) read the canonical identity — this becomes the cleanup key.
+    const identity = await runStep('readAdapterIdentity', stepTimeoutMs, () =>
+      driver.readAdapterIdentity(handle)
+    )
+    state.identity = identity
 
-      // (e) exactly one matching adapter must exist, and it must be ours.
-      matchingAdapterCount = await driver.matchingAdapterCount(identity)
-      if (matchingAdapterCount > 1) {
-        errorCode = G1ErrorCode.conflictDuplicate
-        throw new Error(`duplicate sibling adapter found (${matchingAdapterCount} matches)`)
-      }
-      if (matchingAdapterCount !== 1) {
-        errorCode = G1ErrorCode.g1Failed
-        throw new Error(`expected exactly one matching adapter, saw ${matchingAdapterCount}`)
-      }
+    // (d) mihomo opens the SAME adapter and establishes a provably active session; KEEP RUNNING.
+    state.mihomoAttempted = true
+    const mihomo = await runStep('startMihomoProbe', stepTimeoutMs, () => driver.startMihomoProbe(identity))
+    state.mihomoStarted = true
+    state.mihomoPid = mihomo.pid
 
-      // (f) confirm mihomo actually opened/uses the SAME adapter (not a second one).
-      const reuse = await driver.pollMihomoReuse(identity, opts.reuseTimeoutMs)
-      if (!reuse.reused) {
-        // Deliverable A: if mihomo cannot reuse via an explicit supported path, we
-        // STOP and report G1 unproven — we never let mihomo create a second adapter.
-        errorCode = G1ErrorCode.g1Failed
-        throw new Error('mihomo did not reuse the helper adapter (no dual ownership)')
-      }
+    // (e) exactly one adapter matching the identity.
+    const count = await runStep('matchingAdapterCount', stepTimeoutMs, () =>
+      driver.matchingAdapterCount(identity)
+    )
+    matchingAdapterCount = count
+    if (count > 1) {
+      errorCode = G1ErrorCode.conflictDuplicate
+      throw new G1ProbeError(G1ErrorCode.conflictDuplicate, 'more than one matching adapter')
+    }
+    if (count !== 1) {
+      errorCode = G1ErrorCode.g1Failed
+      throw new G1ProbeError(G1ErrorCode.g1Failed, 'no matching adapter found')
+    }
 
-      // (g) end the mihomo session + process.
-      await driver.stopMihomoProbe()
-      state.mihomoStopped = true
+    // (f) confirm mihomo reused the SAME adapter with a live, provably active session.
+    const reuse = await runStep('pollMihomoReuse', stepTimeoutMs, () => driver.pollMihomoReuse(identity, opts.reuseTimeoutMs))
+    mihomoReusedSameGuidLuid = reuse.reused && reuse.sameGuidLuid
+    if (!reuse.reused || !reuse.sessionActive || !reuse.sameGuidLuid) {
+      errorCode = G1ErrorCode.g1Failed
+      throw new G1ProbeError(
+        G1ErrorCode.g1Failed,
+        'mihomo did not reuse the SAME adapter with a live active session'
+      )
+    }
 
-      // (h) close our own creator handle (the only 0.14.1 removal op).
-      await driver.closeCreatorHandle()
-      state.creatorClosed = true
+    // (g) helper closes ITS OWN creator handle — mihomo KEEPS RUNNING.
+    await runStep('closeCreatorHandle', stepTimeoutMs, () => driver.closeCreatorHandle(handle))
+    state.creatorClosed = true
 
-      // (i) the probe-created adapter must now be gone.
-      adapterGone = !(await driver.adapterStillPresent(identity))
+    // (h) SIMULTANEOUS observation after the creator-handle close:
+    //     adapter present? session active? still the same GUID+LUID?
+    const stillPresent = await runStep('adapterStillPresent', stepTimeoutMs, () =>
+      driver.adapterStillPresent(identity)
+    )
+    adapterGone = !stillPresent
+    mihomoSessionActiveAfterClose = await runStep('mihomoSessionActive', stepTimeoutMs, () =>
+      driver.mihomoSessionActive()
+    )
+    mihomoStillSameGuidLuidAfterClose = await runStep('mihomoStillBoundTo', stepTimeoutMs, () =>
+      driver.mihomoStillBoundTo(identity)
+    )
+    // Observed B is valid ONLY when the creator handle is closed AND the session is
+    // still active AND still bound to the same GUID+LUID (P1-1). Otherwise A.
+    observed = adapterGone
+      ? 'A'
+      : mihomoSessionActiveAfterClose && mihomoStillSameGuidLuidAfterClose
+        ? 'B'
+        : 'A'
 
-      draft = {
-        ...emptyDraft(),
-        startedAt,
-        wintunDllSha256: dll.digest,
-        wintunDllSha256Verified: true,
-        adapterName: identity.name,
-        requestedGuid: identity.requestedGuid,
-        canonicalLuid: identity.canonicalLuid,
-        helperPid: driver.pid,
-        mihomoPid: reuse.pid,
-        matchingAdapterCount,
-        mihomoReusedSameGuidLuid: reuse.reused,
-        observed: adapterGone ? 'A' : 'B',
-        creatorHandleClosed: state.creatorClosed,
-        adapterGone,
-        errorCode
+    // (i) stop mihomo (bounded graceful; the driver terminates the exact PID on timeout).
+    await runStep('stopMihomoProbe', stepTimeoutMs, () => driver.stopMihomoProbe(stepTimeoutMs))
+    state.mihomoStopped = true
+  } catch (err) {
+    errorCode = classifyStepError(err) ?? (errorCode === G1ErrorCode.none ? G1ErrorCode.crash : errorCode)
+  } finally {
+    // (j) EXPLICIT, independent teardown — no vague cleanup(boolean) (P1-5).
+    let cleanupSucceeded: boolean | null = null
+
+    // 1. Stop mihomo if it was ever started or spawned. Bounded graceful; the real
+    //    driver terminates the exact recorded PID and waits on timeout, so no
+    //    residual process survives a fault boundary.
+    if (!state.mihomoStopped && (state.mihomoStarted || state.mihomoAttempted)) {
+      try {
+        await runStep('stopMihomoProbe', stepTimeoutMs, () => driver.stopMihomoProbe(stepTimeoutMs))
+        state.mihomoStopped = true
+      } catch {
+        // Best effort — the driver guarantees no residual process even on failure.
       }
     }
-  } catch (error) {
-    errorCode = errorCode === G1ErrorCode.none ? G1ErrorCode.crash : errorCode
-    draft = {
-      ...emptyDraft(),
-      startedAt,
+
+    // 2. Re-read the LIVE identity behind the creator handle. This runs whenever a
+    //    creator handle exists (the driver returns null once it is already closed,
+    //    so a closed handle never re-triggers a close).
+    let live: G1AdapterIdentity | null = null
+    if (state.handle !== null) {
+      try {
+        live = await runStep('liveAdapterIdentity', stepTimeoutMs, () => driver.liveAdapterIdentity(state.handle as G1OpaqueHandle))
+      } catch {
+        live = null
+      }
+    }
+    const acceptable = cleanupAllowed(live, state.identity)
+    // 3. Close the EXACT creator handle ONLY on a strict identity match, exactly once.
+    if (state.handle !== null && acceptable && !state.creatorClosed) {
+      try {
+        await runStep('closeCreatorHandle', stepTimeoutMs, () => driver.closeCreatorHandle(state.handle as G1OpaqueHandle))
+        state.creatorClosed = true
+      } catch {
+        cleanupSucceeded = false
+      }
+    }
+    // Success means mihomo is confirmed stopped AND the creator handle is closed.
+    cleanupSucceeded = state.creatorCreated
+      ? state.mihomoStopped && state.creatorClosed
+      : null
+    // A live identity that no longer matches ours (or is unconfirmable) means the
+    // adapter is NOT ours to tear down -> identity-conflict, never a blind delete.
+    if (
+      live !== null &&
+      !acceptable &&
+      !state.creatorClosed &&
+      (errorCode === G1ErrorCode.none || errorCode === G1ErrorCode.crash)
+    ) {
+      errorCode = G1ErrorCode.identityConflict
+    }
+    // 4. Adapter presence + read-only network snapshot diff (never assigns a value here).
+    let networkUnchanged: boolean | null = null
+    try {
+      const networkAfter = await runStep('captureNetworkSnapshot', stepTimeoutMs, () =>
+        driver.captureNetworkSnapshot()
+      )
+      if (networkBefore !== null) {
+        const changed = await runStep('networkDiff', stepTimeoutMs, () =>
+          driver.networkDiff(networkBefore as G1NetworkSnapshot, networkAfter)
+        )
+        networkUnchanged = changed.length === 0
+      }
+    } catch {
+      networkUnchanged = null
+    }
+    if (networkUnchanged === false && errorCode === G1ErrorCode.none) {
+      errorCode = G1ErrorCode.networkMutated
+    }
+
+    const draft: EvidenceDraft = {
+      wintunDllSha256: dll.digest, // retain the verified (or detected) digest (P1-7)
+      wintunDllSha256Verified: dll.verified,
       adapterName: state.identity?.name ?? null,
       requestedGuid: state.identity?.requestedGuid ?? null,
       canonicalLuid: state.identity?.canonicalLuid ?? null,
       helperPid: driver.pid,
-      mihomoPid: state.pid ?? null,
+      mihomoPid: state.mihomoPid,
       matchingAdapterCount,
-      mihomoReusedSameGuidLuid: null,
-      observed: adapterGone == null ? null : adapterGone ? 'A' : 'B',
+      mihomoReusedSameGuidLuid,
+      observed,
       creatorHandleClosed: state.creatorClosed,
       adapterGone,
+      mihomoSessionActiveAfterClose,
+      mihomoStillSameGuidLuidAfterClose,
+      preflightConflict: conflictReport.conflict,
+      conflictReason: conflictReport.reason ?? null,
+      startedAt,
       errorCode
     }
-  } finally {
-    // (j) ALWAYS enter finally-cleanup. Only a strict identity match may tear down
-    // a Wintun resource; a mismatch is a no-op that records the conflict.
-    let live: G1AdapterIdentity | null = null
-    try {
-      live = await driver.liveAdapterIdentity()
-    } catch {
-      live = null
-    }
-    const acceptable = cleanupAllowed(live, state.identity)
-    // A live adapter that no longer matches the recorded creation identity is a
-    // conflict: we refuse to touch it (fail closed) and record it. Prefer the
-    // conflict code over a generic crash, but keep a specific probe failure.
-    if (live !== null && !acceptable) {
-      if (errorCode === G1ErrorCode.none || errorCode === G1ErrorCode.crash) {
-        errorCode = G1ErrorCode.identityConflict
-      }
-    }
-    try {
-      await driver.cleanup(acceptable)
-      cleanupSucceeded = !(live !== null && !acceptable)
-    } catch {
-      cleanupSucceeded = false
-    }
-    const networkAfter = await driver.captureNetworkSnapshot()
-    networkUnchanged = driver.networkDiff(networkBefore, networkAfter).length === 0
-    // If the read-only snapshot shows a route/DNS/proxy/firewall change, the
-    // probe mutated the host: record it (a serious fail-closed finding).
-    if (!networkUnchanged && errorCode === G1ErrorCode.none) {
-      errorCode = G1ErrorCode.networkMutated
-    }
+    return buildG1Evidence(
+      opts.identifiers,
+      driver.architecture,
+      true,
+      draft,
+      cleanupSucceeded,
+      networkUnchanged,
+      finishedAt()
+    )
   }
-
-  // Assemble AFTER cleanup/network resolution so the final record carries them.
-  draft.errorCode = errorCode
-  return buildG1Evidence(opts.identifiers, driver.architecture, true, draft, cleanupSucceeded, networkUnchanged, finishedAt())
 }

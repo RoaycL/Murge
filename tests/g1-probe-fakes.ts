@@ -6,7 +6,9 @@
 
 import type {
   G1AdapterIdentity,
+  G1ConflictReport,
   G1NetworkSnapshot,
+  G1OpaqueHandle,
   G1ProbeDriver,
   G1ProbeIdentityTarget,
   G1ReuseResult
@@ -21,12 +23,17 @@ export interface FakeG1ProbeOptions {
   dllDigest?: string
   /** Returned by matchingAdapterCount (default 1). */
   matchingCount?: number
-  /** Returned by pollMihomoReuse (default true). */
+  /** Returned by pollMihomoReuse (default a reused, active, same-GUID/LUID session). */
   reuse?: boolean
-  /** Returned by startMihomoProbe / pollMihomoReuse pid (default 777). */
   mihomoPid?: number
   /** Returned by adapterStillPresent (default false => adapter gone). */
   adapterStillPresent?: boolean
+  /** Returned by mihomoSessionActive (default true). */
+  mihomoSessionActive?: boolean
+  /** Returned by mihomoStillBoundTo (default true). */
+  mihomoStillBoundTo?: boolean
+  /** Returned by the conflict preflight (default no conflict). */
+  preflightConflict?: G1ConflictReport
   /** Override the identity read back by liveAdapterIdentity (default = identity). */
   liveIdentity?: G1AdapterIdentity | null
   /** If true, the second network snapshot differs from the first => networkMutated. */
@@ -42,33 +49,76 @@ const DEFAULT_IDENTITY: G1AdapterIdentity = {
   canonicalLuid: '0x1234567890abcdef'
 }
 
-const SNAP: G1NetworkSnapshot = { route: 'stable', dns: 'stable', proxy: 'stable' }
+const SNAP: G1NetworkSnapshot = {
+  winhttpProxy: 'stable',
+  internetSettingsProxy: 'stable',
+  ipv4DefaultRoute: 'stable',
+  ipv6DefaultRoute: 'stable',
+  dnsServers: 'stable',
+  activeAdapters: 'stable',
+  firewallProfiles: 'stable'
+}
+
+export interface FakeG1ProbeState {
+  calls: string[]
+  createdTarget: (G1ProbeIdentityTarget & { tunnelType: string }) | null
+  creatorCreated: boolean
+  creatorClosed: boolean
+  /** The exact opaque handle createAdapter returned. */
+  creatorHandle: G1OpaqueHandle | null
+  /** Every handle passed to closeCreatorHandle (assert same-handle/at-most-once). */
+  closeTargetHandles: G1OpaqueHandle[]
+  closeCount: number
+  mihomoStarted: boolean
+  mihomoStopped: boolean
+  mihomoStoppedCount: number
+  mihomoPid: number | null
+  identity: G1AdapterIdentity | null
+  liveReadCount: number
+  liveIdentityValue: G1AdapterIdentity | null
+  matchingCount: number | null
+  mihomoSessionActiveValue: boolean | null
+  mihomoStillBoundToValue: boolean | null
+  adapterStillPresentValue: boolean | null
+  preflightConflictValue: G1ConflictReport
+  snapshotCount: number
+}
 
 export interface FakeG1ProbeResult {
   driver: G1ProbeDriver
-  state: {
-    calls: string[]
-    createdTarget: G1ProbeIdentityTarget & { tunnelType: string } | null
-    creatorOpen: boolean
-    creatorClosed: boolean
-    mihomoStarted: boolean
-    mihomoStopped: boolean
-    cleanupMatch: boolean | null
-    cleanupCalled: boolean
-  }
+  state: FakeG1ProbeState
 }
 
 export function createFakeG1Driver(opts: FakeG1ProbeOptions = {}): FakeG1ProbeResult {
   const identity = opts.identity ?? DEFAULT_IDENTITY
-  const state: FakeG1ProbeResult['state'] = {
+  const state: FakeG1ProbeState = {
     calls: [],
     createdTarget: null,
-    creatorOpen: false,
+    creatorCreated: false,
     creatorClosed: false,
+    creatorHandle: null,
+    closeTargetHandles: [],
+    closeCount: 0,
     mihomoStarted: false,
     mihomoStopped: false,
-    cleanupMatch: null,
-    cleanupCalled: false
+    mihomoStoppedCount: 0,
+    mihomoPid: null,
+    identity: null,
+    liveReadCount: 0,
+    liveIdentityValue: identity,
+    matchingCount: null,
+    mihomoSessionActiveValue: null,
+    mihomoStillBoundToValue: null,
+    adapterStillPresentValue: null,
+    preflightConflictValue: {
+      conflict: false,
+      reason: null,
+      sameNameCount: 0,
+      sameGuidCount: 0,
+      namePrefixCount: 0,
+      leftoverProbeResources: 0
+    },
+    snapshotCount: 0
   }
 
   const record = (name: string): void => {
@@ -78,88 +128,128 @@ export function createFakeG1Driver(opts: FakeG1ProbeOptions = {}): FakeG1ProbeRe
     }
   }
 
-  let snapCount = 0
-
   const driver: G1ProbeDriver = {
     architecture: opts.architecture ?? 'x64',
     pid: opts.pid ?? 123,
 
-    async loadPinnedWintun() {
+    async preflightConflictCheck(target: G1ProbeIdentityTarget): Promise<G1ConflictReport> {
+      record('preflightConflictCheck')
+      void target
+      const report = opts.preflightConflict ?? state.preflightConflictValue
+      state.preflightConflictValue = report
+      return report
+    },
+
+    async loadPinnedWintun(): Promise<{ verified: boolean; digest: string }> {
       record('loadPinnedWintun')
       return { verified: opts.dllVerified ?? true, digest: opts.dllDigest ?? 'a1'.repeat(32) }
     },
 
-    async createAdapter(target: G1ProbeIdentityTarget & { tunnelType: string }) {
+    async createAdapter(target: G1ProbeIdentityTarget & { tunnelType: string }): Promise<G1OpaqueHandle> {
       record('createAdapter')
       state.createdTarget = target
-      state.creatorOpen = true
+      state.creatorCreated = true
+      const handle: G1OpaqueHandle = { __g1OpaqueHandle: 'wintun-adapter' }
+      state.creatorHandle = handle
+      return handle
     },
 
-    async readAdapterIdentity() {
+    async readAdapterIdentity(handle: G1OpaqueHandle): Promise<G1AdapterIdentity> {
       record('readAdapterIdentity')
+      if (handle !== state.creatorHandle) throw new Error('readAdapterIdentity: non-creator handle')
+      state.identity = identity
       return identity
     },
 
-    async liveAdapterIdentity() {
+    async liveAdapterIdentity(handle: G1OpaqueHandle): Promise<G1AdapterIdentity | null> {
       record('liveAdapterIdentity')
-      if (!state.creatorOpen) return null
-      if (opts.liveIdentity === undefined) return identity
-      return opts.liveIdentity
+      state.liveReadCount += 1
+      if (handle !== state.creatorHandle || !state.creatorCreated || state.creatorClosed) return null
+      const value = opts.liveIdentity === undefined ? identity : opts.liveIdentity
+      state.liveIdentityValue = value
+      return value
     },
 
-    async startMihomoProbe() {
+    async startMihomoProbe(_identity: G1AdapterIdentity): Promise<{ pid: number }> {
       record('startMihomoProbe')
       state.mihomoStarted = true
-      return opts.mihomoPid ?? 777
+      state.mihomoPid = opts.mihomoPid ?? 777
+      return { pid: state.mihomoPid }
     },
 
-    async matchingAdapterCount() {
+    async matchingAdapterCount(_identity: G1AdapterIdentity): Promise<number> {
       record('matchingAdapterCount')
-      return opts.matchingCount ?? 1
+      const count = opts.matchingCount ?? 1
+      state.matchingCount = count
+      return count
     },
 
-    async pollMihomoReuse() {
+    async pollMihomoReuse(_identity: G1AdapterIdentity, _timeoutMs: number): Promise<G1ReuseResult> {
       record('pollMihomoReuse')
-      const reuse: G1ReuseResult = { reused: opts.reuse ?? true, pid: opts.mihomoPid ?? 777 }
-      return reuse
-    },
-
-    async stopMihomoProbe() {
-      record('stopMihomoProbe')
-      state.mihomoStopped = true
-    },
-
-    async closeCreatorHandle() {
-      record('closeCreatorHandle')
-      state.creatorClosed = true
-      state.creatorOpen = false
-    },
-
-    async adapterStillPresent() {
-      record('adapterStillPresent')
-      return opts.adapterStillPresent ?? false
-    },
-
-    async cleanup(identityMatch: boolean) {
-      record('cleanup')
-      state.cleanupMatch = identityMatch
-      state.cleanupCalled = true
-      if (identityMatch && state.creatorOpen) {
-        state.creatorOpen = false
-        state.creatorClosed = true
+      const reuse = opts.reuse ?? true
+      const sessionActive = reuse
+      const sameGuidLuid = reuse
+      state.mihomoSessionActiveValue = sessionActive
+      state.mihomoStillBoundToValue = sameGuidLuid
+      return {
+        reused: reuse,
+        pid: opts.mihomoPid ?? 777,
+        sessionActive,
+        sameGuidLuid
       }
     },
 
-    async captureNetworkSnapshot() {
+    async stopMihomoProbe(_timeoutMs: number): Promise<boolean> {
+      record('stopMihomoProbe')
+      state.mihomoStopped = true
+      state.mihomoStoppedCount += 1
+      state.mihomoStarted = false
+      return true
+    },
+
+    async closeCreatorHandle(handle: G1OpaqueHandle): Promise<void> {
+      record('closeCreatorHandle')
+      state.closeCount += 1
+      state.closeTargetHandles.push(handle)
+      if (handle !== state.creatorHandle) {
+        throw new Error('closeCreatorHandle received a non-creator handle')
+      }
+      state.creatorClosed = true
+      state.creatorCreated = false
+    },
+
+    async adapterStillPresent(_identity: G1AdapterIdentity): Promise<boolean> {
+      record('adapterStillPresent')
+      const value = opts.adapterStillPresent ?? false
+      state.adapterStillPresentValue = value
+      return value
+    },
+
+    async mihomoSessionActive(): Promise<boolean> {
+      record('mihomoSessionActive')
+      const value = opts.mihomoSessionActive ?? true
+      state.mihomoSessionActiveValue = value
+      return value
+    },
+
+    async mihomoStillBoundTo(_identity: G1AdapterIdentity): Promise<boolean> {
+      record('mihomoStillBoundTo')
+      const value = opts.mihomoStillBoundTo ?? true
+      state.mihomoStillBoundToValue = value
+      return value
+    },
+
+    async captureNetworkSnapshot(): Promise<G1NetworkSnapshot> {
       record('captureNetworkSnapshot')
-      snapCount += 1
-      if (snapCount === 1) return SNAP
-      if (opts.networkAfterChanged) return { ...SNAP, route: 'CHANGED' }
+      state.snapshotCount += 1
+      if (state.snapshotCount === 1) return SNAP
+      if (opts.networkAfterChanged) return { ...SNAP, ipv4DefaultRoute: 'CHANGED' }
       return SNAP
     },
 
-    networkDiff(before: G1NetworkSnapshot, after: G1NetworkSnapshot) {
-      return JSON.stringify(before) === JSON.stringify(after) ? [] : Object.keys(after)
+    networkDiff(before: G1NetworkSnapshot, after: G1NetworkSnapshot): string[] {
+      record('networkDiff')
+      return JSON.stringify(before) === JSON.stringify(after) ? [] : ['networkChanged']
     }
   }
 

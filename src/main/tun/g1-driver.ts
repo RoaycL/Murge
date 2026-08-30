@@ -9,28 +9,41 @@
  * supplied on the gated `murge-tun-lab` self-hosted Windows runner, behind the
  * protected `phase9-tun-lab` environment, with every gate satisfied. Until then
  * `binding` is null and every Wintun/mihomo primitive fails closed to
- * `unsupported`, so no DLL is loaded, no mihomo is spawned and the OS is never
- * mutated. The read-only network snapshot + diff (routes/DNS/proxy/firewall)
- * is implemented standalone and is inert unless invoked.
+ * `unsupported` (`G1ProbeError`), so no DLL is loaded, no mihomo is spawned and
+ * the OS is never mutated. The read-only network snapshot + diff
+ * (routes/DNS/proxy/firewall) is implemented standalone and is inert unless
+ * invoked.
  *
  * This module is never imported from `src/main/index.ts`, `src/preload` or the
  * IPC handlers, so the app bundle never contains it. A static isolation test
  * enforces that.
+ *
+ * ABI ownership (P1-3): the real handle is an opaque native pointer carried by
+ * the binding. `createAdapter` stores that pointer in a `WeakMap` keyed by the
+ * TS `G1OpaqueHandle`; `closeCreatorHandle` retrieves it and passes the SAME
+ * pointer to `WintunCloseAdapter` that `WintunCreateAdapter` returned. TS never
+ * re-derives the handle width, the `NET_LUID`, `GUID` or `WINAPI` convention.
  */
 
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { join } from 'node:path'
-import { G1ErrorCode } from './g1-probe'
-import type {
-  G1AdapterIdentity,
-  G1NetworkSnapshot,
-  G1ProbeDriver,
-  G1ProbeIdentityTarget,
-  G1ReuseResult
+import { parseDocument, isMap, isScalar, isAlias, type Node, type Scalar } from 'yaml'
+import {
+  G1ProbeError,
+  G1ErrorCode,
+  G1_EMPTY_CONFLICT_REPORT,
+  type G1AdapterIdentity,
+  type G1ConflictReport,
+  type G1NetworkSnapshot,
+  type G1OpaqueHandle,
+  type G1ProbeDriver,
+  type G1ProbeIdentityTarget,
+  type G1ReuseResult
 } from './g1-probe'
 import { WINTUN_DLL_NAME, WINTUN_PINNED_VERSION } from './wintun-abi'
+import { createConfigValidator } from '../profiles/config-validator'
 
 /** A resolved native Wintun function symbol (an opaque FFI callable). */
 export type WintunResolvedSymbol = (...args: unknown[]) => unknown
@@ -76,6 +89,266 @@ export const PINNED_WINTUN_MANIFEST: G1WintunManifest = {
 /** Expects the digest to be 64 lower/upper-case hex characters (SHA-256). */
 const SHA256_HEX = /^[0-9a-f]{64}$/i
 
+// ---------------------------------------------------------------------------
+// Isolated mihomo probe config: generate -> validate -> parse-back assert
+// (P1-4). The keys are the OFFICIAL mihomo kebab-case keys; the underscore
+// variants (`auto_route`, `strict_route`) and a top-level `inbound` are invalid
+// and are rejected by the strict validator before mihomo is ever started. This
+// config is route/DNS/proxy-neutral and never creates a second adapter.
+// ---------------------------------------------------------------------------
+
+/** Allowed top-level keys in the isolated probe config (exact set). */
+export const G1_MIHOMO_TOP_KEYS = ['allow-lan', 'mode', 'tun', 'dns'] as const
+/** Allowed keys inside `tun` (exact set). */
+export const G1_MIHOMO_TUN_KEYS = [
+  'enable',
+  'stack',
+  'device',
+  'auto-route',
+  'auto-detect-interface',
+  'strict-route'
+] as const
+/** Allowed keys inside `dns` (exact set). */
+export const G1_MIHOMO_DNS_KEYS = ['enable'] as const
+
+/** Render a YAML scalar that round-trips the exact value. */
+function yamlScalar(value: string): string {
+  if (/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(value)) return value
+  return JSON.stringify(value)
+}
+
+/**
+ * Build the isolated mihomo config that reuses the helper's adapter by name.
+ * `device` names the adapter NIC only — it does NOT itself prove that mihomo
+ * reuses the helper's Wintun instance; the live session + same-GUID/LUID
+ * observation (step h) is what proves (or fails to prove) reuse, so G1 stays
+ * UNPROVEN until that is observed on a gated runner.
+ */
+export function buildIsolatedMihomoConfig(identity: G1AdapterIdentity): string {
+  return [
+    'allow-lan: false',
+    'mode: direct',
+    'tun:',
+    '  enable: true',
+    '  stack: system',
+    '  device: ' + yamlScalar(identity.name),
+    '  auto-route: false',
+    '  auto-detect-interface: false',
+    '  strict-route: false',
+    'dns:',
+    '  enable: false',
+    ''
+  ].join('\n')
+}
+
+/** Validate the shape of a nested map against an exact key allowlist. */
+function nestedMapErrors(
+  section: string,
+  valueNode: unknown,
+  allowed: readonly string[],
+  expect: (key: string, value: Node) => string[]
+): string[] {
+  const errors: string[] = []
+  if (!isMap(valueNode)) {
+    errors.push(`${section} must be a YAML mapping`)
+    return errors
+  }
+  const seen = new Set<string>()
+  for (const item of valueNode.items as Array<{ key: Node; value: Node | null }>) {
+    const k = item.key
+    const v = item.value
+    if (v === null) {
+      errors.push(`${section} entries must have a value`)
+      continue
+    }
+    if (isAlias(k) || isAlias(v) || k.tag !== undefined || v.tag !== undefined) {
+      errors.push(`${section} must not use aliases or tags`)
+      continue
+    }
+    if (!isScalar(k) || typeof k.value !== 'string') {
+      errors.push(`${section} keys must be plain scalar strings`)
+      continue
+    }
+    const nestedKey = k.value
+    if (seen.has(nestedKey)) {
+      errors.push(`duplicate key in ${section}: ${nestedKey}`)
+      continue
+    }
+    seen.add(nestedKey)
+    if (!allowed.includes(nestedKey)) {
+      errors.push(`unknown key in ${section}: ${nestedKey}`)
+      continue
+    }
+    errors.push(...expect(nestedKey, v))
+  }
+  for (const key of allowed) {
+    if (!seen.has(key)) errors.push(`missing required key in ${section}: ${key}`)
+  }
+  return errors
+}
+
+const isBoolFalse = (v: Node): v is Scalar => isScalar(v) && v.value === false
+const isBoolTrue = (v: Node): v is Scalar => isScalar(v) && v.value === true
+const isString = (v: Node): v is Scalar => isScalar(v) && typeof v.value === 'string'
+
+function tunFieldErrors(key: string, v: Node, expectedDevice: string): string[] {
+  if (key === 'enable') return isBoolTrue(v) ? [] : ['tun.enable must be true']
+  if (key === 'stack') {
+    return isString(v) && v.value === 'system' ? [] : ['tun.stack must be system']
+  }
+  if (key === 'device') {
+    return isString(v) && v.value === expectedDevice ? [] : ['tun.device must match the probe adapter name']
+  }
+  // auto-route / auto-detect-interface / strict-route must be false.
+  return isBoolFalse(v) ? [] : [`tun.${key} must be false`]
+}
+
+function dnsFieldErrors(key: string, v: Node): string[] {
+  return isBoolFalse(v) ? [] : ['dns.enable must be false']
+}
+
+/**
+ * Strict G1 probe-config validator. Returns every violation as a message. Any
+ * unknown/duplicated/aliased/tagged key, any top-level key outside the exact
+ * allowlist, or any security field that is not exactly its required value is
+ * rejected — the underscore variants (`auto_route`, `strict_route`) and a
+ * top-level `inbound` are unknown keys and therefore fail here.
+ */
+export function g1MihomoConfigErrors(text: string, expectedDevice: string): string[] {
+  const errors: string[] = []
+  const doc = parseDocument(text, { uniqueKeys: true })
+  for (const err of doc.errors) errors.push(`YAML parse error: ${err.message.split('\n')[0]}`)
+  if (!isMap(doc.contents)) {
+    errors.push('probe config must be a YAML mapping at the top level')
+    return errors
+  }
+  const seen = new Set<string>()
+  for (const item of doc.contents.items as Array<{ key: Node; value: Node | null }>) {
+    const k = item.key
+    const v = item.value
+    if (v === null) {
+      errors.push('probe config entries must have a value')
+      continue
+    }
+    if (isAlias(k) || isAlias(v) || k.tag !== undefined || v.tag !== undefined) {
+      errors.push('probe config must not use aliases or tags')
+      continue
+    }
+    if (!isScalar(k) || typeof k.value !== 'string') {
+      errors.push('probe config keys must be plain scalar strings')
+      continue
+    }
+    const key = k.value
+    if (seen.has(key)) {
+      errors.push(`duplicate key: ${key}`)
+      continue
+    }
+    seen.add(key)
+    if (!(G1_MIHOMO_TOP_KEYS as readonly string[]).includes(key)) {
+      errors.push(`unknown top-level key: ${key}`)
+      continue
+    }
+    if (key === 'allow-lan') {
+      if (!isBoolFalse(v)) errors.push('allow-lan must be false')
+    } else if (key === 'mode') {
+      if (!(isString(v) && v.value === 'direct')) errors.push('mode must be direct')
+    } else if (key === 'tun') {
+      errors.push(...nestedMapErrors('tun', v, G1_MIHOMO_TUN_KEYS, (n, vv) => tunFieldErrors(n, vv, expectedDevice)))
+    } else if (key === 'dns') {
+      errors.push(...nestedMapErrors('dns', v, G1_MIHOMO_DNS_KEYS, dnsFieldErrors))
+    }
+  }
+  for (const key of G1_MIHOMO_TOP_KEYS) {
+    if (!seen.has(key)) errors.push(`missing required top-level key: ${key}`)
+  }
+  return errors
+}
+
+/** The parsed-back security field values asserted by the validator. */
+export interface G1MihomoParsedSecurityFields {
+  allowLan: boolean
+  mode: string
+  tunEnable: boolean
+  tunStack: string
+  tunDevice: string
+  autoRoute: boolean
+  autoDetectInterface: boolean
+  strictRoute: boolean
+  dnsEnable: boolean
+}
+
+/** Parse a validated probe config back into its security field values. */
+export function parseBackG1MihomoConfig(text: string): G1MihomoParsedSecurityFields {
+  const doc = parseDocument(text)
+  const root = doc.contents
+  if (!isMap(root)) throw new G1ProbeError(G1ErrorCode.internal, 'probe config parse-back: not a mapping')
+  const getScalar = (map: Node, key: string): Node | null => {
+    if (!isMap(map)) return null
+    for (const item of map.items as Array<{ key: Node; value: Node | null }>) {
+      if (isScalar(item.key) && item.key.value === key && item.value !== null) return item.value
+    }
+    return null
+  }
+  const asBool = (n: Node | null): boolean => {
+    if (!isScalar(n)) return false
+    return typeof n.value === 'boolean' ? (n.value as boolean) : false
+  }
+  const asString = (n: Node | null): string => {
+    if (!isScalar(n) || typeof n.value !== 'string') return ''
+    return n.value as string
+  }
+  return {
+    allowLan: asBool(getScalar(root as Node, 'allow-lan')),
+    mode: asString(getScalar(root as Node, 'mode')),
+    tunEnable: asBool(getScalar(getScalar(root as Node, 'tun') as Node, 'enable')),
+    tunStack: asString(getScalar(getScalar(root as Node, 'tun') as Node, 'stack')),
+    tunDevice: asString(getScalar(getScalar(root as Node, 'tun') as Node, 'device')),
+    autoRoute: asBool(getScalar(getScalar(root as Node, 'tun') as Node, 'auto-route')),
+    autoDetectInterface: asBool(getScalar(getScalar(root as Node, 'tun') as Node, 'auto-detect-interface')),
+    strictRoute: asBool(getScalar(getScalar(root as Node, 'tun') as Node, 'strict-route')),
+    dnsEnable: asBool(getScalar(getScalar(root as Node, 'dns') as Node, 'enable'))
+  }
+}
+
+/**
+ * Generate -> validate through the repo's existing config validator -> parse
+ * back and assert every security field value (P1-4). Throws on the first
+ * violation. A config that is unknown, ignored or auto-rewritten by mihomo on a
+ * critical field is rejected BEFORE mihomo is started.
+ */
+export function assertG1MihomoConfig(text: string, expectedDevice: string): void {
+  const errors = g1MihomoConfigErrors(text, expectedDevice)
+  if (errors.length) {
+    throw new G1ProbeError(G1ErrorCode.g1Failed, `unsafe probe config: ${errors.join('; ')}`)
+  }
+  // Also route through the repo's own config validator (structural gate).
+  const repoValidator = createConfigValidator()
+  const result = repoValidator.validate(text)
+  if (!result.ok) {
+    const detail = result.issues.map((i) => i.message).join('; ')
+    throw new G1ProbeError(G1ErrorCode.g1Failed, `unsafe probe config (repo validator): ${detail}`)
+  }
+  // Parse back and assert the final values of the security fields.
+  const parsed = parseBackG1MihomoConfig(text)
+  const failures: string[] = []
+  if (parsed.allowLan !== false) failures.push('allow-lan must be false')
+  if (parsed.mode !== 'direct') failures.push('mode must be direct')
+  if (parsed.tunEnable !== true) failures.push('tun.enable must be true')
+  if (parsed.tunStack !== 'system') failures.push('tun.stack must be system')
+  if (parsed.tunDevice !== expectedDevice) failures.push('tun.device must match the probe adapter name')
+  if (parsed.autoRoute !== false) failures.push('tun.auto-route must be false')
+  if (parsed.autoDetectInterface !== false) failures.push('tun.auto-detect-interface must be false')
+  if (parsed.strictRoute !== false) failures.push('tun.strict-route must be false')
+  if (parsed.dnsEnable !== false) failures.push('dns.enable must be false')
+  if (failures.length) {
+    throw new G1ProbeError(G1ErrorCode.g1Failed, `probe config security fields invalid: ${failures.join('; ')}`)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Wintun native handle + manifest + network snapshot
+// ---------------------------------------------------------------------------
+
 /** Convert a canonical GUID string to the 16 little-endian bytes Wintun expects. */
 export function guidToLittleEndianBytes(guid: string): number[] {
   const hex = guid.replace(/[^0-9a-fA-F]/g, '')
@@ -92,29 +365,6 @@ export function guidToLittleEndianBytes(guid: string): number[] {
   ]
 }
 
-/**
- * Build the isolated mihomo config the probe uses to reuse the helper's adapter.
- * It is deliberately route/DNS/proxy-neutral: `auto-route` and `strict-route`
- * are false and no DNS server or in-band proxy is configured, so the probe can
- * never mutate the host's default routes, DNS or system proxy — only observe the
- * data plane. The probe never creates a second adapter (no dual ownership).
- */
-export function buildIsolatedMihomoConfig(identity: G1AdapterIdentity & { mihomoPort: number }): string {
-  const config = {
-    tun: {
-      enable: true,
-      device: identity.name,
-      auto_route: false,
-      strict_route: false,
-      stack: 'system'
-    },
-    dns: { enable: false },
-    'inbound': { port: identity.mihomoPort, listen: '127.0.0.1' },
-    'log-level': 'silent'
-  }
-  return JSON.stringify(config, null, 2)
-}
-
 async function sha256File(path: string): Promise<string> {
   const data = await readFile(path)
   return createHash('sha256').update(data).digest('hex')
@@ -122,10 +372,9 @@ async function sha256File(path: string): Promise<string> {
 
 /**
  * Read-only, side-effect-free host network snapshot + diff, used to prove the
- * probe never mutated routes / DNS / system proxy / firewall. Mirrors the
- * snapshot the real-kernel integration test uses. Windows-aware; on non-Windows
- * it returns a stable placeholder so the diff is deterministic (the probe only
- * ever runs on Windows anyway).
+ * probe never mutated routes / DNS / system proxy / firewall. Windows-aware; on
+ * non-Windows it returns a stable placeholder so the diff is deterministic (the
+ * probe only ever runs on Windows anyway).
  */
 export async function captureNetworkSnapshot(): Promise<G1NetworkSnapshot> {
   if (process.platform !== 'win32') {
@@ -172,15 +421,22 @@ async function runCapture(command: string, args: string[]): Promise<string> {
 
 /** Compare two snapshots; returns every field that changed. */
 export function networkDiff(before: G1NetworkSnapshot, after: G1NetworkSnapshot): string[] {
-  const keys = new Set([...Object.keys(before), ...Object.keys(after)])
+  const keys = new Set<keyof G1NetworkSnapshot>([
+    ...(Object.keys(before) as (keyof G1NetworkSnapshot)[]),
+    ...(Object.keys(after) as (keyof G1NetworkSnapshot)[])
+  ])
   const changed: string[] = []
   for (const key of keys) {
     const a = before[key] ?? 'MISSING'
     const b = after[key] ?? 'MISSING'
-    if (a !== b) changed.push(key)
+    if (a !== b) changed.push(key as string)
   }
   return changed
 }
+
+// ---------------------------------------------------------------------------
+// Real driver (fail closed to `unsupported` when no native binding)
+// ---------------------------------------------------------------------------
 
 export interface RealG1ProbeDriverOptions {
   /** Native binding; null = fail closed. */
@@ -193,6 +449,8 @@ export interface RealG1ProbeDriverOptions {
   architecture?: string
   pid?: number
 }
+
+const unsupportedErr = (msg: string): G1ProbeError => new G1ProbeError(G1ErrorCode.unsupported, msg)
 
 /**
  * Construct the real driver. Fails closed to `unsupported` for every Wintun /
@@ -208,23 +466,38 @@ export function createRealG1ProbeDriver(
   const architecture = opts.architecture ?? detectArchitecture()
   const pid = opts.pid ?? process.pid
 
-  let resolved = false
-  let lastDigest = ''
-  let creatorOpen = false
-  let createdIdentity: G1AdapterIdentity | null = null
-
   const dllPath = (): string => (wintunDir ? join(wintunDir, `${architecture}-${WINTUN_DLL_NAME}`) : '')
 
+  // Opaque TS handle -> native pointer (P1-2 / P1-3). Only the binding owns the
+  // pointer; TS holds the branded handle and never inspects the native value.
+  const nativeHandles = new WeakMap<G1OpaqueHandle, unknown>()
+
+  let creatorHandle: G1OpaqueHandle | null = null
+  let creatorHandleClosed = false
+  let createdIdentity: G1AdapterIdentity | null = null
+  let mihomoChild: ChildProcess | null = null
+  let mihomoPid: number | null = null
+
   const bound = (name: string): WintunResolvedSymbol => {
-    if (!binding) throw new Error(G1ErrorCode.unsupported)
+    if (!binding) throw unsupportedErr('native binding not present')
     const sym = binding.resolve(name)
-    if (!sym) throw new Error(`${G1ErrorCode.unsupported}: unresolved native symbol ${name}`)
+    if (!sym) throw unsupportedErr(`unresolved native symbol ${name}`)
     return sym
   }
 
   return {
     architecture,
     pid,
+
+    async preflightConflictCheck(target: G1ProbeIdentityTarget): Promise<G1ConflictReport> {
+      // Read-only enumeration; the orchestrator guarantees zero change. Requires a
+      // native adapter namespace read; fails closed without it.
+      if (!binding) throw unsupportedErr('conflict preflight requires a native binding')
+      // A real implementation enumerates the same-name adapter, same RequestedGUID,
+      // the product probe name prefix and leftover earlier-round probe resources.
+      void target
+      throw unsupportedErr('conflict preflight enumeration is gated, not wired in this scaffold')
+    },
 
     async loadPinnedWintun(): Promise<{ verified: boolean; digest: string }> {
       // No pinned digest for this arch, or no configured DLL path: fail closed to
@@ -234,12 +507,11 @@ export function createRealG1ProbeDriver(
       const path = dllPath()
       if (!path) return { verified: false, digest: '' }
       const computed = await sha256File(path)
-      lastDigest = computed
       if (computed.toLowerCase() !== digest.toLowerCase()) {
         return { verified: false, digest: computed }
       }
       // Only a verified DLL may be loaded — and only when a native binding exists.
-      if (!binding) throw new Error(`${G1ErrorCode.unsupported}: native binding not present`)
+      if (!binding) throw unsupportedErr('native binding not present')
       binding.load(path)
       binding.assertSymbols([
         'WintunCreateAdapter',
@@ -249,88 +521,154 @@ export function createRealG1ProbeDriver(
         'WintunEndSession',
         'WintunOpenAdapter'
       ])
-      resolved = true
       return { verified: true, digest: computed }
     },
 
-    async createAdapter(target: G1ProbeIdentityTarget & { tunnelType: string }): Promise<void> {
+    async createAdapter(
+      target: G1ProbeIdentityTarget & { tunnelType: string }
+    ): Promise<G1OpaqueHandle> {
       const sym = bound('WintunCreateAdapter')
       const guidBytes = guidToLittleEndianBytes(target.requestedGuid)
-      const handle = sym(target.name, target.tunnelType, guidBytes)
-      if (!handle) {
-        throw new Error(`${G1ErrorCode.unsupported}: WintunCreateAdapter returned NULL`)
-      }
-      creatorOpen = true
+      const nativeHandle = sym(target.name, target.tunnelType, guidBytes)
+      if (!nativeHandle) throw unsupportedErr('WintunCreateAdapter returned NULL')
+      const handle: G1OpaqueHandle = { __g1OpaqueHandle: 'wintun-adapter' }
+      nativeHandles.set(handle, nativeHandle)
+      creatorHandle = handle
+      creatorHandleClosed = false
       createdIdentity = {
         name: target.name,
         requestedGuid: target.requestedGuid,
         canonicalLuid: '' // filled by readAdapterIdentity via the native LUID read
       }
+      return handle
     },
 
-    async readAdapterIdentity(): Promise<G1AdapterIdentity> {
-      if (!creatorOpen || !createdIdentity) {
-        throw new Error(`${G1ErrorCode.unsupported}: no creator handle held`)
-      }
-      // The real binding reads the NET_LUID from the still-open handle and
-      // returns it as a canonical '0x...' string. Fails closed without it.
+    async readAdapterIdentity(handle: G1OpaqueHandle): Promise<G1AdapterIdentity> {
+      const nativeHandle = nativeHandles.get(handle)
+      if (!nativeHandle) throw unsupportedErr('unrecognised creator handle')
+      if (!creatorOpenIdentity()) throw unsupportedErr('no creator handle held')
+      // The native binding reads the NET_LUID from the still-open handle via
+      // `WintunGetAdapterLUID(handle, &luid)` and returns it as a canonical hex
+      // string. Fails closed without a binding.
       void bound('WintunGetAdapterLUID')
-      throw new Error(`${G1ErrorCode.unsupported}: adapter identity requires a native binding`)
+      throw unsupportedErr('adapter identity requires a native binding')
     },
 
-    async liveAdapterIdentity(): Promise<G1AdapterIdentity | null> {
-      if (!creatorOpen || !createdIdentity) return null
-      // The live adapter behind the still-open creator handle must still carry
-      // the recorded Name + RequestedGUID + LUID. Requires a native LUID read.
-      throw new Error(`${G1ErrorCode.unsupported}: live adapter identity requires a native binding`)
+    async liveAdapterIdentity(handle: G1OpaqueHandle): Promise<G1AdapterIdentity | null> {
+      const nativeHandle = nativeHandles.get(handle)
+      if (!nativeHandle || creatorHandleClosed) return null
+      // The live adapter behind the still-open creator handle must still carry the
+      // recorded Name + RequestedGUID + LUID. Requires a native LUID read.
+      if (!creatorOpenIdentity()) return null
+      throw unsupportedErr('live adapter identity requires a native binding')
     },
 
-    async startMihomoProbe(): Promise<number> {
-      // The isolated mihomo reuses the helper's adapter by name (same GUID), with
-      // route/DNS/proxy disabled. Never creates a second adapter (no dual ownership).
-      if (!binding) throw new Error(`${G1ErrorCode.unsupported}: mihomo probe requires a native binding`)
-      // Config produced here is written to a runner-temp dir by the caller; the
-      // probe process is spawned only after the Wintun adapter exists.
-      void buildIsolatedMihomoConfig
-      throw new Error(`${G1ErrorCode.unsupported}: mihomo probe spawn is gated, not wired in this scaffold`)
+    async startMihomoProbe(identity: G1AdapterIdentity): Promise<{ pid: number }> {
+      if (!binding) throw unsupportedErr('mihomo probe requires a native binding')
+      const config = buildIsolatedMihomoConfig(identity)
+      // Generate -> validate -> parse back -> assert BEFORE mihomo is started (P1-4).
+      assertG1MihomoConfig(config, identity.name)
+      // A real implementation writes `config` to a runner-temp dir, validates it
+      // again on-disk, then spawns `mihomo -d <dir> -f <config>` and keeps the
+      // ChildProcess/PID here so stopMihomoProbe can terminate the exact process.
+      void config
+      throw unsupportedErr('mihomo probe spawn is gated, not wired in this scaffold')
     },
 
-    async matchingAdapterCount(): Promise<number> {
+    async matchingAdapterCount(identity: G1AdapterIdentity): Promise<number> {
       void bound('WintunOpenAdapter')
-      throw new Error(`${G1ErrorCode.unsupported}: adapter enumeration requires a native binding`)
+      void identity
+      throw unsupportedErr('adapter enumeration requires a native binding')
     },
 
-    async pollMihomoReuse(): Promise<G1ReuseResult> {
-      throw new Error(`${G1ErrorCode.unsupported}: reuse observation requires a native binding`)
+    async pollMihomoReuse(identity: G1AdapterIdentity, timeoutMs: number): Promise<G1ReuseResult> {
+      void identity
+      void timeoutMs
+      throw unsupportedErr('reuse observation requires a native binding')
     },
 
-    async stopMihomoProbe(): Promise<void> {
-      if (!resolved) throw new Error(`${G1ErrorCode.unsupported}: mihomo probe not started`)
+    async stopMihomoProbe(timeoutMs: number): Promise<boolean> {
+      // Bounded graceful stop; on timeout terminate the EXACT recorded PID and
+      // wait for exit. Returns true on a clean stop. Never throws when nothing
+      // was started, so the orchestrator's finally teardown is safe.
+      if (!mihomoChild) return true
+      const ok = await stopChildGracefully(mihomoChild, timeoutMs)
+      mihomoChild = null
+      mihomoPid = null
+      return ok
     },
 
-    async closeCreatorHandle(): Promise<void> {
-      const sym = bound('WintunCloseAdapter') // the ONLY 0.14.1 removal op
-      sym()
-      creatorOpen = false
-    },
-
-    async adapterStillPresent(): Promise<boolean> {
-      throw new Error(`${G1ErrorCode.unsupported}: adapter presence requires a native binding`)
-    },
-
-    async cleanup(identityMatch: boolean): Promise<void> {
-      // Identity-guarded teardown: the orchestrator passes whether the strict
-      // identity matched. The real driver only closes its own creator handle and
-      // stops the isolated mihomo — never WintunDeleteAdapter, never WintunDeleteDriver.
-      if (identityMatch && creatorOpen && binding) {
-        const sym = bound('WintunCloseAdapter')
-        sym()
-        creatorOpen = false
+    async closeCreatorHandle(handle: G1OpaqueHandle): Promise<void> {
+      // The SAME handle create returned must be passed to WintunCloseAdapter, and
+      // it must be closed at most once (P1-2). We refuse a non-creator handle.
+      if (handle !== creatorHandle) {
+        throw unsupportedErr('cannot close a handle that was not returned by createAdapter')
       }
+      if (creatorHandleClosed) return
+      const nativeHandle = nativeHandles.get(handle)
+      if (!nativeHandle) {
+        creatorHandleClosed = true // nothing native left to close
+        return
+      }
+      const sym = bound('WintunCloseAdapter')
+      sym(nativeHandle)
+      nativeHandles.delete(handle)
+      creatorHandle = null
+      creatorHandleClosed = true
+    },
+
+    async adapterStillPresent(identity: G1AdapterIdentity): Promise<boolean> {
+      void bound('WintunOpenAdapter')
+      void identity
+      throw unsupportedErr('adapter presence requires a native binding')
+    },
+
+    async mihomoSessionActive(): Promise<boolean> {
+      if (!binding) throw unsupportedErr('session activity requires a native binding')
+      throw unsupportedErr('session activity is gated, not wired in this scaffold')
+    },
+
+    async mihomoStillBoundTo(identity: G1AdapterIdentity): Promise<boolean> {
+      void bound('WintunOpenAdapter')
+      void identity
+      throw unsupportedErr('session binding observation requires a native binding')
     },
 
     captureNetworkSnapshot,
     networkDiff
+  }
+
+  function creatorOpenIdentity(): boolean {
+    return creatorHandle !== null && createdIdentity !== null && !creatorHandleClosed
+  }
+
+  async function stopChildGracefully(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+    return await new Promise<boolean>((resolve) => {
+      const pid = child.pid ?? mihomoPid
+      let settled = false
+      const finish = (ok: boolean): void => {
+        if (settled) return
+        settled = true
+        resolve(ok)
+      }
+      child.once('error', () => finish(true))
+      child.once('exit', () => finish(true))
+      // Graceful stop first; on timeout terminate the EXACT recorded PID and wait.
+      try {
+        child.kill('SIGTERM')
+      } catch {
+        /* fall through to forced terminate */
+      }
+      const timer = setTimeout(() => {
+        try {
+          if (pid !== undefined && pid !== null) process.kill(pid, 'SIGKILL')
+        } catch {
+          /* already gone */
+        }
+        setTimeout(() => finish(true), 500)
+      }, timeoutMs)
+      if (timer.unref) timer.unref()
+    })
   }
 }
 

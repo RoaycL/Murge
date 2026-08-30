@@ -1,6 +1,6 @@
-import { desiredNetworkStateSchema } from '../../shared/schemas/tun'
+import { mihomoOwnedTunIntentSchema } from '../../shared/schemas/tun'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
-import type { DesiredNetworkState, TunStatus } from '../../shared/tun'
+import type { MihomoOwnedTunIntent, TunStatus } from '../../shared/tun'
 import { initialTunStatus, transitionTunStatus } from './state-machine'
 
 export type TunEnableResult =
@@ -19,7 +19,7 @@ export type TunRestoreResult =
  */
 export interface TunMutationAdapter {
   recoveryRequired(): Promise<boolean>
-  enable(desired: DesiredNetworkState): Promise<TunEnableResult>
+  enable(intent: MihomoOwnedTunIntent): Promise<TunEnableResult>
   restore(): Promise<TunRestoreResult>
 }
 
@@ -29,17 +29,17 @@ export class GatedTunMutationAdapter implements TunMutationAdapter {
     return false
   }
 
-  async enable(_desired: DesiredNetworkState): Promise<TunEnableResult> {
+  async enable(_intent: MihomoOwnedTunIntent): Promise<TunEnableResult> {
     throw new ProtocolError(
       ProtocolErrorCode.TUN_IMPLEMENTATION_GATED,
-      'Windows TUN implementation is gated pending G1 validation'
+      'Windows TUN service transport is not available in this build'
     )
   }
 
   async restore(): Promise<TunRestoreResult> {
     throw new ProtocolError(
       ProtocolErrorCode.TUN_IMPLEMENTATION_GATED,
-      'Windows TUN recovery implementation is gated pending G1 validation'
+      'Windows TUN service transport is not available in this build'
     )
   }
 }
@@ -87,10 +87,10 @@ export class TunCoordinator {
         this.status.phase === 'conflict' ||
         this.status.phase === 'unsupported'
       ) return
-      const desired = desiredNetworkStateSchema.parse(input) as DesiredNetworkState
+      const intent = mihomoOwnedTunIntentSchema.parse(input) as MihomoOwnedTunIntent
       this.move('enable')
       try {
-        const result = await this.adapter.enable(desired)
+        const result = await this.adapter.enable(intent)
         if (result.outcome === 'active') {
           this.move('enabled')
         } else if (result.outcome === 'conflict') {

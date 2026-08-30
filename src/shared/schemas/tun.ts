@@ -88,6 +88,12 @@ export const desiredNetworkStateSchema = z.object({
   }
 })
 
+export const mihomoOwnedTunIntentSchema = z.object({
+  schemaVersion: z.literal(2),
+  device: safeAdapterLabel.refine(value => /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/.test(value), 'device contains unsupported characters'),
+  stack: z.enum(['mixed', 'system', 'gvisor'])
+}).strict()
+
 function addDuplicateIssues<T>(
   values: readonly T[],
   keyOf: (value: T) => string,

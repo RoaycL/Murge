@@ -288,6 +288,21 @@ Exit criteria:
 
 ## Phase 9 — Windows TUN and privileged helper
 
+> **Phase 9B decision (2026-08-30):** the implementation direction is now
+> `docs/phase9b-mihomo-owned-tun.md`. Mihomo is the sole owner of Wintun,
+> routes and DNS; the privileged service only verifies, starts, stops and
+> supervises the fixed packaged mihomo. The helper-created-adapter/G1-reuse
+> design below is retained as a historical audit trail and is no longer an
+> implementation gate or production path.
+>
+> Phase 9B non-network implementation now includes the exact TUN profile
+> generator/validator, renderer-safe v2 intent, digest-bound privileged service
+> protocol, single-owned-session client, readiness/rollback lifecycle adapter,
+> and unit tests. The Electron bridge and native Windows service remain gated
+> until that service is compiled and its ACL/installer lifecycle is reviewed.
+> Runtime completion still requires the isolated Windows evidence matrix in the
+> Phase 9B decision; tests on macOS/Linux cannot mark TUN runtime complete.
+
 Environment: disposable Windows VM with snapshot and out-of-band recovery.
 
 Entry gate: Phase 8 complete, design review approved, separate owner authorization.

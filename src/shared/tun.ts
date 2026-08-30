@@ -41,6 +41,13 @@ export interface DesiredNetworkState {
   metrics: Array<{ luid: CanonicalNetLuid; metric: number }>
 }
 
+/** Phase 9B renderer-safe intent. It contains no privileged paths or OS mutations. */
+export interface MihomoOwnedTunIntent {
+  schemaVersion: 2
+  device: string
+  stack: 'mixed' | 'system' | 'gvisor'
+}
+
 export type TunIntent = 'initialize' | 'enable' | 'enabled' | 'disable' | 'restored' | 'fail' | 'fatal' | 'conflict' | 'unsupported'
 
 export interface TunGateway {

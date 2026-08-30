@@ -7,15 +7,9 @@ import {
 import { ProtocolErrorCode } from '../src/shared/protocol-errors'
 
 const desired = {
-  schemaVersion: 1,
-  adapter: {
-    name: 'Product TUN',
-    tunnelType: 'Product TUN',
-    requestedGuid: '65f5cc87-e5db-4e9a-a5a4-8dcf7049ea4d'
-  },
-  routes: [],
-  dns: [],
-  metrics: []
+  schemaVersion: 2,
+  device: 'Product TUN',
+  stack: 'mixed'
 } as const
 
 function fake(overrides: Partial<TunMutationAdapter> = {}): TunMutationAdapter {
@@ -102,7 +96,7 @@ describe('TunCoordinator non-network orchestration', () => {
   it('rejects malformed desired state before invoking the adapter', async () => {
     const adapter = fake()
     const coordinator = new TunCoordinator(adapter, true)
-    await expect(coordinator.enable({ ...desired, schemaVersion: 2 })).rejects.toThrow()
+    await expect(coordinator.enable({ ...desired, schemaVersion: 1 })).rejects.toThrow()
     expect(adapter.enable).not.toHaveBeenCalled()
     expect(coordinator.getStatus().phase).toBe('configured')
   })

@@ -1,5 +1,4 @@
 // Read-only Wintun 0.14.1 ABI audit. This program never calls a Wintun API.
-#include <windows.h>
 #include <wintun.h>
 
 #include <array>

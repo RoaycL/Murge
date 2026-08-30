@@ -478,6 +478,14 @@ describe('runG1Probe timeout / late-completion no-residue (P1-1 / P1-2)', () => 
     expect(state.mihomoStopped).toBe(false)
     expect(evidence.cleanupSucceeded).toBe(false)
   })
+
+  it('lets stopMihomoProbe own its full force-and-verify budget without an equal outer abort', async () => {
+    const { driver, state } = createFakeG1Driver({ stopMihomoDelayMs: 80 })
+    const evidence = await runG1Probe(driver, makeOpts(true, 30))
+    expect(evidence.errorCode).toBe(G1ErrorCode.none)
+    expect(state.mihomoStopped).toBe(true)
+    expect(evidence.cleanupSucceeded).toBe(true)
+  })
 })
 
 describe('runG1Probe evidence invariants', () => {

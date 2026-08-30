@@ -272,6 +272,18 @@ describe('resolveSafeEvidencePath', () => {
     }
   })
 
+  it('rejects nested targets so no attacker-controlled intermediate directory is traversed', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'g1-evidence-'))
+    const nested = join(dir, 'nested')
+    try {
+      await mkdir(nested)
+      const result = await resolveSafeEvidencePath(join(nested, 'a.json'), dir)
+      expect(result).toEqual({ error: 'evidence path must be a direct child of the evidence directory' })
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   it('does NOT false-reject a base whose canonical path differs from its resolved path', async () => {
     // Simulates the macOS temp-dir layout where a parent is a symlink (e.g.
     // /var -> /private/var) or a Windows short-path/case difference: the base

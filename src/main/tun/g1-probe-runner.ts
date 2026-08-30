@@ -17,7 +17,7 @@
  * first (no DLL, no mihomo, no network change).
  */
 
-import { lstat, realpath, writeFile } from 'node:fs/promises'
+import { lstat, open, realpath } from 'node:fs/promises'
 import { isAbsolute, relative, resolve, dirname, basename, sep } from 'node:path'
 import {
   evaluateG1Gates,
@@ -72,7 +72,7 @@ function validateTarget(env: Record<string, string | undefined>): { ok: true; na
 export async function resolveSafeEvidencePath(
   rawPath: string,
   baseDir: string
-): Promise<{ path: string; baseReal: string } | { error: string }> {
+): Promise<{ path: string; baseReal: string; baseDev: number; baseIno: number } | { error: string }> {
   const base = resolve(baseDir)
   const target = resolve(rawPath)
 
@@ -110,6 +110,11 @@ export async function resolveSafeEvidencePath(
   if (relDir === '..' || relDir.startsWith('..' + sep) || isAbsolute(relDir)) {
     return { error: 'evidence path escapes the evidence directory' }
   }
+  // Evidence is deliberately a direct child of the dedicated directory. This
+  // removes attacker-controlled intermediate components from the create path.
+  if (relDir !== '') {
+    return { error: 'evidence path must be a direct child of the evidence directory' }
+  }
 
   // Overwrite-existing is rejected (exclusive create). Note: the OS-level 'wx'
   // write below also atomically fails (EEXIST) if the name is taken, so a symlink
@@ -119,7 +124,7 @@ export async function resolveSafeEvidencePath(
     return { error: 'evidence file already exists (overwrite rejected)' }
   }
 
-  return { path: target, baseReal }
+  return { path: target, baseReal, baseDev: baseStat.dev, baseIno: baseStat.ino }
 }
 
 /**
@@ -190,24 +195,33 @@ export async function runG1ProbeCli(deps: G1ProbeCliDeps): Promise<number> {
       write(`${evidenceJson}\n`)
       return 1
     }
-    // TOCTOU hardening: between the validation above and this write the target
-    // parent could be swapped to a symlink that escapes the evidence directory.
-    // Re-canonicalise the parent's real path immediately before the exclusive
-    // create; if it no longer sits inside the canonical base, refuse to write.
-    const parentRealNow = await realpath(dirname(resolved.path)).catch(() => null)
-    if (parentRealNow === null) {
-      write(`G1_PROBE_EXECUTED=${evidence.probeExecuted}\nG1_EVIDENCE_DENIED:evidence directory vanished\n`)
-      write(`${evidenceJson}\n`)
-      return 1
+    // Open exclusively first, then verify that the dedicated parent is still the
+    // exact directory object validated above. The JSON is written only through
+    // this already-open handle; a swapped directory never receives evidence.
+    const handle = await open(resolved.path, 'wx', 0o600)
+    let safeToWrite = false
+    try {
+      const [parentStatNow, parentRealNow] = await Promise.all([
+        lstat(dirname(resolved.path)).catch(() => null),
+        realpath(dirname(resolved.path)).catch(() => null)
+      ])
+      safeToWrite =
+        parentStatNow !== null &&
+        parentStatNow.isDirectory() &&
+        !parentStatNow.isSymbolicLink() &&
+        parentStatNow.dev === resolved.baseDev &&
+        parentStatNow.ino === resolved.baseIno &&
+        parentRealNow === resolved.baseReal
+      if (!safeToWrite) {
+        write(`G1_PROBE_EXECUTED=${evidence.probeExecuted}\nG1_EVIDENCE_DENIED:evidence directory identity changed\n`)
+        write(`${evidenceJson}\n`)
+        return 1
+      }
+      await handle.writeFile(evidenceJson, 'utf8')
+      await handle.sync()
+    } finally {
+      await handle.close()
     }
-    const relNow = relative(resolved.baseReal, parentRealNow)
-    if (relNow === '..' || relNow.startsWith('..' + sep) || isAbsolute(relNow)) {
-      write(`G1_PROBE_EXECUTED=${evidence.probeExecuted}\nG1_EVIDENCE_DENIED:evidence directory was swapped (escape)\n`)
-      write(`${evidenceJson}\n`)
-      return 1
-    }
-    // Exclusive create — overwrites are rejected atomically.
-    await writeFile(resolved.path, evidenceJson, { flag: 'wx' })
     write(`G1_PROBE_EXECUTED=${evidence.probeExecuted}\nG1_EVIDENCE=${resolved.path}\n`)
   } else {
     write(`G1_PROBE_EXECUTED=${evidence.probeExecuted}\n`)

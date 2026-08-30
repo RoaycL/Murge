@@ -607,8 +607,12 @@ export function createRealG1ProbeDriver(
       // was started, so the orchestrator's finally teardown is safe.
       if (!mihomoChild) return true
       const ok = await stopChildGracefully(mihomoChild, timeoutMs, { pid: mihomoPid ?? undefined, signal })
-      mihomoChild = null
-      mihomoPid = null
+      // Preserve the exact process reference after an unconfirmed stop so the
+      // orchestrator/finally can retry instead of certifying absence by amnesia.
+      if (ok) {
+        mihomoChild = null
+        mihomoPid = null
+      }
       return ok
     },
 

@@ -462,12 +462,11 @@ interface ProbeState {
   /** Set only when stopMihomoProbe confirmed the process actually exited (P1-3). */
   mihomoStopConfirmed: boolean
   mihomoPid: number | null
+  /** A timed-out operation produced a resource that could not be reclaimed. */
+  cleanupFailed: boolean
 }
 
 const DEFAULT_STEP_TIMEOUT_MS = 15_000
-
-/** How long `runStep` waits for a timed-out, side-effecting op to reach a settled state. */
-const DEFAULT_CANCEL_GRACE_MS = 5_000
 
 interface RunStepLifecycle<T> {
   /**
@@ -477,8 +476,6 @@ interface RunStepLifecycle<T> {
    * process, so a late-success cannot leak an adapter or a mihomo process.
    */
   reclaimLate?: (value: T) => Promise<void> | void
-  /** Override the bounded wait for a cancelled op to settle (default DEFAULT_CANCEL_GRACE_MS). */
-  cancelGraceMs?: number
 }
 
 /**
@@ -514,25 +511,16 @@ async function runStep<T>(
     if (!(err instanceof G1ProbeError) || err.code !== G1ErrorCode.timeout || !lifecycle.reclaimLate) {
       throw err
     }
-    // Timeout: the op may still be in flight. Wait (bounded) for it to settle so a
-    // late resource never escapes, then reclaim the exact value it delivered.
-    const graceMs = lifecycle.cancelGraceMs ?? DEFAULT_CANCEL_GRACE_MS
-    const settled = await Promise.race([
-      op.then(
-        (value) => ({ kind: 'value' as const, value }),
-        (error) => ({ kind: 'error' as const, error })
-      ),
-      new Promise<{ kind: 'grace' }>((resolve) => {
-        const t = setTimeout(() => resolve({ kind: 'grace' }), graceMs)
-        if (t.unref) t.unref()
-      })
-    ])
+    // Safety wins over availability here: a side-effecting operation may not be
+    // abandoned while it can still deliver a native handle or child process.
+    // The driver/helper boundary is responsible for making abort settle; until it
+    // does, the probe remains in teardown instead of returning a false clean result.
+    const settled = await op.then(
+      (value) => ({ kind: 'value' as const, value }),
+      (error) => ({ kind: 'error' as const, error })
+    )
     if (settled.kind === 'value' && settled.value !== null && settled.value !== undefined) {
-      try {
-        await lifecycle.reclaimLate(settled.value as T)
-      } catch {
-        // Reclamation is best-effort; the original timeout already failed the step.
-      }
+      await lifecycle.reclaimLate(settled.value as T)
     }
     throw err
   } finally {
@@ -598,7 +586,8 @@ export async function runG1Probe(driver: G1ProbeDriver, opts: G1RunOptions): Pro
     mihomoStarted: false,
     mihomoStopped: false,
     mihomoStopConfirmed: false,
-    mihomoPid: null
+    mihomoPid: null,
+    cleanupFailed: false
   }
   let observed: 'A' | 'B' | null = null
   let adapterGone: boolean | null = null
@@ -657,9 +646,8 @@ export async function runG1Probe(driver: G1ProbeDriver, opts: G1RunOptions): Pro
           try {
             await driver.closeCreatorHandle(lateHandle as G1OpaqueHandle)
           } catch {
-            // Best-effort: the step already failed on timeout; a second failure during
-            // late reclamation must not mask it. The owned-handle close in the finally
-            // is a no-op because state.handle was never assigned for this timeout.
+            state.cleanupFailed = true
+            throw new G1ProbeError(G1ErrorCode.identityConflict, 'late creator handle reclamation failed')
           }
         }
       }
@@ -683,9 +671,11 @@ export async function runG1Probe(driver: G1ProbeDriver, opts: G1RunOptions): Pro
         // A late spawn after a timeout must not leave a stray mihomo process.
         reclaimLate: async () => {
           try {
-            await driver.stopMihomoProbe(stepTimeoutMs)
+            const stopped = await driver.stopMihomoProbe(stepTimeoutMs)
+            if (!stopped) throw new Error('late mihomo process exit was not confirmed')
           } catch {
-            // Best-effort late-process reclamation (P1-1).
+            state.cleanupFailed = true
+            throw new G1ProbeError(G1ErrorCode.crash, 'late mihomo process reclamation failed')
           }
         }
       }
@@ -748,9 +738,9 @@ export async function runG1Probe(driver: G1ProbeDriver, opts: G1RunOptions): Pro
 
     // (i) stop mihomo (bounded graceful; the driver terminates the exact PID on timeout).
     //     Honor the EXACT return: only a confirmed exit marks the process stopped (P1-3).
-    const stoppedOk = await runStep('stopMihomoProbe', stepTimeoutMs, (signal) =>
-      driver.stopMihomoProbe(stepTimeoutMs, signal)
-    )
+    // stopMihomoProbe owns its complete graceful -> force -> verify budget. Do not
+    // wrap it in an equal outer timeout that could abort before SIGKILL executes.
+    const stoppedOk = await driver.stopMihomoProbe(stepTimeoutMs)
     if (stoppedOk === true) {
       state.mihomoStopped = true
       state.mihomoStopConfirmed = true
@@ -771,9 +761,7 @@ export async function runG1Probe(driver: G1ProbeDriver, opts: G1RunOptions): Pro
     if (!state.mihomoStopped && (state.mihomoStarted || state.mihomoAttempted)) {
       let stopOk = false
       try {
-        const stopped = await runStep('stopMihomoProbe', stepTimeoutMs, (signal) =>
-          driver.stopMihomoProbe(stepTimeoutMs, signal)
-        )
+        const stopped = await driver.stopMihomoProbe(stepTimeoutMs)
         stopOk = stopped === true
       } catch {
         stopOk = false
@@ -821,8 +809,8 @@ export async function runG1Probe(driver: G1ProbeDriver, opts: G1RunOptions): Pro
     const mihomoOk = state.mihomoStarted ? state.mihomoStopConfirmed : true
     const adapterOk = state.creatorCreated ? state.creatorClosed : true
     cleanupSucceeded =
-      state.creatorCreated || state.mihomoStarted
-        ? mihomoOk && adapterOk && closeResultOk
+      state.creatorCreated || state.mihomoStarted || state.cleanupFailed
+        ? mihomoOk && adapterOk && closeResultOk && !state.cleanupFailed
         : null
     // A live identity that disagrees with the recorded target is an integrity
     // anomaly worth flagging (P1-2) — but it never blocks the OWNED-handle close above.

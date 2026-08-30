@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 const router = useRouter()
 const items = [
   ['通用', '基础运行、启动与网络相关设置。'],
-  ['外观', '主题、托盘图标和通知相关设置。'],
+  ['外观', '主题、对比度和动态效果设置。', '/appearance'],
   ['DNS', '本地 DNS 映射与解析相关设置。'],
   ['订阅', '管理代理与规则 Provider。'],
   ['日志', '查看、筛选并导出已脱敏的实时日志。', '/logs'],

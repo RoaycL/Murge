@@ -27,8 +27,7 @@
   --frame-shadow: 0 18px 55px rgba(24, 31, 45, 0.18);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
+:root[data-theme="dark"] {
     color-scheme: dark;
     --app-background-start: #171b23;
     --app-background-end: #201e29;
@@ -43,5 +42,25 @@
     --app-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
     --frame-border: rgba(52, 56, 66, 0.85);
     --frame-shadow: 0 18px 55px rgba(0, 0, 0, 0.35);
-  }
+}
+
+:root[data-contrast="high"] {
+  --app-text: #000000;
+  --app-muted: #3f4650;
+  --app-faint: #606873;
+  --app-surface: #ffffff;
+  --app-surface-border: #15171a;
+  --app-divider: rgba(0, 0, 0, 0.55);
+  --app-sidebar-selected: #d5e7ff;
+  --app-shadow: none;
+}
+
+:root[data-theme="dark"][data-contrast="high"] {
+  --app-text: #ffffff;
+  --app-muted: #d5d9df;
+  --app-faint: #b0b7c0;
+  --app-surface: #111318;
+  --app-surface-border: #ffffff;
+  --app-divider: rgba(255, 255, 255, 0.65);
+  --app-sidebar-selected: #123e70;
 }

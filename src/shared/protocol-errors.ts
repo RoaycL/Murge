@@ -66,6 +66,8 @@ export const ProtocolErrorCode = {
   TUN_IMPLEMENTATION_GATED: 'TUN_IMPLEMENTATION_GATED',
   /** A privileged TUN binary failed its pinned path, digest or signer policy. */
   TUN_BINARY_INTEGRITY_FAILED: 'TUN_BINARY_INTEGRITY_FAILED',
+  /** A privileged-helper envelope failed schema, MAC, ordering or size checks. */
+  TUN_HELPER_PROTOCOL_INVALID: 'TUN_HELPER_PROTOCOL_INVALID',
   /** An unexpected internal failure. */
   INTERNAL: 'INTERNAL'
 } as const

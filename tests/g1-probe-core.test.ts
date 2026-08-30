@@ -13,6 +13,7 @@ import {
   evaluateG1Gates,
   cleanupAllowed,
   canonicalizeGuid,
+  classifyObservation,
   runG1Probe,
   G1ErrorCode,
   type G1AdapterIdentity,
@@ -46,7 +47,7 @@ function gatesInput(overrides: Partial<G1GateInput> = {}): G1GateInput {
   }
 }
 
-function makeOpts(gatesAllowed = true): G1RunOptions {
+function makeOpts(gatesAllowed = true, stepTimeoutMs?: number): G1RunOptions {
   return {
     gates: { allowed: gatesAllowed, deniedReason: gatesAllowed ? null : 'test denial' },
     identifiers: {
@@ -58,6 +59,7 @@ function makeOpts(gatesAllowed = true): G1RunOptions {
     target: { name: 'ProductTunProbeTemp', requestedGuid: '01234567-89ab-4cde-8f01-23456789abcd' },
     tunnelType: 'WireGuard',
     reuseTimeoutMs: 20_000,
+    stepTimeoutMs,
     now: () => FIXED_NOW
   }
 }
@@ -219,8 +221,9 @@ describe('runG1Probe a–j success path', () => {
       mihomoSessionActive: false
     })
     const evidence = await runG1Probe(driver, makeOpts())
-    expect(evidence.errorCode).toBe(G1ErrorCode.none)
-    expect(evidence.observed).toBe('A')
+    // adapterGone=false + sessionActive=false is NOT a legal B -> illegal observation.
+    expect(evidence.errorCode).toBe(G1ErrorCode.g1Failed)
+    expect(evidence.observed).toBeNull()
     expect(evidence.adapterGone).toBe(false)
     expect(evidence.mihomoSessionActiveAfterClose).toBe(false)
   })
@@ -231,7 +234,9 @@ describe('runG1Probe a–j success path', () => {
       mihomoStillBoundTo: false
     })
     const evidence = await runG1Probe(driver, makeOpts())
-    expect(evidence.observed).toBe('A')
+    // adapterGone=false + sameGuidLuid=false is NOT a legal B -> illegal observation.
+    expect(evidence.errorCode).toBe(G1ErrorCode.g1Failed)
+    expect(evidence.observed).toBeNull()
     expect(evidence.mihomoStillSameGuidLuidAfterClose).toBe(false)
     expect(evidence.mihomoReusedSameGuidLuid).toBe(true)
   })
@@ -267,7 +272,7 @@ describe('runG1Probe conflict and failure codes', () => {
 })
 
 describe('runG1Probe identity-conflict cleanup rule (P1-2 / P1-5)', () => {
-  it('refuses to tear down when the live identity no longer matches our recorded one', async () => {
+  it('flags identityConflict but still closes the OWNED creator handle exactly once', async () => {
     const mismatch: G1AdapterIdentity = {
       name: 'ForeignAdapter',
       requestedGuid: '00000000-0000-0000-0000-000000000000',
@@ -276,20 +281,29 @@ describe('runG1Probe identity-conflict cleanup rule (P1-2 / P1-5)', () => {
     const { driver, state } = createFakeG1Driver({ faultAt: 'pollMihomoReuse', liveIdentity: mismatch })
     const evidence = await runG1Probe(driver, makeOpts())
     expect(evidence.errorCode).toBe(G1ErrorCode.identityConflict)
-    // We did NOT delete an adapter we could not prove is ours.
-    expect(state.closeTargetHandles).toHaveLength(0)
-    expect(state.creatorClosed).toBe(false)
-    expect(evidence.cleanupSucceeded).toBe(false)
+    // The OWNED handle (from THIS call's WintunCreateAdapter) is ours to close
+    // regardless of the live-identity mismatch; the strict identity gate governs
+    // only RECOVERED resources, which are never re-opened here (P1-2).
+    expect(state.closeTargetHandles).toHaveLength(1)
+    expect(state.closeTargetHandles[0]).toBe(state.creatorHandle)
+    expect(state.creatorClosed).toBe(true)
+    expect(evidence.creatorHandleClosed).toBe(true)
+    // mihomo was confirmed stopped and the owned handle is closed -> no residue.
+    expect(evidence.cleanupSucceeded).toBe(true)
   })
 
-  it('fails closed when the created adapter identity could never be read', async () => {
+  it('fails closed on a readAdapterIdentity fault and still closes the OWNED handle', async () => {
     const { driver, state } = createFakeG1Driver({ faultAt: 'readAdapterIdentity' })
     const evidence = await runG1Probe(driver, makeOpts())
-    expect(evidence.errorCode).toBe(G1ErrorCode.identityConflict)
-    // We refuse to delete an adapter whose identity we could not confirm.
-    expect(state.closeTargetHandles).toHaveLength(0)
-    expect(state.creatorClosed).toBe(false)
-    expect(evidence.cleanupSucceeded).toBe(false)
+    // No identity was recorded, so the identityConflict override cannot fire; the
+    // generic fault maps to crash (P1-7).
+    expect(evidence.errorCode).toBe(G1ErrorCode.crash)
+    // We do NOT abandon the adapter we created: the exact creator handle is closed.
+    expect(state.closeTargetHandles).toHaveLength(1)
+    expect(state.closeTargetHandles[0]).toBe(state.creatorHandle)
+    expect(state.creatorClosed).toBe(true)
+    expect(evidence.creatorHandleClosed).toBe(true)
+    expect(evidence.cleanupSucceeded).toBe(true)
   })
 })
 
@@ -317,7 +331,7 @@ describe('runG1Probe fault boundaries (P1-5 residual-process + accurate codes)',
     ['preflightConflictCheck', G1ErrorCode.crash],
     ['loadPinnedWintun', G1ErrorCode.crash],
     ['createAdapter', G1ErrorCode.crash],
-    ['readAdapterIdentity', G1ErrorCode.identityConflict],
+    ['readAdapterIdentity', G1ErrorCode.crash],
     ['startMihomoProbe', G1ErrorCode.crash],
     ['matchingAdapterCount', G1ErrorCode.crash],
     ['pollMihomoReuse', G1ErrorCode.crash],
@@ -377,6 +391,92 @@ describe('runG1Probe fault boundaries (P1-5 residual-process + accurate codes)',
     // In this path the handle was already closed at step (g), so a failed live
     // re-read cannot create a leftover adapter.
     expect(evidence.cleanupSucceeded).toBe(true)
+  })
+})
+
+describe('classifyObservation truth-combo table (P1-4)', () => {
+  // Every possible truth combination must map to exactly A, B, or null (illegal).
+  const combos: Array<[boolean | null, boolean | null, boolean | null, 'A' | 'B' | null]> = [
+    // adapterGone true => A regardless of session/binding.
+    [true, true, true, 'A'],
+    [true, true, false, 'A'],
+    [true, false, true, 'A'],
+    [true, false, false, 'A'],
+    // adapterGone false => B ONLY when the session is active AND same GUID+LUID.
+    [false, true, true, 'B'],
+    [false, true, false, null],
+    [false, false, true, null],
+    [false, false, false, null],
+    // Any unknown (null) observation is illegal, never a confident A or B.
+    [null, true, true, null],
+    [false, null, true, null],
+    [false, true, null, null]
+  ]
+
+  it.each(combos)(
+    'classifyObservation(%s, %s, %s) => %s',
+    (adapterGone, sessionActive, sameGuidLuid, expected) => {
+      expect(classifyObservation(adapterGone, sessionActive, sameGuidLuid)).toBe(expected)
+    }
+  )
+
+  it.each([
+    ['adapter still present but session inactive', { adapterStillPresent: true, mihomoSessionActive: false, mihomoStillBoundTo: true }],
+    ['adapter still present but not bound to same GUID+LUID', { adapterStillPresent: true, mihomoSessionActive: true, mihomoStillBoundTo: false }],
+    ['adapter still present, session inactive AND not bound', { adapterStillPresent: true, mihomoSessionActive: false, mihomoStillBoundTo: false }]
+  ])('rejects an illegal simultaneous observation: %s (g1-failed, observed null)', async (_label, opts) => {
+    const { driver, state } = createFakeG1Driver(opts as Parameters<typeof createFakeG1Driver>[0])
+    const evidence = await runG1Probe(driver, makeOpts())
+    expect(evidence.errorCode).toBe(G1ErrorCode.g1Failed)
+    expect(evidence.observed).toBeNull()
+  })
+})
+
+describe('runG1Probe timeout / late-completion no-residue (P1-1 / P1-2)', () => {
+  it('times out on createAdapter then reclaims the late handle so no adapter leaks', async () => {
+    const { driver, state } = createFakeG1Driver({ createAdapterDelayMs: 400 })
+    const evidence = await runG1Probe(driver, makeOpts(true, 30))
+    expect(evidence.errorCode).toBe(G1ErrorCode.timeout)
+    expect(evidence.probeExecuted).toBe(true)
+    // The op settled late with the exact handle; runStep reclaimed it before
+    // rethrowing, so the created adapter is closed, not leaked (P1-1 / P1-2).
+    expect(state.creatorCreated).toBe(false)
+    expect(state.creatorClosed).toBe(true)
+    expect(state.closeTargetHandles).toHaveLength(1)
+    expect(state.closeTargetHandles[0]).toBe(state.creatorHandle)
+  })
+
+  it('times out on startMihomoProbe then reclaims the late process so no mihomo leaks', async () => {
+    const { driver, state } = createFakeG1Driver({ startMihomoDelayMs: 400 })
+    const evidence = await runG1Probe(driver, makeOpts(true, 30))
+    expect(evidence.errorCode).toBe(G1ErrorCode.timeout)
+    expect(evidence.probeExecuted).toBe(true)
+    // The late-spawned mihomo was stopped by the reclaim token; the finally's own
+    // re-stop is a no-op, so no process survives.
+    expect(state.mihomoStopped).toBe(true)
+    expect(state.mihomoStarted).toBe(false)
+    // The owned adapter from step (b) is also closed by the finally.
+    expect(state.creatorClosed).toBe(true)
+  })
+
+  it('times out reading the adapter identity and still closes the OWNED handle (no residue)', async () => {
+    const { driver, state } = createFakeG1Driver({ readIdentityDelayMs: 400 })
+    const evidence = await runG1Probe(driver, makeOpts(true, 30))
+    expect(evidence.errorCode).toBe(G1ErrorCode.timeout)
+    // The read is a pure read (no resource created), so a late resolve is ignored;
+    // the OWNED creator handle is closed unconditionally by the finally (P1-2).
+    expect(state.closeTargetHandles).toHaveLength(1)
+    expect(state.closeTargetHandles[0]).toBe(state.creatorHandle)
+    expect(state.creatorClosed).toBe(true)
+    expect(evidence.creatorHandleClosed).toBe(true)
+  })
+
+  it('does NOT claim mihomo stopped and reports cleanupSucceeded=false when stop cannot confirm exit', async () => {
+    const { driver, state } = createFakeG1Driver({ stopMihomoResult: false })
+    const evidence = await runG1Probe(driver, makeOpts())
+    expect(evidence.errorCode).toBe(G1ErrorCode.crash)
+    expect(state.mihomoStopped).toBe(false)
+    expect(evidence.cleanupSucceeded).toBe(false)
   })
 })
 

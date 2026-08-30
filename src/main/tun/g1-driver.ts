@@ -315,6 +315,14 @@ export function parseBackG1MihomoConfig(text: string): G1MihomoParsedSecurityFie
  * back and assert every security field value (P1-4). Throws on the first
  * violation. A config that is unknown, ignored or auto-rewritten by mihomo on a
  * critical field is rejected BEFORE mihomo is started.
+ *
+ * NOTE (P2-7): the repo's `createConfigValidator()` here is the deterministic
+ * structural `FakeConfigValidator` — it is a cheap syntax/structural gate ONLY,
+ * NOT a complete mihomo validator, and it never proves that the real mihomo
+ * binary would accept the config. Before any REAL execution the same config
+ * (byte-identical, written to disk untouched) MUST be validated by the real
+ * `mihomo -t` against the SAME mihomo binary the probe will spawn, so a
+ * structural-pass / semantic-fail config can never reach a spawned mihomo.
  */
 export function assertG1MihomoConfig(text: string, expectedDevice: string): void {
   const errors = g1MihomoConfigErrors(text, expectedDevice)
@@ -525,7 +533,8 @@ export function createRealG1ProbeDriver(
     },
 
     async createAdapter(
-      target: G1ProbeIdentityTarget & { tunnelType: string }
+      target: G1ProbeIdentityTarget & { tunnelType: string },
+      _signal?: AbortSignal
     ): Promise<G1OpaqueHandle> {
       const sym = bound('WintunCreateAdapter')
       const guidBytes = guidToLittleEndianBytes(target.requestedGuid)
@@ -563,7 +572,7 @@ export function createRealG1ProbeDriver(
       throw unsupportedErr('live adapter identity requires a native binding')
     },
 
-    async startMihomoProbe(identity: G1AdapterIdentity): Promise<{ pid: number }> {
+    async startMihomoProbe(identity: G1AdapterIdentity, _signal?: AbortSignal): Promise<{ pid: number }> {
       if (!binding) throw unsupportedErr('mihomo probe requires a native binding')
       const config = buildIsolatedMihomoConfig(identity)
       // Generate -> validate -> parse back -> assert BEFORE mihomo is started (P1-4).
@@ -571,6 +580,10 @@ export function createRealG1ProbeDriver(
       // A real implementation writes `config` to a runner-temp dir, validates it
       // again on-disk, then spawns `mihomo -d <dir> -f <config>` and keeps the
       // ChildProcess/PID here so stopMihomoProbe can terminate the exact process.
+      // That on-disk validation MUST be the real `mihomo -t` against the SAME
+      // mihomo binary and a BYTE-IDENTICAL start config file (never a rebuilt /
+      // re-serialised copy) — the structural `FakeConfigValidator` above is only a
+      // cheap pre-flight, not the semantic gate (P2-7).
       void config
       throw unsupportedErr('mihomo probe spawn is gated, not wired in this scaffold')
     },
@@ -587,18 +600,19 @@ export function createRealG1ProbeDriver(
       throw unsupportedErr('reuse observation requires a native binding')
     },
 
-    async stopMihomoProbe(timeoutMs: number): Promise<boolean> {
+    async stopMihomoProbe(timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
       // Bounded graceful stop; on timeout terminate the EXACT recorded PID and
-      // wait for exit. Returns true on a clean stop. Never throws when nothing
+      // wait for a CONFIRMED exit. Returns true only when the process is verified
+      // gone (P1-3); false when it cannot be confirmed. Never throws when nothing
       // was started, so the orchestrator's finally teardown is safe.
       if (!mihomoChild) return true
-      const ok = await stopChildGracefully(mihomoChild, timeoutMs)
+      const ok = await stopChildGracefully(mihomoChild, timeoutMs, { pid: mihomoPid ?? undefined, signal })
       mihomoChild = null
       mihomoPid = null
       return ok
     },
 
-    async closeCreatorHandle(handle: G1OpaqueHandle): Promise<void> {
+    async closeCreatorHandle(handle: G1OpaqueHandle, _signal?: AbortSignal): Promise<void> {
       // The SAME handle create returned must be passed to WintunCloseAdapter, and
       // it must be closed at most once (P1-2). We refuse a non-creator handle.
       if (handle !== creatorHandle) {
@@ -641,35 +655,135 @@ export function createRealG1ProbeDriver(
   function creatorOpenIdentity(): boolean {
     return creatorHandle !== null && createdIdentity !== null && !creatorHandleClosed
   }
+}
 
-  async function stopChildGracefully(child: ChildProcess, timeoutMs: number): Promise<boolean> {
-    return await new Promise<boolean>((resolve) => {
-      const pid = child.pid ?? mihomoPid
-      let settled = false
-      const finish = (ok: boolean): void => {
-        if (settled) return
-        settled = true
-        resolve(ok)
-      }
-      child.once('error', () => finish(true))
-      child.once('exit', () => finish(true))
-      // Graceful stop first; on timeout terminate the EXACT recorded PID and wait.
-      try {
-        child.kill('SIGTERM')
-      } catch {
-        /* fall through to forced terminate */
-      }
-      const timer = setTimeout(() => {
-        try {
-          if (pid !== undefined && pid !== null) process.kill(pid, 'SIGKILL')
-        } catch {
-          /* already gone */
-        }
-        setTimeout(() => finish(true), 500)
-      }, timeoutMs)
-      if (timer.unref) timer.unref()
-    })
+/**
+ * Structural view of a child process that `stopChildGracefully` needs, so tests
+ * can drive the stop path with a stub that never emits a real 'exit' (P1-3). A
+ * real `ChildProcess` is structurally assignable.
+ */
+export interface G1StoppableChild {
+  pid?: number | undefined
+  once(event: string, listener: (...args: unknown[]) => void): unknown
+  removeAllListeners(event?: string): unknown
+  kill(signal?: NodeJS.Signals | number): boolean
+}
+
+/** Options for `stopChildGracefully` (injectable for tests). */
+export interface StopChildOptions {
+  /** PID to SIGKILL after a graceful timeout (defaults to `child.pid`). */
+  pid?: number
+  /** Final bounded wait for a CONFIRMED exit after SIGKILL (default 500ms). */
+  killWaitMs?: number
+  /** Liveness probe; defaults to `isProcessAlive`. */
+  probeAlive?: (pid: number) => boolean
+  /** An aborted/aborting signal cancels the bounded wait (P1-1). */
+  signal?: AbortSignal
+}
+
+/** True when `pid` still exists (EPERM means it exists but is not signalling-able). */
+export function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM'
   }
+}
+
+/**
+ * Bounded graceful shutdown of a child process (P1-3).
+ *
+ * Resolves `true` ONLY when the process is confirmed gone: either a real
+ * 'exit'/'close' event fires, or, after SIGKILL, the liveness probe reports the
+ * exact PID no longer exists within the final bounded `killWaitMs`. An 'error'
+ * event NEVER counts as proof of exit — it only signals that the graceful path
+ * is unreliable, so we keep waiting for a genuine exit or the liveness deadline.
+ *
+ * On a graceful timeout it SIGKILLs the exact recorded PID, then waits a bounded
+ * `killWaitMs`, and resolves `false` if the process is still alive. It always
+ * clears its timer and removes its listeners once it settles.
+ */
+export async function stopChildGracefully(
+  child: G1StoppableChild,
+  timeoutMs: number,
+  opts: StopChildOptions = {}
+): Promise<boolean> {
+  const pid = opts.pid ?? child.pid ?? null
+  const killWaitMs = opts.killWaitMs ?? 500
+  const probeAlive = opts.probeAlive ?? ((p: number) => isProcessAlive(p))
+  const signal = opts.signal ?? null
+
+  return await new Promise<boolean>((resolve) => {
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let pollTimer: ReturnType<typeof setTimeout> | undefined
+
+    const cleanup = (): void => {
+      if (timer !== undefined) clearTimeout(timer)
+      if (pollTimer !== undefined) clearTimeout(pollTimer)
+      child.removeAllListeners('exit')
+      child.removeAllListeners('close')
+      child.removeAllListeners('error')
+      if (signal && typeof signal.removeEventListener === 'function') {
+        signal.removeEventListener('abort', onAbort)
+      }
+    }
+    const finish = (ok: boolean): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(ok)
+    }
+    const onAbort = (): void => finish(false)
+    if (signal) {
+      if (signal.aborted) {
+        finish(false)
+        return
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+    }
+
+    // A real exit/close is the only event that CONFIRMS the process is gone.
+    child.once('exit', () => finish(true))
+    child.once('close', () => finish(true))
+    // An 'error' does not prove the process exited; keep waiting for a real
+    // exit/close or the liveness deadline.
+    child.once('error', () => { /* never confirms exit */ })
+
+    try {
+      child.kill('SIGTERM')
+    } catch {
+      /* fall through to forced terminate */
+    }
+
+    // After the graceful window, SIGKILL the exact PID and wait for a CONFIRMED
+    // exit (bounded). Never trusts a fixed delay as proof of exit (P1-3).
+    timer = setTimeout(() => {
+      if (pid !== null) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {
+          /* already gone — the liveness probe confirms it */
+        }
+      }
+      const start = Date.now()
+      const poll = (): void => {
+        if (settled) return
+        if (pid !== null && !probeAlive(pid)) {
+          finish(true)
+          return
+        }
+        if (Date.now() - start >= killWaitMs) {
+          finish(false)
+          return
+        }
+        pollTimer = setTimeout(poll, 50)
+      }
+      poll()
+    }, Math.max(0, timeoutMs))
+    if (timer.unref) timer.unref()
+  })
 }
 
 /** Best-effort architecture tag used for evidence. */

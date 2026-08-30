@@ -41,6 +41,21 @@ export interface FakeG1ProbeOptions {
   /** Throw here (on the first call of that method) to fault-inject a boundary. */
   faultAt?: keyof G1ProbeDriver
   error?: Error
+  /** If set, createAdapter resolves AFTER this many ms (ignoring the abort signal)
+   *    so the orchestrator's "operation times out then succeeds late" path can be
+   *    exercised — the late handle MUST be reclaimed (P1-1). */
+  createAdapterDelayMs?: number
+  /** If set, startMihomoProbe resolves AFTER this many ms (ignoring the abort
+   *    signal) so a late-spawned mihomo MUST be reclaimed (P1-1). */
+  startMihomoDelayMs?: number
+  /** If set, stopMihomoProbe resolves AFTER this many ms (ignoring the abort
+   *    signal) to exercise a late-stop settlement (P1-1). */
+  stopMihomoDelayMs?: number
+  /** If set, readAdapterIdentity resolves AFTER this many ms (ignoring the abort
+   *    signal) to exercise an identity-read timeout (P1-2). */
+  readIdentityDelayMs?: number
+  /** Return value of stopMihomoProbe (default true). false = cannot confirm exit. */
+  stopMihomoResult?: boolean
 }
 
 const DEFAULT_IDENTITY: G1AdapterIdentity = {
@@ -128,6 +143,13 @@ export function createFakeG1Driver(opts: FakeG1ProbeOptions = {}): FakeG1ProbeRe
     }
   }
 
+  // Honor the delay option by ignoring any abort signal, simulating an operation
+  // that does not respond to cancellation but eventually settles (P1-1 late path).
+  const waitMs = (delayMs: number | undefined): Promise<void> => {
+    if (!delayMs || delayMs <= 0) return Promise.resolve()
+    return new Promise((resolve) => setTimeout(resolve, delayMs))
+  }
+
   const driver: G1ProbeDriver = {
     architecture: opts.architecture ?? 'x64',
     pid: opts.pid ?? 123,
@@ -145,8 +167,14 @@ export function createFakeG1Driver(opts: FakeG1ProbeOptions = {}): FakeG1ProbeRe
       return { verified: opts.dllVerified ?? true, digest: opts.dllDigest ?? 'a1'.repeat(32) }
     },
 
-    async createAdapter(target: G1ProbeIdentityTarget & { tunnelType: string }): Promise<G1OpaqueHandle> {
+    async createAdapter(
+      target: G1ProbeIdentityTarget & { tunnelType: string },
+      _signal?: AbortSignal
+    ): Promise<G1OpaqueHandle> {
       record('createAdapter')
+      // Deliberately ignore signal: the abort only stops the orchestrator's wait,
+      // not the underlying op (P1-1). The late handle must still be reclaimed.
+      await waitMs(opts.createAdapterDelayMs)
       state.createdTarget = target
       state.creatorCreated = true
       const handle: G1OpaqueHandle = { __g1OpaqueHandle: 'wintun-adapter' }
@@ -156,6 +184,9 @@ export function createFakeG1Driver(opts: FakeG1ProbeOptions = {}): FakeG1ProbeRe
 
     async readAdapterIdentity(handle: G1OpaqueHandle): Promise<G1AdapterIdentity> {
       record('readAdapterIdentity')
+      // A delayed read that ignores the abort signal: it is a pure read (no
+      // resource is created), so a late resolve is safely ignored (P1-2 timeout).
+      await waitMs(opts.readIdentityDelayMs)
       if (handle !== state.creatorHandle) throw new Error('readAdapterIdentity: non-creator handle')
       state.identity = identity
       return identity
@@ -170,8 +201,9 @@ export function createFakeG1Driver(opts: FakeG1ProbeOptions = {}): FakeG1ProbeRe
       return value
     },
 
-    async startMihomoProbe(_identity: G1AdapterIdentity): Promise<{ pid: number }> {
+    async startMihomoProbe(_identity: G1AdapterIdentity, _signal?: AbortSignal): Promise<{ pid: number }> {
       record('startMihomoProbe')
+      await waitMs(opts.startMihomoDelayMs)
       state.mihomoStarted = true
       state.mihomoPid = opts.mihomoPid ?? 777
       return { pid: state.mihomoPid }
@@ -199,15 +231,20 @@ export function createFakeG1Driver(opts: FakeG1ProbeOptions = {}): FakeG1ProbeRe
       }
     },
 
-    async stopMihomoProbe(_timeoutMs: number): Promise<boolean> {
+    async stopMihomoProbe(_timeoutMs: number, _signal?: AbortSignal): Promise<boolean> {
       record('stopMihomoProbe')
-      state.mihomoStopped = true
+      await waitMs(opts.stopMihomoDelayMs)
       state.mihomoStoppedCount += 1
+      if (opts.stopMihomoResult === false) {
+        // Cannot confirm the process exited: leave it marked running.
+        return false
+      }
+      state.mihomoStopped = true
       state.mihomoStarted = false
       return true
     },
 
-    async closeCreatorHandle(handle: G1OpaqueHandle): Promise<void> {
+    async closeCreatorHandle(handle: G1OpaqueHandle, _signal?: AbortSignal): Promise<void> {
       record('closeCreatorHandle')
       state.closeCount += 1
       state.closeTargetHandles.push(handle)

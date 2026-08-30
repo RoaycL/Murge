@@ -18,7 +18,7 @@
  */
 
 import { lstat, realpath, writeFile } from 'node:fs/promises'
-import { isAbsolute, relative, resolve, dirname } from 'node:path'
+import { isAbsolute, relative, resolve, dirname, basename, sep } from 'node:path'
 import {
   evaluateG1Gates,
   runG1Probe,
@@ -53,52 +53,73 @@ function validateTarget(env: Record<string, string | undefined>): { ok: true; na
  * Resolve `rawPath` to an evidence write target that is provably inside
  * `baseDir` and safe to create exclusively. Rejects (returns an error message,
  * never writes) on:
- *  - path escaping the evidence directory (absolute-path escape),
- *  - a missing / symlinked / reparse-point evidence base directory,
- *  - any symlink or reparse point traversed between baseDir and the target,
+ *  - path escaping the evidence directory (absolute-path or parent escape),
+ *  - a missing / symlinked / non-directory evidence base,
+ *  - the target directory (or any directory between base and target) resolving
+ *    OUTSIDE the canonical base, i.e. escaping through a symlink,
  *  - the target already existing (overwrite is rejected).
- * Returns the safe absolute path on success.
+ *
+ * Canonicalisation: containment is decided against the REAL (symlink-resolved)
+ * base directory (`realpath`), NOT against a string equality of the resolved
+ * strings — so a legitimate base under a symlinked prefix (e.g. macOS `/var`
+ * -> `/private/var`, or Windows short/8.3 paths and case differences) is NOT a
+ * false "reparse point" rejection (P1-5). The returned `path` is the
+ * non-canonicalised resolved target (the exact path the caller will write).
+ *
+ * Returns the safe absolute path (plus the canonical base for a TOCTOU re-check)
+ * on success.
  */
 export async function resolveSafeEvidencePath(
   rawPath: string,
   baseDir: string
-): Promise<{ path: string } | { error: string }> {
+): Promise<{ path: string; baseReal: string } | { error: string }> {
   const base = resolve(baseDir)
   const target = resolve(rawPath)
-  // Exact containment: the target must sit strictly inside baseDir.
-  const rel = relative(base, target)
-  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
-    return { error: 'evidence path escapes the evidence directory' }
-  }
+
   // The evidence base must be a real, non-symlinked directory.
   const baseStat = await lstat(base).catch(() => null)
-  if (!baseStat || baseStat.isSymbolicLink()) {
+  if (!baseStat) {
     return { error: 'evidence base is not a real directory' }
+  }
+  if (baseStat.isSymbolicLink()) {
+    return { error: 'evidence base is a symbolic link' }
   }
   if (!baseStat.isDirectory()) {
     return { error: 'evidence base is not a directory' }
   }
+
+  // Canonical base, used ONLY for containment (never as a reparse criterion).
   const baseReal = await realpath(base).catch(() => base)
-  if (baseReal !== base) {
-    return { error: 'evidence base is a reparse point or symlink' }
+
+  // A path that is exactly the base directory (or a parent) is never a safe
+  // single-file target.
+  const fileName = basename(target)
+  if (!fileName || fileName === '.' || fileName === '..') {
+    return { error: 'evidence path must name a single file below the evidence directory' }
   }
-  // No path component between baseDir and the target may be a symlink/reparse.
-  let cur = dirname(target)
-  while (cur.length > base.length) {
-    const st = await lstat(cur).catch(() => null)
-    if (st && st.isSymbolicLink()) {
-      return { error: 'evidence path traverses a symlink' }
-    }
-    const next = dirname(cur)
-    if (next === cur) break
-    cur = next
+
+  // Canonicalise the target's parent directory: `realpath` fully resolves every
+  // symlink between the filesystem root and the parent, so a symlink that escapes
+  // the base yields a parent outside baseReal, which the containment check rejects.
+  const targetDir = dirname(target)
+  const targetDirReal = await realpath(targetDir).catch(() => null)
+  if (targetDirReal === null) {
+    return { error: 'evidence target directory does not exist' }
   }
-  // Overwrite-existing is rejected (exclusive create).
+  const relDir = relative(baseReal, targetDirReal)
+  if (relDir === '..' || relDir.startsWith('..' + sep) || isAbsolute(relDir)) {
+    return { error: 'evidence path escapes the evidence directory' }
+  }
+
+  // Overwrite-existing is rejected (exclusive create). Note: the OS-level 'wx'
+  // write below also atomically fails (EEXIST) if the name is taken, so a symlink
+  // planted at the final component is never followed.
   const targetStat = await lstat(target).catch(() => null)
   if (targetStat) {
     return { error: 'evidence file already exists (overwrite rejected)' }
   }
-  return { path: target }
+
+  return { path: target, baseReal }
 }
 
 /**
@@ -166,6 +187,22 @@ export async function runG1ProbeCli(deps: G1ProbeCliDeps): Promise<number> {
     const resolved = await resolveSafeEvidencePath(rawPath, evidenceDir)
     if ('error' in resolved) {
       write(`G1_PROBE_EXECUTED=${evidence.probeExecuted}\nG1_EVIDENCE_DENIED:${resolved.error}\n`)
+      write(`${evidenceJson}\n`)
+      return 1
+    }
+    // TOCTOU hardening: between the validation above and this write the target
+    // parent could be swapped to a symlink that escapes the evidence directory.
+    // Re-canonicalise the parent's real path immediately before the exclusive
+    // create; if it no longer sits inside the canonical base, refuse to write.
+    const parentRealNow = await realpath(dirname(resolved.path)).catch(() => null)
+    if (parentRealNow === null) {
+      write(`G1_PROBE_EXECUTED=${evidence.probeExecuted}\nG1_EVIDENCE_DENIED:evidence directory vanished\n`)
+      write(`${evidenceJson}\n`)
+      return 1
+    }
+    const relNow = relative(resolved.baseReal, parentRealNow)
+    if (relNow === '..' || relNow.startsWith('..' + sep) || isAbsolute(relNow)) {
+      write(`G1_PROBE_EXECUTED=${evidence.probeExecuted}\nG1_EVIDENCE_DENIED:evidence directory was swapped (escape)\n`)
       write(`${evidenceJson}\n`)
       return 1
     }

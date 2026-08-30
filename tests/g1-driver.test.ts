@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
+import { spawn } from 'node:child_process'
 import {
   createRealG1ProbeDriver,
   PINNED_WINTUN_MANIFEST,
@@ -22,6 +23,9 @@ import {
   captureNetworkSnapshot,
   networkDiff,
   guidToLittleEndianBytes,
+  stopChildGracefully,
+  isProcessAlive,
+  type G1StoppableChild,
   type G1AdapterIdentity
 } from '../src/main/tun/g1-driver'
 import { G1ErrorCode, type G1ProbeError } from '../src/main/tun/g1-probe'
@@ -189,5 +193,87 @@ describe('guidToLittleEndianBytes', () => {
   })
   it('rejects a malformed GUID', () => {
     expect(() => guidToLittleEndianBytes('nope')).toThrow('invalid GUID string')
+  })
+})
+
+describe('stopChildGracefully (P1-3 confirmed-exit only)', () => {
+  /** A bare child stub with per-event listeners, so tests can drive the exit
+   *  semantics without spawning a real process where one must never be killed. */
+  function makeStubChild(opts: { pid?: number; kill?: () => boolean } = {}) {
+    const listeners: Record<string, Array<() => void>> = {}
+    const child: G1StoppableChild = {
+      pid: opts.pid,
+      once(event, listener) {
+        ;(listeners[event] ??= []).push(listener as () => void)
+        return child
+      },
+      removeAllListeners(event?: string) {
+        if (event !== undefined) delete listeners[event]
+        else for (const key of Object.keys(listeners)) delete listeners[key]
+        return child
+      },
+      kill: opts.kill ?? (() => true)
+    }
+    const emit = (event: string): void => {
+      for (const l of [...(listeners[event] ?? [])]) l()
+    }
+    return { child, emit }
+  }
+
+  it('returns true when SIGTERM is honoured (real child exits on a normal run)', async () => {
+    const child = spawn(process.execPath, ['-e', 'setInterval(()=>{}, 1000)'], { stdio: 'ignore' })
+    const ok = await stopChildGracefully(child, 3000, { pid: child.pid ?? undefined })
+    expect(ok).toBe(true)
+  })
+
+  it('returns true after SIGTERM-ineffective -> SIGKILL -> confirmed exit', async () => {
+    // This node process ignores SIGTERM, so only the SIGKILL after the graceful
+    // window can end it; the driver must still WAIT for the confirmed exit.
+    const child = spawn(process.execPath, ['-e', 'process.on("SIGTERM",()=>{}); setInterval(()=>{}, 1000)'], {
+      stdio: 'ignore'
+    })
+    const ok = await stopChildGracefully(child, 60, { pid: child.pid ?? undefined, killWaitMs: 3000 })
+    expect(ok).toBe(true)
+  })
+
+  it('returns false when SIGKILL is ineffective and the process stays alive', async () => {
+    // pid points at a non-existent process; probeAlive always reports alive, so the
+    // driver cannot confirm an exit and must resolve false at the bounded deadline.
+    const { child } = makeStubChild({ pid: 2_147_483_647 })
+    const ok = await stopChildGracefully(child, 20, {
+      pid: 2_147_483_647,
+      killWaitMs: 60,
+      probeAlive: () => true
+    })
+    expect(ok).toBe(false)
+  })
+
+  it('never treats an `error` event as proof of exit (error-but-still-alive -> false)', async () => {
+    const { child, emit } = makeStubChild()
+    const promise = stopChildGracefully(child, 20, { killWaitMs: 60, probeAlive: () => true })
+    emit('error') // spawn/comm failure must NOT count as "stopped"
+    const ok = await promise
+    expect(ok).toBe(false)
+  })
+
+  it('clears its listeners and timer once it settles (no late exit flips the result)', async () => {
+    const { child, emit } = makeStubChild()
+    const promise = stopChildGracefully(child, 20, { killWaitMs: 60, probeAlive: () => true })
+    const ok = await promise
+    // A late 'exit' after settle must be a no-op (listeners already removed).
+    emit('exit')
+    expect(ok).toBe(false)
+  })
+
+  it('an instantly-aborted signal resolves false without issuing a signal', async () => {
+    const { child } = makeStubChild()
+    const ac = new AbortController()
+    ac.abort()
+    const ok = await stopChildGracefully(child, 20, { signal: ac.signal })
+    expect(ok).toBe(false)
+  })
+
+  it('isProcessAlive reports false for a pid that cannot exist', () => {
+    expect(isProcessAlive(2_147_483_647)).toBe(false)
   })
 })

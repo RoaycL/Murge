@@ -180,9 +180,13 @@ export const G1_EMPTY_CONFLICT_REPORT: G1ConflictReport = {
 
 /**
  * Strict identity match — the ONLY predicate under which the probe may remove or
- * close a Wintun resource. The **current** live identity (read from the still-open
- * creator handle) must agree on Name + RequestedGUID (case-insensitive) +
- * canonical LUID. Any mismatch => no delete, record a conflict.
+ * close a RECOVERED / re-opened / enumerated Wintun resource (P1-2). The current
+ * live identity must agree on Name + RequestedGUID (case-insensitive) +
+ * canonical LUID.
+ *
+ * This predicate does NOT gate the OWNED creator handle: the exact handle returned
+ * by THIS call's WintunCreateAdapter is ours to close unconditionally, once, in
+ * the finally (P1-2). It only governs resources the probe did not itself create.
  */
 export function cleanupAllowed(
   current: G1AdapterIdentity | null,
@@ -194,6 +198,26 @@ export function cleanupAllowed(
     current.requestedGuid.toLowerCase() === recorded.requestedGuid.toLowerCase() &&
     current.canonicalLuid === recorded.canonicalLuid
   )
+}
+
+/**
+ * Strictly classify the simultaneous post-close observation (P1-4). Only two
+ * outcomes are legal:
+ *   - `A`: the adapter is GONE after the creator handle is closed;
+ *   - `B`: the adapter SURVIVED AND the mihomo session is still active AND still
+ *     bound to the same GUID+LUID.
+ * Every other truth combination (including any unknown/null observation) is an
+ * illegal combination and returns `null` — the orchestrator records `g1-failed`
+ * rather than reporting a success or a mislabelled `A`.
+ */
+export function classifyObservation(
+  adapterGone: boolean | null,
+  sessionActive: boolean | null,
+  sameGuidLuid: boolean | null
+): 'A' | 'B' | null {
+  if (adapterGone === true) return 'A'
+  if (adapterGone === false && sessionActive === true && sameGuidLuid === true) return 'B'
+  return null
 }
 
 /** Canonicalize a GUID string to lowercase form, or return null when invalid. */
@@ -224,14 +248,28 @@ export interface G1ProbeDriver {
   readonly architecture: string
   readonly pid: number
 
+  /**
+   * Every side-effecting primitive accepts an `AbortSignal` so the orchestrator can
+   * cancel an in-flight op AND await its determined (settled) state on a step
+   * timeout (P1-1). A signal-bearing op must settle once it can no longer produce a
+   * late resource, or hand that resource back for reclamation. Read-only primitives
+   * are not signal-bearing and are never aborted.
+   */
   /** Read-only preflight conflict enumeration; zero change. */
   preflightConflictCheck(target: G1ProbeIdentityTarget): Promise<G1ConflictReport>
 
   /** (a) Verify the pinned DLL digest. Returns `verified:false` => never load. */
   loadPinnedWintun(): Promise<{ verified: boolean; digest: string }>
 
-  /** (b) Create the adapter and HOLD the exact creator handle. */
-  createAdapter(target: G1ProbeIdentityTarget & { tunnelType: string }): Promise<G1OpaqueHandle>
+  /**
+   * (b) Create the adapter and HOLD the exact creator handle. Accepts a signal so a
+   * step timeout can cancel a late WintunCreateAdapter; the driver may still deliver
+   * the exact handle after the abort, which the orchestrator reclaims (P1-1).
+   */
+  createAdapter(
+    target: G1ProbeIdentityTarget & { tunnelType: string },
+    signal?: AbortSignal
+  ): Promise<G1OpaqueHandle>
 
   /** (c) Read the canonical identity (the cleanup key) from the handle. */
   readAdapterIdentity(handle: G1OpaqueHandle): Promise<G1AdapterIdentity>
@@ -239,8 +277,11 @@ export interface G1ProbeDriver {
   /** Re-read the live identity behind a still-open handle (null when closed). */
   liveAdapterIdentity(handle: G1OpaqueHandle): Promise<G1AdapterIdentity | null>
 
-  /** (d) Spawn the isolated mihomo that opens the SAME adapter; keep it running. */
-  startMihomoProbe(identity: G1AdapterIdentity): Promise<{ pid: number }>
+  /**
+   * (d) Spawn the isolated mihomo that opens the SAME adapter; keep it running.
+   * Accepts a signal so a timeout can cancel a late spawn (P1-1).
+   */
+  startMihomoProbe(identity: G1AdapterIdentity, signal?: AbortSignal): Promise<{ pid: number }>
 
   /** (e) Count adapters matching the identity. */
   matchingAdapterCount(identity: G1AdapterIdentity): Promise<number>
@@ -248,11 +289,16 @@ export interface G1ProbeDriver {
   /** (f) Confirm mihomo reused the SAME adapter with a live session. */
   pollMihomoReuse(identity: G1AdapterIdentity, timeoutMs: number): Promise<G1ReuseResult>
 
-  /** (i) Bounded graceful stop; terminates the exact recorded PID and waits on timeout. */
-  stopMihomoProbe(timeoutMs: number): Promise<boolean>
+  /**
+   * (i) Bounded graceful stop. Resolves `true` ONLY when the process is confirmed to
+   * have exited (ChildProcess exit/close, or a PID liveness probe that reports it
+   * gone); `false` when it cannot be confirmed. Accepts a signal so a timed-out
+   * teardown can cancel the internal wait (P1-3).
+   */
+  stopMihomoProbe(timeoutMs: number, signal?: AbortSignal): Promise<boolean>
 
-  /** (g) Close the EXACT creator handle (clears on success; idempotent). */
-  closeCreatorHandle(handle: G1OpaqueHandle): Promise<void>
+  /** (g) Close the EXACT creator handle (clears on success; idempotent). Accepts a signal (P1-1). */
+  closeCreatorHandle(handle: G1OpaqueHandle, signal?: AbortSignal): Promise<void>
 
   /** (h) Is the adapter still present after the creator handle is closed? */
   adapterStillPresent(identity: G1AdapterIdentity): Promise<boolean>
@@ -407,31 +453,88 @@ export interface G1RunOptions {
 interface ProbeState {
   creatorCreated: boolean
   creatorClosed: boolean
+  /** The exact handle THIS call's WintunCreateAdapter returned (owned; closed once). */
   handle: G1OpaqueHandle | null
   identity: G1AdapterIdentity | null
   mihomoAttempted: boolean
   mihomoStarted: boolean
   mihomoStopped: boolean
+  /** Set only when stopMihomoProbe confirmed the process actually exited (P1-3). */
+  mihomoStopConfirmed: boolean
   mihomoPid: number | null
 }
 
 const DEFAULT_STEP_TIMEOUT_MS = 15_000
 
-/** Run one step with an orchestrator-owned bound; a timeout throws `timeout`. */
+/** How long `runStep` waits for a timed-out, side-effecting op to reach a settled state. */
+const DEFAULT_CANCEL_GRACE_MS = 5_000
+
+interface RunStepLifecycle<T> {
+  /**
+   * Reclaim a resource a side-effecting op delivered AFTER a step timeout (the op
+   * completed late). Registered BEFORE the op starts (P1-1): the orchestrator
+   * passes a cleanup that closes the exact late handle / stops a late-spawned
+   * process, so a late-success cannot leak an adapter or a mihomo process.
+   */
+  reclaimLate?: (value: T) => Promise<void> | void
+  /** Override the bounded wait for a cancelled op to settle (default DEFAULT_CANCEL_GRACE_MS). */
+  cancelGraceMs?: number
+}
+
+/**
+ * Run one step with an orchestrator-owned bound (P1-7). On timeout it ABORTS the
+ * signal handed to `fn`, then waits for the op to reach a determined
+ * cancelled/settled state — it never merely drops a still-running side-effecting
+ * promise (P1-1). If that late op delivered a resource, `lifecycle.reclaimLate`
+ * reclaims the exact value. A timeout still throws `timeout` to the caller.
+ */
 async function runStep<T>(
   label: string,
   timeoutMs: number,
-  fn: () => T | Promise<T>
+  fn: (signal?: AbortSignal) => T | Promise<T>,
+  lifecycle: RunStepLifecycle<T> = {}
 ): Promise<T> {
+  const controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
+  // `op` is created once and awaited both for the race and, on a timeout, to
+  // await the same in-flight operation's settlement (never a second invocation).
+  const op = Promise.resolve().then(() => fn(controller.signal))
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(
-      () => reject(new G1ProbeError(G1ErrorCode.timeout, `${label} timed out after ${timeoutMs}ms`)),
+      () => {
+        controller.abort()
+        reject(new G1ProbeError(G1ErrorCode.timeout, `${label} timed out after ${timeoutMs}ms`))
+      },
       timeoutMs
     )
   })
   try {
-    return await Promise.race([Promise.resolve(fn()), timeout])
+    return await Promise.race([op, timeout])
+  } catch (err) {
+    if (!(err instanceof G1ProbeError) || err.code !== G1ErrorCode.timeout || !lifecycle.reclaimLate) {
+      throw err
+    }
+    // Timeout: the op may still be in flight. Wait (bounded) for it to settle so a
+    // late resource never escapes, then reclaim the exact value it delivered.
+    const graceMs = lifecycle.cancelGraceMs ?? DEFAULT_CANCEL_GRACE_MS
+    const settled = await Promise.race([
+      op.then(
+        (value) => ({ kind: 'value' as const, value }),
+        (error) => ({ kind: 'error' as const, error })
+      ),
+      new Promise<{ kind: 'grace' }>((resolve) => {
+        const t = setTimeout(() => resolve({ kind: 'grace' }), graceMs)
+        if (t.unref) t.unref()
+      })
+    ])
+    if (settled.kind === 'value' && settled.value !== null && settled.value !== undefined) {
+      try {
+        await lifecycle.reclaimLate(settled.value as T)
+      } catch {
+        // Reclamation is best-effort; the original timeout already failed the step.
+      }
+    }
+    throw err
   } finally {
     if (timer !== undefined) clearTimeout(timer)
   }
@@ -459,8 +562,13 @@ function classifyStepError(err: unknown): G1ErrorCode | null {
  * - A read-only conflict preflight aborts with zero change before any creation.
  * - If mihomo cannot be shown to reuse the SAME adapter with a live session, the
  *   probe stops with `g1-failed` and never lets mihomo create a second adapter.
- * - Destructive teardown requires a strict identity match and closes the EXACT
- *   creator handle once (P1-2).
+ * - The OWNED creator handle (exactly what THIS call's WintunCreateAdapter
+ *   returned) is closed unconditionally, at most once, in the finally — even when
+ *   its identity could not be read (P1-2). Strict identity match (`cleanupAllowed`)
+ *   governs only RECOVERED / enumerated resources, which this design never creates.
+ * - mihomo is only "stopped" when stopMihomoProbe confirms the process actually
+ *   exited; a false/unknown confirmation leaves mihomoStopped=false and marks
+ *   cleanupSucceeded=false (P1-3).
  */
 export async function runG1Probe(driver: G1ProbeDriver, opts: G1RunOptions): Promise<G1Evidence> {
   const now = opts.now ?? (() => new Date())
@@ -489,6 +597,7 @@ export async function runG1Probe(driver: G1ProbeDriver, opts: G1RunOptions): Pro
     mihomoAttempted: false,
     mihomoStarted: false,
     mihomoStopped: false,
+    mihomoStopConfirmed: false,
     mihomoPid: null
   }
   let observed: 'A' | 'B' | null = null
@@ -535,9 +644,25 @@ export async function runG1Probe(driver: G1ProbeDriver, opts: G1RunOptions): Pro
       throw new G1ProbeError(G1ErrorCode.dllHashMismatch, 'pinned DLL digest did not verify')
     }
 
-    // (b) create the adapter and HOLD the exact creator handle (P1-2).
-    const handle = await runStep('createAdapter', stepTimeoutMs, () =>
-      driver.createAdapter({ ...opts.target, tunnelType: opts.tunnelType })
+    // (b) create the adapter and HOLD the exact creator handle (P1-2). The reclaim
+    //     token is registered BEFORE the call starts: if WintunCreateAdapter is
+    //     still delivering the exact handle after a step timeout, that late handle
+    //     is reclaimed (closed) rather than leaked (P1-1).
+    const handle = await runStep(
+      'createAdapter',
+      stepTimeoutMs,
+      (signal) => driver.createAdapter({ ...opts.target, tunnelType: opts.tunnelType }, signal),
+      {
+        reclaimLate: async (lateHandle) => {
+          try {
+            await driver.closeCreatorHandle(lateHandle as G1OpaqueHandle)
+          } catch {
+            // Best-effort: the step already failed on timeout; a second failure during
+            // late reclamation must not mask it. The owned-handle close in the finally
+            // is a no-op because state.handle was never assigned for this timeout.
+          }
+        }
+      }
     )
     state.handle = handle
     state.creatorCreated = true
@@ -550,8 +675,23 @@ export async function runG1Probe(driver: G1ProbeDriver, opts: G1RunOptions): Pro
 
     // (d) mihomo opens the SAME adapter and establishes a provably active session; KEEP RUNNING.
     state.mihomoAttempted = true
-    const mihomo = await runStep('startMihomoProbe', stepTimeoutMs, () => driver.startMihomoProbe(identity))
+    const mihomo = await runStep(
+      'startMihomoProbe',
+      stepTimeoutMs,
+      (signal) => driver.startMihomoProbe(identity, signal),
+      {
+        // A late spawn after a timeout must not leave a stray mihomo process.
+        reclaimLate: async () => {
+          try {
+            await driver.stopMihomoProbe(stepTimeoutMs)
+          } catch {
+            // Best-effort late-process reclamation (P1-1).
+          }
+        }
+      }
+    )
     state.mihomoStarted = true
+    state.mihomoStopConfirmed = false
     state.mihomoPid = mihomo.pid
 
     // (e) exactly one adapter matching the identity.
@@ -580,7 +720,7 @@ export async function runG1Probe(driver: G1ProbeDriver, opts: G1RunOptions): Pro
     }
 
     // (g) helper closes ITS OWN creator handle — mihomo KEEPS RUNNING.
-    await runStep('closeCreatorHandle', stepTimeoutMs, () => driver.closeCreatorHandle(handle))
+    await runStep('closeCreatorHandle', stepTimeoutMs, (signal) => driver.closeCreatorHandle(handle, signal))
     state.creatorClosed = true
 
     // (h) SIMULTANEOUS observation after the creator-handle close:
@@ -595,32 +735,52 @@ export async function runG1Probe(driver: G1ProbeDriver, opts: G1RunOptions): Pro
     mihomoStillSameGuidLuidAfterClose = await runStep('mihomoStillBoundTo', stepTimeoutMs, () =>
       driver.mihomoStillBoundTo(identity)
     )
-    // Observed B is valid ONLY when the creator handle is closed AND the session is
-    // still active AND still bound to the same GUID+LUID (P1-1). Otherwise A.
-    observed = adapterGone
-      ? 'A'
-      : mihomoSessionActiveAfterClose && mihomoStillSameGuidLuidAfterClose
-        ? 'B'
-        : 'A'
+    // Strict: only the exact truth combos map to A / B; every other combination is
+    // an illegal observation and fails the probe (P1-4).
+    observed = classifyObservation(adapterGone, mihomoSessionActiveAfterClose, mihomoStillSameGuidLuidAfterClose)
+    if (observed === null) {
+      errorCode = G1ErrorCode.g1Failed
+      throw new G1ProbeError(
+        G1ErrorCode.g1Failed,
+        'illegal simultaneous observation: adapter state is not a valid A or B outcome'
+      )
+    }
 
     // (i) stop mihomo (bounded graceful; the driver terminates the exact PID on timeout).
-    await runStep('stopMihomoProbe', stepTimeoutMs, () => driver.stopMihomoProbe(stepTimeoutMs))
-    state.mihomoStopped = true
+    //     Honor the EXACT return: only a confirmed exit marks the process stopped (P1-3).
+    const stoppedOk = await runStep('stopMihomoProbe', stepTimeoutMs, (signal) =>
+      driver.stopMihomoProbe(stepTimeoutMs, signal)
+    )
+    if (stoppedOk === true) {
+      state.mihomoStopped = true
+      state.mihomoStopConfirmed = true
+    } else {
+      // Cannot confirm mihomo exited. Do NOT mark it stopped; the finally will retry
+      // and it is counted as a probe failure (cleanupSucceeded=false on a real miss).
+      state.mihomoStopConfirmed = false
+      errorCode = G1ErrorCode.crash
+    }
   } catch (err) {
     errorCode = classifyStepError(err) ?? (errorCode === G1ErrorCode.none ? G1ErrorCode.crash : errorCode)
   } finally {
     // (j) EXPLICIT, independent teardown — no vague cleanup(boolean) (P1-5).
     let cleanupSucceeded: boolean | null = null
 
-    // 1. Stop mihomo if it was ever started or spawned. Bounded graceful; the real
-    //    driver terminates the exact recorded PID and waits on timeout, so no
-    //    residual process survives a fault boundary.
+    // 1. Stop mihomo if it was ever started or spawned and is not yet confirmed
+    //    stopped. Only a true return (confirmed exit) marks it stopped (P1-3).
     if (!state.mihomoStopped && (state.mihomoStarted || state.mihomoAttempted)) {
+      let stopOk = false
       try {
-        await runStep('stopMihomoProbe', stepTimeoutMs, () => driver.stopMihomoProbe(stepTimeoutMs))
-        state.mihomoStopped = true
+        const stopped = await runStep('stopMihomoProbe', stepTimeoutMs, (signal) =>
+          driver.stopMihomoProbe(stepTimeoutMs, signal)
+        )
+        stopOk = stopped === true
       } catch {
-        // Best effort — the driver guarantees no residual process even on failure.
+        stopOk = false
+      }
+      if (stopOk) {
+        state.mihomoStopped = true
+        state.mihomoStopConfirmed = true
       }
     }
 
@@ -630,31 +790,46 @@ export async function runG1Probe(driver: G1ProbeDriver, opts: G1RunOptions): Pro
     let live: G1AdapterIdentity | null = null
     if (state.handle !== null) {
       try {
-        live = await runStep('liveAdapterIdentity', stepTimeoutMs, () => driver.liveAdapterIdentity(state.handle as G1OpaqueHandle))
+        live = await runStep('liveAdapterIdentity', stepTimeoutMs, () =>
+          driver.liveAdapterIdentity(state.handle as G1OpaqueHandle)
+        )
       } catch {
         live = null
       }
     }
     const acceptable = cleanupAllowed(live, state.identity)
-    // 3. Close the EXACT creator handle ONLY on a strict identity match, exactly once.
-    if (state.handle !== null && acceptable && !state.creatorClosed) {
+    // 3. Close the OWNED creator handle — the EXACT handle THIS call's
+    //    WintunCreateAdapter returned — unconditionally, at most once (P1-2).
+    //    It is ours regardless of whether its identity could be read; the strict
+    //    identity gate applies only to RECOVERED/enumerated resources, which this
+    //    design never re-opens. Step (g) already closed it on the success path, so
+    //    this is the single close for every fault/timeout boundary that follows (b).
+    let closeResultOk = true
+    if (state.handle !== null && !state.creatorClosed) {
       try {
-        await runStep('closeCreatorHandle', stepTimeoutMs, () => driver.closeCreatorHandle(state.handle as G1OpaqueHandle))
+        await runStep('closeCreatorHandle', stepTimeoutMs, (signal) =>
+          driver.closeCreatorHandle(state.handle as G1OpaqueHandle, signal)
+        )
         state.creatorClosed = true
       } catch {
-        cleanupSucceeded = false
+        closeResultOk = false
       }
     }
-    // Success means mihomo is confirmed stopped AND the creator handle is closed.
-    cleanupSucceeded = state.creatorCreated
-      ? state.mihomoStopped && state.creatorClosed
-      : null
-    // A live identity that no longer matches ours (or is unconfirmable) means the
-    // adapter is NOT ours to tear down -> identity-conflict, never a blind delete.
+    // Cleanup verdict (P1-3): we built an adapter that MUST be closed, and a mihomo
+    // process that MUST be confirmed exited before we call the run clean. A false
+    // stop confirmation (or an unconfirmable teardown) leaves cleanupSucceeded=false.
+    const mihomoOk = state.mihomoStarted ? state.mihomoStopConfirmed : true
+    const adapterOk = state.creatorCreated ? state.creatorClosed : true
+    cleanupSucceeded =
+      state.creatorCreated || state.mihomoStarted
+        ? mihomoOk && adapterOk && closeResultOk
+        : null
+    // A live identity that disagrees with the recorded target is an integrity
+    // anomaly worth flagging (P1-2) — but it never blocks the OWNED-handle close above.
     if (
       live !== null &&
+      state.identity !== null &&
       !acceptable &&
-      !state.creatorClosed &&
       (errorCode === G1ErrorCode.none || errorCode === G1ErrorCode.crash)
     ) {
       errorCode = G1ErrorCode.identityConflict

@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest'
-import { readFile, rm, mkdtemp, symlink } from 'node:fs/promises'
+import { readFile, rm, mkdtemp, mkdir, symlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
@@ -269,6 +269,58 @@ describe('resolveSafeEvidencePath', () => {
       expect('error' in result).toBe(true)
     } finally {
       await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('does NOT false-reject a base whose canonical path differs from its resolved path', async () => {
+    // Simulates the macOS temp-dir layout where a parent is a symlink (e.g.
+    // /var -> /private/var) or a Windows short-path/case difference: the base
+    // directory itself is a real dir, but its canonical path != the resolved
+    // string. That is NOT a reparse/symlink, so it must be accepted (P1-5).
+    const realRoot = await mkdtemp(join(tmpdir(), 'g1-evidence-root-'))
+    const linkParent = join(tmpdir(), `g1-parent-link-${Date.now()}`)
+    const evidenceDir = join(realRoot, 'evidence')
+    try {
+      await mkdir(evidenceDir)
+      await symlink(realRoot, linkParent)
+      const base = join(linkParent, 'evidence') // real dir reachable via a symlinked prefix
+      const result = await resolveSafeEvidencePath(join(base, 'a.json'), base)
+      expect('path' in result).toBe(true)
+      if ('path' in result) expect(result.path.endsWith('a.json')).toBe(true)
+    } finally {
+      await rm(linkParent, { force: true })
+      await rm(realRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a base that is itself a symlink', async () => {
+    const realDir = await mkdtemp(join(tmpdir(), 'g1-evidence-real-'))
+    const linkDir = join(tmpdir(), `g1-evidence-link-${Date.now()}`)
+    await symlink(realDir, linkDir)
+    try {
+      const result = await resolveSafeEvidencePath(join(linkDir, 'a.json'), linkDir)
+      expect('error' in result).toBe(true)
+    } finally {
+      await rm(linkDir, { force: true })
+      await rm(realDir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a target whose parent resolves OUTSIDE the base through a symlink', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'g1-evidence-'))
+    const outside = await mkdtemp(join(tmpdir(), 'g1-evidence-outside-'))
+    const link = join(tmpdir(), `g1-escape-link-${Date.now()}`)
+    try {
+      await symlink(outside, link)
+      // `link/inside.json` has a parent (`link`) that is a symlink pointing
+      // outside `base`; its canonical parent resolves to `outside`, so containment
+      // must reject it.
+      const result = await resolveSafeEvidencePath(join(link, 'inside.json'), base)
+      expect('error' in result).toBe(true)
+    } finally {
+      await rm(link, { force: true })
+      await rm(base, { recursive: true, force: true })
+      await rm(outside, { recursive: true, force: true })
     }
   })
 })

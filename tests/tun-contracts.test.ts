@@ -107,7 +107,7 @@ describe('Phase 9 non-network contracts', () => {
   })
 
   it('keeps the foundation source free of process, network, Wintun and elevation calls', () => {
-    const files = ['audit-log.ts', 'coordinator.ts', 'security-descriptors.ts', 'state-machine.ts']
+    const files = ['audit-log.ts', 'binary-integrity.ts', 'coordinator.ts', 'security-descriptors.ts', 'state-machine.ts']
     const forbidden = /child_process|execFile|spawn\s*\(|fetch\s*\(|WebSocket|Wintun(?:Create|Open|Close)|CoGetObject|netsh|SetIpForwardEntry|SetInterfaceDnsSettings/
     for (const file of files) {
       const source = readFileSync(resolve(process.cwd(), 'src/main/tun', file), 'utf8')

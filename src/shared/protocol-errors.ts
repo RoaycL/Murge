@@ -64,6 +64,8 @@ export const ProtocolErrorCode = {
   TUN_SECURITY_DESCRIPTOR_INVALID: 'TUN_SECURITY_DESCRIPTOR_INVALID',
   /** The privileged TUN path remains deliberately disabled until its external gates pass. */
   TUN_IMPLEMENTATION_GATED: 'TUN_IMPLEMENTATION_GATED',
+  /** A privileged TUN binary failed its pinned path, digest or signer policy. */
+  TUN_BINARY_INTEGRITY_FAILED: 'TUN_BINARY_INTEGRITY_FAILED',
   /** An unexpected internal failure. */
   INTERNAL: 'INTERNAL'
 } as const

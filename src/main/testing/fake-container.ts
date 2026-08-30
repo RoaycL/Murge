@@ -17,6 +17,7 @@ import type {
 import type { ConfigEdit, ImportRequest, Profile, ProfileMeta, ValidationResult } from '@shared/profiles'
 import type { KernelStatus, RuntimeSummary, TrafficSample } from '@shared/runtime'
 import type { BrandConfig } from '@shared/brand'
+import type { TunGateway, TunStatus } from '@shared/tun'
 
 /**
  * In-memory fake service container for main-process tests.
@@ -338,6 +339,18 @@ export interface FakeContainer {
   profiles: FakeProfileGateway
   systemProxy: FakeSystemProxyGateway
   startup: FakeStartupGateway
+  tun: FakeTunGateway
+}
+
+export class FakeTunGateway implements TunGateway {
+  status: TunStatus = { supported: true, phase: 'configured', errorMessage: null, conflictDetail: null, updatedAt: null }
+  enableCalls = 0
+  disableCalls = 0
+  private readonly listeners = new Set<(status: TunStatus) => void>()
+  getStatus(): TunStatus { return { ...this.status } }
+  async enable(): Promise<TunStatus> { this.enableCalls += 1; return { ...this.status } }
+  async disable(): Promise<TunStatus> { this.disableCalls += 1; return { ...this.status } }
+  onStatus(listener: (status: TunStatus) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener) }
 }
 
 export class FakeStartupGateway implements StartupGateway {
@@ -354,6 +367,7 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
   const profiles = new FakeProfileGateway()
   const systemProxy = new FakeSystemProxyGateway()
   const startup = new FakeStartupGateway()
+  const tun = new FakeTunGateway()
   return {
     kernel,
     mihomo,
@@ -361,6 +375,7 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
     profiles,
     systemProxy,
     startup,
-    deps: { brand, kernel, mihomo, runtime, profiles, systemProxy, startup }
+    tun,
+    deps: { brand, kernel, mihomo, runtime, profiles, systemProxy, startup, tun }
   }
 }

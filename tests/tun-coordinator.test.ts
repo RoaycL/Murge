@@ -4,7 +4,7 @@ import {
   TunCoordinator,
   type TunMutationAdapter
 } from '../src/main/tun/coordinator'
-import { ProtocolErrorCode } from '../src/shared/protocol-errors'
+import { ProtocolError, ProtocolErrorCode } from '../src/shared/protocol-errors'
 
 const desired = {
   schemaVersion: 2,
@@ -43,6 +43,18 @@ describe('TunCoordinator non-network orchestration', () => {
     await coordinator.initialize()
     expect(adapter.restore).toHaveBeenCalledTimes(1)
     expect(coordinator.getStatus().phase).toBe('configured')
+  })
+
+  it('surfaces a service ownership conflict during initialization without mutating it', async () => {
+    const adapter = fake({
+      recoveryRequired: vi.fn(async () => {
+        throw new ProtocolError(ProtocolErrorCode.TUN_SERVICE_CONFLICT, 'PID identity mismatch')
+      })
+    })
+    const coordinator = new TunCoordinator(adapter, true)
+    await coordinator.initialize()
+    expect(coordinator.getStatus()).toMatchObject({ phase: 'conflict', conflictDetail: 'PID identity mismatch' })
+    expect(adapter.restore).not.toHaveBeenCalled()
   })
 
   it('surfaces rollback failure and allows a later emergency retry', async () => {

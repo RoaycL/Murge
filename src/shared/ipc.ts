@@ -15,6 +15,7 @@ import type { ConfigEdit, ImportRequest, Profile, ProfileMeta, ValidationResult 
 import type { KernelStatus, RuntimeSummary, TrafficSample } from './runtime'
 import type { SystemProxyStatus } from './system-proxy'
 import type { StartupStatus } from './startup'
+import type { TunStatus } from './tun'
 
 export const IPC = {
   appGetBrand: 'app:get-brand',
@@ -55,7 +56,11 @@ export const IPC = {
   systemProxyDisable: 'system-proxy:disable',
   systemProxyStatusEvent: 'system-proxy:status-event',
   startupGetStatus: 'startup:get-status',
-  startupSetEnabled: 'startup:set-enabled'
+  startupSetEnabled: 'startup:set-enabled',
+  tunGetStatus: 'tun:get-status',
+  tunEnable: 'tun:enable',
+  tunDisable: 'tun:disable',
+  tunStatusEvent: 'tun:status-event'
 } as const
 
 export interface DesktopApi {
@@ -111,5 +116,11 @@ export interface DesktopApi {
   startup: {
     getStatus(): Promise<StartupStatus>
     setEnabled(enabled: boolean): Promise<StartupStatus>
+  }
+  tun: {
+    getStatus(): Promise<TunStatus>
+    enable(): Promise<TunStatus>
+    disable(): Promise<TunStatus>
+    onStatus(listener: (status: TunStatus) => void): () => void
   }
 }

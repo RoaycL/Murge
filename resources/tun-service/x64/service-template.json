@@ -1,0 +1,9 @@
+{
+  "serviceName": "ProxyDesktopTun_5a2df751959e8b8b",
+  "pipeName": "proxy-desktop-tun-5a2df751959e8b8b",
+  "namespaceId": "proxy-desktop-5a2df751959e8b8b",
+  "archiveFilename": "mihomo-windows-amd64-v1.19.30.zip",
+  "archiveSha256": "22c09fd67673895ef7cd6b1820563918275c3d316f2462b306208675118db3c0",
+  "archiveInnerName": "mihomo-windows-amd64.exe",
+  "clientExecutableName": "murge"
+}

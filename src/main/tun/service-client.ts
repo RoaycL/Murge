@@ -37,6 +37,9 @@ export class TunServiceClient {
       profile,
       profileSha256: createHash('sha256').update(profile, 'utf8').digest('hex')
     }, signal)
+    if (response.outcome === 'conflict') {
+      fail(ProtocolErrorCode.TUN_SERVICE_CONFLICT, response.errorCode ?? 'TUN service ownership conflict')
+    }
     if (response.outcome !== 'running' || response.sessionId !== sessionId || response.pid === null) {
       fail(ProtocolErrorCode.KERNEL_SPAWN_FAILED, response.errorCode ?? `Service returned ${response.outcome}`)
     }
@@ -53,6 +56,9 @@ export class TunServiceClient {
       operation: 'stop',
       sessionId: owned.sessionId
     }, signal)
+    if (response.outcome === 'conflict') {
+      fail(ProtocolErrorCode.TUN_SERVICE_CONFLICT, response.errorCode ?? 'TUN service ownership conflict')
+    }
     if (response.outcome !== 'stopped') {
       fail(ProtocolErrorCode.KERNEL_STOP_TIMEOUT, response.errorCode ?? `Service returned ${response.outcome}`)
     }
@@ -65,6 +71,9 @@ export class TunServiceClient {
       requestId: this.takeRequestId(),
       operation: 'reconcile'
     }, signal)
+    if (response.outcome === 'conflict') {
+      fail(ProtocolErrorCode.TUN_SERVICE_CONFLICT, response.errorCode ?? 'TUN service ownership conflict')
+    }
     if (response.outcome === 'running' && response.sessionId && response.pid) {
       this.ownedSession = { sessionId: response.sessionId, pid: response.pid }
     } else if (response.outcome === 'stopped') {

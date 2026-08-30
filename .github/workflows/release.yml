@@ -26,6 +26,12 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Setup Go for privileged service
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: native/tun-service/go.sum
+
       - name: Install dependencies
         run: npm ci --include=dev
         env:
@@ -61,6 +67,11 @@ jobs:
 
       - name: Download and verify installer-bundled mihomo archives
         run: npm run kernel:prepare
+
+      - name: Test and build privileged TUN service
+        run: |
+          npm run tun-service:test
+          npm run tun-service:build
 
       - name: Package Windows installers
         run: npx electron-builder --win --config electron-builder.config.mjs --publish never

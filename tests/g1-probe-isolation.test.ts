@@ -19,7 +19,7 @@ function read(rel: string): string {
 }
 
 /** The modules that must never be imported by the app shell / preload / IPC. */
-const G1_MODULE_MARKERS = ['g1-probe', 'g1-driver', 'g1-probe-runner', 'wintun-abi', 'tun/']
+const G1_MODULE_MARKERS = ['g1-probe', 'g1-driver', 'g1-probe-runner', 'wintun-abi']
 
 describe('G1 probe isolation', () => {
   it('keeps the probe out of the app shell, preload bridge and IPC layer', () => {

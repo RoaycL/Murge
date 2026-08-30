@@ -11,3 +11,4 @@ resources/bin/mihomo*.exe
 resources/bin/mihomo*
 resources/bin/*/*.zip
 !resources/bin/.gitkeep
+resources/tun-service/*/tun-service.exe

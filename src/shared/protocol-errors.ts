@@ -68,6 +68,8 @@ export const ProtocolErrorCode = {
   TUN_BINARY_INTEGRITY_FAILED: 'TUN_BINARY_INTEGRITY_FAILED',
   /** A privileged-helper envelope failed schema, MAC, ordering or size checks. */
   TUN_HELPER_PROTOCOL_INVALID: 'TUN_HELPER_PROTOCOL_INVALID',
+  /** The service owns or observes a process whose identity cannot be safely changed. */
+  TUN_SERVICE_CONFLICT: 'TUN_SERVICE_CONFLICT',
   /** An unexpected internal failure. */
   INTERNAL: 'INTERNAL'
 } as const

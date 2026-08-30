@@ -38,6 +38,17 @@ Chromium and Node.js. The licenses for those bundled components and their full
 notices are printed in the official Electron distribution and are the
 responsibility of the Electron project.
 
+## Privileged Windows service
+
+The Phase 9B Windows service statically links the following Go modules. Their
+retained notices are installed with the application:
+
+| Package | License file in the artifact | Version | License |
+| --- | --- | --- | --- |
+| github.com/Microsoft/go-winio | `licenses/go-winio.txt` | 0.6.2 | MIT |
+| golang.org/x/sys | `licenses/go-x-sys.txt` | 0.47.0 | BSD-3-Clause |
+| gopkg.in/yaml.v3 | `licenses/go-yaml-v3.txt` | 3.0.1 | MIT / Apache-2.0 |
+
 ## Build-tooling dependencies
 
 The packaging toolchain (`electron-vite`, `@electron-toolkit/utils`,

@@ -69,10 +69,19 @@ export class TunCoordinator {
   initialize(): Promise<TunStatus> {
     return this.serialize(async () => {
       if (!this.status.supported || this.status.phase !== 'configured') return
-      if (await this.adapter.recoveryRequired()) {
+      try {
+        if (await this.adapter.recoveryRequired()) {
+          this.move('enable')
+          this.move('fail', { errorMessage: 'Interrupted TUN transaction requires recovery' })
+          await this.restoreInternal()
+        }
+      } catch (error) {
         this.move('enable')
-        this.move('fail', { errorMessage: 'Interrupted TUN transaction requires recovery' })
-        await this.restoreInternal()
+        if (error instanceof ProtocolError && error.code === ProtocolErrorCode.TUN_SERVICE_CONFLICT) {
+          this.move('conflict', { conflictDetail: error.message })
+        } else {
+          this.move('fatal', { errorMessage: machineMessage(error) })
+        }
       }
     })
   }

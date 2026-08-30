@@ -8,7 +8,9 @@ function serviceResponse(request: TunServiceRequest, outcome: 'running' | 'stopp
     protocolVersion: TUN_SERVICE_PROTOCOL_VERSION,
     requestId: request.requestId,
     outcome,
-    sessionId: outcome === 'running' && request.operation === 'start' ? request.sessionId : null,
+    sessionId: outcome === 'running'
+      ? (request.operation === 'start' ? request.sessionId : '8a86eb80-621f-4a73-8249-1e4455df80de')
+      : null,
     pid: outcome === 'running' ? 5151 : null,
     errorCode: null
   }
@@ -48,10 +50,21 @@ describe('mihomo-owned TUN lifecycle adapter', () => {
   it('does not claim restoration when service stop is unconfirmed', async () => {
     const { adapter, transport } = setup()
     await adapter.enable({ schemaVersion: 2, device: 'Product TUN', stack: 'mixed' })
-    vi.mocked(transport.request).mockImplementationOnce(async request => ({
-      ...serviceResponse(request, 'stopped'),
-      outcome: 'stopping', sessionId: '8a86eb80-621f-4a73-8249-1e4455df80de', pid: 5151, errorCode: 'STOP_TIMEOUT'
-    }))
+    vi.mocked(transport.request).mockImplementationOnce(async request => serviceResponse(request, 'running'))
+      .mockImplementationOnce(async request => ({
+        ...serviceResponse(request, 'stopped'),
+        outcome: 'stopping', sessionId: '8a86eb80-621f-4a73-8249-1e4455df80de', pid: 5151, errorCode: 'STOP_TIMEOUT'
+      }))
     await expect(adapter.restore()).resolves.toMatchObject({ outcome: 'restore-failed' })
+  })
+
+  it('reconciles and stops a service-owned child after the desktop client restarts', async () => {
+    const { adapter, client, transport } = setup()
+    expect(client.getOwnedSession()).toBeNull()
+
+    await expect(adapter.restore()).resolves.toEqual({ outcome: 'restored' })
+
+    expect(client.getOwnedSession()).toBeNull()
+    expect(vi.mocked(transport.request).mock.calls.map(call => call[0].operation)).toEqual(['reconcile', 'stop'])
   })
 })

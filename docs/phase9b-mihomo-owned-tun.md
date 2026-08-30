@@ -1,6 +1,6 @@
 # Phase 9B — mihomo-owned Windows TUN
 
-Status: accepted implementation direction; Windows runtime evidence pending.
+Status: native service and desktop wiring implemented; Windows runtime evidence pending.
 
 This decision supersedes the Phase 9 design in `helper-design.md` wherever that
 design asks the privileged helper to create a Wintun adapter, apply routes or
@@ -94,3 +94,19 @@ recoverable snapshot and out-of-band console, proving at minimum:
 
 Until that evidence is attached, Phase 9B is implementation-complete only at
 the non-network/code-contract level, not runtime-approved.
+
+## Implemented components
+
+- `native/tun-service`: Go Windows Service, strict duplicate implementation of
+  the profile boundary, digest-verified packaged archive extraction, exact PID
+  path/digest reconciliation, administrator-only state, owner-SID Named Pipe,
+  fail-closed install/upgrade/uninstall and x64/arm64 cross-compilation.
+- `src/main/tun/named-pipe-transport.ts`: bounded one-request/one-response local
+  transport; no renderer-controlled pipe or command names.
+- Electron IPC/preload/store/UI wiring with safe-kernel/system-proxy/TUN mutual
+  exclusion and quit-time confirmed TUN stop.
+- CI compiles both service architectures and the Windows packaging job proves
+  the idle service installs, starts without launching mihomo, and is removed.
+
+The CI service check is intentionally non-network. It does not enable TUN and
+does not replace the isolated Windows evidence matrix above.

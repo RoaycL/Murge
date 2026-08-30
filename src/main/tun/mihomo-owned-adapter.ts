@@ -2,6 +2,7 @@ import type { MihomoOwnedTunIntent } from '../../shared/tun'
 import type { TunEnableResult, TunMutationAdapter, TunRestoreResult } from './coordinator'
 import { generateMihomoTunConfig } from './mihomo-tun-config'
 import type { TunServiceClient } from './service-client'
+import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
 
 export interface TunProfileRuntime {
   mixedPort: number
@@ -22,7 +23,7 @@ export class MihomoOwnedTunAdapter implements TunMutationAdapter {
 
   constructor(
     private readonly client: TunServiceClient,
-    private readonly runtimeFactory: () => TunProfileRuntime,
+    private readonly runtimeFactory: () => TunProfileRuntime | Promise<TunProfileRuntime>,
     private readonly readiness: TunControllerReadiness,
     private readonly readyTimeoutMs = 10_000
   ) {}
@@ -33,9 +34,16 @@ export class MihomoOwnedTunAdapter implements TunMutationAdapter {
   }
 
   async enable(intent: MihomoOwnedTunIntent): Promise<TunEnableResult> {
-    const runtime = this.runtimeFactory()
+    const runtime = await this.runtimeFactory()
     const profile = generateMihomoTunConfig({ ...runtime, device: intent.device, stack: intent.stack })
-    await this.client.start(profile)
+    try {
+      await this.client.start(profile)
+    } catch (error) {
+      if (error instanceof ProtocolError && error.code === ProtocolErrorCode.TUN_SERVICE_CONFLICT) {
+        return { outcome: 'conflict', conflictDetail: error.message }
+      }
+      throw error
+    }
     this.activeRuntime = runtime
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.readyTimeoutMs)
@@ -61,10 +69,17 @@ export class MihomoOwnedTunAdapter implements TunMutationAdapter {
 
   async restore(): Promise<TunRestoreResult> {
     try {
+      // Never trust only the in-memory client handle: after an app restart or a
+      // transport failure the service may still own a live elevated child.
+      // Reconcile first so "no local session" cannot become a false restored.
+      await this.client.reconcile()
       await this.client.stop()
       this.activeRuntime = null
       return { outcome: 'restored' }
     } catch (error) {
+      if (error instanceof ProtocolError && error.code === ProtocolErrorCode.TUN_SERVICE_CONFLICT) {
+        return { outcome: 'conflict', conflictDetail: error.message }
+      }
       return { outcome: 'restore-failed', errorMessage: machineMessage(error) }
     }
   }

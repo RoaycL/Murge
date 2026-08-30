@@ -23,6 +23,12 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Setup Go for privileged service
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: native/tun-service/go.sum
+
       - name: Install dependencies (including development)
         run: npm ci --include=dev
         env:
@@ -36,6 +42,11 @@ jobs:
 
       - name: Run unit tests
         run: npm test
+
+      - name: Test and cross-compile privileged TUN service
+        run: |
+          npm run tun-service:test
+          npm run tun-service:build
 
       - name: Build
         run: npm run build
@@ -249,6 +260,12 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Setup Go for privileged service
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: native/tun-service/go.sum
+
       - name: Install dependencies (including development)
         run: npm ci --include=dev
         env:
@@ -271,6 +288,11 @@ jobs:
       - name: Download and verify installer-bundled mihomo archives
         run: npm run kernel:prepare
 
+      - name: Test and build privileged TUN service
+        run: |
+          npm run tun-service:test
+          npm run tun-service:build
+
       - name: Package Windows NSIS (x64 + arm64)
         run: npx electron-builder --win --config electron-builder.config.mjs --publish never
         env:
@@ -287,7 +309,7 @@ jobs:
           if (-not $notices) { throw 'THIRD_PARTY_NOTICES.md missing from the packaged artifact' }
           Write-Host "notices: $($notices.FullName)"
           $licensesDir = Join-Path $notices.DirectoryName 'licenses'
-          $expected = @('vue.txt','vue-router.txt','pinia.txt','vueuse-core.txt','zod.txt','ws.txt','yaml.txt','electron.txt','electron-toolkit-utils.txt','electron-toolkit-preload.txt')
+          $expected = @('vue.txt','vue-router.txt','pinia.txt','vueuse-core.txt','zod.txt','ws.txt','yaml.txt','electron.txt','electron-toolkit-utils.txt','electron-toolkit-preload.txt','go-winio.txt','go-x-sys.txt','go-yaml-v3.txt')
           foreach ($name in $expected) {
             if (-not (Test-Path (Join-Path $licensesDir $name))) {
               throw "license file $name missing from the packaged artifact"
@@ -308,23 +330,24 @@ jobs:
           if (-not $installer) { throw 'x64 NSIS installer not found' }
           Write-Host "installer: $($installer.FullName)"
 
-          # Install silently (assisted NSIS accepts /S; per-user, no elevation).
+          # Phase 9B installs a LocalSystem service, so the installer is per-machine.
           Start-Process -FilePath $installer.FullName -ArgumentList '/S' -Wait
           Start-Sleep -Seconds 3
 
-          # Locate the installed executable. Per-user NSIS default install dir;
-          # fall back to the uninstall registry entry, then a final search.
-          $installDir = Join-Path $env:LOCALAPPDATA "Programs\$env:PRODUCT_NAME"
+          # Locate the per-machine installed executable; retain legacy fallbacks
+          # so this smoke keeps diagnosing an accidental packaging regression.
+          $installDir = Join-Path $env:ProgramFiles $env:PRODUCT_NAME
           $exe = Join-Path $installDir "$env:EXECUTABLE_NAME.exe"
           if (-not (Test-Path $exe)) {
-            $unreg = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$env:APP_ID" -ErrorAction SilentlyContinue
+            $unreg = Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$env:APP_ID" -ErrorAction SilentlyContinue
+            if (-not $unreg) { $unreg = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$env:APP_ID" -ErrorAction SilentlyContinue }
             if ($unreg.InstallLocation) {
               $installDir = $unreg.InstallLocation
               $exe = Join-Path $installDir "$env:EXECUTABLE_NAME.exe"
             }
           }
           if (-not (Test-Path $exe)) {
-            $exe = (Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter "$env:EXECUTABLE_NAME.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+            $exe = (Get-ChildItem $env:ProgramFiles -Recurse -Filter "$env:EXECUTABLE_NAME.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
             if (-not $exe) { throw 'murge.exe not found after install' }
             $installDir = Split-Path -Parent $exe
           }
@@ -334,6 +357,12 @@ jobs:
           $version = (Get-Item $exe).VersionInfo
           Write-Host "ProductName=$($version.ProductName) ProductVersion=$($version.ProductVersion)"
           if ($version.ProductName -ne $env:PRODUCT_NAME) { throw "installed ProductName '$($version.ProductName)' != '$env:PRODUCT_NAME'" }
+
+          $serviceTemplate = Get-Content (Join-Path $installDir 'resources\tun-service\service-template.json') -Raw | ConvertFrom-Json
+          $tunService = Get-Service -Name $serviceTemplate.serviceName -ErrorAction Stop
+          if ($tunService.Status -ne 'Running') { throw "TUN service is not running after install: $($tunService.Status)" }
+          if (Get-Process -Name 'mihomo' -ErrorAction SilentlyContinue) { throw 'idle TUN service unexpectedly started mihomo' }
+          Write-Host "idle privileged service installed: $($serviceTemplate.serviceName)"
 
           $sentinelRoot = Join-Path $env:APPDATA $env:APP_ID 'profiles'
           Remove-Item (Join-Path $sentinelRoot '.packaging-smoke-sentinel') -ErrorAction SilentlyContinue
@@ -429,7 +458,8 @@ jobs:
           # Uninstall silently and confirm program files are gone but app data survives.
           $uninstaller = Get-ChildItem -Path $installDir -Filter 'Uninstall *.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $uninstaller) {
-            $unreg = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$env:APP_ID" -ErrorAction SilentlyContinue
+            $unreg = Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$env:APP_ID" -ErrorAction SilentlyContinue
+            if (-not $unreg) { $unreg = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$env:APP_ID" -ErrorAction SilentlyContinue }
             if ($unreg.UninstallString) { $uninstaller = @{ FullName = ($unreg.UninstallString -replace '^"([^"]+)".*','$1') } }
           }
           if (-not $uninstaller) { throw 'uninstaller not found' }
@@ -438,6 +468,7 @@ jobs:
           Start-Sleep -Seconds 5
 
           if (Test-Path $exe) { throw "program files still present after uninstall: $exe" }
+          if (Get-Service -Name $serviceTemplate.serviceName -ErrorAction SilentlyContinue) { throw 'TUN service remained registered after uninstall' }
           if (-not (Test-Path $sentinel)) { throw 'sentinel was removed on uninstall; deleteAppDataOnUninstall must stay false' }
           Write-Host 'uninstall removed program files but preserved user data (sentinel survives)'
 
@@ -494,6 +525,38 @@ jobs:
             }
           }
           Write-Host 'EXTERNAL_SYSTEM_PROXY_RESTORE=PASS'
+
+      # A packaging assertion can fail after the per-machine service was
+      # installed but before the normal uninstaller runs. Use the same signed-in
+      # bootstrap protocol as uninstall (never sc.exe delete) so an owned mihomo
+      # must be stopped and confirmed before service removal. Then independently
+      # prove SCM no longer contains the service.
+      - name: Remove privileged TUN service (finally)
+        if: always()
+        shell: pwsh
+        run: |
+          $templatePath = Get-ChildItem -Path dist -Recurse -Filter 'service-template.json' -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Directory.Name -eq 'tun-service' } |
+            Select-Object -First 1
+          if (-not $templatePath) {
+            Write-Host 'No packaged service template found; service installation was not reached.'
+            exit 0
+          }
+          $template = Get-Content $templatePath.FullName -Raw | ConvertFrom-Json
+          $service = Get-Service -Name $template.serviceName -ErrorAction SilentlyContinue
+          if ($service) {
+            $bootstrap = Join-Path $templatePath.Directory.FullName 'tun-service.exe'
+            if (-not (Test-Path $bootstrap)) { throw "service bootstrap missing: $bootstrap" }
+            $cleanup = Start-Process -FilePath $bootstrap -ArgumentList '--uninstall' -PassThru -Wait
+            if ($cleanup.ExitCode -ne 0) { throw "TUN service cleanup exited with code $($cleanup.ExitCode)" }
+          }
+          if (Get-Service -Name $template.serviceName -ErrorAction SilentlyContinue) {
+            throw "TUN service remained registered after final cleanup: $($template.serviceName)"
+          }
+          if (Get-Process -Name 'mihomo' -ErrorAction SilentlyContinue) {
+            throw 'mihomo remained after final TUN service cleanup'
+          }
+          Write-Host 'TUN_SERVICE_FINAL_CLEANUP=PASS'
 
       - name: List packaged artifacts
         run: |

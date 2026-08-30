@@ -302,6 +302,13 @@ Exit criteria:
 > until that service is compiled and its ACL/installer lifecycle is reviewed.
 > Runtime completion still requires the isolated Windows evidence matrix in the
 > Phase 9B decision; tests on macOS/Linux cannot mark TUN runtime complete.
+>
+> **Implementation update:** the Go Windows Service, owner-SID Named Pipe,
+> archive/core integrity checks, PID reconciliation, fail-closed installer
+> lifecycle, Electron IPC/preload/store/UI wiring and x64/arm64 CI build are now
+> implemented. GitHub-hosted packaging verifies only the idle service lifecycle;
+> it deliberately does not enable TUN. The isolated Windows runtime evidence
+> gate remains open.
 
 Environment: disposable Windows VM with snapshot and out-of-band recovery.
 

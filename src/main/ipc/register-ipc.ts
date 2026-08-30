@@ -1,6 +1,7 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { brand } from '@shared/brand'
 import type { IpcDeps, KernelGateway, MihomoGateway, ProfileGateway, SystemProxyGateway, StartupGateway } from '@shared/gateways'
+import type { TunGateway } from '@shared/tun'
 import type { RuntimeSummary } from '@shared/runtime'
 import { IPC } from '@shared/ipc'
 import { ProtocolError, encodeProtocolError } from '@shared/protocol-errors'
@@ -12,6 +13,7 @@ export interface IpcDependencies {
   profiles: ProfileGateway
   systemProxy: SystemProxyGateway
   startup: StartupGateway
+  tun: TunGateway
 }
 
 /**
@@ -40,7 +42,7 @@ function buildRuntimeSummary(): RuntimeSummary {
   }
 }
 
-export function registerIpc({ kernel, mihomo, profiles, systemProxy, startup }: IpcDependencies): () => void {
+export function registerIpc({ kernel, mihomo, profiles, systemProxy, startup, tun }: IpcDependencies): () => void {
   const deps: IpcDeps = {
     brand,
     kernel,
@@ -48,7 +50,8 @@ export function registerIpc({ kernel, mihomo, profiles, systemProxy, startup }: 
     runtime: { getSummary: buildRuntimeSummary },
     profiles,
     systemProxy,
-    startup
+    startup,
+    tun
   }
   const entries = Object.entries(buildIpcHandlers(deps))
   for (const [channel, handler] of entries) {
@@ -83,6 +86,7 @@ export function registerIpc({ kernel, mihomo, profiles, systemProxy, startup }: 
 
   // Forward system-proxy status transitions to every open renderer window.
   const systemProxyUnsub = forward(IPC.systemProxyStatusEvent, (listener) => systemProxy.onStatus(listener))
+  const tunUnsub = forward(IPC.tunStatusEvent, (listener) => tun.onStatus(listener))
 
   // Cleanup is owned by the caller (index.ts wires it into the `app` "before-quit"
   // lifecycle event, which is the correct Electron signal — `process` has no
@@ -98,5 +102,6 @@ export function registerIpc({ kernel, mihomo, profiles, systemProxy, startup }: 
     streamErrorUnsub()
     statusUnsub()
     systemProxyUnsub()
+    tunUnsub()
   }
 }

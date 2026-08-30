@@ -25,6 +25,7 @@ export default {
     // The archive is verified before packaging and re-verified at runtime before
     // extraction, so first launch never depends on GitHub availability.
     { from: `resources/bin/${'${arch}'}`, to: 'bin', filter: ['*.zip'] },
+    { from: `resources/tun-service/${'${arch}'}`, to: 'tun-service', filter: ['tun-service.exe', 'service-template.json'] },
     { from: 'resources/defaults', to: 'defaults', filter: ['**/*'] },
     { from: 'LICENSE', to: 'LICENSE.txt' },
     { from: 'resources/THIRD_PARTY_NOTICES.md', to: 'THIRD_PARTY_NOTICES.md' },
@@ -45,6 +46,8 @@ export default {
   },
   nsis: {
     oneClick: false,
+    perMachine: true,
+    allowElevation: true,
     // Restore an owned system proxy before the uninstaller deletes the app files
     // (see resources/nsis/uninstall-restore.nsh). The installed app's headless
     // `--restore-system-proxy` CLI reads its owned backup from app-data and puts

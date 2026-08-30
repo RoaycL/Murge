@@ -25,6 +25,24 @@
 ; the uninstaller before it deletes the installed files), keeping the app binary
 ; and its restore tool so the user can retry, and surface a message. This is the
 ; only way to guarantee the system proxy is never left broken by a failed uninstall.
+!macro customInstall
+  IfFileExists "$INSTDIR\resources\tun-service\tun-service.exe" 0 TunServiceInstallMissing
+    DetailPrint "Installing privileged TUN lifecycle service..."
+    ExecWait '"$INSTDIR\resources\tun-service\tun-service.exe" --install' $R0
+    StrCmp $R0 0 TunServiceInstallDone TunServiceInstallFailed
+    TunServiceInstallFailed:
+      DetailPrint "TUN service installation failed with exit code $R0"
+      MessageBox MB_ICONSTOP|MB_OK "TUN 服务安装失败，安装程序已中止。系统网络设置没有被启用。"
+      SetErrorLevel 1
+      Abort
+  TunServiceInstallMissing:
+    DetailPrint "TUN service executable is missing"
+    MessageBox MB_ICONSTOP|MB_OK "安装包缺少 TUN 服务组件，安装程序已中止。"
+    SetErrorLevel 1
+    Abort
+  TunServiceInstallDone:
+!macroend
+
 !macro customUnInstall
   IfFileExists "$INSTDIR\${APP_EXECUTABLE_FILENAME}" 0 SystemProxyUninstallRestoreDone
     DetailPrint "Restoring owned system proxy before uninstall..."
@@ -37,4 +55,14 @@
       SetErrorLevel 1
       Abort
   SystemProxyUninstallRestoreDone:
+  IfFileExists "$INSTDIR\resources\tun-service\tun-service.exe" 0 TunServiceUninstallDone
+    DetailPrint "Stopping and removing privileged TUN lifecycle service..."
+    ExecWait '"$INSTDIR\resources\tun-service\tun-service.exe" --uninstall' $R0
+    StrCmp $R0 0 TunServiceUninstallDone TunServiceUninstallFailed
+    TunServiceUninstallFailed:
+      DetailPrint "TUN service removal failed with exit code $R0; aborting uninstall"
+      MessageBox MB_ICONSTOP|MB_OK "未能确认 TUN 内核已停止，因此已中止卸载，避免遗留网络状态。请重启电脑后重试。"
+      SetErrorLevel 1
+      Abort
+  TunServiceUninstallDone:
 !macroend

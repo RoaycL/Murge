@@ -36,6 +36,12 @@ import { TrayController } from './tray/tray-controller'
 import { createElectronTray } from './tray/electron-tray'
 import { StartupService } from './startup/service'
 import { ElectronStartupAdapter } from './startup/electron-adapter'
+import { TunCoordinator, GatedTunMutationAdapter } from './tun/coordinator'
+import { MihomoOwnedTunAdapter } from './tun/mihomo-owned-adapter'
+import { TunServiceClient } from './tun/service-client'
+import { NamedPipeTunServiceTransport } from './tun/named-pipe-transport'
+import { tunServiceIdentity } from './tun/service-identity'
+import type { TunGateway, TunStatus } from '../shared/tun'
 
 const devControllerUrl = process.env.MURGE_DEV_CONTROLLER ?? 'http://127.0.0.1:9090'
 const devControllerSecret = process.env.MURGE_DEV_SECRET ?? ''
@@ -64,6 +70,7 @@ let isQuitting = false
 // background process with no window.
 let mainWindow: BrowserWindow | null = null
 let trayController: TrayController | null = null
+let tunCoordinator: TunCoordinator | null = null
 
 // Deep links (murge://...) that arrive before the window exists, or while a
 // second instance hands its argv over, are queued here and flushed once the
@@ -557,12 +564,59 @@ app.whenReady().then(async () => {
     validator,
     subscriptionFetcher
   )
+  const tunSupported = !is.dev && process.platform === 'win32'
+  const tunAdapter = tunSupported
+    ? new MihomoOwnedTunAdapter(
+        new TunServiceClient(
+          new NamedPipeTunServiceTransport(tunServiceIdentity(brand.appId).pipeName)
+        ),
+        async () => {
+          const controllerPort = await findFreePort()
+          let mixedPort = await findFreePort()
+          while (mixedPort === controllerPort) mixedPort = await findFreePort()
+          return { controllerPort, mixedPort, secret: randomSecret(32) }
+        },
+        {
+          waitUntilReady: async ({ controllerPort, secret, signal }) => {
+            const client = new MihomoClient(`http://127.0.0.1:${controllerPort}`, secret, { timeoutMs: 500 })
+            while (!signal.aborted) {
+              try {
+                await client.getVersion(signal)
+                return
+              } catch {
+                if (signal.aborted) break
+                await new Promise<void>((resolve) => setTimeout(resolve, 100))
+              }
+            }
+            throw new ProtocolError(ProtocolErrorCode.KERNEL_START_TIMEOUT, 'TUN controller readiness timed out')
+          }
+        }
+      )
+    : new GatedTunMutationAdapter()
+  const tunInstance = new TunCoordinator(tunAdapter, tunSupported)
+  tunCoordinator = tunInstance
+  if (tunSupported) {
+    await tunInstance.initialize().catch((error) => {
+      console.error('[tun] service reconciliation failed:', error)
+    })
+  }
+  const tunGateway: TunGateway = {
+    getStatus: () => tunInstance.getStatus(),
+    enable: () => tunInstance.enable({
+      schemaVersion: 2,
+      device: `${brand.shortName} TUN`,
+      stack: 'mixed'
+    }),
+    disable: () => tunInstance.emergencyDisable(),
+    onStatus: (listener) => tunInstance.onStatus(listener)
+  }
   disposeIpc = registerIpc({
     kernel: orderedKernel,
     mihomo: gateway,
     profiles: profileService,
     systemProxy: systemProxyService,
-    startup: new StartupService(new ElectronStartupAdapter())
+    startup: new StartupService(new ElectronStartupAdapter()),
+    tun: tunGateway
   })
   createWindow()
   const showMainWindow = (): void => {
@@ -636,6 +690,22 @@ async function restoreSystemProxyBeforeQuit(): Promise<boolean> {
   return false
 }
 
+async function restoreNetworkBeforeQuit(): Promise<boolean> {
+  if (tunCoordinator) {
+    try {
+      const status: TunStatus = await tunCoordinator.emergencyDisable()
+      if (status.phase !== 'configured' && status.phase !== 'unsupported') {
+        console.error('[tun] refused quit because TUN stop was not confirmed:', status)
+        return false
+      }
+    } catch (error) {
+      console.error('[tun] restore during quit failed:', error)
+      return false
+    }
+  }
+  return restoreSystemProxyBeforeQuit()
+}
+
 app.on('before-quit', (event) => {
   if (isQuitting) return
   event.preventDefault()
@@ -649,7 +719,7 @@ app.on('before-quit', (event) => {
     // proxy onStatus listener already broadcast restore-failed to the renderer),
     // and let the user fix it before retrying the quit.
     const result = await runQuitFlow({
-      restore: restoreSystemProxyBeforeQuit,
+      restore: restoreNetworkBeforeQuit,
       stopKernel: async () => {
         await kernel?.stop()
       },

@@ -65,6 +65,16 @@ describe('electron-builder brand wiring (Phase 6 metadata)', () => {
     })
   })
 
+  it('bundles the matching privileged service and requires a per-machine installer', () => {
+    expect(config.extraResources).toContainEqual({
+      from: 'resources/tun-service/${arch}',
+      to: 'tun-service',
+      filter: ['tun-service.exe', 'service-template.json']
+    })
+    expect(config.nsis.perMachine).toBe(true)
+    expect(config.nsis.allowElevation).toBe(true)
+  })
+
   it('produces exactly two per-arch NSIS installers (strategy A, no combined)', () => {
     // Strategy A: x64 + arm64 only, never the combined/universal installer.
     expect(config.nsis.buildUniversalInstaller).toBe(false)

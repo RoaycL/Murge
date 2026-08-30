@@ -81,4 +81,20 @@ describe('Phase 9B privileged service protocol', () => {
     }
     await expect(new TunServiceClient(transport).start(profile)).rejects.toThrow(/Invalid TUN service protocol message/)
   })
+
+  it('maps a service ownership conflict to a typed protocol error', async () => {
+    const transport: TunServiceTransport = {
+      request: vi.fn(async request => ({
+        protocolVersion: 2,
+        requestId: request.requestId,
+        outcome: 'conflict',
+        sessionId: null,
+        pid: null,
+        errorCode: 'PROCESS_IDENTITY_MISMATCH'
+      }))
+    }
+    await expect(new TunServiceClient(transport).start(profile)).rejects.toMatchObject({
+      code: 'TUN_SERVICE_CONFLICT'
+    })
+  })
 })

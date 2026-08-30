@@ -25,13 +25,16 @@ export type IpcHandler = (event: unknown, ...args: unknown[]) => unknown | Promi
  * the semantics Electron uses for `ipcMain.handle`.
  */
 export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
-  const { brand, kernel, mihomo, runtime, profiles, systemProxy, startup } = deps
+  const { brand, kernel, mihomo, runtime, profiles, systemProxy, startup, tun } = deps
 
   return {
     [IPC.appGetBrand]: async () => brand,
 
     [IPC.kernelGetStatus]: async () => kernel.getStatus(),
-    [IPC.kernelStart]: async () => kernel.start(),
+    [IPC.kernelStart]: async () => {
+      assertTunInactive(await tun.getStatus())
+      return kernel.start()
+    },
     [IPC.kernelStop]: async () => kernel.stop(),
 
     [IPC.runtimeGetSummary]: async () => runtime.getSummary(),
@@ -71,10 +74,29 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
     [IPC.profilesValidate]: async (_event, document) => profiles.validateDocument(parseProfileDocument(document)),
 
     [IPC.systemProxyGetStatus]: async () => systemProxy.getStatus(),
-    [IPC.systemProxyEnable]: async () => systemProxy.enable(),
+    [IPC.systemProxyEnable]: async () => {
+      assertTunInactive(await tun.getStatus())
+      return systemProxy.enable()
+    },
     [IPC.systemProxyDisable]: async () => systemProxy.disable(),
     [IPC.startupGetStatus]: async () => startup.getStatus(),
-    [IPC.startupSetEnabled]: async (_event, enabled) => startup.setEnabled(parseStartupEnabled(enabled))
+    [IPC.startupSetEnabled]: async (_event, enabled) => startup.setEnabled(parseStartupEnabled(enabled)),
+    [IPC.tunGetStatus]: async () => tun.getStatus(),
+    [IPC.tunEnable]: async () => {
+      const kernelStatus = await kernel.getStatus()
+      const proxyStatus = await systemProxy.getStatus()
+      if (kernelStatus.phase !== 'stopped' || proxyStatus.phase !== 'disabled') {
+        throw new ProtocolError(ProtocolErrorCode.TUN_INVALID_TRANSITION, 'Stop the safe kernel and system proxy before enabling TUN')
+      }
+      return tun.enable()
+    },
+    [IPC.tunDisable]: async () => tun.disable()
+  }
+}
+
+function assertTunInactive(status: Awaited<ReturnType<IpcDeps['tun']['getStatus']>>): void {
+  if (status.phase !== 'configured' && status.phase !== 'unsupported' && status.phase !== 'failed') {
+    throw new ProtocolError(ProtocolErrorCode.TUN_INVALID_TRANSITION, 'Disable TUN before starting another network mode')
   }
 }
 

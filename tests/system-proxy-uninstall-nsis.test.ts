@@ -48,4 +48,13 @@ describe('uninstall-restore.nsh customUnInstall hook', () => {
     // On success the control flow lands at Done and the uninstall continues.
     expect(source.slice(0, doneIndex)).toContain('StrCmp $R0 0')
   })
+
+  it('installs and removes the privileged TUN service fail-closed', () => {
+    expect(source).toContain('--install')
+    expect(source).toContain('--uninstall')
+    expect(source).toContain('TunServiceInstallFailed:')
+    expect(source).toContain('TunServiceUninstallFailed:')
+    expect(source).toMatch(/ExecWait[^\n]*--install[^\n]*\$R0/)
+    expect(source).toMatch(/ExecWait[^\n]*--uninstall[^\n]*\$R0/)
+  })
 })

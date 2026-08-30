@@ -22,6 +22,7 @@ import type {
 import type { KernelStatus, RuntimeSummary, TrafficSample } from './runtime'
 import type { SystemProxyStatus } from './system-proxy'
 import type { StartupStatus } from './startup'
+import type { TunGateway } from './tun'
 
 /**
  * Narrow, testable service boundaries. Main-process services implement these
@@ -108,4 +109,5 @@ export interface IpcDeps {
   profiles: ProfileGateway
   systemProxy: SystemProxyGateway
   startup: StartupGateway
+  tun: TunGateway
 }

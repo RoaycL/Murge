@@ -54,6 +54,38 @@ describe('Phase 9 non-network contracts', () => {
     }).success).toBe(false)
   })
 
+  it('rejects ambiguous duplicate and multi-adapter network intents', () => {
+    const base = {
+      schemaVersion: 1,
+      adapter: { name: 'Product TUN', tunnelType: 'Product TUN', requestedGuid: '65f5cc87-e5db-4e9a-a5a4-8dcf7049ea4d' },
+      routes: [{ family: 4 as const, destination: '0.0.0.0', prefixLength: 0, nextHop: null, metric: 10, routeStore: 'active' as const }],
+      dns: [{ luid: '0xaf', servers: ['1.1.1.1'], source: 'static' as const }],
+      metrics: [{ luid: '0xaf', metric: 5 }]
+    }
+    expect(desiredNetworkStateSchema.safeParse({ ...base, routes: [...base.routes, ...base.routes] }).success).toBe(false)
+    expect(desiredNetworkStateSchema.safeParse({
+      ...base,
+      dns: [{ ...base.dns[0], servers: ['1.1.1.1', '1.1.1.1'] }]
+    }).success).toBe(false)
+    expect(desiredNetworkStateSchema.safeParse({ ...base, dns: [...base.dns, ...base.dns] }).success).toBe(false)
+    expect(desiredNetworkStateSchema.safeParse({ ...base, metrics: [...base.metrics, ...base.metrics] }).success).toBe(false)
+    expect(desiredNetworkStateSchema.safeParse({
+      ...base,
+      metrics: [{ luid: '0xbe', metric: 5 }]
+    }).success).toBe(false)
+  })
+
+  it('rejects adapter labels containing control characters', () => {
+    const value = {
+      schemaVersion: 1,
+      adapter: { name: 'Product\nTUN', tunnelType: 'Product TUN', requestedGuid: '65f5cc87-e5db-4e9a-a5a4-8dcf7049ea4d' },
+      routes: [],
+      dns: [],
+      metrics: []
+    }
+    expect(desiredNetworkStateSchema.safeParse(value).success).toBe(false)
+  })
+
   it('enforces supported/unsupported and conflict status invariants', () => {
     expect(tunStatusSchema.safeParse(initialTunStatus(false)).success).toBe(true)
     expect(tunStatusSchema.safeParse({ ...initialTunStatus(true), phase: 'conflict' }).success).toBe(false)

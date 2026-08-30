@@ -1,5 +1,7 @@
 import { createHmac, hkdfSync, timingSafeEqual } from 'node:crypto'
+import { z } from 'zod'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
+import { desiredNetworkStateSchema } from '../../shared/schemas/tun'
 
 const MAX_UINT64 = (1n << 64n) - 1n
 const REQUEST_ID = /^(?:0|[1-9][0-9]{0,19})$/
@@ -26,6 +28,27 @@ export interface HelperCommandEnvelope {
   requestId: string
   mac: string
   payload: HelperPayload
+}
+
+const noPayloadSchema = z.null()
+const adapterIdentitySchema = z.object({
+  name: z.string().trim().min(1).max(128),
+  tunnelType: z.string().trim().min(1).max(128),
+  requestedGuid: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+}).strict()
+const closeIdentitySchema = adapterIdentitySchema.omit({ tunnelType: true }).extend({
+  luid: z.string().regex(/^0x(?:0|[1-9a-f][0-9a-f]{0,15})$/)
+}).strict()
+
+const OP_PAYLOAD_SCHEMAS: Readonly<Record<HelperOp, z.ZodTypeAny>> = {
+  probe_integrity: noPayloadSchema,
+  create_adapter: adapterIdentitySchema,
+  apply_network_state: desiredNetworkStateSchema,
+  close_creator_handle: closeIdentitySchema,
+  snapshot: noPayloadSchema,
+  restore: noPayloadSchema,
+  get_status: noPayloadSchema,
+  health: noPayloadSchema
 }
 
 export function deriveHelperSessionKey(
@@ -57,7 +80,7 @@ export class HelperMacSession {
     this.assertOpen()
     if (this.nextOutgoing > MAX_UINT64) invalid('outgoing requestId exhausted')
     validateOp(op)
-    canonicalPayload(payload)
+    validateHelperPayload(op, payload)
     const requestId = this.nextOutgoing.toString(10)
     this.nextOutgoing += 1n
     return { v: 1, op, requestId, payload, mac: computeMac(this.key, op, requestId, payload) }
@@ -70,6 +93,7 @@ export class HelperMacSession {
     const expected = Buffer.from(computeMac(this.key, envelope.op, envelope.requestId, envelope.payload), 'hex')
     const actual = Buffer.from(envelope.mac, 'hex')
     if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) invalid('command MAC mismatch')
+    validateHelperPayload(envelope.op, envelope.payload)
     if (requestId <= this.lastIncoming) invalid('replayed or out-of-order requestId')
     this.lastIncoming = requestId
     return envelope
@@ -106,6 +130,13 @@ export function canonicalPayload(payload: HelperPayload): string {
   const encoded = JSON.stringify(canonical)
   if (Buffer.byteLength(encoded, 'utf8') > HELPER_MAX_PAYLOAD_BYTES) invalid('helper payload exceeds 4096 bytes')
   return encoded
+}
+
+export function validateHelperPayload(op: HelperOp, payload: HelperPayload): void {
+  validateOp(op)
+  canonicalPayload(payload)
+  const result = OP_PAYLOAD_SCHEMAS[op].safeParse(payload)
+  if (!result.success) invalid(`${op} payload does not match its fixed schema`)
 }
 
 function parseEnvelope(input: unknown): HelperCommandEnvelope {

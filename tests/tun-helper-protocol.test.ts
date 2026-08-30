@@ -5,7 +5,8 @@ import {
   HelperMacSession,
   canonicalPayload,
   computeMac,
-  deriveHelperSessionKey
+  deriveHelperSessionKey,
+  validateHelperPayload
 } from '../src/main/tun/helper-protocol'
 import { ProtocolErrorCode } from '../src/shared/protocol-errors'
 
@@ -42,13 +43,13 @@ describe('privileged helper canonical protocol', () => {
   it('creates monotonic canonical uint64 request IDs', () => {
     const session = new HelperMacSession(KEY)
     expect(session.create('health', null).requestId).toBe('1')
-    expect(session.create('get_status', {}).requestId).toBe('2')
+    expect(session.create('get_status', null).requestId).toBe('2')
   })
 
   it('verifies a peer command once and rejects replay or out-of-order IDs', () => {
     const sender = new HelperMacSession(KEY)
     const receiver = new HelperMacSession(KEY)
-    const first = sender.create('health', { ok: true })
+    const first = sender.create('health', null)
     const second = sender.create('get_status', null)
     expect(receiver.verify(first)).toEqual(first)
     expect(() => receiver.verify(first)).toThrowError(expect.objectContaining({ code: ProtocolErrorCode.TUN_HELPER_PROTOCOL_INVALID }))
@@ -89,6 +90,53 @@ describe('privileged helper canonical protocol', () => {
       'probe_integrity', 'create_adapter', 'apply_network_state', 'close_creator_handle',
       'snapshot', 'restore', 'get_status', 'health'
     ])
+  })
+
+  it('enforces an exact payload schema for every operation', () => {
+    const adapter = {
+      name: 'Product TUN',
+      tunnelType: 'Product TUN',
+      requestedGuid: '65f5cc87-e5db-4e9a-a5a4-8dcf7049ea4d'
+    }
+    expect(() => validateHelperPayload('create_adapter', adapter)).not.toThrow()
+    expect(() => validateHelperPayload('close_creator_handle', {
+      name: adapter.name,
+      requestedGuid: adapter.requestedGuid,
+      luid: '0xaf'
+    })).not.toThrow()
+    for (const op of ['probe_integrity', 'snapshot', 'restore', 'get_status', 'health'] as const) {
+      expect(() => validateHelperPayload(op, null)).not.toThrow()
+      expect(() => validateHelperPayload(op, {})).toThrow()
+    }
+    expect(() => validateHelperPayload('create_adapter', { ...adapter, path: 'C:\\tmp\\evil.dll' })).toThrow()
+    expect(() => validateHelperPayload('close_creator_handle', { name: adapter.name, requestedGuid: adapter.requestedGuid, luid: 42 })).toThrow()
+  })
+
+  it('accepts only the strict DesiredNetworkState for apply_network_state', () => {
+    const desired = {
+      schemaVersion: 1,
+      adapter: { name: 'Product TUN', tunnelType: 'Product TUN', requestedGuid: '65f5cc87-e5db-4e9a-a5a4-8dcf7049ea4d' },
+      routes: [{ family: 4, destination: '0.0.0.0', prefixLength: 0, nextHop: null, metric: 10, routeStore: 'active' }],
+      dns: [{ luid: '0xaf', servers: ['1.1.1.1'], source: 'static' }],
+      metrics: [{ luid: '0xaf', metric: 5 }]
+    } as const
+    expect(() => validateHelperPayload('apply_network_state', desired)).not.toThrow()
+    expect(() => validateHelperPayload('apply_network_state', { ...desired, command: 'netsh' } as never)).toThrow()
+    expect(() => validateHelperPayload('apply_network_state', { ...desired, adapter: { ...desired.adapter, requestedGuid: 'not-a-guid' } } as never)).toThrow()
+  })
+
+  it('does not advance replay state for a valid-MAC invalid payload', () => {
+    const receiver = new HelperMacSession(KEY)
+    const malformed = {
+      v: 1,
+      op: 'health',
+      requestId: '1',
+      payload: { command: 'whoami' },
+      mac: computeMac(KEY, 'health', '1', { command: 'whoami' })
+    }
+    expect(() => receiver.verify(malformed)).toThrow()
+    const sender = new HelperMacSession(KEY)
+    expect(receiver.verify(sender.create('health', null)).requestId).toBe('1')
   })
 
   it('derives role-separated session keys and zeroizes the launch secret', () => {

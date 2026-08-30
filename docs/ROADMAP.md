@@ -325,7 +325,7 @@ Environment: Mac for mock UI; Windows VM for OS behavior.
 
 Entry gate: relevant preceding service phase complete.
 
-- [ ] System tray menu and state synchronization.
+- [~] System tray menu and state synchronization. (The main-process `TrayController` is implemented and wired: show/focus, verified kernel phase, serialized start/stop, quit, close-to-tray and idempotent teardown. It consumes the ordered kernel gateway, so tray stop preserves the Phase 8 proxy-before-kernel safety ordering and never toggles optimistically. The Electron adapter and packaged icon are included; controller behavior is unit-tested. Final native Windows tray rendering, Explorer restart behavior and installer lifecycle remain pending on the Windows VM.)
 - [ ] Start-on-login with explicit user opt-in.
 - [x] Connection detail and close actions. (Activity's live connection card opens a dedicated searchable master/detail view backed by the existing shared `/connections` transport. Close requests are deduplicated while in flight and are never treated optimistically: the store re-reads `/connections` and reports success only after the target ID is absent; controller divergence and typed failures remain visible and retryable. Store tests cover filtering/selection, confirmed close, divergence and concurrent duplicate intent.)
 - [x] Process/device detail panes. (The former fixed examples now aggregate the live `/connections` snapshot. Process identity uses name + path; device identity truthfully uses the reported source IP and does not invent DHCP hostnames. Both pages provide stable traffic/name ordering, selection, upload/download totals, active connection counts, target/process detail and explicit empty/loading states; pure tests cover aggregation and ranking.)

@@ -20,6 +20,7 @@ export default {
   },
   copyright: brand.copyright,
   extraResources: [
+    { from: 'resources/icon.png', to: 'icon.png' },
     // Each installer carries only its own architecture's pinned mihomo archive.
     // The archive is verified before packaging and re-verified at runtime before
     // extraction, so first launch never depends on GitHub availability.

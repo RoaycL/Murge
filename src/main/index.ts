@@ -32,6 +32,8 @@ import { startMockMihomoServer, type MockMihomoServerHandle } from './testing/mo
 import type { MihomoGateway } from '@shared/gateways'
 import { ProtocolError, ProtocolErrorCode } from '../shared/protocol-errors'
 import { runQuitFlow } from './quit-guard'
+import { TrayController } from './tray/tray-controller'
+import { createElectronTray } from './tray/electron-tray'
 
 const devControllerUrl = process.env.MURGE_DEV_CONTROLLER ?? 'http://127.0.0.1:9090'
 const devControllerSecret = process.env.MURGE_DEV_SECRET ?? ''
@@ -58,6 +60,7 @@ let isQuitting = false
 // returns, which is especially visible in packaged Windows builds as a running
 // background process with no window.
 let mainWindow: BrowserWindow | null = null
+let trayController: TrayController | null = null
 
 // Deep links (murge://...) that arrive before the window exists, or while a
 // second instance hands its argv over, are queued here and flushed once the
@@ -150,6 +153,15 @@ function createWindow(): BrowserWindow {
     }
   })
   mainWindow = window
+
+  // Closing the window keeps the explicitly visible tray application alive.
+  // A real app quit (tray menu / OS shutdown) passes through before-quit and is
+  // never intercepted here, so proxy + kernel recovery ordering remains intact.
+  window.on('close', (event) => {
+    if (isQuitting) return
+    event.preventDefault()
+    window.hide()
+  })
 
   // `ready-to-show` is an optimisation, not a visibility gate. Renderer load
   // failures and some Windows/GPU combinations may never emit it, so also show
@@ -373,6 +385,7 @@ app.whenReady().then(async () => {
     const window = mainWindow ?? BrowserWindow.getAllWindows()[0]
     if (window) {
       if (window.isMinimized()) window.restore()
+      window.show()
       window.focus()
     }
   })
@@ -547,9 +560,27 @@ app.whenReady().then(async () => {
     systemProxy: systemProxyService
   })
   createWindow()
+  const showMainWindow = (): void => {
+    const window = mainWindow ?? BrowserWindow.getAllWindows()[0] ?? createWindow()
+    if (window.isMinimized()) window.restore()
+    window.show()
+    window.focus()
+  }
+  const trayIcon = is.dev
+    ? join(app.getAppPath(), 'resources', 'icon.png')
+    : join(process.resourcesPath, 'icon.png')
+  trayController = new TrayController({
+    productName: brand.productName,
+    kernel: orderedKernel,
+    view: createElectronTray(trayIcon),
+    showWindow: showMainWindow,
+    quit: () => app.quit(),
+    onError: (error) => console.error('[tray] kernel action failed:', error)
+  })
+  await trayController.initialize()
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    showMainWindow()
   })
 }).catch((error) => {
   const message = error instanceof Error ? `${error.message}\n\n${error.stack ?? ''}` : String(error)
@@ -619,12 +650,14 @@ app.on('before-quit', (event) => {
       },
       dispose: async () => {
         try {
+          trayController?.dispose()
           disposeIpc?.()
           mihomo?.dispose()
           await mockServer?.close()
         } catch (error) {
           console.error('[mihomo] failed to stop mock controller during quit:', error)
         } finally {
+          trayController = null
           disposeIpc = null
         }
       },

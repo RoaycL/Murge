@@ -149,6 +149,7 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .preference-list label:last-child { border-bottom: 0; }.preference-list strong { display: block; font-size: 13px; }.preference-list small { display: block; margin-top: 4px; color: var(--app-muted); font-size: 10px; }
 .preference-list input { width: 17px; height: 17px; accent-color: var(--app-blue); }
 .appearance-note { color: var(--app-muted); font-size: 10px; }
+.general-view { width: 695px; }.general-view section { margin-top: 28px; }.general-view h2 { margin: 0 0 11px; color: var(--app-pink); font-size: 13px; }.setting-help { color: var(--app-muted); font-size: 10px; }.general-info { padding: 15px; border-radius: 10px; }.general-info p { margin: 0; color: var(--app-muted); font-size: 11px; line-height: 1.55; }
 
 :root[data-reduce-motion="true"] *, :root[data-reduce-motion="true"] *::before, :root[data-reduce-motion="true"] *::after { scroll-behavior: auto !important; animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
 

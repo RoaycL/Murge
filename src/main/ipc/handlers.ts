@@ -1,6 +1,6 @@
 import { IPC } from '@shared/ipc'
 import type { IpcDeps } from '@shared/gateways'
-import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions } from '@shared/schemas/ipc'
+import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions, parseStartupEnabled } from '@shared/schemas/ipc'
 import {
   parseConfigEdit,
   parseImportRequest,
@@ -25,7 +25,7 @@ export type IpcHandler = (event: unknown, ...args: unknown[]) => unknown | Promi
  * the semantics Electron uses for `ipcMain.handle`.
  */
 export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
-  const { brand, kernel, mihomo, runtime, profiles, systemProxy } = deps
+  const { brand, kernel, mihomo, runtime, profiles, systemProxy, startup } = deps
 
   return {
     [IPC.appGetBrand]: async () => brand,
@@ -72,7 +72,9 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
 
     [IPC.systemProxyGetStatus]: async () => systemProxy.getStatus(),
     [IPC.systemProxyEnable]: async () => systemProxy.enable(),
-    [IPC.systemProxyDisable]: async () => systemProxy.disable()
+    [IPC.systemProxyDisable]: async () => systemProxy.disable(),
+    [IPC.startupGetStatus]: async () => startup.getStatus(),
+    [IPC.startupSetEnabled]: async (_event, enabled) => startup.setEnabled(parseStartupEnabled(enabled))
   }
 }
 

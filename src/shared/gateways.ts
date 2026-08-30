@@ -21,6 +21,7 @@ import type {
 } from './profiles'
 import type { KernelStatus, RuntimeSummary, TrafficSample } from './runtime'
 import type { SystemProxyStatus } from './system-proxy'
+import type { StartupStatus } from './startup'
 
 /**
  * Narrow, testable service boundaries. Main-process services implement these
@@ -77,6 +78,11 @@ export interface SystemProxyGateway {
   onStatus(listener: (status: SystemProxyStatus) => void): () => void
 }
 
+export interface StartupGateway {
+  getStatus(): Promise<StartupStatus>
+  setEnabled(enabled: boolean): Promise<StartupStatus>
+}
+
 /**
  * Profile/subscription management boundary. Implementations manage an isolated
  * profile directory with atomic writes and never touch the live mihomo config.
@@ -101,4 +107,5 @@ export interface IpcDeps {
   runtime: RuntimeGateway
   profiles: ProfileGateway
   systemProxy: SystemProxyGateway
+  startup: StartupGateway
 }

@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { brand } from '@shared/brand'
-import type { IpcDeps, KernelGateway, MihomoGateway, ProfileGateway, SystemProxyGateway } from '@shared/gateways'
+import type { IpcDeps, KernelGateway, MihomoGateway, ProfileGateway, SystemProxyGateway, StartupGateway } from '@shared/gateways'
 import type { RuntimeSummary } from '@shared/runtime'
 import { IPC } from '@shared/ipc'
 import { ProtocolError, encodeProtocolError } from '@shared/protocol-errors'
@@ -11,6 +11,7 @@ export interface IpcDependencies {
   mihomo: MihomoGateway
   profiles: ProfileGateway
   systemProxy: SystemProxyGateway
+  startup: StartupGateway
 }
 
 /**
@@ -39,14 +40,15 @@ function buildRuntimeSummary(): RuntimeSummary {
   }
 }
 
-export function registerIpc({ kernel, mihomo, profiles, systemProxy }: IpcDependencies): () => void {
+export function registerIpc({ kernel, mihomo, profiles, systemProxy, startup }: IpcDependencies): () => void {
   const deps: IpcDeps = {
     brand,
     kernel,
     mihomo,
     runtime: { getSummary: buildRuntimeSummary },
     profiles,
-    systemProxy
+    systemProxy,
+    startup
   }
   const entries = Object.entries(buildIpcHandlers(deps))
   for (const [channel, handler] of entries) {

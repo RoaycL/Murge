@@ -1,4 +1,5 @@
-import type { KernelGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway } from '@shared/gateways'
+import type { KernelGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway } from '@shared/gateways'
+import type { StartupStatus } from '@shared/startup'
 import type { SystemProxyStatus } from '@shared/system-proxy'
 import type {
   MihomoConfigSnapshot,
@@ -336,6 +337,14 @@ export interface FakeContainer {
   runtime: FakeRuntimeGateway
   profiles: FakeProfileGateway
   systemProxy: FakeSystemProxyGateway
+  startup: FakeStartupGateway
+}
+
+export class FakeStartupGateway implements StartupGateway {
+  status: StartupStatus = { supported: true, enabled: false, phase: 'idle', errorMessage: null }
+  setCalls: boolean[] = []
+  getStatus(): Promise<StartupStatus> { return Promise.resolve({ ...this.status }) }
+  setEnabled(enabled: boolean): Promise<StartupStatus> { this.setCalls.push(enabled); this.status = { ...this.status, enabled }; return Promise.resolve({ ...this.status }) }
 }
 
 export function createFakeContainer(brand: BrandConfig): FakeContainer {
@@ -344,12 +353,14 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
   const runtime = new FakeRuntimeGateway()
   const profiles = new FakeProfileGateway()
   const systemProxy = new FakeSystemProxyGateway()
+  const startup = new FakeStartupGateway()
   return {
     kernel,
     mihomo,
     runtime,
     profiles,
     systemProxy,
-    deps: { brand, kernel, mihomo, runtime, profiles, systemProxy }
+    startup,
+    deps: { brand, kernel, mihomo, runtime, profiles, systemProxy, startup }
   }
 }

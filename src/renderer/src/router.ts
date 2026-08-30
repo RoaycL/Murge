@@ -14,6 +14,7 @@ import MoreView from './views/MoreView.vue'
 import LogsView from './views/LogsView.vue'
 import ConnectionsView from './views/ConnectionsView.vue'
 import AppearanceView from './views/AppearanceView.vue'
+import GeneralView from './views/GeneralView.vue'
 import PlaceholderView from './views/PlaceholderView.vue'
 
 const placeholder = (title: string) => ({ component: PlaceholderView, props: { title } })
@@ -37,6 +38,7 @@ export const router = createRouter({
     { path: '/logs', component: LogsView },
     { path: '/connections', component: ConnectionsView },
     { path: '/appearance', component: AppearanceView },
+    { path: '/general', component: GeneralView },
     { path: '/panel', ...placeholder('面板') }
   ]
 })

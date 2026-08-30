@@ -72,6 +72,10 @@ const api: DesktopApi = {
     enable: () => invoke(IPC.systemProxyEnable),
     disable: () => invoke(IPC.systemProxyDisable),
     onStatus: (listener) => listen(IPC.systemProxyStatusEvent, listener)
+  },
+  startup: {
+    getStatus: () => invoke(IPC.startupGetStatus),
+    setEnabled: (enabled) => invoke(IPC.startupSetEnabled, enabled)
   }
 }
 

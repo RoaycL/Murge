@@ -14,6 +14,7 @@ import type {
 import type { ConfigEdit, ImportRequest, Profile, ProfileMeta, ValidationResult } from './profiles'
 import type { KernelStatus, RuntimeSummary, TrafficSample } from './runtime'
 import type { SystemProxyStatus } from './system-proxy'
+import type { StartupStatus } from './startup'
 
 export const IPC = {
   appGetBrand: 'app:get-brand',
@@ -52,7 +53,9 @@ export const IPC = {
   systemProxyGetStatus: 'system-proxy:get-status',
   systemProxyEnable: 'system-proxy:enable',
   systemProxyDisable: 'system-proxy:disable',
-  systemProxyStatusEvent: 'system-proxy:status-event'
+  systemProxyStatusEvent: 'system-proxy:status-event',
+  startupGetStatus: 'startup:get-status',
+  startupSetEnabled: 'startup:set-enabled'
 } as const
 
 export interface DesktopApi {
@@ -104,5 +107,9 @@ export interface DesktopApi {
     enable(): Promise<SystemProxyStatus>
     disable(): Promise<SystemProxyStatus>
     onStatus(listener: (status: SystemProxyStatus) => void): () => void
+  }
+  startup: {
+    getStatus(): Promise<StartupStatus>
+    setEnabled(enabled: boolean): Promise<StartupStatus>
   }
 }

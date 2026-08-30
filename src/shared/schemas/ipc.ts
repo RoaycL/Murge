@@ -95,6 +95,11 @@ export function parseConnectionId(id: unknown): string {
   return parsed.data.id
 }
 
+export function parseStartupEnabled(value: unknown): boolean {
+  if (typeof value !== 'boolean') throw invalid('startup enabled must be a boolean')
+  return value
+}
+
 /** Validate a provider or node name used in a path segment. */
 export function parseMihomoName(name: unknown): string {
   if (!(typeof name === 'string' && name.trim().length > 0)) throw invalid('name must be a non-empty string')

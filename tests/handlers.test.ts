@@ -82,6 +82,19 @@ describe('buildIpcHandlers', () => {
     })
   })
 
+  describe('startup control', () => {
+    it('forwards an explicit boolean and returns confirmed state', async () => {
+      const result = await handlers[IPC.startupSetEnabled](null, true)
+      expect(container.startup.setCalls).toEqual([true])
+      expect(result).toMatchObject({ enabled: true })
+    })
+
+    it('rejects non-booleans before reaching the gateway', async () => {
+      await expect(handlers[IPC.startupSetEnabled](null, 'true')).rejects.toThrow(ProtocolError)
+      expect(container.startup.setCalls).toEqual([])
+    })
+  })
+
   describe('profile argument validation', () => {
     it('rejects a non-string validation document before reaching the gateway', async () => {
       await expect(handlers[IPC.profilesValidate](null, { yaml: true })).rejects.toMatchObject({

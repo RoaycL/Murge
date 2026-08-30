@@ -34,9 +34,12 @@ import { ProtocolError, ProtocolErrorCode } from '../shared/protocol-errors'
 import { runQuitFlow } from './quit-guard'
 import { TrayController } from './tray/tray-controller'
 import { createElectronTray } from './tray/electron-tray'
+import { StartupService } from './startup/service'
+import { ElectronStartupAdapter } from './startup/electron-adapter'
 
 const devControllerUrl = process.env.MURGE_DEV_CONTROLLER ?? 'http://127.0.0.1:9090'
 const devControllerSecret = process.env.MURGE_DEV_SECRET ?? ''
+const launchHidden = process.argv.includes('--hidden')
 
 // Production pins the application-data directory to a stable, product-name-free
 // namespace (see storage/app-data.ts) so a future rename never orphans user
@@ -167,6 +170,7 @@ function createWindow(): BrowserWindow {
   // failures and some Windows/GPU combinations may never emit it, so also show
   // after the document finishes loading. Both handlers are idempotent.
   const showWindow = (): void => {
+    if (launchHidden) return
     if (!window.isDestroyed() && !window.isVisible()) window.show()
   }
   window.once('ready-to-show', showWindow)
@@ -557,7 +561,8 @@ app.whenReady().then(async () => {
     kernel: orderedKernel,
     mihomo: gateway,
     profiles: profileService,
-    systemProxy: systemProxyService
+    systemProxy: systemProxyService,
+    startup: new StartupService(new ElectronStartupAdapter())
   })
   createWindow()
   const showMainWindow = (): void => {

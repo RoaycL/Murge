@@ -87,7 +87,8 @@ describe('registerIpc — system-proxy event & error wiring', () => {
       kernel: container.kernel,
       mihomo: container.mihomo,
       profiles: container.profiles,
-      systemProxy: container.systemProxy
+      systemProxy: container.systemProxy,
+      startup: container.startup
     })
   })
 

@@ -8,11 +8,13 @@ import { useRuntimeStore } from '../stores/runtime'
 import { useKernelStore } from '../stores/kernel'
 import { formatBytes, formatBytesParts, formatRate } from '../lib/format'
 import { brand } from '@shared/brand'
+import { useRouter } from 'vue-router'
 
 const traffic = useTrafficStore()
 const connections = useConnectionsStore()
 const runtime = useRuntimeStore()
 const kernel = useKernelStore()
+const router = useRouter()
 
 onMounted(() => {
   kernel.connect()
@@ -92,7 +94,7 @@ const bars = Array.from({ length: 23 }, () => 0)
         <SpeedSparkline kind="download" title="下载" :value="down.value" :unit="down.unit" ceiling="2.1 MB/s" middle="1.0 MB/s" :series="traffic.downloadSeries" />
       </div>
 
-      <SurfaceCard class="connections-card">
+      <SurfaceCard class="connections-card connections-link" role="button" tabindex="0" aria-label="查看活动连接" @click="router.push('/connections')" @keydown.enter="router.push('/connections')" @keydown.space.prevent="router.push('/connections')">
         <span class="metric-label">活动连接<span v-if="connStateLabel" class="stream-state">{{ connStateLabel }}</span></span><i :class="connDotClass" />
         <div class="large-metric">{{ activeCount }}</div>
         <div class="connection-breakdown">

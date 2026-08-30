@@ -1,6 +1,8 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { MihomoConnectionsSnapshot, MihomoStreamError } from '@shared/mihomo-api'
+import type { MihomoConnection } from '@shared/mihomo-api'
+import { toProtocolError } from '@shared/protocol-errors'
 
 export type ConnectionsStreamStatus = 'loading' | 'live' | 'disconnected' | 'error'
 
@@ -26,6 +28,10 @@ export const useConnectionsStore = defineStore('connections', () => {
   const status = ref<ConnectionsStreamStatus>('loading')
   const lastError = ref<string | null>(null)
   const snapshot = ref<MihomoConnectionsSnapshot | null>(null)
+  const selectedId = ref<string | null>(null)
+  const search = ref('')
+  const closingIds = ref<string[]>([])
+  const actionError = ref<string | null>(null)
   let connectionsUnsub: (() => void) | null = null
   let errorUnsub: (() => void) | null = null
   let watchdog: ReturnType<typeof setTimeout> | null = null
@@ -76,14 +82,63 @@ export const useConnectionsStore = defineStore('connections', () => {
     }
   })
 
+  const visibleConnections = computed<MihomoConnection[]>(() => {
+    const term = search.value.trim().toLocaleLowerCase()
+    const rows = snapshot.value?.connections ?? []
+    if (!term) return rows
+    return rows.filter((connection) => {
+      const haystack = [
+        connection.metadata.process,
+        connection.metadata.host,
+        connection.metadata.destinationIP,
+        connection.rule,
+        connection.rulePayload,
+        ...connection.chains
+      ].filter(Boolean).join(' ').toLocaleLowerCase()
+      return haystack.includes(term)
+    })
+  })
+
+  const selectedConnection = computed<MihomoConnection | null>(() => {
+    if (!selectedId.value) return null
+    return snapshot.value?.connections.find((connection) => connection.id === selectedId.value) ?? null
+  })
+
   function accept(snap: MihomoConnectionsSnapshot): void {
     snapshot.value = snap
+    if (selectedId.value && !snap.connections.some((connection) => connection.id === selectedId.value)) selectedId.value = null
     // Any valid snapshot proves the stream is alive; recover from loading or
     // disconnected and clear the stale error.
     lastError.value = null
     status.value = 'live'
     // Keep a fresh silence watchdog armed after every snapshot.
     armWatchdog()
+  }
+
+  function select(id: string | null): void {
+    selectedId.value = id
+    actionError.value = null
+  }
+
+  async function close(id: string): Promise<boolean> {
+    if (closingIds.value.includes(id)) return false
+    closingIds.value = [...closingIds.value, id]
+    actionError.value = null
+    try {
+      await window.desktop.mihomo.closeConnection(id)
+      const confirmed = await window.desktop.mihomo.getConnections()
+      accept(confirmed)
+      if (confirmed.connections.some((connection) => connection.id === id)) {
+        actionError.value = '控制器未确认连接已关闭'
+        return false
+      }
+      return true
+    } catch (error) {
+      actionError.value = toProtocolError(error).message
+      return false
+    } finally {
+      closingIds.value = closingIds.value.filter((value) => value !== id)
+    }
   }
 
   function onError(error: MihomoStreamError): void {
@@ -118,5 +173,9 @@ export const useConnectionsStore = defineStore('connections', () => {
     status.value = 'loading'
   }
 
-  return { status, lastError, snapshot, summary, connect, disconnect }
+  return {
+    status, lastError, snapshot, summary,
+    selectedId, selectedConnection, search, visibleConnections, closingIds, actionError,
+    connect, disconnect, select, close
+  }
 })

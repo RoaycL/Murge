@@ -10,6 +10,7 @@ type Mh = {
   connectionsListeners: Set<(snapshot: MihomoConnectionsSnapshot) => void>
   errorListeners: Set<(error: MihomoStreamError) => void>
   getConnections: ReturnType<typeof vi.fn>
+  closeConnection: ReturnType<typeof vi.fn>
   onTraffic: (listener: (sample: TrafficSample) => void) => () => void
   onConnections: (listener: (snapshot: MihomoConnectionsSnapshot) => void) => () => void
   onLogs: (listener: (message: unknown) => void) => () => void
@@ -28,6 +29,7 @@ beforeEach(() => {
   mihomo = {
     ...listeners,
     getConnections: vi.fn(),
+    closeConnection: vi.fn(),
     onTraffic: (listener) => {
       listener && listeners.trafficListeners.add(listener)
       return () => listeners.trafficListeners.delete(listener)
@@ -217,5 +219,58 @@ describe('connections store', () => {
     emitConnections(store, snapshot)
     expect(store.status).toBe('loading')
     await Promise.resolve()
+  })
+
+  it('filters and selects live connection details', () => {
+    const store = useConnectionsStore()
+    mihomo.getConnections.mockResolvedValue(snapshot)
+    store.connect()
+    emitConnections(store, snapshot)
+    store.search = 'browser'
+    expect(store.visibleConnections.map((connection) => connection.id)).toEqual(['c2'])
+    store.select('c2')
+    expect(store.selectedConnection?.metadata.process).toBe('Browser')
+    store.disconnect()
+  })
+
+  it('closes once and only reports success after a confirming controller read', async () => {
+    const store = useConnectionsStore()
+    emitConnections(store, snapshot)
+    mihomo.closeConnection.mockResolvedValue(undefined)
+    mihomo.getConnections.mockResolvedValue({ ...snapshot, connections: snapshot.connections.filter((connection) => connection.id !== 'c2') })
+
+    const result = await store.close('c2')
+    expect(result).toBe(true)
+    expect(mihomo.closeConnection).toHaveBeenCalledTimes(1)
+    expect(mihomo.closeConnection).toHaveBeenCalledWith('c2')
+    expect(store.snapshot?.connections.some((connection) => connection.id === 'c2')).toBe(false)
+    expect(store.actionError).toBeNull()
+  })
+
+  it('keeps the connection visible and recoverable when confirmation diverges', async () => {
+    const store = useConnectionsStore()
+    emitConnections(store, snapshot)
+    mihomo.closeConnection.mockResolvedValue(undefined)
+    mihomo.getConnections.mockResolvedValue(snapshot)
+
+    expect(await store.close('c1')).toBe(false)
+    expect(store.actionError).toBe('控制器未确认连接已关闭')
+    expect(store.snapshot?.connections.some((connection) => connection.id === 'c1')).toBe(true)
+    expect(store.closingIds).toEqual([])
+  })
+
+  it('deduplicates an in-flight close and surfaces a typed failure', async () => {
+    const store = useConnectionsStore()
+    let rejectClose: ((error: Error) => void) | undefined
+    mihomo.closeConnection.mockImplementation(() => new Promise<void>((_resolve, reject) => { rejectClose = reject }))
+
+    const first = store.close('c3')
+    expect(store.closingIds).toEqual(['c3'])
+    expect(await store.close('c3')).toBe(false)
+    expect(mihomo.closeConnection).toHaveBeenCalledTimes(1)
+    rejectClose?.(new Error('controller unavailable'))
+    expect(await first).toBe(false)
+    expect(store.actionError).toContain('controller unavailable')
+    expect(store.closingIds).toEqual([])
   })
 })

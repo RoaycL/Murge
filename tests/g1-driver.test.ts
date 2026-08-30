@@ -1,8 +1,8 @@
 /**
  * Unit tests for the real G1 driver seam (`src/main/tun/g1-driver.ts`).
  *
- * The driver is constructed WITHOUT a native binding and with an intentionally
- * unpopulated pinned manifest, so it fails closed: no Wintun DLL is loaded, no
+ * The driver is constructed WITHOUT a native binding. Official DLL digests are
+ * pinned, but no DLL path/binding is supplied, so it fails closed: no DLL is loaded, no
  * mihomo is spawned and no network/OS mutation is attempted. These tests prove
  * that default fail-closed behaviour plus the generate -> validate ->
  * parse-back-assert pipeline for the isolated mihomo probe config (P1-4).
@@ -49,10 +49,11 @@ function expectCode(fn: () => unknown, code: G1ErrorCode): void {
 }
 
 describe('createRealG1ProbeDriver (fail-closed seam)', () => {
-  it('fails closed when the pinned manifest has no digest for the running arch (no DLL load)', async () => {
-    // The unpinned manifest is intentionally unpopulated (digests === {}), so the
-    // running architecture's digest is missing: this is the arch-mismatch path.
-    expect(Object.keys(PINNED_WINTUN_MANIFEST.digests)).toHaveLength(0)
+  it('pins official amd64/arm64 digests but still fails closed without a configured DLL path', async () => {
+    expect(PINNED_WINTUN_MANIFEST.digests).toEqual({
+      x64: 'e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce',
+      arm64: 'f7ba89005544be9d85231a9e0d5f23b2d15b3311667e2dad0debd344918a3f80'
+    })
     const driver = createRealG1ProbeDriver()
     const load = await driver.loadPinnedWintun()
     expect(load.verified).toBe(false)

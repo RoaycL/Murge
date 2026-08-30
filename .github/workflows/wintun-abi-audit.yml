@@ -1,0 +1,35 @@
+name: Wintun ABI audit (read only)
+
+on:
+  pull_request:
+    paths:
+      - 'native/wintun-abi-audit/**'
+      - 'scripts/verify-wintun-sdk.ps1'
+      - 'src/main/tun/wintun-abi.ts'
+      - 'src/main/tun/g1-driver.ts'
+      - '.github/workflows/wintun-abi-audit.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'native/wintun-abi-audit/**'
+      - 'scripts/verify-wintun-sdk.ps1'
+      - 'src/main/tun/wintun-abi.ts'
+      - 'src/main/tun/g1-driver.ts'
+      - '.github/workflows/wintun-abi-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit-amd64:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Verify official release, compile header contract and resolve exports
+        shell: pwsh
+        run: ./scripts/verify-wintun-sdk.ps1

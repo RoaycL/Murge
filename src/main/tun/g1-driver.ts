@@ -76,14 +76,17 @@ export interface G1WintunManifest {
 
 /**
  * The pinned manifest. The per-arch digest MUST be filled in from the official
- * Wintun release before any execution; an empty digest means the probe fails
- * closed (it refuses to load an unverified DLL). This is intentionally
- * unpopulated in the non-executed scaffold.
+ * Wintun release before any execution. These values are pinned to the official
+ * 0.14.1 archive; the native binding remains absent, so this manifest alone can
+ * never make G1 executable.
  */
 export const PINNED_WINTUN_MANIFEST: G1WintunManifest = {
   version: WINTUN_PINNED_VERSION,
   source: 'https://www.wintun.net/ (official release; see resources/THIRD_PARTY_NOTICES.md)',
-  digests: {}
+  digests: {
+    x64: 'e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce',
+    arm64: 'f7ba89005544be9d85231a9e0d5f23b2d15b3311667e2dad0debd344918a3f80'
+  }
 }
 
 /** Expects the digest to be 64 lower/upper-case hex characters (SHA-256). */

@@ -305,13 +305,13 @@ and calling-convention assumptions cannot drift from the SDK.
 
 | Field | Value |
 |---|---|
-| Header | `wintun.h` from the official Wintun source/release (wintun.net; `git.zx2c4.com/wintun`); copy the exact `typedef`/prototypes into `src/main/tun/wintun-abi.ts` + a pinned `wintun.def` |
+| Header | `wintun.h` extracted from the official Wintun 0.14.1 release archive after verifying archive SHA-256 `07c256...ef51` and header SHA-256 `510a59...460f`; the audit compiles directly against that header and never copies ABI shapes into TypeScript |
 | Version | **0.14.1** |
 | Architecture | per-arch DLL: `amd64`, `arm64`; **one DLL per arch, ABI fixed for that arch** (never cross-bundle) |
 | Calling convention | `WINAPI` (`__stdcall`) on x86-64 (x64 ignores but keep correct for correctness); exported by name (DLL export table) |
 | Handle types | `WINTUN_ADAPTER_HANDLE`, `WINTUN_SESSION_HANDLE` (opaque pointers; do not reinterpret elsewhere) |
 | `NET_LUID` | 64-bit `NET_LUID` union; serialized as a **canonical hex string** in JSON (§8.1) |
-| ABI source of record | **Official `wintun.h` at tag `0.14.1`** (checked into the repo verbatim; DO NOT hand-declare any symbol) — copy the exact `WINTUN_*_FUNC` typedefs into `src/main/tun/wintun-abi.ts` |
+| ABI source of record | **Official `wintun.h` from release `0.14.1`**, accepted only after the pinned archive/header digest checks; DO NOT hand-declare any native signature in TypeScript |
 | Build-time ABI check | A build step runs `dumpbin /exports` (MSVC) or `llvm-readobj --coff-exports` against the pinned `wintun.dll` and asserts the **exported symbol name set exactly matches** the table above; a runtime check additionally resolves each name via `GetProcAddress` and asserts non-null before first use. A mismatch fails the build (no runtime fallback). |
 
 **RequestedGUID note.** There **is** a user-supplied `RequestedGUID` parameter: passing a

@@ -1,9 +1,18 @@
 <script setup lang="ts">
-const items = [
-  ['AI', 'Chat Client', '23 KB/s', '2.63 GB'], ['SYS', 'System Services', '0 B/s', '2.46 GB'],
-  ['>_', 'curl', '0 B/s', '828.6 MB'], ['N', 'node', '0 B/s', '440.0 MB'],
-  ['C', 'Code Editor', '0 B/s', '406.0 MB'], ['B', 'Browser', '778 B/s', '121.6 MB'],
-  ['M', 'Mail', '0 B/s', '103.1 MB']
-]
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useConnectionsStore } from '../stores/connections'
+import { groupConnectionsByProcess } from '../lib/connection-groups'
+import { formatBytes } from '../lib/format'
+
+const store = useConnectionsStore()
+const selectedKey = ref<string | null>(null)
+const sort = ref<'traffic' | 'name'>('traffic')
+const groups = computed(() => {
+  const rows = groupConnectionsByProcess(store.snapshot?.connections ?? [])
+  return sort.value === 'name' ? [...rows].sort((a, b) => a.label.localeCompare(b.label)) : rows
+})
+const selected = computed(() => groups.value.find((group) => group.key === selectedKey.value) ?? null)
+onMounted(store.connect)
+onUnmounted(store.disconnect)
 </script>
-<template><div class="page-shell list-detail-page"><header class="page-toolbar"><h1>进程</h1><select><option>按流量排序</option><option>按名称排序</option></select></header><div class="list-detail-grid"><div class="entity-list"><button v-for="item in items" :key="item[1]" class="entity-row"><i>{{ item[0] }}</i><span>{{ item[1] }}</span><strong>{{ item[2] }}<small>总计 {{ item[3] }}</small></strong></button></div><div class="empty-detail" /></div><footer class="inline-setting"><button class="switch" /><strong>计费网络模式</strong><p>启动后所有进程将默认禁止使用网络，适用于按流量计费的网络。</p></footer></div></template>
+<template><div class="page-shell list-detail-page"><header class="page-toolbar"><div><h1>进程</h1><small>{{ store.status === 'live' ? `${groups.length} 个活动进程` : '正在连接' }}</small></div><select v-model="sort"><option value="traffic">按流量排序</option><option value="name">按名称排序</option></select></header><div class="list-detail-grid"><div class="entity-list"><button v-for="group in groups" :key="group.key" class="entity-row" :class="{ selected: selectedKey === group.key }" @click="selectedKey = group.key"><i>{{ group.label.slice(0, 2) }}</i><span>{{ group.label }}<small>{{ group.subtitle }}</small></span><strong>{{ formatBytes(group.upload + group.download) }}<small>{{ group.connections.length }} 个连接</small></strong></button><p v-if="!groups.length" class="entity-empty">暂无活动进程</p></div><div class="empty-detail entity-detail"><template v-if="selected"><h2>{{ selected.label }}</h2><p>{{ selected.subtitle }}</p><dl><div><dt>活动连接</dt><dd>{{ selected.connections.length }}</dd></div><div><dt>上传</dt><dd>{{ formatBytes(selected.upload) }}</dd></div><div><dt>下载</dt><dd>{{ formatBytes(selected.download) }}</dd></div></dl><h3>目标</h3><ul><li v-for="connection in selected.connections" :key="connection.id"><span>{{ connection.metadata.host || connection.metadata.destinationIP || '未知目标' }}</span><small>{{ connection.chains.join(' → ') || 'DIRECT' }}</small></li></ul></template><p v-else>选择一个进程以查看详情</p></div></div><footer class="inline-setting"><button class="switch" disabled /><strong>计费网络模式</strong><p>尚未实现；当前页面只显示 mihomo 报告的实时连接。</p></footer></div></template>

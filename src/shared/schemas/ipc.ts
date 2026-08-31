@@ -105,15 +105,19 @@ export function parseStartupEnabled(value: unknown): boolean {
  * boolean key is accepted; anything else is rejected so the IPC boundary cannot
  * write an unknown field into the persisted settings document.
  */
-export function parseAppSettingsPatch(input: unknown): { autoStartKernel?: boolean } {
+export function parseAppSettingsPatch(input: unknown): { autoStartKernel?: boolean; autoCheckUpdate?: boolean } {
   if (!(typeof input === 'object' && input !== null && !Array.isArray(input))) {
     throw invalid('app settings patch must be an object')
   }
   const record = input as Record<string, unknown>
-  const patch: { autoStartKernel?: boolean } = {}
+  const patch: { autoStartKernel?: boolean; autoCheckUpdate?: boolean } = {}
   if ('autoStartKernel' in record) {
     if (typeof record.autoStartKernel !== 'boolean') throw invalid('autoStartKernel must be a boolean')
     patch.autoStartKernel = record.autoStartKernel
+  }
+  if ('autoCheckUpdate' in record) {
+    if (typeof record.autoCheckUpdate !== 'boolean') throw invalid('autoCheckUpdate must be a boolean')
+    patch.autoCheckUpdate = record.autoCheckUpdate
   }
   return patch
 }

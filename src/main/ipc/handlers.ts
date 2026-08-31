@@ -25,7 +25,7 @@ export type IpcHandler = (event: unknown, ...args: unknown[]) => unknown | Promi
  * the semantics Electron uses for `ipcMain.handle`.
  */
 export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
-  const { brand, appInfo, kernel, mihomo, runtime, profiles, systemProxy, startup, appSettings, tun } = deps
+  const { brand, appInfo, kernel, mihomo, runtime, profiles, systemProxy, startup, appSettings, updates, tun } = deps
 
   return {
     [IPC.appGetBrand]: async () => brand,
@@ -91,6 +91,10 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
     [IPC.startupSetEnabled]: async (_event, enabled) => startup.setEnabled(parseStartupEnabled(enabled)),
     [IPC.appSettingsGet]: async () => appSettings.get(),
     [IPC.appSettingsSet]: async (_event, patch) => appSettings.set(parseAppSettingsPatch(patch)),
+    [IPC.updatesGetState]: async () => updates.getState(),
+    [IPC.updatesCheck]: async () => updates.check(),
+    [IPC.updatesDownload]: async () => updates.download(),
+    [IPC.updatesInstall]: () => updates.install(),
     [IPC.tunGetStatus]: async () => tun.getStatus(),
     [IPC.tunEnable]: async () => {
       const kernelStatus = await kernel.getStatus()

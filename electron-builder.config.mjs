@@ -2,6 +2,12 @@ import { readFileSync } from 'node:fs'
 
 const brand = JSON.parse(readFileSync(new URL('./brand.config.json', import.meta.url), 'utf8'))
 
+// Derive the GitHub owner/repo from the brand's repository URL so the update
+// feed never hardcodes the product name (the brand:check gate forbids it in
+// source) and a future rename only needs a single brand edit.
+const repoUrl = new URL(brand.repositoryUrl)
+const [, owner, repo] = repoUrl.pathname.split('/')
+
 export default {
   // Owner decision: public releases are intentionally unsigned. Checksums and
   // immutable source/tag evidence remain mandatory; Windows will show Unknown
@@ -77,5 +83,16 @@ export default {
     // shipped as installed resources instead of being shown as click-through
     // contract terms.
   },
-  protocols: [{ name: brand.productName, schemes: [brand.protocolScheme] }]
+  protocols: [{ name: brand.productName, schemes: [brand.protocolScheme] }],
+  // GitHub releases update feed. The builder bakes `app-update.yml` into the
+  // packaged app (electron-updater reads it to find the feed) and emits
+  // `latest.yml` in the output dir, which the release pipeline uploads alongside
+  // the installers. Publishing itself stays explicit and manual (`--publish
+  // never` in the workflow) so the verified-draft sequence is unchanged.
+  publish: {
+    provider: 'github',
+    owner,
+    repo,
+    releaseType: 'release'
+  }
 }

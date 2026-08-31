@@ -86,6 +86,13 @@ const api: DesktopApi = {
     get: () => invoke(IPC.appSettingsGet),
     set: (patch) => invoke(IPC.appSettingsSet, patch)
   },
+  updates: {
+    getState: () => invoke(IPC.updatesGetState),
+    check: () => invoke(IPC.updatesCheck),
+    download: () => invoke(IPC.updatesDownload),
+    install: () => invoke(IPC.updatesInstall),
+    onState: (listener) => listen(IPC.updatesStateEvent, listener)
+  },
   tun: {
     getStatus: () => invoke(IPC.tunGetStatus),
     enable: () => invoke(IPC.tunEnable),

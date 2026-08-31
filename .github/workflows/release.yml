@@ -122,6 +122,19 @@ jobs:
           if (-not ($installers.Name -match '-x64\.exe$')) { throw 'x64 installer is missing' }
           if (-not ($installers.Name -match '-arm64\.exe$')) { throw 'arm64 installer is missing' }
 
+          # Auto-update feed: electron-builder emits `latest.yml` (the channel
+          # manifest electron-updater reads) from the github publish config, and
+          # bakes `app-update.yml` into each unpacked app so the packaged binary
+          # knows its feed. Fail loudly here rather than ship an un-updatable
+          # release silently.
+          $unpacked = @(Get-ChildItem -Path dist -Directory -Filter 'win*-unpacked')
+          $updateFeed = Join-Path $PWD 'dist\latest.yml'
+          if (-not (Test-Path $updateFeed)) { throw 'latest.yml update feed is missing from dist' }
+          foreach ($dir in $unpacked) {
+            $appUpdate = Join-Path $dir.FullName 'resources\app-update.yml'
+            if (-not (Test-Path $appUpdate)) { throw "app-update.yml missing from $($dir.Name)" }
+          }
+
           $checksumPath = Join-Path $PWD 'dist\SHA256SUMS.txt'
           $lines = foreach ($file in $installers) {
             $hash = (Get-FileHash -Algorithm SHA256 $file.FullName).Hash.ToLowerInvariant()
@@ -148,6 +161,7 @@ jobs:
           "x64=$((($installers | Where-Object Name -Match '-x64\.exe$').FullName))" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "arm64=$((($installers | Where-Object Name -Match '-arm64\.exe$').FullName))" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "checksums=$checksumPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "updateFeed=$updateFeed" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "notes=$((Join-Path $PWD 'dist\RELEASE_NOTES.md'))" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "evidence=$evidencePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
@@ -158,6 +172,7 @@ jobs:
           X64_INSTALLER: ${{ steps.assets.outputs.x64 }}
           ARM64_INSTALLER: ${{ steps.assets.outputs.arm64 }}
           CHECKSUM_FILE: ${{ steps.assets.outputs.checksums }}
+          UPDATE_FEED: ${{ steps.assets.outputs.updateFeed }}
           RELEASE_NOTES: ${{ steps.assets.outputs.notes }}
           RELEASE_EVIDENCE: ${{ steps.assets.outputs.evidence }}
         run: |
@@ -166,10 +181,10 @@ jobs:
             if ($existing -ne 'true') {
               throw "Refusing to overwrite an already-published release for $env:GITHUB_REF_NAME"
             }
-            gh release upload $env:GITHUB_REF_NAME $env:X64_INSTALLER $env:ARM64_INSTALLER $env:CHECKSUM_FILE $env:RELEASE_EVIDENCE --clobber
+            gh release upload $env:GITHUB_REF_NAME $env:X64_INSTALLER $env:ARM64_INSTALLER $env:CHECKSUM_FILE $env:UPDATE_FEED $env:RELEASE_EVIDENCE --clobber
             gh release edit $env:GITHUB_REF_NAME --notes-file $env:RELEASE_NOTES
           } else {
-            gh release create $env:GITHUB_REF_NAME $env:X64_INSTALLER $env:ARM64_INSTALLER $env:CHECKSUM_FILE $env:RELEASE_EVIDENCE --draft --verify-tag --title $env:GITHUB_REF_NAME --notes-file $env:RELEASE_NOTES
+            gh release create $env:GITHUB_REF_NAME $env:X64_INSTALLER $env:ARM64_INSTALLER $env:CHECKSUM_FILE $env:UPDATE_FEED $env:RELEASE_EVIDENCE --draft --verify-tag --title $env:GITHUB_REF_NAME --notes-file $env:RELEASE_NOTES
           }
 
       - name: Preserve installers as workflow artifact
@@ -179,6 +194,7 @@ jobs:
           path: |
             dist/*-Setup-*-x64.exe
             dist/*-Setup-*-arm64.exe
+            dist/latest.yml
             dist/SHA256SUMS.txt
             dist/RELEASE_NOTES.md
             dist/release-evidence.json

@@ -90,6 +90,8 @@ describe('registerIpc — system-proxy event & error wiring', () => {
       profiles: container.profiles,
       systemProxy: container.systemProxy,
       startup: container.startup,
+      appSettings: container.appSettings,
+      updates: container.updates,
       tun: container.tun
     })
   })

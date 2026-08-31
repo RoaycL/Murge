@@ -39,6 +39,8 @@ import { createElectronTray } from './tray/electron-tray'
 import { StartupService } from './startup/service'
 import { ElectronStartupAdapter } from './startup/electron-adapter'
 import { AppSettingsService } from './app-settings/service'
+import { UpdateService } from './updates/service'
+import { ElectronUpdaterDriver } from './updates/electron-updater-driver'
 import { TunCoordinator, GatedTunMutationAdapter } from './tun/coordinator'
 import { MihomoOwnedTunAdapter } from './tun/mihomo-owned-adapter'
 import { TunServiceClient } from './tun/service-client'
@@ -74,6 +76,7 @@ let isQuitting = false
 let mainWindow: BrowserWindow | null = null
 let trayController: TrayController | null = null
 let tunCoordinator: TunCoordinator | null = null
+let updateService: UpdateService | null = null
 
 // Deep links (murge://...) that arrive before the window exists, or while a
 // second instance hands its argv over, are queued here and flushed once the
@@ -639,6 +642,9 @@ app.whenReady().then(async () => {
     }
   })
   const appSettingsService = new AppSettingsService(appDataRoot(app.getPath('appData')))
+  const updates = new UpdateService(new ElectronUpdaterDriver())
+  updateService = updates
+  updates.start()
   disposeIpc = registerIpc({
     kernel: orderedKernel,
     mihomo: gateway,
@@ -646,6 +652,7 @@ app.whenReady().then(async () => {
     systemProxy: systemProxyService,
     startup: new StartupService(new ElectronStartupAdapter()),
     appSettings: appSettingsService,
+    updates,
     tun: tunGateway
   })
   createWindow()
@@ -664,6 +671,7 @@ app.whenReady().then(async () => {
     view: createElectronTray(trayIcon),
     showWindow: showMainWindow,
     quit: () => app.quit(),
+    onCheckUpdate: () => { void updates.check().catch((error) => console.warn('[updates] tray check failed:', error)) },
     onError: (error) => console.error('[tray] kernel action failed:', error)
   })
   await trayController.initialize()
@@ -711,6 +719,23 @@ app.whenReady().then(async () => {
       }
     } catch (error) {
       console.warn('[kernel-autostart] failed to auto-start kernel:', error)
+    }
+  }
+
+  // Auto-check for a newer release on launch, gated on the persisted
+  // "启动时自动检查更新" setting. `check()` kicks off the feed request and returns
+  // immediately, so this never blocks the window; a found update downloads in
+  // the background and installs on the next quit, while a manual "检查更新"
+  // from "关于" or the tray always works regardless of this flag. Wrapped so a
+  // transient network failure only logs and never blocks startup.
+  if (!is.dev) {
+    try {
+      const settings = await appSettingsService.get()
+      if (settings.autoCheckUpdate) {
+        await updates.check()
+      }
+    } catch (error) {
+      console.warn('[updates] auto-check failed:', error)
     }
   }
 
@@ -803,6 +828,7 @@ app.on('before-quit', (event) => {
         try {
           trayController?.dispose()
           disposeIpc?.()
+          updateService?.dispose()
           mihomo?.dispose()
           await mockServer?.close()
         } catch (error) {
@@ -810,6 +836,7 @@ app.on('before-quit', (event) => {
         } finally {
           trayController = null
           disposeIpc = null
+          updateService = null
         }
       },
       quit: () => app.quit(),

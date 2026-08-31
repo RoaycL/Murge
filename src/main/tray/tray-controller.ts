@@ -2,7 +2,7 @@ import type { KernelGateway } from '@shared/gateways'
 import type { KernelStatus } from '@shared/runtime'
 
 export interface TrayMenuItem {
-  id: 'show' | 'status' | 'start' | 'stop' | 'quit' | 'separator'
+  id: 'show' | 'status' | 'start' | 'stop' | 'check-update' | 'quit' | 'separator'
   label?: string
   enabled?: boolean
   type?: 'separator'
@@ -23,6 +23,7 @@ export interface TrayControllerOptions {
   view: TrayView
   showWindow(): void
   quit(): void
+  onCheckUpdate?(): void
   onError?(error: unknown): void
 }
 
@@ -82,6 +83,7 @@ export class TrayController {
       { id: 'separator', type: 'separator' },
       { id: 'start', label: '启动内核', enabled: !transition && phase !== 'running', click: () => { void this.act('start') } },
       { id: 'stop', label: '停止内核', enabled: !transition && phase === 'running', click: () => { void this.act('stop') } },
+      { id: 'check-update', label: '检查更新', enabled: true, click: () => { void this.options.onCheckUpdate?.() } },
       { id: 'separator', type: 'separator' },
       { id: 'quit', label: `退出 ${this.options.productName}`, enabled: true, click: this.options.quit }
     ])

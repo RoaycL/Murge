@@ -31,7 +31,11 @@ export class AppSettingsService implements AppSettingsGateway {
         autoStartKernel:
           typeof patch.autoStartKernel === 'boolean'
             ? patch.autoStartKernel
-            : current.autoStartKernel
+            : current.autoStartKernel,
+        autoCheckUpdate:
+          typeof patch.autoCheckUpdate === 'boolean'
+            ? patch.autoCheckUpdate
+            : current.autoCheckUpdate
       }
       await this.write(next)
       return next

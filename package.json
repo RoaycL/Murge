@@ -1,6 +1,6 @@
 {
   "name": "proxy-desktop-shell",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "license": "GPL-3.0-only",
   "private": true,
   "type": "module",
@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@vueuse/core": "^13.0.0",
+    "electron-updater": "^6.8.9",
     "pinia": "^3.0.0",
     "vue": "^3.5.0",
     "vue-router": "^4.5.0",

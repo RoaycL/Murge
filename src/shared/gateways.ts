@@ -27,6 +27,7 @@ import type { StartupStatus } from './startup'
 import type { AppSettings } from './app-settings'
 import type { TunGateway } from './tun'
 import type { AppInfo } from './app-info'
+import type { UpdateState } from './updates'
 
 /**
  * Narrow, testable service boundaries. Main-process services implement these
@@ -99,6 +100,24 @@ export interface AppSettingsGateway {
 }
 
 /**
+ * Application-update boundary. The implementation owns the auto-updater and
+ * reduces its events into a {@link UpdateState} snapshot; the renderer issues a
+ * narrow command (check, download, install) and observes the pushed state.
+ */
+export interface UpdatesGateway {
+  /** Current in-memory snapshot (never performs I/O). */
+  getState(): UpdateState
+  /** Check the feed for a newer version; resolves with the resulting state. */
+  check(): Promise<UpdateState>
+  /** Start (or resume) downloading the available update in the background. */
+  download(): Promise<void>
+  /** Install a fully-downloaded update and restart the app. */
+  install(): void
+  /** Subscribe to state transitions; returns an unsubscribe function. */
+  onState(listener: (state: UpdateState) => void): () => void
+}
+
+/**
  * Profile/subscription management boundary. Implementations manage an isolated
  * profile directory with atomic writes and never touch the live mihomo config.
  */
@@ -129,5 +148,6 @@ export interface IpcDeps {
   systemProxy: SystemProxyGateway
   startup: StartupGateway
   appSettings: AppSettingsGateway
+  updates: UpdatesGateway
   tun: TunGateway
 }

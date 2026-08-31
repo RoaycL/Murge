@@ -20,6 +20,7 @@ import type { StartupStatus } from './startup'
 import type { TunStatus } from './tun'
 import type { AppInfo } from './app-info'
 import type { AppSettings } from './app-settings'
+import type { UpdateState } from './updates'
 
 export const IPC = {
   appGetBrand: 'app:get-brand',
@@ -68,6 +69,11 @@ export const IPC = {
   startupSetEnabled: 'startup:set-enabled',
   appSettingsGet: 'app-settings:get',
   appSettingsSet: 'app-settings:set',
+  updatesGetState: 'updates:get-state',
+  updatesCheck: 'updates:check',
+  updatesDownload: 'updates:download',
+  updatesInstall: 'updates:install',
+  updatesStateEvent: 'updates:state-event',
   tunGetStatus: 'tun:get-status',
   tunEnable: 'tun:enable',
   tunDisable: 'tun:disable',
@@ -136,6 +142,13 @@ export interface DesktopApi {
   appSettings: {
     get(): Promise<AppSettings>
     set(patch: Partial<AppSettings>): Promise<AppSettings>
+  }
+  updates: {
+    getState(): Promise<UpdateState>
+    check(): Promise<UpdateState>
+    download(): Promise<void>
+    install(): void
+    onState(listener: (state: UpdateState) => void): () => void
   }
   tun: {
     getStatus(): Promise<TunStatus>

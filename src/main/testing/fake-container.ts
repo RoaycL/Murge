@@ -1,6 +1,8 @@
-import type { KernelGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway, AppSettingsGateway } from '@shared/gateways'
+import type { KernelGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway } from '@shared/gateways'
 import type { StartupStatus } from '@shared/startup'
 import type { AppSettings } from '@shared/app-settings'
+import type { UpdateState } from '@shared/updates'
+import { DEFAULT_UPDATE_STATE } from '@shared/updates'
 import type { SystemProxyStatus } from '@shared/system-proxy'
 import type {
   MihomoConfigSnapshot,
@@ -368,6 +370,7 @@ export interface FakeContainer {
   systemProxy: FakeSystemProxyGateway
   startup: FakeStartupGateway
   appSettings: FakeAppSettingsGateway
+  updates: FakeUpdatesGateway
   tun: FakeTunGateway
 }
 
@@ -390,13 +393,37 @@ export class FakeStartupGateway implements StartupGateway {
 }
 
 export class FakeAppSettingsGateway implements AppSettingsGateway {
-  settings: AppSettings = { autoStartKernel: true }
+  settings: AppSettings = { autoStartKernel: true, autoCheckUpdate: true }
   setCalls: Array<Partial<AppSettings>> = []
   get(): Promise<AppSettings> { return Promise.resolve({ ...this.settings }) }
   set(patch: Partial<AppSettings>): Promise<AppSettings> {
     this.setCalls.push({ ...patch })
     this.settings = { ...this.settings, ...patch }
     return Promise.resolve({ ...this.settings })
+  }
+}
+
+export class FakeUpdatesGateway implements UpdatesGateway {
+  state: UpdateState = { ...DEFAULT_UPDATE_STATE, currentVersion: '0.0.0-test' }
+  checkCalls = 0
+  downloadCalls = 0
+  installCalls = 0
+  private readonly listeners = new Set<(state: UpdateState) => void>()
+  getState(): UpdateState { return { ...this.state } }
+  async check(): Promise<UpdateState> {
+    this.checkCalls += 1
+    return { ...this.state }
+  }
+  async download(): Promise<void> { this.downloadCalls += 1 }
+  install(): void { this.installCalls += 1 }
+  onState(listener: (state: UpdateState) => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+  /** Test helper: publish a state transition to subscribers. */
+  emitState(state: UpdateState): void {
+    this.state = { ...state }
+    for (const listener of this.listeners) listener({ ...state })
   }
 }
 
@@ -408,6 +435,7 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
   const systemProxy = new FakeSystemProxyGateway()
   const startup = new FakeStartupGateway()
   const appSettings = new FakeAppSettingsGateway()
+  const updates = new FakeUpdatesGateway()
   const tun = new FakeTunGateway()
   return {
     kernel,
@@ -417,7 +445,8 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
     systemProxy,
     startup,
     appSettings,
+    updates,
     tun,
-    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, mihomo, runtime, profiles, systemProxy, startup, appSettings, tun }
+    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, mihomo, runtime, profiles, systemProxy, startup, appSettings, updates, tun }
   }
 }

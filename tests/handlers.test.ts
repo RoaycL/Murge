@@ -196,4 +196,27 @@ describe('buildIpcHandlers', () => {
       expect(result).toEqual(container.mihomo.proxyProviders)
     })
   })
+
+  describe('update control', () => {
+    it('exposes the current update state', async () => {
+      const result = await handlers[IPC.updatesGetState](null)
+      expect(result).toEqual(container.updates.state)
+    })
+
+    it('forwards a manual check to the gateway', async () => {
+      const result = await handlers[IPC.updatesCheck](null)
+      expect(container.updates.checkCalls).toBe(1)
+      expect(result).toEqual(container.updates.state)
+    })
+
+    it('forwards a download request', async () => {
+      await handlers[IPC.updatesDownload](null)
+      expect(container.updates.downloadCalls).toBe(1)
+    })
+
+    it('forwards an install request', async () => {
+      handlers[IPC.updatesInstall](null)
+      expect(container.updates.installCalls).toBe(1)
+    })
+  })
 })

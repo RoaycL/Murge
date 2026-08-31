@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import SpeedSparkline from '../components/SpeedSparkline.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 import { useTrafficStore } from '../stores/traffic'
@@ -21,6 +21,7 @@ onMounted(() => {
   traffic.connect()
   connections.connect()
   void runtime.refresh()
+  void runtime.fetchExternalIp()
 })
 
 const up = computed(() => formatRate(traffic.current?.up ?? 0))
@@ -28,23 +29,45 @@ const down = computed(() => formatRate(traffic.current?.down ?? 0))
 const activeCount = computed(() => connections.summary?.totalConnections ?? 0)
 const processCount = computed(() => connections.summary?.distinctProcesses ?? 0)
 const deviceCount = computed(() => connections.summary?.distinctDevices ?? 0)
-const topProcesses = computed(() => connections.summary?.topProcesses ?? [])
 const directBytes = computed(() => connections.summary?.directDownload ?? 0)
 const proxyBytes = computed(() => connections.summary?.proxyDownload ?? 0)
-const direct = computed(() => formatBytesParts(directBytes.value))
-const proxy = computed(() => formatBytesParts(proxyBytes.value))
-// 总计 is the same cumulative source as DIRECT + 代理 so the breakdown always
-// reconciles to the headline figure (any residual is per-part rounding only).
-const total = computed(() => formatBytesParts(directBytes.value + proxyBytes.value))
-const directPct = computed(() => {
-  const totalBytes = directBytes.value + proxyBytes.value
-  return totalBytes ? Math.round((directBytes.value / totalBytes) * 100) : 0
+
+// 全部/仅代理 scope lives in the store so every ranking slot stays consistent.
+const rankScope = computed(() => connections.rankScope)
+// Which dimension the rank list groups by (进程与设备 / 域名 / 策略).
+const rankDimension = ref<'process' | 'host' | 'policy'>('process')
+const rankedList = computed(() => {
+  if (rankDimension.value === 'host') return connections.topHosts
+  if (rankDimension.value === 'policy') return connections.topPolicies
+  return connections.topProcesses
 })
+
+// 总计: 当前 = sum of live connections (DIRECT + 代理); 历史 = kernel-lifetime
+// cumulative byte counter from the /traffic stream. The DIRECT/代理 split keeps
+// using the live connection ratio so both figures always reconcile to the total.
+const totalScope = ref<'current' | 'history'>('current')
+const currentTotalBytes = computed(() => directBytes.value + proxyBytes.value)
+const displayedTotalBytes = computed(() =>
+  totalScope.value === 'history' ? traffic.totalDownload : currentTotalBytes.value
+)
+const directRatio = computed(() => {
+  const totalBytes = currentTotalBytes.value
+  return totalBytes ? directBytes.value / totalBytes : 0
+})
+const directDisplayed = computed(() => Math.round(displayedTotalBytes.value * directRatio.value))
+const proxyDisplayed = computed(() => displayedTotalBytes.value - directDisplayed.value)
+const total = computed(() => formatBytesParts(displayedTotalBytes.value))
+const direct = computed(() => formatBytesParts(directDisplayed.value))
+const proxy = computed(() => formatBytesParts(proxyDisplayed.value))
+const directPct = computed(() =>
+  displayedTotalBytes.value ? Math.round((directDisplayed.value / displayedTotalBytes.value) * 100) : 0
+)
 
 const modeLabel = computed(() => {
   const map = { rule: '规则判定', global: '全局', direct: '直连' } as const
   return map[runtime.summary?.mode ?? 'rule']
 })
+const externalIpText = computed(() => runtime.externalIp ?? '—')
 
 const connStatus = computed(() => connections.status)
 const connDotClass = computed(() => {
@@ -59,9 +82,14 @@ const connStateLabel = computed(() => {
   return ''
 })
 
-// Keep the chart geometry without inventing history. Durable hourly samples are
-// not available yet, so every bucket renders as an explicit empty state.
-const bars = Array.from({ length: 23 }, () => 0)
+// The chart reflects the live /traffic stream rather than inventing history:
+// the most recent samples make the card come alive while the kernel is running.
+const chartBars = computed<number[]>(() => {
+  const samples = traffic.samples.slice(-23)
+  if (!samples.length) return Array.from({ length: 23 }, () => 0)
+  const max = Math.max(...samples.map((sample) => sample.down), 1)
+  return samples.map((sample) => Math.round((sample.down / max) * 100))
+})
 </script>
 
 <template>
@@ -74,7 +102,7 @@ const bars = Array.from({ length: 23 }, () => 0)
       <div><span>网络</span><strong>{{ runtime.summary?.networkName ?? '以太网' }}</strong></div>
       <div><span>配置</span><strong>{{ runtime.summary?.profileName ?? brand.defaultProfileName }}</strong></div>
       <div><span>出站模式</span><strong>{{ modeLabel }}</strong></div>
-      <div><span>外部 IP⌄</span><strong>{{ runtime.summary?.externalIp ?? '—' }}</strong></div>
+      <div><span>外部 IP</span><strong>{{ externalIpText }}</strong></div>
     </section>
 
     <section class="dashboard-grid">
@@ -105,14 +133,14 @@ const bars = Array.from({ length: 23 }, () => 0)
       </SurfaceCard>
 
       <SurfaceCard class="traffic-card">
-        <div class="card-title-row"><span class="metric-label">流量</span><div class="segmented" role="group" aria-label="流量范围"><button type="button" class="selected" aria-pressed="true">全部</button><button type="button" aria-pressed="false">仅代理</button></div></div>
-        <div class="bar-chart" aria-label="每小时流量">
-          <i v-for="(height, index) in bars" :key="index" :style="{ height: `${height}%` }" />
+        <div class="card-title-row"><span class="metric-label">流量</span><div class="segmented" role="group" aria-label="流量范围"><button type="button" :class="{ selected: rankScope === 'all' }" :aria-pressed="rankScope === 'all'" @click="connections.setRankScope('all')">全部</button><button type="button" :class="{ selected: rankScope === 'proxy' }" :aria-pressed="rankScope === 'proxy'" @click="connections.setRankScope('proxy')">仅代理</button></div></div>
+        <div class="bar-chart" aria-label="最近流量">
+          <i v-for="(height, index) in chartBars" :key="index" :style="{ height: `${height}%` }" />
         </div>
-        <div class="chart-axis"><span>12AM</span><span>6AM</span><span>12PM</span><span>6PM</span></div>
-        <div class="rank-tabs" role="group" aria-label="流量排行维度"><button type="button" class="selected" aria-pressed="true">进程与设备</button><button type="button" aria-pressed="false">域名</button><button type="button" aria-pressed="false">策略</button></div>
+        <div class="chart-axis"><span>最近</span><span>1 分钟</span></div>
+        <div class="rank-tabs" role="group" aria-label="流量排行维度"><button type="button" :class="{ selected: rankDimension === 'process' }" :aria-pressed="rankDimension === 'process'" @click="rankDimension = 'process'">进程与设备</button><button type="button" :class="{ selected: rankDimension === 'host' }" :aria-pressed="rankDimension === 'host'" @click="rankDimension = 'host'">域名</button><button type="button" :class="{ selected: rankDimension === 'policy' }" :aria-pressed="rankDimension === 'policy'" @click="rankDimension = 'policy'">策略</button></div>
         <div class="rank-list">
-          <div v-for="item in topProcesses" :key="item.name" class="rank-row">
+          <div v-for="item in rankedList" :key="item.name" class="rank-row">
             <span class="rank-icon">{{ item.name.slice(0, 2) }}</span>
             <div><span>{{ item.name }}</span><i><b :style="{ width: `${item.width}%` }" /></i></div>
             <strong>{{ formatBytes(item.download) }}</strong>
@@ -121,7 +149,7 @@ const bars = Array.from({ length: 23 }, () => 0)
       </SurfaceCard>
 
       <SurfaceCard class="total-card">
-        <div class="card-title-row"><span class="metric-label">总计</span><div class="segmented" role="group" aria-label="总计时间范围"><button type="button" class="selected" aria-pressed="true">当前</button><button type="button" aria-pressed="false" disabled>历史</button></div></div>
+        <div class="card-title-row"><span class="metric-label">总计</span><div class="segmented" role="group" aria-label="总计时间范围"><button type="button" :class="{ selected: totalScope === 'current' }" :aria-pressed="totalScope === 'current'" @click="totalScope = 'current'">当前</button><button type="button" :class="{ selected: totalScope === 'history' }" :aria-pressed="totalScope === 'history'" @click="totalScope = 'history'">历史</button></div></div>
         <div class="large-metric">{{ total.value }}<span>{{ total.unit }}</span></div>
         <div class="total-labels"><div><span>DIRECT</span><strong>{{ direct.value }} {{ direct.unit }}</strong></div><div><span>代理</span><strong>{{ proxy.value }} {{ proxy.unit }}</strong></div></div>
         <div class="total-bar"><i :style="{ width: `${directPct}%` }" /><i :style="{ width: `${100 - directPct}%` }" /></div>

@@ -178,7 +178,7 @@ watch(() => kernel.status.phase, (phase, previous) => {
 
 <style scoped>
 .mode-selector { width: 510px; }
-.group-tabs { display: flex; gap: 8px; margin-top: 20px; }
+.group-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
 .group-tabs button { height: 27px; padding: 0 14px; border: 0; border-radius: 8px; background: rgba(127,127,127,.12); }
 .group-tabs button.selected { color: white; background: var(--app-blue); }
 .node-grid button.selected { box-shadow: 0 0 0 2px var(--app-blue); background: rgba(22,132,248,.12); }

@@ -68,7 +68,9 @@ export interface MihomoGateway {
 }
 
 export interface RuntimeGateway {
-  getSummary(): RuntimeSummary
+  getSummary(): RuntimeSummary | Promise<RuntimeSummary>
+  /** Best-effort egress IP of the running proxy node; null when unavailable. */
+  getExternalIp(): Promise<string | null>
 }
 
 /**

@@ -12,6 +12,9 @@ export interface ProcessRank {
   width: number
 }
 
+/** Whether the activity breakdown counts every connection or only proxied ones. */
+export type RankScope = 'all' | 'proxy'
+
 export interface ConnectionsSummary {
   totalConnections: number
   distinctProcesses: number
@@ -32,6 +35,7 @@ export const useConnectionsStore = defineStore('connections', () => {
   const search = ref('')
   const closingIds = ref<string[]>([])
   const actionError = ref<string | null>(null)
+  const rankScope = ref<RankScope>('all')
   let connectionsUnsub: (() => void) | null = null
   let errorUnsub: (() => void) | null = null
   let watchdog: ReturnType<typeof setTimeout> | null = null
@@ -50,35 +54,60 @@ export const useConnectionsStore = defineStore('connections', () => {
     }, 5000)
   }
 
+  function isProxyConnection(connection: MihomoConnection): boolean {
+    return !connection.chains.includes('DIRECT')
+  }
+
+  const connections = computed<MihomoConnection[]>(() => snapshot.value?.connections ?? [])
+  const scopeFilter = computed<(connection: MihomoConnection) => boolean>(() =>
+    rankScope.value === 'proxy' ? isProxyConnection : () => true
+  )
+
+  function buildRank(rows: MihomoConnection[], filter: (connection: MihomoConnection) => boolean, keyFn: (connection: MihomoConnection) => string): ProcessRank[] {
+    const map = new Map<string, number>()
+    for (const connection of rows) {
+      if (!filter(connection)) continue
+      const key = keyFn(connection)
+      if (!key) continue
+      map.set(key, (map.get(key) ?? 0) + connection.download)
+    }
+    const ranked = Array.from(map.entries())
+      .map(([name, download]) => ({ name, download }))
+      .sort((a, b) => b.download - a.download)
+    const max = ranked[0]?.download ?? 1
+    return ranked.map(({ name, download }) => ({ name, download, width: Math.round((download / max) * 100) }))
+  }
+
+  // Activity breakdown slots; each reacts to the 全部/仅代理 scope so toggling it
+  // consistently filters whichever dimension the user is viewing.
+  const topProcesses = computed(() => buildRank(connections.value, scopeFilter.value, (c) => c.metadata.process ?? 'unknown'))
+  const topHosts = computed(() => buildRank(connections.value, scopeFilter.value, (c) => c.metadata.host || c.metadata.destinationIP || '未知目标'))
+  const topPolicies = computed(() => buildRank(connections.value, scopeFilter.value, (c) => c.rule || c.chains[0] || 'DIRECT'))
+
   const summary = computed<ConnectionsSummary | null>(() => {
     const snap = snapshot.value
     if (!snap) return null
-    const connectionMap = new Map<string, number>()
+    const processes = new Set<string>()
     const devices = new Set<string>()
     let directDownload = 0
     let proxyDownload = 0
     for (const connection of snap.connections) {
-      const process = connection.metadata.process ?? 'unknown'
-      connectionMap.set(process, (connectionMap.get(process) ?? 0) + connection.download)
+      processes.add(connection.metadata.process ?? 'unknown')
       const ip = connection.metadata.sourceIP ?? connection.metadata.destinationIP
       if (ip) devices.add(ip)
       if (connection.chains.includes('DIRECT')) directDownload += connection.download
       else proxyDownload += connection.download
     }
-    const ranked = Array.from(connectionMap.entries())
-      .map(([name, download]) => ({ name, download }))
-      .sort((a, b) => b.download - a.download)
-    const max = ranked[0]?.download ?? 1
     return {
       totalConnections: snap.connections.length,
-      distinctProcesses: connectionMap.size,
+      distinctProcesses: processes.size,
       distinctDevices: devices.size,
       downloadTotal: snap.downloadTotal,
       uploadTotal: snap.uploadTotal,
       memory: snap.memory,
       directDownload,
       proxyDownload,
-      topProcesses: ranked.map(({ name, download }) => ({ name, download, width: Math.round((download / max) * 100) }))
+      topProcesses: topProcesses.value
     }
   })
 
@@ -118,6 +147,10 @@ export const useConnectionsStore = defineStore('connections', () => {
   function select(id: string | null): void {
     selectedId.value = id
     actionError.value = null
+  }
+
+  function setRankScope(scope: RankScope): void {
+    rankScope.value = scope
   }
 
   async function close(id: string): Promise<boolean> {
@@ -176,6 +209,7 @@ export const useConnectionsStore = defineStore('connections', () => {
   return {
     status, lastError, snapshot, summary,
     selectedId, selectedConnection, search, visibleConnections, closingIds, actionError,
+    rankScope, setRankScope, topProcesses, topHosts, topPolicies,
     connect, disconnect, select, close
   }
 })

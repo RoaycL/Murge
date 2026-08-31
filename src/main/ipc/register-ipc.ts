@@ -2,9 +2,10 @@ import { ipcMain, BrowserWindow, app } from 'electron'
 import { brand } from '@shared/brand'
 import type { IpcDeps, KernelGateway, MihomoGateway, ProfileGateway, SystemProxyGateway, StartupGateway } from '@shared/gateways'
 import type { TunGateway } from '@shared/tun'
-import type { RuntimeSummary } from '@shared/runtime'
+import type { OutboundMode, RuntimeSummary } from '@shared/runtime'
 import { IPC } from '@shared/ipc'
 import { ProtocolError, encodeProtocolError } from '@shared/protocol-errors'
+import { fetchExternalIpViaProxy } from '../services/external-ip'
 import { buildIpcHandlers, type IpcHandler } from './handlers'
 
 export interface IpcDependencies {
@@ -31,15 +32,36 @@ function wrapHandler(handler: IpcHandler): IpcHandler {
   }
 }
 
-function buildRuntimeSummary(): RuntimeSummary {
+async function buildRuntimeSummary({ mihomo }: Pick<IpcDependencies, 'mihomo'>): Promise<RuntimeSummary> {
+  let mode: OutboundMode = 'rule'
+  try {
+    const config = await mihomo.getConfig()
+    if (config.mode) mode = config.mode
+  } catch {
+    // Controller unreachable (kernel stopped): fall back to the safe default.
+  }
   return {
     networkName: 'Ethernet',
     profileName: brand.defaultProfileName,
-    mode: 'rule',
+    mode,
     externalIp: null,
     systemProxyEnabled: false,
     tunEnabled: false
   }
+}
+
+function resolveExternalIp({ kernel, mihomo }: Pick<IpcDependencies, 'kernel' | 'mihomo'>): Promise<string | null> {
+  return (async () => {
+    try {
+      if ((await kernel.getStatus()).phase !== 'running') return null
+      const config = await mihomo.getConfig()
+      const port = config['mixed-port'] ?? config.port
+      if (!port) return null
+      return await fetchExternalIpViaProxy({ host: '127.0.0.1', port })
+    } catch {
+      return null
+    }
+  })()
 }
 
 export function registerIpc({ kernel, mihomo, profiles, systemProxy, startup, tun }: IpcDependencies): () => void {
@@ -48,7 +70,10 @@ export function registerIpc({ kernel, mihomo, profiles, systemProxy, startup, tu
     appInfo: { version: app.getVersion(), platform: process.platform === 'win32' || process.platform === 'darwin' || process.platform === 'linux' ? process.platform : 'other', arch: process.arch },
     kernel,
     mihomo,
-    runtime: { getSummary: buildRuntimeSummary },
+    runtime: {
+      getSummary: () => buildRuntimeSummary({ mihomo }),
+      getExternalIp: () => resolveExternalIp({ kernel, mihomo })
+    },
     profiles,
     systemProxy,
     startup,

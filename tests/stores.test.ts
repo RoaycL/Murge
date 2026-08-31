@@ -274,3 +274,51 @@ describe('connections store', () => {
     expect(store.closingIds).toEqual([])
   })
 })
+
+describe('activity ranking scope', () => {
+  const rich: MihomoConnectionsSnapshot = {
+    downloadTotal: 0,
+    uploadTotal: 0,
+    memory: 0,
+    connections: [
+      { id: 'p1', metadata: { process: 'curl', host: 'a.com', sourceIP: '10.0.0.1' }, upload: 0, download: 100, start: '', chains: ['DIRECT'], rule: 'MATCH', rulePayload: '' },
+      { id: 'p2', metadata: { process: 'Browser', host: 'b.com', sourceIP: '10.0.0.1' }, upload: 0, download: 200, start: '', chains: ['Socks5', 'Proxy'], rule: 'GEOIP,CN', rulePayload: '' },
+      { id: 'p3', metadata: { process: 'curl', host: 'a.com', sourceIP: '10.0.0.2' }, upload: 0, download: 50, start: '', chains: ['DIRECT'], rule: 'MATCH', rulePayload: '' }
+    ]
+  }
+
+  it('ranks by host and policy and honors the 全部/仅代理 scope', () => {
+    const store = useConnectionsStore()
+    mihomo.getConnections.mockResolvedValue(rich)
+    store.connect()
+    emitConnections(store, rich)
+
+    expect(store.rankScope).toBe('all')
+    // 域名: b.com (200) ahead of a.com (150).
+    expect(store.topHosts[0]?.name).toBe('b.com')
+    expect(store.topHosts[0]?.download).toBe(200)
+    expect(store.topHosts[1]?.name).toBe('a.com')
+    // 策略: `GEOIP,CN` (200) ahead of `MATCH` (150).
+    expect(store.topPolicies[0]?.name).toBe('GEOIP,CN')
+    expect(store.topPolicies[1]?.name).toBe('MATCH')
+
+    store.setRankScope('proxy')
+    expect(store.rankScope).toBe('proxy')
+    // Only the proxied connection (p2) remains in every breakdown slot.
+    expect(store.topHosts.map((r) => r.name)).toEqual(['b.com'])
+    expect(store.topPolicies.map((r) => r.name)).toEqual(['GEOIP,CN'])
+    expect(store.topProcesses.map((r) => r.name)).toEqual(['Browser'])
+    store.disconnect()
+  })
+
+  it('keeps the summary process rank bounded to the live snapshot', () => {
+    const store = useConnectionsStore()
+    mihomo.getConnections.mockResolvedValue(rich)
+    store.connect()
+    emitConnections(store, rich)
+
+    expect(store.summary?.topProcesses[0]?.name).toBe('Browser')
+    expect(store.summary?.topProcesses[1]?.name).toBe('curl')
+    store.disconnect()
+  })
+})

@@ -35,7 +35,8 @@ const api: DesktopApi = {
     onStatus: (listener) => listen(IPC.kernelStatusEvent, listener)
   },
   runtime: {
-    getSummary: () => invoke(IPC.runtimeGetSummary)
+    getSummary: () => invoke(IPC.runtimeGetSummary),
+    getExternalIp: () => invoke(IPC.runtimeGetExternalIp)
   },
   mihomo: {
     getConfig: () => invoke(IPC.mihomoGetConfig),

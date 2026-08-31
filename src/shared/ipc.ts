@@ -27,6 +27,7 @@ export const IPC = {
   kernelStart: 'kernel:start',
   kernelStop: 'kernel:stop',
   runtimeGetSummary: 'runtime:get-summary',
+  runtimeGetExternalIp: 'runtime:get-external-ip',
   mihomoGetConfig: 'mihomo:get-config',
   mihomoPatchConfig: 'mihomo:patch-config',
   mihomoGetProxies: 'mihomo:get-proxies',
@@ -83,6 +84,7 @@ export interface DesktopApi {
   }
   runtime: {
     getSummary(): Promise<RuntimeSummary>
+    getExternalIp(): Promise<string | null>
   }
   mihomo: {
     getConfig(): Promise<MihomoConfigSnapshot>

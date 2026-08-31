@@ -29,6 +29,7 @@ describe('frozen RC accessibility contracts', () => {
       expect(source).toContain('aria-live="polite"')
     }
     expect(activity).toContain('aria-label="流量范围"')
-    expect(activity).toContain('aria-pressed="true"')
+    expect(activity).toContain('aria-label="流量排行维度"')
+    expect(activity).toContain(':aria-pressed=')
   })
 })

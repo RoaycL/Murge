@@ -39,6 +39,7 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
     [IPC.kernelStop]: async () => kernel.stop(),
 
     [IPC.runtimeGetSummary]: async () => runtime.getSummary(),
+    [IPC.runtimeGetExternalIp]: async () => runtime.getExternalIp(),
 
     [IPC.mihomoGetConfig]: async () => mihomo.getConfig(),
     [IPC.mihomoPatchConfig]: async (_event, patch) => mihomo.patchConfig(parseConfigPatch(patch)),

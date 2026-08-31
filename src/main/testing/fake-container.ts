@@ -228,6 +228,10 @@ export class FakeRuntimeGateway implements RuntimeGateway {
   getSummary(): RuntimeSummary {
     return { ...this.summary }
   }
+
+  getExternalIp(): Promise<string | null> {
+    return Promise.resolve(null)
+  }
 }
 
 export class FakeProfileGateway implements ProfileGateway {

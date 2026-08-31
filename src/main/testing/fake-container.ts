@@ -1,4 +1,4 @@
-import type { KernelGateway, KernelManagerGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway, OverridesGateway, DnsEnhancementGateway, SnifferEnhancementGateway } from '@shared/gateways'
+import type { KernelGateway, KernelManagerGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway, OverridesGateway, DnsEnhancementGateway, SnifferEnhancementGateway, TunConfigGateway } from '@shared/gateways'
 import type { SnifferEnhancement, SnifferSnapshot } from '@shared/sniffer'
 import { coerceSnifferEnhancement, coerceSnifferSnapshot, EMPTY_SNIFFER_ENHANCEMENT } from '@shared/sniffer'
 import type { StartupStatus } from '@shared/startup'
@@ -31,6 +31,8 @@ import type { ConfigEdit, ImportRequest, Profile, ProfileMeta, ValidationResult 
 import type { KernelStatus, RuntimeSummary, TrafficSample } from '@shared/runtime'
 import type { BrandConfig } from '@shared/brand'
 import type { TunGateway, TunStatus } from '@shared/tun'
+import type { TunConfigModel, TunConfigSnapshot } from '@shared/tun-config'
+import { coerceTunConfig, coerceTunConfigSnapshot, EMPTY_TUN_CONFIG } from '@shared/tun-config'
 
 /**
  * In-memory fake service container for main-process tests.
@@ -382,6 +384,7 @@ export interface FakeContainer {
   overrides: FakeOverridesGateway
   dns: FakeDnsEnhancementGateway
   sniffer: FakeSnifferEnhancementGateway
+  tunConfig: FakeTunConfigGateway
   updates: FakeUpdatesGateway
   tun: FakeTunGateway
 }
@@ -531,6 +534,25 @@ export class FakeSnifferEnhancementGateway implements SnifferEnhancementGateway 
   }
 }
 
+export class FakeTunConfigGateway implements TunConfigGateway {
+  config: TunConfigModel = { ...EMPTY_TUN_CONFIG }
+  setCalls: TunConfigModel[] = []
+  previewCalls: TunConfigModel[] = []
+
+  get(): Promise<TunConfigSnapshot> {
+    return Promise.resolve(coerceTunConfigSnapshot({ config: this.config }))
+  }
+  async set(input: TunConfigModel): Promise<TunConfigSnapshot> {
+    this.setCalls.push(input)
+    this.config = coerceTunConfig(input)
+    return Promise.resolve(coerceTunConfigSnapshot({ config: this.config }))
+  }
+  async preview(input: TunConfigModel): Promise<string> {
+    this.previewCalls.push(input)
+    return ''
+  }
+}
+
 export class FakeUpdatesGateway implements UpdatesGateway {
   state: UpdateState = { ...DEFAULT_UPDATE_STATE, currentVersion: '0.0.0-test' }
   checkCalls = 0
@@ -567,6 +589,7 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
   const overrides = new FakeOverridesGateway()
   const dns = new FakeDnsEnhancementGateway()
   const sniffer = new FakeSnifferEnhancementGateway()
+  const tunConfig = new FakeTunConfigGateway()
   const updates = new FakeUpdatesGateway()
   const tun = new FakeTunGateway()
   return {
@@ -581,8 +604,9 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
     overrides,
     dns,
     sniffer,
+    tunConfig,
     updates,
     tun,
-    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, updates, tun }
+    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun }
   }
 }

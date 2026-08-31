@@ -30,6 +30,7 @@ import type { SystemProxyStatus } from './system-proxy'
 import type { StartupStatus } from './startup'
 import type { AppSettings } from './app-settings'
 import type { TunGateway } from './tun'
+import type { TunConfigModel, TunConfigSnapshot } from './tun-config'
 import type { AppInfo } from './app-info'
 import type { UpdateState } from './updates'
 
@@ -194,6 +195,19 @@ export interface SnifferEnhancementGateway {
   preview(input: SnifferEnhancement): string | Promise<string>
 }
 
+/**
+ * Typed TUN configuration boundary. A single global, schema-validated model that
+ * the mihomo-owned adapter reads at enable-time and folds into its bootstrap
+ * profile. Unlike DNS/sniffer this model does not enter the main-kernel config
+ * pipeline — `tun` is dropped by the safety transform.
+ */
+export interface TunConfigGateway {
+  get(): TunConfigSnapshot | Promise<TunConfigSnapshot>
+  set(input: TunConfigModel): TunConfigSnapshot | Promise<TunConfigSnapshot>
+  /** Render the `tun:` block a model would produce (no writes). */
+  preview(input: TunConfigModel): string | Promise<string>
+}
+
 /** Everything the IPC handler factory needs from the trusted main process. */
 export interface IpcDeps {
   brand: BrandConfig
@@ -209,6 +223,7 @@ export interface IpcDeps {
   overrides: OverridesGateway
   dns: DnsEnhancementGateway
   sniffer: SnifferEnhancementGateway
+  tunConfig: TunConfigGateway
   updates: UpdatesGateway
   tun: TunGateway
 }

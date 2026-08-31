@@ -6,6 +6,7 @@ import { useKernelStore } from '../stores/kernel'
 import OverridesPanel from '../components/OverridesPanel.vue'
 import DnsSettingsPanel from '../components/DnsSettingsPanel.vue'
 import SnifferSettingsPanel from '../components/SnifferSettingsPanel.vue'
+import TunConfigPanel from '../components/TunConfigPanel.vue'
 import type { ValidationResult } from '@shared/profiles'
 
 const profilesStore = useProfilesStore()
@@ -450,6 +451,7 @@ const hasResources = computed(
     <overrides-panel :active-profile-id="activeProfileId" />
     <dns-settings-panel />
     <sniffer-settings-panel />
+    <tun-config-panel />
   </div>
 </template>
 

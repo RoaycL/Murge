@@ -457,13 +457,29 @@ excluded or unproven feature appear supported in an existing release.
       `SnifferSettingsPanel` on the Config page with a YAML preview;
       `src/main/index.ts` wires the concrete service both as the IPC gateway and
       into the pipeline.)
-- [ ] Implement the complete TUN configuration model and Vue status/settings UI:
+- [x] Implement the complete TUN configuration model and Vue status/settings UI:
       stack, device/adapter identity, MTU, strict-route, auto-route,
       auto-detect-interface, DNS hijack, route-address,
       route-exclude-address and other explicitly supported mihomo fields.
       Route every privileged action through the existing Windows service,
       named-pipe contract, coordinator and rollback states; never elevate the
       Electron renderer or let subscription YAML take ownership.
+      (Shipped at `v0.1.16`, **configuration model + config settings UI only**,
+      marked `implementation-complete / runtime-unverified`: `TunConfigModel`
+      in `src/shared/tun-config.ts` is a strict, zod-validated model; the stack
+      enum, device identity, MTU range, every dns-hijack host:port entry and
+      IPv4/IPv6 route CIDR is validated before persistence or bootstrap
+      materialization. The `TunConfigService` persists atomically to
+      `tun-config.json` inside the app-data root and is wired in
+      `src/main/index.ts` both as the IPC gateway and as the
+      `readTunConfig` source for the mihomo-owned adapter, so the model is
+      folded into `generateMihomoTunConfig` *only* for the owned bootstrap —
+      `buildProfileKernelConfig` still drops `tun`, so the model never mutates a
+      subscription profile. The renderer exposes it as a `TunConfigPanel` on the
+      Config page with a YAML preview. **The TUN lifecycle/status UI remains the
+      next item below.** Because TUN is not release-supported until exact
+      restoration and recovery evidence passes, this is **not** a release TUN
+      enablement.)
 - [ ] Complete TUN lifecycle/error UI for unsupported, stopped, starting,
       active, stopping, restoring, restore-failed, conflict and failed states,
       including retry and renderer-independent emergency disable.

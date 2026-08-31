@@ -3,6 +3,8 @@ import type { TunEnableResult, TunMutationAdapter, TunRestoreResult } from './co
 import { generateMihomoTunConfig } from './mihomo-tun-config'
 import type { TunServiceClient } from './service-client'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
+import type { TunConfigModel } from '../../shared/tun-config'
+import { EMPTY_TUN_CONFIG } from '../../shared/tun-config'
 
 export interface TunProfileRuntime {
   mixedPort: number
@@ -25,7 +27,9 @@ export class MihomoOwnedTunAdapter implements TunMutationAdapter {
     private readonly client: TunServiceClient,
     private readonly runtimeFactory: () => TunProfileRuntime | Promise<TunProfileRuntime>,
     private readonly readiness: TunControllerReadiness,
-    private readonly readyTimeoutMs = 10_000
+    private readonly readyTimeoutMs = 10_000,
+    /** Read the persisted typed TUN config model (falls back to the safe default). */
+    private readonly readTunConfig: () => TunConfigModel | Promise<TunConfigModel> = async () => EMPTY_TUN_CONFIG
   ) {}
 
   async recoveryRequired(): Promise<boolean> {
@@ -35,7 +39,8 @@ export class MihomoOwnedTunAdapter implements TunMutationAdapter {
 
   async enable(intent: MihomoOwnedTunIntent): Promise<TunEnableResult> {
     const runtime = await this.runtimeFactory()
-    const profile = generateMihomoTunConfig({ ...runtime, device: intent.device, stack: intent.stack })
+    const tunConfig = await this.readTunConfig()
+    const profile = generateMihomoTunConfig({ ...runtime, device: intent.device, stack: intent.stack, tunConfig })
     try {
       await this.client.start(profile)
     } catch (error) {

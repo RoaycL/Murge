@@ -130,10 +130,17 @@ Rules:
       `apply-sniffer`/`sniffer-enhancement-service` tests assert the generated
       `sniffer:` block round-trips through parse-back, including empty-list
       omission and preserved non-owned keys.)
-- [ ] TUN shared schema and editor: stack, device/adapter identity, MTU,
+- [x] TUN shared schema and editor: stack, device/adapter identity, MTU,
       strict-route, auto-route, auto-detect-interface, DNS hijack,
       route-address, route-exclude-address and explicitly supported optional
       mihomo fields.
+      (Shipped at `v0.1.16`, **config model only**, marked
+      `implementation-complete / runtime-unverified`:
+      `TunConfigModel` in `src/shared/tun-config.ts` plus the strict
+      `tunConfigSchema` at IPC; the `TunConfigPanel.vue` editor on the Config
+      page; the `tun-config.json` service and the `buildTunBlock` generator
+      folded into the mihomo-owned bootstrap via `readTunConfig`. **The TUN
+      lifecycle/error UI is a separate open item below.**)
 - [ ] TUN lifecycle UI: unsupported, stopped, starting, active, stopping,
       restoring, restore-failed, conflict and failed; add retry and emergency
       disable without depending on a responsive renderer.

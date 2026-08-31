@@ -67,4 +67,27 @@ describe('mihomo-owned TUN lifecycle adapter', () => {
     expect(client.getOwnedSession()).toBeNull()
     expect(vi.mocked(transport.request).mock.calls.map(call => call[0].operation)).toEqual(['reconcile', 'stop'])
   })
+
+  it('folds the persisted config model into the started profile', async () => {
+    const transport: TunServiceTransport = {
+      request: vi.fn(async request => serviceResponse(request, request.operation === 'stop' ? 'stopped' : 'running'))
+    }
+    const client = new TunServiceClient(transport)
+    const adapter = new MihomoOwnedTunAdapter(
+      client,
+      () => ({ mixedPort: 17890, controllerPort: 19090, secret: 'ef'.repeat(32) }),
+      { waitUntilReady: vi.fn(async () => undefined) },
+      100,
+      async () => ({ stack: 'system', device: 'TUN-0', mtu: 1500, strictRoute: true, autoRoute: false, autoDetectInterface: true, dnsHijack: ['any:53'], routeAddress: ['192.168.0.0/16'], routeExcludeAddress: [] })
+    )
+    await expect(adapter.enable({ schemaVersion: 2, device: 'Product TUN', stack: 'mixed' })).resolves.toEqual({ outcome: 'active' })
+    const start = vi.mocked(transport.request).mock.calls[0][0]
+    if (start.operation === 'start') {
+      expect(start.profile).toContain('  stack: system')
+      expect(start.profile).toContain('  device: TUN-0')
+      expect(start.profile).toContain('  mtu: 1500')
+      expect(start.profile).toContain('  strict-route: true')
+      expect(start.profile).toContain('  auto-route: false')
+    }
+  })
 })

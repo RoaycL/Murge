@@ -47,6 +47,7 @@ import { UpdateService } from './updates/service'
 import { ElectronUpdaterDriver } from './updates/electron-updater-driver'
 import { TunCoordinator, GatedTunMutationAdapter } from './tun/coordinator'
 import { MihomoOwnedTunAdapter } from './tun/mihomo-owned-adapter'
+import { TunConfigService } from './tun/tun-config-service'
 import { TunServiceClient } from './tun/service-client'
 import { NamedPipeTunServiceTransport } from './tun/named-pipe-transport'
 import { tunServiceIdentity } from './tun/service-identity'
@@ -483,6 +484,7 @@ app.whenReady().then(async () => {
   const overrideService = new OverrideService(appDataRoot(app.getPath('appData')))
   const dnsEnhancementService = new DnsEnhancementService(appDataRoot(app.getPath('appData')))
   const snifferEnhancementService = new SnifferEnhancementService(appDataRoot(app.getPath('appData')))
+  const tunConfigService = new TunConfigService(appDataRoot(app.getPath('appData')))
   const kernelManagerService = new KernelManagerService({
     settings: appSettingsService,
     workspaceRoot: productionKernelRoot
@@ -630,7 +632,9 @@ app.whenReady().then(async () => {
             }
             throw new ProtocolError(ProtocolErrorCode.KERNEL_START_TIMEOUT, 'TUN controller readiness timed out')
           }
-        }
+        },
+        10_000,
+        async () => tunConfigService.readConfig()
       )
     : new GatedTunMutationAdapter()
   const tunInstance = new TunCoordinator(tunAdapter, tunSupported)
@@ -681,6 +685,7 @@ app.whenReady().then(async () => {
     overrides: overrideService,
     dns: dnsEnhancementService,
     sniffer: snifferEnhancementService,
+    tunConfig: tunConfigService,
     updates,
     tun: tunGateway
   })

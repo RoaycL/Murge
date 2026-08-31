@@ -124,6 +124,11 @@ const api: DesktopApi = {
     enable: () => invoke(IPC.tunEnable),
     disable: () => invoke(IPC.tunDisable),
     onStatus: (listener) => listen(IPC.tunStatusEvent, listener)
+  },
+  tunConfig: {
+    get: () => invoke(IPC.tunConfigGet),
+    set: (input) => invoke(IPC.tunConfigSet, input),
+    preview: (input) => invoke(IPC.tunConfigPreview, input)
   }
 }
 

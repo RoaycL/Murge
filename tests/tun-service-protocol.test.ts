@@ -44,7 +44,7 @@ describe('Phase 9B privileged service protocol', () => {
       profileSha256: createHash('sha256').update(profile).digest('hex')
     }
     expect(() => parseTunServiceRequest({ ...base, profileSha256: '0'.repeat(64) })).toThrow()
-    const unsafe = profile.replace('strict-route: false', 'strict-route: true')
+    const unsafe = profile.replace('allow-lan: false', 'allow-lan: true')
     expect(() => parseTunServiceRequest({ ...base, profile: unsafe, profileSha256: createHash('sha256').update(unsafe).digest('hex') })).toThrow()
     expect(() => parseTunServiceRequest({ ...base, executable: 'cmd.exe' })).toThrow()
   })

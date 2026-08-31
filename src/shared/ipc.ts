@@ -22,6 +22,7 @@ import type { KernelStatus, RuntimeSummary, TrafficSample } from './runtime'
 import type { SystemProxyStatus } from './system-proxy'
 import type { StartupStatus } from './startup'
 import type { TunStatus } from './tun'
+import type { TunConfigModel, TunConfigSnapshot } from './tun-config'
 import type { AppInfo } from './app-info'
 import type { AppSettings } from './app-settings'
 import type { UpdateState } from './updates'
@@ -99,7 +100,10 @@ export const IPC = {
   tunGetStatus: 'tun:get-status',
   tunEnable: 'tun:enable',
   tunDisable: 'tun:disable',
-  tunStatusEvent: 'tun:status-event'
+  tunStatusEvent: 'tun:status-event',
+  tunConfigGet: 'tun-config:get',
+  tunConfigSet: 'tun-config:set',
+  tunConfigPreview: 'tun-config:preview'
 } as const
 
 export interface DesktopApi {
@@ -203,5 +207,10 @@ export interface DesktopApi {
     enable(): Promise<TunStatus>
     disable(): Promise<TunStatus>
     onStatus(listener: (status: TunStatus) => void): () => void
+  }
+  tunConfig: {
+    get(): Promise<TunConfigSnapshot>
+    set(input: TunConfigModel): Promise<TunConfigSnapshot>
+    preview(input: TunConfigModel): Promise<string>
   }
 }

@@ -5,6 +5,8 @@ import type { DnsEnhancement } from '../dns'
 import { isValidCidr, isValidDomainOrRule, isValidIp, isValidNameserver } from '../dns'
 import type { SnifferEnhancement } from '../sniffer'
 import { isValidAddressOrCidr, isValidPortToken } from '../sniffer'
+import type { TunConfigModel } from '../tun-config'
+import { isValidDnsHijackEntry, isValidTunDevice, isValidTunMtu, isValidTunRouteAddress } from '../tun-config'
 import { ProtocolError, ProtocolErrorCode } from '../protocol-errors'
 import { logLevelSchema } from './log-level'
 
@@ -342,6 +344,40 @@ export function parseSnifferEnhancement(input: unknown): SnifferEnhancement {
   if (!parsed.success) {
     const detail = parsed.error.issues[0]
     throw invalid(`invalid sniffer enhancement at ${detail?.path.join('.') || 'sniffer'}: ${detail?.message}`)
+  }
+  return parsed.data
+}
+
+const dnsHijackEntrySchema = z.string().refine(isValidDnsHijackEntry, '必须是 any、IP、主机:端口 或 [IPv6]:端口')
+const routeCidrSchema = z.string().refine(isValidTunRouteAddress, '必须是有效的 IP 或 CIDR')
+
+const tunConfigSchema = z
+  .object({
+    stack: z.enum(['mixed', 'system', 'gvisor']),
+    device: z.string().refine(isValidTunDevice, 'TUN 设备名包含非法字符或长度'),
+    mtu: z.number().int().min(576).max(65535),
+    strictRoute: z.boolean(),
+    autoRoute: z.boolean(),
+    autoDetectInterface: z.boolean(),
+    dnsHijack: z.array(dnsHijackEntrySchema).min(1).max(64),
+    routeAddress: z.array(routeCidrSchema).max(128),
+    routeExcludeAddress: z.array(routeCidrSchema).max(128)
+  })
+  .strict()
+
+/**
+ * Validate a renderer-sent TUN config model. Every stack, device, MTU, dns-hijack
+ * entry and route CIDR must pass, and unknown keys are rejected, so an invalid
+ * TUN configuration can never be persisted or reach the mihomo-owned bootstrap.
+ */
+export function parseTunConfig(input: unknown): TunConfigModel {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    throw invalid('tun config must be an object')
+  }
+  const parsed = tunConfigSchema.safeParse(input)
+  if (!parsed.success) {
+    const detail = parsed.error.issues[0]
+    throw invalid(`invalid tun config at ${detail?.path.join('.') || 'tun'}: ${detail?.message}`)
   }
   return parsed.data
 }

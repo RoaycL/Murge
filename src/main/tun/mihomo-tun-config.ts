@@ -1,6 +1,8 @@
 import { isAlias, isMap, isScalar, isSeq, parseDocument, type Node } from 'yaml'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
 import { SECRET_PATTERN } from '../kernel/mihomo-config'
+import type { TunConfigModel } from '../../shared/tun-config'
+import { isValidDnsHijackEntry, isValidTunMtu, isValidTunRouteAddress } from '../../shared/tun-config'
 
 export type MihomoTunStack = 'mixed' | 'system' | 'gvisor'
 
@@ -11,6 +13,9 @@ export interface MihomoTunConfigOptions {
   device: string
   stack?: MihomoTunStack
   logLevel?: 'silent' | 'error' | 'warn' | 'info' | 'debug'
+  /** Optional typed TUN config model. When present its fields override the safe
+   *  defaults and are folded into the `tun:` block the owned adapter enables. */
+  tunConfig?: TunConfigModel
 }
 
 const PORT_MIN = 1024
@@ -26,6 +31,9 @@ const TUN_KEYS = new Set([
   'enable', 'device', 'stack', 'auto-route', 'auto-detect-interface',
   'strict-route', 'dns-hijack'
 ])
+/** Configurable TUN keys: only validated when present; never required. */
+const OPTIONAL_TUN_KEYS = new Set(['mtu', 'route-address', 'route-exclude-address'])
+const ALLOW_TUN_KEYS = new Set([...TUN_KEYS, ...OPTIONAL_TUN_KEYS])
 const DNS_KEYS = new Set(['enable', 'enhanced-mode', 'fake-ip-range', 'nameserver'])
 
 function invalid(message: string): never {
@@ -38,17 +46,51 @@ function assertPort(value: number, label: string): void {
   }
 }
 
-/** Generate the only supported Phase 9B bootstrap profile. No I/O is performed. */
+/**
+ * Generate the only supported Phase 9B bootstrap profile. No I/O is performed.
+ *
+ * When {@link MihomoTunConfigOptions.tunConfig} is present its fields are folded
+ * into the `tun:` block (device, stack, mtu, auto-route, auto-detect-interface,
+ * strict-route, dns-hijack and the optional route CIDR lists); otherwise the
+ * conservative safe defaults are emitted unchanged. Every generated profile,
+ * regardless of source, must still pass {@link mihomoTunConfigErrors}.
+ */
 export function generateMihomoTunConfig(options: MihomoTunConfigOptions): string {
   assertPort(options.mixedPort, 'mixed-port')
   assertPort(options.controllerPort, 'external-controller port')
   if (options.mixedPort === options.controllerPort) invalid('controller and mixed ports must differ')
   if (!SECRET_PATTERN.test(options.secret)) invalid('secret must be a 64-character lowercase hex string')
-  if (!DEVICE_PATTERN.test(options.device)) invalid('device contains unsupported characters or length')
-  const stack = options.stack ?? 'mixed'
-  if (!STACKS.has(stack)) invalid(`unsupported TUN stack: ${stack}`)
   const logLevel = options.logLevel ?? 'info'
   if (!LOG_LEVELS.has(logLevel)) invalid(`unsupported log level: ${logLevel}`)
+
+  const model = options.tunConfig
+  const device = model?.device ?? options.device
+  if (!DEVICE_PATTERN.test(device)) invalid('device contains unsupported characters or length')
+  const stack = model?.stack ?? options.stack ?? 'mixed'
+  if (!STACKS.has(stack)) invalid(`unsupported TUN stack: ${stack}`)
+
+  const tunLines = [
+    'tun:',
+    '  enable: true',
+    `  device: ${device}`,
+    `  stack: ${stack}`
+  ]
+  if (model && isValidTunMtu(model.mtu)) tunLines.push(`  mtu: ${model.mtu}`)
+  tunLines.push(
+    `  auto-route: ${model ? model.autoRoute : true}`,
+    `  auto-detect-interface: ${model ? model.autoDetectInterface : true}`,
+    `  strict-route: ${model ? model.strictRoute : false}`,
+    '  dns-hijack:',
+    ...(model ? model.dnsHijack : ['any:53']).map((entry) => `    - ${entry}`)
+  )
+  if (model && model.routeAddress.length > 0) {
+    tunLines.push('  route-address:')
+    for (const cidr of model.routeAddress) tunLines.push(`    - ${cidr}`)
+  }
+  if (model && model.routeExcludeAddress.length > 0) {
+    tunLines.push('  route-exclude-address:')
+    for (const cidr of model.routeExcludeAddress) tunLines.push(`    - ${cidr}`)
+  }
 
   const text = [
     `mixed-port: ${options.mixedPort}`,
@@ -58,15 +100,7 @@ export function generateMihomoTunConfig(options: MihomoTunConfigOptions): string
     'ipv6: false',
     `external-controller: 127.0.0.1:${options.controllerPort}`,
     `secret: ${options.secret}`,
-    'tun:',
-    '  enable: true',
-    `  device: ${options.device}`,
-    `  stack: ${stack}`,
-    '  auto-route: true',
-    '  auto-detect-interface: true',
-    '  strict-route: false',
-    '  dns-hijack:',
-    '    - any:53',
+    ...tunLines,
     'dns:',
     '  enable: true',
     '  enhanced-mode: fake-ip',
@@ -103,15 +137,27 @@ export function mihomoTunConfigErrors(text: string): string[] {
   const tunNode = root.get('tun')
   if (!isMap(tunNode)) errors.push('tun must be a mapping')
   else {
-    const tun = mapping(tunNode, TUN_KEYS, 'tun', errors)
+    const tun = mapping(tunNode, ALLOW_TUN_KEYS, 'tun', errors)
     requireExactKeys(tun, TUN_KEYS, 'tun', errors)
     scalarEquals(tun, 'enable', true, errors)
-    scalarEquals(tun, 'auto-route', true, errors)
-    scalarEquals(tun, 'auto-detect-interface', true, errors)
-    scalarEquals(tun, 'strict-route', false, errors)
+    // auto-route / auto-detect-interface / strict-route are runtime-tunable via
+    // the TUN config model; only their type is constrained here.
+    scalarMatches(tun, 'auto-route', value => typeof value === 'boolean', errors, 'auto-route must be a boolean')
+    scalarMatches(tun, 'auto-detect-interface', value => typeof value === 'boolean', errors, 'auto-detect-interface must be a boolean')
+    scalarMatches(tun, 'strict-route', value => typeof value === 'boolean', errors, 'strict-route must be a boolean')
     scalarMatches(tun, 'device', value => typeof value === 'string' && DEVICE_PATTERN.test(value), errors)
     scalarMatches(tun, 'stack', value => typeof value === 'string' && STACKS.has(value as MihomoTunStack), errors)
-    sequenceEquals(tun.get('dns-hijack'), ['any:53'], 'tun.dns-hijack', errors)
+    if (!tun.has('dns-hijack')) errors.push('missing tun key: dns-hijack')
+    else {
+      const hijack = tun.get('dns-hijack')
+      if (!isSeq(hijack) || hijack.items.length === 0) errors.push('tun.dns-hijack must be a non-empty sequence')
+      else for (const item of hijack.items) {
+        if (!isScalar(item) || !isValidDnsHijackEntry(nodeText(item))) errors.push(`invalid tun.dns-hijack entry: ${nodeText(item)}`)
+      }
+    }
+    if (tun.has('mtu')) scalarMatches(tun, 'mtu', value => typeof value === 'number' && isValidTunMtu(value), errors, 'mtu must be an integer between 576 and 65535')
+    if (tun.has('route-address')) validateRouteList(tun.get('route-address'), 'route-address', errors)
+    if (tun.has('route-exclude-address')) validateRouteList(tun.get('route-exclude-address'), 'route-exclude-address', errors)
   }
 
   const dnsNode = root.get('dns')
@@ -175,5 +221,23 @@ function scalarMatches(values: Map<string, Node>, key: string, test: (value: unk
 function sequenceEquals(node: Node | undefined, expected: string[], label: string, errors: string[]): void {
   if (!isSeq(node) || node.items.length !== expected.length || node.items.some((item, index) => !isScalar(item) || item.value !== expected[index])) {
     errors.push(`${label} must contain exactly [${expected.join(', ')}]`)
+  }
+}
+
+function nodeText(node: unknown): string {
+  if (!isScalar(node)) return ''
+  const value = node.value
+  return value == null ? '' : String(value)
+}
+
+function validateRouteList(node: Node | undefined, label: string, errors: string[]): void {
+  if (!isSeq(node) || node.items.length === 0) {
+    errors.push(`${label} must be a non-empty sequence`)
+    return
+  }
+  for (const item of node.items) {
+    if (!isScalar(item) || !isValidTunRouteAddress(String(item.value))) {
+      errors.push(`invalid ${label} entry: ${nodeText(item)}`)
+    }
   }
 }

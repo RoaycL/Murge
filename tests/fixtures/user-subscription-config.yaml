@@ -1,0 +1,138 @@
+# Reconstruction of a real user-subscription mihomo config. It deliberately uses
+# YAML anchors + merge keys (NodeParam / FilterGame / FilterAll / RuleProviders),
+# flow-style provider/group entries, TUN auto-route, a public DNS listener and a
+# public socks listener. This is the shape the profile-backed kernel transform
+# must carry (content) while neutralizing (system mutation).
+port: 7890
+socks-port: 7891
+mixed-port: 7892
+redir-port: 7893
+tproxy-port: 7894
+allow-lan: true
+mode: rule
+log-level: info
+ipv6: true
+udp: true
+external-controller: 0.0.0.0:9090
+geox-url: &GeoxUrl
+  geox: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat"
+  mmdb: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/country.mmdb"
+  asn: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/GeoLite2-ASN.mmdb"
+profile:
+  store-selected: true
+  store-fake-ip: true
+sniffer:
+  enable: true
+
+NodeParam: &NodeParam
+  type: http
+  interval: 3600
+  health-check:
+    enable: true
+    url: "http://www.google.com/blank.html"
+    interval: 6
+
+FilterGame: &FilterGame ^(?=.*((?i)游戏|🎮)).*$
+FilterAll: &FilterAll
+  - "^(?=.*((?i)游戏|🎮)).*$"
+  - "^(?=.*((?i)短视频|抖音|快手)).*$"
+
+RuleProviders: &RuleProviders
+  type: http
+  behavior: classical
+  interval: 3600
+  format: yaml
+  proxy: DIRECT
+
+proxy-providers:
+  CloudCone: { url: "https://example.com/cc/basic", <<: *NodeParam, path: "./proxy_providers/CloudCone.yaml", override: { additional-prefix: "[CC] " } }
+  VMISS: { url: "https://example.com/vmiss/basic", <<: *NodeParam, path: "./proxy_providers/VMISS.yaml", override: { additional-prefix: "[VMISS] " } }
+  Oracle: { url: "https://example.com/oracle/basic", <<: *NodeParam, path: "./proxy_providers/Oracle.yaml", override: { additional-prefix: "[ORACLE] " } }
+  SKYLUMO: { url: "https://example.com/skylumo/basic", <<: *NodeParam, path: "./proxy_providers/SKYLUMO.yaml", override: { additional-prefix: "[SKYLUMO] " } }
+  PaoPaoGou: { url: "https://example.com/ppg/basic", <<: *NodeParam, path: "./proxy_providers/PaoPaoGou.yaml", override: { additional-prefix: "[PPG] " } }
+  DingJiJiChang: { url: "https://example.com/djjc/basic", <<: *NodeParam, path: "./proxy_providers/DingJiJiChang.yaml", override: { additional-prefix: "[DJJ C] " } }
+  DigitalOcean: { url: "https://example.com/do/basic", <<: *NodeParam, path: "./proxy_providers/DigitalOcean.yaml", override: { additional-prefix: "[DO] " } }
+
+proxy-groups:
+  - name: 全球选择
+    type: select
+    proxies:
+      - DIRECT
+      - 自动选择
+  - name: 自动选择
+    type: url-test
+    url: "http://www.google.com/blank.html"
+    interval: 300
+    use: [CloudCone, VMISS, Oracle, SKYLUMO, PaoPaoGou, DingJiJiChang, DigitalOcean]
+  - name: 境外下载
+    type: select
+    include-all-providers: true
+    filter: *FilterAll
+  - name: 手动切换
+    type: fallback
+    proxies:
+      - 全球选择
+      - 自动选择
+
+rule-providers:
+  LAN: { <<: *RuleProviders, url: "https://example.com/r/lan.yaml", path: "./rules/lan.yaml" }
+  Direct: { <<: *RuleProviders, url: "https://example.com/r/direct.yaml", path: "./rules/direct.yaml" }
+  Proxy: { <<: *RuleProviders, url: "https://example.com/r/proxy.yaml", path: "./rules/proxy.yaml" }
+  ChinaDownloadCDN: { <<: *RuleProviders, url: "https://example.com/r/china-dl.yaml", path: "./rules/china-dl.yaml" }
+  InternationalDownloadCDN: { <<: *RuleProviders, url: "https://example.com/r/intl-dl.yaml", path: "./rules/intl-dl.yaml" }
+  AI: { <<: *RuleProviders, url: "https://example.com/r/ai.yaml", path: "./rules/ai.yaml" }
+  OpenAI: { <<: *RuleProviders, url: "https://example.com/r/openai.yaml", path: "./rules/openai.yaml" }
+  Claude: { <<: *RuleProviders, url: "https://example.com/r/claude.yaml", path: "./rules/claude.yaml" }
+  Gemini: { <<: *RuleProviders, url: "https://example.com/r/gemini.yaml", path: "./rules/gemini.yaml" }
+  Steam: { <<: *RuleProviders, url: "https://example.com/r/steam.yaml", path: "./rules/steam.yaml" }
+  Microsoft: { <<: *RuleProviders, url: "https://example.com/r/ms.yaml", path: "./rules/ms.yaml" }
+  Google: { <<: *RuleProviders, url: "https://example.com/r/google.yaml", path: "./rules/google.yaml" }
+  Telegram: { <<: *RuleProviders, url: "https://example.com/r/tg.yaml", path: "./rules/tg.yaml" }
+  Twitter: { <<: *RuleProviders, url: "https://example.com/r/tw.yaml", path: "./rules/tw.yaml" }
+  GitHub: { <<: *RuleProviders, url: "https://example.com/r/gh.yaml", path: "./rules/gh.yaml" }
+  YouTube: { <<: *RuleProviders, url: "https://example.com/r/yt.yaml", path: "./rules/yt.yaml" }
+  China: { <<: *RuleProviders, url: "https://example.com/r/cn.yaml", path: "./rules/cn.yaml" }
+  Global: { <<: *RuleProviders, url: "https://example.com/r/global.yaml", path: "./rules/global.yaml" }
+
+dns:
+  enable: true
+  listen: 0.0.0.0:1053
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 28.0.0.1/8
+  fake-ip-filter:
+    - "*.lan"
+    - "*.local"
+  default-nameserver:
+    - 1.1.1.1
+    - 8.8.8.8
+  nameserver:
+    - 8.8.8.8
+    - 1.1.1.1
+
+listeners:
+  - name: socks5-in-1
+    type: socks
+    port: 10808
+    listen: 0.0.0.0
+    udp: true
+    users: []
+    proxy: DIRECT
+
+tun:
+  enable: true
+  stack: system
+  dns-hijack:
+    - any:53
+  auto-route: true
+  auto-detect-interface: true
+
+rules:
+  - DOMAIN,example.com,全球选择
+  - DOMAIN-SUFFIX,google.com,全球选择
+  - RULE-SET,LAN,DIRECT
+  - RULE-SET,Direct,DIRECT
+  - RULE-SET,China,Direct
+  - RULE-SET,Global,Proxy
+  - GEOIP,CN,DIRECT
+  - MATCH,漏网之鱼

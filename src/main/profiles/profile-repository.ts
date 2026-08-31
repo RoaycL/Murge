@@ -150,6 +150,23 @@ export class ProfileRepository {
     return { meta: { ...meta, active: meta.id === activeId }, document }
   }
 
+  /**
+   * Return the currently active profile (document + metadata) or null when no
+   * profile is active. This is the document the kernel materializes so the live
+   * controller actually exposes the profile's proxies, groups and rules.
+   */
+  async getActive(): Promise<Profile | null> {
+    const activeId = await this.readActive()
+    if (!activeId) return null
+    try {
+      return await this.get(activeId)
+    } catch (error) {
+      const code = (error as ProtocolError).code
+      if (code === ProtocolErrorCode.NOT_FOUND) return null
+      throw error
+    }
+  }
+
   private async ensureUniqueName(name: string, excludeId?: string): Promise<void> {
     const existing = await this.list()
     const normalized = normalizeName(name)

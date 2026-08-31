@@ -419,6 +419,32 @@ app.whenReady().then(async () => {
   // already-pinned `userData`, so the namespace is not doubled.
   const profileRoot = await resolveRuntimeProfileRoot(app.getPath('appData'), { dev: is.dev })
 
+  // Profile/subscription service, created BEFORE the kernel so the kernel config
+  // store can resolve the ACTIVE profile's document and run the user's
+  // proxies / proxy-groups / rules instead of the strict direct-only bootstrap.
+  // This is what makes the Policy and Rules views reflect the imported profile.
+  const validator = createConfigValidator({ requireProxySections: false })
+
+  // SECURITY: In development builds, block all outbound network requests for subscriptions
+  // to comply with DEVELOPMENT_SAFETY.md restrictions. Production builds use real fetch.
+  const subscriptionFetcher = is.dev
+    ? new SubscriptionFetcher({
+        strictUrlValidation: true,
+        fetchFn: async () => {
+          throw new ProtocolError(
+            ProtocolErrorCode.INVALID_ARGUMENT,
+            '开发构建禁止真实订阅抓取；请切换到生产构建或显式启用网络访问'
+          )
+        }
+      })
+    : new SubscriptionFetcher()
+
+  const profileService = new ProfileService(
+    new ProfileRepository({ rootDir: profileRoot, validator }),
+    validator,
+    subscriptionFetcher
+  )
+
   // CI-only startup probe (see the `package-win` workflow). Verifies production
   // storage wiring and that packaging did not break the launch path, without
   // opening a window, starting a kernel, or binding any socket.
@@ -459,7 +485,12 @@ app.whenReady().then(async () => {
         : new MihomoKernelConfigStore({
             mixedPort: productionMixedPort!,
             controllerPort: productionControllerPort!,
-            workspaceDir: join(productionKernelRoot, 'runtime')
+            workspaceDir: join(productionKernelRoot, 'runtime'),
+            // Drive the live controller from the ACTIVE profile (proxies, groups,
+            // rules, providers) instead of the strict direct-only bootstrap. Falls
+            // back to the strict config when no profile is active (e.g. CI smoke).
+            resolveActiveDocument: async () =>
+              (await profileService.getActiveProfile())?.document ?? null
           }),
       adapter: new NodeKernelProcessAdapter(),
       secret: is.dev ? devControllerSecret : productionSecret!
@@ -541,30 +572,6 @@ app.whenReady().then(async () => {
     })
   })
 
-  const validator = createConfigValidator({ requireProxySections: false })
-  
-  // SECURITY: In development builds, block all outbound network requests for subscriptions
-  // to comply with DEVELOPMENT_SAFETY.md restrictions. Production builds use real fetch.
-  let subscriptionFetcher: SubscriptionFetcher
-  if (is.dev) {
-    subscriptionFetcher = new SubscriptionFetcher({
-      strictUrlValidation: true,
-      fetchFn: async () => {
-        throw new ProtocolError(
-          ProtocolErrorCode.INVALID_ARGUMENT,
-          '开发构建禁止真实订阅抓取；请切换到生产构建或显式启用网络访问'
-        )
-      }
-    })
-  } else {
-    subscriptionFetcher = new SubscriptionFetcher()
-  }
-  
-  const profileService = new ProfileService(
-    new ProfileRepository({ rootDir: profileRoot, validator }),
-    validator,
-    subscriptionFetcher
-  )
   const tunSupported = !is.dev && process.platform === 'win32'
   const tunAdapter = tunSupported
     ? new MihomoOwnedTunAdapter(

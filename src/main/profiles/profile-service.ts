@@ -27,6 +27,15 @@ export class ProfileService implements ProfileGateway {
     return this.repository.get(id)
   }
 
+  /**
+   * Resolve the active profile's document for the kernel, or null when no
+   * profile is active. The kernel config store calls this at start time so the
+   * live mihomo controller is configured from the user's proxies/groups/rules.
+   */
+  getActiveProfile(): Promise<Profile | null> {
+    return this.repository.getActive()
+  }
+
   async importProfile(request: ImportRequest): Promise<ProfileMeta> {
     const result = this.validator.validate(request.document)
     this.throwIfInvalid(result)

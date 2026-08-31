@@ -5,6 +5,7 @@ import { join, resolve, sep } from 'node:path'
 import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
 import type { KernelBinary, KernelConfig, KernelConfigStore } from './types'
 import { generateMihomoConfig, validateMihomoConfigYaml, SECRET_PATTERN } from './mihomo-config'
+import { buildProfileKernelConfig, profileKernelConfigErrors } from './profile-kernel-config'
 
 export interface MihomoConfigStoreOptions {
   mixedPort: number
@@ -16,17 +17,31 @@ export interface MihomoConfigStoreOptions {
    * child. The parent is never removed. Defaults to the OS temp dir.
    */
   workspaceDir?: string
+  /**
+   * Resolve the active profile's raw YAML document. When it returns a document
+   * the kernel runs the profile's proxies/groups/rules (with only the app-critical
+   * listener/auth keys forced); when it returns null the store falls back to the
+   * strict loopback-only direct config. Omitted entirely, this store never leaves
+   * the strict Phase-7 behavior (preserving the legacy milestone).
+   */
+  resolveActiveDocument?: () => Promise<string | null>
 }
 
 /**
- * Materializes the strict, loopback-only mihomo config into an isolated temp
- * workspace and cleans it up afterwards.
+ * Materializes the runtime mihomo config into an isolated temp workspace and
+ * cleans it up afterwards.
  *
- * Safety: the written document always satisfies the Phase-7 invariants
- * (mixed-port only, allow-lan:false, mode:direct, external-controller on
- * 127.0.0.1, tun.enable:false, dns.enable:false, rules MATCH,DIRECT). Cleanup
- * deletes exactly the per-run child the store created and refuses to touch any
- * other path, including the caller-provided parent.
+ * When `resolveActiveDocument` is provided and returns an active profile, the
+ * written document is the profile's proxies/groups/rules transformed by
+ * {@link buildProfileKernelConfig}: content is preserved while the main-kernel
+ * safety invariants are enforced (mixed-port only on the allocated non-privileged
+ * port, allow-lan:false, external-controller on 127.0.0.1, no TUN, no public
+ * listeners/DNS, caller's secret). When no active profile exists the strict
+ * loopback-only direct config (tun.enable:false, dns.enable:false, MATCH,DIRECT)
+ * is written instead. Cleanup deletes exactly the per-run child the store created
+ * and refuses to touch any other path, including the caller-provided parent. The
+ * strict fallback pins mode:direct; the profile path pins mode:rule so the
+ * profile's rules actually take effect.
  */
 export class MihomoKernelConfigStore implements KernelConfigStore {
   /** The exact directory this store created; unknown until materialize runs. */
@@ -54,14 +69,20 @@ export class MihomoKernelConfigStore implements KernelConfigStore {
         'Mihomo controller secret must be a 64-character lowercase hex string'
       )
     }
-    const configText = generateMihomoConfig({
-      mixedPort: this.options.mixedPort,
-      controllerPort: this.options.controllerPort,
-      secret
-    })
+    const built = await this.buildConfigText(secret)
     // Fail closed before writing: never persist a config that leaks a listener
     // beyond loopback or mutates the system network.
-    validateMihomoConfigYaml(configText)
+    if (built.fromProfile) {
+      const profileErrors = profileKernelConfigErrors(built.text)
+      if (profileErrors.length > 0) {
+        throw new ProtocolError(
+          ProtocolErrorCode.INVALID_ARGUMENT,
+          `配置文件构建失败：${profileErrors.join('；')}`
+        )
+      }
+    } else {
+      validateMihomoConfigYaml(built.text)
+    }
 
     // (2) Only now create the exclusive child. `workspaceDir` (if given) is a
     // parent; the caller's own files under it must survive a later cleanup.
@@ -77,7 +98,7 @@ export class MihomoKernelConfigStore implements KernelConfigStore {
     // caller-provided parent — and any pre-existing file inside it — is never
     // touched.
     try {
-      await writeFile(configPath, configText, 'utf8')
+      await writeFile(configPath, built.text, 'utf8')
     } catch (error) {
       await this.removeOwnedDir()
       throw error
@@ -87,6 +108,37 @@ export class MihomoKernelConfigStore implements KernelConfigStore {
       rootDir,
       args: ['-f', configPath, '-d', rootDir],
       env: { MIHOMO_PLATFORM: process.platform, MIHOMO_ARCH: process.arch }
+    }
+  }
+
+  /**
+   * Build the config document to write. When an active-profile resolver is
+   * configured and returns a document, the profile's proxies/groups/rules are
+   * used with only the app-critical listener/auth keys forced (fromProfile=true).
+   * Otherwise the strict loopback-only direct config is generated (fromProfile=false).
+   */
+  private async buildConfigText(secret: string): Promise<{ text: string; fromProfile: boolean }> {
+    const resolve = this.options.resolveActiveDocument
+    if (resolve) {
+      const document = await resolve()
+      if (document) {
+        return {
+          text: buildProfileKernelConfig(document, {
+            mixedPort: this.options.mixedPort,
+            controllerPort: this.options.controllerPort,
+            secret
+          }),
+          fromProfile: true
+        }
+      }
+    }
+    return {
+      text: generateMihomoConfig({
+        mixedPort: this.options.mixedPort,
+        controllerPort: this.options.controllerPort,
+        secret
+      }),
+      fromProfile: false
     }
   }
 

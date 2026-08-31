@@ -154,3 +154,85 @@ describe('MihomoKernelConfigStore', () => {
     expect((await readdir(parent)).filter((n) => n.startsWith('mihomo-workspace-'))).toEqual([])
   })
 })
+
+describe('MihomoKernelConfigStore (active-profile backed)', () => {
+  const PROFILE = `mode: rule
+proxy-providers:
+  CloudCone:
+    type: http
+    url: https://example.com/cloud
+    path: ./proxy_providers/CloudCone.yaml
+proxy-groups:
+  - name: 全球选择
+    type: select
+    proxies:
+      - DIRECT
+rules:
+  - MATCH,漏网之鱼
+tun:
+  enable: true
+  auto-route: true
+`
+
+  it('materializes the active profile document when a resolver returns it', async () => {
+    const store = new MihomoKernelConfigStore({
+      mixedPort: 25000,
+      controllerPort: 25001,
+      resolveActiveDocument: async () => PROFILE
+    })
+    const config = await store.materialize({ command: '/bin/mihomo', args: [] }, secret)
+    const text = await readFile(config.configPath, 'utf8')
+
+    // The profile's proxies/groups/rules are carried through.
+    expect(text).toContain('proxy-providers:')
+    expect(text).toContain('全球选择')
+    expect(text).toContain('漏网之鱼')
+
+    // The system-mutating tun block is neutralized on the main kernel.
+    expect(text).not.toMatch(/tun:/)
+
+    // Safety keys are forced, and the caller's secret is written verbatim.
+    expect(text).toContain('mixed-port: 25000')
+    expect(text).toContain('external-controller: 127.0.0.1:25001')
+    expect(text).toContain(`secret: ${secret}`)
+
+    await store.cleanup(config)
+  })
+
+  it('falls back to the strict config when no active profile document exists', async () => {
+    const store = new MihomoKernelConfigStore({
+      mixedPort: 26000,
+      controllerPort: 26001,
+      resolveActiveDocument: async () => null
+    })
+    const config = await store.materialize({ command: '/bin/mihomo', args: [] }, secret)
+    const text = await readFile(config.configPath, 'utf8')
+    // Strict path: loopback-only, direct, never mutates the host network.
+    expect(() => validateMihomoConfigYaml(text)).not.toThrow()
+    expect(text).toContain('MATCH,DIRECT')
+    await store.cleanup(config)
+  })
+
+  it('still enforces the caller secret on the profile-backed path', async () => {
+    const store = new MihomoKernelConfigStore({
+      mixedPort: 27000,
+      controllerPort: 27001,
+      resolveActiveDocument: async () => PROFILE
+    })
+    await expect(
+      store.materialize({ command: '/bin/mihomo', args: [] }, '')
+    ).rejects.toMatchObject({ code: ProtocolErrorCode.INVALID_ARGUMENT })
+  })
+
+  it('fails closed when the profile document is invalid', async () => {
+    const store = new MihomoKernelConfigStore({
+      mixedPort: 28000,
+      controllerPort: 28001,
+      resolveActiveDocument: async () => 'mode: rule\n'
+    })
+    // No proxies/groups/rules content → invalid => rejected before writing.
+    await expect(
+      store.materialize({ command: '/bin/mihomo', args: [] }, secret)
+    ).rejects.toMatchObject({ code: ProtocolErrorCode.INVALID_ARGUMENT })
+  })
+})

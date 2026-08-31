@@ -79,6 +79,16 @@ export class ProfileService implements ProfileGateway {
     }
   }
 
+  /** Used by the auto-reload coordinator to compensate a failed first activation. */
+  deactivateProfile(): Promise<void> {
+    return this.repository.deactivate()
+  }
+
+  async restoreProfileDocument(id: string, document: string): Promise<void> {
+    this.throwIfInvalid(this.validator.validate(document))
+    await this.repository.restoreDocument(id, document)
+  }
+
   deleteProfile(id: string): Promise<void> {
     return this.repository.delete(id)
   }

@@ -72,6 +72,57 @@ describe('ProfileAutoReloadGateway', () => {
     expect(result.active).toBe(true)
   })
 
+  it('restores the previous active profile when applying an activation fails', async () => {
+    const inner = new FakeProfileGateway()
+    inner.profiles.push({ meta: meta('p1', 'One', true, 0), document: 'proxies: []\n' })
+    inner.profiles.push({ meta: meta('p2', 'Two', false, 1), document: 'proxies: []\n' })
+    inner.activeIndex = 0
+    const reload = vi.fn(async (rollback?: () => Promise<void>) => {
+      await rollback?.()
+      throw new Error('replacement rejected')
+    })
+    const gw = new ProfileAutoReloadGateway({ inner, reloader: { reload }, autoActivateOnEdit: true })
+
+    await expect(gw.activateProfile('p2')).rejects.toThrow('replacement rejected')
+    expect(inner.activeIndex).toBe(0)
+  })
+
+  it('restores the prior YAML snapshot when applying an edit fails', async () => {
+    const inner = new FakeProfileGateway()
+    const original = 'mode: rule\nproxies: []\n'
+    inner.profiles.push({ meta: meta('p1', 'One', true, 0), document: original })
+    inner.activeIndex = 0
+    inner.editDocument = vi.fn(async (id) => {
+      const profile = await inner.getProfile(id)
+      profile.document = 'mode: global\nproxies: []\n'
+      return profile.meta
+    })
+    const reload = vi.fn(async (rollback?: () => Promise<void>) => {
+      await rollback?.()
+      throw new Error('replacement rejected')
+    })
+    const gw = new ProfileAutoReloadGateway({ inner, reloader: { reload }, autoActivateOnEdit: true })
+
+    await expect(gw.editDocument('p1', [{ key: 'mode', value: 'global' }]))
+      .rejects.toThrow('replacement rejected')
+    expect(inner.profiles[0].document).toBe(original)
+    expect(inner.activeIndex).toBe(0)
+  })
+
+  it('clears the active pointer when the first activated import cannot be applied', async () => {
+    const inner = new FakeProfileGateway()
+    const reload = vi.fn(async (rollback?: () => Promise<void>) => {
+      await rollback?.()
+      throw new Error('replacement rejected')
+    })
+    const gw = new ProfileAutoReloadGateway({ inner, reloader: { reload }, autoActivateOnEdit: true })
+
+    await expect(gw.importProfile({
+      name: 'First', document: 'proxies: []\n', source: { type: 'file' }, activate: true
+    })).rejects.toThrow('replacement rejected')
+    expect(inner.activeIndex).toBe(-1)
+  })
+
   it('reloads an import only when activated', async () => {
     const inner = new FakeProfileGateway()
     const { gw, reload } = gatewayWith(inner)
@@ -89,7 +140,7 @@ describe('ProfileAutoReloadGateway', () => {
     expect(reload).toHaveBeenCalledTimes(2)
   })
 
-  it('delegates non-mutating and unrelated mutating methods untouched', async () => {
+  it('reloads the strict fallback after deleting the active profile', async () => {
     const inner = new FakeProfileGateway()
     inner.profiles.push({ meta: meta('p1', 'One', true, 0), document: 'proxies: []\n' })
     inner.activeIndex = 0
@@ -105,5 +156,6 @@ describe('ProfileAutoReloadGateway', () => {
 
     await gw.deleteProfile('p1')
     expect(inner.profiles.length).toBe(0)
+    expect(reload).toHaveBeenCalledTimes(1)
   })
 })

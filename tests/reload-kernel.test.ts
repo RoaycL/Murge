@@ -69,4 +69,35 @@ describe('reloadKernelForActiveProfile', () => {
     expect(kernel.stop).toHaveBeenCalledTimes(1)
     expect(systemProxy.enable).not.toHaveBeenCalled()
   })
+
+  it('rolls back, restarts the previous config and restores the proxy after replacement start fails', async () => {
+    const { kernel, systemProxy, order } = deps(RUNNING, PROXY_ENABLED)
+    kernel.start
+      .mockImplementationOnce(async () => { order.push('replacement-start'); throw new Error('replacement rejected') })
+      .mockImplementationOnce(async () => { order.push('recovery-start'); return { ...RUNNING } })
+    const rollbackActive = vi.fn(async () => { order.push('rollback') })
+
+    await expect(reloadKernelForActiveProfile(
+      { kernel, systemProxy },
+      { rollbackActive }
+    )).rejects.toThrow('replacement rejected')
+
+    expect(kernel.start).toHaveBeenCalledTimes(2)
+    expect(rollbackActive).toHaveBeenCalledTimes(1)
+    expect(order).toEqual(['stop', 'replacement-start', 'rollback', 'recovery-start', 'enable'])
+  })
+
+  it('restores the previous active pointer when stopping the old kernel fails', async () => {
+    const { kernel, systemProxy } = deps(RUNNING, PROXY_ENABLED)
+    kernel.stop.mockRejectedValueOnce(new Error('stop failed'))
+    const rollbackActive = vi.fn(async () => {})
+
+    await expect(reloadKernelForActiveProfile(
+      { kernel, systemProxy },
+      { rollbackActive }
+    )).rejects.toThrow('stop failed')
+    expect(rollbackActive).toHaveBeenCalledTimes(1)
+    expect(kernel.start).not.toHaveBeenCalled()
+    expect(systemProxy.enable).not.toHaveBeenCalled()
+  })
 })

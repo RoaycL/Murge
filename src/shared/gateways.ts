@@ -100,6 +100,10 @@ export interface ProfileGateway {
   importProfile(request: ImportRequest): ProfileMeta | Promise<ProfileMeta>
   importFromUrl(name: string, url: string, activate?: boolean): ProfileMeta | Promise<ProfileMeta>
   activateProfile(id: string): ProfileMeta | Promise<ProfileMeta>
+  /** Internal recovery primitive; not exposed through renderer IPC. */
+  deactivateProfile(): Promise<void>
+  /** Internal recovery primitive; restores a pre-mutation document snapshot. */
+  restoreProfileDocument(id: string, document: string): Promise<void>
   deleteProfile(id: string): Promise<void>
   renameProfile(id: string, name: string): ProfileMeta | Promise<ProfileMeta>
   editDocument(id: string, edits: ConfigEdit[]): ProfileMeta | Promise<ProfileMeta>

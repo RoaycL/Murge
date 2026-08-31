@@ -7,7 +7,11 @@ import type { ProfileGateway } from '../../shared/gateways'
  * the profile-side sequencing (auto-activate + when to call this).
  */
 export interface ProfileReloader {
-  reload(): Promise<void>
+  /**
+   * Apply the committed active profile. `rollbackActive`, when supplied, restores
+   * the prior pointer if stopping or starting the replacement kernel fails.
+   */
+  reload(rollbackActive?: () => Promise<void>): Promise<void>
 }
 
 export interface ProfileAutoReloadGatewayOptions {
@@ -39,6 +43,8 @@ export class ProfileAutoReloadGateway implements ProfileGateway {
   private readonly inner: ProfileGateway
   private readonly reloader: ProfileReloader
   private readonly autoActivateOnEdit: boolean
+  /** Serialize active-pointer mutations so an older failed reload cannot undo a newer one. */
+  private mutationTail: Promise<void> = Promise.resolve()
 
   constructor(options: ProfileAutoReloadGatewayOptions) {
     this.inner = options.inner
@@ -55,25 +61,48 @@ export class ProfileAutoReloadGateway implements ProfileGateway {
   }
 
   async importProfile(request: ImportRequest): Promise<ProfileMeta> {
-    const meta = await this.inner.importProfile(request)
-    if (request.activate) await this.reloader.reload()
-    return meta
+    return this.enqueueMutation(async () => {
+      const previousActiveId = await this.currentActiveId()
+      const meta = await this.inner.importProfile(request)
+      if (request.activate) await this.reloadWithRollback(previousActiveId)
+      return meta
+    })
   }
 
   async importFromUrl(name: string, url: string, activate = false): Promise<ProfileMeta> {
-    const meta = await this.inner.importFromUrl(name, url, activate)
-    if (activate) await this.reloader.reload()
-    return meta
+    return this.enqueueMutation(async () => {
+      const previousActiveId = await this.currentActiveId()
+      const meta = await this.inner.importFromUrl(name, url, activate)
+      if (activate) await this.reloadWithRollback(previousActiveId)
+      return meta
+    })
   }
 
   async activateProfile(id: string): Promise<ProfileMeta> {
-    const meta = await this.inner.activateProfile(id)
-    await this.reloader.reload()
-    return meta
+    return this.enqueueMutation(async () => {
+      const previousActiveId = await this.currentActiveId()
+      const meta = await this.inner.activateProfile(id)
+      await this.reloadWithRollback(previousActiveId)
+      return meta
+    })
   }
 
-  deleteProfile(id: string): Promise<void> {
-    return this.inner.deleteProfile(id)
+  deactivateProfile(): Promise<void> {
+    return this.inner.deactivateProfile()
+  }
+
+  restoreProfileDocument(id: string, document: string): Promise<void> {
+    return this.inner.restoreProfileDocument(id, document)
+  }
+
+  async deleteProfile(id: string): Promise<void> {
+    return this.enqueueMutation(async () => {
+      const previousActiveId = await this.currentActiveId()
+      await this.inner.deleteProfile(id)
+      // The deleted document cannot be restored. Re-materialize the strict
+      // fallback immediately so the process never keeps using deleted secrets.
+      if (previousActiveId === id) await this.reloader.reload()
+    })
   }
 
   renameProfile(id: string, name: string): ProfileMeta | Promise<ProfileMeta> {
@@ -81,20 +110,26 @@ export class ProfileAutoReloadGateway implements ProfileGateway {
   }
 
   async editDocument(id: string, edits: ConfigEdit[]): Promise<ProfileMeta> {
-    const meta = await this.inner.editDocument(id, edits)
-    const activeId = await this.currentActiveId()
-    if (activeId === id) {
-      // Editing the live profile: reapply it as-is.
-      await this.reloader.reload()
+    return this.enqueueMutation(async () => {
+      const previousActiveId = await this.currentActiveId()
+      const previousDocument = (await this.inner.getProfile(id)).document
+      const meta = await this.inner.editDocument(id, edits)
+      if (previousActiveId === id) {
+        // Editing the live profile: its pointer is already the desired one.
+        await this.reloader.reload(() =>
+          this.restoreEdit(previousActiveId, id, previousDocument)
+        )
+        return meta
+      }
+      if (this.autoActivateOnEdit) {
+        const activated = await this.inner.activateProfile(id)
+        await this.reloader.reload(() =>
+          this.restoreEdit(previousActiveId, id, previousDocument)
+        )
+        return activated
+      }
       return meta
-    }
-    if (this.autoActivateOnEdit) {
-      // Save-as-apply: the edited profile becomes active before the reload.
-      const activated = await this.inner.activateProfile(id)
-      await this.reloader.reload()
-      return activated
-    }
-    return meta
+    })
   }
 
   validateDocument(document: string): ValidationResult | Promise<ValidationResult> {
@@ -104,5 +139,32 @@ export class ProfileAutoReloadGateway implements ProfileGateway {
   private async currentActiveId(): Promise<string | null> {
     const metas = await this.inner.listProfiles()
     return metas.find((meta) => meta.active)?.id ?? null
+  }
+
+  private async restoreActive(id: string | null): Promise<void> {
+    if (id === null) await this.inner.deactivateProfile()
+    else await this.inner.activateProfile(id)
+  }
+
+  private reloadWithRollback(previousActiveId: string | null): Promise<void> {
+    return this.reloader.reload(() => this.restoreActive(previousActiveId))
+  }
+
+  private async restoreEdit(
+    previousActiveId: string | null,
+    editedId: string,
+    previousDocument: string
+  ): Promise<void> {
+    await this.inner.restoreProfileDocument(editedId, previousDocument)
+    await this.restoreActive(previousActiveId)
+  }
+
+  private enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.mutationTail.then(operation, operation)
+    this.mutationTail = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
   }
 }

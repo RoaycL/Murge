@@ -220,6 +220,11 @@ export class ProfileRepository {
     return { ...meta.meta, active: true }
   }
 
+  /** Clear the active pointer without deleting a stored profile. */
+  async deactivate(): Promise<void> {
+    await this.writeActive(null)
+  }
+
   async delete(id: string): Promise<void> {
     const activeId = await this.readActive()
     await rm(this.docPath(id), { force: true })
@@ -263,6 +268,18 @@ export class ProfileRepository {
     }
     await this.writeBytes(this.metaPath(id), JSON.stringify(updated))
     return updated
+  }
+
+  /** Atomically restore a trusted document snapshot after a failed live apply. */
+  async restoreDocument(id: string, document: string): Promise<void> {
+    const profile = await this.get(id)
+    await this.writeBytes(this.docPath(id), document)
+    const updated: ProfileMeta = {
+      ...profile.meta,
+      updatedAt: this.now(),
+      size: Buffer.byteLength(document, 'utf8')
+    }
+    await this.writeBytes(this.metaPath(id), JSON.stringify(updated))
   }
 }
 

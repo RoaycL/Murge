@@ -8,6 +8,8 @@ const profilesStore = useProfilesStore()
 const url = ref('')
 const importName = ref('')
 const document = ref('')
+const localFile = ref<File | null>(null)
+const localFileInput = ref<HTMLInputElement | null>(null)
 const importing = ref(false)
 const validation = ref<ValidationResult | null>(null)
 
@@ -25,7 +27,32 @@ async function importFromUrl(): Promise<void> {
   if (!url.value.trim()) return
   importing.value = true
   try {
-    await profilesStore.importFromUrl(importName.value.trim() || url.value.trim(), url.value.trim())
+    await profilesStore.importFromUrl(importName.value.trim() || url.value.trim(), url.value.trim(), true)
+  } finally {
+    importing.value = false
+  }
+}
+
+function selectLocalFile(event: Event): void {
+  const input = event.currentTarget as HTMLInputElement
+  localFile.value = input.files?.[0] ?? null
+}
+
+async function importLocalFile(): Promise<void> {
+  const file = localFile.value
+  if (!file) return
+  importing.value = true
+  try {
+    const raw = await file.text()
+    const fallbackName = file.name.replace(/\.(?:ya?ml)$/i, '') || file.name
+    await profilesStore.importProfile({
+      name: importName.value.trim() || fallbackName,
+      document: raw,
+      source: { type: 'file', path: file.name },
+      activate: true
+    })
+    localFile.value = null
+    if (localFileInput.value) localFileInput.value.value = ''
   } finally {
     importing.value = false
   }
@@ -38,7 +65,8 @@ async function importManual(): Promise<void> {
     await profilesStore.importProfile({
       name: importName.value.trim() || '手动配置',
       document: document.value,
-      source: { type: 'manual' }
+      source: { type: 'manual' },
+      activate: true
     })
     document.value = ''
   } finally {
@@ -93,7 +121,22 @@ onMounted(() => {
     <div class="import-card">
       <input v-model="importName" class="field" aria-label="配置文件名称（可选）" placeholder="配置文件名称（可选）" />
       <input v-model="url" class="field" aria-label="订阅地址" placeholder="订阅地址 https://…" />
-      <button type="button" @click="importFromUrl" :disabled="importing || !url.trim()">导入</button>
+      <button type="button" @click="importFromUrl" :disabled="importing || !url.trim()">导入并启用</button>
+    </div>
+    <section class="section-caption"><span>本地配置文件</span></section>
+    <div class="import-card">
+      <input
+        ref="localFileInput"
+        class="field"
+        type="file"
+        accept=".yaml,.yml,text/yaml,application/yaml"
+        aria-label="选择本地 mihomo 配置文件"
+        @change="selectLocalFile"
+      />
+      <div class="import-row">
+        <span v-if="localFile" class="local-file-name">{{ localFile.name }}</span>
+        <button type="button" @click="importLocalFile" :disabled="importing || !localFile">导入并启用</button>
+      </div>
     </div>
 
     <section class="section-caption">
@@ -109,7 +152,7 @@ onMounted(() => {
         placeholder="粘贴 mihomo 配置 YAML…"
       />
       <div class="import-row">
-        <button type="button" @click="importManual" :disabled="importing || !document.trim()">导入</button>
+        <button type="button" @click="importManual" :disabled="importing || !document.trim()">导入并启用</button>
       </div>
       <p v-if="validation && !validation.ok" class="inline-error" role="alert">
         {{ validation.issues.map((issue) => issue.message).join('；') }}
@@ -174,7 +217,16 @@ onMounted(() => {
 }
 .import-row {
   display: flex;
+  align-items: center;
+  gap: 10px;
   justify-content: flex-end;
+}
+.local-file-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--app-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .import-card button {
   background: var(--app-purple);

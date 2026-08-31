@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { readFile } from 'node:fs/promises'
+import { parse } from 'yaml'
 import { buildProfileKernelConfig, profileKernelConfigErrors } from '../src/main/kernel/profile-kernel-config'
 
 // A representative user subscription config exercising anchors, merge keys, a
@@ -226,6 +227,9 @@ describe('buildProfileKernelConfig', () => {
     expect(out).not.toMatch(/listeners:/)
     expect(out).not.toMatch(/redir-port:/)
     expect(out).not.toMatch(/tproxy-port:/)
+    const runtime = parse(out) as Record<string, unknown>
+    expect(runtime.port).toBeUndefined()
+    expect(runtime['socks-port']).toBeUndefined()
     expect(out).not.toMatch(/listen: 0\.0\.0\.0:1053/)
 
     // Forced app-critical keys.
@@ -237,6 +241,30 @@ describe('buildProfileKernelConfig', () => {
     // Resolved anchor merge: CloudCone inherits type/http + interval.
     expect(out).toMatch(/CloudCone:/)
     expect(out).toMatch(/type: http/)
+  })
+
+  it('strips every extra inbound and unauthenticated controller surface from the runtime copy', () => {
+    const dangerous = `${USER_CONFIG}\nexternal-controller-unix: mihomo.sock\nexternal-controller-pipe: '\\\\.\\pipe\\mihomo'\nexternal-controller-tls: 0.0.0.0:9443\nexternal-doh-server: /dns-query\nss-config:\n  listen: 0.0.0.0:10001\nvmess-config:\n  listen: 0.0.0.0:10002\ntuic-server:\n  listen: 0.0.0.0:10003\n`
+    const out = buildProfileKernelConfig(dangerous, {
+      mixedPort: 34567,
+      controllerPort: 34568,
+      secret: SECRET
+    })
+    const runtime = parse(out) as Record<string, unknown>
+
+    for (const key of [
+      'port', 'socks-port', 'redir-port', 'tproxy-port', 'listeners', 'tun',
+      'ss-config', 'vmess-config', 'tuic-server', 'external-controller-unix',
+      'external-controller-pipe', 'external-controller-tls', 'external-doh-server'
+    ]) {
+      expect(runtime[key], key).toBeUndefined()
+    }
+    expect(runtime['mixed-port']).toBe(34567)
+    expect(runtime['external-controller']).toBe('127.0.0.1:34568')
+    expect(runtime['bind-address']).toBe('127.0.0.1')
+    // Transformation is copy-only; the imported document remains usable in
+    // another client with all of its original fields intact.
+    expect(dangerous).toContain('external-controller-pipe:')
   })
 
   it('carries a near-complete subscription config through the transform', () => {

@@ -12,6 +12,11 @@ export interface KernelReloadDependencies {
   }
 }
 
+export interface KernelReloadOptions {
+  /** Restore the previous active pointer when replacement cannot be applied. */
+  rollbackActive?: () => Promise<void>
+}
+
 /**
  * Restart a running kernel so it re-materializes from the now-active profile
  * document (the stored profile's proxies/groups/rules), preserving the system
@@ -29,12 +34,48 @@ export interface KernelReloadDependencies {
  * when it was owned before the restart, so a user who never enabled it is
  * unaffected.
  */
-export async function reloadKernelForActiveProfile(deps: KernelReloadDependencies): Promise<void> {
+export async function reloadKernelForActiveProfile(
+  deps: KernelReloadDependencies,
+  options: KernelReloadOptions = {}
+): Promise<void> {
   const status: KernelStatus = await deps.kernel.getStatus()
   if (status.phase !== 'running' && status.phase !== 'starting') return
   const proxyWasEnabled = (await deps.systemProxy.getStatus()).phase === 'enabled'
-  await deps.kernel.stop()
-  await deps.kernel.start()
+  try {
+    await deps.kernel.stop()
+  } catch (error) {
+    try {
+      await options.rollbackActive?.()
+    } catch {
+      // Preserve the lifecycle failure; no replacement process was started.
+    }
+    throw error
+  }
+  try {
+    await deps.kernel.start()
+  } catch (replacementError) {
+    if (options.rollbackActive) {
+      let rollbackSucceeded = false
+      try {
+        await options.rollbackActive()
+        rollbackSucceeded = true
+      } catch {
+        // Never restart against a pointer/document whose restoration failed.
+      }
+      // Best-effort recovery is deliberately attempted before propagating the
+      // original failure. If recovery also fails, the original apply error is
+      // still the most useful renderer-facing cause.
+      if (rollbackSucceeded) {
+        try {
+          await deps.kernel.start()
+          if (proxyWasEnabled) await deps.systemProxy.enable()
+        } catch {
+          // Kernel status/logs retain the recovery failure for diagnostics.
+        }
+      }
+    }
+    throw replacementError
+  }
   if (proxyWasEnabled) {
     await deps.systemProxy.enable()
   }

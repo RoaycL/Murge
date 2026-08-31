@@ -263,8 +263,8 @@ export class FakeProfileGateway implements ProfileGateway {
     return { ...meta, active: request.activate === true }
   }
 
-  async importFromUrl(name: string, url: string): Promise<ProfileMeta> {
-    return this.importProfile({ name, document: `proxies:\n  - name: node\n    server: 127.0.0.1\n`, source: { type: 'url', url } })
+  async importFromUrl(name: string, url: string, activate = false): Promise<ProfileMeta> {
+    return this.importProfile({ name, document: `proxies:\n  - name: node\n    server: 127.0.0.1\n`, source: { type: 'url', url }, activate })
   }
 
   async activateProfile(id: string): Promise<ProfileMeta> {
@@ -272,6 +272,16 @@ export class FakeProfileGateway implements ProfileGateway {
     if (index === -1) throw new Error(`profile ${id} not found`)
     this.activeIndex = index
     return { ...this.profiles[index].meta, active: true }
+  }
+
+  async deactivateProfile(): Promise<void> {
+    this.activeIndex = -1
+  }
+
+  async restoreProfileDocument(id: string, document: string): Promise<void> {
+    const profile = await this.getProfile(id)
+    profile.document = document
+    profile.meta.size = document.length
   }
 
   async deleteProfile(id: string): Promise<void> {

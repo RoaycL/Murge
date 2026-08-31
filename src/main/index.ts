@@ -630,11 +630,11 @@ app.whenReady().then(async () => {
     inner: profileService,
     autoActivateOnEdit: true,
     reloader: {
-      reload: () =>
+      reload: (rollbackActive) =>
         reloadKernelForActiveProfile({
           kernel: orderedKernel,
           systemProxy: systemProxyService
-        })
+        }, { rollbackActive })
     }
   })
   disposeIpc = registerIpc({

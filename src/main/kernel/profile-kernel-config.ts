@@ -26,6 +26,7 @@ import { SECRET_PATTERN } from './mihomo-config'
  *      * `mixed-port` is forced to the app-allocated non-privileged port,
  *      * `secret` is forced to the caller's kernel secret,
  *      * `allow-lan` is forced to false (loopback-only proxies).
+ *      * `bind-address` is forced to 127.0.0.1 as defense in depth.
  *
  * The document is parsed with `merge: true` so YAML anchors / merge keys
  * (`<<: *anchor`) resolve into their merged values; the runtime artifact is then
@@ -133,18 +134,45 @@ export function buildProfileKernelConfig(
   const config = data as Record<string, unknown>
 
   // --- Neutralize host-network mutation (main kernel stays loopback-only) ---
-  delete config.tun
-  delete config.listeners
+  // The desktop main kernel owns exactly one proxy inbound and one authenticated
+  // controller. A subscription may legitimately contain its own listening
+  // ports/server shortcuts for use in another client, but carrying them into this
+  // runtime copy would create port conflicts or an unauthenticated side channel.
+  // Keep the stored profile verbatim; strip every extra inbound from this copy.
+  for (const key of [
+    'port',
+    'socks-port',
+    'redir-port',
+    'tproxy-port',
+    'listeners',
+    'tun',
+    'ss-config',
+    'vmess-config',
+    'tuic-server'
+  ]) {
+    delete config[key]
+  }
+
+  // These API variants create additional controller surfaces. In particular,
+  // mihomo's Unix socket, Windows named pipe and external DoH endpoint do not
+  // authenticate with `secret`, so none may be inherited from a profile.
+  for (const key of [
+    'external-controller-unix',
+    'external-controller-pipe',
+    'external-controller-tls',
+    'external-controller-routing-mark',
+    'external-doh-server'
+  ]) {
+    delete config[key]
+  }
   if (config.dns && typeof config.dns === 'object' && !Array.isArray(config.dns)) {
     delete (config.dns as Record<string, unknown>).listen
   }
-  delete config['redir-port']
-  delete config['tproxy-port']
-
   // --- Force the app-critical listener/auth keys ---
   config['mixed-port'] = mixedPort
   config['external-controller'] = `127.0.0.1:${controllerPort}`
   config['allow-lan'] = false
+  config['bind-address'] = '127.0.0.1'
   config.secret = secret
   config.mode = typeof config.mode === 'string' && config.mode === 'rule' ? config.mode : 'rule'
 

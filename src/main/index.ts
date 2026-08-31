@@ -41,6 +41,7 @@ import { StartupService } from './startup/service'
 import { ElectronStartupAdapter } from './startup/electron-adapter'
 import { AppSettingsService } from './app-settings/service'
 import { OverrideService } from './kernel/overrides/override-service'
+import { DnsEnhancementService } from './kernel/dns/dns-enhancement-service'
 import { UpdateService } from './updates/service'
 import { ElectronUpdaterDriver } from './updates/electron-updater-driver'
 import { TunCoordinator, GatedTunMutationAdapter } from './tun/coordinator'
@@ -479,6 +480,7 @@ app.whenReady().then(async () => {
   const productionKernelRoot = join(profileRoot, 'kernel')
   const appSettingsService = new AppSettingsService(appDataRoot(app.getPath('appData')))
   const overrideService = new OverrideService(appDataRoot(app.getPath('appData')))
+  const dnsEnhancementService = new DnsEnhancementService(appDataRoot(app.getPath('appData')))
   const kernelManagerService = new KernelManagerService({
     settings: appSettingsService,
     workspaceRoot: productionKernelRoot
@@ -512,7 +514,11 @@ app.whenReady().then(async () => {
             resolveActiveDocument: async () => {
               const profile = await profileService.getActiveProfile()
               if (!profile) return null
-              return overrideService.applyForProfile(profile.document, profile.meta.id)
+              // Ordered YAML/JS overrides first, then the typed DNS enhancement,
+              // then the safety pass (buildProfileKernelConfig). This matches the
+              // audit pipeline: overrides -> typed DNS operations -> safety.
+              const overridden = await overrideService.applyForProfile(profile.document, profile.meta.id)
+              return dnsEnhancementService.applyToDocument(overridden)
             }
           }),
       adapter: new NodeKernelProcessAdapter(),
@@ -670,6 +676,7 @@ app.whenReady().then(async () => {
     startup: new StartupService(new ElectronStartupAdapter()),
     appSettings: appSettingsService,
     overrides: overrideService,
+    dns: dnsEnhancementService,
     updates,
     tun: tunGateway
   })

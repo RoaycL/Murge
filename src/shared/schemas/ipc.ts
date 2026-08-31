@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import type { MihomoConfigSnapshot, MihomoDnsQueryType } from '../mihomo-api'
 import type { OverrideInput } from '../overrides'
+import type { DnsEnhancement } from '../dns'
+import { isValidCidr, isValidDomainOrRule, isValidIp, isValidNameserver } from '../dns'
 import { ProtocolError, ProtocolErrorCode } from '../protocol-errors'
 import { logLevelSchema } from './log-level'
 
@@ -257,4 +259,49 @@ export function parseDnsQuery(name: unknown, type: unknown): { name: string; typ
     throw invalid('DNS query type is not supported')
   }
   return { name, type: type as MihomoDnsQueryType }
+}
+
+const serverListSchema = z
+  .array(z.string().refine(isValidNameserver, '无效的 DNS 服务器 URI'))
+  .max(64)
+const domainOrRuleSchema = z
+  .string()
+  .refine(isValidDomainOrRule, '必须是域名、*. 通配符或 geosite/geoip 规则')
+const ipSchema = z.string().refine(isValidIp, '必须是有效的 IPv4 或 IPv6 地址')
+
+const dnsEnhancementSchema = z
+  .object({
+    enabled: z.boolean(),
+    enhancedMode: z.enum(['fake-ip', 'redir-host', 'normal']),
+    ipv6: z.boolean(),
+    respectRules: z.boolean(),
+    fakeIpRange: z.string().refine(isValidCidr, '必须是有效的 CIDR 范围'),
+    fakeIpFilterMode: z.enum(['blacklist', 'whitelist']),
+    fakeIpFilter: z.array(domainOrRuleSchema),
+    useHosts: z.boolean(),
+    hosts: z.array(z.object({ domain: domainOrRuleSchema, address: ipSchema })),
+    defaultNameserver: serverListSchema,
+    proxyServerNameserver: serverListSchema,
+    directNameserver: serverListSchema,
+    nameserver: serverListSchema,
+    fallback: serverListSchema,
+    nameserverPolicy: z.array(z.object({ domain: domainOrRuleSchema, server: serverListSchema.element }))
+  })
+  .strict()
+
+/**
+ * Validate a renderer-sent DNS enhancement. Every server URI, IP, domain pattern
+ * and CIDR must pass, and unknown keys are rejected, so an invalid enhancement
+ * can never be persisted or reach the runtime config.
+ */
+export function parseDnsEnhancement(input: unknown): DnsEnhancement {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    throw invalid('dns enhancement must be an object')
+  }
+  const parsed = dnsEnhancementSchema.safeParse(input)
+  if (!parsed.success) {
+    const detail = parsed.error.issues[0]
+    throw invalid(`invalid dns enhancement at ${detail?.path.join('.') || 'dns'}: ${detail?.message}`)
+  }
+  return parsed.data
 }

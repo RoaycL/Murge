@@ -1,8 +1,10 @@
-import type { KernelGateway, KernelManagerGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway, OverridesGateway } from '@shared/gateways'
+import type { KernelGateway, KernelManagerGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway, OverridesGateway, DnsEnhancementGateway } from '@shared/gateways'
 import type { StartupStatus } from '@shared/startup'
 import type { AppSettings } from '@shared/app-settings'
 import type { OverrideInput, OverridesSnapshot } from '@shared/overrides'
 import { coerceOverridesSnapshot, EMPTY_OVERRIDES } from '@shared/overrides'
+import type { DnsEnhancement, DnsSnapshot } from '@shared/dns'
+import { coerceDnsEnhancement, coerceDnsSnapshot, EMPTY_DNS_ENHANCEMENT } from '@shared/dns'
 import type { KernelManagerState } from '@shared/kernel-manager'
 import { DEFAULT_KERNEL_MANAGER_STATE } from '@shared/kernel-manager'
 import type { UpdateState } from '@shared/updates'
@@ -376,6 +378,7 @@ export interface FakeContainer {
   startup: FakeStartupGateway
   appSettings: FakeAppSettingsGateway
   overrides: FakeOverridesGateway
+  dns: FakeDnsEnhancementGateway
   updates: FakeUpdatesGateway
   tun: FakeTunGateway
 }
@@ -487,6 +490,25 @@ export class FakeOverridesGateway implements OverridesGateway {
   }
 }
 
+export class FakeDnsEnhancementGateway implements DnsEnhancementGateway {
+  enhancement: DnsEnhancement = { ...EMPTY_DNS_ENHANCEMENT }
+  setCalls: DnsEnhancement[] = []
+  previewCalls: DnsEnhancement[] = []
+
+  get(): Promise<DnsSnapshot> {
+    return Promise.resolve(coerceDnsSnapshot({ enhancement: this.enhancement }))
+  }
+  async set(input: DnsEnhancement): Promise<DnsSnapshot> {
+    this.setCalls.push(input)
+    this.enhancement = coerceDnsEnhancement(input)
+    return Promise.resolve(coerceDnsSnapshot({ enhancement: this.enhancement }))
+  }
+  async preview(input: DnsEnhancement): Promise<string> {
+    this.previewCalls.push(input)
+    return ''
+  }
+}
+
 export class FakeUpdatesGateway implements UpdatesGateway {
   state: UpdateState = { ...DEFAULT_UPDATE_STATE, currentVersion: '0.0.0-test' }
   checkCalls = 0
@@ -521,6 +543,7 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
   const startup = new FakeStartupGateway()
   const appSettings = new FakeAppSettingsGateway()
   const overrides = new FakeOverridesGateway()
+  const dns = new FakeDnsEnhancementGateway()
   const updates = new FakeUpdatesGateway()
   const tun = new FakeTunGateway()
   return {
@@ -533,8 +556,9 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
     startup,
     appSettings,
     overrides,
+    dns,
     updates,
     tun,
-    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, updates, tun }
+    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, updates, tun }
   }
 }

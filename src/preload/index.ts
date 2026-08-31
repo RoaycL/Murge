@@ -102,6 +102,11 @@ const api: DesktopApi = {
     setEnabled: (id, enabled) => invoke(IPC.overridesSetEnabled, id, enabled),
     move: (id, direction) => invoke(IPC.overridesMove, id, direction)
   },
+  dns: {
+    get: () => invoke(IPC.dnsGet),
+    set: (input) => invoke(IPC.dnsSet, input),
+    preview: (input) => invoke(IPC.dnsPreview, input)
+  },
   updates: {
     getState: () => invoke(IPC.updatesGetState),
     check: () => invoke(IPC.updatesCheck),

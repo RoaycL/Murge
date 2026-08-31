@@ -4,6 +4,7 @@ import { useProfilesStore } from '../stores/profiles'
 import { useProvidersStore } from '../stores/providers'
 import { useKernelStore } from '../stores/kernel'
 import OverridesPanel from '../components/OverridesPanel.vue'
+import DnsSettingsPanel from '../components/DnsSettingsPanel.vue'
 import type { ValidationResult } from '@shared/profiles'
 
 const profilesStore = useProfilesStore()
@@ -446,6 +447,7 @@ const hasResources = computed(
     </section>
 
     <overrides-panel :active-profile-id="activeProfileId" />
+    <dns-settings-panel />
   </div>
 </template>
 

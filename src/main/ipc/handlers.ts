@@ -1,6 +1,6 @@
 import { IPC } from '@shared/ipc'
 import type { IpcDeps } from '@shared/gateways'
-import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions, parseStartupEnabled, parseDnsQuery, parseAppSettingsPatch, parseKernelEnabled, parseKernelChannel, parseKernelVersion, parseOverrideInput, parseOverrideId, parseOverrideEnabled, parseOverrideMove } from '@shared/schemas/ipc'
+import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions, parseStartupEnabled, parseDnsQuery, parseAppSettingsPatch, parseKernelEnabled, parseKernelChannel, parseKernelVersion, parseOverrideInput, parseOverrideId, parseOverrideEnabled, parseOverrideMove, parseDnsEnhancement } from '@shared/schemas/ipc'
 import {
   parseConfigEdit,
   parseImportRequest,
@@ -25,7 +25,7 @@ export type IpcHandler = (event: unknown, ...args: unknown[]) => unknown | Promi
  * the semantics Electron uses for `ipcMain.handle`.
  */
 export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
-  const { brand, appInfo, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, updates, tun } = deps
+  const { brand, appInfo, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, updates, tun } = deps
 
   return {
     [IPC.appGetBrand]: async () => brand,
@@ -109,6 +109,9 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
       overrides.setEnabled(parseOverrideId(id), parseOverrideEnabled(enabled)),
     [IPC.overridesMove]: async (_event, id, direction) =>
       overrides.move(parseOverrideId(id), parseOverrideMove(direction)),
+    [IPC.dnsGet]: async () => dns.get(),
+    [IPC.dnsSet]: async (_event, input) => dns.set(parseDnsEnhancement(input)),
+    [IPC.dnsPreview]: async (_event, input) => dns.preview(parseDnsEnhancement(input)),
     [IPC.updatesGetState]: async () => updates.getState(),
     [IPC.updatesCheck]: async () => updates.check(),
     [IPC.updatesDownload]: async () => updates.download(),

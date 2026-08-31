@@ -419,12 +419,24 @@ excluded or unproven feature appear supported in an existing release.
       edit, delete and a global/current-subscription scope picker. Contracts are
       covered by `tests/apply-overrides.test.ts`, `tests/override-service.test.ts`
       and the override IPC cases in `tests/handlers.test.ts`.)
-- [ ] Implement the complete typed DNS enhancement model through the override
+- [x] Implement the complete typed DNS enhancement model through the override
       pipeline: enable, enhanced-mode (`fake-ip`/`redir-host`/`normal`), fake-IP
       range/filter/filter-mode, IPv6, respect-rules, hosts/use-hosts,
       default/proxy/direct nameservers, nameserver/fallback and
       nameserver-policy. Validate every server URI, domain, IP and CIDR; provide
       preview and last-known-good rollback. Do not mutate the source profile.
+      (Shipped at `v0.1.14`: `DnsEnhancement` in `src/shared/dns.ts` is a strict,
+      zod-validated model; every server scheme, IP, hostname, domain pattern and
+      CIDR is validated before persistence or materialization. The
+      `DnsEnhancementService` persists atomically to `dns-enhancement.json` inside
+      the app-data root, and `applyDnsEnhancementToDocument` runs inside the
+      production `resolveActiveDocument` pipeline right after the ordered
+      overrides and before the safety pass, so a generated `dns:` block is merged
+      over the profile without ever mutating the subscription source. List keys
+      the model does not own (e.g. `fallback-filter`) are preserved. The renderer
+      exposes it as a `DnsSettingsPanel` on the Config page with a redacted YAML
+      preview; `src/main/index.ts` wires the concrete service both as the IPC
+      gateway and into the pipeline.)
 - [ ] Implement the complete typed sniffer enhancement model through the same
       pipeline: enable, override-destination, force-dns-mapping, parse-pure-ip,
       HTTP/TLS/QUIC port ranges, skip-domain, force-domain, skip-src-address and

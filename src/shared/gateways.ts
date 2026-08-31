@@ -1,6 +1,7 @@
 import type { BrandConfig } from './brand'
 import type { KernelManagerState } from './kernel-manager'
 import type { OverrideInput, OverridesSnapshot } from './overrides'
+import type { DnsEnhancement, DnsSnapshot } from './dns'
 import type {
   MihomoConfigSnapshot,
   MihomoConnectionsSnapshot,
@@ -170,6 +171,17 @@ export interface ProfileGateway {
   validateDocument(document: string): ValidationResult | Promise<ValidationResult>
 }
 
+/**
+ * Typed DNS enhancement boundary. A single global, schema-validated model that
+ * is re-applied through the kernel config pipeline at start time.
+ */
+export interface DnsEnhancementGateway {
+  get(): DnsSnapshot | Promise<DnsSnapshot>
+  set(input: DnsEnhancement): DnsSnapshot | Promise<DnsSnapshot>
+  /** Render the redacted `dns:` block a model would produce (no writes). */
+  preview(input: DnsEnhancement): string | Promise<string>
+}
+
 /** Everything the IPC handler factory needs from the trusted main process. */
 export interface IpcDeps {
   brand: BrandConfig
@@ -183,6 +195,7 @@ export interface IpcDeps {
   startup: StartupGateway
   appSettings: AppSettingsGateway
   overrides: OverridesGateway
+  dns: DnsEnhancementGateway
   updates: UpdatesGateway
   tun: TunGateway
 }

@@ -16,6 +16,7 @@ import type {
 import type { ConfigEdit, ImportRequest, Profile, ProfileMeta, ValidationResult } from './profiles'
 import type { KernelManagerState } from './kernel-manager'
 import type { OverrideInput, OverridesSnapshot } from './overrides'
+import type { DnsEnhancement, DnsSnapshot } from './dns'
 import type { KernelStatus, RuntimeSummary, TrafficSample } from './runtime'
 import type { SystemProxyStatus } from './system-proxy'
 import type { StartupStatus } from './startup'
@@ -83,6 +84,9 @@ export const IPC = {
   overridesRemove: 'overrides:remove',
   overridesSetEnabled: 'overrides:set-enabled',
   overridesMove: 'overrides:move',
+  dnsGet: 'dns:get',
+  dnsSet: 'dns:set',
+  dnsPreview: 'dns:preview',
   updatesGetState: 'updates:get-state',
   updatesCheck: 'updates:check',
   updatesDownload: 'updates:download',
@@ -172,6 +176,11 @@ export interface DesktopApi {
     remove(id: string): Promise<OverridesSnapshot>
     setEnabled(id: string, enabled: boolean): Promise<OverridesSnapshot>
     move(id: string, direction: 'up' | 'down'): Promise<OverridesSnapshot>
+  }
+  dns: {
+    get(): Promise<DnsSnapshot>
+    set(input: DnsEnhancement): Promise<DnsSnapshot>
+    preview(input: DnsEnhancement): Promise<string>
   }
   updates: {
     getState(): Promise<UpdateState>

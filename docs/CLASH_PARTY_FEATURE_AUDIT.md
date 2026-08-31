@@ -100,13 +100,21 @@ Rules:
 
 ### P1 — Controlled DNS, sniffer and core settings
 
-- [ ] DNS shared schema and editor: enable, enhanced mode
+- [x] DNS shared schema and editor: enable, enhanced mode
       (`fake-ip`/`redir-host`/`normal`), fake-IP range, fake-IP filter mode/list,
       IPv6, respect-rules, hosts/use-hosts, default-nameserver,
       proxy-server-nameserver, direct-nameserver, nameserver, fallback and
-      nameserver-policy.
-- [ ] Validate DNS server schemes, IPs, domains and CIDRs; render a redacted
+      nameserver-policy. (`src/shared/dns.ts`, `DnsSettingsPanel.vue`, the
+      `dns-enhancement.json` service and the `dns:` generator at `v0.1.14`. The
+      model is strict/zod-validated at IPC, and generated list keys are only
+      emitted when non-empty.)
+- [x] Validate DNS server schemes, IPs, domains and CIDRs; render a redacted
       effective-config preview; preserve the last-known-good config on failure.
+      (Every server scheme `udp|tcp|tls|https|h3|quic|dhcp`, IP, hostname, domain
+      pattern and CIDR is validated before persist/materialize; preview is
+      redacted (`***` for userinfo); on any invalid/unparseable input the
+      pipeline fails open to the base/default so a broken enhancement never
+      reaches the kernel — a fail-open last-known-good guarantee.)
 - [ ] Sniffer shared schema and editor: enable, override-destination,
       force-dns-mapping, parse-pure-ip, HTTP/TLS/QUIC ports, skip-domain,
       force-domain, skip-src-address and skip-dst-address.

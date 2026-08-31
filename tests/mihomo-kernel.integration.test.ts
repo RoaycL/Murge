@@ -85,17 +85,30 @@ async function waitForController(
  * The parsing is split into a pure helper so it is unit-tested by default.
  */
 async function listenersOn(port: number): Promise<string[]> {
-  let stdout: string
-  try {
-    const res =
-      process.platform === 'win32'
-        ? await execFileAsync('netstat', ['-ano', '-p', 'TCP'])
-        : await execFileAsync('ss', ['-ltna'])
-    stdout = res.stdout
-  } catch (error) {
-    throw new Error(`listener tooling unavailable: ${(error as Error).message}`)
-  }
-  return listenersMatchingText(stdout, port, process.platform === 'win32')
+  // `/version` readiness and the Windows TCP table are not an atomic view.
+  // Keep the proof fail-closed, but allow the OS a bounded interval to publish
+  // both controller and mixed-port listeners after mihomo reports ready.
+  const deadline = Date.now() + 5_000
+  let lastMissing: Error | null = null
+  do {
+    let stdout: string
+    try {
+      const res =
+        process.platform === 'win32'
+          ? await execFileAsync('netstat', ['-ano', '-p', 'TCP'])
+          : await execFileAsync('ss', ['-ltna'])
+      stdout = res.stdout
+    } catch (error) {
+      throw new Error(`listener tooling unavailable: ${(error as Error).message}`)
+    }
+    try {
+      return listenersMatchingText(stdout, port, process.platform === 'win32')
+    } catch (error) {
+      lastMissing = error as Error
+      await new Promise((resolve) => setTimeout(resolve, 200))
+    }
+  } while (Date.now() < deadline)
+  throw lastMissing ?? new Error(`no listener found on port ${port}`)
 }
 
 run('mihomo real kernel integration', () => {

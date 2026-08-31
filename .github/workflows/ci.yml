@@ -347,6 +347,9 @@ jobs:
               throw "$Label timed out after $TimeoutSeconds seconds"
             }
             $process.Refresh()
+            if ($process.ExitCode -ne 0) {
+              throw "$Label exited with code $($process.ExitCode)"
+            }
             return $process
           }
 
@@ -489,7 +492,12 @@ jobs:
           if (-not $uninstaller) { throw 'uninstaller not found' }
           Write-Host "uninstaller: $($uninstaller.FullName)"
           $null = Invoke-BoundedProcess -FilePath $uninstaller.FullName -ArgumentList '/S' -Label 'silent uninstaller' -TimeoutSeconds 180
-          Start-Sleep -Seconds 5
+          # NSIS can return after handing final deletion to its cleanup child.
+          # Poll the actual installed state instead of racing it with a fixed sleep.
+          $uninstallDeadline = (Get-Date).AddSeconds(30)
+          while (((Test-Path $exe) -or (Get-Service -Name $serviceTemplate.serviceName -ErrorAction SilentlyContinue)) -and (Get-Date) -lt $uninstallDeadline) {
+            Start-Sleep -Milliseconds 500
+          }
 
           if (Test-Path $exe) { throw "program files still present after uninstall: $exe" }
           if (Get-Service -Name $serviceTemplate.serviceName -ErrorAction SilentlyContinue) { throw 'TUN service remained registered after uninstall' }

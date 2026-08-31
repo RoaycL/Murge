@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow, app } from 'electron'
 import { brand } from '@shared/brand'
-import type { IpcDeps, KernelGateway, MihomoGateway, ProfileGateway, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway } from '@shared/gateways'
+import type { IpcDeps, KernelGateway, KernelManagerGateway, MihomoGateway, ProfileGateway, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway } from '@shared/gateways'
 import type { TunGateway } from '@shared/tun'
 import type { OutboundMode, RuntimeSummary } from '@shared/runtime'
 import { IPC } from '@shared/ipc'
@@ -10,6 +10,7 @@ import { buildIpcHandlers, type IpcHandler } from './handlers'
 
 export interface IpcDependencies {
   kernel: KernelGateway
+  kernelManager: KernelManagerGateway
   mihomo: MihomoGateway
   profiles: ProfileGateway
   systemProxy: SystemProxyGateway
@@ -66,11 +67,12 @@ function resolveExternalIp({ kernel, mihomo }: Pick<IpcDependencies, 'kernel' | 
   })()
 }
 
-export function registerIpc({ kernel, mihomo, profiles, systemProxy, startup, appSettings, updates, tun }: IpcDependencies): () => void {
+export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemProxy, startup, appSettings, updates, tun }: IpcDependencies): () => void {
   const deps: IpcDeps = {
     brand,
     appInfo: { version: app.getVersion(), platform: process.platform === 'win32' || process.platform === 'darwin' || process.platform === 'linux' ? process.platform : 'other', arch: process.arch },
     kernel,
+    kernelManager,
     mihomo,
     runtime: {
       getSummary: () => buildRuntimeSummary({ mihomo }),
@@ -121,6 +123,9 @@ export function registerIpc({ kernel, mihomo, profiles, systemProxy, startup, ap
   // Forward application-update state transitions to every open renderer window.
   const updatesUnsub = forward(IPC.updatesStateEvent, (listener) => updates.onState(listener))
 
+  // Forward kernel-manager state transitions to every open renderer window.
+  const kernelManagerUnsub = forward(IPC.kernelManagerStateEvent, (listener) => kernelManager.onState(listener))
+
   // Cleanup is owned by the caller (index.ts wires it into the `app` "before-quit"
   // lifecycle event, which is the correct Electron signal — `process` has no
   // `before-quit` event). Repeated calls are harmless no-ops.
@@ -137,5 +142,6 @@ export function registerIpc({ kernel, mihomo, profiles, systemProxy, startup, ap
     systemProxyUnsub()
     tunUnsub()
     updatesUnsub()
+    kernelManagerUnsub()
   }
 }

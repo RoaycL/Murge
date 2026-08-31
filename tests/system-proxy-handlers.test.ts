@@ -86,6 +86,7 @@ describe('registerIpc — system-proxy event & error wiring', () => {
     container = createFakeContainer(brand)
     dispose = registerIpc({
       kernel: container.kernel,
+      kernelManager: container.kernelManager,
       mihomo: container.mihomo,
       profiles: container.profiles,
       systemProxy: container.systemProxy,

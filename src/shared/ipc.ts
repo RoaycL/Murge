@@ -14,6 +14,7 @@ import type {
   MihomoStreamError
 } from './mihomo-api'
 import type { ConfigEdit, ImportRequest, Profile, ProfileMeta, ValidationResult } from './profiles'
+import type { KernelManagerState } from './kernel-manager'
 import type { KernelStatus, RuntimeSummary, TrafficSample } from './runtime'
 import type { SystemProxyStatus } from './system-proxy'
 import type { StartupStatus } from './startup'
@@ -28,6 +29,12 @@ export const IPC = {
   kernelGetStatus: 'kernel:get-status',
   kernelStart: 'kernel:start',
   kernelStop: 'kernel:stop',
+  kernelManagerGetState: 'kernel-manager:get-state',
+  kernelManagerSetEnabled: 'kernel-manager:set-enabled',
+  kernelManagerSetChannel: 'kernel-manager:set-channel',
+  kernelManagerListVersions: 'kernel-manager:list-versions',
+  kernelManagerInstall: 'kernel-manager:install',
+  kernelManagerStateEvent: 'kernel-manager:state-event',
   runtimeGetSummary: 'runtime:get-summary',
   runtimeGetExternalIp: 'runtime:get-external-ip',
   mihomoGetConfig: 'mihomo:get-config',
@@ -90,6 +97,14 @@ export interface DesktopApi {
     start(): Promise<KernelStatus>
     stop(): Promise<KernelStatus>
     onStatus(listener: (status: KernelStatus) => void): () => void
+  }
+  kernelManager: {
+    getState(): Promise<KernelManagerState>
+    setEnabled(enabled: boolean): Promise<KernelManagerState>
+    setChannel(channel: 'stable' | 'specific'): Promise<KernelManagerState>
+    listVersions(): Promise<KernelManagerState>
+    install(version: string): Promise<KernelManagerState>
+    onState(listener: (state: KernelManagerState) => void): () => void
   }
   runtime: {
     getSummary(): Promise<RuntimeSummary>

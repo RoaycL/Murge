@@ -1,4 +1,5 @@
 import type { BrandConfig } from './brand'
+import type { KernelManagerState } from './kernel-manager'
 import type {
   MihomoConfigSnapshot,
   MihomoConnectionsSnapshot,
@@ -41,6 +42,23 @@ export interface KernelGateway {
   stop(): Promise<KernelStatus>
   /** Subscribe to status transitions; returns an unsubscribe function. */
   onStatus(listener: (status: KernelStatus) => void): () => void
+}
+
+/**
+ * Kernel management boundary: the master enable switch plus the version manager
+ * (fetch published versions, install a specific one). Durable choices are
+ * mirrored into the settings document; the rest is runtime state.
+ */
+export interface KernelManagerGateway {
+  getState(): KernelManagerState | Promise<KernelManagerState>
+  setEnabled(enabled: boolean): Promise<KernelManagerState>
+  setChannel(channel: 'stable' | 'specific'): Promise<KernelManagerState>
+  /** Fetch the published mihomo version list. */
+  listVersions(): Promise<KernelManagerState>
+  /** Download + verify + install a specific version, then select it. */
+  install(version: string): Promise<KernelManagerState>
+  /** Subscribe to state transitions; returns an unsubscribe function. */
+  onState(listener: (state: KernelManagerState) => void): () => void
 }
 
 export interface MihomoGateway {
@@ -142,6 +160,7 @@ export interface IpcDeps {
   brand: BrandConfig
   appInfo: AppInfo
   kernel: KernelGateway
+  kernelManager: KernelManagerGateway
   mihomo: MihomoGateway
   runtime: RuntimeGateway
   profiles: ProfileGateway

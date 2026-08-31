@@ -1,6 +1,6 @@
 import { IPC } from '@shared/ipc'
 import type { IpcDeps } from '@shared/gateways'
-import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions, parseStartupEnabled, parseDnsQuery, parseAppSettingsPatch } from '@shared/schemas/ipc'
+import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions, parseStartupEnabled, parseDnsQuery, parseAppSettingsPatch, parseKernelEnabled, parseKernelChannel, parseKernelVersion } from '@shared/schemas/ipc'
 import {
   parseConfigEdit,
   parseImportRequest,
@@ -25,7 +25,7 @@ export type IpcHandler = (event: unknown, ...args: unknown[]) => unknown | Promi
  * the semantics Electron uses for `ipcMain.handle`.
  */
 export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
-  const { brand, appInfo, kernel, mihomo, runtime, profiles, systemProxy, startup, appSettings, updates, tun } = deps
+  const { brand, appInfo, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, updates, tun } = deps
 
   return {
     [IPC.appGetBrand]: async () => brand,
@@ -37,6 +37,15 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
       return kernel.start()
     },
     [IPC.kernelStop]: async () => kernel.stop(),
+
+    [IPC.kernelManagerGetState]: async () => kernelManager.getState(),
+    [IPC.kernelManagerSetEnabled]: async (_event, enabled) =>
+      kernelManager.setEnabled(parseKernelEnabled(enabled)),
+    [IPC.kernelManagerSetChannel]: async (_event, channel) =>
+      kernelManager.setChannel(parseKernelChannel(channel)),
+    [IPC.kernelManagerListVersions]: async () => kernelManager.listVersions(),
+    [IPC.kernelManagerInstall]: async (_event, version) =>
+      kernelManager.install(parseKernelVersion(version)),
 
     [IPC.runtimeGetSummary]: async () => runtime.getSummary(),
     [IPC.runtimeGetExternalIp]: async () => runtime.getExternalIp(),

@@ -33,6 +33,7 @@ import { SubscriptionFetcher } from './subscriptions/subscription-fetcher'
 import { startMockMihomoServer, type MockMihomoServerHandle } from './testing/mock-mihomo-server'
 import type { MihomoGateway } from '@shared/gateways'
 import { ProtocolError, ProtocolErrorCode } from '../shared/protocol-errors'
+import { KernelManagerService } from './kernel/kernel-manager-service'
 import { runQuitFlow } from './quit-guard'
 import { TrayController } from './tray/tray-controller'
 import { createElectronTray } from './tray/electron-tray'
@@ -475,6 +476,11 @@ app.whenReady().then(async () => {
   const productionControllerPort = productionPorts?.controller ?? null
   const productionMixedPort = productionPorts?.mixed ?? null
   const productionKernelRoot = join(profileRoot, 'kernel')
+  const appSettingsService = new AppSettingsService(appDataRoot(app.getPath('appData')))
+  const kernelManagerService = new KernelManagerService({
+    settings: appSettingsService,
+    workspaceRoot: productionKernelRoot
+  })
   const kernelInstance = new KernelSupervisor(
     {
       resolver: is.dev
@@ -483,7 +489,10 @@ app.whenReady().then(async () => {
           ? new MihomoKernelResolver({
               allowReal: true,
               workspaceDir: productionKernelRoot,
-              bundledArchiveDir: join(process.resourcesPath, 'bin')
+              bundledArchiveDir: join(process.resourcesPath, 'bin'),
+              kernelEnabled: () => kernelManagerService.isEnabled(),
+              versionSelection: () => kernelManagerService.getVersionSelection(),
+              ensureSpecificBinary: (version) => kernelManagerService.ensureVersionBinary(version)
             })
           : createKernelResolver({ appPath: app.getAppPath(), mode: 'disabled' }),
       configStore: is.dev
@@ -641,12 +650,12 @@ app.whenReady().then(async () => {
         }, { rollbackActive })
     }
   })
-  const appSettingsService = new AppSettingsService(appDataRoot(app.getPath('appData')))
   const updates = new UpdateService(new ElectronUpdaterDriver())
   updateService = updates
   updates.start()
   disposeIpc = registerIpc({
     kernel: orderedKernel,
+    kernelManager: kernelManagerService,
     mihomo: gateway,
     profiles: profileGateway,
     systemProxy: systemProxyService,
@@ -708,7 +717,7 @@ app.whenReady().then(async () => {
   if (!is.dev && !launchHidden) {
     try {
       const settings = await appSettingsService.get()
-      if (settings.autoStartKernel) {
+      if (settings.autoStartKernel && settings.kernelEnabled) {
         const status = await orderedKernel.getStatus()
         if (status.phase === 'stopped') {
           const started = await orderedKernel.start()

@@ -157,6 +157,62 @@ describe('MihomoKernelResolver', () => {
       message: expect.stringContaining('Bundled mihomo archive is missing')
     })
   })
+
+  it('refuses to resolve when the kernel is disabled via the manager gate', async () => {
+    const resolver = new MihomoKernelResolver({
+      allowReal: true,
+      workspaceDir: '/ws',
+      platform: 'win32',
+      arch: 'x64',
+      kernelEnabled: async () => false
+    })
+    await expect(resolver.resolve()).rejects.toMatchObject({
+      code: ProtocolErrorCode.UNSUPPORTED,
+      message: expect.stringContaining('内核已停用')
+    })
+  })
+
+  it('resolves a stable channel through the normal pinned path', async () => {
+    const resolveMihomoOverride = vi.fn(
+      async (_platform: string, _arch: string): Promise<ResolvedMihomoBinary> => fakeResolved
+    )
+    const resolver = new MihomoKernelResolver({
+      allowReal: true,
+      workspaceDir: '/ws',
+      platform: 'win32',
+      arch: 'x64',
+      kernelEnabled: async () => true,
+      versionSelection: async () => ({ channel: 'stable', specificVersion: null }),
+      resolveMihomoOverride
+    })
+    const binary = await resolver.resolve()
+    expect(binary.command).toBe('/ws/mihomo.exe')
+    expect(resolveMihomoOverride).toHaveBeenCalled()
+  })
+
+  it('resolves a specific version through ensureSpecificBinary', async () => {
+    const ensureSpecificBinary = vi.fn(
+      async (version: string): Promise<ResolvedMihomoBinary> => ({
+        ...fakeResolved,
+        path: `/ws/versions/${version}/mihomo.exe`,
+        version
+      })
+    )
+    const resolver = new MihomoKernelResolver({
+      allowReal: true,
+      workspaceDir: '/ws',
+      platform: 'win32',
+      arch: 'x64',
+      kernelEnabled: async () => true,
+      versionSelection: async () => ({ channel: 'specific', specificVersion: 'v1.19.20' }),
+      ensureSpecificBinary
+    })
+    const binary = await resolver.resolve()
+    expect(ensureSpecificBinary).toHaveBeenCalledWith('v1.19.20')
+    expect(binary.command).toBe('/ws/versions/v1.19.20/mihomo.exe')
+    expect(binary.version).toBe('v1.19.20')
+    expect(binary.env).toMatchObject({ MIHOMO_PLATFORM: 'win32', MIHOMO_ARCH: 'x64' })
+  })
 })
 
 describe('mihomoExecutableName', () => {

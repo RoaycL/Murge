@@ -219,4 +219,59 @@ describe('buildIpcHandlers', () => {
       expect(container.updates.installCalls).toBe(1)
     })
   })
+
+  describe('kernel-manager control', () => {
+    it('exposes the current kernel-manager state', async () => {
+      const result = await handlers[IPC.kernelManagerGetState](null)
+      expect(result).toEqual(await container.kernelManager.getState())
+    })
+
+    it('forwards a valid enable toggle to the gateway', async () => {
+      const result = await handlers[IPC.kernelManagerSetEnabled](null, false)
+      expect(container.kernelManager.setEnabledCalls).toEqual([false])
+      expect(result).toEqual(await container.kernelManager.getState())
+    })
+
+    it('rejects a non-boolean enable toggle BEFORE reaching the gateway', async () => {
+      await expect(handlers[IPC.kernelManagerSetEnabled](null, 'yes')).rejects.toMatchObject({
+        code: ProtocolErrorCode.INVALID_ARGUMENT
+      })
+      expect(container.kernelManager.setEnabledCalls).toHaveLength(0)
+    })
+
+    it('forwards a valid channel change to the gateway', async () => {
+      const result = await handlers[IPC.kernelManagerSetChannel](null, 'specific')
+      expect(container.kernelManager.setChannelCalls).toEqual(['specific'])
+      expect(result).toEqual(await container.kernelManager.getState())
+    })
+
+    it('rejects an invalid channel BEFORE reaching the gateway', async () => {
+      await expect(handlers[IPC.kernelManagerSetChannel](null, 'beta')).rejects.toMatchObject({
+        code: ProtocolErrorCode.INVALID_ARGUMENT
+      })
+      expect(container.kernelManager.setChannelCalls).toHaveLength(0)
+    })
+
+    it('forwards a version refresh to the gateway', async () => {
+      const result = await handlers[IPC.kernelManagerListVersions](null)
+      expect(container.kernelManager.listVersionsCalls).toBe(1)
+      expect(result).toEqual(await container.kernelManager.getState())
+    })
+
+    it('forwards a valid version install to the gateway', async () => {
+      const result = await handlers[IPC.kernelManagerInstall](null, 'v1.19.30')
+      expect(container.kernelManager.installCalls).toEqual(['v1.19.30'])
+      expect(result).toEqual(await container.kernelManager.getState())
+    })
+
+    it('rejects a malformed version BEFORE reaching the gateway', async () => {
+      await expect(handlers[IPC.kernelManagerInstall](null, '1.19.30')).rejects.toMatchObject({
+        code: ProtocolErrorCode.INVALID_ARGUMENT
+      })
+      await expect(handlers[IPC.kernelManagerInstall](null, 'not-a-version')).rejects.toMatchObject({
+        code: ProtocolErrorCode.INVALID_ARGUMENT
+      })
+      expect(container.kernelManager.installCalls).toHaveLength(0)
+    })
+  })
 })

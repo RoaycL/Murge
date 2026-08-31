@@ -1,6 +1,8 @@
-import type { KernelGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway } from '@shared/gateways'
+import type { KernelGateway, KernelManagerGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway } from '@shared/gateways'
 import type { StartupStatus } from '@shared/startup'
 import type { AppSettings } from '@shared/app-settings'
+import type { KernelManagerState } from '@shared/kernel-manager'
+import { DEFAULT_KERNEL_MANAGER_STATE } from '@shared/kernel-manager'
 import type { UpdateState } from '@shared/updates'
 import { DEFAULT_UPDATE_STATE } from '@shared/updates'
 import type { SystemProxyStatus } from '@shared/system-proxy'
@@ -364,6 +366,7 @@ export class FakeSystemProxyGateway implements SystemProxyGateway {
 export interface FakeContainer {
   deps: IpcDeps
   kernel: FakeKernelGateway
+  kernelManager: FakeKernelManagerGateway
   mihomo: FakeMihomoGateway
   runtime: FakeRuntimeGateway
   profiles: FakeProfileGateway
@@ -372,6 +375,40 @@ export interface FakeContainer {
   appSettings: FakeAppSettingsGateway
   updates: FakeUpdatesGateway
   tun: FakeTunGateway
+}
+
+export class FakeKernelManagerGateway implements KernelManagerGateway {
+  state: KernelManagerState = {
+    ...DEFAULT_KERNEL_MANAGER_STATE,
+    stableVersion: 'v1.19.30',
+    effectiveVersion: 'v1.19.30'
+  }
+  setEnabledCalls: boolean[] = []
+  setChannelCalls: Array<'stable' | 'specific'> = []
+  listVersionsCalls = 0
+  installCalls: string[] = []
+  private readonly listeners = new Set<(state: KernelManagerState) => void>()
+  getState(): Promise<KernelManagerState> { return Promise.resolve({ ...this.state }) }
+  async setEnabled(enabled: boolean): Promise<KernelManagerState> {
+    this.setEnabledCalls.push(enabled)
+    this.state = { ...this.state, enabled }
+    return Promise.resolve({ ...this.state })
+  }
+  async setChannel(channel: 'stable' | 'specific'): Promise<KernelManagerState> {
+    this.setChannelCalls.push(channel)
+    this.state = { ...this.state, channel, effectiveVersion: channel === 'specific' ? this.state.specificVersion ?? this.state.stableVersion : this.state.stableVersion }
+    return Promise.resolve({ ...this.state })
+  }
+  async listVersions(): Promise<KernelManagerState> {
+    this.listVersionsCalls += 1
+    return Promise.resolve({ ...this.state })
+  }
+  async install(version: string): Promise<KernelManagerState> {
+    this.installCalls.push(version)
+    this.state = { ...this.state, channel: 'specific', specificVersion: version, effectiveVersion: version }
+    return Promise.resolve({ ...this.state })
+  }
+  onState(listener: (state: KernelManagerState) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener) }
 }
 
 export class FakeTunGateway implements TunGateway {
@@ -393,7 +430,13 @@ export class FakeStartupGateway implements StartupGateway {
 }
 
 export class FakeAppSettingsGateway implements AppSettingsGateway {
-  settings: AppSettings = { autoStartKernel: true, autoCheckUpdate: true }
+  settings: AppSettings = {
+    autoStartKernel: true,
+    autoCheckUpdate: true,
+    kernelEnabled: true,
+    kernelChannel: 'stable',
+    kernelSpecificVersion: ''
+  }
   setCalls: Array<Partial<AppSettings>> = []
   get(): Promise<AppSettings> { return Promise.resolve({ ...this.settings }) }
   set(patch: Partial<AppSettings>): Promise<AppSettings> {
@@ -429,6 +472,7 @@ export class FakeUpdatesGateway implements UpdatesGateway {
 
 export function createFakeContainer(brand: BrandConfig): FakeContainer {
   const kernel = new FakeKernelGateway()
+  const kernelManager = new FakeKernelManagerGateway()
   const mihomo = new FakeMihomoGateway()
   const runtime = new FakeRuntimeGateway()
   const profiles = new FakeProfileGateway()
@@ -439,6 +483,7 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
   const tun = new FakeTunGateway()
   return {
     kernel,
+    kernelManager,
     mihomo,
     runtime,
     profiles,
@@ -447,6 +492,6 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
     appSettings,
     updates,
     tun,
-    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, mihomo, runtime, profiles, systemProxy, startup, appSettings, updates, tun }
+    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, updates, tun }
   }
 }

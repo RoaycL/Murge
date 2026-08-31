@@ -35,7 +35,17 @@ export class AppSettingsService implements AppSettingsGateway {
         autoCheckUpdate:
           typeof patch.autoCheckUpdate === 'boolean'
             ? patch.autoCheckUpdate
-            : current.autoCheckUpdate
+            : current.autoCheckUpdate,
+        kernelEnabled:
+          typeof patch.kernelEnabled === 'boolean' ? patch.kernelEnabled : current.kernelEnabled,
+        kernelChannel:
+          patch.kernelChannel === 'stable' || patch.kernelChannel === 'specific'
+            ? patch.kernelChannel
+            : current.kernelChannel,
+        kernelSpecificVersion:
+          typeof patch.kernelSpecificVersion === 'string'
+            ? patch.kernelSpecificVersion
+            : current.kernelSpecificVersion
       }
       await this.write(next)
       return next

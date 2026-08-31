@@ -46,6 +46,8 @@ export interface MihomoAsset {
   kind: MihomoArtifactKind
   /** Name of the executable held inside the archive before the target rename. */
   innerName: string
+  /** Release version (leading `v`, e.g. `v1.19.30`). Absent implies the pinned version. */
+  version?: string
 }
 
 /** Normalised arch values (Node reports `arm64`/`x64`/`x86`/`arm`/`riscv64`). */
@@ -419,6 +421,29 @@ export async function resolveMihomo(
       `No pinned mihomo artifact for ${platform}/${arch} (version ${MIHOMO_VERSION})`
     )
   }
+  return resolveMihomoAsset(asset, options)
+}
+
+/**
+ * Resolve an explicit (possibly non-pinned) mihomo asset into `workspaceDir`.
+ *
+ * Unlike {@link resolveMihomo}, which is bound to the single pinned build, this
+ * resolves whatever asset the caller describes. The same down-to-the-byte
+ * verification applies: the archive digest and size must match the asset spec
+ * and the on-disk binary is re-hashed on every reuse, so a specific-version
+ * install still cannot run an unverified payload.
+ */
+export async function resolveMihomoAsset(
+  asset: MihomoAsset,
+  options: {
+    workspaceDir: string
+    request?: MihomoDownloadRequest
+    extractArchive?: MihomoExtractArchive
+    timeoutMs?: number
+    maxBytes?: number
+  }
+): Promise<ResolvedMihomoBinary> {
+  const versionNoV = asset.version ? asset.version.replace(/^v/, '') : mihomoVersionNoV()
   await mkdir(options.workspaceDir, { recursive: true })
   const isWin = asset.platform === 'win32'
   const targetName = isWin ? 'mihomo.exe' : 'mihomo'
@@ -429,7 +454,7 @@ export async function resolveMihomo(
   let reusable = false
   if (
     marker &&
-    marker.version === mihomoVersionNoV() &&
+    marker.version === versionNoV &&
     marker.archiveSha256 === asset.sha256 &&
     marker.platform === asset.platform &&
     marker.arch === asset.arch &&
@@ -461,7 +486,7 @@ export async function resolveMihomo(
       binaryName: targetName
     })
     await writeVerifiedMarker(options.workspaceDir, {
-      version: mihomoVersionNoV(),
+      version: versionNoV,
       archiveSha256: asset.sha256,
       binarySha256: await sha256File(extracted),
       platform: asset.platform,
@@ -470,7 +495,7 @@ export async function resolveMihomo(
     })
     return {
       path: extracted,
-      version: mihomoVersionNoV(),
+      version: versionNoV,
       asset,
       sha256: asset.sha256,
       url: asset.url,
@@ -480,7 +505,7 @@ export async function resolveMihomo(
 
   return {
     path: binaryPath,
-    version: mihomoVersionNoV(),
+    version: versionNoV,
     asset,
     sha256: asset.sha256,
     url: asset.url,
@@ -492,3 +517,85 @@ export async function resolveMihomo(
 export function mihomoBinaryName(platform: string): string {
   return platform === 'win32' ? 'mihomo.exe' : 'mihomo'
 }
+
+/**
+ * The filename "token" mihomo uses for a platform/arch, e.g. `windows-amd64`.
+ * This is what appears in `mihomo-windows-amd64-v1.19.30.zip`.
+ */
+export function mihomoAssetToken(platform: string, arch: string): string {
+  switch (platform) {
+    case 'win32':
+      return arch === 'arm64' ? 'windows-arm64' : arch === 'x64' ? 'windows-amd64' : arch === 'x86' ? 'windows-386' : `windows-${arch}`
+    case 'linux':
+      return arch === 'arm64' ? 'linux-arm64' : arch === 'x64' ? 'linux-amd64' : arch === 'x86' ? 'linux-386' : `linux-${arch}`
+    case 'darwin':
+      return arch === 'arm64' ? 'darwin-arm64' : arch === 'x64' ? 'darwin-amd64' : `darwin-${arch}`
+    default:
+      return `${platform}-${arch}`
+  }
+}
+
+/** mihomo ships Windows builds as `.zip` and everything else as a raw `.gz`. */
+export function mihomoAssetKindFor(platform: string): MihomoArtifactKind {
+  return platform === 'win32' ? 'zip' : 'gz'
+}
+
+/** The executable name held inside the archive for a platform/arch. */
+export function mihomoAssetInnerName(platform: string, arch: string, kind: MihomoArtifactKind): string {
+  const token = mihomoAssetToken(platform, arch)
+  return kind === 'zip' ? `mihomo-${token}.exe` : `mihomo-${token}`
+}
+
+/** Expected release asset filename for a version (leading `v`), e.g. `mihomo-windows-amd64-v1.19.30.zip`. */
+export function mihomoAssetFilename(platform: string, arch: string, version: string): string {
+  return `mihomo-${mihomoAssetToken(platform, arch)}-${version}.${mihomoAssetKindFor(platform)}`
+}
+
+/** Accept a GitHub release-asset `digest` (`sha256:<hex>`) or a bare `<hex>`. */
+function extractSha256(digest: unknown): string | null {
+  if (typeof digest !== 'string') return null
+  const prefixed = digest.match(/^sha256:([0-9a-f]{64})$/i)
+  if (prefixed) return prefixed[1].toLowerCase()
+  if (/^[0-9a-f]{64}$/i.test(digest)) return digest.toLowerCase()
+  return null
+}
+
+/** Target-platforms' release asset metadata type (a subset of the GitHub API). */
+export interface MihomoReleaseAsset {
+  name: string
+  digest?: string | null
+  size?: number
+  browser_download_url: string
+}
+
+/**
+ * Build a {@link MihomoAsset} for `version` from a matching GitHub release
+ * asset, or null when the asset does not correspond to this platform/arch or
+ * carries no usable digest/size. The digest is taken from the upstream release
+ * metadata, so a specific-version install is still verified to the byte.
+ */
+export function buildMihomoAssetFromRelease(
+  version: string,
+  platform: string,
+  arch: string,
+  releaseAsset: MihomoReleaseAsset
+): MihomoAsset | null {
+  const kind = mihomoAssetKindFor(platform)
+  const expectedName = mihomoAssetFilename(platform, arch, version)
+  if (releaseAsset.name !== expectedName) return null
+  const sha256 = extractSha256(releaseAsset.digest)
+  const size = typeof releaseAsset.size === 'number' && releaseAsset.size > 0 ? releaseAsset.size : 0
+  if (!sha256 || size <= 0) return null
+  return {
+    platform,
+    arch,
+    filename: releaseAsset.name,
+    url: releaseAsset.browser_download_url,
+    sha256,
+    size,
+    kind,
+    innerName: mihomoAssetInnerName(platform, arch, kind),
+    version
+  }
+}
+

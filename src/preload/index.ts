@@ -34,6 +34,14 @@ const api: DesktopApi = {
     stop: () => invoke(IPC.kernelStop),
     onStatus: (listener) => listen(IPC.kernelStatusEvent, listener)
   },
+  kernelManager: {
+    getState: () => invoke(IPC.kernelManagerGetState),
+    setEnabled: (enabled) => invoke(IPC.kernelManagerSetEnabled, enabled),
+    setChannel: (channel) => invoke(IPC.kernelManagerSetChannel, channel),
+    listVersions: () => invoke(IPC.kernelManagerListVersions),
+    install: (version) => invoke(IPC.kernelManagerInstall, version),
+    onState: (listener) => listen(IPC.kernelManagerStateEvent, listener)
+  },
   runtime: {
     getSummary: () => invoke(IPC.runtimeGetSummary),
     getExternalIp: () => invoke(IPC.runtimeGetExternalIp)

@@ -113,6 +113,23 @@ export interface MihomoKernelResolverOptions {
     arch: string,
     opts: { workspaceDir: string }
   ) => Promise<ResolvedMihomoBinary>
+  /**
+   * Whether the kernel is enabled. When it resolves to false, resolve() throws
+   * an UNSUPPORTED error so a disabled kernel never starts. Defaults to enabled.
+   */
+  kernelEnabled?: () => Promise<boolean>
+  /**
+   * The current kernel version selection. A `specific` channel with a selected
+   * version routes the resolve through `ensureSpecificBinary`; otherwise the
+   * pinned stable build is used. Defaults to `{ channel: 'stable' }`.
+   */
+  versionSelection?: () => Promise<{ channel: 'stable' | 'specific'; specificVersion: string | null }>
+  /**
+   * Resolve (download + verify + reuse) a specific mihomo version into its own
+   * workspace. Called by the resolver only when the selected channel is
+   * `specific`. Every path ends in the same byte-level archive verification.
+   */
+  ensureSpecificBinary?: (version: string) => Promise<ResolvedMihomoBinary>
 }
 
 /**
@@ -143,6 +160,31 @@ export class MihomoKernelResolver implements KernelBinaryResolver {
     }
     const platform = this.options.platform ?? process.platform
     const arch = this.options.arch ?? process.arch
+    if (this.options.kernelEnabled) {
+      const enabled = await this.options.kernelEnabled()
+      if (!enabled) {
+        throw new ProtocolError(
+          ProtocolErrorCode.UNSUPPORTED,
+          '内核已停用：请在「通用」的「内核管理」中启用「启用 Smart 内核」。'
+        )
+      }
+    }
+    if (this.options.versionSelection) {
+      const selection = await this.options.versionSelection()
+      if (
+        selection.channel === 'specific' &&
+        selection.specificVersion &&
+        this.options.ensureSpecificBinary
+      ) {
+        const bin = await this.options.ensureSpecificBinary(selection.specificVersion)
+        return {
+          command: bin.path,
+          args: [],
+          version: bin.version,
+          env: { MIHOMO_PLATFORM: platform, MIHOMO_ARCH: arch }
+        }
+      }
+    }
     const bundledRequest = await this.bundledRequest(platform, arch)
     const bin = this.options.resolveMihomoOverride
       ? await this.options.resolveMihomoOverride(platform, arch, { workspaceDir: this.options.workspaceDir })

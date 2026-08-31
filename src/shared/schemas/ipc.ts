@@ -101,16 +101,30 @@ export function parseStartupEnabled(value: unknown): boolean {
 }
 
 /**
- * Validate a partial application-settings patch from the renderer. Only a known
- * boolean key is accepted; anything else is rejected so the IPC boundary cannot
+ * Validate a partial application-settings patch from the renderer. Only known
+ * keys are accepted; anything else is rejected so the IPC boundary cannot
  * write an unknown field into the persisted settings document.
  */
-export function parseAppSettingsPatch(input: unknown): { autoStartKernel?: boolean; autoCheckUpdate?: boolean } {
+export function parseAppSettingsPatch(
+  input: unknown
+): {
+  autoStartKernel?: boolean
+  autoCheckUpdate?: boolean
+  kernelEnabled?: boolean
+  kernelChannel?: 'stable' | 'specific'
+  kernelSpecificVersion?: string
+} {
   if (!(typeof input === 'object' && input !== null && !Array.isArray(input))) {
     throw invalid('app settings patch must be an object')
   }
   const record = input as Record<string, unknown>
-  const patch: { autoStartKernel?: boolean; autoCheckUpdate?: boolean } = {}
+  const patch: {
+    autoStartKernel?: boolean
+    autoCheckUpdate?: boolean
+    kernelEnabled?: boolean
+    kernelChannel?: 'stable' | 'specific'
+    kernelSpecificVersion?: string
+  } = {}
   if ('autoStartKernel' in record) {
     if (typeof record.autoStartKernel !== 'boolean') throw invalid('autoStartKernel must be a boolean')
     patch.autoStartKernel = record.autoStartKernel
@@ -119,7 +133,44 @@ export function parseAppSettingsPatch(input: unknown): { autoStartKernel?: boole
     if (typeof record.autoCheckUpdate !== 'boolean') throw invalid('autoCheckUpdate must be a boolean')
     patch.autoCheckUpdate = record.autoCheckUpdate
   }
+  if ('kernelEnabled' in record) {
+    if (typeof record.kernelEnabled !== 'boolean') throw invalid('kernelEnabled must be a boolean')
+    patch.kernelEnabled = record.kernelEnabled
+  }
+  if ('kernelChannel' in record) {
+    if (record.kernelChannel !== 'stable' && record.kernelChannel !== 'specific') {
+      throw invalid('kernelChannel must be "stable" or "specific"')
+    }
+    patch.kernelChannel = record.kernelChannel
+  }
+  if ('kernelSpecificVersion' in record) {
+    if (typeof record.kernelSpecificVersion !== 'string') {
+      throw invalid('kernelSpecificVersion must be a string')
+    }
+    patch.kernelSpecificVersion = record.kernelSpecificVersion
+  }
   return patch
+}
+
+/** Validate a specific kernel version string (leading `v` + semver-ish). */
+export function parseKernelVersion(version: unknown): string {
+  if (typeof version !== 'string' || !/^v\d+\.\d+\.\d+$/.test(version)) {
+    throw invalid('kernel version must look like "v1.19.30"')
+  }
+  return version
+}
+
+/** Validate a kernel-version channel toggle. */
+export function parseKernelChannel(channel: unknown): 'stable' | 'specific' {
+  if (channel !== 'stable' && channel !== 'specific') {
+    throw invalid('kernel channel must be "stable" or "specific"')
+  }
+  return channel
+}
+
+export function parseKernelEnabled(value: unknown): boolean {
+  if (typeof value !== 'boolean') throw invalid('kernel enabled must be a boolean')
+  return value
 }
 
 /** Validate a provider or node name used in a path segment. */

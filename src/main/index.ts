@@ -26,7 +26,9 @@ import { MihomoClient } from './services/mihomo-client'
 import { MihomoService } from './services/mihomo-service'
 import { ProfileRepository } from './profiles/profile-repository'
 import { ProfileService } from './profiles/profile-service'
+import { ProfileAutoReloadGateway } from './profiles/profile-auto-reload-gateway'
 import { createConfigValidator } from './profiles/config-validator'
+import { reloadKernelForActiveProfile } from './system-proxy/reload-kernel'
 import { SubscriptionFetcher } from './subscriptions/subscription-fetcher'
 import { startMockMihomoServer, type MockMihomoServerHandle } from './testing/mock-mihomo-server'
 import type { MihomoGateway } from '@shared/gateways'
@@ -618,10 +620,27 @@ app.whenReady().then(async () => {
     disable: () => tunInstance.emergencyDisable(),
     onStatus: (listener) => tunInstance.onStatus(listener)
   }
+  // Reapplies the active profile to the live kernel whenever the user edits,
+  // activates or imports-as-active a profile. The reloader is a no-op when the
+  // kernel is stopped (the profile applies on the next manual start) and
+  // restarts a running kernel stop-then-start, preserving any owned system proxy.
+  // The concrete profileService is still used directly by the kernel config
+  // store's resolveActiveDocument, so both paths read the same repository.
+  const profileGateway = new ProfileAutoReloadGateway({
+    inner: profileService,
+    autoActivateOnEdit: true,
+    reloader: {
+      reload: () =>
+        reloadKernelForActiveProfile({
+          kernel: orderedKernel,
+          systemProxy: systemProxyService
+        })
+    }
+  })
   disposeIpc = registerIpc({
     kernel: orderedKernel,
     mihomo: gateway,
-    profiles: profileService,
+    profiles: profileGateway,
     systemProxy: systemProxyService,
     startup: new StartupService(new ElectronStartupAdapter()),
     tun: tunGateway

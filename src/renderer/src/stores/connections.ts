@@ -14,6 +14,7 @@ export interface ProcessRank {
 
 /** Whether the activity breakdown counts every connection or only proxied ones. */
 export type RankScope = 'all' | 'proxy'
+export type ConnectionSort = 'traffic' | 'started' | 'process' | 'host'
 
 export interface ConnectionsSummary {
   totalConnections: number
@@ -36,6 +37,8 @@ export const useConnectionsStore = defineStore('connections', () => {
   const closingIds = ref<string[]>([])
   const actionError = ref<string | null>(null)
   const rankScope = ref<RankScope>('all')
+  const sort = ref<ConnectionSort>('traffic')
+  const closingMany = ref(false)
   let connectionsUnsub: (() => void) | null = null
   let errorUnsub: (() => void) | null = null
   let watchdog: ReturnType<typeof setTimeout> | null = null
@@ -114,8 +117,7 @@ export const useConnectionsStore = defineStore('connections', () => {
   const visibleConnections = computed<MihomoConnection[]>(() => {
     const term = search.value.trim().toLocaleLowerCase()
     const rows = snapshot.value?.connections ?? []
-    if (!term) return rows
-    return rows.filter((connection) => {
+    const filtered = term ? rows.filter((connection) => {
       const haystack = [
         connection.metadata.process,
         connection.metadata.host,
@@ -125,6 +127,16 @@ export const useConnectionsStore = defineStore('connections', () => {
         ...connection.chains
       ].filter(Boolean).join(' ').toLocaleLowerCase()
       return haystack.includes(term)
+    }) : rows
+    return [...filtered].sort((left, right) => {
+      if (sort.value === 'started') return Date.parse(right.start) - Date.parse(left.start)
+      if (sort.value === 'process') return (left.metadata.process ?? '').localeCompare(right.metadata.process ?? '')
+      if (sort.value === 'host') {
+        const leftHost = left.metadata.host || left.metadata.destinationIP || ''
+        const rightHost = right.metadata.host || right.metadata.destinationIP || ''
+        return leftHost.localeCompare(rightHost)
+      }
+      return (right.upload + right.download) - (left.upload + left.download)
     })
   })
 
@@ -174,6 +186,28 @@ export const useConnectionsStore = defineStore('connections', () => {
     }
   }
 
+  /**
+   * Close the supplied snapshot of connection ids sequentially. A sequential
+   * loop intentionally reuses the single-close read-back contract instead of
+   * racing several controller confirmations against one another.
+   */
+  async function closeMany(ids: string[]): Promise<{ closed: number; failed: number }> {
+    if (closingMany.value) return { closed: 0, failed: ids.length }
+    closingMany.value = true
+    let closed = 0
+    let failed = 0
+    try {
+      for (const id of [...new Set(ids)]) {
+        if (await close(id)) closed += 1
+        else failed += 1
+      }
+      if (failed > 0) actionError.value = `${failed} 条连接未能关闭`
+      return { closed, failed }
+    } finally {
+      closingMany.value = false
+    }
+  }
+
   function onError(error: MihomoStreamError): void {
     if (error.source !== 'connections') return
     if (watchdog) {
@@ -208,8 +242,8 @@ export const useConnectionsStore = defineStore('connections', () => {
 
   return {
     status, lastError, snapshot, summary,
-    selectedId, selectedConnection, search, visibleConnections, closingIds, actionError,
+    selectedId, selectedConnection, search, visibleConnections, closingIds, closingMany, actionError, sort,
     rankScope, setRankScope, topProcesses, topHosts, topPolicies,
-    connect, disconnect, select, close
+    connect, disconnect, select, close, closeMany
   }
 })

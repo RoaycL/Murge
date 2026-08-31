@@ -5,7 +5,7 @@ import { useConnectionsStore } from '../stores/connections'
 import { formatBytes } from '../lib/format'
 
 const store = useConnectionsStore()
-const { status, lastError, search, visibleConnections, selectedConnection, selectedId, closingIds, actionError } = storeToRefs(store)
+const { status, lastError, search, visibleConnections, selectedConnection, selectedId, closingIds, closingMany, actionError, sort, summary } = storeToRefs(store)
 
 function endpoint(connection: (typeof visibleConnections.value)[number]): string {
   return connection.metadata.host || connection.metadata.destinationIP || '未知目标'
@@ -19,8 +19,23 @@ onUnmounted(store.disconnect)
   <div class="page-shell connections-view">
     <header class="connections-header">
       <div><h1>连接</h1><p>{{ status === 'live' ? '实时' : status === 'loading' ? '连接中' : '已断开' }} · {{ visibleConnections.length }} 条</p></div>
-      <input v-model="search" type="search" placeholder="进程、域名、IP 或策略" aria-label="筛选连接" />
+      <div class="connection-totals" aria-label="连接累计流量">
+        <span>↑ {{ formatBytes(summary?.uploadTotal ?? 0) }}</span>
+        <span>↓ {{ formatBytes(summary?.downloadTotal ?? 0) }}</span>
+      </div>
     </header>
+    <div class="connections-toolbar">
+      <input v-model="search" type="search" placeholder="进程、域名、IP 或策略" aria-label="筛选连接" />
+      <select v-model="sort" aria-label="连接排序">
+        <option value="traffic">按流量</option>
+        <option value="started">按建立时间</option>
+        <option value="process">按进程</option>
+        <option value="host">按主机</option>
+      </select>
+      <button type="button" class="danger-button" :disabled="closingMany || !visibleConnections.length" @click="store.closeMany(visibleConnections.map((item) => item.id))">
+        {{ closingMany ? '正在关闭…' : search ? '关闭筛选结果' : '关闭全部' }}
+      </button>
+    </div>
     <p v-if="lastError" class="inline-error">{{ lastError }}</p>
     <p v-if="actionError" class="inline-error">{{ actionError }}</p>
     <div class="connections-layout">
@@ -49,4 +64,3 @@ onUnmounted(store.disconnect)
     </div>
   </div>
 </template>
-

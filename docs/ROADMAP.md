@@ -387,6 +387,70 @@ Exit criteria:
 - Release evidence is attached to the version tag.
 - Publishing the release receives a final explicit owner confirmation.
 
+## Phase 12 — Configuration enhancement and Clash feature parity
+
+Environment: Mac/CI for pure configuration and mock UI; isolated Windows only
+for system-proxy, PAC, UWP, TUN, route or DNS mutation evidence.
+
+Reference audit: `docs/CLASH_PARTY_FEATURE_AUDIT.md`.
+
+Entry gate: Phase 11 release scope remains stable. New controls must not make an
+excluded or unproven feature appear supported in an existing release.
+
+- [ ] Implement versioned declarative YAML overrides with global/profile scope,
+      deterministic ordering, explicit sequence operations and atomic storage.
+- [ ] Add redacted preview/diff, structural and semantic validation, safety-field
+      ownership and last-known-good rollback.
+- [ ] Add the Vue/Pinia override manager after the main-process contracts and
+      repository tests pass.
+- [ ] Implement the complete typed DNS enhancement model through the override
+      pipeline: enable, enhanced-mode (`fake-ip`/`redir-host`/`normal`), fake-IP
+      range/filter/filter-mode, IPv6, respect-rules, hosts/use-hosts,
+      default/proxy/direct nameservers, nameserver/fallback and
+      nameserver-policy. Validate every server URI, domain, IP and CIDR; provide
+      preview and last-known-good rollback. Do not mutate the source profile.
+- [ ] Implement the complete typed sniffer enhancement model through the same
+      pipeline: enable, override-destination, force-dns-mapping, parse-pure-ip,
+      HTTP/TLS/QUIC port ranges, skip-domain, force-domain, skip-src-address and
+      skip-dst-address. Validate ports, domains and CIDRs before materializing.
+- [ ] Implement the complete TUN configuration model and Vue status/settings UI:
+      stack, device/adapter identity, MTU, strict-route, auto-route,
+      auto-detect-interface, DNS hijack, route-address,
+      route-exclude-address and other explicitly supported mihomo fields.
+      Route every privileged action through the existing Windows service,
+      named-pipe contract, coordinator and rollback states; never elevate the
+      Electron renderer or let subscription YAML take ownership.
+- [ ] Complete TUN lifecycle/error UI for unsupported, stopped, starting,
+      active, stopping, restoring, restore-failed, conflict and failed states,
+      including retry and renderer-independent emergency disable.
+- [ ] Finish all DNS/sniffer/TUN schemas, IPC/preload gateways, Pinia stores,
+      fixtures, config generation, parse-back assertions, unit tests and
+      network-silent integration tests before real-machine validation.
+- [ ] Complete controlled core settings, geodata resources and proxy-bypass
+      policy with read-back and conflict handling.
+- [x] Enhance live connections with totals, deterministic sorting and confirmed
+      batch close. (Implemented in the renderer store/page and covered by store
+      tests; batch actions reuse per-id controller read-back confirmation.)
+- [ ] Add bounded usage history, network metadata and read-only topology without
+      persisting credentials or raw profiles.
+- [ ] Preserve structured error details/operation across IPC.
+- [ ] Keep DNS/sniffer/TUN marked `implementation-complete / runtime-unverified`
+      until the Windows evidence matrix passes; never mark an unexecuted test as
+      passed or silently fall back to a second ownership model.
+- [ ] Complete the Windows-only acceptance rows before enabling PAC, UWP or TUN
+      controls in a supported release.
+
+Exit criteria:
+
+- Subscription refresh and enhancement failure cannot destroy user overrides or
+  replace a valid running configuration.
+- Every editable field has a typed contract, validation, confirmed state and
+  recovery behavior.
+- Default tests remain network silent; Windows mutation tests remain separately
+  authorized and isolated.
+- DNS, sniffer and TUN may be code-complete before Windows testing, but TUN is
+  not release-supported until exact restoration and recovery evidence passes.
+
 ## Parallelization rules
 
 - One AI owns one phase or one explicitly bounded item at a time.

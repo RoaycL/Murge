@@ -233,6 +233,21 @@ describe('connections store', () => {
     store.disconnect()
   })
 
+  it('sorts connections without mutating the controller snapshot', () => {
+    const store = useConnectionsStore()
+    mihomo.getConnections.mockResolvedValue(snapshot)
+    store.connect()
+    emitConnections(store, snapshot)
+    const original = store.snapshot?.connections.map((connection) => connection.id)
+
+    store.sort = 'process'
+    expect(store.visibleConnections.map((connection) => connection.id)).toEqual(['c2', 'c1', 'c3'])
+    store.sort = 'traffic'
+    expect(store.visibleConnections.map((connection) => connection.id)).toEqual(['c2', 'c1', 'c3'])
+    expect(store.snapshot?.connections.map((connection) => connection.id)).toEqual(original)
+    store.disconnect()
+  })
+
   it('closes once and only reports success after a confirming controller read', async () => {
     const store = useConnectionsStore()
     emitConnections(store, snapshot)
@@ -272,6 +287,22 @@ describe('connections store', () => {
     expect(await first).toBe(false)
     expect(store.actionError).toContain('controller unavailable')
     expect(store.closingIds).toEqual([])
+  })
+
+  it('closes a deduplicated batch sequentially with controller confirmation', async () => {
+    const store = useConnectionsStore()
+    emitConnections(store, snapshot)
+    const active = new Set(snapshot.connections.map((connection) => connection.id))
+    mihomo.closeConnection.mockImplementation(async (id: string) => { active.delete(id) })
+    mihomo.getConnections.mockImplementation(async () => ({
+      ...snapshot,
+      connections: snapshot.connections.filter((connection) => active.has(connection.id))
+    }))
+
+    expect(await store.closeMany(['c1', 'c1', 'c3'])).toEqual({ closed: 2, failed: 0 })
+    expect(mihomo.closeConnection.mock.calls.map(([id]) => id)).toEqual(['c1', 'c3'])
+    expect(store.snapshot?.connections.map((connection) => connection.id)).toEqual(['c2'])
+    expect(store.closingMany).toBe(false)
   })
 })
 

@@ -44,7 +44,7 @@ function makeBackup(): SystemProxyBackup {
 
 describe('resolveSystemProxyBackupPath', () => {
   it('places the backup under an app-data base', () => {
-    expect(resolveSystemProxyBackupPath('/app/data')).toBe('/app/data/system-proxy/owned-backup.json')
+    expect(resolveSystemProxyBackupPath('/app/data')).toBe(join('/app/data', 'system-proxy', 'owned-backup.json'))
   })
 })
 

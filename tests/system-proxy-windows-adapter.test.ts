@@ -9,7 +9,7 @@ function makeRunner(handlers: Record<string, () => RunResult | Promise<RunResult
   const calls: Array<{ command: string; args: string[] }> = []
   const runner = async (command: string, args: string[]) => {
     calls.push({ command, args })
-    const handler = handlers[command]
+    const handler = handlers[command] ?? handlers[command.replace(/\.exe$/i, '')]
     if (handler) return await handler()
     throw new Error(`no handler for command ${command}`)
   }
@@ -117,7 +117,7 @@ describe('WindowsSystemProxyAdapter', () => {
       const { runner, calls } = makeRunner({ reg: () => ok() })
       const adapter = new WindowsSystemProxyAdapter(runner)
       await adapter.apply(WRITTEN)
-      expect(calls.map((c) => c.command).every((c) => c === 'reg')).toBe(true)
+      expect(calls.map((c) => c.command.replace(/\.exe$/i, '')).every((c) => c === 'reg')).toBe(true)
       expect(calls.length).toBe(3)
     })
 

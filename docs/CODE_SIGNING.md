@@ -17,6 +17,10 @@ installer.
 - The application is **not yet signed**. No certificate is configured.
 - The installer and executable are produced by `electron-builder`. Signing is
   applied at package time when a signing configuration is present.
+- Tag builds set `RELEASE_BUILD=true`, enabling `forceCodeSigning`; they fail
+  before draft creation if credentials are missing or any produced executable
+  does not have a valid Authenticode signature. Ordinary CI smoke artifacts may
+  remain unsigned and can never be promoted by the release workflow.
 
 ## Electronic signing inputs
 

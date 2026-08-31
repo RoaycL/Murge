@@ -31,14 +31,6 @@ const groups = [
       { to: '/config', label: '配置文件', icon: '⌁' },
       { to: '/providers', label: '代理设置', icon: '▣' }
     ]
-  },
-  {
-    label: 'HTTP',
-    items: [
-      { to: '/capture', label: '捕获', icon: '⌗' },
-      { to: '/decrypt', label: '解密', icon: '♙' },
-      { to: '/rewrite', label: '重写', icon: '〆' }
-    ]
   }
 ]
 </script>
@@ -57,7 +49,6 @@ const groups = [
     </nav>
     <div class="sidebar-footer">
       <RouterLink to="/more" class="nav-link"><span class="nav-icon">☷</span><span>更多</span></RouterLink>
-      <RouterLink to="/panel" class="nav-link"><span class="nav-icon">◉</span><span>面板</span></RouterLink>
       <span class="visually-hidden">{{ brand.productName }}</span>
     </div>
   </aside>

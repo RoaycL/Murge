@@ -49,6 +49,15 @@ jobs:
       - name: Verify owner-approved application license
         run: npm run license:check
 
+      - name: Require release signing credentials
+        shell: pwsh
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WIN_CSC_LINK)) { throw 'WIN_CSC_LINK release secret is not configured' }
+          if ([string]::IsNullOrWhiteSpace($env:WIN_CSC_KEY_PASSWORD)) { throw 'WIN_CSC_KEY_PASSWORD release secret is not configured' }
+
       # Keep each native command in its own step. PowerShell does not
       # necessarily stop a multiline script when an earlier external command
       # exits non-zero; that previously allowed Windows test failures to become
@@ -76,7 +85,50 @@ jobs:
       - name: Package Windows installers
         run: npx electron-builder --win --config electron-builder.config.mjs --publish never
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          RELEASE_BUILD: "true"
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+
+      - name: Generate immutable release notes
+        run: npm run release-notes:generate
+
+      - name: Verify Authenticode on every release executable
+        shell: pwsh
+        run: |
+          $brand = Get-Content brand.config.json -Raw | ConvertFrom-Json
+          $targets = @(
+            Get-ChildItem -Path dist -Filter '*-Setup-*-*.exe' -File
+            Get-ChildItem -Path dist -Directory -Filter 'win*-unpacked' | ForEach-Object {
+              Get-ChildItem -Path $_.FullName -Filter '*.exe' -File -Recurse
+            }
+          )
+          if ($targets.Count -lt 4) { throw "Expected signed installers and unpacked executables, found $($targets.Count)" }
+          $ownedPublishers = @()
+          foreach ($target in $targets) {
+            $signature = Get-AuthenticodeSignature $target.FullName
+            if ($signature.Status -ne 'Valid') {
+              throw "Invalid Authenticode signature for $($target.FullName): $($signature.Status)"
+            }
+            Write-Host "SIGNED $($target.Name) :: $($signature.SignerCertificate.Subject)"
+            if ($target.Name -eq "$($brand.executableName).exe" -or $target.Name -eq 'tun-service.exe' -or $target.Name -like '*-Setup-*-*.exe') {
+              $ownedPublishers += $signature.SignerCertificate.Subject
+            }
+          }
+          $uniqueOwnedPublishers = @($ownedPublishers | Sort-Object -Unique)
+          if ($ownedPublishers.Count -lt 4 -or $uniqueOwnedPublishers.Count -ne 1) {
+            throw "Release-owned executables do not share exactly one publisher: $($uniqueOwnedPublishers -join '; ')"
+          }
+
+      - name: Verify license, notices and source instructions in unpacked artifacts
+        shell: pwsh
+        run: |
+          $unpacked = @(Get-ChildItem -Path dist -Directory -Filter 'win*-unpacked')
+          if ($unpacked.Count -ne 2) { throw "Expected two unpacked architectures, found $($unpacked.Count)" }
+          foreach ($dir in $unpacked) {
+            foreach ($relative in @('resources\LICENSE.txt','resources\THIRD_PARTY_NOTICES.md','resources\SOURCE_CODE.md','LICENSE.electron.txt','LICENSES.chromium.html')) {
+              if (-not (Test-Path (Join-Path $dir.FullName $relative))) { throw "$relative missing from $($dir.Name)" }
+            }
+          }
 
       - name: Verify release files and generate checksums
         id: assets
@@ -97,9 +149,25 @@ jobs:
           $lines | Set-Content -Path $checksumPath -Encoding ascii
           Get-Content $checksumPath
 
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          $evidencePath = Join-Path $PWD 'dist\release-evidence.json'
+          [ordered]@{
+            schemaVersion = 1
+            tag = $env:GITHUB_REF_NAME
+            commit = $env:GITHUB_SHA
+            version = $package.version
+            supportedArchitectures = @('x64')
+            testOnlyArchitectures = @('arm64')
+            tunIncluded = $false
+            authenticode = 'verified-valid'
+            license = 'GPL-3.0-only'
+          } | ConvertTo-Json -Depth 4 | Set-Content -Path $evidencePath -Encoding utf8
+
           "x64=$((($installers | Where-Object Name -Match '-x64\.exe$').FullName))" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "arm64=$((($installers | Where-Object Name -Match '-arm64\.exe$').FullName))" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "checksums=$checksumPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "notes=$((Join-Path $PWD 'dist\RELEASE_NOTES.md'))" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "evidence=$evidencePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Create draft GitHub Release
         shell: pwsh
@@ -108,28 +176,18 @@ jobs:
           X64_INSTALLER: ${{ steps.assets.outputs.x64 }}
           ARM64_INSTALLER: ${{ steps.assets.outputs.arm64 }}
           CHECKSUM_FILE: ${{ steps.assets.outputs.checksums }}
+          RELEASE_NOTES: ${{ steps.assets.outputs.notes }}
+          RELEASE_EVIDENCE: ${{ steps.assets.outputs.evidence }}
         run: |
-          $notes = @"
-          Automated Windows build for $env:GITHUB_REF_NAME.
-
-          - x64 NSIS installer
-          - arm64 NSIS installer (packaging verified; runtime verification remains deferred)
-          - SHA256SUMS.txt
-
-          This release is created as a draft. Review the assets, signing status,
-          packaged GPL-3.0-only license and release notes before publishing it.
-          "@
-          $notesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
-          $notes | Set-Content -Path $notesPath -Encoding utf8
-
           $existing = gh release view $env:GITHUB_REF_NAME --json isDraft --jq '.isDraft' 2>$null
           if ($LASTEXITCODE -eq 0) {
             if ($existing -ne 'true') {
               throw "Refusing to overwrite an already-published release for $env:GITHUB_REF_NAME"
             }
-            gh release upload $env:GITHUB_REF_NAME $env:X64_INSTALLER $env:ARM64_INSTALLER $env:CHECKSUM_FILE --clobber
+            gh release upload $env:GITHUB_REF_NAME $env:X64_INSTALLER $env:ARM64_INSTALLER $env:CHECKSUM_FILE $env:RELEASE_EVIDENCE --clobber
+            gh release edit $env:GITHUB_REF_NAME --notes-file $env:RELEASE_NOTES
           } else {
-            gh release create $env:GITHUB_REF_NAME $env:X64_INSTALLER $env:ARM64_INSTALLER $env:CHECKSUM_FILE --draft --verify-tag --title $env:GITHUB_REF_NAME --notes-file $notesPath
+            gh release create $env:GITHUB_REF_NAME $env:X64_INSTALLER $env:ARM64_INSTALLER $env:CHECKSUM_FILE $env:RELEASE_EVIDENCE --draft --verify-tag --title $env:GITHUB_REF_NAME --notes-file $env:RELEASE_NOTES
           }
 
       - name: Preserve installers as workflow artifact
@@ -140,5 +198,7 @@ jobs:
             dist/*-Setup-*-x64.exe
             dist/*-Setup-*-arm64.exe
             dist/SHA256SUMS.txt
+            dist/RELEASE_NOTES.md
+            dist/release-evidence.json
           if-no-files-found: error
           retention-days: 30

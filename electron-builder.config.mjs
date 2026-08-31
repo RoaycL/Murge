@@ -3,6 +3,9 @@ import { readFileSync } from 'node:fs'
 const brand = JSON.parse(readFileSync(new URL('./brand.config.json', import.meta.url), 'utf8'))
 
 export default {
+  // Normal CI may build unsigned smoke artifacts. A tag release sets
+  // RELEASE_BUILD=true and must fail closed when signing credentials are absent.
+  forceCodeSigning: process.env.RELEASE_BUILD === 'true',
   appId: brand.appId,
   productName: brand.productName,
   executableName: brand.executableName,
@@ -29,6 +32,7 @@ export default {
     { from: 'resources/defaults', to: 'defaults', filter: ['**/*'] },
     { from: 'LICENSE', to: 'LICENSE.txt' },
     { from: 'resources/THIRD_PARTY_NOTICES.md', to: 'THIRD_PARTY_NOTICES.md' },
+    { from: 'resources/SOURCE_CODE.md', to: 'SOURCE_CODE.md' },
     // Retained upstream license texts for every bundled dependency. Shipped
     // alongside the app so the notice-preservation obligation is met by the
     // installed artifact itself, not just the source tree.

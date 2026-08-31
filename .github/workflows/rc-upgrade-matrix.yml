@@ -1,0 +1,79 @@
+name: RC Windows upgrade matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      previous_tag:
+        description: Existing GitHub Release tag to upgrade from
+        required: true
+        type: string
+      candidate_tag:
+        description: Signed draft candidate tag to install
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  upgrade-x64:
+    name: Clean N-1 to RC upgrade and uninstall (x64)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_ACTIONS: 'true'
+      MURGE_RUN_RC_MATRIX: '1'
+    steps:
+      - name: Checkout candidate tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_tag }}
+
+      - name: Resolve immutable brand and version
+        shell: pwsh
+        run: |
+          $brand = Get-Content brand.config.json -Raw | ConvertFrom-Json
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          "PRODUCT_NAME=$($brand.productName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "APP_ID=$($brand.appId)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "EXECUTABLE_NAME=$($brand.executableName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "CANDIDATE_VERSION=$($package.version)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Download previous and candidate release assets
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory previous,candidate | Out-Null
+          gh release download '${{ inputs.previous_tag }}' --pattern '*-Setup-*-x64.exe' --dir previous
+          gh release download '${{ inputs.previous_tag }}' --pattern 'SHA256SUMS.txt' --dir previous
+          gh release download '${{ inputs.candidate_tag }}' --pattern '*-Setup-*-x64.exe' --dir candidate
+          gh release download '${{ inputs.candidate_tag }}' --pattern 'SHA256SUMS.txt' --dir candidate
+          $previous = @(Get-ChildItem previous -Filter '*.exe' -File)
+          $candidate = @(Get-ChildItem candidate -Filter '*.exe' -File)
+          if ($previous.Count -ne 1 -or $candidate.Count -ne 1) { throw 'expected exactly one x64 installer for each tag' }
+          function Assert-ReleaseChecksum([System.IO.FileInfo]$Installer) {
+            $sums = Get-Content (Join-Path $Installer.DirectoryName 'SHA256SUMS.txt')
+            $escapedName = [regex]::Escape($Installer.Name)
+            $line = $sums | Where-Object { $_ -match "^([0-9a-fA-F]{64}) \*$escapedName$" } | Select-Object -First 1
+            if (-not $line) { throw "checksum entry missing for $($Installer.Name)" }
+            $expected = ($line -split ' ')[0].ToLowerInvariant()
+            $actual = (Get-FileHash -Algorithm SHA256 $Installer.FullName).Hash.ToLowerInvariant()
+            if ($actual -ne $expected) { throw "checksum mismatch for $($Installer.Name)" }
+          }
+          Assert-ReleaseChecksum $previous[0]
+          Assert-ReleaseChecksum $candidate[0]
+          $signature = Get-AuthenticodeSignature $candidate[0].FullName
+          if ($signature.Status -ne 'Valid') { throw "candidate Authenticode is not valid: $($signature.Status)" }
+          "PREVIOUS_INSTALLER=$($previous[0].FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "CANDIDATE_INSTALLER=$($candidate[0].FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Run isolated upgrade/uninstall matrix
+        shell: pwsh
+        run: |
+          & scripts/rc-upgrade-matrix.ps1 `
+            -PreviousInstaller $env:PREVIOUS_INSTALLER `
+            -CandidateInstaller $env:CANDIDATE_INSTALLER `
+            -CandidateVersion $env:CANDIDATE_VERSION `
+            -ProductName $env:PRODUCT_NAME `
+            -ExecutableName $env:EXECUTABLE_NAME `
+            -AppId $env:APP_ID

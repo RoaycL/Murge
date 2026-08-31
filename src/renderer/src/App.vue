@@ -7,19 +7,16 @@ import { brand as fallbackBrand } from '@shared/brand'
 import { useKernelStore } from './stores/kernel'
 import { useSystemProxyStore } from './stores/system-proxy'
 import { useAppearanceStore } from './stores/appearance'
-import { useTunStore } from './stores/tun'
 
 const brand = ref<BrandConfig>(fallbackBrand)
 const kernel = useKernelStore()
 const systemProxy = useSystemProxyStore()
 const appearance = useAppearanceStore()
-const tun = useTunStore()
 
 onMounted(async () => {
   appearance.connect()
   kernel.connect()
   systemProxy.connect()
-  tun.connect()
   brand.value = await window.desktop.app.getBrand()
   document.title = brand.value.productName
 })
@@ -27,7 +24,6 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   kernel.disconnect()
   systemProxy.disconnect()
-  tun.disconnect()
   appearance.disconnect()
 })
 </script>

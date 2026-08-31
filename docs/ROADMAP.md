@@ -370,14 +370,14 @@ Environment: clean Windows VMs and designated physical test machine only.
 
 Entry gate: owner selects release scope and license; all included phases complete.
 
-- [ ] Freeze supported feature list and explicitly hide unsupported Surge-like pages.
-- [ ] Run clean-install, upgrade and uninstall matrices.
-- [ ] Run system proxy and optional TUN recovery matrices.
-- [ ] Verify first-launch behavior with no profile and invalid profile.
-- [ ] Complete third-party notices and source-offer obligations.
-- [ ] Sign installer and binaries.
-- [ ] Publish checksums and reproducible release notes.
-- [ ] Prepare rollback release and emergency network-recovery instructions.
+- [x] Freeze supported feature list and explicitly hide unsupported Surge-like pages. (`docs/RELEASE_SCOPE.md` freezes x64 RC scope; `src/shared/release-scope.ts` is the executable allowlist. TUN, capture, HTTPS decryption, rewrite, Panel, LAN takeover and automatic updates are absent from navigation/direct routes; static tests prevent their accidental return.)
+- [~] Run clean-install, upgrade and uninstall matrices. (Clean x64 install/visible-window/uninstall is exercised by main CI. `.github/workflows/rc-upgrade-matrix.yml` plus the gated, bounded `scripts/rc-upgrade-matrix.ps1` implements N-1 → signed RC → uninstall with profile-retention and no-mihomo assertions. It remains pending because it needs two immutable release tags and a clean Windows run.)
+- [~] Run system proxy and optional TUN recovery matrices. (Real Windows system-proxy enable/exact restore, owned-proxy uninstall recovery and forced-owner crash recovery run in CI. TUN is explicitly excluded from this RC; final evidence must be captured against the immutable RC tag.)
+- [x] Verify first-launch behavior with no profile and invalid profile. (Repository/service tests prove an empty directory is a valid zero-profile state, unreadable metadata/stale activation is ignored, and invalid YAML imports/activations do not create or replace the active profile. Packaged normal launch is already asserted visible and idle with no mihomo/controller listener.)
+- [x] Complete third-party notices and source-offer obligations. (`LICENSE.txt`, `THIRD_PARTY_NOTICES.md`, every retained runtime/Go license and `SOURCE_CODE.md` are installer resources; tests pin the exact Murge repository and bundled mihomo v1.19.30 source link.)
+- [~] Sign installer and binaries. (Tag workflow now requires out-of-band `WIN_CSC_LINK`/`WIN_CSC_KEY_PASSWORD`, sets `forceCodeSigning`, and rejects any installer/app/service executable whose Authenticode status is not `Valid`. No signing certificate is configured, so this release gate remains open.)
+- [x] Publish checksums and reproducible release notes. (`release-notes:generate` deterministically renders the committed template; the tag workflow emits SHA256SUMS plus an immutable tag/SHA/scope/signing evidence JSON and attaches them to a draft.)
+- [x] Prepare rollback release and emergency network-recovery instructions. (`docs/application-update-design.md` uses forward-version rollback releases; `docs/NETWORK_RECOVERY.md` documents the renderer-independent owned-proxy restore command, conflict behavior and reinstall-to-recover path. TUN instructions are intentionally absent because TUN is excluded.)
 - [ ] Owner approves final 934×672 screenshots.
 
 Exit criteria:

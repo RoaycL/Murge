@@ -18,6 +18,8 @@
 - [x] Packaged Windows kernel start is explicit, authenticated, loopback-only and safe-direct.
 - [x] API and handoff documents identify source references and uncertainty.
 - [x] Owner-selected GPL-3.0-only application license is present and `npm run license:check` passes.
+- [x] The RC route/navigation allowlist hides TUN, capture, HTTPS decryption, rewrite and placeholder pages that lack a completed service contract.
+- [x] Installed artifacts retain source-access instructions for Murge and the exact bundled mihomo version.
 
 ## Phase 8 — Windows system proxy
 

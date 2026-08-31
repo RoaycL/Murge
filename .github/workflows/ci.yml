@@ -309,6 +309,11 @@ jobs:
           $notices = Get-ChildItem -Path dist -Recurse -Filter 'THIRD_PARTY_NOTICES.md' -File | Select-Object -First 1
           if (-not $notices) { throw 'THIRD_PARTY_NOTICES.md missing from the packaged artifact' }
           Write-Host "notices: $($notices.FullName)"
+          if (-not (Test-Path (Join-Path $notices.DirectoryName 'SOURCE_CODE.md'))) { throw 'SOURCE_CODE.md missing from the packaged artifact' }
+          $unpackedRoot = Split-Path -Parent $notices.DirectoryName
+          foreach ($electronNotice in @('LICENSE.electron.txt','LICENSES.chromium.html')) {
+            if (-not (Test-Path (Join-Path $unpackedRoot $electronNotice))) { throw "$electronNotice missing from the packaged artifact" }
+          }
           $licensesDir = Join-Path $notices.DirectoryName 'licenses'
           $expected = @('vue.txt','vue-router.txt','pinia.txt','vueuse-core.txt','zod.txt','ws.txt','yaml.txt','electron.txt','electron-toolkit-utils.txt','electron-toolkit-preload.txt','go-winio.txt','go-x-sys.txt','go-yaml-v3.txt')
           foreach ($name in $expected) {

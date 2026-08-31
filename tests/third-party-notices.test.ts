@@ -18,7 +18,10 @@ const EXPECTED_LICENSES = [
   'yaml.txt',
   'electron.txt',
   'electron-toolkit-utils.txt',
-  'electron-toolkit-preload.txt'
+  'electron-toolkit-preload.txt',
+  'go-winio.txt',
+  'go-x-sys.txt',
+  'go-yaml-v3.txt'
 ]
 
 describe('third-party notices', () => {

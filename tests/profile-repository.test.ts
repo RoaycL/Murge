@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ProfileRepository, applyEdits } from '../src/main/profiles/profile-repository'
@@ -50,6 +50,16 @@ describe('ProfileRepository', () => {
     expect(list).toHaveLength(1)
     expect(list[0].name).toBe('my config')
     expect(list[0].active).toBe(false)
+  })
+
+  it('treats first launch with no profile as a valid empty state', async () => {
+    expect(await repository.list()).toEqual([])
+  })
+
+  it('ignores unreadable profile metadata without inventing an active profile', async () => {
+    await writeFile(join(rootDir, 'broken.meta.json'), '{not-json', 'utf8')
+    await writeFile(join(rootDir, 'active.json'), 'broken', 'utf8')
+    expect(await repository.list()).toEqual([])
   })
 
   it('marks a profile active when imported with activate=true', async () => {

@@ -14,6 +14,7 @@
     "test": "vitest run --passWithNoTests",
     "brand:check": "node scripts/check-brand.mjs",
     "license:check": "node scripts/check-license.mjs",
+    "release-notes:generate": "node scripts/generate-release-notes.mjs",
     "kernel:prepare": "node scripts/prepare-mihomo-assets.mjs",
     "tun-service:test": "cd native/tun-service && go test ./...",
     "tun-service:build": "node scripts/build-tun-service.mjs --all",

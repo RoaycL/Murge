@@ -7,6 +7,7 @@ distribution obligations are met without requiring a separate download.
 The product name and application identifiers are defined in
 `brand.config.json` and `docs/BRANDING.md`. Murge itself is licensed under
 GPL-3.0-only; the complete application license is installed as `LICENSE.txt`.
+Source-access instructions are installed as `SOURCE_CODE.md`.
 This notice covers *third-party* components only and does not replace their
 individual license texts.
 

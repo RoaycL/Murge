@@ -5,9 +5,6 @@ import ProcessListView from './views/ProcessListView.vue'
 import DeviceListView from './views/DeviceListView.vue'
 import PolicyView from './views/PolicyView.vue'
 import RulesView from './views/RulesView.vue'
-import CaptureView from './views/CaptureView.vue'
-import DecryptView from './views/DecryptView.vue'
-import RewriteView from './views/RewriteView.vue'
 import ConfigView from './views/ConfigView.vue'
 import ProviderSettingsView from './views/ProviderSettingsView.vue'
 import MoreView from './views/MoreView.vue'
@@ -17,9 +14,7 @@ import AppearanceView from './views/AppearanceView.vue'
 import GeneralView from './views/GeneralView.vue'
 import DnsView from './views/DnsView.vue'
 import AboutView from './views/AboutView.vue'
-import PlaceholderView from './views/PlaceholderView.vue'
-
-const placeholder = (title: string) => ({ component: PlaceholderView, props: { title } })
+import { isRcSupportedRoute } from '@shared/release-scope'
 
 export const router = createRouter({
   history: createWebHashHistory(),
@@ -31,9 +26,6 @@ export const router = createRouter({
     { path: '/devices', component: DeviceListView },
     { path: '/policies', component: PolicyView },
     { path: '/rules', component: RulesView },
-    { path: '/capture', component: CaptureView },
-    { path: '/decrypt', component: DecryptView },
-    { path: '/rewrite', component: RewriteView },
     { path: '/config', component: ConfigView },
     { path: '/providers', component: ProviderSettingsView },
     { path: '/more', component: MoreView },
@@ -43,6 +35,8 @@ export const router = createRouter({
     { path: '/general', component: GeneralView },
     { path: '/dns', component: DnsView },
     { path: '/about', component: AboutView },
-    { path: '/panel', ...placeholder('面板') }
+    // Unsupported Surge-like pages are absent from the route table. A stale
+    // bookmark cannot reopen a misleading, non-functional control surface.
+    { path: '/:pathMatch(.*)*', redirect: (to) => isRcSupportedRoute(to.path) ? to.path : '/activity' }
   ]
 })

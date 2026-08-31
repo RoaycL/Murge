@@ -1,14 +1,18 @@
 # Automated Windows release builds
 
-Pushing a version tag creates a draft GitHub Release containing the Windows x64
-and arm64 NSIS installers plus `SHA256SUMS.txt`.
+Pushing a version tag creates a draft GitHub Release only when trusted Windows
+signing secrets are configured. The draft contains Windows x64 and arm64 NSIS
+installers plus deterministic release notes and `SHA256SUMS.txt`.
 
 1. Update `package.json` to the intended version and commit it.
 2. Wait for the normal `main` CI workflow to pass.
 3. Create and push the matching tag, for example `v0.1.0` for version `0.1.0`.
-4. Open GitHub Releases and download/test the assets from the generated draft.
-5. Review the GPL-3.0-only license asset, signing status, checksums and final
-   release notes before manually publishing the draft.
+4. Configure `WIN_CSC_LINK` and `WIN_CSC_KEY_PASSWORD` as Actions secrets. An
+   unsigned tag build fails before creating or replacing a draft.
+5. Open GitHub Releases and download/test the assets from the generated draft.
+6. Complete `RELEASE_CANDIDATE_CHECKLIST.md`, including the N-1 upgrade matrix.
+7. Review signing status, checksums and final screenshots before manually
+   publishing the draft with explicit owner approval.
 
 The workflow refuses a tag that does not exactly equal `v` plus the
 `package.json` version. Re-running a draft build replaces its assets, but it
@@ -17,3 +21,7 @@ SHA-256-verifies the pinned official mihomo archives for inclusion in the two
 installers; it does not modify system proxy, TUN, DNS, routes or firewall
 settings. The main CI job separately runs the installed x64 archive against the
 loopback-only safe-direct configuration and proves cleanup.
+
+The first RC supports x64. arm64 remains a test artifact until installed
+lifecycle evidence exists on real Windows arm64 hardware. TUN and the other
+excluded surfaces listed in `RELEASE_SCOPE.md` must remain hidden.

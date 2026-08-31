@@ -1,6 +1,8 @@
-import type { KernelGateway, KernelManagerGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway } from '@shared/gateways'
+import type { KernelGateway, KernelManagerGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway, OverridesGateway } from '@shared/gateways'
 import type { StartupStatus } from '@shared/startup'
 import type { AppSettings } from '@shared/app-settings'
+import type { OverrideInput, OverridesSnapshot } from '@shared/overrides'
+import { coerceOverridesSnapshot, EMPTY_OVERRIDES } from '@shared/overrides'
 import type { KernelManagerState } from '@shared/kernel-manager'
 import { DEFAULT_KERNEL_MANAGER_STATE } from '@shared/kernel-manager'
 import type { UpdateState } from '@shared/updates'
@@ -373,6 +375,7 @@ export interface FakeContainer {
   systemProxy: FakeSystemProxyGateway
   startup: FakeStartupGateway
   appSettings: FakeAppSettingsGateway
+  overrides: FakeOverridesGateway
   updates: FakeUpdatesGateway
   tun: FakeTunGateway
 }
@@ -446,6 +449,44 @@ export class FakeAppSettingsGateway implements AppSettingsGateway {
   }
 }
 
+export class FakeOverridesGateway implements OverridesGateway {
+  snapshot: OverridesSnapshot = { ...EMPTY_OVERRIDES }
+  createCalls: Array<{ id: string; input: OverrideInput }> = []
+  updateCalls: Array<{ id: string; input: OverrideInput }> = []
+  removeCalls: string[] = []
+  setEnabledCalls: Array<{ id: string; enabled: boolean }> = []
+  moveCalls: Array<{ id: string; direction: 'up' | 'down' }> = []
+  private nextId = 1
+
+  list(): Promise<OverridesSnapshot> { return Promise.resolve(coerceOverridesSnapshot(this.snapshot)) }
+  async create(input: OverrideInput): Promise<OverridesSnapshot> {
+    const id = `ov-${this.nextId++}`
+    this.createCalls.push({ id, input })
+    const items = [...this.snapshot.items, { id, name: input.name, kind: input.kind, enabled: true, scope: input.scope, profileId: input.scope === 'profile' ? input.profileId ?? null : null, order: this.snapshot.items.length, content: input.content, updatedAt: 0 }]
+    this.snapshot = { items }
+    return Promise.resolve(coerceOverridesSnapshot(this.snapshot))
+  }
+  async update(id: string, input: OverrideInput): Promise<OverridesSnapshot> {
+    this.updateCalls.push({ id, input })
+    this.snapshot = { items: this.snapshot.items.map((item) => item.id === id ? { ...item, name: input.name, kind: input.kind, scope: input.scope, profileId: input.scope === 'profile' ? input.profileId ?? null : null, content: input.content, updatedAt: 0 } : item) }
+    return Promise.resolve(coerceOverridesSnapshot(this.snapshot))
+  }
+  async remove(id: string): Promise<OverridesSnapshot> {
+    this.removeCalls.push(id)
+    this.snapshot = { items: this.snapshot.items.filter((item) => item.id !== id).map((item, index) => ({ ...item, order: index })) }
+    return Promise.resolve(coerceOverridesSnapshot(this.snapshot))
+  }
+  async setEnabled(id: string, enabled: boolean): Promise<OverridesSnapshot> {
+    this.setEnabledCalls.push({ id, enabled })
+    this.snapshot = { items: this.snapshot.items.map((item) => item.id === id ? { ...item, enabled } : item) }
+    return Promise.resolve(coerceOverridesSnapshot(this.snapshot))
+  }
+  async move(id: string, direction: 'up' | 'down'): Promise<OverridesSnapshot> {
+    this.moveCalls.push({ id, direction })
+    return Promise.resolve(coerceOverridesSnapshot(this.snapshot))
+  }
+}
+
 export class FakeUpdatesGateway implements UpdatesGateway {
   state: UpdateState = { ...DEFAULT_UPDATE_STATE, currentVersion: '0.0.0-test' }
   checkCalls = 0
@@ -479,6 +520,7 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
   const systemProxy = new FakeSystemProxyGateway()
   const startup = new FakeStartupGateway()
   const appSettings = new FakeAppSettingsGateway()
+  const overrides = new FakeOverridesGateway()
   const updates = new FakeUpdatesGateway()
   const tun = new FakeTunGateway()
   return {
@@ -490,8 +532,9 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
     systemProxy,
     startup,
     appSettings,
+    overrides,
     updates,
     tun,
-    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, updates, tun }
+    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, updates, tun }
   }
 }

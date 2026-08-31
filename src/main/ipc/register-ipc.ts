@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow, app } from 'electron'
 import { brand } from '@shared/brand'
-import type { IpcDeps, KernelGateway, KernelManagerGateway, MihomoGateway, ProfileGateway, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway } from '@shared/gateways'
+import type { IpcDeps, KernelGateway, KernelManagerGateway, MihomoGateway, ProfileGateway, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway, OverridesGateway } from '@shared/gateways'
 import type { TunGateway } from '@shared/tun'
 import type { OutboundMode, RuntimeSummary } from '@shared/runtime'
 import { IPC } from '@shared/ipc'
@@ -16,6 +16,7 @@ export interface IpcDependencies {
   systemProxy: SystemProxyGateway
   startup: StartupGateway
   appSettings: AppSettingsGateway
+  overrides: OverridesGateway
   updates: UpdatesGateway
   tun: TunGateway
 }
@@ -67,7 +68,7 @@ function resolveExternalIp({ kernel, mihomo }: Pick<IpcDependencies, 'kernel' | 
   })()
 }
 
-export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemProxy, startup, appSettings, updates, tun }: IpcDependencies): () => void {
+export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemProxy, startup, appSettings, overrides, updates, tun }: IpcDependencies): () => void {
   const deps: IpcDeps = {
     brand,
     appInfo: { version: app.getVersion(), platform: process.platform === 'win32' || process.platform === 'darwin' || process.platform === 'linux' ? process.platform : 'other', arch: process.arch },
@@ -82,6 +83,7 @@ export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemPro
     systemProxy,
     startup,
     appSettings,
+    overrides,
     updates,
     tun
   }

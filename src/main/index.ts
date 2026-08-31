@@ -40,6 +40,7 @@ import { createElectronTray } from './tray/electron-tray'
 import { StartupService } from './startup/service'
 import { ElectronStartupAdapter } from './startup/electron-adapter'
 import { AppSettingsService } from './app-settings/service'
+import { OverrideService } from './kernel/overrides/override-service'
 import { UpdateService } from './updates/service'
 import { ElectronUpdaterDriver } from './updates/electron-updater-driver'
 import { TunCoordinator, GatedTunMutationAdapter } from './tun/coordinator'
@@ -477,6 +478,7 @@ app.whenReady().then(async () => {
   const productionMixedPort = productionPorts?.mixed ?? null
   const productionKernelRoot = join(profileRoot, 'kernel')
   const appSettingsService = new AppSettingsService(appDataRoot(app.getPath('appData')))
+  const overrideService = new OverrideService(appDataRoot(app.getPath('appData')))
   const kernelManagerService = new KernelManagerService({
     settings: appSettingsService,
     workspaceRoot: productionKernelRoot
@@ -504,8 +506,14 @@ app.whenReady().then(async () => {
             // Drive the live controller from the ACTIVE profile (proxies, groups,
             // rules, providers) instead of the strict direct-only bootstrap. Falls
             // back to the strict config when no profile is active (e.g. CI smoke).
-            resolveActiveDocument: async () =>
-              (await profileService.getActiveProfile())?.document ?? null
+            // Any enabled overrides (global + this profile's) are applied to the
+            // profile document before the safety pass, so custom rules/groups/DNS
+            // survive without editing the subscription file itself.
+            resolveActiveDocument: async () => {
+              const profile = await profileService.getActiveProfile()
+              if (!profile) return null
+              return overrideService.applyForProfile(profile.document, profile.meta.id)
+            }
           }),
       adapter: new NodeKernelProcessAdapter(),
       secret: is.dev ? devControllerSecret : productionSecret!
@@ -661,6 +669,7 @@ app.whenReady().then(async () => {
     systemProxy: systemProxyService,
     startup: new StartupService(new ElectronStartupAdapter()),
     appSettings: appSettingsService,
+    overrides: overrideService,
     updates,
     tun: tunGateway
   })

@@ -274,4 +274,65 @@ describe('buildIpcHandlers', () => {
       expect(container.kernelManager.installCalls).toHaveLength(0)
     })
   })
+
+  describe('override chain', () => {
+    it('lists the current overrides snapshot', async () => {
+      container.overrides.snapshot = { items: [{ id: 'ov-1', name: '规则', kind: 'yaml', enabled: true, scope: 'global', profileId: null, order: 0, content: 'mode: rule', updatedAt: 1 }] }
+      const result = await handlers[IPC.overridesList](null)
+      expect(result.items).toHaveLength(1)
+      expect(result.items[0].name).toBe('规则')
+    })
+
+    it('forwards a valid create payload to the gateway', async () => {
+      const result = await handlers[IPC.overridesCreate](null, { name: '规则', kind: 'yaml', scope: 'global', content: 'mode: rule' })
+      expect(container.overrides.createCalls).toHaveLength(1)
+      expect(container.overrides.createCalls[0].input).toEqual({ name: '规则', kind: 'yaml', scope: 'global', profileId: null, content: 'mode: rule' })
+      expect(result).toEqual(await container.overrides.list())
+    })
+
+    it('rejects a blank name BEFORE reaching the gateway', async () => {
+      await expect(handlers[IPC.overridesCreate](null, { name: '  ', kind: 'yaml', scope: 'global', content: '' })).rejects.toMatchObject({
+        code: ProtocolErrorCode.INVALID_ARGUMENT
+      })
+      expect(container.overrides.createCalls).toHaveLength(0)
+    })
+
+    it('rejects an unknown kind BEFORE reaching the gateway', async () => {
+      await expect(handlers[IPC.overridesCreate](null, { name: 'x', kind: 'toml', scope: 'global', content: '' })).rejects.toThrow(ProtocolError)
+      expect(container.overrides.createCalls).toHaveLength(0)
+    })
+
+    it('requires a profileId for profile-scoped overrides', async () => {
+      await expect(handlers[IPC.overridesCreate](null, { name: 'x', kind: 'yaml', scope: 'profile', content: 'a: 1' })).rejects.toThrow(ProtocolError)
+      expect(container.overrides.createCalls).toHaveLength(0)
+    })
+
+    it('forwards an update with a validated id', async () => {
+      const result = await handlers[IPC.overridesUpdate](null, 'ov-1', { name: '新', kind: 'js', scope: 'global', content: 'main=function(c){return c}' })
+      expect(container.overrides.updateCalls).toEqual([{ id: 'ov-1', input: { name: '新', kind: 'js', scope: 'global', profileId: null, content: 'main=function(c){return c}' } }])
+      expect(result).toEqual(await container.overrides.list())
+    })
+
+    it('forwards removal and toggle through the gateway', async () => {
+      await handlers[IPC.overridesRemove](null, 'ov-1')
+      expect(container.overrides.removeCalls).toEqual(['ov-1'])
+      await handlers[IPC.overridesSetEnabled](null, 'ov-1', false)
+      expect(container.overrides.setEnabledCalls).toEqual([{ id: 'ov-1', enabled: false }])
+    })
+
+    it('rejects a non-boolean enabled value BEFORE reaching the gateway', async () => {
+      await expect(handlers[IPC.overridesSetEnabled](null, 'ov-1', 'yes')).rejects.toThrow(ProtocolError)
+      expect(container.overrides.setEnabledCalls).toHaveLength(0)
+    })
+
+    it('forwards a valid reorder direction', async () => {
+      await handlers[IPC.overridesMove](null, 'ov-1', 'up')
+      expect(container.overrides.moveCalls).toEqual([{ id: 'ov-1', direction: 'up' }])
+    })
+
+    it('rejects an invalid direction BEFORE reaching the gateway', async () => {
+      await expect(handlers[IPC.overridesMove](null, 'ov-1', 'sideways')).rejects.toThrow(ProtocolError)
+      expect(container.overrides.moveCalls).toHaveLength(0)
+    })
+  })
 })

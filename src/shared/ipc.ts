@@ -15,6 +15,7 @@ import type {
 } from './mihomo-api'
 import type { ConfigEdit, ImportRequest, Profile, ProfileMeta, ValidationResult } from './profiles'
 import type { KernelManagerState } from './kernel-manager'
+import type { OverrideInput, OverridesSnapshot } from './overrides'
 import type { KernelStatus, RuntimeSummary, TrafficSample } from './runtime'
 import type { SystemProxyStatus } from './system-proxy'
 import type { StartupStatus } from './startup'
@@ -76,6 +77,12 @@ export const IPC = {
   startupSetEnabled: 'startup:set-enabled',
   appSettingsGet: 'app-settings:get',
   appSettingsSet: 'app-settings:set',
+  overridesList: 'overrides:list',
+  overridesCreate: 'overrides:create',
+  overridesUpdate: 'overrides:update',
+  overridesRemove: 'overrides:remove',
+  overridesSetEnabled: 'overrides:set-enabled',
+  overridesMove: 'overrides:move',
   updatesGetState: 'updates:get-state',
   updatesCheck: 'updates:check',
   updatesDownload: 'updates:download',
@@ -157,6 +164,14 @@ export interface DesktopApi {
   appSettings: {
     get(): Promise<AppSettings>
     set(patch: Partial<AppSettings>): Promise<AppSettings>
+  }
+  overrides: {
+    list(): Promise<OverridesSnapshot>
+    create(input: OverrideInput): Promise<OverridesSnapshot>
+    update(id: string, input: OverrideInput): Promise<OverridesSnapshot>
+    remove(id: string): Promise<OverridesSnapshot>
+    setEnabled(id: string, enabled: boolean): Promise<OverridesSnapshot>
+    move(id: string, direction: 'up' | 'down'): Promise<OverridesSnapshot>
   }
   updates: {
     getState(): Promise<UpdateState>

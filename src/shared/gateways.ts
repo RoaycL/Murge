@@ -1,5 +1,6 @@
 import type { BrandConfig } from './brand'
 import type { KernelManagerState } from './kernel-manager'
+import type { OverrideInput, OverridesSnapshot } from './overrides'
 import type {
   MihomoConfigSnapshot,
   MihomoConnectionsSnapshot,
@@ -118,6 +119,20 @@ export interface AppSettingsGateway {
 }
 
 /**
+ * Override/增强 chain management boundary. Implements the durable override
+ * list (global + profile-scoped, applied during runtime config generation).
+ * Every mutation returns the authoritative {@link OverridesSnapshot}.
+ */
+export interface OverridesGateway {
+  list(): OverridesSnapshot | Promise<OverridesSnapshot>
+  create(input: OverrideInput): OverridesSnapshot | Promise<OverridesSnapshot>
+  update(id: string, input: OverrideInput): OverridesSnapshot | Promise<OverridesSnapshot>
+  remove(id: string): OverridesSnapshot | Promise<OverridesSnapshot>
+  setEnabled(id: string, enabled: boolean): OverridesSnapshot | Promise<OverridesSnapshot>
+  move(id: string, direction: 'up' | 'down'): OverridesSnapshot | Promise<OverridesSnapshot>
+}
+
+/**
  * Application-update boundary. The implementation owns the auto-updater and
  * reduces its events into a {@link UpdateState} snapshot; the renderer issues a
  * narrow command (check, download, install) and observes the pushed state.
@@ -167,6 +182,7 @@ export interface IpcDeps {
   systemProxy: SystemProxyGateway
   startup: StartupGateway
   appSettings: AppSettingsGateway
+  overrides: OverridesGateway
   updates: UpdatesGateway
   tun: TunGateway
 }

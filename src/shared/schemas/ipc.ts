@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { MihomoConfigSnapshot, MihomoDnsQueryType } from '../mihomo-api'
+import type { OverrideInput } from '../overrides'
 import { ProtocolError, ProtocolErrorCode } from '../protocol-errors'
 import { logLevelSchema } from './log-level'
 
@@ -171,6 +172,55 @@ export function parseKernelChannel(channel: unknown): 'stable' | 'specific' {
 export function parseKernelEnabled(value: unknown): boolean {
   if (typeof value !== 'boolean') throw invalid('kernel enabled must be a boolean')
   return value
+}
+
+/** Validate a renderer-sent override create/update payload. */
+export function parseOverrideInput(input: unknown): OverrideInput {
+  if (!(typeof input === 'object' && input !== null && !Array.isArray(input))) {
+    throw invalid('override input must be an object')
+  }
+  const record = input as Record<string, unknown>
+  const name = record.name
+  if (typeof name !== 'string' || name.trim().length === 0) {
+    throw invalid('override name must be a non-empty string')
+  }
+  const kind = record.kind
+  if (kind !== 'yaml' && kind !== 'js') {
+    throw invalid('override kind must be "yaml" or "js"')
+  }
+  const scope = record.scope
+  if (scope !== 'global' && scope !== 'profile') {
+    throw invalid('override scope must be "global" or "profile"')
+  }
+  let profileId: string | null = null
+  if (scope === 'profile') {
+    if (typeof record.profileId !== 'string' || record.profileId.trim().length === 0) {
+      throw invalid('a profile-scoped override requires a non-empty profileId')
+    }
+    profileId = record.profileId
+  }
+  if (typeof record.content !== 'string') {
+    throw invalid('override content must be a string')
+  }
+  return { name: name.trim(), kind, scope, profileId, content: record.content }
+}
+
+/** Validate an override id used in a mutation path. */
+export function parseOverrideId(id: unknown): string {
+  if (typeof id !== 'string' || id.trim().length === 0) throw invalid('override id must be a non-empty string')
+  return id
+}
+
+/** Validate an override enable toggle. */
+export function parseOverrideEnabled(value: unknown): boolean {
+  if (typeof value !== 'boolean') throw invalid('override enabled must be a boolean')
+  return value
+}
+
+/** Validate an override reorder direction. */
+export function parseOverrideMove(direction: unknown): 'up' | 'down' {
+  if (direction !== 'up' && direction !== 'down') throw invalid('override move direction must be "up" or "down"')
+  return direction
 }
 
 /** Validate a provider or node name used in a path segment. */

@@ -94,6 +94,14 @@ const api: DesktopApi = {
     get: () => invoke(IPC.appSettingsGet),
     set: (patch) => invoke(IPC.appSettingsSet, patch)
   },
+  overrides: {
+    list: () => invoke(IPC.overridesList),
+    create: (input) => invoke(IPC.overridesCreate, input),
+    update: (id, input) => invoke(IPC.overridesUpdate, id, input),
+    remove: (id) => invoke(IPC.overridesRemove, id),
+    setEnabled: (id, enabled) => invoke(IPC.overridesSetEnabled, id, enabled),
+    move: (id, direction) => invoke(IPC.overridesMove, id, direction)
+  },
   updates: {
     getState: () => invoke(IPC.updatesGetState),
     check: () => invoke(IPC.updatesCheck),

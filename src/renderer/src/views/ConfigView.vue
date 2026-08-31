@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useProfilesStore } from '../stores/profiles'
 import { useProvidersStore } from '../stores/providers'
 import { useKernelStore } from '../stores/kernel'
+import OverridesPanel from '../components/OverridesPanel.vue'
 import type { ValidationResult } from '@shared/profiles'
 
 const profilesStore = useProfilesStore()
@@ -210,6 +211,7 @@ watch(
 )
 
 const activeCount = computed(() => profilesStore.profiles.filter((entry) => entry.active).length)
+const activeProfileId = computed(() => profilesStore.profiles.find((entry) => entry.active)?.id ?? null)
 const hasResources = computed(
   () => Object.keys(providersStore.proxyProviders).length + Object.keys(providersStore.ruleProviders).length > 0
 )
@@ -442,6 +444,8 @@ const hasResources = computed(
         </div>
       </template>
     </section>
+
+    <overrides-panel :active-profile-id="activeProfileId" />
   </div>
 </template>
 

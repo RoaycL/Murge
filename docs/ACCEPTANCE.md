@@ -19,6 +19,7 @@
 - [x] API and handoff documents identify source references and uncertainty.
 - [x] Owner-selected GPL-3.0-only application license is present and `npm run license:check` passes.
 - [x] The RC route/navigation allowlist hides TUN, capture, HTTPS decryption, rewrite and placeholder pages that lack a completed service contract.
+- [x] Excluded placeholder page sources are absent, and supported RC controls have accessible names/state without changing the reference geometry.
 - [x] Installed artifacts retain source-access instructions for Murge and the exact bundled mihomo version.
 
 ## Phase 8 — Windows system proxy

@@ -105,12 +105,12 @@ const bars = Array.from({ length: 23 }, () => 0)
       </SurfaceCard>
 
       <SurfaceCard class="traffic-card">
-        <div class="card-title-row"><span class="metric-label">流量</span><div class="segmented"><button class="selected">全部</button><button>仅代理</button></div></div>
+        <div class="card-title-row"><span class="metric-label">流量</span><div class="segmented" role="group" aria-label="流量范围"><button type="button" class="selected" aria-pressed="true">全部</button><button type="button" aria-pressed="false">仅代理</button></div></div>
         <div class="bar-chart" aria-label="每小时流量">
           <i v-for="(height, index) in bars" :key="index" :style="{ height: `${height}%` }" />
         </div>
         <div class="chart-axis"><span>12AM</span><span>6AM</span><span>12PM</span><span>6PM</span></div>
-        <div class="rank-tabs"><button class="selected">进程与设备</button><button>域名</button><button>策略</button></div>
+        <div class="rank-tabs" role="group" aria-label="流量排行维度"><button type="button" class="selected" aria-pressed="true">进程与设备</button><button type="button" aria-pressed="false">域名</button><button type="button" aria-pressed="false">策略</button></div>
         <div class="rank-list">
           <div v-for="item in topProcesses" :key="item.name" class="rank-row">
             <span class="rank-icon">{{ item.name.slice(0, 2) }}</span>
@@ -121,7 +121,7 @@ const bars = Array.from({ length: 23 }, () => 0)
       </SurfaceCard>
 
       <SurfaceCard class="total-card">
-        <div class="card-title-row"><span class="metric-label">总计</span><div class="segmented"><button class="selected">当前</button><button disabled>历史</button></div></div>
+        <div class="card-title-row"><span class="metric-label">总计</span><div class="segmented" role="group" aria-label="总计时间范围"><button type="button" class="selected" aria-pressed="true">当前</button><button type="button" aria-pressed="false" disabled>历史</button></div></div>
         <div class="large-metric">{{ total.value }}<span>{{ total.unit }}</span></div>
         <div class="total-labels"><div><span>DIRECT</span><strong>{{ direct.value }} {{ direct.unit }}</strong></div><div><span>代理</span><strong>{{ proxy.value }} {{ proxy.unit }}</strong></div></div>
         <div class="total-bar"><i :style="{ width: `${directPct}%` }" /><i :style="{ width: `${100 - directPct}%` }" /></div>

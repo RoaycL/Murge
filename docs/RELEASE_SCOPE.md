@@ -17,9 +17,9 @@ until its installed lifecycle is exercised on real arm64 hardware.
 ## Excluded and hidden
 
 - TUN: the G1 reuse and real route/DNS recovery gate is not proven.
-- HTTP capture, HTTPS decryption and rewrite: these had visual placeholders but
-  no completed backend or security lifecycle.
-- Panel: placeholder only.
+- HTTP capture, HTTPS decryption and rewrite: the former visual placeholder
+  source files were removed because there is no completed backend or security lifecycle.
+- Panel: its former placeholder source was removed.
 - Automatic application/kernel updates: signer, update channel and update keys
   are not configured.
 - LAN listener controls: the release remains loopback-only.
@@ -27,7 +27,8 @@ until its installed lifecycle is exercised on real arm64 hardware.
 Excluded features must not appear in navigation, settings, Overview, or as
 directly reachable hash routes. `src/shared/release-scope.ts` is the executable
 allowlist and `tests/release-scope.test.ts` prevents those pages from returning
-accidentally.
+accidentally, including an assertion that the removed placeholder source files
+do not return.
 
 ## Release gates still requiring owner or Windows evidence
 

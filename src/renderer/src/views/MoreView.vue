@@ -10,4 +10,4 @@ const items = [
   ['关于', '版本、支持链接与无敏感信息的诊断包。', '/about']
 ] as const
 </script>
-<template><div class="page-shell more-view"><h1>设置</h1><div class="settings-menu"><button v-for="item in items" :key="item[0]" @click="item[2] && router.push(item[2])"><i /><strong>{{ item[0] }}</strong><span>{{ item[1] }}</span></button></div></div></template>
+<template><div class="page-shell more-view"><h1>设置</h1><div class="settings-menu"><button v-for="item in items" :key="item[0]" type="button" @click="item[2] && router.push(item[2])"><i /><strong>{{ item[0] }}</strong><span>{{ item[1] }}</span></button></div></div></template>

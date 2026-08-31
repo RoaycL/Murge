@@ -64,7 +64,7 @@ onMounted(() => {
     <template v-else>
       <p class="inline-note">当前配置文件：{{ activeMeta.name }}</p>
 
-      <p v-if="profilesStore.lastError" class="inline-error">{{ profilesStore.lastError }}</p>
+      <p v-if="profilesStore.lastError" class="inline-error" role="alert">{{ profilesStore.lastError }}</p>
 
       <section class="section-caption"><span>运行模式</span></section>
       <div class="mode-selector import-card" role="tablist" aria-label="运行模式">
@@ -79,7 +79,7 @@ onMounted(() => {
 
       <section class="section-caption"><span>监听端口</span></section>
       <div class="import-card">
-        <input v-model="mixedPort" class="field" placeholder="mixed-port，例如 7890" />
+        <input v-model="mixedPort" class="field" aria-label="mixed-port" placeholder="mixed-port，例如 7890" />
         <div class="import-row">
           <button type="button" @click="save" :disabled="saving">保存</button>
         </div>

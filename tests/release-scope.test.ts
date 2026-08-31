@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readFile } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { RC_EXCLUDED_FEATURES, RC_SUPPORTED_ROUTES, isRcSupportedRoute } from '../src/shared/release-scope'
@@ -28,5 +28,11 @@ describe('release-candidate feature scope', () => {
     }
     expect(overview).not.toContain('toggleTun')
     expect(overview).not.toContain('TUN 模式')
+  })
+
+  it('does not ship placeholder source for excluded RC pages', async () => {
+    for (const file of ['CaptureView.vue', 'DecryptView.vue', 'RewriteView.vue', 'PlaceholderView.vue']) {
+      await expect(access(path.join(root, 'src/renderer/src/views', file))).rejects.toMatchObject({ code: 'ENOENT' })
+    }
   })
 })

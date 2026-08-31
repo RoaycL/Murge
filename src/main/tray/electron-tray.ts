@@ -6,6 +6,7 @@ export function createElectronTray(iconPath: string): TrayView {
   if (image.isEmpty()) throw new Error(`Tray icon could not be loaded: ${iconPath}`)
   const tray = new Tray(image.resize({ width: 16, height: 16 }))
   return {
+    isReady: () => !tray.isDestroyed(),
     setToolTip: (value) => tray.setToolTip(value),
     setMenu: (items) => {
       const template = items.map((item): MenuItemConstructorOptions => item.type === 'separator'
@@ -24,4 +25,3 @@ export function createElectronTray(iconPath: string): TrayView {
     destroy: () => tray.destroy()
   }
 }
-

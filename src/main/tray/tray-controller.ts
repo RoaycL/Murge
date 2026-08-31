@@ -10,6 +10,7 @@ export interface TrayMenuItem {
 }
 
 export interface TrayView {
+  isReady(): boolean
   setToolTip(value: string): void
   setMenu(items: TrayMenuItem[]): void
   onActivate(listener: () => void): () => void
@@ -49,6 +50,10 @@ export class TrayController {
   async initialize(): Promise<void> {
     this.status = await this.options.kernel.getStatus()
     this.render()
+  }
+
+  isReady(): boolean {
+    return !this.disposed && this.options.view.isReady()
   }
 
   private async act(action: 'start' | 'stop'): Promise<void> {

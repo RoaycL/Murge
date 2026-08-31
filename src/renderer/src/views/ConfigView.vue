@@ -87,12 +87,12 @@ onMounted(() => {
   <div class="page-shell config-view">
     <h1>配置</h1>
 
-    <p v-if="profilesStore.lastError" class="inline-error">{{ profilesStore.lastError }}</p>
+    <p v-if="profilesStore.lastError" class="inline-error" role="alert">{{ profilesStore.lastError }}</p>
 
     <section class="section-caption"><span>导入订阅</span></section>
     <div class="import-card">
-      <input v-model="importName" class="field" placeholder="配置文件名称（可选）" />
-      <input v-model="url" class="field" placeholder="订阅地址 https://…" />
+      <input v-model="importName" class="field" aria-label="配置文件名称（可选）" placeholder="配置文件名称（可选）" />
+      <input v-model="url" class="field" aria-label="订阅地址" placeholder="订阅地址 https://…" />
       <button type="button" @click="importFromUrl" :disabled="importing || !url.trim()">导入</button>
     </div>
 
@@ -105,15 +105,16 @@ onMounted(() => {
         v-model="document"
         class="field document"
         spellcheck="false"
+        aria-label="mihomo 配置 YAML"
         placeholder="粘贴 mihomo 配置 YAML…"
       />
       <div class="import-row">
         <button type="button" @click="importManual" :disabled="importing || !document.trim()">导入</button>
       </div>
-      <p v-if="validation && !validation.ok" class="inline-error">
+      <p v-if="validation && !validation.ok" class="inline-error" role="alert">
         {{ validation.issues.map((issue) => issue.message).join('；') }}
       </p>
-      <p v-else-if="validation?.ok" class="inline-ok">配置有效</p>
+      <p v-else-if="validation?.ok" class="inline-ok" aria-live="polite">配置有效</p>
     </div>
 
     <section class="section-caption"><span>配置文件</span></section>

@@ -58,7 +58,7 @@ watch(() => kernel.status.phase, (phase, previous) => {
         <h1>规则</h1>
         <p>规则将按照从上至下的顺序进行测试。</p>
       </div>
-      <input :value="rules.search" placeholder="搜索规则" @input="rules.setSearch(($event.target as HTMLInputElement).value)">
+      <input :value="rules.search" aria-label="搜索规则" placeholder="搜索规则" @input="rules.setSearch(($event.target as HTMLInputElement).value)">
     </header>
 
     <div v-if="rules.status === 'ready'" class="rules-counters">
@@ -92,7 +92,7 @@ watch(() => kernel.status.phase, (phase, previous) => {
         </thead>
         <tbody>
           <tr v-for="row in rules.visibleRows" :key="row.index">
-            <td><input type="checkbox" aria-label="选择规则"></td>
+            <td><input type="checkbox" :aria-label="`选择规则 ${row.index}`"></td>
             <td>{{ row.index }}</td>
             <td>{{ row.type }}</td>
             <td>{{ row.payload }}</td>

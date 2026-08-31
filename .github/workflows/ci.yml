@@ -330,6 +330,7 @@ jobs:
           # GITHUB_ACTIONS=true (see runSystemProxyEnable) so no arbitrary user can
           # manufacture an enable from the packaged app. Start-Process inherits it.
           MURGE_CI_SYSTEM_PROXY_ENABLE: "1"
+          MURGE_CI_HIDDEN_START: "1"
         run: |
           $ErrorActionPreference = 'Stop'
           function Invoke-BoundedProcess {
@@ -428,6 +429,11 @@ jobs:
           $bridge = Invoke-BoundedProcess -FilePath $exe -ArgumentList '--ui-smoke' -Label 'preload IPC smoke'
           Write-Host "ui-smoke exit code: $($bridge.ExitCode) (expected 0)"
           if ($bridge.ExitCode -ne 0) { throw "preload IPC smoke exited with code $($bridge.ExitCode)" }
+
+          # Login-launch shape: hidden window + native tray + stopped kernel.
+          $hidden = Invoke-BoundedProcess -FilePath $exe -ArgumentList '--hidden','--hidden-smoke' -Label 'hidden tray smoke'
+          Write-Host "hidden-smoke exit code: $($hidden.ExitCode) (expected 0)"
+          if (Get-Process -Name 'mihomo' -ErrorAction SilentlyContinue) { throw 'hidden startup unexpectedly started mihomo' }
 
           # Launch the REAL packaged GUI path (without a smoke flag) and
           # require a visible native top-level window. The old probe explicitly

@@ -639,6 +639,27 @@ app.whenReady().then(async () => {
   })
   await trayController.initialize()
 
+  // CI-only installed-artifact proof for the real login-launch shape. It
+  // creates the hidden BrowserWindow and native Tray, but never starts mihomo
+  // or mutates proxy/TUN/DNS.
+  if (!is.dev && process.argv.includes('--hidden-smoke')) {
+    if (process.platform !== 'win32' || process.env.GITHUB_ACTIONS !== 'true' || process.env.MURGE_CI_HIDDEN_START !== '1') {
+      throw new Error('--hidden-smoke is restricted to the packaged GitHub Actions Windows probe')
+    }
+    const window = mainWindow
+    const status = await orderedKernel.getStatus()
+    if (!launchHidden || !window || window.isDestroyed() || window.isVisible()) {
+      throw new Error('hidden startup created a missing, destroyed, or visible main window')
+    }
+    if (!trayController.isReady()) throw new Error('hidden startup did not create a live native tray')
+    if (status.phase !== 'stopped' || status.pid !== null) {
+      throw new Error(`hidden startup unexpectedly activated the kernel (${status.phase}, pid=${status.pid ?? 'none'})`)
+    }
+    console.log('[hidden-smoke] hidden window + native tray + stopped kernel: PASS')
+    app.exit(0)
+    return
+  }
+
   app.on('activate', () => {
     showMainWindow()
   })

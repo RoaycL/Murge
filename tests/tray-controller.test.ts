@@ -7,6 +7,7 @@ class FakeTrayView implements TrayView {
   menu: TrayMenuItem[] = []
   activate: (() => void) | null = null
   destroyed = false
+  isReady(): boolean { return !this.destroyed }
   setToolTip(value: string): void { this.tooltip = value }
   setMenu(items: TrayMenuItem[]): void { this.menu = items }
   onActivate(listener: () => void): () => void { this.activate = listener; return () => { this.activate = null } }
@@ -26,6 +27,7 @@ describe('TrayController', () => {
     kernel.status = { ...kernel.status, phase: 'running', pid: 42 }
     const controller = new TrayController({ productName: 'Configurable Name', kernel, view, showWindow: show, quit })
     await controller.initialize()
+    expect(controller.isReady()).toBe(true)
     expect(view.tooltip).toBe('Configurable Name · 运行中')
     expect(view.item('start')?.enabled).toBe(false)
     expect(view.item('stop')?.enabled).toBe(true)
@@ -57,6 +59,7 @@ describe('TrayController', () => {
     view.item('quit')?.click?.()
     expect(quit).toHaveBeenCalledOnce()
     controller.dispose(); controller.dispose()
+    expect(controller.isReady()).toBe(false)
     expect(view.destroyed).toBe(true)
     expect(view.activate).toBeNull()
   })

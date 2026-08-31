@@ -42,6 +42,7 @@ import { ElectronStartupAdapter } from './startup/electron-adapter'
 import { AppSettingsService } from './app-settings/service'
 import { OverrideService } from './kernel/overrides/override-service'
 import { DnsEnhancementService } from './kernel/dns/dns-enhancement-service'
+import { SnifferEnhancementService } from './kernel/sniffer/sniffer-enhancement-service'
 import { UpdateService } from './updates/service'
 import { ElectronUpdaterDriver } from './updates/electron-updater-driver'
 import { TunCoordinator, GatedTunMutationAdapter } from './tun/coordinator'
@@ -481,6 +482,7 @@ app.whenReady().then(async () => {
   const appSettingsService = new AppSettingsService(appDataRoot(app.getPath('appData')))
   const overrideService = new OverrideService(appDataRoot(app.getPath('appData')))
   const dnsEnhancementService = new DnsEnhancementService(appDataRoot(app.getPath('appData')))
+  const snifferEnhancementService = new SnifferEnhancementService(appDataRoot(app.getPath('appData')))
   const kernelManagerService = new KernelManagerService({
     settings: appSettingsService,
     workspaceRoot: productionKernelRoot
@@ -518,7 +520,8 @@ app.whenReady().then(async () => {
               // then the safety pass (buildProfileKernelConfig). This matches the
               // audit pipeline: overrides -> typed DNS operations -> safety.
               const overridden = await overrideService.applyForProfile(profile.document, profile.meta.id)
-              return dnsEnhancementService.applyToDocument(overridden)
+              const dnsApplied = await dnsEnhancementService.applyToDocument(overridden)
+              return snifferEnhancementService.applyToDocument(dnsApplied)
             }
           }),
       adapter: new NodeKernelProcessAdapter(),
@@ -677,6 +680,7 @@ app.whenReady().then(async () => {
     appSettings: appSettingsService,
     overrides: overrideService,
     dns: dnsEnhancementService,
+    sniffer: snifferEnhancementService,
     updates,
     tun: tunGateway
   })

@@ -17,6 +17,7 @@ import type { ConfigEdit, ImportRequest, Profile, ProfileMeta, ValidationResult 
 import type { KernelManagerState } from './kernel-manager'
 import type { OverrideInput, OverridesSnapshot } from './overrides'
 import type { DnsEnhancement, DnsSnapshot } from './dns'
+import type { SnifferEnhancement, SnifferSnapshot } from './sniffer'
 import type { KernelStatus, RuntimeSummary, TrafficSample } from './runtime'
 import type { SystemProxyStatus } from './system-proxy'
 import type { StartupStatus } from './startup'
@@ -87,6 +88,9 @@ export const IPC = {
   dnsGet: 'dns:get',
   dnsSet: 'dns:set',
   dnsPreview: 'dns:preview',
+  snifferGet: 'sniffer:get',
+  snifferSet: 'sniffer:set',
+  snifferPreview: 'sniffer:preview',
   updatesGetState: 'updates:get-state',
   updatesCheck: 'updates:check',
   updatesDownload: 'updates:download',
@@ -181,6 +185,11 @@ export interface DesktopApi {
     get(): Promise<DnsSnapshot>
     set(input: DnsEnhancement): Promise<DnsSnapshot>
     preview(input: DnsEnhancement): Promise<string>
+  }
+  sniffer: {
+    get(): Promise<SnifferSnapshot>
+    set(input: SnifferEnhancement): Promise<SnifferSnapshot>
+    preview(input: SnifferEnhancement): Promise<string>
   }
   updates: {
     getState(): Promise<UpdateState>

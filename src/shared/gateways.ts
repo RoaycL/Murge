@@ -2,6 +2,7 @@ import type { BrandConfig } from './brand'
 import type { KernelManagerState } from './kernel-manager'
 import type { OverrideInput, OverridesSnapshot } from './overrides'
 import type { DnsEnhancement, DnsSnapshot } from './dns'
+import type { SnifferEnhancement, SnifferSnapshot } from './sniffer'
 import type {
   MihomoConfigSnapshot,
   MihomoConnectionsSnapshot,
@@ -182,6 +183,17 @@ export interface DnsEnhancementGateway {
   preview(input: DnsEnhancement): string | Promise<string>
 }
 
+/**
+ * Typed sniffer enhancement boundary. A single global, schema-validated model
+ * that is re-applied through the kernel config pipeline at start time.
+ */
+export interface SnifferEnhancementGateway {
+  get(): SnifferSnapshot | Promise<SnifferSnapshot>
+  set(input: SnifferEnhancement): SnifferSnapshot | Promise<SnifferSnapshot>
+  /** Render the `sniffer:` block a model would produce (no writes). */
+  preview(input: SnifferEnhancement): string | Promise<string>
+}
+
 /** Everything the IPC handler factory needs from the trusted main process. */
 export interface IpcDeps {
   brand: BrandConfig
@@ -196,6 +208,7 @@ export interface IpcDeps {
   appSettings: AppSettingsGateway
   overrides: OverridesGateway
   dns: DnsEnhancementGateway
+  sniffer: SnifferEnhancementGateway
   updates: UpdatesGateway
   tun: TunGateway
 }

@@ -3,6 +3,8 @@ import type { MihomoConfigSnapshot, MihomoDnsQueryType } from '../mihomo-api'
 import type { OverrideInput } from '../overrides'
 import type { DnsEnhancement } from '../dns'
 import { isValidCidr, isValidDomainOrRule, isValidIp, isValidNameserver } from '../dns'
+import type { SnifferEnhancement } from '../sniffer'
+import { isValidAddressOrCidr, isValidPortToken } from '../sniffer'
 import { ProtocolError, ProtocolErrorCode } from '../protocol-errors'
 import { logLevelSchema } from './log-level'
 
@@ -302,6 +304,44 @@ export function parseDnsEnhancement(input: unknown): DnsEnhancement {
   if (!parsed.success) {
     const detail = parsed.error.issues[0]
     throw invalid(`invalid dns enhancement at ${detail?.path.join('.') || 'dns'}: ${detail?.message}`)
+  }
+  return parsed.data
+}
+
+const portTokenSchema = z.string().refine(isValidPortToken, '端口必须是 1-65535、范围 (如 8080-8880) 或 *')
+const addressOrCidrSchema = z.string().refine(isValidAddressOrCidr, '必须是有效的 IP 或 CIDR')
+
+const snifferEnhancementSchema = z
+  .object({
+    enabled: z.boolean(),
+    overrideDestination: z.boolean(),
+    forceDnsMapping: z.boolean(),
+    parsePureIp: z.boolean(),
+    ports: z.object({
+      http: z.array(portTokenSchema).max(64),
+      tls: z.array(portTokenSchema).max(64),
+      quic: z.array(portTokenSchema).max(64)
+    }),
+    skipDomain: z.array(domainOrRuleSchema).max(128),
+    forceDomain: z.array(domainOrRuleSchema).max(128),
+    skipSrcAddress: z.array(addressOrCidrSchema).max(128),
+    skipDstAddress: z.array(addressOrCidrSchema).max(128)
+  })
+  .strict()
+
+/**
+ * Validate a renderer-sent sniffer enhancement. Every port, domain pattern and
+ * address CIDR must pass, and unknown keys are rejected, so an invalid
+ * enhancement can never be persisted or reach the runtime config.
+ */
+export function parseSnifferEnhancement(input: unknown): SnifferEnhancement {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    throw invalid('sniffer enhancement must be an object')
+  }
+  const parsed = snifferEnhancementSchema.safeParse(input)
+  if (!parsed.success) {
+    const detail = parsed.error.issues[0]
+    throw invalid(`invalid sniffer enhancement at ${detail?.path.join('.') || 'sniffer'}: ${detail?.message}`)
   }
   return parsed.data
 }

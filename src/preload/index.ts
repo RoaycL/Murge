@@ -107,6 +107,11 @@ const api: DesktopApi = {
     set: (input) => invoke(IPC.dnsSet, input),
     preview: (input) => invoke(IPC.dnsPreview, input)
   },
+  sniffer: {
+    get: () => invoke(IPC.snifferGet),
+    set: (input) => invoke(IPC.snifferSet, input),
+    preview: (input) => invoke(IPC.snifferPreview, input)
+  },
   updates: {
     getState: () => invoke(IPC.updatesGetState),
     check: () => invoke(IPC.updatesCheck),

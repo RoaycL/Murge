@@ -1,4 +1,6 @@
-import type { KernelGateway, KernelManagerGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway, OverridesGateway, DnsEnhancementGateway } from '@shared/gateways'
+import type { KernelGateway, KernelManagerGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway, OverridesGateway, DnsEnhancementGateway, SnifferEnhancementGateway } from '@shared/gateways'
+import type { SnifferEnhancement, SnifferSnapshot } from '@shared/sniffer'
+import { coerceSnifferEnhancement, coerceSnifferSnapshot, EMPTY_SNIFFER_ENHANCEMENT } from '@shared/sniffer'
 import type { StartupStatus } from '@shared/startup'
 import type { AppSettings } from '@shared/app-settings'
 import type { OverrideInput, OverridesSnapshot } from '@shared/overrides'
@@ -379,6 +381,7 @@ export interface FakeContainer {
   appSettings: FakeAppSettingsGateway
   overrides: FakeOverridesGateway
   dns: FakeDnsEnhancementGateway
+  sniffer: FakeSnifferEnhancementGateway
   updates: FakeUpdatesGateway
   tun: FakeTunGateway
 }
@@ -509,6 +512,25 @@ export class FakeDnsEnhancementGateway implements DnsEnhancementGateway {
   }
 }
 
+export class FakeSnifferEnhancementGateway implements SnifferEnhancementGateway {
+  enhancement: SnifferEnhancement = { ...EMPTY_SNIFFER_ENHANCEMENT }
+  setCalls: SnifferEnhancement[] = []
+  previewCalls: SnifferEnhancement[] = []
+
+  get(): Promise<SnifferSnapshot> {
+    return Promise.resolve(coerceSnifferSnapshot({ enhancement: this.enhancement }))
+  }
+  async set(input: SnifferEnhancement): Promise<SnifferSnapshot> {
+    this.setCalls.push(input)
+    this.enhancement = coerceSnifferEnhancement(input)
+    return Promise.resolve(coerceSnifferSnapshot({ enhancement: this.enhancement }))
+  }
+  async preview(input: SnifferEnhancement): Promise<string> {
+    this.previewCalls.push(input)
+    return ''
+  }
+}
+
 export class FakeUpdatesGateway implements UpdatesGateway {
   state: UpdateState = { ...DEFAULT_UPDATE_STATE, currentVersion: '0.0.0-test' }
   checkCalls = 0
@@ -544,6 +566,7 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
   const appSettings = new FakeAppSettingsGateway()
   const overrides = new FakeOverridesGateway()
   const dns = new FakeDnsEnhancementGateway()
+  const sniffer = new FakeSnifferEnhancementGateway()
   const updates = new FakeUpdatesGateway()
   const tun = new FakeTunGateway()
   return {
@@ -557,8 +580,9 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
     appSettings,
     overrides,
     dns,
+    sniffer,
     updates,
     tun,
-    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, updates, tun }
+    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, updates, tun }
   }
 }

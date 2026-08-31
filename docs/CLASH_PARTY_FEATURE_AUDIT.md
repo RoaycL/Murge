@@ -118,9 +118,18 @@ Rules:
 - [ ] Sniffer shared schema and editor: enable, override-destination,
       force-dns-mapping, parse-pure-ip, HTTP/TLS/QUIC ports, skip-domain,
       force-domain, skip-src-address and skip-dst-address.
+      (Shipped at `v0.1.15`: `SnifferEnhancement` in `src/shared/sniffer.ts` plus
+      the `SnifferSettingsPanel` editor on the Config page; port token, domain
+      pattern and CIDR validation happen in the IPC schema before any persist.)
 - [ ] Validate and normalize single ports/ranges, domain patterns and IPv4/IPv6
       CIDRs; add parse-back and fixture coverage for the generated `sniffer:`
       block.
+      (Shipped at `v0.1.15`: `isValidPortToken`, `isValidAddressOrCidr` and the
+      shared `net.ts` validators back the strict `snifferEnhancementSchema`; the
+      IPC schema is unit-tested for bad ports/domains/CIDRs, and
+      `apply-sniffer`/`sniffer-enhancement-service` tests assert the generated
+      `sniffer:` block round-trips through parse-back, including empty-list
+      omission and preserved non-owned keys.)
 - [ ] TUN shared schema and editor: stack, device/adapter identity, MTU,
       strict-route, auto-route, auto-detect-interface, DNS hijack,
       route-address, route-exclude-address and explicitly supported optional

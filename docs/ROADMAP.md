@@ -441,6 +441,22 @@ excluded or unproven feature appear supported in an existing release.
       pipeline: enable, override-destination, force-dns-mapping, parse-pure-ip,
       HTTP/TLS/QUIC port ranges, skip-domain, force-domain, skip-src-address and
       skip-dst-address. Validate ports, domains and CIDRs before materializing.
+      (Shipped at `v0.1.15`: `SnifferEnhancement` in `src/shared/sniffer.ts` is a
+      strict, zod-validated model; every port token (single/range/`*`), domain
+      pattern and IPv4/IPv6 CIDR is validated before persistence or
+      materialization, reusing the shared network validators extracted to
+      `src/shared/net.ts`. The `SnifferEnhancementService` persists atomically to
+      `sniffer-enhancement.json` inside the app-data root, and
+      `applySnifferEnhancementToDocument` runs inside the production
+      `resolveActiveDocument` pipeline right after the ordered overrides and DNS
+      enhancement and before the safety pass, so a generated `sniffer:` block is
+      merged over the profile without ever mutating the subscription source.
+      `sniffer` is not in the safety-pass drop list, so the block survives
+      `buildProfileKernelConfig`. List keys the model does not own (e.g.
+      `port-black-list`) are preserved. The renderer exposes it as a
+      `SnifferSettingsPanel` on the Config page with a YAML preview;
+      `src/main/index.ts` wires the concrete service both as the IPC gateway and
+      into the pipeline.)
 - [ ] Implement the complete TUN configuration model and Vue status/settings UI:
       stack, device/adapter identity, MTU, strict-route, auto-route,
       auto-detect-interface, DNS hijack, route-address,

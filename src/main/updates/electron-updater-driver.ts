@@ -1,4 +1,4 @@
-import { app } from 'electron'
+import { app, Notification } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import type { UpdaterDriver, UpdaterDriverEvent } from './updater-driver'
 
@@ -28,9 +28,11 @@ export class ElectronUpdaterDriver implements UpdaterDriver {
     autoUpdater.autoInstallOnAppQuit = true
     autoUpdater.allowPrerelease = false
     autoUpdater.on('checking-for-update', () => this.emit({ kind: 'checking' }))
-    autoUpdater.on('update-available', (info) =>
-      this.emit({ kind: 'available', version: info.version, releaseNotes: typeof info.releaseNotes === 'string' ? info.releaseNotes : null })
-    )
+    autoUpdater.on('update-available', (info) => {
+      const version = info.version
+      this.emit({ kind: 'available', version, releaseNotes: typeof info.releaseNotes === 'string' ? info.releaseNotes : null })
+      this.notify(`发现新版本 v${version}`, '正在后台下载，退出应用时自动安装。')
+    })
     autoUpdater.on('update-not-available', () => this.emit({ kind: 'not-available' }))
     autoUpdater.on('download-progress', (progress) =>
       this.emit({
@@ -41,8 +43,21 @@ export class ElectronUpdaterDriver implements UpdaterDriver {
         total: progress.total
       })
     )
-    autoUpdater.on('update-downloaded', () => this.emit({ kind: 'downloaded' }))
+    autoUpdater.on('update-downloaded', (info) => {
+      this.emit({ kind: 'downloaded' })
+      this.notify(`新版本 v${info.version} 已就绪`, '退出应用时自动安装，或点击“重启并安装”立即更新。')
+    })
     autoUpdater.on('error', (error) => this.emit({ kind: 'error', message: error instanceof Error ? error.message : String(error) }))
+  }
+
+  /** Show a native OS notification, guarded so it is a no-op where unsupported. */
+  private notify(title: string, body: string): void {
+    try {
+      if (!Notification.isSupported()) return
+      new Notification({ title, body }).show()
+    } catch {
+      // A failing notification must never take down the updater event stream.
+    }
   }
 
   check(): void {

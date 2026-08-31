@@ -82,6 +82,10 @@ const api: DesktopApi = {
     getStatus: () => invoke(IPC.startupGetStatus),
     setEnabled: (enabled) => invoke(IPC.startupSetEnabled, enabled)
   },
+  appSettings: {
+    get: () => invoke(IPC.appSettingsGet),
+    set: (patch) => invoke(IPC.appSettingsSet, patch)
+  },
   tun: {
     getStatus: () => invoke(IPC.tunGetStatus),
     enable: () => invoke(IPC.tunEnable),

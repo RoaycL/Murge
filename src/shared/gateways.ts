@@ -24,6 +24,7 @@ import type {
 import type { KernelStatus, RuntimeSummary, TrafficSample } from './runtime'
 import type { SystemProxyStatus } from './system-proxy'
 import type { StartupStatus } from './startup'
+import type { AppSettings } from './app-settings'
 import type { TunGateway } from './tun'
 import type { AppInfo } from './app-info'
 
@@ -92,6 +93,11 @@ export interface StartupGateway {
   setEnabled(enabled: boolean): Promise<StartupStatus>
 }
 
+export interface AppSettingsGateway {
+  get(): Promise<AppSettings>
+  set(patch: Partial<AppSettings>): Promise<AppSettings>
+}
+
 /**
  * Profile/subscription management boundary. Implementations manage an isolated
  * profile directory with atomic writes and never touch the live mihomo config.
@@ -122,5 +128,6 @@ export interface IpcDeps {
   profiles: ProfileGateway
   systemProxy: SystemProxyGateway
   startup: StartupGateway
+  appSettings: AppSettingsGateway
   tun: TunGateway
 }

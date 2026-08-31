@@ -100,6 +100,24 @@ export function parseStartupEnabled(value: unknown): boolean {
   return value
 }
 
+/**
+ * Validate a partial application-settings patch from the renderer. Only a known
+ * boolean key is accepted; anything else is rejected so the IPC boundary cannot
+ * write an unknown field into the persisted settings document.
+ */
+export function parseAppSettingsPatch(input: unknown): { autoStartKernel?: boolean } {
+  if (!(typeof input === 'object' && input !== null && !Array.isArray(input))) {
+    throw invalid('app settings patch must be an object')
+  }
+  const record = input as Record<string, unknown>
+  const patch: { autoStartKernel?: boolean } = {}
+  if ('autoStartKernel' in record) {
+    if (typeof record.autoStartKernel !== 'boolean') throw invalid('autoStartKernel must be a boolean')
+    patch.autoStartKernel = record.autoStartKernel
+  }
+  return patch
+}
+
 /** Validate a provider or node name used in a path segment. */
 export function parseMihomoName(name: unknown): string {
   if (!(typeof name === 'string' && name.trim().length > 0)) throw invalid('name must be a non-empty string')

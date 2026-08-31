@@ -1,5 +1,6 @@
-import type { KernelGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway } from '@shared/gateways'
+import type { KernelGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway, AppSettingsGateway } from '@shared/gateways'
 import type { StartupStatus } from '@shared/startup'
+import type { AppSettings } from '@shared/app-settings'
 import type { SystemProxyStatus } from '@shared/system-proxy'
 import type {
   MihomoConfigSnapshot,
@@ -366,6 +367,7 @@ export interface FakeContainer {
   profiles: FakeProfileGateway
   systemProxy: FakeSystemProxyGateway
   startup: FakeStartupGateway
+  appSettings: FakeAppSettingsGateway
   tun: FakeTunGateway
 }
 
@@ -387,6 +389,17 @@ export class FakeStartupGateway implements StartupGateway {
   setEnabled(enabled: boolean): Promise<StartupStatus> { this.setCalls.push(enabled); this.status = { ...this.status, enabled }; return Promise.resolve({ ...this.status }) }
 }
 
+export class FakeAppSettingsGateway implements AppSettingsGateway {
+  settings: AppSettings = { autoStartKernel: true }
+  setCalls: Array<Partial<AppSettings>> = []
+  get(): Promise<AppSettings> { return Promise.resolve({ ...this.settings }) }
+  set(patch: Partial<AppSettings>): Promise<AppSettings> {
+    this.setCalls.push({ ...patch })
+    this.settings = { ...this.settings, ...patch }
+    return Promise.resolve({ ...this.settings })
+  }
+}
+
 export function createFakeContainer(brand: BrandConfig): FakeContainer {
   const kernel = new FakeKernelGateway()
   const mihomo = new FakeMihomoGateway()
@@ -394,6 +407,7 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
   const profiles = new FakeProfileGateway()
   const systemProxy = new FakeSystemProxyGateway()
   const startup = new FakeStartupGateway()
+  const appSettings = new FakeAppSettingsGateway()
   const tun = new FakeTunGateway()
   return {
     kernel,
@@ -402,7 +416,8 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
     profiles,
     systemProxy,
     startup,
+    appSettings,
     tun,
-    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, mihomo, runtime, profiles, systemProxy, startup, tun }
+    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, mihomo, runtime, profiles, systemProxy, startup, appSettings, tun }
   }
 }

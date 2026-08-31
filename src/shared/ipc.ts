@@ -19,6 +19,7 @@ import type { SystemProxyStatus } from './system-proxy'
 import type { StartupStatus } from './startup'
 import type { TunStatus } from './tun'
 import type { AppInfo } from './app-info'
+import type { AppSettings } from './app-settings'
 
 export const IPC = {
   appGetBrand: 'app:get-brand',
@@ -65,6 +66,8 @@ export const IPC = {
   systemProxyStatusEvent: 'system-proxy:status-event',
   startupGetStatus: 'startup:get-status',
   startupSetEnabled: 'startup:set-enabled',
+  appSettingsGet: 'app-settings:get',
+  appSettingsSet: 'app-settings:set',
   tunGetStatus: 'tun:get-status',
   tunEnable: 'tun:enable',
   tunDisable: 'tun:disable',
@@ -129,6 +132,10 @@ export interface DesktopApi {
   startup: {
     getStatus(): Promise<StartupStatus>
     setEnabled(enabled: boolean): Promise<StartupStatus>
+  }
+  appSettings: {
+    get(): Promise<AppSettings>
+    set(patch: Partial<AppSettings>): Promise<AppSettings>
   }
   tun: {
     getStatus(): Promise<TunStatus>

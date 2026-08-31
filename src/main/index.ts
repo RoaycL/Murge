@@ -38,6 +38,7 @@ import { TrayController } from './tray/tray-controller'
 import { createElectronTray } from './tray/electron-tray'
 import { StartupService } from './startup/service'
 import { ElectronStartupAdapter } from './startup/electron-adapter'
+import { AppSettingsService } from './app-settings/service'
 import { TunCoordinator, GatedTunMutationAdapter } from './tun/coordinator'
 import { MihomoOwnedTunAdapter } from './tun/mihomo-owned-adapter'
 import { TunServiceClient } from './tun/service-client'
@@ -637,12 +638,14 @@ app.whenReady().then(async () => {
         }, { rollbackActive })
     }
   })
+  const appSettingsService = new AppSettingsService(appDataRoot(app.getPath('appData')))
   disposeIpc = registerIpc({
     kernel: orderedKernel,
     mihomo: gateway,
     profiles: profileGateway,
     systemProxy: systemProxyService,
     startup: new StartupService(new ElectronStartupAdapter()),
+    appSettings: appSettingsService,
     tun: tunGateway
   })
   createWindow()
@@ -684,6 +687,31 @@ app.whenReady().then(async () => {
     console.log('[hidden-smoke] hidden window + native tray + stopped kernel: PASS')
     app.exit(0)
     return
+  }
+
+  // Auto-start the safe loopback kernel on a normal (non-hidden) launch so the
+  // Policy/Rules views reflect the active profile immediately, matching the
+  // persistent-core model of mihomo-party / clash-verge-rev. Only the
+  // loopback-only kernel starts here; system proxy and TUN remain explicit,
+  // user-triggered takeovers. Gated on the persisted "启动时自动启动内核"
+  // setting, skipped on login `--hidden` launches (which keep the guarantee
+  // that nothing auto-enables at login), and wrapped so a failure logs without
+  // ever blocking the window from opening.
+  if (!is.dev && !launchHidden) {
+    try {
+      const settings = await appSettingsService.get()
+      if (settings.autoStartKernel) {
+        const status = await orderedKernel.getStatus()
+        if (status.phase === 'stopped') {
+          const started = await orderedKernel.start()
+          if (started.phase !== 'running') {
+            console.warn(`[kernel-autostart] kernel did not become running (${started.phase})`)
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('[kernel-autostart] failed to auto-start kernel:', error)
+    }
   }
 
   app.on('activate', () => {

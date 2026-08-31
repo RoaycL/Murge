@@ -1,17 +1,15 @@
 # Automated Windows release builds
 
-Pushing a version tag creates a draft GitHub Release only when trusted Windows
-signing secrets are configured. The draft contains Windows x64 and arm64 NSIS
-installers plus deterministic release notes and `SHA256SUMS.txt`.
+Pushing a version tag creates a draft GitHub Release containing intentionally
+unsigned Windows x64 and arm64 NSIS installers, deterministic release notes,
+release evidence and `SHA256SUMS.txt`. Windows displays Unknown publisher.
 
 1. Update `package.json` to the intended version and commit it.
 2. Wait for the normal `main` CI workflow to pass.
 3. Create and push the matching tag, for example `v0.1.0` for version `0.1.0`.
-4. Configure `WIN_CSC_LINK` and `WIN_CSC_KEY_PASSWORD` as Actions secrets. An
-   unsigned tag build fails before creating or replacing a draft.
-5. Open GitHub Releases and download/test the assets from the generated draft.
-6. Complete `RELEASE_CANDIDATE_CHECKLIST.md`, including the N-1 upgrade matrix.
-7. Review signing status, checksums and final screenshots before manually
+4. Open GitHub Releases and download/test the assets from the generated draft.
+5. Complete `RELEASE_CANDIDATE_CHECKLIST.md`, including the N-1 upgrade matrix.
+6. Review the explicit unsigned evidence, checksums and final screenshots before manually
    publishing the draft with explicit owner approval.
 
 The workflow refuses a tag that does not exactly equal `v` plus the

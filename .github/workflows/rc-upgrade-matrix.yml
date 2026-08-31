@@ -63,7 +63,7 @@ jobs:
           Assert-ReleaseChecksum $previous[0]
           Assert-ReleaseChecksum $candidate[0]
           $signature = Get-AuthenticodeSignature $candidate[0].FullName
-          if ($signature.Status -ne 'Valid') { throw "candidate Authenticode is not valid: $($signature.Status)" }
+          if ($signature.Status -ne 'NotSigned') { throw "candidate does not match owner-approved unsigned policy: $($signature.Status)" }
           "PREVIOUS_INSTALLER=$($previous[0].FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
           "CANDIDATE_INSTALLER=$($candidate[0].FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
 

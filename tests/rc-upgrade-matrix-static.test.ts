@@ -19,10 +19,10 @@ describe('RC Windows upgrade matrix', () => {
     expect(script).not.toContain('--execute-g1-probe')
   })
 
-  it('requires a signed candidate and checks out the immutable candidate tag', async () => {
+  it('requires the owner-approved unsigned candidate policy and checks out the immutable candidate tag', async () => {
     const workflow = await readFile(path.join(root, '.github/workflows/rc-upgrade-matrix.yml'), 'utf8')
     expect(workflow).toContain('ref: ${{ inputs.candidate_tag }}')
-    expect(workflow).toContain("$signature.Status -ne 'Valid'")
+    expect(workflow).toContain("$signature.Status -ne 'NotSigned'")
     expect(workflow).toContain('Get-FileHash -Algorithm SHA256')
     expect(workflow).toContain('timeout-minutes: 20')
   })

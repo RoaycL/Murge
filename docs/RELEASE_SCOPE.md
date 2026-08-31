@@ -32,7 +32,7 @@ do not return.
 
 ## Release gates still requiring owner or Windows evidence
 
-- Trusted Authenticode signing of the installer, app executable and privileged service.
+- Confirm the expected Unknown publisher warning for the owner-approved unsigned installer.
 - Clean x64 VM install/upgrade/uninstall matrix using the actual RC artifacts.
 - Tray, login-start and forced-process recovery evidence on Windows.
 - Final 934×672 screenshot approval.

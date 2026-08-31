@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 const execFileAsync = promisify(execFile)
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const brand = JSON.parse(await readFile(path.join(root, 'brand.config.json'), 'utf8')) as { productName: string; repositoryUrl: string }
+const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')) as { version: string }
 
 describe('release-candidate artifacts', () => {
   beforeAll(async () => {
@@ -19,7 +20,8 @@ describe('release-candidate artifacts', () => {
     await execFileAsync(process.execPath, ['scripts/generate-release-notes.mjs'], { cwd: root })
     const second = await readFile(path.join(root, 'dist/RELEASE_NOTES.md'), 'utf8')
     expect(second).toBe(first)
-    expect(second).toContain(`${brand.productName} v0.1.3`)
+    expect(second).toContain(`${brand.productName} v${pkg.version}`)
+    expect(second).toContain('not Authenticode-signed')
     expect(second).not.toContain('{{')
   })
 
@@ -29,6 +31,6 @@ describe('release-candidate artifacts', () => {
     expect(source).toContain('MetaCubeX/mihomo/tree/v1.19.30')
     const builder = await readFile(path.join(root, 'electron-builder.config.mjs'), 'utf8')
     expect(builder).toContain("{ from: 'resources/SOURCE_CODE.md', to: 'SOURCE_CODE.md' }")
-    expect(builder).toContain("forceCodeSigning: process.env.RELEASE_BUILD === 'true'")
+    expect(builder).toContain('forceCodeSigning: false')
   })
 })

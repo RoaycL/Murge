@@ -3,9 +3,10 @@ import { readFileSync } from 'node:fs'
 const brand = JSON.parse(readFileSync(new URL('./brand.config.json', import.meta.url), 'utf8'))
 
 export default {
-  // Normal CI may build unsigned smoke artifacts. A tag release sets
-  // RELEASE_BUILD=true and must fail closed when signing credentials are absent.
-  forceCodeSigning: process.env.RELEASE_BUILD === 'true',
+  // Owner decision: public releases are intentionally unsigned. Checksums and
+  // immutable source/tag evidence remain mandatory; Windows will show Unknown
+  // publisher until this policy changes and a trusted certificate is supplied.
+  forceCodeSigning: false,
   appId: brand.appId,
   productName: brand.productName,
   executableName: brand.executableName,

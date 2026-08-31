@@ -17,9 +17,11 @@ Windows release candidate for the mihomo-based desktop client.
 
 ## Verification and recovery
 
-Verify the installer against `SHA256SUMS.txt` and confirm its Authenticode
-publisher before installation. See `docs/NETWORK_RECOVERY.md` in the matching
-source tag for emergency system-proxy recovery.
+This release is intentionally **not Authenticode-signed** by owner decision.
+Windows will display an **Unknown publisher** warning. Verify the installer
+against `SHA256SUMS.txt` and download it only from the official GitHub Release.
+See `docs/NETWORK_RECOVERY.md` in the matching source tag for emergency
+system-proxy recovery.
 
 This draft must not be published until the release-candidate checklist and
 owner approval are complete.

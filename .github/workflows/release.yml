@@ -49,15 +49,6 @@ jobs:
       - name: Verify owner-approved application license
         run: npm run license:check
 
-      - name: Require release signing credentials
-        shell: pwsh
-        env:
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:WIN_CSC_LINK)) { throw 'WIN_CSC_LINK release secret is not configured' }
-          if ([string]::IsNullOrWhiteSpace($env:WIN_CSC_KEY_PASSWORD)) { throw 'WIN_CSC_KEY_PASSWORD release secret is not configured' }
-
       # Keep each native command in its own step. PowerShell does not
       # necessarily stop a multiline script when an earlier external command
       # exits non-zero; that previously allowed Windows test failures to become
@@ -85,38 +76,28 @@ jobs:
       - name: Package Windows installers
         run: npx electron-builder --win --config electron-builder.config.mjs --publish never
         env:
-          RELEASE_BUILD: "true"
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
       - name: Generate immutable release notes
         run: npm run release-notes:generate
 
-      - name: Verify Authenticode on every release executable
+      - name: Verify owner-approved unsigned release state
         shell: pwsh
         run: |
           $brand = Get-Content brand.config.json -Raw | ConvertFrom-Json
-          $targets = @(
-            Get-ChildItem -Path dist -Filter '*-Setup-*-*.exe' -File
-            Get-ChildItem -Path dist -Directory -Filter 'win*-unpacked' | ForEach-Object {
-              Get-ChildItem -Path $_.FullName -Filter '*.exe' -File -Recurse
-            }
-          )
-          if ($targets.Count -lt 4) { throw "Expected signed installers and unpacked executables, found $($targets.Count)" }
-          $ownedPublishers = @()
+          $unpacked = @(Get-ChildItem -Path dist -Directory -Filter 'win*-unpacked')
+          $targets = @(Get-ChildItem -Path dist -Filter '*-Setup-*-*.exe' -File)
+          foreach ($dir in $unpacked) {
+            $targets += Get-Item (Join-Path $dir.FullName "$($brand.executableName).exe")
+            $targets += Get-Item (Join-Path $dir.FullName 'resources\tun-service\tun-service.exe')
+          }
+          if ($targets.Count -ne 6) { throw "Expected 6 release-owned unsigned executables, found $($targets.Count)" }
           foreach ($target in $targets) {
             $signature = Get-AuthenticodeSignature $target.FullName
-            if ($signature.Status -ne 'Valid') {
-              throw "Invalid Authenticode signature for $($target.FullName): $($signature.Status)"
+            if ($signature.Status -ne 'NotSigned') {
+              throw "Unexpected Authenticode state for intentionally unsigned $($target.FullName): $($signature.Status)"
             }
-            Write-Host "SIGNED $($target.Name) :: $($signature.SignerCertificate.Subject)"
-            if ($target.Name -eq "$($brand.executableName).exe" -or $target.Name -eq 'tun-service.exe' -or $target.Name -like '*-Setup-*-*.exe') {
-              $ownedPublishers += $signature.SignerCertificate.Subject
-            }
-          }
-          $uniqueOwnedPublishers = @($ownedPublishers | Sort-Object -Unique)
-          if ($ownedPublishers.Count -lt 4 -or $uniqueOwnedPublishers.Count -ne 1) {
-            throw "Release-owned executables do not share exactly one publisher: $($uniqueOwnedPublishers -join '; ')"
+            Write-Host "INTENTIONALLY_UNSIGNED $($target.FullName)"
           }
 
       - name: Verify license, notices and source instructions in unpacked artifacts
@@ -159,7 +140,8 @@ jobs:
             supportedArchitectures = @('x64')
             testOnlyArchitectures = @('arm64')
             tunIncluded = $false
-            authenticode = 'verified-valid'
+            authenticode = 'not-signed-owner-approved'
+            windowsPublisherWarning = 'Unknown publisher is expected'
             license = 'GPL-3.0-only'
           } | ConvertTo-Json -Depth 4 | Set-Content -Path $evidencePath -Encoding utf8
 

@@ -10,8 +10,9 @@ commit is not release evidence.
 - [ ] GPL-3.0-only text, third-party notices, retained licenses and source-access
       instructions are present in both installers.
 - [ ] SHA-256 checksums are generated from the uploaded bytes.
-- [ ] Authenticode reports `Valid` for installer, application executable and
-      privileged service, with the approved publisher.
+- [x] Owner explicitly approved unsigned releases; Authenticode reports
+      `NotSigned` for installer, application executable and privileged service,
+      and release notes warn that Unknown publisher is expected.
 
 ## Windows x64 matrix
 
@@ -32,13 +33,13 @@ TUN rows are intentionally absent from the first RC because TUN is excluded.
 
 ## Physical-machine and visual checks
 
-- [ ] Windows Defender/SmartScreen publisher is correct.
+- [ ] Windows Defender/SmartScreen shows the expected Unknown publisher warning.
 - [ ] Main window, tray and startup behavior pass on the designated machine.
 - [ ] Keyboard focus, labels, contrast and reduced-motion checks pass.
 - [ ] Owner approves final 934×672 screenshots.
 
 ## Publish decision
 
-- [ ] No P0/P1 recovery, credential, signing or licensing issue is open.
+- [ ] No P0/P1 recovery, credential or licensing issue is open; unsigned status is explicitly disclosed.
 - [ ] Release evidence JSON, checksums and notes are attached to the draft.
 - [ ] Owner explicitly approves publishing the draft.

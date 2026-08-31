@@ -502,6 +502,21 @@ jobs:
           if (-not (Test-Path $ownedBackup)) { throw "owned system-proxy backup not written at $ownedBackup" }
           Write-Host "owned system-proxy backup: $ownedBackup"
 
+          # Headless Electron probes can return after their browser process while
+          # a renderer/GPU child is still draining. Kill only processes whose
+          # immutable executable path is this installed app, then prove none can
+          # keep Program Files locked before NSIS begins deletion.
+          $probeProcessDeadline = (Get-Date).AddSeconds(15)
+          do {
+            $probeProcesses = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.Equals($exe, [System.StringComparison]::OrdinalIgnoreCase) })
+            foreach ($probeProcess in $probeProcesses) {
+              Stop-Process -Id $probeProcess.ProcessId -Force -ErrorAction SilentlyContinue
+            }
+            if ($probeProcesses.Count -gt 0) { Start-Sleep -Milliseconds 250 }
+          } while ($probeProcesses.Count -gt 0 -and (Get-Date) -lt $probeProcessDeadline)
+          $probeProcesses = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.Equals($exe, [System.StringComparison]::OrdinalIgnoreCase) })
+          if ($probeProcesses.Count -gt 0) { throw 'headless probe child processes did not exit before uninstall' }
+
           # Uninstall silently and confirm program files are gone but app data survives.
           $uninstaller = Get-ChildItem -Path $installDir -Filter 'Uninstall *.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $uninstaller) {

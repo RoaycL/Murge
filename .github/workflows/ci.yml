@@ -250,6 +250,7 @@ jobs:
     name: Package Windows & smoke-test NSIS installer
     needs: verify
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -326,12 +327,30 @@ jobs:
           MURGE_CI_SYSTEM_PROXY_ENABLE: "1"
         run: |
           $ErrorActionPreference = 'Stop'
+          function Invoke-BoundedProcess {
+            param(
+              [Parameter(Mandatory = $true)][string]$FilePath,
+              [string[]]$ArgumentList = @(),
+              [Parameter(Mandatory = $true)][string]$Label,
+              [int]$TimeoutSeconds = 120
+            )
+
+            $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru
+            if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+              Write-Warning "$Label timed out after $TimeoutSeconds seconds (pid=$($process.Id)); terminating its process tree"
+              & taskkill.exe /PID $process.Id /T /F 2>$null | Out-Null
+              throw "$Label timed out after $TimeoutSeconds seconds"
+            }
+            $process.Refresh()
+            return $process
+          }
+
           $installer = Get-ChildItem -Path 'dist' -Filter "*Setup-*-x64.exe" -File | Select-Object -First 1
           if (-not $installer) { throw 'x64 NSIS installer not found' }
           Write-Host "installer: $($installer.FullName)"
 
           # Phase 9B installs a LocalSystem service, so the installer is per-machine.
-          Start-Process -FilePath $installer.FullName -ArgumentList '/S' -Wait
+          $null = Invoke-BoundedProcess -FilePath $installer.FullName -ArgumentList '/S' -Label 'silent installer' -TimeoutSeconds 180
           Start-Sleep -Seconds 3
 
           # Locate the per-machine installed executable; retain legacy fallbacks
@@ -371,7 +390,7 @@ jobs:
           $beforePorts = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalPort
 
           # Launch the CI-only production probe (no window, no kernel, no socket).
-          $p = Start-Process -FilePath $exe -ArgumentList '--packaging-smoke' -PassThru -Wait
+          $p = Invoke-BoundedProcess -FilePath $exe -ArgumentList '--packaging-smoke' -Label 'packaging smoke'
           Write-Host "packaging-smoke exit code: $($p.ExitCode) (expected 0)"
           if ($p.ExitCode -ne 0) { throw "packaging-smoke exited with code $($p.ExitCode)" }
 
@@ -390,7 +409,7 @@ jobs:
           # must not download anything: it verifies and extracts the archive
           # shipped in resources/bin, starts the loopback-only direct config,
           # authenticates /version, then stops and cleans up.
-          $kernelProbe = Start-Process -FilePath $exe -ArgumentList '--kernel-smoke' -PassThru -Wait
+          $kernelProbe = Invoke-BoundedProcess -FilePath $exe -ArgumentList '--kernel-smoke' -Label 'bundled kernel smoke'
           Write-Host "kernel-smoke exit code: $($kernelProbe.ExitCode) (expected 0)"
           if ($kernelProbe.ExitCode -ne 0) { throw "bundled kernel smoke exited with code $($kernelProbe.ExitCode)" }
           if (Get-Process -Name 'mihomo' -ErrorAction SilentlyContinue) { throw 'mihomo remained after bundled kernel smoke' }
@@ -398,7 +417,7 @@ jobs:
           # Load the real renderer + sandboxed preload and perform one typed IPC
           # round-trip. A visible static shell alone is insufficient: a missing
           # preload previously left every live view stuck while this job passed.
-          $bridge = Start-Process -FilePath $exe -ArgumentList '--ui-smoke' -PassThru -Wait
+          $bridge = Invoke-BoundedProcess -FilePath $exe -ArgumentList '--ui-smoke' -Label 'preload IPC smoke'
           Write-Host "ui-smoke exit code: $($bridge.ExitCode) (expected 0)"
           if ($bridge.ExitCode -ne 0) { throw "preload IPC smoke exited with code $($bridge.ExitCode)" }
 
@@ -446,7 +465,7 @@ jobs:
           # applying the registry. The kernel is then stopped so the proxy is left
           # pointing at a now-dead loopback port — the exact "orphaned proxy" the
           # uninstaller must undo. Gated so no arbitrary user can manufacture this.
-          $enableProbe = Start-Process -FilePath $exe -ArgumentList '--system-proxy-enable' -PassThru -Wait
+          $enableProbe = Invoke-BoundedProcess -FilePath $exe -ArgumentList '--system-proxy-enable' -Label 'system proxy enable smoke'
           Write-Host "system-proxy-enable exit code: $($enableProbe.ExitCode) (expected 0)"
           if ($enableProbe.ExitCode -ne 0) { throw "system-proxy-enable exited with code $($enableProbe.ExitCode)" }
           $enableSnap = & pwsh -NoProfile -File scripts/system-proxy-snapshot.ps1 | ConvertFrom-Json
@@ -464,7 +483,7 @@ jobs:
           }
           if (-not $uninstaller) { throw 'uninstaller not found' }
           Write-Host "uninstaller: $($uninstaller.FullName)"
-          Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -Wait
+          $null = Invoke-BoundedProcess -FilePath $uninstaller.FullName -ArgumentList '/S' -Label 'silent uninstaller' -TimeoutSeconds 180
           Start-Sleep -Seconds 5
 
           if (Test-Path $exe) { throw "program files still present after uninstall: $exe" }

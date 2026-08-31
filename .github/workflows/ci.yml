@@ -455,6 +455,20 @@ jobs:
             Stop-Process -Id $ui.Id -Force -ErrorAction SilentlyContinue
             Wait-Process -Id $ui.Id -Timeout 10 -ErrorAction SilentlyContinue
           }
+          # Electron can leave renderer/GPU children alive after the browser
+          # process is force-stopped. Match the immutable installed executable
+          # path (not a broad process name), terminate those children, and prove
+          # none still holds the installation directory before uninstall.
+          $appProcessDeadline = (Get-Date).AddSeconds(15)
+          do {
+            $appProcesses = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.Equals($exe, [System.StringComparison]::OrdinalIgnoreCase) })
+            foreach ($appProcess in $appProcesses) {
+              Stop-Process -Id $appProcess.ProcessId -Force -ErrorAction SilentlyContinue
+            }
+            if ($appProcesses.Count -gt 0) { Start-Sleep -Milliseconds 250 }
+          } while ($appProcesses.Count -gt 0 -and (Get-Date) -lt $appProcessDeadline)
+          $appProcesses = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.Equals($exe, [System.StringComparison]::OrdinalIgnoreCase) })
+          if ($appProcesses.Count -gt 0) { throw 'packaged GUI child processes did not exit before uninstall' }
           Write-Host 'packaged GUI visibility: PASS'
 
           # --- install -> enable -> uninstall -> exact-restore (P1 #6) ---

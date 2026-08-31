@@ -143,6 +143,55 @@ export const useProvidersStore = defineStore('providers', () => {
     }
   }
 
+  /**
+   * Refresh every external resource (proxy + rule providers) currently loaded
+   * from the running controller, in one click. Individual provider refreshes are
+   * still reflected in `ops` so a row can show its own in-flight/error state,
+   * while this batch returns a summary the caller can surface without restarting
+   * the kernel. Provider maps are re-pulled only at the end, so a single failing
+   * resource never discards the data the user already sees.
+   */
+  async function refreshAllProviders(): Promise<{ updated: number; failed: number }> {
+    const proxyNames = Object.keys(proxyProviders.value)
+    const ruleNames = Object.keys(ruleProviders.value)
+    let updated = 0
+    let failed = 0
+    await Promise.all(
+      proxyNames.map(async (name) => {
+        try {
+          await window.desktop.mihomo.refreshProxyProvider(name)
+          updated++
+        } catch (error) {
+          setOp(name, { refreshing: false, error: toProtocolError(error).message })
+          failed++
+        }
+      })
+    )
+    await Promise.all(
+      ruleNames.map(async (name) => {
+        try {
+          await window.desktop.mihomo.refreshRuleProvider(name)
+          updated++
+        } catch (error) {
+          setOp(name, { refreshing: false, error: toProtocolError(error).message })
+          failed++
+        }
+      })
+    )
+    // Re-pull both maps after the batch so rows reflect fresh metadata.
+    try {
+      await reloadProxyProviders()
+    } catch {
+      /* keep last good data */
+    }
+    try {
+      await reloadRuleProviders()
+    } catch {
+      /* keep last good data */
+    }
+    return { updated, failed }
+  }
+
   async function healthCheckProxyProvider(name: string): Promise<void> {
     setOp(name, { healthchecking: true, error: null })
     try {
@@ -197,6 +246,7 @@ export const useProvidersStore = defineStore('providers', () => {
     loadRuleProviders,
     refreshProxyProvider,
     refreshRuleProvider,
+    refreshAllProviders,
     healthCheckProxyProvider,
     reset
   }

@@ -28,7 +28,7 @@ const groups = [
   {
     label: '配置',
     items: [
-      { to: '/config', label: '配置文件', icon: '⌁' },
+      { to: '/config', label: '订阅管理', icon: '⌁' },
       { to: '/providers', label: '代理设置', icon: '▣' }
     ]
   }

@@ -397,12 +397,28 @@ Reference audit: `docs/CLASH_PARTY_FEATURE_AUDIT.md`.
 Entry gate: Phase 11 release scope remains stable. New controls must not make an
 excluded or unproven feature appear supported in an existing release.
 
-- [ ] Implement versioned declarative YAML overrides with global/profile scope,
+- [x] Implement versioned declarative YAML overrides with global/profile scope,
       deterministic ordering, explicit sequence operations and atomic storage.
+      (Shipped at `v0.1.13`: `OverrideService` persists to `overrides.json` via
+      temp-file+rename atomic writes and a serial queue; global + per-profile
+      scope is selected by `effectiveOverrides(profileId)`; ordering follows the
+      stored list; `+key` (prepend) / `key+` (append) sequence operations are
+      resolved by `apply-overrides.ts`. JS `main(config)` overrides are also
+      supported in a sealed `node:vm` sandbox with a 2 s timeout, fail-open per
+      item. The override pipeline runs inside the production
+      `resolveActiveDocument` and is always followed by the existing safety
+      pass, so overrides cannot bypass the loopback-only invariant.)
 - [ ] Add redacted preview/diff, structural and semantic validation, safety-field
-      ownership and last-known-good rollback.
-- [ ] Add the Vue/Pinia override manager after the main-process contracts and
-      repository tests pass.
+      ownership and last-known-good rollback. (Partial: the safety pass still owns
+      loopback-only fields after overrides, and malformed overrides fail open per
+      item; a redacted preview/diff UI and an overrides-specific last-known-good
+      rollback are still outstanding.)
+- [x] Add the Vue/Pinia override manager after the main-process contracts and
+      repository tests pass. (`src/renderer/src/stores/overrides.ts` +
+      `OverridesPanel.vue` embedded in the Config page; per-item enable, reorder,
+      edit, delete and a global/current-subscription scope picker. Contracts are
+      covered by `tests/apply-overrides.test.ts`, `tests/override-service.test.ts`
+      and the override IPC cases in `tests/handlers.test.ts`.)
 - [ ] Implement the complete typed DNS enhancement model through the override
       pipeline: enable, enhanced-mode (`fake-ip`/`redir-host`/`normal`), fake-IP
       range/filter/filter-mode, IPv6, respect-rules, hosts/use-hosts,

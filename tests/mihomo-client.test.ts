@@ -52,6 +52,27 @@ afterEach(() => {
 })
 
 describe('MihomoClient', () => {
+  it('validates DNS query results and encodes the hostname and type', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(fakeResponse({
+      Status: 0, Question: [{ name: 'example.com', type: 1 }], TC: false, RD: true, RA: true, AD: false, CD: false,
+      Answer: [{ name: 'example.com', type: 1, TTL: 60, data: '203.0.113.10' }]
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
+    await expect(client.dnsQuery('example.com', 'A')).resolves.toMatchObject({ Status: 0 })
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/dns/query?name=example.com&type=A')
+  })
+
+  it('uses POST and accepts 204 for both DNS cache flush actions', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(fakeResponse('', 204))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
+    await client.flushDnsCache(); await client.flushFakeIpCache()
+    expect(fetchMock.mock.calls.map(call => [String(call[0]), (call[1] as RequestInit).method])).toEqual([
+      ['http://127.0.0.1:9090/cache/dns/flush', 'POST'], ['http://127.0.0.1:9090/cache/fakeip/flush', 'POST']
+    ])
+  })
+
   it('parses a valid version response', async () => {
     const fetchMock = vi.fn().mockResolvedValue(fakeResponse({ meta: true, version: '1.18.9' }))
     vi.stubGlobal('fetch', fetchMock)

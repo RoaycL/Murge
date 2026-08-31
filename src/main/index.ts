@@ -210,7 +210,8 @@ function createWindow(): BrowserWindow {
     showWindow()
   })
   window.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
+    const allowed = new Set([brand.repositoryUrl, brand.supportUrl].filter(Boolean))
+    if (allowed.has(url) && url.startsWith('https://')) void shell.openExternal(url)
     return { action: 'deny' }
   })
 

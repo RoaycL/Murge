@@ -5,6 +5,7 @@ import type {
   MihomoConnectionsSnapshot,
   MihomoDelayMap,
   MihomoDelayResult,
+  MihomoDnsQueryResult,
   MihomoLogMessage,
   MihomoProxiesResponse,
   MihomoProxy,
@@ -164,6 +165,19 @@ const delayResultSchema = z
 
 const delayMapSchema = z.record(z.string(), z.number())
 
+const dnsQuestionSchema = z.object({ name: z.string(), type: z.number().int().nonnegative() }).passthrough()
+const dnsRecordSchema = z.object({
+  name: z.string(), type: z.number().int().nonnegative(), TTL: z.number().int().nonnegative(), data: z.string()
+}).passthrough()
+const dnsQuerySchema = z.object({
+  Status: z.number().int().nonnegative(),
+  Question: z.array(dnsQuestionSchema),
+  TC: z.boolean(), RD: z.boolean(), RA: z.boolean(), AD: z.boolean(), CD: z.boolean(),
+  Answer: z.array(dnsRecordSchema).optional(),
+  Authority: z.array(dnsRecordSchema).optional(),
+  Additional: z.array(dnsRecordSchema).optional()
+}).passthrough()
+
 const connectionMetadataSchema = z
   .object({
     network: z.string().optional(),
@@ -292,6 +306,12 @@ export function parseMihomoDelayMap(input: unknown): MihomoDelayMap {
   const parsed = delayMapSchema.safeParse(input)
   if (!parsed.success) throw fail('delay-map', parsed.error.issues[0]?.message)
   return parsed.data as MihomoDelayMap
+}
+
+export function parseMihomoDnsQuery(input: unknown): MihomoDnsQueryResult {
+  const parsed = dnsQuerySchema.safeParse(input)
+  if (!parsed.success) throw fail('dns-query', parsed.error.issues[0]?.message)
+  return parsed.data as MihomoDnsQueryResult
 }
 
 export function parseMihomoConnection(input: unknown): MihomoConnection {

@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain, BrowserWindow, app } from 'electron'
 import { brand } from '@shared/brand'
 import type { IpcDeps, KernelGateway, MihomoGateway, ProfileGateway, SystemProxyGateway, StartupGateway } from '@shared/gateways'
 import type { TunGateway } from '@shared/tun'
@@ -45,6 +45,7 @@ function buildRuntimeSummary(): RuntimeSummary {
 export function registerIpc({ kernel, mihomo, profiles, systemProxy, startup, tun }: IpcDependencies): () => void {
   const deps: IpcDeps = {
     brand,
+    appInfo: { version: app.getVersion(), platform: process.platform === 'win32' || process.platform === 'darwin' || process.platform === 'linux' ? process.platform : 'other', arch: process.arch },
     kernel,
     mihomo,
     runtime: { getSummary: buildRuntimeSummary },

@@ -15,6 +15,8 @@ import LogsView from './views/LogsView.vue'
 import ConnectionsView from './views/ConnectionsView.vue'
 import AppearanceView from './views/AppearanceView.vue'
 import GeneralView from './views/GeneralView.vue'
+import DnsView from './views/DnsView.vue'
+import AboutView from './views/AboutView.vue'
 import PlaceholderView from './views/PlaceholderView.vue'
 
 const placeholder = (title: string) => ({ component: PlaceholderView, props: { title } })
@@ -39,6 +41,8 @@ export const router = createRouter({
     { path: '/connections', component: ConnectionsView },
     { path: '/appearance', component: AppearanceView },
     { path: '/general', component: GeneralView },
+    { path: '/dns', component: DnsView },
+    { path: '/about', component: AboutView },
     { path: '/panel', ...placeholder('面板') }
   ]
 })

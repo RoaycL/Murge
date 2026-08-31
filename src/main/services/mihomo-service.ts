@@ -4,6 +4,8 @@ import type {
   MihomoConnectionsSnapshot,
   MihomoDelayMap,
   MihomoDelayResult,
+  MihomoDnsQueryResult,
+  MihomoDnsQueryType,
   MihomoLogMessage,
   MihomoProxiesResponse,
   MihomoProxyProvidersResponse,
@@ -121,6 +123,14 @@ export class MihomoService implements MihomoGateway {
   groupDelayTest(name: string, opts?: { timeout?: number }): Promise<MihomoDelayMap> {
     return this.client.groupDelayTest(name, opts)
   }
+
+  dnsQuery(name: string, type: MihomoDnsQueryType): Promise<MihomoDnsQueryResult> {
+    return this.client.dnsQuery(name, type)
+  }
+
+  flushDnsCache(): Promise<void> { return this.client.flushDnsCache() }
+
+  flushFakeIpCache(): Promise<void> { return this.client.flushFakeIpCache() }
 
   getConnections(): Promise<MihomoConnectionsSnapshot> {
     return this.client.getConnections()

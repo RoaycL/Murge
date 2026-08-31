@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { MihomoConfigSnapshot } from '../mihomo-api'
+import type { MihomoConfigSnapshot, MihomoDnsQueryType } from '../mihomo-api'
 import { ProtocolError, ProtocolErrorCode } from '../protocol-errors'
 import { logLevelSchema } from './log-level'
 
@@ -118,4 +118,20 @@ export function parseDelayOptions(input: unknown): { timeout?: number } {
     throw invalid(`invalid delay options at ${detail?.path.join('.') || 'options'}: ${detail?.message}`)
   }
   return parsed.data
+}
+
+const dnsTypes = new Set<MihomoDnsQueryType>(['A', 'AAAA', 'CNAME', 'TXT', 'MX', 'NS', 'HTTPS'])
+
+export function parseDnsQuery(name: unknown, type: unknown): { name: string; type: MihomoDnsQueryType } {
+  const labels = typeof name === 'string' ? name.split('.') : []
+  const validName = typeof name === 'string' && name.length >= 1 && name.length <= 253 && labels.every(label =>
+    label.length >= 1 && label.length <= 63 && /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label)
+  )
+  if (!validName) {
+    throw invalid('DNS name must be a valid ASCII hostname')
+  }
+  if (typeof type !== 'string' || !dnsTypes.has(type as MihomoDnsQueryType)) {
+    throw invalid('DNS query type is not supported')
+  }
+  return { name, type: type as MihomoDnsQueryType }
 }

@@ -74,7 +74,8 @@ describe('registerIpc — system-proxy event & error wiring', () => {
     },
     BrowserWindow: {
       getAllWindows: () => mockWindows
-    }
+    },
+    app: { getVersion: () => '0.0.0-test' }
   }))
 
   let container: ReturnType<typeof createFakeContainer>

@@ -6,6 +6,8 @@ import type {
   MihomoConnectionsSnapshot,
   MihomoDelayMap,
   MihomoDelayResult,
+  MihomoDnsQueryResult,
+  MihomoDnsQueryType,
   MihomoLogMessage,
   MihomoProxiesResponse,
   MihomoProxyProvidersResponse,
@@ -80,6 +82,9 @@ export class FakeMihomoGateway implements MihomoGateway {
   refreshRuleProviderCalls: string[] = []
   getConnectionsCalls = 0
   closeConnectionCalls: string[] = []
+  dnsQueryCalls: Array<{ name: string; type: MihomoDnsQueryType }> = []
+  flushDnsCacheCalls = 0
+  flushFakeIpCacheCalls = 0
 
   getVersion(): Promise<MihomoVersion> {
     return Promise.resolve({ version: '1.18.0', meta: false })
@@ -161,6 +166,14 @@ export class FakeMihomoGateway implements MihomoGateway {
     this.closeConnectionCalls.push(id)
     return Promise.resolve()
   }
+
+  dnsQuery(name: string, type: MihomoDnsQueryType): Promise<MihomoDnsQueryResult> {
+    this.dnsQueryCalls.push({ name, type })
+    return Promise.resolve({ Status: 0, Question: [{ name, type: type === 'AAAA' ? 28 : 1 }], TC: false, RD: true, RA: true, AD: false, CD: false, Answer: [] })
+  }
+
+  flushDnsCache(): Promise<void> { this.flushDnsCacheCalls += 1; return Promise.resolve() }
+  flushFakeIpCache(): Promise<void> { this.flushFakeIpCacheCalls += 1; return Promise.resolve() }
 
   private readonly trafficListeners = new Set<(sample: TrafficSample) => void>()
   private readonly connectionsListeners = new Set<(snapshot: MihomoConnectionsSnapshot) => void>()
@@ -376,6 +389,6 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
     systemProxy,
     startup,
     tun,
-    deps: { brand, kernel, mihomo, runtime, profiles, systemProxy, startup, tun }
+    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, mihomo, runtime, profiles, systemProxy, startup, tun }
   }
 }

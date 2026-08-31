@@ -27,6 +27,15 @@ function firstMessage(url: string, secret?: string): Promise<string> {
 }
 
 describe('mock mihomo server', () => {
+  it('serves DNS diagnostics and both cache flush endpoints', async () => {
+    const server = await startMockMihomoServer(); handles.push(server)
+    const query = await fetch(`${server.baseUrl}/dns/query?name=example.com&type=A`)
+    expect(query.status).toBe(200)
+    await expect(query.json()).resolves.toMatchObject({ Status: 0, Answer: [{ data: '203.0.113.10' }] })
+    expect((await fetch(`${server.baseUrl}/cache/dns/flush`, { method: 'POST' })).status).toBe(204)
+    expect((await fetch(`${server.baseUrl}/cache/fakeip/flush`, { method: 'POST' })).status).toBe(204)
+  })
+
   it('serves the version over REST', async () => {
     const server = await startMockMihomoServer({ trafficIntervalMs: 1000, version: { meta: true, version: '1.18.9-mock' } })
     handles.push(server)

@@ -119,6 +119,33 @@ export interface MihomoDelayResult {
 /** Per-node delay map returned by a group or provider health-check, in ms. */
 export type MihomoDelayMap = Record<string, number>
 
+export type MihomoDnsQueryType = 'A' | 'AAAA' | 'CNAME' | 'TXT' | 'MX' | 'NS' | 'HTTPS'
+
+export interface MihomoDnsRecord {
+  name: string
+  type: number
+  TTL: number
+  data: string
+}
+
+export interface MihomoDnsQuestion {
+  name: string
+  type: number
+}
+
+export interface MihomoDnsQueryResult {
+  Status: number
+  Question: MihomoDnsQuestion[]
+  TC: boolean
+  RD: boolean
+  RA: boolean
+  AD: boolean
+  CD: boolean
+  Answer?: MihomoDnsRecord[]
+  Authority?: MihomoDnsRecord[]
+  Additional?: MihomoDnsRecord[]
+}
+
 export interface ConnectionMetadata {
   network?: string
   type?: string

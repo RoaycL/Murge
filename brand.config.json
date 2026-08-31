@@ -8,8 +8,8 @@
   "protocolScheme": "murge",
   "defaultProfileName": "Murge Default",
   "companyName": "Murge Contributors",
-  "repositoryUrl": "",
-  "supportUrl": "",
+  "repositoryUrl": "https://github.com/RoaycL/Murge",
+  "supportUrl": "https://github.com/RoaycL/Murge/issues",
   "copyright": "Copyright © 2026 Murge Contributors",
   "legacyProductNames": ["Murge"],
   "legacyAppDataNamespaces": []

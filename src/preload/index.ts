@@ -25,7 +25,8 @@ function listen<T>(channel: string, listener: (value: T) => void): () => void {
 
 const api: DesktopApi = {
   app: {
-    getBrand: () => invoke(IPC.appGetBrand)
+    getBrand: () => invoke(IPC.appGetBrand),
+    getInfo: () => invoke(IPC.appGetInfo)
   },
   kernel: {
     getStatus: () => invoke(IPC.kernelGetStatus),
@@ -51,6 +52,9 @@ const api: DesktopApi = {
     groupDelayTest: (name, opts) => invoke(IPC.mihomoGroupDelayTest, name, opts),
     getConnections: () => invoke(IPC.mihomoGetConnections),
     closeConnection: (id) => invoke(IPC.mihomoCloseConnection, id),
+    dnsQuery: (name, type) => invoke(IPC.mihomoDnsQuery, name, type),
+    flushDnsCache: () => invoke(IPC.mihomoFlushDnsCache),
+    flushFakeIpCache: () => invoke(IPC.mihomoFlushFakeIpCache),
     onTraffic: (listener) => listen(IPC.mihomoTrafficEvent, listener),
     onConnections: (listener) => listen(IPC.mihomoConnectionsEvent, listener),
     onLogs: (listener) => listen(IPC.mihomoLogEvent, listener),

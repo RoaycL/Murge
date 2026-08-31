@@ -1,6 +1,6 @@
 import { IPC } from '@shared/ipc'
 import type { IpcDeps } from '@shared/gateways'
-import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions, parseStartupEnabled } from '@shared/schemas/ipc'
+import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions, parseStartupEnabled, parseDnsQuery } from '@shared/schemas/ipc'
 import {
   parseConfigEdit,
   parseImportRequest,
@@ -25,10 +25,11 @@ export type IpcHandler = (event: unknown, ...args: unknown[]) => unknown | Promi
  * the semantics Electron uses for `ipcMain.handle`.
  */
 export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
-  const { brand, kernel, mihomo, runtime, profiles, systemProxy, startup, tun } = deps
+  const { brand, appInfo, kernel, mihomo, runtime, profiles, systemProxy, startup, tun } = deps
 
   return {
     [IPC.appGetBrand]: async () => brand,
+    [IPC.appGetInfo]: async () => appInfo,
 
     [IPC.kernelGetStatus]: async () => kernel.getStatus(),
     [IPC.kernelStart]: async () => {
@@ -56,6 +57,12 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
     [IPC.mihomoGroupDelayTest]: async (_event, name, opts) => mihomo.groupDelayTest(parseMihomoName(name), parseDelayOptions(opts)),
     [IPC.mihomoGetConnections]: async () => mihomo.getConnections(),
     [IPC.mihomoCloseConnection]: async (_event, id) => mihomo.closeConnection(parseConnectionId(id)),
+    [IPC.mihomoDnsQuery]: async (_event, name, type) => {
+      const query = parseDnsQuery(name, type)
+      return mihomo.dnsQuery(query.name, query.type)
+    },
+    [IPC.mihomoFlushDnsCache]: async () => mihomo.flushDnsCache(),
+    [IPC.mihomoFlushFakeIpCache]: async () => mihomo.flushFakeIpCache(),
 
     [IPC.profilesList]: async () => profiles.listProfiles(),
     [IPC.profilesGet]: async (_event, id) => profiles.getProfile(parseProfileName(id)),

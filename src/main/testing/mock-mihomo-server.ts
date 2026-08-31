@@ -195,6 +195,18 @@ class MockServer {
     if (segments[0] === 'connections' && segments[1] && method === 'DELETE') {
       return this.json(response, 204)
     }
+    if (segments[0] === 'dns' && segments[1] === 'query' && method === 'GET') {
+      const name = url.searchParams.get('name') ?? ''
+      const type = url.searchParams.get('type') ?? 'A'
+      const rrType = type === 'AAAA' ? 28 : type === 'CNAME' ? 5 : type === 'TXT' ? 16 : 1
+      return this.json(response, 200, {
+        Status: 0, Question: [{ name, type: rrType }], TC: false, RD: true, RA: true, AD: false, CD: false,
+        Answer: [{ name, type: rrType, TTL: 60, data: type === 'AAAA' ? '2001:db8::10' : type === 'TXT' ? 'mock-response' : '203.0.113.10' }]
+      })
+    }
+    if (segments[0] === 'cache' && (segments[1] === 'dns' || segments[1] === 'fakeip') && segments[2] === 'flush' && method === 'POST') {
+      return this.json(response, 204)
+    }
     this.json(response, 404, { message: 'not found' })
   }
 

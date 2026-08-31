@@ -69,6 +69,26 @@ describe('buildIpcHandlers', () => {
     })
   })
 
+  describe('mihomo DNS diagnostics', () => {
+    it('validates and forwards a DNS query', async () => {
+      await handlers[IPC.mihomoDnsQuery](null, 'example.com', 'AAAA')
+      expect(container.mihomo.dnsQueryCalls).toEqual([{ name: 'example.com', type: 'AAAA' }])
+    })
+
+    it('rejects malformed names and unsupported types before the gateway', async () => {
+      await expect(handlers[IPC.mihomoDnsQuery](null, 'https://example.com', 'A')).rejects.toThrow(ProtocolError)
+      await expect(handlers[IPC.mihomoDnsQuery](null, 'example.com', 'ANY')).rejects.toThrow(ProtocolError)
+      expect(container.mihomo.dnsQueryCalls).toEqual([])
+    })
+
+    it('forwards both cache flush operations', async () => {
+      await handlers[IPC.mihomoFlushDnsCache](null)
+      await handlers[IPC.mihomoFlushFakeIpCache](null)
+      expect(container.mihomo.flushDnsCacheCalls).toBe(1)
+      expect(container.mihomo.flushFakeIpCacheCalls).toBe(1)
+    })
+  })
+
   describe('kernel control', () => {
     it('delegates start to the kernel gateway', async () => {
       await handlers[IPC.kernelStart](null)

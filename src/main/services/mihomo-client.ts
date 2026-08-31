@@ -3,6 +3,8 @@ import type {
   MihomoConnectionsSnapshot,
   MihomoDelayMap,
   MihomoDelayResult,
+  MihomoDnsQueryResult,
+  MihomoDnsQueryType,
   MihomoProxiesResponse,
   MihomoProxyProvidersResponse,
   MihomoRuleProvidersResponse,
@@ -14,6 +16,7 @@ import {
   parseMihomoConnections,
   parseMihomoDelayMap,
   parseMihomoDelayResult,
+  parseMihomoDnsQuery,
   parseMihomoProxies,
   parseMihomoProxyProviders,
   parseMihomoRuleProviders,
@@ -298,6 +301,19 @@ export class MihomoClient {
       signal: opts.signal,
       timeoutMs: Math.max(this.timeoutMs, timeout + 3000)
     }).then(parseMihomoDelayMap)
+  }
+
+  dnsQuery(name: string, type: MihomoDnsQueryType, signal?: AbortSignal): Promise<MihomoDnsQueryResult> {
+    const query = `?name=${encodeURIComponent(name)}&type=${encodeURIComponent(type)}`
+    return this.request(`/dns/query${query}`, {}, { signal }).then(parseMihomoDnsQuery)
+  }
+
+  flushDnsCache(): Promise<void> {
+    return this.request('/cache/dns/flush', { method: 'POST' }, { empty204: true }).then(() => undefined)
+  }
+
+  flushFakeIpCache(): Promise<void> {
+    return this.request('/cache/fakeip/flush', { method: 'POST' }, { empty204: true }).then(() => undefined)
   }
 
   getConnections(signal?: AbortSignal): Promise<MihomoConnectionsSnapshot> {

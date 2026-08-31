@@ -4,6 +4,8 @@ import type {
   MihomoConnectionsSnapshot,
   MihomoDelayMap,
   MihomoDelayResult,
+  MihomoDnsQueryResult,
+  MihomoDnsQueryType,
   MihomoLogMessage,
   MihomoProxiesResponse,
   MihomoProxyProvidersResponse,
@@ -23,6 +25,7 @@ import type { KernelStatus, RuntimeSummary, TrafficSample } from './runtime'
 import type { SystemProxyStatus } from './system-proxy'
 import type { StartupStatus } from './startup'
 import type { TunGateway } from './tun'
+import type { AppInfo } from './app-info'
 
 /**
  * Narrow, testable service boundaries. Main-process services implement these
@@ -52,6 +55,9 @@ export interface MihomoGateway {
   refreshRuleProvider(name: string): Promise<void>
   delayTest(name: string, opts?: { timeout?: number }): Promise<MihomoDelayResult>
   groupDelayTest(name: string, opts?: { timeout?: number }): Promise<MihomoDelayMap>
+  dnsQuery(name: string, type: MihomoDnsQueryType): Promise<MihomoDnsQueryResult>
+  flushDnsCache(): Promise<void>
+  flushFakeIpCache(): Promise<void>
   getConnections(): Promise<MihomoConnectionsSnapshot>
   closeConnection(id: string): Promise<void>
   /** Push subscriptions over the shared WebSocket transports. */
@@ -103,6 +109,7 @@ export interface ProfileGateway {
 /** Everything the IPC handler factory needs from the trusted main process. */
 export interface IpcDeps {
   brand: BrandConfig
+  appInfo: AppInfo
   kernel: KernelGateway
   mihomo: MihomoGateway
   runtime: RuntimeGateway

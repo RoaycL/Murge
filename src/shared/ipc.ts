@@ -4,6 +4,8 @@ import type {
   MihomoConnectionsSnapshot,
   MihomoDelayMap,
   MihomoDelayResult,
+  MihomoDnsQueryResult,
+  MihomoDnsQueryType,
   MihomoLogMessage,
   MihomoProxiesResponse,
   MihomoProxyProvidersResponse,
@@ -16,9 +18,11 @@ import type { KernelStatus, RuntimeSummary, TrafficSample } from './runtime'
 import type { SystemProxyStatus } from './system-proxy'
 import type { StartupStatus } from './startup'
 import type { TunStatus } from './tun'
+import type { AppInfo } from './app-info'
 
 export const IPC = {
   appGetBrand: 'app:get-brand',
+  appGetInfo: 'app:get-info',
   kernelGetStatus: 'kernel:get-status',
   kernelStart: 'kernel:start',
   kernelStop: 'kernel:stop',
@@ -37,6 +41,9 @@ export const IPC = {
   mihomoGroupDelayTest: 'mihomo:group-delay-test',
   mihomoGetConnections: 'mihomo:get-connections',
   mihomoCloseConnection: 'mihomo:close-connection',
+  mihomoDnsQuery: 'mihomo:dns-query',
+  mihomoFlushDnsCache: 'mihomo:flush-dns-cache',
+  mihomoFlushFakeIpCache: 'mihomo:flush-fakeip-cache',
   mihomoTrafficEvent: 'mihomo:traffic-event',
   mihomoConnectionsEvent: 'mihomo:connections-event',
   mihomoLogEvent: 'mihomo:log-event',
@@ -66,6 +73,7 @@ export const IPC = {
 export interface DesktopApi {
   app: {
     getBrand(): Promise<BrandConfig>
+    getInfo(): Promise<AppInfo>
   }
   kernel: {
     getStatus(): Promise<KernelStatus>
@@ -91,6 +99,9 @@ export interface DesktopApi {
     groupDelayTest(name: string, opts?: { timeout?: number }): Promise<MihomoDelayMap>
     getConnections(): Promise<MihomoConnectionsSnapshot>
     closeConnection(id: string): Promise<void>
+    dnsQuery(name: string, type: MihomoDnsQueryType): Promise<MihomoDnsQueryResult>
+    flushDnsCache(): Promise<void>
+    flushFakeIpCache(): Promise<void>
     onTraffic(listener: (sample: TrafficSample) => void): () => void
     onConnections(listener: (snapshot: MihomoConnectionsSnapshot) => void): () => void
     onLogs(listener: (message: MihomoLogMessage) => void): () => void

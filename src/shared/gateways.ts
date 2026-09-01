@@ -4,6 +4,7 @@ import type { OverrideInput, OverridesSnapshot } from './overrides'
 import type { DnsEnhancement, DnsSnapshot } from './dns'
 import type { SnifferEnhancement, SnifferSnapshot } from './sniffer'
 import type { GeodataSettings } from './geodata'
+import type { UsageWindow, UsageRanking, UsageHistorySnapshot, UsageRankingEntry, UsageCapacity } from './usage'
 import type {
   MihomoConfigSnapshot,
   MihomoConnectionsSnapshot,
@@ -247,6 +248,23 @@ export interface GeodataSettingsGateway {
   preview(input: GeodataSettings): string | Promise<string>
 }
 
+/**
+ * Bounded usage-history boundary. The main process records the `/traffic`
+ * stream into an hourly bucket database (capped, persisted) and serves windowed
+ * aggregates plus ranked views. It deliberately stores only aggregate byte
+ * counts — never credentials, hosts, or raw profiles.
+ */
+export interface UsageHistoryGateway {
+  /** Aggregate the bounded database into a window slice (read-back). */
+  getWindow(window: UsageWindow): UsageHistorySnapshot | Promise<UsageHistorySnapshot>
+  /** Rank a window's buckets by the chosen metric into a 1-based ordered list. */
+  rank(window: UsageWindow, ranking: UsageRanking, limit?: number): UsageRankingEntry[] | Promise<UsageRankingEntry[]>
+  /** Drop the whole bounded database; write-back via the underlying store. */
+  clear(): Promise<void>
+  /** Static capacity facts (bucket granularity, cap, retention). */
+  getCapacity(): UsageCapacity | Promise<UsageCapacity>
+}
+
 /** Everything the IPC handler factory needs from the trusted main process. */
 export interface IpcDeps {
   brand: BrandConfig
@@ -265,6 +283,7 @@ export interface IpcDeps {
   tunConfig: TunConfigGateway
   core: CoreSettingsGateway
   geodata: GeodataSettingsGateway
+  usageHistory: UsageHistoryGateway
   updates: UpdatesGateway
   tun: TunGateway
 }

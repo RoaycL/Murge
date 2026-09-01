@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import SpeedSparkline from '../components/SpeedSparkline.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
+import UsageHistoryPanel from '../components/UsageHistoryPanel.vue'
 import { useTrafficStore } from '../stores/traffic'
 import { useConnectionsStore } from '../stores/connections'
 import { useRuntimeStore } from '../stores/runtime'
@@ -154,6 +155,8 @@ const chartBars = computed<number[]>(() => {
         <div class="total-labels"><div><span>DIRECT</span><strong>{{ direct.value }} {{ direct.unit }}</strong></div><div><span>代理</span><strong>{{ proxy.value }} {{ proxy.unit }}</strong></div></div>
         <div class="total-bar"><i :style="{ width: `${directPct}%` }" /><i :style="{ width: `${100 - directPct}%` }" /></div>
       </SurfaceCard>
+
+      <UsageHistoryPanel class="usage-history-card" />
     </section>
   </div>
 </template>
@@ -170,5 +173,10 @@ const chartBars = computed<number[]>(() => {
 }
 .pill-dim {
   background: #b7bcc4 !important;
+}
+.usage-history-card {
+  grid-column: 1 / -1;
+  padding: 15px 16px;
+  width: 709px;
 }
 </style>

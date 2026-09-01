@@ -11,6 +11,8 @@ import type { CoreSettings } from '../core-settings'
 import type { GeodataSettings } from '../geodata'
 import type { ProxyBypassPolicy } from '../proxy-bypass'
 import { MAX_CUSTOM_BYPASS_ENTRIES, MAX_CUSTOM_BYPASS_ENTRY_LENGTH } from '../proxy-bypass'
+import type { UsageWindow, UsageRanking } from '../usage'
+import { USAGE_MAX_BUCKETS } from '../usage'
 import { ProtocolError, ProtocolErrorCode } from '../protocol-errors'
 import { logLevelSchema } from './log-level'
 
@@ -488,4 +490,37 @@ export function parseProxyBypassPolicy(input: unknown): ProxyBypassPolicy {
     enabled: parsed.data.enabled,
     customEntries: parsed.data.customEntries.map((entry) => entry.trim()).filter((entry) => entry.length > 0)
   }
+}
+
+const usageWindowSchema = z.enum(['1h', '24h', '7d', '30d'])
+const usageRankingSchema = z.enum(['down', 'up', 'total', 'count'])
+
+/** Validate a bounded usage-history window lens. */
+export function parseUsageWindow(input: unknown): UsageWindow {
+  const parsed = usageWindowSchema.safeParse(input)
+  if (!parsed.success) {
+    throw invalid(`invalid usage window: ${usageWindowSchema.options.join(', ')}`)
+  }
+  return parsed.data
+}
+
+/** Validate a bounded usage-history ranking metric (the four ranking views). */
+export function parseUsageRanking(input: unknown): UsageRanking {
+  const parsed = usageRankingSchema.safeParse(input)
+  if (!parsed.success) {
+    throw invalid(`invalid usage ranking: ${usageRankingSchema.options.join(', ')}`)
+  }
+  return parsed.data
+}
+
+/**
+ * Validate an optional ranking limit. `undefined` means "no limit" and returns
+ * `undefined`; otherwise it must be a positive integer within the bounded cap.
+ */
+export function parseUsageRankLimit(input: unknown): number | undefined {
+  if (typeof input === 'undefined') return undefined
+  if (typeof input !== 'number' || !Number.isInteger(input) || input < 1 || input > USAGE_MAX_BUCKETS) {
+    throw invalid(`usage rank limit must be an integer between 1 and ${USAGE_MAX_BUCKETS}`)
+  }
+  return input
 }

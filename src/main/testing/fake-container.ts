@@ -1,4 +1,6 @@
-import type { KernelGateway, KernelManagerGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway, OverridesGateway, DnsEnhancementGateway, SnifferEnhancementGateway, TunConfigGateway, CoreSettingsGateway, GeodataSettingsGateway } from '@shared/gateways'
+import type { KernelGateway, KernelManagerGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway, OverridesGateway, DnsEnhancementGateway, SnifferEnhancementGateway, TunConfigGateway, CoreSettingsGateway, GeodataSettingsGateway, UsageHistoryGateway } from '@shared/gateways'
+import type { UsageBucket, UsageWindow, UsageRanking, UsageHistorySnapshot, UsageRankingEntry, UsageCapacity } from '@shared/usage'
+import { aggregateUsageWindow, rankUsageBuckets, usageCapacity } from '@shared/usage'
 import type { SnifferEnhancement, SnifferSnapshot } from '@shared/sniffer'
 import { coerceSnifferEnhancement, coerceSnifferSnapshot, EMPTY_SNIFFER_ENHANCEMENT } from '@shared/sniffer'
 import type { StartupStatus } from '@shared/startup'
@@ -415,6 +417,7 @@ export interface FakeContainer {
   tun: FakeTunGateway
   core: FakeCoreSettingsGateway
   geodata: FakeGeodataSettingsGateway
+  usageHistory: FakeUsageHistoryGateway
 }
 
 export class FakeGeodataSettingsGateway implements GeodataSettingsGateway {
@@ -433,6 +436,33 @@ export class FakeGeodataSettingsGateway implements GeodataSettingsGateway {
   async preview(input: GeodataSettings): Promise<string> {
     this.previewCalls.push(input)
     return ''
+  }
+}
+
+/**
+ * In-memory bounded usage-history fake. Backed by the shared pure model so the
+ * IPC handlers and the renderer are exercised against real aggregation.
+ */
+export class FakeUsageHistoryGateway implements UsageHistoryGateway {
+  buckets: UsageBucket[] = []
+  getWindowCalls: UsageWindow[] = []
+  rankCalls: { window: UsageWindow; ranking: UsageRanking; limit?: number }[] = []
+  clearCalls = 0
+
+  getWindow(window: UsageWindow): UsageHistorySnapshot {
+    this.getWindowCalls.push(window)
+    return aggregateUsageWindow(this.buckets, window, Date.now())
+  }
+  rank(window: UsageWindow, ranking: UsageRanking, limit?: number): UsageRankingEntry[] {
+    this.rankCalls.push({ window, ranking, limit })
+    return rankUsageBuckets(aggregateUsageWindow(this.buckets, window, Date.now()).buckets, ranking, limit)
+  }
+  async clear(): Promise<void> {
+    this.clearCalls += 1
+    this.buckets = []
+  }
+  getCapacity(): UsageCapacity {
+    return usageCapacity()
   }
 }
 
@@ -660,6 +690,7 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
   const tun = new FakeTunGateway()
   const core = new FakeCoreSettingsGateway()
   const geodata = new FakeGeodataSettingsGateway()
+  const usageHistory = new FakeUsageHistoryGateway()
   return {
     kernel,
     kernelManager,
@@ -677,6 +708,7 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
     tun,
     core,
     geodata,
-    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata }
+    usageHistory,
+    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory }
   }
 }

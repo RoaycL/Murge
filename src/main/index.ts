@@ -24,6 +24,8 @@ import { SystemProxyOrderedKernelGateway } from './system-proxy/ordered-kernel-g
 import { NodeKernelProcessAdapter } from './kernel/node-adapter'
 import { MihomoClient } from './services/mihomo-client'
 import { MihomoService } from './services/mihomo-service'
+import { UsageHistoryService } from './services/usage-history-service'
+import { FileSystemUsageHistoryStore, InMemoryUsageHistoryStore } from './services/usage-history-store'
 import { ProfileRepository } from './profiles/profile-repository'
 import { ProfileService } from './profiles/profile-service'
 import { ProfileAutoReloadGateway } from './profiles/profile-auto-reload-gateway'
@@ -84,6 +86,7 @@ let mainWindow: BrowserWindow | null = null
 let trayController: TrayController | null = null
 let tunCoordinator: TunCoordinator | null = null
 let updateService: UpdateService | null = null
+let usageHistoryServiceRef: UsageHistoryService | null = null
 
 // Deep links (murge://...) that arrive before the window exists, or while a
 // second instance hands its argv over, are queued here and flushed once the
@@ -685,6 +688,14 @@ app.whenReady().then(async () => {
   const updates = new UpdateService(new ElectronUpdaterDriver())
   updateService = updates
   updates.start()
+  const usageHistoryService = new UsageHistoryService({
+    store: app.isPackaged
+      ? FileSystemUsageHistoryStore.forAppDataBase(app.getPath('appData'))
+      : new InMemoryUsageHistoryStore(),
+    onTraffic: (listener) => gateway.onTraffic(listener)
+  })
+  await usageHistoryService.init()
+  usageHistoryServiceRef = usageHistoryService
   disposeIpc = registerIpc({
     kernel: orderedKernel,
     kernelManager: kernelManagerService,
@@ -700,7 +711,8 @@ app.whenReady().then(async () => {
     core: coreSettingsService,
     geodata: geodataSettingsService,
     updates,
-    tun: tunGateway
+    tun: tunGateway,
+    usageHistory: usageHistoryService
   })
   createWindow()
   const showMainWindow = (): void => {
@@ -876,6 +888,7 @@ app.on('before-quit', (event) => {
           trayController?.dispose()
           disposeIpc?.()
           updateService?.dispose()
+          usageHistoryServiceRef?.dispose()
           mihomo?.dispose()
           await mockServer?.close()
         } catch (error) {
@@ -884,6 +897,7 @@ app.on('before-quit', (event) => {
           trayController = null
           disposeIpc = null
           updateService = null
+          usageHistoryServiceRef = null
         }
       },
       quit: () => app.quit(),

@@ -142,6 +142,12 @@ const api: DesktopApi = {
     get: () => invoke(IPC.geodataSettingsGet),
     set: (input) => invoke(IPC.geodataSettingsSet, input),
     preview: (input) => invoke(IPC.geodataSettingsPreview, input)
+  },
+  usageHistory: {
+    getWindow: (window) => invoke(IPC.usageHistoryGetWindow, window),
+    rank: (window, ranking, limit) => invoke(IPC.usageHistoryRank, window, ranking, limit),
+    clear: () => invoke(IPC.usageHistoryClear),
+    getCapacity: () => invoke(IPC.usageHistoryGetCapacity)
   }
 }
 

@@ -548,6 +548,15 @@ excluded or unproven feature appear supported in an existing release.
       tests; batch actions reuse per-id controller read-back confirmation.)
 - [ ] Add bounded usage history, network metadata and read-only topology without
       persisting credentials or raw profiles.
+      (Sub-feature 1/3 — bounded usage history — implemented & tested: the main
+      process records the `/traffic` stream into an hourly byte bucket database,
+      capped at 720 buckets (≈30 days) and persisted atomically; the renderer
+      reads 1h/24h/7d/30d windowed aggregates and four ranking views (download /
+      upload / total / count) and a bounded capacity footer, and can explicitly
+      clear the database. Only aggregate byte totals and sample counts are ever
+      stored — no credentials, hosts or raw profiles. Released in v0.1.22.)
+      (Sub-feature 2/3 — network metadata — pending.)
+      (Sub-feature 3/3 — read-only topology — pending.)
 - [ ] Preserve structured error details/operation across IPC.
 - [ ] Keep DNS/sniffer/TUN marked `implementation-complete / runtime-unverified`
       until the Windows evidence matrix passes; never mark an unexecuted test as

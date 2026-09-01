@@ -26,6 +26,7 @@ import type { TunStatus } from './tun'
 import type { TunConfigModel, TunConfigSnapshot } from './tun-config'
 import type { CoreSettings } from './core-settings'
 import type { GeodataSettings } from './geodata'
+import type { UsageWindow, UsageRanking, UsageHistorySnapshot, UsageRankingEntry, UsageCapacity } from './usage'
 import type { AppInfo } from './app-info'
 import type { AppSettings } from './app-settings'
 import type { UpdateState } from './updates'
@@ -115,7 +116,11 @@ export const IPC = {
   coreSettingsPreview: 'core-settings:preview',
   geodataSettingsGet: 'geodata-settings:get',
   geodataSettingsSet: 'geodata-settings:set',
-  geodataSettingsPreview: 'geodata-settings:preview'
+  geodataSettingsPreview: 'geodata-settings:preview',
+  usageHistoryGetWindow: 'usage-history:get-window',
+  usageHistoryRank: 'usage-history:rank',
+  usageHistoryClear: 'usage-history:clear',
+  usageHistoryGetCapacity: 'usage-history:get-capacity'
 } as const
 
 export interface DesktopApi {
@@ -237,5 +242,11 @@ export interface DesktopApi {
     get(): Promise<GeodataSettings>
     set(input: GeodataSettings): Promise<GeodataSettings>
     preview(input: GeodataSettings): Promise<string>
+  }
+  usageHistory: {
+    getWindow(window: UsageWindow): Promise<UsageHistorySnapshot>
+    rank(window: UsageWindow, ranking: UsageRanking, limit?: number): Promise<UsageRankingEntry[]>
+    clear(): Promise<void>
+    getCapacity(): Promise<UsageCapacity>
   }
 }

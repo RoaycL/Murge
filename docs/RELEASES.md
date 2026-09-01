@@ -17,8 +17,12 @@ The workflow refuses a tag that does not exactly equal `v` plus the
 refuses to overwrite an already-published release. Packaging downloads and
 SHA-256-verifies the pinned official mihomo archives for inclusion in the two
 installers; it does not modify system proxy, TUN, DNS, routes or firewall
-settings. The main CI job separately runs the installed x64 archive against the
-loopback-only safe-direct configuration and proves cleanup.
+settings. The main hosted CI job installs the x64 artifact, validates the ASAR
+contents and privileged-service lifecycle, uninstalls it, and proves the exact
+system-proxy baseline is unchanged. Electron/preload/tray/visible-window probes
+run only in `.github/workflows/windows-gui-smoke.yml` on an explicitly labelled
+self-hosted Windows runner with an interactive desktop; they are not treated as
+green until that workflow has actually run.
 
 The first RC supports x64. arm64 remains a test artifact until installed
 lifecycle evidence exists on real Windows arm64 hardware. TUN and the other

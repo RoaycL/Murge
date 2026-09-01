@@ -49,6 +49,15 @@ describe('uninstall-restore.nsh customUnInstall hook', () => {
     expect(source.slice(0, doneIndex)).toContain('StrCmp $R0 0')
   })
 
+  it('launches Electron restore only when the durable ownership backup exists', () => {
+    expect(source).toContain('IfFileExists "$APPDATA\\system-proxy\\owned-backup.json"')
+    expect(source).toContain(
+      'IfFileExists "$INSTDIR\\${APP_EXECUTABLE_FILENAME}" 0 SystemProxyUninstallRestoreFailed'
+    )
+    expect(source).not.toContain('MURGE_CI_SKIP_ELECTRON_RESTORE')
+    expect(source).not.toContain('GITHUB_ACTIONS')
+  })
+
   it('installs and removes the privileged TUN service fail-closed', () => {
     expect(source).toContain('--install')
     expect(source).toContain('--uninstall')

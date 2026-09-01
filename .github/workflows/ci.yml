@@ -323,14 +323,8 @@ jobs:
           }
           Write-Host "retained license files: $($expected.Count)"
 
-      - name: Install, launch, verify & uninstall Windows NSIS (x64)
+      - name: Install, verify & uninstall Windows NSIS (x64, hosted-safe)
         shell: pwsh
-        env:
-          # Headless `--system-proxy-enable` is gated behind BOTH this variable and
-          # GITHUB_ACTIONS=true (see runSystemProxyEnable) so no arbitrary user can
-          # manufacture an enable from the packaged app. Start-Process inherits it.
-          MURGE_CI_SYSTEM_PROXY_ENABLE: "1"
-          MURGE_CI_HIDDEN_START: "1"
         run: |
           $ErrorActionPreference = 'Stop'
           function Invoke-BoundedProcess {
@@ -395,13 +389,30 @@ jobs:
           Write-Host "ProductName=$($version.ProductName) ProductVersion=$($version.ProductVersion)"
           if ($version.ProductName -ne $env:PRODUCT_NAME) { throw "installed ProductName '$($version.ProductName)' != '$env:PRODUCT_NAME'" }
 
+          # Validate the actual installed application archive. ELECTRON_RUN_AS_NODE
+          # below proves only that the executable can host Node; it deliberately
+          # bypasses app.asar and therefore is not an application-entry check.
+          $asar = Join-Path $installDir 'resources\app.asar'
+          if (-not (Test-Path $asar)) { throw "installed app.asar missing: $asar" }
+          $asarEntries = @(& node node_modules/@electron/asar/bin/asar.js list $asar)
+          if ($LASTEXITCODE -ne 0) { throw 'installed app.asar could not be read' }
+          $asarEntries = @($asarEntries | ForEach-Object { $_.Replace('\','/').TrimStart('/') })
+          $requiredAsarEntries = @(
+            'package.json',
+            'out/main/index.js',
+            'out/preload/index.js',
+            'out/renderer/index.html'
+          )
+          foreach ($entry in $requiredAsarEntries) {
+            if ($asarEntries -notcontains $entry) { throw "installed app.asar missing required entry: $entry" }
+          }
+          Write-Host "installed app.asar readable with required entries: PASS"
+
           # Ground truth: can the installed binary execute our JS at all? Run it as
           # plain Node via ELECTRON_RUN_AS_NODE=1, which bypasses Chromium, GPU,
           # the display and app.asar entirely and just evaluates a tiny script. If
-          # it prints + writes a sentinel + exits, the binary and all its bundled
-          # deps are healthy and the smoke hang lives in Electron/Chromium init
-          # (environmental, not app code). If this also hangs, the binary itself
-          # cannot run on this runner.
+          # it prints + writes a sentinel + exits, the executable can host Node.
+          # This does NOT load app.asar or prove the Electron application entry.
           $nodeScript = Join-Path $env:RUNNER_TEMP 'electron-node-probe.js'
           $nodeSentinel = Join-Path $env:RUNNER_TEMP 'electron-node-sentinel.txt'
           Set-Content -Path $nodeScript -Value 'const fs=require("fs");fs.writeFileSync(process.env.RUNNER_TEMP+"/electron-node-sentinel.txt","ok");console.log("ELECTRON_RUN_AS_NODE_OK");process.exit(0)' -Encoding utf8
@@ -433,7 +444,23 @@ jobs:
           Write-Host "idle privileged service installed: $($serviceTemplate.serviceName)"
 
           $sentinelRoot = Join-Path $env:APPDATA $env:APP_ID 'profiles'
-          Remove-Item (Join-Path $sentinelRoot '.packaging-smoke-sentinel') -ErrorAction SilentlyContinue
+          $sentinel = Join-Path $sentinelRoot '.packaging-smoke-sentinel'
+          New-Item -ItemType Directory -Path $sentinelRoot -Force | Out-Null
+          Set-Content -Path $sentinel -Value 'hosted-package-smoke' -Encoding utf8
+          $ownedBackup = Join-Path $env:APPDATA 'system-proxy\owned-backup.json'
+
+          # The hosted runner does not execute Electron probes. Capture the exact
+          # proxy baseline now and prove install/uninstall leaves it unchanged.
+          $pkgBaseJson = & pwsh -NoProfile -File scripts/system-proxy-snapshot.ps1
+          $pkgBaseJson | Out-File -FilePath "$env:RUNNER_TEMP\system-proxy-package-baseline.json" -Encoding utf8
+          Write-Host "hosted package system-proxy baseline: $pkgBaseJson"
+
+          # Electron/Chromium launch, preload IPC, tray and installed-app command
+          # probes require an interactive Windows desktop. They remain here as the
+          # authoritative sequence for the separate self-hosted GUI workflow, but
+          # are intentionally not executed on GitHub's hosted Windows service.
+          $interactiveDesktop = $false
+          if ($interactiveDesktop) {
 
           # Snapshot listening ports so we can prove the smoke created no listener.
           $beforePorts = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalPort
@@ -604,6 +631,8 @@ jobs:
           $probeProcesses = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.Equals($exe, [System.StringComparison]::OrdinalIgnoreCase) })
           if ($probeProcesses.Count -gt 0) { throw 'headless probe child processes did not exit before uninstall' }
 
+          }
+
           # Uninstall silently and confirm program files are gone but app data survives.
           $uninstaller = Get-ChildItem -Path $installDir -Filter 'Uninstall *.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $uninstaller) {
@@ -613,6 +642,10 @@ jobs:
           }
           if (-not $uninstaller) { throw 'uninstaller not found' }
           Write-Host "uninstaller: $($uninstaller.FullName)"
+          # No owned proxy was created in this hosted-safe branch, so the NSIS
+          # hook sees no durable ownership backup and does not need to launch
+          # Electron. It still removes the privileged service; exact HKCU state
+          # is verified externally below.
           $null = Invoke-BoundedProcess -FilePath $uninstaller.FullName -ArgumentList '/S' -Label 'silent uninstaller' -TimeoutSeconds 180
           # NSIS can return after handing final deletion to its cleanup child.
           # Poll the actual installed state instead of racing it with a fixed sleep.
@@ -626,11 +659,9 @@ jobs:
           if (-not (Test-Path $sentinel)) { throw 'sentinel was removed on uninstall; deleteAppDataOnUninstall must stay false' }
           Write-Host 'uninstall removed program files but preserved user data (sentinel survives)'
 
-          # The NSIS hook ran the installed app's `--restore-system-proxy` BEFORE
-          # deleting the files, so the exact pre-install HKCU proxy (exists +
-          # registry type + raw value for all three) must be back and the owned
-          # backup deleted. Prove it via the verify helper; the if:always() step
-          # below is the final net on a mid-step failure.
+          # The hosted job never owned the proxy, so install/uninstall must leave
+          # the exact captured HKCU values untouched. The interactive self-hosted
+          # workflow remains responsible for the owned-proxy restore path.
           & pwsh -NoProfile -File scripts/system-proxy-verify.ps1 `
             -Baseline "$env:RUNNER_TEMP\system-proxy-package-baseline.json" `
             -Label 'UNINSTALL_SYSTEM_PROXY_RESTORE'

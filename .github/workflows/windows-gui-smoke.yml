@@ -1,0 +1,42 @@
+name: Interactive Windows GUI smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gui-smoke:
+    # This label must identify a disposable Windows VM with an unlocked,
+    # interactive user desktop. Do not run the Actions agent as a Session 0
+    # Windows service for this workflow.
+    runs-on: [self-hosted, Windows, X64, interactive-desktop]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: native/tun-service/go.sum
+      - name: Install dependencies
+        run: npm ci --include=dev
+        env:
+          NODE_ENV: development
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          npm run build
+          npm run kernel:prepare
+          npm run tun-service:test
+          npm run tun-service:build
+          npx electron-builder --win --x64 --config electron-builder.config.mjs --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Run installed GUI and preload smoke
+        shell: pwsh
+        run: ./scripts/windows-interactive-gui-smoke.ps1

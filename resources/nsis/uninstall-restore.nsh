@@ -44,7 +44,12 @@
 !macroend
 
 !macro customUnInstall
-  IfFileExists "$INSTDIR\${APP_EXECUTABLE_FILENAME}" 0 SystemProxyUninstallRestoreDone
+  ; The restore executable is needed only when this user actually has a durable
+  ; ownership backup. Avoid starting Electron during an ordinary uninstall that
+  ; never enabled system proxy. If the backup exists, the restore remains
+  ; strictly fail-closed below; a corrupted or unreadable backup aborts uninstall.
+  IfFileExists "$APPDATA\system-proxy\owned-backup.json" 0 SystemProxyUninstallRestoreDone
+  IfFileExists "$INSTDIR\${APP_EXECUTABLE_FILENAME}" 0 SystemProxyUninstallRestoreFailed
     DetailPrint "Restoring owned system proxy before uninstall..."
     ExecWait '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" --restore-system-proxy' $R0
     DetailPrint "system-proxy restore exit code: $R0"

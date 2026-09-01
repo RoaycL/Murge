@@ -1,6 +1,5 @@
 import { join } from 'node:path'
 import { writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { writeFile } from 'node:fs/promises'
 import { app, BrowserWindow, dialog, shell } from 'electron'
 import { is } from '@electron-toolkit/utils'
@@ -63,40 +62,17 @@ import type { TunGateway, TunStatus } from '../shared/tun'
 const devControllerUrl = process.env.MURGE_DEV_CONTROLLER ?? 'http://127.0.0.1:9090'
 const devControllerSecret = process.env.MURGE_DEV_SECRET ?? ''
 
-// DIAGNOSTIC (one-cycle): write an UNCONDITIONAL boot marker to the OS temp dir
-// the instant the main module is evaluated — no argv or env gate — so a CI run
-// can prove whether Electron ever ran the app's main script and capture the
-// exact argv it received. If this file is absent, Electron stalls before the
-// main script executes.
-try {
-  const marker = JSON.stringify({ argv: process.argv, cwd: process.cwd(), ts: Date.now() }, null, 2)
-  // GHA sets RUNNER_TEMP identically for the whole job and children inherit it,
-  // so it is the one path the workflow can observe regardless of elevated/user
-  // context. Write there first; also mirror to the OS temp and cwd as fallbacks.
-  const targets = [process.env.RUNNER_TEMP, process.env.TEMP, tmpdir(), process.cwd()]
-    .filter((p): p is string => typeof p === 'string' && p.length > 0)
-  for (const dir of targets) {
-    try { writeFileSync(join(dir, 'murge-boot-marker.json'), marker) } catch { /* best effort */ }
-  }
-} catch {
-  /* diagnostics must never break the app */
-}
-
-// CI-only flag routing. The `package-win` workflow launches the packaged app on
-// a headless Windows runner and passes its direction on the command line (e.g.
-// `--packaging-smoke`). If those argv flags do not reach the packaged process,
-// the app would silently fall through to the normal GUI and hang forever, which
-// is exactly the 75s timeout we observed: no sentinel, no stderr, and the
-// module-load watchdog below never firing. To make the channel robust we accept
-// the same flags via MURGE_CI_BOOT_FLAGS (a space-separated string the workflow
-// exports on the probe launch), so a probe is triggered even when argv is
-// swallowed. hasArg() honors either source; normal user launches set neither.
+// CI-only flag routing for the interactive Windows GUI smoke workflow. Accept
+// the same flags through MURGE_CI_BOOT_FLAGS so a self-hosted runner can forward
+// probes through launch wrappers without weakening normal user launches.
 const ciBootFlags = (process.env.MURGE_CI_BOOT_FLAGS ?? '')
   .split(/\s+/)
   .map((flag) => flag.trim())
   .filter(Boolean)
 const hasArg = (flag: string): boolean => process.argv.includes(flag) || ciBootFlags.includes(flag)
 const launchHidden = hasArg('--hidden')
+const skipKernelAutostart =
+  process.env.GITHUB_ACTIONS === 'true' && hasArg('--no-kernel-autostart')
 
 // Diagnostics: dump the exact argv + boot flags the packaged process parsed, so
 // a CI spin shows ground truth about whether the probe flag survived delivery.
@@ -116,8 +92,8 @@ if (process.env.MURGE_CI_BOOT_DIAG === '1' && process.env.MURGE_CI_BOOT_DIAG_PAT
   }
 }
 
-// CI-only loading-time watchdog for the `package-win` workflow. It launches the
-// packaged app with `--packaging-smoke` on a headless Windows runner; if
+// CI-only loading-time watchdog for the interactive Windows smoke workflow. If
+// a packaged `--packaging-smoke` probe stalls in Electron initialization,
 // Electron stalls anywhere in startup (window-ready, migration, profile
 // resolution, sentinel write) the process would otherwise hang for the workflow
 // timeout. Arm a timer at module load so it fires no matter WHY startup stalls,
@@ -353,7 +329,7 @@ async function runPackagingSmoke(profileRoot: string): Promise<void> {
     // A single-line, stable marker leaves an audit trail in CI logs; it is not a
     // substitute for the portable assertion the smoke workflow performs.
     console.log(`[packaging-smoke] ${JSON.stringify(evidence)}`)
-    // On a headless Windows runner `app.exit(0)` can fail to tear the process
+    // On an automated Windows runner `app.exit(0)` can fail to tear the process
     // down even though no window/kernel exists, leaving the CI step to time out.
     // Arm a hard-exit watchdog so the probe can never hang the workflow, then
     // exit normally. The watchdog is unref'd so a healthy `app.exit` is unaffected.
@@ -559,7 +535,7 @@ app.whenReady().then(async () => {
     subscriptionFetcher
   )
 
-  // CI-only startup probe (see the `package-win` workflow). Verifies production
+  // CI-only startup probe (see `windows-gui-smoke`). Verifies production
   // storage wiring and that packaging did not break the launch path, without
   // opening a window, starting a kernel, or binding any socket.
   if (hasArg('--packaging-smoke')) {
@@ -883,7 +859,7 @@ app.whenReady().then(async () => {
   // setting, skipped on login `--hidden` launches (which keep the guarantee
   // that nothing auto-enables at login), and wrapped so a failure logs without
   // ever blocking the window from opening.
-  if (!is.dev && !launchHidden) {
+  if (!is.dev && !launchHidden && !skipKernelAutostart) {
     try {
       const settings = await appSettingsService.get()
       if (settings.autoStartKernel && settings.kernelEnabled) {

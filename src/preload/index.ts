@@ -148,6 +148,12 @@ const api: DesktopApi = {
     rank: (window, ranking, limit) => invoke(IPC.usageHistoryRank, window, ranking, limit),
     clear: () => invoke(IPC.usageHistoryClear),
     getCapacity: () => invoke(IPC.usageHistoryGetCapacity)
+  },
+  networkMetadata: {
+    getProviders: () => invoke(IPC.networkMetadataGetProviders),
+    getState: () => invoke(IPC.networkMetadataGetState),
+    selectProvider: (id) => invoke(IPC.networkMetadataSelectProvider, id),
+    resolve: (force) => invoke(IPC.networkMetadataResolve, force)
   }
 }
 

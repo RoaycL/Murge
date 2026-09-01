@@ -555,7 +555,16 @@ excluded or unproven feature appear supported in an existing release.
       upload / total / count) and a bounded capacity footer, and can explicitly
       clear the database. Only aggregate byte totals and sample counts are ever
       stored — no credentials, hosts or raw profiles. Released in v0.1.22.)
-      (Sub-feature 2/3 — network metadata — pending.)
+      (Sub-feature 2/3 — network metadata — implemented & tested: the main
+      process resolves the proxy node's public exit address through the kernel's
+      mixed-port proxy and derives geographic metadata (country / city / ASN)
+      from a user-selected privacy-explicit provider (ipwho.is / ip-api.com /
+      ipinfo.io), keeping only a bounded in-memory cache keyed by provider with a
+      freshness TTL. The renderer exposes an explicit state (idle / fetching /
+      ready / error), a provider selector, a privacy-forward masked-IP reveal,
+      a copy action and a refresh action; the activity header reads this single
+      source. Only public egress aggregate metadata is ever kept — no
+      credentials, hosts or raw profiles. Released in v0.1.23.)
       (Sub-feature 3/3 — read-only topology — pending.)
 - [ ] Preserve structured error details/operation across IPC.
 - [ ] Keep DNS/sniffer/TUN marked `implementation-complete / runtime-unverified`

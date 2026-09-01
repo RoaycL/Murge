@@ -26,6 +26,7 @@ import { MihomoClient } from './services/mihomo-client'
 import { MihomoService } from './services/mihomo-service'
 import { UsageHistoryService } from './services/usage-history-service'
 import { FileSystemUsageHistoryStore, InMemoryUsageHistoryStore } from './services/usage-history-store'
+import { NetworkMetadataService, fetchMetadataJsonViaProxy } from './services/network-metadata-service'
 import { ProfileRepository } from './profiles/profile-repository'
 import { ProfileService } from './profiles/profile-service'
 import { ProfileAutoReloadGateway } from './profiles/profile-auto-reload-gateway'
@@ -696,6 +697,19 @@ app.whenReady().then(async () => {
   })
   await usageHistoryService.init()
   usageHistoryServiceRef = usageHistoryService
+  const networkMetadataService = new NetworkMetadataService({
+    resolveProxyPort: async () => {
+      try {
+        if ((await ipcKernel.getStatus()).phase !== 'running') return null
+        const config = await gateway.getConfig()
+        const port = config['mixed-port'] ?? config.port
+        return typeof port === 'number' && port > 0 ? port : null
+      } catch {
+        return null
+      }
+    },
+    fetchJsonViaProxy: fetchMetadataJsonViaProxy
+  })
   disposeIpc = registerIpc({
     kernel: orderedKernel,
     kernelManager: kernelManagerService,
@@ -712,7 +726,8 @@ app.whenReady().then(async () => {
     geodata: geodataSettingsService,
     updates,
     tun: tunGateway,
-    usageHistory: usageHistoryService
+    usageHistory: usageHistoryService,
+    networkMetadata: networkMetadataService
   })
   createWindow()
   const showMainWindow = (): void => {

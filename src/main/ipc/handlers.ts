@@ -1,6 +1,6 @@
 import { IPC } from '@shared/ipc'
 import type { IpcDeps } from '@shared/gateways'
-import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions, parseStartupEnabled, parseDnsQuery, parseAppSettingsPatch, parseKernelEnabled, parseKernelChannel, parseKernelVersion, parseOverrideInput, parseOverrideId, parseOverrideEnabled, parseOverrideMove, parseDnsEnhancement, parseSnifferEnhancement, parseTunConfig, parseCoreSettings, parseGeodataSettings, parseProxyBypassPolicy, parseUsageWindow, parseUsageRanking, parseUsageRankLimit } from '@shared/schemas/ipc'
+import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions, parseStartupEnabled, parseDnsQuery, parseAppSettingsPatch, parseKernelEnabled, parseKernelChannel, parseKernelVersion, parseOverrideInput, parseOverrideId, parseOverrideEnabled, parseOverrideMove, parseDnsEnhancement, parseSnifferEnhancement, parseTunConfig, parseCoreSettings, parseGeodataSettings, parseProxyBypassPolicy, parseUsageWindow, parseUsageRanking, parseUsageRankLimit, parseNetworkMetadataProviderId } from '@shared/schemas/ipc'
 import {
   parseConfigEdit,
   parseImportRequest,
@@ -25,7 +25,7 @@ export type IpcHandler = (event: unknown, ...args: unknown[]) => unknown | Promi
  * the semantics Electron uses for `ipcMain.handle`.
  */
 export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
-  const { brand, appInfo, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory } = deps
+  const { brand, appInfo, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata } = deps
 
   return {
     [IPC.appGetBrand]: async () => brand,
@@ -148,7 +148,14 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
     [IPC.usageHistoryRank]: async (_event, window, ranking, limit) =>
       usageHistory.rank(parseUsageWindow(window), parseUsageRanking(ranking), parseUsageRankLimit(limit)),
     [IPC.usageHistoryClear]: async () => usageHistory.clear(),
-    [IPC.usageHistoryGetCapacity]: async () => usageHistory.getCapacity()
+    [IPC.usageHistoryGetCapacity]: async () => usageHistory.getCapacity(),
+
+    [IPC.networkMetadataGetProviders]: async () => networkMetadata.getProviders(),
+    [IPC.networkMetadataGetState]: async () => networkMetadata.getState(),
+    [IPC.networkMetadataSelectProvider]: async (_event, id) =>
+      networkMetadata.selectProvider(parseNetworkMetadataProviderId(id)),
+    [IPC.networkMetadataResolve]: async (_event, force) =>
+      networkMetadata.resolve(parseOptionalBoolean(force, 'force'))
   }
 }
 

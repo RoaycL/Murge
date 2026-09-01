@@ -1,6 +1,8 @@
-import type { KernelGateway, KernelManagerGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway, OverridesGateway, DnsEnhancementGateway, SnifferEnhancementGateway, TunConfigGateway, CoreSettingsGateway, GeodataSettingsGateway, UsageHistoryGateway } from '@shared/gateways'
+import type { KernelGateway, KernelManagerGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway, OverridesGateway, DnsEnhancementGateway, SnifferEnhancementGateway, TunConfigGateway, CoreSettingsGateway, GeodataSettingsGateway, UsageHistoryGateway, NetworkMetadataGateway } from '@shared/gateways'
 import type { UsageBucket, UsageWindow, UsageRanking, UsageHistorySnapshot, UsageRankingEntry, UsageCapacity } from '@shared/usage'
 import { aggregateUsageWindow, rankUsageBuckets, usageCapacity } from '@shared/usage'
+import type { NetworkMetadata, NetworkMetadataProvider, NetworkMetadataState } from '@shared/network-metadata'
+import { defaultNetworkMetadataProviderId, getNetworkMetadataProvider, networkMetadataProviderList } from '@shared/network-metadata'
 import type { SnifferEnhancement, SnifferSnapshot } from '@shared/sniffer'
 import { coerceSnifferEnhancement, coerceSnifferSnapshot, EMPTY_SNIFFER_ENHANCEMENT } from '@shared/sniffer'
 import type { StartupStatus } from '@shared/startup'
@@ -418,6 +420,7 @@ export interface FakeContainer {
   core: FakeCoreSettingsGateway
   geodata: FakeGeodataSettingsGateway
   usageHistory: FakeUsageHistoryGateway
+  networkMetadata: FakeNetworkMetadataGateway
 }
 
 export class FakeGeodataSettingsGateway implements GeodataSettingsGateway {
@@ -463,6 +466,51 @@ export class FakeUsageHistoryGateway implements UsageHistoryGateway {
   }
   getCapacity(): UsageCapacity {
     return usageCapacity()
+  }
+}
+
+/**
+ * In-memory read-only network-metadata fake. Backed by the shared pure model so
+ * the IPC handlers and renderer are exercised against real provider parsing.
+ */
+export class FakeNetworkMetadataGateway implements NetworkMetadataGateway {
+  providerId: string = defaultNetworkMetadataProviderId()
+  /** Seed metadata returned immediately by every get/resolve (simulates cache). */
+  metadata: NetworkMetadata | null = null
+  error: string | null = null
+  phase: NetworkMetadataState['phase'] = 'idle'
+  selectCalls: string[] = []
+  resolveCalls: boolean[] = []
+
+  getProviders(): NetworkMetadataProvider[] {
+    return networkMetadataProviderList()
+  }
+  getState(): NetworkMetadataState {
+    const cached = this.metadata?.provider === this.providerId ? this.metadata : null
+    return { phase: this.phase, provider: this.providerId, metadata: cached, error: this.error }
+  }
+  selectProvider(id: string): NetworkMetadataState {
+    this.selectCalls.push(id)
+    if (!getNetworkMetadataProvider(id)) {
+      this.error = `unknown network metadata provider: ${id}`
+      this.phase = 'error'
+    } else {
+      this.providerId = id
+      this.error = null
+      this.phase = this.metadata?.provider === id ? 'ready' : 'idle'
+    }
+    return this.getState()
+  }
+  async resolve(force = false): Promise<NetworkMetadataState> {
+    this.resolveCalls.push(force)
+    if (this.metadata && this.metadata.provider === this.providerId) {
+      this.phase = 'ready'
+      this.error = null
+      return this.getState()
+    }
+    this.phase = 'error'
+    this.error = this.error ?? '数据源返回了无法解析的响应'
+    return this.getState()
   }
 }
 
@@ -691,6 +739,7 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
   const core = new FakeCoreSettingsGateway()
   const geodata = new FakeGeodataSettingsGateway()
   const usageHistory = new FakeUsageHistoryGateway()
+  const networkMetadata = new FakeNetworkMetadataGateway()
   return {
     kernel,
     kernelManager,
@@ -709,6 +758,7 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
     core,
     geodata,
     usageHistory,
-    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory }
+    networkMetadata,
+    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata }
   }
 }

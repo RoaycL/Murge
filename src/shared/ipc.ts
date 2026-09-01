@@ -27,6 +27,7 @@ import type { TunConfigModel, TunConfigSnapshot } from './tun-config'
 import type { CoreSettings } from './core-settings'
 import type { GeodataSettings } from './geodata'
 import type { UsageWindow, UsageRanking, UsageHistorySnapshot, UsageRankingEntry, UsageCapacity } from './usage'
+import type { NetworkMetadataProvider, NetworkMetadataState } from './network-metadata'
 import type { AppInfo } from './app-info'
 import type { AppSettings } from './app-settings'
 import type { UpdateState } from './updates'
@@ -120,7 +121,11 @@ export const IPC = {
   usageHistoryGetWindow: 'usage-history:get-window',
   usageHistoryRank: 'usage-history:rank',
   usageHistoryClear: 'usage-history:clear',
-  usageHistoryGetCapacity: 'usage-history:get-capacity'
+  usageHistoryGetCapacity: 'usage-history:get-capacity',
+  networkMetadataGetProviders: 'network-metadata:get-providers',
+  networkMetadataGetState: 'network-metadata:get-state',
+  networkMetadataSelectProvider: 'network-metadata:select-provider',
+  networkMetadataResolve: 'network-metadata:resolve'
 } as const
 
 export interface DesktopApi {
@@ -248,5 +253,11 @@ export interface DesktopApi {
     rank(window: UsageWindow, ranking: UsageRanking, limit?: number): Promise<UsageRankingEntry[]>
     clear(): Promise<void>
     getCapacity(): Promise<UsageCapacity>
+  }
+  networkMetadata: {
+    getProviders(): Promise<NetworkMetadataProvider[]>
+    getState(): Promise<NetworkMetadataState>
+    selectProvider(id: string): Promise<NetworkMetadataState>
+    resolve(force?: boolean): Promise<NetworkMetadataState>
   }
 }

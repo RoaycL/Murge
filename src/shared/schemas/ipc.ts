@@ -13,6 +13,7 @@ import type { ProxyBypassPolicy } from '../proxy-bypass'
 import { MAX_CUSTOM_BYPASS_ENTRIES, MAX_CUSTOM_BYPASS_ENTRY_LENGTH } from '../proxy-bypass'
 import type { UsageWindow, UsageRanking } from '../usage'
 import { USAGE_MAX_BUCKETS } from '../usage'
+import type { NetworkMetadataProviderId } from '../network-metadata'
 import { ProtocolError, ProtocolErrorCode } from '../protocol-errors'
 import { logLevelSchema } from './log-level'
 
@@ -494,6 +495,7 @@ export function parseProxyBypassPolicy(input: unknown): ProxyBypassPolicy {
 
 const usageWindowSchema = z.enum(['1h', '24h', '7d', '30d'])
 const usageRankingSchema = z.enum(['down', 'up', 'total', 'count'])
+const networkMetadataProviderSchema = z.enum(['ipwhois', 'ipapi', 'ipinfo'])
 
 /** Validate a bounded usage-history window lens. */
 export function parseUsageWindow(input: unknown): UsageWindow {
@@ -509,6 +511,15 @@ export function parseUsageRanking(input: unknown): UsageRanking {
   const parsed = usageRankingSchema.safeParse(input)
   if (!parsed.success) {
     throw invalid(`invalid usage ranking: ${usageRankingSchema.options.join(', ')}`)
+  }
+  return parsed.data
+}
+
+/** Validate a network-metadata provider id against the shipped provider set. */
+export function parseNetworkMetadataProviderId(input: unknown): NetworkMetadataProviderId {
+  const parsed = networkMetadataProviderSchema.safeParse(input)
+  if (!parsed.success) {
+    throw invalid(`invalid network metadata provider: ${networkMetadataProviderSchema.options.join(', ')}`)
   }
   return parsed.data
 }

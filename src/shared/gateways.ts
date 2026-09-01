@@ -5,6 +5,7 @@ import type { DnsEnhancement, DnsSnapshot } from './dns'
 import type { SnifferEnhancement, SnifferSnapshot } from './sniffer'
 import type { GeodataSettings } from './geodata'
 import type { UsageWindow, UsageRanking, UsageHistorySnapshot, UsageRankingEntry, UsageCapacity } from './usage'
+import type { NetworkMetadataProvider, NetworkMetadataState } from './network-metadata'
 import type {
   MihomoConfigSnapshot,
   MihomoConnectionsSnapshot,
@@ -265,6 +266,27 @@ export interface UsageHistoryGateway {
   getCapacity(): UsageCapacity | Promise<UsageCapacity>
 }
 
+/**
+ * Read-only network (egress) metadata boundary. The main process resolves the
+ * proxy node's public exit address through the kernel's mixed-port proxy and
+ * derives geographic metadata from a user-selected privacy-explicit provider.
+ * Only a bounded in-memory cache of aggregate metadata is kept; no credentials,
+ * hosts or raw profiles are persisted or transmitted.
+ */
+export interface NetworkMetadataGateway {
+  /** List the available (function-free) privacy-explicit providers. */
+  getProviders(): NetworkMetadataProvider[]
+  /** The current state snapshot, without triggering a fetch. */
+  getState(): NetworkMetadataState
+  /** Select a provider by id and return the resulting state (no fetch). */
+  selectProvider(id: string): NetworkMetadataState
+  /**
+   * Resolve metadata for the current provider. Uses a fresh cache entry when one
+   * is available unless `force` is true; returns the resulting state.
+   */
+  resolve(force?: boolean): Promise<NetworkMetadataState>
+}
+
 /** Everything the IPC handler factory needs from the trusted main process. */
 export interface IpcDeps {
   brand: BrandConfig
@@ -284,6 +306,7 @@ export interface IpcDeps {
   core: CoreSettingsGateway
   geodata: GeodataSettingsGateway
   usageHistory: UsageHistoryGateway
+  networkMetadata: NetworkMetadataGateway
   updates: UpdatesGateway
   tun: TunGateway
 }

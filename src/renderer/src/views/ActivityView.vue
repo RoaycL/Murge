@@ -3,10 +3,12 @@ import { computed, onMounted, ref } from 'vue'
 import SpeedSparkline from '../components/SpeedSparkline.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 import UsageHistoryPanel from '../components/UsageHistoryPanel.vue'
+import NetworkMetadataPanel from '../components/NetworkMetadataPanel.vue'
 import { useTrafficStore } from '../stores/traffic'
 import { useConnectionsStore } from '../stores/connections'
 import { useRuntimeStore } from '../stores/runtime'
 import { useKernelStore } from '../stores/kernel'
+import { useNetworkMetadataStore } from '../stores/network-metadata'
 import { formatBytes, formatBytesParts, formatRate } from '../lib/format'
 import { brand } from '@shared/brand'
 import { useRouter } from 'vue-router'
@@ -15,6 +17,7 @@ const traffic = useTrafficStore()
 const connections = useConnectionsStore()
 const runtime = useRuntimeStore()
 const kernel = useKernelStore()
+const networkMeta = useNetworkMetadataStore()
 const router = useRouter()
 
 onMounted(() => {
@@ -22,7 +25,7 @@ onMounted(() => {
   traffic.connect()
   connections.connect()
   void runtime.refresh()
-  void runtime.fetchExternalIp()
+  void networkMeta.init()
 })
 
 const up = computed(() => formatRate(traffic.current?.up ?? 0))
@@ -68,7 +71,7 @@ const modeLabel = computed(() => {
   const map = { rule: '规则判定', global: '全局', direct: '直连' } as const
   return map[runtime.summary?.mode ?? 'rule']
 })
-const externalIpText = computed(() => runtime.externalIp ?? '—')
+const externalIpText = computed(() => networkMeta.ipText)
 
 const connStatus = computed(() => connections.status)
 const connDotClass = computed(() => {
@@ -157,6 +160,7 @@ const chartBars = computed<number[]>(() => {
       </SurfaceCard>
 
       <UsageHistoryPanel class="usage-history-card" />
+      <NetworkMetadataPanel class="network-metadata-card" />
     </section>
   </div>
 </template>
@@ -175,6 +179,11 @@ const chartBars = computed<number[]>(() => {
   background: #b7bcc4 !important;
 }
 .usage-history-card {
+  grid-column: 1 / -1;
+  padding: 15px 16px;
+  width: 709px;
+}
+.network-metadata-card {
   grid-column: 1 / -1;
   padding: 15px 16px;
   width: 709px;

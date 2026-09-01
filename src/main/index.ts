@@ -62,6 +62,21 @@ const devControllerUrl = process.env.MURGE_DEV_CONTROLLER ?? 'http://127.0.0.1:9
 const devControllerSecret = process.env.MURGE_DEV_SECRET ?? ''
 const launchHidden = process.argv.includes('--hidden')
 
+// CI-only loading-time watchdog for the `package-win` workflow. It launches the
+// packaged app with `--packaging-smoke` on a headless Windows runner; if
+// Electron stalls anywhere in startup (window-ready, migration, profile
+// resolution, sentinel write) the process would otherwise hang for the workflow
+// timeout. Arm a timer at module load so it fires no matter WHY startup stalls,
+// and exit non-zero so the workflow fails fast with a deterministic message
+// instead of timing out silently. A healthy probe reaches runPackagingSmoke and
+// exits 0 long before this fires.
+if (process.argv.includes('--packaging-smoke')) {
+  setTimeout(() => {
+    console.error('[packaging-smoke] watchdog: app never reached runPackagingSmoke within 60s; forcing exit')
+    process.exit(1)
+  }, 60000)
+}
+
 // Production pins the application-data directory to a stable, product-name-free
 // namespace (see storage/app-data.ts) so a future rename never orphans user
 // data. This must run before the ready event so every Electron subsystem that

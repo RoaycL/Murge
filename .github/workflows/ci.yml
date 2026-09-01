@@ -399,11 +399,32 @@ jobs:
           $beforePorts = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalPort
 
           # Launch the CI-only production probe (no window, no kernel, no socket).
-          $p = Invoke-BoundedProcess -FilePath $exe -ArgumentList '--packaging-smoke' -Label 'packaging smoke'
-          Write-Host "packaging-smoke exit code: $($p.ExitCode) (expected 0)"
-          if ($p.ExitCode -ne 0) { throw "packaging-smoke exited with code $($p.ExitCode)" }
-
+          # Capture stdout/stderr so a startup stall is diagnosable, and surface
+          # the app's own watchdog marker + sentinel state on timeout instead of
+          # a blind 120s hang.
+          $smokeOut = Join-Path $env:RUNNER_TEMP 'packaging-smoke.stdout.log'
+          $smokeErr = Join-Path $env:RUNNER_TEMP 'packaging-smoke.stderr.log'
           $sentinel = Join-Path $sentinelRoot '.packaging-smoke-sentinel'
+          $smoke = Start-Process -FilePath $exe -ArgumentList '--packaging-smoke' -PassThru `
+            -RedirectStandardOutput $smokeOut -RedirectStandardError $smokeErr
+          if (-not $smoke.WaitForExit(75000)) {
+            Write-Host '=== packaging-smoke stderr (tail) ==='
+            if (Test-Path $smokeErr) { Get-Content $smokeErr -Tail 80 }
+            Write-Host '=== packaging-smoke stdout (tail) ==='
+            if (Test-Path $smokeOut) { Get-Content $smokeOut -Tail 80 }
+            Write-Host "sentinel present after timeout: $(Test-Path $sentinel)"
+            & taskkill.exe /PID $smoke.Id /T /F 2>$null | Out-Null
+            throw 'packaging smoke timed out (see captured output above)'
+          }
+          $smoke.Refresh()
+          Write-Host "packaging-smoke exit code: $($smoke.ExitCode) (expected 0)"
+          if ($smoke.ExitCode -ne 0) {
+            Write-Host '=== packaging-smoke stderr (tail) ==='
+            if (Test-Path $smokeErr) { Get-Content $smokeErr -Tail 80 }
+            Write-Host '=== packaging-smoke stdout (tail) ==='
+            if (Test-Path $smokeOut) { Get-Content $smokeOut -Tail 80 }
+            throw "packaging-smoke exited with code $($smoke.ExitCode)"
+          }
           if (-not (Test-Path $sentinel)) { throw "sentinel profile not written at $sentinel" }
           Write-Host "sentinel profile: $sentinel"
 
@@ -602,14 +623,15 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          # dist contains BOTH win-x64-unpacked and win-arm64-unpacked; running
+          # dist holds BOTH win-unpacked (x64) and win-arm64-unpacked; running
           # the ARM64 bootstrap on an x64 runner fails ("not a valid application
-          # for this OS platform"), so prefer the directory matching the host
-          # architecture before falling back to any packaged template.
-          $wantedDir = if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64') { 'win-x64-unpacked' } else { 'win-arm64-unpacked' }
+          # for this OS platform"). Exclude the ARM64 tree on an x64 host (so the
+          # remaining x64 dir is picked regardless of its exact name) and require
+          # it on an ARM64 host before falling back to any packaged template.
+          $isArm64Host = ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64')
           $templatePath = Get-ChildItem -Path dist -Recurse -Filter 'service-template.json' -File -ErrorAction SilentlyContinue |
             Where-Object { $_.Directory.Name -eq 'tun-service' } |
-            Sort-Object { if ($_.FullName -match $wantedDir) { 0 } else { 1 } } |
+            Where-Object { if ($isArm64Host) { $_.FullName -match 'arm64' } else { $_.FullName -notmatch 'arm64' } } |
             Select-Object -First 1
           if (-not $templatePath) {
             Write-Host 'No packaged service template found; service installation was not reached.'

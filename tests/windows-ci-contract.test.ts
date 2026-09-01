@@ -27,6 +27,7 @@ describe('Windows packaging and interactive GUI CI contracts', () => {
     expect(hostedWorkflow).toContain("'out/preload/index.js'")
     expect(hostedWorkflow).toContain("'out/renderer/index.html'")
     expect(hostedWorkflow).not.toContain('MURGE_CI_SKIP_ELECTRON_RESTORE')
+    expect(hostedWorkflow).toContain("-ArgumentList '--uninstall' -Label 'installed TUN service removal'")
   })
 
   it('runs packaged Electron probes only on an explicitly interactive self-hosted runner', () => {

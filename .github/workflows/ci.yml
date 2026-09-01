@@ -642,10 +642,23 @@ jobs:
           }
           if (-not $uninstaller) { throw 'uninstaller not found' }
           Write-Host "uninstaller: $($uninstaller.FullName)"
+
+          # NSIS reports service-hook failures through a native dialog even for
+          # /S, which a hosted service-session runner cannot acknowledge. Prove
+          # the installed service bootstrap can remove the exact installed
+          # service first, then require the NSIS hook's idempotent no-service
+          # path to complete. The interactive workflow remains responsible for
+          # the one-shot NSIS service-hook path with a real desktop.
+          $installedTunBootstrap = Join-Path $installDir 'resources\tun-service\tun-service.exe'
+          if (-not (Test-Path $installedTunBootstrap)) { throw "installed TUN bootstrap missing: $installedTunBootstrap" }
+          $null = Invoke-BoundedProcess -FilePath $installedTunBootstrap -ArgumentList '--uninstall' -Label 'installed TUN service removal'
+          if (Get-Service -Name $serviceTemplate.serviceName -ErrorAction SilentlyContinue) {
+            throw 'installed TUN bootstrap did not remove its service'
+          }
+          Write-Host 'installed TUN service removal: PASS'
+
           # No owned proxy was created in this hosted-safe branch, so the NSIS
-          # hook sees no durable ownership backup and does not need to launch
-          # Electron. It still removes the privileged service; exact HKCU state
-          # is verified externally below.
+          # hook sees no durable ownership backup and does not launch Electron.
           $null = Invoke-BoundedProcess -FilePath $uninstaller.FullName -ArgumentList '/S' -Label 'silent uninstaller' -TimeoutSeconds 180
           # NSIS can return after handing final deletion to its cleanup child.
           # Poll the actual installed state instead of racing it with a fixed sleep.

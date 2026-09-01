@@ -43,6 +43,7 @@ import { AppSettingsService } from './app-settings/service'
 import { OverrideService } from './kernel/overrides/override-service'
 import { DnsEnhancementService } from './kernel/dns/dns-enhancement-service'
 import { SnifferEnhancementService } from './kernel/sniffer/sniffer-enhancement-service'
+import { CoreSettingsService } from './kernel/core-settings-service'
 import { UpdateService } from './updates/service'
 import { ElectronUpdaterDriver } from './updates/electron-updater-driver'
 import { TunCoordinator, GatedTunMutationAdapter } from './tun/coordinator'
@@ -485,6 +486,7 @@ app.whenReady().then(async () => {
   const dnsEnhancementService = new DnsEnhancementService(appDataRoot(app.getPath('appData')))
   const snifferEnhancementService = new SnifferEnhancementService(appDataRoot(app.getPath('appData')))
   const tunConfigService = new TunConfigService(appDataRoot(app.getPath('appData')))
+  const coreSettingsService = new CoreSettingsService(appDataRoot(app.getPath('appData')))
   const kernelManagerService = new KernelManagerService({
     settings: appSettingsService,
     workspaceRoot: productionKernelRoot
@@ -524,7 +526,12 @@ app.whenReady().then(async () => {
               const overridden = await overrideService.applyForProfile(profile.document, profile.meta.id)
               const dnsApplied = await dnsEnhancementService.applyToDocument(overridden)
               return snifferEnhancementService.applyToDocument(dnsApplied)
-            }
+            },
+            // Controlled core settings: when enabled, the allowlisted core keys
+            // are authoritative in the runtime config (read-back) and override
+            // the profile's own values (conflict handling); when disabled the
+            // profile is preserved.
+            resolveCore: () => coreSettingsService.getRaw()
           }),
       adapter: new NodeKernelProcessAdapter(),
       secret: is.dev ? devControllerSecret : productionSecret!
@@ -686,6 +693,7 @@ app.whenReady().then(async () => {
     dns: dnsEnhancementService,
     sniffer: snifferEnhancementService,
     tunConfig: tunConfigService,
+    core: coreSettingsService,
     updates,
     tun: tunGateway
   })

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
 import type { KernelBinary, KernelConfig, KernelConfigStore } from './types'
+import type { CoreSettings } from '@shared/core-settings'
 import { generateMihomoConfig, validateMihomoConfigYaml, SECRET_PATTERN } from './mihomo-config'
 import { buildProfileKernelConfig, profileKernelConfigErrors } from './profile-kernel-config'
 
@@ -25,6 +26,14 @@ export interface MihomoConfigStoreOptions {
    * the strict Phase-7 behavior (preserving the legacy milestone).
    */
   resolveActiveDocument?: () => Promise<string | null>
+  /**
+   * Resolve the controlled mihomo core settings to fold into the profile-backed
+   * runtime config. When it returns an `enabled` model, the allowlisted core keys
+   * become authoritative (read-back) and override the profile's own values
+   * (conflict handling); when `disabled` the profile is preserved. Omitted
+   * entirely, the store never applies controlled core settings.
+   */
+  resolveCore?: () => Promise<CoreSettings>
 }
 
 /**
@@ -122,11 +131,13 @@ export class MihomoKernelConfigStore implements KernelConfigStore {
     if (resolve) {
       const document = await resolve()
       if (document) {
+        const core = this.options.resolveCore ? await this.options.resolveCore() : undefined
         return {
           text: buildProfileKernelConfig(document, {
             mixedPort: this.options.mixedPort,
             controllerPort: this.options.controllerPort,
-            secret
+            secret,
+            core
           }),
           fromProfile: true
         }

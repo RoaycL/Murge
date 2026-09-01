@@ -31,6 +31,7 @@ import type { StartupStatus } from './startup'
 import type { AppSettings } from './app-settings'
 import type { TunGateway } from './tun'
 import type { TunConfigModel, TunConfigSnapshot } from './tun-config'
+import type { CoreSettings } from './core-settings'
 import type { AppInfo } from './app-info'
 import type { UpdateState } from './updates'
 
@@ -208,6 +209,19 @@ export interface TunConfigGateway {
   preview(input: TunConfigModel): string | Promise<string>
 }
 
+/**
+ * Controlled core-settings boundary. A single global, schema-validated model of
+ * the allowlisted mihomo *core* runtime keys the user may control. When enabled
+ * the model is authoritative in the runtime config (read-back); when disabled the
+ * active profile's own values are preserved (conflict handling).
+ */
+export interface CoreSettingsGateway {
+  get(): CoreSettings | Promise<CoreSettings>
+  set(input: CoreSettings): CoreSettings | Promise<CoreSettings>
+  /** Render the mihomo core keys a model would produce (no writes). */
+  preview(input: CoreSettings): string | Promise<string>
+}
+
 /** Everything the IPC handler factory needs from the trusted main process. */
 export interface IpcDeps {
   brand: BrandConfig
@@ -224,6 +238,7 @@ export interface IpcDeps {
   dns: DnsEnhancementGateway
   sniffer: SnifferEnhancementGateway
   tunConfig: TunConfigGateway
+  core: CoreSettingsGateway
   updates: UpdatesGateway
   tun: TunGateway
 }

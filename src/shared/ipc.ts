@@ -23,6 +23,7 @@ import type { SystemProxyStatus } from './system-proxy'
 import type { StartupStatus } from './startup'
 import type { TunStatus } from './tun'
 import type { TunConfigModel, TunConfigSnapshot } from './tun-config'
+import type { CoreSettings } from './core-settings'
 import type { AppInfo } from './app-info'
 import type { AppSettings } from './app-settings'
 import type { UpdateState } from './updates'
@@ -103,7 +104,10 @@ export const IPC = {
   tunStatusEvent: 'tun:status-event',
   tunConfigGet: 'tun-config:get',
   tunConfigSet: 'tun-config:set',
-  tunConfigPreview: 'tun-config:preview'
+  tunConfigPreview: 'tun-config:preview',
+  coreSettingsGet: 'core-settings:get',
+  coreSettingsSet: 'core-settings:set',
+  coreSettingsPreview: 'core-settings:preview'
 } as const
 
 export interface DesktopApi {
@@ -212,5 +216,10 @@ export interface DesktopApi {
     get(): Promise<TunConfigSnapshot>
     set(input: TunConfigModel): Promise<TunConfigSnapshot>
     preview(input: TunConfigModel): Promise<string>
+  }
+  core: {
+    get(): Promise<CoreSettings>
+    set(input: CoreSettings): Promise<CoreSettings>
+    preview(input: CoreSettings): Promise<string>
   }
 }

@@ -8,6 +8,7 @@ import DnsSettingsPanel from '../components/DnsSettingsPanel.vue'
 import SnifferSettingsPanel from '../components/SnifferSettingsPanel.vue'
 import TunConfigPanel from '../components/TunConfigPanel.vue'
 import TunLifecyclePanel from '../components/TunLifecyclePanel.vue'
+import CoreSettingsPanel from '../components/CoreSettingsPanel.vue'
 import type { ValidationResult } from '@shared/profiles'
 
 const profilesStore = useProfilesStore()
@@ -454,6 +455,7 @@ const hasResources = computed(
     <sniffer-settings-panel />
     <tun-config-panel />
     <tun-lifecycle-panel />
+    <core-settings-panel />
   </div>
 </template>
 

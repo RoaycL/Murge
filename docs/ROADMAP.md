@@ -517,6 +517,14 @@ excluded or unproven feature appear supported in an existing release.
       while preserving the model's DNS/Sniffer values and profile-only keys.)
 - [ ] Complete controlled core settings, geodata resources and proxy-bypass
       policy with read-back and conflict handling.
+      (Sub-feature 1/3 — controlled core settings — implemented & tested:
+      `CoreSettings` model is authoritative when `enabled`; the allowlisted
+      core keys (`log-level`/`ipv6`/`tcp-concurrent`/`unified-delay`/
+      `find-process-mode`) override whatever the profile set (conflict handling
+      tests) and the runtime config reflects the model (read-back), only on the
+      profile-backed path. When disabled the enhancement is skipped and the
+      profile's own values are preserved. Strict mihomo-config fallback is left
+      unchanged. Geodata resources + proxy-bypass policy remain.)
 - [x] Enhance live connections with totals, deterministic sorting and confirmed
       batch close. (Implemented in the renderer store/page and covered by store
       tests; batch actions reuse per-id controller read-back confirmation.)

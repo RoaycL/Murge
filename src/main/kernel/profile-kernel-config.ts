@@ -1,6 +1,8 @@
 import { isMap, parseDocument, stringify } from 'yaml'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
 import { SECRET_PATTERN } from './mihomo-config'
+import type { CoreSettings } from '../../shared/core-settings'
+import { buildCoreSettingsBlock } from '../../shared/core-settings'
 
 /**
  * Runtime transform for a user-provided mihomo profile.
@@ -40,6 +42,13 @@ export interface ProfileKernelConfigOptions {
   mixedPort: number
   controllerPort: number
   secret: string
+  /**
+   * Controlled mihomo core settings. When the model is `enabled` its allowlisted
+   * core keys (log-level, ipv6, tcp-concurrent, unified-delay, find-process-mode)
+   * are authoritative in the runtime config — overriding what the profile set.
+   * When `disabled` (or absent) the profile's own keys are preserved.
+   */
+  core?: CoreSettings
 }
 
 function invalid(message: string): never {
@@ -175,6 +184,15 @@ export function buildProfileKernelConfig(
   config['bind-address'] = '127.0.0.1'
   config.secret = secret
   config.mode = typeof config.mode === 'string' && config.mode === 'rule' ? config.mode : 'rule'
+
+  // --- Controlled core settings (read-back + conflict handling) ---
+  // When the owner has opted in, the allowlisted core keys are authoritative:
+  // they override whatever the profile set (conflict handling) and the runtime
+  // config therefore reflects the model (read-back). When disabled the profile's
+  // own values are left untouched.
+  if (options.core?.enabled) {
+    Object.assign(config, buildCoreSettingsBlock(options.core))
+  }
 
   return stringify(config)
 }

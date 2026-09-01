@@ -129,6 +129,11 @@ const api: DesktopApi = {
     get: () => invoke(IPC.tunConfigGet),
     set: (input) => invoke(IPC.tunConfigSet, input),
     preview: (input) => invoke(IPC.tunConfigPreview, input)
+  },
+  core: {
+    get: () => invoke(IPC.coreSettingsGet),
+    set: (input) => invoke(IPC.coreSettingsSet, input),
+    preview: (input) => invoke(IPC.coreSettingsPreview, input)
   }
 }
 

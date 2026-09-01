@@ -7,6 +7,7 @@ import type { SnifferEnhancement } from '../sniffer'
 import { isValidAddressOrCidr, isValidPortToken } from '../sniffer'
 import type { TunConfigModel } from '../tun-config'
 import { isValidDnsHijackEntry, isValidTunDevice, isValidTunMtu, isValidTunRouteAddress } from '../tun-config'
+import type { CoreSettings } from '../core-settings'
 import { ProtocolError, ProtocolErrorCode } from '../protocol-errors'
 import { logLevelSchema } from './log-level'
 
@@ -378,6 +379,35 @@ export function parseTunConfig(input: unknown): TunConfigModel {
   if (!parsed.success) {
     const detail = parsed.error.issues[0]
     throw invalid(`invalid tun config at ${detail?.path.join('.') || 'tun'}: ${detail?.message}`)
+  }
+  return parsed.data
+}
+
+const coreSettingsSchema = z
+  .object({
+    enabled: z.boolean(),
+    logLevel: logLevelSchema,
+    ipv6: z.boolean(),
+    tcpConcurrent: z.boolean(),
+    unifiedDelay: z.boolean(),
+    findProcessMode: z.enum(['off', 'strict', 'always'])
+  })
+  .strict()
+
+/**
+ * Validate a renderer-sent controlled core-settings model. The log level must be
+ * a real mihomo level, the find-process mode must be one of the three supported
+ * values, and unknown keys are rejected, so an invalid model can never be
+ * persisted or reach the runtime config.
+ */
+export function parseCoreSettings(input: unknown): CoreSettings {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    throw invalid('core settings must be an object')
+  }
+  const parsed = coreSettingsSchema.safeParse(input)
+  if (!parsed.success) {
+    const detail = parsed.error.issues[0]
+    throw invalid(`invalid core settings at ${detail?.path.join('.') || 'core'}: ${detail?.message}`)
   }
   return parsed.data
 }

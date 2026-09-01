@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useOverridesStore } from '../stores/overrides'
 import type { OverrideInput } from '@shared/overrides'
+import { diffLines } from '@shared/overrides'
 
 const props = defineProps<{ activeProfileId: string | null }>()
 
@@ -22,6 +23,43 @@ const isEditing = computed(() => editingId.value !== null)
 const canUseProfileScope = computed(() => props.activeProfileId !== null)
 const yamlPlaceholder = ['proxy-groups:', '  - name: auto', '    type: url-test'].join('\n')
 const jsPlaceholder = ['function main(config) {', '  config.mode = "rule"', '  return config', '}'].join('\n')
+
+const previewDiff = computed(() => {
+  const preview = store.preview
+  if (!preview || preview.unavailable) return []
+  return diffLines(preview.baseText, preview.appliedText)
+})
+const hasLastKnownGood = computed(() => store.lastGood !== null)
+const lastGoodLabel = computed(() => {
+  const last = store.lastGood
+  if (!last) return ''
+  return `上次可用：${new Date(last.capturedAt).toLocaleString()}`
+})
+
+function issueSummary(): string {
+  const validation = store.validation
+  if (!validation || validation.valid) return ''
+  return `${validation.issues.filter((issue) => issue.level === 'error').length} 项错误`
+}
+
+async function runPreview(): Promise<void> {
+  await store.refreshPreview()
+  void store.refreshLastKnownGood()
+}
+
+async function runValidation(): Promise<void> {
+  await store.refreshValidation()
+  void store.refreshLastKnownGood()
+}
+
+async function rollback(): Promise<void> {
+  const ok = await store.resetToLastGood()
+  if (ok) {
+    await store.refresh()
+    await store.refreshLastKnownGood()
+    await store.refreshValidation()
+  }
+}
 
 function label(kind: string): string {
   return kind === 'js' ? 'JS' : 'YAML'
@@ -130,6 +168,52 @@ onMounted(() => {
         </div>
       </li>
     </ul>
+
+    <div class="ov-tools">
+      <button type="button" class="ov-tool" :disabled="store.validating" @click="runValidation">
+        {{ store.validating ? '校验中…' : '校验' }}
+      </button>
+      <button type="button" class="ov-tool" :disabled="store.previewLoading" @click="runPreview">
+        {{ store.previewLoading ? '生成中…' : '预演' }}
+      </button>
+      <span class="ov-tool-spacer" />
+      <button type="button" class="ov-tool" :disabled="!hasLastKnownGood" title="撤销到最后一次校验通过的覆写集合" @click="rollback">
+        回滚到最后可用
+      </button>
+    </div>
+
+    <div v-if="store.validation" class="ov-validate" :class="{ ok: store.validation.valid, bad: !store.validation.valid }" role="status">
+      <span class="ov-validate-mark">{{ store.validation.valid ? '✓' : '✕' }}</span>
+      <div class="ov-validate-body">
+        <p class="ov-validate-head">
+          {{ store.validation.valid ? '覆写校验通过' : `覆写校验未通过 · ${issueSummary()}` }}
+          <span v-if="store.validation.issues.length === 0" class="ov-validate-note">将原样应用订阅配置</span>
+        </p>
+        <ul v-if="store.validation.issues.length > 0" class="ov-issues">
+          <li v-for="(issue, index) in store.validation.issues" :key="index" :class="`ov-issue-${issue.level}`">
+            <span v-if="issue.itemName" class="ov-issue-name">「{{ issue.itemName }}」</span>{{ issue.message }}
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <div v-if="store.preview" class="ov-preview">
+      <header class="ov-preview-head">
+        <h3>覆写预演（已脱敏）</h3>
+        <span v-if="store.preview.unavailable" class="ov-preview-note">当前没有活动的订阅</span>
+        <span v-else class="ov-preview-note">红色为移除、绿色为新增，仅显示改动附近内容</span>
+      </header>
+      <p v-if="store.preview.unavailable" class="ov-preview-empty">{{ store.preview.warnings.join('；') }}</p>
+      <div v-else class="ov-diff" aria-label="覆写差异预览">
+        <div v-for="(line, index) in previewDiff" :key="index" :class="`ov-diff-line ov-diff-${line.type}`">
+          <span class="ov-diff-sign">{{ line.type === 'added' ? '+' : line.type === 'removed' ? '-' : ' ' }}</span>
+          <span class="ov-diff-text">{{ line.text }}</span>
+        </div>
+      </div>
+      <p v-if="store.preview.warnings.length > 0" class="ov-preview-warn">
+        {{ store.preview.warnings.join('；') }}
+      </p>
+    </div>
 
     <div v-if="open" class="ov-backdrop" @click.self="closeEditor">
       <div class="ov-editor" role="dialog" aria-modal="true" aria-label="编辑覆写">
@@ -337,4 +421,86 @@ onMounted(() => {
 .ov-save { background: var(--app-blue); color: white; }
 .ov-cancel:disabled,
 .ov-save:disabled { opacity: 0.6; }
+
+.ov-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+.ov-tool-spacer { flex: 1; }
+.ov-tool {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--app-divider);
+  border-radius: 7px;
+  background: var(--app-panel);
+  color: inherit;
+  font-size: 12px;
+}
+.ov-tool:hover { border-color: var(--app-blue); }
+.ov-tool:disabled { opacity: 0.45; cursor: default; }
+
+.ov-validate {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--app-divider);
+  border-radius: 9px;
+  background: var(--app-panel);
+}
+.ov-validate.ok { border-color: rgba(39, 203, 150, 0.35); }
+.ov-validate.bad { border-color: rgba(255, 82, 82, 0.4); }
+.ov-validate-mark { font-weight: 700; font-size: 13px; }
+.ov-validate.ok .ov-validate-mark { color: var(--app-green); }
+.ov-validate.bad .ov-validate-mark { color: var(--app-red, #ff5252); }
+.ov-validate-body { flex: 1; }
+.ov-validate-head { margin: 0; font-size: 12px; }
+.ov-validate-note { margin-left: 8px; color: var(--app-muted); font-size: 11px; }
+.ov-issues { margin: 6px 0 0; padding: 0; list-style: none; }
+.ov-issues li { font-size: 11px; line-height: 1.5; }
+.ov-issue-error { color: var(--app-red, #ff5252); }
+.ov-issue-warning { color: var(--app-muted); }
+.ov-issue-name { font-weight: 600; }
+
+.ov-preview {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--app-divider);
+  border-radius: 9px;
+  background: var(--app-panel);
+}
+.ov-preview-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.ov-preview-head h3 { margin: 0; font-size: 12px; }
+.ov-preview-note { color: var(--app-muted); font-size: 11px; }
+.ov-preview-empty { margin: 0; color: var(--app-muted); font-size: 11px; }
+.ov-preview-warn {
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--app-divider);
+  color: var(--app-pink);
+  font-size: 11px;
+}
+.ov-diff {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--app-divider);
+  border-radius: 7px;
+  background: var(--app-surface-solid);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.ov-diff-line { display: flex; gap: 6px; padding: 0 8px; white-space: pre; }
+.ov-diff-context { color: var(--app-muted); }
+.ov-diff-added { background: rgba(39, 203, 150, 0.16); color: var(--app-green); }
+.ov-diff-removed { background: rgba(255, 82, 82, 0.14); color: var(--app-red, #ff5252); }
+.ov-diff-sign { user-select: none; width: 10px; text-align: center; opacity: 0.7; }
 </style>

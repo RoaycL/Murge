@@ -408,11 +408,20 @@ excluded or unproven feature appear supported in an existing release.
       item. The override pipeline runs inside the production
       `resolveActiveDocument` and is always followed by the existing safety
       pass, so overrides cannot bypass the loopback-only invariant.)
-- [ ] Add redacted preview/diff, structural and semantic validation, safety-field
-      ownership and last-known-good rollback. (Partial: the safety pass still owns
-      loopback-only fields after overrides, and malformed overrides fail open per
-      item; a redacted preview/diff UI and an overrides-specific last-known-good
-      rollback are still outstanding.)
+- [x] Add redacted preview/diff, structural and semantic validation, safety-field
+      ownership and last-known-good rollback. (Shipped at `v0.1.25`:
+      `OverrideService` gained `preview()` (redacted base + applied text),
+      `validate()` (per-item YAML/JS structural checks plus a whole-chain check
+      that an override did not break a previously-valid base), and a
+      last-known-good snapshot with `lastKnownGood()` / `resetToLastGood()`
+      rollback, captured whenever the effective set produces a structurally
+      valid runtime config. A line-level `diffLines()` and `redactOverrideContent()`
+      live in `@shared/overrides`, exposed over IPC and driven by
+      `OverridesPanel.vue` (校验/预演/回滚到最后可用). Safety-field ownership is
+      re-proven by `tests/override-preview.test.ts`: a hostile override injecting
+      `tun`/`listeners`/`redir-port`/`tproxy-port`/`dns.listen` and public
+      `external-controller`/`mixed-port`/`allow-lan`/`bind-address`/`secret` is
+      neutralized by `buildProfileKernelConfig`.)
 - [x] Add the Vue/Pinia override manager after the main-process contracts and
       repository tests pass. (`src/renderer/src/stores/overrides.ts` +
       `OverridesPanel.vue` embedded in the Config page; per-item enable, reorder,

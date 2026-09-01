@@ -7,7 +7,13 @@ import type { SnifferEnhancement, SnifferSnapshot } from '@shared/sniffer'
 import { coerceSnifferEnhancement, coerceSnifferSnapshot, EMPTY_SNIFFER_ENHANCEMENT } from '@shared/sniffer'
 import type { StartupStatus } from '@shared/startup'
 import type { AppSettings } from '@shared/app-settings'
-import type { OverrideInput, OverridesSnapshot } from '@shared/overrides'
+import type {
+  OverrideInput,
+  OverridesSnapshot,
+  OverridePreview,
+  OverrideValidation,
+  OverrideLastKnownGood
+} from '@shared/overrides'
 import { coerceOverridesSnapshot, EMPTY_OVERRIDES } from '@shared/overrides'
 import type { DnsEnhancement, DnsSnapshot } from '@shared/dns'
 import { coerceDnsEnhancement, coerceDnsSnapshot, EMPTY_DNS_ENHANCEMENT } from '@shared/dns'
@@ -638,6 +644,33 @@ export class FakeOverridesGateway implements OverridesGateway {
     this.moveCalls.push({ id, direction })
     return Promise.resolve(coerceOverridesSnapshot(this.snapshot))
   }
+  preview(): Promise<OverridePreview> {
+    return Promise.resolve({
+      baseText: 'base',
+      appliedText: this.snapshot.items.map((item) => item.name).join(', '),
+      warnings: this.appliedWarnings,
+      unavailable: false
+    })
+  }
+  validate(): Promise<OverrideValidation> {
+    return Promise.resolve({
+      valid: this.lastValid,
+      issues: this.validationIssues
+    })
+  }
+  lastKnownGood(): Promise<OverrideLastKnownGood | null> {
+    return Promise.resolve(this.lastGood ? { capturedAt: this.lastGood.capturedAt, snapshot: this.lastGood.snapshot.map((item) => ({ ...item })) } : null)
+  }
+  async resetToLastGood(): Promise<OverridesSnapshot> {
+    if (this.lastGood) {
+      this.snapshot = coerceOverridesSnapshot({ items: this.lastGood.snapshot.map((item) => ({ ...item })) })
+    }
+    return Promise.resolve(coerceOverridesSnapshot(this.snapshot))
+  }
+  appliedWarnings: string[] = []
+  lastValid = true
+  validationIssues: OverrideValidation['issues'] = []
+  lastGood: OverrideLastKnownGood | null = null
 }
 
 export class FakeDnsEnhancementGateway implements DnsEnhancementGateway {

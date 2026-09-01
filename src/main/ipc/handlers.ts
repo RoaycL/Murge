@@ -114,6 +114,10 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
       overrides.setEnabled(parseOverrideId(id), parseOverrideEnabled(enabled)),
     [IPC.overridesMove]: async (_event, id, direction) =>
       overrides.move(parseOverrideId(id), parseOverrideMove(direction)),
+    [IPC.overridesPreview]: async () => overrides.preview(),
+    [IPC.overridesValidate]: async () => overrides.validate(),
+    [IPC.overridesLastKnownGood]: async () => overrides.lastKnownGood(),
+    [IPC.overridesResetToLastGood]: async () => overrides.resetToLastGood(),
     [IPC.dnsGet]: async () => dns.get(),
     [IPC.dnsSet]: async (_event, input) => dns.set(parseDnsEnhancement(input)),
     [IPC.dnsPreview]: async (_event, input) => dns.preview(parseDnsEnhancement(input)),

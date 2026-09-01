@@ -1,6 +1,12 @@
 import type { BrandConfig } from './brand'
 import type { KernelManagerState } from './kernel-manager'
-import type { OverrideInput, OverridesSnapshot } from './overrides'
+import type {
+  OverrideInput,
+  OverridesSnapshot,
+  OverridePreview,
+  OverrideValidation,
+  OverrideLastKnownGood
+} from './overrides'
 import type { DnsEnhancement, DnsSnapshot } from './dns'
 import type { SnifferEnhancement, SnifferSnapshot } from './sniffer'
 import type { GeodataSettings } from './geodata'
@@ -148,6 +154,14 @@ export interface OverridesGateway {
   remove(id: string): OverridesSnapshot | Promise<OverridesSnapshot>
   setEnabled(id: string, enabled: boolean): OverridesSnapshot | Promise<OverridesSnapshot>
   move(id: string, direction: 'up' | 'down'): OverridesSnapshot | Promise<OverridesSnapshot>
+  /** Redacted preview of the effective override set against the active profile document. */
+  preview(): OverridePreview | Promise<OverridePreview>
+  /** Structural + semantic validation of the effective override set against the active profile document. */
+  validate(): OverrideValidation | Promise<OverrideValidation>
+  /** The last-known-good override snapshot, or null if none has been captured. */
+  lastKnownGood(): OverrideLastKnownGood | null | Promise<OverrideLastKnownGood | null>
+  /** Restore the override list to its last-known-good state. */
+  resetToLastGood(): OverridesSnapshot | Promise<OverridesSnapshot>
 }
 
 /**

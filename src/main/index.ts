@@ -487,7 +487,14 @@ app.whenReady().then(async () => {
   const productionMixedPort = productionPorts?.mixed ?? null
   const productionKernelRoot = join(profileRoot, 'kernel')
   const appSettingsService = new AppSettingsService(appDataRoot(app.getPath('appData')))
-  const overrideService = new OverrideService(appDataRoot(app.getPath('appData')))
+  const overrideService = new OverrideService(
+    appDataRoot(app.getPath('appData')),
+    undefined,
+    async () => {
+      const profile = await profileService.getActiveProfile()
+      return profile ? { document: profile.document, profileId: profile.meta.id } : null
+    }
+  )
   const dnsEnhancementService = new DnsEnhancementService(appDataRoot(app.getPath('appData')))
   const snifferEnhancementService = new SnifferEnhancementService(appDataRoot(app.getPath('appData')))
   const tunConfigService = new TunConfigService(appDataRoot(app.getPath('appData')))

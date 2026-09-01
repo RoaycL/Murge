@@ -15,7 +15,13 @@ import type {
 } from './mihomo-api'
 import type { ConfigEdit, ImportRequest, Profile, ProfileMeta, ValidationResult } from './profiles'
 import type { KernelManagerState } from './kernel-manager'
-import type { OverrideInput, OverridesSnapshot } from './overrides'
+import type {
+  OverrideInput,
+  OverridesSnapshot,
+  OverridePreview,
+  OverrideValidation,
+  OverrideLastKnownGood
+} from './overrides'
 import type { DnsEnhancement, DnsSnapshot } from './dns'
 import type { SnifferEnhancement, SnifferSnapshot } from './sniffer'
 import type { KernelStatus, RuntimeSummary, TrafficSample } from './runtime'
@@ -94,6 +100,10 @@ export const IPC = {
   overridesRemove: 'overrides:remove',
   overridesSetEnabled: 'overrides:set-enabled',
   overridesMove: 'overrides:move',
+  overridesPreview: 'overrides:preview',
+  overridesValidate: 'overrides:validate',
+  overridesLastKnownGood: 'overrides:last-known-good',
+  overridesResetToLastGood: 'overrides:reset-to-last-good',
   dnsGet: 'dns:get',
   dnsSet: 'dns:set',
   dnsPreview: 'dns:preview',
@@ -209,6 +219,10 @@ export interface DesktopApi {
     remove(id: string): Promise<OverridesSnapshot>
     setEnabled(id: string, enabled: boolean): Promise<OverridesSnapshot>
     move(id: string, direction: 'up' | 'down'): Promise<OverridesSnapshot>
+    preview(): Promise<OverridePreview>
+    validate(): Promise<OverrideValidation>
+    lastKnownGood(): Promise<OverrideLastKnownGood | null>
+    resetToLastGood(): Promise<OverridesSnapshot>
   }
   dns: {
     get(): Promise<DnsSnapshot>

@@ -144,6 +144,43 @@ export function runJsOverride(content: string, config: Record<string, unknown>):
 }
 
 /**
+ * Dry-run a JS override body to confirm it defines `main(config)` without
+ * actually invoking it. Returns a human-readable issue, or null when the body is
+ * structurally valid. Safe: the body runs only in the sealed VM sandbox and is
+ * never executed against a real config.
+ */
+export function validateJsOverride(content: string): string | null {
+  const consoleShadow: Record<string, (...args: unknown[]) => void> = {
+    log: () => undefined,
+    info: () => undefined,
+    warn: () => undefined,
+    error: () => undefined,
+    debug: () => undefined
+  }
+  const sandbox: Record<string, unknown> = { console: consoleShadow }
+  const context = createContext(sandbox)
+  try {
+    runInContext(content, context, { timeout: 2000 })
+  } catch (error) {
+    return `JS 覆写脚本无法解析：${(error as Error).message.split('\n')[0]}`
+  }
+  return typeof sandbox.main === 'function' ? null : 'JS 覆写未定义 main(config) 函数'
+}
+
+/**
+ * Structural validation for a single override item, independent of any base
+ * document. Returns a human-readable issue when the item is malformed, or null
+ * when it is structurally acceptable.
+ */
+export function validateOverrideContent(item: Pick<OverrideItem, 'kind' | 'content'>): string | null {
+  if (item.content.trim().length === 0) return '覆写内容为空'
+  if (item.kind === 'yaml') {
+    return parseYamlToObject(item.content) ? null : 'YAML 覆写解析失败，需要是一个映射对象'
+  }
+  return validateJsOverride(item.content)
+}
+
+/**
  * Apply every enabled override (already selected & ordered by the caller) to a
  * base profile document. With no runnable overrides the base text is returned
  * verbatim (zero copying, no re-serialization churn).

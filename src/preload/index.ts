@@ -103,7 +103,11 @@ const api: DesktopApi = {
     update: (id, input) => invoke(IPC.overridesUpdate, id, input),
     remove: (id) => invoke(IPC.overridesRemove, id),
     setEnabled: (id, enabled) => invoke(IPC.overridesSetEnabled, id, enabled),
-    move: (id, direction) => invoke(IPC.overridesMove, id, direction)
+    move: (id, direction) => invoke(IPC.overridesMove, id, direction),
+    preview: () => invoke(IPC.overridesPreview),
+    validate: () => invoke(IPC.overridesValidate),
+    lastKnownGood: () => invoke(IPC.overridesLastKnownGood),
+    resetToLastGood: () => invoke(IPC.overridesResetToLastGood)
   },
   dns: {
     get: () => invoke(IPC.dnsGet),

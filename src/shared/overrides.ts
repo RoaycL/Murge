@@ -97,3 +97,154 @@ export function coerceOverridesSnapshot(input: unknown): OverridesSnapshot {
   if (!isRecord(input) || !Array.isArray(input.items)) return { ...EMPTY_OVERRIDES }
   return { items: input.items.map(coerceOverrideItem) }
 }
+
+/**
+ * A redacted, diffable preview of what the *effective* override set does to a
+ * base profile document. Both texts are redacted so credentials, secrets and
+ * subscription URL user-info never reach the renderer.
+ */
+export interface OverridePreview {
+  /** The base profile document (before overrides), redacted. */
+  baseText: string
+  /** The merged result after applying the effective overrides, redacted. */
+  appliedText: string
+  /** Non-fatal diagnostics collected while applying (e.g. overrides that failed open). */
+  warnings: string[]
+  /** True when there is no active profile to preview against. */
+  unavailable: boolean
+}
+
+/** A single structural/semantic diagnostic for the override set. */
+export interface OverrideValidationIssue {
+  /** Override name the issue belongs to, or null when it is a whole-set issue. */
+  itemName: string | null
+  /** `error` blocks the config from starting; `warning` is informational. */
+  level: 'error' | 'warning'
+  message: string
+}
+
+/** The result of validating the *effective* override set against a base. */
+export interface OverrideValidation {
+  valid: boolean
+  issues: OverrideValidationIssue[]
+}
+
+/** A captured last-known-good state: the override set that last produced a valid config. */
+export interface OverrideLastKnownGood {
+  /** Epoch ms when the good state was captured. */
+  capturedAt: number
+  /** The override item list that was valid at capture time. */
+  snapshot: OverrideItem[]
+}
+
+/** One line of a diff between two texts. */
+export interface DiffSegment {
+  type: 'context' | 'added' | 'removed'
+  text: string
+}
+
+const OVERRIDE_SECRET_OK = '***'
+const URL_USERINFO = /(\w+:\/\/)([^@\s/]+)@/g
+const OVERRIDE_SECRET_KEY = /(\b(?:password|secret|token|access[_-]?key|access[_-]?secret|authorization|cookie|uuid|apikey|api[_-]?key|private[_-]?key)[^:\s]*\s*:\s*)([^\n]+)/gi
+const OVERRIDE_HEX64 = /\b[0-9a-f]{64}\b/g
+
+/**
+ * Redact credential-like material from override/provider text so any preview or
+ * diff can be shown without leaking secrets. Best-effort: masks URL user-info,
+ * common credential key values, and 64-hex mihomo secrets. This is only for
+ * display; the real value is never re-created from the redacted text.
+ */
+export function redactOverrideContent(text: string): string {
+  if (text.length === 0) return text
+  return text
+    .replace(URL_USERINFO, `$1${OVERRIDE_SECRET_OK}@`)
+    .replace(OVERRIDE_SECRET_KEY, `$1${OVERRIDE_SECRET_OK}`)
+    .replace(OVERRIDE_HEX64, OVERRIDE_SECRET_OK)
+}
+
+/**
+ * Compute a line-level diff between two strings, windowing context so unchanged
+ * runs are collapsed. Useful for showing what an override set actually changes
+ * without dumping the whole (possibly large) profile.
+ */
+export function diffLines(before: string, after: string, context = 3): DiffSegment[] {
+  const a = before.split('\n')
+  const b = after.split('\n')
+  const na = a.length
+  const nb = b.length
+
+  // LCS length table (bottom-up).
+  const dp: number[][] = Array.from({ length: na + 1 }, () => new Array<number>(nb + 1).fill(0))
+  for (let i = na - 1; i >= 0; i--) {
+    for (let j = nb - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1])
+    }
+  }
+
+  // Reconstruct the raw edit script.
+  const raw: DiffSegment[] = []
+  let i = 0
+  let j = 0
+  while (i < na && j < nb) {
+    if (a[i] === b[j]) {
+      raw.push({ type: 'context', text: a[i] })
+      i++
+      j++
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      raw.push({ type: 'removed', text: a[i] })
+      i++
+    } else {
+      raw.push({ type: 'added', text: b[j] })
+      j++
+    }
+  }
+  while (i < na) raw.push({ type: 'removed', text: a[i++] })
+  while (j < nb) raw.push({ type: 'added', text: b[j++] })
+
+  return windowDiff(raw, context)
+}
+
+/**
+ * Collapse long unchanged runs into a short context window around each change.
+ * Leading context before a change keeps the lines closest to the change (with
+ * an ellipsis at the head of the collapsed run); a trailing run keeps the lines
+ * closest to the preceding change (with an ellipsis at its tail).
+ */
+function windowDiff(segments: DiffSegment[], context: number): DiffSegment[] {
+  const out: DiffSegment[] = []
+  const n = segments.length
+  let index = 0
+  while (index < n) {
+    if (segments[index].type !== 'context') {
+      out.push(segments[index])
+      index++
+      continue
+    }
+    const runStart = index
+    let runEnd = index
+    while (runEnd < n && segments[runEnd].type === 'context') runEnd++
+    const run = segments.slice(runStart, runEnd)
+    const hasChangeAfter = runEnd < n // there is a non-context segment next
+    const collapsed = run.length - context
+    if (hasChangeAfter) {
+      // Leading context: keep the lines closest to the change (run tail).
+      if (collapsed > 0) {
+        out.push({ type: 'context', text: '…' })
+        for (let k = runStart + collapsed; k < runEnd; k++) out.push(segments[k])
+      } else {
+        for (let k = runStart; k < runEnd; k++) out.push(segments[k])
+      }
+    } else {
+      // Trailing run: keep the lines closest to the change (run head).
+      if (collapsed > 0) {
+        for (let k = runStart; k < runStart + context; k++) out.push(segments[k])
+        out.push({ type: 'context', text: '…' })
+      } else {
+        for (let k = runStart; k < runEnd; k++) out.push(segments[k])
+      }
+      break
+    }
+    index = runEnd
+  }
+  return out
+}

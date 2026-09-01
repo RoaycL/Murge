@@ -497,9 +497,24 @@ excluded or unproven feature appear supported in an existing release.
       maps to `configured`/a paused coordinator. **implementation-complete /
       runtime-unverified** — the UI renders `unsupported` on non-Windows/dev
       builds and is not a release TUN enablement.)
-- [ ] Finish all DNS/sniffer/TUN schemas, IPC/preload gateways, Pinia stores,
+- [x] Finish all DNS/sniffer/TUN schemas, IPC/preload gateways, Pinia stores,
       fixtures, config generation, parse-back assertions, unit tests and
-      network-silent integration tests before real-machine validation.
+      network-silent integration tests before real-machine validation. (Each of
+      DNS / Sniffer / TUN now has a shared typed model + strict zod schema at
+      `@shared/schemas/ipc`, an IPC gate + preload block + Pinia store + Config
+      page panel, an atomic-persist service, a config generator
+      (`buildDnsBlock`/`buildSnifferBlock`/`generateMihomoTunConfig`), and
+      parse-back assertions through the mihomo validators. The previously
+      missing piece — a **network-silent integration test** — is added as
+      `tests/network-silent-config.integration.test.ts`: it composes the real
+      pipeline (active profile + typed DNS enhancement + typed Sniffer
+      enhancement + `buildProfileKernelConfig` safety boundary) purely in-memory
+      (never spawns mihomo / binds / mutates routes/DNS/system-proxy) and
+      asserts the runtime config is loopback-only (`allow-lan:false`,
+      `bind-address:127.0.0.1`, loopback controller, no `tun`/`listeners`/
+      `redir-port`/`tproxy-port`, `dns.listen` stripped, no `0.0.0.0` bind
+      anywhere) and round-trips cleanly through `profileKernelConfigErrors`
+      while preserving the model's DNS/Sniffer values and profile-only keys.)
 - [ ] Complete controlled core settings, geodata resources and proxy-bypass
       policy with read-back and conflict handling.
 - [x] Enhance live connections with totals, deterministic sorting and confirmed

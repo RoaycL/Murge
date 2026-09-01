@@ -160,9 +160,16 @@ Rules:
       integrity checks, coordinator and mutation journal. Do not elevate the
       Electron renderer and do not allow the subscription to become a second
       route/DNS owner.
-- [ ] Complete all DNS/sniffer/TUN gateways, IPC validation, Pinia stores,
+- [x] Complete all DNS/sniffer/TUN gateways, IPC validation, Pinia stores,
       fixtures, generators, preview/diff and network-silent tests before the
-      Windows test campaign.
+      Windows test campaign. (DNS / Sniffer / TUN each ship a shared model +
+      strict zod schema, IPC gate + preload block + Pinia store + Config page
+      panel, an atomic-persist service and a config generator with parse-back
+      assertions; the composed `tests/network-silent-config.integration.test.ts`
+      exercises the real profile + DNS + Sniffer + `buildProfileKernelConfig`
+      pipeline in-memory and asserts loopback-only / no public bind /
+      `dns.listen`-stripped / parse-back-valid output. Non-Windows/dev builds
+      keep TUN `unsupported`; not a release TUN enablement.)
 - [ ] Controlled ports/listen/LAN/auth editor with pre-bind validation.
 - [ ] Editable system-proxy bypass policy with exact restore and conflict tests.
 - [ ] Preserve typed error `details` and `operation` across Electron IPC.

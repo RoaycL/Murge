@@ -341,17 +341,26 @@ jobs:
               [int]$TimeoutSeconds = 120
             )
 
-            $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru
-            if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-              Write-Warning "$Label timed out after $TimeoutSeconds seconds (pid=$($process.Id)); terminating its process tree"
-              & taskkill.exe /PID $process.Id /T /F 2>$null | Out-Null
-              throw "$Label timed out after $TimeoutSeconds seconds"
+            # On a headless runner the packaged app may not receive its command
+            # line; the app reads a MURGE_CI_BOOT_FLAGS env var as a fallback
+            # channel. Export the same flags, then clear them so a later plain
+            # GUI launch (UI smoke) is not mistaken for a probe.
+            $env:MURGE_CI_BOOT_FLAGS = ($ArgumentList -join ' ')
+            try {
+              $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru
+              if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+                Write-Warning "$Label timed out after $TimeoutSeconds seconds (pid=$($process.Id)); terminating its process tree"
+                & taskkill.exe /PID $process.Id /T /F 2>$null | Out-Null
+                throw "$Label timed out after $TimeoutSeconds seconds"
+              }
+              $process.Refresh()
+              if ($process.ExitCode -ne 0) {
+                throw "$Label exited with code $($process.ExitCode)"
+              }
+              return $process
+            } finally {
+              Remove-Item Env:MURGE_CI_BOOT_FLAGS -ErrorAction SilentlyContinue
             }
-            $process.Refresh()
-            if ($process.ExitCode -ne 0) {
-              throw "$Label exited with code $($process.ExitCode)"
-            }
-            return $process
           }
 
           $installer = Get-ChildItem -Path 'dist' -Filter "*Setup-*-x64.exe" -File | Select-Object -First 1
@@ -405,14 +414,24 @@ jobs:
           $smokeOut = Join-Path $env:RUNNER_TEMP 'packaging-smoke.stdout.log'
           $smokeErr = Join-Path $env:RUNNER_TEMP 'packaging-smoke.stderr.log'
           $sentinel = Join-Path $sentinelRoot '.packaging-smoke-sentinel'
-          $smoke = Start-Process -FilePath $exe -ArgumentList '--packaging-smoke' -PassThru `
-            -RedirectStandardOutput $smokeOut -RedirectStandardError $smokeErr
+          $smokeArgv = Join-Path $env:RUNNER_TEMP 'murge-argv.json'
+          $env:MURGE_CI_BOOT_FLAGS = '--packaging-smoke'
+          $env:MURGE_CI_BOOT_DIAG = '1'
+          $env:MURGE_CI_BOOT_DIAG_PATH = $smokeArgv
+          try {
+            $smoke = Start-Process -FilePath $exe -ArgumentList '--packaging-smoke' -PassThru `
+              -RedirectStandardOutput $smokeOut -RedirectStandardError $smokeErr
+          } finally {
+            Remove-Item Env:MURGE_CI_BOOT_FLAGS -ErrorAction SilentlyContinue
+          }
           if (-not $smoke.WaitForExit(75000)) {
             Write-Host '=== packaging-smoke stderr (tail) ==='
             if (Test-Path $smokeErr) { Get-Content $smokeErr -Tail 80 }
             Write-Host '=== packaging-smoke stdout (tail) ==='
             if (Test-Path $smokeOut) { Get-Content $smokeOut -Tail 80 }
             Write-Host "sentinel present after timeout: $(Test-Path $sentinel)"
+            Write-Host "argv diag present: $(Test-Path $smokeArgv)"
+            if (Test-Path $smokeArgv) { Get-Content $smokeArgv -Tail 40 }
             & taskkill.exe /PID $smoke.Id /T /F 2>$null | Out-Null
             throw 'packaging smoke timed out (see captured output above)'
           }
@@ -427,6 +446,8 @@ jobs:
           }
           if (-not (Test-Path $sentinel)) { throw "sentinel profile not written at $sentinel" }
           Write-Host "sentinel profile: $sentinel"
+          Remove-Item Env:MURGE_CI_BOOT_DIAG -ErrorAction SilentlyContinue
+          Remove-Item Env:MURGE_CI_BOOT_DIAG_PATH -ErrorAction SilentlyContinue
 
           # No real kernel may be running and no new proxy/controller port may listen.
           if (Get-Process -Name 'mihomo' -ErrorAction SilentlyContinue) { throw 'a mihomo process was started during the smoke run' }

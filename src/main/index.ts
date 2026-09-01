@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { writeFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { app, BrowserWindow, dialog, shell } from 'electron'
 import { is } from '@electron-toolkit/utils'
@@ -60,7 +61,40 @@ import type { TunGateway, TunStatus } from '../shared/tun'
 
 const devControllerUrl = process.env.MURGE_DEV_CONTROLLER ?? 'http://127.0.0.1:9090'
 const devControllerSecret = process.env.MURGE_DEV_SECRET ?? ''
-const launchHidden = process.argv.includes('--hidden')
+
+// CI-only flag routing. The `package-win` workflow launches the packaged app on
+// a headless Windows runner and passes its direction on the command line (e.g.
+// `--packaging-smoke`). If those argv flags do not reach the packaged process,
+// the app would silently fall through to the normal GUI and hang forever, which
+// is exactly the 75s timeout we observed: no sentinel, no stderr, and the
+// module-load watchdog below never firing. To make the channel robust we accept
+// the same flags via MURGE_CI_BOOT_FLAGS (a space-separated string the workflow
+// exports on the probe launch), so a probe is triggered even when argv is
+// swallowed. hasArg() honors either source; normal user launches set neither.
+const ciBootFlags = (process.env.MURGE_CI_BOOT_FLAGS ?? '')
+  .split(/\s+/)
+  .map((flag) => flag.trim())
+  .filter(Boolean)
+const hasArg = (flag: string): boolean => process.argv.includes(flag) || ciBootFlags.includes(flag)
+const launchHidden = hasArg('--hidden')
+
+// Diagnostics: dump the exact argv + boot flags the packaged process parsed, so
+// a CI spin shows ground truth about whether the probe flag survived delivery.
+// Only writes when the workflow exports MURGE_CI_BOOT_DIAG=1 and a path.
+if (process.env.MURGE_CI_BOOT_DIAG === '1' && process.env.MURGE_CI_BOOT_DIAG_PATH) {
+  try {
+    writeFileSync(
+      process.env.MURGE_CI_BOOT_DIAG_PATH,
+      JSON.stringify(
+        { argv: process.argv, bootFlags: ciBootFlags, cwd: process.cwd() },
+        null,
+        2
+      )
+    )
+  } catch {
+    /* diagnostics must never break the app */
+  }
+}
 
 // CI-only loading-time watchdog for the `package-win` workflow. It launches the
 // packaged app with `--packaging-smoke` on a headless Windows runner; if
@@ -70,11 +104,26 @@ const launchHidden = process.argv.includes('--hidden')
 // and exit non-zero so the workflow fails fast with a deterministic message
 // instead of timing out silently. A healthy probe reaches runPackagingSmoke and
 // exits 0 long before this fires.
-if (process.argv.includes('--packaging-smoke')) {
+if (hasArg('--packaging-smoke')) {
   setTimeout(() => {
     console.error('[packaging-smoke] watchdog: app never reached runPackagingSmoke within 60s; forcing exit')
     process.exit(1)
   }, 60000)
+}
+
+// Headless CI runners often have no GPU/display, and Electron can stall in
+// window-ready waiting on GPU init. For the CI probe modes (which never open a
+// GUI and exit fast) disable hardware acceleration so startup resolves; normal
+// user launches keep it.
+if (
+  hasArg('--packaging-smoke') ||
+  hasArg('--kernel-smoke') ||
+  hasArg('--ui-smoke') ||
+  hasArg('--hidden-smoke') ||
+  hasArg('--system-proxy-enable')
+) {
+  app.disableHardwareAcceleration()
+  app.commandLine.appendSwitch('disable-gpu')
 }
 
 // Production pins the application-data directory to a stable, product-name-free
@@ -214,7 +263,7 @@ function createWindow(): BrowserWindow {
   }
   window.once('ready-to-show', showWindow)
   window.webContents.once('did-finish-load', showWindow)
-  if (process.argv.includes('--ui-smoke')) {
+  if (hasArg('--ui-smoke')) {
     window.webContents.once('did-finish-load', () => {
       void window.webContents.executeJavaScript(
         `window.desktop.app.getBrand().then((value) => ({ productName: value.productName, hasMihomo: typeof window.desktop.mihomo?.getConnections === 'function' }))`
@@ -493,14 +542,14 @@ app.whenReady().then(async () => {
   // CI-only startup probe (see the `package-win` workflow). Verifies production
   // storage wiring and that packaging did not break the launch path, without
   // opening a window, starting a kernel, or binding any socket.
-  if (process.argv.includes('--packaging-smoke')) {
+  if (hasArg('--packaging-smoke')) {
     await runPackagingSmoke(profileRoot)
     return
   }
 
   // Headless system-proxy restore (see runSystemProxyRestore). Used by the
   // uninstaller and CI whenever the GUI must not be started.
-  if (process.argv.includes('--restore-system-proxy')) {
+  if (hasArg('--restore-system-proxy')) {
     await runSystemProxyRestore()
     return
   }
@@ -603,7 +652,7 @@ app.whenReady().then(async () => {
   // the complete opt-in production path: bundled archive verification,
   // extraction, process spawn, authenticated /version readiness and cleanup.
   // The generated config is loopback-only/direct with TUN and DNS disabled.
-  if (!is.dev && process.argv.includes('--kernel-smoke')) {
+  if (!is.dev && hasArg('--kernel-smoke')) {
     const started = await ipcKernel.start()
     if (started.phase !== 'running') {
       throw new ProtocolError(ProtocolErrorCode.KERNEL_START_TIMEOUT, 'Packaged kernel did not reach running state')
@@ -623,7 +672,7 @@ app.whenReady().then(async () => {
   // Because the live probe needs a running kernel, this is handled AFTER the
   // kernel + gateway are wired (the probe reads the real mixed-port and proves it
   // with a TCP / HTTP / SOCKS socket check before the registry is touched).
-  if (!is.dev && process.argv.includes('--system-proxy-enable')) {
+  if (!is.dev && hasArg('--system-proxy-enable')) {
     await runSystemProxyEnable(ipcKernel, gateway)
     return
   }
@@ -788,7 +837,7 @@ app.whenReady().then(async () => {
   // CI-only installed-artifact proof for the real login-launch shape. It
   // creates the hidden BrowserWindow and native Tray, but never starts mihomo
   // or mutates proxy/TUN/DNS.
-  if (!is.dev && process.argv.includes('--hidden-smoke')) {
+  if (!is.dev && hasArg('--hidden-smoke')) {
     if (process.platform !== 'win32' || process.env.GITHUB_ACTIONS !== 'true' || process.env.MURGE_CI_HIDDEN_START !== '1') {
       throw new Error('--hidden-smoke is restricted to the packaged GitHub Actions Windows probe')
     }

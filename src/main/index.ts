@@ -252,23 +252,36 @@ function createWindow(): BrowserWindow {
  */
 async function runPackagingSmoke(profileRoot: string): Promise<void> {
   const sentinelPath = join(profileRoot, '.packaging-smoke-sentinel')
-  await writeFile(
-    sentinelPath,
-    JSON.stringify({ mode: 'packaging-smoke', pid: process.pid, at: new Date().toISOString() }, null, 2) + '\n',
-    'utf8'
-  )
-  const evidence = {
-    mode: 'packaging-smoke',
-    profileRoot,
-    sentinel: sentinelPath,
-    pid: process.pid,
-    platform: process.platform,
-    arch: process.arch
+  try {
+    await writeFile(
+      sentinelPath,
+      JSON.stringify({ mode: 'packaging-smoke', pid: process.pid, at: new Date().toISOString() }, null, 2) + '\n',
+      'utf8'
+    )
+    const evidence = {
+      mode: 'packaging-smoke',
+      profileRoot,
+      sentinel: sentinelPath,
+      pid: process.pid,
+      platform: process.platform,
+      arch: process.arch
+    }
+    // A single-line, stable marker leaves an audit trail in CI logs; it is not a
+    // substitute for the portable assertion the smoke workflow performs.
+    console.log(`[packaging-smoke] ${JSON.stringify(evidence)}`)
+    // On a headless Windows runner `app.exit(0)` can fail to tear the process
+    // down even though no window/kernel exists, leaving the CI step to time out.
+    // Arm a hard-exit watchdog so the probe can never hang the workflow, then
+    // exit normally. The watchdog is unref'd so a healthy `app.exit` is unaffected.
+    const watchdog = setTimeout(() => process.exit(0), 3000)
+    watchdog.unref()
+    app.exit(0)
+  } catch (error) {
+    // A failed sentinel must not hang the process either: report and fail fast
+    // so CI surfaces the actual reason instead of timing out silently.
+    console.error('[packaging-smoke] failed to write the sentinel:', error)
+    app.exit(1)
   }
-  // A single-line, stable marker leaves an audit trail in CI logs; it is not a
-  // substitute for the portable assertion the smoke workflow performs.
-  console.log(`[packaging-smoke] ${JSON.stringify(evidence)}`)
-  app.exit(0)
 }
 
 /**

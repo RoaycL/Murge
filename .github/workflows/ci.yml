@@ -602,8 +602,14 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+          # dist contains BOTH win-x64-unpacked and win-arm64-unpacked; running
+          # the ARM64 bootstrap on an x64 runner fails ("not a valid application
+          # for this OS platform"), so prefer the directory matching the host
+          # architecture before falling back to any packaged template.
+          $wantedDir = if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64') { 'win-x64-unpacked' } else { 'win-arm64-unpacked' }
           $templatePath = Get-ChildItem -Path dist -Recurse -Filter 'service-template.json' -File -ErrorAction SilentlyContinue |
             Where-Object { $_.Directory.Name -eq 'tun-service' } |
+            Sort-Object { if ($_.FullName -match $wantedDir) { 0 } else { 1 } } |
             Select-Object -First 1
           if (-not $templatePath) {
             Write-Host 'No packaged service template found; service installation was not reached.'

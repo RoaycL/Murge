@@ -134,6 +134,11 @@ const api: DesktopApi = {
     get: () => invoke(IPC.coreSettingsGet),
     set: (input) => invoke(IPC.coreSettingsSet, input),
     preview: (input) => invoke(IPC.coreSettingsPreview, input)
+  },
+  geodata: {
+    get: () => invoke(IPC.geodataSettingsGet),
+    set: (input) => invoke(IPC.geodataSettingsSet, input),
+    preview: (input) => invoke(IPC.geodataSettingsPreview, input)
   }
 }
 

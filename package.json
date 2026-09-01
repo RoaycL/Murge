@@ -1,6 +1,6 @@
 {
   "name": "proxy-desktop-shell",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "license": "GPL-3.0-only",
   "private": true,
   "type": "module",

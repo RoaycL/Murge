@@ -9,6 +9,7 @@ import SnifferSettingsPanel from '../components/SnifferSettingsPanel.vue'
 import TunConfigPanel from '../components/TunConfigPanel.vue'
 import TunLifecyclePanel from '../components/TunLifecyclePanel.vue'
 import CoreSettingsPanel from '../components/CoreSettingsPanel.vue'
+import GeodataSettingsPanel from '../components/GeodataSettingsPanel.vue'
 import type { ValidationResult } from '@shared/profiles'
 
 const profilesStore = useProfilesStore()
@@ -456,6 +457,7 @@ const hasResources = computed(
     <tun-config-panel />
     <tun-lifecycle-panel />
     <core-settings-panel />
+    <geodata-settings-panel />
   </div>
 </template>
 

@@ -1,6 +1,6 @@
 import { IPC } from '@shared/ipc'
 import type { IpcDeps } from '@shared/gateways'
-import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions, parseStartupEnabled, parseDnsQuery, parseAppSettingsPatch, parseKernelEnabled, parseKernelChannel, parseKernelVersion, parseOverrideInput, parseOverrideId, parseOverrideEnabled, parseOverrideMove, parseDnsEnhancement, parseSnifferEnhancement, parseTunConfig, parseCoreSettings } from '@shared/schemas/ipc'
+import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions, parseStartupEnabled, parseDnsQuery, parseAppSettingsPatch, parseKernelEnabled, parseKernelChannel, parseKernelVersion, parseOverrideInput, parseOverrideId, parseOverrideEnabled, parseOverrideMove, parseDnsEnhancement, parseSnifferEnhancement, parseTunConfig, parseCoreSettings, parseGeodataSettings } from '@shared/schemas/ipc'
 import {
   parseConfigEdit,
   parseImportRequest,
@@ -25,7 +25,7 @@ export type IpcHandler = (event: unknown, ...args: unknown[]) => unknown | Promi
  * the semantics Electron uses for `ipcMain.handle`.
  */
 export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
-  const { brand, appInfo, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core } = deps
+  const { brand, appInfo, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata } = deps
 
   return {
     [IPC.appGetBrand]: async () => brand,
@@ -134,7 +134,10 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
     [IPC.tunConfigPreview]: async (_event, input) => tunConfig.preview(parseTunConfig(input)),
     [IPC.coreSettingsGet]: async () => core.get(),
     [IPC.coreSettingsSet]: async (_event, input) => core.set(parseCoreSettings(input)),
-    [IPC.coreSettingsPreview]: async (_event, input) => core.preview(parseCoreSettings(input))
+    [IPC.coreSettingsPreview]: async (_event, input) => core.preview(parseCoreSettings(input)),
+    [IPC.geodataSettingsGet]: async () => geodata.get(),
+    [IPC.geodataSettingsSet]: async (_event, input) => geodata.set(parseGeodataSettings(input)),
+    [IPC.geodataSettingsPreview]: async (_event, input) => geodata.preview(parseGeodataSettings(input))
   }
 }
 

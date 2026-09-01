@@ -3,6 +3,7 @@ import type { KernelManagerState } from './kernel-manager'
 import type { OverrideInput, OverridesSnapshot } from './overrides'
 import type { DnsEnhancement, DnsSnapshot } from './dns'
 import type { SnifferEnhancement, SnifferSnapshot } from './sniffer'
+import type { GeodataSettings } from './geodata'
 import type {
   MihomoConfigSnapshot,
   MihomoConnectionsSnapshot,
@@ -222,6 +223,19 @@ export interface CoreSettingsGateway {
   preview(input: CoreSettings): string | Promise<string>
 }
 
+/**
+ * Controlled geodata-settings boundary. A single global, schema-validated model of
+ * the allowlisted mihomo *geodata* runtime keys the user may control. When enabled
+ * the model is authoritative in the runtime config (read-back); when disabled the
+ * active profile's own values are preserved (conflict handling).
+ */
+export interface GeodataSettingsGateway {
+  get(): GeodataSettings | Promise<GeodataSettings>
+  set(input: GeodataSettings): GeodataSettings | Promise<GeodataSettings>
+  /** Render the mihomo geodata keys a model would produce (no writes). */
+  preview(input: GeodataSettings): string | Promise<string>
+}
+
 /** Everything the IPC handler factory needs from the trusted main process. */
 export interface IpcDeps {
   brand: BrandConfig
@@ -239,6 +253,7 @@ export interface IpcDeps {
   sniffer: SnifferEnhancementGateway
   tunConfig: TunConfigGateway
   core: CoreSettingsGateway
+  geodata: GeodataSettingsGateway
   updates: UpdatesGateway
   tun: TunGateway
 }

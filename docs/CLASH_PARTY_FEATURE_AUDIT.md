@@ -178,6 +178,12 @@ Rules:
 
 - [ ] Geodata source registry with HTTPS allowlist, hashes, atomic replacement,
       manual refresh and bounded scheduling.
+      (Controlled geodata *policy* — geodata-mode / geoip-mode / geo-auto-update /
+      geo-update-interval / optional geo-x-url — is implemented as a typed,
+      persisted model that is authoritative when enabled (read-back) and overrides
+      the profile (conflict handling) in v0.1.20. The registry itself — HTTPS
+      allowlist, download integrity/hashes, atomic replacement, manual refresh,
+      bounded scheduling — remains.)
 - [ ] Provider detail view and batch result reporting.
 - [ ] Connections closed-history model and configurable visible columns.
 - [ ] Bounded usage database, 1h/24h/7d/30d buckets and four ranking views.

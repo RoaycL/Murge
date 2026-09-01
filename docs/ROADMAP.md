@@ -518,13 +518,21 @@ excluded or unproven feature appear supported in an existing release.
 - [ ] Complete controlled core settings, geodata resources and proxy-bypass
       policy with read-back and conflict handling.
       (Sub-feature 1/3 — controlled core settings — implemented & tested:
-      `CoreSettings` model is authoritative when `enabled`; the allowlisted
-      core keys (`log-level`/`ipv6`/`tcp-concurrent`/`unified-delay`/
-      `find-process-mode`) override whatever the profile set (conflict handling
-      tests) and the runtime config reflects the model (read-back), only on the
-      profile-backed path. When disabled the enhancement is skipped and the
-      profile's own values are preserved. Strict mihomo-config fallback is left
-      unchanged. Geodata resources + proxy-bypass policy remain.)
+      the `CoreSettings` model is authoritative when `enabled`, the allowlisted
+      core keys override what the profile set (conflict handling) and the runtime
+      config reflects the model (read-back), only on the profile-backed path,
+      and disabled leaves the profile preserved. Released in v0.1.19.)
+      (Sub-feature 2/3 — controlled geodata settings — implemented & tested:
+      the `GeodataSettings` model is authoritative when `enabled`, the
+      allowlisted keys (`geodata-mode`/`geoip-mode`/`geo-auto-update`/
+      `geo-update-interval`/optional `geo-x-url`) override the profile's geodata
+      keys (conflict handling) and the runtime config reflects the model
+      (read-back); an empty source URL leaves the profile's geodata source
+      untouched rather than wiping it. Disabled preserves the profile. Released
+      in v0.1.20. The geodata *source registry* (HTTPS allowlist, hashes, atomic
+      replacement, manual refresh, bounded scheduling) is a separate P2 resource
+      concern and is NOT part of this controlled-settings model. Proxy-bypass
+      policy remains.)
 - [x] Enhance live connections with totals, deterministic sorting and confirmed
       batch close. (Implemented in the renderer store/page and covered by store
       tests; batch actions reuse per-id controller read-back confirmation.)

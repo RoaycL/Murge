@@ -1,4 +1,4 @@
-import type { KernelGateway, KernelManagerGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway, OverridesGateway, DnsEnhancementGateway, SnifferEnhancementGateway, TunConfigGateway, CoreSettingsGateway } from '@shared/gateways'
+import type { KernelGateway, KernelManagerGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway, OverridesGateway, DnsEnhancementGateway, SnifferEnhancementGateway, TunConfigGateway, CoreSettingsGateway, GeodataSettingsGateway } from '@shared/gateways'
 import type { SnifferEnhancement, SnifferSnapshot } from '@shared/sniffer'
 import { coerceSnifferEnhancement, coerceSnifferSnapshot, EMPTY_SNIFFER_ENHANCEMENT } from '@shared/sniffer'
 import type { StartupStatus } from '@shared/startup'
@@ -35,6 +35,8 @@ import type { TunConfigModel, TunConfigSnapshot } from '@shared/tun-config'
 import { coerceTunConfig, coerceTunConfigSnapshot, EMPTY_TUN_CONFIG } from '@shared/tun-config'
 import type { CoreSettings } from '@shared/core-settings'
 import { coerceCoreSettings, EMPTY_CORE_SETTINGS } from '@shared/core-settings'
+import type { GeodataSettings } from '@shared/geodata'
+import { coerceGeodataSettings, EMPTY_GEODATA_SETTINGS } from '@shared/geodata'
 
 /**
  * In-memory fake service container for main-process tests.
@@ -390,6 +392,26 @@ export interface FakeContainer {
   updates: FakeUpdatesGateway
   tun: FakeTunGateway
   core: FakeCoreSettingsGateway
+  geodata: FakeGeodataSettingsGateway
+}
+
+export class FakeGeodataSettingsGateway implements GeodataSettingsGateway {
+  settings: GeodataSettings = { ...EMPTY_GEODATA_SETTINGS }
+  setCalls: GeodataSettings[] = []
+  previewCalls: GeodataSettings[] = []
+
+  get(): Promise<GeodataSettings> {
+    return Promise.resolve(coerceGeodataSettings(this.settings))
+  }
+  async set(input: GeodataSettings): Promise<GeodataSettings> {
+    this.setCalls.push(input)
+    this.settings = coerceGeodataSettings(input)
+    return Promise.resolve({ ...this.settings })
+  }
+  async preview(input: GeodataSettings): Promise<string> {
+    this.previewCalls.push(input)
+    return ''
+  }
 }
 
 export class FakeCoreSettingsGateway implements CoreSettingsGateway {
@@ -615,6 +637,7 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
   const updates = new FakeUpdatesGateway()
   const tun = new FakeTunGateway()
   const core = new FakeCoreSettingsGateway()
+  const geodata = new FakeGeodataSettingsGateway()
   return {
     kernel,
     kernelManager,
@@ -631,6 +654,7 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
     updates,
     tun,
     core,
-    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core }
+    geodata,
+    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata }
   }
 }

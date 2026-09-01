@@ -8,6 +8,7 @@ import { isValidAddressOrCidr, isValidPortToken } from '../sniffer'
 import type { TunConfigModel } from '../tun-config'
 import { isValidDnsHijackEntry, isValidTunDevice, isValidTunMtu, isValidTunRouteAddress } from '../tun-config'
 import type { CoreSettings } from '../core-settings'
+import type { GeodataSettings } from '../geodata'
 import { ProtocolError, ProtocolErrorCode } from '../protocol-errors'
 import { logLevelSchema } from './log-level'
 
@@ -408,6 +409,49 @@ export function parseCoreSettings(input: unknown): CoreSettings {
   if (!parsed.success) {
     const detail = parsed.error.issues[0]
     throw invalid(`invalid core settings at ${detail?.path.join('.') || 'core'}: ${detail?.message}`)
+  }
+  return parsed.data
+}
+
+const HTTPS_URL_OR_EMPTY = z
+  .string()
+  .refine((value) => {
+    const trimmed = value.trim()
+    if (trimmed.length === 0) return true
+    try {
+      const url = new URL(trimmed)
+      return url.protocol === 'https:' || url.protocol === 'http:'
+    } catch {
+      return false
+    }
+  }, 'must be an absolute https/http URL')
+
+const geodataSettingsSchema = z
+  .object({
+    enabled: z.boolean(),
+    geodataMode: z.boolean(),
+    geoipMode: z.enum(['memconservative', 'standard']),
+    autoUpdate: z.boolean(),
+    updateIntervalHours: z.number().int().min(1).max(168),
+    geoxUrl: HTTPS_URL_OR_EMPTY
+  })
+  .strict()
+
+/**
+ * Validate a renderer-sent controlled geodata-settings model. The geodata mode
+ * must be a boolean, the geoip mode one of the two supported values, the update
+ * interval a bounded integer of hours, the source URL an absolute URL (or empty),
+ * and unknown keys are rejected, so an invalid model can never be persisted or
+ * reach the runtime config.
+ */
+export function parseGeodataSettings(input: unknown): GeodataSettings {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    throw invalid('geodata settings must be an object')
+  }
+  const parsed = geodataSettingsSchema.safeParse(input)
+  if (!parsed.success) {
+    const detail = parsed.error.issues[0]
+    throw invalid(`invalid geodata settings at ${detail?.path.join('.') || 'geodata'}: ${detail?.message}`)
   }
   return parsed.data
 }

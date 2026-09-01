@@ -5,6 +5,7 @@ import { join, resolve, sep } from 'node:path'
 import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
 import type { KernelBinary, KernelConfig, KernelConfigStore } from './types'
 import type { CoreSettings } from '@shared/core-settings'
+import type { GeodataSettings } from '@shared/geodata'
 import { generateMihomoConfig, validateMihomoConfigYaml, SECRET_PATTERN } from './mihomo-config'
 import { buildProfileKernelConfig, profileKernelConfigErrors } from './profile-kernel-config'
 
@@ -34,6 +35,14 @@ export interface MihomoConfigStoreOptions {
    * entirely, the store never applies controlled core settings.
    */
   resolveCore?: () => Promise<CoreSettings>
+  /**
+   * Resolve the controlled mihomo geodata settings to fold into the profile-backed
+   * runtime config. When it returns an `enabled` model, the allowlisted geodata
+   * keys become authoritative (read-back) and override the profile's own values
+   * (conflict handling); when `disabled` the profile is preserved. Omitted
+   * entirely, the store never applies controlled geodata settings.
+   */
+  resolveGeodata?: () => Promise<GeodataSettings>
 }
 
 /**
@@ -132,12 +141,14 @@ export class MihomoKernelConfigStore implements KernelConfigStore {
       const document = await resolve()
       if (document) {
         const core = this.options.resolveCore ? await this.options.resolveCore() : undefined
+        const geodata = this.options.resolveGeodata ? await this.options.resolveGeodata() : undefined
         return {
           text: buildProfileKernelConfig(document, {
             mixedPort: this.options.mixedPort,
             controllerPort: this.options.controllerPort,
             secret,
-            core
+            core,
+            geodata
           }),
           fromProfile: true
         }

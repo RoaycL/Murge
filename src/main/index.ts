@@ -44,6 +44,7 @@ import { OverrideService } from './kernel/overrides/override-service'
 import { DnsEnhancementService } from './kernel/dns/dns-enhancement-service'
 import { SnifferEnhancementService } from './kernel/sniffer/sniffer-enhancement-service'
 import { CoreSettingsService } from './kernel/core-settings-service'
+import { GeodataSettingsService } from './kernel/geodata-settings-service'
 import { UpdateService } from './updates/service'
 import { ElectronUpdaterDriver } from './updates/electron-updater-driver'
 import { TunCoordinator, GatedTunMutationAdapter } from './tun/coordinator'
@@ -487,6 +488,7 @@ app.whenReady().then(async () => {
   const snifferEnhancementService = new SnifferEnhancementService(appDataRoot(app.getPath('appData')))
   const tunConfigService = new TunConfigService(appDataRoot(app.getPath('appData')))
   const coreSettingsService = new CoreSettingsService(appDataRoot(app.getPath('appData')))
+  const geodataSettingsService = new GeodataSettingsService(appDataRoot(app.getPath('appData')))
   const kernelManagerService = new KernelManagerService({
     settings: appSettingsService,
     workspaceRoot: productionKernelRoot
@@ -531,7 +533,9 @@ app.whenReady().then(async () => {
             // are authoritative in the runtime config (read-back) and override
             // the profile's own values (conflict handling); when disabled the
             // profile is preserved.
-            resolveCore: () => coreSettingsService.getRaw()
+            resolveCore: () => coreSettingsService.getRaw(),
+            // Controlled geodata settings: same contract as core settings.
+            resolveGeodata: () => geodataSettingsService.getRaw()
           }),
       adapter: new NodeKernelProcessAdapter(),
       secret: is.dev ? devControllerSecret : productionSecret!
@@ -694,6 +698,7 @@ app.whenReady().then(async () => {
     sniffer: snifferEnhancementService,
     tunConfig: tunConfigService,
     core: coreSettingsService,
+    geodata: geodataSettingsService,
     updates,
     tun: tunGateway
   })

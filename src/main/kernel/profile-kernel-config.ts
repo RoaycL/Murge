@@ -3,6 +3,8 @@ import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
 import { SECRET_PATTERN } from './mihomo-config'
 import type { CoreSettings } from '../../shared/core-settings'
 import { buildCoreSettingsBlock } from '../../shared/core-settings'
+import type { GeodataSettings } from '../../shared/geodata'
+import { buildGeodataBlock } from '../../shared/geodata'
 
 /**
  * Runtime transform for a user-provided mihomo profile.
@@ -49,6 +51,14 @@ export interface ProfileKernelConfigOptions {
    * When `disabled` (or absent) the profile's own keys are preserved.
    */
   core?: CoreSettings
+  /**
+   * Controlled mihomo geodata settings. When the model is `enabled` its
+   * allowlisted geodata keys (geodata-mode, geoip-mode, geo-auto-update,
+   * geo-update-interval and an optional geo-x-url) are authoritative in the
+   * runtime config — overriding what the profile set. When `disabled` (or
+   * absent) the profile's own keys are preserved.
+   */
+  geodata?: GeodataSettings
 }
 
 function invalid(message: string): never {
@@ -192,6 +202,15 @@ export function buildProfileKernelConfig(
   // own values are left untouched.
   if (options.core?.enabled) {
     Object.assign(config, buildCoreSettingsBlock(options.core))
+  }
+
+  // --- Controlled geodata settings (read-back + conflict handling) ---
+  // Same contract as core settings: an enabled model is authoritative for the
+  // geodata keys it owns (geodata-mode, geoip-mode, geo-auto-update,
+  // geo-update-interval, and geo-x-url only when a URL was chosen); disabled
+  // leaves the profile's own values untouched.
+  if (options.geodata?.enabled) {
+    Object.assign(config, buildGeodataBlock(options.geodata))
   }
 
   return stringify(config)

@@ -24,6 +24,7 @@ import type { StartupStatus } from './startup'
 import type { TunStatus } from './tun'
 import type { TunConfigModel, TunConfigSnapshot } from './tun-config'
 import type { CoreSettings } from './core-settings'
+import type { GeodataSettings } from './geodata'
 import type { AppInfo } from './app-info'
 import type { AppSettings } from './app-settings'
 import type { UpdateState } from './updates'
@@ -107,7 +108,10 @@ export const IPC = {
   tunConfigPreview: 'tun-config:preview',
   coreSettingsGet: 'core-settings:get',
   coreSettingsSet: 'core-settings:set',
-  coreSettingsPreview: 'core-settings:preview'
+  coreSettingsPreview: 'core-settings:preview',
+  geodataSettingsGet: 'geodata-settings:get',
+  geodataSettingsSet: 'geodata-settings:set',
+  geodataSettingsPreview: 'geodata-settings:preview'
 } as const
 
 export interface DesktopApi {
@@ -221,5 +225,10 @@ export interface DesktopApi {
     get(): Promise<CoreSettings>
     set(input: CoreSettings): Promise<CoreSettings>
     preview(input: CoreSettings): Promise<string>
+  }
+  geodata: {
+    get(): Promise<GeodataSettings>
+    set(input: GeodataSettings): Promise<GeodataSettings>
+    preview(input: GeodataSettings): Promise<string>
   }
 }

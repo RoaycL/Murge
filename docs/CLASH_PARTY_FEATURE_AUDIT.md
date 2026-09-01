@@ -140,10 +140,22 @@ Rules:
       `tunConfigSchema` at IPC; the `TunConfigPanel.vue` editor on the Config
       page; the `tun-config.json` service and the `buildTunBlock` generator
       folded into the mihomo-owned bootstrap via `readTunConfig`. **The TUN
-      lifecycle/error UI is a separate open item below.**)
-- [ ] TUN lifecycle UI: unsupported, stopped, starting, active, stopping,
+      lifecycle/error UI is the next item below.**)
+- [x] TUN lifecycle UI: unsupported, stopped, starting, active, stopping,
       restoring, restore-failed, conflict and failed; add retry and emergency
       disable without depending on a responsive renderer.
+      (Shipped at **v0.1.17**, marked `implementation-complete /
+      runtime-unverified` — pinned to the `TunPhase` enum so `stopped`/`stopping`
+      map to `configured`/a paused coordinator; `TunLifecyclePanel.vue` on the
+      Config page renders the phase via `TUN_UI_COPY`, surfaces
+      `errorMessage`/`conflictDetail`, derives enable-only-from-`configured`/
+      `failed` (retry) and disable-while-networking-owned gating from the pure
+      `src/renderer/src/lib/tun-lifecycle.ts` helper, and the `tun` Pinia store
+      mirrors coordinator status via `connect`/`disconnect` while capturing
+      action errors with `toProtocolError`. The renderer never elevates: disable
+      routes to the coordinator's `emergencyDisable`, which stays callable
+      without a renderer. Non-Windows/dev builds render `unsupported`; not a
+      release TUN enablement.)
 - [ ] Wire TUN only through the existing privileged service/named pipe,
       integrity checks, coordinator and mutation journal. Do not elevate the
       Electron renderer and do not allow the subscription to become a second

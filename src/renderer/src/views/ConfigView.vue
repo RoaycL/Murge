@@ -7,6 +7,7 @@ import OverridesPanel from '../components/OverridesPanel.vue'
 import DnsSettingsPanel from '../components/DnsSettingsPanel.vue'
 import SnifferSettingsPanel from '../components/SnifferSettingsPanel.vue'
 import TunConfigPanel from '../components/TunConfigPanel.vue'
+import TunLifecyclePanel from '../components/TunLifecyclePanel.vue'
 import type { ValidationResult } from '@shared/profiles'
 
 const profilesStore = useProfilesStore()
@@ -452,6 +453,7 @@ const hasResources = computed(
     <dns-settings-panel />
     <sniffer-settings-panel />
     <tun-config-panel />
+    <tun-lifecycle-panel />
   </div>
 </template>
 

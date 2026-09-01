@@ -476,13 +476,27 @@ excluded or unproven feature appear supported in an existing release.
       folded into `generateMihomoTunConfig` *only* for the owned bootstrap —
       `buildProfileKernelConfig` still drops `tun`, so the model never mutates a
       subscription profile. The renderer exposes it as a `TunConfigPanel` on the
-      Config page with a YAML preview. **The TUN lifecycle/status UI remains the
-      next item below.** Because TUN is not release-supported until exact
+      Config page with a YAML preview. **The TUN lifecycle/status UI is the next
+      item below.** Because TUN is not release-supported until exact
       restoration and recovery evidence passes, this is **not** a release TUN
       enablement.)
-- [ ] Complete TUN lifecycle/error UI for unsupported, stopped, starting,
-      active, stopping, restoring, restore-failed, conflict and failed states,
-      including retry and renderer-independent emergency disable.
+- [x] Complete TUN lifecycle/error UI for the reported phase set (configured/
+      unsupported/support-not-met, starting/active, restoring, failed,
+      restore-failed and conflict) including retry and renderer-independent
+      emergency disable. (A `TunLifecyclePanel` on the Config page renders the
+      phase via `TUN_UI_COPY`, surfaces `errorMessage`/`conflictDetail`, and
+      derives enable/disable gating from a pure `tun-lifecycle` helper — enable
+      only from `configured`/`failed` (retry), disable/restore while TUN owns
+      networking or is mid-rollback, and both withheld on `unsupported` or while
+      an action is in flight. The `tun` Pinia store mirrors the coordinator over
+      `tun:status-event` with `connect`/`disconnect` and captures action errors
+      via `toProtocolError`; the renderer never elevates (disable routes to the
+      coordinator's `emergencyDisable`, which stays callable without a
+      renderer). Because the ipc handler only ever surfaces phases that exist in
+      the `TunPhase` enum, the roadmap's earlier `stopped`/`stopping` wording
+      maps to `configured`/a paused coordinator. **implementation-complete /
+      runtime-unverified** — the UI renders `unsupported` on non-Windows/dev
+      builds and is not a release TUN enablement.)
 - [ ] Finish all DNS/sniffer/TUN schemas, IPC/preload gateways, Pinia stores,
       fixtures, config generation, parse-back assertions, unit tests and
       network-silent integration tests before real-machine validation.

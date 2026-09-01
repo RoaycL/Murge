@@ -1,6 +1,16 @@
+import { createRequire } from 'node:module'
 import { app, Notification } from 'electron'
-import { autoUpdater } from 'electron-updater'
 import type { UpdaterDriver, UpdaterDriverEvent } from './updater-driver'
+
+// `electron-updater` is a CommonJS module. The bundled main process runs as ESM
+// (`"type": "module"`), and a bare `import { autoUpdater } from 'electron-updater'`
+// fails at runtime because Node's ESM/CJS interop cannot synthesize the named
+// export — the packaged app crashes on launch with
+// `SyntaxError: Named export 'autoUpdater' not found`. Loading it through a real
+// CJS `require` (createRequire) sidesteps interop entirely and preserves the
+// `AppUpdater` type via the cast.
+const nativeRequire = createRequire(import.meta.url)
+const { autoUpdater } = nativeRequire('electron-updater') as typeof import('electron-updater')
 
 /**
  * {@link UpdaterDriver} backed by electron-updater's platform `autoUpdater`.

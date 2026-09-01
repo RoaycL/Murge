@@ -395,6 +395,27 @@ jobs:
           Write-Host "ProductName=$($version.ProductName) ProductVersion=$($version.ProductVersion)"
           if ($version.ProductName -ne $env:PRODUCT_NAME) { throw "installed ProductName '$($version.ProductName)' != '$env:PRODUCT_NAME'" }
 
+          # Ground truth: can the installed binary initialize as Electron AT ALL,
+          # independent of the app's main script? `--version` is handled in
+          # Electron's C++ entry before any of our JS runs, needs no display, and
+          # exits immediately. If it hangs, Electron cannot boot on this runner
+          # (environmental, not app code). If it returns a version, the binary is
+          # fine and the smoke hang is in loading app.asar / the main script.
+          $verOut = Join-Path $env:RUNNER_TEMP 'electron-version.out.txt'
+          $verErr = Join-Path $env:RUNNER_TEMP 'electron-version.err.txt'
+          $verProc = Start-Process -FilePath $exe -ArgumentList '--version' -PassThru `
+            -RedirectStandardOutput $verOut -RedirectStandardError $verErr
+          if (-not $verProc.WaitForExit(30000)) {
+            Write-Host '=== electron --version TIMED OUT (30s): Electron cannot even initialize ==='
+            Write-Host '--- ver stdout ---'; if (Test-Path $verOut) { Get-Content $verOut -Tail 20 }
+            Write-Host '--- ver stderr ---'; if (Test-Path $verErr) { Get-Content $verErr -Tail 40 }
+            & taskkill.exe /PID $verProc.Id /T /F 2>$null | Out-Null
+            throw 'electron --version timed out: Electron cannot initialize on this runner'
+          }
+          Write-Host "electron --version exit code: $($verProc.ExitCode)"
+          Write-Host '--- electron --version stdout ---'; if (Test-Path $verOut) { Get-Content $verOut -Tail 20 }
+          Write-Host '--- electron --version stderr ---'; if (Test-Path $verErr) { Get-Content $verErr -Tail 40 }
+
           $serviceTemplate = Get-Content (Join-Path $installDir 'resources\tun-service\service-template.json') -Raw | ConvertFrom-Json
           $tunService = Get-Service -Name $serviceTemplate.serviceName -ErrorAction Stop
           if ($tunService.Status -ne 'Running') { throw "TUN service is not running after install: $($tunService.Status)" }

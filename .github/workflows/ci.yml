@@ -395,26 +395,36 @@ jobs:
           Write-Host "ProductName=$($version.ProductName) ProductVersion=$($version.ProductVersion)"
           if ($version.ProductName -ne $env:PRODUCT_NAME) { throw "installed ProductName '$($version.ProductName)' != '$env:PRODUCT_NAME'" }
 
-          # Ground truth: can the installed binary initialize as Electron AT ALL,
-          # independent of the app's main script? `--version` is handled in
-          # Electron's C++ entry before any of our JS runs, needs no display, and
-          # exits immediately. If it hangs, Electron cannot boot on this runner
-          # (environmental, not app code). If it returns a version, the binary is
-          # fine and the smoke hang is in loading app.asar / the main script.
-          $verOut = Join-Path $env:RUNNER_TEMP 'electron-version.out.txt'
-          $verErr = Join-Path $env:RUNNER_TEMP 'electron-version.err.txt'
-          $verProc = Start-Process -FilePath $exe -ArgumentList '--version' -PassThru `
-            -RedirectStandardOutput $verOut -RedirectStandardError $verErr
-          if (-not $verProc.WaitForExit(30000)) {
-            Write-Host '=== electron --version TIMED OUT (30s): Electron cannot even initialize ==='
-            Write-Host '--- ver stdout ---'; if (Test-Path $verOut) { Get-Content $verOut -Tail 20 }
-            Write-Host '--- ver stderr ---'; if (Test-Path $verErr) { Get-Content $verErr -Tail 40 }
-            & taskkill.exe /PID $verProc.Id /T /F 2>$null | Out-Null
-            throw 'electron --version timed out: Electron cannot initialize on this runner'
+          # Ground truth: can the installed binary execute our JS at all? Run it as
+          # plain Node via ELECTRON_RUN_AS_NODE=1, which bypasses Chromium, GPU,
+          # the display and app.asar entirely and just evaluates a tiny script. If
+          # it prints + writes a sentinel + exits, the binary and all its bundled
+          # deps are healthy and the smoke hang lives in Electron/Chromium init
+          # (environmental, not app code). If this also hangs, the binary itself
+          # cannot run on this runner.
+          $nodeScript = Join-Path $env:RUNNER_TEMP 'electron-node-probe.js'
+          $nodeSentinel = Join-Path $env:RUNNER_TEMP 'electron-node-sentinel.txt'
+          Set-Content -Path $nodeScript -Value 'const fs=require("fs");fs.writeFileSync(process.env.RUNNER_TEMP+"/electron-node-sentinel.txt","ok");console.log("ELECTRON_RUN_AS_NODE_OK");process.exit(0)' -Encoding utf8
+          $nodeOut = Join-Path $env:RUNNER_TEMP 'electron-node.out.txt'
+          $nodeErr = Join-Path $env:RUNNER_TEMP 'electron-node.err.txt'
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          try {
+            $nodeProc = Start-Process -FilePath $exe -ArgumentList $nodeScript -PassThru `
+              -RedirectStandardOutput $nodeOut -RedirectStandardError $nodeErr
+            if (-not $nodeProc.WaitForExit(30000)) {
+              Write-Host '=== ELECTRON_RUN_AS_NODE TIMED OUT (30s): binary cannot run even as Node ==='
+              Write-Host '--- node stdout ---'; if (Test-Path $nodeOut) { Get-Content $nodeOut -Tail 20 }
+              Write-Host '--- node stderr ---'; if (Test-Path $nodeErr) { Get-Content $nodeErr -Tail 60 }
+              & taskkill.exe /PID $nodeProc.Id /T /F 2>$null | Out-Null
+              throw 'ELECTRON_RUN_AS_NODE timed out: binary cannot run as Node on this runner'
+            }
+            Write-Host "ELECTRON_RUN_AS_NODE exit code: $($nodeProc.ExitCode)"
+            Write-Host "node sentinel written: $(Test-Path $nodeSentinel)"
+            Write-Host '--- node stdout ---'; if (Test-Path $nodeOut) { Get-Content $nodeOut -Tail 20 }
+            Write-Host '--- node stderr ---'; if (Test-Path $nodeErr) { Get-Content $nodeErr -Tail 60 }
+          } finally {
+            Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
           }
-          Write-Host "electron --version exit code: $($verProc.ExitCode)"
-          Write-Host '--- electron --version stdout ---'; if (Test-Path $verOut) { Get-Content $verOut -Tail 20 }
-          Write-Host '--- electron --version stderr ---'; if (Test-Path $verErr) { Get-Content $verErr -Tail 40 }
 
           $serviceTemplate = Get-Content (Join-Path $installDir 'resources\tun-service\service-template.json') -Raw | ConvertFrom-Json
           $tunService = Get-Service -Name $serviceTemplate.serviceName -ErrorAction Stop

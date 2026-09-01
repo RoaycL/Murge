@@ -4,6 +4,7 @@ import SpeedSparkline from '../components/SpeedSparkline.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 import UsageHistoryPanel from '../components/UsageHistoryPanel.vue'
 import NetworkMetadataPanel from '../components/NetworkMetadataPanel.vue'
+import TopologyPanel from '../components/TopologyPanel.vue'
 import { useTrafficStore } from '../stores/traffic'
 import { useConnectionsStore } from '../stores/connections'
 import { useRuntimeStore } from '../stores/runtime'
@@ -161,6 +162,7 @@ const chartBars = computed<number[]>(() => {
 
       <UsageHistoryPanel class="usage-history-card" />
       <NetworkMetadataPanel class="network-metadata-card" />
+      <TopologyPanel class="topology-card" />
     </section>
   </div>
 </template>
@@ -184,6 +186,11 @@ const chartBars = computed<number[]>(() => {
   width: 709px;
 }
 .network-metadata-card {
+  grid-column: 1 / -1;
+  padding: 15px 16px;
+  width: 709px;
+}
+.topology-card {
   grid-column: 1 / -1;
   padding: 15px 16px;
   width: 709px;

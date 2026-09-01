@@ -546,7 +546,7 @@ excluded or unproven feature appear supported in an existing release.
 - [x] Enhance live connections with totals, deterministic sorting and confirmed
       batch close. (Implemented in the renderer store/page and covered by store
       tests; batch actions reuse per-id controller read-back confirmation.)
-- [ ] Add bounded usage history, network metadata and read-only topology without
+- [x] Add bounded usage history, network metadata and read-only topology without
       persisting credentials or raw profiles.
       (Sub-feature 1/3 — bounded usage history — implemented & tested: the main
       process records the `/traffic` stream into an hourly byte bucket database,
@@ -565,7 +565,7 @@ excluded or unproven feature appear supported in an existing release.
       a copy action and a refresh action; the activity header reads this single
       source. Only public egress aggregate metadata is ever kept — no
       credentials, hosts or raw profiles. Released in v0.1.23.)
-      (Sub-feature 3/3 — read-only topology — pending.)
+      (Sub-feature 3/3 — read-only topology — done; derived, labels incomplete mihomo data.)
 - [ ] Preserve structured error details/operation across IPC.
 - [ ] Keep DNS/sniffer/TUN marked `implementation-complete / runtime-unverified`
       until the Windows evidence matrix passes; never mark an unexecuted test as

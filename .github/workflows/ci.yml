@@ -447,6 +447,7 @@ jobs:
           $sentinel = Join-Path $sentinelRoot '.packaging-smoke-sentinel'
           $smokeArgv = Join-Path $env:RUNNER_TEMP 'murge-argv.json'
           $bootMarker = Join-Path $env:TEMP 'murge-boot-marker.json'
+          $bootMarkerRun = Join-Path $env:RUNNER_TEMP 'murge-boot-marker.json'
           $bootMarkerCwd = Join-Path $PWD 'murge-boot-marker.json'
           # GPU/display bootstrap switches: headless Windows runners can stall in
           # Chromium GPU init before the main script even runs. These are consumed
@@ -457,6 +458,7 @@ jobs:
           $env:MURGE_CI_BOOT_DIAG_PATH = $smokeArgv
           try {
             $smoke = Start-Process -FilePath $exe -ArgumentList $smokeArgs -PassThru `
+              -WorkingDirectory $installDir `
               -RedirectStandardOutput $smokeOut -RedirectStandardError $smokeErr
           } finally {
             Remove-Item Env:MURGE_CI_BOOT_FLAGS -ErrorAction SilentlyContinue
@@ -470,8 +472,10 @@ jobs:
             Write-Host "argv diag present: $(Test-Path $smokeArgv)"
             if (Test-Path $smokeArgv) { Get-Content $smokeArgv -Tail 40 }
             Write-Host "boot marker (temp) present: $(Test-Path $bootMarker)"
+            Write-Host "boot marker (runner temp) present: $(Test-Path $bootMarkerRun)"
             Write-Host "boot marker (cwd) present: $(Test-Path $bootMarkerCwd)"
             if (Test-Path $bootMarkerCwd) { Get-Content $bootMarkerCwd -Tail 40 }
+            elseif (Test-Path $bootMarkerRun) { Get-Content $bootMarkerRun -Tail 40 }
             elseif (Test-Path $bootMarker) { Get-Content $bootMarker -Tail 40 }
             & taskkill.exe /PID $smoke.Id /T /F 2>$null | Out-Null
             throw 'packaging smoke timed out (see captured output above)'

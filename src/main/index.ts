@@ -70,11 +70,13 @@ const devControllerSecret = process.env.MURGE_DEV_SECRET ?? ''
 // main script executes.
 try {
   const marker = JSON.stringify({ argv: process.argv, cwd: process.cwd(), ts: Date.now() }, null, 2)
-  writeFileSync(join(tmpdir(), 'murge-boot-marker.json'), marker)
-  try {
-    writeFileSync(join(process.cwd(), 'murge-boot-marker.json'), marker)
-  } catch {
-    /* cwd may not be writable; temp marker is enough */
+  // GHA sets RUNNER_TEMP identically for the whole job and children inherit it,
+  // so it is the one path the workflow can observe regardless of elevated/user
+  // context. Write there first; also mirror to the OS temp and cwd as fallbacks.
+  const targets = [process.env.RUNNER_TEMP, process.env.TEMP, tmpdir(), process.cwd()]
+    .filter((p): p is string => typeof p === 'string' && p.length > 0)
+  for (const dir of targets) {
+    try { writeFileSync(join(dir, 'murge-boot-marker.json'), marker) } catch { /* best effort */ }
   }
 } catch {
   /* diagnostics must never break the app */

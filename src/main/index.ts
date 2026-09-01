@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 import { writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { writeFile } from 'node:fs/promises'
 import { app, BrowserWindow, dialog, shell } from 'electron'
 import { is } from '@electron-toolkit/utils'
@@ -61,6 +62,23 @@ import type { TunGateway, TunStatus } from '../shared/tun'
 
 const devControllerUrl = process.env.MURGE_DEV_CONTROLLER ?? 'http://127.0.0.1:9090'
 const devControllerSecret = process.env.MURGE_DEV_SECRET ?? ''
+
+// DIAGNOSTIC (one-cycle): write an UNCONDITIONAL boot marker to the OS temp dir
+// the instant the main module is evaluated — no argv or env gate — so a CI run
+// can prove whether Electron ever ran the app's main script and capture the
+// exact argv it received. If this file is absent, Electron stalls before the
+// main script executes.
+try {
+  const marker = JSON.stringify({ argv: process.argv, cwd: process.cwd(), ts: Date.now() }, null, 2)
+  writeFileSync(join(tmpdir(), 'murge-boot-marker.json'), marker)
+  try {
+    writeFileSync(join(process.cwd(), 'murge-boot-marker.json'), marker)
+  } catch {
+    /* cwd may not be writable; temp marker is enough */
+  }
+} catch {
+  /* diagnostics must never break the app */
+}
 
 // CI-only flag routing. The `package-win` workflow launches the packaged app on
 // a headless Windows runner and passes its direction on the command line (e.g.

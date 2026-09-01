@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { StaticSystemProxyProbe, LiveSystemProxyKernelProbe } from './probe'
 import { FileSystemProxyBackupStore, InMemorySystemProxyBackupStore } from './backup-store'
+import { FileSystemProxyBypassStore, InMemoryProxyBypassStore } from './proxy-bypass-store'
+import type { ProxyBypassStore } from './proxy-bypass-store'
 import { SystemProxyService } from './service'
 import { FakeSystemProxyAdapter } from './adapters/fake-adapter'
 import { DisabledSystemProxyAdapter } from './adapters/disabled-adapter'
@@ -29,6 +31,7 @@ export interface CreateSystemProxyOptions {
   adapter?: SystemProxyAdapter
   probe?: SystemProxyKernelProbe
   backup?: SystemProxyBackupStore
+  proxyBypassStore?: ProxyBypassStore
 }
 
 /**
@@ -37,7 +40,9 @@ export interface CreateSystemProxyOptions {
  * Production on Windows uses the real registry adapter plus a live kernel probe
  * and the durable file-backed backup store. Anything else must never mutate the
  * real network, so the dev build gets a fake adapter, a static probe and an
- * in-memory backup store.
+ * in-memory backup store. The controlled proxy-bypass policy is persisted to
+ * disk in production (so an edited custom bypass list survives a restart) and
+ * kept in-memory in dev.
  */
 export function createSystemProxy(options: CreateSystemProxyOptions): SystemProxyService {
   const instanceId = options.instanceId ?? randomUUID()
@@ -52,5 +57,8 @@ export function createSystemProxy(options: CreateSystemProxyOptions): SystemProx
     options.probe ??
     (options.isDev ? new StaticSystemProxyProbe() : new LiveSystemProxyKernelProbe(options.kernel, options.mihomo))
   const backup = options.backup ?? (options.isDev ? new InMemorySystemProxyBackupStore() : FileSystemProxyBackupStore.forAppDataBase(options.appDataBase))
-  return new SystemProxyService({ adapter, probe, backup, instanceId })
+  const proxyBypassStore =
+    options.proxyBypassStore ??
+    (options.isDev ? new InMemoryProxyBypassStore() : FileSystemProxyBypassStore.forAppDataBase(options.appDataBase))
+  return new SystemProxyService({ adapter, probe, backup, proxyBypassStore, instanceId })
 }

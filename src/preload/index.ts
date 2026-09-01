@@ -84,7 +84,10 @@ const api: DesktopApi = {
     getStatus: () => invoke(IPC.systemProxyGetStatus),
     enable: () => invoke(IPC.systemProxyEnable),
     disable: () => invoke(IPC.systemProxyDisable),
-    onStatus: (listener) => listen(IPC.systemProxyStatusEvent, listener)
+    onStatus: (listener) => listen(IPC.systemProxyStatusEvent, listener),
+    getProxyBypass: () => invoke(IPC.systemProxyGetProxyBypass),
+    setProxyBypass: (input) => invoke(IPC.systemProxySetProxyBypass, input),
+    previewProxyBypass: (input) => invoke(IPC.systemProxyPreviewProxyBypass, input)
   },
   startup: {
     getStatus: () => invoke(IPC.startupGetStatus),

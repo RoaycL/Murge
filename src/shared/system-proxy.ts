@@ -33,6 +33,13 @@ export interface SystemProxyStatus {
   address: string | null
   /** The controller mixed-port, while enabled, else null. */
   port: number | null
+  /**
+   * The `ProxyOverride` value the app most recently wrote while enabled (or
+   * observed, when the phase is `conflict`), else null. This is the verified
+   * read-back of the bypass list so the renderer can show what is actually
+   * applied without touching the registry.
+   */
+  proxyOverride: string | null
   /** Human readable (usually Chinese) error detail for the current phase. */
   errorMessage: string | null
   /** Extra detail for a conflict phase (which value was mutated). */

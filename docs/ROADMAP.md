@@ -515,7 +515,7 @@ excluded or unproven feature appear supported in an existing release.
       `redir-port`/`tproxy-port`, `dns.listen` stripped, no `0.0.0.0` bind
       anywhere) and round-trips cleanly through `profileKernelConfigErrors`
       while preserving the model's DNS/Sniffer values and profile-only keys.)
-- [ ] Complete controlled core settings, geodata resources and proxy-bypass
+- [x] Complete controlled core settings, geodata resources and proxy-bypass
       policy with read-back and conflict handling.
       (Sub-feature 1/3 — controlled core settings — implemented & tested:
       the `CoreSettings` model is authoritative when `enabled`, the allowlisted
@@ -531,8 +531,18 @@ excluded or unproven feature appear supported in an existing release.
       untouched rather than wiping it. Disabled preserves the profile. Released
       in v0.1.20. The geodata *source registry* (HTTPS allowlist, hashes, atomic
       replacement, manual refresh, bounded scheduling) is a separate P2 resource
-      concern and is NOT part of this controlled-settings model. Proxy-bypass
-      policy remains.)
+      concern and is NOT part of this controlled-settings model.)
+      (Sub-feature 3/3 — controlled proxy-bypass policy — implemented & tested:
+      the `ProxyBypassPolicy` model is authoritative for the written
+      `ProxyOverride` when `enabled` (mandatory local/private bypass entries
+      merged with the user's `customEntries`, conflict handling), while a
+      disabled policy preserves the OS's existing bypass list and never drops a
+      user's entries (read-back through the `proxyOverride` status field).
+      Editing the policy while enabled re-applies it live with conflict +
+      read-back verification, and the pre-enable `ProxyOverride` is always
+      restored verbatim on disable (exact restore) no matter how often the list
+      was edited. The policy persists across restarts in production. Released in
+      v0.1.21.)
 - [x] Enhance live connections with totals, deterministic sorting and confirmed
       batch close. (Implemented in the renderer store/page and covered by store
       tests; batch actions reuse per-id controller read-back confirmation.)

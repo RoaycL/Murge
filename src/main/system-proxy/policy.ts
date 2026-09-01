@@ -1,4 +1,6 @@
 import { SYSTEM_PROXY_LOOPBACK_HOST } from '../../shared/system-proxy'
+import { DEFAULT_LOCAL_BYPASS_ENTRIES } from '../../shared/proxy-bypass'
+import type { ProxyBypassPolicy } from '../../shared/proxy-bypass'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
 import type {
   RegistryValue,
@@ -33,7 +35,7 @@ export function buildProxyServerValue(target: SystemProxyTarget): string {
 }
 
 /** Local/private destinations that must never be proxied. */
-const LOCAL_BYPASS_ENTRIES = ['<local>', 'localhost', '127.*', '10.*', '172.16.*', '192.168.*'] as const
+export const LOCAL_BYPASS_ENTRIES: readonly string[] = DEFAULT_LOCAL_BYPASS_ENTRIES
 
 /**
  * Build the `ProxyOverride` value we write while enabled.
@@ -44,15 +46,39 @@ const LOCAL_BYPASS_ENTRIES = ['<local>', 'localhost', '127.*', '10.*', '172.16.*
  * restored verbatim on `disable()`.
  */
 export function mergeProxyOverride(original: string | null | undefined): string {
-  const merged = new Set<string>(LOCAL_BYPASS_ENTRIES)
-  if (typeof original === 'string' && original.length > 0) {
-    for (const entry of original.split(';')) {
-      const trimmed = entry.trim()
-      if (trimmed.length === 0) continue
-      merged.add(trimmed)
-    }
+  return mergeBypassEntries(original?.split(';') ?? [])
+}
+
+/**
+ * Build the `ProxyOverride` value from an authoritative user policy: the
+ * mandatory local bypass list (always present, for safety) merged with the
+ * user's custom entries, de-duplicated. This is the "controlled" path used when
+ * {@link ProxyBypassPolicy.enabled} is true.
+ */
+export function mergeLocalBypass(customEntries: readonly string[]): string {
+  return mergeBypassEntries(customEntries)
+}
+
+function mergeBypassEntries(entries: readonly string[]): string {
+  const merged = new Set<string>(DEFAULT_LOCAL_BYPASS_ENTRIES)
+  for (const entry of entries) {
+    const trimmed = entry.trim()
+    if (trimmed.length === 0) continue
+    merged.add(trimmed)
   }
   return Array.from(merged).join(';')
+}
+
+/**
+ * Resolve the `ProxyOverride` value the app should write given the controlled
+ * policy, the current OS `ProxyOverride`, and the mandated local entries. An
+ * `enabled` policy is authoritative for the custom section (local + custom);
+ * a disabled / absent policy preserves whatever the OS already had (local +
+ * existing) so no existing bypass is ever dropped.
+ */
+export function resolveProxyOverride(policy: ProxyBypassPolicy | undefined, original: string | null | undefined): string {
+  if (policy?.enabled) return mergeLocalBypass(policy.customEntries)
+  return mergeProxyOverride(original)
 }
 
 /** The raw registry types we can faithfully restore via `reg.exe`. */
@@ -65,12 +91,17 @@ function isRestorableType(type: RegistryValue['type']): boolean {
 /** Build the value set the app owns while the system proxy is enabled. */
 export function buildWrittenState(
   target: SystemProxyTarget,
-  observed: SystemProxyRegistryState
+  observed: SystemProxyRegistryState,
+  policy?: ProxyBypassPolicy
 ): SystemProxyWrittenState {
   return {
     proxyEnable: { exists: true, type: 'REG_DWORD', value: 1 },
     proxyServer: { exists: true, type: 'REG_SZ', value: buildProxyServerValue(target) },
-    proxyOverride: { exists: true, type: 'REG_SZ', value: mergeProxyOverride(observed.proxyOverride.value as string | null) }
+    proxyOverride: {
+      exists: true,
+      type: 'REG_SZ',
+      value: resolveProxyOverride(policy, observed.proxyOverride.value as string | null)
+    }
   }
 }
 

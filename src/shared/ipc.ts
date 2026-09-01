@@ -20,6 +20,7 @@ import type { DnsEnhancement, DnsSnapshot } from './dns'
 import type { SnifferEnhancement, SnifferSnapshot } from './sniffer'
 import type { KernelStatus, RuntimeSummary, TrafficSample } from './runtime'
 import type { SystemProxyStatus } from './system-proxy'
+import type { ProxyBypassPolicy } from './proxy-bypass'
 import type { StartupStatus } from './startup'
 import type { TunStatus } from './tun'
 import type { TunConfigModel, TunConfigSnapshot } from './tun-config'
@@ -78,6 +79,9 @@ export const IPC = {
   systemProxyEnable: 'system-proxy:enable',
   systemProxyDisable: 'system-proxy:disable',
   systemProxyStatusEvent: 'system-proxy:status-event',
+  systemProxyGetProxyBypass: 'system-proxy:get-proxy-bypass',
+  systemProxySetProxyBypass: 'system-proxy:set-proxy-bypass',
+  systemProxyPreviewProxyBypass: 'system-proxy:preview-proxy-bypass',
   startupGetStatus: 'startup:get-status',
   startupSetEnabled: 'startup:set-enabled',
   appSettingsGet: 'app-settings:get',
@@ -176,6 +180,9 @@ export interface DesktopApi {
     enable(): Promise<SystemProxyStatus>
     disable(): Promise<SystemProxyStatus>
     onStatus(listener: (status: SystemProxyStatus) => void): () => void
+    getProxyBypass(): Promise<ProxyBypassPolicy>
+    setProxyBypass(input: ProxyBypassPolicy): Promise<ProxyBypassPolicy>
+    previewProxyBypass(input: ProxyBypassPolicy): Promise<string>
   }
   startup: {
     getStatus(): Promise<StartupStatus>

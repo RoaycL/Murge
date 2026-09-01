@@ -9,6 +9,8 @@ import type { TunConfigModel } from '../tun-config'
 import { isValidDnsHijackEntry, isValidTunDevice, isValidTunMtu, isValidTunRouteAddress } from '../tun-config'
 import type { CoreSettings } from '../core-settings'
 import type { GeodataSettings } from '../geodata'
+import type { ProxyBypassPolicy } from '../proxy-bypass'
+import { MAX_CUSTOM_BYPASS_ENTRIES, MAX_CUSTOM_BYPASS_ENTRY_LENGTH } from '../proxy-bypass'
 import { ProtocolError, ProtocolErrorCode } from '../protocol-errors'
 import { logLevelSchema } from './log-level'
 
@@ -454,4 +456,36 @@ export function parseGeodataSettings(input: unknown): GeodataSettings {
     throw invalid(`invalid geodata settings at ${detail?.path.join('.') || 'geodata'}: ${detail?.message}`)
   }
   return parsed.data
+}
+
+/**
+ * Renderer-sent controlled proxy-bypass model. `enabled` must be a boolean,
+ * `customEntries` a bounded list of non-empty (after trim), length-capped tokens;
+ * unknown keys are rejected so an invalid model can never override the OS
+ * `ProxyOverride` or be persisted.
+ */
+const proxyBypassPolicySchema = z
+  .object({
+    enabled: z.boolean(),
+    customEntries: z
+      .array(z.string().trim().min(1).max(MAX_CUSTOM_BYPASS_ENTRY_LENGTH))
+      .max(MAX_CUSTOM_BYPASS_ENTRIES)
+  })
+  .strict()
+
+export function parseProxyBypassPolicy(input: unknown): ProxyBypassPolicy {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    throw invalid('proxy bypass policy must be an object')
+  }
+  const parsed = proxyBypassPolicySchema.safeParse(input)
+  if (!parsed.success) {
+    const detail = parsed.error.issues[0]
+    throw invalid(
+      `invalid proxy bypass policy at ${detail?.path.join('.') || 'proxy-bypass'}: ${detail?.message}`
+    )
+  }
+  return {
+    enabled: parsed.data.enabled,
+    customEntries: parsed.data.customEntries.map((entry) => entry.trim()).filter((entry) => entry.length > 0)
+  }
 }

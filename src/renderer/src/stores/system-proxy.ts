@@ -15,6 +15,7 @@ export const useSystemProxyStore = defineStore('system-proxy', () => {
     phase: 'disabled',
     address: null,
     port: null,
+    proxyOverride: null,
     errorMessage: null,
     conflictDetail: null,
     updatedAt: null

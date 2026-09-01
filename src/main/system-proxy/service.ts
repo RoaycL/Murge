@@ -1,5 +1,7 @@
 import type { SystemProxyStatus, SystemProxyPhase } from '../../shared/system-proxy'
 import type { SystemProxyGateway } from '../../shared/gateways'
+import type { ProxyBypassPolicy } from '../../shared/proxy-bypass'
+import { coerceProxyBypassPolicy } from '../../shared/proxy-bypass'
 import { ProtocolError, ProtocolErrorCode, toProtocolError } from '../../shared/protocol-errors'
 import { parseSystemProxyStatus } from '../../shared/schemas/system-proxy'
 import { SYSTEM_PROXY_BACKUP_SCHEMA_VERSION } from './backup-store'
@@ -9,14 +11,18 @@ import {
   formatAddress,
   isOwned,
   matchesPrevious,
+  resolveProxyOverride,
   validateRestorable,
   validateTarget
 } from './policy'
+import type { ProxyBypassStore } from './proxy-bypass-store'
+import { InMemoryProxyBypassStore } from './proxy-bypass-store'
 import type {
   SystemProxyAdapter,
   SystemProxyBackup,
   SystemProxyBackupStore,
   SystemProxyKernelProbe,
+  SystemProxyRegistryState,
   SystemProxyTarget
 } from './types'
 
@@ -27,6 +33,8 @@ export interface SystemProxyServiceOptions {
   probe: SystemProxyKernelProbe
   backup: SystemProxyBackupStore
   instanceId: string
+  /** Controlled proxy-bypass policy store. Defaults to an in-memory (non-persistent) store. */
+  proxyBypassStore?: ProxyBypassStore
 }
 
 const NOT_SUPPORTED_MSG = '当前平台不支持系统代理'
@@ -45,6 +53,7 @@ export class SystemProxyService implements SystemProxyGateway {
   private readonly adapter: SystemProxyAdapter
   private readonly probe: SystemProxyKernelProbe
   private readonly backup: SystemProxyBackupStore
+  private readonly proxyBypass: ProxyBypassStore
   private readonly instanceId: string
   private readonly listeners = new Set<SystemProxyListener>()
   private current: SystemProxyStatus
@@ -54,6 +63,7 @@ export class SystemProxyService implements SystemProxyGateway {
     this.adapter = options.adapter
     this.probe = options.probe
     this.backup = options.backup
+    this.proxyBypass = options.proxyBypassStore ?? new InMemoryProxyBypassStore()
     this.instanceId = options.instanceId
     this.current = this.buildStatus(this.adapter.supported ? 'disabled' : 'unsupported')
   }
@@ -143,7 +153,8 @@ export class SystemProxyService implements SystemProxyGateway {
         if (isOwned(observed, existing.written)) {
           return this.transition('enabled', {
             address: formatAddress(existing.target),
-            port: existing.target.port
+            port: existing.target.port,
+            proxyOverride: existing.written.proxyOverride.value as string
           })
         }
         const detail = conflictDetail(observed, existing.written)
@@ -153,10 +164,12 @@ export class SystemProxyService implements SystemProxyGateway {
       // Fresh enable: snapshot the pre-enable registry, persist the owned bundle
       // BEFORE applying so a crash mid-apply is recoverable next launch. Refuse
       // up front if the pre-enable state holds a value we could not faithfully
-      // restore — never enable on an un-restorable state.
+      // restore — never enable on an un-restorable state. The controlled proxy-
+      // bypass policy is authoritative for the `ProxyOverride` we write.
       const observed = await this.adapter.read()
       validateRestorable(observed)
-      const written = buildWrittenState(target, observed)
+      const policy = await this.proxyBypass.read()
+      const written = buildWrittenState(target, observed, policy)
       const bundle: SystemProxyBackup = {
         schemaVersion: SYSTEM_PROXY_BACKUP_SCHEMA_VERSION,
         instanceId: this.instanceId,
@@ -192,7 +205,83 @@ export class SystemProxyService implements SystemProxyGateway {
         return this.fail('disabled', ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED, '系统代理启用失败，已还原', null, error)
       }
 
-      return this.transition('enabled', { address: formatAddress(target), port: target.port })
+      return this.transition('enabled', {
+        address: formatAddress(target),
+        port: target.port,
+        proxyOverride: written.proxyOverride.value as string
+      })
+    })
+  }
+
+  async getProxyBypass(): Promise<ProxyBypassPolicy> {
+    return this.serialize(async () => coerceProxyBypassPolicy(await this.proxyBypass.read()))
+  }
+
+  async previewProxyBypass(input: ProxyBypassPolicy): Promise<string> {
+    return this.serialize(async () => {
+      const policy = coerceProxyBypassPolicy(input)
+      if (!this.adapter.supported) return resolveProxyOverride(policy, null)
+      let observed: SystemProxyRegistryState
+      try {
+        observed = await this.adapter.read()
+      } catch {
+        // We cannot read the current override (e.g. registry unavailable), so
+        // fall back to a preview that only reflects the policy + local entries.
+        return resolveProxyOverride(policy, null)
+      }
+      return resolveProxyOverride(policy, observed.proxyOverride.value as string | null)
+    })
+  }
+
+  async setProxyBypass(input: ProxyBypassPolicy): Promise<ProxyBypassPolicy> {
+    const policy = coerceProxyBypassPolicy(input)
+    return this.serialize(async () => {
+      await this.proxyBypass.write(policy)
+      // If the system proxy is currently enabled and we still own it, re-apply the
+      // new ProxyOverride live so the edit takes effect immediately; a conflict is
+      // treated as safe (the OS value is no longer ours) and never overwritten.
+      if (this.current.phase === 'enabled' && this.adapter.supported) {
+        const backup = await this.readBackupForOwnership()
+        if (backup) {
+          const observed = await this.adapter.read()
+          if (!isOwned(observed, backup.written)) {
+            const detail = conflictDetail(observed, backup.written)
+            this.transition('conflict', { errorMessage: CONFLICT_MSG, conflictDetail: detail, proxyOverride: observed.proxyOverride.value as string | null })
+            return policy
+          }
+          const written = buildWrittenState(backup.target, observed, policy)
+          try {
+            await this.adapter.apply(written)
+            await this.adapter.refresh()
+            const readback = await this.adapter.read()
+            if (!isOwned(readback, written)) {
+              throw new Error('read-back mismatch after bypass re-apply')
+            }
+          } catch (error) {
+            // The re-apply could not be confirmed; fall back to the previous
+            // written state so ownership is still provable, and surface the
+            // failure through a status transition + error.
+            await this.adapter.restore(backup.written)
+            await this.adapter.refresh()
+            this.transition('enabled', {
+              address: formatAddress(backup.target),
+              port: backup.target.port,
+              proxyOverride: backup.written.proxyOverride.value as string
+            })
+            throw new ProtocolError(
+              ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED,
+              `应用系统代理绕过策略失败：${error instanceof Error ? error.message : String(error)}`
+            )
+          }
+          await this.backup.write({ ...backup, written })
+          this.transition('enabled', {
+            address: formatAddress(backup.target),
+            port: backup.target.port,
+            proxyOverride: written.proxyOverride.value as string
+          })
+        }
+      }
+      return policy
     })
   }
 
@@ -312,6 +401,7 @@ export class SystemProxyService implements SystemProxyGateway {
       phase,
       address: null,
       port: null,
+      proxyOverride: null,
       errorMessage: null,
       conflictDetail: null,
       updatedAt: new Date().toISOString()

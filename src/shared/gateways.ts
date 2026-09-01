@@ -28,6 +28,7 @@ import type {
 } from './profiles'
 import type { KernelStatus, RuntimeSummary, TrafficSample } from './runtime'
 import type { SystemProxyStatus } from './system-proxy'
+import type { ProxyBypassPolicy } from './proxy-bypass'
 import type { StartupStatus } from './startup'
 import type { AppSettings } from './app-settings'
 import type { TunGateway } from './tun'
@@ -111,6 +112,16 @@ export interface SystemProxyGateway {
   disable(): Promise<SystemProxyStatus>
   /** Subscribe to status transitions; returns an unsubscribe function. */
   onStatus(listener: (status: SystemProxyStatus) => void): () => void
+  /**
+   * The controlled proxy-bypass policy. `get` returns the persisted model;
+   * `set` validates + persists it and, when the system proxy is currently
+   * enabled, re-applies the new `ProxyOverride` live (conflict-checked and
+   * read-back verified); `preview` returns the `ProxyOverride` value that would
+   * be written given the policy and the current registry.
+   */
+  getProxyBypass(): ProxyBypassPolicy | Promise<ProxyBypassPolicy>
+  setProxyBypass(input: ProxyBypassPolicy): Promise<ProxyBypassPolicy>
+  previewProxyBypass(input: ProxyBypassPolicy): Promise<string>
 }
 
 export interface StartupGateway {

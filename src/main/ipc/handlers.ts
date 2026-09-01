@@ -1,6 +1,6 @@
 import { IPC } from '@shared/ipc'
 import type { IpcDeps } from '@shared/gateways'
-import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions, parseStartupEnabled, parseDnsQuery, parseAppSettingsPatch, parseKernelEnabled, parseKernelChannel, parseKernelVersion, parseOverrideInput, parseOverrideId, parseOverrideEnabled, parseOverrideMove, parseDnsEnhancement, parseSnifferEnhancement, parseTunConfig, parseCoreSettings, parseGeodataSettings } from '@shared/schemas/ipc'
+import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions, parseStartupEnabled, parseDnsQuery, parseAppSettingsPatch, parseKernelEnabled, parseKernelChannel, parseKernelVersion, parseOverrideInput, parseOverrideId, parseOverrideEnabled, parseOverrideMove, parseDnsEnhancement, parseSnifferEnhancement, parseTunConfig, parseCoreSettings, parseGeodataSettings, parseProxyBypassPolicy } from '@shared/schemas/ipc'
 import {
   parseConfigEdit,
   parseImportRequest,
@@ -96,6 +96,11 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
       return systemProxy.enable()
     },
     [IPC.systemProxyDisable]: async () => systemProxy.disable(),
+    [IPC.systemProxyGetProxyBypass]: async () => systemProxy.getProxyBypass(),
+    [IPC.systemProxySetProxyBypass]: async (_event, input) =>
+      systemProxy.setProxyBypass(parseProxyBypassPolicy(input)),
+    [IPC.systemProxyPreviewProxyBypass]: async (_event, input) =>
+      systemProxy.previewProxyBypass(parseProxyBypassPolicy(input)),
     [IPC.startupGetStatus]: async () => startup.getStatus(),
     [IPC.startupSetEnabled]: async (_event, enabled) => startup.setEnabled(parseStartupEnabled(enabled)),
     [IPC.appSettingsGet]: async () => appSettings.get(),

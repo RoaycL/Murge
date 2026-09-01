@@ -19,6 +19,13 @@ export const systemProxyStatusSchema = z.object({
   ]),
   address: z.string().nullable(),
   port: z.number().int().min(1).max(65535).nullable(),
+  /**
+   * The `ProxyOverride` value the app most recently wrote while enabled (or
+   * observed, when the phase is `conflict`), else null. This is the verified
+   * read-back of the bypass list so the renderer can show what is actually
+   * applied without touching the registry.
+   */
+  proxyOverride: z.string().nullable(),
   errorMessage: z.string().nullable(),
   conflictDetail: z.string().nullable(),
   updatedAt: z.string().nullable()

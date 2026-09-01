@@ -37,6 +37,8 @@ import type { CoreSettings } from '@shared/core-settings'
 import { coerceCoreSettings, EMPTY_CORE_SETTINGS } from '@shared/core-settings'
 import type { GeodataSettings } from '@shared/geodata'
 import { coerceGeodataSettings, EMPTY_GEODATA_SETTINGS } from '@shared/geodata'
+import type { ProxyBypassPolicy } from '@shared/proxy-bypass'
+import { EMPTY_PROXY_BYPASS_POLICY } from '@shared/proxy-bypass'
 
 /**
  * In-memory fake service container for main-process tests.
@@ -335,6 +337,7 @@ export class FakeSystemProxyGateway implements SystemProxyGateway {
     phase: 'disabled',
     address: null,
     port: null,
+    proxyOverride: null,
     errorMessage: null,
     conflictDetail: null,
     updatedAt: ''
@@ -372,6 +375,25 @@ export class FakeSystemProxyGateway implements SystemProxyGateway {
   emitStatus(status: SystemProxyStatus): void {
     this.status = { ...status }
     for (const listener of this.listeners) listener({ ...status })
+  }
+
+  proxyBypass: ProxyBypassPolicy = { ...EMPTY_PROXY_BYPASS_POLICY }
+  setProxyBypassCalls = 0
+  previewProxyBypassCalls = 0
+
+  getProxyBypass(): Promise<ProxyBypassPolicy> {
+    return Promise.resolve({ ...this.proxyBypass, customEntries: [...this.proxyBypass.customEntries] })
+  }
+
+  setProxyBypass(input: ProxyBypassPolicy): Promise<ProxyBypassPolicy> {
+    this.setProxyBypassCalls += 1
+    this.proxyBypass = { ...input, customEntries: [...input.customEntries] }
+    return Promise.resolve({ ...this.proxyBypass, customEntries: [...this.proxyBypass.customEntries] })
+  }
+
+  previewProxyBypass(input: ProxyBypassPolicy): Promise<string> {
+    this.previewProxyBypassCalls += 1
+    return Promise.resolve(`proxy-override-preview:${input.enabled ? input.customEntries.join(',') : 'disabled'}`)
   }
 }
 

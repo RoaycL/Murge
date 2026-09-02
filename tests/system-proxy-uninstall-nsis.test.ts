@@ -3,11 +3,14 @@ import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
-// P1-3: the uninstaller's `customUnInstall` hook must NOT silently swallow a
-// failed system-proxy restore. Before electron-builder deletes the installed
-// files, the app is asked to restore the owned HKCU proxy; if that exits non-zero
-// the uninstaller must abort (keeping the app binary + restore tool) rather than
-// leave the OS pointing at a now-removed port.
+// P1-3 (revised): the uninstaller's `customUnInstall` hook must ATTEMPT to restore
+// the owned system proxy before electron-builder deletes the installed files, but
+// it must NEVER trap the user on a broken install. The restore is performed by
+// launching the *installed* app binary, so a release that cannot boot (e.g. a
+// crash bug) would make uninstall — and therefore every future upgrade —
+// impossible if the hook hard-aborted on a non-zero restore exit. The hook now
+// warns and continues, so removal is never blocked; the healthy case still
+// restores (exit 0 -> continue) as before.
 //
 // We can't compile/run the NSIS installer on the Linux verify job, but the hook is
 // generated from this checked-in macro, so a content test is a faithful regression
@@ -30,40 +33,51 @@ describe('uninstall-restore.nsh customUnInstall hook', () => {
     expect(source).toContain('StrCmp $R0 0')
   })
 
-  it('aborts the uninstall on a non-zero restore exit, keeping the app + tool', () => {
-    expect(source).toContain('Abort')
-    // The abort path is only reached on failure (not on exit 0 / safe conflict).
-    expect(source).toMatch(/StrCmp \$R0 0[^\n]*SystemProxyUninstallRestoreDone[^\n]*SystemProxyUninstallRestoreFailed/)
-    expect(source).toContain('SystemProxyUninstallRestoreFailed:')
-    expect(source).toContain('SetErrorLevel 1')
-    expect(source).toContain('保留程序与还原工具')
+  it('warns and CONTINUES on a non-zero restore exit so uninstall is never blocked', () => {
+    // A failed proxy restore must NOT Abort — that would trap the user on a release
+    // that cannot boot. It flows to the Warn label and carries on.
+    expect(source).toContain('SystemProxyUninstallRestoreWarn:')
+    expect(source).toMatch(
+      /StrCmp \$R0 0[^\n]*SystemProxyUninstallRestoreDone[^\n]*SystemProxyUninstallRestoreWarn/
+    )
+    // The warn path still surfaces an explanatory message (not silently swallowed).
+    const warnIndex = source.indexOf('SystemProxyUninstallRestoreWarn:')
+    const warnRegion = source.slice(warnIndex)
+    expect(warnRegion).toMatch(/MessageBox/)
+    // The proxy-restore path itself carries no hard Abort / error level anymore.
+    // Anchor on the boundary of the uninstall macro (so the TUN blocks, which
+    // legitimately stay fail-closed, are excluded) up to the Done label.
+    const macroIndex = source.indexOf('!macro customUnInstall')
+    const doneIndex = source.indexOf('SystemProxyUninstallRestoreDone:')
+    const restorePath = source.slice(macroIndex, doneIndex)
+    expect(restorePath).not.toContain('Abort')
+    expect(restorePath).not.toContain('SetErrorLevel 1')
   })
 
-  it('still lets a clean restore (exit 0) and a safe conflict continue', () => {
-    // Exit 0 flows straight to the Done label; no Abort is reached.
-    const doneIndex = source.indexOf('SystemProxyUninstallRestoreDone:')
-    const failedIndex = source.indexOf('SystemProxyUninstallRestoreFailed:')
-    expect(doneIndex).toBeGreaterThan(-1)
-    expect(failedIndex).toBeGreaterThan(-1)
-    // On success the control flow lands at Done and the uninstall continues.
-    expect(source.slice(0, doneIndex)).toContain('StrCmp $R0 0')
+  it('still lets a clean restore (exit 0) continue', () => {
+    // Exit 0 flows straight to the Done label; no Abort is reached in that branch.
+    expect(source).toContain('StrCmp $R0 0 SystemProxyUninstallRestoreDone')
+    expect(source).toContain('SystemProxyUninstallRestoreDone:')
   })
 
   it('launches Electron restore only when the durable ownership backup exists', () => {
     expect(source).toContain('IfFileExists "$APPDATA\\system-proxy\\owned-backup.json"')
     expect(source).toContain(
-      'IfFileExists "$INSTDIR\\${APP_EXECUTABLE_FILENAME}" 0 SystemProxyUninstallRestoreFailed'
+      'IfFileExists "$INSTDIR\\${APP_EXECUTABLE_FILENAME}" 0 SystemProxyUninstallRestoreWarn'
     )
     expect(source).not.toContain('MURGE_CI_SKIP_ELECTRON_RESTORE')
     expect(source).not.toContain('GITHUB_ACTIONS')
   })
 
-  it('installs and removes the privileged TUN service fail-closed', () => {
+  it('keeps the privileged TUN service fail-closed (install/remove still abort on failure)', () => {
     expect(source).toContain('--install')
     expect(source).toContain('--uninstall')
     expect(source).toContain('TunServiceInstallFailed:')
     expect(source).toContain('TunServiceUninstallFailed:')
     expect(source).toMatch(/ExecWait[^\n]*--install[^\n]*\$R0/)
     expect(source).toMatch(/ExecWait[^\n]*--uninstall[^\n]*\$R0/)
+    // The only hard Abort / error level left in the whole hook is the TUN path.
+    expect(source).toContain('Abort')
+    expect(source).toContain('SetErrorLevel 1')
   })
 })

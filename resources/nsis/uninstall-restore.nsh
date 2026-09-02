@@ -16,32 +16,30 @@
 ; exits 0 both when it restored and when it reported a safe conflict (so it never
 ; overwrites an external edit).
 ;
-; The restore is BEST-EFFORT for the uninstall path: exit 0 means disabled /
-; restored / safe-conflict (an external edit was left intact), so the uninstaller
-; continues normally. A non-zero exit or a missing/reboot-broken app binary means
-; the restore could not be confirmed. We deliberately do NOT abort the uninstall
-; in that case: the restore is performed by launching the *installed* executable,
-; so any release whose app cannot boot (e.g. a crash bug) would otherwise make
-; removal — and therefore every future upgrade — impossible, trapping the user on
-; a broken install. Instead the uninstaller warns and continues, so the user is
-; never locked out of uninstalling or upgrading; if the proxy was still
-; registered it is reset manually in Windows Settings afterwards. The restore is
-; still ATTEMPTED so the common healthy case keeps full protection.
+; Both the system-proxy restore AND the privileged TUN service lifecycle are
+; BEST-EFFORT: neither is allowed to hard-block install or uninstall. The proxy
+; restore is performed by launching the *installed* executable, so any release
+; whose app cannot boot (e.g. a crash bug) would otherwise make removal — and
+; therefore every future upgrade — impossible, trapping the user on a broken
+; install. The TUN service only serves the optional TUN-adapter mode; the core
+; system-proxy mode launches the mihomo kernel directly and never needs it. On
+; failure each path warns and continues, so the user is never locked out of
+; installing, uninstalling or upgrading; if a proxy was still registered it is
+; reset manually in Windows Settings afterwards, and a leftover TUN service can be
+; removed in the Services snap-in. The operations are still ATTEMPTED so the
+; common healthy case keeps full protection.
 !macro customInstall
   IfFileExists "$INSTDIR\resources\tun-service\tun-service.exe" 0 TunServiceInstallMissing
     DetailPrint "Installing privileged TUN lifecycle service..."
     ExecWait '"$INSTDIR\resources\tun-service\tun-service.exe" --install' $R0
-    StrCmp $R0 0 TunServiceInstallDone TunServiceInstallFailed
-    TunServiceInstallFailed:
-      DetailPrint "TUN service installation failed with exit code $R0"
-      MessageBox MB_ICONSTOP|MB_OK "TUN 服务安装失败，安装程序已中止。系统网络设置没有被启用。"
-      SetErrorLevel 1
-      Abort
+    StrCmp $R0 0 TunServiceInstallDone TunServiceInstallWarn
+    TunServiceInstallWarn:
+      DetailPrint "TUN service installation failed with exit code $R0; continuing install since TUN is optional"
+      MessageBox MB_ICONEXCLAMATION|MB_OK "TUN 服务安装失败，本程序将继续完成安装。系统代理模式不受影响。若需 TUN 网卡模式，请以管理员身份重新安装并确认系统服务可正常启动。"
+      Goto TunServiceInstallDone
   TunServiceInstallMissing:
-    DetailPrint "TUN service executable is missing"
-    MessageBox MB_ICONSTOP|MB_OK "安装包缺少 TUN 服务组件，安装程序已中止。"
-    SetErrorLevel 1
-    Abort
+    DetailPrint "TUN service executable is missing; continuing install since TUN is optional"
+    MessageBox MB_ICONEXCLAMATION|MB_OK "安装包未包含 TUN 服务组件，本程序将继续完成安装。系统代理模式不受影响。"
   TunServiceInstallDone:
 !macroend
 
@@ -59,14 +57,16 @@
       DetailPrint "system-proxy restore not confirmed; continuing uninstall so removal is not blocked"
       MessageBox MB_ICONEXCLAMATION|MB_OK "未能确认系统代理已安全还原。为避免阻塞卸载（程序可能异常或已损坏），本程序将继续执行。若系统代理仍指向旧端口，请到「Windows 设置 → 网络和 Internet → 代理」关闭后重新启用。"
   SystemProxyUninstallRestoreDone:
+  ; TUN removal is best-effort for the same reason as the proxy restore: a
+  ; failure to remove the optional TUN service must never trap the user in a
+  ; broken install. Warn and continue; a leftover service can be cleared in the
+  ; Services snap-in (or by re-running the app once it is healthy).
   IfFileExists "$INSTDIR\resources\tun-service\tun-service.exe" 0 TunServiceUninstallDone
     DetailPrint "Stopping and removing privileged TUN lifecycle service..."
     ExecWait '"$INSTDIR\resources\tun-service\tun-service.exe" --uninstall' $R0
-    StrCmp $R0 0 TunServiceUninstallDone TunServiceUninstallFailed
-    TunServiceUninstallFailed:
-      DetailPrint "TUN service removal failed with exit code $R0; aborting uninstall"
-      MessageBox MB_ICONSTOP|MB_OK "未能确认 TUN 内核已停止，因此已中止卸载，避免遗留网络状态。请重启电脑后重试。"
-      SetErrorLevel 1
-      Abort
+    StrCmp $R0 0 TunServiceUninstallDone TunServiceUninstallWarn
+    TunServiceUninstallWarn:
+      DetailPrint "TUN service removal failed with exit code $R0; continuing uninstall so removal is not blocked"
+      MessageBox MB_ICONEXCLAMATION|MB_OK "未能确认 TUN 服务已移除。为避免阻塞卸载，本程序将继续执行。若残留的 TUN 服务需清理，请以管理员身份在「Windows 服务」中找到并停止、删除对应服务。"
   TunServiceUninstallDone:
 !macroend

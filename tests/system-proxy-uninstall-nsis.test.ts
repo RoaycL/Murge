@@ -45,8 +45,9 @@ describe('uninstall-restore.nsh customUnInstall hook', () => {
     const warnRegion = source.slice(warnIndex)
     expect(warnRegion).toMatch(/MessageBox/)
     // The proxy-restore path itself carries no hard Abort / error level anymore.
-    // Anchor on the boundary of the uninstall macro (so the TUN blocks, which
-    // legitimately stay fail-closed, are excluded) up to the Done label.
+    // Anchor on the boundary of the uninstall macro (the TUN block follows the
+    // Done label, so the slice is exactly the proxy-restore portion) up to the
+    // Done label.
     const macroIndex = source.indexOf('!macro customUnInstall')
     const doneIndex = source.indexOf('SystemProxyUninstallRestoreDone:')
     const restorePath = source.slice(macroIndex, doneIndex)
@@ -69,15 +70,24 @@ describe('uninstall-restore.nsh customUnInstall hook', () => {
     expect(source).not.toContain('GITHUB_ACTIONS')
   })
 
-  it('keeps the privileged TUN service fail-closed (install/remove still abort on failure)', () => {
+  it('treats the privileged TUN service as optional (install/remove warn and continue)', () => {
     expect(source).toContain('--install')
     expect(source).toContain('--uninstall')
-    expect(source).toContain('TunServiceInstallFailed:')
-    expect(source).toContain('TunServiceUninstallFailed:')
     expect(source).toMatch(/ExecWait[^\n]*--install[^\n]*\$R0/)
     expect(source).toMatch(/ExecWait[^\n]*--uninstall[^\n]*\$R0/)
-    // The only hard Abort / error level left in the whole hook is the TUN path.
-    expect(source).toContain('Abort')
-    expect(source).toContain('SetErrorLevel 1')
+    // The TUN service only backs TUN-adapter mode; the core system-proxy mode
+    // launches the mihomo kernel directly and never needs it. So a TUN install or
+    // removal failure must NOT abort — it must warn and continue, matching the
+    // proxy-restore policy. No hard Abort / error level may remain anywhere.
+    expect(source).toContain('TunServiceInstallWarn:')
+    expect(source).toContain('TunServiceUninstallWarn:')
+    expect(source).toMatch(/StrCmp \$R0 0[^\n]*TunServiceInstallDone[^\n]*TunServiceInstallWarn/)
+    expect(source).toMatch(/StrCmp \$R0 0[^\n]*TunServiceUninstallDone[^\n]*TunServiceUninstallWarn/)
+    const installWarn = source.indexOf('TunServiceInstallWarn:')
+    expect(source.slice(installWarn)).toMatch(/MessageBox/)
+    const uninstallWarn = source.indexOf('TunServiceUninstallWarn:')
+    expect(source.slice(uninstallWarn)).toMatch(/MessageBox/)
+    expect(source).not.toContain('Abort')
+    expect(source).not.toContain('SetErrorLevel 1')
   })
 })

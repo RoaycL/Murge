@@ -1,23 +1,21 @@
-# Phase 3 — Activity, implementation vs. normative reference
+# 阶段 3 — Activity，实现 vs. 规范参考
 
-Both captures below are **934 × 672** content-viewport screenshots (Electron `useContentSize`);
-`docs/ui-reference/murge-ui-preview.html` is the owner-approved normative reference.
+下面两张截图均为 **934 × 672** 内容视口截图（Electron `useContentSize`）；
+`docs/ui-reference/murge-ui-preview.html` 是经所有者批准的规范参考。
 
-> Screenshots were produced headlessly (Xvfb :99) from the `electron-vite` production build
-> (`out/renderer/index.html`) with an injected `window.desktop` feeding mock-shaped live data so the
-> Activity view exercises its live stream at the reference canvas size. The harness lives outside the
-> repository (`/tmp/murge-shots/`) and is **not** part of the shipped app. The shipped app in dev wires
-> the in-process mock server (`src/main/testing/mock-mihomo-server.ts`); in production it talks to the
-> real controller.
+> 截图通过 `electron-vite` 生产构建（`out/renderer/index.html`）以无头方式（Xvfb :99）生成，
+> 并注入 `window.desktop` 提供模拟形态的实时数据，以便 Activity 视图在参考画布尺寸下运作其实时流。
+> 测试框架位于仓库之外（`/tmp/murge-shots/`），并且**不**属于随附应用的一部分。随附应用在开发模式下
+> 接入进程内 mock 服务器（`src/main/testing/mock-mihomo-server.ts`）；在生产模式下它会与真实控制器通信。
 
-Open `activity-comparison.html` for the two captures side by side.
+打开 `activity-comparison.html` 以并排查看两张截图。
 
 | Capture | File |
 | --- | --- |
 | Implementation | `activity-impl-934x672.png` |
 | Normative reference | `activity-ref-934x672.png` |
 
-## Data source changed (fixture → live mock stream)
+## 数据源已变更（fixture → 实时 mock 流）
 
 | Element | Before (fixture) | Now (live/mock) |
 | --- | --- | --- |
@@ -28,42 +26,40 @@ Open `activity-comparison.html` for the two captures side by side.
 | DIRECT / proxy | fixed split | computed from snapshot `chains` (DIRECT vs proxy) |
 | 延迟 | static "6ms" | static "6ms" (no live latency endpoint in scope) |
 
-The rank row **counts and widths** now come from the mock aggregation; the reference used representative
-fixtures, so the numbers/total differ but the layout density is preserved (the list still fills the same
-rows, downloads now formatted compactly).
+排名行的**计数与宽度**现在来自 mock 聚合；参考使用的是代表性
+fixture，因此数字/总数不同，但布局密度保持一致（列表仍填充相同的
+行数，下载量现已紧凑格式化）。
 
-## Added within the reference geometry (no size/position change)
+## 在参考几何尺寸内新增（无尺寸/位置变更）
 
-Resilient stream states were added without shifting the fixed grid:
+在不移动固定网格的前提下新增了健壮流状态：
 
-- `traffic/connections` stores expose `loading | live | disconnected | error`; the Activity view shows a
-  small dot + label (`.stream-state`) only in non-live states. In the healthy live state (as captured)
-  **no** indicator is drawn, so the geometry is identical to the reference. Confirmed by capture probe:
-  `streamState: null` while live.
-- On disconnect/error the dot is amber/red via scoped classes (`.online-dot.pending` / `.online-dot.offline`);
-  labels "载入中 / 已断开 / 数据异常".
-- Header pills dim (`pill-dim`) when `systemProxyEnabled` / `tunEnabled` are false.
+- `traffic/connections` 存储暴露 `loading | live | disconnected | error`；Activity 视图仅在非 live 状态下显示
+  一个小圆点 + 标签（`.stream-state`）。在健康 live 状态下（如截图所示）
+  **不会**绘制指示器，因此几何尺寸与参考完全一致。已通过捕获探针确认：
+  处于 live 时 `streamState: null`。
+- 在断开/出错时，圆点通过作用域类（`.online-dot.pending` / `.online-dot.offline`）变为琥珀色/红色；
+  标签为“载入中 / 已断开 / 数据异常”。
+- 当 `systemProxyEnabled` / `tunEnabled` 为 false 时，头部胶囊变暗（`pill-dim`）。
 
-## Intentional deviations to be owner-approved
+## 有待所有者批准的刻意偏差
 
-1. **Resilient stream-state indicators** (dot + label) are new affordances the reference does not draw.
-   They render only on non-live states, so the reference-state (healthy) pixel geometry is unchanged.
-2. **Live totals & rank density** — fixture values replaced by mock-derived values; sizes, counts and the
-   DIRECT/proxy split change by data, not by geometry.
+1. **健壮流状态指示器**（圆点 + 标签）是参考不绘制的新增配饰。
+   它们仅在非 live 状态下渲染，因此参考状态（健康）的像素几何尺寸不变。
+2. **实时总数与排名密度** —— 用 mock 派生值替换了 fixture 值；大小、计数以及
+   DIRECT/proxy 拆分随数据变化，而非由几何尺寸决定。
 
-## Verification
+## 验证
 
-- `npm run build` (brand:check + typecheck + electron-vite build) → exit 0.
-- `vitest` → 121 passing (includes `tests/mihomo-service.test.ts`, `tests/stores.test.ts` for the live
-  forwarding and stream-error mapping).
-- Capture confirmed (DOM probe while live): route `#/activity`, `.dashboard-grid` present, 2 `.speed-card`
-  sparklines with real `d` paths (10-point series), 5 `.rank-row`, 活动连接 = 5, 总计 = 8.1 MB.
+- `npm run build`（brand:check + typecheck + electron-vite build）→ 退出码 0。
+- `vitest` → 121 通过（包含 `tests/mihomo-service.test.ts`、`tests/stores.test.ts`，分别覆盖实时
+  转发与流错误映射）。
+- 捕获已验证（处于 live 时的 DOM 探针）：路由 `#/activity`、`.dashboard-grid` 存在、2 个 `.speed-card`
+  迷你图含真实 `d` 路径（10 点序列）、5 个 `.rank-row`、活动连接 = 5、总计 = 8.1 MB。
 
-## Visual review refresh — 2026-08-28
+## 视觉复核刷新 — 2026-08-28
 
-The implementation PNG was recaptured from a real Electron window after the
-reference-size alignment pass. It was inspected visually against both the
-normative PNG and the installed Surge Activity page. The capture is exactly
-934×672, all dashboard cards remain on the first screen, and no scrollbar is
-visible. The runtime values and graph paths intentionally differ because the
-implementation uses live mock data.
+在参考尺寸对齐通过后，实现 PNG 从真实 Electron 窗口重新截取。
+它已对照规范 PNG 和已安装的 Surge Activity 页面进行视觉检查。该截图精确为
+934×672，所有仪表盘卡片均停留在首屏，且没有可见滚动条。由于实现使用的是
+实时 mock 数据，运行时的数值与图形路径会刻意有所不同。

@@ -1,29 +1,29 @@
-## Summary
+## 摘要
 
-<!-- One-line description of what this change does and why. -->
+<!-- 用一句话描述此改动做了什么以及原因。 -->
 
-## Scope
+## 范围
 
-<!-- Check every area this PR touches. -->
+<!-- 勾选此 PR 触及的每个领域。 -->
 
-- [ ] Contracts / IPC surface
-- [ ] Main-process services
+- [ ] 契约 / IPC 表面
+- [ ] 主进程服务
 - [ ] Renderer UI
-- [ ] Runtime schema validation
-- [ ] Tests / test infrastructure
-- [ ] CI / tooling
-- [ ] Docs / roadmap
+- [ ] 运行时 schema 校验
+- [ ] 测试 / 测试基础设施
+- [ ] CI / 工具链
+- [ ] 文档 / 路线图
 
-## Changed contracts
+## 变更的契约
 
-<!-- List every IPC channel, shared type, schema or error code added/renamed/removed.
-     Note any message-shape or behavior changes that affect other surfaces. -->
+<!-- 列出每个新增/重命名/移除的 IPC 通道、共享类型、schema 或错误码。
+     注明任何影响其他表面的消息形态或行为变更。 -->
 
 - ...
 
-## Test commands & results
+## 测试命令与结果
 
-<!-- Paste the exact commands run and their results. -->
+<!-- 粘贴实际执行的命令及其结果。 -->
 
 ```bash
 npm run brand:check
@@ -32,29 +32,29 @@ npm test
 npm run build
 ```
 
-## Runtime evidence
+## 运行时证据
 
-<!-- Prove the change runs against a real (or mocked) environment.
-     Unsplash-license or fixture-based evidence is fine; state what was used.
-     Do not mutate the host machine's network state on a dev box. -->
+<!-- 证明该改动在真实（或 mock）环境中可运行。
+     基于 Unsplash 许可证或 fixture 的证据即可；请注明使用了什么。
+     不要在开发机器上改动宿主机网络状态。 -->
 
-- [ ] I exercised the affected path and observed the expected result
-- [ ] Evidence: (screenshot / log / test output)
+- [ ] 我已运行受影响路径并观察到预期结果
+- [ ] 证据：（截图 / 日志 / 测试输出）
 
-## UI verification
+## UI 验证
 
-<!-- If this changes any rendered view, attach a screenshot. -->
+<!-- 如果此改动改变了任何渲染视图，请附上截图。 -->
 
-- [ ] Screenshot attached at the minimum window size (`934x672`), when applicable
+- [ ] 在最小窗口尺寸（`934x672`）下附上截图（如适用）
 
-## Security & safety
+## 安全与可靠性
 
-- [ ] Inputs from the renderer are validated before reaching a service
-- [ ] No host network/TUN/DNS/system-proxy mutation outside a controlled target
-- [ ] No secrets committed
+- [ ] 来自 renderer 的输入在到达服务前已得到校验
+- [ ] 未在受控目标之外改动宿主网络/TUN/DNS/系统代理
+- [ ] 未提交任何机密
 
-## Checklist
+## 检查清单
 
-- [ ] Added/updated unit tests
-- [ ] CI passes on a clean checkout
-- [ ] Brand-neutral source (no hard-coded product name in source files)
+- [ ] 已新增/更新单元测试
+- [ ] 在干净的检出上 CI 通过
+- [ ] 品牌中立源码（源文件中无硬编码的产品名称）

@@ -1,98 +1,70 @@
-# Code Signing
+# 代码签名
 
-This document describes the inputs and workflow for Windows and macOS code
-signing so a release build can be produced reproducibly. It documents the
-*shape* of the inputs and where they live in CI. It contains no secrets: no
-certificate, no private key, no password.
+本文档描述了 Windows 和 macOS 代码签名的输入与工作流，以便能够可复现地生成发布构建。它记录了输入的*形态*及其在 CI 中的位置。其中不包含任何秘密：没有证书、没有私钥、没有密码。
 
-## Why
+## 为什么
 
-Unsigned Windows binaries trigger SmartScreen "Unknown publisher" warnings and
-are blocked on some enterprise policies. Signing with a code-signing certificate
-lets Windows attest the publisher and integrity of the packaged application and
-installer.
+未签名的 Windows 二进制会触发 SmartScreen 的“未知发布者”警告，并在某些企业策略下被阻止。使用代码签名证书签名后，Windows 可以验证打包应用与安装器的发布者和完整性。
 
-## Current status
+## 当前状态
 
-- The application is intentionally **unsigned** by owner decision; no certificate will be purchased for the current releases.
-- The installer and executable are produced by `electron-builder`. Signing is
-  applied at package time when a signing configuration is present.
-- Tag builds disable certificate auto-discovery and verify that every
-  release-owned executable is `NotSigned`. Release notes and evidence explicitly
-  record this state so an unsigned artifact can never be mistaken for a signed one.
+- 应用程序按所有者决策**有意保持未签名**；当前发布不会购买证书。
+- 安装器与可执行文件由 `electron-builder` 生成。当存在签名配置时，签名会在打包阶段进行。
+- 标签构建会禁用证书自动发现，并验证每个发布所拥有的可执行文件均为 `NotSigned`。发布说明与证据明确记录此状态，从而确保未签名产物绝不会被误认为已签名产物。
 
-## Electronic signing inputs
+## 电子签名输入
 
-These values are required to sign a Windows build. They must be supplied as
-environment variables at package time; they are **never** stored in the
-repository.
+以下值是签名 Windows 构建所必需的。它们必须在打包时以环境变量形式提供；它们**绝不**存储在仓库中。
 
-| Variable                        | Body                          | Purpose                                            |
+| 变量 | 内容 | 用途 |
 | ------------------------------- | ----------------------------- | -------------------------------------------------- |
-| `WIN_CSC_LINK`                  | path or base64 of the `.pfx` | Certificate + private key bundle                   |
-| `WIN_CSC_KEY_PASSWORD`          | password for the `.pfx`       | Unlocks the private key                             |
+| `WIN_CSC_LINK` | `.pfx` 的路径或 base64 | 证书 + 私钥包 |
+| `WIN_CSC_KEY_PASSWORD` | `.pfx` 的密码 | 解锁私钥 |
 
-For certificate/file-signing scopes that require an external service, an
-additional attestation credential is needed. The exact service and variable name
-are an owner decision and are intentionally left unset here.
+对于需要外部服务的证书/文件签名范围，还需要额外的证明凭据。确切的服务与变量名由所有者决策，此处有意留空。
 
-For macOS (not part of this phase but documented for symmetry):
+对于 macOS（不属于本阶段，仅为对称而记录）：
 
-| Variable        | Body                                   | Purpose                       |
+| 变量 | 内容 | 用途 |
 | --------------- | -------------------------------------- | ----------------------------- |
-| `CSC_LINK`      | `.p12` (Developer ID + private key)    | Sign the .app and `.dmg`      |
-| `CSC_KEY_PASSWORD` | password for the `.p12`             | Unlocks the private key        |
-| `APPLE_ID`      | Apple account email                     | Notarization                   |
-| `APPLE_APP_SPECIFIC_PASSWORD` | app-specific password | Notarization      |
-| `APPLE_TEAM_ID` | Team ID                                 | Notarization                   |
+| `CSC_LINK` | `.p12`（开发者 ID + 私钥） | 对 `.app` 与 `.dmg` 签名 |
+| `CSC_KEY_PASSWORD` | `.p12` 的密码 | 解锁私钥 |
+| `APPLE_ID` | Apple 账户邮箱 | 公证 |
+| `APPLE_APP_SPECIFIC_PASSWORD` | 应用专用密码 | 公证 |
+| `APPLE_TEAM_ID` | 团队 ID | 公证 |
 
-## Self-signing vs. trusted signing
+## 自签名与受信任签名
 
-A self-signed certificate only proves *who made the file* to the person who
-installed that same certificate's root first. It does **not** make SmartScreen
-trust the publisher. Self-signing can be useful for internal test builds but is
-not a substitute for a certificate issued by a public CA (e.g. the trusted
-Windows code-signing roots). A CI "smoke" job may sign with a self-signed cert
-just to exercise the packaging path end-to-end; it must never be promoted as a
-release signing artifact.
+自签名证书只能向已先安装了同一证书根的人*证明文件由谁制作*。它**不能**让 SmartScreen 信任发布者。自签名对内部测试构建可能有用，但不能替代由公共 CA（例如受信任的 Windows 代码签名根）签发的证书。CI 的“冒烟”任务可以用自签名证书签名，仅用于端到端地演练打包路径；它绝不能作为发布签名产物来推广。
 
-## Where signing is applied in this repo
+## 签名在本仓库中应用的位置
 
-- `electron-builder.config.mjs` is the single packaging configuration. It reads
-  signing settings from the environment via electron-builder's built-in
-  `WIN_CSC_LINK`/`WIN_CSC_KEY_PASSWORD` handling; no certificate path is
-  hardcoded.
-- `.github/workflows/ci.yml` contains the `package-win` job. It does **not**
-  contain secrets. In a real release, the signing secrets would be supplied as
-  encrypted GitHub Actions secrets referenced by name, never inlined.
+- `electron-builder.config.mjs` 是唯一的打包配置。它通过 electron-builder 内置的 `WIN_CSC_LINK`/`WIN_CSC_KEY_PASSWORD` 处理机制从环境读取签名设置；没有硬编码任何证书路径。
+- `.github/workflows/ci.yml` 包含 `package-win` 任务。它**不**包含任何秘密。在真实发布中，签名秘密以加密的 GitHub Actions 秘密形式按名称提供，绝不可内联。
 
-## Steps to produce a signed build (owner/operator)
+## 生成签名构建的步骤（所有者/操作者）
 
-1. Obtain a code-signing certificate and its password.
-2. Store them as CI secrets or in the operator's environment (`.env`-style
-   tooling must be gitignored).
-3. Run the package step with those variables exported:
+1. 获取代码签名证书及其密码。
+2. 将它们存储为 CI 秘密或存储在操作者环境中（`.env` 风格工具必须被 gitignore）。
+3. 在导出这些变量的情况下运行打包步骤：
    ```sh
    WIN_CSC_LINK=/path/to/cert.pfx
-   WIN_CSC_KEY_PASSWORD=***  # from the operator environment, never committed
+   WIN_CSC_KEY_PASSWORD=***  # 来自操作者环境，绝不提交
    npm run package:win
    ```
-4. Verify the signature on the artifact:
+4. 验证产物上的签名：
    ```sh
    powershell -Command "Get-AuthenticodeSignature .\dist\*.exe"
    ```
 
-## Security rules
+## 安全规则
 
-- Never commit a certificate, private key, or password.
-- Never log a certificate or secret in CI output. CI secrets are masked by
-  default; do not echo them.
-- A `.pfx`/`.p12` is a secret. Treat it as such and rotate it if it ever leaves
-  a controlled environment.
+- 绝不提交证书、私钥或密码。
+- 绝不在 CI 输出中记录证书或秘密。CI 秘密默认被掩蔽；不要回显它们。
+- `.pfx`/`.p12` 属于秘密。请将其作为秘密对待，一旦离开受控环境就将其轮换。
 
-## Out of scope (owner decision)
+## 范围之外（所有者决策）
 
-- Choosing a certificate provider and the specific trust model.
-- Configuring notarization for macOS.
-- Auto-signed nightly builds — setting that up changes release policy and is
-  deferred to the owner.
+- 选择证书提供商以及特定的信任模型。
+- 为 macOS 配置公证。
+- 自动签名的 nightly 构建——此设置会改变发布策略，推迟由所有人决定。

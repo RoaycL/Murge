@@ -1,41 +1,41 @@
-# Kernel update design
+# 内核更新设计
 
-Status: design complete; implementation disabled until the owner selects a pinned channel.
+状态：设计完成；实现已禁用，直到所有者选择固定的通道。
 
-## Decision
+## 决策
 
-Murge does **not** call mihomo's `/upgrade` endpoint. Phase 9B's LocalSystem service owns the executable and must preserve its fixed-command, fixed-asset integrity boundary. Kernel releases are therefore selected by a Murge-maintained, signed release manifest and installed as part of an application release or a future narrowly scoped service operation.
+Murge **不**调用 mihomo 的 `/upgrade` 端点。Phase 9B 的 LocalSystem 服务拥有该可执行文件，并且必须保持其固定命令、固定产物的完整性边界。因此，内核版本由 Murge 维护的、已签名的发布清单来选择，并作为应用发布的一部分或作为未来一个范围狭窄的服务操作来安装。
 
-## Manifest and trust
+## 清单与信任
 
-Each channel manifest is repository-owned and contains only:
+每个通道清单都由仓库拥有，且只包含：
 
-- schema version, channel, mihomo version and minimum Murge version;
-- exact platform/architecture, archive filename, archive inner filename, byte size and SHA-256;
-- HTTPS source URL from the allowlisted MetaCubeX release origin;
-- release timestamp and an offline release-signing-key signature over canonical JSON.
+- 模式版本、通道、mihomo 版本和最低 Murge 版本；
+- 精确的平台/架构、归档文件名、归档内部文件名、字节大小与 SHA-256；
+- 来自已被允许的 MetaCubeX 发布源的 HTTPS 源码 URL；
+- 发布时间戳，以及一个对规范 JSON 进行签名的离线发布签名密钥签名。
 
-The public verification key is pinned in the application/service. Redirects to non-allowlisted origins, unknown fields, wrong architecture, digest mismatch, signature failure and version regression fail closed. Renderer input cannot add a channel or URL.
+公共验证密钥在应用/服务中被固定。重定向到未被允许的源、未知字段、错误的架构、摘要不匹配、签名失败以及版本回退都会 fail-closed。渲染器输入不能添加通道或 URL。
 
-## Staging and activation
+## 暂存与激活
 
-1. Download to an unprivileged staging directory with byte/time limits; never execute it there.
-2. Verify manifest signature, archive size/hash and exact single expected inner executable.
-3. Ask the service for status. An owned/running TUN child blocks activation.
-4. The elevated service re-verifies the same manifest and archive, extracts into a new administrator-only version slot, hashes the core and atomically switches the selected slot.
-5. Start a loopback-only `MATCH,DIRECT`, TUN/DNS-disabled validation process; authenticate `/version`; stop and confirm it.
-6. Mark the slot healthy. The next real start uses only that immutable slot.
+1. 下载到无特权的暂存目录，并加上字节/时间限制；绝不在那里执行它。
+2. 校验清单签名、归档大小/哈希以及精确的单个预期内部可执行文件。
+3. 向服务询问状态。由服务拥有/运行中的 TUN 子进程会阻止激活。
+4. 提升的服务重新校验同一份清单与归档，解压到一个新的仅管理员可用的版本槽位，对内核进行哈希，并原子地切换所选槽位。
+5. 启动一个仅回环 `MATCH,DIRECT`、禁用 TUN/DNS 的校验进程；认证 `/version`；停止并确认它。
+6. 将该槽位标记为健康。下一次真实启动只使用该不可变槽位。
 
-The service retains the previous healthy slot. A failed validation or failed first start atomically restores that slot. It never deletes the last known-good core. Garbage collection retains at least two healthy versions and runs only while no child is owned.
+服务保留之前的健康槽位。校验失败或首次启动失败会原子地恢复该槽位。它绝不用删除最后已知良好的内核。垃圾回收至少保留两个健康版本，并且只在未拥有子进程时运行。
 
-## Channel policy
+## 通道策略
 
-- `stable`: owner-approved mihomo versions only; default once enabled.
-- `beta`: explicit opt-in, never silently inherited from an application prerelease.
-- `pinned`: no network check; the version bundled with the installed Murge release.
+- `stable`：仅限所有者批准的 mihomo 版本；一旦启用即为默认。
+- `beta`：明确选择加入，绝不从应用预发布版静默继承。
+- `pinned`：无网络检查；随已安装的 Murge 版本捆绑的版本。
 
-Until the owner chooses channels and supplies the manifest signing key, the UI reports `disabled`; the existing `resources/mihomo-assets.json` remains the sole build-time pinned catalog.
+直到所有者选择通道并提供清单签名密钥，UI 才报告 `disabled`；现有的 `resources/mihomo-assets.json` 仍是唯一的构建时固定目录。
 
-## Required evidence before enabling
+## 启用前所需的证据
 
-Test wrong signer/hash/architecture, zip traversal/duplicate entries, interrupted download, disk-full atomicity, service/TUN ownership conflicts, crash at every slot-switch boundary, validation failure, first-start failure, downgrade refusal and successful rollback on Windows x64 and any selected arm64 release target.
+在 Windows x64 以及任何选定的 arm64 发布目标上测试：错误的签名者/哈希/架构、zip 遍历/重复条目、中断的下载、磁盘满的原子性、服务/TUN 所有权冲突、在每次槽位切换边界处的崩溃、校验失败、首次启动失败、降级拒绝以及成功的回滚。

@@ -1,33 +1,33 @@
-# Normative UI reference
+# 规范 UI 参考
 
-`murge-ui-preview.html` is the owner-approved interactive visual reference for the framework milestone.
+`murge-ui-preview.html` 是经所有者批准的、针对框架里程碑的交互式视觉参考。
 
-## Authority
+## 权威性
 
-For visual implementation, use sources in this order:
+对于视觉实现，请按此顺序使用来源：
 
-1. `murge-ui-preview.html` for geometry, spacing, card composition, navigation hierarchy and visual state.
-2. `../UI_SPEC.md` for written dimensions, behavior and accessibility requirements.
-3. Existing Vue/CSS source only when it agrees with the two references above.
+1. `murge-ui-preview.html` 用于几何尺寸、间距、卡片构成、导航层级和视觉状态。
+2. `../UI_SPEC.md` 用于书面尺寸、行为和可访问性要求。
+3. 现有的 Vue/CSS 源码仅当其与上述两个参考一致时才可使用。
 
-If the implementation and reference disagree, the reference wins unless the owner explicitly approves a change.
+如果实现与参考不一致，则以参考为准，除非所有者明确批准改动。
 
-## Contributor rules
+## 贡献者规则
 
-- Open the reference and inspect every relevant route before implementing a page.
-- Do not invent alternative dashboards, cards, colors, navigation groups or spacing.
-- Preserve the 934×672 reference canvas and fixed internal proportions.
-- Do not copy the temporary HTML implementation directly into production components without adapting semantics, accessibility and application architecture.
-- Fixture values may differ, but their length and density should exercise the same layout.
-- Any intentional visual deviation must be listed in the pull request with its reason and an owner-approval link.
-- UI pull requests must include a 934×672 screenshot beside the corresponding reference state.
+- 在实现页面之前，打开参考并检查每个相关路由。
+- 不要发明替代的仪表盘、卡片、颜色、导航分组或间距。
+- 保留 934×672 参考画布和固定的内部比例。
+- 不要在不调整语义、可访问性和应用架构的前提下，将临时 HTML 实现直接复制到生产组件中。
+- Fixture 值可以不同，但其长度和密度应演练相同的布局。
+- 任何刻意的视觉偏差都必须在 pull request 中列出，并附上理由和所有者批准链接。
+- UI pull request 必须在相应的参考状态旁包含一张 934×672 截图。
 
-## Integrity
+## 完整性
 
-Imported reference SHA-256:
+导入的参考 SHA-256：
 
 ```text
 2aee6ba66294e21b14270ec31fb9a0cbbee6d6dab94094c0d859ed0dafe4bf7d
 ```
 
-Update this hash when, and only when, the owner approves a new reference version.
+仅当所有者批准新参考版本时，才更新此哈希。

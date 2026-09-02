@@ -1,45 +1,41 @@
-# Release-candidate checklist
+# 发布候选检查清单
 
-Record evidence against the immutable tag and SHA. A green build from another
-commit is not release evidence.
+对照不可变标签与 SHA 记录证据。来自其他提交的绿色构建不构成发布证据。
 
-## Build identity and licensing
+## 构建身份与许可
 
-- [ ] Tag exactly matches `package.json` version.
-- [ ] `npm ci`, brand check, license check, typecheck, tests and build pass at the tag.
-- [ ] GPL-3.0-only text, third-party notices, retained licenses and source-access
-      instructions are present in both installers.
-- [ ] SHA-256 checksums are generated from the uploaded bytes.
-- [x] Owner explicitly approved unsigned releases; Authenticode reports
-      `NotSigned` for installer, application executable and privileged service,
-      and release notes warn that Unknown publisher is expected.
+- [ ] 标签与 `package.json` 版本完全匹配。
+- [ ] 在该标签处 `npm ci`、品牌检查、许可检查、类型检查、测试与构建通过。
+- [ ] GPL-3.0-only 文本、第三方声明、保留的许可证以及源码访问说明均存在于两个安装器中。
+- [ ] SHA-256 校验和由上传的字节生成。
+- [x] 所有者明确批准未签名发布；Authenticode 对安装器、应用可执行文件和特权服务均报告 `NotSigned`，并且发布说明警告预期会出现“未知发布者”。
 
-## Windows x64 matrix
+## Windows x64 矩阵
 
-Use a clean snapshot for each row and preserve before/after evidence.
+为每一行使用干净的快照，并保留前后证据。
 
-| Matrix | Required result |
+| 矩阵 | 所需结果 |
 | --- | --- |
-| Clean install, no profile | Visible UI; no mihomo process; no proxy/TUN/DNS/route mutation |
-| Invalid profile import | Validation error; active profile and runtime remain unchanged |
-| Valid profile + kernel | Authenticated loopback controller; explicit start and clean stop |
-| System proxy enable/disable | Live mixed-port protocol probe; exact registry restoration |
-| Forced app termination with owned proxy | Next launch or recovery command restores exact baseline |
-| N-1 to RC upgrade | Profiles retained; network restored before replacement; new version visible |
-| RC uninstall | Owned proxy restored; service removed; program files removed; profiles retained |
-| Tray and login start | Visible tray; login starts UI/tray only; kernel and network remain off |
+| 干净安装，无配置 | 可见 UI；无 mihomo 进程；无代理/TUN/DNS/路由更改 |
+| 无效配置导入 | 校验错误；活动配置与运行时保持不变 |
+| 有效配置 + 内核 | 已认证的回环控制器；显式启动与干净停止 |
+| 系统代理 启用/禁用 | 实时混合端口协议探测；精确的注册表恢复 |
+| 强制终止拥有代理的应用 | 下次启动或恢复命令恢复精确基线 |
+| N-1 到 RC 升级 | 配置保留；替换前恢复网络；新版本可见 |
+| RC 卸载 | 恢复拥有的代理；移除服务；移除程序文件；配置保留 |
+| 托盘与登录启动 | 可见托盘；登录仅启动 UI/托盘；内核与网络保持关闭 |
 
-TUN rows are intentionally absent from the first RC because TUN is excluded.
+TUN 行有意不在首个 RC 中出现，因为 TUN 已被排除。
 
-## Physical-machine and visual checks
+## 物理机与视觉检查
 
-- [ ] Windows Defender/SmartScreen shows the expected Unknown publisher warning.
-- [ ] Main window, tray and startup behavior pass on the designated machine.
-- [ ] Keyboard focus, labels, contrast and reduced-motion checks pass.
-- [ ] Owner approves final 934×672 screenshots.
+- [ ] Windows Defender/SmartScreen 显示预期的“未知发布者”警告。
+- [ ] 主窗口、托盘和启动行为在指定机器上通过。
+- [ ] 键盘焦点、标签、对比度和减少动态效果检查通过。
+- [ ] 所有者批准最终的 934×672 截图。
 
-## Publish decision
+## 发布决策
 
-- [ ] No P0/P1 recovery, credential or licensing issue is open; unsigned status is explicitly disclosed.
-- [ ] Release evidence JSON, checksums and notes are attached to the draft.
-- [ ] Owner explicitly approves publishing the draft.
+- [ ] 没有 P0/P1 恢复、凭据或许可问题未解决；未签名状态已明确披露。
+- [ ] 发布证据 JSON、校验和与说明已附到草稿。
+- [ ] 所有者明确批准发布该草稿。

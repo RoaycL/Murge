@@ -1,26 +1,19 @@
 # Murge desktop framework
 
-An Electron + Vue 3 framework for a Windows-first network client powered by a separately supervised mihomo process.
+一个面向 Windows 优先网络客户端的 Electron + Vue 3 框架，由单独监管的 mihomo 进程作为内核。
 
-The project currently implements the Phase 1–7 application shell, typed IPC,
-profiles, mihomo REST/WebSocket transport, Windows packaging, and an explicitly
-user-triggered safe-direct kernel lifecycle. System proxy, TUN, DNS takeover,
-automatic updates and service management are **not** implemented yet.
+项目目前实现了第 1–7 阶段的应用外壳、类型化 IPC、配置文件、mihomo REST/WebSocket 传输、Windows 打包，以及一个由用户显式触发的安全目录内核生命周期。系统代理、TUN、DNS 接管、自动更新和服务管理**尚未**实现。
 
-## Start the UI development build
+## 启动 UI 开发构建
 
 ```bash
 npm install
 npm run dev
 ```
 
-Development uses an in-process loopback mock controller and a harmless fixture
-process. It never starts real mihomo or changes system networking. Packaged
-Windows builds also start stopped; the verified kernel is downloaded and run
-only after the user presses “启动” in Overview, with a loopback-only
-`MATCH,DIRECT` configuration.
+开发模式使用进程内回环 mock 控制器和一个无害的 fixture 进程。它从不会启动真正的 mihomo，也不会修改系统网络。打包的 Windows 构建同样以停止状态启动；只有在用户在 Overview 中按下“启动”后才会下载并运行经过验证的内核，并使用仅回环的 `MATCH,DIRECT` 配置。
 
-## Handoff reading order
+## 交接阅读顺序
 
 1. [`docs/DEVELOPMENT_SAFETY.md`](docs/DEVELOPMENT_SAFETY.md)
 2. [`docs/ui-reference/murge-ui-preview.html`](docs/ui-reference/murge-ui-preview.html)
@@ -32,29 +25,25 @@ only after the user presses “启动” in Overview, with a loopback-only
 8. [`docs/BRANDING.md`](docs/BRANDING.md)
 9. [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)
 
-> Safety gate: this Mac may be the owner's active remote connection. Do not start a real kernel or modify its proxy, TUN, DNS, routes, firewall or other network state. The complete mandatory rules are in `docs/DEVELOPMENT_SAFETY.md`.
+> 安全门禁：此 Mac 可能是所有者的活动远程连接。不要启动真实内核，也不要修改其代理、TUN、DNS、路由、防火墙或其他网络状态。完整的强制规则见 `docs/DEVELOPMENT_SAFETY.md`。
 
-## Project status
+## 项目状态
 
-- Electron security defaults: implemented
-- Vue router and application shell: implemented
-- Activity and Overview UI: implemented; final cross-page pixel pass pending
-- Typed renderer/preload/main IPC contract: implemented and runtime-validated
-- Mihomo REST/WebSocket transport: implemented
-- Kernel process supervisor: implemented; real Windows start is explicit only
-- Profiles/subscriptions and stable production storage: implemented
-- Windows x64/arm64 packaging and GitHub draft releases: implemented
-- Windows system proxy and TUN: specification only
-- Installer signing and update channel: not implemented
+- Electron 安全默认设置：已实现
+- Vue 路由与应用外壳：已实现
+- Activity 与 Overview UI：已实现；最终的跨页面像素校对待完成
+- 类型化的 renderer/preload/main IPC 契约：已实现并通过运行时验证
+- Mihomo REST/WebSocket 传输：已实现
+- 内核进程监管：已实现；真实的 Windows 启动仅为显式操作
+- 配置文件/订阅与稳定的生产存储：已实现
+- Windows x64/arm64 打包与 GitHub 草稿发布：已实现
+- Windows 系统代理与 TUN：仅规格说明
+- 安装包签名与更新通道：未实现
 
-## Naming
+## 命名
 
-The product name is not an architectural identifier. Rename the project through [`brand.config.json`](brand.config.json); see [`docs/BRANDING.md`](docs/BRANDING.md).
+产品名称并非架构标识符。请通过 [`brand.config.json`](brand.config.json) 重命名项目；见 [`docs/BRANDING.md`](docs/BRANDING.md)。
 
-## Licensing note
+## 许可说明
 
-Murge is free software licensed under the
-[GNU General Public License version 3 only](LICENSE) (`GPL-3.0-only`). Tagged
-release builds fail closed unless the complete root license and matching
-`package.json` SPDX identifier are present. Third-party components remain under
-their respective licenses; see [`resources/THIRD_PARTY_NOTICES.md`](resources/THIRD_PARTY_NOTICES.md).
+Murge 是依据[仅 GNU 通用公共许可证第 3 版](LICENSE)（`GPL-3.0-only`）发布的自由软件。除非存在完整的根许可证和匹配的 `package.json` SPDX 标识符，否则标记的发布构建会故障关闭（fail closed）。第三方组件仍保留其各自许可证；见 [`resources/THIRD_PARTY_NOTICES.md`](resources/THIRD_PARTY_NOTICES.md)。

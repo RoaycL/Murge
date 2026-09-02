@@ -1,25 +1,25 @@
-# Architecture decisions
+# 架构决策
 
 ## ADR-001: Electron + Vue 3
 
-Status: accepted by project owner.
+状态: 由项目所有者接受。
 
-The UI must be developed and previewed on macOS while targeting Windows. Electron provides a consistent renderer and native main-process boundary. The cost is higher memory usage than WinUI; the framework mitigates this by bounding telemetry history and keeping one upstream WebSocket per stream.
+UI 必须在面向 Windows 的同时在 macOS 上开发和预览。Electron 提供了一致的 renderer 和原生主进程边界。代价是比 WinUI 更高的内存占用；该框架通过限制遥测历史并保持每个流一个上游 WebSocket 来缓解这一点。
 
-## ADR-002: mihomo is a supervised external process
+## ADR-002: mihomo 是一个受监督的外部进程
 
-Status: accepted for framework design.
+状态: 用于框架设计，已接受。
 
-The GUI does not embed or fork the kernel. It supervises a separately packaged executable and communicates through the documented controller API. This creates a clear upgrade, logging and failure boundary.
+GUI 不嵌入或 fork 内核。它监督一个单独打包的可执行文件，并通过文档化的控制器 API 通信。这创建了清晰的升级、日志记录和失败边界。
 
-## ADR-003: brand config is data
+## ADR-003: 品牌配置是数据
 
-Status: accepted by project owner.
+状态: 由项目所有者接受。
 
-Product identity is loaded from `brand.config.json`. Internal modules use neutral names. Installer config reads the same source so a rename is not a source-tree rewrite.
+产品标识从 `brand.config.json` 加载。内部模块使用中性名称。安装器配置读取同一来源，因此重命名不是一次源码树的改写。
 
-## ADR-004: reference-size-first UI
+## ADR-004: 参考尺寸优先的 UI
 
-Status: accepted for the development milestone.
+状态: 用于开发里程碑，已接受。
 
-The approved UI is reviewed at 934×672. Responsive expansion comes later and may not change reference geometry without explicit approval.
+已批准的 UI 在 934×672 下评审。响应式扩展稍后进行，未经明确批准不得更改参考尺寸。

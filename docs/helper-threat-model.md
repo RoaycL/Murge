@@ -1,67 +1,60 @@
-# Phase 9 — Windows TUN privileged helper: threat model
+# Phase 9 — Windows TUN 特权 helper：威胁模型
 
-> Status: **draft for design review.** This document is design/analysis only. It
-> authorizes no network mutation. It is the deliverable for the first Phase 9
-> roadmap line ("Write and approve helper/privilege threat model") and is the
-> input to the design-review gate that precedes all Windows implementation and
-> testing. Nothing here may be executed on this development machine; all real
-> behavior is verified only in the disposable `windows-latest` CI environment and
-> must remain gated behind explicit owner authorization (see
-> `DEVELOPMENT_SAFETY.md`).
+> 状态：**供设计评审的草稿。** 本文档仅用于设计/分析，不授权任何网络变更。它是
+> Phase 9 路线图第一条（"编写并批准 helper/权限威胁模型"）的交付物，也是先于所有
+> Windows 实现与测试的设计评审关卡（gate）的输入。此处的任何内容都不能在本开发机上执行；
+> 所有真实行为仅在一次性（disposable）的 `windows-latest` CI 环境中验证，并且必须始终
+> 保持由显式的 owner 授权把关（见 `DEVELOPMENT_SAFETY.md`）。
 
 ---
 
-## 1. Purpose and scope
+## 1. 目的与范围
 
-This threat model defines what a **TUN enabled mode** on Windows protects, who the
-hostile actors are, and the controls the privileged helper must implement so that
-transparent capture never disconnects the machine and can always be undone.
+本威胁模型定义了 **TUN 启用模式（TUN enabled mode）** 在 Windows 上保护什么、敌对方
+（hostile actors）是谁，以及特权 helper 必须实现哪些控制（controls），以使透明捕获
+永远不会断开机器，并且总能被撤销。
 
-In scope:
+范围内（In scope）：
 
-- The privileged helper binary, its installation service (if any), and the TUN
-  device it uses (wintun / equivalent).
-- The inter-process channel between the unprivileged Electron main process and
-  the privileged helper.
-- The configuration, DNS, IPv4/IPv6 route and interface mutations the helper
-  performs, their reversal, and their recovery after crash.
-- The Windows driver/signing and integrity-verification path.
+- 特权 helper 二进制、其安装服务（如有），以及它使用的 TUN 设备（wintun / 等价物）。
+- 非特权 Electron 主进程与特权 helper 之间的进程间通道。
+- helper 执行的配置、DNS、IPv4/IPv6 路由与接口变更、它们的撤销，以及崩溃后的恢复。
+- Windows 驱动/签名与完整性校验路径。
 
-Out of scope:
+范围外（Out of scope）：
 
-- The mihomo kernel process lifecycle, controller secret, and REST/WebSocket
-  security (covered by Phase 7 and `ARCHITECTURE.md`).
-- macOS network behavior (explicitly unsupported in this milestone).
-- Reverse-proxy, TLS-decryption and rewrite behavior (Phase 10 UI and an owner
-  decision; see ROADMAP owner backlog).
-- The application update channel design (Phase 10/11).
+- mihomo 内核进程生命周期、controller 密钥，以及 REST/WebSocket 安全（由 Phase 7 和
+  `ARCHITECTURE.md` 覆盖）。
+- macOS 网络行为（本里程碑明确不支持）。
+- 反向代理、TLS 解密与改写行为（Phase 10 UI 与一个 owner 决策；见 ROADMAP owner backlog）。
+- 应用更新通道设计（Phase 10/11）。
 
-Grounding references: `docs/ARCHITECTURE.md` (process model, `TunService`),
-`docs/CODE_SIGNING.md`, `src/main/kernel/mihomo-config.ts` and
-`src/main/kernel/mihomo-artifact.ts` (existing SHA-256 integrity and
-`tun.enable:false` gating), `src/main/system-proxy/*` (established
-interface/adapter/backup-store and fail-closed pattern the helper must mirror).
+基础参考（Grounding references）：`docs/ARCHITECTURE.md`（进程模型、`TunService`）、
+`docs/CODE_SIGNING.md`、`src/main/kernel/mihomo-config.ts` 和
+`src/main/kernel/mihomo-artifact.ts`（现有 SHA-256 完整性与 `tun.enable:false` 把关）、
+`src/main/system-proxy/*`（已确立的 interface/adapter/backup-store 与 fail-closed 模式，
+helper 必须效仿这些模式）。
 
 ---
 
-## 2. Assets
+## 2. 资产（Assets）
 
-| Asset | Sensitivity | Why it matters |
+| 资产 | 敏感度 | 为何重要 |
 |---|---|---|
-| Machine network path / connectivity | High | The owner may rely on this machine remotely. Losing it locks the owner out, so the helper must be reversible and recoverable out-of-band. |
-| TUN device + its packets | High | Transparent capture of all non-proxy-aware traffic; a hostile actor with the device can read/mutate traffic or exfiltrate it. |
-| DNS configuration and resolution | High | Hijacking DNS is both a capture primitive and a poisoning/redirection attack surface. |
-| IPv4/IPv6 route table, interface metrics, firewall rules | High | A malicious or buggy helper could blackhole, redirect or fragment traffic. |
-| Helper binary, its service, and any helper-secret | High | The helper runs elevated; its compromise is a host compromise. |
-| Stored baseline state (pre-TUN route/DNS/interface snapshot) | High | The rollback source of truth. An attacker that forges or corrupts it blocks clean disable and can leave the system broken. |
-| Kerberos/admin credentials and integrity level | High | Elevation must not expose admin to a lower-trust surface. |
-| IPC channel between app and helper | High | Spoofing/tampering here defeats fail-closed and allows unauthorized mutation. |
-| Event/log evidence of route/DNS/service changes | Medium | Required for recovery, diagnosis and the Phase 9 evidence record. |
-| The renderer and its stores | Low/Medium | Must never see helper credentials, device handles, or privileged paths. |
+| 机器网络路径 / 连通性 | 高 | 所有权者可能远程依赖这台机器。失去它会锁死所有所有者，因此 helper 必须可撤销并可在带外（out-of-band）恢复。 |
+| TUN 设备 + 其数据包 | 高 | 对所有非代理感知流量的透明捕获；拥有该设备的敌对方可以读取/篡改流量或将其外泄。 |
+| DNS 配置与解析 | 高 | 劫持 DNS 既是捕获原语，也是投毒/重定向的攻击面。 |
+| IPv4/IPv6 路由表、接口指标、防火墙规则 | 高 | 恶意或有 bug 的 helper 可能使流量黑洞化、重定向或分片。 |
+| Helper 二进制、其服务，以及任何 helper 密钥 | 高 | helper 以提升权限运行；其被攻破即整台主机被攻破。 |
+| 已存储的基线状态（TUN 前的路由/DNS/接口快照） | 高 | 回滚的真相来源（source of truth）。能伪造或损坏它的攻击者会阻止干净禁用，并可能让系统长期处于损坏状态。 |
+| Kerberos/admin 凭据与完整性级别 | 高 | 提升权限绝不能把 admin 暴露给更低信任的面。 |
+| 应用与 helper 之间的 IPC 通道 | 高 | 此处伪造/篡改会击败 fail-closed，并允许未授权变更。 |
+| 路由/DNS/服务变更的事件/日志证据 | 中 | 恢复、诊断与 Phase 9 证据记录所必需。 |
+| renderer 及其存储 | 低/中 | 绝不能看到 helper 凭据、设备句柄或特权路径。 |
 
 ---
 
-## 3. Trust boundaries and components
+## 3. 信任边界与组件
 
 ```text
                        ┌─────────────────────────────┐
@@ -94,530 +87,420 @@ High IL          │ PRIVILEGED HELPER            │    │ 3. Driver/file     
                     └──────────────────────────────────────────────┘
 ```
 
-Integrity levels (Windows IL): the renderer and app run at **Medium IL**; the
-helper runs at **High IL** (or as an elevated service) in a narrow, dedicated
-process. It must never be a shell or a general-purpose admin surface.
+完整性级别（Windows IL）：renderer 与应用运行在 **Medium IL**；helper 运行在 **High IL**
+（或作为提升的服务）下的一个狭窄而专用的进程中。它绝不能是 shell 或一个通用管理界面。
 
-Definition of a **clear trust boundary**: the elevated helper is the only
-component that may (a) call `WintunCreateAdapter` (which installs/loads the Wintun
-driver on demand and creates the adapter), (b) add/remove routes, or (c) change
-DNS or interface metrics — it is the **sole** OS network-config owner. It does **not**
-create/hold the Wintun adapter for packet I/O — that is owned exclusively by mihomo
-(the single TUN data-plane owner, see §5 A8; whether mihomo can reuse the helper-created
-adapter is G1). The app may only *request* the helper's privilege work as typed, validated,
-per-operation commands, and never carry raw PowerShell/`reg.exe`/`ip` command
-strings across the boundary (mirroring the existing no-concatenated-command rule).
+**清晰信任边界**的定义：提升的 helper 是**唯一**可以 (a) 调用 `WintunCreateAdapter`
+（按需安装/加载 Wintun 驱动并创建适配器）、(b) 添加/移除路由，或 (c) 更改 DNS 或接口
+指标的组件——它是**唯一**的 OS 网络配置所有者。它**不**为数据包 I/O 创建/持有 Wintun
+适配器——那完全由 mihomo 独占（唯一的 TUN 数据平面所有者，见 §5 A8；mihomo 能否复用
+helper 创建的适配器是 G1）。应用只能以类型化、已验证、按操作（per-operation）的命令来
+*请求* helper 的特权工作，并且绝不在边界上携带原始 PowerShell/`reg.exe`/`ip` 命令字符串
+（效仿现有的"不拼接命令"规则）。
 
 ---
 
-## 4. Actors / attacker models
+## 4. 参与者 / 攻击者模型
 
-| Actor | Trust | Motivation / access |
+| 参与者 | 信任 | 动机 / 访问 |
 |---|---|---|
-| Local user (owner) | Legitimate | Wants transparent capture; the only party allowed to initiate elevation. |
-| Unprivileged local process running as the same user | Untrusted | Medium-IL malware, downloaded content, a compromised renderer. May try to talk to the helper, tamper with helper/driver files, or fake app→helper requests. |
-| Higher-privilege process (already-elevated malware) | Untrusted | Already owns the box; cannot be fully defended against, but must not be *made easier* (no network-mutation helper that blindly accepts commands). |
-| Malicious web/mail content delivered to the user | Untrusted | Drives the local unprivileged actor above (e.g., via a crafted download that is later run). |
-| Remote network actor | Untrusted | May race the helper's route/DNS changes or exploit a wide-open TUN. |
-| Privileged-helper compromise (the helper itself) | Untrusted-if-compromised | The boundary must be small so a helper bug or hijack has a bounded blast radius and is detectable. |
+| 本地用户（所有者） | 合法 | 想要透明捕获；唯一被允许发起提升的当事方。 |
+| 以同一用户身份运行的非特权本地进程 | 不可信 | Medium-IL 恶意软件、已下载的内容、被攻破的 renderer。可能试图与 helper 通信、篡改 helper/驱动文件，或伪造应用→helper 请求。 |
+| 更高权限进程（已提升的恶意软件） | 不可信 | 已经掌控了这台机器；不可能完全防御，但绝不能"更容易"（不能被一个盲目接受命令的网络变更 helper 变得更糟）。 |
+| 送达给用户的恶意网页/邮件内容 | 不可信 | 驱动上述本地非特权参与者（例如，通过一个随后运行的特制下载）。 |
+| 远程网络参与者 | 不可信 | 可能抢占（race）helper 的路由/DNS 变更，或利用一个过开放的 TUN。 |
+| 特权 helper 被攻破（helper 本身） | 一旦被攻破则不可信 | 边界必须很小，以便 helper 的 bug 或劫持拥有一个有限的爆炸半径且可被检测。 |
 
 ---
 
-## 5. Design assumptions (must be confirmed in design review)
+## 5. 设计假设（必须经设计评审确认）
 
-These are decisions the threat model assumes; each has an owner-decision flag in
-§10.
+这些是威胁模型所假设的决策；每一项在 §10 中都有一个 owner 决策标记。
 
-- **A1. Device model.** TUN uses the official **wintun** distribution (WireGuard's
-  model): we ship the official per-arch **`wintun.dll`**; the signed Wintun kernel
-  driver is installed/loaded **on demand by the DLL inside `WintunCreateAdapter`**,
-  so there is **no separate driver-load step** and `LoadLibraryEx(wintun.dll)` alone
-  does **not** install/load a driver. We never ship a bare driver file named like the
-  driver, and we do **not** self-sign a driver or a driver cert. The **TUN data plane is
-  owned by mihomo only**; the helper **creates the adapter** with `WintunCreateAdapter`
-  (its elevated act) and applies OS-level routes/DNS as the **sole** network-config owner.
-- **A2. Helper shape.** A small, purpose-built privileged **helper executable**
-  (or a Windows service) rather than elevating the entire Electron app. The app
-  stays Medium IL.
-- **A3. Elevation trigger.** Elevation is always **explicit user action** (UAC
-  consent / a button) and never implied, auto-elevated or performed at app start.
-- **A4. Route/DNS/interface ownership (single owner, Option A).** The helper **is the
-  sole** route/DNS/interface modifier, driven by a precise typed **`DesiredNetworkState`**
-  generated by the main process (§8.2 of the design doc). mihomo's synthesized runtime
-  config has `auto-route:false`, `auto-detect-interface:false`, `dns-hijack:false`, so
-  mihomo **never** mutates routes/DNS. The helper keeps a schema-versioned
-  **BaselineSnapshot** (full per-interface IPv4/IPv6 routes with prefix/next-hop/
-  metric/protocol/store, ordered DNS with DHCP/static source, interface metric/state)
-  written **before** the first mutation, plus a **WrittenState** and an ordered
-  **MutationJournal**. Restore is **per-item owned-only** and in **reverse journal order**.
-- **A5. mihomo config gating.** Today `mihomo.config.ts` enforces
-  `tun.enable:false` (and `dns.enable:false`) for every document. Phase 9 must
-  relax this **only** on Windows, only when the helper is present and
-  authorized, and only for the runtime activation — never change the dev-safe
-  default. Relaxation must be a deliberate, reviewed change with tests.
-- **A6. Fail-closed.** If the helper cannot prove it is the expected binary with a
-  verified signature/checksum, or IPC cannot be authenticated, activation must
-  fail and perform **zero** mutation.
-- **A7. Least-privilege IPC.** The helper exposes one minimal command set. Each
-  command is authorized by policy in the helper; the app does not carry privilege.
-  The renderer is even more constrained: it only emits typed, parameterless intent
-  and never holds a helper handle (C6).
-- **A8. Single TUN data-plane owner.** Exactly one process owns the Wintun adapter
-  session for packet I/O: **mihomo**. The helper never reads/writes packets and never
-  holds the session handle. The helper's privilege role is to call
-  `WintunCreateAdapter(Name, TunnelType, RequestedGUID)` (which installs/loads the
-  driver on demand and creates the adapter, with the app-supplied `RequestedGUID`
-  giving a **stable, recoverable identity**; see the design doc §3.0/§3.2), to hold the
-  **creator handle** (the adapter's lifetime anchor), and to perform the **sole**
-  OS-level route/DNS/interface mutation + verification/recovery. On disable the adapter is
-  removed **only** by `WintunCloseAdapter(creatorHandle)` — there is **no**
-  `WintunDeleteAdapter` and no `RebootRequired`/`delete-pending`. **Whether mihomo can open
-  and reuse the helper-created adapter, and whether the adapter survives the helper closing
-  the creator handle, is **G1 — an unproven hypothesis** that must be proven by the **G1
-  lifecycle probe** (create + hold creator handle → mihomo opens by Name + starts a session →
-  helper closes the creator handle/exits → verify session + adapter persist; design doc
-  §3.3/§12) before any Phase 9 helper implementation begins.** No component other than mihomo
-  may enable the `tun` data plane.
+- **A1. 设备模型。** TUN 使用官方的 **wintun** 发行版（WireGuard 的模型）：我们分发
+  官方按架构区分的 **`wintun.dll`**；签名的 Wintun 内核驱动由 DLL 在
+  `WintunCreateAdapter` 内部**按需安装/加载**，因此**没有单独的驱动加载步骤**，单独调用
+  `LoadLibraryEx(wintun.dll)` 本身**不**会安装/加载驱动。我们绝不分发一个名字类似驱动的
+  裸驱动文件，也**不**自签驱动或驱动证书。**TUN 数据平面只由 mihomo 拥有**；helper 用
+  `WintunCreateAdapter` **创建适配器**（它的提升行为），并以**唯一**网络配置所有者的身份
+  应用 OS 级路由/DNS。
+- **A2. Helper 形态。** 一个微小、专用构建的特权 **helper 可执行文件**（或 Windows 服务），
+  而不是提升整个 Electron 应用。应用保持 Medium IL。
+- **A3. 提升触发。** 提升始终是**显式的用户操作**（UAC 同意 / 一个按钮），绝不属于隐含、
+  自动提升或在应用启动时执行。
+- **A4. 路由/DNS/接口所有权（单一所有者，选项 A）。** **helper 是唯一的**路由/DNS/接口
+  修改者，由主进程生成的精确类型化 **`DesiredNetworkState`** 驱动（设计文档 §8.2）。
+  mihomo 的合成运行时配置有 `auto-route:false`、`auto-detect-interface:false`、
+  `dns-hijack:false`，因此 mihomo **绝不**修改路由/DNS。helper 在**第一次**变更之前保存一个
+  带 schema 版本的 **BaselineSnapshot**（每个接口完整的 IPv4/IPv6 路由，含前缀/下一跳/
+  指标/协议/存储，带 DHCP/静态来源的有序 DNS，接口指标/状态），外加一个 **WrittenState**
+  和一个有序的 **MutationJournal**。恢复是**按项且仅限自有**，并按**逆 journal 顺序**。
+- **A5. mihomo 配置把关。** 如今 `mihomo.config.ts` 对每个文档都强制 `tun.enable:false`
+  （以及 `dns.enable:false`）。Phase 9 必须**仅**在 Windows 上、仅当 helper 存在且被授权时、
+  仅针对运行时激活放宽此限制——绝不更改对开发安全的默认值。放宽必须是审慎的、经过评审的、
+  带测试的变更。
+- **A6. Fail-closed。** 如果 helper 无法证明它是预期二进制（签名/校验和已验证），或 IPC
+  无法被认证，激活必须失败并执行**零**变更。
+- **A7. 最小权限 IPC。** helper 暴露一个最小的命令集。每个命令在 helper 内由策略授权；
+  应用不携带权限。renderer 受限更严：它只发出类型化、无参数的意图，并且绝不持有 helper
+  句柄（C6）。
+- **A8. 单一 TUN 数据平面所有者。** 恰好一个进程拥有 Wintun 适配器会话用于数据包 I/O：
+  **mihomo**。helper 绝不读/写数据包，也绝不持有会话句柄。helper 的特权角色是调用
+  `WintunCreateAdapter(Name, TunnelType, RequestedGUID)`（按需安装/加载驱动并创建适配器，
+  其中应用提供的 `RequestedGUID` 给出一个**稳定、可恢复的身份**；见设计文档 §3.0/§3.2），
+  持有**创建者句柄**（适配器的生命期锚点），并执行**唯一**的 OS 级路由/DNS/接口变更 +
+  验证/恢复。在禁用时，适配器**仅**由 `WintunCloseAdapter(creatorHandle)` 移除——**没有**
+  `WintunDeleteAdapter`，也**没有** `RebootRequired`/`delete-pending`。**mihomo 能否打开并
+  复用 helper 创建的适配器，以及适配器在 helper 关闭创建者句柄后是否仍存活，是 **G1 — 一个
+  未经证明的假设**，必须由 **G1 生命周期探针**（G1 lifecycle probe）证明（创建 + 持有创建者
+  句柄 → mihomo 按 Name 打开 + 启动会话 → helper 关闭创建者句柄/退出 → 验证会话 + 适配器
+  持续存在；设计文档 §3.3/§12），**之后才允许任何 Phase 9 helper 实现开始。** 除了 mihomo，
+  任何组件都不得启用 `tun` 数据平面。
 
 ---
 
-## 6. STRIDE threat enumeration
+## 6. STRIDE 威胁枚举
 
-Legend — controls are **C1 .. C13** defined in §7. "Owner" = design-review /
-owner decision item.
+图例（Legend）——控制指 **C1 .. C13**，在 §7 中定义。"Owner" = 设计评审 / owner 决策项。
 
-| ID | STRIDE | Asset | Threat / scenario | Impact | Primary controls |
+| ID | STRIDE | 资产 | 威胁 / 场景 | 影响 | 主要控制 |
 |---|---|---|---|---|---|
-| T01 | Spoofing | IPC | A Medium-IL process (or a same-user impostor) impersonates the app and sends `apply_network_state` / `create_adapter` / `restore` to the helper. | Unauthorized network rewrite | C3, C4, C6 |
-| T02 | Spoofing | Helper/DLL | An attacker drops a malicious DLL/exe in place of the helper or the official `wintun.dll` next to a writable path. | Elevation / network rewrite | C1, C2, C3 |
-| T03 | Spoofing | Route/DNS | A remote or local actor advertises a conflicting route/DNS after activation. | Traffic redirection / blackhole | C7, C8, C11, C13 |
-| T04 | Tampering | Baseline snapshot | An attacker edits the stored pre-TUN snapshot so disable restores the *wrong* state. | Permanent misconfig / lockout | C4, C8, C9, C10, C12 |
-| T05 | Tampering | Helper/service config | Registry/service keys or helper config are modified by a lower-trust actor. | Persist / weaken the helper | C2, C3, C6, C13 |
-| T06 | Tampering | TUN packets | A component or network actor reads/writes packets on the device out of policy. | Confidentiality / integrity of traffic | C6, C11, C13 |
-| T07 | Repudiation | Evidence | The helper performs a network mutation but an operator/owner cannot attribute or revert it. | Unrecoverable broken state | C9, C12, C13 |
-| T08 | Info disclosure | Helper creds / device handle | A low-privilege process reads helper IPC or memory and extracts the device handle or any helper secret. | Capture/mutation primitives | C3, C6, C12 |
-| T09 | Info disclosure | Packets / DNS | DNS hijack leaks the requested domains or a mis-configured TUN exposes traffic to a wrong interface. | Confidentiality | C1, C6, C11 |
-| T10 | DoS | Machine network path | A buggy/elevated helper or a malicious request leaves a bad route/DNS and disconnects the machine. | Owner lockout | C7, C8, C9, C10, C12 |
-| T11 | DoS | Helper service | An over-eager or over-broad helper task is started repeatedly, or holds the TUN device open, blocking other uses. | Resource exhaustion | C5, C7 |
-| T12 | Elevation of privilege | Helper | A vulnerability in the helper (parsing, IPC, driver ABI) lets a Medium-IL caller gain admin. | Full host compromise | C3, C4, C6, C7, C13 |
-| T13 | Elevation of privilege | Driver | A privileged driver is loaded from a tampered/poorly-signed source. | Kernel compromise | C1, C2, C3 |
-| T14 | Elevation of privilege | Elevation flow | The app auto-elevates, or a UAC "consent" is bypassed, so a low-trust actor triggers admin work. | Unauthorized admin | C5, C6, C13 |
-| T15 | Tampering | Config gating | A profile-driven `tun`/`dns` block slips past the merge validator and activates TUN in a non-authorized (or dev) build. | Network mutation in a safe env | C7, C13, Owner |
+| T01 | Spoofing | IPC | 一个 Medium-IL 进程（或一个同用户的冒名者）冒充应用，向 helper 发送 `apply_network_state` / `create_adapter` / `restore`。 | 未授权网络改写 | C3, C4, C6 |
+| T02 | Spoofing | Helper/DLL | 攻击者在可写路径旁投下一个恶意 DLL/exe 以替代 helper 或官方 `wintun.dll`。 | 提升 / 网络改写 | C1, C2, C3 |
+| T03 | Spoofing | Route/DNS | 远程或本地参与者在激活后宣告一个冲突的路由/DNS。 | 流量重定向 / 黑洞 | C7, C8, C11, C13 |
+| T04 | Tampering | 基线快照 | 攻击者编辑已存储的 TUN 前快照，使禁用恢复出*错误的*状态。 | 永久误配置 / 锁死 | C4, C8, C9, C10, C12 |
+| T05 | Tampering | Helper/服务配置 | 注册表/服务键或 helper 配置被较低信任参与者修改。 | 持久化 / 削弱 helper | C2, C3, C6, C13 |
+| T06 | Tampering | TUN 数据包 | 某组件或网络参与者在策略之外读/写设备上的数据包。 | 流量的机密性 / 完整性 | C6, C11, C13 |
+| T07 | Repudiation | 证据 | helper 执行了一次网络变更，但操作者/所有者无法归因或撤销它。 | 无法恢复的损坏状态 | C9, C12, C13 |
+| T08 | Info disclosure | helper 凭据 / 设备句柄 | 低权限进程读取 helper IPC 或内存，提取设备句柄或任何 helper 密钥。 | 捕获/变更原语 | C3, C6, C12 |
+| T09 | Info disclosure | 数据包 / DNS | DNS 劫持泄露被请求的域名，或配置错误的 TUN 把流量暴露给错误的接口。 | 机密性 | C1, C6, C11 |
+| T10 | DoS | 机器网络路径 | 有 bug / 已提升的 helper 或一个恶意请求留下错误的路由/DNS 并断开机器。 | 所有者锁死 | C7, C8, C9, C10, C12 |
+| T11 | DoS | Helper 服务 | 过于热切或过于宽泛的 helper 任务被反复启动，或一直持有 TUN 设备，阻塞其他用途。 | 资源耗尽 | C5, C7 |
+| T12 | Elevation of privilege | Helper | helper 中的漏洞（解析、IPC、驱动 ABI）让 Medium-IL 调用者获得 admin。 | 完全主机攻破 | C3, C4, C6, C7, C13 |
+| T13 | Elevation of privilege | 驱动 | 一个特权驱动从被篡改/签名不良的来源加载。 | 内核攻破 | C1, C2, C3 |
+| T14 | Elevation of privilege | 提升流程 | 应用自动提升，或 UAC "同意"被绕过，使低信任参与者触发 admin 工作。 | 未授权 admin | C5, C6, C13 |
+| T15 | Tampering | 配置把关 | 一个 profile 驱动的 `tun`/`dns` 块绕过合并校验器，并在一个未授权（或 dev）构建中激活 TUN。 | 在安全环境中进行网络变更 | C7, C13, Owner |
 
 ---
 
-## 7. Control requirements
+## 7. 控制要求
 
-Groups integrate with (and reuse) existing project patterns.
+各组（Groups）与（并复用）现有项目模式集成。
 
-### C1 — Verified supply chain / signed artifacts (owner-driven)
+### C1 — 已验证的供应链 / 签名的产物（owner 驱动）
 
-- The helper and the helper's dependencies are **Authenticode-signed** with a
-  certificate that the app trusts by pinned thumbprint, not by the OS trust store
-  alone (see `CODE_SIGNING.md` inputs; certificate provider is an owner decision).
-- The official per-arch **`wintun.dll`** is validated by a **pinned SHA-256 digest**
-  in the release manifest (mirror `mihomo-artifact.ts` `sha256File`/`binarySha256`)
-  and its **license/source** are recorded in `THIRD_PARTY_NOTICES.md`. The Wintun
-  **kernel driver** is loaded through the DLL; Windows only loads a signed driver,
-  so the driver must carry a **Microsoft/attestation-signed** signature — we do
-  **not** self-sign a driver or ship a self-signed driver cert.
-- Activation verifies, **before** any mutation:
-  - the helper's SHA-256 matches a pinned release manifest, **and**
-  - `Get-AuthenticodeSignature` for the helper reports the expected publisher,
-  - the wintun DLL digest matches the manifest.
-- A self-signed cert is acceptable only for a CI "smoke" path and never a release
-  artifact; it must not be trusted by the production activation path.
+- helper 及 helper 的依赖都经过 **Authenticode 签名**，使用的证书是应用通过钉定的指纹
+  （pinned thumbprint）来信任的，而不是只信任 OS 信任存储（见 `CODE_SIGNING.md` 输入；
+  证书提供商是 owner 决策）。
+- 官方的按架构 **`wintun.dll`** 通过发布清单中的**钉定 SHA-256 摘要**验证（效仿
+  `mihomo-artifact.ts` 的 `sha256File`/`binarySha256`），其**许可证/来源**记录在
+  `THIRD_PARTY_NOTICES.md` 中。Wintun **内核驱动**通过 DLL 加载；Windows 只加载签名驱动，
+  因此驱动必须携带 **Microsoft/attestation 签名**——我们**不**自签驱动，也**不**分发自签的
+  驱动证书。
+- 在**任何**变更之前，激活会验证：
+  - helper 的 SHA-256 匹配钉定的发布清单，**且**
+  - helper 的 `Get-AuthenticodeSignature` 报告预期的发布者，
+  - wintun 的 DLL 摘要匹配清单。
+- 自签证书仅适用于 CI "smoke"（冒烟）路径，绝不可用于发布产物；它不能被生产激活路径信任。
 
-### C2 — Tamper-resistant placement
+### C2 — 防篡改放置
 
-- Install the helper and the per-arch `wintun.dll` under `Program Files` (or the
-  per-user equivalent only if the helper does not need Medium-trust-protected
-  placement). No temp-dir or per-user-writable drop of a privileged binary. The DLL
-  is never resolved from a search path a lower-trust process can influence.
-- The directory ACL protects files from Medium-IL writes; the service/registry keys
-  are created with the **pure allow-list DACL** intended for an elevated object (design doc
-  §5.1 — **no** `DENY Everyone`/`DENY Users` shadowing the owner's `ALLOW`). The recovery
-  state store is further protected by a **`High` mandatory-integrity label** so the same-user
-  **Medium-IL** owner cannot write/delete/change-ACL it even though it shares the owner's SID
-  (design doc §8.0).
-- Never promote a file placed in, or a path resolved from, an attacker-writable
-  directory (e.g. `%TEMP%`, app-data subfolders writable by the same user) to an
-  elevated command. The trusted recovery state is **never** written to such a path; it lives in
-  the High-IL-only `%ProgramData%\<brand-independent-id>\tun-state\<ownerSid>\` (design doc
-  §8.0).
+- 在 `Program Files`（或仅当 helper 不需要 Medium-信任保护的放置时的每用户等价物）下安装
+  helper 和按架构的 `wintun.dll`。绝不在临时目录或每用户可写处放置特权二进制。DLL 绝不
+  从较低信任进程能影响的搜索路径解析。
+- 目录 ACL 保护文件免受 Medium-IL 写入；服务/注册表键以**纯允许列表 DACL**创建，专为提升的
+  对象设计（设计文档 §5.1——**无** `DENY Everyone`/`DENY Users` 遮蔽所有者的 `ALLOW`）。
+  恢复状态存储进一步受**`High` 强制完整性标签**保护，因此即使该同用户 **Medium-IL** 所有者
+  与其共享 SID，也不能对它写入/删除/更改 ACL（设计文档 §8.0）。
+- 绝不把位于、或从攻击者可写目录（例如 `%TEMP%`、同一用户可写的 app-data 子文件夹）解析的
+  路径，提升为提升命令。可信恢复状态**绝不**写入此类路径；它位于 High-IL-only 的
+  `%ProgramData%\<brand-independent-id>\tun-state\<ownerSid>\`（设计文档 §8.0）。
 
-### C3 — Authenticated, authorized, replay-safe IPC (COM elevation-moniker bootstrap)
+### C3 — 认证、授权、防重放的 IPC（COM 提升 moniker 引导）
 
-The simple same-user-SID + random-name + nonce model is **not** sufficient because another
-process running as the *same user* can impersonate the app, and `runas`/`ShellExecuteEx`
-**cannot** propagate an inheritable-handle list across elevation. The bootstrap therefore
-uses the **Microsoft-sanctioned COM Elevation Moniker** flow: the app activates an elevated,
-out-of-proc COM server (the helper) with `CoGetObject(L"Elevation:Administrator!new:{CLSID}",
-BIND_OPTS3, ...)` where the elevation broker authenticates and mediates the rendezvous, and
-**each enable creates one per-enable single-client resident server** (design doc §5.5); its
-process lifetime is bound to the enabled TUN window and it holds the **creator handle** for
-the whole window (design doc §3.3, §3.4). The contract
-requires all of the following; failure in any one ⇒ close + fail closed:
+简单的同用户 SID + 随机名 + nonce 模型**不足够**，因为另一个以*同一用户*身份运行的进程可以
+冒充应用，并且 `runas`/`ShellExecuteEx` **无法**跨提升传播可继承句柄列表。因此引导使用
+**Microsoft 认可的 COM 提升 moniker（Elevation Moniker）** 流程：应用用
+`CoGetObject(L"Elevation:Administrator!new:{CLSID}", BIND_OPTS3, ...)` 激活一个提升的、
+进程外 COM 服务器（helper），其中提升代理（elevation broker）认证并中介这次会合，并且
+**每次启用都会创建一个按启用的单客户端常驻服务器**（设计文档 §5.5）；其进程生命期绑定到
+已启用的 TUN 窗口，并在整个窗口内持有**创建者句柄**（设计文档 §3.3、§3.4）。该契约要求
+以下全部条件；任一项失败 ⇒ 关闭并 fail closed：
 
-- **Elevation-moniker registration (machine-wide HKLM).** `CLSID` default +
-  `LocalizedString=@...helper.exe,-101` + `Elevation\Enabled` = **REG_DWORD `1`** +
-  `LocalServer32` (default = **absolute helper path**, plus `ServerExecutable` = absolute
-  path, `AppID`) + `AppID` (default + `RunAs = "Interactive User"`, **pure allow-list**
-  `LaunchPermission`/`AccessPermission` DACLs granting local launch/activate/access **only** to
-  the authorized interactive-user principal + `SYSTEM` (+ `Administrators` in `LaunchPermission`
-  for install/repair), using the **explicit COM rights masks** `D:P(A;;0xB;;;SY)(A;;0xB;;;BA)`
-  (launch) and `D:P(A;;0x3;;;SY)(A;;0x3;;;<ownerSid>)` (access) — **no** `DENY Everyone`/
-  `DENY Users`, **no** `Everyone`/`Users`/`Authenticated Users` ACE, and **no `DENY` at all**
-  (a complete allow-list denies by absence; `ANONYMOUS LOGON`/`NETWORK` are denied that way);
-  verified by the descriptor-build `AccessCheck` tests, design doc §5.1/§13). There is **no** `ThreadingModel`
-  under `LocalServer32` and **no** `Elevation` string value. Registration is in the registry
-  **view matching the helper bitness**, selected explicitly with the
-  **`KEY_WOW64_64KEY`/`KEY_WOW64_32KEY` flags** (no literal `WOW6432Node` path). The product
-  ships **amd64/arm64 helpers only**, so we register **only the 64-bit COM view
-  (`KEY_WOW64_64KEY`)** and **do not register a 32-bit COM helper**. Registration is done by
-  the installer **and re-verified by the app's probe**, never by an unprivileged path.
-- **Transport is an authenticated, encrypted COM channel with mutual auth + packet
-  privacy.** The app calls `CoInitializeSecurity(..., RPC_C_AUTHN_LEVEL_PKT_PRIVACY,
-  RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_SECURE_REFS|EOAC_STATIC_CLOAKING, NULL)` and does
-  `CoSetProxyBlanket(proxy, RPC_C_AUTHN_WINNT, RPC_C_AUTHZ_NONE, NULL,
-  RPC_C_AUTHN_LEVEL_PKT_PRIVACY, RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_NONE)`. The
-  schema-validated `HelperCommand` envelope is the interface parameter (size-capped, no raw
-  command string). **No app-created named pipe; no inherited handle; no endpoint name in a
-  user-readable medium; it is not plain `CoCreateInstance` + `requireAdministrator`.**
-- **Client (app) identity validated server-side.** On each privileged call the helper does
-  `CoImpersonateClient()`, then:
-  - **PID** — `RpcServerInqCallAttributes(..., RPC_CALL_ATTRIBUTES_V2, ...)` with
-    `Flags = RPC_QUERY_CLIENT_PID` reading **`ClientPID`** (not `ClientProcessId`),
-  - **transport** — assert the call arrived over local **`ncalrpc`** (LPC); reject any
-    `ncacn_ip_tcp`/remote call,
-  - **token/session** — `GetTokenInformation(TokenUser / TokenStatistics /
-    TokenIntegrityLevel)` shows the same **logon session**, same **user SID**, expected
-    **Medium IL**, **token type**,
-  - **canonical path + signature + hash** — `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,
-    pid)` + `QueryFullProcessImageName` → normalized canonical path whose SHA-256 digest and
-    Authenticode publisher match the pinned app identity,
-  then `CoRevertToSelf()`. **The PID is only a handle to open and validate the process object
-  — never an identity by itself** (identity = logon session + user SID + integrity +
-  path/digest/publisher + session key; a reused PID is caught by the path/digest mismatch).
-  A same-user impostor (wrong PID, token, path, digest, signer, or missing session key) is
-  rejected even though it shares the SID.
-- **App authenticates the helper.** The first (`bootstrap`) call returns the **helper PID**;
-  the app opens it (`PROCESS_QUERY_LIMITED_INFORMATION`) and verifies its canonical path +
-  SHA-256 + Authenticode publisher match the pinned helper. A per-user registration that
-  tried to divert the CLSID fails this check and is refused.
-- **Per-enable, single-client resident server (§5.5 of the design doc).** Each enable uses
-  `Elevation:Administrator!new` so a **fresh per-enable server** is created. It
-  **binds to the first verified client** and **rejects every other client** — including a
-  second Murge process with the identical binary (same path, same Authenticode, same
-  SHA-256), because the first client has already been bound. Its **process lifetime is bound
-  to the enabled TUN window** (it holds the creator handle for the whole window; design doc
-  §3.3/§3.4), and it **exits only** on: normal disable complete, enable-failure recovery
-  complete, bound client/kernel death after emergency restore, handshake-phase timeout, or an
-  explicit global max recovery timeout. It is **not idle-exited** while resident-active.
-  No already-running helper is reused.
-- **One-time `launchSecret` exchanged inside the authenticated channel** — never on a command
-  line, env, regular file or user-readable registry value (all readable by a same-user
-  process). It is used to derive the `sessionKey` and is `RtlSecureZeroMemory`-zeroized right
-  after the handshake. Then `CoRevertToSelf()`.
-- **Replay/reflection resistance.** The `sessionKey` is derived with HKDF
-  (launchSecret, per-session salt + peer-role); every message is MAC'd over the canonical
-  encoding (§4.3 of the design doc) with a **monotonic uint64 `requestId`**, and a bounded
-  replay cache rejects duplicates or out-of-order ids.
-- **Timeout/cleanup.** A **bootstrap handshake timeout** (e.g. 5 s) after which the helper
-  exits, a **per-command timeout**, idle channels closed, and the `launchSecret` +
-  `sessionKey` **zeroized** on channel close, task end and helper exit (never logged).
-- **Typed, schema-validated message with a fixed allowlist.** Operation identifiers from a
-  **fixed allowlist** (`probe_integrity`, `create_adapter`, `apply_network_state`,
-  `snapshot`, `restore`, `get_status`, `health`, `close_creator_handle`); a per-operation
-  monotonic `requestId` (idempotency/replay guard); JSON-schema validation in the helper
-  (mirror the "validate every IPC arg" rule; TS types are not runtime validation); a strict
-  size cap. There is **no** `delete_adapter`/`WintunDeleteAdapter` in the model or the
-  allowlist.
-- The helper authorizes **each** operation by policy; it does not trust the app as a blanket
-  admin. `apply_network_state` carries the typed, validated `DesiredNetworkState` (never raw
-  command text).
+- **提升 moniker 注册（机器级 HKLM）。** `CLSID` default + `LocalizedString=@...helper.exe,-101`
+  + `Elevation\Enabled` = **REG_DWORD `1`** + `LocalServer32`（default = **绝对 helper 路径**，
+  外加 `ServerExecutable` = 绝对路径、`AppID`）+ `AppID`（default + `RunAs = "Interactive User"`，
+  **纯允许列表**的 `LaunchPermission`/`AccessPermission` DACL，仅向**授权的交互式用户主体** +
+  `SYSTEM`（外加在 `LaunchPermission` 中的 `Administrators` 用于安装/修复）授予本地
+  启动/激活/访问，使用**显式 COM 权限掩码** `D:P(A;;0xB;;;SY)(A;;0xB;;;BA)`（launch）和
+  `D:P(A;;0x3;;;SY)(A;;0x3;;;<ownerSid>)`（access）——**无** `DENY Everyone`/`DENY Users`，
+  **无** `Everyone`/`Users`/`Authenticated Users` ACE，并且**根本没有 `DENY`**（一个完整的允许
+  列表靠缺席来拒绝；`ANONYMOUS LOGON`/`NETWORK` 由此被拒绝）；由描述符构建的 `AccessCheck`
+  测试验证，设计文档 §5.1/§13）。在 `LocalServer32` 下**没有** `ThreadingModel`，也**没有**
+  `Elevation` 字符串值。注册位于**与 helper 位宽匹配的注册表视图**中，用
+  **`KEY_WOW64_64KEY`/`KEY_WOW64_32KEY`** 标志显式选择（没有字面的 `WOW6432Node` 路径）。
+  产品只分发 **amd64/arm64 helpers**，因此我们**只注册 64 位 COM 视图（`KEY_WOW64_64KEY`）**，
+  并且**不注册 32 位 COM helper**。注册由安装程序完成，**并由应用的探针重新验证**，绝不通过
+  非特权路径。
+- **传输是经过认证、加密的 COM 通道，带双向认证 + 数据包隐私。** 应用调用
+  `CoInitializeSecurity(..., RPC_C_AUTHN_LEVEL_PKT_PRIVACY, RPC_C_IMP_LEVEL_IMPERSONATE, NULL,
+  EOAC_SECURE_REFS|EOAC_STATIC_CLOAKING, NULL)`，并执行 `CoSetProxyBlanket(proxy,
+  RPC_C_AUTHN_WINNT, RPC_C_AUTHZ_NONE, NULL, RPC_C_AUTHN_LEVEL_PKT_PRIVACY,
+  RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_NONE)`。经过 schema 验证的 `HelperCommand` 信封是
+  接口参数（大小受限，无原始命令字符串）。**无应用创建的命名管道；无继承句柄；无用户可读介质
+  中的端点名称；不是普通 `CoCreateInstance` + `requireAdministrator`。**
+- **客户端（应用）身份在服务端验证。** 每次特权调用，helper 都执行 `CoImpersonateClient()`，
+  然后：
+  - **PID** —— `RpcServerInqCallAttributes(..., RPC_CALL_ATTRIBUTES_V2, ...)` 用
+    `Flags = RPC_QUERY_CLIENT_PID` 读取 **`ClientPID`**（不是 `ClientProcessId`），
+  - **传输** —— 断言调用经由本地 **`ncalrpc`**（LPC）到达；拒绝任何 `ncacn_ip_tcp`/远程调用，
+  - **令牌/会话** —— `GetTokenInformation(TokenUser / TokenStatistics / TokenIntegrityLevel)`
+    显示相同的**登录会话**、相同的**用户 SID**、预期的 **Medium IL**、**令牌类型**，
+  - **规范路径 + 签名 + 哈希** —— `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, pid)` +
+    `QueryFullProcessImageName` → 规范化后的规范路径，其 SHA-256 摘要和 Authenticode 发布者
+    匹配钉定的应用身份，
+  然后 `CoRevertToSelf()`。**PID 只是一个用于打开并验证进程对象的句柄——本身永远不是身份**
+  （身份 = 登录会话 + 用户 SID + 完整性 + 路径/摘要/发布者 + 会话密钥；被复用的 PID 由路径/
+  摘要不匹配捕捉）。即使共享 SID，同用户冒名者（错误的 PID、令牌、路径、摘要、签名者，或
+  缺失会话密钥）也会被拒绝。
+- **应用认证 helper。** 第一次（`bootstrap`）调用返回 **helper PID**；应用打开它
+  （`PROCESS_QUERY_LIMITED_INFORMATION`）并验证其规范路径 + SHA-256 + Authenticode 发布者
+  匹配钉定的 helper。一个试图转移 CLSID 的每用户注册会在此检查失败并被拒绝。
+- **按启用、单客户端常驻服务器（设计文档 §5.5）。** 每次启用都用 `Elevation:Administrator!new`
+  使一个**全新的按启用服务器**被创建。它**绑定到第一个已验证的客户端**，并**拒绝其他所有
+  客户端**——包括一个二进制完全相同的第二个 Murge 进程（相同路径、相同 Authenticode、相同
+  SHA-256），因为第一个客户端已被绑定。其**进程生命期绑定到已启用的 TUN 窗口**（它在整个窗口
+  内持有创建者句柄；设计文档 §3.3/§3.4），并且**只**在以下情况退出：正常禁用完成、启用失败
+  恢复完成、紧急恢复后已绑定客户端/内核死亡、握手阶段超时，或显式的全局最大恢复超时。在常驻
+  激活期间它**不会空闲退出**。不会复用任何已在运行的 helper。
+- **一次性 `launchSecret` 在认证通道内交换**——绝不在命令行、环境变量、普通文件或用户可读的
+  注册表值上（这些都能被同用户进程读取）。它用于派生 `sessionKey`，并在握手完成后立即用
+  `RtlSecureZeroMemory` 清零。然后 `CoRevertToSelf()`。
+- **防重放/反射。** `sessionKey` 用 HKDF 派生（launchSecret、每会话盐 + 对端角色）；每条消息
+  都以规范编码（设计文档 §4.3）MAC，带一个**单调 uint64 `requestId`**，一个有界的重放缓存
+  拒绝重复或乱序的 id。
+- **超时/清理。** 一个**引导握手超时**（例如 5 s），之后 helper 退出，一个**每命令超时**，
+  空闲通道关闭，并且在通道关闭、任务结束和 helper 退出时对 `launchSecret` + `sessionKey`
+  **清零**（绝不记录日志）。
+- **类型化、schema 验证的消息，带固定允许列表。** 操作标识符来自一个**固定允许列表**
+  （`probe_integrity`、`create_adapter`、`apply_network_state`、`snapshot`、`restore`、
+  `get_status`、`health`、`close_creator_handle`）；每操作的单调 `requestId`（幂等/防重放护栏）；
+  helper 内做 JSON-schema 验证（效仿"验证每个 IPC 参数"规则；TS 类型不是运行时验证）；严格的
+  大小上限。模型中与允许列表中**都没有** `delete_adapter`/`WintunDeleteAdapter`。
+- helper 按策略授权**每个**操作；它不把应用当作整个 admin 来信任。`apply_network_state` 携带
+  类型化、已验证的 `DesiredNetworkState`（绝不携带原始命令文本）。
 
-### C4 — Baseline + written + journal before first mutation (fail-closed)
+### C4 — 首次变更前的基线 + 已写 + 日志（fail-closed）
 
-- Before the first route/DNS/interface mutation of an activation, the helper writes a
-  schema-versioned **BaselineSnapshot** keyed per interface by **LUID/index** that
-  holds the **full** IPv4/IPv6 route rows (prefix, prefix length, next-hop/on-link,
-  metric, protocol, route store), the **ordered per-interface DNS** with each entry's
-  **DHCP/static source**, and the interface metric/state + firewall profile. It is
-  written **atomically** (write temp → validate → rename), mirroring
-  `FileSystemProxyBackupStore`.
-- The exact set the helper writes is recorded as **WrittenState**, and every mutation
-  is appended to an ordered **write-ahead MutationJournal** (design doc §8.3–§8.4): each
-  operation is a **`PREPARED`** record (with before/after values + baseline fingerprint,
-  **fsync'd before** the OS is touched) → perform the mutation → **`APPLIED`** record. This
-  includes **`CREATE_ADAPTER/PREPARED`** written + fsync'd **before** `WintunCreateAdapter`
-  (carrying `name`/`TunnelType`/`RequestedGUID` for a recoverable identity) so a crash
-  between the two records leaves a durable intent that recovery **reconciles by
-  `WintunOpenAdapter(Name)` + identity verification** (`WintunGetAdapterLUID` +
-  `ConvertInterfaceLuidToGuid`/SetupAPI) — **never by assuming**. A failure to write/verify
-  the snapshot or journal **aborts** with zero mutation. The snapshot/journal live in the
-  **High-IL-only trusted store** (`%ProgramData%\<brand-independent-id>\tun-state\<ownerSid>`,
-  design doc §8.0), which the helper **validates on startup** (owner/DACL/reparse) and whose
-  journal **handle file-ID is re-verified before each `PREPARED`/`APPLIED`/`RECONCILED`
-  append** (no string-path re-open) — a store/ACL/reparse/integrity anomaly **fails closed**.
-- Restore is **per-item owned-only**: each item is compared against `WrittenState`
-  and reverted to its baseline only if the current value still equals what the app
-  wrote. An externally-modified item is reported as a **per-item conflict**
-  (`conflictDetail`: LUID/index, family, field, expected vs current) and left
-  untouched; it does **not** block restoring other owned items and does **not**
-  trigger overwriting other externally-changed items (never all-or-nothing).
+- 在一次激活的首次路由/DNS/接口变更之前，helper 写入一个带 schema 版本的 **BaselineSnapshot**，
+  按接口以 **LUID/index** 为键，保存**完整**的 IPv4/IPv6 路由行（前缀、前缀长度、下一跳/on-link、
+  指标、协议、路由存储）、**有序的每接口 DNS**（每条带 **DHCP/静态来源**），以及接口指标/状态 +
+  防火墙配置。它**原子**写入（写临时 → 验证 → 重命名），效仿 `FileSystemProxyBackupStore`。
+- helper 的确切写入集合记录为 **WrittenState**，并且每次变更都追加到一个有序的 **write-ahead
+  MutationJournal**（设计文档 §8.3–§8.4）：每个操作是一个 **`PREPARED`** 记录（带 before/after 值 +
+  基线指纹，**在触碰 OS 之前 fsync**）→ 执行变更 → **`APPLIED`** 记录。这包括在
+  `WintunCreateAdapter` 之前写入并 fsync 的 **`CREATE_ADAPTER/PREPARED`**（携带
+  `name`/`TunnelType`/`RequestedGUID` 以获得可恢复身份），因此两个记录之间的崩溃会留下一个
+  持久的意图，恢复时通过 **`WintunOpenAdapter(Name)` + 身份验证**（`WintunGetAdapterLUID` +
+  `ConvertInterfaceLuidToGuid`/SetupAPI）**调和（reconcile）**——**绝不靠假设**。快照或 journal
+  写入/验证失败会以零变更**中止**。快照/journal 位于 **High-IL-only 的可信存储**
+  （`%ProgramData%\<brand-independent-id>\tun-state\<ownerSid>`，设计文档 §8.0），helper 在**启动时
+  验证**它（owner/DACL/reparse），并且其 journal 的**句柄 file-ID 在每次 `PREPARED`/`APPLIED`/
+  `RECONCILED` 追加前都会重新验证**（不按字符串路径重新打开）——存储/ACL/reparse/完整性异常
+  **会 fail closed**。
+- 恢复是**按项且仅限自有**：每一项目与 `WrittenState` 比较，仅当当前值仍等于应用写入的值时才
+  回退到其基线。一个被外部修改的项目被报告为**按项冲突**（`conflictDetail`：LUID/index、family、
+  field、expected vs current）并保持不动；它**不会**阻止恢复其他自有项目，也**不会**触发覆盖
+  其他被外部修改的项目（绝非全有或全无）。
 
-### C5 — Explicit elevation, least privilege
+### C5 — 显式提升，最小权限
 
-- No auto-elevation. Activation is triggered only by an explicit user action.
-- The app opens the helper through an explicit consent the user sees (a UAC prompt shown by
-  the COM elevation broker); each enable creates a **per-enable single-client resident
-  server** whose **process lifetime is bound to the enabled TUN window** (it holds the
-  creator handle for the whole window; design doc §3.3/§3.4/§5.5). The helper runs **High IL** but with a **restricted token** whose enabled privileges
-  are exactly those needed. The restriction **retains the `Administrators` (`BA`) group SID enabled
-  and not deny-only**, because the trusted-state DACL authorizes the helper through that ACE; the
-  helper verifies this token property at startup and fails closed before network mutation if it is
-  absent. Required privileges include `SeLoadDriverPrivilege` for the
-  `WintunCreateAdapter(Name, TunnelType, RequestedGUID)` call; route add/delete are granted
-  via the DNS/route APIs rather than blanket admin.
-- Adapter lifecycle is **explicit** (design doc §3.3): on disable mihomo ends its session and
-  closes its open handle, then the helper verifies ownership (`Name`/`RequestedGUID`/LUID)
-  and calls **`WintunCloseAdapter(creatorHandle)`** — the **only** operation that removes a
-  create-created adapter. There is **no** `WintunDeleteAdapter`, **no**
-  `ERROR_REBOOT_REQUIRED` adapter-delete return, and **no** `delete-pending` state. It
-  removes **only** an adapter it provably created (own `Name`/`RequestedGUID`), never a
-  pre-existing/shared adapter or driver (C9); **`WintunDeleteDriver` is never called**.
-- The helper is a dedicated process without a console, no network listener of its
-  own (other than its IPC), and no accidental admin shell. It never creates/holds
-  the Wintun packet session — mihomo owns the data plane (A8), and whether mihomo can
-  reuse the helper-created adapter is the G1 gate.
+- 无自动提升。激活只由显式用户操作触发。
+- 应用通过用户看到的显式同意打开 helper（由 COM 提升代理显示的一个 UAC 提示）；每次启用创建一个
+  **按启用的单客户端常驻服务器**，其**进程生命期绑定到已启用的 TUN 窗口**（它在整个窗口内持有
+  创建者句柄；设计文档 §3.3/§3.4/§5.5）。helper 运行在 **High IL** 但带一个**受限令牌**，其启用
+  特权恰好是所需那些。该限制**保留 `Administrators`（`BA`）组 SID 为启用状态且不是 deny-only**，
+  因为可信状态 DACL 通过那个 ACE 授权 helper；helper 在启动时验证这一令牌属性，若缺失则在网络
+  变更前 fail closed。所需特权包括用于 `WintunCreateAdapter(Name, TunnelType, RequestedGUID)`
+  调用的 `SeLoadDriverPrivilege`；路由添加/删除通过 DNS/路由 API 授予，而不是宽泛 admin。
+- 适配器生命期是**显式**的（设计文档 §3.3）：禁用时 mihomo 结束其会话并关闭其打开的句柄，然后
+  helper 验证所有权（`Name`/`RequestedGUID`/LUID）并调用**`WintunCloseAdapter(creatorHandle)`**——
+  这是移除 create 创建的适配器的**唯一**操作。**没有** `WintunDeleteAdapter`，**没有**
+  `ERROR_REBOOT_REQUIRED` 适配器删除返回，也**没有** `delete-pending` 状态。它**只**移除一个它能
+  证明由自己创建的适配器（自己的 `Name`/`RequestedGUID`），绝不会是预先存在/共享的适配器或驱动
+  （C9）；**`WintunDeleteDriver` 绝不会被调用**。
+- helper 是一个无控制台、无自有网络监听器（除其 IPC 外）、无意外 admin shell 的专用进程。它绝不
+  创建/持有 Wintun 数据包会话——mihomo 拥有数据平面（A8），而 mihomo 能否复用 helper 创建的适配器
+  是 G1 关卡。
 
-### C6 — Renderer/secret isolation & least surface
+### C6 — renderer/密钥隔离与最小面
 
-- The helper/device handle and any helper secret **never** cross into preload/renderer.
-- The helper exposes no general-purpose command, no arbitrary path argument, and no
-  raw PowerShell/command string (enforced by schema + allowlist, §C3).
-- The renderer only **reads** `TunStatus` from `get_status`/status events. It may
-  emit **typed, parameterless intent** (`requestEnable`/`requestDisable`) that the
-  main-process `TunService` validates and acts on; it never touches the helper,
-  passes arbitrary arguments, or mutates state itself (mirror the existing proxy
-  rule — the renderer cannot flip state optimistically). There is no
-  renderer→helper path.
+- helper/设备句柄和任何 helper 密钥**绝不**跨入 preload/renderer。
+- helper 不暴露通用命令、不暴露任意路径参数，也不暴露原始 PowerShell/命令字符串（由 schema +
+  允许列表强制执行，§C3）。
+- renderer 只**读取**来自 `get_status`/状态事件的 `TunStatus`。它可发出**类型化、无参数的意图**
+  （`requestEnable`/`requestDisable`），由主进程的 `TunService` 验证并执行；它绝不触碰 helper、不传递
+  任意参数，也不自行变更状态（效仿现有的代理规则——renderer 不能乐观地翻转状态）。不存在
+  renderer→helper 路径。
 
-### C7 — Config gating authority
+### C7 — 配置把关权限
 
-- Relaxing `tun.enable:false`/`dns.enable:false` in `mihomo-config.ts` is a **single,
-  reviewed change** with tests that (a) keep the dev-safe default and (b) only allow
-  activation when the Windows helper is present and authorized. A profile that
-  attempts to enable TUN/DNS outside that path keeps failing closed.
-- A non-Windows build must return an explicit **unsupported/blocked** result (per
-  `DEVELOPMENT_SAFETY.md`), never silently enable TUN.
+- 在 `mihomo-config.ts` 中对 `tun.enable:false`/`dns.enable:false` 的放宽是一个**单一、经评审的**
+  带测试变更，它 (a) 保持对开发安全的默认值，且 (b) 仅当 Windows helper 存在且被授权时才允许激活。
+  一个 profile 试图在该路径之外启用 TUN/DNS 会继续 fail closed。
+- 一个非 Windows 构建必须返回一个显式的**不支持/被阻止**结果（按 `DEVELOPMENT_SAFETY.md`），绝不
+  静默启用 TUN。
 
-### C8 — Per-item owned-only restore (no clobbering, never all-or-nothing)
+### C8 — 按项仅自有恢复（绝不覆盖，绝非全有或全无）
 
-- Disable/rollback restores only the baseline values recorded by the helper and
-  only when the current values still **match** what the helper previously wrote
-  (owned-state semantics, mirroring `isOwned`/`matchesPrevious` in the proxy
-  adapter), evaluated **per item** (per LUID/index, per address family, per field).
-- An externally-modified item produces a typed **per-item conflict**
-  (`conflictDetail`: LUID/index, family, field, expected vs current) and is left
-  untouched, while **unrelated owned items are still restored**. Phase becomes
-  `conflict` only if any owned item was externally modified; otherwise restore
-  completes to `configured`. Restore never becomes an all-or-nothing operation based
-  on one unrelated external change, and never overwrites an externally-changed item.
+- 禁用/回滚只恢复 helper 记录的那些基线值，并且仅当当前值仍然**匹配** helper 先前写入的值
+  （owned-state 语义，效仿代理适配器中的 `isOwned`/`matchesPrevious`），**按项**评估（按 LUID/index、
+  按地址族、按字段）。
+- 被外部修改的项目产生类型化的**按项冲突**（`conflictDetail`：LUID/index、family、field、expected vs
+  current）并保持不动，而**无关的自有项目仍被恢复**。只有当任何自有项目被外部修改时 Phase 才变为
+  `conflict`；否则恢复完成为 `configured`。恢复绝不因为一个无关的外部变更而变成全有或全无操作，
+  也绝不覆盖被外部修改的项目。
 
-### C9 — Idempotent, crash-safe disable & emergency path
+### C9 — 幂等、崩溃安全的禁用与紧急路径
 
-- Disable/restore is idempotent and safe to re-run; a re-entrant or failed disable
-  never leaves a partially-applied state.
-- An **emergency disable** path is independent of the GUI and of the mihomo
-  process: a documented, owner-runnable recovery (service command, a bundled
-  `--recover` mode, or a `.cmd` that the helper accepts) that restores the baseline
-  snapshot even if the app is dead. It must not require the network it is about to
-  fix.
+- 禁用/恢复是幂等的，可安全地重复运行；重入或失败的禁用绝不留下部分应用的状态。
+- **紧急禁用**路径独立于 GUI 和 mihomo 进程：一个已文档化、owner 可运行的恢复（服务命令、捆绑的
+  `--recover` 模式，或 helper 接受的 `.cmd`），即使应用已死也能恢复基线快照。它绝不能要求它正要
+  修复的网络。
 
-### C10 — Recovery after forced termination / crash
+### C10 — 强制终止 / 崩溃后的恢复
 
-- The helper records its mutations and their intended undo in an on-disk **mutation
-  journal** plus the **WrittenState** and **BaselineSnapshot**, which the app reads
-  on next boot to reconcile. If the helper is killed mid-activation, the next
-  `init()` (or the emergency path) reconciles **per item** against the journal +
-  baseline and restores only what the app owns. Tested with forced termination at
-  each state.
-- **Distinct abnormal-exit paths (design doc §3.4).**
-  - **App or mihomo dies while TUN enabled:** the helper **duplicates and watches both** the
-    bound-app and mihomo process handles; on either abnormal exit it runs a **bounded
-    emergency restore** (routes/DNS per item first, then closes the creator handle, then
-    persists the outcome and exits). If the restore fails it **still closes the creator
-    handle** (no TUN adapter with no data plane) and **keeps the journal** for the next
-    recovery, capped by an explicit global max recovery timeout.
-  - **The helper's own crash:** Windows auto-closes its handles, so the **adapter is
-    removed** (0.14.1). The next `init()`/`--recover` launches a **new recovery helper** that
-    **does not claim** to call `WintunCloseAdapter` (it has no old creator handle), verifies
-    the adapter is gone, and restores residual routes/DNS. If the adapter still exists but the
-    new helper **cannot prove/own the creator handle**, it **marks a conflict**, **keeps
-    evidence**, and **never deletes it** (C9).
+- helper 将其变更及其目标撤销记录在磁盘上的 **mutation journal** 外加 **WrittenState** 与
+  **BaselineSnapshot** 中，应用在下次启动时读取以调和。如果 helper 在激活中途被杀，下一次 `init()`
+  （或紧急路径）针对 journal + 基线**按项**调和，只恢复应用所拥有的。以每个状态下的强制终止测试。
+- **不同的异常退出路径（设计文档 §3.4）。**
+  - **TUN 启用时应用或 mihomo 死亡：** helper **复制并监控**已绑定应用和 mihomo 两个进程句柄；其中
+    任一异常退出时，它运行一个**有界的紧急恢复**（先逐项恢复路由/DNS，然后关闭创建者句柄，然后
+    持久化结果并退出）。如果恢复失败，它**仍关闭创建者句柄**（绝不留无数据平面的 TUN 适配器），并为
+    下一次恢复**保留 journal**，由显式的全局最大恢复超时封顶。
+  - **helper 自身崩溃：** Windows 自动关闭其句柄，因此适配器**被移除**（0.14.1）。下一次
+    `init()`/`--recover` 启动一个**新的恢复 helper**，它**不声称**调用 `WintunCloseAdapter`（它没有旧
+    的创建者句柄），验证适配器已消失，并恢复残余的路由/DNS。如果适配器仍存在但新 helper **无法证明/
+    拥有创建者句柄**，它**标记一个冲突**，**保留证据**，并且**绝不删除它**（C9）。
 
-### C11 — Route/DNS/IPv4/IPv6 coexistence (no loss of connectivity)
+### C11 — 路由/DNS/IPv4/IPv6 共存（不失连通性）
 
-- The route/DNS rules must preserve loopback, LAN and the machine's own
-  connectivity; auto-route excludes the management/loopback path. IPv4 **and** IPv6
-  default routes and DNS servers are both recorded and restored.
-- DNS hijack is scoped to the TUN interface name with an explicit exclusion list and
-  fails closed if the expected adapter's physical properties are missing.
-- Sleep/wake and network-change (interface up/down, DHCP renew) events are
-  re-reconciled: on resume or change, the helper re-asserts TUN and re-verifies the
-  baseline is unmodified, and fails closed on conflict.
+- 路由/DNS 规则必须保留 loopback、LAN 和机器自身的连通性；auto-route 排除管理/loopback 路径。IPv4
+  **和** IPv6 默认路由与 DNS 服务器都被记录并恢复。
+- DNS 劫持限定在 TUN 接口名，带显式排除列表，并且如果预期适配器的物理属性缺失就 fail closed。
+- 睡眠/唤醒与网络变更（接口上/下、DHCP 续租）事件会重新调和：在恢复或变更时，helper 重新断言 TUN 并
+  重新验证基线未改动，遇冲突则 fail closed。
 
-### C12 — Integrity/authenticity of evidence
+### C12 — 证据的完整性/真实性
 
-- **Deterministic contract (round-6), replacing the former "HMAC/digest-protected or at
-  least digest" wording.** The integrity boundary is **the store DACL + mandatory integrity
-  label**, not a cryptographic digest that a same-user attacker could also rewrite:
-  - The recovery state lives in **`%ProgramData%\<brand-independent-id>\tun-state\<ownerSid>\`**
-    (design doc §8.0), created by the **elevated helper**, **owner = SYSTEM**, with the
-    **resolvable pure allow-list SDDL**
-    `O:SYG:SYD:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)` + `S:(ML;OICI;NW;;;HI)` — **no `DENY`**, and
-    **no owner-SID ACE** (the Medium UI has no raw-read path; it reads the sanitized state via
-    helper COM), plus a **`High` mandatory label** (`NO_WRITE_UP`, `HI` = `S-1-16-12288`). A
-    **same-user Medium-IL attacker cannot read, write, delete or re-ACL the store**: it has no
-    owner-SID ACE, its `Administrators` member is deny-only under UAC, and MIC write-up blocks it
-    even though it shares the owner's SID — so the store is **not user-writable** at all. **Only
-    the High-IL helper can access it** (its token has the `Administrators` group enabled, so it
-    reaches it via the `BA` ACE).
-  - Inside that boundary, each record carries **`schemaVersion` + a SHA-256 digest**
-    (`state.manifest`) and is written by the **helper only** (the owner's Medium UI never opens
-    the raw files; it reads only the **sanitized** state via helper COM). The digest detects
-    **accidental corruption/truncation** — it is **not** presented as tamper-proof authenticity.
-  - **No disk-state HMAC is claimed.** An HMAC would require a key location, key generation,
-    **DPAPI** protection, rotation and an upgrade/recovery read path, which are **not**
-    provided, so the HMAC language is removed; the channel envelope MAC (IPC, design doc §4.3)
-    is a **separate, per-message** authenticator over the authenticated COM channel, not a
-    disk-state claim.
-  - **Fail closed.** On read failure, incorrect ACL, wrong owner, discovered reparse point, or
-    schema/digest anomaly the helper performs **zero network modification** and enters
-    **`restore-failed`**, retaining the store for a human/`--recover` decision.
-- A structured, machine-readable record (`service`, route, DNS, TUN device, phase
-  transitions, snapshot digests) is written at each transition into the trusted store
-  (C04/C07 mitigation).
-- Logs must not contain credentials, subscription URLs, controller secrets, or
-  plaintext helper secrets.
+- **确定性契约（round-6），取代原先的"HMAC/摘要保护或至少摘要"措辞。** 完整性边界是**存储 DACL +
+  强制完整性标签**，而不是一个同用户攻击者也能改写的加密摘要：
+  - 恢复状态位于 **`%ProgramData%\<brand-independent-id>\tun-state\<ownerSid>\`**（设计文档 §8.0），
+    由**提升的 helper**创建，**owner = SYSTEM**，带**可解析的纯允许列表 SDDL**
+    `O:SYG:SYD:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)` + `S:(ML;OICI;NW;;;HI)`——**无 `DENY`**，也**无
+    owner-SID ACE**（Medium UI 没有原始读取路径；它通过 helper COM 读取净化后的状态），外加一个
+    **`High` 强制标签**（`NO_WRITE_UP`，`HI` = `S-1-16-12288`）。一个**同用户 Medium-IL 攻击者无法
+    读取、写入、删除或重新 ACL 该存储**：它没有 owner-SID ACE，它的 `Administrators` 成员在 UAC 下是
+    deny-only，并且 MIC write-up 在其共享所有者 SID 的情况下也阻止它——因此该存储**完全不可被用户写入**。
+    **只有 High-IL helper 能访问它**（其令牌启用了 `Administrators` 组，故它经由 `BA` ACE 到达）。
+  - 在该边界内，每条记录携带 **`schemaVersion` + 一个 SHA-256 摘要**（`state.manifest`），并且**仅由
+    helper**写入（所有者的 Medium UI 绝不打开原始文件；它只通过 helper COM 读取**净化后**的状态）。
+    该摘要检测**意外损坏/截断**——它**不**被呈现为防篡改的真实性。
+  - **不声称磁盘状态 HMAC。** HMAC 需要一个密钥位置、密钥生成、**DPAPI** 保护、轮换和升级/恢复读取路径，
+    这些**都不**提供，因此移除 HMAC 措辞；通道信封 MAC（IPC，设计文档 §4.3）是认证 COM 通道上的
+    **独立的、逐消息**认证器，不是磁盘状态的声称。
+  - **Fail closed。** 在读取失败、ACL 错误、owner 错误、发现 reparse 点或 schema/摘要异常时，helper 执行
+    **零网络修改**并进入 **`restore-failed`**，保留该存储供人工/`--recover` 决策。
+- 一个结构化、机器可读的记录（`service`、route、DNS、TUN 设备、phase 转换、快照摘要）在每次转换时写入
+  可信存储（C04/C07 缓解措施）。
+- 日志绝不能包含凭据、订阅 URL、controller 密钥或明文 helper 密钥。
 
-### C13 — Test/evidence gating (disposable Windows only)
+### C13 — 测试/证据把关（仅一次性 Windows）
 
-- All real TUN behavior is exercised only by a **gated** Windows CI job that:
-  - is skipped unless `MURGE_RUN_REAL_TUN=1` **and** `win32` (so it never runs in
-    default `npm test`),
-  - snaps a host `NetworkSnapshot` before/after and **fails closed** if any
-    safety-relevant field changed unexpectedly,
-  - proves the helper **never loses VM connectivity**, that disable/uninstall
-    returns routes and DNS to the exact prior state, and that recovery survives
-    forced process termination,
-  - records service, route, DNS and non-proxy-aware-request evidence.
+- 所有真实 TUN 行为只由一个**受把关的** Windows CI 作业执行，该作业：
+  - 除非 `MURGE_RUN_REAL_TUN=1` **且**为 `win32`，否则被跳过（因此从不在默认 `npm test` 中运行），
+  - 在前后捕获主机 `NetworkSnapshot`，如果任何安全相关字段意外改变则**fail closed**，
+  - 证明 helper**从不丢失 VM 连通性**，禁用/卸载把路由和 DNS 恢复到确切的先前状态，并且恢复在强制
+    进程终止后仍能存活，
+  - 记录 service、route、DNS 与非代理感知请求的证据。
 
 ---
 
-## 8. Fail-closed invariants (asserted in code and tests)
+## 8. Fail-closed 不变量（在代码与测试中断言）
 
-1. **No verified helper, no mutation.** Activation with an unverified
-   signature/checksum or failed IPC authentication performs zero mutation.
-2. **No snapshot, no mutation.** Baseline is written and verified before the first
-   change.
-3. **Conflict ⇒ no overwrite, per item.** An externally-modified owned item is
-   reported (`conflictDetail`), never overwritten; unrelated owned items are still
-   restored (per-item, not all-or-nothing).
-4. **Renderer only intents.** The renderer reads status and may emit typed,
-   parameterless intent (`requestEnable`/`requestDisable`); only the serialized
-   main-process `TunService` (promise-queue, mirroring the proxy service) issues
-   commands to the helper. No renderer→helper path.
-5. **No elevated shell.** No raw command strings, no arbitrary paths, a fixed
-   command allowlist.
-6. **Mac/no-driver ⇒ explicit unsupported/blocked.** Non-Windows builds never
-   enable TUN.
+1. **无已验证 helper，即无变更。** 未验证签名/校验和或 IPC 认证失败的激活执行零变更。
+2. **无快照，即无变更。** 基线在首次变更前写入并验证。
+3. **冲突 ⇒ 不覆盖，按项。** 被外部修改的自有项目被报告（`conflictDetail`），绝不覆盖；无关的自有
+   项目仍被恢复（按项，而非全有或全无）。
+4. **renderer 只发意图。** renderer 读取状态，可发出类型化、无参数的意图（`requestEnable`/
+   `requestDisable`）；只有串行化的主进程 `TunService`（promise-queue，效仿代理服务）发出对 helper
+   的命令。无 renderer→helper 路径。
+5. **无提升 shell。** 无原始命令字符串、无任意路径、固定的命令允许列表。
+6. **Mac/无驱动 ⇒ 显式不支持/被阻止。** 非 Windows 构建绝不启用 TUN。
 
 ---
 
-## 9. Mapping to Phase 9 roadmap lines
+## 9. 映射到 Phase 9 路线图行
 
-| Roadmap line | Primary threats | Controls exercised |
+| 路线图行 | 主要威胁 | 所行使的控制 |
 |---|---|---|
-| Write and approve helper/privilege threat model | (this doc) | — |
-| Define install/upgrade/rollback/uninstall behavior | T02, T04, T05, T10 | C1, C2, C4, C8, C9, C10, C12 |
-| Implement explicit elevation flow | T12, T14 | C5, C6, C13 |
-| Verify driver/helper signature and binary integrity | T01, T02, T13 | C1, C2 |
-| Implement TUN configured/starting/active/failed states and recovery states (restoring / restore-failed / conflict / unsupported) | T10, T11 | C5, C7, C13 |
-| Add emergency disable and cleanup path independent of GUI | T07, T10 | C9, C10 |
-| Test DNS, IPv4, IPv6, sleep/wake, network change, crash recovery | T03, T06, T10 | C10, C11, C13 |
-| Record service/route/DNS & non-proxy-aware request evidence | T07, T08 | C12, C13 |
+| 编写并批准 helper/权限威胁模型 | （本文档） | — |
+| 定义安装/升级/回滚/卸载行为 | T02, T04, T05, T10 | C1, C2, C4, C8, C9, C10, C12 |
+| 实现显式提升流程 | T12, T14 | C5, C6, C13 |
+| 验证驱动/helper 签名与二进制完整性 | T01, T02, T13 | C1, C2 |
+| 实现 TUN configured/starting/active/failed 状态与恢复状态（restoring / restore-failed / conflict / unsupported） | T10, T11 | C5, C7, C13 |
+| 添加独立于 GUI 的紧急禁用与清理路径 | T07, T10 | C9, C10 |
+| 测试 DNS、IPv4、IPv6、睡眠/唤醒、网络变更、崩溃恢复 | T03, T06, T10 | C10, C11, C13 |
+| 记录 service/route/DNS 与非代理感知请求证据 | T07, T08 | C12, C13 |
 
 ---
 
-## 10. Owner decisions (resolved + remaining)
+## 10. Owner 决策（已解决 + 待解决）
 
-Resolved by the owner (in force for implementation):
+由 owner 解决（对实现生效）：
 
-1. **D1 — Device model:** **Signed wintun (official WireGuard distribution).** Ship
-   per-arch `wintun.dll` (digest-pinned) and load the signed Wintun driver through it;
-   never ship a bare driver file or self-sign a driver/cert; **mihomo owns the TUN
-   data plane** (A1, A8, C1, C2).
-2. **D2 — Helper shape:** **Standalone elevated helper** process, not a Windows
-   service. (A2, C2, C5.) Note: changing D2 to a service later would require revoking
-   this because the design-review package (`docs/helper-design.md`) assumes a
-   standalone helper.
-3. **D3 — Adapter/driver creation timing:** **On first enable.** The `wintun.dll` is
-   staged at install; the Wintun kernel driver is installed/loaded and the adapter is
-   created **only at the user's first explicit enable**, inside `WintunCreateAdapter` —
-   there is **no separate driver-load op**. (A3.)
-4. **D6 — OS network-config owner:** **The helper is the sole route/DNS/interface
-   modifier (Option A).** The main process generates a typed **`DesiredNetworkState`**,
-   mihomo's runtime config has `auto-route:false` / `auto-detect-interface:false` /
-   `dns-hijack:false`, and the helper applies the state verbatim. (A4, C7.)
+1. **D1 — 设备模型：** **带签名 wintun（官方 WireGuard 发行版）。** 分发按架构的 `wintun.dll`
+   （摘要钉定）并经由它加载带签名的 Wintun 驱动；绝不分发裸驱动文件或自签驱动/证书；**mihomo 拥有 TUN
+   数据平面**（A1、A8、C1、C2）。
+2. **D2 — Helper 形态：** **独立的提升 helper** 进程，而非 Windows 服务。（A2、C2、C5。）注意：以后若把
+   D2 改为服务，需要撤销此决策，因为设计评审包（`docs/helper-design.md`）假设的是一个独立 helper。
+3. **D3 — 适配器/驱动创建时机：** **首次启用时。** `wintun.dll` 在安装时暂存；Wintun 内核驱动的安装/加载
+   与适配器创建**只在用户首次显式启用时**、在 `WintunCreateAdapter` 内部发生——**没有单独的驱动加载操作**。
+   （A3。）
+4. **D6 — OS 网络配置所有者：** **helper 是唯一的路由/DNS/接口修改者（选项 A）。** 主进程生成类型化的
+   **`DesiredNetworkState`**，mihomo 的运行时配置有 `auto-route:false` / `auto-detect-interface:false` /
+   `dns-hijack:false`，helper 逐字应用该状态。（A4、C7。）
 
-Still to decide before implementation starts:
+实现开始前仍需决定：
 
-5. **G1 — whether mihomo reuses the helper-created adapter.** **Unproven hypothesis; must be
-   proven by the **G1 lifecycle probe** (design doc §3.3, §12): (a) helper creates + holds the
-   **creator handle**; (b) mihomo `WintunOpenAdapter(Name)` + `WintunStartSession`; (c) helper
-   `WintunCloseAdapter(creatorHandle)` / exits; (d) observe whether the session + adapter
-   persist. The two outcomes are **Observed A** (adapter removed ⇒ confirms the helper must
-   hold the creator handle for the enabled window) / **Observed B** (adapter survives while
-   mihomo holds a handle ⇒ a later optimization may let the helper exit earlier). **Neither
-   changes the fixed safety baseline** (design doc §0.4/§3.3/§5.5): the helper is a per-enable
-   single-client **resident** server holding the creator handle for the whole enabled window.
-   It runs on a snapshot-able, out-of-band-recoverable Windows VM in gated CI (T0) **before
-   any Phase 9 helper implementation begins** and **never on this dev machine**. If it
-   fails/remains unresolved, stop and return to the owner for a revised ownership decision —
-   do not fall back to dual ownership.
-6. **Certificate provider & trust model.** Which CA/cert for the helper and driver;
-   wintun is already signed by a vendor — confirm this is the relied-on artifact and
-   that we pin its publisher. (Affects C1 — see `CODE_SIGNING.md`.)
-7. **DNS hijack scope.** Whether DNS is delegated to mihomo's dns-hijack, to the
-   helper, or left to the system-proxy path, and the exclusion list. (Under D6 the
-   helper owns DNS; the exclusion list is still to be set.) (Affects C11.)
-8. **D4 — resolved: no boot auto-start.** No service, scheduled task, `Run` key or
-   background boot trigger is installed. The standalone helper starts only from an explicit
-   enable action or explicit manual `--recover`; passive startup/status checks never launch it.
-9. **D5 — resolved: never remove pre-existing/shared Wintun state.** Never call
-   `WintunDeleteDriver`; never delete a pre-existing/foreign adapter; uninstall removes no
-   shared driver/adapter. Only close the continuously held creator handle for the exact adapter
-   created and owned by the current enable session.
-10. **HTTPS decryption/rewrite visibility.** Whether these pages remain visible /
-    experimental / removed in v1 (already in the owner backlog; affects whether the
-    TUN device also covers proxied HTTPS or only transparent/non-proxy-aware flows).
-11. **Sleep/wake and network-change reconciliation depth.** (Affects C11; a test
-    plan is required before implementation.)
+5. **G1 — mihomo 是否复用 helper 创建的适配器。** **未经证明的假设；必须由 **G1 生命周期探针**证明
+   （设计文档 §3.3、§12）：(a) helper 创建并持有**创建者句柄**；(b) mihomo `WintunOpenAdapter(Name)` +
+   `WintunStartSession`；(c) helper `WintunCloseAdapter(creatorHandle)` / 退出；(d) 观察会话 + 适配器是否
+   持续存在。两种结果是 **Observed A**（适配器被移除 ⇒ 确认 helper 必须在启用窗口内持有创建者句柄）/
+   **Observed B**（mihomo 持有句柄时适配器存活 ⇒ 后续可优化为更早退出 helper）。**两者都不改变固定的安全
+   基线**（设计文档 §0.4/§3.3/§5.5）：helper 是一个按启用的单客户端**常驻**服务器，在整个启用窗口内持有
+   创建者句柄。它在一个可打快照、可带外恢复的 Windows VM 上、在受关卡的 CI（T0）中运行，**在任何 Phase 9
+   helper 实现开始之前**，并且**绝不在本开发机上**。如果它失败/仍悬而未决，就停下并回到 owner 寻求修订后的
+   所有权决策——不要回退到双重所有权。
+6. **证书提供商与信任模型。** helper 和驱动用哪个 CA/证书；wintun 已由厂商签名——确认这是被依赖的产物，
+   并且我们钉定其发布者。（影响 C1——见 `CODE_SIGNING.md`。）
+7. **DNS 劫持范围。** DNS 是委托给 mihomo 的 dns-hijack、helper，还是留给 system-proxy 路径，以及排除列表。
+   （在 D6 下 helper 拥有 DNS；排除列表仍需设置。）（影响 C11。）
+8. **D4 — 已解决：无开机自启。** 不安装服务、计划任务、`Run` 键或后台启动触发器。独立 helper 只从显式启用
+   操作或显式手动 `--recover` 启动；被动的启动/状态检查绝不启动它。
+9. **D5 — 已解决：绝不移除预先存在/共享的 Wintun 状态。** 绝不调用 `WintunDeleteDriver`；绝不删除预先存在/
+   外来的适配器；卸载时不移除任何共享驱动/适配器。只关闭那个由当前启用会话创建并拥有的确切适配器的持续
+   持有的创建者句柄。
+10. **HTTPS 解密/改写可见性。** 这些页面在 v1 中是保持可见 / 实验性 / 移除（已经在 owner backlog 中；影响 TUN
+    设备是同时覆盖代理 HTTPS 还是只覆盖透明/非代理感知流量）。
+11. **睡眠/唤醒与网络变更调和深度。**（影响 C11；实现前需要一个测试计划。）
 
 ---
 
-## 11. Open questions for the design review
+## 11. 设计评审的开放问题
 
-- Does the project accept that Phase 9 runs *only* on a disposable Windows VM with a
-  snapshot and an out-of-band recovery path, and that it will never execute on the
-  development machine?
-- Should TUN be **opt-in and off by default** (recommended), and shown as
-  "unsupported" on non-Windows builds?
-- What is the exact **owner authorization** the helper must receive before it will
-  perform a mutation, and how is that recorded for repro?
-- Which existing patterns (backup store, owned-state restore, promise-queue mutex,
-  fail-closed adapter) should the helper re-use, and where is the boundary allowed
-  to diverge?
+- 项目是否接受 Phase 9 **只**在带快照和带外恢复路径的一次性 Windows VM 上运行，并且绝不在开发机上执行？
+- TUN 是否应该是**可选且默认关闭**（推荐），并在非 Windows 构建上显示为"unsupported"？
+- helper 在执行一次变更之前必须收到的确切 **owner 授权**是什么，以及如何记录下来以复现？
+- helper 应该复用哪些现有模式（backup store、owned-state restore、promise-queue mutex、fail-closed
+  adapter），边界允许在何处偏离？

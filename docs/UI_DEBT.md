@@ -1,179 +1,108 @@
-# UI debt log
+# UI 债务日志
 
-Deferred visual issues, to be resolved in the unified visual-acceptance phase
-(the final pixel-alignment pass using the normative 934×672 reference and a
-shared capture environment). Do NOT fix these items in feature phases.
+已搁置的视觉问题，将在统一的视觉验收阶段解决（即使用权威的 934×672 参考与共享截图环境的最终像素对齐阶段）。在功能阶段不要修复这些项目。
 
-> Ownership was accepted on the Activity milestone (commit `36572ee`) on the
-> understanding that the items below are recorded and deferred, not dropped.
+> 已在 Activity 里程碑（提交 `36572ee`）上接受其所有权，前提是以下各项被记录并延迟，而非被丢弃。
 
-## UI-DEBT-001 — Total-card ratio bar whitespace
+## UI-DEBT-001 — 总计卡片比例条的空白
 
-Resolved: the bar now uses a single flex/percentage sizing model.
+已解决：该条现在使用单一的 flex/百分比尺寸模型。
 
-The 总计 card's ratio bar uses a `grid` with fixed `fr` column tracks
-(`grid-template-columns: 68fr 32fr`) *and* each child also declares its own
-percentage width. The two width models stack, producing a visible blank gap
-between the DIRECT and 代理 segments (and/or clipping at the trailing edge).
+总计卡片的比例条使用带固定 `fr` 列轨道的 `grid`（`grid-template-columns: 68fr 32fr`）*同时*每个子元素又声明了自己的百分比宽度。这两种宽度模型叠加，在 DIRECT 与 代理 段之间产生可见的空白间隙（和/或在尾部边缘被裁切）。
 
-- Where: `.total-bar` in `src/renderer/src/styles/base.css`; the two segment
-  children in the 总计 card.
-- Fix (deferred): pick ONE width model. Either keep the `grid` columns and drop
-  the children's percentage widths, or drop the `grid` and rely on the
-  children's percentages inside a flex row. Do not carry both.
-- Do not treat the current 68/32 split as final.
+- 位置：`src/renderer/src/styles/base.css` 中的 `.total-bar`；总计卡片中的两个段子元素。
+- 修复（已延迟）：选定一种宽度模型。要么保留 `grid` 列并去掉子元素的百分比宽度，要么去掉 `grid` 并依赖 flex 行内子元素的百分比。不要同时携带两者。
+- 不要把当前的 68/32 拆分视为最终。
 
-## UI-DEBT-002 — "今日" is not a cumulative statistic
+## UI-DEBT-002 —「今日」并非累计统计
 
-Resolved for truthful presentation: the tab is now labelled “当前”; unavailable
-history is disabled rather than presented as cumulative data.
+已为如实呈现而解决：该标签页现在标注为「当前」；不可用的历史被禁用，而不是作为累计数据展示。
 
-The 今日 / 总计 figure currently derives from the *active-connection* summary
-(`connections.summary.directDownload + proxyDownload`), which is a live
-snapshot, not a true cumulative categorized total.
+今日 / 总计 的数字目前源自*活动连接*汇总（`connections.summary.directDownload + proxyDownload`），这是实时快照，而非真正的按类别累计总计。
 
-- Do NOT expose this as a stable shared contract.
-- Do NOT reuse it as the source for 总计 on other pages.
-- It is a provisional display value only for the Activity page. When real
-  cumulative per-category data lands, replace the source and drop this
-  provisional one.
+- 不要将其暴露为稳定的共享契约。
+- 不要在其他页面复用为 总计 的数据来源。
+- 它只是 Activity 页面的临时显示值。当真正的按类别累计数据落地后，请替换数据源并丢弃这个临时方案。
 
-## UI-DEBT-003 — Activity vs reference ~3–11px drift
+## UI-DEBT-003 — Activity 与参考存在约 3–11px 偏差
 
-Resolved: the application frame no longer adds an unapproved 8px inset, the
-sidebar and Activity dashboard now use the normative 205px / 347px / 166px
-geometry, and light/dark card borders use the reference-specific surface
-tokens. A static UI contract test guards these dimensions and the speed-card
-surface component wiring.
+已解决：应用框架不再添加未经批准的 8px 内边距，侧边栏与 Activity 仪表盘现使用规范的 205px / 347px / 166px 几何，明暗卡片边框使用参考专用的表面 token。一个静态 UI 契约测试守护这些尺寸与速率卡片表面组件的接线。
 
-The Activity page was ~3–11px off the normative reference in position and
-width (notably the title/runtime-context strip is ~5px wider because of the
-695px content-box vs the reference's 690 + padding; the total-bar and dashboard
-margins differ by a few px).
+Activity 页面在位置与宽度上与规范参考存在约 3–11px 偏差（特别是标题/运行时上下文条约宽 5px，因为 695px 内容盒对比参考的 690 + 内边距；总计条与仪表盘边距相差几 px）。
 
-- The 2026-08-28 acceptance refresh used a real 934×672 Electron window and
-  compared the result visually with both the normative PNG and installed Surge.
-- Future changes must keep using raw 934×672 captures; normalized proportions
-  remain diagnostic evidence rather than the acceptance gate.
+- 2026-08-28 的验收刷新使用了真实的 934×672 Electron 窗口，并将结果与规范 PNG 及已安装的 Surge 进行了目视对比。
+- 未来的更改必须继续使用原始的 934×672 截图；归一化比例仍作为诊断证据，而非验收门槛。
 
-## UI-DEBT-004 — Activity latency card and hourly bars are still hardcoded
+## UI-DEBT-004 — Activity 延迟卡片与每小时柱状条仍为硬编码
 
-Resolved for truthful presentation: invented latency/DHCP numbers were replaced
-with `—`, diagnostics are disabled, and hourly buckets render empty until a
-durable history source exists.
+已为如实呈现而解决：虚构的延迟/DHCP 数字已被替换为 `—`，诊断功能被禁用，每小时桶保持为空，直到存在持久历史数据源。
 
-Phase 3 wired the Activity speed cards, active-connection counts, process/domain
-ranking and the 总计 breakdown to live mock IPC data, but three regions of
-`src/renderer/src/views/ActivityView.vue` are still static placeholders:
+阶段 3 已将 Activity 速率卡片、活动连接计数、进程/域名排行以及 总计 细分接入实时 mock IPC 数据，但 `src/renderer/src/views/ActivityView.vue` 中仍有三个区域是静态占位：
 
-- The INTERNET latency card (`6 ms`, `路由 ≤1 ms`, `DNS 11 ms`,
-  `Hong Kong 01 73 ms`) — hardcoded in the template.
-- The hourly-traffic bar chart (`const bars = [...]`) — a fixed literal array.
-- The "1 DHCP 设备" figure in the connections card.
+- INTERNET 延迟卡片（`6 ms`、`路由 ≤1 ms`、`DNS 11 ms`、`Hong Kong 01 73 ms`）——硬编码在模板中。
+- 每小时流量柱状图（`const bars = [...]`）——一个固定的字面量数组。
+- 连接卡片中的「1 DHCP 设备」数字。
 
-These are intentionally deferred, not wired, because the data does not come from
-the P0 streams already integrated:
+这些是有意延迟而非接入，因为数据并非来自已集成的 P0 流：
 
-- Real latency requires a routing/DNS probe plus a selected-node delay
-  (`/proxies/:name/delay`, and a diagnostic path for route/DNS) — see the P2
-  `/dns/query` capability in `MIHOMO_API.md`.
-- A truthful hourly series requires the app to persist sampled traffic deltas
-  over time (the `/traffic` stream only yields instantaneous rate + cumulative
-  totals), which is the same durable-history gap called out in UI-DEBT-002.
+- 真实延迟需要路由/DNS 探测加上所选节点的延迟测试（`/proxies/:name/delay`，以及用于路由/DNS 的诊断路径）——参见 `MIHOMO_API.md` 中的 P2 `/dns/query` 能力。
+- 真实的每小时序列需要应用随时间持久化采样到的流量增量（`/traffic` 流只产生瞬时速率 + 累计总量），这正是 UI-DEBT-002 中指出的同一持久历史缺口。
 
-Constraints until then:
+在此之前保持的约束：
 
-- Do NOT present these three regions as live data or reuse them as a shared
-  contract. They exist only to hold the 934×672 geometry stable.
-- When the latency probe and durable traffic history land, replace the
-  hardcoded values and add the disconnected/empty states for these two cards
-  (the connections card already switches on `connStatus`).
+- 不要将这三个区域呈现为实时数据，也不要将其复用为共享契约。它们仅用于保持 934×672 几何稳定。
+- 当延迟探测与持久流量历史落地后，请替换硬编码值并为这两张卡片添加断开/空状态（连接卡片已根据 `connStatus` 切换）。
 
-## UI-DEBT-005 — Configuration & provider-setting pages are functional-only
+## UI-DEBT-005 — 配置与 provider 设置页面仅实现功能
 
-Phase 5 added `ConfigView.vue` (profile list / activate / rename / delete / import)
-and `ProviderSettingsView.vue` (mode + mixed-port scalar editing) using the shared
-tokens and the generic `.import-card` / `.field` / `.profile-row` styles. They are
-wired to the profile gateway and pass the Phase 5 exit criteria, but they were NOT
-pixel-tuned against the 934×672 reference:
+阶段 5 使用共享 token 与通用的 `.import-card` / `.field` / `.profile-row` 样式，添加了 `ConfigView.vue`（profile 列表 / 激活 / 重命名 / 删除 / 导入）与 `ProviderSettingsView.vue`（模式 + mixed-port 标量编辑）。它们已接入 profile 网关并通过阶段 5 的退出标准，但未针对 934×672 参考进行像素调校：
 
-- Inputs, buttons and row spacing reuse the provisional `.import-card` idiom
-  rather than the page-specific geometry used by the Activity/Policy pages.
-- No dedicated empty/error artwork; they fall back to the generic `.empty-state`.
-- The profile list has no per-profile detail drawer/editor yet; editing is
-  scalar-only for `mode` and `mixed-port`, everything else is preserved verbatim.
+- 输入框、按钮与行间距复用临时性的 `.import-card` 用法，而非 Activity/策略页面所使用的页面专属几何。
+- 没有专门的空/错误素材；它们回退到通用的 `.empty-state`。
+- profile 列表尚无每个 profile 的详情抽屉/编辑器；编辑仅针对 `mode` 与 `mixed-port` 标量，其余内容原样保留。
 
-**Development machine note (mkdtemp semantics):**  
-The profile root directory is created via `mkdtemp` at application startup
-(`src/main/index.ts:113`). This means:
-- A fresh temp directory is created each launch; old profiles are orphaned in
-  system temp and never seen again by the app.
-- Profiles do NOT persist across restarts on this development Mac.
-- This is intentional for safety (no real mihomo process, no network mutation),
-  but is easily misread as "restores from the same directory after a restart".
+**开发机说明（mkdtemp 语义）：**
+profile 根目录在应用启动时通过 `mkdtemp` 创建（`src/main/index.ts:113`）。这意味着：
+- 每次启动都会创建一个全新的临时目录；旧 profile 在系统临时目录中被孤立，之后再也不会被应用看到。
+- profile 在此开发 Mac 上不会跨重启持久化。
+- 这是出于安全的有意设计（没有真实 mihomo 进程、没有网络变更），但很容易被误读为「重启后从同一目录恢复」。
 
-Defer the visual pass to the unified visual-acceptance phase. Functional behavior
-must not be reworked for layout reasons.
+将视觉工作延迟到统一的视觉验收阶段。不要为了布局原因而重做功能行为。
 
-## UI-DEBT-006 — Profile storage uses mkdtemp (ephemeral per-launch)
+## UI-DEBT-006 — Profile 存储使用 mkdtemp（每次启动临时）
 
-Resolved for production: packaged builds use the stable app-id-derived profile
-root. Only development intentionally uses a fresh isolated temporary root.
+已为生产环境解决：打包构建使用由应用 id 派生的稳定 profile 根目录。只有开发环境有意使用全新的隔离临时根目录。
 
-Phase 5 stores profiles in a `mkdtemp` directory under `/tmp` (`index.ts:113`).
-This means:
+阶段 5 将 profile 存储在 `/tmp` 下的 `mkdtemp` 目录中（`index.ts:113`）。这意味着：
 
-- Each application launch creates a fresh profile directory; old profiles are
-  orphaned in system temp and never recovered on restart.
-- The ephemeral store is intentional for development safety (no persistent
-  credential exposure), but it contradicts user expectations of "profiles survive
-  restart".
-- On production Windows builds, this must be replaced with a stable app-data
-  path (e.g., `%LOCALAPPDATA%\Murge\profiles`) so profiles persist across
-  launches.
+- 每次应用启动都会创建一个全新的 profile 目录；旧 profile 在系统临时目录中被孤立，重启后不会被恢复。
+- 这种临时存储是有意的开发安全措施（不会持久暴露凭据），但它与用户「profile 存活于重启后」的预期相矛盾。
+- 在生产 Windows 构建中，这必须替换为稳定的应用数据路径（例如 `%LOCALAPPDATA%\Murge\profiles`），使 profile 能跨启动持久化。
 
-Until then, treat Phase 5 as mock-only: profiles exist only within a single
-session. Document this clearly in the UI if users ask where their profiles go.
+在此之前，将阶段 5 视为仅 mock：profile 只存在于单个会话内。如果用户询问 profile 去哪了，请在 UI 中清晰说明。
 
-## UI-DEBT-007 — Subscription refresh is deferred (credentials are not stored)
+## UI-DEBT-007 — 订阅刷新被延迟（凭据未存储）
 
-Phase 5 persists only the REDACTED subscription URL (`ProfileSubscription.url`),
-in both the profile metadata and anything the renderer receives. Credentials are
-never written to disk or sent to the renderer — this is required by the Phase 5
-exit criterion "logs never contain subscription credentials".
+阶段 5 仅持久化经过脱敏的订阅 URL（`ProfileSubscription.url`），在 profile 元数据与渲染进程收到的任何内容中都是如此。凭据从不写入磁盘，也从不发送给渲染进程——这是阶段 5 退出标准「日志绝不包含订阅凭据」所要求的。
 
-A direct consequence: there is no stored secret to re-fetch with, so
-"refresh subscription" cannot be implemented purely from the persisted metadata.
+一个直接后果是：没有可用来重新抓取的已存 secret，因此「刷新订阅」无法仅从持久化元数据实现。
 
-Deferred to a later phase (alongside durable storage, UI-DEBT-006):
+延迟到后续阶段（与持久存储 UI-DEBT-006 一并处理）：
 
-- A secure secret store (e.g. Electron `safeStorage`) that holds the full
-  credential-bearing URL encrypted at rest, keyed by profile id.
-- A refresh action that asks the main process to re-fetch using that stored
-  secret and re-import, without the credential ever crossing IPC.
+- 一个安全的 secret 存储（如 Electron `safeStorage`），以 profile id 为键，将完整的带凭据 URL 加密保存在静态数据中。
+- 一个刷新动作，要求主进程使用该已存 secret 重新抓取并重新导入，凭据绝不跨越 IPC。
 
-Until then:
+在此之前：
 
-- Treat "refresh subscription" as a not-yet-available feature.
-- Re-importing from the original URL remains the supported way to update content.
-- Do NOT reintroduce a credential-bearing field on `ProfileSubscription` to work
-  around this; that would reopen the plaintext-at-rest leak.
+- 将「刷新订阅」视为尚未可用的功能。
+- 从原始 URL 重新导入仍是更新内容的受支持方式。
+- 不要重新引入 `ProfileSubscription` 上的凭据字段来规避此问题；那会重新打开静态明文泄露。
 
-## UI-DEBT-008 — Overview system-proxy switch is functional-only
+## UI-DEBT-008 — Overview 系统代理开关仅实现功能
 
-Phase 8 added a live 系统代理 toggle to `src/renderer/src/views/OverviewView.vue`
-(`toggleSystemProxy`, `spSwitchDisabled`, the `.switch` button plus a
-`spPhaseLabel` status line) using the shared `.switch` and `SurfaceCard` idioms. It
-is wired to the typed system-proxy gateway and mirrors the verified main-process
-`phase` (never optimistic), but it was NOT pixel-tuned against the 934×672
-reference:
+阶段 8 向 `src/renderer/src/views/OverviewView.vue` 添加了一个实时 系统代理 切换（`toggleSystemProxy`、`spSwitchDisabled`、`.switch` 按钮加一条 `spPhaseLabel` 状态行），使用共享的 `.switch` 与 `SurfaceCard` 用法。它已接入类型化的系统代理网关，并镜像经主进程验证的 `phase`（绝不乐观更新），但未针对 934×672 参考进行像素调校：
 
-- The reference does not depict an *active* proxy toggle, so the "on" switch state,
-  the busy state and the `conflict`/`restore-failed` status text have no normative
-  geometry to compare against.
-- The `.switch` control and the status line reuse the generic SurfaceCard
-  `.setting-head` / `.setting-status` layout rather than a page-specific proxy
-  card.
+- 参考并无*激活态*代理切换的描绘，因此「开启」开关状态、忙碌状态以及 `conflict`/`restore-failed` 状态文本没有可对比的规范几何。
+- `.switch` 控件与状态行复用通用的 SurfaceCard `.setting-head` / `.setting-status` 布局，而非页面专属的代理卡片。
 
-Deferred to the unified visual-acceptance phase. The functional wiring and the
-disabled/unsupported states must not be reworked for layout reasons.
+延迟到统一的视觉验收阶段。功能接线与禁用/不支持状态不得因布局原因而重做。

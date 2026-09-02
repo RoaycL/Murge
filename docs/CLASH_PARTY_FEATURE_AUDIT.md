@@ -1,61 +1,45 @@
-# Clash Party page audit and Murge enhancement backlog
+# Clash Party 页面审计与 Murge 增强积压
 
-Status date: 2026-08-31
+状态日期：2026-08-31
 
-This document audits the ten supplied Clash Party screenshots against the
-current Murge implementation. A visible switch is not counted as supported
-unless Murge has a typed renderer → IPC → main-process contract, confirmed
-runtime state and a recovery/error path.
+本文档对照当前的 Murge 实现，审计所提供的十张 Clash Party 截图。除非 Murge 具备类型化的渲染进程 → IPC → 主进程契约、已确认的运行时状态以及恢复/错误路径，否则一个可见开关不视为已支持。
 
-The screenshots are a feature reference, not a visual reference. Murge keeps
-its approved Surge-derived information architecture and brand-configurable
-product identity.
+这些截图是功能参考，而非视觉参考。Murge 保留其已批准的源自 Surge 的信息架构与可配置品牌的产品标识。
 
-## Summary
+## 总结
 
-Murge already covers the daily core path: profiles from URL/file/manual input,
-kernel lifecycle and version selection, policies, rules, providers, live
-connections, per-connection close, process/device aggregation, logs, DNS
-diagnostics, system-proxy ownership, tray/startup and update scaffolding.
+Murge 已覆盖日常核心路径：来自 URL/文件/手动输入的 profile、内核生命周期与版本选择、策略、规则、provider、实时连接、单连接关闭、进程/设备聚合、日志、DNS 诊断、系统代理所有权、托盘/启动与更新脚手架。
 
-The largest missing product capability is a deterministic configuration
-enhancement pipeline. DNS, sniffer, TUN and advanced core settings must be
-implemented as typed inputs to that pipeline rather than independent controls
-that overwrite subscription YAML.
+最大的缺失产品能力是确定性的配置增强管线。DNS、sniffer、TUN 与高级内核设置必须实现为该管线的类型化输入，而不是覆盖订阅 YAML 的独立控件。
 
-## Page-by-page comparison
+## 逐页对比
 
-| Screenshot/page | Clash Party capability | Murge status | Work required |
+| 截图/页面 | Clash Party 能力 | Murge 状态 | 所需工作 |
 | --- | --- | --- | --- |
-| System proxy | Host, manual/PAC mode, UWP loopback helper, default/custom bypass list | Partial | Murge owns and restores the Windows manual proxy safely. Editable bypass policy with verified read-back is done: the `ProxyBypassPolicy` is authoritative for the written `ProxyOverride` when enabled (mandatory local/private entries merged with the user's custom list), preserves the OS list when disabled, re-applies live with conflict + read-back verification, and always restores the pre-enable value verbatim. PAC and UWP remain separate, Windows-only features. Never periodically overwrite state owned by another process. |
-| Virtual adapter | TUN stack, adapter name, strict route, auto route/interface, MTU, DNS hijack and excluded ranges | Gated partial | Service, coordinator, IPC and UI wiring exist, but release support is blocked on the isolated Windows recovery matrix. Do not expose advanced controls until every field is represented in the signed intent and rollback evidence. |
-| DNS settings | Enable, enhanced mode, fake-IP range/filter, IPv6, respect-rules and nameserver groups | Partial | Murge has DNS query/cache actions and preserves profile DNS. Add a declarative DNS override editor, schema validation, preview and last-known-good rollback. |
-| Domain sniffer | Enable, destination override, IP mapping options, HTTP/TLS/QUIC ports, skip/force domains and skipped CIDRs | Missing | Add a typed sniffer override model. Validate ports, domains and CIDRs before materializing the runtime config. |
-| Connections | Live/closed tabs, totals, filter, columns, per-row close/pause controls | Strong partial | Murge already has shared streaming, search, detail and confirmed single-close. Added totals, sorting and confirmed batch close. Closed-history and column chooser remain. Pause is not promised by the current mihomo contract. |
-| External resources | GeoIP/GeoSite/MMDB/ASN sources, data mode, update interval, proxy/rule provider refresh and details | Partial | Provider list/refresh/health data exists. Add geodata source policy, download integrity, atomic replace, update schedule and provider detail. QR export must redact credentials and be opt-in. |
-| Overrides | URL/local import and ordered override items | Missing / P0 | Add versioned YAML overrides first: global and profile scope, order, enable/disable, preview/diff, validation, atomic writes and rollback. JavaScript is a later trusted-code feature, not a security sandbox. |
-| Core settings | Kernel selection, mixed/SOCKS/HTTP ports, listen address, secret, dashboard, IPv6, LAN/auth and 1-RTT | Partial | Stable/specific kernel management and mixed port are present. Add controlled port/listen/LAN fields with collision checks. Controller secret stays app-owned and must not be revealed or freely edited. |
-| Network information | Egress IP provider, country/city/ASN, copy/reveal and connection topology | Partial | Murge exposes best-effort egress IP. Add privacy-explicit provider selection and cached metadata. Topology is a derived visualization and must label incomplete mihomo data. |
-| Usage | 1h/24h/7d/30d history; sessions/upload/download/total; device/domain/proxy/process ranking | Missing | Add bounded local time-series persistence, retention, aggregation and clear-data action. Never persist controller secrets, full URLs or raw profile content. |
-| Sub-Store entry | Embedded/linked subscription transformer | Missing | Defer until the override pipeline is stable. Prefer an explicit external integration over silently hosting a privileged remote panel. |
+| 系统代理 | 主机、手动/PAC 模式、UWP 回环助手、默认/自定义绕过列表 | 部分 | Murge 安全地拥有并恢复 Windows 手动代理。可编辑、带读回验证的绕过策略已完成：启用时 `ProxyBypassPolicy` 对写入的 `ProxyOverride` 具有权威性（强制性的本地/私有条目与用户的自定义列表合并），禁用时保留操作系统列表，实时重新应用并带冲突 + 读回验证，并始终原样恢复启用前的值。PAC 与 UWP 仍是独立的、仅 Windows 的功能。绝不周期性覆盖另一个进程所拥有的状态。 |
+| 虚拟适配器 | TUN 栈、适配器名称、严格路由、自动路由/接口、MTU、DNS 劫持与排除范围 | 受限的部分 | 服务、协调器、IPC 与 UI 接线已存在，但发布支持被隔离的 Windows 恢复矩阵所阻塞。在签名意图与回滚证据中表示出每个字段之前，不要暴露高级控件。 |
+| DNS 设置 | 启用、增强模式、fake-IP 范围/过滤、IPv6、respect-rules 与 nameserver 组 | 部分 | Murge 具备 DNS 查询/缓存动作并保留 profile DNS。请添加声明式 DNS 覆盖编辑器、schema 校验、预览与 last-known-good 回滚。 |
+| 域名 sniffer | 启用、目标覆盖、IP 映射选项、HTTP/TLS/QUIC 端口、跳过/强制域名与跳过的 CIDR | 缺失 | 添加类型化的 sniffer 覆盖模型。在物化运行时配置前校验端口、域名与 CIDR。 |
+| 连接 | 实时/已关闭标签、总计、过滤、列、逐行关闭/暂停控件 | 强部分 | Murge 已具备共享流式传输、搜索、详情与已确认的单连接关闭。已新增总计、排序与已确认的批量关闭。已关闭历史与列选择器仍未实现。暂停并非当前 mihomo 契约所承诺的。 |
+| 外部资源 | GeoIP/GeoSite/MMDB/ASN 来源、数据模式、更新间隔、代理/规则 provider 刷新与详情 | 部分 | Provider 列表/刷新/健康数据已存在。请添加 geodata 来源策略、下载完整性、原子替换、更新计划与 provider 详情。QR 导出必须脱敏凭据并设为主动选择加入。 |
+| 覆盖 | URL/本地导入与有序覆盖项 | 缺失 / P0 | 首先添加版本化 YAML 覆盖：全局与 profile 作用域、顺序、启用/禁用、预览/差异、校验、原子写入与回滚。JavaScript 是之后的受信任代码功能，而非安全沙箱。 |
+| 内核设置 | 内核选择、mixed/SOCKS/HTTP 端口、监听地址、secret、仪表盘、IPv6、LAN/认证与 1-RTT | 部分 | 稳定/特定内核管理与混合端口已存在。请添加带冲突检查的受控端口/监听/LAN 字段。控制器 secret 保持应用所有，绝不能被揭示或随意编辑。 |
+| 网络信息 | 出口 IP provider、国家/城市/ASN、复制/揭示与连接拓扑 | 部分 | Murge 尽力展示出口 IP。请添加隐私明确的 provider 选择与缓存元数据。拓扑是一种派生可视化，必须标注 mihomo 数据的不完整性。 |
+| 用量 | 1h/24h/7d/30d 历史；会话/上传/下载/总计；设备/域名/代理/进程排行 | 缺失 | 添加有上限的本地时序持久化、保留策略、聚合与清除数据动作。绝不持久化控制器 secret、完整 URL 或原始 profile 内容。 |
+| Sub-Store 入口 | 内嵌/链接的订阅转换器 | 缺失 | 延迟到覆盖管线稳定之后。优先使用显式的外部集成，而非静默托管一个特权远程面板。 |
 
-## Existing Murge capabilities that must not be rebuilt
+## 不得重建的现有 Murge 能力
 
-- Typed `ProtocolErrorCode` classification already spans renderer and main;
-  enhance detail transport instead of introducing a second error family.
-- `/traffic`, `/connections` and `/logs` already use shared WebSockets with
-  backoff, jitter, stable-window reset, listener cleanup and renderer silence
-  watchdogs.
-- Production ports are dynamically selected. The remaining issue is the
-  probe-to-bind race; startup should retry on a verified collision.
-- Raw subscription URLs are not persisted; stored source metadata is redacted.
-- Deep-link registration and single-instance forwarding already exist.
-- TUN follows Murge's privileged-service ownership and recovery architecture.
-  Do not replace it with an elevated Electron renderer.
+- 类型化的 `ProtocolErrorCode` 分类已横跨渲染进程与主进程；请增强详情传输，而不是引入第二个错误体系。
+- `/traffic`、`/connections` 与 `/logs` 已使用共享 WebSocket，具备退避、抖动、稳定窗口重置、监听器清理与渲染进程静默看门狗。
+- 生产端口被动态选择。剩余问题是探针到绑定的竞态；启动应在验证到冲突时重试。
+- 原始订阅 URL 不被持久化；已存来源元数据被脱敏。
+- 深链注册与单实例转发已存在。
+- TUN 遵循 Murge 的特权服务所有权与恢复架构。不要用提权的 Electron 渲染进程替换它。
 
-## Configuration enhancement pipeline
+## 配置增强管线
 
-The required order is:
+所需的顺序是：
 
 ```text
 immutable source profile
@@ -69,166 +53,151 @@ immutable source profile
   -> atomic last-known-good runtime materialization
 ```
 
-Rules:
+规则：
 
-1. Subscription refresh never edits or deletes user overrides.
-2. Every override has a stable ID, schema version, scope, enabled state and
-   deterministic order.
-3. Invalid YAML, invalid fields and semantic conflicts fail closed. The
-   previous valid runtime config remains active.
-4. Arrays use explicit replace/prepend/append/remove operations; generic deep
-   merge must not silently replace `rules`, `proxies` or `proxy-groups`.
-5. Safety-owned controller address/secret, public listeners, system proxy and
-   TUN ownership cannot be overridden by a subscription or enhancement.
-6. Node `vm` is not a security boundary. A future JavaScript override is
-   labelled trusted local code and runs in a separately constrained process
-   with a timeout, memory ceiling and no file/network/module access.
+1. 订阅刷新绝不编辑或删除用户的覆盖。
+2. 每个覆盖都有稳定的 ID、schema 版本、作用域、启用状态与确定性顺序。
+3. 无效 YAML、无效字段与语义冲突时安全失败。先前有效的运行时配置保持生效。
+4. 数组使用显式的替换/前插/后插/删除操作；通用深度合并绝不能静默替换 `rules`、`proxies` 或 `proxy-groups`。
+5. 安全所拥有的控制器地址/secret、公共监听器、系统代理与 TUN 所有权不能被订阅或增强覆盖。
+6. 节点 `vm` 不是安全边界。未来的 JavaScript 覆盖被标注为受信任的本地代码，并在一个单独受限的进程中运行，带有超时、内存上限，没有文件/网络/模块访问。
 
-## Delivery TODO
+## 交付 TODO
 
-### P0 — Declarative enhancement foundation
+### P0 — 声明式增强基础
 
-- [ ] Define versioned override schemas and shared gateway contracts.
-- [ ] Implement atomic override repository with stable ordering.
-- [ ] Implement deterministic map merge plus explicit sequence operations.
-- [ ] Apply global overrides, then profile overrides, before safety transforms.
-- [ ] Produce validation result and redacted before/after diff without applying.
-- [ ] Preserve and recover the last-known-good materialized configuration.
-- [ ] Add Vue management page: create, import, edit, reorder, enable and scope.
-- [ ] Cover malformed YAML, duplicate IDs, sequence behavior, safety conflicts,
-      refresh persistence and crash-safe writes.
+- [ ] 定义版本化的覆盖 schema 与共享网关契约。
+- [ ] 实现具有稳定排序的原子覆盖仓库。
+- [ ] 实现确定性映射合并加上显式序列操作。
+- [ ] 在安全转换之前，先应用全局覆盖，再应用 profile 覆盖。
+- [ ] 在不应用的情况下生成校验结果与脱敏的前后差异。
+- [ ] 保留并恢复 last-known-good 的物化配置。
+- [ ] 添加 Vue 管理页面：创建、导入、编辑、重新排序、启用与作用域。
+- [ ] 覆盖格式错误的 YAML、重复 ID、序列行为、安全冲突、刷新持久化与崩溃安全写入。
 
-### P1 — Controlled DNS, sniffer and core settings
+### P1 — 受控的 DNS、sniffer 与内核设置
 
-- [x] DNS shared schema and editor: enable, enhanced mode
-      (`fake-ip`/`redir-host`/`normal`), fake-IP range, fake-IP filter mode/list,
-      IPv6, respect-rules, hosts/use-hosts, default-nameserver,
-      proxy-server-nameserver, direct-nameserver, nameserver, fallback and
-      nameserver-policy. (`src/shared/dns.ts`, `DnsSettingsPanel.vue`, the
-      `dns-enhancement.json` service and the `dns:` generator at `v0.1.14`. The
-      model is strict/zod-validated at IPC, and generated list keys are only
-      emitted when non-empty.)
-- [x] Validate DNS server schemes, IPs, domains and CIDRs; render a redacted
-      effective-config preview; preserve the last-known-good config on failure.
-      (Every server scheme `udp|tcp|tls|https|h3|quic|dhcp`, IP, hostname, domain
-      pattern and CIDR is validated before persist/materialize; preview is
-      redacted (`***` for userinfo); on any invalid/unparseable input the
-      pipeline fails open to the base/default so a broken enhancement never
-      reaches the kernel — a fail-open last-known-good guarantee.)
-- [ ] Sniffer shared schema and editor: enable, override-destination,
-      force-dns-mapping, parse-pure-ip, HTTP/TLS/QUIC ports, skip-domain,
-      force-domain, skip-src-address and skip-dst-address.
-      (Shipped at `v0.1.15`: `SnifferEnhancement` in `src/shared/sniffer.ts` plus
-      the `SnifferSettingsPanel` editor on the Config page; port token, domain
-      pattern and CIDR validation happen in the IPC schema before any persist.)
-- [ ] Validate and normalize single ports/ranges, domain patterns and IPv4/IPv6
-      CIDRs; add parse-back and fixture coverage for the generated `sniffer:`
-      block.
-      (Shipped at `v0.1.15`: `isValidPortToken`, `isValidAddressOrCidr` and the
-      shared `net.ts` validators back the strict `snifferEnhancementSchema`; the
-      IPC schema is unit-tested for bad ports/domains/CIDRs, and
-      `apply-sniffer`/`sniffer-enhancement-service` tests assert the generated
-      `sniffer:` block round-trips through parse-back, including empty-list
-      omission and preserved non-owned keys.)
-- [x] TUN shared schema and editor: stack, device/adapter identity, MTU,
-      strict-route, auto-route, auto-detect-interface, DNS hijack,
-      route-address, route-exclude-address and explicitly supported optional
-      mihomo fields.
-      (Shipped at `v0.1.16`, **config model only**, marked
-      `implementation-complete / runtime-unverified`:
-      `TunConfigModel` in `src/shared/tun-config.ts` plus the strict
-      `tunConfigSchema` at IPC; the `TunConfigPanel.vue` editor on the Config
-      page; the `tun-config.json` service and the `buildTunBlock` generator
-      folded into the mihomo-owned bootstrap via `readTunConfig`. **The TUN
-      lifecycle/error UI is the next item below.**)
-- [x] TUN lifecycle UI: unsupported, stopped, starting, active, stopping,
-      restoring, restore-failed, conflict and failed; add retry and emergency
-      disable without depending on a responsive renderer.
-      (Shipped at **v0.1.17**, marked `implementation-complete /
-      runtime-unverified` — pinned to the `TunPhase` enum so `stopped`/`stopping`
-      map to `configured`/a paused coordinator; `TunLifecyclePanel.vue` on the
-      Config page renders the phase via `TUN_UI_COPY`, surfaces
-      `errorMessage`/`conflictDetail`, derives enable-only-from-`configured`/
-      `failed` (retry) and disable-while-networking-owned gating from the pure
-      `src/renderer/src/lib/tun-lifecycle.ts` helper, and the `tun` Pinia store
-      mirrors coordinator status via `connect`/`disconnect` while capturing
-      action errors with `toProtocolError`. The renderer never elevates: disable
-      routes to the coordinator's `emergencyDisable`, which stays callable
-      without a renderer. Non-Windows/dev builds render `unsupported`; not a
-      release TUN enablement.)
-- [ ] Wire TUN only through the existing privileged service/named pipe,
-      integrity checks, coordinator and mutation journal. Do not elevate the
-      Electron renderer and do not allow the subscription to become a second
-      route/DNS owner.
-- [x] Complete all DNS/sniffer/TUN gateways, IPC validation, Pinia stores,
-      fixtures, generators, preview/diff and network-silent tests before the
-      Windows test campaign. (DNS / Sniffer / TUN each ship a shared model +
-      strict zod schema, IPC gate + preload block + Pinia store + Config page
-      panel, an atomic-persist service and a config generator with parse-back
-      assertions; the composed `tests/network-silent-config.integration.test.ts`
-      exercises the real profile + DNS + Sniffer + `buildProfileKernelConfig`
-      pipeline in-memory and asserts loopback-only / no public bind /
-      `dns.listen`-stripped / parse-back-valid output. Non-Windows/dev builds
-      keep TUN `unsupported`; not a release TUN enablement.)
-- [ ] Controlled ports/listen/LAN/auth editor with pre-bind validation.
-- [ ] Editable system-proxy bypass policy with exact restore and conflict tests.
-- [ ] Preserve typed error `details` and `operation` across Electron IPC.
+- [x] DNS 共享 schema 与编辑器：启用、增强模式
+      （`fake-ip`/`redir-host`/`normal`）、fake-IP 范围、fake-IP 过滤模式/列表、
+      IPv6、respect-rules、hosts/use-hosts、default-nameserver、
+      proxy-server-nameserver、direct-nameserver、nameserver、fallback 与
+      nameserver-policy。（`src/shared/dns.ts`、`DnsSettingsPanel.vue`、
+      `dns-enhancement.json` 服务以及 `dns:` 生成器，发布于 `v0.1.14`。该
+      模型在 IPC 处经严格/zod 校验，并且生成的列表键仅在非空时才发出。）
+- [x] 校验 DNS 服务器 scheme、IP、域名与 CIDR；渲染脱敏后的
+      有效配置预览；在失败时保留 last-known-good 配置。
+      （每个服务器 scheme `udp|tcp|tls|https|h3|quic|dhcp`、IP、主机名、域名
+      模式与 CIDR 在持久化/物化之前都经过校验；预览被脱敏（userinfo 用
+      `***`）；在任何无效/不可解析的输入上，管线安全开启为基准/默认值，
+      因此损坏的增强永远不会到达内核——这是一个 fail-open 的
+      last-known-good 保证。）
+- [ ] Sniffer 共享 schema 与编辑器：启用、override-destination、
+      force-dns-mapping、parse-pure-ip、HTTP/TLS/QUIC 端口、skip-domain、
+      force-domain、skip-src-address 与 skip-dst-address。
+      （发布于 `v0.1.15`：`src/shared/sniffer.ts` 中的 `SnifferEnhancement` 加上
+      Config 页面上的 `SnifferSettingsPanel` 编辑器；端口 token、域名
+      模式与 CIDR 校验在任何持久化之前于 IPC schema 中完成。）
+- [ ] 校验并归一化单个端口/范围、域名模式与 IPv4/IPv6
+      CIDR；为生成的 `sniffer:` 块添加解析回显与夹具覆盖。
+      （发布于 `v0.1.15`：`isValidPortToken`、`isValidAddressOrCidr` 与
+      共享 `net.ts` 校验器支撑严格的 `snifferEnhancementSchema`；IPC
+      schema 针对错误的端口/域名/CIDR 进行了单元测试，并且
+      `apply-sniffer`/`sniffer-enhancement-service` 测试断言生成的
+      `sniffer:` 块通过解析回显往返，包括空列表省略与保留的非自有键。）
+- [x] TUN 共享 schema 与编辑器：栈、设备/适配器标识、MTU、
+      strict-route、auto-route、auto-detect-interface、DNS 劫持、
+      route-address、route-exclude-address 以及明确支持的 mihomo 可选字段。
+      （发布于 `v0.1.16`，**仅配置模型**，标记为
+      `implementation-complete / runtime-unverified`：
+      `src/shared/tun-config.ts` 中的 `TunConfigModel` 加上 IPC 处的严格
+      `tunConfigSchema`；Config 页面上的 `TunConfigPanel.vue` 编辑器；
+      `tun-config.json` 服务以及通过 `readTunConfig` 折入 mihomo 自有引导的
+      `buildTunBlock` 生成器。**TUN 生命周期/错误 UI 是下一项。**）
+- [x] TUN 生命周期 UI：unsupported、stopped、starting、active、stopping、
+      restoring、restore-failed、conflict 与 failed；添加重试与紧急
+      禁用而不依赖响应式渲染进程。
+      （发布于 **v0.1.17**，标记为 `implementation-complete /
+      runtime-unverified`——固定到 `TunPhase` 枚举，因此 `stopped`/`stopping`
+      映射到 `configured`/暂停的协调器；Config 页面上的 `TunLifecyclePanel.vue`
+      通过 `TUN_UI_COPY` 渲染该阶段，展现
+      `errorMessage`/`conflictDetail`，从纯函数
+      `src/renderer/src/lib/tun-lifecycle.ts` 辅助逻辑推导仅从 `configured`/
+      `failed` 启用（重试）以及网络所有期间的禁用门控，并且 `tun` Pinia store
+      通过 `connect`/`disconnect` 镜像协调器状态，同时通过 `toProtocolError`
+      捕获动作错误。渲染进程绝不提权：禁用走协调器的 `emergencyDisable`，
+      它在没有渲染进程时仍保持可调用。非 Windows/开发构建渲染 `unsupported`；
+      不是发布版 TUN 启用。）
+- [ ] 仅通过现有的特权服务/命名管道、
+      完整性检查、协调器与变更日志接线 TUN。不要提权
+      Electron 渲染进程，也不要让订阅成为第二个
+      路由/DNS 所有者。
+- [x] 在 Windows 测试活动之前，完成所有 DNS/sniffer/TUN 网关、IPC 校验、Pinia 存储、
+      夹具、生成器、预览/差异与网络静默测试。（DNS / Sniffer / TUN 各自交付共享模型 +
+      严格 zod schema、IPC 网关 + preload 块 + Pinia store + Config 页面
+      面板、一个原子持久化服务以及带解析回显断言的配置生成器；组合的
+      `tests/network-silent-config.integration.test.ts` 在内存中演练真实的 profile + DNS + Sniffer + `buildProfileKernelConfig`
+      管线，并断言仅回环 / 无公共绑定 /
+      剔除 `dns.listen` / 解析回显有效的输出。非 Windows/开发构建
+      保持 TUN `unsupported`；不是发布版 TUN 启用。）
+- [ ] 带预绑定校验的受控端口/监听/LAN/认证编辑器。
+- [ ] 可编辑的系统代理绕过策略，带精确恢复与冲突测试。
+- [ ] 在 Electron IPC 间保留类型化的错误 `details` 与 `operation`。
 
-### P2 — Resources and observability
+### P2 — 资源与可观测性
 
-- [ ] Geodata source registry with HTTPS allowlist, hashes, atomic replacement,
-      manual refresh and bounded scheduling.
-      (Controlled geodata *policy* — geodata-mode / geoip-mode / geo-auto-update /
-      geo-update-interval / optional geo-x-url — is implemented as a typed,
-      persisted model that is authoritative when enabled (read-back) and overrides
-      the profile (conflict handling) in v0.1.20. The registry itself — HTTPS
-      allowlist, download integrity/hashes, atomic replacement, manual refresh,
-      bounded scheduling — remains.)
-- [ ] Provider detail view and batch result reporting.
-- [ ] Connections closed-history model and configurable visible columns.
-- [ ] Bounded usage database, 1h/24h/7d/30d buckets and four ranking views.
-- [ ] Network metadata provider selection, cache, privacy copy and failure state.
-- [ ] Read-only topology derived from current connections/rules/proxy chains.
+- [ ] 具有 HTTPS 白名单、哈希、原子替换、
+      手动刷新与有界调度的 geodata 来源注册表。
+      （受控的 geodata *策略*——geodata-mode / geoip-mode / geo-auto-update /
+      geo-update-interval / 可选的 geo-x-url——在 v0.1.20 中已作为类型化的、
+      持久化模型实现，启用时具有权威性（读回）并覆盖
+      profile（冲突处理）。注册表本身——HTTPS
+      白名单、下载完整性/哈希、原子替换、手动刷新、
+      有界调度——仍在。）
+- [ ] Provider 详情视图与批量结果报告。
+- [ ] 连接已关闭历史模型与可配置的可见列。
+- [ ] 有上限的用量数据库、1h/24h/7d/30d 桶与四个排行视图。
+- [ ] 网络元数据 provider 选择、缓存、隐私复制与失败状态。
+- [ ] 由当前连接/规则/代理链派生的只读拓扑。
 
-### P3 — Optional integrations
+### P3 — 可选集成
 
-- [ ] Local backup/export and transactional restore with manifest/checksums.
-- [ ] Encrypted WebDAV backup with conflicts, rotation and credential storage.
-- [ ] Global shortcuts and shell-specific proxy environment export.
-- [ ] Traffic floating window and richer tray states.
-- [ ] Sub-Store/deep-link enhancements after threat and privacy review.
-- [ ] Trusted-code JavaScript overrides only after process-isolation review.
+- [ ] 本地备份/导出与事务性恢复，带清单/校验和。
+- [ ] 加密的 WebDAV 备份，带冲突、轮换与凭据存储。
+- [ ] 全局快捷键与特定 shell 的代理环境导出。
+- [ ] 流量悬浮窗口与更丰富的托盘状态。
+- [ ] 在威胁与隐私审查后增强 Sub-Store/深链。
+- [ ] 仅在与进程隔离审查后实现受信任代码的 JavaScript 覆盖。
 
-### Windows-only release gates
+### 仅 Windows 的发布门禁
 
-- [ ] Install an implementation-complete build on an isolated, snapshot-able
-      Windows VM with an out-of-band recovery console.
-- [ ] Verify TUN enable/disable, adapter identity/reuse, IPv4, IPv6, DNS hijack,
-      DNS leak behavior, strict route, exclusions and LAN reachability.
-- [ ] Verify sleep/wake, Wi-Fi/Ethernet change, DHCP/network-profile change and
-      temporary controller/network loss.
-- [ ] Force-kill the GUI, mihomo and privileged service independently at every
-      mutation-journal boundary; verify bounded recovery after restart.
-- [ ] Verify normal disable, failed enable, forced termination, reboot and
-      uninstall restore the exact previous routes, DNS, proxy and service state.
-- [ ] Verify retry and emergency disable after restore failure without spawning
-      a second kernel, adapter or ownership session.
-- [ ] Record sanitized before/after evidence, process/service state, adapter
-      identity, route tables and DNS state against an immutable build/tag.
-- [ ] Keep TUN labelled `runtime-unverified` until every required row passes;
-      implementation and mock tests alone cannot promote it to supported.
-- [ ] Validate PAC/UWP behavior on clean supported Windows versions.
-- [ ] Prove install, upgrade, uninstall and emergency recovery leave exact prior
-      proxy/routes/DNS state.
+- [ ] 在隔离的、可快照的
+      Windows VM 上安装一个实现完整的构建，附带带外恢复控制台。
+- [ ] 验证 TUN 启用/禁用、适配器标识/重用、IPv4、IPv6、DNS 劫持、
+      DNS 泄漏行为、严格路由、排除项与 LAN 可达性。
+- [ ] 验证睡眠/唤醒、Wi-Fi/以太网切换、DHCP/网络 profile 切换与
+      临时控制器/网络丢失。
+- [ ] 在每个变更日志边界独立地强制终止 GUI、mihomo 与特权服务；
+      验证重启后是有界恢复。
+- [ ] 验证正常禁用、失败启用、强制终止、重启与
+      卸载会恢复精确的先前路由、DNS、代理与服务状态。
+- [ ] 在恢复失败后验证重试与紧急禁用，而不生成
+      第二个内核、适配器或所有权会话。
+- [ ] 针对不可变构建/标签，记录脱敏的前后证据、进程/服务状态、适配器
+      标识、路由表与 DNS 状态。
+- [ ] 保持 TUN 标记为 `runtime-unverified`，直到每个必需行均通过；
+      实现与 mock 测试本身不能将其提升为受支持。
+- [ ] 在干净且受支持的 Windows 版本上验证 PAC/UWP 行为。
+- [ ] 证明安装、升级、卸载与紧急恢复会留下精确的先前
+      代理/路由/DNS 状态。
 
-## Reference implementation policy
+## 参考实现策略
 
-- Clash Party's Node main-process organization may inform contracts and data
-  flow, but React UI code is translated into Murge's Vue/Pinia architecture.
-- Clash Verge Rev's Rust code is a behavioral reference only; do not translate
-  unsafe assumptions or copy Rust implementation mechanically.
-- Preserve upstream GPL notices where code is actually adapted. Record source,
-  commit and affected files in `THIRD_PARTY_NOTICES.md` before merging copied or
-  derivative implementation.
-- Screenshots and third-party names are not Murge assets. No Clash Party logos,
-  gradients, icons or branding are copied.
+- Clash Party 的 Node 主进程组织方式可为契约与数据
+  流提供参考，但 React UI 代码会转换为 Murge 的 Vue/Pinia 架构。
+- Clash Verge Rev 的 Rust 代码仅是行为参考；不要翻译
+  不安全的假设，也不要机械地照搬 Rust 实现。
+- 在代码实际改编时保留上游 GPL 声明。在合并复制或
+  衍生实现之前，在 `THIRD_PARTY_NOTICES.md` 中记录来源、
+  提交与涉及的文件。
+- 截图与第三方名称不是 Murge 资产。不复制任何 Clash Party 的 logo、
+  渐变、图标或品牌。

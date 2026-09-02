@@ -1,92 +1,92 @@
-# Development machine network safety
+# 开发机网络安全
 
-## Current machine restriction
+## 当前机器限制
 
-The current development machine is a Mac that the owner may be using through a remote connection. Losing its network path could lock the owner out.
+当前开发机是一台 Mac，机主可能正在通过远程连接使用它。丢失其网络路径可能把机主锁在门外。
 
-Until the owner explicitly removes this restriction in writing, every human or AI contributor must follow these rules on this machine.
+在机主以书面形式明确移除该限制之前，每个人类或 AI 贡献者都必须在这台机器上遵守以下规则。
 
-## Prohibited actions
+## 禁止的操作
 
-- Do not start a real mihomo process.
-- Do not enable or change the macOS system proxy.
-- Do not enable TUN or install a network extension, driver, daemon or privileged helper.
-- Do not change DNS, routes, interfaces, packet filters, firewall rules or forwarding settings.
-- Do not load or test the owner's real subscriptions, nodes, credentials or active proxy configuration.
-- Do not run integration tests that bind proxy ports or attempt transparent traffic capture.
-- Do not add an automatic startup path that launches the real kernel during application development.
+- 不得启动真实的 mihomo 进程。
+- 不得启用或更改 macOS 系统代理。
+- 不得启用 TUN，或安装网络扩展、驱动、守护进程或特权辅助程序。
+- 不得更改 DNS、路由、接口、数据包过滤器、防火墙规则或转发设置。
+- 不得加载或测试机主的真实订阅、节点、凭据或当前代理配置。
+- 不得运行会绑定代理端口或尝试透明流量捕获的集成测试。
+- 不得在应用开发期间添加会启动真实内核的自动启动路径。
 
-This prohibition applies even when a task says to “finish,” “verify,” “run the app,” or “test end to end.” Those phrases do not authorize network mutation on this Mac.
+即使任务写的是“完成”“验证”“运行应用”或“端到端测试”，此禁令依然适用。这些措辞不会授权在这台 Mac 上修改网络。
 
-## Allowed work
+## 允许的工作
 
-- Develop and review renderer UI with deterministic fixture data.
-- Run type checks, builds, linting and unit tests.
-- Test IPC contracts using mocks.
-- Develop `KernelSupervisor` against a harmless fixture process that does not open network listeners.
-- Test the mihomo client against an in-process mock HTTP/WebSocket server bound only for the duration of a scoped test, provided it does not change system networking or proxy settings.
-- Write Windows-specific system proxy and TUN code without executing it on this Mac.
-- Produce Windows test plans and CI jobs for later execution on a disposable Windows environment.
+- 使用确定性的夹具数据开发和评审 renderer UI。
+- 运行类型检查、构建、lint 和单元测试。
+- 使用模拟测试 IPC 契约。
+- 针对一个不打开网络监听器的无害夹具进程开发 `KernelSupervisor`。
+- 针对进程内模拟的 HTTP/WebSocket 服务器测试 mihomo 客户端，该服务器仅在有界的测试期间绑定——前提是不更改系统网络或代理设置。
+- 编写 Windows 特定的系统代理与 TUN 代码，但不在这台 Mac 上执行。
+- 生成 Windows 测试计划和 CI 任务，供日后在一个一次性的 Windows 环境中执行。
 
-## Required implementation guards
+## 必需的实现防护
 
-- Real kernel startup must remain opt-in and disabled by default in development builds.
-- macOS implementations of system proxy and TUN services must return an explicit unsupported/blocked result in this project milestone.
-- Network-mutating services must be injected behind interfaces so tests use fakes.
-- No module may perform network mutation at import time, application startup or renderer mount.
-- Any future integration test requiring a real kernel, proxy, TUN, DNS or route change must be tagged and excluded from default test commands.
+- 真实内核启动必须在开发构建中保持 opt-in 且默认禁用。
+- 本里程碑中，macOS 上的系统代理与 TUN 服务实现必须返回明确的 unsupported/blocked 结果。
+- 修改网络的服务必须注入在接口之后，以便测试使用伪实现（fakes）。
+- 任何模块都不得在导入时、应用启动时或 renderer 挂载时执行网络变更。
+- 任何未来需要真实内核、代理、TUN、DNS 或路由变更的集成测试都必须被标记，并从默认测试命令中排除。
 
-## Future authorization
+## 未来授权
 
-Real network integration testing requires all of the following:
+真实的网络集成测试需要以下全部条件：
 
-1. Explicit owner approval for the exact test and machine.
-2. A rollback plan that has been reviewed before the test.
-3. An independent recovery path that does not depend on the network being modified.
-4. Before/after evidence for settings, process, listener, route and DNS state.
+1. 机主对确切测试和机器给出的明确批准。
+2. 一个在测试前已被评审过的回滚方案。
+3. 一条不依赖被修改网络的独立恢复路径。
+4. 针对设置、进程、监听器、路由和 DNS 状态的前后对照证据。
 
-Absent all four conditions, stop and use mocks.
+缺少上述四项中的任何一项，就停止并使用模拟。
 
-## Phase 9 G1 workflow scaffold
+## 第 9 阶段 G1 工作流骨架
 
-`.github/workflows/g1-probe.yml` is a manual, validation-only authorization gate. It is not
-a G1 implementation and must not be described as probe evidence. It targets only a protected
-self-hosted Windows lab environment and records `probeExecuted:false`. Replacing the
-validation-only step with native Wintun/mihomo execution requires a separate reviewed change
-and a new explicit owner authorization for the exact lab asset and snapshot.
+`.github/workflows/g1-probe.yml` 是一个手工触发的、仅验证的授权门禁。它
+不是 G1 实现，不得被描述为 probe（探测）证据。它仅针对受保护的
+自行托管的 Windows 实验室环境，并记录 `probeExecuted:false`。将
+仅验证步骤替换为原生 Wintun/mihomo 执行，需要一份单独的经评审的变更
+以及机主针对该确切实验室资产和快照做出的新的明确授权。
 
-## Disposable Windows real-kernel listener policy
+## 一次性 Windows 真实内核监听器策略
 
-The only real mihomo execution permitted in this project is the `kernel-real-windows`
-CI job, on a disposable `windows-latest` runner (never on this Mac). That job must
-assert, fail-closed, that the controller and mixed ports each expose at least one
-listener and that every listener is **loopback** — `127.0.0.1` or `::1` (the IPv6
-loopback is accepted as loopback-equivalent). Any bind to a non-loopback address
-(`0.0.0.0`, `::`, a real interface address) fails the job, as does an empty parse
-or unavailable listener tooling. The job also captures a before/after snapshot of
-the host's WinHTTP/Internet-Settings proxy, IPv4/IPv6 default routes, DNS client
-server addresses, active adapters and firewall profile state, and fails if any
-safety-relevant value changed. Real mihomo does not run locally on the Mac, so this
-policy is only enforced by the disposable Windows job.
+本项目允许的真实 mihomo 执行只有 `kernel-real-windows`
+CI 任务，且位于一次性的 `windows-latest` 运行器上（绝不在这台 Mac 上）。该任务必须
+以 fail-closed 的方式断言控制器端口和混合端口各自至少暴露一个
+监听器，且每个监听器都是**回环**——`127.0.0.1` 或 `::1`（IPv6
+回环被视为等效回环）。任何绑定到非回环地址
+（`0.0.0.0`、`::`、真实接口地址）都会使任务失败，空的解析
+或不可用的监听器工具同样如此。该任务还会捕获宿主
+WinHTTP/Internet-Settings 代理、IPv4/IPv6 默认路由、DNS 客户端
+服务器地址、活动适配器和防火墙配置文件状态的前后对照快照，
+并在此类安全相关值发生变化时失败。真实 mihomo 不在这台 Mac 上本地运行，因此该
+策略仅由一次性 Windows 任务强制执行。
 
-## Disposable Windows real system-proxy policy
+## 一次性 Windows 真实系统代理策略
 
-The only real per-user proxy mutation permitted in this project is the
-`system-proxy-real-windows` CI job, on a disposable `windows-latest` runner (never
-on this Mac). That job runs the gated `tests/system-proxy-real.integration.test.ts`
-which is skipped unless BOTH `MURGE_RUN_REAL_SYSTEM_PROXY=1` AND `win32`, so it can
-never run in the default `npm test`. The test:
+本项目允许的真实每用户代理变更只有
+`system-proxy-real-windows` CI 任务，且位于一次性的 `windows-latest` 运行器上（绝不在
+这台 Mac 上）。该任务运行带门禁的 `tests/system-proxy-real.integration.test.ts`，
+除非 BOTH `MURGE_RUN_REAL_SYSTEM_PROXY=1` 与 `win32` 同时成立，否则该测试被跳过，因此它
+绝不会在默认的 `npm test` 中运行。该测试：
 
-- registers the three HKCU Internet Settings values (ProxyEnable, ProxyServer,
-  ProxyOverride) pointing at `127.0.0.1:<port>` — it does NOT bind a socket, so no
-  real traffic is proxied, and it does not touch TUN, DNS, routes, LAN proxy or
-  firewall;
-- captures a host `NetworkSnapshot` before and after and fails closed if anything
-  other than the HKCU Internet Settings proxy field changed (WinHTTP, default
-  routes, DNS, adapters and firewall profiles must stay byte-identical);
-- restores the exact original values in a `finally` block, so a failing assertion
-  can never leave the runner's proxy changed.
+- 注册三个指向 `127.0.0.1:<port>` 的 HKCU Internet Settings 值（ProxyEnable、ProxyServer、
+  ProxyOverride）——它【不】绑定 socket，因此
+  没有真实流量被代理，并且不触碰 TUN、DNS、路由、LAN 代理或
+  防火墙；
+- 在前后捕获宿主 `NetworkSnapshot`，并采用 fail-closed：如果除
+  HKCU Internet Settings 代理字段外的任何内容发生变化（WinHTTP、默认
+  路由、DNS、适配器和防火墙配置必须保持逐字节一致）；
+- 在 `finally` 块中恢复精确的原始值，因此失败的断言
+  绝不会让运行器的代理遗留变更。
 
-No system-proxy mutation may be invoked from this Mac. All Windows proxy behavior
-is verified through unit/component tests using `FakeSystemProxyAdapter` and, for
-the real path, only the gated disposable job above.
+不得从这台 Mac 调用任何系统代理变更。所有 Windows 代理行为
+均通过使用 `FakeSystemProxyAdapter` 的单元/组件测试验证，并且对于
+真实路径，仅通过上述带门禁的一次性任务验证。

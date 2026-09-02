@@ -1,89 +1,89 @@
-# UI specification
+# UI 规格
 
-## Normative visual reference
+## 权威视觉参考
 
-The owner-approved interactive reference is [`ui-reference/murge-ui-preview.html`](ui-reference/murge-ui-preview.html). It is part of the repository and is the primary authority for geometry, spacing, card composition, navigation hierarchy and visual state.
+经所有者批准的交互式参考位于 [`ui-reference/murge-ui-preview.html`](ui-reference/murge-ui-preview.html)。它是代码库的一部分，并且在几何尺寸、间距、卡片构成、导航层级与视觉状态方面是首要权威。
 
-Implementation agents must open the relevant reference page before changing Vue or CSS. If this document, existing production UI and the reference differ visually, the reference wins unless the owner explicitly approves an exception. Do not invent replacement layouts or add decorative components.
+实现代理在修改 Vue 或 CSS 之前必须打开相应的参考页面。如果本文档、现有生产 UI 与参考三者在视觉上不一致，则以参考为准——除非所有者明确批准豁免。不要凭空发明替代布局或添加装饰性组件。
 
-## Reference boundary
+## 参考边界
 
-The UI follows the observed information architecture, density, spacing and card proportions of the installed Surge for Mac interface. Do not copy vendor trademarks, icons, illustrations or proprietary text. Windows system controls, keyboard behavior and accessibility remain native to the target platform.
+UI 遵循已安装的 Surge for Mac 界面的信息架构、密度、间距与卡片比例。不要复制厂商商标、图标、插图或专有文本。Windows 系统控件、键盘行为与可访问性仍保持目标平台原生。
 
-## Reference viewport
+## 参考视口
 
-- Baseline content viewport: `934 × 672` CSS pixels.
-- Sidebar: `205 px`.
-- Main content lane: `729 px`.
-- Dashboard content width: `709 px`.
-- Minimum window: `934 × 672`.
-- At larger sizes, preserve card dimensions and add breathing room; do not stretch charts into a different aspect ratio without a dedicated responsive design.
+- 基准内容视口：`934 × 672` CSS 像素。
+- 侧边栏：`205 px`。
+- 主内容栏：`729 px`。
+- 仪表盘内容宽度：`709 px`。
+- 最小窗口：`934 × 672`。
+- 在更大尺寸下，保持卡片尺寸并增加留白；除非有专门的响应式设计，否则不要把图表拉伸成不同的宽高比。
 
-## Global layout
+## 全局布局
 
-- Translucent cool-gray to faint-lilac application background.
-- Fixed left navigation grouped as primary, client, proxy and HTTP tools.
-- Selected navigation row: 38 px height, 9 px radius, quiet gray fill.
-- Main page begins at x=210 relative to the reference window and y≈45.
-- Page title: 28 px, compact line height, strong but not black-heavy weight.
-- Card surface: 19 px radius, subtle translucent fill and low-elevation shadow.
-- No visible application logo in the upper-left navigation region.
+- 半透明冷灰到淡紫渐变的应用程序背景。
+- 左侧固定导航，分组为主要、客户端、代理与 HTTP 工具。
+- 选中的导航行：38 px 高度、9 px 圆角、静谧灰填充。
+- 主页面相对于参考窗口起始于 x=210、y≈45。
+- 页面标题：28 px、紧凑行高，字重强但不至于过黑。
+- 卡片表面：19 px 圆角、微弱的半透明填充与低阴影。
+- 左上角导航区域没有可见的应用 logo。
 
-## Activity page
+## Activity 页面
 
-The Activity page is the default route.
+Activity 页面是默认路由。
 
-### Header
+### 页头
 
-- Title on the left.
-- Compact status pills for system proxy and TUN on the right.
-- Four runtime facts below: network, profile, outbound mode and external IP.
+- 左侧为标题。
+- 右侧为系统代理与 TUN 的紧凑状态胶囊。
+- 下方为四项运行时事实：网络、profile、出口模式与外部 IP。
 
-### Dashboard geometry
+### 仪表盘几何
 
-- Two columns, each 347 px wide, with a 15 px gap.
-- Three 165–166 px rows with 15 px gaps.
-- Left column: latency, active connections, total traffic.
-- Right top: two equal upload/download cards.
-- Right lower: one card spanning two rows for hourly traffic and ranking.
+- 两列，每列 347 px 宽，间距 15 px。
+- 三行 165–166 px，间距 15 px。
+- 左列：延迟、活动连接、总流量。
+- 右上：两张等大的上传/下载卡片。
+- 右下：一张跨两行的卡片，用于每小时流量与排行。
 
-### Data behavior
+### 数据行为
 
-- Live rates update at most once per second in the UI.
-- Keep graph animation under 200 ms and disable it for reduced-motion users.
-- Total counters use IEC/decimal units consistently; select one policy and test boundary values.
-- Process ranking is derived from the latest connection snapshot and local aggregation, not from `/traffic` alone.
-- Empty, connecting, disconnected and permission-denied states must keep the same geometry.
+- 实时速率在 UI 中最多每秒更新一次。
+- 将图表动画保持在 200 ms 以内，并对减弱运动用户禁用它。
+- 总计计数器统一使用 IEC/十进制单位；选择一种策略并测试边界值。
+- 进程排行由最新的连接快照与本地聚合推导，而非仅依赖 `/traffic`。
+- 空、连接中、已断开与权限被拒的状态必须保持相同的几何尺寸。
 
-## Overview page
+## Overview 页面
 
-- Sections use a small magenta heading.
-- Two cards per row, 337 px each, 15 px gap.
-- Each card contains title, concise explanation, trailing switch and bottom status.
-- A visual switch is never proof that an OS setting succeeded. Update it only after main-process verification.
+- 各区块使用小幅洋红色标题。
+- 每行两张卡片，各 337 px，间距 15 px。
+- 每张卡片包含标题、简要说明、尾部开关与底部状态。
+- 视觉开关绝不是操作系统设置已成功的证明。仅在主进程验证后更新它。
 
-## Navigation mapping
+## 导航映射
 
-| UI page | mihomo/source capability | Framework state |
+| UI 页面 | mihomo/来源能力 | 框架状态 |
 |---|---|---|
-| Activity | `/traffic`, `/connections`, `/configs`, `/version` | Visual shell |
-| Overview | `/configs`, Windows proxy service, TUN service | Visual shell |
-| Processes | `/connections` aggregation | Visual shell |
-| Devices | `/connections` source aggregation | Visual shell |
-| Policies | `/proxies`, `/group` | Visual shell |
-| Rules | `/rules`, `/providers/rules` | Visual shell |
-| Capture | local connection event history | Visual shell; capability pending |
-| Decrypt | no direct equivalent; feature decision required | Visual shell only |
-| Rewrite | no direct equivalent; feature decision required | Visual shell only |
+| Activity | `/traffic`、`/connections`、`/configs`、`/version` | 视觉外壳 |
+| Overview | `/configs`、Windows 代理服务、TUN 服务 | 视觉外壳 |
+| Processes | `/connections` 聚合 | 视觉外壳 |
+| Devices | `/connections` 来源聚合 | 视觉外壳 |
+| Policies | `/proxies`、`/group` | 视觉外壳 |
+| Rules | `/rules`、`/providers/rules` | 视觉外壳 |
+| Capture | 本地连接事件历史 | 视觉外壳；能力待定 |
+| Decrypt | 无直接对应；需要功能决策 | 仅视觉外壳 |
+| Rewrite | 无直接对应；需要功能决策 | 仅视觉外壳 |
 
-## Accessibility
+## 可访问性
 
-- Full keyboard navigation and visible focus indicators.
-- Minimum interactive target 32 px; 38 px for sidebar rows.
-- Never encode alive/error state using color alone.
-- Charts require accessible labels and a textual current value.
-- Respect Windows high contrast and reduced motion.
+- 完整的键盘导航与可见焦点指示。
+- 最小交互目标 32 px；侧边栏行为 38 px。
+- 绝不只依赖颜色来编码存活/错误状态。
+- 图表需要可访问的标签与文本格式的当前值。
+- 遵循 Windows 高对比度与减弱运动。
 
-## Visual review rule
+## 视觉评审规则
 
-For every page, capture at exactly 934×672 and compare it beside `ui-reference/murge-ui-preview.html`. A reviewer must approve geometry before live data integration changes the page. Every intentional difference must be documented in the pull request and approved by the owner.
+对每个页面，都必须在精确的 934×672 下截图，并与 `ui-reference/murge-ui-preview.html` 并排比较。在实时数据集成改变页面之前，评审者必须批准几何尺寸。每个有意的差异都必须在拉取请求中记录并获得所有者批准。

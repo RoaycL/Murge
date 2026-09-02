@@ -1,36 +1,36 @@
-# Application update design
+# 应用更新设计
 
-Status: design complete; implementation disabled until the owner selects a signing provider and release channel.
+状态：设计完成；实现已禁用，直到所有者选择签名提供方与发布通道。
 
-## Security boundary
+## 安全边界
 
-- Windows updates use the existing per-machine NSIS target and `electron-updater`; no renderer-controlled feed URL, headers, file path or installer arguments are accepted.
-- Production update metadata and every installer are published only by the release workflow. HTTPS is transport, not trust: metadata SHA-512 and Windows Authenticode publisher verification are both mandatory.
-- `win.verifyUpdateCodeSignature` remains enabled. The owner-supplied publisher allowlist is embedded at build time; certificate rotation temporarily allows the old and new subjects.
-- Unsigned CI artifacts never enter an update feed. A missing/invalid signature, checksum mismatch, version regression or malformed metadata is a terminal, visible failure with no install attempt.
-- Updates are manual: check and download require explicit user actions; installation uses the updater's manual mode only after Murge confirms TUN, system proxy and mihomo are stopped. Shutdown/logoff never starts an installer.
+- Windows 更新使用现有的每机器 NSIS 目标与 `electron-updater`；不接受渲染器控制的订阅源 URL、请求头、文件路径或安装器参数。
+- 生产更新元数据与每个安装器只由发布工作流发布。HTTPS 作为传输层，而非信任层：元数据 SHA-512 与 Windows Authenticode 发布者校验两者都是强制性的。
+- `win.verifyUpdateCodeSignature` 保持启用。所有者提供的发布者允许列表在构建时嵌入；证书轮换期间临时允许旧与新主体。
+- 未签名的 CI 产物绝不会进入更新订阅源。缺失/无效的签名、校验和不匹配、版本回退或格式错误的元数据都是终端性的、可见的失败，且不会尝试安装。
+- 更新是手动的：检查与下载需要明确的用户操作；安装仅在使用 Murge 已确认 TUN、系统代理与 mihomo 均已停止后，才以更新器的手动模式进行。关机/注销绝不启动安装器。
 
-## State machine
+## 状态机
 
 `disabled -> idle -> checking -> available -> downloading -> downloaded -> installing`
 
-Every active state may enter `failed`; cancel returns to `idle`. The renderer receives verified state only and cannot select a URL or local executable. `allowDowngrade` is false in normal operation.
+每个活动状态都可能进入 `failed`；取消会返回 `idle`。渲染器只接收已验证的状态，不能选择 URL 或本地可执行文件。在正常操作中 `allowDowngrade` 为 false。
 
-## Install and rollback
+## 安装与回滚
 
-1. Record the running version and update metadata without credentials.
-2. Run the existing ordered network shutdown. Any unconfirmed TUN/service/proxy cleanup blocks installation.
-3. Revalidate the cached installer's metadata checksum and Authenticode publisher immediately before install.
-4. Invoke the per-machine NSIS installer. Existing install hooks upgrade the LocalSystem TUN service fail-closed.
-5. On first launch, run storage migrations transactionally and write a version-health marker only after main/preload/renderer IPC and service status checks pass.
-6. If startup health fails, recovery instructions offer the previous signed installer. Automated downgrade is deliberately excluded until a tested A/B app installation mechanism exists.
+1. 记录正在运行的版本与更新元数据，不携带任何凭据。
+2. 运行现有的有序网络关闭。任何未确认的 TUN/服务/代理清理都会阻止安装。
+3. 在安装前立即重新校验缓存安装器的元数据校验和与 Authenticode 发布者。
+4. 调用每机器 NSIS 安装器。现有安装钩子会以 fail-closed 方式升级 LocalSystem TUN 服务。
+5. 在首次启动时，事务性地执行存储迁移，并且仅在主/预加载/渲染器 IPC 与服务状态检查通过后，才写入版本健康标记。
+6. 如果启动健康检查失败，恢复说明会提供之前的已签名安装器。自动降级被有意排除，直到存在一个经过测试的 A/B 应用安装机制。
 
-Rollback releases always increment the public version and contain the reverted code; they are not lower-version downgrades. Release metadata retains at least the current and previous signed installers plus checksums and source archives.
+回滚版本总是递增公共版本并包含被还原的代码；它们不是低版本的降级。发布元数据至少保留当前与之前的已签名安装器，加上校验和与源码归档。
 
-## Required evidence before enabling
+## 启用前所需的证据
 
-- Owner selects stable/beta feeds and the Windows signing provider/publisher names.
-- Clean install, N-1 upgrade, interrupted download, corrupt metadata, wrong signer, service-stop failure and rollback-release matrices pass on disposable Windows VMs.
-- Update never enables TUN, proxy or kernel; app data survives; diagnostics contain no feed credentials.
+- 所有者选择稳定/测试通道以及 Windows 签名提供方/发布者名称。
+- 干净安装、N-1 升级、中断的下载、损坏的元数据、错误的签名者、服务停止失败以及回滚版本矩阵在一次性 Windows 虚拟机上都通过。
+- 更新绝不会启用 TUN、代理或内核；应用数据被保留；诊断中不包含任何订阅源凭据。
 
-References: electron-builder's NSIS updater validates modern update metadata and Windows code signatures; manual installation avoids session-end installer races.
+参考资料：electron-builder 的 NSIS 更新器会校验现代更新元数据与 Windows 代码签名；手动安装避免了会话结束时启动安装器的竞态。

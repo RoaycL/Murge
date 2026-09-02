@@ -1,65 +1,65 @@
-# mihomo controller API contract
+# mihomo 控制器 API 契约
 
-Primary references:
+主要参考：
 
-- Official API documentation: https://wiki.metacubex.one/en/api/
-- Official configuration documentation: https://wiki.metacubex.one/en/config/
-- Kernel branch and license: https://github.com/MetaCubeX/mihomo/tree/Meta
+- 官方 API 文档：https://wiki.metacubex.one/en/api/
+- 官方配置文档：https://wiki.metacubex.one/en/config/
+- 内核分支与许可：https://github.com/MetaCubeX/mihomo/tree/Meta
 
-This file is an implementation map, not a replacement for upstream documentation. Re-check upstream before release because fields and endpoints can evolve.
+本文件是一份实现映射表，并不替代上游文档。由于字段与端点会不断演进，在发布前请重新核对上游。
 
-## Connection setup
+## 连接建立
 
-Recommended generated configuration:
+推荐的生成配置：
 
 ```yaml
 external-controller: 127.0.0.1:9090
 secret: <random-per-install-secret>
 ```
 
-Every REST request and WebSocket upgrade sends:
+每个 REST 请求与 WebSocket 升级都会发送：
 
 ```http
 Authorization: Bearer <secret>
 ```
 
-Never expose the secret to the renderer. Main process owns the base URL, secret and sockets.
+绝不要把 secret 暴露给渲染进程。主进程负责持有 base URL、secret 与套接字。
 
-## Required endpoints by milestone
+## 各里程碑所需端点
 
-| Priority | Method | Path | Purpose |
+| 优先级 | 方法 | 路径 | 用途 |
 |---|---|---|---|
-| P0 | GET | `/version` | Controller readiness and displayed kernel version |
-| P0 | GET | `/configs` | Runtime mode, ports, LAN, IPv6 and TUN state |
-| P0 | PATCH | `/configs` | Change supported live configuration fields |
-| P0 | GET/WS | `/traffic` | Current up/down rate and cumulative totals |
-| P0 | GET/WS | `/connections` | Active connections, process metadata and totals |
-| P0 | DELETE | `/connections/:id` | Close one connection |
-| P0 | DELETE | `/connections` | Close all connections |
-| P0 | GET/WS | `/logs` | Live logs |
-| P1 | GET | `/proxies` | Nodes and policy groups |
-| P1 | PUT | `/proxies/:group` | Select a group member |
-| P1 | GET | `/proxies/:name/delay` | Test one node |
-| P1 | GET | `/group/:name/delay` | Test members of a group |
-| P1 | GET | `/rules` | Rule list and counters |
-| P1 | GET | `/providers/proxies` | Subscription/provider metadata |
-| P1 | PUT | `/providers/proxies/:name` | Update one proxy provider |
-| P1 | GET | `/providers/proxies/:name/healthcheck` | Health-check a provider |
-| P1 | GET | `/providers/rules` | Rule-provider metadata |
-| P1 | PUT | `/providers/rules/:name` | Update one rule provider |
-| P2 | GET | `/dns/query?name=&type=` | Diagnostic DNS query |
-| P2 | POST | `/cache/dns/flush` | Flush DNS cache |
-| P2 | POST | `/cache/fakeip/flush` | Flush fake-IP cache |
-| P2 | GET/WS | `/memory` | Kernel memory telemetry |
-| P2 | PUT | `/configs?force=true` | Reload full configuration |
+| P0 | GET | `/version` | 控制器就绪状态与显示的内核版本 |
+| P0 | GET | `/configs` | 运行时模式、端口、LAN、IPv6 与 TUN 状态 |
+| P0 | PATCH | `/configs` | 更改受支持的动态配置字段 |
+| P0 | GET/WS | `/traffic` | 当前上/下行速率与累计总量 |
+| P0 | GET/WS | `/connections` | 活动连接、进程元数据与总计 |
+| P0 | DELETE | `/connections/:id` | 关闭单个连接 |
+| P0 | DELETE | `/connections` | 关闭全部连接 |
+| P0 | GET/WS | `/logs` | 实时日志 |
+| P1 | GET | `/proxies` | 节点与策略组 |
+| P1 | PUT | `/proxies/:group` | 选择一个组内成员 |
+| P1 | GET | `/proxies/:name/delay` | 测试单个节点 |
+| P1 | GET | `/group/:name/delay` | 测试组内成员 |
+| P1 | GET | `/rules` | 规则列表与计数器 |
+| P1 | GET | `/providers/proxies` | 订阅/provider 元数据 |
+| P1 | PUT | `/providers/proxies/:name` | 更新单个代理 provider |
+| P1 | GET | `/providers/proxies/:name/healthcheck` | 对 provider 进行健康检查 |
+| P1 | GET | `/providers/rules` | 规则 provider 元数据 |
+| P1 | PUT | `/providers/rules/:name` | 更新单个规则 provider |
+| P2 | GET | `/dns/query?name=&type=` | 诊断性 DNS 查询 |
+| P2 | POST | `/cache/dns/flush` | 刷新 DNS 缓存 |
+| P2 | POST | `/cache/fakeip/flush` | 刷新 fake-IP 缓存 |
+| P2 | GET/WS | `/memory` | 内核内存遥测 |
+| P2 | PUT | `/configs?force=true` | 重载完整配置 |
 
-Kernel and UI update endpoints must remain disabled until release signing, checksum verification and rollback are designed.
+内核与 UI 更新端点必须在设计出发布签名、校验和验证与回滚机制之前保持禁用状态。
 
-## Message shapes
+## 消息结构
 
-### Traffic
+### 流量
 
-`GET` or `WS /traffic`, approximately once per second:
+`GET` 或 `WS /traffic`，大约每秒一次：
 
 ```ts
 interface TrafficMessage {
@@ -70,11 +70,11 @@ interface TrafficMessage {
 }
 ```
 
-Map directly to the two speed cards. Do not derive per-process rankings from this stream.
+直接映射到两张速率卡片。不要从该数据流推导每进程排行。
 
-### Connections
+### 连接
 
-`GET` or `WS /connections?interval=1000`:
+`GET` 或 `WS /connections?interval=1000`：
 
 ```ts
 interface ConnectionsSnapshot {
@@ -105,21 +105,21 @@ interface ConnectionsSnapshot {
 }
 ```
 
-Aggregations:
+聚合方式：
 
-- Active connections: `connections.length`.
-- Processes: normalized non-empty `metadata.process` or `processPath`.
-- Domains: normalized `metadata.host`; fall back to destination IP only in the detail view.
-- Policy: final/visible chain label according to a documented chain convention.
-- Per-item usage: sum connection `upload + download` within the snapshot. This is active-connection volume, not permanent historical accounting.
+- 活动连接数：`connections.length`。
+- 进程：归一化后的非空 `metadata.process` 或 `processPath`。
+- 域名：归一化后的 `metadata.host`；仅在详情视图中回退到目标 IP。
+- 策略：按文档规定的链约定取最终/可见的链标签。
+- 单项用量：在快照内对连接 `upload + download` 求和。这是活动连接的流量，而非持久的历史计数。
 
-Persistent daily/monthly totals require the application to store sampled deltas or consume another durable source. Do not label a non-durable snapshot as historical truth.
+持久的日/月总计需要应用保存采样的增量值，或消费另一个持久数据源。不要把非持久的快照标注为历史真值。
 
-### Proxies and groups
+### 代理与策略组
 
-`GET /proxies` returns an object keyed by proxy or group name. Common fields include `name`, `type`, `alive`, `history`, and capability flags. Groups additionally include `now`, `all`, `testUrl`, `hidden`, `icon`, and sometimes `fixed`.
+`GET /proxies` 返回一个以代理或策略组名称为键的对象。常见字段包括 `name`、`type`、`alive`、`history` 以及能力标志。策略组还会包含 `now`、`all`、`testUrl`、`hidden`、`icon`，有时还有 `fixed`。
 
-Select a member:
+选择成员：
 
 ```http
 PUT /proxies/<percent-encoded-group-name>
@@ -128,23 +128,21 @@ Content-Type: application/json
 {"name":"member name"}
 ```
 
-Success is HTTP 204. Refetch that group or update optimistically and roll back on error.
+成功时返回 HTTP 204。重新拉取该策略组，或乐观更新并在出错时回滚。
 
-Latency test:
+延迟测试：
 
 ```http
 GET /proxies/<name>/delay?url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204&timeout=5000&expected=204
 ```
 
-Response: `{ "delay": 73 }`. Treat timeouts, zero and missing delay distinctly.
+响应：`{ "delay": 73 }`。请将超时、零值和缺失的 delay 区分处理。
 
-Group latency testing uses `GET /group/<name>/delay?...` and returns a map keyed by member name (`{ "香港 01": 42, "DIRECT": 6 }`). Members that failed or were not measured are omitted from the map (they are not written with a sentinel), so a missing key means "no latency available" and must be surfaced as unavailable — it is not a timeout. A whole-group timeout/probe failure returns HTTP 504/503 for the request itself.
+策略组延迟测试使用 `GET /group/<name>/delay?...` 并返回一个以成员名称为键的映射（`{ "香港 01": 42, "DIRECT": 6 }`）。测试失败或未测量的成员不会出现在映射中（它们不会被写成哨兵值），因此缺失的键表示「无可用延迟」，必须呈现为不可用——它不是超时。整组超时/探测失败会使请求本身返回 HTTP 504/503。
 
-### Providers
+### Provider
 
-`GET /providers/proxies` returns `{ "providers": { <name>: {...} } }`. Each proxy
-provider is marshalled by upstream as (verified against
-`adapter/provider/provider.go`):
+`GET /providers/proxies` 返回 `{ "providers": { <name>: {...} } }`。每个代理 provider 由上游编组为（已对照 `adapter/provider/provider.go` 验证）：
 
 ```ts
 interface MihomoProxyProvider {
@@ -164,14 +162,10 @@ interface MihomoProxyProvider {
 }
 ```
 
-Derive a node count from `proxies.length`; do not expect a `proxiesCount` field.
-`GET /providers/proxies/<name>/healthcheck` returns **HTTP 204 with no body** (it
-re-probes members and records fresh `history` entries on each proxy); read the
-delays back from `/providers/proxies` afterwards rather than from the healthcheck
-response.
+从 `proxies.length` 推导节点数量；不要指望存在 `proxiesCount` 字段。
+`GET /providers/proxies/<name>/healthcheck` 返回 **HTTP 204 且无响应体**（它会重新探测成员并在每个代理上记录新鲜的 `history` 条目）；之后请从 `/providers/proxies` 读回延迟值，而不是从 healthcheck 响应中读取。
 
-`GET /providers/rules` returns rule providers marshalled as (verified against
-`rules/provider/provider.go`):
+`GET /providers/rules` 返回规则 provider，编组为（已对照 `rules/provider/provider.go` 验证）：
 
 ```ts
 interface MihomoRuleProvider {
@@ -186,24 +180,24 @@ interface MihomoRuleProvider {
 }
 ```
 
-### Running configuration
+### 运行时配置
 
-`GET /configs` returns a flexible object containing fields such as:
+`GET /configs` 返回一个灵活的、包含如下字段的对象：
 
-- `port`, `socks-port`, `mixed-port`
-- `mode`: `rule`, `global`, or `direct`
+- `port`、`socks-port`、`mixed-port`
+- `mode`：`rule`、`global` 或 `direct`
 - `log-level`
 - `allow-lan`
 - `ipv6`
 - `tun`
 
-Change only allowlisted fields through `PATCH /configs`. Full profile activation uses `PUT /configs?force=true` with `{ path, payload }` and must stay in main process. Paths outside the working directory may require upstream `SAFE_PATHS`; prefer keeping managed profiles inside the kernel working directory.
+仅通过 `PATCH /configs` 更改白名单字段。完整 profile 激活使用 `PUT /configs?force=true` 并携带 `{ path, payload }`，且必须保持在主进程中。工作目录之外的路径可能需要上游配置 `SAFE_PATHS`；请优先将受管 profile 保留在内核工作目录内。
 
-`GET /version` and `GET /configs` are re-used by the Windows system-proxy live probe (`src/main/system-proxy/probe.ts`): before enabling the per-user proxy it reads `/version` (kernel must be running) and the `mixed-port` from `/configs`, and refuses to enable unless that mixed-port is a valid loopback port (`127.0.0.1`). The proxy is registered against the loopback mixed-port; no new controller or proxy listener is opened by the system-proxy feature itself.
+`GET /version` 与 `GET /configs` 也被 Windows 系统代理实时探针复用（`src/main/system-proxy/probe.ts`）：在启用每用户代理之前，它会先读取 `/version`（内核必须正在运行）和 `/configs` 中的 `mixed-port`，并且除非该 mixed-port 是有效的回环端口（`127.0.0.1`），否则拒绝启用。代理针对回环 mixed-port 进行注册；system-proxy 功能本身不会打开任何新的控制器或代理监听器。
 
-### Rules
+### 规则
 
-`GET /rules` returns:
+`GET /rules` 返回：
 
 ```ts
 interface Rule {
@@ -222,43 +216,43 @@ interface Rule {
 }
 ```
 
-Temporary rule disabling exists through `PATCH /rules/disable`, keyed by rule index. It resets after restart; the UI must label it temporary.
+临时禁用规则通过 `PATCH /rules/disable` 实现，以规则索引为键。重启后它会重置；UI 必须将其标注为临时。
 
-### Logs
+### 日志
 
-Use `WS /logs?level=info&format=structured` when supported. Structured messages contain `time`, `level`, `message`, and `fields`. Standard mode uses `type` and `payload`. The parser must accept both and cap the renderer buffer.
+支持时使用 `WS /logs?level=info&format=structured`。结构化消息包含 `time`、`level`、`message` 与 `fields`。标准模式使用 `type` 与 `payload`。解析器必须同时接受这两种格式，并限制渲染进程缓冲区大小。
 
-## WebSocket lifecycle
+## WebSocket 生命周期
 
-1. Connect only after `/version` health succeeds.
-2. Include the bearer header in the upgrade request from Electron main.
-3. Parse one JSON object per message.
-4. Publish normalized samples to renderer subscribers through one IPC event per stream.
-5. Keep one upstream socket regardless of the number of Vue components.
-6. Retry network failures with jittered backoff: 250 ms, 500 ms, 1 s, 2 s, maximum 5 s.
-7. Reset backoff after a stable 10-second connection.
-8. Stop immediately on intentional kernel shutdown.
+1. 仅在 `/version` 健康检查成功后连接。
+2. 从 Electron 主进程在升级请求中包含 bearer 头。
+3. 每条消息解析一个 JSON 对象。
+4. 通过每个流一个 IPC 事件，将归一化后的样本发布给渲染进程订阅者。
+5. 无论存在多少 Vue 组件，都保持单一上游套接字。
+6. 使用带抖动的退避重试网络故障：250 ms、500 ms、1 s、2 s，最大 5 s。
+7. 在稳定连接 10 秒后重置退避。
+8. 在内核有意关停时立即停止。
 
-## Error mapping
+## 错误映射
 
-| Condition | UI state |
+| 条件 | UI 状态 |
 |---|---|
-| Connection refused | Kernel/controller unavailable |
-| HTTP 401 | Controller secret mismatch; never display secret |
-| HTTP 404 | Unsupported endpoint/version capability |
-| HTTP 400/422 | Invalid requested config or node operation |
-| HTTP 503 (delay test) | Node unreachable / unavailable |
-| HTTP 504 (delay test) | Node latency timeout |
-| WebSocket close during stop | Normal stopped state |
-| Malformed JSON | Protocol error with redacted diagnostic log |
-| Repeated crash/reconnect | Failed state with explicit retry action |
+| 连接被拒绝 | 内核/控制器不可用 |
+| HTTP 401 | 控制器 secret 不匹配；绝不显示 secret |
+| HTTP 404 | 不支持的端点/版本能力 |
+| HTTP 400/422 | 请求的配置或节点操作无效 |
+| HTTP 503（延迟测试） | 节点不可达 / 不可用 |
+| HTTP 504（延迟测试） | 节点延迟超时 |
+| 停止期间 WebSocket 关闭 | 正常停止状态 |
+| 格式错误的 JSON | 协议错误，并输出脱敏的诊断日志 |
+| 反复崩溃/重连 | 失败状态，附带明确的重新连接操作 |
 
-## Capability detection
+## 能力检测
 
-At startup:
+在启动时：
 
-1. Read `/version`.
-2. Read `/configs`.
-3. Probe only optional endpoints needed for the visible page.
-4. Cache capabilities for the current PID/version.
-5. Hide or disable unsupported UI with an explanation; never assume every release has every documented field.
+1. 读取 `/version`。
+2. 读取 `/configs`。
+3. 仅探测当前可见页面所需的可选端点。
+4. 为当前 PID/版本缓存能力。
+5. 隐藏或禁用不支持的 UI 并给出解释；绝不假定每个版本都提供每个文档字段。

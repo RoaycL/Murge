@@ -1,37 +1,25 @@
-# Emergency Windows network recovery
+# Windows 紧急网络恢复
 
-The first release candidate supports Windows system proxy and excludes TUN.
-These steps do not delete profiles.
+首个发布候选支持 Windows 系统代理，并且不包含 TUN。以下步骤不会删除配置。
 
-## Preferred recovery
+## 首选恢复方式
 
-1. Exit the application normally. The main process restores an owned system
-   proxy before stopping mihomo.
-2. If the UI is unavailable, run the installed executable from an ordinary
-   PowerShell window:
+1. 正常退出应用。主进程会在停止 mihomo 之前恢复其拥有的系统代理。
+2. 如果界面不可用，请在普通 PowerShell 窗口中运行已安装的可执行文件：
 
    ```powershell
    & "$env:ProgramFiles\Murge\murge.exe" --restore-system-proxy
    ```
 
-   A successful exit means either the exact saved state was restored or Murge
-   no longer owns the current proxy values. A conflict is not overwritten.
-3. Relaunch the application and verify Overview reports system proxy disabled.
+   成功退出意味着要么精确保存的状态已恢复，要么 Murge 不再拥有当前代理值。冲突不会被覆盖。
+3. 重新启动应用，并确认 Overview 报告系统代理已禁用。
 
-## If the application was already removed
+## 如果应用已被移除
 
-Do not guess or clear organization-managed proxy/PAC values. Reinstall the same
-version, run the recovery command above, then uninstall normally. The profile
-and owned-backup directory is intentionally preserved by uninstall so recovery
-remains possible.
+不要猜测或清除组织管理的代理/PAC 值。请重新安装相同版本，运行上面的恢复命令，然后正常卸载。配置与拥有式备份目录由卸载有意保留，因此恢复仍有可能。
 
-## Evidence to retain
+## 需要保留的证据
 
-Before making a manual change, capture the three HKCU Internet Settings values:
-`ProxyEnable`, `ProxyServer`, and `ProxyOverride`. Record the application version
-and attach the privacy-safe diagnostics bundle. Never publish profile YAML,
-controller secrets, raw logs, destination addresses or subscription URLs.
+在进行手动更改之前，请捕获三个 HKCU Internet Settings 值：`ProxyEnable`、`ProxyServer` 和 `ProxyOverride`。记录应用版本，并附上隐私安全的诊断包。绝不发布配置文件 YAML、控制器秘密、原始日志、目标地址或订阅 URL。
 
-TUN/route/DNS recovery instructions are intentionally not offered because TUN
-is not part of this RC. A build exposing TUN must not be published under this
-scope.
+之所以不提供 TUN/路由/DNS 恢复说明，是因为 TUN 不属于此 RC。暴露 TUN 的构建不得在此范围内发布。

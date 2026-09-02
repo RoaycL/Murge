@@ -1,22 +1,22 @@
-# Verified framework status
+# 已验证的框架状态
 
-Verified on macOS on 2026-08-24:
+在 macOS 上于 2026-08-24 验证：
 
-- `npm install`: passed; lockfile generated.
-- `npm run brand:check`: passed.
-- `npm run typecheck`: passed.
-- `npm run build`: passed for main, preload and renderer bundles.
-- `npm run dev`: Electron process and Vite development server started.
-- `http://localhost:5173/`: returned HTTP 200 while the development process was active.
-- Activity, Overview, Processes, Devices, Policies, Rules, Capture, Decrypt, Rewrite and Settings visual shells are present.
-- Controller WebSocket streams (`/traffic`, `/logs`, `/connections`) via the in-process mock controller; reconnect backoff, jitter and listener cleanup verified.
+- `npm install`: 通过；已生成 lockfile。
+- `npm run brand:check`: 通过。
+- `npm run typecheck`: 通过。
+- `npm run build`: 针对 main、preload 和 renderer 打包均通过。
+- `npm run dev`: Electron 进程和 Vite 开发服务器已启动。
+- `http://localhost:5173/`: 在开发进程活动时返回 HTTP 200。
+- Activity、Overview、Processes、Devices、Policies、Rules、Capture、Decrypt、Rewrite 和 Settings 的视觉外壳均存在。
+- 通过进程内模拟的 mock 控制器实现控制器 WebSocket 流（`/traffic`、`/logs`、`/connections`）；重连退避、抖动和监听器清理已验证。
 
-Not verified in this milestone:
+本里程碑未验证：
 
-- Windows x64/arm64 packaging.
-- Windows code signing.
-- Actual mihomo binary supervision.
-- Windows system proxy mutation/restoration.
-- TUN installation and traffic capture.
+- Windows x64/arm64 打包。
+- Windows 代码签名。
+- 实际的 mihomo 二进制监督。
+- Windows 系统代理变更/恢复。
+- TUN 安装和流量捕获。
 
-The GitHub remote is not created because the local GitHub CLI credential is invalid. Re-authenticate before repository creation.
+GitHub 远程仓库尚未创建，因为本地 GitHub CLI 凭据无效。请在创建仓库前重新认证。

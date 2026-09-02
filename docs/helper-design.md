@@ -1,160 +1,150 @@
-# Phase 9 — Windows TUN privileged helper: design review package (rev. 8)
+# Phase 9 — Windows TUN 特权 helper：设计评审包（rev. 8）
 
-> Status: **draft for design review (rev. 8).** Design/contract level only. No code
-> execution, no network mutation, no driver/route/DNS change performed on this
-> machine. This revision resolves the seven must-fix items from the second review
-> (round-5, §0.4): unified per-enable single-client resident helper, Observed A/B,
-> WAL ordering, the three crash-recovery paths, WOW64 bitness flags, and
-> `%ProgramData%` recovery-state storage; and the **two round-6 security blockers**
-> (§5.1, §8.0, §8.3, §13): a **pure allow-list COM/DACL/SDDL contract** and a
-> **trusted, High-integrity, directory-substitution-resistant recovery state store**
-> with a **deterministic integrity contract** (the integrity term "HMAC/digest or at
-> least digest" is removed — C12). **Round-7 corrects the actual Windows
-> security-descriptor contract** (§5.1, §8.0, §13, install doc §2/§8): the COM ACLs
-> use **explicit COM rights masks** (`0xB`/`0x3`, **no generic `GX`**), no extra
-> `DENY`, and the state directory uses one **resolvable, complete SDDL**
-> (`O:SYG:SYD:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)` + `S:(ML;OICI;NW;;;HI)`), with
-> **no owner-SID file ACE** (the Medium UI has no raw-read path). **Round-8 corrects
-> the descriptor conversion/persistence contract**: SDDL conversion already returns
-> self-relative data; registry `REG_BINARY` applies only to the COM descriptors; filesystem
-> APIs apply/read the state-directory descriptor; SYSTEM is allowed by both COM ACLs; and the
-> restricted helper must retain an enabled, non-deny-only `BA` SID. The implementation
-> gate remains **NOT met** and
-> requires design-review sign-off plus separate owner authorization before any
-> Windows implementation. In particular **G1 (mihomo reuses the helper-created
-> adapter) is an unproven hypothesis** and is a hard blocking gate, not an
-> established contract.
+> 状态：**设计评审草稿（rev. 8）。** 仅设计/契约层面。未在本机执行任何代码执行、
+> 任何网络变更、任何驱动/路由/DNS 修改。本修订解决了第二轮评审（round-5，§0.4）
+> 中七个必须修复项：统一的每次启用单客户端常驻 helper、Observed A/B、
+> WAL 顺序、三条崩溃恢复路径、WOW64 位数标志、以及 `%ProgramData%` 恢复状态存储；
+> 并解决了**两个 round-6 安全阻塞项**（§5.1、§8.0、§8.3、§13）：一个
+> **纯允许列表 COM/DACL/SDDL 契约**，以及一个**可信、高完整性、抗目录替换的恢复状态存储**，
+> 带有一个**确定性完整性契约**（完整性术语 "HMAC/digest 或至少 digest" 已移除 — C12）。
+> **Round-7 纠正了实际的 Windows 安全描述符契约**（§5.1、§8.0、§13、安装文档 §2/§8）：
+> COM ACL 使用**显式 COM 权限掩码**（`0xB`/`0x3`，**无通用 `GX`**），无额外
+> `DENY`，并且状态目录使用一个**可解析、完整的 SDDL**
+> （`O:SYG:SYD:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)` + `S:(ML;OICI;NW;;;HI)`），带有
+> **无 owner-SID 文件 ACE**（Medium UI 没有原始读取路径）。**Round-8 纠正了
+> 描述符转换/持久化契约**：SDDL 转换已经返回自相对数据；注册表 `REG_BINARY` 仅适用于 COM 描述符；
+> 文件系统 API 应用/读取状态目录描述符；SYSTEM 被两个 COM ACL 都允许；并且受限 helper 必须
+> 保留一个已启用、非 deny-only 的 `BA` SID。实现门槛仍然**未满足**，并且
+> 在任何 Windows 实现之前需要设计评审签核以及另行所有权授权。
+> 特别是 **G1（mihomo 复用 helper 创建的适配器）是一个未经验证的假设**，是硬性阻塞门槛，而不是
+> 已确立的契约。
 
-Decisions supplied by the owner (in force):
+所有者提供的决策（已生效）：
 
-- **D1 = Signed Wintun (official WireGuard distribution).** Ship the official
-  per-arch `wintun.dll`; the signed Wintun kernel driver is loaded **on demand by
-  the DLL during `WintunCreateAdapter`** — there is **no separate driver-load op**,
-  and `LoadLibraryEx(wintun.dll)` alone does **not** install/load the driver.
-- **D2 = Standalone elevated helper process** (not a Windows service).
-- **D3 = Wintun adapter/driver created at first enable** (the `wintun.dll` is
-  staged from the installer, but the driver is installed + the adapter created only
-  at the user's first explicit enable, inside `WintunCreateAdapter`).
+- **D1 = 已签名 Wintun（官方 WireGuard 发行版）。** 发布官方
+  每架构 `wintun.dll`；已签名的 Wintun 内核驱动在 `WintunCreateAdapter` 期间
+  **由 DLL 按需加载**——**没有单独的驱动加载操作**，
+  并且仅 `LoadLibraryEx(wintun.dll)` 自身**不会**安装/加载驱动。
+- **D2 = 独立的提升 helper 进程**（不是 Windows 服务）。
+- **D3 = 首次启用时创建 Wintun 适配器/驱动**（`wintun.dll` 由安装器暂存，
+  但驱动仅安装 + 适配器仅在用户的首次显式启用时创建，在 `WintunCreateAdapter` 内）。
 
-Companion docs: `docs/helper-threat-model.md`, `docs/helper-install-upgrade-rollback.md`.
-Conventions referenced: `src/shared/system-proxy.ts`, `src/shared/ipc.ts`,
-`src/shared/gateways.ts`, `src/main/system-proxy/service.ts` & `adapters/*`,
-`src/main/kernel/mihomo-config.ts`, `src/main/kernel/mihomo-artifact.ts`.
+配套文档：`docs/helper-threat-model.md`、`docs/helper-install-upgrade-rollback.md`。
+引用的惯例：`src/shared/system-proxy.ts`、`src/shared/ipc.ts`、
+`src/shared/gateways.ts`、`src/main/system-proxy/service.ts` 与 `adapters/*`、
+`src/main/kernel/mihomo-config.ts`、`src/main/kernel/mihomo-artifact.ts`。
 
 ---
 
-## 0. Review resolutions
+## 0. 评审决议
 
-### 0.1 Round 2 review fixes (rev.3 — retained)
+### 0.1 第二轮评审修复（rev.3 — 保留）
 
-| # | Finding / resolution |
+| # | 发现 / 决议 |
 |---|---|
-| 1 | Fictitious standalone `load_driver` op removed; driver installed/loaded **inside `WintunCreateAdapter`**; adapter identity by name; **G1** flagged as unproven (§1.3, §12). |
-| 2 | Enable order fixed so routes/DNS follow adapter creation; recovery in reverse journal order (§10.1, §8.4). |
-| 3 | Single OS-config owner **Option A**; mihomo `auto-route:false`/`auto-detect-interface:false`/`dns-hijack:false`; typed `DesiredNetworkState` (§1.1, §9). |
-| 4 | Elevation bootstrap rewritten as an executable **COM elevation-moniker** sequence; `runas` cannot inherit handles (§5). |
-| 5 | Key lifecycle: zero only `launchSecret` post-handshake; retain `sessionKey` to channel close/task end; `RtlSecureZeroMemory` on all paths; length-prefixed canonical MAC (§4.2, §4.3). |
-| 6 | Type fixes: `dnsSets` closing `>`; `NET_LUID` as canonical hex string; `requestId` monotonic uint64 decimal string (§8.1). |
-| 7 | Expanded test/evidence matrix (§13). |
+| 1 | 虚构的独立 `load_driver` 操作已移除；驱动在 **`WintunCreateAdapter`** 内安装/加载；适配器按名称标识；**G1** 被标记为未验证（§1.3、§12）。 |
+| 2 | 启用顺序已修复，使路由/DNS 跟随适配器创建；按逆日志顺序恢复（§10.1、§8.4）。 |
+| 3 | 单一 OS 配置所有者**方案 A**；mihomo `auto-route:false`/`auto-detect-interface:false`/`dns-hijack:false`；类型化 `DesiredNetworkState`（§1.1、§9）。 |
+| 4 | 提升引导重写为可执行的 **COM 提升标记（elevation-moniker）序列**；`runas` 无法继承句柄（§5）。 |
+| 5 | 密钥生命周期：仅在完成握手后清零 `launchSecret`；保留 `sessionKey` 直到通道关闭/任务结束；所有路径上使用 `RtlSecureZeroMemory`；长度前缀的规范 MAC（§4.2、§4.3）。 |
+| 6 | 类型修复：`dnsSets` 闭合 `>`；`NET_LUID` 作为规范十六进制字符串；`requestId` 单调 uint64 十进制字符串（§8.1）。 |
+| 7 | 扩展测试/证据矩阵（§13）。 |
 
-### 0.2 Round 3 review fixes (rev.4 — superseded)
+### 0.2 第三轮评审修复（rev.4 — 已被取代）
 
-| # | Finding | Resolution (this document) |
+| # | 发现 | 决议（本文档） |
 |---|---|---|
-| 1 | Wintun ABI wrong: `WintunCreateAdapter(LUID*, Name, TunnelType, Session*)` is an incorrect signature | **Fixed verbatim from the official `wintun.h`** (§3.0, pinned **0.14.1**, recorded arch/exported-symbols/header-source): `WintunCreateAdapter(Name, TunnelType, RequestedGUID) -> WINTUN_ADAPTER_HANDLE`; `WintunGetAdapterLUID(Adapter, &Luid)`; `WintunStartSession(Adapter, Capacity)` creates the packet session; `WintunEndSession` ends a session; `WintunCloseAdapter` releases a handle (and, for a create-created adapter, removes it). The "**Wintun has no RequestedGUID parameter**" assertion is **withdrawn** — `RequestedGUID` is a real parameter (§3.0, §3.2). Pinned version + arch + exported symbols + header source recorded. |
-| 2 | Elevation bootstrap used plain `CoCreateInstance` + `requireAdministrator` instead of the official COM elevation moniker | **Rewritten to the COM Elevation Moniker flow** (§5.1–§5.2): client uses `CoGetObject("Elevation:Administrator!new:{CLSID}", BIND_OPTS3, ...)`; full HKLM `CLSID`/`LocalizedString`/`Elevation`/`LocalServer32` (absolute path + `ServerExecutable`)/`AppID`/`LaunchPermission`/`AccessPermission` listed; `RunAs = "Interactive User"` (Activate-as-Activator); explicit `CoInitializeSecurity`/`CoSetProxyBlanket` authn/impersonation/packet-privacy params. **Round-4 correction below** (`Elevation\Enabled = REG_DWORD 1`, `ThreadingModel` removed, WOW64/bitness location noted). |
-| 3 | RPC client PID wrong: used `RPC_CALL_ATTRIBUTES_V2.ClientProcessId` | **Fixed to `RPC_CALL_ATTRIBUTES_V2.ClientPID`** with `Flags = RPC_QUERY_CLIENT_PID`; assert the call arrived over local **`ncalrpc`**; the PID is used **only to open and validate the process object** (path/digest/publisher/session-key), never as identity by itself (§5.2, §5.4). |
-| 4 | Journal not truly write-ahead (the adapter was created, then the journal intent written) | **True write-ahead journal** (§8.3–§8.4): `BaselineSnapshot` committed first; `CREATE_ADAPTER/PREPARED` (fsync'd **before** `WintunCreateAdapter`); `CREATE_ADAPTER/APPLIED` after; every route/DNS op is `PREPARED` → mutate → `APPLIED`; crash between any two records is reconciled by **enumerating the product adapter / current OS state** (PREPARED-but-unknown). |
-| 5 | No explicit adapter deletion; claimed last-session/handle close auto-deletes | **Corrected to the real 0.14.1 lifecycle** (§3.3): there is **no `WintunDeleteAdapter`**; an adapter created by `WintunCreateAdapter` is removed **only** by `WintunCloseAdapter(creatorHandle)`; there is **no `RebootRequired` adapter-delete return and no `delete-pending`** state (the only reboot-visible artifact is the Wintun driver, which we never delete). Because the creator handle is the adapter's lifetime anchor, the helper must keep the creator handle for the whole enabled window — **proven, not assumed**, by the **G1 lifecycle probe** (§3.3; the fixed resident lifecycle is in round-5, §0.4/§3.3/§5.5). The automatic-deletion and the explicit-`WintunDeleteAdapter` claims are both **removed**. |
-| 6 | Reusable elevated helper let a second process attach | **Per-activation, single-client elevated server** (§5.5): each enable uses `Elevation:Administrator!new` to create a fresh server that **binds to the first verified client** and **rejects all other clients** (including a second Murge process with identical path/signature/hash). **Round-4 correction**: the server's **process lifetime is bound to the enabled TUN window** (it holds the creator handle), not to one IPC command — it is freshly activated per enable and exits on disable/rollback (helper holds the creator handle for the whole enabled window; see round-5, §0.4/§3.3/§5.5). Second-instance race test added (§13). |
-| 7 | G1 still un-proven | Keep as a **hard pre-implementation gate**. The probe is now the **G1 lifecycle probe** (§3.3, §12, §13): create + hold creator handle → mihomo opens by Name + starts a session → helper closes the creator handle/exits → verify session + adapter persist; two **observed outcomes** (A = adapter disappears on creator close, B = it survives while mihomo holds a handle — §0.4/§3.3). Each of the previous "short-lived-helper" claims is **removed**. It may run only on the separately authorized, snapshot-able, out-of-band-recoverable self-hosted Windows lab behind the protected `phase9-tun-lab` environment — **never on this dev machine or a general hosted runner**. |
+| 1 | Wintun ABI 错误：`WintunCreateAdapter(LUID*, Name, TunnelType, Session*)` 是不正确的签名 | **从官方 `wintun.h` 逐字修复**（§3.0，固定 **0.14.1**，记录架构/导出符号/头文件来源）：`WintunCreateAdapter(Name, TunnelType, RequestedGUID) -> WINTUN_ADAPTER_HANDLE`；`WintunGetAdapterLUID(Adapter, &Luid)`；`WintunStartSession(Adapter, Capacity)` 创建数据包会话；`WintunEndSession` 结束会话；`WintunCloseAdapter` 释放句柄（对由 create 创建的适配器，会将其移除）。"Wintun 没有 RequestedGUID 参数"的断言**已撤回** — `RequestedGUID` 是真实参数（§3.0、§3.2）。固定版本 + 架构 + 导出符号 + 头文件来源均已记录。 |
+| 2 | 提升引导使用普通 `CoCreateInstance` + `requireAdministrator` 而非官方 COM 提升标记 | **已改写为 COM 提升标记流程**（§5.1–§5.2）：客户端使用 `CoGetObject("Elevation:Administrator!new:{CLSID}", BIND_OPTS3, ...)`；完整的 HKLM `CLSID`/`LocalizedString`/`Elevation`/`LocalServer32`（绝对路径 + `ServerExecutable`）/`AppID`/`LaunchPermission`/`AccessPermission` 均已列出；`RunAs = "Interactive User"`（Activate-as-Activator）；显式 `CoInitializeSecurity`/`CoSetProxyBlanket` 的 authn/impersonation/packet-privacy 参数。**下方 round-4 修正**（`Elevation\Enabled = REG_DWORD 1`，`ThreadingModel` 已移除，WOW64/位数位置已注明）。 |
+| 3 | RPC 客户端 PID 错误：使用了 `RPC_CALL_ATTRIBUTES_V2.ClientProcessId` | **已修复为 `RPC_CALL_ATTRIBUTES_V2.ClientPID`**，带 `Flags = RPC_QUERY_CLIENT_PID`；断言调用通过本地 **`ncalrpc`** 到达；PID **仅用于打开并验证进程对象**（路径/摘要/发布者/会话密钥），绝不单独作为身份（§5.2、§5.4）。 |
+| 4 | 日志并不是真正的 write-ahead（先创建适配器，再写日志意图） | **真正的 write-ahead 日志**（§8.3–§8.4）：`BaselineSnapshot` 先行提交；`CREATE_ADAPTER/PREPARED`（在 `WintunCreateAdapter` **之前** fsync）；之后 `CREATE_ADAPTER/APPLIED`；每个路由/DNS 操作都是 `PREPARED` → 变更 → `APPLIED`；任何两条记录之间崩溃由**列举产品适配器/当前 OS 状态**调停（PREPARED-but-unknown）。 |
+| 5 | 无显式适配器删除；声称最后会话/句柄关闭会自动删除 | **已纠正为真实的 0.14.1 生命周期**（§3.3）：**没有 `WintunDeleteAdapter`**；由 `WintunCreateAdapter` 创建的适配器**仅**由 `WintunCloseAdapter(creatorHandle)` 移除；**没有 `RebootRequired` 适配器删除返回，也没有 `delete-pending`** 状态（唯一重启可见的产物是 Wintun 驱动，我们从不删除）。由于 creator 句柄是适配器的生命周期锚点，helper 必须在整个启用窗口内保持该句柄 — **经过证明，而非假设**，通过 **G1 lifecycle probe**（§3.3；固定的常驻生命周期见 round-5，§0.4/§3.3/§5.5）。自动删除和显式 `WintunDeleteAdapter` 的声明**均已移除**。 |
+| 6 | 可复用的提升 helper 让第二个进程得以附加 | **每个激活、单客户端提升服务器**（§5.5）：每次启用使用 `Elevation:Administrator!new` 创建全新服务器，它**绑定第一个经过验证的客户端**，并**拒绝所有其他客户端**（包括路径/签名/哈希都相同的第二个 Murge 进程）。**Round-4 修正**：服务器的**进程生命周期绑定到已启用的 TUN 窗口**（它持有 creator 句柄），而非绑定到一条 IPC 命令 — 每次启用时全新激活，并在禁用/回滚时退出（helper 在整个启用窗口内持有 creator 句柄；见 round-5，§0.4/§3.3/§5.5）。已加入二次实例竞态测试（§13）。 |
+| 7 | G1 仍未被证明 | 作为**实现前硬性门槛**保留。探针现在是 **G1 lifecycle probe**（§3.3、§12、§13）：创建 + 持有 creator 句柄 → mihomo 按名称打开 + 启动会话 → helper 关闭 creator 句柄/退出 → 验证会话 + 适配器持续存在；两个**观察结果**（A = 适配器在 creator 关闭时消失，B = 在 mihomo 持有句柄时存活 — §0.4/§3.3）。每个先前的"短命 helper"声明**均已移除**。它只能在受保护的 `phase9-tun-lab` 环境背后、另行授权的、可快照的、带外可恢复的自托管 Windows 实验室中运行 — **绝不在本开发机或通用托管运行器上**。 |
 
-### 0.3 Round 4 review fixes (rev.6 — retained)
+### 0.3 第四轮评审修复（rev.6 — 保留）
 
-| # | Finding | Resolution (this document) |
+| # | 发现 | 决议（本文档） |
 |---|---|---|
-| 1 | Mixed a nonexistent `WintunDeleteAdapter` (+ `RebootRequired`/`delete-pending`) into the pinned 0.14.1 ABI | **Deleted from the whole design.** The **official 0.14.1 `wintun.h` is the ONLY ABI source**. Removal is `WintunCloseAdapter(creatorHandle)`, which "removes adapter" only for a create-created adapter; there is no `WintunDeleteAdapter`, no `WintunFreeSendPacket`, no `RebootRequired` adapter-delete return, no `delete-pending` state (§3.0, §3.3). |
-| 2 | `WintunDeleteDriver` semantics mis-stated | The symbol **is** exported (`BOOL WINAPI (VOID)`) but production policy **forbids calling it** — it removes the shared Wintun driver if no adapters are in use and would affect other Wintun consumers (D5). Noted in the export table (§3.0) and never called. |
-| 3 | Short-lived-helper vs creator-handle-lifetime contradiction unresolved | **Resolved by the G1 lifecycle probe** (§3.3): because the creator handle is the adapter's lifetime anchor, the model is **proven, not assumed**. Probe exercises a–d; the two outcomes are recorded as **Observed A** (adapter removed when creator handle closes) and **Observed B** (adapter survives while mihomo holds its own open handle). **Round-5 supersedes the B1/B2 architecture framing** (§0.4/§3.3): the **safety baseline is fixed** — helper holds the creator handle for the whole enabled window — and the A/B observation only affects a potential future optimization, **never** the baseline. G1 stays a **hard gate** (it must prove mihomo reuses the same adapter). |
-| 4 | COM elevation `Elevation` default was the string `"Enabled"`; unexplained `ThreadingModel`; no bitness/WOW64 note | **Fixed** (§5.1): `Elevation\Enabled` is a **REG_DWORD `1`** (not a string); `LocalServer32\ThreadingModel` **removed**; the **bitness/WOW64 registration location** is documented via the **`KEY_WOW64_64KEY`/`KEY_WOW64_32KEY` flags** (no literal `WOW6432Node` path); since the product ships **amd64/arm64 helpers only**, we explicitly **do not register a 32-bit COM helper** (§5.1). |
-| 5 | WAL delete/recovery still referred to deletion of the adapter | **Rewritten** (§8.3–§8.4): `CREATE_ADAPTER/APPLIED` stores `{Name, RequestedGUID, LUID}`; recovery **re-opens by `WintunOpenAdapter(Name)`** and verifies `RequestedGUID` via `WintunGetAdapterLUID` + `ConvertInterfaceLuidToGuid`/SetupAPI; only close the creator handle / run product lifecycle cleanup on an **exact identity match**; if the creator handle is already closed by a crash, **observe whether the adapter auto-disappeared** before marking `RECONCILED`. No `WintunDeleteAdapter`. |
-| 6 | Export table out of sync; no ABI-check artifact | Export table is the **verbatim 0.14.1 `Wintun_*_FUNC` set** (§3.0) including `WintunOpenAdapter`, `WintunGetRunningDriverVersion`, `WintunSetLogger`, and exported-but-forbidden `WintunDeleteDriver`; removed the non-existent `WintunFreeSendPacket`. **Build-time `dumpbin`/`GetProcAddress` ABI check** added (§3.0, §13). |
-| 7 | G1 probe wording was "one-shot minimal" | **Renamed/expanded to the G1 lifecycle probe** (§3.3, §12, §13): create + hold creator handle → mihomo opens by Name + starts a session → helper closes the creator handle/exits → verify session + adapter persist; the probe **never runs on this machine** (needs a snapshot-able, out-of-band-recoverable Windows VM + gated CI + separate owner authorization). |
+| 1 | 把不存在的 `WintunDeleteAdapter`（+ `RebootRequired`/`delete-pending`）混入了固定的 0.14.1 ABI | **已从整个设计中删除。** **官方 0.14.1 `wintun.h` 是唯一的 ABI 来源。** 移除是 `WintunCloseAdapter(creatorHandle)`，它只对由 create 创建的适配器"移除适配器"；没有 `WintunDeleteAdapter`、没有 `WintunFreeSendPacket`、没有 `RebootRequired` 适配器删除返回、没有 `delete-pending` 状态（§3.0、§3.3）。 |
+| 2 | `WintunDeleteDriver` 的语义描述错误 | 该符号**确实**被导出（`BOOL WINAPI (VOID)`），但生产策略**禁止调用它** — 如果无适配器在使用，它会移除共享的 Wintun 驱动并影响其他 Wintun 消费者（D5）。在导出表中注明（§3.0）且从不调用。 |
+| 3 | 短命 helper 与 creator 句柄生命周期的矛盾未解决 | **由 G1 lifecycle probe 解决**（§3.3）：因为 creator 句柄是适配器的生命周期锚点，所以该模型是**经过证明的，而非假设**。探针演练 a–d；两个结果记录为 **Observed A**（creator 句柄关闭时适配器被移除）和 **Observed B**（mihomo 持有自己的打开句柄时适配器存活）。**Round-5 取代了 B1/B2 架构框架**（§0.4/§3.3）：**安全基线是固定的** — helper 在整个启用窗口内持有 creator 句柄 — A/B 观察仅影响潜在的未来优化，**绝不**影响基线。G1 仍是**硬性门槛**（它必须证明 mihomo 复用同一适配器）。 |
+| 4 | COM 提升的 `Elevation` 默认值是字符串 `"Enabled"`；未解释的 `ThreadingModel`；无数位/WOW64 说明 | **已修复**（§5.1）：`Elevation\Enabled` 是 **REG_DWORD `1`**（不是字符串）；`LocalServer32\ThreadingModel` **已移除**；**位数/WOW64 注册位置**通过 **`KEY_WOW64_64KEY`/`KEY_WOW64_32KEY`** 标志说明（无字面 `WOW6432Node` 路径）；由于产品仅发布 **amd64/arm64 helper**，我们明确**不注册 32 位 COM helper**（§5.1）。 |
+| 5 | WAL 删除/恢复仍提及删除适配器 | **已改写**（§8.3–§8.4）：`CREATE_ADAPTER/APPLIED` 存储 `{Name, RequestedGUID, LUID}`；恢复**通过 `WintunOpenAdapter(Name)` 重新打开**并通过 `WintunGetAdapterLUID` + `ConvertInterfaceLuidToGuid`/SetupAPI 验证 `RequestedGUID`；仅在与**精确身份匹配**时才关闭 creator 句柄 / 运行产品生命周期清理；如果 creator 句柄已因崩溃关闭，**先观察适配器是否自动消失**再标记 `RECONCILED`。没有 `WintunDeleteAdapter`。 |
+| 6 | 导出表不同步；无 ABI 检查产物 | 导出表是**逐字的 0.14.1 `Wintun_*_FUNC` 集合**（§3.0），包括 `WintunOpenAdapter`、`WintunGetRunningDriverVersion`、`WintunSetLogger`、以及已导出但禁止的 `WintunDeleteDriver`；移除了不存在的 `WintunFreeSendPacket`。**构建时 `dumpbin`/`GetProcAddress` ABI 检查**已加入（§3.0、§13）。 |
+| 7 | G1 探针措辞是"一次性最小化" | **已重命名/扩展为 G1 lifecycle probe**（§3.3、§12、§13）：创建 + 持有 creator 句柄 → mihomo 按名称打开 + 启动会话 → helper 关闭 creator 句柄/退出 → 验证会话 + 适配器持续存在；探针**绝不在本机运行**（需要可快照、带外可恢复的 Windows VM + 门控 CI + 另行所有权授权）。 |
 
-### 0.4 Round 5 review fixes (rev.6 — retained)
+### 0.4 第五轮评审修复（rev.6 — 保留）
 
-| # | Finding | Resolution (this document) |
+| # | 发现 | 决议（本文档） |
 |---|---|---|
-| 1 | Helper lifecycle still "a fresh helper per enable/disable"; disable can't reach the old creator handle | **Unified to one resident model** (§3.3, §5.5): one **per-enable single-client helper**. `enable` activates it; it binds the single client, creates the adapter, and holds the **creator handle for the whole enabled window** (`resident-active`, §3.4); `disable` is served by that **same instance** over the **same COM proxy**. No "fresh helper per transaction" wording remains. |
-| 2 | No definition of an app/mihomo abnormal exit | **Added** (§3.4): helper **duplicates and watches both** the bound-app and mihomo process handles; on either abnormal exit it runs a **bounded emergency restore** (routes/DNS first → close the creator handle → persist outcome → exit). On restore failure it **still closes the creator handle** and **keeps the journal** for the next recovery. Timeouts distinguish **active idle** from handshake/command timeouts; **no idle exit while resident-active**. |
-| 3 | No definition of the helper's own crash | **Added** (§3.4): on helper death **Windows auto-closes the creator handle ⇒ adapter removed** (0.14.1). The next `init()`/`--recover` **launches a new recovery helper** that **does not** claim to call `WintunCloseAdapter`, **verifies the adapter is gone**, and restores residual routes/DNS; if the adapter still exists but the new helper **can't prove/own the creator handle**, it **marks a conflict**, **keeps evidence**, and **does not delete** it (D5). |
-| 4 | Confusing B1/B2 architecture naming | **Removed** (§3.3, §12, §13). Replaced with **Observed A** (adapter disappears on creator close) / **Observed B** (mihomo handle keeps it alive). The **safety baseline is fixed** — helper holds the creator handle for the whole enabled window — and **does not depend on** the observation. G1 proves mihomo **reuses the same adapter**; the A/B observation only decides a future optimization, never the baseline. |
-| 5 | COM server labelled a "short-lived transaction server" | **Re-labelled per-enable single-client resident server** (§5.5), with an **exhaustive** exit-condition list (normal disable; enable-failure recovery; bound client/kernel death after emergency restore; handshake-phase timeout; explicit global max recovery timeout). **No idle timeout while resident-active.** |
-| 6 | WOW64 path written as `HKLM\Software\WOW6432Node\Software\Classes` | **Fixed** (§5.1): describe the view with the **`KEY_WOW64_64KEY`/`KEY_WOW64_32KEY`** flags; and since the product ships **amd64/arm64 helpers only**, we explicitly **do not register a 32-bit COM helper** (so no 32-bit/WOW64 view is ever created). |
-| 7 | State machine and tests not expanded for the resident model | **Added** (§10.2 helper `resident-active` state; §13 tests): enable → long no-IPC ⇒ adapter still present; disable uses the **same helper PID** (enable PID == disable PID recorded in evidence); three **distinct** recovery paths (app crash / mihomo crash / helper crash); new recovery helper has **no old creator handle**; helper crash ⇒ adapter gone + routes/DNS restored. |
+| 1 | helper 生命周期仍是"每次启用/禁用一个全新 helper"；禁用时无法触及旧的 creator 句柄 | **统一为一个常驻模型**（§3.3、§5.5）：一个**每次启用单客户端 helper**。`enable` 激活它；它绑定单一客户端、创建适配器，并在**整个启用窗口内持有 creator 句柄**（`resident-active`，§3.4）；`disable` 由**同一实例**通过**同一 COM 代理**服务。不再保留"每次事务一个全新 helper"的措辞。 |
+| 2 | 未定义应用/mihomo 异常退出 | **已加入**（§3.4）：helper**复制并监视**绑定应用和 mihomo 进程句柄；任一异常退出时它运行**有界紧急恢复**（先路由/DNS → 关闭 creator 句柄 → 持久化结果 → 退出）。恢复失败时它**仍关闭 creator 句柄**并**保留日志**用于下次恢复。超时区分**active idle** 与握手/命令超时；**resident-active 时无 idle 退出**。 |
+| 3 | 未定义 helper 自身的崩溃 | **已加入**（§3.4）：helper 死亡时，**Windows 自动关闭 creator 句柄 ⇒ 适配器被移除**（0.14.1）。下次 `init()`/`--recover` **启动新的恢复 helper**，它**不会**声称调用 `WintunCloseAdapter`，**验证适配器已消失**，并恢复残余路由/DNS；如果适配器仍然存在但新 helper **无法证明/拥有 creator 句柄**，则**标记冲突**、**保留证据**、并**不删除**它（D5）。 |
+| 4 | 混淆的 B1/B2 架构命名 | **已移除**（§3.3、§12、§13）。替换为 **Observed A**（适配器在 creator 关闭时消失）/ **Observed B**（mihomo 句柄使其存活）。**安全基线是固定的** — helper 在整个启用窗口内持有 creator 句柄 — 并且**不依赖**该观察。G1 证明 mihomo **复用同一适配器**；A/B 观察仅决定未来优化，绝不决定基线。 |
+| 5 | COM 服务器被标记为"短命事务服务器" | **已改为每次启用单客户端常驻服务器**（§5.5），带**详尽**的退出条件列表（正常禁用；启用失败恢复；紧急恢复后的边界客户端/kernel 死亡；握手阶段超时；显式全局最大恢复超时）。**resident-active 时无 idle 超时。** |
+| 6 | WOW64 路径写为 `HKLM\Software\WOW6432Node\Software\Classes` | **已修复**（§5.1）：用 **`KEY_WOW64_64KEY`/`KEY_WOW64_32KEY`** 标志描述视图；由于产品仅发布 **amd64/arm64 helper**，我们明确**不注册 32 位 COM helper**（因此从不创建 32 位/WOW64 视图）。 |
+| 7 | 常驻模型的状态机和测试未扩展 | **已加入**（§10.2 helper `resident-active` 状态；§13 测试）：启用 → 长时间无 IPC ⇒ 适配器仍存在；禁用使用**同一 helper PID**（enable PID == disable PID 记录在证据中）；三条**不同**恢复路径（应用崩溃 / mihomo 崩溃 / helper 崩溃）；新恢复 helper **无旧 creator 句柄**；helper 崩溃 ⇒ 适配器消失 + 路由/DNS 恢复。 |
 
-### 0.5 Round 6 review fixes — the two security blockers (rev.6 — retained)
+### 0.5 第六轮评审修复 — 两个安全阻塞项（rev.6 — 保留）
 
-| # | Finding (blocker) | Resolution (this document) |
+| # | 发现（阻塞项） | 决议（本文档） |
 |---|---|---|
-| 1 | COM ACL/SDDL used `DENY Everyone` + `DENY built-in Users` + `ALLOW some-interactive-user-SID`, which locks the legitimate user out (the owner is a member of Everyone and Users) | **Pure allow-list DACL** (§5.1): `LaunchPermission` `D:P(A;;0xB;;;SY)(A;;0xB;;;BA)(A;;0xB;;;<ownerSid>)`; `AccessPermission` `D:P(A;;0x3;;;SY)(A;;0x3;;;<ownerSid>)` (**explicit COM rights masks** `0xB` = EXECUTE|EXECUTE_LOCAL|ACTIVATE_LOCAL; `0x3` = EXECUTE|EXECUTE_LOCAL; **no generic `GX`**). **No** `DENY Everyone`/`DENY built-in Users`, **no** `Everyone`/`Users`/`Authenticated Users`. **No `DENY` at all** (a complete pure allow-list denies by absence; `ANONYMOUS LOGON`/`NETWORK` are denied that way too). SYSTEM (local start/activate/access); the install-time owner SID (Local Launch/Activate/Access); Administrators only for install/repair and **not** in `AccessPermission`. **Per-ACE table** (object SID / allow-deny / permission bits) + **AccessCheck** verification (test `T24`). |
-| 2 | Trusted recovery state was "app-data (Medium/High)" — vague and user-writable | **Deterministic store** (§8.0): `%ProgramData%\<brand-independent-id>\tun-state\<ownerSid>\`. Created by the **elevated helper**; owner = SYSTEM; **resolvable pure allow-list SDDL** `O:SYG:SYD:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)` + `S:(ML;OICI;NW;;;HI)` (owner SYSTEM; `SY`/`BA` `GA`; **no owner SID ACE** — helper reaches it via `BA` since it runs as an admin; Medium has `BA` deny-only + no ACE + High label); **`High` mandatory-integrity label** (`NW`/`NO_WRITE_UP`, `HI` = `S-1-16-12288`) — the Medium/High split requires MIC + the missing owner ACE (the helper and the Medium UI share one SID, so the ACL alone cannot separate them). The owner UI reads **sanitized** state **only** via helper COM (never raw baseline/journal). Every record written by the helper only; each file opened with `FILE_FLAG_OPEN_REPARSE_POINT` (+ `FILE_FLAG_BACKUP_SEMANTICS`), **rejects** symlink/junction/mount/reparse point, reuses a held handle + `FileIdInfo` re-verify (never re-opens by string path), writes temp → `FlushFileBuffers` → `ReplaceFile`/atomic rename, and **never follows a user-controllable path**. Upgrade/uninstall **retain** the dir, cleaned only after a safe recovery completes. |
-| 3 | Integrity phrased as "HMAC/digest or at least digest" (optional) | **Deterministic integrity contract** (§8.0, C12): the primary security boundary is the **Medium-unwritable DACL + integrity label**, not a digest a same-user attacker can re-write; records still carry `schemaVersion` + SHA-256 to detect **corruption**; the **HMAC claim is removed** (no key location/generation/DPAPI/rotation/upgrade-read path exists); the channel envelope MAC (§4.3) is a separate per-message authenticator, not a disk-state claim. Any read failure, wrong ACL, wrong owner, discovered reparse point, or schema/digest anomaly ⇒ **zero network mutation** + `restore-failed`. |
-| 4 | WAL not defended against directory substitution | **Directory-replacement defense** (§8.0, §8.3): on `init`/`--recover` validate the store dir owner/DACL/reparse; before each `PREPARED`/`APPLIED`/`RECONCILED` append re-verify the already-open handle still points to the same file/dir (file ID) — **never** re-open via string path; tests added for crash-then-truncation, tampering, junction/symlink, ACL-changed, and directory-swapped (`T25`–`T30`). |
-| 5 | Threat-model C12 said "snapshot and journal are HMAC/digest-protected or at least digest" | **C12 rewritten** to the deterministic contract (above), and C2/C3 harmonized to the **pure allow-list** ACL (no `DENY Everyone`/`DENY Users`); a same-user Medium attacker **cannot write** the state directory (only the High helper can); tamper/corruption always **fail closed**. |
+| 1 | COM ACL/SDDL 使用 `DENY Everyone` + `DENY built-in Users` + `ALLOW some-interactive-user-SID`，把合法用户锁在门外（所有者是 Everyone 和 Users 的成员） | **纯允许列表 DACL**（§5.1）：`LaunchPermission` `D:P(A;;0xB;;;SY)(A;;0xB;;;BA)(A;;0xB;;;<ownerSid>)`；`AccessPermission` `D:P(A;;0x3;;;SY)(A;;0x3;;;<ownerSid>)`（**显式 COM 权限掩码** `0xB` = EXECUTE\|EXECUTE_LOCAL\|ACTIVATE_LOCAL；`0x3` = EXECUTE\|EXECUTE_LOCAL；**无通用 `GX`**）。**无** `DENY Everyone`/`DENY built-in Users`，**无** `Everyone`/`Users`/`Authenticated Users`。**完全无 `DENY`**（完整的纯允许列表通过缺席来拒绝；`ANONYMOUS LOGON`/`NETWORK` 也这样被拒绝）。SYSTEM（本地启动/激活/访问）；安装时所有者 SID（Local Launch/Activate/Access）；Administrators 仅用于安装/修复且**不在** `AccessPermission` 中。**逐 ACE 表**（对象 SID / 允许-拒绝 / 权限位）+ **AccessCheck** 验证（测试 `T24`）。 |
+| 2 | 可信恢复状态是"应用数据（Medium/High）" — 模糊且用户可写 | **确定性存储**（§8.0）：`%ProgramData%\<brand-independent-id>\tun-state\<ownerSid>\`。由**提升的 helper** 创建；所有者 = SYSTEM；**可解析的纯允许列表 SDDL** `O:SYG:SYD:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)` + `S:(ML;OICI;NW;;;HI)`（所有者 SYSTEM；`SY`/`BA` `GA`；**无所有者 SID ACE** — helper 通过 `BA` 访问它，因为它以管理员身份运行；Medium 有 `BA` deny-only + 无 ACE + High 标签）；**`High` 强制完整性标签**（`NW`/`NO_WRITE_UP`，`HI` = `S-1-16-12288`）— Medium/High 拆分需要 MIC + 缺失的 owner ACE（helper 和 Medium UI 共享一个 SID，因此仅靠 ACL 无法区分它们）。所有者 UI 通过 helper COM **仅**读取**清洗后的**状态（绝不读取原始 baseline/journal）。每条记录仅由 helper 写入；每个文件以 `FILE_FLAG_OPEN_REPARSE_POINT`（+ `FILE_FLAG_BACKUP_SEMANTICS`）打开，**拒绝** symlink/junction/mount/reparse point，复用持有的句柄 + `FileIdInfo` 重新验证（绝不按字符串路径重新打开），先写临时文件 → `FlushFileBuffers` → `ReplaceFile`/原子重命名，并且**绝不跟随用户可控路径**。升级/卸载**保留**该目录，仅在安全恢复完成后清理。 |
+| 3 | 完整性被表述为"HMAC/digest 或至少 digest"（可选） | **确定性完整性契约**（§8.0，C12）：主要安全边界是**Medium 不可写的 DACL + 完整性标签**，而不是同用户攻击者能重写的摘要；记录仍携带 `schemaVersion` + SHA-256 以检测**损坏**；**HMAC 声明已移除**（不存在密钥位置/生成/DPAPI/轮换/升级读取路径）；通道信封 MAC（§4.3）是独立的逐消息认证器，不是磁盘状态声明。任何读取失败、错误 ACL、错误所有者、发现的 reparse point、或 schema/摘要异常 ⇒ **零网络变更** + `restore-failed`。 |
+| 4 | WAL 未针对目录替换防御 | **目录替换防御**（§8.0、§8.3）：在 `init`/`--recover` 时验证存储目录的所有者/DACL/reparse；每次 `PREPARED`/`APPLIED`/`RECONCILED` 追加前重新验证已打开的句柄仍指向同一文件/目录（文件 ID）— **绝不**通过字符串路径重新打开；为崩溃后截断、篡改、junction/symlink、ACL 变更以及目录替换加入了测试（`T25`–`T30`）。 |
+| 5 | 威胁模型 C12 说"快照和日志受 HMAC/digest 保护，或至少是 digest" | **C12 已改写**为上述确定性契约，并且 C2/C3 已与**纯允许列表** ACL 协调（无 `DENY Everyone`/`DENY Users`）；同用户 Medium 攻击者**无法写入**状态目录（只有 High helper 能）；篡改/损坏始终**安全关闭（fail closed）**。 |
 
-### 0.6 Round 7 review fixes — security-descriptor contract (rev.7 — retained)
+### 0.6 第七轮评审修复 — 安全描述符契约（rev.7 — 保留）
 
-| # | Finding (round 7) | Resolution (this revision) |
+| # | 发现（round 7） | 决议（本修订） |
 |---|---|---|
-| 1 | COM `LaunchPermission`/`AccessPermission` used a generic `GX` and relied on a hand-interpreted `GX → COM rights` mapping (and allowed an extra `DENY ANONYMOUS LOGON`/`NETWORK`) | **Explicit COM rights masks** (§5.1): `Launch` `D:P(A;;0xB;;;SY)(A;;0xB;;;BA)(A;;0xB;;;<ownerSid>)` (`0xB` = `EXECUTE 0x1 | EXECUTE_LOCAL 0x2 | ACTIVATE_LOCAL 0x8`); `Access` `D:P(A;;0x3;;;SY)(A;;0x3;;;<ownerSid>)` (`0x3` = `EXECUTE | EXECUTE_LOCAL`). Each ACL uses **one uniform new-style mask**, every ACE **contains `0x1`**, and there are **no `DENY` ACEs** (a complete allow-list denies by absence). |
-| 2 | State-directory ACL was described per-ACE with `GR → GW` + traverse arrows and a wrong-number-of-semicolons SACL | **One resolvable complete SDDL** (§8.0): `O:SYG:SYD:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)` + `S:(ML;OICI;NW;;;HI)`; **no owner-SID file ACE** (Medium has no raw read; UI is COM-sanitized only), no arrows, exact mask `GA` for `SY`/`BA`, `HI` = `S-1-16-12288`, `NW` = `NO_WRITE_UP`, `OICI` inheritance. |
-| 3 | No tests proved the descriptor-build/verification chain | **Descriptor-build tests** (§13): `ConvertStringSecurityDescriptorToSecurityDescriptor` succeeds and returns a valid descriptor with `SE_SELF_RELATIVE`; only the COM `LaunchPermission`/`AccessPermission` descriptors round-trip byte-identically as registry `REG_BINARY`; the state-directory descriptor is applied with `SECURITY_ATTRIBUTES`/`SetNamedSecurityInfo` and read back with `GetNamedSecurityInfo`/`GetSecurityInfo`; `AccessCheck` verifies Launch and Access (owner=allow, second user=deny, SYSTEM=allow); every COM ACE mask is **strictly** `0xB`/`0x3` and **contains `0x1`**; directory **High** mandatory label present with `NO_WRITE_UP`; **Medium** owner write/delete/change-ACL **fails** while the **High helper token with `BA` enabled (not deny-only)** succeeds. |
-| 4 | Install doc component table split the state into "app-data (Medium/High)" vs the `%ProgramData%` store | **Unified** (install doc §1): `BaselineSnapshot`/`WrittenState`/`MutationJournal` + ownership/version manifest all live in `%ProgramData%\<brand-independent-id>\tun-state\<ownerSid>\`, helper-owned / SYSTEM owner / **High integrity** / **Medium-not-writable**; the stale "app-data (Medium/High)" description is deleted. |
+| 1 | COM `LaunchPermission`/`AccessPermission` 使用了通用的 `GX`，依赖一个手工解释的 `GX → COM rights` 映射（并允许额外的 `DENY ANONYMOUS LOGON`/`NETWORK`） | **显式 COM 权限掩码**（§5.1）：`Launch` `D:P(A;;0xB;;;SY)(A;;0xB;;;BA)(A;;0xB;;;<ownerSid>)`（`0xB` = `EXECUTE 0x1 | EXECUTE_LOCAL 0x2 | ACTIVATE_LOCAL 0x8`）；`Access` `D:P(A;;0x3;;;SY)(A;;0x3;;;<ownerSid>)`（`0x3` = `EXECUTE | EXECUTE_LOCAL`）。每个 ACL 使用**一个统一的 new-style 掩码**，每个 ACE **包含 `0x1`**，并且**没有 `DENY` ACE**（完整的允许列表通过缺席来拒绝）。 |
+| 2 | 状态目录 ACL 被逐 ACE 描述为 `GR → GW` + 遍历箭头，以及一个分号数量错误的 SACL | **一个可解析的完整 SDDL**（§8.0）：`O:SYG:SYD:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)` + `S:(ML;OICI;NW;;;HI)`；**无 owner-SID 文件 ACE**（Medium 无原始读取；UI 仅经 COM 清洗），无箭头，`SY`/`BA` 的精确掩码 `GA`，`HI` = `S-1-16-12288`，`NW` = `NO_WRITE_UP`，`OICI` 继承。 |
+| 3 | 无测试证明描述符构建/验证链 | **描述符构建测试**（§13）：`ConvertStringSecurityDescriptorToSecurityDescriptor` 成功并返回带 `SE_SELF_RELATIVE` 的有效描述符；仅 COM `LaunchPermission`/`AccessPermission` 描述符作为注册表 `REG_BINARY` 字节一致地往返；状态目录描述符用 `SECURITY_ATTRIBUTES`/`SetNamedSecurityInfo` 应用并用 `GetNamedSecurityInfo`/`GetSecurityInfo` 读回；`AccessCheck` 验证 Launch 和 Access（owner=allow，second user=deny，SYSTEM=allow）；每个 COM ACE 掩码**严格**为 `0xB`/`0x3` 且**包含 `0x1`**；目录**High** 强制标签存在且带 `NO_WRITE_UP`；**Medium** 所有者写入/删除/更改 ACL**失败**，而**带 `BA` 启用（非 deny-only）的 High helper 令牌**成功。 |
+| 4 | 安装文档组件表把状态拆为"应用数据（Medium/High）"与 `%ProgramData%` 存储 | **已统一**（安装文档 §1）：`BaselineSnapshot`/`WrittenState`/`MutationJournal` + 所有权/版本清单都位于 `%ProgramData%\<brand-independent-id>\tun-state\<ownerSid>\`，helper 所有 / SYSTEM 所有者 / **High 完整性** / **Medium 不可写**；已删除过时的"应用数据（Medium/High）"描述。 |
 
-### 0.7 Round 8 review fixes — descriptor API and token contract (rev.8 — this revision)
+### 0.7 第八轮评审修复 — 描述符 API 与令牌契约（rev.8 — 本修订）
 
-| # | Finding (round 8) | Resolution (this revision) |
+| # | 发现（round 8） | 决议（本修订） |
 |---|---|---|
-| 1 | The test chain passed the already self-relative output of `ConvertStringSecurityDescriptorToSecurityDescriptor` directly to `MakeSelfRelativeSD`, whose input must be absolute | **Fixed** (§5.1, §13, install doc): validate `SE_SELF_RELATIVE` on the returned descriptor and persist it directly. An optional absolute/self-relative conversion test must call `MakeAbsoluteSD` first and compare semantic fields, not demand identical re-encoding. |
-| 2 | `REG_BINARY` round-trip incorrectly included a filesystem “state key” | **Separated**: byte-identical registry round-trip applies only to COM `LaunchPermission`/`AccessPermission`; the state-directory descriptor is applied/read with filesystem security APIs and compared semantically. |
-| 3 | T37 denied SYSTEM ordinary access despite the explicit `SY` `0x3` Access ACE | **Aligned**: both Launch and Access `AccessCheck` matrices require owner=allow, second-user=deny, SYSTEM=allow. |
-| 4 | “restricted token” did not state the group property required by the state-store `BA` ACE | **Made fail-closed** (§5.3, §13): the High helper token must retain `BA` enabled and not deny-only; startup and T40 verify it before any network mutation. |
+| 1 | 测试链把 `ConvertStringSecurityDescriptorToSecurityDescriptor` 的已经自相对的输出直接传给 `MakeSelfRelativeSD`，而后者要求绝对输入 | **已修复**（§5.1、§13、安装文档）：验证返回描述符上的 `SE_SELF_RELATIVE` 并直接持久化它。可选的绝对/自相对转换测试必须先调用 `MakeAbsoluteSD` 再比较语义字段，而不是要求相同的重新编码。 |
+| 2 | `REG_BINARY` 往返错误地包含了文件系统的"状态键" | **已分离**：字节一致的注册表往返仅适用于 COM `LaunchPermission`/`AccessPermission`；状态目录描述符用文件系统安全 API 应用/读取，并在语义上比较。 |
+| 3 | T37 尽管有显式 `SY` `0x3` Access ACE，仍拒绝 SYSTEM 的普通访问 | **已对齐**：Launch 和 Access 两个 `AccessCheck` 矩阵都要求 owner=allow、second-user=deny、SYSTEM=allow。 |
+| 4 | "受限令牌"未说明状态存储 `BA` ACE 所需的组属性 | **已改为 fail-closed**（§5.3、§13）：High helper 令牌必须保留 `BA` 启用且非 deny-only；启动和 T40 在任何网络变更前验证它。 |
 
 
 ---
 
-## 1. Architectural layering and the single owner per plane
+## 1. 架构分层与每平面单一所有者
 
-### 1.1 Ownership split (item 3 — one owner per plane)
+### 1.1 所有权拆分（项 3 — 每平面一个所有者）
 
-Each plane has exactly one owner:
+每个平面恰有一个所有者：
 
-| Plane | Owner | Responsibility |
+| 平面 | 所有者 | 职责 |
 |---|---|---|
-| **TUN data plane** (adapter packet session) | **mihomo** (supervised kernel, `tun.stack: system`) | Opens/reuses the adapter, reads/writes packets. It must **not** modify routes or DNS. |
-| **OS network-config plane** (driver install/load + route/DNS/interface mutation + baseline + recovery) | **helper** (elevated broker) | Calls `WintunCreateAdapter` (which installs/loads the driver on demand), applies the typed `DesiredNetworkState`, records/restores the baseline. The only route/DNS/interface modifier. |
-| **Decision plane** (which routes/DNS/interface to set) | **main process** | Derives a precise typed `DesiredNetworkState` from the validated mihomo config (§9); the helper executes it verbatim. |
+| **TUN 数据平面**（适配器数据包会话） | **mihomo**（受监督内核，`tun.stack: system`） | 打开/复用适配器，读/写数据包。它**不得**修改路由或 DNS。 |
+| **OS 网络配置平面**（驱动安装/加载 + 路由/DNS/接口变更 + 基线 + 恢复） | **helper**（提升的代理） | 调用 `WintunCreateAdapter`（按需安装/加载驱动），应用类型化的 `DesiredNetworkState`，记录/恢复基线。唯一的路由/DNS/接口修改者。 |
+| **决策平面**（设置哪些路由/DNS/接口） | **main 进程** | 从验证过的 mihomo 配置推导出精确的类型化 `DesiredNetworkState`（§9）；helper 逐字执行它。 |
 
-**Option A (chosen).** The helper is the **sole** OS network-config owner. Therefore:
+**方案 A（已选）。** helper 是**唯一**的 OS 网络配置所有者。因此：
 
-- mihomo's synthesized runtime config has `auto-route:false`, `auto-detect-interface:false`,
-  and `dns-hijack:false` — mihomo never adds/removes a route or hijacks DNS.
-- The main process generates `DesiredNetworkState` (a pure, typed function — §9) and the
-  helper applies exactly that; the helper does **not** read mihomo's config itself and is
-  never handed raw command text.
-- Because Option A is exclusive, mihomo **cannot** be given `auto-route`/`dns-hijack`.
-  Choosing Option B (mihomo owns routes/DNS) is explicitly rejected: it would require the
-  helper to give up per-item ownership/recovery of routes/DNS and adopt a different
-  observable/restore contract, and it would make mihomo (Medium IL) responsible for
-  OS mutations that need elevation.
+- mihomo 的合成运行时配置有 `auto-route:false`、`auto-detect-interface:false`、
+  和 `dns-hijack:false` — mihomo 从不添加/移除路由或劫持 DNS。
+- main 进程生成 `DesiredNetworkState`（一个纯粹的、类型化的函数 — §9），helper
+  精确地应用它；helper 自身**不**读取 mihomo 的配置，也从不被交给原始命令文本。
+- 因为方案 A 是排他的，mihomo**不能**被赋予 `auto-route`/`dns-hijack`。
+  选择方案 B（mihomo 拥有路由/DNS）被明确拒绝：那会要求 helper
+  放弃对路由/DNS 的逐项所有权/恢复，并采用不同的可观察/恢复契约，
+  还会让 mihomo（Medium IL）负责需要提升的 OS 变更。
 
-The helper therefore **never holds a Wintun packet session and never touches a packet
-buffer**. There is exactly one TUN data-plane owner (mihomo) and one OS-network-config
-owner (helper); they are coordinated over the authenticated channel (§5) with typed,
-validated commands.
+因此，helper**从不持有 Wintun 数据包会话，也从不触碰数据包缓冲区**。
+恰好有一个 TUN 数据平面所有者（mihomo）和一个 OS 网络配置所有者（helper）；
+它们通过认证的通道（§5）用类型化、验证过的命令协调。
 
-### 1.2 Layering diagram
+### 1.2 分层图
 
 ```
 renderer ── typed window.desktop.tun.*  (intent + status only; §6)
@@ -182,61 +172,57 @@ wintun.dll (official, per-arch) ──► signed Wintun kernel driver (loaded in
 mihomo ── opens/reuses the adapter     the ONLY data-plane owner (G1 gate)
 ```
 
-Non-Windows builds use a `DisabledTunAdapter` returning `{ supported:false,
-phase:'unsupported' }` with zero mutation (a fake adapter backs the dev/test path).
+非 Windows 构建使用返回 `{ supported:false, phase:'unsupported' }` 的
+`DisabledTunAdapter`，零变更（一个伪造适配器支撑开发/测试路径）。
 
-### 1.3 Adapter-handoff: an unproven hypothesis (G1), not a settled contract
+### 1.3 适配器交接：未经验证的假设（G1），而非已确立的契约
 
-The data-plane owner is mihomo. The OS-network-config owner is the helper, and the
-helper is the only component that can install/load the Wintun driver (it requires
-elevation). Therefore the architecture must answer: **can mihomo open and reuse the
-adapter that the helper created via `WintunCreateAdapter`?** This is **G1**.
+数据平面所有者是 mihomo。OS 网络配置所有者是 helper，而
+helper 是唯一能安装/加载 Wintun 驱动的组件（它需要提升）。
+因此架构必须回答：**mihomo 能否打开并复用 helper 通过 `WintunCreateAdapter` 创建的适配器？**
+这就是 **G1**。
 
-- G1 is **NOT established**. It must be proven by a **real mihomo Windows integration
-  test** (gated `windows-latest` job) that mihomo can `WintunOpenAdapter(Name)` (open the
-  existing adapter by its stable product name) and run its packet session against the
-  adapter the helper created, with no packet handle transferred across the boundary.
-- Until G1 passes, the design **does not claim** the handoff works; it is a hypothesis
-  with documented steps, a blocking gate, and a re-open path:
-  - If G1 **passes**: mihomo opens the helper-created adapter; helper stays with the
-    sole OS-network-config role; data plane stays with mihomo. This is the intended path.
-  - If G1 **fails** (mihomo cannot reuse a helper-created adapter — e.g. it always
-    creates its own): the design **stops and returns to the owner** for a revised
-    ownership decision, because the round-2 constraint is that there is **one** OS
-    network-config owner and **one** data-plane owner. The design must not silently
-    fall back to dual ownership.
-- Steps the design fixes **now** (independent of the G1 outcome):
-  1. The helper calls `WintunCreateAdapter(Name, TunnelType, RequestedGUID)` while
-     elevated (official ABI, §3.0). It returns a `WINTUN_ADAPTER_HANDLE`; this is the
-     **only** call that **installs/loads the signed driver on demand** and creates the
-     adapter, addressed by the product-specific **name** (e.g. `"Murge TUN"`), **tunnel
-     type**, and a product-specific stable **`RequestedGUID`**.
-  2. The helper derives the **LUID** via `WintunGetAdapterLUID(Adapter, &luid)` (a `_Out_`
-     param on the adapter handle) so the name/GUID→LUID mapping is obtained; it publishes
-     `{ name, requestedGuid, luid }`. The helper **never opens a packet session**
-     (`WintunStartSession`) and keeps only the adapter handle (not a session) so it never
-     touches a packet buffer.
-  3. The helper **pins + verifies** the LUID **before** the network-config phase (§10.1).
-  4. The network-config phase applies routes/DNS/interface (§10.1). Routes/DNS are always
-     written **after** the adapter exists (its LUID/index are known).
-  5. mihomo opens/reuses the adapter and becomes the sole packet-I/O owner. **This is G1.**
+- G1 **尚未确立**。它必须通过**真实的 mihomo Windows 集成测试**（门控的 `windows-latest` 作业）证明：
+  mihomo 能 `WintunOpenAdapter(Name)`（按稳定的产品名打开现有适配器），并对
+  helper 创建的适配器运行其数据包会话，且不跨边界传递数据包句柄。
+- 在 G1 通过之前，设计**不声称**交接可用；它是一个假设，
+  带有已记录的步骤、一个阻塞门槛、以及一条重新打开路径：
+  - 如果 G1 **通过**：mihomo 打开 helper 创建的适配器；helper 保持
+    唯一的 OS 网络配置角色；数据平面保持在 mihomo。这是预期的路径。
+  - 如果 G1 **失败**（mihomo 无法复用 helper 创建的适配器 — 例如它总是
+    创建自己的）：设计**停止并返回所有者**以作出修改后的
+    所有权决策，因为 round-2 约束是**一个** OS
+    网络配置所有者和**一个**数据平面所有者。设计不得静默
+    回退到双所有权。
+- 设计**现在**固定下来的步骤（独立于 G1 结果）：
+  1. helper 在提升状态下调用 `WintunCreateAdapter(Name, TunnelType, RequestedGUID)`
+     （官方 ABI，§3.0）。它返回 `WINTUN_ADAPTER_HANDLE`；这是
+     **唯一**按需**安装/加载已签名驱动**并创建适配器的调用，
+     由产品特定的**名称**（如 `"Murge TUN"`）、**隧道类型**、
+     以及产品特定的稳定 **`RequestedGUID`** 来寻址。
+  2. helper 通过 `WintunGetAdapterLUID(Adapter, &luid)`（一个关于适配器句柄的 `_Out_`
+     参数）导出 **LUID**，从而获得名称/GUID→LUID 映射；它发布
+     `{ name, requestedGuid, luid }`。helper **从不打开数据包会话**
+     （`WintunStartSession`），只保留适配器句柄（而非会话），因此它从不触碰数据包缓冲区。
+  3. helper 在网络配置阶段**之前**（§10.1）**固定 + 验证** LUID。
+  4. 网络配置阶段应用路由/DNS/接口（§10.1）。路由/DNS 总是在
+     适配器存在之后写入（其 LUID/索引已知）。
+  5. mihomo 打开/复用适配器并成为唯一的数据包 I/O 所有者。**这就是 G1。**
 
-> **Corrected from the earlier draft.** The Wintun API **does have a user-supplied
-> `RequestedGUID` parameter** on `WintunCreateAdapter`. A "stable GUID" is therefore
-> realized by passing a **product-specific, stable `RequestedGUID`**, so the adapter is
-> addressable by a deterministic GUID for recovery (§3.2, §3.3); the **LUID** is derived
-> from the adapter handle (`WintunGetAdapterLUID`) and is used as the routes/DNS/interface
-> key. `WintunCreateAdapter` **fails** if the requested GUID is already in use (→
-> `conflict`, zero mutation). The earlier claim that "Wintun has no user-supplied GUID
-> parameter" is **withdrawn**. The uniqueness invariant stands: the helper enumerates
-> Wintun adapters, asserts exactly one Murge adapter by `Name`+`RequestedGUID`, and fails
-> closed if a foreign adapter already holds that identity.
+> **对早先草稿的更正。** Wintun API **确实在 `WintunCreateAdapter` 上有用户提供的
+> `RequestedGUID` 参数**。因此"稳定 GUID"是通过传入一个**产品特定、稳定的 `RequestedGUID`**实现的，
+> 这样适配器可通过确定的 GUID 寻址以用于恢复（§3.2、§3.3）；**LUID** 从适配器句柄导出
+> （`WintunGetAdapterLUID`），用作路由/DNS/接口的键。如果请求的 GUID 已被使用，
+> `WintunCreateAdapter` **会失败**（→ `conflict`，零变更）。早先声称"Wintun 没有用户提供的 GUID
+> 参数"**已撤回**。唯一性不变量仍然成立：helper 列举 Wintun 适配器，
+> 通过 `Name`+`RequestedGUID` 断言恰好一个 Murge 适配器，如果外来适配器已持有该身份，
+> 则失败关闭。
 
 ---
 
-## 2. Shared contract (`src/shared/tun.ts`)
+## 2. 共享契约（`src/shared/tun.ts`）
 
-### 2.1 Canonical `TunPhase`
+### 2.1 规范 `TunPhase`
 
 ```ts
 export type TunPhase =
@@ -250,8 +236,7 @@ export type TunPhase =
   | 'unsupported'     // platform/build cannot enable TUN
 ```
 
-There is no separate `disabled`: "off but supported" is `configured`; "cannot be
-enabled" is `unsupported`.
+没有单独的 `disabled`："关闭但受支持"是 `configured`；"无法启用"是 `unsupported`。
 
 ### 2.2 `TunStatus`
 
@@ -271,7 +256,7 @@ export interface TunStatus {
 export const TUN_LOOPBACK_HOST = '127.0.0.1'
 ```
 
-### 2.3 IPC channels + gateway (`src/shared/ipc.ts`, `src/shared/gateways.ts`)
+### 2.3 IPC 通道 + 网关（`src/shared/ipc.ts`、`src/shared/gateways.ts`）
 
 ```ts
 // ipc.ts
@@ -291,40 +276,38 @@ export interface TunGateway {
 
 ---
 
-## 3. Wintun distribution and on-demand adapter creation (items 1, 2)
+## 3. Wintun 发行与按需适配器创建（项 1、2）
 
-### 3.0 Pinned ABI — fixed verbatim from the official wintun.h of the chosen version
+### 3.0 固定 ABI — 从所选版本的官方 wintun.h 逐字固定
 
-The ABI is **pinned to Wintun **0.14.1**** (chosen stable release; the exact release
-and its manifest hash are recorded in the release manifest and third-party notice —
-**to be re-confirmed against the pinned release's `wintun.h` at implementation time**).
-The contract below is copied from the **official `wintun.h`** so that our exported-symbol
-and calling-convention assumptions cannot drift from the SDK.
+ABI **固定到 Wintun **0.14.1****（选定的稳定版本；确切版本
+及其清单哈希记录在发行清单和第三方声明中 —
+**实现时需对照固定版本的 `wintun.h` 重新确认**）。
+下面的契约从**官方 `wintun.h`** 复制，因此我们的导出符号
+和调用约定假设不会偏离 SDK。
 
-**Source of record**
+**记录来源**
 
-| Field | Value |
+| 字段 | 值 |
 |---|---|
-| Header | `wintun.h` extracted from the official Wintun 0.14.1 release archive after verifying archive SHA-256 `07c256...ef51` and header SHA-256 `510a59...460f`; the audit compiles directly against that header and never copies ABI shapes into TypeScript |
-| Version | **0.14.1** |
-| Architecture | per-arch DLL: `amd64`, `arm64`; **one DLL per arch, ABI fixed for that arch** (never cross-bundle) |
-| Calling convention | `WINAPI` (`__stdcall`) on x86-64 (x64 ignores but keep correct for correctness); exported by name (DLL export table) |
-| Handle types | `WINTUN_ADAPTER_HANDLE`, `WINTUN_SESSION_HANDLE` (opaque pointers; do not reinterpret elsewhere) |
-| `NET_LUID` | 64-bit `NET_LUID` union; serialized as a **canonical hex string** in JSON (§8.1) |
-| ABI source of record | **Official `wintun.h` from release `0.14.1`**, accepted only after the pinned archive/header digest checks; DO NOT hand-declare any native signature in TypeScript |
-| Build-time ABI check | A build step runs `dumpbin /exports` (MSVC) or `llvm-readobj --coff-exports` against the pinned `wintun.dll` and asserts the **exported symbol name set exactly matches** the table above; a runtime check additionally resolves each name via `GetProcAddress` and asserts non-null before first use. A mismatch fails the build (no runtime fallback). |
+| 头文件 | 从官方 Wintun 0.14.1 发行归档中提取的 `wintun.h`，验证归档 SHA-256 `07c256...ef51` 和头文件 SHA-256 `510a59...460f` 后；审核直接针对该头文件编译，绝不把 ABI 形状复制到 TypeScript |
+| 版本 | **0.14.1** |
+| 架构 | 每架构 DLL：`amd64`、`arm64`；**每个架构一个 DLL，该架构的 ABI 固定**（绝不跨架构捆绑） |
+| 调用约定 | x86-64 上为 `WINAPI`（`__stdcall`）（x64 忽略但为正确性保持正确）；按名称导出（DLL 导出表） |
+| 句柄类型 | `WINTUN_ADAPTER_HANDLE`、`WINTUN_SESSION_HANDLE`（不透明指针；不要在其他地方重新解释） |
+| `NET_LUID` | 64 位 `NET_LUID` 联合；在 JSON 中序列化为**规范十六进制字符串**（§8.1） |
+| 记录来源的 ABI | **来自发行 `0.14.1` 的官方 `wintun.h`**，仅在固定的归档/头文件摘要检查通过后接受；不要在 TypeScript 中手工声明任何原生签名 |
+| 构建时 ABI 检查 | 构建步骤针对固定的 `wintun.dll` 运行 `dumpbin /exports`（MSVC）或 `llvm-readobj --coff-exports`，并断言**导出的符号名集合与上表完全匹配**；运行时检查还通过 `GetProcAddress` 解析每个名称，并在首次使用前断言非空。不匹配则构建失败（无运行时回退）。 |
 
-**RequestedGUID note.** There **is** a user-supplied `RequestedGUID` parameter: passing a
-product-specific, stable GUID makes the adapter addressable by that GUID for recovery.
-If the GUID is already in use, `WintunCreateAdapter` fails (→ `conflict`, no mutation).
-The stable identity for recovery is **`RequestedGUID` + `Name`**, and the wire identity is
-the associated **`NET_LUID`**.
+**RequestedGUID 说明。** 确实**有**用户提供的 `RequestedGUID` 参数：传入一个
+产品特定、稳定的 GUID 使适配器可通过该 GUID 寻址以用于恢复。
+如果 GUID 已被使用，`WintunCreateAdapter` 会失败（→ `conflict`，无变更）。
+恢复的稳定身份是 **`RequestedGUID` + `Name`**，而线上身份是关联的 **`NET_LUID`**。
 
-**Exported symbols (pinned from the official `wintun.h` of Wintun 0.14.1 — the single ABI source)**
+**导出符号（从 Wintun 0.14.1 的官方 `wintun.h` 固定 — 唯一 ABI 来源）**
 
-The declarations in the 0.14.1 `wintun.h` are written as function-pointer `typedef`s
-(`WINTUN_*_FUNC`); each has a `WINAPI` (`__stdcall`) calling convention. The functions
-are:
+0.14.1 `wintun.h` 中的声明被写成函数指针 `typedef`（`WINTUN_*_FUNC`）；
+每个都有 `WINAPI`（`__stdcall`）调用约定。这些函数是：
 
 ```
 WintunCreateAdapter          WINTUN_ADAPTER_HANDLE WINAPI (Name, TunnelType, RequestedGUID)
@@ -343,15 +326,14 @@ WintunAllocateSendPacket     BYTE *WINAPI (Session, DWORD PacketSize)
 WintunSendPacket             VOID WINAPI (Session, const BYTE *Packet)
 ```
 
-There is **no `WintunDeleteAdapter`** and **no `WintunFreeSendPacket`** in 0.14.1; either
-must never appear in our code, ABI record or calls. `WintunOpenAdapter` **is** exported and
-is how a second process (mihomo) opens an existing adapter by name.
-`WintunDeleteDriver` **is** exported but the production policy **forbids calling it** — a
-Wintun driver is a **shared system resource** that other Wintun consumers (e.g. the
-WireGuard app) rely on; we must never remove a driver a pre-existing adapter or another
-user may be using (D5).
+0.14.1 中**没有 `WintunDeleteAdapter`，也没有 `WintunFreeSendPacket`**；两者都
+绝不出现在我们的代码、ABI 记录或调用中。`WintunOpenAdapter` **被**导出，
+是第二个进程（mihomo）按名称打开现有适配器的方式。
+`WintunDeleteDriver` **被**导出，但生产策略**禁止调用它** — 
+Wintun 驱动是其他 Wintun 消费者（如 WireGuard 应用）依赖的**共享系统资源**；
+我们绝不移除预存在适配器或其他用户可能正在使用的驱动（D5）。
 
-**Pinned signatures (verbatim from the official 0.14.1 `wintun.h`)**
+**固定签名（逐字取自官方 0.14.1 `wintun.h`）**
 
 ```c
 typedef struct _WINTUN_ADAPTER *WINTUN_ADAPTER_HANDLE;
@@ -375,75 +357,54 @@ VOID(WINAPI WINTUN_GET_ADAPTER_LUID_FUNC)(_In_ WINTUN_ADAPTER_HANDLE Adapter, _O
 DWORD(WINAPI WINTUN_GET_RUNNING_DRIVER_VERSION_FUNC)(VOID);
 ```
 
-> The 0.14.1 header declares these as **function-pointer typedefs** named `WINTUN_*_FUNC`
-> (the `WINTUN_ADAPTER_HANDLE(WINAPI ...)` form). The **exported DLL symbols** resolved at
-> runtime by `GetProcAddress` are the `Wintun*` names in the export table above
-> (`WintunCreateAdapter`, `WintunOpenAdapter`, …). The build-time ABI check (§3.0 / §13)
-> resolves each `Wintun*` symbol in `wintun.dll` and asserts its address matches the
-> corresponding `WINTUN_*_FUNC` signature.
+> 0.14.1 头文件将这些声明为**函数指针 typedef**，命名为 `WINTUN_*_FUNC`
+> （`WINTUN_ADAPTER_HANDLE(WINAPI ...)` 形式）。运行时会解析的**导出 DLL 符号**是上面导出表中的 `Wintun*` 名称
+> （`WintunCreateAdapter`、`WintunOpenAdapter`、…）。构建时 ABI 检查（§3.0 / §13）
+> 在 `wintun.dll` 中解析每个 `Wintun*` 符号，并断言其地址与相应的 `WINTUN_*_FUNC` 签名匹配。
 
-**Creator-handle lifecycle (the real 0.14.1 semantics)**
+**Creator 句柄生命周期（真实的 0.14.1 语义）**
 
-- `WintunCreateAdapter` returns the **creator handle**. This handle is the **lifetime
-  anchor** of the adapter: per the 0.14.1 header, `WintunCloseAdapter` "releases
-  resources and, **if adapter was created with `WintunCreateAdapter`, removes adapter**."
-  There is **no** `WintunDeleteAdapter` and **no** `ERROR_REBOOT_REQUIRED`/`delete-pending`
-  for adapter removal — removal is **closing the creator handle**, and the only
-  reboot-visible artifact is the Wintun **driver** (which we never delete).
-- `WintunOpenAdapter(Name)` — a **second** process (mihomo) opens **another handle** by name
-  and calls `WintunStartSession(Adapter, Capacity)` to get its own packet session. The
-  creator **handle** and the opened **handle** are distinct; both are released by
-  `WintunCloseAdapter`.
-- `WintunGetAdapterLUID(Adapter, &Luid)` derives the `NET_LUID` (routes/DNS key) from an
-  adapter handle.
-- **The data plane is owned by mihomo** (§1.1). The helper never opens a session; it only
-  holds the **creator handle** for as long as TUN is enabled and releases it (closing =
-  removing the adapter) at disable/rollback.
-- **`WintunDeleteDriver` is never called.** We ship no `.sys` and never remove a driver that
-  another adapter/user may rely on (D5).
+- `WintunCreateAdapter` 返回**creator 句柄**。该句柄是适配器的**生命周期
+  锚点**：根据 0.14.1 头文件，`WintunCloseAdapter` "释放资源，
+  并且，**如果适配器是用 `WintunCreateAdapter` 创建的，则移除适配器**"。
+  对于适配器移除，**没有** `WintunDeleteAdapter`，**没有** `ERROR_REBOOT_REQUIRED`/`delete-pending` —
+  移除就是**关闭 creator 句柄**，唯一重启可见的产物是 Wintun **驱动**（我们从不删除）。
+- `WintunOpenAdapter(Name)` — **第二个**进程（mihomo）按名称打开**另一个句柄**，
+  并调用 `WintunStartSession(Adapter, Capacity)` 获得自己的数据包会话。
+  creator 的**句柄**和打开的**句柄**是不同的；两者都用 `WintunCloseAdapter` 释放。
+- `WintunGetAdapterLUID(Adapter, &Luid)` 从适配器句柄导出 `NET_LUID`（路由/DNS 键）。
+- **数据平面由 mihomo 拥有**（§1.1）。helper 从不打开会话；它只在 TUN 启用的时间内
+  持有**creator 句柄**，并在禁用/回滚时释放它（关闭 = 移除适配器）。
+- **`WintunDeleteDriver` 从不被调用。** 我们不发布 `.sys`，绝不移除其他适配器/用户可能依赖的驱动（D5）。
 
-### 3.1 Official distribution model
+### 3.1 官方发行模型
 
-- **Ship the official per-arch `wintun.dll`, never a bare driver file.** The Wintun
-  release is distributed at `https://www.wintun.net/` as a ZIP containing `wintun.dll`
-  per architecture (`wintun/bin/amd64/...`, `wintun/bin/arm64/...`). The **kernel driver
-  is installed/loaded by the DLL on demand**, and an application must **not** distribute
-  a file named like the driver directly. All "install the .sys", "upgrade the .sys",
-  "delete the .sys" steps are removed.
-- **Per-arch bundling.** Bundle `wintun-amd64.dll` / `wintun-arm64.dll` as an
-  `extraResources` near `resources/bin/<arch>` (the same per-arch model used for the
-  pinned mihomo archive). Never cross-bundle the other arch.
-- **Source.** From the official Wintun release (wintun.net); record the exact release
-  version + URL in the third-party notice.
-- **License / notice compliance.** Capture the Wintun license text from the official
-  release, record its SPDX identifier, and add it to `resources/THIRD_PARTY_NOTICES.md`.
-  Because the app is `GPL-3.0-only`, confirm compatibility and redistribution obligations
-  **before** packaging (a compliance gate).
-- **SHA-256 / integrity.** Set the exact per-arch `wintun.dll` SHA-256 in the pinned
-  release manifest (same mechanism as `mihomo-artifact.ts`). Runtime re-verifies the
-  digest before loading; mismatch ⇒ fail closed, do not load.
-- **Signature verification.** `helper.exe` is Authenticode-signed with the project
-  certificate and its publisher verified (C1). The Wintun **kernel driver** is installed
-  by the DLL (`WintunCreateAdapter`) and is **required to be a signed driver** that
-  Windows will load (the OS only loads signed kernel drivers). We do **not** self-sign,
-  add a self-signed cert, or spoof the driver's signature. The `wintun.dll` is validated
-  by its pinned digest; where Windows can report it, assert the loaded driver's publisher
-  matches the Wintun publisher.
-- **Safe loading.** `LoadLibraryEx(wintun.dll)` maps the DLL **only** — it does **not**
-  install or load the driver. Use the **absolute path** in the (non-writable) install
-  dir with the safe search flags (`LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR` /
-  `SetDefaultDllDirectories`), never by short name, so a search-path hijack cannot
-  substitute a DLL.
+- **发布官方每架构 `wintun.dll`，绝不发布裸驱动文件。** Wintun
+  发行版发布在 `https://www.wintun.net/`，为每个架构提供一个 ZIP 包含 `wintun.dll`
+  （`wintun/bin/amd64/...`、`wintun/bin/arm64/...`）。**内核驱动由 DLL 按需安装/加载**，
+  应用**不得**直接发布类似驱动名称的文件。所有"安装 .sys"、"升级 .sys"、删除 .sys"步骤均已移除。
+- **每架构捆绑。** 将 `wintun-amd64.dll` / `wintun-arm64.dll` 作为
+  `extraResources` 捆绑在 `resources/bin/<arch>` 附近（用于固定 mihomo 归档的同一每架构模型）。
+  绝不跨捆绑另一架构。
+- **来源。** 来自官方 Wintun 发行版（wintun.net）；在第三方声明中记录确切的发行版本 + URL。
+- **许可证/声明合规。** 从官方发行捕获 Wintun 许可证文本，记录其 SPDX 标识符，
+  并添加到 `resources/THIRD_PARTY_NOTICES.md`。因为应用是 `GPL-3.0-only`，请在打包**之前**确认兼容性和再分发义务（一个合规门槛）。
+- **SHA-256 / 完整性。** 在固定的发行清单中设置确切的每架构 `wintun.dll` SHA-256
+  （与 `mihomo-artifact.ts` 相同的机制）。运行时在加载前重新验证摘要；不匹配 ⇒ 失败关闭，不加载。
+- **签名验证。** `helper.exe` 用项目证书进行 Authenticode 签名并验证其发布者（C1）。
+  Wintun **内核驱动**由 DLL 安装（`WintunCreateAdapter`），并且**必须是 Windows 会加载的已签名驱动**（OS 只加载已签名的内核驱动）。我们**不**自签名、添加自签名证书或伪造驱动的签名。
+  `wintun.dll` 通过其固定摘要验证；在 Windows 能报告时，断言已加载驱动的发布者与 Wintun 发布者匹配。
+- **安全加载。** `LoadLibraryEx(wintun.dll)` **仅**映射 DLL — 它**不**安装或加载驱动。
+  在（不可写的）安装目录中使用**绝对路径**，并带安全搜索标志（`LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR` /
+  `SetDefaultDllDirectories`），绝不用短名称，以免搜索路径劫持替换 DLL。
 
-### 3.2 Adapter creation (the helper's elevated act) — correct ABI, no `load_driver` op
+### 3.2 适配器创建（helper 的提升动作）— 正确的 ABI，无 `load_driver` 操作
 
-The `load_driver` op and every "load the driver once" step are **deleted**. The
-installation of the Wintun driver is a **side effect of `WintunCreateAdapter`**, which
-requires elevation and is called by the helper. There is therefore no op whose purpose
-is "load the driver"; there is only `create_adapter`.
+`load_driver` 操作以及每个"加载驱动一次"步骤**均已删除**。
+Wintun 驱动的安装是 `WintunCreateAdapter` 的**副作用**，它需要提升并由 helper 调用。
+因此没有以"加载驱动"为目的的操作；只有 `create_adapter`。
 
-- **`create_adapter`** (helper, elevated). `LoadLibraryEx` the official DLL (absolute path,
-  safe flags) → resolve the pinned exports (§3.0) → call:
+- **`create_adapter`**（helper，提升）。`LoadLibraryEx` 官方 DLL（绝对路径、安全标志）→ 解析固定的导出（§3.0）→ 调用：
 
   ```c
   WINTUN_ADAPTER_HANDLE h = WintunCreateAdapter(
@@ -452,179 +413,76 @@ is "load the driver"; there is only `create_adapter`.
       &kProductRequestedGuid);// product-specific, stable RequestedGUID (never NULL)
   ```
 
-  - `Name` and `TunnelType` are the **stable, product-specific** values.
-  - `RequestedGUID` is a **product-specific stable GUID** so the adapter is addressable by
-    a deterministic GUID for recovery (§3.3). If the GUID is already in use,
-    `WintunCreateAdapter` **fails** → `conflict`, **zero mutation**.
-  - The returned **`WINTUN_ADAPTER_HANDLE` is the creator handle**, and is **the sole
-    lifetime anchor of the adapter** (§3.3). Do **not** reinterpret it as a LUID or a
-    session.
-- **Derive the LUID (routes/DNS key).** `WintunGetAdapterLUID(h, &luid)` (a `_Out_` param,
-  on the adapter handle). Publish `{ name, requestedGuid, luid }` with `luid` as a
-  **canonical hex string** (§8.1) — this is the key for routes/DNS/interface.
-- **Do NOT start a session here.** The helper must **not** open a packet session
-  (`WintunStartSession`). The data plane is owned by mihomo (§1.1), which will open its own
-  handle with `WintunOpenAdapter(Name)` and start the session. The helper **keeps the
-  creator handle open but never the session**.
-- **Uniqueness / reservation.** Enumerate Wintun adapters; assert exactly one Murge adapter
-  and that no foreign adapter already holds the reserved `Name`/`RequestedGUID`. Otherwise ⇒
-  `conflict`, no mutation.
-- **Recovery identity.** On restart/recovery, enumerate Wintun adapters and reconcile by
-  **`Name` + `RequestedGUID`** (the GUID is the stable address; the LUID is derived per
-  adapter). A leftover adapter from an un-applied `create_adapter` is recognized and either
-  adopted (if it is this product's) or reconciled without mutation if not provably owned
-  (§3.3, §8.4).
-- **`probe_integrity`** verifies the helper digest/publisher + the `wintun.dll` digest; it
-  does **not** load the driver and does **not** require elevation.
+  - `Name` 和 `TunnelType` 是**稳定的、产品特定的**值。
+  - `RequestedGUID` 是**产品特定的稳定 GUID**，因此适配器可通过确定的 GUID 寻址以便恢复（§3.3）。如果 GUID 已被使用，`WintunCreateAdapter` **失败** → `conflict`，**零变更**。
+  - 返回的 **`WINTUN_ADAPTER_HANDLE` 是 creator 句柄**，并且**是适配器唯一生命周期锚点**（§3.3）。**不**要把它重新解释为 LUID 或会话。
+- **导出 LUID（路由/DNS 键）。** `WintunGetAdapterLUID(h, &luid)`（一个 `_Out_` 参数，在适配器句柄上）。发布 `{ name, requestedGuid, luid }`，`luid` 作为**规范十六进制字符串**（§8.1）— 这是路由/DNS/接口的键。
+- **在此不要启动会话。** helper**不得**打开数据包会话（`WintunStartSession`）。数据平面由 mihomo 拥有（§1.1），它用 `WintunOpenAdapter(Name)` 打开自己的句柄并启动会话。helper**保持 creator 句柄打开，但绝不保持会话**。
+- **唯一性/保留。** 列举 Wintun 适配器；断言恰好一个 Murge 适配器，且没有外来适配器已持有保留的 `Name`/`RequestedGUID`。否则 ⇒ `conflict`，无变更。
+- **恢复身份。** 在重启/恢复时，列举 Wintun 适配器并按 **`Name` + `RequestedGUID`** 调停（GUID 是稳定地址；LUID 是每个适配器导出的）。来自未应用 `create_adapter` 的遗留适配器会被识别，并被采纳（如果它是本产品的）或在不属于可证所有的情况下无变更地调停（§3.3、§8.4）。
+- **`probe_integrity`** 验证 helper 摘要/发布者 + `wintun.dll` 摘要；它**不**加载驱动，**不**需要提升。
 
-### 3.3 Handle lifecycle, handoff and the G1 ownership probe
+### 3.3 句柄生命周期、交接与 G1 所有权探针
 
-**There is no `WintunDeleteAdapter`.** The **only** way a `WintunCreateAdapter`-created
-adapter is removed is by calling **`WintunCloseAdapter(creatorHandle)`** — per the 0.14.1
-header, closing an adapter handle "releases resources and, if adapter was created with
-`WintunCreateAdapter`, **removes adapter**". There is **no `ERROR_REBOOT_REQUIRED`**
-adapter-delete return and **no `delete-pending`** journal state (the only reboot-visible
-artifact is the Wintun **driver**, which we never delete, and a route/DNS change, which the
-helper always restores).
+**没有 `WintunDeleteAdapter`。** 由 `WintunCreateAdapter` 创建的适配器**唯一**的移除方式是调用 **`WintunCloseAdapter(creatorHandle)`** — 根据 0.14.1 头文件，关闭适配器句柄"释放资源，并且，如果适配器是用 `WintunCreateAdapter` 创建的，**则移除适配器**"。没有 **`ERROR_REBOOT_REQUIRED`** 适配器删除返回，**没有 `delete-pending`** 日志状态（唯一重启可见的产物是 Wintun **驱动**，我们从不删除，以及 helper 总是恢复的路由/DNS 变更）。
 
-**The creator handle is the adapter's lifetime anchor — this is the central design fact.**
+**creator 句柄是适配器的生命周期锚点 — 这是核心设计事实。**
 
-The helper creates the adapter, so it owns the **creator handle**. If the helper closes that
-handle while TUN is still enabled, the adapter is removed. This is in **direct tension**
-with the discarded "a fresh helper per enable/disable command" idea, which would exit as soon
-as the enable transaction finishes: **if the helper exits, it closes its creator handle, and
-the adapter disappears.**
+helper 创建适配器，因此它拥有**creator 句柄**。如果 helper 在 TUN 仍启用时关闭该句柄，适配器会被移除。这与已废弃的"每次启用/禁用命令一个全新 helper"想法**直接冲突**，后者会在启用事务结束时立即退出：**如果 helper 退出，它会关闭其 creator 句柄，适配器便消失。**
 
-The **safety baseline is fixed, not conditional on the probe** (§0.4/§5.5): the helper is
-activated per enable, holds the **creator handle for the whole enabled window**, and closes it
-only as the final step of `disable` or an emergency restore. So the helper **must
-not** exit when the enable transaction completes. The **G1 lifecycle probe**'s job is to (1)
-confirm mihomo reuses the same adapter (the actual handoff) and (2) observe whether the
-adapter would survive a creator-close (Observed A/B) for a **possible future optimization
-only** — it does not gate the baseline. G1 is still a **hard gate before any real TUN work**
-(§12). It runs only on the gated `murge-tun-lab` self-hosted Windows runner behind the
-protected `phase9-tun-lab` environment, with a verified snapshot, out-of-band recovery and
-separate owner authorization; it never runs on this dev machine (§0.0 / DEVELOPMENT_SAFETY).
+**安全基线是固定的，而非取决于探针**（§0.4/§5.5）：helper 每次启用时被激活，在**整个启用窗口内持有 creator 句柄**，且仅在 `disable` 的最后步骤或紧急恢复时关闭它。所以 helper**不得**在启用事务完成时退出。**G1 lifecycle probe** 的工作是（1）确认 mihomo 复用同一适配器（实际交接），（2）观察适配器是否会在 creator 关闭后存活（Observed A/B）**仅用于可能的未来优化** — 它并不门控基线。G1 仍是任何真实 TUN 工作之前的**硬性门槛**（§12）。它只能在受保护的 `phase9-tun-lab` 环境背后、门控的 `murge-tun-lab` 自托管 Windows 运行器上运行，带已验证的快照、带外恢复和另行所有权授权；它绝不在本开发机上运行（§0.0 / DEVELOPMENT_SAFETY）。
 
-**G1 lifecycle probe (defines the ownership model).** The probe exercises a-d and records
-whether the adapter survives step (c):
+**G1 lifecycle probe（定义所有权模型）。** 探针演练 a-d 并记录适配器是否在步骤 (c) 后存活：
 
-1. **(a)** helper `WintunCreateAdapter` → holds the **creator handle**; `${name}` exists.
-2. **(b)** mihomo `WintunOpenAdapter(name)` → **second handle** + `WintunStartSession` ⇒ a
-   live data plane; `${name}` + LUID stable.
-3. **(c)** helper **`WintunCloseAdapter(creatorHandle)`** → helper exits.
-4. **(d)** observe: does mihomo's session and the adapter `${name}` **still exist**?
+1. **(a)** helper `WintunCreateAdapter` → 持有**creator 句柄**；`${name}` 存在。
+2. **(b)** mihomo `WintunOpenAdapter(name)` → **第二个句柄** + `WintunStartSession` ⇒ 一个活动数据平面；`${name}` + LUID 稳定。
+3. **(c)** helper **`WintunCloseAdapter(creatorHandle)`** → helper 退出。
+4. **(d)** 观察：mihomo 的会话和适配器 `${name}` 是否**仍然存在**？
 
-**Two observations — but they do NOT select the architecture.** The probe observes one of
-these at (d). Both are recorded as evidence; neither decides the safety model below, which is
-fixed:
+**两种观察 — 但它们不选择架构。** 探针在 (d) 观察到其中之一。两者都记录为证据；都不决定下面的安全模型，它是固定的：
 
-- **Observed A — the adapter is removed when the creator handle closes.** This is what the
-  0.14.1 header's wording implies and is the conservative expectation: removal is the creator
-  handle's job, so a helper that closes it drops the adapter. **Because the product's safety
-  baseline never relies on the adapter outliving the helper**, Observed A changes nothing in
-  the model — it merely confirms the helper must stay for the whole enabled window.
-- **Observed B — the adapter survives the creator-close while mihomo still holds its own open
-  handle.** The adapter lives while some handle keeps it up; mihomo holds one at (d). Under
-  Observed B it is conceivable that the helper could exit earlier — but this is a **future
-  optimization only**, never the current baseline.
+- **Observed A — 适配器在 creator 句柄关闭时被移除。** 这就是 0.14.1 头文件措辞所暗示的，也是保守预期：移除是 creator 句柄的工作，因此关闭它的 helper 会丢弃适配器。**因为产品的安全基线从不依赖适配器比 helper 存活更久**，Observed A 在模型中不改变任何东西 — 它仅确认 helper 必须在整个启用窗口内停留。
+- **Observed B — 适配器在 mihomo 仍持有自己的打开句柄时经受住 creator 关闭。** 当某个句柄保持着它时，适配器存活；(d) 时 mihomo 持有一个。在 Observed B 下，可以设想 helper 可更早退出 — 但这**仅是未来优化**，绝不是当前基线。
 
-**Safety baseline (fixed — set independently of the probe).** The helper is activated per
-enable, binds the single verified client, creates the adapter, and holds the **creator handle
-for the entire enabled TUN window**; it only closes that handle (removing the adapter) as the
-final step of `disable` or an emergency restore. So the helper's **process lifetime = TUN
-enabled lifetime** (§5.5), and removing it is always the helper's own explicit, owned act. The
-**G1 probe's required conclusion is that mihomo reuses the same adapter** (opens the same
-`${name}` and runs a session); the creator-close **observation (A vs B)** only records whether
-we could later optimize (e.g. let the helper exit on enable-completion), and **never** changes
-whether the current safety model holds.
+**安全基线（固定 — 独立于探针设置）。** helper 每次启用时被激活，绑定单一经过验证的客户端，创建适配器，并在**整个启用 TUN 窗口内持有 creator 句柄**；它只在 `disable` 的最后步骤或紧急恢复时关闭该句柄（移除适配器）。因此 helper 的**进程生命周期 = TUN 启用生命周期**（§5.5），移除它始终是 helper 自己的显式、拥有所有权的行为。**G1 probe 所需的结论是 mihomo 复用同一适配器**（打开同一 `${name}` 并运行会话）；creator 关闭的**观察（A vs B）**仅记录我们能否日后优化（例如让 helper 在启用完成时退出），**绝不**改变当前安全模型是否成立。
 
-- **Enable / valid lifetime.** The helper is activated per enable; mihomo opens a second
-  handle + session. The helper **keeps the creator handle open for the whole enabled window**
-  and **does not exit** on enable-transaction completion or on idle — it enters a
-  **resident-active** phase (§3.4/§5.5) and persists until `disable` or an emergency/exit
-  condition. The enable order is therefore **fixed** and does not wait on the probe.
-- **Disable / teardown.** main calls the **same** resident helper via the same COM proxy;
-  mihomo calls `WintunEndSession` and `WintunCloseAdapter` on its open handle; the helper
-  restores routes/DNS per item; the helper then `WintunCloseAdapter(creatorHandle)` — which
-  **removes the adapter**; it writes `RECONCILED`, zeroizes keys, exits. No
-  `WintunDeleteAdapter`, no `WintunDeleteDriver`.
-- **Ownership verification is mandatory.** Before the helper closes the creator handle, it
-  re-verifies the adapter is **this product's/instance's** (by `Name` + `RequestedGUID`, and
-  the derived LUID); if it cannot prove ownership it **does not** touch the adapter and
-  instead records `RECONCILED` with no mutation (§8.4). Pre-existing/shared adapters are
-  never removed (D5).
+- **启用 / 有效生命周期。** helper 每次启用时被激活；mihomo 打开第二个句柄 + 会话。helper**在**整个启用窗口内保持 creator 句柄打开**，并且**不在**启用事务完成或空闲时退出 — 它进入 **resident-active** 阶段（§3.4/§5.5）并持续到 `disable` 或一个紧急/退出条件。因此启用顺序是**固定**的，且不等待探针。
+- **禁用 / 拆除。** main 通过同一 COM 代理调用**同一**常驻 helper；mihomo 在其打开句柄上调用 `WintunEndSession` 和 `WintunCloseAdapter`；helper 逐项恢复路由/DNS；然后 helper `WintunCloseAdapter(creatorHandle)` — 这**移除适配器**；它写入 `RECONCILED`、清零密钥、退出。无 `WintunDeleteAdapter`，无 `WintunDeleteDriver`。
+- **所有权验证是强制性的。** 在 helper 关闭 creator 句柄之前，它重新验证适配器是**本产品/本实例的**（通过 `Name` + `RequestedGUID`，以及导出的 LUID）；如果它无法证明所有权，则**不**触碰适配器，而是记录 `RECONCILED`，无变更（§8.4）。预存在/共享的适配器从不被移除（D5）。
 
-### 3.4 Helper lifetime: resident-active, abnormal exits and helper crash (items 2, 3)
+### 3.4 Helper 生命周期：resident-active、异常退出与 helper 崩溃（项 2、3）
 
-Two failure classes, each with an explicit **bounded** recovery path. Every path terminates
-by closing the creator handle so we **never leave a TUN adapter with no data plane**; only a
-successful restore ends without a pending journal item.
+两类失败，每类都有显式的**有界**恢复路径。每条路径都通过关闭 creator 句柄结束，因此我们**绝不留下一个没有数据平面的 TUN 适配器**；只有成功的恢复才以无待处理日志项结束。
 
-**Client / kernel abnormal exit (the app or mihomo dies while TUN is enabled).** The helper
-**duplicates and watches both** the bound app process handle **and** the mihomo process
-handle (the latter obtained when the helper launches/starts the session). While
-resident-active it waits on those two handles (plus the command channel). If **either** exits
-abnormally:
+**客户端 / 内核异常退出（TUN 启用时应用或 mihomo 死亡）。** helper**复制并监视**绑定应用进程句柄**和** mihomo 进程句柄（后者在 helper 启动/启动会话时获得）。在 resident-active 期间，它等待这两个句柄（加上命令通道）。如果**任一**异常退出：
 
-1. the helper enters a **bounded emergency restore** and first records the failure in the
-   journal;
-2. it **restores routes/DNS** per item (owned-only, reverse journal order, §8.3/§8.5);
-3. **only then** it **closes the creator handle** (`WintunCloseAdapter(creatorHandle)`) — the
-   adapter is removed (0.14.1 semantics), because an adapter with no data plane must not stay;
-4. it **persists the outcome** (`RECONCILED`, or `RESTORE_FAILED` + preserved journal) and
-   exits.
+1. helper 进入**有界紧急恢复**并首先在日志中记录失败；
+2. 它**逐项恢复路由/DNS**（owned-only，逆日志顺序，§8.3/§8.5）；
+3. **然后才**它**关闭 creator 句柄**（`WintunCloseAdapter(creatorHandle)`）— 适配器被移除（0.14.1 语义），因为没有数据平面的适配器不得保留；
+4. 它**持久化结果**（`RECONCILED`，或 `RESTORE_FAILED` + 保留日志）并退出。
 
-**If the restore fails**, the helper **still closes the creator handle** (so a TUN adapter
-with no data plane is never left behind) and records `RESTORE_FAILED`, **keeping the journal**
-so the next `init()`/`--recover` can finish the route/DNS restoration. The emergency restore
-is capped by an explicit **global maximum recovery timeout**; on expiry it force-closes the
-creator handle and exits with `RESTORE_FAILED`.
+**如果恢复失败**，helper**仍关闭 creator 句柄**（所以不会留下没有数据平面的 TUN 适配器）并记录 `RESTORE_FAILED`，**保留日志**以便下次 `init()`/`--recover` 可以完成路由/DNS 恢复。紧急恢复由显式的**全局最大恢复超时**封顶；超时后它强制关闭 creator 句柄并以 `RESTORE_FAILED` 退出。
 
-**The helper's own crash.** If the helper dies while resident-active, **Windows closes its
-handles automatically**, and per the 0.14.1 header the adapter is **removed** (the creator
-handle is gone). The next `init()`/`--recover` therefore launches a **new recovery helper**:
+**helper 自身的崩溃。** 如果 helper 在 resident-active 期间死亡，**Windows 自动关闭其句柄**，根据 0.14.1 头文件，适配器被**移除**（creator 句柄消失）。因此下次 `init()`/`--recover` 启动一个**新的恢复 helper**：
 
-- the new helper **does not have the old creator handle**, so it **must not record that it
-  called `WintunCloseAdapter`** — it did not; the adapter is gone because the OS closed the
-  handle;
-- it **verifies the adapter is gone** (enumerate by `Name`/`RequestedGUID`/LUID — absent) and
-  **restores any residual routes/DNS** item by item against the snapshot/journal (§8.4), then
-  writes `RECONCILED`;
-- if the adapter **abnormally still exists** but the new helper **cannot prove/own the
-  creator handle**, it **marks a conflict**, **preserves the evidence** (snapshot + journal +
-  adapter-enumerate result), and **does not touch or delete the adapter** — it never removes a
-  pre-existing/foreign adapter (D5). Recovery stops with a conflict, not a destructive delete.
+- 新 helper**没有旧的 creator 句柄**，所以它**不得记录它调用了 `WintunCloseAdapter`** — 它没有；适配器消失是因为 OS 关闭了句柄；
+- 它**验证适配器已消失**（按 `Name`/`RequestedGUID`/LUID 列举 — 不存在）并**逐项恢复任何残余路由/DNS**，对照快照/日志（§8.4），然后写入 `RECONCILED`；
+- 如果适配器**异常地仍然存在**但新 helper**无法证明/拥有 creator 句柄**，它**标记冲突**，**保留证据**（快照 + 日志 + 适配器列举结果），并且**不触碰或删除适配器** — 它绝不移除预存在/外来适配器（D5）。恢复以冲突结束，而非破坏性删除。
 
-Because enable and disable share the **same helper instance** (§5.5), the creator handle it
-closes at disable is the one it owns; recovery only ever handles the cases above. The
-distinction between **active idle** and **handshake/command timeout** is explicit: timeouts
-apply only to the brief pre-bind handshake window and to individual command request/response
-(§4.4) — **never** to a resident-active helper with no IPC traffic.
+因为启用和禁用共享**同一 helper 实例**（§5.5），它在禁用时关闭的 creator 句柄就是它拥有的那个；恢复只处理上述情况。**active idle** 与**握手/命令超时**的区别是显式的：超时仅适用于短暂的绑定前握手窗口和单个命令请求/响应（§4.4）— **绝不适用于无 IPC 流量的 resident-active helper**。
 
 ---
 
-## 4. Helper IPC, authentication and key lifecycle (items 4, 5)
+## 4. Helper IPC、认证与密钥生命周期（项 4、5）
 
-### 4.1 Why the earlier named-pipe/inheritance scheme is rejected
+### 4.1 为何拒绝早先的命名管道/继承方案
 
-- `ShellExecuteEx(verb=runas)` (the UAC route) creates the elevated process **via the
-  shell/elevation broker**; it does **not** propagate a `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`
-  from the caller. **Handles therefore cannot be inherited across `runas`.** Any design
-  that has the app create both pipe ends and hand one end to the helper by inheritance is
-  not executable through UAC.
-- A channel whose endpoint is only a random name + SDDL + a user-readable secret cannot
-  stop a **same-user** Medium-IL process from impersonating the app: the endpoint name,
-  any `launchSecret` on a command line, in an environment variable, or in a regular file /
-  user-registry value is readable by a same-user process, and a same-user actor shares
-  the user SID that the DACL grants.
+- `ShellExecuteEx(verb=runas)`（UAC 路径）**通过 shell/提升代理**创建提升进程；它**不**从调用方传播 `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`。**因此句柄无法跨 `runas` 继承。** 任何让应用创建两个管道端并通过继承把一端交给 helper 的设计都**无法**通过 UAC 执行。
+- 一个端点仅仅是随机名称 + SDDL + 用户可读秘密的通道，无法阻止**同用户** Medium-IL 进程冒充应用：端点名称、命令行上的任何 `launchSecret`、环境变量中或普通文件 / 用户注册表值中的任何秘密都可由同用户进程读取，且同用户参与者共享 DACL 授予的用户 SID。
 
-So the design switches to the **Windows-officially-supported secure bootstrap: an
-elevated out-of-proc COM server** (the helper), where the OS (AppInfo elevation broker)
-authenticates and mediates the rendezvous, so no custom handle must cross elevation and
-no same-user secret is placed in a user-readable medium (§5).
+因此设计转向**Windows 官方支持的安全引导：一个提升的进程外 COM 服务器**（helper），其中 OS（AppInfo 提升代理）认证并促成会合，因此无需自定义句柄跨提升传递，也不把同用户秘密放入用户可读介质（§5）。
 
-### 4.2 Command envelope (schema-validated in the helper) + canonical MAC
+### 4.2 命令信封（在 helper 中做 schema 校验）+ 规范 MAC
 
 ```ts
 interface HelperCommand {
@@ -645,36 +503,20 @@ type HelperOp =
   | 'health'
 ```
 
-Rules enforced in the helper:
+在 helper 中执行的规则：
 
-- `op` outside the allowlist ⇒ reject. `v` must be `1`. `payload` validated against the
-  op schema before any side effect. Size-capped (e.g. 4 KiB). No arbitrary path, no raw
-  command string, no free-text script.
-- `apply_network_state` carries the **typed `DesiredNetworkState`** (_§9_), never
-  free-form CLI text. The helper is not a shell.
+- `op` 不在允许列表中 ⇒ 拒绝。`v` 必须是 `1`。`payload` 在任何副作用之前按操作 schema 验证。大小受限（如 4 KiB）。无任意路径、无原始命令字符串、无自由文本脚本。
+- `apply_network_state` 携带**类型化的 `DesiredNetworkState`**（_§9_），绝不携带自由格式 CLI 文本。helper 不是 shell。
 
-### 4.3 Key lifecycle and canonical MAC encoding (item 5)
+### 4.3 密钥生命周期与规范 MAC 编码（项 5）
 
-**Secrets.** Two secrets exist: the one-time `launchSecret` (bootstrap only) and the
-`sessionKey` (channel lifetime).
+**机密。** 存在两个机密：一次性的 `launchSecret`（仅引导）和 `sessionKey`（通道生命周期）。
 
-- `launchSecret` (256-bit): used **only** to derive `sessionKey` at handshake. Zeroized
-  (`RtlSecureZeroMemory`) **immediately after** the handshake completes — it is never
-  used again.
-- `sessionKey` (derived with HKDF-SHA256(launchSecret, per-session salt + peer-role
-  string), 256-bit): the only key used for the message MAC. **Retained for the life of
-  the channel** and zeroized only on **channel close / task end** (never earlier, so it
-  is available for every message of an active operation).
-- **Zeroize on all paths.** `RtlSecureZeroMemory` runs (a) on normal channel close,
-  (b) on handshake/command timeout, (c) on exception, and (d) on helper process exit
-  (a dedicated cleanup in an `__try/__finally`-style guard plus a process-exit handler
-  and a `TerminateGracefully` path). Neither key is ever logged, passed to the renderer,
-  or persisted. The app's client zeroizes its copy of `launchSecret` after the handshake
-  and its `sessionKey` on teardown.
+- `launchSecret`（256 位）：**仅**用于在握手时派生 `sessionKey`。在握手完成后**立即**用 `RtlSecureZeroMemory` **清零** — 之后绝不再使用。
+- `sessionKey`（用 HKDF-SHA256(launchSecret, 每会话盐 + 对端角色字符串) 派生，256 位）：唯一用于消息 MAC 的密钥。**为通道生命周期保留**，仅在**通道关闭 / 任务结束**时清零（绝不在更早时，因此它对活动操作的每条消息都可用）。
+- **所有路径上清零。** `RtlSecureZeroMemory` 在 (a) 正常通道关闭、(b) 握手/命令超时、(c) 异常、(d) helper 进程退出时运行（在 `__try/__finally` 风格的守卫中做专门清理，外加进程退出处理器和 `TerminateGracefully` 路径）。两个密钥都绝不记录、绝不传给 renderer、绝不持久化。应用的客户端在握手后清零自己的 `launchSecret` 副本，在拆除时清零其 `sessionKey`。
 
-**Canonical MAC encoding.** The MAC is **not** a bare concatenation such as
-`v|op|requestId|payload` (ambiguous because fields may contain the separator and are of
-variable length). Instead each field is **length-prefixed** and the payload is canonical:
+**规范 MAC 编码。** MAC**不是**像 `v|op|requestId|payload` 这样的裸拼接（有歧义，因为字段可能包含分隔符且是变长的）。相反每个字段被**长度前缀**，且 payload 是规范的：
 
 ```
 encode(field) = u32le(byteLength(field)) || fieldBytes
@@ -686,169 +528,100 @@ mac = HMAC-SHA256(sessionKey,
         encode(canonicalJSON(payload)))
 ```
 
-`requestId` is serialized as its 8-byte big-endian uint64 value for the MAC (canonical
-numeric), and its wire form is the decimal string. This removes all ambiguity and is
-byte-deterministic so both sides compute the same MAC.
+`requestId` 为 MAC 序列化为其 8 字节大端 uint64 值（规范数值），而其线上形式是十进制字符串。这消除所有歧义且是字节确定的，因此两侧计算相同的 MAC。
 
-### 4.4 Replay, ordering, timeouts
+### 4.4 重放、顺序、超时
 
-- `requestId` is **monotonic** within a session (a per-session uint64 sequence). A
-  bounded replay cache keyed by `requestId` rejects duplicates; a stale/out-of-order id ⇒
-  close. (A fresh session's ids never collide because the sequence resets with a fresh
-  `sessionKey` and is scoped by the `sessionKey`'s HKDF salt.)
-- The helper enforces a **bootstrap handshake timeout** (e.g. 5 s, the pre-bind window) after
-  which it exits, a **per-command request/response timeout**, and a **handshake/idle-connect
-  timeout on the channel**. These timeouts apply **only** to the brief handshake window and to
-  an individual command — they are **not** an idle timeout on a resident-active helper (§3.4,
-  §5.5), which must stay up with zero IPC traffic.
-- Because the transport is an authenticated COM channel (§5), the OS already provides
-  per-message integrity + privacy; the envelope MAC + `requestId` is a **second layer**
-  (application-level integrity + replay defense), which is why the key lifecycle above is
-  still required.
+- `requestId` 在会话中是**单调**的（每会话 uint64 序列）。以 `requestId` 为键的有界重放缓存拒绝重复；陈旧/乱序 id ⇒ 关闭。（新会话的 id 永不冲突，因为序列随新的 `sessionKey` 重置，并由 `sessionKey` 的 HKDF 盐限定作用域。）
+- helper 强制一个**引导握手超时**（如 5 秒，绑定前窗口），超时后退出、一个**每命令请求/响应超时**、以及一个**通道上的握手/空闲连接超时**。这些超时**仅**适用于短暂的握手窗口和单个命令 — 它们**不是**针对 resident-active helper 的空闲超时（§3.4、§5.5），后者必须在零 IPC 流量下保持运行。
+- 因为传输是认证的 COM 通道（§5），OS 已提供逐消息完整性 + 隐私；信封 MAC + `requestId` 是**第二层**（应用层完整性 + 重放防御），这就是上面密钥生命周期仍然必需的原因。
 
 ---
 
-## 5. Elevation + IPC bootstrap (item 4) — executable Win32 sequence
+## 5. 提升 + IPC 引导（项 4）— 可执行的 Win32 序列
 
-The helper is an **elevated, out-of-proc COM server**; the app is the COM **client**;
-the **Windows elevation broker (AppInfo)** is the rendezvous. **No handle is inherited
-across elevation** (this is the officially-supported alternative), and **no same-user
-secret is placed in a user-readable medium** (the secret is exchanged inside the
-authenticated COM call).
+helper 是**提升的、进程外的 COM 服务器**；应用是 COM **客户端**；**Windows 提升代理（AppInfo）**是会合点。**跨提升不继承句柄**（这是官方支持的替代方案），并且**不把同用户秘密放入用户可读介质**（秘密在认证的 COM 调用内部交换）。
 
-### 5.1 Parties and registration (COM Elevation Moniker)
+### 5.1 参与方与注册（COM 提升标记）
 
-The helper is an **elevated, out-of-proc COM server**; the app is the COM **client**;
-the **Windows elevation broker (AppInfo)** is the rendezvous. The client activates the
-server through the **COM Elevation Moniker** — the officially documented way to request an
-elevated COM server — **not** by a plain `CoCreateInstance` on a `requireAdministrator`
-server.
+helper 是**提升的、进程外的 COM 服务器**；应用是 COM **客户端**；**Windows 提升代理（AppInfo）**是会合点。客户端通过 **COM 提升标记**激活服务器 — 这是请求提升 COM 服务器的官方记录方式 — **不是**通过对 `requireAdministrator` 服务器使用普通 `CoCreateInstance`。
 
-| Side | IL | Role | Build |
+| 侧 | IL | 角色 | 构建 |
 |---|---|---|---|
-| `.exe` main app (`electron` main) | Medium | COM **client**; the only holder of the `PrivilegedHelperClient` | Electron main |
-| `helper.exe` | High (elevated) | COM **server**; the elevated broker | Native, `requireAdministrator`, no console, no network listener |
+| `.exe` 主应用（`electron` main） | Medium | COM **客户端**；`PrivilegedHelperClient` 的唯一持有者 | Electron main |
+| `helper.exe` | High（提升） | COM **服务器**；提升的代理 | 原生，`requireAdministrator`，无控制台，无网络监听 |
 
-`helper.exe` is registered **machine-wide** (HKLM, so a per-user `HKCU` registration cannot
-override it) as an out-of-proc COM server under a dedicated **`AppID`**:
+`helper.exe` 在**机器范围**（HKLM，因此每用户 `HKCU` 注册不能覆盖它）注册为一个进程外 COM 服务器，属于一个专用 **`AppID`**：
 
 **`HKLM\Software\Classes\CLSID\{CLSID_PrivilegedHelper}`**
 
-| Value | Value |
+| 值 | 值 |
 |---|---|
-| (default) | `Murge Privileged Helper (elevated)` |
+| (默认) | `Murge Privileged Helper (elevated)` |
 | `LocalizedString` | `@C:\Program Files\Murge\resources\bin\helper.exe,-101` |
-| `LocalServer32` (default) | `C:\Program Files\Murge\resources\bin\helper.exe` — **absolute path** |
-| `LocalServer32\ServerExecutable` | `C:\Program Files\Murge\resources\bin\helper.exe` — explicit module name for the moniker |
+| `LocalServer32` (默认) | `C:\Program Files\Murge\resources\bin\helper.exe` — **绝对路径** |
+| `LocalServer32\ServerExecutable` | `C:\Program Files\Murge\resources\bin\helper.exe` — 为标记提供的显式模块名 |
 | `LocalServer32\AppID` | `{AppID_PrivilegedHelper}` |
-| `Elevation\Enabled` | **REG_DWORD `1`** (elevation allowed by the moniker) |
-| `Elevation\IconReference` | `@C:\Program Files\Murge\resources\bin\helper.exe,0` — **optional** (custom UAC icon) |
+| `Elevation\Enabled` | **REG_DWORD `1`**（标记允许提升） |
+| `Elevation\IconReference` | `@C:\Program Files\Murge\resources\bin\helper.exe,0` — **可选**（自定义 UAC 图标） |
 
 **`HKLM\Software\Classes\AppID\{AppID_PrivilegedHelper}`**
 
-| Value | Value |
+| 值 | 值 |
 |---|---|
-| (default) | `Murge Privileged Helper` |
-| `RunAs` | **`Interactive User`** — required so the server is activated as the current interactive user's high-integrity token (Activate-as-Activator / Interactive User semantics, per the elevation moniker). **Not** a named/known account. |
-| `LaunchPermission` | **Pure allow-list DACL** with **explicit COM rights mask `0xB`** (`EXECUTE|EXECUTE_LOCAL|ACTIVATE_LOCAL`), no `Everyone`/`Users`/`Authenticated Users`, no deny that shadows the owner. Grants local launch + local activation to the authorized user principal, `SYSTEM`, and `Administrators` (install/repair) only. See the exact SDDL + ACE table (+ descriptor-build tests) below. |
-| `AccessPermission` | **Pure allow-list DACL** with **explicit COM rights mask `0x3`** (`EXECUTE|EXECUTE_LOCAL`) — grants local access (call/connect) to the authorized user principal + `SYSTEM` only. `Administrators` is **not** granted ordinary call access (it is in the launch list only for install/repair). See the exact SDDL + ACE table below. |
+| (默认) | `Murge Privileged Helper` |
+| `RunAs` | **`Interactive User`** — 要求如此，使服务器被激活为当前交互式用户的高完整性令牌（Activate-as-Activator / Interactive User 语义，按提升标记）。**不是**命名/已知账户。 |
+| `LaunchPermission` | **纯允许列表 DACL**，带**显式 COM 权限掩码 `0xB`**（`EXECUTE|EXECUTE_LOCAL|ACTIVATE_LOCAL`），无 `Everyone`/`Users`/`Authenticated Users`，无掩盖所有者的 deny。仅向授权的用户主体、`SYSTEM` 和 `Administrators`（安装/修复）授予本地启动 + 本地激活。见下方精确 SDDL + ACE 表（+ 描述符构建测试）。 |
+| `AccessPermission` | **纯允许列表 DACL**，带**显式 COM 权限掩码 `0x3`**（`EXECUTE|EXECUTE_LOCAL`）— 仅向授权的用户主体 + `SYSTEM` 授予本地访问（调用/连接）。`Administrators`**未被**授予普通调用访问（它仅在启动列表中用于安装/修复）。见下方精确 SDDL + ACE 表。 |
 
-> **Round-6/7 — the DACL is a pure allow-list, never a deny-then-allow, and carries no `DENY`
-> at all.** A `DENY Everyone` + `DENY Users` + `ALLOW <ownerSID>` pattern is **rejected**: the
-> authorized user is a member of both `Everyone` and `Users`, so the explicit `DENY` entries win
-> over the `ALLOW` and the legitimate owner is locked out of activating/calling the helper.
-> Instead the DACL is a **complete allow-list** of positive ACEs only — absent SIDs get **no
-> effective access** (deny-by-default on a complete DACL). Because the allow-list is complete,
-> **no `DENY` ACE is added** (not even `ANONYMOUS LOGON`/`NETWORK`): adding a `DENY` only
-> introduces ACE-order / deny-override risk and is unnecessary here, since principals with no
-> `ALLOW` ACE already get no access.
+> **Round-6/7 — DACL 是纯允许列表，绝不是 deny-then-allow，并且完全不携带 `DENY`。** `DENY Everyone` + `DENY Users` + `ALLOW <ownerSID>` 模式**被拒绝**：
+> 授权用户是 `Everyone` 和 `Users` 两者的成员，因此显式 `DENY` 条目会战胜 `ALLOW`，合法的所有者被锁在激活/调用 helper 之外。
+> 相反 DACL 是仅正面 ACE 的**完整允许列表** — 缺席的 SID 获得**无有效访问**（在完整 DACL 上默认拒绝）。因为允许列表是完整的，**不添加 `DENY` ACE**（甚至不添加 `ANONYMOUS LOGON`/`NETWORK`）：添加 `DENY` 只会引入 ACE 顺序 / deny 覆盖风险，且在此无关紧要，因为没有 `ALLOW` ACE 的主体已获得无访问。
 >
-> **LaunchPermission SDDL** — `D:P` (protected, no inheritance); every ACE uses the **explicit COM rights mask `0xB`** (a single, uniform format; **no** generic `GX`):
+> **LaunchPermission SDDL** — `D:P`（受保护，无继承）；每个 ACE 使用**显式 COM 权限掩码 `0xB`**（单一、统一格式；**无**通用 `GX`）：
 > ```
 > D:P(A;;0xB;;;SY)(A;;0xB;;;BA)(A;;0xB;;;<ownerSid>)
 > ```
-> where each `A;;0xB;;;…` = **Allow** with `COM_RIGHTS_EXECUTE (0x1) | COM_RIGHTS_EXECUTE_LOCAL (0x2) | COM_RIGHTS_ACTIVATE_LOCAL (0x8)`.
+> 其中每个 `A;;0xB;;;…` = **Allow**，带 `COM_RIGHTS_EXECUTE (0x1) | COM_RIGHTS_EXECUTE_LOCAL (0x2) | COM_RIGHTS_ACTIVATE_LOCAL (0x8)`。
 >
-> **AccessPermission SDDL** — `D:P` protected; every ACE uses the **explicit COM rights mask `0x3`** (single uniform format):
+> **AccessPermission SDDL** — `D:P` 受保护；每个 ACE 使用**显式 COM 权限掩码 `0x3`**（单一统一格式）：
 > ```
 > D:P(A;;0x3;;;SY)(A;;0x3;;;<ownerSid>)
 > ```
-> where each `A;;0x3;;;…` = **Allow** with `COM_RIGHTS_EXECUTE (0x1) | COM_RIGHTS_EXECUTE_LOCAL (0x2)`.
+> 其中每个 `A;;0x3;;;…` = **Allow**，带 `COM_RIGHTS_EXECUTE (0x1) | COM_RIGHTS_EXECUTE_LOCAL (0x2)`。
 >
-> **No mix of old and new ACEs, and no extra `DENY`.** Every ACE in an ACL uses the **same
-> new-style mask** and every one contains **`0x1`** (`COM_RIGHTS_EXECUTE`) — there is **no**
-> legacy `0x1`-only ACE mixed alongside a `0x3`/`0xB` ACE. The DACL is a **complete pure
-> allow-list**; absent SIDs get **no effective access** (deny-by-default), so **no `DENY`
-> `ANONYMOUS LOGON`/`NETWORK` ACE is added** (that only adds ACE-order / deny-override risk and
-> is unnecessary on a complete allow-list). `SY` = `S-1-5-18`, `BA` = `S-1-5-32-544`, and
-> `<ownerSid>` is the interactive-user SID (`S-1-5-21-<dom>-<rid>`) resolved at install.
+> **不混用新旧 ACE，也无额外 `DENY`。** 一个 ACL 中的每个 ACE 使用**相同的
+> new-style 掩码**，每个都包含**`0x1`**（`COM_RIGHTS_EXECUTE`）— **没有**遗留的 `0x1` 专用 ACE 与 `0x3`/`0xB` ACE 混在一起。DACL 是**完整的纯允许列表**；缺席的 SID 获得**无有效访问**（默认拒绝），因此**不添加 `DENY` `ANONYMOUS LOGON`/`NETWORK` ACE**（那只会增加 ACE 顺序 / deny 覆盖风险，在完整允许列表上无必要）。`SY` = `S-1-5-18`，`BA` = `S-1-5-32-544`，`<ownerSid>` 是安装时解析的交互式用户 SID（`S-1-5-21-<dom>-<rid>`）。
 >
-> These registry values are a **binary `SECURITY_DESCRIPTOR`** (the SDDL string above is the
-> `ConvertStringSecurityDescriptorToSecurityDescriptor` source form, `SDDL_REVISION_1`). The
-> mask is the **actual COM rights mask**, so there is **no generic-rights → COM-rights
-> translation to assume**; the value is written verbatim. Launch grants launch+activate-local;
-> Access grants call/connect local. Because **no `COM_RIGHTS_*_REMOTE` bit and no `GA`/`GW` are
-> granted**, a network/remote activation or access is denied by DCOM, which also backs the
-> "local `ncalrpc` only" requirement in §5.2.
+> 这些注册表值是**二进制 `SECURITY_DESCRIPTOR`**（上面的 SDDL 字符串是 `ConvertStringSecurityDescriptorToSecurityDescriptor` 源码形式，`SDDL_REVISION_1`）。掩码是**实际的 COM 权限掩码**，因此**无需假设通用权限 → COM 权限转换**；该值被逐字写入。Launch 授予 launch+activate-local；Access 授予 call/connect local。因为**不授予 `COM_RIGHTS_*_REMOTE` 位且不授予 `GA`/`GW`**，网络/远程激活或访问被 DCOM 拒绝，这也支撑了 §5.2 中"本地 `ncalrpc` only"的要求。
 >
-> **Per-ACE table** (each `A;;` = Allow; the DACL contains **no `DENY`**):
+> **逐 ACE 表**（每个 `A;;` = Allow；DACL 包含**无 `DENY`**）：
 
-> | SDDL | ACE | Object SID | allow / deny | COM rights mask | Effective COM rights | Why |
+> | SDDL | ACE | 对象 SID | 允许/拒绝 | COM 权限掩码 | 有效 COM 权限 | 原因 |
 > |---|---|---|---|---|---|---|
-> | `Launch` `D:P(A;;0xB;;;SY)…` | `A` | `SYSTEM` `S-1-5-18` | **allow** | `0xB` | `EXECUTE (0x1) + EXECUTE_LOCAL (0x2) + ACTIVATE_LOCAL (0x8)` | The SCM/RPCSS must be able to launch + activate the out-of-proc server; local only. |
-> | `Launch` `…(A;;0xB;;;BA)…` | `A` | `Administrators` `S-1-5-32-544` | **allow** | `0xB` | `EXECUTE + EXECUTE_LOCAL + ACTIVATE_LOCAL` | Install/repair can launch/activate (`BA`); **not** granted ordinary call access (absent from `AccessPermission`). |
-> | `Launch` `…(A;;0xB;;;<ownerSid>)…` | `A` | Owner user SID `S-1-5-21-<dom>-<rid>` (resolved at install) | **allow** | `0xB` | `EXECUTE + EXECUTE_LOCAL + ACTIVATE_LOCAL` | The **only** interactive user that may launch/activate the helper. |
-> | `Access` `D:P(A;;0x3;;;SY)…` | `A` | `SYSTEM` `S-1-5-18` | **allow** | `0x3` | `EXECUTE (0x1) + EXECUTE_LOCAL (0x2)` | The SCM may complete the connect; local only. |
-> | `Access` `…(A;;0x3;;;<ownerSid>)…` | `A` | Owner user SID `S-1-5-21-<dom>-<rid>` | **allow** | `0x3` | `EXECUTE + EXECUTE_LOCAL` | The **only** interactive user that may call the helper. `Administrators`, `Everyone`, `Users`, `Authenticated Users` are **absent** ⇒ no effective access. |
+> | `Launch` `D:P(A;;0xB;;;SY)…` | `A` | `SYSTEM` `S-1-5-18` | **允许** | `0xB` | `EXECUTE (0x1) + EXECUTE_LOCAL (0x2) + ACTIVATE_LOCAL (0x8)` | SCM/RPCSS 必须能启动 + 激活进程外服务器；仅本地。 |
+> | `Launch` `…(A;;0xB;;;BA)…` | `A` | `Administrators` `S-1-5-32-544` | **允许** | `0xB` | `EXECUTE + EXECUTE_LOCAL + ACTIVATE_LOCAL` | 安装/修复可以启动/激活（`BA`）；**不**授予普通调用访问（在 `AccessPermission` 中缺席）。 |
+> | `Launch` `…(A;;0xB;;;<ownerSid>)…` | `A` | 所有者用户 SID `S-1-5-21-<dom>-<rid>`（安装时解析） | **允许** | `0xB` | `EXECUTE + EXECUTE_LOCAL + ACTIVATE_LOCAL` | **唯一**可能启动/激活 helper 的交互式用户。 |
+> | `Access` `D:P(A;;0x3;;;SY)…` | `A` | `SYSTEM` `S-1-5-18` | **允许** | `0x3` | `EXECUTE (0x1) + EXECUTE_LOCAL (0x2)` | SCM 可以完成连接；仅本地。 |
+> | `Access` `…(A;;0x3;;;<ownerSid>)…` | `A` | 所有者用户 SID `S-1-5-21-<dom>-<rid>` | **允许** | `0x3` | `EXECUTE + EXECUTE_LOCAL` | **唯一**可能调用 helper 的交互式用户。`Administrators`、`Everyone`、`Users`、`Authenticated Users` **缺席** ⇒ 无有效访问。 |
 >
-> **`AccessCheck` verification is required (see §13 descriptor-build tests).** Build the actual
-> `SECURITY_DESCRIPTOR` from the stored binary value (or the SDDL above) and assert:
-> **owner SID allowed**, **a second normal user denied**, **SYSTEM allowed** for both
-> `LaunchPermission` and `AccessPermission`; every COM ACE mask is **strictly** `0xB` or `0x3`
-> and **contains `0x1`**. `ConvertStringSecurityDescriptorToSecurityDescriptor` returns an
-> already **self-relative** descriptor; verify `SE_SELF_RELATIVE` and write those returned bytes
-> directly as the COM `REG_BINARY` value. `GetSecurityInfo` reads back the same DACL. (No
-> `ANONYMOUS LOGON`/`NETWORK` ACE is present;
-> they are denied by absence on the complete allow-list.)
+> **需要 `AccessCheck` 验证（见 §13 描述符构建测试）。** 从存储的二进制值（或上面的 SDDL）构建实际的 `SECURITY_DESCRIPTOR` 并断言：**所有者 SID 允许**、**第二个普通用户被拒绝**、**SYSTEM 允许**，对 `LaunchPermission` 和 `AccessPermission` 都如此；每个 COM ACE 掩码**严格**为 `0xB` 或 `0x3` 且**包含 `0x1`**。`ConvertStringSecurityDescriptorToSecurityDescriptor` 返回**已经是自相对的**描述符；验证 `SE_SELF_RELATIVE` 并按原样把那些返回的字节写为 COM `REG_BINARY` 值。`GetSecurityInfo` 读回相同的 DACL。（不存在 `ANONYMOUS LOGON`/`NETWORK` ACE；它们在完整允许列表上被缺席拒绝。）
 
 
 
 
-> Because the server is activated via the **elevation moniker**, `RunAs` must be
-> **`Interactive User`** (the moniker's Activate-as-Activator / interactive-user model).
-> If you instead configured a specific account in `RunAs`, the elevation moniker would not
-> operate in the documented interactive-user fashion; the design therefore explicitly
-> rejects a named-account `RunAs`.
+> 因为服务器通过**提升标记**激活，`RunAs` 必须是 **`Interactive User`**（标记的 Activate-as-Activator / 交互式用户模型）。
+> 如果你反而在 `RunAs` 中配置了特定账户，提升标记将不会按记录的交互式用户方式运作；因此设计明确拒绝命名账户的 `RunAs`。
 >
-> The `LocalServer32` path and the optional `ServerExecutable` value must be **absolute and
-> in the non-writable install dir**, so a search-path/DLL hijack cannot substitute a binary.
-> `Elevation\Enabled` is a **REG_DWORD `1`**, NOT the string `"Enabled"` (a string value is
-> not honored by the COM elevation broker). There is **no `ThreadingModel`** under
-> `LocalServer32` for an out-of-proc server — it is not a documented/meaningful value here,
-> so it must not be emitted.
+> `LocalServer32` 路径和可选的 `ServerExecutable` 值必须**绝对且在不可写的安装目录中**，以免搜索路径/DLL 劫持替换二进制。
+> `Elevation\Enabled` 是 **REG_DWORD `1`**，不是字符串 `"Enabled"`（字符串值不被 COM 提升代理认可）。进程外服务器在 `LocalServer32` 下**没有 `ThreadingModel`** — 在那里它不是有记录/有意义的值，因此不得发出。
 >
-> **Bitness / WOW64 registration location.** Registration goes into the **registry view
-> that matches the helper binary's bitness**, selected **explicitly with the
-> `KEY_WOW64_64KEY` / `KEY_WOW64_32KEY` flags** on the `RegCreateKeyEx`/`RegOpenKeyEx` calls
-> — **not** by spelling out a `WOW6432Node` path, so we never name a `HKLM\Software\Classes`
-> variant or a `HKLM\Software\WOW6432Node\Software\Classes` subtree as a literal path. The
-> product ships **amd64 and arm64 helpers only (no 32-bit helper)**, so we explicitly
-> **register only the 64-bit COM view (`KEY_WOW64_64KEY`)** and **do not register a 32-bit
-> COM helper at all**. The running helper is **the same bitness as the Wintun DLL it loads**
-> (`wintun-amd64.dll`/`wintun-arm64.dll`, §3.1); because there is no 32-bit helper there is
-> no 32-bit registration to produce, and mixing bitness (a 32-bit moniker against a 64-bit
-> registration or vice versa) is a registration mismatch the installer must never produce.
+> **位数 / WOW64 注册位置。** 注册进入**与 helper 二进制位数匹配的注册表视图**，在 `RegCreateKeyEx`/`RegOpenKeyEx` 调用上**显式用 `KEY_WOW64_64KEY` / `KEY_WOW64_32KEY` 标志**选择 — **不**是拼出 `WOW6432Node` 路径，因此我们从不把 `HKLM\Software\Classes` 变体或 `HKLM\Software\WOW6432Node\Software\Classes` 子树作为字面路径命名。产品仅发布 **amd64 和 arm64 helper（无 32 位 helper）**，因此我们明确**只注册 64 位 COM 视图（`KEY_WOW64_64KEY`）**，并且**完全不注册 32 位 COM helper**。运行的 helper **与其加载的 Wintun DLL 位数相同**（`wintun-amd64.dll`/`wintun-arm64.dll`，§3.1）；因为没有 32 位 helper，也就没有要产生的 32 位注册，混合位数（32 位标记对 64 位注册，或反之）是安装器绝不得产生的注册不匹配。
 
-### 5.2 Steps (each: process, API, who creates/connects, UAC API, handle inheritance)
+### 5.2 步骤（每个：进程、API、谁创建/连接、UAC API、句柄继承）
 
-1. **Client COM init (app, Medium).** `CoInitializeEx(NULL, COINIT_APARTMENTTHREADED)`;
-   `CoInitializeSecurity(NULL, -1, NULL, NULL, RPC_C_AUTHN_LEVEL_PKT_PRIVACY,
-   RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_SECURE_REFS | EOAC_STATIC_CLOAKING, NULL)`.
-   This pins **packet-privacy authentication** and **impersonation** for the activating
-   process. The app does **not** pre-launch the helper and does **not** use
-   `runas`/`ShellExecuteEx` — it activates the COM server (step 2) and the OS requests
-   elevation.
-2. **Activation via the Elevation Moniker (UAC is the elevation API).**
+1. **客户端 COM 初始化（应用，Medium）。** `CoInitializeEx(NULL, COINIT_APARTMENTTHREADED)`；`CoInitializeSecurity(NULL, -1, NULL, NULL, RPC_C_AUTHN_LEVEL_PKT_PRIVACY, RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_SECURE_REFS | EOAC_STATIC_CLOAKING, NULL)`。这为激活进程固定**packet-privacy 认证**和**模拟**。应用**不**预启动 helper，**不**使用 `runas`/`ShellExecuteEx` — 它激活 COM 服务器（步骤 2），OS 请求提升。
+2. **通过提升标记激活（UAC 是提升 API）。**
    ```c
    BIND_OPTS3 bo = {};
    bo.cbStruct  = sizeof(bo);
@@ -858,175 +631,79 @@ override it) as an out-of-proc COM server under a dedicated **`AppID`**:
        L"Elevation:Administrator!new:{<CLSID_PrivilegedHelper>}",
        &bo, IID_PPV_ARGS(&pHelper));
    ```
-   `CoGetObject` with the **`Elevation:Administrator!new:{CLSID}`** moniker is the
-   elevation-request point — triggered only by an explicit user action (§10.1 enable).
-   The **elevation broker (AppInfo)** shows UAC and starts `helper.exe` at **High IL** by
-   the (interactive-user) object the moniker names, honoring the manifest's
-   `requireAdministrator`.
-3. **Server side (helper, High).** Registers its class factory under its CLSID/AppID, runs
-   at High IL. **Handle inheritance:** the design does **not** use
-   `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`; it requires **no inherited handle** (elevated
-   activation via the moniker cannot propagate one).
-4. **Channel.** The authenticated COM interface **is** the channel; each request is the
-   schema-validated `HelperCommand` envelope (§4) passed as a length-prefixed, size-capped
-   byte blob/`IStream`. **No app-created named pipe** and hence no endpoint name leaked to a
-   user-readable medium. Before servicing a call the server enforces privacy on the proxy:
-   `CoInitializeSecurity(..., RPC_C_AUTHN_LEVEL_PKT_PRIVACY,
-   RPC_C_IMP_LEVEL_IMPERSONATE, ...)`; the client sets the same on its proxy with
-   `CoSetProxyBlanket(pHelper, RPC_C_AUTHN_WINNT, RPC_C_AUTHZ_NONE, NULL,
-   RPC_C_AUTHN_LEVEL_PKT_PRIVACY, RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_NONE)`.
-5. **Helper authenticates the app (identity binding).** On each privileged call the helper:
-   - `CoImpersonateClient()` (and `RpcImpersonateClient()` for pure-RPC parity), then
-   - `RpcServerInqCallAttributes(call, RPC_CALL_ATTRIBUTES_V2, &atts)` with
-     `atts.Version = 2` and **`atts.Flags = RPC_QUERY_CLIENT_PID`**; read
-     **`atts.ClientPID`** (not a field the caller must name differently) → **client PID**.
-   - **Transport.** Assert the call arrived over the **local `ncalrpc`** LPC transport
-     (LRPC) used by a LocalServer in the same session; reject any `ncacn_ip_tcp`/remote
-     transport. (Local RPC is the only protocol the moniker LocalServer uses.)
-   - `GetTokenInformation(TokenUser/TokenStatistics/TokenIntegrityLevel)` on the
-     impersonation token: assert same **logon session**, same **user SID**, **Medium IL**,
-     **token type** (primary/impersonation).
-   - The **PID is used only to open and validate the process object**, never as identity by
-     itself: `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, clientPid)` +
-     `QueryFullProcessImageName` → **normalized canonical path**; verify that path's
-     **SHA-256 digest** and **Authenticode publisher** match the pinned app identity. A
-     same-user impostor — even one with a **reused PID** — fails the path/digest check and
-     does not present the **session key**.
-   - `CoRevertToSelf()` / `RpcRevertToSelf()` after the check.
-6. **App authenticates the helper.** The `bootstrap` method returns the **helper PID**; the
-   app `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, helperPid)` +
-   `QueryFullProcessImageName` + Authenticode and asserts the helper's canonical path +
-   SHA-256 + publisher match the pinned helper. A diverted/per-user registration that
-   yields a medium-IL server fails this check, so the app refuses to trust it.
-7. **Handshake + key.** Over the authenticated channel the two sides derive `sessionKey`
-   (HKDF); the `launchSecret` is exchanged **inside** the authenticated call (never on a
-   cmdline/env/file) and `RtlSecureZeroMemory`-zeroized right after the handshake (§4.3).
-   The `sessionKey` is retained for the channel life and zeroized on close/exit.
+   `CoGetObject` 加 **`Elevation:Administrator!new:{CLSID}`** 标记是提升请求点 — 仅由显式用户操作触发（§10.1 启用）。**提升代理（AppInfo）** 显示 UAC 并按标记命名的（交互式用户）对象以 **High IL** 启动 `helper.exe`，遵循清单的 `requireAdministrator`。
+3. **服务器侧（helper，High）。** 在其 CLSID/AppID 下注册类工厂，以 High IL 运行。**句柄继承：** 设计**不**使用 `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`；它**不需要继承句柄**（通过标记的提升激活无法传播一个）。
+4. **通道。** 认证的 COM 接口**就是**通道；每个请求是 schema 校验的 `HelperCommand` 信封（§4），作为长度前缀、大小受限的字节 blob/`IStream` 传递。**无应用创建的命名管道**，因此没有端点名称泄露到用户可读介质。服务调用前服务器在代理上强制隐私：`CoInitializeSecurity(..., RPC_C_AUTHN_LEVEL_PKT_PRIVACY, RPC_C_IMP_LEVEL_IMPERSONATE, ...)`；客户端在其代理上用 `CoSetProxyBlanket(pHelper, RPC_C_AUTHN_WINNT, RPC_C_AUTHZ_NONE, NULL, RPC_C_AUTHN_LEVEL_PKT_PRIVACY, RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_NONE)` 设置同样的。
+5. **helper 认证应用（身份绑定）。** 在每次特权调用时 helper：
+   - `CoImpersonateClient()`（以及为纯 RPC 对等的 `RpcImpersonateClient()`），然后
+   - `RpcServerInqCallAttributes(call, RPC_CALL_ATTRIBUTES_V2, &atts)`，带 `atts.Version = 2` 和 **`atts.Flags = RPC_QUERY_CLIENT_PID`**；读取 **`atts.ClientPID`**（不是必须由调用方以不同方式命名的一个字段）→ **客户端 PID**。
+   - **传输。** 断言调用通过**本地 `ncalrpc`** LPC 传输到达（由同一会话中的 LocalServer 使用）；拒绝任何 `ncacn_ip_tcp`/远程传输。（本地 RPC 是标记 LocalServer 使用的唯一协议。）
+   - 在模拟令牌上 `GetTokenInformation(TokenUser/TokenStatistics/TokenIntegrityLevel)`：断言相同的**登录会话**、相同的**用户 SID**、**Medium IL**、**令牌类型**（primary/impersonation）。
+   - **PID 仅用于打开并验证进程对象**，绝不单独作为身份：`OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, clientPid)` + `QueryFullProcessImageName` → **规范化规范路径**；验证该路径的 **SHA-256 摘要**和 **Authenticode 发布者**与固定的应用身份匹配。同用户冒充者 — 即使带**复用 PID** — 也会失败路径/摘要检查，且不呈现**会话密钥**。
+   - 检查后 `CoRevertToSelf()` / `RpcRevertToSelf()`。
+6. **应用认证 helper。** `bootstrap` 方法返回**helper PID**；应用 `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, helperPid)` + `QueryFullProcessImageName` + Authenticode，并断言 helper 的规范路径 + SHA-256 + 发布者与固定的 helper 匹配。产生 medium-IL 服务器的改道/每用户注册失败此检查，因此应用拒绝信任它。
+7. **握手 + 密钥。** 在认证通道上两侧派生 `sessionKey`（HKDF）；`launchSecret` 在**认证调用内部**交换（绝不在 cmdline/env/file 上）并在握手后立即用 `RtlSecureZeroMemory` 清零（§4.3）。`sessionKey` 为通道生命周期保留，在关闭/退出时清零。
 
-This is a self-consistent, executable sequence using the **documented elevation-moniker
-bootstrap**. Because the transport is mutually authenticated and privacy-encrypted, the
-same-user-spoofing threat is closed by the OS rather than by a secret in a readable medium.
+这是使用**有记录提升标记引导**的自洽、可执行序列。因为传输是互认证且隐私加密的，同用户欺骗威胁由 OS 而非可读介质中的秘密关闭。
 
-### 5.3 Least privilege
+### 5.3 最小权限
 
-- UAC is shown only on first enable (explicit user action). `probe_integrity`/`get_status`/
-  `health` never prompt UAC.
-- The helper runs **High IL but with a restricted token**. Restriction removes unnecessary
-  privileges, but it **must retain the `Administrators` (`BA`) SID as enabled, not deny-only**, because
-  the trusted-store DACL deliberately grants the helper through its `BA` ACE. Startup verifies this
-  token property before opening or mutating the store; failure is fail-closed with zero network
-  modification. The minimal enabled-privilege set includes `SeLoadDriverPrivilege` for
-  `WintunCreateAdapter`; route/DNS/interface changes use the `IP Helper`/`netsh`-equivalent APIs
-  rather than blanket admin.
-- The helper is a dedicated process: no console, no network listener of its own, no
-  accidental admin shell, and **no** packet session (§1).
+- UAC 仅在首次启用（显式用户操作）时显示。`probe_integrity`/`get_status`/`health` 从不触发 UAC。
+- helper 以 **High IL 但带受限令牌**运行。限制移除不必要的特权，但它**必须保留 `Administrators`（`BA`）SID 为已启用，而非 deny-only**，因为可信存储 DACL 特意通过其 `BA` ACE 授权 helper。启动时在打开或变更存储之前验证此令牌属性；失败则安全关闭，零网络修改。最小启用特权集包括用于 `WintunCreateAdapter` 的 `SeLoadDriverPrivilege`；路由/DNS/接口更改使用 `IP Helper`/`netsh` 等价 API，而非宽泛 admin。
+- helper 是专用进程：无控制台、无自己的网络监听、无意外管理员 shell，**无**数据包会话（§1）。
 
-### 5.4 Facts to confirm against the pinned Windows target before implementation
+### 5.4 实现前需对照固定的 Windows 目标确认的事实
 
-The following are asserted from the general Windows model and must be **re-checked against
-the exact pinned Windows SDK / minimum-OS target and the exact Wintun release** before any
-implementation, because no live lookup was done this session:
+以下是从一般 Windows 模型断言的，必须在任何实现前**对照精确的固定 Windows SDK / 最低 OS 目标以及精确的 Wintun 发行版重新检查**，因为本次会话未做实际查证：
 
-- The **elevation-moniker** activation (`CoGetObject("Elevation:Administrator!new:{CLSID}",
-  BIND_OPTS3, ...)`) triggers UAC and starts a `requireAdministrator` LocalServer. Confirm
-  the exact HKLM `CLSID`/`AppID`/`Elevation`/`LocalServer32` key + value set that produces
-  a high-IL `helper.exe` for a Medium-IL activation, and that **`RunAs = "Interactive User"`**
-  is the correct setting (the moniker's Activate-as-Activator / interactive-user model).
-- **`RPC_CALL_ATTRIBUTES_V2.ClientPID`** with **`Flags = RPC_QUERY_CLIENT_PID`** is available
-  and populated on the target; and the client call arrives over the local **`ncalrpc`** LPC
-  transport. If the target cannot report the transport/`ClientPID`, fall back to
-  `CoImpersonateClient` + `RpcServerInqCallAttributes` on the `RPC_CALL_ATTRIBUTES_V1` +
-  token checks and document the exact alternative.
-- The **Wintun ABI** pinned in §3.0 matches the shipped `wintun.h`/`wintun.def` for the
-  chosen release (export names, `WINAPI` calling convention, handle types, `NET_LUID`), and
-  **`WintunCreateAdapter` installs/loads the driver on demand** and accepts a **`RequestedGUID`**.
-- Whether mihomo can **open/reuse the helper-created adapter** by name (or the derived LUID) is
-  exactly the **G1** question — **not** answered here, and **gated** by the **G1 lifecycle
-  probe** (§12).
+- **提升标记**激活（`CoGetObject("Elevation:Administrator!new:{CLSID}", BIND_OPTS3, ...)`）触发 UAC 并启动 `requireAdministrator` LocalServer。确认能对 Medium-IL 激活产生 high-IL `helper.exe` 的确切 HKLM `CLSID`/`AppID`/`Elevation`/`LocalServer32` 键 + 值集，并且 **`RunAs = "Interactive User"`** 是正确设置（标记的 Activate-as-Activator / 交互式用户模型）。
+- **`RPC_CALL_ATTRIBUTES_V2.ClientPID`** 配合 **`Flags = RPC_QUERY_CLIENT_PID`** 在目标上可用且被填充；且客户端调用通过本地 **`ncalrpc`** LPC 传输到达。如果目标无法报告传输/`ClientPID`，回退到 `CoImpersonateClient` + 在 `RPC_CALL_ATTRIBUTES_V1` + 令牌检查上的 `RpcServerInqCallAttributes`，并记录确切的替代方案。
+- §3.0 固定的 **Wintun ABI** 与所选发行版的 `wintun.h`/`wintun.def` 匹配（导出名、`WINAPI` 调用约定、句柄类型、`NET_LUID`），且 **`WintunCreateAdapter` 按需安装/加载驱动**并接受 **`RequestedGUID`**。
+- mihomo 能否按名称（或导出的 LUID）**打开/复用 helper 创建的适配器**正是 **G1** 问题 — **此处不回答**，且由 **G1 lifecycle probe**（§12）**门控**。
 
-These checks are a pre-implementation prerequisite and keep the design honest rather than
-asserting unverified OS behavior. The design stands on the round-3 fixes regardless; the
-checks only pin down which exact OS API calls to make.
+这些检查是实现前先决条件，使设计诚实而不主张未验证的 OS 行为。无论怎样，设计都立足于 round-3 修复；这些检查仅确定要调用哪些确切的 OS API。
 
-### 5.5 Per-enable single-client resident server (item 6)
+### 5.5 每次启用单客户端常驻服务器（项 6）
 
-The helper is **one instance per enabled TUN window**, not per IPC transaction. `enable`
-activates it and it stays **resident-active** (§3.4) for the whole enabled window; `disable`
-is served by that **same** instance — the main process issues both over the **same COM proxy**
-— so the helper still owns the creator handle from `create_adapter` (§3.3). It is **never**
-the old "fresh per-command helper" pattern that exits when a single command completes,
-because **disable cannot reach a process it never kept alive**.
+helper 是**每个启用 TUN 窗口一个实例**，而非每个 IPC 事务一个。`enable` 激活它，它在整个启用窗口内保持 **resident-active**（§3.4）；`disable` 由**同一**实例服务 — main 进程通过**同一 COM 代理**发出两者 — 因此 helper 仍拥有来自 `create_adapter`（§3.3）的 creator 句柄。它**从不**是旧的"每命令全新 helper"模式（即单条命令完成就退出），因为**disable 无法触及一个它从未保持存活的进程**。
 
-- **Bound to one client.** On activation the helper registers its class factory and accepts
-  **only the first client that passes the identity check** (steps 5–6). Every subsequent
-  activation client is **rejected** — including a **second Murge process** that is
-  byte-for-byte identical (same path, same Authenticode signature, same SHA-256) but a
-  different process: the helper already bound to the first verified client's
-  `ClientPID`+logon-session+session-key and refuses a second `ProcessId`. This binding holds
-  for the helper's **whole lifetime** (not per command), so no other client can attach to an
-  already-resident privileged instance.
-- **Resident-active; no idle exit.** From `create_adapter` until teardown the helper holds the
-  creator handle and runs **resident-active** (internal state, §10.2). **It does not exit on
-  enable-transaction completion and is not subject to an ordinary idle timeout during the
-  active window** — the creator handle is what keeps the adapter (and thus the data plane)
-  alive, so the helper must persist as long as TUN is enabled, even with zero IPC traffic.
-- **Exit conditions (exhaustive).** The helper exits **only** on:
-  1. **normal `disable` complete** (routes/DNS restored, creator handle closed, `RECONCILED`
-     written, keys zeroized);
-  2. **enable failure + recovery complete** (adapter rolled back or reconciled cleanly);
-  3. **bound client/kernel death after emergency restore** (§3.4);
-  4. **handshake-phase timeout** (the brief pre-bind bootstrap window — distinct from the
-     active window);
-  5. an explicit **global maximum recovery timeout** (a hard cap on a stuck emergency
-     restore, §3.4).
-  **No other timer — in particular no idle timeout applies while resident-active.**
-- **Why per-enable rather than reusable.** A reusable helper would let an unrelated process
-  (or a restarted app with the same binary) attach to a privileged instance. Per-enable
-  activation + client binding + the resident-active lifetime closes that; the OS also unloads
-  the elevated process when it exits, so there is no lingering High-IL process after disable
-  or a crash.
-- **No double-activation.** If a `requestEnable` is already in flight (promise-queue
-  serialization, §10), the main process does not issue a second activation; a second app
-  instance that tries to activate independently is rejected by the client-binding rule (and
-  the second instance is already gated by the single-instance app rule where applicable).
+- **绑定到一个客户端。** 激活时 helper 注册类工厂，**仅接受第一个通过身份检查的客户端**（步骤 5–6）。每个后续激活客户端**被拒绝** — 包括一个逐字节相同（同一路径、同一 Authenticode 签名、同一 SHA-256）但是不同进程的**第二个 Murge 进程**：helper 已绑定到第一个经过验证的客户端的 `ClientPID`+登录会话+会话密钥，并拒绝第二个 `ProcessId`。此绑定对 helper 的**整个生命周期**成立（而非每命令），因此没有其他客户端可以附加到已经常驻的特权实例。
+- **Resident-active；无 idle 退出。** 从 `create_adapter` 到拆除，helper 持有 creator 句柄并运行 **resident-active**（内部状态，§10.2）。**它在启用事务完成时**不退出**，并且**不受**活动窗口期间的普通空闲超时约束** — creator 句柄是保持适配器（进而数据平面）存活的东西，因此只要 TUN 启用，helper 就必须持续存在，即使零 IPC 流量。
+- **退出条件（详尽）。** helper**仅**在以下情况退出：
+  1. **正常 `disable` 完成**（路由/DNS 恢复、creator 句柄关闭、`RECONCILED` 写入、密钥清零）；
+  2. **启用失败 + 恢复完成**（适配器回滚或干净调停）；
+  3. **紧急恢复后的边界客户端/内核死亡**（§3.4）；
+  4. **握手阶段超时**（短暂的绑定前引导窗口 — 与活动窗口不同）；
+  5. 一个显式的**全局最大恢复超时**（对卡住的紧急恢复的硬上限，§3.4）。
+  **没有其他定时器 — 特别是 resident-active 期间不适用 idle 超时。**
+- **为何每次启用而非可复用。** 可复用 helper 会让无关进程（或带相同二进制的重启应用）附加到特权实例。每次启用激活 + 客户端绑定 + resident-active 生命周期关闭了这一点；OS 在它退出时也卸载该提升进程，因此在禁用或崩溃后没有残留的 High-IL 进程。
+- **无双重激活。** 如果 `requestEnable` 已在执行中（promise-queue 序列化，§10），main 进程不发出第二次激活；尝试独立激活的第二个应用实例被客户端绑定规则拒绝（且在适用时，第二个实例已被单实例应用规则门控）。
 
 ---
 
-## 6. Renderer contract (intent-only)
+## 6. Renderer 契约（仅意图）
 
-- The renderer has **no access to the helper client, no device/session handle, and no
-  privilege**. It only has `TunGateway` (a main-process proxy).
-- The renderer may only:
-  - **read** `TunStatus` via `getStatus()`/`onStatus()`, and
-  - **send a typed, parameterless intent** `requestEnable()`/`requestDisable()` (a click
-    that carries no arguments). These are validated IPC intents; authorization, mutation,
-    ordering and error handling all happen in the main-process `TunService`, the **sole
-    holder of the `PrivilegedHelperClient` handle**.
-- There is **no** renderer→helper path, **no** arbitrary parameter, and **no** op to
-  mutate state directly. The UI never flips state optimistically; it renders what main reports.
+- renderer **无法访问 helper 客户端、无设备/会话句柄、无特权**。它只有 `TunGateway`（一个 main 进程代理）。
+- renderer 只能：
+  - 通过 `getStatus()`/`onStatus()` **读取** `TunStatus`，以及
+  - **发送类型化、无参数的意图** `requestEnable()`/`requestDisable()`（一次不携带任何参数点击）。这些是验证过的 IPC 意图；授权、变更、顺序和错误处理都在 main 进程 `TunService` 中完成，它是 `PrivilegedHelperClient` 句柄的**唯一持有者**。
+- **没有** renderer→helper 路径、**无**任意参数、**无**直接变更状态的操作。UI 从不乐观地翻转状态；它渲染 main 报告的内容。
 
 ---
 
-## 7. Driver/helper integrity procedure (C1, C2)
+## 7. 驱动/helper 完整性流程（C1、C2）
 
-- **Manifest:** per-arch `helper.exe` + `wintun.dll` SHA-256 digests and publisher
-  thumbprints, validated inside the signed installer and re-checked at runtime (reuse
-  `sha256File`, `mihomo-artifact.ts`).
-- **Runtime:** every `create_adapter`/`apply_network_state` re-verifies the helper digest +
-  publisher and the `wintun.dll` digest. Failure ⇒ `{ phase:'failed'|'unsupported' }`, zero
-  mutation, helper not trusted.
-- **Fail-closed:** missing manifest, digest mismatch, untrusted signer, unreadable file ⇒
-  abort. Self-signed cert allowed only in a CI "smoke" path, never in production activation.
+- **清单：** 每架构 `helper.exe` + `wintun.dll` SHA-256 摘要和发布者指纹，在签名安装器内验证并在运行时重新检查（复用 `sha256File`、`mihomo-artifact.ts`）。
+- **运行时：** 每次 `create_adapter`/`apply_network_state` 重新验证 helper 摘要 + 发布者和 `wintun.dll` 摘要。失败 ⇒ `{ phase:'failed'|'unsupported' }`，零变更，helper 不受信任。
+- **失败关闭：** 缺失清单、摘要不匹配、不受信任的签名者、不可读文件 ⇒ 中止。自签名证书只允许在 CI "smoke" 路径中，绝不在生产激活中。
 
 ---
 
-## 8. Network snapshot / written / journal model (item 2, item 6)
+## 8. 网络快照 / 已写入 / 日志模型（项 2、项 6）
 
-### 8.0 Trusted state storage, integrity and WAL directory defense (round-6, items 2–4)
+### 8.0 可信状态存储、完整性与 WAL 目录防御（round-6，项 2–4）
 
-**The recovery state is a **trusted, High-IL-only store**, not any user-writable folder (no
-`AppData`/`%TEMP%`/application-data).** The path is decided at install and created by the
-**elevated helper** (never by the unprivileged installer or the Medium app):
+**恢复状态是一个**可信、仅 High-IL**存储，而不是任何用户可写文件夹（无 `AppData`/`%TEMP%`/application-data）。** 路径在安装时决定，并由**提升的 helper**创建（绝不由无特权安装器或 Medium 应用）：
 
 ```
 %ProgramData%\<brand-independent-id>\tun-state\<ownerSid>\
@@ -1036,105 +713,44 @@ because **disable cannot reach a process it never kept alive**.
     state.manifest    (record set: schemaVersion + per-file SHA-256)
 ```
 
-- **Created by the elevated helper at first `enable` (or at `--recover`), under a fixed
-  layout.** The `<brand-independent-id>` (e.g. `Murge` — a stable, brand-independent token, so
-  a rename does not lose recovery state) and the `<ownerSid>` (the authorized user's SID,
-  hex/`S-1-5-21-…`) separate per-owner state so one account cannot see or corrupt another's.
-- **Owner is `SYSTEM`** (S-1-5-18). The DACL is a **pure allow-list** with **no inheritance**
-  and **no deny-that-shadows-owner**:
-  * `SYSTEM` — `GA` (full control: create/read/write/delete/change-ACL);
-  * `Administrators` — `GA` (full control: install/repair/recovery);
-  * **no `owner user SID` ACE** (see below), and it is **not** granted to `Everyone`/`Users`/
-    `Authenticated Users`.
+- **在首次 `enable`（或 `--recover`）时由提升的 helper 创建，按固定布局。** `<brand-independent-id>`（如 `Murge` — 一个稳定、品牌无关的令牌，因此改名不丢失恢复状态）和 `<ownerSid>`（授权用户的 SID，十六进制/`S-1-5-21-…`）分离每个所有者的状态，因此一个账户无法看到或损坏另一个的。
+- **所有者是 `SYSTEM`**（S-1-5-18）。DACL 是**纯允许列表**，**无继承**、**无掩盖所有者的 deny**：
+  * `SYSTEM` — `GA`（完全控制：创建/读取/写入/删除/更改 ACL）；
+  * `Administrators` — `GA`（完全控制：安装/修复/恢复）；
+  * **无`owner user SID` ACE**（见下文），并且不授予 `Everyone`/`Users`/`Authenticated Users`。
 
-  **State-directory DACL (the resolvable SDDL).** Owner `SYSTEM` (`O:SY`), primary group
-  `SYSTEM` (`G:SY`), **protected** (`D:P`), **container/object inherit** (`OICI`), a **complete
-  pure allow-list** with **no `DENY`**, carrying the **High mandatory-integrity label** with
-  `NO_WRITE_UP` (`NW`) and inherit (`OICI`):
+  **状态目录 DACL（可解析的 SDDL）。** 所有者 `SYSTEM`（`O:SY`）、主组 `SYSTEM`（`G:SY`）、**受保护**（`D:P`）、**容器/对象继承**（`OICI`）、**完整的纯允许列表**，**无 `DENY`**，携带**High 强制完整性标签**，带 `NO_WRITE_UP`（`NW`）和继承（`OICI`）：
 
   ```
   O:SYG:SYD:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)
   S:(ML;OICI;NW;;;HI)
   ```
 
-  | SDDL ACE | Object SID | allow / deny | Access mask | Inherit | Why |
+  | SDDL ACE | 对象 SID | 允许/拒绝 | 访问掩码 | 继承 | 原因 |
   |---|---|---|---|---|---|
-  | `(A;OICI;GA;;;SY)` | `SYSTEM` `S-1-5-18` | **allow** | `GA` generic-all (0x1F01FF) | object + container | Full control — create/read/write/delete/change-ACL of the store tree. |
-  | `(A;OICI;GA;;;BA)` | `Administrators` `S-1-5-32-544` | **allow** | `GA` generic-all (0x1F01FF) | object + container | Install/repair/recovery; full control so a repair can rebuild the store. |
-  | (none) | owner user SID `S-1-5-21-<dom>-<rid>` | **absent (no ACE)** | — | — | The Medium owner gets **no raw read** (as required) so the **owner SID ACE is omitted**; the UI reads only the **sanitized** state via helper COM (below). |
-  | (none) | `Everyone` / `Users` / `Authenticated Users` | **absent (no ACE)** | — | — | Deny-by-default on a complete ACL ⇒ no access; never granted. |
-  | `(ML;OICI;NW;;;HI)` | `High` `S-1-16-12288` (label ACE) | — | `NW` = `NO_WRITE_UP` | object + container | The mandatory-integrity `High` label, inherited, with `NO_WRITE_UP`; `HI` = `S-1-16-12288`. |
+  | `(A;OICI;GA;;;SY)` | `SYSTEM` `S-1-5-18` | **允许** | `GA` generic-all（0x1F01FF） | 对象 + 容器 | 完全控制 — 对存储树的创建/读取/写入/删除/更改 ACL。 |
+  | `(A;OICI;GA;;;BA)` | `Administrators` `S-1-5-32-544` | **允许** | `GA` generic-all（0x1F01FF） | 对象 + 容器 | 安装/修复/恢复；完全控制以便修复能重建存储。 |
+  | (无) | 所有者用户 SID `S-1-5-21-<dom>-<rid>` | **缺席（无 ACE）** | — | — | Medium 所有者获得**无原始读取**（如需要），因此 **owner SID ACE 被省略**；UI 仅通过 helper COM 读取**清洗后的**状态（见下文）。 |
+  | (无) | `Everyone` / `Users` / `Authenticated Users` | **缺席（无 ACE）** | — | — | 在完整 ACL 上默认拒绝 ⇒ 无访问；从不授予。 |
+  | `(ML;OICI;NW;;;HI)` | `High` `S-1-16-12288`（标签 ACE） | — | `NW` = `NO_WRITE_UP` | 对象 + 容器 | 强制完整性的 `High` 标签，被继承，带 `NO_WRITE_UP`；`HI` = `S-1-16-12288`。 |
 
-  **Why there is **no** `owner SID` ACE (the Medium surface never opens raw files).** The
-  helper (activated as the **owner's high-integrity token** via `RunAs = Interactive User`) is a
-  member of **`Administrators`** (the COM elevation moniker only runs when the interactive user
-  is an administrator or supplies admin credentials), so its token carries **`BA` enabled** and
-  reaches the store through the `BA` ACE (`GA`). The **Medium** token of the same user has
-  `Administrators` as **deny-only/restricted** (UAC Admin Approval Mode) and has **no** `owner SID`
-  ACE, so it is denied **read, write, delete and change-ACL** by **both** the DACL and the **High
-  mandatory label** (`NO_WRITE_UP`). The Medium UI reads **only** the sanitized state via helper
-  COM and **never** opens a raw `baseline.json`/`journal.json`. This is the **preferred** case the
-  reviewer called out — because the Medium surface needs **no raw read**, no `owner SID` file ACE
-  is added, and the UI rides COM-sanitized status only. (If a future non-admin helper had to write
-  the store, the exact file mask would be asserted by the descriptor-build tests in §13; that is
-  not the design here.)
+  **为何**没有**`owner SID` ACE（Medium 表面从不打开原始文件）。** helper（通过 `RunAs = Interactive User` 作为**所有者的高完整性令牌**激活）是 **`Administrators`** 的成员（COM 提升标记仅在交互式用户是管理员或提供管理员凭据时运行），因此其令牌携带 **`BA` 启用**，并通过 `BA` ACE（`GA`）到达存储。同一用户的 **Medium** 令牌把 `Administrators` 视为 **deny-only/受限**（UAC 管理员批准模式），并且**没有** `owner SID` ACE，因此它被**DACL 和 High 强制标签**（`NO_WRITE_UP`）**拒绝读写、删除和更改 ACL**。Medium UI 仅通过 helper COM 读取**清洗后的**状态，**从不**打开原始 `baseline.json`/`journal.json`。这是审阅者指出的**首选**情况 — 因为 Medium 表面**不需要原始读取**，不添加 `owner SID` 文件 ACE，UI 仅使用 COM 清洗的状态。（如果未来的非管理员 helper 必须写入存储，确切的文件掩码会由 §13 中的描述符构建测试断言；这不是这里的设计。）
 
-- **The same-user Medium/High split is the point of the store contract.** The helper runs as the
-  **owner's high-integrity token** (`RunAs = Interactive User`), which is a member of
-  **`Administrators`** (elevation moniker ⇒ the interactive user is an admin or supplied admin
-  credentials), so it reaches the store through the **`BA` (`GA`) ACE**. The Medium UI token of
-  **the same user SID** has `Administrators` as **deny-only/restricted** (UAC Admin Approval Mode)
-  and has **no** `owner SID` ACE in the DACL, so it is denied by the DACL **and** by the
-  **`High` mandatory label**. The separation is **mandatory integrity control + the missing owner
-  ACE**: the `tun-state` and `<ownerSid>` directories carry the **`High` mandatory label**
-  (`S:(ML;OICI;NW;;;HI)`, `HI` = `S-1-16-12288`, `NW` = `NO_WRITE_UP`). A **Medium** token of that
-  SID is denied **write / delete / ACL change** (MIC write-up), while the **High** helper passes.
-  The Medium surface is therefore **incapable** of writing, deleting or re-ACLing the state
-  dir/files — the property the round-6 reviewer requires.
-- **Owner reads only the sanitized state via helper COM.** To get state, the helper exposes
-  `get_status`/`get_state`, which returns a **sanitized projection** (the current `WrittenState`
-  fields the renderer needs, **no** raw `BaselineSnapshot`/`MutationJournal` records, no
-  secrets, no LUID/GUID beyond what the UI shows). **Main (Medium) never opens the raw files**;
-  there is no Medium-facing read path to `baseline.json`/`journal.json`.
-- **Every record is written by the helper only**, always via secure file I/O:
-  * open with `CreateFile` and **`FILE_FLAG_OPEN_REPARSE_POINT`** (so a reparse point is
-    surfaced, not followed) + `FILE_FLAG_BACKUP_SEMANTICS` for directories;
-  * **validate each path component** before use, and **reject** any **symlink / junction /
-    mount point / reparse point** on the store path (opening with `FILE_FLAG_OPEN_REPARSE_POINT`
-    and querying `FileAttributeTagInfo`/`GetFileInformationByHandle` for
-    `FILE_ATTRIBUTE_REPARSE_POINT`), so a planted `junction`/`symlink` cannot redirect the
-    store;
-  * never **re-open by string path** a location a user can replace — once a file is opened
-    (and its `file ID` recorded), reuse that **handle**, and before each append **re-verify** the
-    handle still refers to the same object (`FileIdInfo` / `GetFileInformationByHandleEx`),
-    matching the recorded `file ID`; a mismatch ⇒ **fail closed**;
-  * write to a temp file in the **same directory**, `FlushFileBuffers`, then **atomic
-    `ReplaceFile`/rename** into place (so a crash mid-write never leaves a torn record);
-  * **never follow a user-controlled path** (no file placed in `%TEMP%`/app-data is promoted to
-    an elevated location; the store lives only under `%ProgramData%\<id>\tun-state\<ownerSid>`).
-- **Upgrade/uninstall retain the directory.** It is preserved across upgrade and uninstall and
-  removed **only** after a safe recovery has completed (no pending `PREPARED`/`APPLIED` record
-  and routes/DNS are back to baseline), so losing recovery state does not orphan a live
-  interface or a route/DNS change.
+- **同用户 Medium/High 拆分是存储契约的要义。** helper 作为**所有者的高完整性令牌**（`RunAs = Interactive User`）运行，它是 **`Administrators`** 的成员（提升标记 ⇒ 交互式用户是管理员或提供管理员凭据），因此它通过 **`BA`（`GA`）ACE**到达存储。**同一用户 SID** 的 Medium UI 令牌把 `Administrators` 视为 **deny-only/受限**（UAC 管理员批准模式）且**没有** `owner SID` ACE，因此它被 DACL **且**被 **`High` 强制标签**拒绝。分离是**强制完整性控制 + 缺失的 owner ACE**：`tun-state` 和 `<ownerSid>` 目录携带 **`High` 强制标签**（`S:(ML;OICI;NW;;;HI)`，`HI` = `S-1-16-12288`，`NW` = `NO_WRITE_UP`）。该 SID 的 **Medium** 令牌被**拒绝 写入 / 删除 / ACL 更改**（MIC write-up），而 **High** helper 通过。因此 Medium 表面**无法**写入、删除或重新 ACL 状态目录/文件 — 这是 round-6 审阅者要求的属性。
+- **所有者仅通过 helper COM 读取清洗后的状态。** 为获取状态，helper 暴露 `get_status`/`get_state`，它返回**清洗后的投影**（renderer 需要的当前 `WrittenState` 字段，**无**原始 `BaselineSnapshot`/`MutationJournal` 记录，无机密，无超过 UI 显示的 LUID/GUID）。**main（Medium）从不打开原始文件**；没有面向 Medium 的读取路径到 `baseline.json`/`journal.json`。
+- **每条记录仅由 helper 写入**，始终通过安全文件 I/O：
+  * 用 `CreateFile` 打开，带 **`FILE_FLAG_OPEN_REPARSE_POINT`**（因此 reparse point 会被浮现，而非跟随）+ 目录的 `FILE_FLAG_BACKUP_SEMANTICS`；
+  * 使用前**验证每个路径组件**，并且**拒绝**存储路径上的任何 **symlink / junction / mount point / reparse point**（用 `FILE_FLAG_OPEN_REPARSE_POINT` 打开并查询 `FileAttributeTagInfo`/`GetFileInformationByHandle` 的 `FILE_ATTRIBUTE_REPARSE_POINT`），因此植入的 `junction`/`symlink` 无法重定向存储；
+  * 绝不**按字符串路径重新打开**用户可替换的位置 — 一旦文件打开（并记录其 `file ID`），复用该 **句柄**，并在每次追加前**重新验证**句柄仍指同一对象（`FileIdInfo` / `GetFileInformationByHandleEx`），匹配记录的 `file ID`；不匹配 ⇒ **失败关闭**；
+  * 写入**同一目录**中的临时文件、`FlushFileBuffers`，然后**原子 `ReplaceFile`/重命名**到位（因此写入中途崩溃绝不会留下撕裂记录）；
+  * **绝不跟随用户可控路径**（`%TEMP%`/app-data 中的文件不会被提升到提升位置；存储仅存在于 `%ProgramData%\<id>\tun-state\<ownerSid>` 下）。
+- **升级/卸载保留目录。** 它跨升级和卸载被保存，且**仅**在安全恢复完成后移除（无待处理 `PREPARED`/`APPLIED` 记录且路由/DNS 回到基线），因此丢失恢复状态不会使活动接口或路由/DNS 变更成为孤儿。
 
-**Integrity / authenticity is deterministic — "HMAC-or-digest" is removed.** The **primary
-authority is the Medium-unwritable DACL + High mandatory label** above (a same-user attacker
-**cannot** write the store at all). On top of that boundary, the records carry
-**`schemaVersion` + a SHA-256 digest** (in `state.manifest`) *only to detect accidental
-corruption / truncation* — a same-user attacker who could write the store would also rewrite
-the digest, so the digest is **not** presented as tamper-proof authenticity. There is **no
-disk-state HMAC** claim: if an HMAC were used it would need a key location, key generation,
-**DPAPI** protection, rotation and an upgrade/recovery reading path, which we do **not** provide
-— so the HMAC language is **deleted** and only the DACL/integrity-label boundary + corruption
-detection are claimed. (The **channel** envelope MAC over IPC in §4.3 is a separate, per-message
-authenticator over the authenticated COM channel and is **not** a disk-state integrity claim.)
+**完整性 / 真实性是确定的 — "HMAC 或 digest"已移除。** **首要权威是上述 Medium 不可写 DACL + High 强制标签**（同用户攻击者**根本不能**写入存储）。在该边界之上，记录携带 **`schemaVersion` + 一个 SHA-256 摘要**（在 `state.manifest` 中）*仅用于检测意外损坏/截断* — 能写入存储的同用户攻击者也会重写摘要，因此摘要**不**被呈现为防篡改的真实性。**没有磁盘状态 HMAC**主张：如果使用 HMAC，它需要密钥位置、密钥生成、**DPAPI** 保护、轮换和升级/恢复读取路径，这些我们**不**提供 — 因此 HMAC 措辞**已删除**，只主张 DACL/完整性标签边界 + 损坏检测。（§4.3 中 IPC 的**通道**信封 MAC 是认证 COM 通道之上的独立逐消息认证器，**不是**磁盘状态完整性主张。）
 
-**Fail-closed on any anomaly.** On **read failure, incorrect ACL, wrong owner, discovered
-reparse point, or schema/digest anomaly**, the helper performs **zero network modification**
-and enters **`restore-failed`** (state machine §10.2), retaining the store for a human/`--recover`
-decision — it never proceeds to mutate routes/DNS or close handles from data it could not trust.
+**对任何异常失败关闭。** 在**读取失败、错误 ACL、错误所有者、发现的 reparse point、或 schema/摘要异常**时，helper 执行**零网络修改**并进入 **`restore-failed`**（状态机 §10.2），保留存储供人工/`--recover` 决策 — 它绝不从无法信任的数据继续变更路由/DNS 或关闭句柄。
 
-### 8.1 Records and type fixes
+### 8.1 记录与类型修复
 
 ```ts
 // BaselineSnapshot — exact pre-enable OS state (immutable reference for restore)
@@ -1200,12 +816,9 @@ interface MutationJournalEntry {
 }
 ```
 
-> **Type fixes (item 6):** `dnsSets` was `Array<{...>` (unclosed) → now
-> `Array<{...}>`. `NET_LUID` is a **64-bit value** and is serialized as a **canonical hex
-> string** everywhere in JSON, never a JS number. `requestId` is a **monotonic uint64
-> decimal string** (per-session sequence), never a UUID/string mix.
+> **类型修复（项 6）：** `dnsSets` 是 `Array<{...>`（未闭合）→ 现在为 `Array<{...}>`。`NET_LUID` 是 **64 位值**，在 JSON 中的任何地方都序列化为**规范十六进制字符串**，绝不是 JS number。`requestId` 是**单调 uint64 十进制字符串**（每会话序列），绝不是 UUID/字符串混合。
 
-### 8.2 `DesiredNetworkState` (item 3 — the sole-modifier intent)
+### 8.2 `DesiredNetworkState`（项 3 — 唯一修改者意图）
 
 ```ts
 interface DesiredNetworkState {
@@ -1222,202 +835,106 @@ interface DesiredNetworkState {
 }
 ```
 
-Generated by the main process (`policy.deriveDesiredNetworkState(validatedMihomoConfig)`)
-from the validated runtime config, and applied verbatim by the helper. Because
-`auto-route`/`dns-hijack` are disabled in the runtime config, this is the **only** source
-of route/DNS/interface changes.
+由 main 进程（`policy.deriveDesiredNetworkState(validatedMihomoConfig)`）从验证过的运行时配置生成，并由 helper 逐字应用。因为 `auto-route`/`dns-hijack` 在运行时配置中被禁用，这是路由/DNS/接口变更的**唯一**来源。
 
-### 8.3 Write-ahead journal (WAL) — record intent durable BEFORE mutating
+### 8.3 预写日志（WAL）— 在变更之前先将意图持久化
 
-The journal is **write-ahead**: the OS is **never mutated before its PREPARED record is
-durable on disk**.
+日志是**预写（write-ahead）**的：OS**绝不在其 PREPARED 记录在磁盘上持久化之前被变更**。
 
-- **`BaselineSnapshot` is committed first.** Before any mutation — and before
-  `create_adapter` — the helper writes + validates + fsyncs the full `BaselineSnapshot`
-  (atomically: temp → validate → rename). If it cannot, it aborts with **zero mutation**.
-- **`create_adapter` is itself WAL.** Before calling `WintunCreateAdapter`, the helper
-  writes + fsyncs `CREATE_ADAPTER/PREPARED` carrying `{ adapterName, tunnelType,
-  requestedGuid }` (the recoverable identity). Only after that record is durable does it
-  call `WintunCreateAdapter`. On success it writes `CREATE_ADAPTER/APPLIED` with the
-  derived `luid` (from `WintunGetAdapterLUID`) + the handle-derived GUID.
-- **Every route/DNS/interface mutation is a two-phase record.** For each op
-  (`addRoute`, `delRoute`, `setDns`, `setMetric`): write + fsync the `${op}/PREPARED`
-  record with its target identity and expected `after`; mutate the OS; then write
-  `${op}/APPLIED` recording the exact resulting values (this is also `WrittenState`).
-- **The journal is append-only and ordered.** Crash can occur **between any two records**;
-  the durable record stream, not assumptions, is what recovery replays.
-- **The WAL is itself protected against directory replacement (§8.0).** On `init`/`--recover`
-  the helper first validates the store **directory** — its **owner**, its **DACL** (the
-  allow-list/HIGH-label contract) and its **reparse state** (no junction/symlink/mount point).
-  The journal file is opened **once across the run**; before **each** `PREPARED`/`APPLIED`/
-  `RECONCILED` append the helper **re-verifies that the already-open handle still refers to the
-  same object** (`FileIdInfo`/`GetFileInformationByHandleEx` file-ID match) — it **never
-  re-opens `journal.json` by string path** (a user-replaceable location). Any mismatch ⇒
-  **zero network mutation** + `restore-failed`.
+- **`BaselineSnapshot` 先行提交。** 在任何变更之前 — 并在 `create_adapter` 之前 — helper 写入 + 验证 + fsync 完整的 `BaselineSnapshot`（原子：临时 → 验证 → 重命名）。如果无法做到，它以**零变更**中止。
+- **`create_adapter` 本身就是 WAL。** 在调用 `WintunCreateAdapter` 之前，helper 写入 + fsync `CREATE_ADAPTER/PREPARED`，携带 `{ adapterName, tunnelType, requestedGuid }`（可恢复身份）。仅在该记录持久化后它才调用 `WintunCreateAdapter`。成功后它写入 `CREATE_ADAPTER/APPLIED`，带导出的 `luid`（来自 `WintunGetAdapterLUID`）+ 从句柄导出的 GUID。
+- **每个路由/DNS/接口变更都是两阶段记录。** 对每个操作（`addRoute`、`delRoute`、`setDns`、`setMetric`）：写入 + fsync `${op}/PREPARED` 记录，带其目标身份和预期 `after`；变更 OS；然后写入 `${op}/APPLIED`，记录确切的最终值（这也是 `WrittenState`）。
+- **日志是仅追加且有序的。** 崩溃可能发生在**任意两条记录之间**；恢复重放的是持久的记录流，而不是假设。
+- **WAL 本身受到目录替换防御（§8.0）。** 在 `init`/`--recover` 时，helper 首先验证存储**目录** — 其**所有者**、其**DACL**（允许列表/HIGH 标签契约）及其**reparse 状态**（无 junction/symlink/mount point）。日志文件在运行期间**打开一次**；在**每次** `PREPARED`/`APPLIED`/`RECONCILED` 追加前，helper**重新验证已打开的句柄仍指向同一对象**（`FileIdInfo`/`GetFileInformationByHandleEx` 文件 ID 匹配）— 它**绝不按字符串路径重新打开 `journal.json`**（用户可替换的位置）。任何不匹配 ⇒ **零网络变更** + `restore-failed`。
 
-### 8.4 Recovery: reconcile PREPARED-but-unknown against the current OS state
+### 8.4 恢复：对照当前 OS 状态调停 PREPARED-but-unknown
 
-A crash can leave a **PREPARED** record with no matching **APPLIED** — the mutation may or
-may not have happened. Recovery must **reconcile by enumeration**, not assume:
+崩溃可能留下一个**PREPARED** 记录，无匹配的 **APPLIED** — 变更可能发生也可能没有。恢复必须**通过列举调停**，而非假设：
 
-- **On next boot / `--recover`.** `TunService.init()`/`--recover` loads `BaselineSnapshot` +
-  the journal. For each op from the end backwards:
-  - **APPLIED** → undo (reverse the op) subject to the per-item owned-only rule (§8.5);
-    then write the matching `RECONCILED` record.
-  - **PREPARED without APPLIED** → the mutation's success is **unknown**. Do **not** assume
-    it happened or did not. Instead **reconcile against the current OS state**:
-    - for `CREATE_ADAPTER`: **`WintunOpenAdapter(Name)`** the product adapter by name and
-      verify identity — compare `RequestedGUID` against `WintunGetAdapterLUID(handle,
-      &luid)` + `ConvertInterfaceLuidToGuid` (and/or a SetupAPI device match). Only on an
-      **exact identity match** do we close the creator handle / run product lifecycle
-      cleanup; if the creator handle is already closed (a crash between `APPLIED` and
-      cleanup), first **observe whether the adapter auto-disappeared** — if it did, mark
-      `RECONCILED` (nothing to undo); if it still exists, it is now just an orphan we never
-      created a handle for, so reconcile by name+identity and record `RECONCILED` without
-      making an unwanted change. No `WintunDeleteAdapter`.
-    - for a route/DNS op: **read the current OS state** for that LUID/prefix; if it matches
-      the op's `after`, undo it back to `before`; if it never took effect, mark
-      `RECONCILED` (nothing to undo).
-- **Per-item owned-only rule (never all-or-nothing).** Undo is per LUID/family/field. If the
-  current value still equals what we wrote, restore it to the baseline; if it was changed
-  externally, do **not** overwrite — record a **per-item `conflict`** (`conflictDetail`) and
-  leave that item. Unrelated items are unaffected; the phase becomes `conflict` only if an
-  owned item was externally modified, otherwise restore completes to `configured`.
-- **Reverse order.** Undo walks the journal **in reverse** so a dependent op (e.g. a route
-  added after an interface metric) is torn down before the dependency it relied on. A
-  crash mid-recovery re-runs idempotently (each undo is guarded by the existing
-  `RECONCILED` marker).
-- **`CLOSE_CREATOR_HANDLE` (commit point).** The adapter is removed **only** by closing the
-  creator handle — and this is the **last** undo step, itself WAL:
-  `CLOSE_CREATOR_HANDLE/PREPARED` → verify ownership by `Name` + `RequestedGUID` (and the
-  derived LUID) → ensure mihomo has already ended its session and closed its open handle →
-  `WintunCloseAdapter(creatorHandle)` → `CLOSE_CREATOR_HANDLE/APPLIED` (→ `RECONCILED`).
-  There is **no** `WintunDeleteAdapter`, **no** `ERROR_REBOOT_REQUIRED` adapter-delete
-  return, and **no** `delete-pending` state. The adapter is reported gone once the handle is
-  closed. If ownership cannot be proven, do **not** close the handle; record a per-item
-  `conflict` and leave it (D5).
+- **下次启动 / `--recover`。** `TunService.init()`/`--recover` 加载 `BaselineSnapshot` + 日志。对每个从末尾向前的操作：
+  - **APPLIED** → 撤销（反转该操作），遵守逐项 owned-only 规则（§8.5）；然后写入匹配的 `RECONCILED` 记录。
+  - **无 APPLIED 的 PREPARED** → 变更成功**未知**。**不**假设发生或未发生。相反**对照当前 OS 状态调停**：
+    - 对 `CREATE_ADAPTER`：按名称 **`WintunOpenAdapter(Name)`** 打开产品适配器并验证身份 — 将 `RequestedGUID` 与 `WintunGetAdapterLUID(handle, &luid)` + `ConvertInterfaceLuidToGuid`（和/或 SetupAPI 设备匹配）比较。仅在与**精确身份匹配**时才关闭 creator 句柄 / 运行产品生命周期清理；如果 creator 句柄已关闭（在 `APPLIED` 与清理之间崩溃），先**观察适配器是否自动消失** — 如果已消失，标记 `RECONCILED`（无撤销）；如果仍存在，它现在只是我们从未为其创建句柄的孤儿，因此按名称+身份调停并记录 `RECONCILED`，不做不想要的变更。无 `WintunDeleteAdapter`。
+    - 对路由/DNS 操作：**读取该 LUID/前缀的当前 OS 状态**；如果匹配操作的 `after`，把它撤销回 `before`；如果从未生效，标记 `RECONCILED`（无撤销）。
+- **逐项 owned-only 规则（绝不全部或全无）。** 撤销按 LUID/族/字段进行。如果当前值仍等于我们写入的，恢复到基线；如果被外部更改，**不**覆盖 — 记录一个**逐项 `conflict`**（`conflictDetail`）并保留该项。无关项不受影响；仅当拥有的项被外部修改时相位变为 `conflict`，否则恢复完成到 `configured`。
+- **逆序。** 撤销**反向**遍历日志，因此依赖项（如在接口指标之后添加的路由）在它依赖的依赖项被拆除之前被拆除。恢复中途崩溃会幂等地重新运行（每个撤销都受现有 `RECONCILED` 标记保护）。
+- **`CLOSE_CREATOR_HANDLE`（提交点）。** 适配器**仅**通过关闭 creator 句柄被移除 — 这是**最后**的撤销步骤，本身是 WAL：`CLOSE_CREATOR_HANDLE/PREPARED` → 通过 `Name` + `RequestedGUID`（以及导出的 LUID）验证所有权 → 确保 mihomo 已结束其会话并关闭其打开句柄 → `WintunCloseAdapter(creatorHandle)` → `CLOSE_CREATOR_HANDLE/APPLIED`（→ `RECONCILED`）。**没有** `WintunDeleteAdapter`、**没有** `ERROR_REBOOT_REQUIRED` 适配器删除返回、**没有** `delete-pending` 状态。一旦句柄关闭，适配器被报告为消失。如果所有权无法证明，**不**关闭句柄；记录一个逐项 `conflict` 并保留它（D5）。
 
-### 8.5 Per-item owned-only restore rule
+### 8.5 逐项 owned-only 恢复规则
 
-Restore is **never all-or-nothing**. Treating the whole snapshot as one unit would either
-fail everything because one item was externally changed, or overwrite a user's change.
-Instead each item is decided independently:
+恢复**绝不全部或全无**。把整个快照当作一个单元要么因为一项被外部更改而全部失败，要么覆盖用户的更改。相反每项独立决定：
 
-- Compare the **current** OS value against what we wrote (the op's `after`/`WrittenState`).
-- If it still equals what we wrote → restore to the `BaselineSnapshot` value.
-- If it was **changed externally** → **do not overwrite**; record a per-item `conflict`
-  (`conflictDetail`: LUID/index, family, field, expected vs current) and leave it.
-- Unrelated items are unaffected; the phase becomes `conflict` only if an owned item was
-  externally modified, otherwise restore completes to `configured`.
+- 将**当前** OS 值与我们的写入（操作的 `after`/`WrittenState`）比较。
+- 如果仍等于我们写入的 → 恢复到 `BaselineSnapshot` 值。
+- 如果被**外部更改** → **不覆盖**；记录一个逐项 `conflict`（`conflictDetail`：LUID/索引、族、字段、预期 vs 当前）并保留它。
+- 无关项不受影响；仅当拥有的项被外部修改时相位变为 `conflict`，否则恢复完成到 `configured`。
 
 ---
 
-## 9. Config gating (C7) — allow the single-owner activation only
+## 9. 配置门控（C7）— 仅允许单所有者激活
 
-Today `mihomo-config.ts` asserts, for every document, that `tun`/`dns` contain only
-`enable` and it must be `false`. Phase 9 changes this with one reviewed, tested change:
+今天 `mihomo-config.ts` 对每个文档断言 `tun`/`dns` 只包含 `enable` 且必须为 `false`。Phase 9 通过一个经评审、被测试的更改改变这一点：
 
-- Keep the dev-safe default: non-Windows, or no verified helper, still fails closed and
-  rejects a synthesized `tun.enable:true` / `dns` block.
-- On Windows, the runtime activation path may synthesize a `tun`/`dns` block **only in the
-  running config** (never persisted as a user preference, torn down on disable), and it is
-  produced **only** by the main process for the single-owner model:
+- 保留开发安全默认：非 Windows 或无已验证 helper，仍失败关闭并拒绝合成的 `tun.enable:true` / `dns` 块。
+- 在 Windows 上，运行时激活路径可以**仅**在运行配置中合成一个 `tun`/`dns` 块（绝不作为用户偏好持久化，在禁用时拆除），并且它**仅**由 main 进程为单所有者模型产生：
   - `tun: { enable: true, stack: system, auto-route: false, auto-detect-interface: false }`
   - `dns: { enable: true, hijack: false, nameserver: [mihomo loopback DNS] }`
-  - `auto-route` / `auto-detect-interface` / `dns-hijack` are **false/absent** because the
-    helper is the sole modifier (Option A, §1.1). The routes/DNS that the helper applies
-    come from `DesiredNetworkState` (§8.2), not from mihomo.
-- `mihomoConfigErrors` stays the single gate and gains an explicit
-  `allowedTunContext: false|'activate'` parameter: `false` everywhere except the
-  authorized `activate` path. A profile carrying its own `tun`/`dns`/`rules` still cannot
-  slip through.
-- The helper is never handed a mihomo config to mutate; it only receives the typed
-  `DesiredNetworkState`.
+  - `auto-route` / `auto-detect-interface` / `dns-hijack` 为 **false/缺席**，因为 helper 是唯一修改者（方案 A，§1.1）。helper 应用的路由/DNS 来自 `DesiredNetworkState`（§8.2），而非 mihomo。
+- `mihomoConfigErrors` 保持单一门控并获得一个显式 `allowedTunContext: false|'activate'` 参数：除授权的 `activate` 路径外处处为 `false`。携带自己的 `tun`/`dns`/`rules` 的配置文件仍然无法漏过。
+- helper 从未被交给要变更的 mihomo 配置；它只接收类型化的 `DesiredNetworkState`。
 
 ---
 
-## 10. TUN state machine, enable order and UI copy
+## 10. TUN 状态机、启用顺序与 UI 文案
 
-### 10.1 Enable order (fixed, item 2) — write-ahead
+### 10.1 启用顺序（固定，项 2） — 预写
 
-The enable operation runs inside the main-process `promise-queue` (serialized). Every
-mutation is **write-ahead**: its `PREPARED` record is durable **before** the OS is touched
-(§8.3). The exact order is:
+启用操作在 main 进程 `promise-queue`（序列化）内运行。每个变更都是**预写**的：其 `PREPARED` 记录在 OS 被触碰**之前**持久化（§8.3）。确切顺序是：
 
 ```
- 1 verify            probe_integrity (helper + wintun digest/publisher); no elevation, no mutation
- 2 elevate/bootstrap activate helper via Elevation:Administrator!new; handshake + sessionKey
- 3 BaselineSnapshot  helper writes + fsyncs + verifies the FULL baseline BEFORE any mutation;
-                     abort with zero mutation if it cannot
- 4 CREATE_ADAPTER/PREPARED  helper writes + fsyncs {adapterName, tunnelType, requestedGuid}
-                     BEFORE calling WintunCreateAdapter (recoverable identity)
- 5 create adapter    helper calls WintunCreateAdapter(Name, TunnelType, RequestedGUID);
-                     installs/loads driver on demand + creates adapter; WintunGetAdapterLUID
-                     derives the LUID; assert exactly one Murge adapter (Name+RequestedGUID)
- 6 CREATE_ADAPTER/APPLIED  write {adapterName, requestedGuid, luid} and pin the canonical-hex LUID
-7 apply routes/DNS  for each op: write ${op}/PREPARED -> mutate OS -> write ${op}/APPLIED
-8 start mihomo     mihomo opens/reuses the adapter (G1) and starts its packet session
- 9 readiness probe  probe the TUN/loopback path is live; assert routes/DNS present
-10 active           phase → active; helper is resident-active (§3.4/§5.5): it keeps the creator
-                    handle open for the whole enabled window; renderer gets the true status
+  1 verify            probe_integrity (helper + wintun digest/publisher); no elevation, no mutation
+  2 elevate/bootstrap activate helper via Elevation:Administrator!new; handshake + sessionKey
+  3 BaselineSnapshot  helper writes + fsyncs + verifies the FULL baseline BEFORE any mutation;
+                      abort with zero mutation if it cannot
+  4 CREATE_ADAPTER/PREPARED  helper writes + fsyncs {adapterName, tunnelType, requestedGuid}
+                      BEFORE calling WintunCreateAdapter (recoverable identity)
+  5 create adapter    helper calls WintunCreateAdapter(Name, TunnelType, RequestedGUID);
+                      installs/loads driver on demand + creates adapter; WintunGetAdapterLUID
+                      derives the LUID; assert exactly one Murge adapter (Name+RequestedGUID)
+  6 CREATE_ADAPTER/APPLIED  write {adapterName, requestedGuid, luid} and pin the canonical-hex LUID
+ 7 apply routes/DNS  for each op: write ${op}/PREPARED -> mutate OS -> write ${op}/APPLIED
+ 8 start mihomo     mihomo opens/reuses the adapter (G1) and starts its packet session
+  9 readiness probe  probe the TUN/loopback path is live; assert routes/DNS present
+ 10 active           phase → active; helper is resident-active (§3.4/§5.5): it keeps the creator
+                     handle open for the whole enabled window; renderer gets the true status
 ```
 
-- **Routes/DNS are always written after adapter creation** (steps 7+ follow step 5–6) so
-  their target interface LUID/index already exists.
-- **`CREATE_ADAPTER` is write-ahead**: the `PREPARED` record (steps 4) is fsync'd **before**
-  `WintunCreateAdapter` (step 5) and the `APPLIED` record (step 6) is written only after it
-  succeeds. A crash between 4 and 6 leaves a `CREATE_ADAPTER/PREPARED` record that recovery
-  reconciles by **`WintunOpenAdapter(Name)`** + identity verification (§8.4).
-- **Baseline/journal live in the trusted state store (§8.0).** Step 3 first creates/validates
-  the `%ProgramData%\<id>\tun-state\<ownerSid>\` directory (owner, DACL, mandatory label,
-  reparse state) and then writes + fsyncs `BaselineSnapshot` there; every later record lands in
-  the same verified store via a held handle. A store/ACL/reparse/integrity anomaly at any step
-  ⇒ **zero network mutation** + `restore-failed`.
-- **Any failure at any step recovers in reverse journal order** (§8.4), reconciling each
-  PREPARED-but-unknown op against the current OS state: failure at step 9 undoes steps 7–6
-  then the adapter (closes the creator handle, §3.3); failure at step 5 (or between 4–6)
-  reconciles the adapter by `WintunOpenAdapter(Name)` + identity; failure at step 2 (UAC
-  cancelled / timeout) leaves **zero mutation**.
-- **Disable is the mirror, served by the **same resident helper** (§3.3, §5.5):** main calls
-  the same helper over the same COM proxy; mihomo ends its session (`WintunEndSession`) and
-  closes its open handle → helper restores routes/DNS per item (reverse WAL order) →
-  **`CLOSE_CREATOR_HANDLE/PREPARED` → verify ownership by `Name`+`RequestedGUID`+LUID →
-  `WintunCloseAdapter(creatorHandle)` (removes the adapter) →
-  `CLOSE_CREATOR_HANDLE/APPLIED`/`RECONCILED`** → reconcile journal → `configured`. There is
-  **no** `WintunDeleteAdapter` and **no** `delete-pending`/`RebootRequired` path. The helper
-  **holds the creator handle for the entire enabled window** (the fixed safety baseline, §3.3),
-  so **disable reaches the same instance** that created the adapter — it never spawns a new
-  helper for disable.
+- **路由/DNS 总是在适配器创建之后写入**（步骤 7+ 跟随步骤 5–6），因此它们的目标接口 LUID/索引已存在。
+- **`CREATE_ADAPTER` 是预写的**：`PREPARED` 记录（步骤 4）在 `WintunCreateAdapter`（步骤 5）**之前**被 fsync，`APPLIED` 记录（步骤 6）仅在它成功之后写入。步骤 4 与 6 之间崩溃留下 `CREATE_ADAPTER/PREPARED` 记录，恢复通过 **`WintunOpenAdapter(Name)`** + 身份验证调停（§8.4）。
+- **基线/日志位于可信状态存储（§8.0）。** 步骤 3 首先创建/验证 `%ProgramData%\<id>\tun-state\<ownerSid>\` 目录（所有者、DACL、强制标签、reparse 状态），然后在那里写入 + fsync `BaselineSnapshot`；每个后续记录通过持有的句柄落入同一已验证存储。任何步骤的存储/ACL/reparse/完整性异常 ⇒ **零网络变更** + `restore-failed`。
+- **任何步骤的失败都按逆日志顺序恢复**（§8.4），把每个 PREPARED-but-unknown 操作对照当前 OS 状态调停：步骤 9 失败撤销步骤 7–6 然后适配器（关闭 creator 句柄，§3.3）；步骤 5（或 4–6 之间）失败通过 `WintunOpenAdapter(Name)` + 身份调停适配器；步骤 2（UAC 取消/超时）失败留下**零变更**。
+- **禁用是镜像，由**同一个常驻 helper**服务（§3.3、§5.5）：** main 通过同一 COM 代理调用同一 helper；mihomo 结束其会话（`WintunEndSession`）并关闭其打开句柄 → helper 逐项恢复路由/DNS（逆 WAL 顺序）→ **`CLOSE_CREATOR_HANDLE/PREPARED` → 通过 `Name`+`RequestedGUID`+LUID 验证所有权 → `WintunCloseAdapter(creatorHandle)`（移除适配器）→ `CLOSE_CREATOR_HANDLE/APPLIED`/`RECONCILED`** → 调停日志 → `configured`。**没有** `WintunDeleteAdapter`，**没有** `delete-pending`/`RebootRequired` 路径。helper**在整个启用窗口内持有 creator 句柄**（固定安全基线，§3.3），因此**disable 能到达创建适配器的同一实例** — 它从不为了 disable 而生成新 helper。
 
-### 10.2 Transition table
+### 10.2 转换表
 
-| Phase | Entry | Allowed actions | On failure |
+| 相位 | 进入 | 允许的动作 | 失败时 |
 |---|---|---|---|
-| `configured` | init/recovery, end of disable | enable | — |
-| `starting` | `requestEnable` intent | verify → snapshot → `create_adapter`/PREPARED→APPLIED → pin LUID → `apply_network_state` (each op PREPARED→APPLIED) → mihomo open → probe | → `restoring` (reverse WAL order) → `restore-failed`/`failed` |
-| `active` | routes/DNS applied + mihomo TUN up | disable, teardown | → `restoring` |
-| `restoring` | disable/teardown/rollback | per-item owned-only restore, reverse journal order | → `conflict` (per-item) or `restore-failed` (corruption) |
-| `failed` | non-recoverable integrity/adapter/capture | retry / report | — |
-| `conflict` | an externally-modified owned item | none (report, per-item) | owner/emergency path |
-| `unsupported` | non-Windows / no verified helper | none | — |
-| `restore-failed` | could not restore (not a conflict) | retry / `--recover` | — |
+| `configured` | init/recovery，禁用结束 | enable | — |
+| `starting` | `requestEnable` 意图 | verify → snapshot → `create_adapter`/PREPARED→APPLIED → pin LUID → `apply_network_state`（每个操作 PREPARED→APPLIED）→ mihomo open → probe | → `restoring`（逆 WAL 顺序）→ `restore-failed`/`failed` |
+| `active` | 路由/DNS 已应用 + mihomo TUN up | disable、拆除 | → `restoring` |
+| `restoring` | disable/拆除/回滚 | 逐项 owned-only 恢复，逆日志顺序 | → `conflict`（逐项）或 `restore-failed`（损坏） |
+| `failed` | 不可恢复的完整性/适配器/捕获 | retry / report | — |
+| `conflict` | 外部修改的拥有项 | 无（report，逐项） | owner/emergency 路径 |
+| `unsupported` | 非 Windows / 无已验证 helper | 无 | — |
+| `restore-failed` | 无法恢复（非 conflict） | retry / `--recover` | — |
 
-Invariants: every transition re-verifies ownership + baseline digest; `restoring` is
-idempotent; a crash mid-activation reconciles from the journal + baseline on next boot,
-or via `--recover`. On the trusted store, a **read failure, wrong ACL, wrong owner,
-discovered reparse point, or schema/digest anomaly** (§8.0) ⇒ **zero network mutation** and
-`restore-failed` (never proceed to mutate from data that could not be trusted).
+不变量：每个转换重新验证所有权 + 基线摘要；`restoring` 是幂等的；激活中途崩溃在下次启动时从日志 + 基线调停，或通过 `--recover` 调停。在可信存储上，**读取失败、错误 ACL、错误所有者、发现的 reparse point、或 schema/摘要异常**（§8.0）⇒ **零网络变更**和 `restore-failed`（绝不从无法信任的数据继续变更）。
 
-> This table is the **renderer-visible** product phase. Alongside it the helper has its own
-> internal state machine with a **`resident-active`** state (§3.4/§5.5): from `create_adapter`
-> through disable/emergency the helper is `resident-active`, holding the creator handle and
-> watching the bound app + mihomo process handles; it is `recovering` during a bounded
-> emergency restore; otherwise it is `booting`/`handshake` (short pre-bind window) or
-> `exiting`. The helper **never** exits on an idle timeout while `resident-active`.
+> 此表是**renderer 可见**的产品相位。与之并列，helper 有自己的内部状态机，带一个 **`resident-active`** 状态（§3.4/§5.5）：从 `create_adapter` 到 disable/emergency，helper 都是 `resident-active`，持有 creator 句柄并监视绑定应用 + mihomo 进程句柄；在有界紧急恢复期间它是 `recovering`；否则它是 `booting`/`handshake`（短暂预绑定窗口）或 `exiting`。helper**绝不会**在 `resident-active` 时因空闲超时退出。
 
-### 10.3 Canonical UI copy (Chinese, matches `system-proxy` style)
+### 10.3 规范 UI 文案（中文，与 `system-proxy` 风格一致）
 
-| Phase | UI copy |
+| 相位 | UI 文案 |
 |---|---|
 | `configured` | TUN 未启用（当前平台支持） |
 | `starting` | TUN 正在启动… |
@@ -1430,120 +947,89 @@ discovered reparse point, or schema/digest anomaly** (§8.0) ⇒ **zero network 
 
 ---
 
-## 11. Proposed module/interface layout
+## 11. 提议的模块/接口布局
 
-| File | Contents | Tests |
+| 文件 | 内容 | 测试 |
 |---|---|---|
-| `src/shared/tun.ts` | `TunPhase`, `TunStatus`, `TunGateway`, IPC names, `HelperOp`/`HelperCommand`, `DesiredNetworkState` | — |
-| `src/shared/schemas/tun.ts` | runtime Zod schema for `TunStatus`, `HelperCommand`, `DesiredNetworkState`, snapshot/written/journal records | valid/invalid/forward-compatible |
-| `src/main/tun/service.ts` | `TunService` (state machine, promise-queue, probe, backup, reconcile) | `FakeTunAdapter` + `RecordingBackupStore` |
-| `src/main/tun/policy.ts` | pure `deriveDesiredNetworkState`, `isOwned`/`matchesWritten`/`buildBaseline`/canonical-MAC helpers | pure unit |
-| `src/main/tun/adapters/windows-tun-adapter.ts` | helper client + integrity verify + snapshot/reconcile | fakes; real path gated |
-| `src/main/tun/adapters/disabled-tun-adapter.ts` | `{supported:false, phase:'unsupported'}` for non-win32 | unit |
-| `src/main/tun/adapters/fake-tun-adapter.ts` | deterministic in-memory helper for dev/tests | — |
-| `src/main/tun/helper-client.ts` | COM elevation activation + identity binding + envelope + key lifecycle | unit (fake COM) |
-| `src/main/tun/types.ts` | local types (snapshot/written/journal/DesiredNetworkState, status) | — |
-| `src/main/tun/probe.ts` | TUN readiness probe (reuse accumulating-buffer pattern) | unit |
+| `src/shared/tun.ts` | `TunPhase`、`TunStatus`、`TunGateway`、IPC 名称、`HelperOp`/`HelperCommand`、`DesiredNetworkState` | — |
+| `src/shared/schemas/tun.ts` | 用于 `TunStatus`、`HelperCommand`、`DesiredNetworkState`、snapshot/written/journal 记录的运行时 Zod schema | 有效/无效/前向兼容 |
+| `src/main/tun/service.ts` | `TunService`（状态机、promise-queue、probe、backup、reconcile） | `FakeTunAdapter` + `RecordingBackupStore` |
+| `src/main/tun/policy.ts` | 纯 `deriveDesiredNetworkState`、`isOwned`/`matchesWritten`/`buildBaseline`/canonical-MAC 辅助函数 | 纯单元 |
+| `src/main/tun/adapters/windows-tun-adapter.ts` | helper 客户端 + 完整性验证 + 快照/调停 | 伪造；真实路径门控 |
+| `src/main/tun/adapters/disabled-tun-adapter.ts` | 非 win32 用 `{supported:false, phase:'unsupported'}` | 单元 |
+| `src/main/tun/adapters/fake-tun-adapter.ts` | 用于开发/测试的确定性内存 helper | — |
+| `src/main/tun/helper-client.ts` | COM 提升激活 + 身份绑定 + 信封 + 密钥生命周期 | 单元（伪造 COM） |
+| `src/main/tun/types.ts` | 本地类型（snapshot/written/journal/DesiredNetworkState、status） | — |
+| `src/main/tun/probe.ts` | TUN 就绪探针（复用累积缓冲模式） | 单元 |
 
 ---
 
-## 12. Gates and remaining decisions before implementation
+## 12. 实现前的门槛与剩余决策
 
-**Hard gates that must pass / be decided first:**
+**必须先通过/先决策的硬性门槛：**
 
-- **G1 (adapter handoff + creator-handle lifetime) — unproven, and it is a hard
-  pre-implementation gate.** Before any Phase 9 implementation of the handoff path, run the
-  **G1 lifecycle probe** in the gated job, which exercises four steps on a disposable,
-  snapshot-able Windows VM and records one decisive fact:
-  1. **(a)** helper `WintunCreateAdapter` → holds the **creator handle**; `${name}` exists;
-  2. **(b)** mihomo `WintunOpenAdapter(name)` → **second handle** + `WintunStartSession` ⇒
-     live data plane;
-  3. **(c)** helper `WintunCloseAdapter(creatorHandle)` → helper exits;
-  4. **(d)** does mihomo's session **and** the adapter `${name}` **still exist**?
-  The probe must **not** expand into full Phase 9 implementation (no helper service, no
-  routes/DNS, no persistence, no UAC-bootstrap machinery), and it **never runs on this dev
-  machine** (it needs a snapshot-able, out-of-band-recoverable Windows VM + gated CI + a
-  separate owner-authorization record — §0.0 / DEVELOPMENT_SAFETY). **Two observations**: if
-  the adapter disappears at (c) → **Observed A**; if it survives while mihomo holds a handle →
-  **Observed B**. **Neither changes the safety baseline**, which is **fixed** (§0.4/§3.3/§5.5):
-  the helper holds the **creator handle for the whole enabled window** and is a **per-enable
-  single-client resident server**; the observation only tells us whether a later optimization
-  (e.g. letting the helper exit on enable-completion) is plausible. **If G1 fails / cannot be
-  completed** (mihomo cannot reuse the helper-created adapter), **stop and return to the
-  owner** for the revised ownership decision; do not fall back to dual ownership (§3.3).
-- **D4 — resolved: no boot auto-start.** The standalone helper has no service, scheduled
-  task, `Run` key or other boot trigger. It starts only for an explicit in-app enable action
-  or an explicit manual `--recover`; status/probe/UI startup never elevates or launches it.
-- **D5 — resolved: never remove pre-existing/shared Wintun state.** Production never calls
-  `WintunDeleteDriver`, never deletes a pre-existing/foreign adapter, and uninstall never
-  removes a driver or adapter it did not create and continuously own. The only adapter-removal
-  action is closing this enable session's provably owned creator handle (§3.3).
-- **Certificate provider / trusted publisher** for `helper.exe` (see `CODE_SIGNING.md`).
-- **Independent owner authorization** record (who, what, when) before any implementation.
-- **DNS-hijack scope**, HTTPS decryption/rewrite visibility, sleep/wake + network-change
-  reconciliation depth.
+- **G1（适配器交接 + creator 句柄生命周期）— 未验证，且是硬性实现前门槛。** 在对交接路径做任何 Phase 9 实现之前，在门控作业中运行 **G1 lifecycle probe**，它在一次性、可快照的 Windows VM 上演练四步并记录一个决定性事实：
+  1. **(a)** helper `WintunCreateAdapter` → 持有**creator 句柄**；`${name}` 存在；
+  2. **(b)** mihomo `WintunOpenAdapter(name)` → **第二个句柄** + `WintunStartSession` ⇒ 活动数据平面；
+  3. **(c)** helper `WintunCloseAdapter(creatorHandle)` → helper 退出；
+  4. **(d)** mihomo 的会话**和**适配器 `${name}` 是否**仍然存在**？
+  探针**不得**扩展为完整的 Phase 9 实现（无 helper 服务、无路由/DNS、无持久化、无 UAC 引导机制），且它**绝不在本开发机上运行**（它需要可快照、带外可恢复的 Windows VM + 门控 CI + 单独的所有权授权记录 — §0.0 / DEVELOPMENT_SAFETY）。**两种观察**：如果适配器在 (c) 消失 → **Observed A**；如果它在 mihomo 持有句柄时存活 → **Observed B**。**两者都不改变安全基线**，它是**固定**的（§0.4/§3.3/§5.5）：helper 在**整个启用窗口内持有 creator 句柄**，并且是**每次启用单客户端常驻服务器**；观察仅告诉我们以后的优化（如让 helper 在启用完成时退出）是否可信。**如果 G1 失败 / 无法完成**（mihomo 无法复用 helper 创建的适配器），**停止并返回所有者**以作出修改后的所有权决策；不要回退到双所有权（§3.3）。
+- **D4 — 已解决：无开机自启动。** 独立 helper 没有服务、计划任务、`Run` 键或其他启动触发。它仅为应用内显式启用动作或显式手动 `--recover` 启动；状态/探针/UI 启动从不提升或启动它。
+- **D5 — 已解决：绝不移除预存在/共享的 Wintun 状态。** 生产从不调用 `WintunDeleteDriver`，绝不会删除预存在/外来适配器，且卸载从不移除它未创建并持续拥有的驱动或适配器。唯一的适配器移除动作是关闭本启用会话可证所有的 creator 句柄（§3.3）。
+- `helper.exe` 的**证书提供者 / 受信任发布者**（见 `CODE_SIGNING.md`）。
+- 独立**所有权授权**记录（谁、什么、何时），在任何实现之前。
+- **DNS 劫持范围**、HTTPS 解密/改写可见性、休眠/唤醒 + 网络变化调停深度。
 
-The repository contains only a **validation-only G1 workflow scaffold**
-(`.github/workflows/g1-probe.yml`): manual dispatch + exact acknowledgement + authorization,
-target, snapshot and recovery identifiers + protected `phase9-tun-lab` environment + a
-`self-hosted, windows, x64, murge-tun-lab` runner. It records `probeExecuted:false`; no native
-probe body exists yet. Implementation/testing for the remaining lines proceeds only after design-review sign-off
-and separate owner authorization, and only in the gated disposable-Windows job
-(`MURGE_RUN_REAL_TUN=1` **and** `win32`, never in default `npm test`).
+仓库只包含一个**仅验证的 G1 工作流脚手架**（`.github/workflows/g1-probe.yml`）：手动触发 + 精确确认 + 授权、目标、快照和恢复标识符 + 受保护的 `phase9-tun-lab` 环境 + `self-hosted, windows, x64, murge-tun-lab` 运行器。它记录 `probeExecuted:false`；尚无原生探针体。剩余行的实现/测试仅在设计评审签核和另行所有权授权之后进行，且仅在门控的一次性 Windows 作业中（`MURGE_RUN_REAL_TUN=1` **且** `win32`，绝不在默认 `npm test` 中）。
 
 ---
 
-## 13. Test / evidence matrix (item 7)
+## 13. 测试 / 证据矩阵（项 7）
 
-All real behavior runs only in the gated `windows-latest` job
-(`MURGE_RUN_REAL_TUN=1` **and** `win32`), never in default `npm test`. The **access-control /
-descriptor-build** rows (`T24`, `T38`–`T40`, and the state-dir DACL/SACL reads) are
-**Windows-only unit tests that need no real TUN, no network mutation and no elevated helper** —
-they build the `SECURITY_DESCRIPTOR` in-process, so they run in the `win32` job without
-`MURGE_RUN_REAL_TUN`.
+所有真实行为仅在门控的 `windows-latest` 作业中运行（`MURGE_RUN_REAL_TUN=1` **且** `win32`），绝不在默认 `npm test` 中。**访问控制 / 描述符构建**行（`T24`、`T38`–`T40`、以及状态目录 DACL/SACL 读取）是**仅 Windows 的单元测试，无需真实 TUN、无需网络变更、无需提升 helper** — 它们在进程内构建 `SECURITY_DESCRIPTOR`，因此它们在没有 `MURGE_RUN_REAL_TUN` 的 `win32` 作业中运行。
 
-| # | Test | Assertion | Evidence |
+| # | 测试 | 断言 | 证据 |
 |---|---|---|---|
-| T0 | **G1 lifecycle probe (disposable, hard gate)** | (a) helper `WintunCreateAdapter` holds the creator handle; (b) mihomo `WintunOpenAdapter` + `WintunStartSession` ⇒ live data plane; (c) helper `WintunCloseAdapter(creatorHandle)` / exits; (d) assert **whether the adapter/session still exist**. On a snapshot-able VM that is restored out-of-band afterwards | enumerate adapter + session presence at each of a/b/c/d; record **which observation** (A = disappears on creator close, B = survives while mihomo holds a handle) and assert the **fixed baseline** (no observation changes the helper-holds-creator-handle model); machine restored |
-| T1 | **Single-owner data plane / adapter handoff (G1)** | After the helper creates the adapter, mihomo **reuses the same GUID/LUID** (RequestedGUID is the stable identity) and there is exactly **one Murge adapter** in the system | enumerate adapter by Name/RequestedGUID/LUID before/after; assert count==1; assert mihomo session binds the same LUID |
-| T2 | Ordering: routes/DNS after adapter creation | routes/DNS/interface are written **only after** the adapter exists; a failure before adapter creation leaves zero routes/DNS | journal seq + adapter existence at each step; assert no route/DNS op precedes `createAdapter` |
-| T3 | **mihomo emits no route/DNS change** | With `auto-route:false`, `auto-detect-interface:false`, `dns-hijack:false`, mihomo adds/removes **no** route/DNS/interface outside the helper | route/DNS snapshot before+after mihomo start, diff == helper-written set only |
-| T4 | Isolate dual-ownership regressions | Assert the runtime config never contains `auto-route:true`/`auto-detect-interface:true`/`dns-hijack:true` when the helper owns OS config | config-validator unit + integration grep |
-| T5 | **Elevation moniker bootstrap: same-user malicious race-connect** | A second Medium-IL process cannot activate/connect to the running elevated helper while the app is connected, and cannot impersonate the app | attempt activation/connect from a second medium process; assert rejected (identity binding) |
-| T5b | **Second Murge instance race (same path/signature/hash)** | A **second Murge process** — byte-for-byte identical binary (same path, same Authenticode, same SHA-256) — attempts to connect to the running per-enable resident helper; the helper has already bound the first verified client and **rejects** the second | launch second app; assert its activation/connect is rejected; assert it cannot drive the helper |
-| T6 | **PID reuse** | A client PID whose process object was reused (exited + replaced) is rejected because path/digest/session-key no longer match | exit the app, let a reused PID connect; assert reject |
-| T7 | **Handshake/command timeout + helper exit zeroizes** | A **handshake-phase** timeout or a **command request/response** timeout zeroizes `launchSecret`/`sessionKey` and leaves zero mutation, and the helper exits; a **resident-active** helper receiving **no IPC** does **not** exit | timeout injection in the pre-bind window and per-command; assert no mutation + secrets zeroed; assert the resident-active helper stays (adapter still present) during a long IPC gap |
-| T8 | **Replay** | Replayed `HelperCommand` with a stale `requestId` is rejected | replay recorded frame; assert reject |
-| T9 | **Crash injection at every journal record boundary (WAL)** | Force-kill the helper at **each durable-journal boundary** (pre-snapshot, post-snapshot, `CREATE_ADAPTER/PREPARED`-written, **mid-`WintunCreateAdapter`**, post-`CREATE_ADAPTER/APPLIED`, pre-`${op}/PREPARED`, mid-route/DNS mutate, post-`${op}/APPLIED`, pre-mihomo, post-probe, `CLOSE_CREATOR_HANDLE/*`); assert next `init()`/`--recover` reconciles each record against the current OS state and restores the baseline | journal replay + before/after route/DNS diff per boundary; for `CREATE_ADAPTER` PREPARED-but-unknown, reconcile by `WintunOpenAdapter(Name)` + identity |
-| T10 | Crash recovery restores exact prior state | After a forced kill mid-activation, disable restores routes/DNS to the exact pre-enable state | route/DNS diff vs baseline |
-| T11 | Only-one-Murge-adapter uniqueness + RequestedGUID conflict | A foreign adapter holding the reserved `Name`/`RequestedGUID` blocks activation with `conflict`, zero mutation | adapter pre-created with the reserved identity; assert `conflict` |
-| T12 | **Adapter removal via creator-handle close (no `WintunDeleteAdapter`)** | After disable, the product adapter is gone **because `WintunCloseAdapter(creatorHandle)` was called** (the only removal path); there is **no** `RebootRequired`/`delete-pending` state; a **pre-existing/foreign** adapter is never removed and is verified by `Name`+`RequestedGUID`+LUID before any close | enumerate adapters; assert product adapter removed only after ownership verified and mihomo session ended; assert foreign adapter present |
-| T13 | Uninstall restore runs before deletion | Uninstall runs `--recover`, restores routes/DNS, aborts on corrupt snapshot | `NetworkSnapshot` diff; exit code / `Abort` path |
-| T14 | Emergency `--recover` independent of GUI | Kill the app, run `--recover`, assert restored | restored state |
-| T15 | Non-Windows / no helper ⇒ unsupported | Non-Windows or no verified helper returns `{supported:false, phase:'unsupported'}`, zero mutation | status probe unit + CI |
-| T16 | **Resident-active survives a long IPC gap** | After `enable`, a long period with **no IPC/messages** between app and helper leaves the adapter and routes/DNS **intact** (the helper is resident-active and does not idle-exit) | wait > idle timeout; enumerate adapter + route/DNS diff vs applied; assert still present (clock-accelerated in test) |
-| T17 | **Disable uses the SAME helper instance as enable** | `disable` is served by the **same** helper process that handled `enable` (the one holding the creator handle); evidence records **enable helper PID == disable helper PID**, and disable reaches the creator handle | helper PID logged at enable + disable; assert equal; assert creator handle closed at disable |
-| T18 | **App crashes while TUN enabled ⇒ emergency restore** | Force-kill the bound **app** process; the helper (which watches the app process handle) runs the bounded emergency restore: routes/DNS first, then closes the creator handle, then persists the outcome and exits | force-kill app; assert routes/DNS restored, adapter removed, `RECONCILED` (or `RESTORE_FAILED` + journal kept), helper exited |
-| T19 | **mihomo crashes while TUN enabled ⇒ emergency restore** | Force-kill the **mihomo** process; the helper (which watches the mihomo process handle) runs the bounded emergency restore | force-kill mihomo; assert same restore sequence + outcome |
-| T20 | **Helper crashes ⇒ adapter auto-removed + next recovery** | Force-kill the **helper**; Windows closes its creator handle so the adapter is removed; the next `init()`/`--recover` launches a **new** recovery helper that **does not claim** to call `WintunCloseAdapter`, verifies the adapter is gone, and restores residual routes/DNS | force-kill helper; assert adapter gone + new recovery helper reconciles `RECONCILED`; assert it did **not** record a `WintunCloseAdapter` |
-| T21 | **New recovery helper has no old creator handle** | A recovery helper started after a crash has **no** handle from the dead helper; it must **not** try to close a creator handle and instead decides restoration from the journal + current OS adapter state | assert recovery path branches to "adapter gone / conflict" without a creator-handle close |
-| T22 | **Helper crash leaves no intact-but-orphaned adapter** | After helper crash, no Murge adapter remains with a **live data plane but no owning helper**; if an adapter is observed still present, the new helper marks a `conflict`, keeps evidence, and does **not** delete it (D5) | enumerate adapter; assert either absent or `conflict` + evidence + no delete |
-| T23 | **Foreign/preexisting adapter never removed on recover** | A pre-existing/foreign adapter sharing the reserved identity is never removed, even during recovery of an owned adapter | pre-create foreign adapter; run recover; assert it remains |
+| T0 | **G1 lifecycle probe（一次性、硬性门槛）** | (a) helper `WintunCreateAdapter` 持有 creator 句柄；(b) mihomo `WintunOpenAdapter` + `WintunStartSession` ⇒ 活动数据平面；(c) helper `WintunCloseAdapter(creatorHandle)` / 退出；(d) 断言**适配器/会话是否仍然存在**。在一个之后带外恢复的可快照 VM 上 | 在 a/b/c/d 各自列举适配器 + 会话存在性；记录**哪个观察**（A = 在 creator 关闭时消失，B = 在 mihomo 持有句柄时存活）并断言**固定基线**（无观察改变 helper-持有-creator-句柄 模型）；机器已恢复 |
+| T1 | **单所有者数据平面 / 适配器交接（G1）** | helper 创建适配器后，mihomo **复用同一 GUID/LUID**（RequestedGUID 是稳定身份）且系统中恰好有**一个 Murge 适配器** | 在之前/之后按 Name/RequestedGUID/LUID 列举适配器；断言 count==1；断言 mihomo 会话绑定同一 LUID |
+| T2 | 顺序：适配器创建之后的路由/DNS | 路由/DNS/接口**仅在**适配器存在之后写入；适配器创建之前的失败留下零路由/DNS | 在每步的日志 seq + 适配器存在性；断言没有路由/DNS 操作先于 `createAdapter` |
+| T3 | **mihomo 不发出任何路由/DNS 变更** | 带 `auto-route:false`、`auto-detect-interface:false`、`dns-hijack:false`，mihomo 在 helper 之外**不**添加/移除任何路由/DNS/接口 | mihomo 启动前后的路由/DNS 快照，diff == 仅 helper 写入的集合 |
+| T4 | 隔离双所有权回归 | 当 helper 拥有 OS 配置时，断言运行时配置绝不包含 `auto-route:true`/`auto-detect-interface:true`/`dns-hijack:true` | config-validator 单元 + 集成 grep |
+| T5 | **提升标记引导：同用户恶意竞态连接** | 当应用正在连接时，第二个 Medium-IL 进程无法激活/连接到运行中的提升 helper，且无法冒充应用 | 从第二个 medium 进程尝试激活/连接；断言被拒绝（身份绑定） |
+| T5b | **第二个 Murge 实例竞态（同一路径/签名/哈希）** | **第二个 Murge 进程** — 逐字节相同二进制（同一路径、同一 Authenticode、同一 SHA-256）— 尝试连接运行中的每次启用常驻 helper；helper 已绑定第一个经过验证的客户端并**拒绝**第二个 | 启动第二个应用；断言其激活/连接被拒绝；断言它无法驱动 helper |
+| T6 | **PID 复用** | 进程对象被复用（退出 + 替换）的客户端 PID 因路径/摘要/会话密钥不再匹配而被拒绝 | 退出应用，让一个复用 PID 连接；断言拒绝 |
+| T7 | **握手/命令超时 + helper 退出清零** | **握手阶段**超时或**命令请求/响应**超时清零 `launchSecret`/`sessionKey` 并留下零变更，且 helper 退出；一个**resident-active** helper 在**无 IPC** 接收时**不**退出 | 在绑定前窗口和每命令注入超时；断言无变更 + 机密已清零；断言在长 IPC 间隙期间 resident-active helper 保持（适配器仍存在） |
+| T8 | **重放** | 带陈旧 `requestId` 的重放 `HelperCommand` 被拒绝 | 重放记录的帧；断言拒绝 |
+| T9 | **在每个日志记录边界注入崩溃（WAL）** | 在**每个持久日志边界**强杀 helper（预快照、后快照、`CREATE_ADAPTER/PREPARED`-已写、**`WintunCreateAdapter` 中途**、后 `CREATE_ADAPTER/APPLIED`、预 `${op}/PREPARED`、路由/DNS 变更中途、后 `${op}/APPLIED`、预 mihomo、后 probe、`CLOSE_CREATOR_HANDLE/*`）；断言下次 `init()`/`--recover` 把每个记录对照当前 OS 状态调停并恢复基线 | 每边界的日志重放 + 前后路由/DNS diff；对 `CREATE_ADAPTER` PREPARED-but-unknown，用 `WintunOpenAdapter(Name)` + 身份调停 |
+| T10 | 崩溃恢复恢复确切先前状态 | 在激活中途强制杀后，disable 把路由/DNS 恢复到确切的启用前状态 | 相对基线的路由/DNS diff |
+| T11 | 仅一个 Murge 适配器的唯一性 + RequestedGUID 冲突 | 持有保留 `Name`/`RequestedGUID` 的外来适配器以 `conflict` 阻塞激活，零变更 | 预创建带保留身份的适配器；断言 `conflict` |
+| T12 | **通过 creator 句柄关闭移除适配器（无 `WintunDeleteAdapter`）** | disable 后产品适配器消失**因为 `WintunCloseAdapter(creatorHandle)` 被调用**（唯一移除路径）；**没有** `RebootRequired`/`delete-pending` 状态；**预存在/外来**适配器绝不移除，且在任何关闭前用 `Name`+`RequestedGUID`+LUID 验证 | 列举适配器；断言产品适配器仅在所有已验证且 mihomo 会话结束后移除；断言外来适配器存在 |
+| T13 | 卸载在删除前先运行恢复 | 卸载运行 `--recover`、恢复路由/DNS、在损坏快照上中止 | `NetworkSnapshot` diff；退出码 / `Abort` 路径 |
+| T14 | 独立于 GUI 的紧急 `--recover` | 杀应用，运行 `--recover`，断言已恢复 | 已恢复状态 |
+| T15 | 非 Windows / 无 helper ⇒ unsupported | 非 Windows 或无已验证 helper 返回 `{supported:false, phase:'unsupported'}`，零变更 | 状态探针单元 + CI |
+| T16 | **Resident-active 经受长 IPC 间隙** | `enable` 后，应用与 helper 之间长时间**无 IPC/消息**使适配器和路由/DNS **完好**（helper 是 resident-active 且不会 idle-exit） | 等待 > idle 超时；列举适配器 + 相对已应用的路由/DNS diff；断言仍存在（测试中时钟加速） |
+| T17 | **disable 使用与 enable 相同的 helper 实例** | `disable` 由**处理 `enable` 的同一** helper 进程服务（持有 creator 句柄的那个）；证据记录 **enable helper PID == disable helper PID**，且 disable 到达 creator 句柄 | 在 enable + disable 记录 helper PID；断言相等；断言 creator 句柄在 disable 时关闭 |
+| T18 | **TUN 启用时应用崩溃 ⇒ 紧急恢复** | 强杀绑定**应用**进程；helper（监视应用进程句柄）运行有界紧急恢复：先路由/DNS，然后关闭 creator 句柄，然后持久化结果并退出 | 强杀应用；断言路由/DNS 已恢复、适配器已移除、`RECONCILED`（或 `RESTORE_FAILED` + 日志保留）、helper 已退出 |
+| T19 | **TUN 启用时 mihomo 崩溃 ⇒ 紧急恢复** | 强杀 **mihomo**进程；helper（监视 mihomo 进程句柄）运行有界紧急恢复 | 强杀 mihomo；断言相同恢复序列 + 结果 |
+| T20 | **helper 崩溃 ⇒ 适配器自动移除 + 下次恢复** | 强杀 **helper**；Windows 关闭其 creator 句柄使适配器被移除；下次 `init()`/`--recover` 启动一个**新**恢复 helper，它**不声称**调用 `WintunCloseAdapter`，验证适配器已消失，并恢复残余路由/DNS | 强杀 helper；断言适配器消失 + 新恢复 helper 调停 `RECONCILED`；断言它**未**记录 `WintunCloseAdapter` |
+| T21 | **新恢复 helper 无旧 creator 句柄** | 崩溃后启动的恢复 helper **没有**来自死亡 helper 的句柄；它**不得**尝试关闭 creator 句柄，而是从日志 + 当前 OS 适配器状态决定恢复 | 断言恢复路径分支到"适配器消失 / 冲突"，无 creator 句柄关闭 |
+| T22 | **helper 崩溃不留下完整但孤儿的适配器** | helper 崩溃后，不留下带**活动数据平面但无拥有 helper** 的 Murge 适配器；如果观察到适配器仍存在，新 helper 标记 `conflict`、保留证据、且**不**删除它（D5） | 列举适配器；断言要么缺席，要么 `conflict` + 证据 + 不删除 |
+| T23 | **外来/预存在适配器在恢复时绝不移除** | 共享保留身份的预存在/外来适配器绝不移除，即使恢复一个拥有的适配器时 | 预创建外来适配器；运行恢复；断言它保持 |
 
-| T24 | **COM ACL is a pure allow-list (AccessCheck)** | The stored `LaunchPermission`/`AccessPermission` (+ state-dir DACL) `SECURITY_DESCRIPTOR` gives **owner SID allowed**, **second normal user denied**, **SYSTEM allowed**, and grants **no** `Everyone`/`Users`/`Authenticated Users` ACE (and **no** `DENY` ACE — `ANONYMOUS LOGON`/`NETWORK` are denied by absence, not by a `DENY`). The exact COM-mask assertions are the descriptor-build group below (`T32`–`T40`) | `AccessCheck` against the built descriptor for owner / second-user / SYSTEM tokens; assert the matrix (owner=allow, second-user=deny, system=allow); assert no `Everyone`/`Users`/`AuthUsers` ACE and no `DENY` ACE |
-| T25 | **State-dir owner/DACL/reparse validated on startup** | On `init`/`--recover` the helper validates the store dir owner = SYSTEM, the allow-list DACL and reparse state; a **wrong owner** or **wrong ACL** ⇒ **zero network mutation** + `restore-failed` | pre-set wrong owner/ACL on the dir; start recovery; assert no route/DNS change + `restore-failed` + store retained |
-| T26 | **Reparse point on the store path is rejected** | A **symlink / junction / mount point** planted on the store path (dir or a record file) is detected (`FILE_FLAG_OPEN_REPARSE_POINT` + reparse-tag query) and the operation **fails closed** | create junction/symlink/mount on `tun-state\<ownerSid>` or on a record file; assert detection + fail-closed + no mutation |
-| T27 | **WAL handle/file-ID re-verify (directory swap)** | If the journal **directory** is swapped between appends (replaced with another dir of the same name), the already-open handle's **file ID** no longer matches the recorded one ⇒ the next `PREPARED`/`APPLIED`/`RECONCILED` append **fails closed** | record file ID; swap the dir; append; assert mismatch → fail-closed, no mutation, no re-open-by-string |
-| T28 | **Journal truncation / tamper / schema+digest anomaly** | A truncated, tampered or schema/digest-mismatched journal (or `state.manifest` mismatch) is detected and **zero network modification** occurs; recovery enters `restore-failed` | truncate/tamper `journal.json` / `state.manifest`; assert detect + no mutation + `restore-failed` |
-| T29 | **State-dir ACL modified by a lower-trust process** | Changing the state-dir DACL to add a user/Everyone ACE, or to remove the owner ACE, is **not** possible from Medium (MIC write-up) and, if observed, the helper **fails closed** | attempt ACL change from Medium; assert blocked (MIC); assert helper re-verifies ACL and fails closed |
-| T30 | **Medium-IL owner cannot write/delete/change-ACL the store** | The same user's **Medium** token cannot create/modify/delete/ACL a file in the High-labeled store while the **High restricted helper with enabled, non-deny-only `BA`** can | attempt create/write/delete/SetSecurity from Medium; assert denied; assert the verified High helper token succeeds |
-| T31 | **Uninstall retains store until safe recovery** | Uninstall retains `%ProgramData%\<id>\tun-state\<ownerSid>\` and cleans it **only** after a safe recovery completes (no pending record + routes/DNS back to baseline) | simulate pending `PREPARED`; run uninstall; assert store retained + no cleanup; after clean recovery assert cleanup |
-| T32 | **Descriptor-build: SDDL → `SECURITY_DESCRIPTOR`** | `ConvertStringSecurityDescriptorToSecurityDescriptor` succeeds on the `LaunchPermission` SDDL, the `AccessPermission` SDDL **and** the state-dir SDDL (`O:SYG:SYD:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)S:(ML;OICI;NW;;;HI)`), yielding a valid descriptor | call the API on each SDDL string; assert success + non-null descriptor + `GetSecurityDescriptorLength` reasonable |
-| T33 | **Descriptor-build: returned form** | `ConvertStringSecurityDescriptorToSecurityDescriptor` already returns a **self-relative** descriptor suitable for persistent bytes | call `GetSecurityDescriptorControl`; assert `SE_SELF_RELATIVE`. Do **not** pass this result directly to `MakeSelfRelativeSD` (that API requires an absolute input). An optional conversion test must use `MakeAbsoluteSD` first, then `MakeSelfRelativeSD`, and compare descriptor semantics rather than requiring identical byte layout |
-| T34 | **Descriptor-build: COM `REG_BINARY` round-trip** | Writing each returned self-relative **COM** descriptor as the `LaunchPermission`/`AccessPermission` `REG_BINARY` value then reading it back yields **byte-identical** data | write only the two COM registry values; read back; assert byte equality and `REG_BINARY` type. The state-directory descriptor is not a registry value and is excluded |
-| T35 | **Descriptor-build: state-directory security readback** | Applying the state-directory descriptor through directory security APIs and reading it back yields matching owner/DACL/SACL semantics (owner SYSTEM, allow-list DACL, `High` label with `NO_WRITE_UP`) | create with `SECURITY_ATTRIBUTES` or apply with `SetNamedSecurityInfo`/`SetSecurityInfo`; read with `GetNamedSecurityInfo`/`GetSecurityInfo`; assert owner SID + DACL ACEs + SACL label |
-| T36 | **`AccessCheck` — `LaunchPermission`** | The built Launch descriptor grants **owner SID = allow**, a **second normal user = deny**, **SYSTEM = allow**; no `Everyone`/`Users`/`Authenticated Users` ACE grants access | `AccessCheck` with tokens for owner / second normal user / SYSTEM; assert the allow/deny matrix + no other ACE grants |
-| T37 | **`AccessCheck` — `AccessPermission`** | The built Access descriptor grants **owner SID = allow**, **second normal user = deny**, **SYSTEM = allow**, matching the explicit `SY` `0x3` ACE | `AccessCheck` with owner, second-user and SYSTEM tokens; assert owner allow, second-user deny, SYSTEM allow |
-| T38 | **COM ACE mask equality** | Every ACE in `LaunchPermission` has mask **strictly `0xB`**; every ACE in `AccessPermission` has mask **strictly `0x3`**; **no** generic `GX`/`GA` ACE; and **every** COM ACE contains the `0x1` (`COM_RIGHTS_EXECUTE`) bit | enumerate ACEs on the built descriptors; assert each mask == `0xB` or `0x3` and `mask & 0x1 == 0x1` |
-| T39 | **State-dir High mandatory label + `NO_WRITE_UP`** | The store dir carries the **`High`** mandatory-integrity label (`S:(ML;OICI;NW;;;HI)`, `HI` = `S-1-16-12288`) with `NW`/`NO_WRITE_UP` and `OICI` inheritance | `GetSecurityInfo` SACL readback; assert a `SYSTEM_MANDATORY_LABEL_ACE` with the `S-1-16-12288` SID and `NO_WRITE_UP` |
-| T40 | **Store dir Medium vs High + helper-token group state** | A **Medium** token of the owner SID **cannot write / delete / change-ACL** a file in the `tun-state` dir, while the **High restricted helper token retains `BA` enabled (not deny-only)** and can perform those operations | inspect the helper token with `GetTokenInformation(TokenGroups)` and assert the `BA` SID is enabled and not `SE_GROUP_USE_FOR_DENY_ONLY`; try create/write/delete/SetSecurity from Medium (deny) and High helper (allow); a missing/deny-only `BA` fails closed before any network mutation; cross-refs T25/T29/T30 |
+| T24 | **COM ACL 是纯允许列表（AccessCheck）** | 存储的 `LaunchPermission`/`AccessPermission`（+ 状态目录 DACL）`SECURITY_DESCRIPTOR` 给予**所有者 SID 允许**、**第二普通用户被拒绝**、**SYSTEM 允许**，且不授予**任何** `Everyone`/`Users`/`Authenticated Users` ACE（也**无 `DENY` ACE** — `ANONYMOUS LOGON`/`NETWORK` 被缺席而非 `DENY` 拒绝）。确切的 COM 掩码断言在下方描述符构建组（`T32`–`T40`） | 对 owner / second-user / SYSTEM 令牌的构建描述符做 `AccessCheck`；断言矩阵（owner=allow、second-user=deny、system=allow）；断言无 `Everyone`/`Users`/`AuthUsers` ACE 且无 `DENY` ACE |
+| T25 | **启动时验证状态目录 owner/DACL/reparse** | 在 `init`/`--recover` 时 helper 验证存储目录 owner = SYSTEM、允许列表 DACL 和 reparse 状态；**错误 owner** 或**错误 ACL** ⇒ **零网络变更** + `restore-failed` | 在目录上预设错误 owner/ACL；启动恢复；断言无路由/DNS 变更 + `restore-failed` + 存储保留 |
+| T26 | **存储路径上的 reparse point 被拒绝** | 植入存储路径（目录或记录文件）上的 **symlink / junction / mount point** 被检测（`FILE_FLAG_OPEN_REPARSE_POINT` + reparse-tag 查询）且操作**失败关闭** | 在 `tun-state\<ownerSid>` 或记录文件上创建 junction/symlink/mount；断言检测 + fail-closed + 无变更 |
+| T27 | **WAL 句柄/文件 ID 重新验证（目录替换）** | 如果日志**目录**在追加之间被替换（用同名另一目录替换），已打开句柄的**文件 ID**不再匹配记录的那个 ⇒ 下次 `PREPARED`/`APPLIED`/`RECONCILED` 追加**失败关闭** | 记录文件 ID；替换目录；追加；断言不匹配 → fail-closed、无变更、无按字符串重新打开 |
+| T28 | **日志截断 / 篡改 / schema+摘要异常** | 截断、篡改或 schema/摘要不匹配的日志（或 `state.manifest` 不匹配）被检测且**发生零网络修改**；恢复进入 `restore-failed` | 截断/篡改 `journal.json` / `state.manifest`；断言检测 + 无变更 + `restore-failed` |
+| T29 | **状态目录 ACL 被较低信任进程修改** | 更改状态目录 DACL 以添加用户/Everyone ACE，或移除 owner ACE，从 Medium **不可行**（MIC write-up），且如果被观察到，helper **失败关闭** | 尝试从 Medium 改 ACL；断言被阻塞（MIC）；断言 helper 重新验证 ACL 并 fail-closed |
+| T30 | **Medium-IL 所有者无法写/删/改 ACL 存储** | 同一用户的 **Medium** 令牌无法在 High 标记的存储中创建/修改/删除/ACL 文件，而**带启用、非 deny-only `BA` 的 High 受限 helper** 可以 | 尝试从 Medium 创建/写/删/SetSecurity；断言被拒；断言已验证的 High helper 令牌成功 |
+| T31 | **卸载在安全恢复前保留存储** | 卸载保留 `%ProgramData%\<id>\tun-state\<ownerSid>\` 且**仅**在安全恢复完成后清理（无待处理记录 + 路由/DNS 回到基线） | 模拟待处理 `PREPARED`；运行卸载；断言存储保留 + 无清理；在干净恢复后断言清理 |
+| T32 | **描述符构建：SDDL → `SECURITY_DESCRIPTOR`** | `ConvertStringSecurityDescriptorToSecurityDescriptor` 在 `LaunchPermission` SDDL、`AccessPermission` SDDL **和**状态目录 SDDL（`O:SYG:SYD:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)S:(ML;OICI;NW;;;HI)`）上成功，产生有效描述符 | 对每个 SDDL 字符串调用 API；断言成功 + 非空描述符 + `GetSecurityDescriptorLength` 合理 |
+| T33 | **描述符构建：返回形式** | `ConvertStringSecurityDescriptorToSecurityDescriptor` 已经返回**自相对**描述符，适合持久化字节 | 调用 `GetSecurityDescriptorControl`；断言 `SE_SELF_RELATIVE`。**不要**把这结果直接传给 `MakeSelfRelativeSD`（该 API 要求绝对输入）。可选转换测试必须先用 `MakeAbsoluteSD`，再 `MakeSelfRelativeSD`，并比较描述符语义而非要求相同字节布局 |
+| T34 | **描述符构建：COM `REG_BINARY` 往返** | 把每个返回的自相对 **COM** 描述符写为 `LaunchPermission`/`AccessPermission` `REG_BINARY` 值然后读回，得到**字节一致**数据 | 只写两个 COM 注册表值；读回；断言字节相等和 `REG_BINARY` 类型。状态目录描述符不是注册表值且被排除 |
+| T35 | **描述符构建：状态目录安全读回** | 通过目录安全 API 应用状态目录描述符并读回得到匹配的 owner/DACL/SACL 语义（owner SYSTEM、允许列表 DACL、带 `NO_WRITE_UP` 的 `High` 标签） | 用 `SECURITY_ATTRIBUTES` 创建或用 `SetNamedSecurityInfo`/`SetSecurityInfo` 应用；用 `GetNamedSecurityInfo`/`GetSecurityInfo` 读取；断言 owner SID + DACL ACE + SACL 标签 |
+| T36 | **`AccessCheck` — `LaunchPermission`** | 构建的 Launch 描述符授予**owner SID = allow**、**第二普通用户 = deny**、**SYSTEM = allow**；无 `Everyone`/`Users`/`Authenticated Users` ACE 授予访问 | 用 owner / 第二普通用户 / SYSTEM 令牌做 `AccessCheck`；断言 allow/deny 矩阵 + 无其他 ACE 授予 |
+| T37 | **`AccessCheck` — `AccessPermission`** | 构建的 Access 描述符授予**owner SID = allow**、**第二普通用户 = deny**、**SYSTEM = allow**，匹配显式 `SY` `0x3` ACE | 用 owner、第二用户和 SYSTEM 令牌做 `AccessCheck`；断言 owner allow、second-user deny、SYSTEM allow |
+| T38 | **COM ACE 掩码相等** | `LaunchPermission` 中的每个 ACE 有掩码**严格 `0xB`**；`AccessPermission` 中的每个 ACE 有掩码**严格 `0x3`**；**无**通用 `GX`/`GA` ACE；且**每个** COM ACE 包含 `0x1`（`COM_RIGHTS_EXECUTE`）位 | 在构建描述符上列举 ACE；断言每个掩码 == `0xB` 或 `0x3` 且 `mask & 0x1 == 0x1` |
+| T39 | **状态目录 High 强制标签 + `NO_WRITE_UP`** | 存储目录携带 **`High`** 强制完整性标签（`S:(ML;OICI;NW;;;HI)`，`HI` = `S-1-16-12288`），带 `NW`/`NO_WRITE_UP` 和 `OICI` 继承 | `GetSecurityInfo` SACL 读回；断言带 `S-1-16-12288` SID 和 `NO_WRITE_UP` 的 `SYSTEM_MANDATORY_LABEL_ACE` |
+| T40 | **存储目录 Medium vs High + helper 令牌组状态** | 所有者 SID 的 **Medium** 令牌**无法写入 / 删除 / 改 ACL** `tun-state` 目录中的文件，而**带 `BA` 启用（非 deny-only）的 High 受限 helper 令牌**可以执行这些操作 | 用 `GetTokenInformation(TokenGroups)` 检查 helper 令牌并断言 `BA` SID 启用且非 `SE_GROUP_USE_FOR_DENY_ONLY`；尝试从 Medium 创建/写/删/SetSecurity（拒绝）和 High helper（允许）；缺失/deny-only `BA` 在任何网络变更前 fail-closed；交叉引用 T25/T29/T30 |

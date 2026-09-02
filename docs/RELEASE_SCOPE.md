@@ -1,39 +1,29 @@
-# First release-candidate scope
+# 首个发布候选范围
 
-This file freezes the public feature surface for the first Windows release
-candidate. The application is GPL-3.0-only. Windows x64 is the verified target;
-Windows arm64 may be packaged for testing but is not a supported release target
-until its installed lifecycle is exercised on real arm64 hardware.
+本文件冻结首个 Windows 发布候选的公共功能表面。应用程序为 GPL-3.0-only。Windows x64 是已验证的目标；Windows arm64 可以打包用于测试，但在真实 arm64 硬件上验证其安装生命周期之前，不属于受支持的发布目标。
 
-## Included
+## 包含
 
-- Explicit mihomo kernel start/stop with a loopback-only authenticated controller.
-- Profile import, validation, activation, rename, removal and supported edits.
-- Activity, connections, process/device grouping, policies, providers and rules.
-- Verified Windows system-proxy enable, restore, crash recovery and uninstall recovery.
-- Logs, DNS query/cache tools, appearance, start-on-login, tray, About and a
-  privacy-safe diagnostics export.
+- 显式的 mihomo 内核启动/停止，带有仅回环的已认证控制器。
+- 配置的导入、校验、激活、重命名、移除以及受支持的编辑。
+- 活动、连接、进程/设备分组、策略、提供方与规则。
+- 已验证的 Windows 系统代理 启用、恢复、崩溃恢复与卸载恢复。
+- 日志、DNS 查询/缓存工具、外观、登录自启、托盘、关于以及隐私安全的诊断导出。
 
-## Excluded and hidden
+## 排除并隐藏
 
-- TUN: the G1 reuse and real route/DNS recovery gate is not proven.
-- HTTP capture, HTTPS decryption and rewrite: the former visual placeholder
-  source files were removed because there is no completed backend or security lifecycle.
-- Panel: its former placeholder source was removed.
-- Automatic application/kernel updates: signer, update channel and update keys
-  are not configured.
-- LAN listener controls: the release remains loopback-only.
+- TUN：G1 复用以及真实路由/DNS 恢复门槛尚未被验证。
+- HTTP 捕获、HTTPS 解密与重写：前者的视觉占位源文件已被移除，因为没有完整的后端或安全生命周期。
+- Panel：其以前的占位源码已被移除。
+- 自动应用/内核更新：签名者、更新通道和更新密钥尚未配置。
+- LAN 监听器控制：发布仍为仅回环。
 
-Excluded features must not appear in navigation, settings, Overview, or as
-directly reachable hash routes. `src/shared/release-scope.ts` is the executable
-allowlist and `tests/release-scope.test.ts` prevents those pages from returning
-accidentally, including an assertion that the removed placeholder source files
-do not return.
+被排除的功能不得出现在导航、设置、Overview 中，也不得作为可直接到达的哈希路由出现。`src/shared/release-scope.ts` 是可执行的允许列表，`tests/release-scope.test.ts` 阻止这些页面意外返回，包括一条断言已移除的占位源文件不会重新出现的断言。
 
-## Release gates still requiring owner or Windows evidence
+## 仍需要所有者或 Windows 证据的发布门槛
 
-- Confirm the expected Unknown publisher warning for the owner-approved unsigned installer.
-- Clean x64 VM install/upgrade/uninstall matrix using the actual RC artifacts.
-- Tray, login-start and forced-process recovery evidence on Windows.
-- Final 934×672 screenshot approval.
-- Explicit owner confirmation before a draft GitHub Release is published.
+- 确认所有者批准的未签名安装器会出现预期的“未知发布者”警告。
+- 使用实际 RC 产物进行干净的 x64 虚拟机安装/升级/卸载矩阵。
+- Windows 上的托盘、登录启动与强制进程恢复证据。
+- 最终 934×672 截图批准。
+- 在发布草稿 GitHub Release 之前，明确的所有者确认。

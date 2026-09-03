@@ -9,6 +9,9 @@ Windows release candidate for the mihomo-based desktop client.
   profile so TUN actually proxies traffic.
 - TUN switch on the Overview (概览) page next to the system-proxy toggle for
   one-click enable/disable; the config page keeps the full lifecycle panel.
+- Turning TUN on automatically stops the safe loopback kernel first (the two are
+  mutually exclusive), so no manual stop is needed; an owned system proxy is
+  restored before the kernel stops.
 - Profile, activity, connection, policy, provider, rule, DNS and log tools.
 - Verified Windows system-proxy enable, exact restore and recovery path.
 - Tray, optional start-on-login, diagnostics and brand-configurable desktop UI.

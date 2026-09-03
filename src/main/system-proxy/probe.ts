@@ -185,3 +185,51 @@ export class LiveSystemProxyKernelProbe implements SystemProxyKernelProbe {
     return { host: SYSTEM_PROXY_LOOPBACK_HOST, port: mixedPort }
   }
 }
+
+/** The live TUN session's inbound, or null when TUN is not active. */
+export interface TunSessionSource {
+  getActiveMixedPort(): number | null
+}
+
+/**
+ * Coexistence probe: resolves the system-proxy target for whichever mihomo is
+ * actually serving traffic.
+ *
+ * TUN runs a SEPARATE elevated mihomo on an ephemeral port while the main kernel
+ * is stopped, so the main-kernel probe would refuse with "内核未运行" and the two
+ * modes could never be on together. When a TUN session is live this resolves to
+ * that session's mixed-port instead; otherwise it delegates unchanged to the
+ * main-kernel probe.
+ *
+ * The port is still socket-probed (TCP + HTTP CONNECT + SOCKS5) exactly as the
+ * main-kernel path does — being privileged is not evidence of being listening, so
+ * a starting-or-dead TUN child must never have the registry pointed at it.
+ */
+export class TunAwareSystemProxyProbe implements SystemProxyKernelProbe {
+  constructor(
+    private readonly tunSession: TunSessionSource,
+    private readonly fallback: SystemProxyKernelProbe
+  ) {}
+
+  async resolveTarget(): Promise<SystemProxyTarget> {
+    const port = this.tunSession.getActiveMixedPort()
+    if (port === null) return this.fallback.resolveTarget()
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+      throw new ProtocolError(
+        ProtocolErrorCode.SYSTEM_PROXY_KERNEL_REQUIRED,
+        'TUN 会话未提供有效的混合端口，无法启用系统代理'
+      )
+    }
+    const [httpResult, socksResult] = await Promise.allSettled([probeHttp(port), probeSocks(port)])
+    const probeErrors = [httpResult, socksResult]
+      .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+      .map((r) => (r.reason as Error).message)
+    if (probeErrors.length > 0) {
+      throw new ProtocolError(
+        ProtocolErrorCode.SYSTEM_PROXY_KERNEL_REQUIRED,
+        `TUN 混合端口未就绪（${port}）：${probeErrors.join('；')}`
+      )
+    }
+    return { host: SYSTEM_PROXY_LOOPBACK_HOST, port }
+  }
+}

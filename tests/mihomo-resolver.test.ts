@@ -85,12 +85,26 @@ describe('MihomoKernelResolver', () => {
     await expect(resolver.resolve()).rejects.toMatchObject({ code: ProtocolErrorCode.INVALID_ARGUMENT })
   })
 
-  it('rejects a binaryPath that is a symlink', async () => {
+  it('rejects a binaryPath that is a symlink', async (ctx) => {
     const dir = await wi()
     const target = join(dir, 'real.exe')
     const link = join(dir, 'link.exe')
     await writeFile(target, 'bytes')
-    await symlink(target, link)
+    try {
+      await symlink(target, link, 'file')
+    } catch (error) {
+      // Creating a FILE symlink on Windows requires admin or Developer Mode, and
+      // unlike a directory link there is no unprivileged equivalent (a junction
+      // only links directories). Skip rather than fail on an ordinary developer
+      // machine; the guard itself is `lstat().isSymbolicLink()` in resolvers.ts,
+      // which is platform-independent, and this case still runs on the Ubuntu CI
+      // verification job and on any host where the link can be created.
+      if ((error as NodeJS.ErrnoException).code === 'EPERM') {
+        ctx.skip()
+        return
+      }
+      throw error
+    }
     const expected = await sha256File(target)
     const resolver = new MihomoKernelResolver({
       allowReal: true,

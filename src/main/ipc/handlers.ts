@@ -91,10 +91,7 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
     [IPC.profilesValidate]: async (_event, document) => profiles.validateDocument(parseProfileDocument(document)),
 
     [IPC.systemProxyGetStatus]: async () => systemProxy.getStatus(),
-    [IPC.systemProxyEnable]: async () => {
-      assertTunInactive(await tun.getStatus())
-      return systemProxy.enable()
-    },
+    [IPC.systemProxyEnable]: async () => systemProxy.enable(),
     [IPC.systemProxyDisable]: async () => systemProxy.disable(),
     [IPC.systemProxyGetProxyBypass]: async () => systemProxy.getProxyBypass(),
     [IPC.systemProxySetProxyBypass]: async (_event, input) =>
@@ -130,10 +127,13 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
     [IPC.updatesInstall]: () => updates.install(),
     [IPC.tunGetStatus]: async () => tun.getStatus(),
     [IPC.tunEnable]: async () => {
+      // TUN and the safe kernel stay mutually exclusive: both run a mihomo and
+      // both bind a mixed-port. The system proxy is NOT excluded — it may point at
+      // whichever mihomo is live (see TunAwareSystemProxyProbe), so TUN and the
+      // system proxy can be enabled together.
       const kernelStatus = await kernel.getStatus()
-      const proxyStatus = await systemProxy.getStatus()
-      if (kernelStatus.phase !== 'stopped' || proxyStatus.phase !== 'disabled') {
-        throw new ProtocolError(ProtocolErrorCode.TUN_INVALID_TRANSITION, 'Stop the safe kernel and system proxy before enabling TUN')
+      if (kernelStatus.phase !== 'stopped') {
+        throw new ProtocolError(ProtocolErrorCode.TUN_INVALID_TRANSITION, 'Stop the safe kernel before enabling TUN')
       }
       return tun.enable()
     },

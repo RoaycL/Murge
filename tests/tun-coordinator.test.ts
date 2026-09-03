@@ -123,3 +123,41 @@ describe('TunCoordinator non-network orchestration', () => {
     expect(adapter.restore).not.toHaveBeenCalled()
   })
 })
+
+/**
+ * The coordinator reports the owned session's inbound so the system proxy can
+ * point at the elevated TUN child while the main kernel is stopped. It must only
+ * do so while TUN is genuinely serving traffic.
+ */
+describe('TunCoordinator owned-session port', () => {
+  const withRuntime = (mixedPort: number, overrides: Partial<TunMutationAdapter> = {}) =>
+    fake({ getActiveRuntime: () => ({ mixedPort }), ...overrides })
+
+  it('reports the port only while active', async () => {
+    const coordinator = new TunCoordinator(withRuntime(17890), true)
+    expect(coordinator.getActiveMixedPort()).toBeNull()
+    await coordinator.enable(desired)
+    expect(coordinator.getActiveMixedPort()).toBe(17890)
+    await coordinator.emergencyDisable()
+    expect(coordinator.getActiveMixedPort()).toBeNull()
+  })
+
+  it('reports null when the adapter owns no process', async () => {
+    // The gated placeholder exposes no runtime; a missing accessor must not throw.
+    const coordinator = new TunCoordinator(fake(), true)
+    await coordinator.enable(desired)
+    expect(coordinator.getActiveMixedPort()).toBeNull()
+  })
+
+  it('does not report a port for a session that failed to become ready', async () => {
+    const coordinator = new TunCoordinator(
+      withRuntime(17890, {
+        enable: vi.fn(async () => ({ outcome: 'rollback-required' as const, errorMessage: 'timeout' }))
+      }),
+      true
+    )
+    await coordinator.enable(desired)
+    expect(coordinator.getStatus().phase).not.toBe('active')
+    expect(coordinator.getActiveMixedPort()).toBeNull()
+  })
+})

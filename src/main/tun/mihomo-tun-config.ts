@@ -1,8 +1,11 @@
-import { isAlias, isMap, isScalar, isSeq, parseDocument, type Node } from 'yaml'
+import { isAlias, isMap, isScalar, isSeq, parseDocument, stringify, type Node } from 'yaml'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
 import { SECRET_PATTERN } from '../kernel/mihomo-config'
+import { buildProfileKernelConfig } from '../kernel/profile-kernel-config'
+import type { CoreSettings } from '../../shared/core-settings'
+import type { GeodataSettings } from '../../shared/geodata'
 import type { TunConfigModel } from '../../shared/tun-config'
-import { isValidDnsHijackEntry, isValidTunMtu, isValidTunRouteAddress } from '../../shared/tun-config'
+import { buildTunBlock, isValidDnsHijackEntry, isValidTunMtu, isValidTunRouteAddress } from '../../shared/tun-config'
 
 export type MihomoTunStack = 'mixed' | 'system' | 'gvisor'
 
@@ -240,4 +243,292 @@ function validateRouteList(node: Node | undefined, label: string, errors: string
       errors.push(`invalid ${label} entry: ${nodeText(item)}`)
     }
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Proxied TUN profile (real subscription content)                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The service enforces a hard 64 KiB ceiling on the submitted profile
+ * (`maxProfileBytes` in native/tun-service/protocol.go). Real subscriptions sit
+ * far below it because `rule-providers` / `proxy-providers` are URLs that mihomo
+ * fetches itself, but an inlined ruleset can exceed it — fail with a legible
+ * message instead of letting the service close the pipe without a response.
+ */
+export const TUN_PROFILE_MAX_BYTES = 64 * 1024
+
+/** The fake-ip keys TUN requires; a profile's own `dns` keys are otherwise kept. */
+const TUN_REQUIRED_DNS = {
+  enable: true,
+  'enhanced-mode': 'fake-ip',
+  'fake-ip-range': '198.18.0.1/16'
+} as const
+
+/**
+ * Top-level keys that must never reach the elevated child, mirroring the
+ * service-side blacklist. `buildProfileKernelConfig` already strips the extra
+ * inbounds and controller variants for the main kernel; the rest are handled here
+ * because this profile runs as SYSTEM:
+ *
+ * - `tunnels` binds arbitrary local ports and forwards them to arbitrary hosts.
+ * - `external-ui*` makes mihomo download a ZIP and unpack it under the configured
+ *   directory, then serve it. This application ships its own UI.
+ * - `ntp.write-to-system` lets the SYSTEM process set the machine clock.
+ * - `external-controller-cors` widens who may reach the controller.
+ */
+const FORBIDDEN_TOP_KEYS = [
+  'port', 'socks-port', 'redir-port', 'tproxy-port', 'listeners', 'tunnels',
+  'external-controller-unix', 'external-controller-pipe', 'external-controller-tls',
+  'external-controller-routing-mark', 'external-controller-cors', 'external-doh-server',
+  'external-ui', 'external-ui-url', 'external-ui-name',
+  'ntp'
+] as const
+
+/** Sections whose entries carry a `path` mihomo WRITES downloaded content to. */
+const PROVIDER_SECTIONS = ['proxy-providers', 'rule-providers'] as const
+
+/**
+ * Confine a provider `path` to the state directory. An absolute path or a `..`
+ * escape would be an arbitrary file write performed by a SYSTEM-privileged
+ * process. Returns null when the path is acceptable.
+ */
+function providerPathError(path: unknown): string | null {
+  if (typeof path !== 'string' || path.trim().length === 0) return 'must be a non-empty string'
+  if (/^[/\\]/.test(path) || /^[A-Za-z]:/.test(path)) return 'must be relative to the state directory'
+  if (path.includes(':')) return 'must not name a drive or alternate stream'
+  if (path.replace(/\\/g, '/').split('/').includes('..')) return 'must not traverse outside the state directory'
+  return null
+}
+
+/** Collapse a provider name into a single safe filename component. */
+function safeProviderFileName(name: string): string {
+  const cleaned = name.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '')
+  return cleaned.length > 0 ? cleaned.slice(0, 64) : 'provider'
+}
+
+export interface ProxiedTunConfigOptions {
+  /** The ACTIVE profile document, already through overrides/DNS/sniffer. */
+  document: string
+  mixedPort: number
+  controllerPort: number
+  secret: string
+  device: string
+  stack?: MihomoTunStack
+  tunConfig?: TunConfigModel
+  core?: CoreSettings
+  geodata?: GeodataSettings
+}
+
+/**
+ * Build a TUN profile that actually proxies: the user's proxies, groups,
+ * providers and rules are preserved and mihomo owns the adapter.
+ *
+ * The safety transform is NOT reimplemented here — {@link buildProfileKernelConfig}
+ * is reused verbatim, so this path inherits exactly the same neutralisation the
+ * main kernel gets (extra inbounds, unauthenticated controller variants and
+ * `dns.listen` stripped; loopback controller, `allow-lan:false`,
+ * `bind-address:127.0.0.1`, caller's secret and `mode:rule` forced). The only
+ * deliberate divergence is the `tun:` block: that transform drops `tun` because
+ * the main kernel must stay loopback-only, whereas this profile exists precisely
+ * to enable it.
+ */
+export function generateProxiedTunConfig(options: ProxiedTunConfigOptions): string {
+  assertPort(options.mixedPort, 'mixed-port')
+  assertPort(options.controllerPort, 'external-controller port')
+  if (options.mixedPort === options.controllerPort) invalid('controller and mixed ports must differ')
+  if (!SECRET_PATTERN.test(options.secret)) invalid('secret must be a 64-character lowercase hex string')
+
+  const model = options.tunConfig
+  const device = model?.device ?? options.device
+  if (!DEVICE_PATTERN.test(device)) invalid('device contains unsupported characters or length')
+  const stack = model?.stack ?? options.stack ?? 'mixed'
+  if (!STACKS.has(stack)) invalid(`unsupported TUN stack: ${stack}`)
+
+  // Reuse the main-kernel safety pass (content preserved, host-network mutation
+  // neutralised, app-critical listener/auth keys forced).
+  const safeText = buildProfileKernelConfig(options.document, {
+    mixedPort: options.mixedPort,
+    controllerPort: options.controllerPort,
+    secret: options.secret,
+    core: options.core,
+    geodata: options.geodata
+  })
+
+  const parsed = parseDocument(safeText, { merge: true, uniqueKeys: true })
+  if (parsed.errors.length > 0) {
+    invalid(`配置解析失败：${parsed.errors.map((e) => e.message.split('\n')[0]).join('；')}`)
+  }
+  const data = parsed.toJS() as Record<string, unknown>
+
+  // Strip rather than reject: `buildProfileKernelConfig` neutralises the inbound
+  // and controller keys for the main kernel, but not the external-UI family, and
+  // real subscriptions do sometimes carry one. Removing it keeps such a profile
+  // usable while still denying the privileged child a download/extract path. The
+  // validator below (and the service) still REFUSE these keys, so a hand-authored
+  // or tampered profile that reaches them directly fails closed.
+  for (const key of FORBIDDEN_TOP_KEYS) delete data[key]
+
+  // A provider `path` is only a cache location, but mihomo WRITES downloaded
+  // content there as SYSTEM, so an absolute or `..`-escaping path is an arbitrary
+  // file write. Rewrite an unsafe one to a deterministic contained location rather
+  // than rejecting the whole subscription: the provider keeps working and the
+  // write stays inside the state directory.
+  for (const section of PROVIDER_SECTIONS) {
+    const raw = data[section]
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) continue
+    for (const [name, entry] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue
+      const record = entry as Record<string, unknown>
+      if (record.path === undefined) continue
+      if (providerPathError(record.path) !== null) {
+        record.path = `./${section}/${safeProviderFileName(name)}.yaml`
+      }
+    }
+  }
+
+  // `tun` is re-added on top of the transform that intentionally removed it.
+  const tunBlock: Record<string, unknown> = model
+    ? { enable: true, ...buildTunBlock({ ...model, device, stack }) }
+    : {
+        enable: true,
+        device,
+        stack,
+        'auto-route': true,
+        'auto-detect-interface': true,
+        'strict-route': false,
+        'dns-hijack': ['any:53']
+      }
+  data.tun = tunBlock
+
+  // TUN needs fake-ip to resolve hijacked queries, but the profile's own
+  // nameserver/fallback split is the user's routing intent — merge, never replace.
+  const existingDns = data.dns
+  data.dns = {
+    ...(typeof existingDns === 'object' && existingDns !== null && !Array.isArray(existingDns)
+      ? (existingDns as Record<string, unknown>)
+      : {}),
+    ...TUN_REQUIRED_DNS
+  }
+  const dns = data.dns as Record<string, unknown>
+  if (!Array.isArray(dns.nameserver) || dns.nameserver.length === 0) {
+    dns.nameserver = ['system']
+  }
+
+  const text = stringify(data)
+  const errors = proxiedTunConfigErrors(text)
+  if (errors.length > 0) invalid(`generated TUN config failed validation: ${errors.join('; ')}`)
+  const bytes = Buffer.byteLength(text, 'utf8')
+  if (bytes > TUN_PROFILE_MAX_BYTES) {
+    invalid(
+      `TUN 配置为 ${bytes} 字节，超过特权服务的 ${TUN_PROFILE_MAX_BYTES} 字节上限。` +
+        '请改用 rule-providers/proxy-providers 引用规则集，而不要将其内联进配置。'
+    )
+  }
+  return text
+}
+
+/**
+ * Validate a proxied TUN profile against the NON-NEGOTIABLE invariants only.
+ *
+ * Deliberately weaker than {@link mihomoTunConfigErrors}: proxies, groups,
+ * providers, rules and a full `dns` block are legitimate content here, so there
+ * is no exact top-level allowlist. What stays enforced is what the privileged
+ * service also re-checks independently — no public bind, no unauthenticated
+ * controller surface, no extra inbound, no alias/tag tricks, TUN actually on.
+ */
+export function proxiedTunConfigErrors(text: string): string[] {
+  const errors: string[] = []
+  const doc = parseDocument(text, { merge: true, uniqueKeys: true })
+  for (const error of doc.errors) errors.push(`YAML parse error: ${error.message.split('\n')[0]}`)
+  if (!isMap(doc.contents)) return [...errors, 'config must be a YAML mapping']
+  scanUnsafeNodes(doc.contents, errors)
+
+  let data: Record<string, unknown>
+  try {
+    data = doc.toJS() as Record<string, unknown>
+  } catch (error) {
+    return [...errors, `config could not be resolved: ${(error as Error).message.split('\n')[0]}`]
+  }
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    return [...errors, 'config must be a YAML mapping']
+  }
+
+  for (const key of FORBIDDEN_TOP_KEYS) {
+    if (key in data) errors.push(`forbidden key for a privileged profile: ${key}`)
+  }
+  // Provider paths are WRITE targets for a SYSTEM-privileged process.
+  for (const section of PROVIDER_SECTIONS) {
+    const raw = data[section]
+    if (raw === undefined) continue
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      errors.push(`${section} must be a mapping`)
+      continue
+    }
+    for (const [name, entry] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+        errors.push(`${section}.${name} must be a mapping`)
+        continue
+      }
+      const path = (entry as Record<string, unknown>).path
+      if (path === undefined) continue
+      const problem = providerPathError(path)
+      if (problem) errors.push(`${section}.${name}.path ${problem}`)
+    }
+  }
+  if (data['allow-lan'] !== false) errors.push('allow-lan must equal false')
+  if (typeof data['external-controller'] !== 'string' || !/^127\.0\.0\.1:(?:[1-9]\d*)$/.test(data['external-controller'])) {
+    errors.push('external-controller must bind loopback')
+  }
+  if (typeof data.secret !== 'string' || !SECRET_PATTERN.test(data.secret)) {
+    errors.push('secret must be a 64-character lowercase hex string')
+  }
+  const mixedPort = data['mixed-port']
+  if (typeof mixedPort !== 'number' || !Number.isInteger(mixedPort) || mixedPort < PORT_MIN || mixedPort > PORT_MAX) {
+    errors.push('mixed-port is outside the allowed range')
+  }
+
+  const tun = data.tun
+  if (typeof tun !== 'object' || tun === null || Array.isArray(tun)) {
+    errors.push('tun must be a mapping')
+  } else {
+    const block = tun as Record<string, unknown>
+    if (block.enable !== true) errors.push('tun.enable must equal true')
+    if (typeof block.device !== 'string' || !DEVICE_PATTERN.test(block.device)) errors.push('tun.device is invalid')
+    if (typeof block.stack !== 'string' || !STACKS.has(block.stack as MihomoTunStack)) errors.push('tun.stack is invalid')
+    if (block.mtu !== undefined && (typeof block.mtu !== 'number' || !isValidTunMtu(block.mtu))) {
+      errors.push('tun.mtu must be an integer between 576 and 65535')
+    }
+    const hijack = block['dns-hijack']
+    if (!Array.isArray(hijack) || hijack.length === 0) errors.push('tun.dns-hijack must be a non-empty sequence')
+    else for (const entry of hijack) {
+      if (typeof entry !== 'string' || !isValidDnsHijackEntry(entry)) errors.push(`invalid tun.dns-hijack entry: ${String(entry)}`)
+    }
+    for (const [key, label] of [['route-address', 'tun.route-address'], ['route-exclude-address', 'tun.route-exclude-address']] as const) {
+      const list = block[key]
+      if (list === undefined) continue
+      if (!Array.isArray(list) || list.length === 0) errors.push(`${label} must be a non-empty sequence`)
+      else for (const entry of list) {
+        if (typeof entry !== 'string' || !isValidTunRouteAddress(entry)) errors.push(`invalid ${label} entry: ${String(entry)}`)
+      }
+    }
+  }
+
+  const dns = data.dns
+  if (typeof dns !== 'object' || dns === null || Array.isArray(dns)) {
+    errors.push('dns must be a mapping')
+  } else {
+    const block = dns as Record<string, unknown>
+    if (block.enable !== true) errors.push('dns.enable must equal true')
+    if (block['enhanced-mode'] !== 'fake-ip') errors.push('dns.enhanced-mode must equal fake-ip')
+    if ('listen' in block) errors.push('forbidden key for a privileged profile: dns.listen')
+  }
+
+  return [...new Set(errors)]
+}
+
+/** Throwing form of {@link proxiedTunConfigErrors}. */
+export function assertProxiedTunConfig(text: string): void {
+  const errors = proxiedTunConfigErrors(text)
+  if (errors.length > 0) invalid(`unsafe TUN config: ${errors.join('; ')}`)
 }

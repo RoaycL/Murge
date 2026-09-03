@@ -18,7 +18,13 @@ import { SystemProxyService } from './system-proxy/service'
 import { WindowsSystemProxyAdapter } from './system-proxy/adapters/windows-adapter'
 import { DisabledSystemProxyAdapter } from './system-proxy/adapters/disabled-adapter'
 import { FileSystemProxyBackupStore } from './system-proxy/backup-store'
-import { StaticSystemProxyProbe, LiveSystemProxyKernelProbe, type LiveProbeMihomo } from './system-proxy/probe'
+import {
+  StaticSystemProxyProbe,
+  LiveSystemProxyKernelProbe,
+  TunAwareSystemProxyProbe,
+  type LiveProbeMihomo,
+  type TunSessionSource
+} from './system-proxy/probe'
 import type { KernelGateway } from '../shared/gateways'
 import { SYSTEM_PROXY_LOOPBACK_HOST } from '../shared/system-proxy'
 import { SystemProxyOrderedKernelGateway } from './system-proxy/ordered-kernel-gateway'
@@ -573,6 +579,20 @@ app.whenReady().then(async () => {
   const tunConfigService = new TunConfigService(appDataRoot(app.getPath('appData')))
   const coreSettingsService = new CoreSettingsService(appDataRoot(app.getPath('appData')))
   const geodataSettingsService = new GeodataSettingsService(appDataRoot(app.getPath('appData')))
+
+  // The single source of the runtime document, shared by the main kernel and the
+  // privileged TUN path so both run byte-identical content. Ordered exactly as the
+  // audit pipeline requires: overrides -> typed DNS -> sniffer, with the safety
+  // pass applied afterwards by whichever consumer materializes the config. Keeping
+  // this in one place is what stops TUN from silently ignoring the user's
+  // overrides / DNS / sniffer settings.
+  const resolveEnhancedActiveDocument = async (): Promise<string | null> => {
+    const profile = await profileService.getActiveProfile()
+    if (!profile) return null
+    const overridden = await overrideService.applyForProfile(profile.document, profile.meta.id)
+    const dnsApplied = await dnsEnhancementService.applyToDocument(overridden)
+    return snifferEnhancementService.applyToDocument(dnsApplied)
+  }
   const kernelManagerService = new KernelManagerService({
     settings: appSettingsService,
     workspaceRoot: productionKernelRoot
@@ -602,17 +622,9 @@ app.whenReady().then(async () => {
             // back to the strict config when no profile is active (e.g. CI smoke).
             // Any enabled overrides (global + this profile's) are applied to the
             // profile document before the safety pass, so custom rules/groups/DNS
-            // survive without editing the subscription file itself.
-            resolveActiveDocument: async () => {
-              const profile = await profileService.getActiveProfile()
-              if (!profile) return null
-              // Ordered YAML/JS overrides first, then the typed DNS enhancement,
-              // then the safety pass (buildProfileKernelConfig). This matches the
-              // audit pipeline: overrides -> typed DNS operations -> safety.
-              const overridden = await overrideService.applyForProfile(profile.document, profile.meta.id)
-              const dnsApplied = await dnsEnhancementService.applyToDocument(overridden)
-              return snifferEnhancementService.applyToDocument(dnsApplied)
-            },
+            // survive without editing the subscription file itself. The resolver is
+            // shared with the privileged TUN path so both run identical content.
+            resolveActiveDocument: resolveEnhancedActiveDocument,
             // Controlled core settings: when enabled, the allowlisted core keys
             // are authoritative in the runtime config (read-back) and override
             // the profile's own values (conflict handling); when disabled the
@@ -677,11 +689,28 @@ app.whenReady().then(async () => {
   // controller (never a hard-coded value); the backup store lives in the stable
   // brand-independent app-data namespace so a crash mid-apply is recoverable.
   // `init()` restores any orphan from a previous crash before the UI is usable.
+  //
+  // TUN is created further down (it needs this service's ordering guarantees), so
+  // the probe reads the coordinator through a late-bound holder rather than a
+  // constructor argument. Until TUN exists this reports null and the probe behaves
+  // exactly like the main-kernel-only path.
+  const tunSessionSource: TunSessionSource = {
+    getActiveMixedPort: () => tunCoordinator?.getActiveMixedPort() ?? null
+  }
   const systemProxyService = createSystemProxy({
     appDataBase: app.getPath('appData'),
     isDev: is.dev,
     kernel: ipcKernel,
-    mihomo: gateway
+    mihomo: gateway,
+    // Let the system proxy point at whichever mihomo is live: the elevated TUN
+    // child when TUN is active, the main kernel otherwise. Without this the two
+    // modes could never be enabled together (the main kernel is stopped while TUN
+    // runs, so the main-kernel probe would refuse with "内核未运行").
+    probe: is.dev
+      ? undefined
+      : process.platform === 'win32'
+        ? new TunAwareSystemProxyProbe(tunSessionSource, new LiveSystemProxyKernelProbe(ipcKernel, gateway))
+        : undefined
   })
   systemProxy = systemProxyService
   await systemProxyService.init()
@@ -729,7 +758,17 @@ app.whenReady().then(async () => {
           }
         },
         10_000,
-        async () => tunConfigService.readConfig()
+        async () => tunConfigService.readConfig(),
+        {
+          // TUN runs the SAME enhanced document as the main kernel, so enabling it
+          // carries the user's proxies, groups, providers and rules (a real proxy)
+          // rather than the DIRECT-only bootstrap. With no active profile the
+          // adapter falls back to DIRECT: a rule-mode config with no proxies would
+          // reference groups that do not exist and mihomo would refuse to start.
+          readActiveDocument: resolveEnhancedActiveDocument,
+          readCore: () => coreSettingsService.getRaw(),
+          readGeodata: () => geodataSettingsService.getRaw()
+        }
       )
     : new GatedTunMutationAdapter()
   const tunInstance = new TunCoordinator(tunAdapter, tunSupported)
@@ -748,6 +787,26 @@ app.whenReady().then(async () => {
     }),
     disable: () => tunInstance.emergencyDisable(),
     onStatus: (listener) => tunInstance.onStatus(listener)
+  }
+
+  // TUN and the system proxy may now be on together, which means the proxy can be
+  // pointing at the ELEVATED TUN child's port. When that session stops (user
+  // disable, mihomo crash, service restart) the port dies, so restore the proxy
+  // for exactly the same reason the main-kernel crash hook above does — otherwise
+  // the registry keeps aiming at a dead port and the user loses connectivity.
+  // Mirrors the kernel path: a conflict is safe (the proxy is no longer ours) and
+  // a genuine restore failure stays visible as `restore-failed`.
+  if (tunSupported) {
+    let servingTraffic = tunInstance.getStatus().phase === 'active'
+    tunInstance.onStatus((status) => {
+      const nowServing = status.phase === 'active'
+      const stoppedServing = servingTraffic && !nowServing
+      servingTraffic = nowServing
+      if (!stoppedServing) return
+      void systemProxyService.restoreBeforeKernelUnavailable().catch((error) => {
+        console.error('[system-proxy] TUN teardown recovery failed:', error)
+      })
+    })
   }
   // Reapplies the active profile to the live kernel whenever the user edits,
   // activates or imports-as-active a profile. The reloader is a no-op when the

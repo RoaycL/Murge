@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Microsoft/go-winio"
 	"golang.org/x/sys/windows"
@@ -147,12 +148,54 @@ func (service *windowsService) handleConnection(connection net.Conn) {
 	_ = encoder.Encode(response)
 }
 
+// clientIdentityCache pins the verified digest of the allowed client to the
+// exact file identity it was computed from. Re-hashing a ~150MB Electron
+// executable on EVERY pipe request (including the 5s liveness reconcile while
+// TUN is active) would burn sustained disk reads for no security gain: the
+// client executable lives in an administrator-owned install directory, and a
+// replaced file necessarily changes size and/or modification time, which
+// invalidates the cache and forces a fresh hash+compare on the next request.
+var clientIdentityCache struct {
+	sync.Mutex
+	known *clientIdentity
+}
+
+type clientIdentity struct {
+	size    int64
+	modTime time.Time
+}
+
+// verifyAllowedClientDigest re-verifies the pinned client digest unless the
+// executable's file identity is unchanged since the last verified hash. A
+// digest mismatch or an unreadable file is always a rejection (fail closed);
+// only the steady-state re-hash is skipped.
+func verifyAllowedClientDigest(config serviceConfig) error {
+	info, err := os.Stat(config.AllowedClientPath)
+	if err != nil {
+		return fmt.Errorf("pipe client executable unreadable: %w", err)
+	}
+	clientIdentityCache.Lock()
+	defer clientIdentityCache.Unlock()
+	if cache := clientIdentityCache.known; cache != nil && cache.size == info.Size() && cache.modTime.Equal(info.ModTime()) {
+		return nil
+	}
+	digest, err := hashFile(config.AllowedClientPath)
+	if err != nil {
+		return fmt.Errorf("pipe client executable unreadable: %w", err)
+	}
+	if digest != config.AllowedClientSHA256 {
+		return errors.New("pipe client executable digest mismatch")
+	}
+	clientIdentityCache.known = &clientIdentity{size: info.Size(), modTime: info.ModTime()}
+	return nil
+}
+
 // verifyClient authenticates the pipe client on EVERY connection: the client
 // process image must match the pinned AllowedClientPath AND its digest must
-// still equal the pinned AllowedClientSHA256. The initialize-time digest check
-// alone would leave a window where an updated/tampered GUI binary could connect
-// (or a stale binary be trusted after the file was replaced); re-hashing the
-// executable each time (a few ms for a ~100MB Electron binary, once per request)
+// still equal the pinned AllowedClientSHA256 (verified per file identity — see
+// verifyAllowedClientDigest). The initialize-time digest check alone would
+// leave a window where an updated/tampered GUI binary could connect (or a
+// stale binary be trusted after the file was replaced); checking at use time
 // keeps the pinned identity true at the moment of use, matching the threat
 // model's C3 control (path + digest on every call).
 func (service *windowsService) verifyClient(connection net.Conn) error {
@@ -178,14 +221,7 @@ func (service *windowsService) verifyClient(connection net.Conn) error {
 	if !strings.EqualFold(filepath.Clean(observed), filepath.Clean(service.config.AllowedClientPath)) {
 		return errors.New("pipe client executable mismatch")
 	}
-	digest, err := hashFile(service.config.AllowedClientPath)
-	if err != nil {
-		return fmt.Errorf("pipe client executable unreadable: %w", err)
-	}
-	if digest != service.config.AllowedClientSHA256 {
-		return errors.New("pipe client executable digest mismatch")
-	}
-	return nil
+	return verifyAllowedClientDigest(service.config)
 }
 
 func (service *windowsService) shutdown() {

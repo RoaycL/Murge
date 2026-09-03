@@ -93,6 +93,11 @@ class FakeTunGateway implements TunGateway {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
   }
+
+  /** Test-only: force the coordinator phase (simulates a latched state). */
+  async forcePhase(phase: TunStatus['phase']): Promise<void> {
+    this.status = tunStatus(phase)
+  }
 }
 
 class FakeSystemProxy {
@@ -248,6 +253,23 @@ describe('P1-1 normal TUN mode switch keeps the owned system proxy', () => {
     h.tun.enableOutcome = 'failed'
     await h.ipcTun.enable()
     expect(h.proxy.restoreCalls).toBe(1)
+  })
+
+  it('ALWAYS prepares before enabling — even from restore-failed with a resumed main kernel', async () => {
+    // Abnormal-exit recovery can leave the coordinator in `restore-failed` while
+    // the main kernel runs again (resume succeeded, TUN cleanup failed). A
+    // retried enable must stop that live main kernel first: skipping prepare
+    // would let the elevated child collide with it on the unified ports.
+    const h = createHarness({ controllerReady: true })
+    await h.controller.runExclusive(async () => {
+      await h.tun.forcePhase('restore-failed')
+      h.kernel.start()
+    })
+    expect(h.kernel.status.phase).toBe('running')
+    await h.ipcTun.enable()
+    expect(h.kernel.prepareTunEnableCalls).toBe(1)
+    expect(h.kernel.status.phase).toBe('stopped')
+    expect(h.tun.enableCalls).toBe(1)
   })
 })
 

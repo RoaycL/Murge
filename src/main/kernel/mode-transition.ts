@@ -192,11 +192,12 @@ export class ModeTransitionController {
     // (reconcile) first, and no prepare churn should happen for a call the
     // coordinator would refuse anyway.
     if (!ENABLE_PROCEEDS_FROM.has(before.phase)) return before
-    // `restore-failed` already had its main kernel stopped by the mode switch
-    // that led here, so only the ordinary resting phases need a prepare.
-    if (before.phase !== 'restore-failed') {
-      await this.prepareForTunEnable()
-    }
+    // ALWAYS prepare, including from `restore-failed`: an abnormal-exit recovery
+    // may have resumed the main kernel while the coordinator lingers in
+    // `restore-failed`, and prepare's own status check makes it a no-op when the
+    // kernel is already stopped. Skipping it here would let the elevated child
+    // collide with a live main kernel on the unified ports.
+    await this.prepareForTunEnable()
     const status = await this.deps.tun.enable()
     if (status.phase === 'active') return status
     // The child failed (or rolled back). Bring the main kernel back on the

@@ -16,6 +16,16 @@ import (
 	"golang.org/x/sys/windows/svc/mgr"
 )
 
+// removeAllWithRetry backoff: bounded retries with a growing sleep so a service
+// image file that is transiently locked during process teardown does not abort a
+// completed uninstall. 5 attempts * 250ms..1.25s ≈ 1.5s worst case, well under
+// the 30s stop budget and far beyond how long Windows holds a terminated
+// service's image for.
+const (
+	maxRemoveAllAttempts   = 5
+	removeAllRetryInterval = 250 * time.Millisecond
+)
+
 type serviceTemplate struct {
 	ServiceName          string `json:"serviceName"`
 	PipeName             string `json:"pipeName"`
@@ -191,7 +201,25 @@ func uninstallService(template serviceTemplate, root, stateDirectory string) err
 	} else if !errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
 		return fmt.Errorf("open service for uninstall: %w", err)
 	}
-	return os.RemoveAll(root)
+	return removeAllWithRetry(root)
+}
+
+// removeAllWithRetry removes root, retrying briefly so a just-stopped service
+// process that is still releasing its image file (the exe under root/service)
+// does not make an otherwise-complete uninstall fail. The SCM entry has already
+// been deleted by the caller's service.Delete(); this only needs the on-disk
+// state gone. A genuinely persistent lock still surfaces as an error after the
+// retry window, so real problems are never silently swallowed.
+func removeAllWithRetry(root string) error {
+	var err error
+	for attempt := 0; attempt < maxRemoveAllAttempts; attempt++ {
+		err = os.RemoveAll(root)
+		if err == nil {
+			return nil
+		}
+		time.Sleep(time.Duration(attempt+1) * removeAllRetryInterval)
+	}
+	return err
 }
 
 func stopServiceAndWait(service *mgr.Service, timeout time.Duration) error {

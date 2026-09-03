@@ -439,7 +439,16 @@ jobs:
 
           $serviceTemplate = Get-Content (Join-Path $installDir 'resources\tun-service\service-template.json') -Raw | ConvertFrom-Json
           $tunService = Get-Service -Name $serviceTemplate.serviceName -ErrorAction Stop
-          if ($tunService.Status -ne 'Running') { throw "TUN service is not running after install: $($tunService.Status)" }
+          if ($tunService.Status -ne 'Running') {
+            Write-Host '--- TUN service query diagnostics ---'
+            & sc.exe queryex $serviceTemplate.serviceName
+            Write-Host '--- recent Service Control Manager events ---'
+            Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager'; StartTime = (Get-Date).AddMinutes(-10) } -ErrorAction SilentlyContinue |
+              Where-Object { $_.Message -like "*$($serviceTemplate.serviceName)*" } |
+              Select-Object -First 20 TimeCreated, Id, LevelDisplayName, Message |
+              Format-List
+            throw "TUN service is not running after install: $($tunService.Status)"
+          }
           if (Get-Process -Name 'mihomo' -ErrorAction SilentlyContinue) { throw 'idle TUN service unexpectedly started mihomo' }
           Write-Host "idle privileged service installed: $($serviceTemplate.serviceName)"
 

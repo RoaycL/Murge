@@ -105,6 +105,37 @@ describe('WindowsSystemProxyAdapter', () => {
       await expect(adapter.read()).rejects.toMatchObject({ code: ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED })
     })
 
+    it('retries an empty/truncated successful PowerShell snapshot and then accepts a complete snapshot', async () => {
+      let attempts = 0
+      const { runner, calls } = makeRunner({
+        powershell: () => {
+          attempts += 1
+          if (attempts === 1) return ok('')
+          if (attempts === 2) return ok('{"ProxyEnable":')
+          return ok(
+            JSON.stringify({
+              ProxyEnable: { exists: true, type: 'REG_DWORD', value: 0 },
+              ProxyServer: { exists: false, type: 'none', value: null },
+              ProxyOverride: { exists: false, type: 'none', value: null }
+            })
+          )
+        }
+      })
+      const adapter = new WindowsSystemProxyAdapter(runner)
+      await expect(adapter.read()).resolves.toMatchObject({ proxyEnable: { value: 0 } })
+      expect(calls).toHaveLength(3)
+    })
+
+    it('fails closed after three malformed successful snapshots and reports bounded diagnostics', async () => {
+      const { runner, calls } = makeRunner({ powershell: () => ok('') })
+      const adapter = new WindowsSystemProxyAdapter(runner)
+      await expect(adapter.read()).rejects.toMatchObject({
+        code: ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED,
+        message: expect.stringContaining('已重试 3 次')
+      })
+      expect(calls).toHaveLength(3)
+    })
+
     it('surfaces a transport failure (powershell not executable) as a typed error', async () => {
       const { runner } = makeRunner({})
       const adapter = new WindowsSystemProxyAdapter(runner)

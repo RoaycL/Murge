@@ -44,26 +44,40 @@ export class MihomoService implements MihomoGateway {
     const parseHandler = (source: MihomoStreamError['source']) => (error: unknown) => this.emitError(source, 'parse', error)
     const connectionHandler = (source: MihomoStreamError['source']) => (error: unknown) => this.emitError(source, 'connection', error)
     if (enabled) {
+      // maxRetries: 0 — retry FOREVER while any listener remains. The
+      // production subscribers are long-lived (the IPC forwarder subscribes at
+      // startup until quit, usage history hangs off /traffic permanently), so
+      // `listeners.size` never drops to zero and the listener-count reset in
+      // the transport never runs. A finite retry budget therefore means a
+      // kernel downtime longer than the backoff ladder (~23s at defaults —
+      // easy to hit with TUN mode switches or a manual restart) KILLS the
+      // streams until the app relaunches: the UI sticks at "未收到流量数据"
+      // and usage history silently stops recording. Retrying indefinitely with
+      // the existing exponential backoff + jitter (capped at 5s) is the correct
+      // steady-state behavior for a loopback peer that comes and goes.
       this.trafficStream = createMihomoStream<TrafficSample>({
         url: `${streams.wsBaseUrl}/traffic`,
         secret: streams.secret,
         parse: (raw) => ({ timestamp: Date.now(), ...parseMihomoTraffic(raw) }),
         onParseError: parseHandler('traffic'),
-        onConnectionError: connectionHandler('traffic')
+        onConnectionError: connectionHandler('traffic'),
+        options: { maxRetries: 0 }
       })
       this.connectionsStream = createMihomoStream<MihomoConnectionsSnapshot>({
         url: `${streams.wsBaseUrl}/connections`,
         secret: streams.secret,
         parse: parseMihomoConnections,
         onParseError: parseHandler('connections'),
-        onConnectionError: connectionHandler('connections')
+        onConnectionError: connectionHandler('connections'),
+        options: { maxRetries: 0 }
       })
       this.logsStream = createMihomoStream<MihomoLogMessage>({
         url: `${streams.wsBaseUrl}/logs`,
         secret: streams.secret,
         parse: parseMihomoLog,
         onParseError: parseHandler('logs'),
-        onConnectionError: connectionHandler('logs')
+        onConnectionError: connectionHandler('logs'),
+        options: { maxRetries: 0 }
       })
     } else {
       this.trafficStream = null

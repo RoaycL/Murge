@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import SpeedSparkline from '../components/SpeedSparkline.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 import UsageHistoryPanel from '../components/UsageHistoryPanel.vue'
@@ -27,6 +27,15 @@ onMounted(() => {
   connections.connect()
   void runtime.refresh()
   void networkMeta.init()
+})
+
+// Same lifecycle contract as ConnectionsView / LogsView / ProcessListView:
+// drop the push subscriptions when the view unmounts so an inactive page
+// stops accumulating snapshots. The main-process streams stay shared (the
+// IPC forwarder keeps them alive), only this window's listeners detach.
+onUnmounted(() => {
+  traffic.disconnect()
+  connections.disconnect()
 })
 
 const up = computed(() => formatRate(traffic.current?.up ?? 0))

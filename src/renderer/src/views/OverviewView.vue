@@ -3,9 +3,12 @@ import { computed, ref } from 'vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 import { useKernelStore } from '../stores/kernel'
 import { useSystemProxyStore } from '../stores/system-proxy'
+import { useTunStore } from '../stores/tun'
+import { TUN_UI_COPY } from '@shared/tun'
 
 const kernel = useKernelStore()
 const systemProxy = useSystemProxyStore()
+const tun = useTunStore()
 const actionError = ref('')
 const busy = computed(() => kernel.status.phase === 'starting' || kernel.status.phase === 'stopping')
 const running = computed(() => kernel.status.phase === 'running')
@@ -70,6 +73,26 @@ async function toggleSystemProxy(): Promise<void> {
   }
 }
 
+// The TUN switch mirrors the privileged TUN lifecycle. It is only actionable
+// when the current build actually supports the TUN service (packaged Windows);
+// in dev/non-Windows the platform reports unsupported and the switch stays
+// disabled. The backend coordinator owns the safe-kernel mutual-exclusion
+// invariant (TUN and the safe kernel can't both run a mixed-port mihomo); the
+// system proxy is allowed alongside TUN, so the UI simply reflects the
+// authoritative phase.
+const tunActive = computed(() => tun.status.phase === 'active')
+const tunBusy = computed(() => tun.busy || tun.status.phase === 'starting' || tun.status.phase === 'restoring')
+const tunSwitchDisabled = computed(() => tunBusy.value || !tun.status.supported)
+const tunPhaseLabel = computed(() => {
+  if (!tun.status.supported) return '当前平台不支持 TUN（需打包后的 Windows 版本）'
+  return TUN_UI_COPY[tun.status.phase] ?? tun.status.phase
+})
+
+async function toggleTun(): Promise<void> {
+  if (tunActive.value) await tun.disable()
+  else await tun.enable()
+}
+
 </script>
 
 <template>
@@ -80,6 +103,7 @@ async function toggleSystemProxy(): Promise<void> {
     </div></section>
     <section><h2>网络接管</h2><div class="overview-grid">
       <SurfaceCard><div class="setting-head"><div><h3>系统代理</h3><p>将系统代理指向本应用的内核，不必先手动启动内核；首次开启会自动启动内核。兼容性和性能最佳。</p></div><button type="button" class="switch" :class="{ on: spEnabled }" :aria-checked="spEnabled" :disabled="spSwitchDisabled" aria-label="切换系统代理" @click="toggleSystemProxy" /></div><div class="setting-status"><i :class="{ active: spEnabled }" />{{ spPhaseLabel }}</div><p v-if="actionError" class="inline-error">{{ actionError }}</p></SurfaceCard>
+      <SurfaceCard><div class="setting-head"><div><h3>TUN 模式</h3><p>接管全部流量（包括不遵循系统代理的程序）。TUN 使用当前激活的订阅与分流规则，可与系统代理同时开启；但启用前需先停止安全直连内核，禁用后会由 mihomo 自动恢复网络设置。</p></div><button type="button" class="switch" :class="{ on: tunActive }" :aria-checked="tunActive" :disabled="tunSwitchDisabled" aria-label="切换 TUN 模式" @click="toggleTun" /></div><div class="setting-status"><i :class="{ active: tunActive }" />{{ tunPhaseLabel }}</div><p v-if="tun.actionError" class="inline-error">{{ tun.actionError }}</p></SurfaceCard>
     </div></section>
     <section><h2>局域网设备接管</h2><div class="overview-grid">
       <SurfaceCard><div class="setting-head"><div><h3>HTTP & SOCKS5 代理</h3><p>安全直连配置强制只监听本机；开放局域网将在独立安全阶段实现。</p></div><button class="switch" disabled aria-label="局域网接管尚未实现" /></div><div class="setting-status"><i />未开放局域网；启动后仅监听 127.0.0.1</div></SurfaceCard>

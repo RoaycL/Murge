@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted } from 'vue'
+import { computed } from 'vue'
 import { useTunStore } from '../stores/tun'
 import { useProfilesStore } from '../stores/profiles'
 import { TUN_UI_COPY } from '@shared/tun'
@@ -17,9 +17,6 @@ const detail = computed(() => tunLifecycleDetail(tun.status))
 // falls back to a direct-only bootstrap, which routes nothing through a proxy —
 // worth stating plainly so "TUN is on but nothing is proxied" is never a surprise.
 const activeProfileName = computed(() => profiles.active?.name ?? null)
-
-onMounted(() => tun.connect())
-onBeforeUnmount(() => tun.disconnect())
 </script>
 
 <template>

@@ -30,6 +30,11 @@ export type CommandRunner = (command: string, args: string[]) => Promise<RunResu
 const REG_COMMAND = process.platform === 'win32' ? 'reg.exe' : 'reg'
 const POWERSHELL_COMMAND = 'powershell'
 const DEFAULT_TIMEOUT_MS = 5000
+const REGISTRY_READ_ATTEMPTS = 3
+const REGISTRY_READ_RETRY_MS = 75
+
+const delay = (milliseconds: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, milliseconds))
 
 function defaultRunner(command: string, args: string[]): Promise<RunResult> {
   return new Promise((resolve, reject) => {
@@ -91,20 +96,37 @@ export class WindowsSystemProxyAdapter implements SystemProxyAdapter {
    * malformed value is a read failure, never a phantom `0` / absent.
    */
   private async readRegistrySnapshot(): Promise<Record<'ProxyEnable' | 'ProxyServer' | 'ProxyOverride', RegistryValue>> {
-    const result = await this.runChecked(
-      POWERSHELL_COMMAND,
-      ['-NoProfile', '-NonInteractive', '-Command', buildRegistryReadScript()],
-      ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED,
-      '读取系统代理注册表值失败'
-    )
-    try {
-      return coerceRegistrySnapshot(result.stdout)
-    } catch (error) {
-      throw new ProtocolError(
+    const diagnostics: string[] = []
+    for (let attempt = 1; attempt <= REGISTRY_READ_ATTEMPTS; attempt += 1) {
+      const result = await this.runChecked(
+        POWERSHELL_COMMAND,
+        ['-NoProfile', '-NonInteractive', '-Command', buildRegistryReadScript()],
         ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED,
-        `解析系统代理注册表快照失败：${(error as Error).message}`
+        '读取系统代理注册表值失败'
       )
+      try {
+        return coerceRegistrySnapshot(result.stdout)
+      } catch (error) {
+        // Hosted Windows runners have occasionally returned exit 0 with empty or
+        // truncated stdout while PowerShell itself was still draining. Retry the
+        // complete, side-effect-free snapshot command; malformed data never gets
+        // accepted and the final failure remains fail-closed.
+        const stderr = result.stderr.trim()
+        diagnostics.push(
+          `attempt=${attempt}, stdoutBytes=${Buffer.byteLength(result.stdout)}, stderrBytes=${Buffer.byteLength(result.stderr)}` +
+            (stderr ? `, stderr=${stderr.slice(0, 160)}` : '')
+        )
+        if (attempt < REGISTRY_READ_ATTEMPTS) {
+          await delay(REGISTRY_READ_RETRY_MS * attempt)
+          continue
+        }
+        throw new ProtocolError(
+          ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED,
+          `解析系统代理注册表快照失败（已重试 ${REGISTRY_READ_ATTEMPTS} 次）：${(error as Error).message}；${diagnostics.join('；')}`
+        )
+      }
     }
+    throw new ProtocolError(ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED, '解析系统代理注册表快照失败')
   }
 
   async readValue(valueName: string): Promise<RegistryValue> {

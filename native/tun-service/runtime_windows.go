@@ -81,8 +81,15 @@ func secureStateDirectory(path string) error {
 	if err != nil {
 		return err
 	}
-	// Setting the mandatory label requires the SACL + label bits and
-	// SeSecurityPrivilege, which LocalSystem holds.
+	// Setting the mandatory label requires SeSecurityPrivilege to be ENABLED.
+	// Both an elevated installer token and LocalSystem normally contain it but
+	// Windows keeps privileges disabled until explicitly requested. Restore the
+	// prior token state immediately after the one protected operation.
+	restorePrivilege, err := enableSecurityPrivilege()
+	if err != nil {
+		return fmt.Errorf("enable SeSecurityPrivilege: %w", err)
+	}
+	defer restorePrivilege()
 	err = windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
 		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION|
 			windows.SACL_SECURITY_INFORMATION|windows.LABEL_SECURITY_INFORMATION,
@@ -91,6 +98,54 @@ func secureStateDirectory(path string) error {
 		return fmt.Errorf("state directory hardening failed: %w", err)
 	}
 	return nil
+}
+
+func enableSecurityPrivilege() (func(), error) {
+	var token windows.Token
+	if err := windows.OpenProcessToken(
+		windows.CurrentProcess(),
+		windows.TOKEN_ADJUST_PRIVILEGES|windows.TOKEN_QUERY,
+		&token,
+	); err != nil {
+		return nil, err
+	}
+	name, err := windows.UTF16PtrFromString("SeSecurityPrivilege")
+	if err != nil {
+		token.Close()
+		return nil, err
+	}
+	var luid windows.LUID
+	if err := windows.LookupPrivilegeValue(nil, name, &luid); err != nil {
+		token.Close()
+		return nil, err
+	}
+	desired := windows.Tokenprivileges{
+		PrivilegeCount: 1,
+		Privileges: [1]windows.LUIDAndAttributes{{
+			Luid: luid, Attributes: windows.SE_PRIVILEGE_ENABLED,
+		}},
+	}
+	var previous windows.Tokenprivileges
+	var returned uint32
+	if err := windows.AdjustTokenPrivileges(
+		token,
+		false,
+		&desired,
+		uint32(unsafe.Sizeof(previous)),
+		&previous,
+		&returned,
+	); err != nil {
+		token.Close()
+		return nil, err
+	}
+	if errors.Is(windows.GetLastError(), windows.ERROR_NOT_ALL_ASSIGNED) {
+		token.Close()
+		return nil, windows.ERROR_NOT_ALL_ASSIGNED
+	}
+	return func() {
+		_ = windows.AdjustTokenPrivileges(token, false, &previous, 0, nil, nil)
+		_ = token.Close()
+	}, nil
 }
 
 func prepareCore(config serviceConfig) (string, string, error) {

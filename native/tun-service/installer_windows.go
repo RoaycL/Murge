@@ -174,7 +174,10 @@ func installOrUpgradeService(template serviceTemplate, bootstrapDirectory, servi
 		{Type: mgr.ServiceRestart, Delay: 10 * time.Second},
 		{Type: mgr.NoAction},
 	}, 24*60*60)
-	return service.Start()
+	if err := service.Start(); err != nil {
+		return fmt.Errorf("start service: %w", err)
+	}
+	return waitForServiceRunning(service, 30*time.Second)
 }
 
 func uninstallService(template serviceTemplate, root, stateDirectory string) error {
@@ -245,6 +248,28 @@ func stopServiceAndWait(service *mgr.Service, timeout time.Duration) error {
 		time.Sleep(250 * time.Millisecond)
 	}
 	return errors.New("service stop timed out")
+}
+
+func waitForServiceRunning(service *mgr.Service, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		status, err := service.Query()
+		if err != nil {
+			return err
+		}
+		switch status.State {
+		case svc.Running:
+			return nil
+		case svc.Stopped:
+			return fmt.Errorf(
+				"service stopped during startup (win32ExitCode=%d, serviceExitCode=%d)",
+				status.Win32ExitCode,
+				status.ServiceSpecificExitCode,
+			)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return errors.New("service start timed out")
 }
 
 func copyFileAtomic(source, destination string) error {

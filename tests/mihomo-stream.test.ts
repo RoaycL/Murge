@@ -188,6 +188,57 @@ describe('MihomoStream transport', () => {
     expect(sockets).toHaveLength(2)
   })
 
+  it('keeps retrying forever with a permanent subscriber (maxRetries: 0 never gives up)', () => {
+    // The production streams have long-lived subscribers (the IPC forwarder and
+    // usage history), so the listener count never reaches zero and the
+    // listener-count reset in subscribe() never runs. A finite retry budget
+    // would therefore kill the stream for the rest of the session after a
+    // kernel downtime longer than the backoff ladder (easy to hit with TUN
+    // mode switches or a manual stop/start). This pins the production shape.
+    vi.useFakeTimers()
+    const sockets: FakeSocket[] = []
+    // While true, every new socket is refused (connection reset) right after
+    // the transport wires its listeners — 0ms under the fake clock.
+    let refusing = true
+    const factory = () => {
+      const socket = new FakeSocket()
+      sockets.push(socket)
+      if (refusing) setTimeout(() => socket.emit('close'), 0)
+      return socket
+    }
+    const connectionErrors: Error[] = []
+    const stream = createMihomoStream<{ up: number }>({
+      url: 'ws://127.0.0.1:1/traffic',
+      parse: (raw) => raw as { up: number },
+      options: { backoffMs: 250, maxBackoffMs: 5000, jitter: 0.2, maxRetries: 0 },
+      onConnectionError: (error) => connectionErrors.push(error as Error),
+      socketFactory: factory
+    })
+    const events: number[] = []
+    stream.subscribe((value) => events.push(value.up))
+    vi.advanceTimersByTime(0) // let the first refusal close socket #0
+
+    // Nobody ever answers; the controller is down far longer than any finite
+    // backoff ladder would survive.
+    vi.advanceTimersByTime(120_000)
+    const attempts = sockets.length
+    expect(attempts).toBeGreaterThan(8)
+    // Jitter is bounded: even at the 5s cap + 20% jitter the cadence stays
+    // above one attempt per ~7.5s across the two-minute outage.
+    expect(attempts).toBeLessThan(120_000 / 2500)
+    // Exhaustion must NOT be reported: the stream is still fighting.
+    expect(connectionErrors.some((error) => /exhausted/i.test(error.message))).toBe(false)
+
+    // The controller finally comes back; the next attempt connects and the
+    // stream delivers again without any resubscribe.
+    refusing = false
+    vi.advanceTimersByTime(10_000)
+    const live = sockets[sockets.length - 1]
+    live.emit('open')
+    live.emit('message', Buffer.from(JSON.stringify({ up: 7 })))
+    expect(events).toEqual([7])
+  })
+
   it('removes only the unsubscribed listener (no leaks)', () => {
     const sockets: FakeSocket[] = []
     const factory = () => {

@@ -12,6 +12,10 @@ Windows release candidate for the mihomo-based desktop client.
 - Turning TUN on automatically stops the safe loopback kernel first (the two are
   mutually exclusive), so no manual stop is needed; an owned system proxy is
   restored before the kernel stops.
+- The system proxy and TUN can now be enabled together: while TUN is on, the
+  Overview 系统代理 switch points the proxy at the live TUN child instead of
+  erroring, and turning TUN off restores the proxy so it is never left aimed at
+  a dead port.
 - Profile, activity, connection, policy, provider, rule, DNS and log tools.
 - Verified Windows system-proxy enable, exact restore and recovery path.
 - Tray, optional start-on-login, diagnostics and brand-configurable desktop UI.

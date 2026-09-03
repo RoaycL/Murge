@@ -8,16 +8,20 @@ describe('TUN IPC exclusivity', () => {
   let container: ReturnType<typeof createFakeContainer>
   beforeEach(() => { container = createFakeContainer(brand) })
 
-  it('enables TUN only while the safe kernel is stopped', async () => {
+  it('enables TUN with the safe kernel stopped, and auto-stops it otherwise', async () => {
     const handlers = buildIpcHandlers(container.deps)
     await handlers[IPC.tunEnable]({})
     expect(container.tun.enableCalls).toBe(1)
+    expect(container.kernel.stopCalls).toBe(0)
 
-    // The safe kernel stays mutually exclusive: both it and TUN run a mihomo and
-    // bind a mixed-port.
+    // The safe kernel is mutually exclusive with TUN (both run a mihomo and bind
+    // a mixed-port). Enabling TUN while it is live auto-stops the kernel first, so
+    // the user does not have to stop it by hand; the gateway restores any owned
+    // system proxy before the stop.
     container.kernel.status.phase = 'running'
-    await expect(handlers[IPC.tunEnable]({})).rejects.toThrow(/Stop the safe kernel/)
-    expect(container.tun.enableCalls).toBe(1)
+    await handlers[IPC.tunEnable]({})
+    expect(container.kernel.stopCalls).toBe(1)
+    expect(container.tun.enableCalls).toBe(2)
   })
 
   it('enables TUN while the system proxy is already owned (coexistence)', async () => {

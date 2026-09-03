@@ -13,19 +13,13 @@ import { TempKernelConfigStore } from './kernel/config-store'
 import { findFreePort, MihomoKernelConfigStore } from './kernel/mihomo-config-store'
 import { randomSecret } from './kernel/mihomo-config'
 import { ControllerReadyKernelGateway } from './kernel/controller-ready-gateway'
-import { SingleKernelGateway } from './kernel/single-kernel-gateway'
+import { LateBoundKernelGateway, SingleKernelGateway } from './kernel/single-kernel-gateway'
 import { createSystemProxy } from './system-proxy/factory'
 import { SystemProxyService } from './system-proxy/service'
 import { WindowsSystemProxyAdapter } from './system-proxy/adapters/windows-adapter'
 import { DisabledSystemProxyAdapter } from './system-proxy/adapters/disabled-adapter'
 import { FileSystemProxyBackupStore } from './system-proxy/backup-store'
-import {
-  StaticSystemProxyProbe,
-  LiveSystemProxyKernelProbe,
-  TunAwareSystemProxyProbe,
-  type LiveProbeMihomo,
-  type TunSessionSource
-} from './system-proxy/probe'
+import { StaticSystemProxyProbe, LiveSystemProxyKernelProbe, type LiveProbeMihomo } from './system-proxy/probe'
 import type { KernelGateway } from '../shared/gateways'
 import { SYSTEM_PROXY_LOOPBACK_HOST } from '../shared/system-proxy'
 import { SystemProxyOrderedKernelGateway } from './system-proxy/ordered-kernel-gateway'
@@ -696,22 +690,31 @@ app.whenReady().then(async () => {
   // the probe reads the coordinator through a late-bound holder rather than a
   // constructor argument. Until TUN exists this reports null and the probe behaves
   // exactly like the main-kernel-only path.
-  const tunSessionSource: TunSessionSource = {
-    getActiveMixedPort: () => tunCoordinator?.getActiveMixedPort() ?? null
-  }
+  // Single logical-kernel holder for the system-proxy probe. The probe consults
+  // the SAME unified kernel view the renderer sees (running whenever either the
+  // main kernel OR the elevated TUN child is serving, over the single production
+  // controller/mixed ports). This replaces the legacy coexistence probe that
+  // consulted the main-only kernel and reported a stopped kernel while TUN owned
+  // the data plane — the source of the "请先启动内核后再启用系统代理" failure —
+  // and lets the system proxy be enabled in BOTH modes on the one unified port.
+  // The single-kernel gateway is created further down, so this is bound lazily
+  // after it is wired; init() never enables, so the probe is first called after
+  // the binding is assigned.
+  let singleKernelGatewayRef: KernelGateway | null = null
+  const singleKernelProbeGateway = new LateBoundKernelGateway(() => singleKernelGatewayRef)
   const systemProxyService = createSystemProxy({
     appDataBase: app.getPath('appData'),
     isDev: is.dev,
     kernel: ipcKernel,
     mihomo: gateway,
-    // Let the system proxy point at whichever mihomo is live: the elevated TUN
-    // child when TUN is active, the main kernel otherwise. Without this the two
-    // modes could never be enabled together (the main kernel is stopped while TUN
-    // runs, so the main-kernel probe would refuse with "内核未运行").
+    // In single-kernel mode the system proxy simply points at the one unified
+    // mixed-port, whatever host is live, so the live probe needs nothing beyond
+    // the unified kernel + controller. On non-Windows the platform adapter is
+    // unsupported and the factory's default probe is used.
     probe: is.dev
       ? undefined
       : process.platform === 'win32'
-        ? new TunAwareSystemProxyProbe(tunSessionSource, new LiveSystemProxyKernelProbe(ipcKernel, gateway))
+        ? new LiveSystemProxyKernelProbe(singleKernelProbeGateway, gateway)
         : undefined
   })
   systemProxy = systemProxyService
@@ -830,6 +833,9 @@ app.whenReady().then(async () => {
     systemProxyService,
     `http://127.0.0.1:${productionControllerPort}`
   )
+  // Bind the system-proxy probe's holder to the unified gateway once it exists, so
+  // the probe and the renderer's kernel.status.phase resolve the same live host.
+  singleKernelGatewayRef = runtimeKernelGateway
   // Reapplies the active profile to the live kernel whenever the user edits,
   // activates or imports-as-active a profile. The reloader is a no-op when the
   // kernel is stopped (the profile applies on the next manual start) and

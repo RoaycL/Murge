@@ -3,7 +3,8 @@ import type { KernelGateway } from '../src/shared/gateways'
 import type { KernelStatus } from '../src/shared/runtime'
 import type { TunStatus } from '../src/shared/tun'
 import type { KernelStopPrecondition } from '../src/main/system-proxy/ordered-kernel-gateway'
-import { SingleKernelGateway } from '../src/main/kernel/single-kernel-gateway'
+import { SingleKernelGateway, LateBoundKernelGateway } from '../src/main/kernel/single-kernel-gateway'
+import { ProtocolError } from '../src/shared/protocol-errors'
 
 const RUNNING: KernelStatus = { phase: 'running', pid: 412, version: 'v1.19.30', controllerUrl: null, startedAt: 0, lastError: null }
 const STOPPED: KernelStatus = { phase: 'stopped', pid: null, version: null, controllerUrl: null, startedAt: null, lastError: null }
@@ -163,5 +164,40 @@ describe('SingleKernelGateway', () => {
     tun.emitStatus(ACTIVE_TUN)
     await Promise.resolve()
     expect(seen[seen.length - 1].phase).toBe('running')
+  })
+})
+
+describe('LateBoundKernelGateway', () => {
+  it('delegates getStatus to the implementation bound after construction', async () => {
+    const real = makeKernel(RUNNING)
+    const bound = new LateBoundKernelGateway(() => null)
+    bound.set(real)
+    const status = await bound.getStatus()
+    expect(status.phase).toBe('running')
+    expect(status.pid).toBe(412)
+  })
+
+  it('also resolves through the provider when implementation is not bound', async () => {
+    const real = makeKernel(RUNNING)
+    const bound = new LateBoundKernelGateway(() => real)
+    const status = await bound.getStatus()
+    expect(status.phase).toBe('running')
+  })
+
+  it('delegates start/stop/onStatus to the bound gateway', async () => {
+    const main = makeKernel(STOPPED)
+    const bound = new LateBoundKernelGateway(() => null)
+    bound.set(main)
+    await bound.start()
+    expect(main.startCalls).toBe(1)
+    const seen: KernelStatus[] = []
+    bound.onStatus((s) => seen.push(s))
+    main.emitStatus(RUNNING)
+    expect(seen[seen.length - 1].phase).toBe('running')
+  })
+
+  it('fails closed (INTERNAL) when neither a provider nor a bound gateway exists', () => {
+    const bound = new LateBoundKernelGateway(() => null)
+    expect(() => bound.getStatus()).toThrowError(ProtocolError)
   })
 })

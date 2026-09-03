@@ -13,16 +13,6 @@ const actionError = ref('')
 const busy = computed(() => kernel.status.phase === 'starting' || kernel.status.phase === 'stopping')
 const running = computed(() => kernel.status.phase === 'running')
 
-async function toggleKernel(): Promise<void> {
-  actionError.value = ''
-  try {
-    if (running.value) await kernel.stop()
-    else await kernel.start()
-  } catch (error) {
-    actionError.value = error instanceof Error ? error.message : String(error)
-  }
-}
-
 const sp = computed(() => systemProxy.status)
 // The 系统代理 switch drives the whole turn-on: if the kernel is not yet
 // running it is auto-started first, so the switch is always actionable (when
@@ -98,9 +88,6 @@ async function toggleTun(): Promise<void> {
 <template>
   <div class="page-shell overview-view">
     <h1>概览</h1>
-    <section><h2>内核</h2><div class="overview-grid">
-      <SurfaceCard><div class="setting-head"><div><h3>内核</h3><p>运行以接管本机流量的 mihomo。这是同一个内核：未启用 TUN 时以普通模式运行，启用 TUN 时自动以特权方式重启并提供全量接管；系统代理开关会自动完成启动这一步，且默认在启动应用后自动运行（可在通用设置中关闭）。</p></div><button type="button" class="primary-button" :disabled="busy" @click="toggleKernel">{{ busy ? '处理中…' : running ? '停止' : '启动' }}</button></div><div class="setting-status"><i :class="{ active: running }" />{{ running ? `运行中${kernel.status.pid !== null ? ` · PID ${kernel.status.pid}` : ''}` : kernel.status.phase === 'starting' ? '正在校验并准备内置内核…' : kernel.status.phase === 'stopping' ? '正在停止内核…' : kernel.status.phase === 'failed' ? '启动失败' : '未运行（可在设置中开启“启动时自动启动内核”，或用右侧按钮手动启动）' }}</div><p v-if="actionError || kernel.status.lastError" class="inline-error">{{ actionError || kernel.status.lastError }}</p></SurfaceCard>
-    </div></section>
     <section><h2>网络接管</h2><div class="overview-grid">
       <SurfaceCard><div class="setting-head"><div><h3>系统代理</h3><p>将系统代理指向当前正在接管网络的内核（端口固定：系统代理与内核始终指向同一个混合端口，无论当前是普通模式还是 TUN）。未接管时首次开启会自动启动内核，兼容性和性能最佳。</p></div><button type="button" class="switch" :class="{ on: spEnabled }" :aria-checked="spEnabled" :disabled="spSwitchDisabled" aria-label="切换系统代理" @click="toggleSystemProxy" /></div><div class="setting-status"><i :class="{ active: spEnabled }" />{{ spPhaseLabel }}</div><p v-if="actionError" class="inline-error">{{ actionError }}</p></SurfaceCard>
       <SurfaceCard><div class="setting-head"><div><h3>TUN 模式</h3><p>接管全部流量（包括不遵循系统代理的程序）。使用当前激活的订阅与分流规则，并且可与系统代理同时开启（两者指向同一内核：系统代理指向其混合端口，TUN 接管全部流量）；启用时会自动以特权方式重启同一内核，无需手动处理，禁用后由 mihomo 自动恢复网络设置。</p></div><button type="button" class="switch" :class="{ on: tunActive }" :aria-checked="tunActive" :disabled="tunSwitchDisabled" aria-label="切换 TUN 模式" @click="toggleTun" /></div><div class="setting-status"><i :class="{ active: tunActive }" />{{ tunPhaseLabel }}</div><p v-if="tun.actionError" class="inline-error">{{ tun.actionError }}</p></SurfaceCard>

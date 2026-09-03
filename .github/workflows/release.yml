@@ -152,7 +152,7 @@ jobs:
             version = $package.version
             supportedArchitectures = @('x64')
             testOnlyArchitectures = @('arm64')
-            tunIncluded = $false
+            tunIncluded = $true
             authenticode = 'not-signed-owner-approved'
             windowsPublisherWarning = 'Unknown publisher is expected'
             license = 'GPL-3.0-only'

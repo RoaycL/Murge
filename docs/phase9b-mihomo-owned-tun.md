@@ -145,6 +145,42 @@ unified mixed port; a brief connection drop during the restart is tolerated). An
 explicit kernel stop is the only path that restores the proxy and stops
 everything.
 
+### Mode-transition queue and restore policy (single-kernel P1 fixes)
+
+Every host transition — `kernel.start`, `kernel.stop`, TUN enable, TUN disable,
+failure recovery and profile reload — runs as an exclusive task on ONE FIFO
+queue (`src/main/kernel/mode-transition.ts`). This makes the single-host
+invariant structural: no two transitions can interleave a prepare/stop/resume
+sequence and let a second host claim the unified ports in between.
+
+Restore policy on that queue (deviation from the earlier blanket "any TUN
+teardown restores the proxy" hook, which disabled a working proxy whenever the
+user merely turned TUN off):
+
+1. NORMAL disable: stop the child, resume the main kernel on the SAME unified
+   ports, confirm the unified controller (authenticated `/version`, never a
+   fixed sleep). The owned system proxy is NOT touched.
+2. The proxy is restored ONLY when the unified controller cannot be confirmed
+   reachable again — enable failure with a failed resume, abnormal-exit recovery
+   with a failed resume, or any transition whose port check fails. A restore
+   failure propagates instead of being hidden (dead-port aim is never accepted).
+3. ABNORMAL exit (elevated child dies without a user disable — mihomo crash,
+   service-initiated stop): a monitor re-probes the service session on a
+   cadence while the coordinator still reports `active`. Only a DEFINITIVE
+   `owned-gone` answer triggers recovery (`unreachable` is unknown and is never
+   acted on); recovery cleans the TUN lifecycle, resumes the main kernel and
+   applies rule 2.
+4. Quit is fail-closed on the PROXY, not on the TUN lifecycle: the owned proxy
+   is always restored best-effort before quit; an unconfirmed TUN stop no longer
+   holds the app hostage (the service keeps supervising the child, nothing aims
+   at a dead port, and the next launch reconciles the session).
+
+`conflict` and `restore-failed` are no longer dead ends: a disable from
+`conflict` re-runs the restore path (which reconciles first — the only way a
+latched service conflict clears), and an enable from `restore-failed` is the
+natural retry (the mode switch that led there already stopped the main kernel).
+
+
 ## Install, upgrade and uninstall
 
 - Installation registers the service and its restrictive service ACL. No TUN is
@@ -177,8 +213,10 @@ the non-network/code-contract level, not runtime-approved.
 
 - `native/tun-service`: Go Windows Service, strict duplicate implementation of
   the profile boundary, digest-verified packaged archive extraction, exact PID
-  path/digest reconciliation, administrator-only state, owner-SID Named Pipe,
-  fail-closed install/upgrade/uninstall and x64/arm64 cross-compilation.
+  path/digest reconciliation, administrator-only state (DACL + HIGH mandatory
+  integrity label matching `STATE_DIRECTORY_SDDL`), per-connection client
+  path+digest verification, owner-SID Named Pipe, fail-closed
+  install/upgrade/uninstall and x64/arm64 cross-compilation.
 - `src/main/tun/named-pipe-transport.ts`: bounded one-request/one-response local
   transport; no renderer-controlled pipe or command names.
 - Electron IPC/preload/store/UI wiring for the single-kernel lifecycle (one

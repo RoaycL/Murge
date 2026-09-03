@@ -5,7 +5,7 @@ import { buildProfileKernelConfig } from '../kernel/profile-kernel-config'
 import type { CoreSettings } from '../../shared/core-settings'
 import type { GeodataSettings } from '../../shared/geodata'
 import type { TunConfigModel } from '../../shared/tun-config'
-import { buildTunBlock, isValidDnsHijackEntry, isValidTunMtu, isValidTunRouteAddress } from '../../shared/tun-config'
+import { EMPTY_TUN_CONFIG, buildTunBlock, isValidDnsHijackEntry, isValidTunMtu, isValidTunRouteAddress } from '../../shared/tun-config'
 
 export type MihomoTunStack = 'mixed' | 'system' | 'gvisor'
 
@@ -58,6 +58,20 @@ function assertPort(value: number, label: string): void {
  * conservative safe defaults are emitted unchanged. Every generated profile,
  * regardless of source, must still pass {@link mihomoTunConfigErrors}.
  */
+/**
+ * Resolve the effective `tun.device` (adapter identity).
+ *
+ * The brand-derived intent (e.g. `<brand> TUN`) is the DEFAULT; the persisted TUN
+ * config model overrides it only when the user actually customized the device —
+ * the shared stock default (`EMPTY_TUN_CONFIG.device`) is treated as "unset",
+ * otherwise every install would silently run with the generic `Mihomo` adapter
+ * name no matter what the app intended.
+ */
+function resolveDevice(model: TunConfigModel | undefined, fallback: string): string {
+  if (!model) return fallback
+  return model.device === EMPTY_TUN_CONFIG.device ? fallback : model.device
+}
+
 export function generateMihomoTunConfig(options: MihomoTunConfigOptions): string {
   assertPort(options.mixedPort, 'mixed-port')
   assertPort(options.controllerPort, 'external-controller port')
@@ -67,7 +81,7 @@ export function generateMihomoTunConfig(options: MihomoTunConfigOptions): string
   if (!LOG_LEVELS.has(logLevel)) invalid(`unsupported log level: ${logLevel}`)
 
   const model = options.tunConfig
-  const device = model?.device ?? options.device
+  const device = resolveDevice(model, options.device)
   if (!DEVICE_PATTERN.test(device)) invalid('device contains unsupported characters or length')
   const stack = model?.stack ?? options.stack ?? 'mixed'
   if (!STACKS.has(stack)) invalid(`unsupported TUN stack: ${stack}`)
@@ -282,7 +296,11 @@ const FORBIDDEN_TOP_KEYS = [
   'external-controller-unix', 'external-controller-pipe', 'external-controller-tls',
   'external-controller-routing-mark', 'external-controller-cors', 'external-doh-server',
   'external-ui', 'external-ui-url', 'external-ui-name',
-  'ntp'
+  'ntp',
+  // Legacy standalone inbound servers. The service refuses these too (protocol.go
+  // forbiddenTopKeys) — the lists must stay in lockstep so a subscription that
+  // carries one is stripped here instead of failing opaquely at the service.
+  'ss-config', 'vmess-config', 'tuic-server'
 ] as const
 
 /** Sections whose entries carry a `path` mihomo WRITES downloaded content to. */
@@ -340,7 +358,7 @@ export function generateProxiedTunConfig(options: ProxiedTunConfigOptions): stri
   if (!SECRET_PATTERN.test(options.secret)) invalid('secret must be a 64-character lowercase hex string')
 
   const model = options.tunConfig
-  const device = model?.device ?? options.device
+  const device = resolveDevice(model, options.device)
   if (!DEVICE_PATTERN.test(device)) invalid('device contains unsupported characters or length')
   const stack = model?.stack ?? options.stack ?? 'mixed'
   if (!STACKS.has(stack)) invalid(`unsupported TUN stack: ${stack}`)
@@ -510,6 +528,16 @@ export function proxiedTunConfigErrors(text: string): string[] {
       if (!Array.isArray(list) || list.length === 0) errors.push(`${label} must be a non-empty sequence`)
       else for (const entry of list) {
         if (typeof entry !== 'string' || !isValidTunRouteAddress(entry)) errors.push(`invalid ${label} entry: ${String(entry)}`)
+      }
+    }
+    // A TUN device without auto-route and without explicit routes is a silent
+    // traffic black hole: the interface exists, DNS may even answer, but no
+    // traffic is ever steered into it. Refuse the combination up front instead
+    // of shipping a support-nightmare "TUN enabled but the network is down" state.
+    if (block['auto-route'] === false && block['auto-detect-interface'] === false) {
+      const routeAddress = block['route-address']
+      if (!Array.isArray(routeAddress) || routeAddress.length === 0) {
+        errors.push('tun.route-address is required when both auto-route and auto-detect-interface are disabled')
       }
     }
   }

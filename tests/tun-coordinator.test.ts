@@ -74,7 +74,7 @@ describe('TunCoordinator non-network orchestration', () => {
     expect(coordinator.getStatus().phase).toBe('configured')
   })
 
-  it('preserves external-conflict evidence and does not attempt destructive restore', async () => {
+  it('preserves external-conflict evidence and offers the disable recovery path', async () => {
     const adapter = fake({
       enable: vi.fn(async () => ({ outcome: 'conflict', conflictDetail: 'route externally modified' }))
     })
@@ -82,9 +82,29 @@ describe('TunCoordinator non-network orchestration', () => {
     await coordinator.enable(desired)
     expect(coordinator.getStatus()).toMatchObject({ phase: 'conflict', conflictDetail: 'route externally modified' })
     expect(adapter.restore).not.toHaveBeenCalled()
+    // `conflict` is no longer terminal: a disable re-runs the restore path
+    // (which reconciles first) — the only user-facing way out of a conflict.
     await coordinator.emergencyDisable()
-    expect(coordinator.getStatus().phase).toBe('conflict')
-    expect(adapter.restore).not.toHaveBeenCalled()
+    expect(coordinator.getStatus().phase).toBe('configured')
+    expect(adapter.restore).toHaveBeenCalledTimes(1)
+  })
+
+  it('allows a later enable to retry from restore-failed', async () => {
+    const adapter = fake({
+      enable: vi
+        .fn<TunMutationAdapter['enable']>()
+        .mockResolvedValueOnce({ outcome: 'rollback-required', errorMessage: 'APPLY_FAILED' })
+        .mockResolvedValueOnce({ outcome: 'active' }),
+      restore: vi.fn(async () => ({ outcome: 'restore-failed', errorMessage: 'RESTORE_DENIED' }))
+    })
+    const coordinator = new TunCoordinator(adapter, true)
+    await coordinator.enable(desired)
+    expect(coordinator.getStatus()).toMatchObject({ phase: 'restore-failed', errorMessage: 'RESTORE_DENIED' })
+    // The mode switch already stopped the main kernel in this state, so a
+    // retried enable is the natural recovery (mode-transition.ts relies on it).
+    await coordinator.enable(desired)
+    expect(coordinator.getStatus().phase).toBe('active')
+    expect(adapter.enable).toHaveBeenCalledTimes(2)
   })
 
   it('does not let a failing subscriber interrupt recovery', async () => {

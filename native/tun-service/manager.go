@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 )
 
 type ownedProcess struct {
@@ -65,8 +66,18 @@ func (manager *sessionManager) Handle(request serviceRequest) serviceResponse {
 
 func (manager *sessionManager) start(request serviceRequest, response *serviceResponse) error {
 	if manager.blocked {
-		response.Outcome = "conflict"
-		return errors.New("service recovery is blocked")
+		// One recovery attempt before refusing: a reconcile that can read the
+		// store (and finds no record or a live match) clears the latch, so a
+		// transient store error never wedges enable until service restart.
+		probe := serviceResponse{}
+		if err := manager.reconcile(&probe); err != nil {
+			response.Outcome = "conflict"
+			return errors.New("service recovery is blocked")
+		}
+		if manager.blocked {
+			response.Outcome = "conflict"
+			return errors.New("service recovery is blocked")
+		}
 	}
 	if manager.owned != nil {
 		response.Outcome = "conflict"
@@ -151,7 +162,7 @@ func (manager *sessionManager) status(response *serviceResponse) {
 }
 
 func (manager *sessionManager) reconcile(response *serviceResponse) error {
-	recorded, err := manager.store.Read()
+	recorded, err := manager.readStoreResilient()
 	if err != nil {
 		manager.blocked = true
 		response.Outcome = "failed"
@@ -191,4 +202,23 @@ func (manager *sessionManager) reconcile(response *serviceResponse) error {
 	response.SessionID = &recorded.SessionID
 	response.PID = &recorded.PID
 	return nil
+}
+
+// readStoreResilient reads the ownership store with a short bounded retry so a
+// TRANSIENT filesystem error (antivirus scan, backup reader, page fault storm)
+// does not latch the fail-closed `blocked` state and wedge the service until
+// restart. A persistent failure still returns the error and latches exactly as
+// before — fail-closed is preserved, only single-shot blips are absorbed.
+func (manager *sessionManager) readStoreResilient() (*ownedProcess, error) {
+	const attempts = 3
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		recorded, err := manager.store.Read()
+		if err == nil {
+			return recorded, nil
+		}
+		lastErr = err
+		time.Sleep(50 * time.Millisecond)
+	}
+	return nil, lastErr
 }

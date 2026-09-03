@@ -49,6 +49,15 @@ func newWindowsRuntime(config serviceConfig) (*windowsRuntime, error) {
 	return &windowsRuntime{config: config, corePath: corePath, coreSHA256: coreDigest, job: job}, nil
 }
 
+// stateDirectorySDDL is the byte-for-byte normative contract mirrored by
+// STATE_DIRECTORY_SDDL in src/main/tun/security-descriptors.ts (asserted in
+// tests/tun-contracts.test.ts): owner+group SYSTEM, a protected DACL granting
+// full control to SYSTEM and Administrators only, and a HIGH mandatory
+// integrity label with no-write-up — a Medium-IL process of the same user can
+// READ nothing here and can never write, so ownership records and the pinned
+// profile cannot be tampered with from the session.
+const stateDirectorySDDL = "O:SYG:SYD:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)S:(ML;OICI;NW;;;HI)"
+
 func secureStateDirectory(path string) error {
 	if err := os.MkdirAll(path, 0700); err != nil {
 		return err
@@ -60,7 +69,7 @@ func secureStateDirectory(path string) error {
 	if attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
 		return errors.New("refusing reparse-point service directory")
 	}
-	sd, err := windows.SecurityDescriptorFromString("O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)")
+	sd, err := windows.SecurityDescriptorFromString(stateDirectorySDDL)
 	if err != nil {
 		return err
 	}
@@ -68,9 +77,20 @@ func secureStateDirectory(path string) error {
 	if err != nil {
 		return err
 	}
-	return windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil, nil, dacl, nil)
+	sacl, _, err := sd.SACL()
+	if err != nil {
+		return err
+	}
+	// Setting the mandatory label requires the SACL + label bits and
+	// SeSecurityPrivilege, which LocalSystem holds.
+	err = windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION|
+			windows.SACL_SECURITY_INFORMATION|windows.LABEL_SECURITY_INFORMATION,
+		nil, nil, dacl, sacl)
+	if err != nil {
+		return fmt.Errorf("state directory hardening failed: %w", err)
+	}
+	return nil
 }
 
 func prepareCore(config serviceConfig) (string, string, error) {

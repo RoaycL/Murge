@@ -126,6 +126,14 @@ describe('Phase 9 non-network contracts', () => {
     expect(() => buildComSecurityDescriptorContract('not-a-sid')).toThrowError(ProtocolError)
   })
 
+  it('keeps the Go service state-directory SDDL byte-for-byte in sync with the TS contract', () => {
+    // Cross-language contract: the Windows service hardens the SAME directory,
+    // so its embedded SDDL string must never drift from STATE_DIRECTORY_SDDL
+    // (this pairing was the source of a reviewed ML-label drift).
+    const go = readFileSync(resolve(process.cwd(), 'native/tun-service/runtime_windows.go'), 'utf8')
+    expect(go).toContain(`const stateDirectorySDDL = "${STATE_DIRECTORY_SDDL}"`)
+  })
+
   it('rotates the audit log by entry and byte limits without exposing mutable entries', () => {
     const log = new TunAuditLog(10_000, 2)
     log.append('enable-intent', 'configured', null, new Date('2026-01-01T00:00:00Z'))

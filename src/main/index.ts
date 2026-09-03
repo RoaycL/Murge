@@ -58,6 +58,7 @@ import { TunConfigService } from './tun/tun-config-service'
 import { TunServiceClient } from './tun/service-client'
 import { NamedPipeTunServiceTransport } from './tun/named-pipe-transport'
 import { tunServiceIdentity } from './tun/service-identity'
+import { ModeTransitionController, queuedKernelGateway, queuedTunGateway } from './kernel/mode-transition'
 import type { TunGateway, TunStatus } from '../shared/tun'
 
 const devControllerUrl = process.env.MURGE_DEV_CONTROLLER ?? 'http://127.0.0.1:9090'
@@ -147,6 +148,8 @@ let isQuitting = false
 let mainWindow: BrowserWindow | null = null
 let trayController: TrayController | null = null
 let tunCoordinator: TunCoordinator | null = null
+let modeTransition: ModeTransitionController | null = null
+let tunExitMonitor: { stop(): void } | null = null
 let updateService: UpdateService | null = null
 let usageHistoryServiceRef: UsageHistoryService | null = null
 
@@ -206,6 +209,11 @@ async function allocateProductionPorts(): Promise<{ controller: number; mixed: n
   // Port reservations are released before mihomo starts, so the OS may return
   // the same ephemeral port twice. Keep asking until both config fields differ.
   while (mixed === controller) mixed = await findFreePort()
+  // Known accepted TOCTOU: the reservation is closed here and mihomo binds some
+  // seconds later, so another process can claim the port in between. Windows
+  // ephemeral-port reuse for a just-released listener is rare and the failure
+  // mode is a loud kernel-start error (user retries), not silent corruption —
+  // holding the sockets open would starve mihomo's bind instead.
   return { controller, mixed }
 }
 
@@ -736,11 +744,16 @@ app.whenReady().then(async () => {
   })
 
   const tunSupported = !is.dev && process.platform === 'win32'
+  // One pipe transport + client shared by the adapter (enable/restore) and the
+  // liveness probe, so both observe the SAME service session.
+  const tunServiceClient = tunSupported
+    ? new TunServiceClient(
+        new NamedPipeTunServiceTransport(tunServiceIdentity(brand.appId).pipeName)
+      )
+    : null
   const tunAdapter = tunSupported
     ? new MihomoOwnedTunAdapter(
-        new TunServiceClient(
-          new NamedPipeTunServiceTransport(tunServiceIdentity(brand.appId).pipeName)
-        ),
+        tunServiceClient!,
         // Single-kernel model: the elevated TUN child reuses the SAME controller,
         // mixed port and secret as the main kernel, so the data plane (bound to
         // the production controller) and the owned system proxy (aimed at the
@@ -788,36 +801,23 @@ app.whenReady().then(async () => {
       console.error('[tun] service reconciliation failed:', error)
     })
   }
-  const tunGateway: TunGateway = {
+  // One mode-transition queue for EVERY host switch: kernel start/stop, TUN
+  // enable/disable and failure recovery all become exclusive tasks on the same
+  // FIFO, so no two of them can interleave a prepare/stop/resume sequence.
+  // The raw TUN gateway is handed to the controller (it provides the exclusive
+  // execution context); the IPC-facing gateways below are the queued wrappers.
+  const rawTunGateway: TunGateway = {
     getStatus: () => tunInstance.getStatus(),
-    enable: () => tunInstance.enable({
-      schemaVersion: 2,
-      device: `${brand.shortName} TUN`,
-      stack: 'mixed'
-    }),
+    enable: () =>
+      tunInstance.enable({
+        schemaVersion: 2,
+        device: `${brand.shortName} TUN`,
+        stack: 'mixed'
+      }),
     disable: () => tunInstance.emergencyDisable(),
     onStatus: (listener) => tunInstance.onStatus(listener)
   }
 
-  // TUN and the system proxy may now be on together, which means the proxy can be
-  // pointing at the ELEVATED TUN child's port. When that session stops (user
-  // disable, mihomo crash, service restart) the port dies, so restore the proxy
-  // for exactly the same reason the main-kernel crash hook above does — otherwise
-  // the registry keeps aiming at a dead port and the user loses connectivity.
-  // Mirrors the kernel path: a conflict is safe (the proxy is no longer ours) and
-  // a genuine restore failure stays visible as `restore-failed`.
-  if (tunSupported) {
-    let servingTraffic = tunInstance.getStatus().phase === 'active'
-    tunInstance.onStatus((status) => {
-      const nowServing = status.phase === 'active'
-      const stoppedServing = servingTraffic && !nowServing
-      servingTraffic = nowServing
-      if (!stoppedServing) return
-      void systemProxyService.restoreBeforeKernelUnavailable().catch((error) => {
-        console.error('[system-proxy] TUN teardown recovery failed:', error)
-      })
-    })
-  }
   // Single-kernel gateway: presents the main kernel and the elevated TUN child
   // as ONE logical kernel over the unified production controller/mixed ports.
   // `kernel` (the IPC-facing gateway) reports running whenever EITHER host is
@@ -836,21 +836,83 @@ app.whenReady().then(async () => {
   // Bind the system-proxy probe's holder to the unified gateway once it exists, so
   // the probe and the renderer's kernel.status.phase resolve the same live host.
   singleKernelGatewayRef = runtimeKernelGateway
+
+  // Abnormal TUN exit monitoring. A NORMAL disable goes through the mode
+  // controller (`disableTun`), which resumes the main kernel and keeps the
+  // owned system proxy — the proxy target (the unified mixed port) is rebound,
+  // never dead, so nothing here restores it. What this monitor covers is the
+  // path the coordinator cannot see: the elevated child dies WITHOUT a user
+  // disable (mihomo crash, service-initiated stop). The mode controller's
+  // `recoverTunExit` re-verifies via a fresh service probe (no fixed delays),
+  // resumes the main kernel, and only restores the proxy when the unified
+  // controller is confirmed unreachable.
+  const unifiedControllerReady = async (): Promise<boolean> => {
+    try {
+      const client = new MihomoClient(`http://127.0.0.1:${productionControllerPort}`, productionSecret!, { timeoutMs: 750 })
+      await client.getVersion()
+      return true
+    } catch {
+      return false
+    }
+  }
+  const tunSessionProbe = tunServiceClient
+    ? async () => {
+        const response = await tunServiceClient.reconcile()
+        if (response.outcome === 'running' || response.outcome === 'starting') return 'owned-live'
+        if (response.outcome === 'stopped') return 'owned-gone'
+        return 'unreachable'
+      }
+    : undefined
+  const modeController = new ModeTransitionController({
+    kernel: runtimeKernelGateway,
+    tun: rawTunGateway,
+    systemProxy: systemProxyService,
+    // Dev has no TUN support; fall back to the unified kernel status as the
+    // readiness signal there (the mock kernel has no real controller).
+    isControllerReady: is.dev ? undefined : unifiedControllerReady,
+    probeTunSession: tunSessionProbe,
+    onError: (error, step) => console.error(`[mode-transition] ${step}:`, error)
+  })
+  modeTransition = modeController
+  if (tunSupported) {
+    const TUN_SESSION_POLL_MS = 5_000
+    const monitor = setInterval(() => {
+      // Only worth probing while the coordinator still believes a child is up.
+      const phase = tunInstance.getStatus().phase
+      if (phase !== 'active' && phase !== 'starting') return
+      void modeController.recoverTunExit().catch((error) => {
+        console.error('[tun] abnormal-exit recovery failed:', error)
+      })
+    }, TUN_SESSION_POLL_MS)
+    tunExitMonitor = { stop: () => clearInterval(monitor) }
+  }
+  // The IPC-facing gateways go through THE ONE mode-transition queue, so kernel
+  // start/stop and TUN enable/disable can never interleave their
+  // prepare/stop/resume sequences (no second host can claim the unified ports
+  // in between).
+  const queuedKernel = queuedKernelGateway(runtimeKernelGateway, modeController)
+  const queuedTun = queuedTunGateway(rawTunGateway, modeController)
   // Reapplies the active profile to the live kernel whenever the user edits,
-  // activates or imports-as-active a profile. The reloader is a no-op when the
-  // kernel is stopped (the profile applies on the next manual start) and
-  // restarts a running kernel stop-then-start, preserving any owned system proxy.
-  // The concrete profileService is still used directly by the kernel config
-  // store's resolveActiveDocument, so both paths read the same repository.
+  // activates or imports-as-active a profile. The reloader runs INSIDE the mode
+  // queue (no-op when the kernel is stopped; a running kernel restarts
+  // stop-then-start through the unified gateway, preserving any owned system
+  // proxy). While TUN is serving, the unified view reports running but the main
+  // kernel cannot be stop/started (it would collide with the child on the
+  // unified ports), so the reload becomes a mode switch that re-materializes
+  // the profile into the child. The concrete profileService is still used
+  // directly by the kernel config store's resolveActiveDocument, so both paths
+  // read the same repository.
   const profileGateway = new ProfileAutoReloadGateway({
     inner: profileService,
     autoActivateOnEdit: true,
     reloader: {
       reload: (rollbackActive) =>
-        reloadKernelForActiveProfile({
-          kernel: orderedKernel,
-          systemProxy: systemProxyService
-        }, { rollbackActive })
+        modeController.reloadProfile((kernel) =>
+          reloadKernelForActiveProfile({
+            kernel,
+            systemProxy: systemProxyService
+          }, { rollbackActive })
+        )
     }
   })
   const updates = new UpdateService(new ElectronUpdaterDriver())
@@ -878,7 +940,7 @@ app.whenReady().then(async () => {
     fetchJsonViaProxy: fetchMetadataJsonViaProxy
   })
   disposeIpc = registerIpc({
-    kernel: runtimeKernelGateway,
+    kernel: queuedKernel,
     kernelManager: kernelManagerService,
     mihomo: gateway,
     profiles: profileGateway,
@@ -892,7 +954,7 @@ app.whenReady().then(async () => {
     core: coreSettingsService,
     geodata: geodataSettingsService,
     updates,
-    tun: tunGateway,
+    tun: queuedTun,
     usageHistory: usageHistoryService,
     networkMetadata: networkMetadataService
   })
@@ -908,7 +970,10 @@ app.whenReady().then(async () => {
     : join(process.resourcesPath, 'icon.png')
   trayController = new TrayController({
     productName: brand.productName,
-    kernel: orderedKernel,
+    // Tray start/stop goes through the ONE mode-transition queue like every
+    // other entry point (queuedKernel.stop() keeps the unified gateway's
+    // restore-proxy-before-stop ordering when TUN is serving).
+    kernel: queuedKernel,
     view: createElectronTray(trayIcon),
     showWindow: showMainWindow,
     quit: () => app.quit(),
@@ -950,9 +1015,12 @@ app.whenReady().then(async () => {
     try {
       const settings = await appSettingsService.get()
       if (settings.autoStartKernel && settings.kernelEnabled) {
-        const status = await orderedKernel.getStatus()
+        const status = await queuedKernel.getStatus()
         if (status.phase === 'stopped') {
-          const started = await orderedKernel.start()
+          // Through the mode queue like every other start (a leftover TUN
+          // session reconciled at boot makes this a no-op instead of a
+          // conflicting spawn on the unified ports).
+          const started = await queuedKernel.start()
           if (started.phase !== 'running') {
             console.warn(`[kernel-autostart] kernel did not become running (${started.phase})`)
           }
@@ -1033,19 +1101,27 @@ async function restoreSystemProxyBeforeQuit(): Promise<boolean> {
 }
 
 async function restoreNetworkBeforeQuit(): Promise<boolean> {
-  if (tunCoordinator) {
-    try {
-      const status: TunStatus = await tunCoordinator.emergencyDisable()
-      if (status.phase !== 'configured' && status.phase !== 'unsupported') {
-        console.error('[tun] refused quit because TUN stop was not confirmed:', status)
-        return false
+  // Inside the ONE mode-transition queue, so a concurrent renderer start/stop
+  // can never interleave with the shutdown sequence.
+  const task = async (): Promise<boolean> => {
+    if (tunCoordinator) {
+      try {
+        const status: TunStatus = await tunCoordinator.emergencyDisable()
+        if (status.phase !== 'configured' && status.phase !== 'unsupported') {
+          console.error('[tun] TUN stop was not confirmed during quit:', status.phase)
+          // Do NOT short-circuit the proxy restore: restoring the owned proxy is
+          // safe and valuable even when the TUN stop could not be confirmed —
+          // the service still supervises the child, so nothing aims at a dead
+          // port on the TUN side, and the quit decision below stays fail-closed.
+        }
+      } catch (error) {
+        console.error('[tun] restore during quit failed:', error)
       }
-    } catch (error) {
-      console.error('[tun] restore during quit failed:', error)
-      return false
     }
+    return restoreSystemProxyBeforeQuit()
   }
-  return restoreSystemProxyBeforeQuit()
+  if (modeTransition) return modeTransition.runExclusive(task)
+  return task()
 }
 
 app.on('before-quit', (event) => {
@@ -1063,10 +1139,18 @@ app.on('before-quit', (event) => {
     const result = await runQuitFlow({
       restore: restoreNetworkBeforeQuit,
       stopKernel: async () => {
-        await kernel?.stop()
+        // Inside the same mode queue as the restore step, so a queued renderer
+        // transition cannot interleave with the shutdown's kernel stop.
+        const stop = async (): Promise<void> => {
+          await kernel?.stop()
+        }
+        if (modeTransition) await modeTransition.runExclusive(stop)
+        else await stop()
       },
       dispose: async () => {
         try {
+          tunExitMonitor?.stop()
+          tunExitMonitor = null
           trayController?.dispose()
           disposeIpc?.()
           updateService?.dispose()

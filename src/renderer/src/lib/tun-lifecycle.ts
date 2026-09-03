@@ -27,11 +27,15 @@ export function tunLifecycleGating(status: TunStatus, busy: boolean): TunLifecyc
   // permits disable from both).
   const busyPhase = phase === 'starting' || phase === 'restoring' || busy
 
-  // Enable is only offered from a settled, supported lifecycle. For a `failed`
-  // phase this doubles as the retry affordance.
-  const canEnable = supported && !busy && (phase === 'configured' || phase === 'failed')
-  // Disable/restore is offered while TUN owns networking or is mid-rollback.
-  const canDisable = supported && !busy && (phase === 'active' || phase === 'starting' || phase === 'restoring' || phase === 'restore-failed')
+  // Enable is only offered from a settled, supported lifecycle. `failed` and
+  // `restore-failed` double as the retry affordance — the mode switch that led
+  // to `restore-failed` already stopped the main kernel, so re-enabling TUN is
+  // the natural recovery (see state-machine.ts TRANSITIONS['restore-failed']).
+  const canEnable = supported && !busy && (phase === 'configured' || phase === 'failed' || phase === 'restore-failed')
+  // Disable/restore is offered while TUN owns networking, is mid-rollback, or is
+  // latched in `conflict`: the disable path reconciles with the service first,
+  // which is the only way a latched conflict clears (never a terminal state).
+  const canDisable = supported && !busy && (phase === 'active' || phase === 'starting' || phase === 'restoring' || phase === 'restore-failed' || phase === 'conflict')
 
   return {
     active: phase === 'active',
@@ -41,7 +45,7 @@ export function tunLifecycleGating(status: TunStatus, busy: boolean): TunLifecyc
     showConflict: phase === 'conflict' && (status.conflictDetail != null || status.errorMessage != null),
     showError: (phase === 'failed' || phase === 'restore-failed') && (status.errorMessage != null || status.conflictDetail != null),
     showUnsupported: !supported,
-    enableLabel: phase === 'failed' ? '重试启用' : '启用'
+    enableLabel: phase === 'failed' || phase === 'restore-failed' ? '重试启用' : '启用'
   }
 }
 

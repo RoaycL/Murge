@@ -1,3 +1,9 @@
+/**
+ * PHASE 9 LEGACY (superseded by Phase 9B): binary manifest verification for the
+ * elevation flow. Kept only as reviewed audit-trail code; the Phase 9B service
+ * pins digests in service-config.json instead. NO production path imports this
+ * module; do not wire it without a new reviewed design change.
+ */
 import { win32 } from 'node:path'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
 

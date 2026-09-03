@@ -1,3 +1,10 @@
+/**
+ * PHASE 9 LEGACY (superseded by Phase 9B): the COM helper MAC/HKDF session
+ * protocol. Kept only as reviewed audit-trail code; the Phase 9B service uses a
+ * strict JSON named-pipe protocol with a DACL + client-identity check instead.
+ * NO production path imports this module; do not wire it without a new reviewed
+ * design change.
+ */
 import { createHmac, hkdfSync, timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'

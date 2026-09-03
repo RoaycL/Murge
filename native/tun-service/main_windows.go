@@ -147,6 +147,14 @@ func (service *windowsService) handleConnection(connection net.Conn) {
 	_ = encoder.Encode(response)
 }
 
+// verifyClient authenticates the pipe client on EVERY connection: the client
+// process image must match the pinned AllowedClientPath AND its digest must
+// still equal the pinned AllowedClientSHA256. The initialize-time digest check
+// alone would leave a window where an updated/tampered GUI binary could connect
+// (or a stale binary be trusted after the file was replaced); re-hashing the
+// executable each time (a few ms for a ~100MB Electron binary, once per request)
+// keeps the pinned identity true at the moment of use, matching the threat
+// model's C3 control (path + digest on every call).
 func (service *windowsService) verifyClient(connection net.Conn) error {
 	fdConnection, ok := connection.(interface{ Fd() uintptr })
 	if !ok {
@@ -169,6 +177,13 @@ func (service *windowsService) verifyClient(connection net.Conn) error {
 	observed := windows.UTF16ToString(buffer[:size])
 	if !strings.EqualFold(filepath.Clean(observed), filepath.Clean(service.config.AllowedClientPath)) {
 		return errors.New("pipe client executable mismatch")
+	}
+	digest, err := hashFile(service.config.AllowedClientPath)
+	if err != nil {
+		return fmt.Errorf("pipe client executable unreadable: %w", err)
+	}
+	if digest != service.config.AllowedClientSHA256 {
+		return errors.New("pipe client executable digest mismatch")
 	}
 	return nil
 }

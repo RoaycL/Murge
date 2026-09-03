@@ -10,10 +10,12 @@ describe('TUN lifecycle gating', () => {
   it('offers enable only from a settled, supported lifecycle', () => {
     expect(tunLifecycleGating(status({ phase: 'configured' }), false).canEnable).toBe(true)
     expect(tunLifecycleGating(status({ phase: 'failed' }), false).canEnable).toBe(true)
+    // `restore-failed` is a retry phase: the mode switch that led there already
+    // stopped the main kernel, so re-enabling TUN is the natural recovery.
+    expect(tunLifecycleGating(status({ phase: 'restore-failed' }), false).canEnable).toBe(true)
     expect(tunLifecycleGating(status({ phase: 'active' }), false).canEnable).toBe(false)
     expect(tunLifecycleGating(status({ phase: 'starting' }), false).canEnable).toBe(false)
     expect(tunLifecycleGating(status({ phase: 'restoring' }), false).canEnable).toBe(false)
-    expect(tunLifecycleGating(status({ phase: 'restore-failed' }), false).canEnable).toBe(false)
     expect(tunLifecycleGating(status({ phase: 'conflict' }), false).canEnable).toBe(false)
     expect(tunLifecycleGating(status({ phase: 'unsupported' }), false).canEnable).toBe(false)
   })
@@ -28,6 +30,9 @@ describe('TUN lifecycle gating', () => {
     expect(tunLifecycleGating(status({ phase: 'starting' }), false).canDisable).toBe(true)
     expect(tunLifecycleGating(status({ phase: 'restoring' }), false).canDisable).toBe(true)
     expect(tunLifecycleGating(status({ phase: 'restore-failed' }), false).canDisable).toBe(true)
+    // `conflict` is no longer a dead end: the disable path reconciles with the
+    // service first, which is the only way a latched conflict clears.
+    expect(tunLifecycleGating(status({ phase: 'conflict' }), false).canDisable).toBe(true)
     expect(tunLifecycleGating(status({ phase: 'configured' }), false).canDisable).toBe(false)
     expect(tunLifecycleGating(status({ phase: 'failed' }), false).canDisable).toBe(false)
     expect(tunLifecycleGating(status({ phase: 'unsupported' }), false).canDisable).toBe(false)

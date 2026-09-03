@@ -60,12 +60,15 @@ async function toggleSystemProxy(): Promise<void> {
     if (spEnabled.value) {
       await systemProxy.disable()
     } else {
-      // Turning on the system proxy auto-starts the kernel (which also awaits a
-      // ready loopback controller) before pointing the registry at its
-      // mixed-port. The backend probe still guards the actual enable, so the
-      // loopback-only safety boundary and the TUN mutual-exclusion invariants
-      // are unchanged.
-      if (!running.value) await kernel.start()
+      // Turning on the system proxy points it at whichever mihomo is live. When a
+      // TUN session is active that is the elevated TUN child (the backend probe
+      // routes to its mixed-port), so we must NOT try to start the main kernel
+      // here — it is the mutually-exclusive loopback mihomo and `kernel.start()`
+      // would be rejected while TUN owns networking. When TUN is off, auto-start
+      // the loopback kernel first, as before. The backend probe still guards the
+      // actual enable, so the loopback-only safety boundary and the TUN
+      // mutual-exclusion invariants are unchanged.
+      if (!running.value && !tunActive.value) await kernel.start()
       await systemProxy.enable()
     }
   } catch (error) {
@@ -102,8 +105,8 @@ async function toggleTun(): Promise<void> {
       <SurfaceCard><div class="setting-head"><div><h3>安全直连内核</h3><p>仅启动本机 mihomo 与回环控制器，不接管系统网络；系统代理开关可自动完成这一步，且默认在启动应用后自动运行（可在通用设置中关闭）。</p></div><button type="button" class="primary-button" :disabled="busy" @click="toggleKernel">{{ busy ? '处理中…' : running ? '停止' : '启动' }}</button></div><div class="setting-status"><i :class="{ active: running }" />{{ running ? `运行中 · PID ${kernel.status.pid ?? '—'}` : kernel.status.phase === 'starting' ? '正在校验并准备内置内核…' : kernel.status.phase === 'stopping' ? '正在停止内核…' : kernel.status.phase === 'failed' ? '启动失败' : '未运行（可在设置中开启“启动时自动启动内核”，或用右侧按钮手动启动）' }}</div><p v-if="actionError || kernel.status.lastError" class="inline-error">{{ actionError || kernel.status.lastError }}</p></SurfaceCard>
     </div></section>
     <section><h2>网络接管</h2><div class="overview-grid">
-      <SurfaceCard><div class="setting-head"><div><h3>系统代理</h3><p>将系统代理指向本应用的内核，不必先手动启动内核；首次开启会自动启动内核。兼容性和性能最佳。</p></div><button type="button" class="switch" :class="{ on: spEnabled }" :aria-checked="spEnabled" :disabled="spSwitchDisabled" aria-label="切换系统代理" @click="toggleSystemProxy" /></div><div class="setting-status"><i :class="{ active: spEnabled }" />{{ spPhaseLabel }}</div><p v-if="actionError" class="inline-error">{{ actionError }}</p></SurfaceCard>
-      <SurfaceCard><div class="setting-head"><div><h3>TUN 模式</h3><p>接管全部流量（包括不遵循系统代理的程序）。TUN 使用当前激活的订阅与分流规则，可与系统代理同时开启；但启用前需先停止安全直连内核，禁用后会由 mihomo 自动恢复网络设置。</p></div><button type="button" class="switch" :class="{ on: tunActive }" :aria-checked="tunActive" :disabled="tunSwitchDisabled" aria-label="切换 TUN 模式" @click="toggleTun" /></div><div class="setting-status"><i :class="{ active: tunActive }" />{{ tunPhaseLabel }}</div><p v-if="tun.actionError" class="inline-error">{{ tun.actionError }}</p></SurfaceCard>
+      <SurfaceCard><div class="setting-head"><div><h3>系统代理</h3><p>将系统代理指向当前正在接管网络的内核：未开 TUN 时指向安全直连内核（首次开启会自动启动内核），TUN 开启时自动指向 TUN。兼容性和性能最佳。</p></div><button type="button" class="switch" :class="{ on: spEnabled }" :aria-checked="spEnabled" :disabled="spSwitchDisabled" aria-label="切换系统代理" @click="toggleSystemProxy" /></div><div class="setting-status"><i :class="{ active: spEnabled }" />{{ spPhaseLabel }}</div><p v-if="actionError" class="inline-error">{{ actionError }}</p></SurfaceCard>
+      <SurfaceCard><div class="setting-head"><div><h3>TUN 模式</h3><p>接管全部流量（包括不遵循系统代理的程序）。使用当前激活的订阅与分流规则，并且可与系统代理同时开启（此时系统代理指向 TUN）；启用时会自动停止安全直连内核，无需手动处理，禁用后由 mihomo 自动恢复网络设置。</p></div><button type="button" class="switch" :class="{ on: tunActive }" :aria-checked="tunActive" :disabled="tunSwitchDisabled" aria-label="切换 TUN 模式" @click="toggleTun" /></div><div class="setting-status"><i :class="{ active: tunActive }" />{{ tunPhaseLabel }}</div><p v-if="tun.actionError" class="inline-error">{{ tun.actionError }}</p></SurfaceCard>
     </div></section>
     <section><h2>局域网设备接管</h2><div class="overview-grid">
       <SurfaceCard><div class="setting-head"><div><h3>HTTP & SOCKS5 代理</h3><p>安全直连配置强制只监听本机；开放局域网将在独立安全阶段实现。</p></div><button class="switch" disabled aria-label="局域网接管尚未实现" /></div><div class="setting-status"><i />未开放局域网；启动后仅监听 127.0.0.1</div></SurfaceCard>

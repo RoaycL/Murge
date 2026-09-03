@@ -1,8 +1,10 @@
 import type { MihomoOwnedTunIntent } from '../../shared/tun'
 import type { TunEnableResult, TunMutationAdapter, TunRestoreResult } from './coordinator'
-import { generateMihomoTunConfig } from './mihomo-tun-config'
+import { generateMihomoTunConfig, generateProxiedTunConfig } from './mihomo-tun-config'
 import type { TunServiceClient } from './service-client'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
+import type { CoreSettings } from '../../shared/core-settings'
+import type { GeodataSettings } from '../../shared/geodata'
 import type { TunConfigModel } from '../../shared/tun-config'
 import { EMPTY_TUN_CONFIG } from '../../shared/tun-config'
 
@@ -16,9 +18,26 @@ export interface TunControllerReadiness {
   waitUntilReady(input: { controllerPort: number; secret: string; signal: AbortSignal }): Promise<void>
 }
 
+/** Optional sources for the proxied profile. Omitted, the adapter stays DIRECT-only. */
+export interface TunProfileSources {
+  /**
+   * Resolve the ACTIVE profile document (already through overrides, typed DNS and
+   * sniffer enhancements — same pipeline the main kernel uses). Returning null
+   * falls back to the conservative DIRECT bootstrap.
+   */
+  readActiveDocument?: () => Promise<string | null>
+  readCore?: () => Promise<CoreSettings>
+  readGeodata?: () => Promise<GeodataSettings>
+}
+
 /**
  * Phase 9B lifecycle adapter. The only privileged action is delegated to the
  * fixed service protocol; network setup/teardown is entirely mihomo-owned.
+ *
+ * When an active profile is available the submitted config carries the user's
+ * proxies/groups/providers/rules so TUN actually proxies; with no active profile
+ * it falls back to the DIRECT bootstrap (a rule-mode config with no proxies would
+ * reference groups that do not exist and mihomo would refuse to start).
  */
 export class MihomoOwnedTunAdapter implements TunMutationAdapter {
   private activeRuntime: TunProfileRuntime | null = null
@@ -29,8 +48,18 @@ export class MihomoOwnedTunAdapter implements TunMutationAdapter {
     private readonly readiness: TunControllerReadiness,
     private readonly readyTimeoutMs = 10_000,
     /** Read the persisted typed TUN config model (falls back to the safe default). */
-    private readonly readTunConfig: () => TunConfigModel | Promise<TunConfigModel> = async () => EMPTY_TUN_CONFIG
+    private readonly readTunConfig: () => TunConfigModel | Promise<TunConfigModel> = async () => EMPTY_TUN_CONFIG,
+    private readonly profileSources: TunProfileSources = {}
   ) {}
+
+  /**
+   * The mixed-port of the live owned session, or null when TUN is not active.
+   * Lets the system proxy point at the elevated child's inbound while TUN owns
+   * the data plane (the main kernel is stopped in that state).
+   */
+  getActiveRuntime(): TunProfileRuntime | null {
+    return this.activeRuntime ? { ...this.activeRuntime } : null
+  }
 
   async recoveryRequired(): Promise<boolean> {
     const response = await this.client.reconcile()
@@ -40,7 +69,7 @@ export class MihomoOwnedTunAdapter implements TunMutationAdapter {
   async enable(intent: MihomoOwnedTunIntent): Promise<TunEnableResult> {
     const runtime = await this.runtimeFactory()
     const tunConfig = await this.readTunConfig()
-    const profile = generateMihomoTunConfig({ ...runtime, device: intent.device, stack: intent.stack, tunConfig })
+    const profile = await this.buildProfile(intent, runtime, tunConfig)
     try {
       await this.client.start(profile)
     } catch (error) {
@@ -70,6 +99,32 @@ export class MihomoOwnedTunAdapter implements TunMutationAdapter {
     } finally {
       clearTimeout(timer)
     }
+  }
+
+  /**
+   * Materialize the profile to submit. A resolvable active document yields a real
+   * proxied config; anything else yields the DIRECT bootstrap.
+   */
+  private async buildProfile(
+    intent: MihomoOwnedTunIntent,
+    runtime: TunProfileRuntime,
+    tunConfig: TunConfigModel
+  ): Promise<string> {
+    const document = this.profileSources.readActiveDocument
+      ? await this.profileSources.readActiveDocument()
+      : null
+    if (document) {
+      return generateProxiedTunConfig({
+        document,
+        ...runtime,
+        device: intent.device,
+        stack: intent.stack,
+        tunConfig,
+        core: this.profileSources.readCore ? await this.profileSources.readCore() : undefined,
+        geodata: this.profileSources.readGeodata ? await this.profileSources.readGeodata() : undefined
+      })
+    }
+    return generateMihomoTunConfig({ ...runtime, device: intent.device, stack: intent.stack, tunConfig })
   }
 
   async restore(): Promise<TunRestoreResult> {

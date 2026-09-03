@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { createServer, type Server, type Socket } from 'node:net'
 import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
 import { SYSTEM_PROXY_LOOPBACK_HOST } from '@shared/system-proxy'
-import { LiveSystemProxyKernelProbe, probeHttp, probeSocks } from '../src/main/system-proxy/probe'
+import { LiveSystemProxyKernelProbe, TunAwareSystemProxyProbe, probeHttp, probeSocks } from '../src/main/system-proxy/probe'
 import type { KernelGateway } from '../src/shared/gateways'
 import type { MihomoConfigSnapshot } from '../src/shared/mihomo-api'
 /**
@@ -284,5 +284,75 @@ describe('probeSocks', () => {
     // Must not double-reject with a spurious "closed without a greeting reply"
     // after the reply already satisfied the probe (the `finish` guard).
     await expect(probeSocks(port, 400)).resolves.toBeUndefined()
+  })
+})
+
+/**
+ * TunAwareSystemProxyProbe is what lets TUN and the system proxy be enabled
+ * together: TUN runs a SEPARATE elevated mihomo on an ephemeral port while the
+ * main kernel is stopped, so the main-kernel probe alone would always refuse with
+ * "内核未运行". These tests drive it against the same real socket server, so the
+ * liveness proof for the TUN port is genuinely exercised rather than assumed.
+ */
+describe('TunAwareSystemProxyProbe', () => {
+  const servers: Server[] = []
+  afterEach(() => {
+    for (const server of servers) server.close()
+    servers.length = 0
+  })
+
+  const fallbackTarget = { host: SYSTEM_PROXY_LOOPBACK_HOST, port: 1080 }
+  const recordingFallback = () => {
+    let calls = 0
+    return {
+      calls: () => calls,
+      probe: {
+        resolveTarget: async () => {
+          calls += 1
+          return fallbackTarget
+        }
+      }
+    }
+  }
+
+  it('targets the live TUN session port while TUN is active', async () => {
+    const { server, port } = await startMixedServer()
+    servers.push(server)
+    const fallback = recordingFallback()
+    const probe = new TunAwareSystemProxyProbe({ getActiveMixedPort: () => port }, fallback.probe)
+    await expect(probe.resolveTarget()).resolves.toEqual({ host: SYSTEM_PROXY_LOOPBACK_HOST, port })
+    // The main-kernel probe must not be consulted: that kernel is stopped.
+    expect(fallback.calls()).toBe(0)
+  })
+
+  it('delegates to the main-kernel probe when TUN is not active', async () => {
+    const fallback = recordingFallback()
+    const probe = new TunAwareSystemProxyProbe({ getActiveMixedPort: () => null }, fallback.probe)
+    await expect(probe.resolveTarget()).resolves.toEqual(fallbackTarget)
+    expect(fallback.calls()).toBe(1)
+  })
+
+  it('refuses a TUN port that is not actually listening', async () => {
+    // Being privileged is not evidence of being bound: a starting-or-dead child
+    // must never have the registry pointed at it.
+    const { server, port } = await startMixedServer()
+    server.close()
+    const fallback = recordingFallback()
+    const probe = new TunAwareSystemProxyProbe({ getActiveMixedPort: () => port }, fallback.probe)
+    await expect(probe.resolveTarget()).rejects.toMatchObject({
+      code: ProtocolErrorCode.SYSTEM_PROXY_KERNEL_REQUIRED
+    })
+    expect(fallback.calls()).toBe(0)
+  })
+
+  it('refuses a structurally invalid TUN port', async () => {
+    const fallback = recordingFallback()
+    for (const bad of [0, -1, 70000, 1.5]) {
+      const probe = new TunAwareSystemProxyProbe({ getActiveMixedPort: () => bad }, fallback.probe)
+      await expect(probe.resolveTarget()).rejects.toMatchObject({
+        code: ProtocolErrorCode.SYSTEM_PROXY_KERNEL_REQUIRED
+      })
+    }
+    expect(fallback.calls()).toBe(0)
   })
 })

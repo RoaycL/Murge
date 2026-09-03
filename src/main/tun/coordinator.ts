@@ -21,6 +21,12 @@ export interface TunMutationAdapter {
   recoveryRequired(): Promise<boolean>
   enable(intent: MihomoOwnedTunIntent): Promise<TunEnableResult>
   restore(): Promise<TunRestoreResult>
+  /**
+   * The live owned session's mixed-port, when the implementation runs one. Lets
+   * the system proxy target the elevated TUN child while the main kernel is
+   * stopped. Optional: the gated placeholder owns no process.
+   */
+  getActiveRuntime?(): { mixedPort: number } | null
 }
 
 /** Fail-closed production placeholder. It performs no I/O or OS mutation. */
@@ -59,6 +65,17 @@ export class TunCoordinator {
 
   getStatus(): TunStatus {
     return { ...this.status }
+  }
+
+  /**
+   * The mixed-port of the live owned TUN session, or null when TUN is not serving
+   * traffic. Only reported in `active`: during starting/restoring the child's
+   * inbound is not a target the system proxy may be pointed at.
+   */
+  getActiveMixedPort(): number | null {
+    if (this.status.phase !== 'active') return null
+    const runtime = this.adapter.getActiveRuntime?.() ?? null
+    return runtime ? runtime.mixedPort : null
   }
 
   onStatus(listener: (status: TunStatus) => void): () => void {

@@ -26,6 +26,17 @@ import {
 
 const FIXED_NOW = new Date('2026-01-01T00:00:00.000Z')
 
+// Creating a *directory* link is unprivileged on every supported host: POSIX
+// takes a plain symlink, and Windows takes a junction (a real reparse point that
+// `lstat().isSymbolicLink()` reports as a link, which is exactly what the
+// evidence-path guard inspects). An untyped `symlink()` asks Windows for a true
+// directory symlink, which needs admin or Developer Mode and otherwise fails
+// EPERM — so these reparse-point tests would fail on an ordinary developer
+// machine while passing in CI. Mirrors the junction convention already used by
+// tests/kernel-watchdog-cleanup.test.ts.
+const linkDirectory = (target: string, path: string): Promise<void> =>
+  symlink(target, path, process.platform === 'win32' ? 'junction' : undefined)
+
 function env(overrides: Record<string, string | undefined> = {}): Record<string, string | undefined> {
   return {
     MURGE_RUN_REAL_TUN: '1',
@@ -234,7 +245,7 @@ describe('runG1ProbeCli evidence-path safety (P1-7)', () => {
   it('rejects an evidence base that is a symlink / reparse point', async () => {
     const realDir = await mkdtemp(join(tmpdir(), 'g1-evidence-real-'))
     const linkDir = join(tmpdir(), `g1-evidence-link-${Date.now()}`)
-    await symlink(realDir, linkDir)
+    await linkDirectory(realDir, linkDir)
     try {
       const path = join(linkDir, 'g1-probe-evidence.json')
       const { outputs, result } = runCli({
@@ -294,7 +305,7 @@ describe('resolveSafeEvidencePath', () => {
     const evidenceDir = join(realRoot, 'evidence')
     try {
       await mkdir(evidenceDir)
-      await symlink(realRoot, linkParent)
+      await linkDirectory(realRoot, linkParent)
       const base = join(linkParent, 'evidence') // real dir reachable via a symlinked prefix
       const result = await resolveSafeEvidencePath(join(base, 'a.json'), base)
       expect('path' in result).toBe(true)
@@ -308,7 +319,7 @@ describe('resolveSafeEvidencePath', () => {
   it('rejects a base that is itself a symlink', async () => {
     const realDir = await mkdtemp(join(tmpdir(), 'g1-evidence-real-'))
     const linkDir = join(tmpdir(), `g1-evidence-link-${Date.now()}`)
-    await symlink(realDir, linkDir)
+    await linkDirectory(realDir, linkDir)
     try {
       const result = await resolveSafeEvidencePath(join(linkDir, 'a.json'), linkDir)
       expect('error' in result).toBe(true)
@@ -323,7 +334,7 @@ describe('resolveSafeEvidencePath', () => {
     const outside = await mkdtemp(join(tmpdir(), 'g1-evidence-outside-'))
     const link = join(tmpdir(), `g1-escape-link-${Date.now()}`)
     try {
-      await symlink(outside, link)
+      await linkDirectory(outside, link)
       // `link/inside.json` has a parent (`link`) that is a symlink pointing
       // outside `base`; its canonical parent resolves to `outside`, so containment
       // must reject it.

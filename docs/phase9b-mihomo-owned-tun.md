@@ -58,14 +58,84 @@ reported as conflict. Login never auto-enables TUN.
 ## Configuration boundary
 
 `src/main/tun/mihomo-tun-config.ts` is the only Phase 9B TUN profile generator.
-It uses a real YAML parser and an exact schema. The separate Phase 7 safe config
-generator remains TUN-disabled and must not be weakened.
+It uses a real YAML parser. The separate Phase 7 safe config generator remains
+TUN-disabled and must not be weakened.
 
-Initial Windows-lab defaults are deliberately conservative: DIRECT mode,
-`allow-lan:false`, IPv6 disabled, loopback controller, `mixed` stack,
-`auto-route:true`, `auto-detect-interface:true`, `strict-route:false`, DNS
-hijack to mihomo, and `MATCH,DIRECT`. Proxy profile integration comes only after
-this lifecycle passes isolated Windows tests.
+Two profiles exist:
+
+- **`generateProxiedTunConfig`** — the normal path. It reuses
+  `buildProfileKernelConfig` (the main kernel's safety transform) on the ACTIVE
+  profile document, then re-adds the `tun:` block that transform deliberately
+  strips. The user's `proxies`, `proxy-groups`, `proxy-providers`, `rules`,
+  `rule-providers` and resolver split are preserved, so TUN actually proxies.
+- **`generateMihomoTunConfig`** — the conservative DIRECT bootstrap, retained as
+  the fallback when no profile is active. A rule-mode config with no proxies would
+  reference groups that do not exist and mihomo would refuse to start.
+
+### Relaxed proxy-content gating (threat-model C7 reviewed change)
+
+The original Phase 9B profile pinned `mode:direct` + `rules:[MATCH,DIRECT]`,
+which by construction could not proxy. Enabling real proxying required relaxing
+that gate in BOTH enforcement points (`mihomoTunConfigErrors` in TypeScript and
+`validateTunProfile` in Go). Per `helper-threat-model.md` C7 this is recorded as a
+single, deliberate change rather than a silent removal.
+
+**Now allowed** (proxy CONTENT — the user's routing intent):
+`mode: rule`, `proxies`, `proxy-groups`, `proxy-providers`, `rules`,
+`rule-providers`, a full `dns` block (nameserver/fallback splits), `ipv6`,
+`strict-route`, custom `fake-ip-range`, extra `dns-hijack` entries, and other
+ordinary mihomo top-level keys.
+
+**Still refused** (structural boundary — non-negotiable, and re-checked
+independently by the service because the ordinary main process is not trusted):
+
+- `allow-lan: true`, and any `bind-address` off loopback
+- `external-controller` not on `127.0.0.1`, or a `secret` that is not 64-hex
+- extra inbounds: `port`, `socks-port`, `redir-port`, `tproxy-port`, `listeners`,
+  and `tunnels` (which binds arbitrary local ports and forwards them to arbitrary
+  hosts)
+- unauthenticated controller surfaces: `external-controller-unix`,
+  `external-controller-pipe`, `external-controller-tls`,
+  `external-controller-routing-mark`, `external-doh-server`, and
+  `external-controller-cors` (which widens who may reach the controller)
+- host clock mutation: `ntp`, whose `write-to-system: true` lets this
+  SYSTEM-privileged process set the machine clock — which can invalidate
+  certificate validity windows and Kerberos tickets host-wide
+- remote-archive download/extract: `external-ui`, `external-ui-url`,
+  `external-ui-name`. mihomo would fetch that ZIP and unpack it under the
+  configured directory as SYSTEM; Murge ships its own UI, so these are never
+  legitimate. The generator STRIPS them (a real subscription may carry one and
+  must stay usable) while both validators still REFUSE them, so a hand-authored
+  or tampered profile submitted straight to the pipe fails closed.
+- arbitrary file write via provider cache paths: `proxy-providers.*.path` and
+  `rule-providers.*.path` are WRITE targets for the privileged child, so an
+  absolute path, a drive-relative path (`C:x`), an alternate data stream or a
+  `..` escape is refused. The generator rewrites an unsafe path to a contained
+  `./<section>/<name>.yaml` so the provider still works. mihomo enforces its own
+  "subpath of home directory" rule, but this service is the boundary and must not
+  have to trust it.
+- `dns.listen` (a public DNS bind), `dns.enable:false`, non-`fake-ip` enhanced mode
+- `tun.enable:false`, a malformed `tun.device`, an unknown `tun.stack`
+- YAML aliases, non-core-schema tags (matched against an allowlist, NOT a `!!`
+  prefix test — `!!python/object` starts with `!!`), and multiple documents
+- a profile over the service's 64 KiB `maxProfileBytes` ceiling
+
+The residual risk is explicit: a compromised main process could direct this
+SYSTEM-privileged child at attacker-chosen proxy nodes and rules. It still cannot
+bind a public port, expose an unauthenticated controller, substitute the binary or
+run an arbitrary command. That is a strictly smaller surface than clients which
+run an elevated mihomo with no service-side validation at all.
+
+### Mutual exclusion
+
+TUN remains mutually exclusive with the **safe kernel** (both run a mihomo and
+bind a mixed-port). TUN and the **system proxy** may now be enabled together:
+`TunAwareSystemProxyProbe` resolves the proxy target to the live TUN session's
+mixed-port while the main kernel is stopped, and still socket-probes it
+(TCP + HTTP CONNECT + SOCKS5) before the registry is touched. When a TUN session
+stops serving, the owned proxy is restored through the same
+`restoreBeforeKernelUnavailable` path the main-kernel crash hook uses, so the
+registry never keeps pointing at a dead port.
 
 ## Install, upgrade and uninstall
 

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -114,36 +115,107 @@ func validateUint64(value string) error {
 	return err
 }
 
-type tunProfile struct {
-	MixedPort          int      `yaml:"mixed-port"`
-	AllowLAN           bool     `yaml:"allow-lan"`
-	Mode               string   `yaml:"mode"`
-	LogLevel           string   `yaml:"log-level"`
-	IPv6               bool     `yaml:"ipv6"`
-	ExternalController string   `yaml:"external-controller"`
-	Secret             string   `yaml:"secret"`
-	Tun                tunBlock `yaml:"tun"`
-	DNS                dnsBlock `yaml:"dns"`
-	Rules              []string `yaml:"rules"`
+// forbiddenTopKeys are the top-level keys a profile may never carry into the
+// elevated child:
+//
+//   - extra inbounds beyond the single authorized mixed-port (`port`,
+//     `socks-port`, `redir-port`, `tproxy-port`, `listeners`, and `tunnels`,
+//     which binds arbitrary local ports and forwards them to arbitrary hosts);
+//   - controller surfaces that `secret` does not authenticate (mihomo's Unix
+//     socket, Windows named pipe, TLS controller and external DoH endpoint all
+//     bypass it) and `external-controller-cors`, which widens who may reach the
+//     controller from a browser;
+//   - remote-archive download/extract: the `external-ui*` family makes mihomo
+//     fetch a ZIP and unpack it under the configured directory, then serve it.
+//     This product ships its own UI, so these are never legitimate;
+//   - `ntp`, whose `write-to-system: true` lets this SYSTEM-privileged process
+//     set the machine clock — which can invalidate certificate validity windows
+//     and Kerberos tickets host-wide.
+//
+// None of these are needed to proxy traffic, so refusing them keeps a compromised
+// main process from reaching them without depending on mihomo's own checks.
+var forbiddenTopKeys = []string{
+	"port", "socks-port", "redir-port", "tproxy-port", "listeners", "tunnels",
+	"external-controller-unix", "external-controller-pipe", "external-controller-tls",
+	"external-controller-routing-mark", "external-controller-cors", "external-doh-server",
+	"external-ui", "external-ui-url", "external-ui-name",
+	"ntp",
+	"ss-config", "vmess-config", "tuic-server",
 }
 
-type tunBlock struct {
-	Enable              bool     `yaml:"enable"`
-	Device              string   `yaml:"device"`
-	Stack               string   `yaml:"stack"`
-	AutoRoute           bool     `yaml:"auto-route"`
-	AutoDetectInterface bool     `yaml:"auto-detect-interface"`
-	StrictRoute         bool     `yaml:"strict-route"`
-	DNSHijack           []string `yaml:"dns-hijack"`
+// providerSections name the profile sections whose entries carry a `path` that
+// mihomo WRITES downloaded content to. An absolute path or a `..` escape would be
+// an arbitrary file write performed by a SYSTEM-privileged process, so the paths
+// are confined to the service's own state directory here. mihomo enforces its own
+// "subpath of home directory" rule, but this service must not have to trust that:
+// it is the boundary, not a second opinion.
+var providerSections = []string{"proxy-providers", "rule-providers"}
+
+func validateProviderPaths(profile map[string]any) error {
+	for _, section := range providerSections {
+		raw, present := profile[section]
+		if !present {
+			continue
+		}
+		entries, ok := raw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s must be a mapping", section)
+		}
+		for name, entryRaw := range entries {
+			entry, ok := entryRaw.(map[string]any)
+			if !ok {
+				return fmt.Errorf("%s.%s must be a mapping", section, name)
+			}
+			pathRaw, present := entry["path"]
+			if !present {
+				continue
+			}
+			path, ok := pathRaw.(string)
+			if !ok {
+				return fmt.Errorf("%s.%s.path must be a string", section, name)
+			}
+			if err := ensureContainedPath(path); err != nil {
+				return fmt.Errorf("%s.%s.path %w", section, name, err)
+			}
+		}
+	}
+	return nil
 }
 
-type dnsBlock struct {
-	Enable       bool     `yaml:"enable"`
-	EnhancedMode string   `yaml:"enhanced-mode"`
-	FakeIPRange  string   `yaml:"fake-ip-range"`
-	Nameserver   []string `yaml:"nameserver"`
+// ensureContainedPath accepts only a relative path with no parent traversal, so
+// the resolved target cannot leave the state directory mihomo runs in.
+func ensureContainedPath(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return errors.New("must not be empty")
+	}
+	if filepath.IsAbs(path) || strings.HasPrefix(path, "/") || strings.HasPrefix(path, `\`) {
+		return errors.New("must be relative to the state directory")
+	}
+	// A Windows drive-relative path (`C:x`) or an NTFS stream both contain a colon.
+	if strings.Contains(path, ":") {
+		return errors.New("must not name a drive or alternate stream")
+	}
+	for _, segment := range strings.Split(strings.ReplaceAll(path, `\`, "/"), "/") {
+		if segment == ".." {
+			return errors.New("must not traverse outside the state directory")
+		}
+	}
+	return nil
 }
 
+// validateTunProfile is the service's INDEPENDENT re-validation of the profile.
+// The ordinary main process is not trusted: even if it were compromised it must
+// not be able to make this SYSTEM-privileged child bind a public port, expose an
+// unauthenticated controller or run anything but the pinned packaged mihomo.
+//
+// It deliberately does NOT constrain proxy CONTENT (`proxies`, `proxy-groups`,
+// `proxy-providers`, `rules`, `rule-providers`, resolver splits under `dns`) —
+// that content is the whole purpose of a TUN proxy and is the user's routing
+// intent. What it enforces is the structural boundary: loopback-only controller
+// with a real secret, no extra inbounds, no unauthenticated API surface, TUN
+// actually enabled with a well-formed adapter identity, and none of the YAML
+// tricks (aliases, custom tags, multiple documents) that could smuggle a value
+// past this check.
 func validateTunProfile(text string) error {
 	var syntax yaml.Node
 	if err := yaml.Unmarshal([]byte(text), &syntax); err != nil {
@@ -152,9 +224,12 @@ func validateTunProfile(text string) error {
 	if err := rejectUnsafeYAML(&syntax); err != nil {
 		return err
 	}
+
+	// A permissive map decode (no KnownFields): unknown keys are legitimate mihomo
+	// sections, so they are allowed through while the blacklist below still
+	// actively rejects the dangerous ones.
 	decoder := yaml.NewDecoder(strings.NewReader(text))
-	decoder.KnownFields(true)
-	var profile tunProfile
+	var profile map[string]any
 	if err := decoder.Decode(&profile); err != nil {
 		return err
 	}
@@ -162,52 +237,138 @@ func validateTunProfile(text string) error {
 	if err := decoder.Decode(&extra); err != io.EOF {
 		return errors.New("multiple YAML documents are forbidden")
 	}
-	if profile.MixedPort < 1024 || profile.MixedPort > 65535 {
+	if profile == nil {
+		return errors.New("profile must be a YAML mapping")
+	}
+
+	for _, key := range forbiddenTopKeys {
+		if _, present := profile[key]; present {
+			return fmt.Errorf("forbidden key for a privileged profile: %s", key)
+		}
+	}
+	if err := validateProviderPaths(profile); err != nil {
+		return err
+	}
+
+	// --- Inbound / authentication boundary (non-negotiable) ---
+	if allowLAN, present := profile["allow-lan"]; present {
+		enabled, ok := allowLAN.(bool)
+		if !ok || enabled {
+			return errors.New("allow-lan must be false")
+		}
+	}
+	mixedPort, err := intValue(profile, "mixed-port")
+	if err != nil {
+		return err
+	}
+	if mixedPort < 1024 || mixedPort > 65535 {
 		return errors.New("mixed-port is outside the allowed range")
 	}
-	if profile.AllowLAN || profile.Mode != "direct" || profile.IPv6 {
-		return errors.New("top-level safety policy mismatch")
+	controllerText, ok := profile["external-controller"].(string)
+	if !ok {
+		return errors.New("external-controller must be a string")
 	}
-	if profile.LogLevel != "silent" && profile.LogLevel != "error" && profile.LogLevel != "warn" && profile.LogLevel != "info" && profile.LogLevel != "debug" {
-		return errors.New("invalid log-level")
-	}
-	controller := controllerPattern.FindStringSubmatch(profile.ExternalController)
+	controller := controllerPattern.FindStringSubmatch(controllerText)
 	if controller == nil {
 		return errors.New("external-controller must bind loopback")
 	}
 	controllerPort, _ := strconv.Atoi(controller[1])
-	if controllerPort < 1024 || controllerPort > 65535 || controllerPort == profile.MixedPort {
+	if controllerPort < 1024 || controllerPort > 65535 || controllerPort == mixedPort {
 		return errors.New("controller port is invalid")
 	}
-	if !secretPattern.MatchString(profile.Secret) {
+	secret, ok := profile["secret"].(string)
+	if !ok || !secretPattern.MatchString(secret) {
 		return errors.New("invalid controller secret")
 	}
-	if !profile.Tun.Enable || !profile.Tun.AutoRoute || !profile.Tun.AutoDetectInterface || profile.Tun.StrictRoute {
-		return errors.New("TUN ownership policy mismatch")
+	if bindAddress, present := profile["bind-address"]; present {
+		address, ok := bindAddress.(string)
+		if !ok || (address != "127.0.0.1" && address != "localhost") {
+			return errors.New("bind-address must stay on loopback")
+		}
 	}
-	if !devicePattern.MatchString(profile.Tun.Device) {
+
+	// --- TUN ownership boundary (non-negotiable) ---
+	tunRaw, present := profile["tun"]
+	if !present {
+		return errors.New("tun block is required")
+	}
+	tunMap, ok := tunRaw.(map[string]any)
+	if !ok {
+		return errors.New("tun must be a mapping")
+	}
+	if enable, ok := tunMap["enable"].(bool); !ok || !enable {
+		return errors.New("tun.enable must be true")
+	}
+	device, ok := tunMap["device"].(string)
+	if !ok || !devicePattern.MatchString(device) {
 		return errors.New("invalid TUN device")
 	}
-	if profile.Tun.Stack != "mixed" && profile.Tun.Stack != "system" && profile.Tun.Stack != "gvisor" {
+	stack, ok := tunMap["stack"].(string)
+	if !ok || (stack != "mixed" && stack != "system" && stack != "gvisor") {
 		return errors.New("invalid TUN stack")
 	}
-	if !equalStrings(profile.Tun.DNSHijack, []string{"any:53"}) {
-		return errors.New("dns-hijack policy mismatch")
+	hijack, ok := tunMap["dns-hijack"].([]any)
+	if !ok || len(hijack) == 0 {
+		return errors.New("tun.dns-hijack must be a non-empty sequence")
 	}
-	if !profile.DNS.Enable || profile.DNS.EnhancedMode != "fake-ip" || profile.DNS.FakeIPRange != "198.18.0.1/16" || !equalStrings(profile.DNS.Nameserver, []string{"system"}) {
-		return errors.New("DNS policy mismatch")
+
+	// --- DNS boundary: fake-ip required; a public DNS bind is refused ---
+	dnsRaw, present := profile["dns"]
+	if !present {
+		return errors.New("dns block is required")
 	}
-	if !equalStrings(profile.Rules, []string{"MATCH,DIRECT"}) {
-		return errors.New("rules policy mismatch")
+	dnsMap, ok := dnsRaw.(map[string]any)
+	if !ok {
+		return errors.New("dns must be a mapping")
+	}
+	if _, listens := dnsMap["listen"]; listens {
+		return errors.New("forbidden key for a privileged profile: dns.listen")
+	}
+	if enable, ok := dnsMap["enable"].(bool); !ok || !enable {
+		return errors.New("dns.enable must be true")
+	}
+	if mode, ok := dnsMap["enhanced-mode"].(string); !ok || mode != "fake-ip" {
+		return errors.New("dns.enhanced-mode must be fake-ip")
 	}
 	return nil
+}
+
+func intValue(profile map[string]any, key string) (int, error) {
+	raw, present := profile[key]
+	if !present {
+		return 0, fmt.Errorf("missing key: %s", key)
+	}
+	switch value := raw.(type) {
+	case int:
+		return value, nil
+	case int64:
+		return int(value), nil
+	case float64:
+		if value != float64(int(value)) {
+			return 0, fmt.Errorf("%s must be an integer", key)
+		}
+		return int(value), nil
+	default:
+		return 0, fmt.Errorf("%s must be an integer", key)
+	}
+}
+
+// standardYAMLTags is the exact set yaml.v3 auto-assigns while resolving a plain
+// document. Anything else is an explicitly authored tag.
+var standardYAMLTags = map[string]bool{
+	"!!map": true, "!!seq": true, "!!str": true,
+	"!!int": true, "!!float": true, "!!bool": true,
+	"!!null": true, "!!merge": true, "!!timestamp": true,
 }
 
 func rejectUnsafeYAML(node *yaml.Node) error {
 	if node.Alias != nil || node.Kind == yaml.AliasNode {
 		return errors.New("YAML aliases are forbidden")
 	}
-	if node.Tag != "" && !strings.HasPrefix(node.Tag, "!!") {
+	// Match against the known-good set rather than the `!!` prefix: a prefix test
+	// admits any `!!`-namespaced tag, so a deserializer-directed tag such as
+	// `!!python/object` would pass while still being an author-supplied tag.
+	if node.Tag != "" && !standardYAMLTags[node.Tag] {
 		return errors.New("custom YAML tags are forbidden")
 	}
 	for _, child := range node.Content {
@@ -216,16 +377,4 @@ func rejectUnsafeYAML(node *yaml.Node) error {
 		}
 	}
 	return nil
-}
-
-func equalStrings(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
 }

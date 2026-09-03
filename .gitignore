@@ -2,6 +2,7 @@ node_modules/
 out/
 dist/
 .DS_Store
+.idea/
 *.log
 *.tsbuildinfo
 .env
@@ -12,3 +13,9 @@ resources/bin/mihomo*
 resources/bin/*/*.zip
 !resources/bin/.gitkeep
 resources/tun-service/*/tun-service.exe
+# Runtime artifacts written next to the service binary by the local TUN evidence
+# harness (scripts/tun-runtime-evidence.ps1). service-config.json embeds this
+# machine's SID and absolute paths, and state/ is re-ACLed to SYSTEM, so neither
+# is ever committable.
+resources/tun-service/*/service-config.json
+resources/tun-service/*/state/

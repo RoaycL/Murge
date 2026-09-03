@@ -32,12 +32,16 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
     [IPC.appGetInfo]: async () => appInfo,
 
     [IPC.kernelGetStatus]: async () => kernel.getStatus(),
-    [IPC.kernelStart]: async () => {
-      // Single-kernel model: when TUN is live the logical kernel is already
-      // running (as the elevated child), so this is a no-op rather than a
-      // conflicting spawn — the merged gateway reports running and does nothing.
-      return kernel.start()
-    },
+    // The injected `kernel`/`tun` gateways are the QUEUED wrappers over the
+    // single-kernel model (see kernel/mode-transition.ts): kernel start/stop and
+    // TUN enable/disable are exclusive tasks on ONE FIFO queue, so no two host
+    // transitions can interleave a prepare/stop/resume sequence. Enabling TUN is
+    // a mode switch on the SAME kernel: the ordinary host is stopped first (no
+    // proxy restore — the elevated child rebinds the unified ports), the child
+    // comes up, and the owned system proxy is untouched on success. Restore
+    // happens inside the controller ONLY when the unified controller cannot be
+    // confirmed reachable again (never a fixed-delay guess).
+    [IPC.kernelStart]: async () => kernel.start(),
     [IPC.kernelStop]: async () => kernel.stop(),
 
     [IPC.kernelManagerGetState]: async () => kernelManager.getState(),
@@ -128,38 +132,8 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
     [IPC.updatesDownload]: async () => updates.download(),
     [IPC.updatesInstall]: () => updates.install(),
     [IPC.tunGetStatus]: async () => tun.getStatus(),
-    [IPC.tunEnable]: async () => {
-      // Single-kernel model: the main kernel and the TUN child are two hosts over
-      // one set of unified ports, so enabling TUN is a MODE SWITCH, not a separate
-      // kernel. Stop the (unprivileged) main kernel WITHOUT restoring the owned
-      // system proxy — the unified mixed port is rebound by the elevated child, so
-      // the proxy target stays valid. The merged gateway carries this via
-      // `prepareTunEnable`; plain/mock kernels fall back to a legacy stop (which
-      // restores the proxy, and is a no-op when already being stopped).
-      if (kernel.prepareTunEnable) {
-        await kernel.prepareTunEnable()
-      } else {
-        const kernelStatus = await kernel.getStatus()
-        if (kernelStatus.phase !== 'stopped') await kernel.stop()
-      }
-      const status = await tun.enable()
-      // If the child failed to come up after the main kernel was stopped, bring
-      // the main kernel back so the unified ports are never left dead.
-      if (status.phase !== 'active' && kernel.resumeAfterTun) {
-        await kernel.resumeAfterTun()
-      }
-      return status
-    },
-    [IPC.tunDisable]: async () => {
-      const status = await tun.disable()
-      // Single-kernel model: after TUN turns off the logical kernel must keep
-      // serving the unified ports, so restart the main kernel (no-op when another
-      // host is already serving or the mode-switch hook is absent).
-      if (kernel.resumeAfterTun) {
-        await kernel.resumeAfterTun()
-      }
-      return status
-    },
+    [IPC.tunEnable]: async () => tun.enable(),
+    [IPC.tunDisable]: async () => tun.disable(),
     [IPC.tunConfigGet]: async () => tunConfig.get(),
     [IPC.tunConfigSet]: async (_event, input) => tunConfig.set(parseTunConfig(input)),
     [IPC.tunConfigPreview]: async (_event, input) => tunConfig.preview(parseTunConfig(input)),

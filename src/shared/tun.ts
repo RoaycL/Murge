@@ -70,8 +70,10 @@ export const TUN_UI_COPY: Readonly<Record<TunPhase, string>> = {
   starting: 'TUN 正在启动…',
   active: 'TUN 已启用',
   restoring: '正在恢复网络设置…',
-  failed: 'TUN 启用失败',
-  conflict: '检测到网络配置被外部修改，未还原该条目',
+  failed: 'TUN 启用失败，可重试',
+  // Conflict is recoverable: toggling off re-runs the restore path, which
+  // reconciles with the service first (the only way a latched conflict clears).
+  conflict: 'TUN 状态冲突：请先关闭 TUN 以重新对齐服务状态',
   unsupported: '当前平台不支持 TUN',
-  'restore-failed': '网络设置恢复失败'
+  'restore-failed': '网络设置恢复失败，可重试关闭'
 }

@@ -2,6 +2,7 @@ import { mihomoOwnedTunIntentSchema } from '../../shared/schemas/tun'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
 import type { MihomoOwnedTunIntent, TunStatus } from '../../shared/tun'
 import { initialTunStatus, transitionTunStatus } from './state-machine'
+import { TunAuditLog } from './audit-log'
 
 export type TunEnableResult =
   | { outcome: 'active' }
@@ -58,9 +59,17 @@ export class TunCoordinator {
   private status: TunStatus
   private queue: Promise<void> = Promise.resolve()
   private readonly listeners = new Set<(status: TunStatus) => void>()
+  /** Machine-code-only lifecycle evidence (see threat model T07). Never secrets. */
+  private readonly audit: TunAuditLog
 
-  constructor(private readonly adapter: TunMutationAdapter, supported: boolean) {
+  constructor(private readonly adapter: TunMutationAdapter, supported: boolean, audit?: TunAuditLog) {
     this.status = initialTunStatus(supported)
+    this.audit = audit ?? new TunAuditLog()
+  }
+
+  /** Bounded snapshot of lifecycle evidence for diagnostics. */
+  getAuditSnapshot(): ReturnType<TunAuditLog['snapshot']> {
+    return this.audit.snapshot()
   }
 
   getStatus(): TunStatus {
@@ -109,10 +118,12 @@ export class TunCoordinator {
         this.status.phase === 'active' ||
         this.status.phase === 'starting' ||
         this.status.phase === 'restoring' ||
-        this.status.phase === 'restore-failed' ||
         this.status.phase === 'conflict' ||
         this.status.phase === 'unsupported'
       ) return
+      // `restore-failed` intentionally falls through: the mode switch that led
+      // here already stopped the main kernel, so retrying the enable is the
+      // natural recovery (see TRANSITIONS['restore-failed']).
       const intent = mihomoOwnedTunIntentSchema.parse(input) as MihomoOwnedTunIntent
       this.move('enable')
       try {
@@ -136,9 +147,12 @@ export class TunCoordinator {
     return this.serialize(async () => {
       if (
         this.status.phase === 'configured' ||
-        this.status.phase === 'unsupported' ||
-        this.status.phase === 'conflict'
+        this.status.phase === 'unsupported'
       ) return
+      // `conflict` participates again: the restore path reconciles first, which
+      // is the only way a latched service conflict can clear. A disable that
+      // fails again simply re-enters conflict/restore-failed — the user may
+      // retry, and quit only proceeds once the phase is confirmed clean.
       if (this.status.phase !== 'restoring') this.move('disable')
       await this.restoreInternal()
     })
@@ -160,8 +174,20 @@ export class TunCoordinator {
   }
 
   private move(intent: Parameters<typeof transitionTunStatus>[1], detail: Parameters<typeof transitionTunStatus>[2] = {}): void {
+    const from = this.status.phase
     this.status = transitionTunStatus(this.status, intent, detail)
     const snapshot = this.getStatus()
+    // Machine-code lifecycle evidence: never throws into the state machine, and a
+    // listener failure never interrupts recovery sequencing.
+    try {
+      this.audit.append(
+        `transition:${from}->${snapshot.phase}`,
+        snapshot.phase,
+        snapshot.conflictDetail?.match(/^[A-Z0-9_.:-]{1,128}$/)?.[0] ?? null
+      )
+    } catch {
+      // Audit is diagnostic only; state correctness never depends on it.
+    }
     for (const listener of this.listeners) {
       try {
         listener(snapshot)

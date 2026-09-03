@@ -4,24 +4,28 @@ import { brand } from '../src/shared/brand'
 import { buildIpcHandlers } from '../src/main/ipc/handlers'
 import { createFakeContainer } from '../src/main/testing/fake-container'
 
+/**
+ * The IPC handlers are PURE delegates: the injected `kernel`/`tun` gateways are
+ * the queued wrappers over the single-kernel model (see
+ * src/main/kernel/mode-transition.ts), which owns the whole mode-switch
+ * orchestration — prepare-without-proxy-restore, rollback resume, readiness
+ * confirmation and the proxy-restore-on-dead-port invariant. The orchestration
+ * itself is covered end-to-end in tests/mode-transition.test.ts.
+ */
 describe('TUN IPC single-kernel mode switch', () => {
   let container: ReturnType<typeof createFakeContainer>
   beforeEach(() => { container = createFakeContainer(brand) })
 
-  it('enables TUN with the kernel stopped, and auto-stops it otherwise', async () => {
+  it('delegates tunEnable/tunDisable to the injected (queued) TUN gateway', async () => {
     const handlers = buildIpcHandlers(container.deps)
     await handlers[IPC.tunEnable]({})
     expect(container.tun.enableCalls).toBe(1)
+    // The handler itself never touches the kernel: the controller inside the
+    // queued gateway owns the prepare/stop sequence.
     expect(container.kernel.stopCalls).toBe(0)
 
-    // In the single-kernel model enabling TUN is a mode switch on the SAME kernel:
-    // whenever the ordinary host is live, it is stopped first so the elevated child
-    // can rebind the unified ports. Real wiring uses `prepareTunEnable` (no proxy
-    // restore); the fakes fall back to a legacy stop, which is still a stop.
-    container.kernel.status.phase = 'running'
-    await handlers[IPC.tunEnable]({})
-    expect(container.kernel.stopCalls).toBe(1)
-    expect(container.tun.enableCalls).toBe(2)
+    await handlers[IPC.tunDisable]({})
+    expect(container.tun.disableCalls).toBe(1)
   })
 
   it('enables TUN while the system proxy is already owned (coexistence)', async () => {

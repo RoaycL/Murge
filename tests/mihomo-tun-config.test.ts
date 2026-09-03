@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
+import { brand } from '../src/shared/brand'
 import {
   assertMihomoTunConfig,
   assertProxiedTunConfig,
@@ -9,6 +10,7 @@ import {
   proxiedTunConfigErrors
 } from '../src/main/tun/mihomo-tun-config'
 import type { TunConfigModel } from '../src/shared/tun-config'
+import { EMPTY_TUN_CONFIG } from '../src/shared/tun-config'
 
 const options = {
   mixedPort: 17890,
@@ -201,6 +203,42 @@ describe('proxied TUN config (real subscription content)', () => {
     expect(config.tun['auto-route']).toBe(false)
     expect(config.tun['route-address']).toEqual(['192.168.0.0/16'])
     expect(config.tun['route-exclude-address']).toEqual(['10.0.0.0/8'])
+  })
+
+  it('prefers the brand intent device over the stock tunConfig placeholder', () => {
+    // EMPTY_TUN_CONFIG carries the generic 'Mihomo' placeholder; the adapter's
+    // brand-derived intent must win until the user customizes. The brand name
+    // itself is asserted generically (brand.config.json is the single source).
+    const intentDevice = `${brand.shortName} TUN`
+    const stock: TunConfigModel = { ...EMPTY_TUN_CONFIG }
+    const config = parse(generateProxiedTunConfig({ ...proxied, device: intentDevice, tunConfig: stock })) as Record<string, any>
+    expect(config.tun.device).toBe(intentDevice)
+    // An explicitly customized device still wins over the intent.
+    const custom: TunConfigModel = { ...stock, device: 'TUN-9' }
+    const customized = parse(generateProxiedTunConfig({ ...proxied, device: intentDevice, tunConfig: custom })) as Record<string, any>
+    expect(customized.tun.device).toBe('TUN-9')
+  })
+
+  it('rejects auto-route + auto-detect-interface both disabled without explicit routes (silent black hole)', () => {
+    const model: TunConfigModel = { ...EMPTY_TUN_CONFIG, autoRoute: false, autoDetectInterface: false, routeAddress: [] }
+    // The generator validates its own output: the black-hole combination is
+    // refused up front, not merely flagged after the fact.
+    expect(() => generateProxiedTunConfig({ ...proxied, tunConfig: model })).toThrow(/auto-route and auto-detect-interface/)
+    // With explicit routes the combination is legitimate.
+    const routed: TunConfigModel = { ...model, routeAddress: ['192.168.0.0/16'] }
+    expect(proxiedTunConfigErrors(generateProxiedTunConfig({ ...proxied, tunConfig: routed }))).toEqual([])
+  })
+
+  it('strips the legacy standalone-server keys exactly like the Go service refuses them', () => {
+    // ss-config / vmess-config / tuic-server are refused by protocol.go; the TS
+    // generator must strip them from real subscriptions instead of failing
+    // opaquely at the service boundary.
+    const withLegacy = `${document}ss-config: '{"listen":"127.0.0.1:8388"}'\nvmess-config: {}\ntuic-server: {}\n`
+    const config = parse(generateProxiedTunConfig({ ...proxied, document: withLegacy })) as Record<string, any>
+    expect(config['ss-config']).toBeUndefined()
+    expect(config['vmess-config']).toBeUndefined()
+    expect(config['tuic-server']).toBeUndefined()
+    expect(proxiedTunConfigErrors(generateProxiedTunConfig({ ...proxied, document: withLegacy }))).toEqual([])
   })
 
   it('rejects a profile that exceeds the privileged service byte ceiling', () => {

@@ -7,9 +7,21 @@ const TRANSITIONS: Readonly<Record<TunPhase, Partial<Record<TunIntent, TunPhase>
   active: { disable: 'restoring', fail: 'restoring', fatal: 'failed', conflict: 'conflict' },
   restoring: { restored: 'configured', fail: 'restore-failed', conflict: 'conflict' },
   failed: { enable: 'starting', disable: 'restoring', unsupported: 'unsupported' },
-  conflict: {},
+  /**
+   * `conflict` is NOT a terminal state: the service latches it while the owned
+   * child cannot be verified or stopped, but a later reconcile may clear it
+   * (transient store/Inspect failures self-heal). Disabling re-runs the restore
+   * path, which reconciles first — the only user-facing way out of a conflict.
+   */
+  conflict: { disable: 'restoring' },
   unsupported: { initialize: 'unsupported' },
-  'restore-failed': { disable: 'restoring' }
+  /**
+   * `restore-failed` may retry the enable: the previous mode switch already
+   * stopped the main kernel, so re-enabling TUN is the natural retry. If the
+   * service still owns a live child, the start comes back as conflict and the
+   * user can disable to recover.
+   */
+  'restore-failed': { enable: 'starting', disable: 'restoring' }
 }
 
 export interface TunTransitionDetail {

@@ -1,3 +1,12 @@
+/**
+ * PHASE 9 LEGACY (superseded by Phase 9B): the reviewed COM-launch and
+ * state-directory SDDL contracts. The state-directory SDDL is STILL the
+ * normative contract the Go service matches byte-for-byte (see the
+ * `stateDirectorySDDL` constant in native/tun-service/runtime_windows.go) —
+ * the Go side now carries the SAME mandatory-integrity label, so a Medium-IL
+ * same-user process can neither read nor write the service state directory.
+ * The COM masks are audit-trail only.
+ */
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
 
 export const COM_LAUNCH_MASK = 0x0b

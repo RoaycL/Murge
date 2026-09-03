@@ -1,3 +1,9 @@
+/**
+ * PHASE 9 LEGACY (superseded by Phase 9B): elevation COM flow — kept only as
+ * reviewed audit-trail code and unit-tested evidence of the reviewed design
+ * (see docs/phase9b-mihomo-owned-tun.md). NO production path imports this
+ * module; do not wire it without a new reviewed design change.
+ */
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
 import type { TunBinaryIntegrityEvidence, TunBinaryManifestEntry } from './binary-integrity'
 

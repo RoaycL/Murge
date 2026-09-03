@@ -18,6 +18,13 @@ Windows release candidate for the mihomo-based desktop client.
   keeps running across TUN toggles, so enabling TUN no longer darkens the rules
   / groups / policy / log views. An owned system proxy is restored only on an
   explicit kernel stop.
+- Fix: the system-proxy toggle is now directly usable while TUN is on. The
+  enable probe resolves the kernel through the same unified single-kernel
+  gateway the renderer uses, so it no longer mistakes the (intentionally
+  stopped) main kernel for a down kernel and no longer errors with
+  "请先启动内核后再启用系统代理". The Overview (概览) page now surfaces only the
+  system-proxy and TUN switches; kernel startup status is no longer shown
+  there, matching the community single-kernel clients.
 - The system-proxy enable path now re-adopts a stale owned bundle whose port
   moved between sessions instead of reporting a bogus "外部修改" conflict; a
   genuine external edit still surfaces a conflict.

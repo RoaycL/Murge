@@ -1,3 +1,4 @@
+import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
 import type { KernelGateway } from '@shared/gateways'
 import type { KernelStatus } from '@shared/runtime'
 import type { TunCoordinator } from '../tun/coordinator'
@@ -121,5 +122,57 @@ export class SingleKernelGateway implements KernelGateway {
     const status = await this.rawMain.getStatus()
     if (status.phase !== 'stopped') return
     await this.main.start()
+  }
+}
+
+/**
+ * A {@link KernelGateway} whose live implementation is injected later.
+ *
+ * Services created before the single logical-kernel gateway is wired (notably
+ * the system-proxy probe) resolve the live kernel through this holder so they
+ * see the SAME unified view the renderer does: running whenever either the main
+ * kernel OR the elevated TUN child is serving, over the single production
+ * controller/mixed ports. Without this the probe consulted a main-only gateway
+ * that reports a stopped kernel while TUN owns the data plane, so enabling the
+ * system proxy alongside TUN failed with "请先启动内核后再启用系统代理".
+ *
+ * Fails closed (throws INTERNAL) if called before `set` so a stray enable can
+ * never silently point the registry at a dead port.
+ */
+export class LateBoundKernelGateway implements KernelGateway {
+  private implementation: KernelGateway | null = null
+
+  constructor(private readonly resolve: () => KernelGateway | null) {}
+
+  /** Bind the real implementation. */
+  set(implementation: KernelGateway): void {
+    this.implementation = implementation
+  }
+
+  private get impl(): KernelGateway {
+    const impl = this.implementation ?? this.resolve()
+    if (!impl) {
+      throw new ProtocolError(
+        ProtocolErrorCode.INTERNAL,
+        'single logical kernel gateway is not wired yet; refusing to enable the system proxy'
+      )
+    }
+    return impl
+  }
+
+  getStatus(): KernelStatus | Promise<KernelStatus> {
+    return this.impl.getStatus()
+  }
+
+  onStatus(listener: (status: KernelStatus) => void): () => void {
+    return this.impl.onStatus(listener)
+  }
+
+  start(): Promise<KernelStatus> {
+    return this.impl.start()
+  }
+
+  stop(): Promise<KernelStatus> {
+    return this.impl.stop()
   }
 }

@@ -76,6 +76,14 @@ export function parseTunServiceResponse(input: unknown, expectedRequestId: strin
   return response
 }
 
+/**
+ * TS-side mirror of the privileged boundary in `native/tun-service/protocol.go`:
+ * byte ceiling, exact profile digest and the same unsafe-profile refusal. The
+ * FORBIDDEN top-level key lists are kept in lockstep with protocol.go (TS adds
+ * the legacy `ss-config`/`vmess-config`/`tuic-server` server keys that Go also
+ * refuses); when one side changes, the other must change with it.
+ */
+
 function fail(reason: string): never {
   throw new ProtocolError(ProtocolErrorCode.TUN_HELPER_PROTOCOL_INVALID, 'Invalid TUN service protocol message', { reason })
 }

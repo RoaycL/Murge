@@ -43,7 +43,16 @@ function wrapHandler(handler: IpcHandler): IpcHandler {
   }
 }
 
-async function buildRuntimeSummary({ mihomo }: Pick<IpcDependencies, 'mihomo'>): Promise<RuntimeSummary> {
+/**
+ * Build the Activity page's runtime context summary. Exported for tests; the
+ * production path is the `runtime` gateway wired below.
+ */
+export async function buildRuntimeSummary({
+  mihomo,
+  profiles,
+  systemProxy,
+  tun
+}: Pick<IpcDependencies, 'mihomo' | 'profiles' | 'systemProxy' | 'tun'>): Promise<RuntimeSummary> {
   let mode: OutboundMode = 'rule'
   try {
     const config = await mihomo.getConfig()
@@ -51,13 +60,40 @@ async function buildRuntimeSummary({ mihomo }: Pick<IpcDependencies, 'mihomo'>):
   } catch {
     // Controller unreachable (kernel stopped): fall back to the safe default.
   }
+  // Real context, not placeholders: the Activity page shows the profile name to
+  // the user, so it must be the ACTIVE profile (falling back to the brand
+  // default only when nothing is activated), and the proxy/TUN flags must
+  // reflect the main-process lifecycle owners rather than hardcoded values.
+  let profileName = brand.defaultProfileName
+  try {
+    const metas = await profiles.listProfiles()
+    const active = metas.find((meta) => meta.active)
+    if (active) profileName = active.name
+  } catch {
+    // Keep the brand default on a repository error; never fabricate a name.
+  }
+  let systemProxyEnabled = false
+  try {
+    // `getStatus` may be sync or async per the gateway contract; await both.
+    const proxyStatus = await systemProxy.getStatus()
+    systemProxyEnabled = proxyStatus.phase === 'enabled'
+  } catch {
+    // A status failure must not break the whole summary.
+  }
+  let tunEnabled = false
+  try {
+    const tunStatus = await tun.getStatus()
+    tunEnabled = tunStatus.phase === 'active' || tunStatus.phase === 'starting'
+  } catch {
+    // A status failure must not break the whole summary.
+  }
   return {
     networkName: 'Ethernet',
-    profileName: brand.defaultProfileName,
+    profileName,
     mode,
     externalIp: null,
-    systemProxyEnabled: false,
-    tunEnabled: false
+    systemProxyEnabled,
+    tunEnabled
   }
 }
 
@@ -83,7 +119,7 @@ export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemPro
     kernelManager,
     mihomo,
     runtime: {
-      getSummary: () => buildRuntimeSummary({ mihomo }),
+      getSummary: () => buildRuntimeSummary({ mihomo, profiles, systemProxy, tun }),
       getExternalIp: () => resolveExternalIp({ kernel, mihomo })
     },
     profiles,

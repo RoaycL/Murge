@@ -17,6 +17,13 @@ const MIHOMO_REPO = 'mihomo'
 const GITHUB_API_BASE = 'https://api.github.com/repos'
 const ASSET_FILENAME = '.mihomo-asset.json'
 const VERSION_TAG_RE = /^v\d+\.\d+\.\d+$/
+/**
+ * Every other network path in the app is bounded (subscription fetch 30s,
+ * kernel archive download via AbortSignal.timeout); the release-metadata API
+ * call must be too. Without it a hung api.github.com connection keeps the
+ * renderer's busy flag latched for minutes on `listVersions`/`install`.
+ */
+const GITHUB_API_TIMEOUT_MS = 30_000
 
 /** GitHub release metadata subset relevant to a mihomo asset. */
 export interface GithubRelease {
@@ -45,6 +52,8 @@ export interface KernelManagerServiceDeps {
   fetchReleaseAssets?: (version: string) => Promise<MihomoReleaseAsset[]>
   /** Resolve (download + verify + reuse) an asset into a per-version workspace. */
   resolveAsset?: (asset: MihomoAsset, workspaceDir: string) => Promise<ResolvedMihomoBinary>
+  /** Timeout for the live GitHub metadata requests (default 30s). */
+  githubTimeoutMs?: number
 }
 
 interface TransientState {
@@ -276,11 +285,20 @@ export class KernelManagerService implements KernelManagerGateway {
   }
 
   private async githubRequest(url: string): Promise<unknown> {
+    const timeoutMs = this.deps.githubTimeoutMs ?? GITHUB_API_TIMEOUT_MS
     const response = await fetch(url, {
       headers: {
         Accept: 'application/vnd.github+json',
         'User-Agent': 'mihomo-kernel-manager'
-      }
+      },
+      signal: AbortSignal.timeout(timeoutMs)
+    }).catch((error: unknown) => {
+      throw new ProtocolError(
+        ProtocolErrorCode.ARTIFACT_DOWNLOAD_FAILED,
+        error instanceof Error && /timeout|abort/i.test(error.message)
+          ? `GitHub 请求超时（${timeoutMs}ms）`
+          : `GitHub 请求失败：${error instanceof Error ? error.message : String(error)}`
+      )
     })
     if (!response.ok) {
       throw new ProtocolError(ProtocolErrorCode.ARTIFACT_DOWNLOAD_FAILED, `GitHub 请求失败：${response.status}`)

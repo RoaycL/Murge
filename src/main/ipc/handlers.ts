@@ -33,7 +33,9 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
 
     [IPC.kernelGetStatus]: async () => kernel.getStatus(),
     [IPC.kernelStart]: async () => {
-      assertTunInactive(await tun.getStatus())
+      // Single-kernel model: when TUN is live the logical kernel is already
+      // running (as the elevated child), so this is a no-op rather than a
+      // conflicting spawn — the merged gateway reports running and does nothing.
       return kernel.start()
     },
     [IPC.kernelStop]: async () => kernel.stop(),
@@ -127,24 +129,37 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
     [IPC.updatesInstall]: () => updates.install(),
     [IPC.tunGetStatus]: async () => tun.getStatus(),
     [IPC.tunEnable]: async () => {
-      // TUN and the safe kernel stay mutually exclusive: both run a mihomo and
-      // both bind a mixed-port. Rather than rejecting when the kernel is live,
-      // auto-stop it first so enabling TUN is a single action. The kernel gateway
-      // restores any owned system proxy before stopping (see
-      // SystemProxyOrderedKernelGateway), so the proxy is never left pointing at a
-      // port that is about to close; a proxy conflict is treated as safe. On a true
-      // restore/stop failure the gateway throws and the TUN enable aborts, leaving
-      // the kernel running rather than a TUN session against a dead controller.
-      // The system proxy is NOT excluded — it may point at whichever mihomo is
-      // live (see TunAwareSystemProxyProbe), so TUN and the system proxy can be
-      // enabled together.
-      const kernelStatus = await kernel.getStatus()
-      if (kernelStatus.phase !== 'stopped') {
-        await kernel.stop()
+      // Single-kernel model: the main kernel and the TUN child are two hosts over
+      // one set of unified ports, so enabling TUN is a MODE SWITCH, not a separate
+      // kernel. Stop the (unprivileged) main kernel WITHOUT restoring the owned
+      // system proxy — the unified mixed port is rebound by the elevated child, so
+      // the proxy target stays valid. The merged gateway carries this via
+      // `prepareTunEnable`; plain/mock kernels fall back to a legacy stop (which
+      // restores the proxy, and is a no-op when already being stopped).
+      if (kernel.prepareTunEnable) {
+        await kernel.prepareTunEnable()
+      } else {
+        const kernelStatus = await kernel.getStatus()
+        if (kernelStatus.phase !== 'stopped') await kernel.stop()
       }
-      return tun.enable()
+      const status = await tun.enable()
+      // If the child failed to come up after the main kernel was stopped, bring
+      // the main kernel back so the unified ports are never left dead.
+      if (status.phase !== 'active' && kernel.resumeAfterTun) {
+        await kernel.resumeAfterTun()
+      }
+      return status
     },
-    [IPC.tunDisable]: async () => tun.disable(),
+    [IPC.tunDisable]: async () => {
+      const status = await tun.disable()
+      // Single-kernel model: after TUN turns off the logical kernel must keep
+      // serving the unified ports, so restart the main kernel (no-op when another
+      // host is already serving or the mode-switch hook is absent).
+      if (kernel.resumeAfterTun) {
+        await kernel.resumeAfterTun()
+      }
+      return status
+    },
     [IPC.tunConfigGet]: async () => tunConfig.get(),
     [IPC.tunConfigSet]: async (_event, input) => tunConfig.set(parseTunConfig(input)),
     [IPC.tunConfigPreview]: async (_event, input) => tunConfig.preview(parseTunConfig(input)),
@@ -167,12 +182,6 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
       networkMetadata.selectProvider(parseNetworkMetadataProviderId(id)),
     [IPC.networkMetadataResolve]: async (_event, force) =>
       networkMetadata.resolve(parseOptionalBoolean(force, 'force'))
-  }
-}
-
-function assertTunInactive(status: Awaited<ReturnType<IpcDeps['tun']['getStatus']>>): void {
-  if (status.phase !== 'configured' && status.phase !== 'unsupported' && status.phase !== 'failed') {
-    throw new ProtocolError(ProtocolErrorCode.TUN_INVALID_TRANSITION, 'Disable TUN before starting another network mode')
   }
 }
 

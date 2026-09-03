@@ -30,12 +30,12 @@ describe('TUN lifecycle store', () => {
 
   it('records an action error when enable rejects', async () => {
     getStatus.mockResolvedValue(configured)
-    enable.mockRejectedValue(new Error('Stop the safe kernel and system proxy before enabling TUN'))
+    enable.mockRejectedValue(new Error('kernel not running'))
     const store = useTunStore()
     await store.refresh()
     await store.enable()
     expect(enable).toHaveBeenCalledOnce()
-    expect(store.actionError).toBe('Stop the safe kernel and system proxy before enabling TUN')
+    expect(store.actionError).toBe('kernel not running')
     expect(store.busy).toBe(false)
   })
 

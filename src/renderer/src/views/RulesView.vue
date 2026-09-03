@@ -67,7 +67,7 @@ watch(() => kernel.status.phase, (phase, previous) => {
 
     <div v-if="kernel.status.phase !== 'running'" class="empty-state">
       <p>内核尚未运行</p>
-      <span>请先在“概览”中启动安全直连内核，规则将在 Controller 就绪后自动载入。</span>
+      <span>请先在“概览”中启动内核，规则将在 Controller 就绪后自动载入。</span>
     </div>
 
     <div v-else-if="rules.status === 'error'" class="empty-state">

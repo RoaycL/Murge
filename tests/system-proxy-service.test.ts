@@ -17,6 +17,7 @@ import type {
 } from '../src/main/system-proxy/types'
 
 const TARGET: SystemProxyTarget = { host: SYSTEM_PROXY_LOOPBACK_HOST, port: 7890 }
+const NEXT_TARGET: SystemProxyTarget = { host: SYSTEM_PROXY_LOOPBACK_HOST, port: 7891 }
 
 class ConfigurableProbe implements SystemProxyKernelProbe {
   constructor(private readonly behavior: () => Promise<SystemProxyTarget>) {}
@@ -188,6 +189,46 @@ describe('SystemProxyService', () => {
       await expectReject(service.enable(), ProtocolErrorCode.SYSTEM_PROXY_STATE_CONFLICT)
       expect(adapter.calls.filter((c) => c.op === 'apply').length).toBe(applyCount)
       expect(service.getStatus().phase).toBe('conflict')
+      await expect(backup.read()).resolves.not.toBeNull()
+    })
+
+    it('re-adopts a stale bundle whose unified port moved across sessions instead of conflicting', async () => {
+      // A previous session enabled the proxy at port 7890 and left an owned
+      // bundle on disk; this session allocated a fresh (unified) port 7891. The
+      // registry still points at our write, so this is OUR stale bundle — enabling
+      // must restore the true pre-enable state and re-enable fresh at the new
+      // port, never surface an external-modification conflict.
+      const adapter = new FakeSystemProxyAdapter()
+      const backup = new InMemorySystemProxyBackupStore()
+      const first = new SystemProxyService({ adapter, probe: new StaticSystemProxyProbe(TARGET), backup, instanceId: 'owner' })
+      await first.enable()
+      const restoreCallsBefore = adapter.calls.filter((c) => c.op === 'restore').length
+
+      const next = new SystemProxyService({ adapter, probe: new StaticSystemProxyProbe(NEXT_TARGET), backup, instanceId: 'owner' })
+      const status = await next.enable()
+      expect(status.phase).toBe('enabled')
+      expect(status.port).toBe(NEXT_TARGET.port)
+      // The stale write was rolled back to the pre-enable state before re-enabling.
+      expect(adapter.calls.filter((c) => c.op === 'restore').length).toBeGreaterThan(restoreCallsBefore)
+      // A fresh bundle now targets the current live port.
+      const bundle = await backup.read()
+      expect(bundle).not.toBeNull()
+      expect(bundle!.target.port).toBe(NEXT_TARGET.port)
+    })
+
+    it('still conflicts when a stale-target bundle was mutated externally (route not ours)', async () => {
+      // Same cross-session port move, but the registry proxy was replaced by a
+      // non-loopback host: that is a genuine external takeover, not our stale
+      // write, so it must stay a conflict.
+      const adapter = new FakeSystemProxyAdapter()
+      const backup = new InMemorySystemProxyBackupStore()
+      const first = new SystemProxyService({ adapter, probe: new StaticSystemProxyProbe(TARGET), backup, instanceId: 'owner' })
+      await first.enable()
+      adapter.mutate({ proxyServer: { exists: true, type: 'REG_SZ', value: 'http=8.8.8.8:8080' } })
+
+      const next = new SystemProxyService({ adapter, probe: new StaticSystemProxyProbe(NEXT_TARGET), backup, instanceId: 'owner' })
+      await expectReject(next.enable(), ProtocolErrorCode.SYSTEM_PROXY_STATE_CONFLICT)
+      expect(next.getStatus().phase).toBe('conflict')
       await expect(backup.read()).resolves.not.toBeNull()
     })
 

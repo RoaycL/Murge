@@ -13,6 +13,7 @@ import { TempKernelConfigStore } from './kernel/config-store'
 import { findFreePort, MihomoKernelConfigStore } from './kernel/mihomo-config-store'
 import { randomSecret } from './kernel/mihomo-config'
 import { ControllerReadyKernelGateway } from './kernel/controller-ready-gateway'
+import { SingleKernelGateway } from './kernel/single-kernel-gateway'
 import { createSystemProxy } from './system-proxy/factory'
 import { SystemProxyService } from './system-proxy/service'
 import { WindowsSystemProxyAdapter } from './system-proxy/adapters/windows-adapter'
@@ -177,7 +178,8 @@ if (!hasSingleInstanceLock) {
  * Build the controller gateway. Development builds run the in-process localhost
  * mock controller so the renderer can be exercised without a real binary or any
  * network change. Production targets the randomized loopback controller used by
- * the opt-in safe-direct kernel lifecycle; no system-network setting is changed.
+ * the opt-in kernel lifecycle over the randomized loopback controller; no
+ * system-network setting is changed.
  */
 async function createMihomoGateway(
   productionController?: { url: string; secret: string }
@@ -736,12 +738,17 @@ app.whenReady().then(async () => {
         new TunServiceClient(
           new NamedPipeTunServiceTransport(tunServiceIdentity(brand.appId).pipeName)
         ),
-        async () => {
-          const controllerPort = await findFreePort()
-          let mixedPort = await findFreePort()
-          while (mixedPort === controllerPort) mixedPort = await findFreePort()
-          return { controllerPort, mixedPort, secret: randomSecret(32) }
-        },
+        // Single-kernel model: the elevated TUN child reuses the SAME controller,
+        // mixed port and secret as the main kernel, so the data plane (bound to
+        // the production controller) and the owned system proxy (aimed at the
+        // production mixed port) keep working whichever host is live. The child
+        // and the main kernel are mutually exclusive (both bind these ports), but
+        // the logical kernel the app sees never changes ports.
+        async () => ({
+          controllerPort: productionControllerPort!,
+          mixedPort: productionMixedPort!,
+          secret: productionSecret!
+        }),
         {
           waitUntilReady: async ({ controllerPort, secret, signal }) => {
             const client = new MihomoClient(`http://127.0.0.1:${controllerPort}`, secret, { timeoutMs: 500 })
@@ -808,6 +815,21 @@ app.whenReady().then(async () => {
       })
     })
   }
+  // Single-kernel gateway: presents the main kernel and the elevated TUN child
+  // as ONE logical kernel over the unified production controller/mixed ports.
+  // `kernel` (the IPC-facing gateway) reports running whenever EITHER host is
+  // live, so the data plane and the renderer's kernel.status.phase stay correct
+  // in TUN mode (the main kernel being stopped is an implementation detail, not
+  // a down kernel). The raw supervisor is used for the mode-switch stop/start so
+  // the owned system proxy is NOT restored while switching hosts — the unified
+  // mixed port is rebound rather than going dead.
+  const runtimeKernelGateway = new SingleKernelGateway(
+    orderedKernel,
+    kernelInstance,
+    tunInstance,
+    systemProxyService,
+    `http://127.0.0.1:${productionControllerPort}`
+  )
   // Reapplies the active profile to the live kernel whenever the user edits,
   // activates or imports-as-active a profile. The reloader is a no-op when the
   // kernel is stopped (the profile applies on the next manual start) and
@@ -839,7 +861,7 @@ app.whenReady().then(async () => {
   const networkMetadataService = new NetworkMetadataService({
     resolveProxyPort: async () => {
       try {
-        if ((await ipcKernel.getStatus()).phase !== 'running') return null
+        if ((await runtimeKernelGateway.getStatus()).phase !== 'running') return null
         const config = await gateway.getConfig()
         const port = config['mixed-port'] ?? config.port
         return typeof port === 'number' && port > 0 ? port : null
@@ -850,7 +872,7 @@ app.whenReady().then(async () => {
     fetchJsonViaProxy: fetchMetadataJsonViaProxy
   })
   disposeIpc = registerIpc({
-    kernel: orderedKernel,
+    kernel: runtimeKernelGateway,
     kernelManager: kernelManagerService,
     mihomo: gateway,
     profiles: profileGateway,
@@ -910,10 +932,10 @@ app.whenReady().then(async () => {
     return
   }
 
-  // Auto-start the safe loopback kernel on a normal (non-hidden) launch so the
+  // Auto-start the single kernel on a normal (non-hidden) launch so the
   // Policy/Rules views reflect the active profile immediately, matching the
-  // persistent-core model of mihomo-party / clash-verge-rev. Only the
-  // loopback-only kernel starts here; system proxy and TUN remain explicit,
+  // persistent-core model of mihomo-party / clash-verge-rev. Only the ordinary
+  // (non-TUN) host starts here; system proxy and TUN remain explicit,
   // user-triggered takeovers. Gated on the persisted "启动时自动启动内核"
   // setting, skipped on login `--hidden` launches (which keep the guarantee
   // that nothing auto-enables at login), and wrapped so a failure logs without

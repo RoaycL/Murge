@@ -4,20 +4,20 @@ import { brand } from '../src/shared/brand'
 import { buildIpcHandlers } from '../src/main/ipc/handlers'
 import { createFakeContainer } from '../src/main/testing/fake-container'
 
-describe('TUN IPC exclusivity', () => {
+describe('TUN IPC single-kernel mode switch', () => {
   let container: ReturnType<typeof createFakeContainer>
   beforeEach(() => { container = createFakeContainer(brand) })
 
-  it('enables TUN with the safe kernel stopped, and auto-stops it otherwise', async () => {
+  it('enables TUN with the kernel stopped, and auto-stops it otherwise', async () => {
     const handlers = buildIpcHandlers(container.deps)
     await handlers[IPC.tunEnable]({})
     expect(container.tun.enableCalls).toBe(1)
     expect(container.kernel.stopCalls).toBe(0)
 
-    // The safe kernel is mutually exclusive with TUN (both run a mihomo and bind
-    // a mixed-port). Enabling TUN while it is live auto-stops the kernel first, so
-    // the user does not have to stop it by hand; the gateway restores any owned
-    // system proxy before the stop.
+    // In the single-kernel model enabling TUN is a mode switch on the SAME kernel:
+    // whenever the ordinary host is live, it is stopped first so the elevated child
+    // can rebind the unified ports. Real wiring uses `prepareTunEnable` (no proxy
+    // restore); the fakes fall back to a legacy stop, which is still a stop.
     container.kernel.status.phase = 'running'
     await handlers[IPC.tunEnable]({})
     expect(container.kernel.stopCalls).toBe(1)
@@ -25,21 +25,23 @@ describe('TUN IPC exclusivity', () => {
   })
 
   it('enables TUN while the system proxy is already owned (coexistence)', async () => {
-    // Matches the behaviour of other mihomo desktop clients: the proxy points at
-    // whichever mihomo is live, so an owned proxy must not block TUN.
+    // The proxy points at the fixed mixed-port regardless of which host is live, so
+    // an owned proxy must not block TUN.
     container.systemProxy.status.phase = 'enabled'
     const handlers = buildIpcHandlers(container.deps)
     await handlers[IPC.tunEnable]({})
     expect(container.tun.enableCalls).toBe(1)
   })
 
-  it('blocks safe-kernel start but allows system-proxy enable while TUN owns networking', async () => {
+  it('does not reject kernel start while TUN owns networking; the system proxy stays allowed', async () => {
+    // Single-kernel model: the merged gateway turns a `kernel.start()` while TUN is
+    // live into a no-op (the logical kernel is already running as the elevated
+    // child). The raw IPC handler only delegates, so it must not throw.
     container.tun.status.phase = 'active'
     const handlers = buildIpcHandlers(container.deps)
-    await expect(handlers[IPC.kernelStart]({})).rejects.toThrow(/Disable TUN/)
-    expect(container.kernel.startCalls).toBe(0)
+    await expect(handlers[IPC.kernelStart]({})).resolves.toBeDefined()
     // The system proxy may be enabled on top of an active TUN session; the
-    // TUN-aware probe resolves it to the elevated child's mixed-port.
+    // TUN-aware probe resolves it to the unified mixed-port.
     await handlers[IPC.systemProxyEnable]({})
     expect(container.systemProxy.enableCalls).toBe(1)
   })

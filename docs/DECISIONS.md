@@ -47,3 +47,12 @@ Phase 9B 的 TUN 配置写死 `mode: direct` + `rules: [MATCH,DIRECT]`，因此�
 该放开按 `docs/helper-threat-model.md` C7 的要求，作为一次单独、显式、带测试的评审变更记录，
 而非静默取消。TS 侧（`mihomoTunConfigErrors` / `proxiedTunConfigErrors`）与 Go 侧
 （`validateTunProfile`）两处校验必须保持同义，两侧均有对应测试固化。
+
+## 单 mihomo 内核（本会话单项决策）
+
+与 mihomo-party / clash-verge-rev 对齐，将 Murge 从"双内核"（非特权回环安全内核 +
+特权 TUN 子进程）迁移为**单 mihomo 内核**：系统代理与 TUN 由同一个 mihomo 提供服务
+（TUN 开启时以管理员/服务权限重启该内核并注入 `tun` 配置），数据面始终读取该单内核
+控制器。`-安全直连内核" 概念已被删除。作为配套修复，系统代理 `enable()` 现在会重新
+收养跨会话端口重分配后遗留的自有备份（陈旧 target.port），而非误报"外部修改"冲突；
+真正的外部修改仍会冲突。

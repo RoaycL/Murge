@@ -9,13 +9,18 @@ Windows release candidate for the mihomo-based desktop client.
   profile so TUN actually proxies traffic.
 - TUN switch on the Overview (概览) page next to the system-proxy toggle for
   one-click enable/disable; the config page keeps the full lifecycle panel.
-- Turning TUN on automatically stops the safe loopback kernel first (the two are
-  mutually exclusive), so no manual stop is needed; an owned system proxy is
-  restored before the kernel stops.
-- The system proxy and TUN can now be enabled together: while TUN is on, the
-  Overview 系统代理 switch points the proxy at the live TUN child instead of
-  erroring, and turning TUN off restores the proxy so it is never left aimed at
-  a dead port.
+- Single-kernel (社区式 mihomo) model: one mihomo serves both the system proxy
+  (mixed-port) and TUN. Enabling TUN restarts that same kernel with
+  admin/service privileges and injects the `tun` config; the data plane
+  (rules / groups / delay-test / logs) always reads the one live controller.
+  The "-安全直连内核" concept is removed.
+- The system proxy and TUN are no longer mutually exclusive: a logical kernel
+  keeps running across TUN toggles, so enabling TUN no longer darkens the rules
+  / groups / policy / log views. An owned system proxy is restored only on an
+  explicit kernel stop.
+- The system-proxy enable path now re-adopts a stale owned bundle whose port
+  moved between sessions instead of reporting a bogus "外部修改" conflict; a
+  genuine external edit still surfaces a conflict.
 - Profile, activity, connection, policy, provider, rule, DNS and log tools.
 - Verified Windows system-proxy enable, exact restore and recovery path.
 - Tray, optional start-on-login, diagnostics and brand-configurable desktop UI.

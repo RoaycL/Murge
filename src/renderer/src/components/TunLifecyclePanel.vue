@@ -25,7 +25,7 @@ const activeProfileName = computed(() => profiles.active?.name ?? null)
       <div>
         <h2 class="tunlife-title">TUN 状态</h2>
         <p class="tunlife-subtitle">
-          启用 mihomo 自营 TUN 适配器，接管全部流量（包括不遵循系统代理设置的程序）。TUN 使用当前激活的订阅节点与分流规则，可与系统代理同时开启；启用前需停止安全直连内核，禁用会由 mihomo 自行恢复网络设置。
+          启用 mihomo 自营 TUN 适配器，接管全部流量（包括不遵循系统代理设置的程序）。TUN 使用当前激活的订阅节点与分流规则，可与系统代理同时开启；启用时内核会自动以特权方式重启（同一内核），禁用会由 mihomo 自行恢复网络设置。
         </p>
       </div>
       <div class="tunlife-status" :class="{ active: gating.active }">

@@ -6,6 +6,7 @@ import { ProtocolError, ProtocolErrorCode, toProtocolError } from '../../shared/
 import { parseSystemProxyStatus } from '../../shared/schemas/system-proxy'
 import { SYSTEM_PROXY_BACKUP_SCHEMA_VERSION } from './backup-store'
 import {
+  buildProxyServerValue,
   buildWrittenState,
   conflictDetail,
   formatAddress,
@@ -145,20 +146,41 @@ export class SystemProxyService implements SystemProxyGateway {
         throw error
       }
 
-      // An existing owned bundle: either we are already enabled (idempotent) or
+      // An existing owned bundle: either we are already enabled (idempotent), we
+      // own a stale bundle from a previous session whose unified port moved, or
       // the OS values were mutated externally (conflict — never overwrite).
-      const existing = await this.readBackupForOwnership()
-      if (existing) {
+      const existingBackup = await this.readBackupForOwnership()
+      if (existingBackup) {
         const observed = await this.adapter.read()
-        if (isOwned(observed, existing.written)) {
+        const sameTarget =
+          existingBackup.target.host === target.host && existingBackup.target.port === target.port
+        if (isOwned(observed, existingBackup.written) && sameTarget) {
+          // Idempotent: the proxy already points at the live target.
           return this.transition('enabled', {
-            address: formatAddress(existing.target),
-            port: existing.target.port,
-            proxyOverride: existing.written.proxyOverride.value as string
+            address: formatAddress(existingBackup.target),
+            port: existingBackup.target.port,
+            proxyOverride: existingBackup.written.proxyOverride.value as string
           })
         }
-        const detail = conflictDetail(observed, existing.written)
-        return this.fail('conflict', ProtocolErrorCode.SYSTEM_PROXY_STATE_CONFLICT, CONFLICT_MSG, detail)
+        // A stale bundle whose target differs from the current live target means
+        // the unified port moved between sessions. If the registry still reflects
+        // OUR previous write (route-owned) or is already back at OUR pre-enable
+        // snapshot (a restore that finished but lost its delete), this is a self-
+        // recovery, not an external edit: restore to the true pre-enable state,
+        // drop the bundle, and re-enable fresh at the current target below. Only
+        // a genuinely external mutation surfaces a conflict.
+        const routeOwned =
+          observed.proxyEnable.exists &&
+          observed.proxyEnable.value === 1 &&
+          typeof observed.proxyServer.value === 'string' &&
+          observed.proxyServer.value === buildProxyServerValue(existingBackup.target)
+        const alreadyRestored = matchesPrevious(observed, existingBackup.previous)
+        if (!sameTarget && (routeOwned || alreadyRestored)) {
+          await this.restoreBackupStrict(existingBackup)
+        } else {
+          const detail = conflictDetail(observed, existingBackup.written)
+          return this.fail('conflict', ProtocolErrorCode.SYSTEM_PROXY_STATE_CONFLICT, CONFLICT_MSG, detail)
+        }
       }
 
       // Fresh enable: snapshot the pre-enable registry, persist the owned bundle

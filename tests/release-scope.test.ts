@@ -13,7 +13,13 @@ describe('release-candidate feature scope', () => {
     for (const route of ['/capture', '/decrypt', '/rewrite', '/panel']) {
       expect(isRcSupportedRoute(route)).toBe(false)
     }
-    expect(RC_EXCLUDED_FEATURES.map(({ id }) => id)).toContain('tun')
+    // TUN is an included feature and must NOT be treated as excluded. The still
+    // incomplete feature set is what stays frozen.
+    const excludedIds = RC_EXCLUDED_FEATURES.map(({ id }) => id)
+    for (const id of ['http-capture', 'https-decryption', 'rewrite', 'panel', 'automatic-updates']) {
+      expect(excludedIds).toContain(id)
+    }
+    expect(excludedIds).not.toContain('tun')
   })
 
   it('does not expose excluded Surge-like pages in navigation or router imports', async () => {
@@ -26,8 +32,9 @@ describe('release-candidate feature scope', () => {
       expect(sidebar).not.toContain(route)
       expect(router).not.toContain(`path: '${route}'`)
     }
-    expect(overview).not.toContain('toggleTun')
-    expect(overview).not.toContain('TUN 模式')
+    // TUN is surfaced as a switch on the Overview page.
+    expect(overview).toContain('toggleTun')
+    expect(overview).toContain('TUN 模式')
   })
 
   it('does not ship placeholder source for excluded RC pages', async () => {

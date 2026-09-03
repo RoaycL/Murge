@@ -1,5 +1,5 @@
 /**
- * Frozen feature surface for the first release candidate.
+ * Frozen feature surface for the release candidate.
  *
  * This is deliberately data, not scattered renderer conditionals. Pages that
  * look actionable but do not have a completed backend must not ship in the
@@ -25,8 +25,9 @@ export const RC_SUPPORTED_ROUTES = [
 
 export type RcSupportedRoute = (typeof RC_SUPPORTED_ROUTES)[number]
 
+// TUN is an included feature: the Overview page surfaces a TUN switch (and the
+// config page keeps the full lifecycle panel). It is therefore NOT listed here.
 export const RC_EXCLUDED_FEATURES = Object.freeze([
-  { id: 'tun', reason: 'G1 real Windows reuse/recovery gate is not proven' },
   { id: 'http-capture', reason: 'no completed mihomo transport and persistence contract' },
   { id: 'https-decryption', reason: 'no certificate lifecycle or trusted interception implementation' },
   { id: 'rewrite', reason: 'no completed rewrite backend' },

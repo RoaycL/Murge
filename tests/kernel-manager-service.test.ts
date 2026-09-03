@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mkdtemp, rm, readFile, readdir } from 'node:fs/promises'
@@ -251,6 +251,41 @@ describe('KernelManagerService', () => {
       await settings.set({ kernelChannel: 'specific', kernelSpecificVersion: 'v1.19.20' })
       expect(await service.getVersionSelection()).toEqual({ channel: 'specific', specificVersion: 'v1.19.20' })
       await rm(base, { recursive: true, force: true })
+    })
+  })
+
+  describe('live GitHub metadata requests', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals()
+    })
+
+    it('bounds the live GitHub API call with a timeout (no infinite busy latch)', async () => {
+      // A hung api.github.com connection previously kept listVersions busy for
+      // minutes: the fetch had no timeout, unlike every other network path in
+      // the app (subscription fetch 30s, kernel archive download bounded). The
+      // request now carries AbortSignal.timeout; a hanging stub proves the
+      // service reports a typed timeout error instead of latching versionsLoading.
+      vi.stubGlobal('fetch', vi.fn((_url: string | URL, init?: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new Error('This operation was aborted')))
+        })
+      ))
+      const base = await mkdtemp(join(tmpdir(), 'kernel-manager-'))
+      try {
+        const service = new KernelManagerService({
+          workspaceRoot: join(base, 'kernel'),
+          platform: 'win32',
+          arch: 'amd64',
+          settings: new FakeAppSettingsGateway(),
+          githubTimeoutMs: 50
+          // No fetchVersions override: exercises the real githubRequest path.
+        })
+        const state = await service.listVersions()
+        expect(state.versionsLoading).toBe(false)
+        expect(state.error).toContain('超时')
+      } finally {
+        await rm(base, { recursive: true, force: true })
+      }
     })
   })
 })

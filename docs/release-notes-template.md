@@ -7,6 +7,8 @@ Windows release candidate for the mihomo-based desktop client.
 - Windows x64 installer with explicit mihomo kernel lifecycle.
 - TUN service: installs a privileged Windows TUN service that runs the active
   profile so TUN actually proxies traffic.
+- TUN switch on the Overview (概览) page next to the system-proxy toggle for
+  one-click enable/disable; the config page keeps the full lifecycle panel.
 - Profile, activity, connection, policy, provider, rule, DNS and log tools.
 - Verified Windows system-proxy enable, exact restore and recovery path.
 - Tray, optional start-on-login, diagnostics and brand-configurable desktop UI.

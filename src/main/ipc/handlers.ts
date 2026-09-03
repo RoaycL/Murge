@@ -128,12 +128,19 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
     [IPC.tunGetStatus]: async () => tun.getStatus(),
     [IPC.tunEnable]: async () => {
       // TUN and the safe kernel stay mutually exclusive: both run a mihomo and
-      // both bind a mixed-port. The system proxy is NOT excluded — it may point at
-      // whichever mihomo is live (see TunAwareSystemProxyProbe), so TUN and the
-      // system proxy can be enabled together.
+      // both bind a mixed-port. Rather than rejecting when the kernel is live,
+      // auto-stop it first so enabling TUN is a single action. The kernel gateway
+      // restores any owned system proxy before stopping (see
+      // SystemProxyOrderedKernelGateway), so the proxy is never left pointing at a
+      // port that is about to close; a proxy conflict is treated as safe. On a true
+      // restore/stop failure the gateway throws and the TUN enable aborts, leaving
+      // the kernel running rather than a TUN session against a dead controller.
+      // The system proxy is NOT excluded — it may point at whichever mihomo is
+      // live (see TunAwareSystemProxyProbe), so TUN and the system proxy can be
+      // enabled together.
       const kernelStatus = await kernel.getStatus()
       if (kernelStatus.phase !== 'stopped') {
-        throw new ProtocolError(ProtocolErrorCode.TUN_INVALID_TRANSITION, 'Stop the safe kernel before enabling TUN')
+        await kernel.stop()
       }
       return tun.enable()
     },

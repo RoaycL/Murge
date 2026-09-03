@@ -19,3 +19,6 @@ resources/tun-service/*/tun-service.exe
 # is ever committable.
 resources/tun-service/*/service-config.json
 resources/tun-service/*/state/
+# Local Go cross-compile output dropped in the module dir by ad-hoc `go build`
+# runs (the real packaging path writes resources/tun-service/<arch>/).
+native/tun-service/*.exe

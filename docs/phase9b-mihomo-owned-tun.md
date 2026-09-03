@@ -58,8 +58,10 @@ reported as conflict. Login never auto-enables TUN.
 ## Configuration boundary
 
 `src/main/tun/mihomo-tun-config.ts` is the only Phase 9B TUN profile generator.
-It uses a real YAML parser. The separate Phase 7 safe config generator remains
-TUN-disabled and must not be weakened.
+It uses a real YAML parser. The main-kernel config generator (the Phase 7 safety
+transform in `profile-kernel-config.ts`) remains the single base: it stays
+TUN-disabled and must not be weakened — the TUN path re-adds the `tun:` block on
+top of that base, so the loopback-only default is preserved.
 
 Two profiles exist:
 
@@ -126,16 +128,22 @@ bind a public port, expose an unauthenticated controller, substitute the binary 
 run an arbitrary command. That is a strictly smaller surface than clients which
 run an elevated mihomo with no service-side validation at all.
 
-### Mutual exclusion
+### Single-kernel serving (system proxy + TUN)
 
-TUN remains mutually exclusive with the **safe kernel** (both run a mihomo and
-bind a mixed-port). TUN and the **system proxy** may now be enabled together:
-`TunAwareSystemProxyProbe` resolves the proxy target to the live TUN session's
-mixed-port while the main kernel is stopped, and still socket-probes it
-(TCP + HTTP CONNECT + SOCKS5) before the registry is touched. When a TUN session
-stops serving, the owned proxy is restored through the same
-`restoreBeforeKernelUnavailable` path the main-kernel crash hook uses, so the
-registry never keeps pointing at a dead port.
+The "-安全直连内核" (separate unprivileged loopback kernel) model is removed in
+favour of the community single-mihomo model: ONE mihomo serves both the system
+proxy and TUN. When TUN is off that host is the unprivileged main kernel; when
+TUN is on it is restarted as the privileged child on the SAME unified controller
++ mixed port + secret. Because both hosts bind the same ports, the data plane
+(already bound to the production controller) and the owned system proxy (already
+aimed at the production mixed port) keep working no matter which host is live.
+
+The system proxy and TUN can be enabled together and no longer require stopping a
+separate kernel. A mode switch stops the current host and starts the other on the
+same ports WITHOUT restoring the owned system proxy (the proxy keeps aiming at the
+unified mixed port; a brief connection drop during the restart is tolerated). An
+explicit kernel stop is the only path that restores the proxy and stops
+everything.
 
 ## Install, upgrade and uninstall
 
@@ -173,8 +181,8 @@ the non-network/code-contract level, not runtime-approved.
   fail-closed install/upgrade/uninstall and x64/arm64 cross-compilation.
 - `src/main/tun/named-pipe-transport.ts`: bounded one-request/one-response local
   transport; no renderer-controlled pipe or command names.
-- Electron IPC/preload/store/UI wiring with safe-kernel/system-proxy/TUN mutual
-  exclusion and quit-time confirmed TUN stop.
+- Electron IPC/preload/store/UI wiring for the single-kernel lifecycle (one
+  mihomo serving both system proxy and TUN) and quit-time confirmed TUN stop.
 - CI compiles both service architectures and the Windows packaging job proves
   the idle service installs, starts without launching mihomo, and is removed.
 

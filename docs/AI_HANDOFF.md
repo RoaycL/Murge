@@ -113,3 +113,25 @@
 - 安装特权服务或驱动；
 - 启用自动内核下载；
 - 复制任何供应商拥有的图标或资源。
+
+## 本次迁移：单 mihomo 内核（0.3.0）
+
+在本次会话中，Murge 从"双内核"（非特权回环安全内核 + 特权 TUN 子进程）迁移为
+社区式**单 mihomo 内核**，对齐 mihomo-party / clash-verge-rev：
+
+- **一个 mihomo 同时服务系统代理与 TUN**：TUN 关闭时是普通主内核；TUN 开启时以
+  管理员/服务权限重启同一个内核并注入 `tun` 配置。两者都绑定同一套统一的
+  controller / mixed-port / secret 端口，因此数据面（规则、分组、测量、日志）与
+  已拥有的系统代理始终指向同一个内核。
+- **删除"安全直连内核"概念**（相关术语从源码、测试、文案与文档中移除）。
+- **系统代理与 TUN 不再互斥**：逻辑内核在 TUN 切换期间保持运行；模式切换在不恢复
+  系统代理的情况下停止当前宿主机、在同一端口启动另一宿主机。仅显式的
+  `kernel:stop` 会恢复系统代理并停止一切。
+- **系统代理启用路径修复**：跨会话端口重分配遗留的自有备份，其 `target.port` 与
+  当前端口不一致时，`enable()` 现在重新收养（re-adopt）该陈旧自有 bundle 而非误报
+  冲突；真正的外部修改仍会冲突。
+
+新增/替换的核心实现：`src/main/kernel/single-kernel-gateway.ts`
+（`SingleKernelGateway` 为 `KernelGateway` 的可选 `prepareTunEnable`/`resumeAfterTun`
+钩子提供单内核语义），配套测试见 `tests/single-kernel-gateway.test.ts`、
+`tests/tun-handlers.test.ts`、`tests/system-proxy-service.test.ts`。

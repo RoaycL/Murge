@@ -10,10 +10,10 @@ import type { KernelVersionChannel } from './kernel-manager'
 
 export interface AppSettings {
   /**
-   * Start the safe loopback kernel automatically when the app launches, so the
-   * Policy/Rules views reflect the active profile immediately without a manual
-   * "安全直连内核" step. Only the loopback-only kernel is started; system proxy
-   * and TUN remain explicit, user-triggered takeovers.
+   * Start the kernel automatically when the app launches, so the Policy/Rules
+   * views reflect the active profile immediately without a manual start. The
+   * single kernel is started in ordinary (non-TUN) mode; system proxy and TUN
+   * remain explicit, user-triggered takeovers.
    */
   autoStartKernel: boolean
   /**

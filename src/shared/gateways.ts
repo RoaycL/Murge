@@ -57,6 +57,15 @@ export interface KernelGateway {
   stop(): Promise<KernelStatus>
   /** Subscribe to status transitions; returns an unsubscribe function. */
   onStatus(listener: (status: KernelStatus) => void): () => void
+  /**
+   * Single-kernel mode-switch hooks. Optional: the plain main-kernel gateway does
+   * not implement them. When present, the IPC `tun:enable`/`tun:disable` handlers
+   * use them instead of a plain stop/start so the unified controller/mixed ports
+   * keep serving the data plane and the owned system proxy across the switch
+   * (the ports are never left pointing at a dead host).
+   */
+  prepareTunEnable?(): Promise<void>
+  resumeAfterTun?(): Promise<void>
 }
 
 /**

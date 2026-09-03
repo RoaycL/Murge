@@ -9,9 +9,10 @@ import { toProtocolError } from '@shared/protocol-errors'
  * handler. Updates are never optimistically applied — the UI reflects what the
  * coordinator reports after it has completed (or rejected) the native
  * transition, so an action can only move the lifecycle when the backend allows
- * it. Enabling TUN requires the safe kernel and system proxy to be stopped
- * (the IPC handler enforces this), and on unsupported platforms the phase
- * stays `unsupported` with the enable/disable controls disabled.
+ * it. Enabling TUN is a mode switch on the single kernel (the IPC handler
+ * stops/restarts the ordinary host over the same unified ports, so the system
+ * proxy can stay pointed at the fixed mixed-port), and on unsupported platforms
+ * the phase stays `unsupported` with the enable/disable controls disabled.
  */
 export const useTunStore = defineStore('tun', () => {
   const status = ref<TunStatus>({ supported: false, phase: 'unsupported', errorMessage: null, conflictDetail: null, updatedAt: null })

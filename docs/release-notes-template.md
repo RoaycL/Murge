@@ -5,14 +5,17 @@ Windows release candidate for the mihomo-based desktop client.
 ## Included
 
 - Windows x64 installer with explicit mihomo kernel lifecycle.
+- TUN service: installs a privileged Windows TUN service that runs the active
+  profile so TUN actually proxies traffic.
 - Profile, activity, connection, policy, provider, rule, DNS and log tools.
 - Verified Windows system-proxy enable, exact restore and recovery path.
 - Tray, optional start-on-login, diagnostics and brand-configurable desktop UI.
+- Project documentation translated to Chinese.
 
 ## Deliberately excluded
 
-- TUN, HTTP capture, HTTPS decryption, rewrite, LAN listeners and automatic updates.
-- Windows arm64 is not a supported target until its installed lifecycle is
+- HTTP capture, HTTPS decryption, rewrite, LAN listeners and automatic updates.
+- Windows arm64 installers remain test-only until the installed lifecycle is
   verified on real arm64 hardware.
 
 ## Verification and recovery

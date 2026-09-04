@@ -245,4 +245,82 @@ describe('providers store', () => {
       '香港 02': { status: 'unavailable', delay: null }
     })
   })
+
+  it('exposes only URL-backed (HTTP vehicle) providers as remote external resources', async () => {
+    getProxyProviders.mockResolvedValue({
+      providers: {
+        '机场 A': { name: '机场 A', type: 'Proxy', vehicleType: 'HTTP' },
+        '机场 B': { name: '机场 B', type: 'Proxy', vehicleType: 'File' },
+        '机场 C': { name: '机场 C', type: 'Proxy', vehicleType: 'Compatible' }
+      }
+    })
+    getRuleProviders.mockResolvedValue({
+      providers: {
+        '规则集 A': { name: '规则集 A', type: 'Rule', behavior: 'rule', format: 'yaml', vehicleType: 'HTTP', ruleCount: 8 },
+        '规则集 B': { name: '规则集 B', type: 'Rule', behavior: 'rule', format: 'yaml', vehicleType: 'File', ruleCount: 3 }
+      }
+    })
+    const store = useProvidersStore()
+    await store.loadProxyProviders()
+    await store.loadRuleProviders()
+    // Ordered lists keep everything (used by PolicyView / RulesView).
+    expect(store.orderedProxyProviders.map((p) => p.name)).toEqual(['机场 A', '机场 B', '机场 C'])
+    expect(store.orderedRuleProviders.map((p) => p.name)).toEqual(['规则集 A', '规则集 B'])
+    // The external-resources (remote) view is URL-backed only.
+    expect(store.remoteProxyProviders.map((p) => p.name)).toEqual(['机场 A'])
+    expect(store.remoteRuleProviders.map((p) => p.name)).toEqual(['规则集 A'])
+  })
+
+  it('treats a mismatched VehicleType + url as remote (a URL is authoritative)', async () => {
+    getProxyProviders.mockResolvedValue({
+      providers: {
+        '机场 A': { name: '机场 A', type: 'Proxy', vehicleType: 'Compatible', url: 'https://example.com/sub' }
+      }
+    })
+    const store = useProvidersStore()
+    await store.loadProxyProviders()
+    expect(store.remoteProxyProviders.map((p) => p.name)).toEqual(['机场 A'])
+  })
+
+  it('rewords a refresh HTTP 503 into a source-fetch error, not "delay test failed"', async () => {
+    getProxyProviders.mockResolvedValue(PROXY_PROVIDERS)
+    refreshProxyProvider.mockRejectedValue(
+      new ProtocolError(ProtocolErrorCode.UPSTREAM_TEST_FAILED, 'mihomo delay test failed: HTTP 503')
+    )
+    const store = useProvidersStore()
+    await store.loadProxyProviders()
+    await store.refreshProxyProvider('机场 A')
+    expect(store.opOf('机场 A').error).toBe('更新失败：无法连接源地址（HTTP 503）')
+  })
+
+  it('refreshAllProviders touches only remote resources and reports failures', async () => {
+    getProxyProviders.mockResolvedValue({
+      providers: {
+        '机场 A': { name: '机场 A', type: 'Proxy', vehicleType: 'HTTP' },
+        '机场 B': { name: '机场 B', type: 'Proxy', vehicleType: 'Compatible' }
+      }
+    })
+    getRuleProviders.mockResolvedValue({
+      providers: {
+        '规则集 A': { name: '规则集 A', type: 'Rule', behavior: 'rule', vehicleType: 'HTTP' },
+        '规则集 B': { name: '规则集 B', type: 'Rule', behavior: 'rule', vehicleType: 'File' }
+      }
+    })
+    refreshProxyProvider.mockResolvedValue(undefined)
+    refreshRuleProvider.mockRejectedValue(
+      new ProtocolError(ProtocolErrorCode.UPSTREAM_HTTP_ERROR, 'rule source failed')
+    )
+    const store = useProvidersStore()
+    await store.loadProxyProviders()
+    await store.loadRuleProviders()
+    const result = await store.refreshAllProviders()
+    // Compatible + File providers are not externally updatable, so they are
+    // never fired at the controller (i.e. no 503 pile-up for inline rules).
+    expect(refreshProxyProvider).toHaveBeenCalledTimes(1)
+    expect(refreshProxyProvider).toHaveBeenCalledWith('机场 A')
+    expect(refreshRuleProvider).toHaveBeenCalledTimes(1)
+    expect(refreshRuleProvider).toHaveBeenCalledWith('规则集 A')
+    expect(store.opOf('规则集 A').error).toBe('rule source failed')
+    expect(result).toEqual({ updated: 1, failed: 1 })
+  })
 })

@@ -3,6 +3,7 @@ import { onMounted, watch } from 'vue'
 import { useRulesStore, type RulesSortKey } from '../stores/rules'
 import { useProvidersStore } from '../stores/providers'
 import { useKernelStore } from '../stores/kernel'
+import AppIcon from '../components/AppIcon.vue'
 
 const rules = useRulesStore()
 const providers = useProvidersStore()
@@ -21,11 +22,6 @@ const COLUMNS: Array<{ key: RulesSortKey | null; label: string; className?: stri
 function formatHits(row: { extra?: { hitCount?: number } }): string {
   const hits = row.extra?.hitCount
   return typeof hits === 'number' ? String(hits) : '—'
-}
-
-function arrowFor(key: RulesSortKey): string {
-  if (rules.sortKey !== key) return ''
-  return rules.sortDirection === 'asc' ? '↑' : '↓'
 }
 
 function formatUpdatedAt(value?: string): string {
@@ -86,7 +82,7 @@ watch(() => kernel.status.phase, (phase, previous) => {
         <thead>
           <tr>
             <th v-for="column in COLUMNS" :key="column.label" @click="column.key && rules.sortBy(column.key)">
-              {{ column.label }}<span v-if="column.key && arrowFor(column.key)" class="sort-arrow">{{ arrowFor(column.key) }}</span>
+              {{ column.label }}<AppIcon v-if="column.key && rules.sortKey === column.key" :name="rules.sortDirection === 'asc' ? 'move-up' : 'move-down'" :size="12" />
             </th>
           </tr>
         </thead>

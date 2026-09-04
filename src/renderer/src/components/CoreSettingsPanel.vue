@@ -3,6 +3,8 @@ import { onMounted, reactive, ref, watch } from 'vue'
 import { useCoreSettingsStore } from '../stores/core-settings'
 import type { CoreSettings } from '@shared/core-settings'
 import { EMPTY_CORE_SETTINGS } from '@shared/core-settings'
+import AppSelect from './AppSelect.vue'
+import AppIcon from './AppIcon.vue'
 
 const store = useCoreSettingsStore()
 
@@ -95,19 +97,11 @@ onMounted(async () => {
         <div class="core-grid">
           <label class="core-field">
             <span class="core-label">log-level</span>
-            <select v-model="form.logLevel" class="core-select">
-              <option v-for="option in LOG_LEVEL_OPTIONS" :key="option.value" :value="option.value">
-                {{ option.label }}
-              </option>
-            </select>
+            <AppSelect v-model="form.logLevel" :options="LOG_LEVEL_OPTIONS" label="日志级别" />
           </label>
           <label class="core-field">
             <span class="core-label">find-process-mode</span>
-            <select v-model="form.findProcessMode" class="core-select">
-              <option v-for="option in FIND_PROCESS_OPTIONS" :key="option.value" :value="option.value">
-                {{ option.label }}
-              </option>
-            </select>
+            <AppSelect v-model="form.findProcessMode" :options="FIND_PROCESS_OPTIONS" label="进程查找模式" />
           </label>
         </div>
       </fieldset>
@@ -141,7 +135,7 @@ onMounted(async () => {
       <div v-if="previewOpen" class="core-preview">
         <div class="core-preview-head">
           <span>运行时生效的 mihomo 核心键</span>
-          <button type="button" class="core-icon" aria-label="关闭预览" @click="previewOpen = false">✕</button>
+          <button type="button" class="core-icon" aria-label="关闭预览" @click="previewOpen = false"><AppIcon name="close" :size="15" /></button>
         </div>
         <pre class="core-preview-body">{{ previewYaml || '（空）' }}</pre>
       </div>

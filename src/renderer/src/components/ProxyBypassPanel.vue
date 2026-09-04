@@ -4,6 +4,7 @@ import { useProxyBypassStore } from '../stores/proxy-bypass'
 import { useSystemProxyStore } from '../stores/system-proxy'
 import type { ProxyBypassPolicy } from '@shared/proxy-bypass'
 import { EMPTY_PROXY_BYPASS_POLICY, MAX_CUSTOM_BYPASS_ENTRIES } from '@shared/proxy-bypass'
+import AppIcon from './AppIcon.vue'
 
 const store = useProxyBypassStore()
 const systemProxy = useSystemProxyStore()
@@ -116,7 +117,7 @@ onMounted(async () => {
       <div v-if="previewOpen" class="pb-preview">
         <div class="pb-preview-head">
           <span>将写入的 ProxyOverride 值</span>
-          <button type="button" class="pb-icon" aria-label="关闭预览" @click="previewOpen = false">✕</button>
+          <button type="button" class="pb-icon" aria-label="关闭预览" @click="previewOpen = false"><AppIcon name="close" :size="15" /></button>
         </div>
         <pre class="pb-preview-body">{{ previewValue || '（空）' }}</pre>
       </div>

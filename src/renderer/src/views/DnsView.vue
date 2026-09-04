@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
 import { useDnsStore } from '../stores/dns'
+import AppSelect from '../components/AppSelect.vue'
 
 const store = useDnsStore()
 const { name, type, result, busy, message, error } = storeToRefs(store)
 const types = ['A', 'AAAA', 'CNAME', 'TXT', 'MX', 'NS', 'HTTPS'] as const
+const TYPE_OPTIONS = types.map((value) => ({ value, label: value }))
 </script>
 
 <template>
@@ -13,7 +15,7 @@ const types = ['A', 'AAAA', 'CNAME', 'TXT', 'MX', 'NS', 'HTTPS'] as const
     <section><h2>解析诊断</h2><div class="surface-card dns-query-card">
       <form @submit.prevent="store.query">
         <input v-model="name" required maxlength="253" spellcheck="false" aria-label="域名" placeholder="example.com" />
-        <select v-model="type" aria-label="记录类型"><option v-for="item in types" :key="item" :value="item">{{ item }}</option></select>
+        <AppSelect v-model="type" :options="TYPE_OPTIONS" label="记录类型" />
         <button type="submit" :disabled="busy">查询</button>
       </form>
       <p v-if="error" class="inline-error">{{ error }}</p><p v-else-if="message" class="setting-help">{{ message }}</p>

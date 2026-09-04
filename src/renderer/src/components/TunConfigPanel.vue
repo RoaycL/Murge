@@ -2,6 +2,8 @@
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useTunConfigStore } from '../stores/tun-config'
 import type { TunConfigModel } from '@shared/tun-config'
+import AppSelect from './AppSelect.vue'
+import AppIcon from './AppIcon.vue'
 
 const store = useTunConfigStore()
 
@@ -109,11 +111,7 @@ onMounted(async () => {
         <div class="tun-grid">
           <label class="tun-field">
             <span class="tun-label">stack</span>
-            <select v-model="form.stack" class="tun-select">
-              <option v-for="option in STACK_OPTIONS" :key="option.value" :value="option.value">
-                {{ option.label }}
-              </option>
-            </select>
+            <AppSelect v-model="form.stack" :options="STACK_OPTIONS" label="TUN 栈" />
           </label>
           <label class="tun-field">
             <span class="tun-label">device（适配器标识）</span>
@@ -179,7 +177,7 @@ onMounted(async () => {
       <div v-if="previewOpen" class="tun-preview">
         <div class="tun-preview-head">
           <span>启用 TUN 时生效的 mihomo 配置</span>
-          <button type="button" class="tun-icon" aria-label="关闭预览" @click="previewOpen = false">✕</button>
+          <button type="button" class="tun-icon" aria-label="关闭预览" @click="previewOpen = false"><AppIcon name="close" :size="15" /></button>
         </div>
         <pre class="tun-preview-body">{{ previewYaml || '（空）' }}</pre>
       </div>

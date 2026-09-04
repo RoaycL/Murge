@@ -4,6 +4,7 @@ import { useStartupStore } from '../stores/startup'
 import { useAppSettingsStore } from '../stores/app-settings'
 import { useKernelManagerStore } from '../stores/kernel-manager'
 import KernelVersionModal from '../components/KernelVersionModal.vue'
+import AppSelect from '../components/AppSelect.vue'
 
 const startup = useStartupStore()
 const appSettings = useAppSettingsStore()
@@ -27,8 +28,7 @@ function toggleKernelEnabled(): void {
   void kernelManager.setEnabled(!kernelManager.state.enabled)
 }
 
-function onChannelChange(event: Event): void {
-  const value = (event.target as HTMLSelectElement).value
+function onChannelChange(value: string): void {
   if (value === 'specific') {
     showVersionModal.value = true
   } else {
@@ -115,15 +115,13 @@ const channelDescription = (): string => {
             <strong>内核版本</strong>
             <small>{{ channelDescription() }}</small>
           </span>
-          <select
-            :value="kernelManager.state.channel"
+          <AppSelect
+            :model-value="kernelManager.state.channel"
+            :options="[{ value: 'stable', label: '稳定版' }, { value: 'specific', label: '选择特定版本…' }]"
             :disabled="kernelManager.busy || !kernelManager.state.enabled"
-            aria-label="内核版本"
-            @change="onChannelChange"
-          >
-            <option value="stable">稳定版</option>
-            <option value="specific">选择特定版本…</option>
-          </select>
+            label="内核版本"
+            @update:model-value="onChannelChange"
+          />
         </label>
       </div>
       <p v-if="kernelManager.state.installing" class="setting-help">正在下载并校验 {{ kernelManager.state.installing }}…</p>

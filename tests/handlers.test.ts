@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { IPC } from '@shared/ipc'
 import { brand } from '@shared/brand'
 import { buildIpcHandlers } from '../src/main/ipc/handlers'
@@ -22,6 +22,14 @@ describe('buildIpcHandlers', () => {
   it('returns the runtime summary via runtime:get-summary', async () => {
     const result = await handlers[IPC.runtimeGetSummary](null)
     expect(result).toEqual(container.runtime.summary)
+  })
+
+  it('uses the injected enhanced runtime document order for policy groups', async () => {
+    const resolveActiveGroupOrder = vi.fn().mockResolvedValue(['Runtime A', 'Runtime B'])
+    handlers = buildIpcHandlers(container.deps, { resolveActiveGroupOrder })
+
+    await expect(handlers[IPC.profilesGetActiveGroupOrder](null)).resolves.toEqual(['Runtime A', 'Runtime B'])
+    expect(resolveActiveGroupOrder).toHaveBeenCalledTimes(1)
   })
 
   describe('mihomo:patch-config', () => {

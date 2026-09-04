@@ -26,6 +26,8 @@ export interface IpcDependencies {
   geodata: GeodataSettingsGateway
   usageHistory: UsageHistoryGateway
   networkMetadata: NetworkMetadataGateway
+  /** Group order parsed from the exact enhanced document materialized for mihomo. */
+  resolveActiveGroupOrder?: () => Promise<string[]>
 }
 
 /**
@@ -111,7 +113,7 @@ function resolveExternalIp({ kernel, mihomo }: Pick<IpcDependencies, 'kernel' | 
   })()
 }
 
-export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata }: IpcDependencies): () => void {
+export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata, resolveActiveGroupOrder }: IpcDependencies): () => void {
   const deps: IpcDeps = {
     brand,
     appInfo: { version: app.getVersion(), platform: process.platform === 'win32' || process.platform === 'darwin' || process.platform === 'linux' ? process.platform : 'other', arch: process.arch },
@@ -138,7 +140,7 @@ export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemPro
     networkMetadata
   }
   const iconCache = new Map<string, string>()
-  const entries = Object.entries(buildIpcHandlers(deps))
+  const entries = Object.entries(buildIpcHandlers(deps, { resolveActiveGroupOrder }))
   entries.push([IPC.appGetProcessIcon, async (_event, rawPath) => {
     if (process.platform !== 'win32') return null
     // Local drive paths only: never let renderer input make Explorer resolve a

@@ -35,6 +35,7 @@ import { ProfileRepository } from './profiles/profile-repository'
 import { EncryptedProfileSourceStore } from './profiles/profile-source-store'
 import { ProfileService } from './profiles/profile-service'
 import { ProfileAutoReloadGateway } from './profiles/profile-auto-reload-gateway'
+import { parseProxyGroupOrder } from './profiles/proxy-group-order'
 import { ProxySelectionStore } from './profiles/proxy-selection-store'
 import { ProxySelectionService } from './services/proxy-selection-service'
 import { ProxySelectionGateway } from './services/proxy-selection-gateway'
@@ -160,6 +161,7 @@ let proxyGuardTimer: NodeJS.Timeout | null = null
 let networkDetector: NetworkDetector | null = null
 let updateService: UpdateService | null = null
 let usageHistoryServiceRef: UsageHistoryService | null = null
+let waitForProfileOperations: (() => Promise<void>) | null = null
 
 // Deep links (murge://...) that arrive before the window exists, or while a
 // second instance hands its argv over, are queued here and flushed once the
@@ -979,13 +981,15 @@ app.whenReady().then(async () => {
     intervalSeconds: 15,
     log: (message) => console.log(message),
     gateway: {
-      isKernelRunning: () => {
+      getRunMode: async () => {
+        const tunPhase = tunInstance.getStatus().phase
+        if (tunPhase === 'active' || tunPhase === 'starting' || tunPhase === 'restoring') return 'tun'
         const status = runtimeKernelGateway.getStatus()
-        return status instanceof Promise
-          ? status.then((value) => value.phase === 'running')
-          : Promise.resolve(status.phase === 'running')
+        const resolved = status instanceof Promise ? await status : status
+        return resolved.phase === 'running' ? 'kernel' : 'stopped'
       },
       startKernel: () => queuedKernel.start(),
+      startTun: () => queuedTun.enable(),
       stopKernel: () => queuedKernel.stop(),
       handleNetworkDown: () => systemProxyService.handleNetworkDown(),
       handleNetworkUp: () => systemProxyService.handleNetworkUp()
@@ -1026,6 +1030,7 @@ app.whenReady().then(async () => {
       }
     }
   })
+  waitForProfileOperations = () => profileGateway.waitForIdle()
   // Per-profile node-pick cache (sparkle/clash-party model): every accepted
   // selectProxy is remembered, and each kernel reload replays the picks so a
   // restart/profile-switch restores the user's nodes instead of config defaults.
@@ -1063,7 +1068,11 @@ app.whenReady().then(async () => {
     kernelManager: kernelManagerService,
     // The selection-recording wrapper is what the renderer talks to; the raw
     // gateway stays available for internal reads (restore, network metadata).
-    mihomo: new ProxySelectionGateway(gateway, proxySelectionService),
+    mihomo: new ProxySelectionGateway(
+      gateway,
+      proxySelectionService,
+      (operation) => profileGateway.runExclusive(operation)
+    ),
     profiles: profileGateway,
     systemProxy: systemProxyService,
     startup: new StartupService(new ElectronStartupAdapter()),
@@ -1077,7 +1086,9 @@ app.whenReady().then(async () => {
     updates,
     tun: queuedTun,
     usageHistory: usageHistoryService,
-    networkMetadata: networkMetadataService
+    networkMetadata: networkMetadataService,
+    resolveActiveGroupOrder: async () =>
+      parseProxyGroupOrder((await resolveEnhancedActiveDocument()) ?? '')
   })
   createWindow()
   const showMainWindow = (): void => {
@@ -1253,6 +1264,9 @@ app.on('before-quit', (event) => {
   event.preventDefault()
   isQuitting = true
   void (async () => {
+    // Proxy selections share the profile mutation queue through their durable
+    // per-profile write. Drain accepted work before tearing IPC and storage down.
+    await waitForProfileOperations?.()
     // Restore a owned system proxy FIRST, so the OS proxy is never left pointing
     // at a controller port that is about to close. If the restore cannot be
     // confirmed, we must NOT stop the kernel and must NOT quit: leaving a
@@ -1294,6 +1308,7 @@ app.on('before-quit', (event) => {
           disposeIpc = null
           updateService = null
           usageHistoryServiceRef = null
+          waitForProfileOperations = null
         }
       },
       quit: () => app.quit(),

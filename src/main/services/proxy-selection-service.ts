@@ -37,13 +37,12 @@ export class ProxySelectionService {
   }
 
   /**
-   * Persist an already-attributed selection. Fire-and-forget by design: the
-   * kernel has already applied the change, so a cache-write failure must not
-   * turn a successful switch into an error — the worst case is one forgotten
-   * pick.
+   * Persist an already-attributed selection before the shared mutation boundary
+   * is released. Storage remains best-effort, but callers wait for completion so
+   * an immediate reload/quit cannot discard an accepted pick.
    */
-  recordSelection(profileId: string, group: string, node: string): void {
-    void this.store.set(profileId, group, node).catch(() => undefined)
+  async recordSelection(profileId: string, group: string, node: string): Promise<void> {
+    await this.store.set(profileId, group, node).catch(() => undefined)
   }
 
   /**

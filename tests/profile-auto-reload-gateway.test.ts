@@ -72,6 +72,42 @@ describe('ProfileAutoReloadGateway', () => {
     expect(result.active).toBe(true)
   })
 
+  it('reloads on deactivation and restores the pointer if the fallback is rejected', async () => {
+    const inner = new FakeProfileGateway()
+    inner.profiles.push({ meta: meta('p1', 'One', true, 0), document: 'proxies: []\n' })
+    inner.activeIndex = 0
+    const reload = vi.fn(async (rollback?: () => Promise<void>) => {
+      await rollback?.()
+      throw new Error('fallback rejected')
+    })
+    const gw = new ProfileAutoReloadGateway({ inner, reloader: { reload }, autoActivateOnEdit: true })
+
+    await expect(gw.deactivateProfile()).rejects.toThrow('fallback rejected')
+    expect(reload).toHaveBeenCalledTimes(1)
+    expect(inner.activeIndex).toBe(0)
+  })
+
+  it('runExclusive shares the mutation queue and waitForIdle drains it', async () => {
+    const inner = new FakeProfileGateway()
+    const { gw } = gatewayWith(inner)
+    const events: string[] = []
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const first = gw.runExclusive(async () => {
+      events.push('first:start')
+      await gate
+      events.push('first:end')
+    })
+    const second = gw.runExclusive(async () => { events.push('second') })
+    const drained = gw.waitForIdle().then(() => events.push('drained'))
+
+    await Promise.resolve()
+    expect(events).toEqual(['first:start'])
+    release()
+    await Promise.all([first, second, drained])
+    expect(events).toEqual(['first:start', 'first:end', 'second', 'drained'])
+  })
+
   it('restores the previous active profile when applying an activation fails', async () => {
     const inner = new FakeProfileGateway()
     inner.profiles.push({ meta: meta('p1', 'One', true, 0), document: 'proxies: []\n' })

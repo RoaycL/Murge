@@ -108,7 +108,11 @@ export class ProfileAutoReloadGateway implements ProfileGateway {
   }
 
   deactivateProfile(): Promise<void> {
-    return this.inner.deactivateProfile()
+    return this.enqueueMutation(async () => {
+      const previousActiveId = await this.currentActiveId()
+      await this.inner.deactivateProfile()
+      if (previousActiveId !== null) await this.reloadWithRollback(previousActiveId)
+    })
   }
 
   restoreProfileDocument(id: string, document: string): Promise<void> {
@@ -167,6 +171,19 @@ export class ProfileAutoReloadGateway implements ProfileGateway {
 
   validateDocument(document: string): ValidationResult | Promise<ValidationResult> {
     return this.inner.validateDocument(document)
+  }
+
+  /**
+   * Share the active-profile mutation boundary with operations whose meaning is
+   * tied to a particular live profile (for example a controller node pick).
+   */
+  runExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    return this.enqueueMutation(operation)
+  }
+
+  /** Wait until every accepted profile-bound operation has settled. */
+  waitForIdle(): Promise<void> {
+    return this.mutationTail
   }
 
   private async currentActiveId(): Promise<string | null> {

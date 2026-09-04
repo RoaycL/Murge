@@ -2,13 +2,16 @@ import { net } from 'electron'
 import os from 'node:os'
 
 export interface NetworkDetectorGateway {
-  /** True when the kernel is running (phase `running`). */
-  isKernelRunning(): boolean | Promise<boolean>
+  /** The host mode currently serving the unified controller. */
+  getRunMode(): NetworkRunMode | Promise<NetworkRunMode>
   startKernel(): Promise<unknown>
+  startTun(): Promise<unknown>
   stopKernel(): Promise<unknown>
   handleNetworkDown(): Promise<unknown>
   handleNetworkUp(): Promise<unknown>
 }
+
+export type NetworkRunMode = 'stopped' | 'kernel' | 'tun'
 
 export interface NetworkDetectorOptions {
   gateway: NetworkDetectorGateway
@@ -47,6 +50,8 @@ export class NetworkDetector {
   private generation = 0
   private checking = false
   private sawOffline = false
+  /** Exact user-selected host that was serving before this outage. */
+  private resumeMode: Exclude<NetworkRunMode, 'stopped'> | null = null
   /** Latches the offline actions (proxy off + kernel stop) per outage episode. */
   private outageHandled = false
 
@@ -101,31 +106,45 @@ export class NetworkDetector {
           // probes the controller), so a kernel the outage stopped comes back
           // FIRST, then the proxy re-enables — and both retry on every tick
           // until they succeed, so a half-healed state never sticks.
-          if (!(await this.options.gateway.isKernelRunning())) {
+          let currentMode = await this.options.gateway.getRunMode()
+          if (this.resumeMode && currentMode !== this.resumeMode) {
             try {
-              await this.options.gateway.startKernel()
+              if (this.resumeMode === 'tun') await this.options.gateway.startTun()
+              else await this.options.gateway.startKernel()
             } catch (error) {
               this.options.log?.(
                 `[network-detector] kernel restart after reconnect failed: ${error instanceof Error ? error.message : error}`
               )
             }
+            currentMode = await this.options.gateway.getRunMode()
           }
-          try {
-            await this.options.gateway.handleNetworkUp()
-          } catch {
-            // The proxy service reports failures through its status.
+          // Re-enable an owned proxy only after some host is live. With no
+          // pre-outage host there is nothing to wait for.
+          let proxyRecovered = false
+          if (!this.resumeMode || currentMode !== 'stopped') {
+            try {
+              await this.options.gateway.handleNetworkUp()
+              proxyRecovered = true
+            } catch {
+              // The proxy service reports failures through its status.
+            }
           }
-          if (await this.options.gateway.isKernelRunning()) this.sawOffline = false
+          if (proxyRecovered && (!this.resumeMode || currentMode === this.resumeMode)) {
+            this.sawOffline = false
+            this.resumeMode = null
+          }
         }
       } else if (!this.outageHandled) {
         this.sawOffline = true
         this.outageHandled = true
+        const mode = await this.options.gateway.getRunMode()
+        this.resumeMode = mode === 'stopped' ? null : mode
         try {
           await this.options.gateway.handleNetworkDown()
         } catch {
           // The proxy service reports failures through its status.
         }
-        if (await this.options.gateway.isKernelRunning()) {
+        if (mode !== 'stopped') {
           try {
             await this.options.gateway.stopKernel()
           } catch {
@@ -135,7 +154,10 @@ export class NetworkDetector {
       }
       // The outage actions run once per outage; the recovery retries until the
       // machine is actually healthy again.
-      if (connected) this.outageHandled = false
+      // Keep the episode latched while recovery is incomplete. Otherwise a
+      // brief online/offline flap can observe the intentionally stopped host,
+      // overwrite resumeMode with null, and forget that TUN must be restored.
+      if (connected && !this.sawOffline) this.outageHandled = false
     } finally {
       this.checking = false
     }

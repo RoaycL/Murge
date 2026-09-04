@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { KernelSupervisor } from '../src/main/kernel/supervisor'
+import { buildWatchdogScript, WATCHDOG_RELEASE_BYTE } from '../src/main/kernel/crash-watchdog'
 import type {
   KernelBinary,
   KernelBinaryResolver,
@@ -121,6 +122,14 @@ const waitFor = async (cond: () => boolean): Promise<void> => {
 }
 
 describe('KernelSupervisor crash watchdog', () => {
+  it('distinguishes an explicit release byte from an unexpected parent EOF', () => {
+    const script = buildWatchdogScript(4321)
+    expect(WATCHDOG_RELEASE_BYTE).toBeGreaterThanOrEqual(0)
+    expect(script).toContain('ReadByte()')
+    expect(script).toContain('$releaseByte -eq -1')
+    expect(script).toContain('taskkill.exe /PID 4321 /T /F')
+  })
+
   it('attaches to every spawned kernel and releases on a clean stop', async () => {
     const { supervisor, adapter, watches } = createHarness()
     await supervisor.start()

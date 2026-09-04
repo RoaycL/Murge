@@ -14,7 +14,8 @@ import type { ProxySelectionService } from './proxy-selection-service'
 export class ProxySelectionGateway implements MihomoGateway {
   constructor(
     private readonly inner: MihomoGateway,
-    private readonly selections: ProxySelectionService
+    private readonly selections: ProxySelectionService,
+    private readonly runExclusive: <T>(operation: () => Promise<T>) => Promise<T> = (operation) => operation()
   ) {}
 
   getVersion(): Promise<MihomoVersion> { return this.inner.getVersion() }
@@ -23,15 +24,14 @@ export class ProxySelectionGateway implements MihomoGateway {
   getProxies(): Promise<MihomoProxiesResponse> { return this.inner.getProxies() }
 
   async selectProxy(group: string, name: string): Promise<void> {
-    // Attribute the pick BEFORE the controller write: the id is resolved while
-    // the old profile is still active, so a profile switch / restart / quit
-    // racing the (async) cache write can never file the selection under the
-    // wrong config — and a failed lookup degrades to "not remembered", never to
-    // "remembered under the wrong profile".
-    const profileId = await this.selections.resolveActiveProfileId()
-    // Apply next; only a selection the controller actually accepted is cached.
-    await this.inner.selectProxy(group, name)
-    if (profileId) this.selections.recordSelection(profileId, group, name)
+    await this.runExclusive(async () => {
+      // The profile id, controller PUT and durable record share the SAME queue
+      // as profile activation/reload. The live config cannot change between
+      // attribution and application, and quit cannot outrun the accepted write.
+      const profileId = await this.selections.resolveActiveProfileId()
+      await this.inner.selectProxy(group, name)
+      if (profileId) await this.selections.recordSelection(profileId, group, name)
+    })
   }
 
   getRules(): Promise<MihomoRulesResponse> { return this.inner.getRules() }

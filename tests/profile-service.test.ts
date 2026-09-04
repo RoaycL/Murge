@@ -6,6 +6,7 @@ import { ProfileRepository } from '../src/main/profiles/profile-repository'
 import { ProfileService } from '../src/main/profiles/profile-service'
 import { createConfigValidator } from '../src/main/profiles/config-validator'
 import { SubscriptionFetcher } from '../src/main/subscriptions/subscription-fetcher'
+import { MemoryProfileSourceStore } from '../src/main/profiles/profile-source-store'
 
 const VALID_DOC = `mixed-port: 7890
 proxies:
@@ -218,6 +219,34 @@ describe('ProfileService', () => {
       expect(profile.document).toContain('name: fresh')
       expect(profile.document).not.toContain('name: node-01')
       expect((await repository.list()).find((meta) => meta.active)?.id).toBe(original.id)
+    })
+
+    it('updates a token-bearing subscription with its private raw URL', async () => {
+      const sourceStore = new MemoryProfileSourceStore()
+      const seen: string[] = []
+      const fetcher = new SubscriptionFetcher({
+        fetchFn: async (url) => {
+          seen.push(String(url))
+          return { ok: true, status: 200, text: async () => VALID_DOC }
+        }
+      })
+      const remote = new ProfileService(repository, createConfigValidator(), fetcher, sourceStore)
+      const rawUrl = 'https://gist.githubusercontent.com/RoaycL/8bb169258b029784d6a534b23b92cc8e/raw/MihomoParty'
+      const meta = await remote.importFromUrl('gist', rawUrl)
+      expect(meta.source.url).toContain('[UUID_REDACTED]')
+      expect(meta.source.url).not.toContain('8bb169258b029784d6a534b23b92cc8e')
+      await remote.updateFromSource(meta.id)
+      expect(seen).toEqual([rawUrl, rawUrl])
+      expect(JSON.stringify(await remote.listProfiles())).not.toContain('8bb169258b029784d6a534b23b92cc8e')
+    })
+
+    it('removes the private refresh URL when a profile is deleted', async () => {
+      const sourceStore = new MemoryProfileSourceStore()
+      const remote = new ProfileService(repository, createConfigValidator(), fetcherReturning(null), sourceStore)
+      const meta = await remote.importFromUrl('sub', 'https://example.com/private?token=secret')
+      expect(await sourceStore.get(meta.id)).not.toBeNull()
+      await remote.deleteProfile(meta.id)
+      expect(await sourceStore.get(meta.id)).toBeNull()
     })
 
     it('updateFromSource rejects a profile without a remote source', async () => {

@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { writeFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
-import { app, BrowserWindow, dialog, shell } from 'electron'
+import { app, BrowserWindow, dialog, safeStorage, shell } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { brand } from '@shared/brand'
 import { parseBrandConfig } from '@shared/schemas/brand'
@@ -30,6 +30,7 @@ import { UsageHistoryService } from './services/usage-history-service'
 import { FileSystemUsageHistoryStore, InMemoryUsageHistoryStore } from './services/usage-history-store'
 import { NetworkMetadataService, fetchMetadataJsonViaProxy } from './services/network-metadata-service'
 import { ProfileRepository } from './profiles/profile-repository'
+import { EncryptedProfileSourceStore } from './profiles/profile-source-store'
 import { ProfileService } from './profiles/profile-service'
 import { ProfileAutoReloadGateway } from './profiles/profile-auto-reload-gateway'
 import { createConfigValidator } from './profiles/config-validator'
@@ -542,7 +543,12 @@ app.whenReady().then(async () => {
   const profileService = new ProfileService(
     new ProfileRepository({ rootDir: profileRoot, validator }),
     validator,
-    subscriptionFetcher
+    subscriptionFetcher,
+    new EncryptedProfileSourceStore(join(profileRoot, '.sources'), {
+      isAvailable: () => safeStorage.isEncryptionAvailable(),
+      encrypt: (value) => safeStorage.encryptString(value),
+      decrypt: (value) => safeStorage.decryptString(value)
+    })
   )
 
   // CI-only startup probe (see `windows-gui-smoke`). Verifies production

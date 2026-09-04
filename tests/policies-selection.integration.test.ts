@@ -34,7 +34,10 @@ function installBridge(client: MihomoClient): void {
     groupDelayTest: (name: string) => client.groupDelayTest(name)
   }
   ;(globalThis as unknown as { window: unknown }).window = {
-    desktop: { mihomo } as DesktopApi['mihomo']
+    desktop: {
+      mihomo,
+      profiles: { getActiveGroupOrder: async () => [] as string[] }
+    } as unknown as DesktopApi
   }
 }
 

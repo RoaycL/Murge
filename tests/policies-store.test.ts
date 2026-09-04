@@ -24,6 +24,7 @@ function error(code: ProtocolErrorCode): ProtocolError {
 
 describe('policies store', () => {
   let getProxies: ReturnType<typeof vi.fn>
+  let getActiveGroupOrder: ReturnType<typeof vi.fn>
   let selectProxy: ReturnType<typeof vi.fn>
   let delayTest: ReturnType<typeof vi.fn>
   let groupDelayTest: ReturnType<typeof vi.fn>
@@ -47,6 +48,7 @@ describe('policies store', () => {
     controllerNow = '香港 01'
     controllerMode = 'rule'
     getProxies = vi.fn()
+    getActiveGroupOrder = vi.fn().mockResolvedValue([])
     selectProxy = vi.fn()
     delayTest = vi.fn()
     groupDelayTest = vi.fn()
@@ -54,7 +56,8 @@ describe('policies store', () => {
     getConfig = vi.fn()
     ;(globalThis as unknown as { window: unknown }).window = {
       desktop: {
-        mihomo: { getProxies, selectProxy, delayTest, groupDelayTest, patchConfig, getConfig }
+        mihomo: { getProxies, selectProxy, delayTest, groupDelayTest, patchConfig, getConfig },
+        profiles: { getActiveGroupOrder }
       }
     }
   })

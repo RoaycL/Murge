@@ -23,9 +23,15 @@ export class ProxySelectionGateway implements MihomoGateway {
   getProxies(): Promise<MihomoProxiesResponse> { return this.inner.getProxies() }
 
   async selectProxy(group: string, name: string): Promise<void> {
-    // Apply first; only a selection the controller actually accepted is cached.
+    // Attribute the pick BEFORE the controller write: the id is resolved while
+    // the old profile is still active, so a profile switch / restart / quit
+    // racing the (async) cache write can never file the selection under the
+    // wrong config — and a failed lookup degrades to "not remembered", never to
+    // "remembered under the wrong profile".
+    const profileId = await this.selections.resolveActiveProfileId()
+    // Apply next; only a selection the controller actually accepted is cached.
     await this.inner.selectProxy(group, name)
-    this.selections.recordSelection(group, name)
+    if (profileId) this.selections.recordSelection(profileId, group, name)
   }
 
   getRules(): Promise<MihomoRulesResponse> { return this.inner.getRules() }

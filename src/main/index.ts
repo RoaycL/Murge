@@ -232,19 +232,18 @@ function createWindow(): BrowserWindow {
     // The approved Surge-derived reference remains a 934 x 672 content
     // viewport, so the window still opens on that exact canvas. The layout is
     // fluid: users may enlarge *or shrink* the window, but only down to the
-    // point where the Activity dashboard's cards reach their minimum size —
-    // the square cards bottom out at 280px (the shared --card-min token), so
-    // the grid needs 2*280+15=575px of content width and, stacked two squares
-    // tall plus the header/runtime strip, ~575px of content height. Below that
-    // the cards would be crushed, so the window refuses to shrink further:
+    // point where the Activity dashboard's cards reach their minimum width —
+    // each grid column bottoms out at 280px (the shared --card-min token), so
+    // the grid needs 2*280+15=575px. The corrected Surge geometry uses three
+    // ~2.1:1 rows on the left and one square spanning the lower two rows, so it
+    // fits the reference-height canvas without vertical clipping:
     //   minWidth  = 575 (grid) + 68 (page-shell L/R padding) + 205 (sidebar)
-    //   minHeight = 45 (top pad) + 34 (h1) + 57 (runtime strip) + 15 (gap)
-    //               + 575 (two stacked squares + their gap) + 30 (bottom pad)
+    //   minHeight = 640 (keeps the complete dashboard usable at minimum width)
     width: 934,
     height: 672,
     useContentSize: true,
     minWidth: 848,
-    minHeight: 756,
+    minHeight: 640,
     // Surge places its content beneath the traffic-light/title-bar region.
     // The renderer already owns a draggable strip; keep native window controls
     // as an overlay on Windows while avoiding a second 30px layout offset.

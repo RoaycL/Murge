@@ -12,8 +12,8 @@ describe('Activity fluid-layout UI contract', () => {
     ])
 
     expect(main).toMatch(/width:\s*934,\s*\n\s*height:\s*672,\s*\n\s*useContentSize:\s*true/)
-    // 最小窗口锁在卡片最小尺寸处（正方形 --card-min=280）：宽 848 / 高 756。
-    expect(main).toMatch(/minWidth:\s*848,\s*\n\s*minHeight:\s*756,/)
+    // 最小窗口锁在 280px 列宽；Surge 横卡比例修正后 640px 高即可完整展示。
+    expect(main).toMatch(/minWidth:\s*848,\s*\n\s*minHeight:\s*640,/)
     expect(main).toMatch(/titleBarStyle:\s*'hidden'/)
     expect(main).toMatch(/titleBarOverlay:\s*\{[^}]*height:\s*34/s)
     expect(tokens).toMatch(/--sidebar-width:\s*205px/)
@@ -22,16 +22,19 @@ describe('Activity fluid-layout UI contract', () => {
     // 完全流式仪表盘：弹性列 + 居中内容壳，禁止回到写死列宽。
     expect(css).toMatch(/\.dashboard-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/)
     expect(css).toMatch(/\.dashboard-grid\s*\{[^}]*width:\s*100%/)
-    // 所有者要求：正方形卡片恒 1:1、长方形卡片恒 2:1（aspect-ratio 锁定，
-    // 禁止回到固定行高）。速率卡为 2:1 长方形，流量卡跨两行同为 2:1。
-    expect(css).toMatch(/\.latency-card\s*\{[^}]*aspect-ratio:\s*1 \/ 1/)
-    expect(css).toMatch(/\.connections-card\s*\{[^}]*aspect-ratio:\s*1 \/ 1/)
-    expect(css).toMatch(/\.total-card\s*\{[^}]*aspect-ratio:\s*1 \/ 1/)
-    expect(css).toMatch(/\.speed-card\s*\{[^}]*aspect-ratio:\s*2 \/ 1/)
-    expect(css).toMatch(/\.traffic-card\s*\{[^}]*aspect-ratio:\s*2 \/ 1/)
+    expect(css).toMatch(/\.dashboard-grid\s*\{[^}]*margin:\s*6px auto 0/)
+    // Surge 实图：左列横卡约 2.1:1；上传/下载和跨两行流量卡约 1:1。
+    expect(css).toMatch(/\.latency-card\s*\{[^}]*aspect-ratio:\s*2\.1 \/ 1/)
+    expect(css).toMatch(/\.connections-card\s*\{[^}]*aspect-ratio:\s*2\.1 \/ 1/)
+    expect(css).toMatch(/\.total-card\s*\{[^}]*aspect-ratio:\s*2\.1 \/ 1/)
+    expect(css).toMatch(/\.speed-card\s*\{[^}]*aspect-ratio:\s*1 \/ 1/)
+    expect(css).toMatch(/\.traffic-card\s*\{[^}]*aspect-ratio:\s*1 \/ 1/)
     // 卡片到达最小尺寸后网格不再压缩（与 848px 最小窗口互为兜底）。
     expect(css).toMatch(/\.dashboard-grid\s*\{[^}]*min-width:\s*calc\(2 \* var\(--card-min\) \+ 15px\)/)
     expect(css).toMatch(/\.activity-view\.page-shell\s*\{[^}]*min-width:\s*calc\(2 \* var\(--card-min\) \+ 15px\)/)
+    expect(css).toMatch(/\.activity-view\.page-shell\s*\{[^}]*max-width:\s*none/)
+    expect(css).toMatch(/\.activity-view\.page-shell\s*\{[^}]*padding-left:\s*5px/)
+    expect(css).toMatch(/\.activity-view\.page-shell\s*\{[^}]*padding-right:\s*35px/)
     expect(css).toMatch(/\.page-shell\s*\{[^}]*max-width:\s*var\(--content-max-width\)/)
     expect(css).toMatch(/\.page-shell\s*\{[^}]*margin:\s*0 auto/)
     // 所有者要求：任何宽度下都保持规范的双列仪表盘，不做单列降级。

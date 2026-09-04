@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
@@ -43,11 +43,84 @@ export interface MihomoConfigStoreOptions {
    * entirely, the store never applies controlled geodata settings.
    */
   resolveGeodata?: () => Promise<GeodataSettings>
+  /**
+   * Persistent kernel home passed to mihomo as `-d`. Geodata databases and
+   * provider caches resolve here and MUST survive restarts (a per-run temp
+   * home forces an online geodata download on every start, which fails before
+   * any proxy exists and blocks startup). When omitted, the per-run workspace
+   * keeps the historical temp behavior (dev fixtures and existing tests).
+   */
+  kernelHomeDir?: string
+  /**
+   * Directory holding geodata databases shipped with the installer
+   * (`geosite.dat`, `geoip.dat`, ...). When set (production), every seed file
+   * found here is copied into the persistent kernel home on materialize so the
+   * kernel never needs its first-run online geodata download. Omitted (tests,
+   * fixtures), seeding is skipped entirely.
+   */
+  seedResourcesDir?: string
 }
 
 /**
- * Materializes the runtime mihomo config into an isolated temp workspace and
- * cleans it up afterwards.
+ * Databases the kernel resolves from its home directory (`-d`). A profile rule
+ * such as `GEOSITE,CN,DIRECT` cannot start the kernel without `geosite.dat`;
+ * when the file is missing mihomo tries to download it online — which fails
+ * before any proxy exists (no DNS to resolve the download host yet), turning a
+ * missing file into a full startup block. Seeding these from the installer and
+ * keeping them in a persistent home removes that dependency entirely.
+ */
+const GEODATA_SEED_FILES = ['geosite.dat', 'geoip.dat', 'geoip.metadb', 'country.mmdb', 'ASN.mmdb'] as const
+
+/**
+ * Copy installer-shipped geodata into the kernel home. Per-file best effort:
+ * one unreadable seed must never block a start that could otherwise succeed;
+ * the kernel's own download path remains as the fallback. Returns the names of
+ * the files actually placed (used for diagnostics).
+ */
+export async function seedGeodataFiles(homeDir: string, resourcesDir: string): Promise<string[]> {
+  const seeded: string[] = []
+  let entries: string[]
+  try {
+    entries = await readdir(resourcesDir)
+  } catch {
+    // No seed dir (dev checkout, partial install): nothing to seed.
+    return seeded
+  }
+  await mkdir(homeDir, { recursive: true })
+  for (const name of GEODATA_SEED_FILES) {
+    if (!entries.includes(name)) continue
+    const target = join(homeDir, name)
+    try {
+      // Refresh when the installer carries a newer build than the kept copy. A
+      // missing kept copy is the expected FIRST-RUN case, not an error.
+      const [source, existing] = await Promise.all([
+        stat(join(resourcesDir, name)),
+        stat(target).then(
+          (value) => value,
+          () => null
+        )
+      ])
+      if (existing?.isFile() && existing.mtimeMs >= source.mtimeMs) continue
+      await copyFile(join(resourcesDir, name), target)
+      seeded.push(name)
+    } catch {
+      // Best effort per file: keep whatever copy already exists.
+    }
+  }
+  return seeded
+}
+
+/**
+ * Materializes the runtime mihomo config and cleans up the per-run config
+ * file afterwards.
+ *
+ * The kernel home (`-d`) is a STABLE directory that is never deleted: mihomo
+ * resolves geodata databases and writes provider caches relative to it, and a
+ * profile rule like `GEOSITE,CN,DIRECT` cannot start the kernel without
+ * `geosite.dat`. A per-run temp home would force a fresh online geodata
+ * download on every start — which fails before any proxy exists (no DNS to
+ * resolve the download host yet) and blocks startup entirely. The stable home
+ * keeps a successfully fetched or installer-seeded database forever.
  *
  * When `resolveActiveDocument` is provided and returns an active profile, the
  * written document is the profile's proxies/groups/rules transformed by
@@ -56,10 +129,12 @@ export interface MihomoConfigStoreOptions {
  * port, allow-lan:false, external-controller on 127.0.0.1, no TUN, no public
  * listeners/DNS, caller's secret). When no active profile exists the strict
  * loopback-only direct config (tun.enable:false, dns.enable:false, MATCH,DIRECT)
- * is written instead. Cleanup deletes exactly the per-run child the store created
- * and refuses to touch any other path, including the caller-provided parent. The
- * strict fallback pins mode:direct; the profile path pins mode:rule so the
- * profile's rules actually take effect.
+ * is written instead.
+ *
+ * The config document itself lives in a per-run `mihomo-workspace-*` sibling
+ * (created under the same parent as the kernel home) and is deleted on
+ * cleanup() exactly as before — only the disposable file the store created is
+ * removed; the kernel home and every database in it are left untouched.
  */
 export class MihomoKernelConfigStore implements KernelConfigStore {
   /** The exact directory this store created; unknown until materialize runs. */
@@ -102,14 +177,27 @@ export class MihomoKernelConfigStore implements KernelConfigStore {
       validateMihomoConfigYaml(built.text)
     }
 
-    // (2) Only now create the exclusive child. `workspaceDir` (if given) is a
-    // parent; the caller's own files under it must survive a later cleanup.
+    // (2) Only now create the exclusive per-run child plus the persistent home.
+    // `workspaceDir` (if given) is a parent; the caller's own files under it
+    // must survive a later cleanup.
     const parent = this.options.workspaceDir
       ? await mkdir(this.options.workspaceDir, { recursive: true }).then(() => this.options.workspaceDir!)
       : tmpdir()
     const rootDir = await mkdtemp(join(parent, 'mihomo-workspace-'))
     this.ownedDir = rootDir
     const configPath = join(rootDir, 'config.yaml')
+    // The kernel home is a stable sibling: it holds the geodata databases and
+    // provider caches that must survive restarts, so it is NEVER cleaned up.
+    // Without a configured home the per-run dir keeps the historical behavior
+    // (fixture/dev runs and every existing test).
+    const homeDir = this.options.kernelHomeDir
+      ? await mkdir(this.options.kernelHomeDir, { recursive: true }).then(() => this.options.kernelHomeDir!)
+      : rootDir
+    let seeded: string[] = []
+    if (this.options.seedResourcesDir) {
+      // Fail-open by contract: a missing/corrupt seed never blocks a start.
+      seeded = await seedGeodataFiles(homeDir, this.options.seedResourcesDir)
+    }
 
     // (3) Anything that can fail AFTER the child exists (the config write) must
     // remove exactly that child before rethrowing the original error. The
@@ -124,8 +212,8 @@ export class MihomoKernelConfigStore implements KernelConfigStore {
     return {
       configPath,
       rootDir,
-      args: ['-f', configPath, '-d', rootDir],
-      env: { MIHOMO_PLATFORM: process.platform, MIHOMO_ARCH: process.arch }
+      args: ['-f', configPath, '-d', homeDir],
+      env: { MIHOMO_PLATFORM: process.platform, MIHOMO_ARCH: process.arch, MIHOMO_GEODATA_SEEDED: seeded.join(',') }
     }
   }
 
@@ -182,9 +270,10 @@ export class MihomoKernelConfigStore implements KernelConfigStore {
   }
 
   async cleanup(config: KernelConfig): Promise<void> {
-    // Only ever delete the exact child this store created. Anything else (the
-    // parent passed in, a config the store did not materialize, or a path
-    // outside the workspace) is left untouched.
+    // Only ever delete the exact per-run child this store created — NEVER the
+    // stable kernel home, whose geodata databases and provider caches must
+    // survive restarts (deleting it would reintroduce the first-run online
+    // download and its pre-proxy DNS failure mode on every start).
     if (!this.ownedDir) return
     const owned = resolve(this.ownedDir)
     const root = resolve(config.rootDir)

@@ -68,3 +68,14 @@ action. mihomo is licensed under GPL-3.0; the corresponding source for the exact
 distributed version is available from
 <https://github.com/MetaCubeX/mihomo/tree/v1.19.30>. The complete GPLv3 text is
 installed as `LICENSE.txt`.
+
+## Geodata databases
+
+The installers also ship the `geosite.dat` (domain-list database) and
+`geoip.metadb` (IP-to-country metadata database) files built by the
+MetaCubeX/meta-rules-dat project, distributed as unmodified release assets
+(pinned by SHA-256 in `resources/mihomo-assets.json`). The kernel requires these
+databases to evaluate `GEOSITE`/`GEOIP` rules. The underlying data is assembled
+by MetaCubeX from the v2fly domain-list-community and geoip projects; consult
+<https://github.com/MetaCubeX/meta-rules-dat> for the data sources and their
+respective license terms.

@@ -236,3 +236,98 @@ tun:
     ).rejects.toMatchObject({ code: ProtocolErrorCode.INVALID_ARGUMENT })
   })
 })
+
+describe('MihomoKernelConfigStore (persistent kernel home + geodata seed)', () => {
+  it('points `-d` at the stable kernel home while the config stays in the per-run workspace', async () => {
+    const parent = join(tmpdir(), `mihomo-home-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    const homeDir = join(parent, 'geodata')
+    const store = new MihomoKernelConfigStore({
+      mixedPort: 29000,
+      controllerPort: 29001,
+      workspaceDir: parent,
+      kernelHomeDir: homeDir
+    })
+    const config = await store.materialize({ command: '/bin/mihomo', args: [] }, secret)
+
+    // The per-run workspace still owns the config document.
+    expect(config.configPath).toBe(join(config.rootDir, 'config.yaml'))
+    // The kernel home argument is the STABLE directory, NOT the per-run child:
+    // geodata resolved from a per-run home would be deleted on cleanup and
+    // force a fresh (pre-proxy, DNS-dependent) download on every start.
+    expect(config.args).toEqual(['-f', config.configPath, '-d', homeDir])
+    expect(config.rootDir).not.toBe(homeDir)
+    expect(config.rootDir.startsWith(parent)).toBe(true)
+
+    await store.cleanup(config)
+    // Cleanup removes the per-run config child…
+    await expect(stat(config.rootDir)).rejects.toThrow()
+    // …but the kernel home — and every database in it — always survives.
+    await expect(stat(homeDir)).resolves.toBeTruthy()
+  })
+
+  it('seeds installer geodata into the home on first materialize', async () => {
+    const parent = join(tmpdir(), `mihomo-seed-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    const resources = join(parent, 'resources-geodata')
+    const homeDir = join(parent, 'geodata')
+    await mkdir(resources, { recursive: true })
+    await writeFile(join(resources, 'geosite.dat'), 'bundled-geosite')
+    await writeFile(join(resources, 'unrelated.txt'), 'never copied')
+    await writeFile(join(resources, 'geoip.metadb'), 'bundled-geoip')
+
+    const store = new MihomoKernelConfigStore({
+      mixedPort: 29100,
+      controllerPort: 29101,
+      workspaceDir: parent,
+      kernelHomeDir: homeDir,
+      seedResourcesDir: resources
+    })
+    const config = await store.materialize({ command: '/bin/mihomo', args: [] }, secret)
+
+    // Only known geodata artifacts are seeded, nothing else.
+    expect(await readFile(join(homeDir, 'geosite.dat'), 'utf8')).toBe('bundled-geosite')
+    expect(await readFile(join(homeDir, 'geoip.metadb'), 'utf8')).toBe('bundled-geoip')
+    expect(await readdir(homeDir)).not.toContain('unrelated.txt')
+    await store.cleanup(config)
+  })
+
+  it('keeps a newer kept copy and never blocks startup on a broken seed dir', async () => {
+    const parent = join(tmpdir(), `mihomo-seed2-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    const resources = join(parent, 'resources-geodata')
+    const homeDir = join(parent, 'geodata')
+    await mkdir(resources, { recursive: true })
+    await writeFile(join(resources, 'geosite.dat'), 'older-bundle')
+
+    const store = new MihomoKernelConfigStore({
+      mixedPort: 29200,
+      controllerPort: 29201,
+      workspaceDir: parent,
+      kernelHomeDir: homeDir,
+      seedResourcesDir: resources
+    })
+    // First materialize seeds the bundled copy.
+    const first = await store.materialize({ command: '/bin/mihomo', args: [] }, secret)
+    await store.cleanup(first)
+    // The kept copy is now NEWER than the (unmodified) bundle: a later start
+    // must not overwrite it (e.g. with an older installer's database).
+    const kept = join(homeDir, 'geosite.dat')
+    const future = new Date(Date.now() + 60_000)
+    const { utimes } = await import('node:fs/promises')
+    await utimes(kept, future, future)
+
+    const second = await store.materialize({ command: '/bin/mihomo', args: [] }, secret)
+    await store.cleanup(second)
+    await expect(readFile(kept, 'utf8')).resolves.toBe('older-bundle')
+
+    // A missing seed dir is fail-open: materialize still succeeds.
+    const broken = new MihomoKernelConfigStore({
+      mixedPort: 29300,
+      controllerPort: 29301,
+      workspaceDir: parent,
+      kernelHomeDir: join(parent, 'geodata-2'),
+      seedResourcesDir: join(parent, 'does-not-exist')
+    })
+    const third = await broken.materialize({ command: '/bin/mihomo', args: [] }, secret)
+    expect(third.args).toContain('-d')
+    await broken.cleanup(third)
+  })
+})

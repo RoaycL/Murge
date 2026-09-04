@@ -77,3 +77,22 @@ Phase 9B 的 TUN 配置写死 `mode: direct` + `rules: [MATCH,DIRECT]`，因此�
    有意 UX（见提交 `0007996` 的测试锁定），现按所有者要求反转：三条导入路径
    （远程/本地/手动）均传 `activate: false`，配置仅在用户在列表中选中后才启用。
    `ui-navigation-contract.test.ts` 的断言已同步反转，作为新行为的回归锁。
+
+## ADR-007: 内核主目录持久化 + 安装包自带 geodata
+
+状态: 已接受（2026-09-04）。
+
+现场可复现的启动阻断：profile 含 `GEOSITE,CN,DIRECT` 时，内核主目录（`-d`）缺少
+`geosite.dat`，mihomo 首启自行在线下载，而下载需要 DNS 解析下载域名——在代理可用
+之前不存在，于是 `dns resolve failed` → `-t` 配置测试失败 → 内核启动失败。旧实现
+把 `-d` 指向每次 `mkdtemp` 的临时目录并在退出时删除，即使下载成功也无法留存，
+每次启动都重复该失败。两项修复对齐 Clash Party 的成熟做法：
+
+1. **`-d` 指向稳定目录。** 内核主目录改为 `<profiles>/kernel/geodata/`，永不删除；
+   每次运行的临时目录只承载 `config.yaml`（退出照旧清理该临时目录，主目录与其中的
+   数据库/缓存一律保留）。内核成功联网下载一次后，后续启动不再依赖下载。
+2. **安装包自带 geodata 种子。** `scripts/prepare-mihomo-assets.mjs` 从
+   MetaCubeX/meta-rules-dat 下载 `geosite.dat` 与 `geoip.metadb`（SHA-256 钉在
+   `resources/mihomo-assets.json`），经 extraResources 进入安装包；启动 materialize
+   时按 mtime 较新则复制进主目录。首个启动即有数据库，完全不依赖在线下载路径。
+   每文件 fail-open：单个种子损坏最多退化为内核自带下载，绝不阻断启动。

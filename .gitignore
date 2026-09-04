@@ -12,6 +12,10 @@ resources/bin/mihomo*.exe
 resources/bin/mihomo*
 resources/bin/*/*.zip
 !resources/bin/.gitkeep
+# Geodata databases fetched by scripts/prepare-mihomo-assets.mjs (pinned in
+# resources/mihomo-assets.json) — large blobs, re-fetchable, never committed.
+resources/geodata/*.dat
+resources/geodata/*.metadb
 resources/tun-service/*/tun-service.exe
 # Runtime artifacts written next to the service binary by the local TUN evidence
 # harness (scripts/tun-runtime-evidence.ps1). service-config.json embeds this

@@ -5,6 +5,7 @@ import type { ConfigValidator } from './config-validator'
 import { ProfileRepository } from './profile-repository'
 import type { SubscriptionFetcher } from '../subscriptions/subscription-fetcher'
 import { redactCredentials, deriveFallbackSubscriptionName } from '../subscriptions/subscription-fetcher'
+import { MemoryProfileSourceStore, type ProfileSourceStore } from './profile-source-store'
 
 /**
  * Compose the profile store, config validator, and subscription fetcher into the
@@ -16,7 +17,8 @@ export class ProfileService implements ProfileGateway {
   constructor(
     private readonly repository: ProfileRepository,
     private readonly validator: ConfigValidator,
-    private readonly fetcher: SubscriptionFetcher
+    private readonly fetcher: SubscriptionFetcher,
+    private readonly sourceStore: ProfileSourceStore = new MemoryProfileSourceStore()
   ) {}
 
   listProfiles(): Promise<ProfileMeta[]> {
@@ -50,8 +52,8 @@ export class ProfileService implements ProfileGateway {
   }
 
   /**
-   * Fetch a subscription config and import it. Only the redacted URL is
-   * persisted, so credentials can never appear in the stored profile metadata.
+   * Renderer-visible metadata keeps only the redacted URL; the main process
+   * stores the refresh URL separately so token-bearing subscriptions can update.
    *
    * When the caller leaves the name empty, the display name is derived the way
    * community clients do: from the response's `Content-Disposition` filename,
@@ -67,12 +69,21 @@ export class ProfileService implements ProfileGateway {
       fetched.suggestedName ||
       deriveFallbackSubscriptionName(url) ||
       '远程订阅'
-    return this.importProfile({
+    const meta = await this.importProfile({
       name: effectiveName,
       document: fetched.document,
       source: fetched.source,
-      activate
+      // Secure the refresh URL before moving the active pointer. If secure
+      // storage fails, the previously active profile remains untouched.
+      activate: false
     })
+    try {
+      await this.sourceStore.set(meta.id, url)
+    } catch (error) {
+      await this.repository.delete(meta.id)
+      throw error
+    }
+    return activate ? this.activateProfile(meta.id) : meta
   }
 
   /**
@@ -90,9 +101,13 @@ export class ProfileService implements ProfileGateway {
         '该配置没有远程订阅地址，无法更新'
       )
     }
-    const fetched = await this.fetcher.fetch(source.url)
+    const refreshUrl = (await this.sourceStore.get(id)) ?? source.url
+    const fetched = await this.fetcher.fetch(refreshUrl)
     // Validate BEFORE writing so a failed update cannot corrupt the stored doc.
     this.throwIfInvalid(this.validator.validate(fetched.document))
+    // Persist/migrate the private refresh address before replacing a valid
+    // existing document. A secure-storage failure must leave that document intact.
+    await this.sourceStore.set(id, refreshUrl)
     return this.repository.replaceFromSource(id, fetched.document, fetched.source)
   }
 
@@ -122,8 +137,9 @@ export class ProfileService implements ProfileGateway {
     await this.repository.restoreDocument(id, document)
   }
 
-  deleteProfile(id: string): Promise<void> {
-    return this.repository.delete(id)
+  async deleteProfile(id: string): Promise<void> {
+    await this.repository.delete(id)
+    await this.sourceStore.delete(id)
   }
 
   renameProfile(id: string, name: string): Promise<ProfileMeta> {

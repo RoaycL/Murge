@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import type { KernelStatus } from '@shared/runtime'
 import { ProtocolError, ProtocolErrorCode, toProtocolError } from '@shared/protocol-errors'
 import { BoundedLogBuffer, type KernelLog } from './bounded-log'
+import type { KernelWatchdog } from './crash-watchdog'
 import type {
   KernelBinary,
   KernelConfig,
@@ -26,12 +27,25 @@ export interface KernelSupervisorOptions {
   stopTimeoutMs?: number
   /** Extra time to wait after SIGKILL before declaring failure. Default 3000ms. */
   forceKillTimeoutMs?: number
-  /** Max unexpected-exit restarts before giving up. Default 3. */
+  /** Max unexpected-exit restarts before giving up. Default 10. */
   maxRestarts?: number
   /** Base crash backoff; doubled per attempt. Default 250ms. */
   backoffMs?: number
   /** Upper bound on a single backoff delay. Default 5000ms. */
   maxBackoffMs?: number
+  /**
+   * Continuous runtime that refills the crash-restart budget: a kernel that ran
+   * this long had a fresh, independent failure, so a later exit restarts with a
+   * full budget again. Default 60_000ms; 0 disables the reset.
+   */
+  restartBudgetResetMs?: number
+  /**
+   * Attach a crash watchdog to a freshly spawned kernel. Contract: when the APP
+   * dies while the kernel lives, the watchdog force-kills the kernel (the
+   * Job-Object guarantee, clash-verge-rev style). The supervisor calls
+   * `release()` on natural exit/stop so a healthy shutdown never triggers it.
+   */
+  attachWatchdog?: (kernelPid: number) => KernelWatchdog
   /**
    * Readiness regex tested against accumulated stdout. When null/empty, spawn
    * success means ready. The fixture emits a ready line to exercise this path.
@@ -75,6 +89,8 @@ export class KernelSupervisor extends EventEmitter {
   private readonly maxRestarts: number
   private readonly backoffMs: number
   private readonly maxBackoffMs: number
+  private readonly restartBudgetResetMs: number
+  private readonly attachWatchdog?: (kernelPid: number) => KernelWatchdog
   private readonly log: BoundedLogBuffer
 
   private status: KernelStatus = { ...STOPPED }
@@ -84,6 +100,10 @@ export class KernelSupervisor extends EventEmitter {
   private isStopping = false
   private restartCount = 0
   private restartTimer: NodeJS.Timeout | null = null
+  /** Armed while the kernel runs; resets the crash budget after sustained uptime. */
+  private healthyTimer: NodeJS.Timeout | null = null
+  /** Attached crash watchdog for the live kernel; released on exit/stop. */
+  private watchdog: KernelWatchdog | null = null
   private readiness: Readiness | null = null
   private exitWait: ExitWait | null = null
   /** In-flight post-exit work (config cleanup + status/restart). Never on the
@@ -103,9 +123,11 @@ export class KernelSupervisor extends EventEmitter {
     this.startTimeoutMs = options.startTimeoutMs ?? 5000
     this.stopTimeoutMs = options.stopTimeoutMs ?? 5000
     this.forceKillTimeoutMs = options.forceKillTimeoutMs ?? 3000
-    this.maxRestarts = options.maxRestarts ?? 3
+    this.maxRestarts = options.maxRestarts ?? 10
     this.backoffMs = options.backoffMs ?? 250
     this.maxBackoffMs = options.maxBackoffMs ?? 5000
+    this.restartBudgetResetMs = options.restartBudgetResetMs ?? 60_000
+    this.attachWatchdog = deps.attachWatchdog ?? options.attachWatchdog
     this.log = new BoundedLogBuffer(options.maxLogBytes ?? 256 * 1024, options.maxLogEntries ?? 4000)
   }
 
@@ -166,6 +188,10 @@ export class KernelSupervisor extends EventEmitter {
       }
 
       this.isStopping = true
+      this.clearHealthyTimer()
+      // The kernel is exiting on OUR request: the watchdog must not kill it.
+      this.watchdog?.release()
+      this.watchdog = null
       this.setStatus({ phase: 'stopping' })
       const exited = await this.terminate(handle)
       if (exited) {
@@ -271,6 +297,28 @@ export class KernelSupervisor extends EventEmitter {
     }
 
     this.setStatus({ phase: 'running', startedAt: new Date().toISOString() })
+    // Arm the sustained-run reset: once the kernel has been up this long, the
+    // crash budget refills — a later exit is a fresh, independent failure and
+    // must not inherit the previous incident's exhausted restarts.
+    this.clearHealthyTimer()
+    if (this.maxRestarts > 0 && this.restartBudgetResetMs > 0) {
+      this.healthyTimer = setTimeout(() => {
+        this.healthyTimer = null
+        if (this.status.phase === 'running' && this.restartCount > 0) {
+          this.restartCount = 0
+          this.log.append('stdout', '[supervisor] sustained run; crash-restart budget reset\n')
+        }
+      }, this.restartBudgetResetMs)
+    }
+    this.watchdog?.release()
+    this.watchdog = this.attachWatchdog?.(handle.pid ?? 0) ?? null
+  }
+
+  private clearHealthyTimer(): void {
+    if (this.healthyTimer) {
+      clearTimeout(this.healthyTimer)
+      this.healthyTimer = null
+    }
   }
 
   private async handleStalePid(): Promise<void> {
@@ -339,6 +387,9 @@ export class KernelSupervisor extends EventEmitter {
     // resolved (so stop()/before-quit never complete early) and before a
     // crash-restart is scheduled (so a fresh directory never materializes over
     // an uncleaned one).
+    this.clearHealthyTimer()
+    this.watchdog?.release()
+    this.watchdog = null
     this.rejectReadiness(new ProtocolError(ProtocolErrorCode.KERNEL_CRASHED, `Kernel ${this.describeExit(info)}`))
     const wasRunning = this.status.phase === 'running'
     const desc = this.describeExit(info)

@@ -59,6 +59,8 @@ export class SystemProxyService implements SystemProxyGateway {
   private readonly listeners = new Set<SystemProxyListener>()
   private current: SystemProxyStatus
   private queue: Promise<unknown> = Promise.resolve()
+  /** Set when the network detector disabled an owned proxy; the next `handleNetworkUp` re-enables. */
+  private networkResumePending = false
 
   constructor(options: SystemProxyServiceOptions) {
     this.adapter = options.adapter
@@ -312,6 +314,10 @@ export class SystemProxyService implements SystemProxyGateway {
       if (!this.adapter.supported) {
         return this.fail('unsupported', ProtocolErrorCode.SYSTEM_PROXY_UNSUPPORTED, NOT_SUPPORTED_MSG)
       }
+      // An explicit user/IPC disable always cancels any pending network-outage
+      // resume: the detector must never silently re-enable what the user just
+      // turned off — even when there is nothing owned left to restore.
+      this.networkResumePending = false
       let backup: SystemProxyBackup | null
       try {
         backup = await this.backup.read()
@@ -367,6 +373,125 @@ export class SystemProxyService implements SystemProxyGateway {
       }
       this.transition('disabled')
     })
+  }
+
+  /**
+   * Periodic integrity sweep for the proxy guard (clash-verge-rev's guard loop,
+   * adapted to this service's ownership model). While WE own an enabled proxy, any
+   * external mutation of the registry values means every HTTP client silently
+   * bypasses or misroutes through us — the "proxy is on but nothing works"
+   * failure. The sweep re-applies our exact written values; anything we do not
+   * own is left untouched (an external takeover must never be fought).
+   * Best-effort by contract: never throws, returns a discriminant for logging.
+   */
+  async verifyIntegrity(): Promise<'ok' | 'repaired' | 'conflict' | 'idle' | 'repair-failed'> {
+    return this.serialize(async () => {
+      if (!this.adapter.supported || this.current.phase !== 'enabled') return 'idle'
+      let backup: SystemProxyBackup | null
+      try {
+        backup = await this.backup.read()
+      } catch {
+        return 'conflict'
+      }
+      if (!backup) return 'idle'
+      let observed: SystemProxyRegistryState
+      try {
+        observed = await this.adapter.read()
+      } catch {
+        return 'repair-failed'
+      }
+      if (
+        observed.proxyEnable.value === backup.written.proxyEnable.value &&
+        observed.proxyServer.value === backup.written.proxyServer.value &&
+        observed.proxyOverride.value === backup.written.proxyOverride.value
+      ) {
+        return 'ok'
+      }
+      // Decide between DEGRADATION and TAKEOVER. Degradation (someone turned the
+      // proxy off or tweaked the bypass list while ProxyServer still aims at OUR
+      // listener) is exactly the "proxy on but nothing loads / everything off"
+      // breakage the guard exists to repair. Takeover (a different proxy server
+      // was written) is another tool's ownership — never fought, reported as a
+      // conflict like every other external-mutation path in this service.
+      const stillAimingAtUs = observed.proxyServer.value === backup.written.proxyServer.value
+      if (!stillAimingAtUs) {
+        this.transition('conflict', {
+          errorMessage: CONFLICT_MSG,
+          conflictDetail: conflictDetail(observed, backup.written)
+        })
+        return 'conflict'
+      }
+      try {
+        await this.adapter.apply(backup.written)
+        await this.adapter.refresh()
+        const readback = await this.adapter.read()
+        if (!isOwned(readback, backup.written)) throw new Error('read-back mismatch after guard re-apply')
+        return 'repaired'
+      } catch (error) {
+        console.error(
+          '[system-proxy] guard re-apply failed:',
+          error instanceof Error ? error.message : error
+        )
+        return 'repair-failed'
+      }
+    })
+  }
+
+  /**
+   * Network went down (detector): turn off an owned proxy so the OS stops
+   * routing HTTP into a listener that cannot reach anywhere, and remember to
+   * restore it when the network returns. Mirrors sparkle's offline handling.
+   */
+  async handleNetworkDown(): Promise<'disabled' | 'idle' | 'failed'> {
+    return this.serialize(async () => {
+      if (!this.adapter.supported || this.current.phase !== 'enabled') return 'idle'
+      let backup: SystemProxyBackup | null
+      try {
+        backup = await this.backup.read()
+      } catch {
+        return 'failed'
+      }
+      if (!backup) return 'idle'
+      this.transition('restoring')
+      try {
+        await this.restoreBackupStrict(backup)
+      } catch (error) {
+        console.error(
+          '[system-proxy] network-down restore failed:',
+          error instanceof Error ? error.message : error
+        )
+        this.transition('restore-failed', { errorMessage: '系统代理还原失败' })
+        return 'failed'
+      }
+      this.networkResumePending = true
+      this.transition('disabled')
+      return 'disabled'
+    })
+  }
+
+  /**
+   * Network came back (detector): re-enable the proxy that
+   * {@link handleNetworkDown} turned off. Deliberately NOT inside `serialize` —
+   * `enable()` serializes itself and must enqueue after this check, so the
+   * pending flag flip and the re-enable never deadlock the queue.
+   */
+  async handleNetworkUp(): Promise<'reenabled' | 'idle' | 'failed'> {
+    if (!this.networkResumePending) return 'idle'
+    this.networkResumePending = false
+    try {
+      await this.enable()
+      return 'reenabled'
+    } catch (error) {
+      // The re-enable can legitimately fail while the kernel is still coming
+      // back up (kernel-required). Keep the pending flag so the next detector
+      // tick retries instead of giving up after one early attempt.
+      this.networkResumePending = true
+      console.error(
+        '[system-proxy] network-up re-enable failed:',
+        error instanceof Error ? error.message : error
+      )
+      return 'failed'
+    }
   }
 
   private async readBackupForOwnership(): Promise<SystemProxyBackup | null> {

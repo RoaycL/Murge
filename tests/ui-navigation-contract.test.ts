@@ -14,7 +14,7 @@ describe('Surge-inspired UI navigation contract', () => {
     expect(sidebar).toContain('<AppIcon :name="item.icon"')
     expect(sidebar).not.toContain("label: '客户端'")
     expect(sidebar).not.toContain("to: '/processes'")
-    expect(sidebar).not.toContain("to: '/devices'")
+    expect(sidebar).toContain("to: '/devices'")
     expect(sidebar).not.toMatch(/icon:\s*'[⌁⌘▣▤⑂☷]'/)
   })
 

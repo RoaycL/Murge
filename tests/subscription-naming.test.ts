@@ -35,7 +35,8 @@ describe('parseDispositionFilename (Clash Party style subscription naming)', () 
 })
 
 describe('deriveFallbackSubscriptionName', () => {
-  it('uses the URL host, never the path (paths can carry tokens)', () => {
+  it('uses a safe decoded final filename, then falls back to the host', () => {
+    expect(deriveFallbackSubscriptionName('https://example.com/files/%E6%9C%BA%E5%9C%BA.yaml')).toBe('机场')
     expect(deriveFallbackSubscriptionName('https://example.com/sub?token=secret')).toBe('example.com')
   })
 
@@ -72,5 +73,11 @@ describe('SubscriptionFetcher.suggestedName', () => {
     const result = await fetcher.fetch('https://gist.githubusercontent.com/user/8bb18928838278784d6a534b23b929ab/raw')
     expect(result.suggestedName).toBe('gist.githubusercontent.com')
     expect(result.suggestedName).not.toContain('8bb18928838278784d6a534b23b929ab')
+  })
+
+  it('uses a meaningful final path like Clash Verge Rev when no header is present', async () => {
+    const fetcher = new SubscriptionFetcher({ fetchFn: async () => ({ ok: true, status: 200, text: async () => 'mode: rule\n' }) })
+    const result = await fetcher.fetch('https://gist.githubusercontent.com/user/token/raw/MihomoParty')
+    expect(result.suggestedName).toBe('MihomoParty')
   })
 })

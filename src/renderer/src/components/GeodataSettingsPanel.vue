@@ -5,8 +5,10 @@ import type { GeodataSettings, GeoipMode } from '@shared/geodata'
 import { EMPTY_GEODATA_SETTINGS } from '@shared/geodata'
 import AppSelect from './AppSelect.vue'
 import AppIcon from './AppIcon.vue'
+import { useToast } from '../composables/use-toast'
 
 const store = useGeodataSettingsStore()
+const toast = useToast()
 
 const form = reactive<GeodataSettings>({ ...EMPTY_GEODATA_SETTINGS })
 
@@ -32,7 +34,8 @@ function syncFromConfig(value: GeodataSettings): void {
 
 async function save(): Promise<void> {
   const ok = await store.save({ ...form })
-  if (ok) syncFromConfig(store.settings)
+  if (ok) { syncFromConfig(store.settings); toast.success('GeoData 设置已保存') }
+  else toast.error('GeoData 设置保存失败', store.lastError ?? undefined)
 }
 
 async function preview(): Promise<void> {
@@ -137,7 +140,7 @@ onMounted(async () => {
 
       <div class="gd-actions">
         <button type="button" class="gd-preview" @click="preview">预览配置</button>
-        <button type="button" class="gd-save" :disabled="store.busy" @click="save">保存</button>
+        <button type="button" class="gd-save" :disabled="store.busy" @click="save">{{ store.busy ? '保存中…' : '保存' }}</button>
       </div>
 
       <div v-if="previewOpen" class="gd-preview">

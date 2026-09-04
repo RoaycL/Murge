@@ -8,10 +8,13 @@ import AppIcon from '../components/AppIcon.vue'
 import AppSelect from '../components/AppSelect.vue'
 import DetailDrawer from '../components/DetailDrawer.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
+import { useToast } from '../composables/use-toast'
+import EmptyState from '../components/EmptyState.vue'
 
 const profilesStore = useProfilesStore()
 const providersStore = useProvidersStore()
 const kernel = useKernelStore()
+const toast = useToast()
 
 const url = ref('')
 const importName = ref('')
@@ -94,6 +97,9 @@ async function importFromUrl(): Promise<void> {
   try {
     await profilesStore.importFromUrl(importName.value.trim() || url.value.trim(), url.value.trim(), false)
     showAddDialog.value = false
+    toast.success('远程配置已添加', '配置已保存，尚未启用')
+  } catch {
+    toast.error('远程配置导入失败', profilesStore.lastError ?? undefined)
   } finally {
     importing.value = false
   }
@@ -129,6 +135,9 @@ async function importLocalFile(): Promise<void> {
     localFile.value = null
     if (localFileInput.value) localFileInput.value.value = ''
     showAddDialog.value = false
+    toast.success('本地配置已添加', '配置已保存，尚未启用')
+  } catch {
+    toast.error('本地配置导入失败', profilesStore.lastError ?? undefined)
   } finally {
     importing.value = false
   }
@@ -147,6 +156,9 @@ async function importManual(): Promise<void> {
     document.value = ''
     validation.value = null
     showAddDialog.value = false
+    toast.success('手动配置已添加', '配置已保存，尚未启用')
+  } catch {
+    toast.error('手动配置导入失败', profilesStore.lastError ?? undefined)
   } finally {
     importing.value = false
   }
@@ -159,8 +171,9 @@ async function previewValidation(): Promise<void> {
 async function activate(id: string): Promise<void> {
   try {
     await profilesStore.activate(id)
+    toast.success('配置已启用')
   } catch {
-    /* store surfaces the failure */
+    toast.error('无法启用配置', profilesStore.lastError ?? undefined)
   }
 }
 
@@ -170,21 +183,25 @@ async function cardRefresh(id: string): Promise<void> {
   closeMenu()
 }
 
-async function remove(id: string): Promise<void> {
+async function remove(id: string): Promise<boolean> {
   try {
     await profilesStore.remove(id)
+    return true
   } catch {
-    /* store surfaces the failure */
+    toast.error('无法删除配置', profilesStore.lastError ?? undefined)
+    return false
+  } finally {
+    closeMenu()
   }
-  closeMenu()
 }
 
 async function confirmRemove(): Promise<void> {
   const id = pendingDeleteId.value
   if (!id) return
-  await remove(id)
+  if (!await remove(id)) return
   if (selectedProfileId.value === id) selectedProfileId.value = null
   pendingDeleteId.value = null
+  toast.success('配置已删除')
 }
 
 function openRename(id: string): void {
@@ -202,8 +219,9 @@ async function confirmRename(): Promise<void> {
   try {
     await profilesStore.rename(id, name)
     pendingRenameId.value = null
+    toast.success('配置已重命名')
   } catch {
-    /* store surfaces the failure */
+    toast.error('无法重命名配置', profilesStore.lastError ?? undefined)
   }
 }
 
@@ -299,9 +317,7 @@ function ruleProviderMeta(
     <div v-if="profilesStore.status === 'loading' || profilesStore.status === 'idle'" class="empty-state">
       <p>正在加载配置…</p>
     </div>
-    <div v-else-if="profilesStore.ordered.length === 0" class="empty-state">
-      <p>尚无配置，请从上方导入一个订阅。</p>
-    </div>
+    <EmptyState v-else-if="profilesStore.ordered.length === 0" icon="profiles" title="还没有配置文件" detail="添加远程订阅、本地 YAML，或手动创建一份 mihomo 配置。" action-label="添加配置" @action="showAddDialog = true" />
     <div v-else class="profiles-grid">
       <article
         v-for="meta in profilesStore.ordered"

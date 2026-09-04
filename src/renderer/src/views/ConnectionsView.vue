@@ -7,6 +7,7 @@ import AppIcon from '../components/AppIcon.vue'
 import DetailDrawer from '../components/DetailDrawer.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import AppSelect from '../components/AppSelect.vue'
+import EmptyState from '../components/EmptyState.vue'
 
 const store = useConnectionsStore()
 const { status, lastError, search, visibleConnections, selectedConnection, selectedId, closingIds, closingMany, actionError, sort, summary } = storeToRefs(store)
@@ -48,7 +49,8 @@ onUnmounted(store.disconnect)
           <span class="connection-process">{{ connection.metadata.process || '未知进程' }}<small>{{ endpoint(connection) }}</small></span>
           <span>{{ formatBytes(connection.download + connection.upload) }}<small>{{ connection.chains.join(' → ') || 'DIRECT' }}</small></span>
         </button>
-        <div v-if="!visibleConnections.length" class="connection-empty">{{ status === 'loading' ? '正在载入连接…' : '没有匹配的连接' }}</div>
+        <EmptyState v-if="!visibleConnections.length && status !== 'loading'" icon="connections" :title="search ? '没有匹配的连接' : '暂无活动连接'" :detail="search ? '请调整筛选条件。' : '应用产生网络请求后，连接会实时显示在这里。'" />
+        <div v-else-if="!visibleConnections.length" class="connection-empty">正在载入连接…</div>
     </section>
     <DetailDrawer :open="drawerOpen" title="连接详情" :subtitle="selectedConnection ? `${selectedConnection.metadata.process || '未知进程'} · ${endpoint(selectedConnection)}` : ''" @close="store.select(null)">
       <section class="connection-detail drawer-detail">

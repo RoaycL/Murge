@@ -2,10 +2,12 @@
 import { onMounted, reactive, ref, watch } from 'vue'
 import AppSelect from './AppSelect.vue'
 import AppIcon from './AppIcon.vue'
+import { useToast } from '../composables/use-toast'
 import { useDnsEnhancementStore } from '../stores/dns-enhancement'
 import type { DnsEnhancement } from '@shared/dns'
 
 const store = useDnsEnhancementStore()
+const toast = useToast()
 
 const form = reactive<DnsEnhancement>({
   enabled: false,
@@ -102,7 +104,8 @@ function buildInput(): DnsEnhancement {
 
 async function save(): Promise<void> {
   const ok = await store.save(buildInput())
-  if (ok) syncFromEnhancement(store.enhancement)
+  if (ok) { syncFromEnhancement(store.enhancement); toast.success('DNS 设置已保存') }
+  else toast.error('DNS 设置保存失败', store.lastError ?? undefined)
 }
 
 async function preview(): Promise<void> {
@@ -232,7 +235,7 @@ onMounted(async () => {
 
       <div class="dns-actions">
         <button type="button" class="dns-preview" @click="preview">预览配置</button>
-        <button type="button" class="dns-save" :disabled="store.busy" @click="save">保存</button>
+        <button type="button" class="dns-save" :disabled="store.busy" @click="save">{{ store.busy ? '保存中…' : '保存' }}</button>
       </div>
 
       <div v-if="previewOpen" class="dns-preview">

@@ -7,8 +7,10 @@ import { USAGE_WINDOW_CONFIG } from '@shared/usage'
 import { formatBytes, formatBytesParts } from '../lib/format'
 import ConfirmModal from './ConfirmModal.vue'
 import AppIcon from './AppIcon.vue'
+import { useToast } from '../composables/use-toast'
 
 const store = useUsageHistoryStore()
+const toast = useToast()
 const clearOpen = ref(false)
 
 const WINDOWS: Array<{ value: UsageWindow; label: string }> = [
@@ -98,8 +100,9 @@ function timeLabel(bucketStart: number): string {
 }
 
 async function confirmClear(): Promise<void> {
-  await store.clear()
-  clearOpen.value = false
+  const ok = await store.clear()
+  if (ok) { clearOpen.value = false; toast.success('使用记录已清空') }
+  else toast.error('无法清空使用记录', store.lastError ?? undefined)
 }
 </script>
 

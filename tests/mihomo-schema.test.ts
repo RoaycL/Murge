@@ -109,6 +109,11 @@ describe('parseMihomoConnections / parseMihomoConnection', () => {
     expect(result.connections[0].id).toBe('conn-1')
   })
 
+  it('normalizes a null connection list from mihomo to an empty array', () => {
+    const result = parseMihomoConnections({ downloadTotal: 0, uploadTotal: 0, memory: 0, connections: null })
+    expect(result.connections).toEqual([])
+  })
+
   it('rejects a connection missing the required rule field', () => {
     expect(() => parseMihomoConnections(connectionsMissingRule)).toThrowError(ProtocolError)
   })

@@ -1,8 +1,6 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import ActivityView from './views/ActivityView.vue'
 import OverviewView from './views/OverviewView.vue'
-import ProcessListView from './views/ProcessListView.vue'
-import DeviceListView from './views/DeviceListView.vue'
 import PolicyView from './views/PolicyView.vue'
 import RulesView from './views/RulesView.vue'
 import ConfigView from './views/ConfigView.vue'
@@ -28,8 +26,8 @@ export const router = createRouter({
     { path: '/', redirect: '/activity' },
     { path: '/activity', component: ActivityView },
     { path: '/overview', component: OverviewView },
-    { path: '/processes', component: ProcessListView },
-    { path: '/devices', component: DeviceListView },
+    { path: '/processes', redirect: '/connections' },
+    { path: '/devices', redirect: '/connections' },
     { path: '/policies', component: PolicyView },
     { path: '/rules', component: RulesView },
     { path: '/profiles', component: ConfigView },

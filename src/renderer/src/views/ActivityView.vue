@@ -45,7 +45,6 @@ const up = computed(() => formatRate(traffic.current?.up ?? 0))
 const down = computed(() => formatRate(traffic.current?.down ?? 0))
 const activeCount = computed(() => connections.summary?.totalConnections ?? 0)
 const processCount = computed(() => connections.summary?.distinctProcesses ?? 0)
-const deviceCount = computed(() => connections.summary?.distinctDevices ?? 0)
 const directBytes = computed(() => connections.summary?.directDownload ?? 0)
 const proxyBytes = computed(() => connections.summary?.proxyDownload ?? 0)
 
@@ -119,7 +118,7 @@ const chartBars = computed<number[]>(() => {
       <div><span>网络</span><strong>{{ runtime.summary?.networkName ?? '以太网' }}</strong></div>
       <div><span>配置</span><strong>{{ runtime.summary?.profileName ?? brand.defaultProfileName }}</strong></div>
       <div><span>出站模式</span><strong>{{ modeLabel }}</strong></div>
-      <div><span>外部 IP</span><strong>{{ externalIpText }}</strong></div>
+      <button type="button" class="runtime-detail-link" aria-label="查看网络信息" @click="summaryDrawer = 'network'"><span>外部 IP</span><strong>{{ externalIpText }}</strong><AppIcon name="next" :size="14" /></button>
     </section>
 
     <section class="dashboard-grid">
@@ -139,14 +138,10 @@ const chartBars = computed<number[]>(() => {
         <SpeedSparkline kind="download" title="下载" :value="down.value" :unit="down.unit" ceiling="2.1 MB/s" middle="1.0 MB/s" :series="traffic.downloadSeries" />
       </div>
 
-      <SurfaceCard class="connections-card connections-link" role="button" tabindex="0" aria-label="查看活动连接" @click="router.push('/connections')" @keydown.enter="router.push('/connections')" @keydown.space.prevent="router.push('/connections')">
-        <span class="metric-label">活动连接<span v-if="connStateLabel" class="stream-state">{{ connStateLabel }}</span></span><i :class="connDotClass" />
-        <div class="large-metric">{{ activeCount }}</div>
-        <div class="connection-breakdown">
-          <div><strong>{{ processCount }}</strong><span>进程</span></div>
-          <div><strong>{{ deviceCount }}</strong><span>设备</span></div>
-          <div><strong>—</strong><span>DHCP 设备</span></div>
-        </div>
+      <SurfaceCard class="connections-card">
+        <div class="card-title-row"><span class="metric-label">活动连接<span v-if="connStateLabel" class="stream-state">{{ connStateLabel }}</span></span><i :class="connDotClass" /></div>
+        <button type="button" class="connections-summary-link" @click="router.push('/connections')"><strong>{{ activeCount }}</strong><span>查看连接</span><AppIcon name="next" :size="15" /></button>
+        <button type="button" class="topology-inline" @click="summaryDrawer = 'topology'"><AppIcon name="connections" :size="16" /><span><strong>活动拓扑</strong><small>{{ processCount }} 个进程 · {{ activeCount }} 条连接</small></span><AppIcon name="next" :size="14" /></button>
       </SurfaceCard>
 
       <SurfaceCard class="traffic-card">
@@ -169,14 +164,9 @@ const chartBars = computed<number[]>(() => {
         <div class="card-title-row"><span class="metric-label">总计</span><div class="segmented" role="group" aria-label="总计时间范围"><button type="button" :class="{ selected: totalScope === 'current' }" :aria-pressed="totalScope === 'current'" @click="totalScope = 'current'">当前</button><button type="button" :class="{ selected: totalScope === 'history' }" :aria-pressed="totalScope === 'history'" @click="totalScope = 'history'">历史</button></div></div>
         <div class="large-metric">{{ total.value }}<span>{{ total.unit }}</span></div>
         <div class="total-labels"><div><span>DIRECT</span><strong>{{ direct.value }} {{ direct.unit }}</strong></div><div><span>代理</span><strong>{{ proxy.value }} {{ proxy.unit }}</strong></div></div>
-        <div class="total-bar"><i :style="{ width: `${directPct}%` }" /><i :style="{ width: `${100 - directPct}%` }" /></div>
+        <button type="button" class="total-bar total-history-link" aria-label="查看用量历史" @click="summaryDrawer = 'usage'"><i :style="{ width: `${directPct}%` }" /><i :style="{ width: `${100 - directPct}%` }" /></button>
       </SurfaceCard>
 
-    </section>
-    <section class="activity-entry-grid" aria-label="活动详情入口">
-      <button type="button" class="surface-card activity-entry" @click="summaryDrawer = 'network'"><AppIcon name="network" /><span><strong>网络信息</strong><small>{{ externalIpText }}</small></span><AppIcon name="next" :size="15" /></button>
-      <button type="button" class="surface-card activity-entry" @click="summaryDrawer = 'usage'"><AppIcon name="activity" /><span><strong>用量历史</strong><small>{{ total.value }} {{ total.unit }}</small></span><AppIcon name="next" :size="15" /></button>
-      <button type="button" class="surface-card activity-entry" @click="summaryDrawer = 'topology'"><AppIcon name="connections" /><span><strong>连接拓扑</strong><small>{{ activeCount }} 个活动连接</small></span><AppIcon name="next" :size="15" /></button>
     </section>
     <DetailDrawer :open="Boolean(summaryDrawer)" :title="summaryDrawer === 'network' ? '网络信息' : summaryDrawer === 'usage' ? '用量历史' : '连接拓扑'" subtitle="活动页的扩展信息，不改变主仪表盘布局" @close="summaryDrawer = null"><NetworkMetadataPanel v-if="summaryDrawer === 'network'" /><UsageHistoryPanel v-else-if="summaryDrawer === 'usage'" /><TopologyPanel v-else-if="summaryDrawer === 'topology'" /></DetailDrawer>
   </div>

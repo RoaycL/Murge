@@ -233,6 +233,22 @@ describe('connections store', () => {
     store.disconnect()
   })
 
+  it('moves vanished connections into the bounded closed view', () => {
+    const store = useConnectionsStore()
+    mihomo.getConnections.mockResolvedValue(snapshot)
+    store.connect()
+    emitConnections(store, snapshot)
+    emitConnections(store, { ...snapshot, connections: snapshot.connections.filter((item) => item.id !== 'c2') })
+    expect(store.closedConnections.map((item) => item.id)).toContain('c2')
+    store.setView('closed')
+    expect(store.visibleConnections.map((item) => item.id)).toEqual(['c2'])
+    store.select('c2')
+    expect(store.selectedConnection?.closedAt).toBeTruthy()
+    store.clearClosed()
+    expect(store.closedConnections).toEqual([])
+    store.disconnect()
+  })
+
   it('sorts connections without mutating the controller snapshot', () => {
     const store = useConnectionsStore()
     mihomo.getConnections.mockResolvedValue(snapshot)

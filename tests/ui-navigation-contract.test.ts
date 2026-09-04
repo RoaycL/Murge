@@ -25,7 +25,7 @@ describe('Surge-inspired UI navigation contract', () => {
       expect(source).not.toContain('list-detail-grid')
     }
     const css = read('src/renderer/src/styles/base.css')
-    expect(css).toMatch(/\.detail-drawer\{[^}]*width:360px/)
+    expect(css).toMatch(/\.detail-drawer\{[^}]*width:min\(372px,calc\(100vw - 40px\)\)/)
   })
 
   it('keeps runtime settings out of the profile page surface', () => {

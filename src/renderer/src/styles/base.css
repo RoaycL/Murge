@@ -39,10 +39,12 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .runtime-context .runtime-detail-link{display:grid;grid-template-columns:1fr auto;grid-template-rows:auto auto;min-width:0;padding:0;border:0;background:transparent;color:inherit;text-align:left}.runtime-detail-link span{grid-column:1}.runtime-detail-link strong{grid-column:1}.runtime-detail-link svg{grid-column:2;grid-row:1 / 3;align-self:center;color:var(--app-muted)}
 .runtime-context span, .metric-label { color: var(--app-muted); font-size: 11px; }
 .runtime-context strong { margin-top: 3px; font-size: 16px; line-height: 19px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 完全流式仪表盘：两列等分弹性轨道，行高固定以保持卡片比例；窗口缩小时
-   通过下方媒体查询降级为单列。 */
-.dashboard-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: 166px 165px 165px; gap: 15px; width: 100%; }
-.latency-card { padding: 15px 16px 13px; }
+/* 完全流式仪表盘：两列等分弹性轨道。所有者要求卡片按比例而非固定行高——
+   正方形卡片恒 1:1（见下方 aspect-ratio），长方形卡片（速率、流量）恒 2:1。
+   两行正方形卡片自然叠出与跨行流量卡一致的总高。 */
+.dashboard-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: auto; gap: 15px; width: 100%; }
+/* 正方形模块：恒 1:1。 */
+.latency-card { aspect-ratio: 1 / 1; padding: 15px 16px 13px; overflow: hidden; }
 .quiet-button { float: right; width: 100px; height: 28px; margin-top: -5px; border: 1px solid var(--app-divider); border-radius: 6px; background: transparent; font-size: 12px; cursor: pointer; }
 .large-metric { margin-top: 5px; font-size: 34px; line-height: 37px; font-weight: 650; }
 .large-metric span, .speed-value span { margin-left: 3px; font-size: 13px; font-weight: 500; }
@@ -51,8 +53,9 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .latency-breakdown div:first-child { padding-left: 0; border-left: 0; }
 .latency-breakdown span { display: block; color: var(--app-muted); font-size: 11px; }
 .latency-breakdown strong { display: block; margin-top: 4px; font-size: 15px; font-weight: 650; }
-.speed-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
-.speed-card { position: relative; padding: 16px 14px; }
+.speed-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; min-width: 0; }
+/* 长方形模块：每张速率卡恒 2:1（宽:高）。 */
+.speed-card { position: relative; aspect-ratio: 2 / 1; min-width: 0; padding: 16px 14px; overflow: hidden; }
 .speed-value { margin-top: 5px; font-size: 34px; line-height: 37px; font-weight: 650; }
 .speed-scale { position: absolute; right: 8px; color: var(--app-faint); font-size: 10px; }
 .speed-scale-top { top: 18px; }
@@ -63,7 +66,8 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .spark-download { stroke: var(--app-cyan); }
 .spark-upload-area { fill: rgba(102, 82, 237, 0.09); }
 .spark-download-area { fill: rgba(25, 189, 214, 0.1); }
-.connections-card { padding: 16px; }
+/* 正方形模块：恒 1:1。 */
+.connections-card { aspect-ratio: 1 / 1; padding: 16px; overflow: hidden; }
 .connections-summary-link{display:grid;grid-template-columns:auto 1fr auto;align-items:baseline;gap:8px;width:100%;margin-top:8px;padding:0;border:0;background:transparent;color:inherit;text-align:left}.connections-summary-link>strong{font-size:36px;line-height:42px}.connections-summary-link>span{color:var(--app-muted);font-size:10px}.connections-summary-link>svg{align-self:center;color:var(--app-muted)}
 .topology-inline{display:grid;grid-template-columns:28px 1fr auto;align-items:center;gap:8px;width:100%;min-height:52px;margin-top:13px;padding:7px 9px;border:1px solid var(--app-divider);border-radius:9px;background:rgba(127,127,127,.06);color:inherit;text-align:left}.topology-inline>svg:first-child{color:var(--app-blue)}.topology-inline span{display:flex;flex-direction:column}.topology-inline strong{font-size:11px}.topology-inline small{margin-top:3px;color:var(--app-muted);font-size:9px}
 .connections-link { cursor: pointer; }
@@ -74,7 +78,8 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .connection-breakdown div:first-child { padding-left: 0; border-left: 0; }
 .connection-breakdown strong { font-size: 24px; line-height: 25px; font-weight: 650; }
 .connection-breakdown span { margin-top: 4px; color: var(--app-muted); font-size: 11px; }
-.traffic-card { grid-column: 2; grid-row: 2 / span 2; padding: 15px 16px; min-width: 0; }
+/* 长方形模块（跨两行）：恒 2:1，与左侧两张叠放的 1:1 卡片总高一致。 */
+.traffic-card { grid-column: 2; grid-row: 2 / span 2; aspect-ratio: 2 / 1; padding: 15px 16px; min-width: 0; overflow: hidden; }
 .card-title-row { display: flex; justify-content: space-between; align-items: center; }
 .segmented { display: flex; padding: 2px; border-radius: var(--radius-control); background: rgba(127, 127, 127, 0.13); }
 .segmented button { width: 64px; height: 20px; padding: 0; border: 0; border-radius: 5px; background: transparent; font-size: 11px; cursor: pointer; }
@@ -92,7 +97,8 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .rank-row > div > i { display: block; width: 44px; height: 3px; margin-top: 4px; border-radius: 2px; background: rgba(127, 127, 127, 0.15); overflow: hidden; }
 .rank-row > div > i > b { display: block; height: 100%; background: #aeb3bc; }
 .rank-row > strong { font-weight: 400; }
-.total-card { padding: 15px 16px; }
+/* 正方形模块：恒 1:1。 */
+.total-card { aspect-ratio: 1 / 1; padding: 15px 16px; overflow: hidden; }
 .total-card .large-metric { margin-top: 2px; }
 .total-labels { display: grid; grid-template-columns: 1fr 1fr; margin-top: 4px; }
 .total-labels div { display: flex; flex-direction: column; }
@@ -296,9 +302,11 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .activity-entry > svg { color:var(--app-purple); }.activity-entry strong,.activity-entry small{display:block}.activity-entry strong{font-size:12px}.activity-entry small{margin-top:3px;color:var(--app-muted);font-size:9px}
 .feature-page { width:100%; padding-bottom:30px; }.feature-header{display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:22px}.feature-header p{margin:3px 0 0;color:var(--app-muted);font-size:11px}.feature-header>svg{color:var(--app-purple)}
 .resource-page-groups{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));gap:15px;width:100%;margin-bottom:18px}.resource-page-card{padding:14px}.resource-page-card h2{margin:0 0 8px;font-size:13px}.resource-page-card h2 small{color:var(--app-muted)}.resource-page-card>p,.inline-note{color:var(--app-muted);font-size:11px}.resource-page-row{display:flex;align-items:center;justify-content:space-between;min-height:45px;border-top:1px solid var(--app-divider)}.resource-page-row strong,.resource-page-row small{display:block}.resource-page-row strong{font-size:11px}.resource-page-row small{margin-top:3px;color:var(--app-muted);font-size:9px}
-.detail-drawer-shade{position:fixed;z-index:50;inset:0 0 0 var(--sidebar-width);border:0;background:rgba(12,14,19,.18)}
-.detail-drawer{position:fixed;z-index:51;top:0;right:0;bottom:0;width:360px;padding:20px;border-left:1px solid var(--app-divider);color:var(--app-text);background:linear-gradient(135deg,var(--app-background-start),var(--app-background-end));box-shadow:-18px 0 40px rgba(17,22,31,.17)}
-.detail-drawer-header{display:flex;align-items:flex-start;justify-content:space-between;padding-top:22px}.detail-drawer-header h2{margin:0;font-size:20px}.detail-drawer-header p{margin:4px 0 0;color:var(--app-muted);font-size:10px}.detail-drawer-body{height:calc(100% - 110px);margin-top:18px;overflow:auto}.detail-drawer-footer{position:absolute;left:20px;right:20px;bottom:18px;display:flex;gap:8px}.drawer-detail{padding:0;border:0;background:transparent;box-shadow:none}.drawer-detail header{padding-top:0}.drawer-slide-enter-active,.drawer-slide-leave-active,.drawer-fade-enter-active,.drawer-fade-leave-active{transition:.18s ease}.drawer-slide-enter-from,.drawer-slide-leave-to{transform:translateX(100%)}.drawer-fade-enter-from,.drawer-fade-leave-to{opacity:0}
+/* 抽屉层级强化（所有者要求）：遮罩加深并加背景模糊，抽屉本身浮起为圆角
+   面板（与窗口边缘留出间隙），阴影加重，使其在视觉上明确浮于主页之上。 */
+.detail-drawer-shade{position:fixed;z-index:50;inset:0;border:0;background:rgba(10,13,19,.42);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
+.detail-drawer{position:fixed;z-index:51;top:12px;right:12px;bottom:12px;width:min(372px,calc(100vw - 40px));padding:20px;border:1px solid var(--app-divider);border-radius:var(--radius-large);color:var(--app-text);background:var(--app-surface-solid);box-shadow:-24px 0 64px rgba(0,0,0,.34),0 8px 28px rgba(0,0,0,.2)}
+.detail-drawer-header{display:flex;align-items:flex-start;justify-content:space-between;padding-top:6px}.detail-drawer-header h2{margin:0;font-size:20px}.detail-drawer-header p{margin:4px 0 0;color:var(--app-muted);font-size:10px}.detail-drawer-body{height:calc(100% - 110px);margin-top:18px;overflow:auto}.detail-drawer-footer{position:absolute;left:20px;right:20px;bottom:18px;display:flex;gap:8px}.drawer-detail{padding:0;border:0;background:transparent;box-shadow:none}.drawer-detail header{padding-top:0}.drawer-slide-enter-active,.drawer-slide-leave-active,.drawer-fade-enter-active,.drawer-fade-leave-active{transition:.18s ease}.drawer-slide-enter-from,.drawer-slide-leave-to{transform:translateX(100%)}.drawer-fade-enter-from,.drawer-fade-leave-to{opacity:0}
 .modal-shade{position:fixed;z-index:70;inset:0;display:grid;place-items:center;background:rgba(9,11,15,.42)}.confirm-modal{width:min(420px,calc(100vw - 48px));padding:20px;border:1px solid var(--app-divider);border-radius:16px;color:var(--app-text);background:var(--app-surface-solid);box-shadow:0 22px 70px rgba(0,0,0,.28)}.confirm-modal header,.confirm-modal footer{display:flex;align-items:center;justify-content:space-between}.confirm-modal h2{margin:0;font-size:19px}.confirm-modal p{margin:14px 0 20px;color:var(--app-muted);font-size:11px;line-height:1.5}.confirm-modal footer{justify-content:flex-end;gap:8px}
 
 /* 完全流式布局（2026 年调整，替代原“固定卡片 + 留白”策略）：

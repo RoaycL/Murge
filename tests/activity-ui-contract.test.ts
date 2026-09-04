@@ -18,10 +18,16 @@ describe('Activity fluid-layout UI contract', () => {
     expect(tokens).toMatch(/--sidebar-width:\s*205px/)
     expect(css).toMatch(/\.app-window\s*\{[^}]*height:\s*100%;\s*overflow:\s*hidden;/)
     expect(css).not.toMatch(/\.app-window\s*\{[^}]*padding:/)
-    // 完全流式仪表盘：弹性列 + 规范行高 + 居中内容壳，禁止回到写死列宽。
+    // 完全流式仪表盘：弹性列 + 居中内容壳，禁止回到写死列宽。
     expect(css).toMatch(/\.dashboard-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/)
-    expect(css).toMatch(/\.dashboard-grid\s*\{[^}]*grid-template-rows:\s*166px 165px 165px/)
     expect(css).toMatch(/\.dashboard-grid\s*\{[^}]*width:\s*100%/)
+    // 所有者要求：正方形卡片恒 1:1、长方形卡片恒 2:1（aspect-ratio 锁定，
+    // 禁止回到固定行高）。速率卡为 2:1 长方形，流量卡跨两行同为 2:1。
+    expect(css).toMatch(/\.latency-card\s*\{[^}]*aspect-ratio:\s*1 \/ 1/)
+    expect(css).toMatch(/\.connections-card\s*\{[^}]*aspect-ratio:\s*1 \/ 1/)
+    expect(css).toMatch(/\.total-card\s*\{[^}]*aspect-ratio:\s*1 \/ 1/)
+    expect(css).toMatch(/\.speed-card\s*\{[^}]*aspect-ratio:\s*2 \/ 1/)
+    expect(css).toMatch(/\.traffic-card\s*\{[^}]*aspect-ratio:\s*2 \/ 1/)
     expect(css).toMatch(/\.page-shell\s*\{[^}]*max-width:\s*var\(--content-max-width\)/)
     expect(css).toMatch(/\.page-shell\s*\{[^}]*margin:\s*0 auto/)
     // 所有者要求：任何宽度下都保持规范的双列仪表盘，不做单列降级。

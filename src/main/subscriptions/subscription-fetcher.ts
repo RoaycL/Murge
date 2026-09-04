@@ -32,7 +32,7 @@ export interface FetchResponseLike {
  */
 export type FetchFn = (
   url: string,
-  init?: { signal?: AbortSignal; redirect?: 'manual' | 'follow' }
+  init?: { signal?: AbortSignal; redirect?: 'manual' | 'follow'; headers?: Record<string, string> }
 ) => Promise<FetchResponseLike>
 
 export interface FetchSubscriptionResult {
@@ -67,6 +67,10 @@ const DEFAULT_MAX_BYTES = 2 * 1024 * 1024
 const DEFAULT_MAX_REDIRECTS = 5
 const DEFAULT_TIMEOUT_MS = 30000
 const TRUSTED_FAKE_IP_HOSTS = new Set(['gist.githubusercontent.com', 'raw.githubusercontent.com'])
+const SUBSCRIPTION_REQUEST_HEADERS = {
+  'User-Agent': 'ClashforWindows/0.20.39',
+  Accept: 'application/x-yaml,text/yaml,text/plain,application/octet-stream,*/*'
+} as const
 
 /** Check if an IP address is private/internal (SSRF protection). */
 function isPrivateOrInternalHost(host: string): boolean {
@@ -323,10 +327,11 @@ export class SubscriptionFetcher {
     // bypass the SSRF checks entirely).
     this.fetchFn =
       options.fetchFn ??
-      (async (url: string, init?: { signal?: AbortSignal; redirect?: 'manual' | 'follow' }) => {
+      (async (url: string, init?: { signal?: AbortSignal; redirect?: 'manual' | 'follow'; headers?: Record<string, string> }) => {
         const res = await fetch(url, {
           signal: init?.signal,
-          redirect: init?.redirect ?? 'manual'
+          redirect: init?.redirect ?? 'manual',
+          headers: init?.headers
         })
         return {
           ok: res.ok,
@@ -435,7 +440,11 @@ export class SubscriptionFetcher {
         await this.validateUrl(currentUrl)
         
         // Use manual redirect mode to detect 3xx responses
-        response = await this.fetchFn(currentUrl, { signal, redirect: 'manual' })
+        response = await this.fetchFn(currentUrl, {
+          signal,
+          redirect: 'manual',
+          headers: SUBSCRIPTION_REQUEST_HEADERS
+        })
         
         // Handle redirects manually with validation
         if (response.status >= 300 && response.status < 400 && response.headers?.has('location')) {

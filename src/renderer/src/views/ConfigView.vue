@@ -104,9 +104,9 @@ async function importFromUrl(): Promise<void> {
     // An empty name lets the main process derive one from the subscription
     // itself (Content-Disposition filename, then URL host). NEVER the raw URL:
     // its path can carry a token and would render as an overlong profile name.
-    await profilesStore.importFromUrl(importName.value.trim(), url.value.trim(), false)
+    await profilesStore.importFromUrl(importName.value.trim(), url.value.trim(), true)
     showAddDialog.value = false
-    toast.success('远程配置已添加', '配置已保存，尚未启用')
+    toast.success('远程配置已添加', '配置已启用并加载')
   } catch {
     toast.error('远程配置导入失败', profilesStore.lastError ?? undefined)
   } finally {
@@ -139,12 +139,12 @@ async function importLocalFile(): Promise<void> {
       name: importName.value.trim() || fallbackName,
       document: raw,
       source: { type: 'file', path: file.name },
-      activate: false
+      activate: true
     })
     localFile.value = null
     if (localFileInput.value) localFileInput.value.value = ''
     showAddDialog.value = false
-    toast.success('本地配置已添加', '配置已保存，尚未启用')
+    toast.success('本地配置已添加', '配置已启用并加载')
   } catch {
     toast.error('本地配置导入失败', profilesStore.lastError ?? undefined)
   } finally {
@@ -160,12 +160,12 @@ async function importManual(): Promise<void> {
       name: importName.value.trim() || '手动配置',
       document: document.value,
       source: { type: 'manual' },
-      activate: false
+      activate: true
     })
     document.value = ''
     validation.value = null
     showAddDialog.value = false
-    toast.success('手动配置已添加', '配置已保存，尚未启用')
+    toast.success('手动配置已添加', '配置已启用并加载')
   } catch {
     toast.error('手动配置导入失败', profilesStore.lastError ?? undefined)
   } finally {
@@ -358,7 +358,7 @@ function ruleProviderMeta(
     <Teleport to="body">
       <div v-if="showAddDialog" class="modal-shade" @click.self="showAddDialog = false">
         <section class="profile-import-modal" role="dialog" aria-modal="true" aria-label="添加配置">
-          <header><div><h2>添加配置</h2><p>导入后先保存到配置库，不会自动切换当前运行配置。</p></div><button type="button" class="icon-control" aria-label="关闭" @click="showAddDialog = false"><AppIcon name="close" /></button></header>
+          <header><div><h2>添加配置</h2><p>导入后会立即设为当前配置，并加载到运行内核。</p></div><button type="button" class="icon-control" aria-label="关闭" @click="showAddDialog = false"><AppIcon name="close" /></button></header>
           <div class="profile-source-tabs" role="tablist"><button type="button" :class="{ selected: importSource === 'url' }" @click="importSource = 'url'"><AppIcon name="resources" :size="16" />远程 URL</button><button type="button" :class="{ selected: importSource === 'file' }" @click="importSource = 'file'"><AppIcon name="profiles" :size="16" />本地文件</button><button type="button" :class="{ selected: importSource === 'manual' }" @click="importSource = 'manual'"><AppIcon name="code" :size="16" />手动编辑</button></div>
           <label class="modal-field"><span>显示名称</span><input v-model="importName" class="field" aria-label="配置显示名称" placeholder="可选，留空时自动生成" /></label>
           <template v-if="importSource === 'url'"><label class="modal-field"><span>订阅地址</span><div class="field-with-action"><input ref="urlInput" v-model="url" class="field" aria-label="订阅地址" placeholder="https://example.com/subscription" @keyup.enter="importFromUrl" /><button type="button" class="icon-control" aria-label="粘贴订阅地址" @click="pasteUrl"><AppIcon name="clipboard" :size="16" /></button></div></label><label class="modal-field"><span>拉取方式</span><AppSelect v-model="proxyMode" :options="[{ value: 'direct', label: '直连' }, { value: 'system', label: '系统代理' }]" label="订阅拉取方式" /></label></template>

@@ -336,8 +336,22 @@ export class SystemProxyService implements SystemProxyGateway {
 
       const observed = await this.adapter.read()
       if (!isOwned(observed, backup.written)) {
-        const detail = conflictDetail(observed, backup.written)
-        return this.fail('conflict', ProtocolErrorCode.SYSTEM_PROXY_STATE_CONFLICT, CONFLICT_MSG, detail)
+        // Same ownership classification as `enable`: a registry degraded INSIDE
+        // our envelope (our server value with ProxyEnable flipped off or
+        // ProxyOverride edited — or already back at the pre-enable snapshot) is
+        // still OUR state; disabling restores the true pre-enable values. Only
+        // a different proxy server (another tool's takeover) is a conflict —
+        // and even then `disable` must never fail-closed into a dead-end here:
+        // restoreBeforeKernelUnavailable treats the same shape as safe because
+        // the proxy is not ours, so surface the conflict but keep the machine
+        // restorable (see the stale-bundle tests).
+        const serverStillOurs =
+          typeof observed.proxyServer.value === 'string' &&
+          observed.proxyServer.value === buildProxyServerValue(backup.target)
+        if (!serverStillOurs && !matchesPrevious(observed, backup.previous)) {
+          const detail = conflictDetail(observed, backup.written)
+          return this.fail('conflict', ProtocolErrorCode.SYSTEM_PROXY_STATE_CONFLICT, CONFLICT_MSG, detail)
+        }
       }
 
       this.transition('restoring')

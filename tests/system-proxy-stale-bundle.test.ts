@@ -115,6 +115,33 @@ describe('enable() recovers from a stale OWNED bundle (BUG-REVIEW #2 follow-up)'
     expect(observed.proxyServer.value).toContain(`http=${TARGET.host}:${TARGET.port}`)
   })
 
+  it('disable() restores a same-target bundle whose ProxyEnable was flipped off', async () => {
+    const { service, adapter, backup } = makeService()
+    await service.enable()
+    const bundle = await backup.read()
+    adapter.mutate({ proxyEnable: { exists: true, type: 'REG_DWORD', value: 0 } })
+    await backup.write(bundle!)
+
+    const result = await service.disable()
+    expect(result.phase).toBe('disabled')
+    const observed = await adapter.read()
+    expect(observed.proxyEnable).toEqual(bundle!.previous.proxyEnable) // pre-enable snapshot
+    expect(await backup.read()).toBeNull() // bundle consumed
+  })
+
+  it('disable() restores an override degraded inside our envelope', async () => {
+    const { service, adapter, backup } = makeService()
+    await service.enable()
+    const bundle = await backup.read()
+    adapter.mutate({ proxyOverride: { exists: true, type: 'REG_SZ', value: '<local>;*.drifted' } })
+    await backup.write(bundle!)
+
+    const result = await service.disable()
+    expect(result.phase).toBe('disabled')
+    const observed = await adapter.read()
+    expect(observed.proxyOverride.value).toBe(bundle!.previous.proxyOverride.value)
+  })
+
   it('a genuinely external server edit still fails closed (conflict)', async () => {
     const { service, adapter, backup } = makeService()
     await service.enable()

@@ -21,10 +21,12 @@ const urlInput = ref<HTMLInputElement | null>(null)
 const importing = ref(false)
 const validation = ref<ValidationResult | null>(null)
 const proxyMode = ref<'direct' | 'system'>('direct')
-const showFilePanel = ref(false)
-const showManualPanel = ref(false)
+const showAddDialog = ref(false)
+const importSource = ref<'url' | 'file' | 'manual'>('url')
 const selectedProfileId = ref<string | null>(null)
 const pendingDeleteId = ref<string | null>(null)
+const pendingRenameId = ref<string | null>(null)
+const renameValue = ref('')
 
 const menuAnchor = ref<{ id: string; top: number; left: number } | null>(null)
 const refreshingAll = ref(false)
@@ -89,7 +91,8 @@ async function importFromUrl(): Promise<void> {
   if (!url.value.trim()) return
   importing.value = true
   try {
-    await profilesStore.importFromUrl(importName.value.trim() || url.value.trim(), url.value.trim(), true)
+    await profilesStore.importFromUrl(importName.value.trim() || url.value.trim(), url.value.trim(), false)
+    showAddDialog.value = false
   } finally {
     importing.value = false
   }
@@ -120,10 +123,11 @@ async function importLocalFile(): Promise<void> {
       name: importName.value.trim() || fallbackName,
       document: raw,
       source: { type: 'file', path: file.name },
-      activate: true
+      activate: false
     })
     localFile.value = null
     if (localFileInput.value) localFileInput.value.value = ''
+    showAddDialog.value = false
   } finally {
     importing.value = false
   }
@@ -137,10 +141,11 @@ async function importManual(): Promise<void> {
       name: importName.value.trim() || '手动配置',
       document: document.value,
       source: { type: 'manual' },
-      activate: true
+      activate: false
     })
     document.value = ''
     validation.value = null
+    showAddDialog.value = false
   } finally {
     importing.value = false
   }
@@ -181,17 +186,24 @@ async function confirmRemove(): Promise<void> {
   pendingDeleteId.value = null
 }
 
-async function rename(id: string): Promise<void> {
+function openRename(id: string): void {
   const meta = profilesStore.profiles.find((entry) => entry.id === id)
-  const next = prompt('重命名配置文件', meta?.name ?? '')
-  if (next && next.trim()) {
-    try {
-      await profilesStore.rename(id, next.trim())
-    } catch {
-      /* store surfaces the failure */
-    }
-  }
+  if (!meta) return
+  pendingRenameId.value = id
+  renameValue.value = meta.name
   closeMenu()
+}
+
+async function confirmRename(): Promise<void> {
+  const id = pendingRenameId.value
+  const name = renameValue.value.trim()
+  if (!id || !name) return
+  try {
+    await profilesStore.rename(id, name)
+    pendingRenameId.value = null
+  } catch {
+    /* store surfaces the failure */
+  }
 }
 
 async function refreshAllResources(): Promise<void> {
@@ -262,88 +274,26 @@ function ruleProviderMeta(
 <template>
   <div class="page-shell config-view">
     <header class="config-header">
-      <h1>配置文件</h1>
-      <p class="config-subtitle">
-        共 {{ profilesStore.ordered.length }} 个配置<template v-if="activeCount"> · 使用中 {{ activeCount }}</template>
-      </p>
+      <div><h1>配置文件</h1><p class="config-subtitle">共 {{ profilesStore.ordered.length }} 个配置<template v-if="activeCount"> · 使用中 {{ activeCount }}</template></p></div>
+      <button type="button" class="primary-button add-profile-button" @click="showAddDialog = true"><AppIcon name="add-file" :size="16" />添加配置</button>
     </header>
 
     <p v-if="profilesStore.lastError" class="inline-error" role="alert">{{ profilesStore.lastError }}</p>
 
-    <section class="import-bar" aria-label="导入订阅">
-      <input
-        ref="urlInput"
-        v-model="url"
-        class="url-field"
-        aria-label="订阅地址"
-        placeholder="请输入您的订阅网址"
-        @keyup.enter="importFromUrl"
-      />
-      <button type="button" class="icon-button" aria-label="粘贴订阅地址" title="粘贴" @click="pasteUrl"><AppIcon name="clipboard" :size="17" /></button>
-      <select v-model="proxyMode" class="proxy-select" aria-label="拉取方式">
-        <option value="direct">直连</option>
-        <option value="system">系统代理</option>
-      </select>
-      <button type="button" class="import-button" :disabled="importing || !url.trim()" @click="importFromUrl">
-        导入
-      </button>
-      <button
-        type="button"
-        class="icon-button"
-        aria-label="导入本地配置文件"
-        title="本地文件"
-        :class="{ active: showFilePanel }"
-        @click="showFilePanel = !showFilePanel"
-      ><AppIcon name="profiles" :size="17" /></button>
-      <button
-        type="button"
-        class="icon-button"
-        aria-label="手动导入配置"
-        title="手动导入"
-        :class="{ active: showManualPanel }"
-        @click="showManualPanel = !showManualPanel"
-      ><AppIcon name="add-file" :size="17" /></button>
-    </section>
-    <p v-if="proxyMode === 'system'" class="import-note">订阅暂由系统直连拉取，系统代理方式即将支持。</p>
-
-    <section v-if="showFilePanel" class="import-panel">
-      <input
-        ref="localFileInput"
-        class="file-input"
-        type="file"
-        accept=".yaml,.yml,text/yaml,application/yaml"
-        aria-label="选择本地 mihomo 配置文件"
-        @change="selectLocalFile"
-      />
-      <div class="import-row">
-        <span v-if="localFile" class="local-file-name">{{ localFile.name }}</span>
-        <button type="button" class="panel-button" :disabled="importing || !localFile" @click="importLocalFile">
-          导入并启用
-        </button>
-        <button type="button" class="panel-button ghost" @click="showFilePanel = false">关闭</button>
+    <Teleport to="body">
+      <div v-if="showAddDialog" class="modal-shade" @click.self="showAddDialog = false">
+        <section class="profile-import-modal" role="dialog" aria-modal="true" aria-label="添加配置">
+          <header><div><h2>添加配置</h2><p>导入后先保存到配置库，不会自动切换当前运行配置。</p></div><button type="button" class="icon-control" aria-label="关闭" @click="showAddDialog = false"><AppIcon name="close" /></button></header>
+          <div class="profile-source-tabs" role="tablist"><button type="button" :class="{ selected: importSource === 'url' }" @click="importSource = 'url'"><AppIcon name="resources" :size="16" />远程 URL</button><button type="button" :class="{ selected: importSource === 'file' }" @click="importSource = 'file'"><AppIcon name="profiles" :size="16" />本地文件</button><button type="button" :class="{ selected: importSource === 'manual' }" @click="importSource = 'manual'"><AppIcon name="code" :size="16" />手动编辑</button></div>
+          <label class="modal-field"><span>显示名称</span><input v-model="importName" class="field" aria-label="配置显示名称" placeholder="可选，留空时自动生成" /></label>
+          <template v-if="importSource === 'url'"><label class="modal-field"><span>订阅地址</span><div class="field-with-action"><input ref="urlInput" v-model="url" class="field" aria-label="订阅地址" placeholder="https://example.com/subscription" @keyup.enter="importFromUrl" /><button type="button" class="icon-control" aria-label="粘贴订阅地址" @click="pasteUrl"><AppIcon name="clipboard" :size="16" /></button></div></label><label class="modal-field"><span>拉取方式</span><select v-model="proxyMode" class="field" aria-label="订阅拉取方式"><option value="direct">直连</option><option value="system">系统代理</option></select></label></template>
+          <label v-else-if="importSource === 'file'" class="modal-field"><span>本地 mihomo 配置</span><input ref="localFileInput" class="field file-input" type="file" accept=".yaml,.yml,text/yaml,application/yaml" aria-label="本地 mihomo 配置文件" @change="selectLocalFile" /></label>
+          <label v-else class="modal-field"><span>配置 YAML</span><textarea v-model="document" class="field document" aria-label="mihomo 配置 YAML" spellcheck="false" placeholder="粘贴 mihomo 配置 YAML…" /></label>
+          <p v-if="validation && !validation.ok" class="inline-error" role="alert">{{ validation.issues.map((issue) => issue.message).join('；') }}</p><p v-else-if="validation?.ok" class="inline-ok">配置有效</p>
+          <footer><button type="button" class="secondary-button" @click="showAddDialog = false">取消</button><button v-if="importSource === 'manual'" type="button" class="secondary-button" :disabled="!document.trim()" @click="previewValidation">校验</button><button type="button" class="primary-button" :disabled="importing || (importSource === 'url' ? !url.trim() : importSource === 'file' ? !localFile : !document.trim())" @click="importSource === 'url' ? importFromUrl() : importSource === 'file' ? importLocalFile() : importManual()">{{ importing ? '导入中…' : '验证并添加' }}</button></footer>
+        </section>
       </div>
-    </section>
-
-    <section v-if="showManualPanel" class="import-panel">
-      <textarea
-        v-model="document"
-        class="field document"
-        spellcheck="false"
-        aria-label="mihomo 配置 YAML"
-        placeholder="粘贴 mihomo 配置 YAML…"
-      />
-      <div class="import-row">
-        <button type="button" class="panel-button" @click="previewValidation">校验</button>
-        <button type="button" class="panel-button" :disabled="importing || !document.trim()" @click="importManual">
-          导入并启用
-        </button>
-        <button type="button" class="panel-button ghost" @click="showManualPanel = false">关闭</button>
-      </div>
-      <p v-if="validation && !validation.ok" class="inline-error" role="alert">
-        {{ validation.issues.map((issue) => issue.message).join('；') }}
-      </p>
-      <p v-else-if="validation?.ok" class="inline-ok" aria-live="polite">配置有效</p>
-    </section>
+    </Teleport>
 
     <div v-if="profilesStore.status === 'loading' || profilesStore.status === 'idle'" class="empty-state">
       <p>正在加载配置…</p>
@@ -397,7 +347,7 @@ function ruleProviderMeta(
       <template v-for="meta in profilesStore.ordered" :key="meta.id">
         <template v-if="meta.id === menuAnchor.id">
           <button v-if="!meta.active" type="button" role="menuitem" @click="activate(meta.id); closeMenu()">使用</button>
-          <button type="button" role="menuitem" @click="rename(meta.id)">重命名</button>
+          <button type="button" role="menuitem" @click="openRename(meta.id)">重命名</button>
           <button type="button" role="menuitem" class="danger" @click="pendingDeleteId = meta.id; closeMenu()">删除</button>
         </template>
       </template>
@@ -408,6 +358,7 @@ function ruleProviderMeta(
       <template #footer><button type="button" class="danger-button" :disabled="selectedProfile?.active" @click="selectedProfile && (pendingDeleteId = selectedProfile.id)"><AppIcon name="delete" :size="15" />删除</button><button type="button" class="primary-button" :disabled="selectedProfile?.active" @click="selectedProfile && activate(selectedProfile.id)">{{ selectedProfile?.active ? '正在使用' : '使用此配置' }}</button></template>
     </DetailDrawer>
     <ConfirmModal :open="Boolean(pendingDeleteId)" title="删除此配置？" description="这会移除本地配置记录；当前正在使用的配置不能删除，远程订阅源不会受到影响。" @close="pendingDeleteId = null" @confirm="confirmRemove" />
+    <Teleport to="body"><div v-if="pendingRenameId" class="modal-shade" @click.self="pendingRenameId = null"><section class="rename-modal" role="dialog" aria-modal="true" aria-label="重命名配置"><header><h2>重命名配置</h2><button type="button" class="icon-control" aria-label="关闭" @click="pendingRenameId = null"><AppIcon name="close" /></button></header><input v-model="renameValue" class="field" autofocus aria-label="配置名称" @keyup.enter="confirmRename" /><footer><button type="button" class="secondary-button" @click="pendingRenameId = null">取消</button><button type="button" class="primary-button" :disabled="!renameValue.trim()" @click="confirmRename">保存</button></footer></section></div></Teleport>
 
     <section v-if="false" class="resource-section" aria-hidden="true">
       <header class="section-heading">
@@ -513,10 +464,11 @@ function ruleProviderMeta(
 }
 .config-header {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  justify-content: space-between;
   margin-bottom: 18px;
 }
+.add-profile-button { display: inline-flex; align-items: center; gap: 6px; }
 .config-subtitle {
   margin: 0;
   color: var(--app-muted);
@@ -608,6 +560,16 @@ function ruleProviderMeta(
   gap: 10px;
   margin: 12px 0;
 }
+.profile-import-modal { width: 470px; padding: 20px; border: 1px solid var(--app-divider); border-radius: 16px; color: var(--app-text); background: var(--app-surface-solid); box-shadow: 0 22px 70px rgba(0,0,0,.28); }
+.profile-import-modal header { display:flex; align-items:flex-start; justify-content:space-between; }
+.profile-import-modal h2 { margin:0; font-size:19px; }.profile-import-modal header p{margin:4px 0 0;color:var(--app-muted);font-size:10px}
+.profile-source-tabs { display:grid; grid-template-columns:repeat(3,1fr); gap:7px; margin:18px 0; }
+.profile-source-tabs button { display:flex; align-items:center; justify-content:center; gap:6px; height:34px; border:1px solid var(--app-divider); border-radius:8px; color:inherit; background:transparent; }
+.profile-source-tabs button.selected { border-color:var(--app-purple); color:white; background:var(--app-purple); }
+.modal-field { display:block; margin-top:12px; }.modal-field>span{display:block;margin-bottom:6px;color:var(--app-muted);font-size:10px}.modal-field .field{min-height:34px}
+.field-with-action{display:grid;grid-template-columns:1fr 34px;gap:7px}.field-with-action .icon-control{width:34px;height:34px}
+.profile-import-modal footer{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+.rename-modal{width:380px;padding:20px;border:1px solid var(--app-divider);border-radius:16px;color:var(--app-text);background:var(--app-surface-solid);box-shadow:0 22px 70px rgba(0,0,0,.28)}.rename-modal header,.rename-modal footer{display:flex;align-items:center;justify-content:space-between}.rename-modal h2{margin:0;font-size:19px}.rename-modal>.field{min-height:36px;margin-top:18px}.rename-modal footer{justify-content:flex-end;gap:8px;margin-top:18px}
 .file-input {
   color: var(--app-muted);
 }

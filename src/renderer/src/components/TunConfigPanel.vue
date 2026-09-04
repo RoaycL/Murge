@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useTunConfigStore } from '../stores/tun-config'
 import type { TunConfigModel } from '@shared/tun-config'
 import AppSelect from './AppSelect.vue'
 import AppIcon from './AppIcon.vue'
 import { useToast } from '../composables/use-toast'
+import { useUnsavedChanges } from '../composables/use-unsaved-changes'
 
 const store = useTunConfigStore()
 const toast = useToast()
+const hydrated = ref(false)
 
 const form = reactive<TunConfigModel>({
   stack: 'mixed',
@@ -82,6 +84,9 @@ function resetFromStore(): void {
   syncFromConfig(store.config)
 }
 
+const dirty = computed(() => hydrated.value && JSON.stringify(buildInput()) !== JSON.stringify(store.config))
+useUnsavedChanges('tun-config', 'TUN 配置', dirty)
+
 watch(
   () => store.config,
   (value) => syncFromConfig(value),
@@ -91,6 +96,7 @@ watch(
 onMounted(async () => {
   await store.refresh()
   syncFromConfig(store.config)
+  hydrated.value = true
 })
 </script>
 
@@ -174,7 +180,7 @@ onMounted(async () => {
 
       <div class="tun-actions">
         <button type="button" class="tun-preview" @click="preview">预览配置</button>
-        <button type="button" class="tun-save" :disabled="store.busy" @click="save">{{ store.busy ? '保存中…' : '保存' }}</button>
+        <span v-if="dirty" class="unsaved-indicator">未保存</span><button type="button" class="tun-save" :disabled="store.busy || !dirty" @click="save">{{ store.busy ? '保存中…' : '保存' }}</button>
       </div>
 
       <div v-if="previewOpen" class="tun-preview">

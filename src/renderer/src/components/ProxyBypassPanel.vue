@@ -6,9 +6,11 @@ import type { ProxyBypassPolicy } from '@shared/proxy-bypass'
 import { EMPTY_PROXY_BYPASS_POLICY, MAX_CUSTOM_BYPASS_ENTRIES } from '@shared/proxy-bypass'
 import AppIcon from './AppIcon.vue'
 import { useToast } from '../composables/use-toast'
+import { useUnsavedChanges } from '../composables/use-unsaved-changes'
 
 const store = useProxyBypassStore()
 const toast = useToast()
+const hydrated = ref(false)
 const systemProxy = useSystemProxyStore()
 
 const form = reactive<ProxyBypassPolicy>({ ...EMPTY_PROXY_BYPASS_POLICY })
@@ -54,6 +56,9 @@ function resetFromStore(): void {
   previewOpen.value = false
 }
 
+const dirty = computed(() => hydrated.value && JSON.stringify({ enabled: form.enabled, customEntries: parseEntries() }) !== JSON.stringify(store.policy))
+useUnsavedChanges('proxy-bypass', '代理绕过设置', dirty)
+
 watch(
   () => store.policy,
   (value) => syncFromPolicy(value),
@@ -63,6 +68,7 @@ watch(
 onMounted(async () => {
   await Promise.all([store.refresh(), systemProxy.refresh()])
   syncFromPolicy(store.policy)
+  hydrated.value = true
 })
 </script>
 
@@ -115,7 +121,7 @@ onMounted(async () => {
 
       <div class="pb-actions">
         <button type="button" class="pb-preview" @click="preview">预览 ProxyOverride</button>
-        <button type="button" class="pb-save" :disabled="store.busy" @click="save">{{ store.busy ? '保存中…' : '保存' }}</button>
+        <span v-if="dirty" class="unsaved-indicator">未保存</span><button type="button" class="pb-save" :disabled="store.busy || !dirty" @click="save">{{ store.busy ? '保存中…' : '保存' }}</button>
       </div>
 
       <div v-if="previewOpen" class="pb-preview">

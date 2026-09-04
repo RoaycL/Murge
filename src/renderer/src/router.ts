@@ -20,6 +20,7 @@ import NetworkSettingsView from './views/NetworkSettingsView.vue'
 import DnsSnifferView from './views/DnsSnifferView.vue'
 import KernelSettingsView from './views/KernelSettingsView.vue'
 import { isRcSupportedRoute } from '@shared/release-scope'
+import { consumeNavigationBypass, hasUnsavedChanges, requestNavigation } from './composables/use-unsaved-changes'
 
 export const router = createRouter({
   history: createWebHashHistory(),
@@ -50,4 +51,10 @@ export const router = createRouter({
     // bookmark cannot reopen a misleading, non-functional control surface.
     { path: '/:pathMatch(.*)*', redirect: (to) => isRcSupportedRoute(to.path) ? to.path : '/activity' }
   ]
+})
+
+router.beforeEach((to) => {
+  if (!hasUnsavedChanges.value || consumeNavigationBypass(to.fullPath)) return true
+  requestNavigation(to.fullPath)
+  return false
 })

@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useSnifferEnhancementStore } from '../stores/sniffer-enhancement'
 import type { SnifferEnhancement } from '@shared/sniffer'
 import AppIcon from './AppIcon.vue'
 import { useToast } from '../composables/use-toast'
+import { useUnsavedChanges } from '../composables/use-unsaved-changes'
 
 const store = useSnifferEnhancementStore()
 const toast = useToast()
+const hydrated = ref(false)
 
 const form = reactive<SnifferEnhancement>({
   enabled: false,
@@ -89,6 +91,9 @@ function resetFromStore(): void {
   syncFromEnhancement(store.enhancement)
 }
 
+const dirty = computed(() => hydrated.value && JSON.stringify(buildInput()) !== JSON.stringify(store.enhancement))
+useUnsavedChanges('sniffer-enhancement', '嗅探设置', dirty)
+
 watch(
   () => store.enhancement,
   (value) => syncFromEnhancement(value),
@@ -98,6 +103,7 @@ watch(
 onMounted(async () => {
   await store.refresh()
   syncFromEnhancement(store.enhancement)
+  hydrated.value = true
 })
 </script>
 
@@ -193,7 +199,7 @@ onMounted(async () => {
 
       <div class="sniffer-actions">
         <button type="button" class="sniffer-preview" @click="preview">预览配置</button>
-        <button type="button" class="sniffer-save" :disabled="store.busy" @click="save">{{ store.busy ? '保存中…' : '保存' }}</button>
+        <span v-if="dirty" class="unsaved-indicator">未保存</span><button type="button" class="sniffer-save" :disabled="store.busy || !dirty" @click="save">{{ store.busy ? '保存中…' : '保存' }}</button>
       </div>
 
       <div v-if="previewOpen" class="sniffer-preview">

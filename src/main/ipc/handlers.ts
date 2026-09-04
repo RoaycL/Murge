@@ -12,6 +12,7 @@ import {
 } from '@shared/schemas/profiles'
 import type { ConfigEdit } from '@shared/profiles'
 import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
+import { parseProxyGroupOrder } from '../profiles/proxy-group-order'
 
 /** A single IPC handler. The event is opaque to keep the factory Electron-free. */
 export type IpcHandler = (event: unknown, ...args: unknown[]) => unknown | Promise<unknown>
@@ -81,6 +82,13 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
     [IPC.mihomoFlushDnsCache]: async () => mihomo.flushDnsCache(),
     [IPC.mihomoFlushFakeIpCache]: async () => mihomo.flushFakeIpCache(),
 
+    [IPC.profilesGetActiveGroupOrder]: async () => {
+      const metas = await profiles.listProfiles()
+      const active = metas.find((meta) => meta.active)
+      if (!active) return []
+      const profile = await profiles.getProfile(active.id)
+      return parseProxyGroupOrder(profile.document)
+    },
     [IPC.profilesList]: async () => profiles.listProfiles(),
     [IPC.profilesGet]: async (_event, id) => profiles.getProfile(parseProfileName(id)),
     [IPC.profilesImport]: async (_event, request) => profiles.importProfile(parseImportRequest(request)),

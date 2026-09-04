@@ -71,6 +71,7 @@ const api: DesktopApi = {
     onStreamError: (listener) => listen(IPC.mihomoStreamErrorEvent, listener)
   },
   profiles: {
+    getActiveGroupOrder: () => invoke(IPC.profilesGetActiveGroupOrder),
     list: () => invoke(IPC.profilesList),
     get: (id) => invoke(IPC.profilesGet, id),
     import: (request) => invoke(IPC.profilesImport, request),

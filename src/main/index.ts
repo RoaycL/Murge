@@ -808,35 +808,6 @@ app.whenReady().then(async () => {
     })
   }, PROXY_GUARD_INTERVAL_MS)
 
-  // Connectivity watchdog (sparkle's detector): while offline, an owned proxy
-  // keeps routing HTTP into a dead uplink and TUN routes blackhole traffic, so
-  // the proxy is turned off and (Windows) the kernel is stopped; when the
-  // network returns, the kernel restarts and the proxy re-enables by itself.
-  // This also covers sleep/resume: the first tick after a wake self-heals.
-  networkDetector = new NetworkDetector({
-    intervalSeconds: 15,
-    log: (message) => console.log(message),
-    gateway: {
-      isKernelRunning: () => {
-        const status = ipcKernel.getStatus()
-        return status instanceof Promise
-          ? status.then((value) => value.phase === 'running')
-          : Promise.resolve(status.phase === 'running')
-      },
-      startKernel: () => queuedKernel.start(),
-      stopKernel: () => queuedKernel.stop(),
-      handleNetworkDown: () => systemProxyService.handleNetworkDown(),
-      handleNetworkUp: () => systemProxyService.handleNetworkUp()
-    }
-  })
-  networkDetector.start()
-  // A resume must not wait for the next periodic tick to reconcile.
-  powerMonitor.on('resume', () => {
-    void networkDetector?.probeNow().catch((error) => {
-      console.error('[network-detector] resume probe failed:', error)
-    })
-  })
-
   const tunSupported = !is.dev && process.platform === 'win32'
   // One pipe transport + client shared by the adapter (enable/restore) and the
   // liveness probe, so both observe the SAME service session.
@@ -986,6 +957,42 @@ app.whenReady().then(async () => {
   // in between).
   const queuedKernel = queuedKernelGateway(runtimeKernelGateway, modeController)
   const queuedTun = queuedTunGateway(rawTunGateway, modeController)
+
+  // Connectivity watchdog (sparkle's detector): while offline, an owned proxy
+  // keeps routing HTTP into a dead uplink and TUN routes blackhole traffic, so
+  // the proxy is turned off and (only when the unified view says a host is up)
+  // that host is stopped; when the network returns, the host restarts and the
+  // proxy re-enables by itself. The detector MUST observe the unified gateway:
+  // under TUN the main kernel is stopped by design and the child is the live
+  // host — a raw supervisor view would skip the offline stop entirely and then
+  // loop restart attempts every tick. It also lives AFTER `queuedKernel` is
+  // declared, so the lazy closures cannot touch a TDZ binding however slowly
+  // initialization above them runs. This also covers sleep/resume: the first
+  // tick after a wake self-heals.
+  networkDetector = new NetworkDetector({
+    intervalSeconds: 15,
+    log: (message) => console.log(message),
+    gateway: {
+      isKernelRunning: () => {
+        const status = runtimeKernelGateway.getStatus()
+        return status instanceof Promise
+          ? status.then((value) => value.phase === 'running')
+          : Promise.resolve(status.phase === 'running')
+      },
+      startKernel: () => queuedKernel.start(),
+      stopKernel: () => queuedKernel.stop(),
+      handleNetworkDown: () => systemProxyService.handleNetworkDown(),
+      handleNetworkUp: () => systemProxyService.handleNetworkUp()
+    }
+  })
+  networkDetector.start()
+  // A resume must not wait for the next periodic tick to reconcile.
+  powerMonitor.on('resume', () => {
+    void networkDetector?.probeNow().catch((error) => {
+      console.error('[network-detector] resume probe failed:', error)
+    })
+  })
+
   // Reapplies the active profile to the live kernel whenever the user edits,
   // activates or imports-as-active a profile. The reloader runs INSIDE the mode
   // queue (no-op when the kernel is stopped; a running kernel restarts

@@ -20,14 +20,30 @@ export class ProxySelectionService {
   ) {}
 
   /**
-   * Persist a user-initiated selection. Fire-and-forget by design: the kernel
-   * has already applied the change, so a cache-write failure must not turn a
-   * successful switch into an error — the worst case is one forgotten pick.
+   * Resolve the id of the profile the NEXT controller write will apply to.
+   * Called BEFORE the controller switch, so the selection is attributed to the
+   * configuration that was active when the user made it — a profile switch,
+   * kernel restart or quit that lands between the controller write and the
+   * cache write can no longer misfile the pick (or lose it via a failing late
+   * lookup).
    */
-  recordSelection(group: string, node: string): void {
-    void this.currentProfileId()
-      .then((id) => (id ? this.store.set(id, group, node) : undefined))
-      .catch(() => undefined)
+  async resolveActiveProfileId(): Promise<string | null> {
+    try {
+      const metas = await this.profiles.listProfiles()
+      return metas.find((meta) => meta.active)?.id ?? null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Persist an already-attributed selection. Fire-and-forget by design: the
+   * kernel has already applied the change, so a cache-write failure must not
+   * turn a successful switch into an error — the worst case is one forgotten
+   * pick.
+   */
+  recordSelection(profileId: string, group: string, node: string): void {
+    void this.store.set(profileId, group, node).catch(() => undefined)
   }
 
   /**
@@ -75,11 +91,6 @@ export class ProxySelectionService {
   }
 
   private async currentProfileId(): Promise<string | null> {
-    try {
-      const metas = await this.profiles.listProfiles()
-      return metas.find((meta) => meta.active)?.id ?? null
-    } catch {
-      return null
-    }
+    return this.resolveActiveProfileId()
   }
 }

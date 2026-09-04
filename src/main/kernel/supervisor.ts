@@ -274,6 +274,13 @@ export class KernelSupervisor extends EventEmitter {
 
     this.setStatus({ pid: handle.pid, version: binary.version ?? null, startedAt: null, lastError: null })
 
+    // Attach the crash watchdog as soon as the kernel EXISTS, not after the
+    // readiness handshake: the spawn→ready window (up to startTimeoutMs) has a
+    // live process that a killed app must not orphan. If readiness then fails,
+    // stop()/abort paths still release it before terminating.
+    this.watchdog?.release()
+    this.watchdog = this.attachWatchdog?.(handle.pid ?? 0) ?? null
+
     try {
       await this.awaitReady(handle)
     } catch (error) {
@@ -310,8 +317,6 @@ export class KernelSupervisor extends EventEmitter {
         }
       }, this.restartBudgetResetMs)
     }
-    this.watchdog?.release()
-    this.watchdog = this.attachWatchdog?.(handle.pid ?? 0) ?? null
   }
 
   private clearHealthyTimer(): void {

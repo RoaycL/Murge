@@ -11,25 +11,28 @@ import { spawn, type ChildProcess } from 'node:child_process'
  * hits EOF, and it `taskkill`s the entire kernel process tree. No polling, no
  * marker files, no extra script assets; the binding is the pipe itself.
  *
- * The helper is `detached` so it must NOT be reaped by the app's exit; it lives
- * only until its stdin closes (app death OR an explicit `release()` when the
- * kernel exited on its own) and then kills-or-exits.
+ * `release()` must NEVER be a plain stdin close: EOF would fall through to the
+ * helper's `taskkill` and force-kill a kernel the app is still using or trying
+ * to stop gracefully. Instead release kills the HELPER process tree — a dead
+ * helper can never run its kill command, and the app death guarantee only needs
+ * helpers that are still alive.
  */
 export interface KernelWatchdog {
-  /** End the watch: called when the kernel exited by itself. */
+  /** Dismantle the watch without touching the kernel. */
   release(): void
 }
 
 export function attachKernelWatchdog(kernelPid: number): KernelWatchdog {
   if (process.platform !== 'win32' || !kernelPid) return { release(): void {} }
 
-  let helper: ChildProcess
+  let helper: ChildProcess | null = null
+  let released = false
   try {
     helper = spawn(
       'cmd.exe',
-      // `more` blocks reading stdin; on EOF (the app died or released the pipe)
-      // it falls through and the whole kernel tree is force-killed. `/T` covers
-      // any children mihomo spawned (e.g. Wintun helpers).
+      // `more` blocks reading stdin; on EOF (the app died) it falls through and
+      // the whole kernel tree is force-killed. `/T` covers any children mihomo
+      // spawned (e.g. Wintun helpers).
       ['/d', '/s', '/c', `more > NUL & taskkill /PID ${kernelPid} /T /F`],
       {
         detached: true,
@@ -49,10 +52,28 @@ export function attachKernelWatchdog(kernelPid: number): KernelWatchdog {
 
   return {
     release(): void {
+      if (released) return
+      released = true
+      // Kill the helper ITSELF (cmd + its `more` child). Relying on stdin EOF
+      // would run the helper's taskkill against a kernel the app may still be
+      // stopping gracefully — or against a REUSED pid after stop/start cycles.
+      const dying: ChildProcess | null = helper
+      helper = null
+      if (!dying) return
       try {
-        helper.stdin?.end()
+        dying.stdin?.destroy()
       } catch {
         /* the pipe is already gone */
+      }
+      if (dying.pid) {
+        try {
+          spawn('taskkill', ['/PID', String(dying.pid), '/T', '/F'], {
+            stdio: 'ignore',
+            windowsHide: true
+          }).unref()
+        } catch {
+          /* a surviving helper is inert unless the app itself dies */
+        }
       }
     }
   }

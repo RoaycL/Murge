@@ -75,6 +75,7 @@ export const IPC = {
   mihomoLogEvent: 'mihomo:log-event',
   mihomoStreamErrorEvent: 'mihomo:stream-error-event',
   profilesList: 'profiles:list',
+  profilesGetActiveGroupOrder: 'profiles:get-active-group-order',
   profilesGet: 'profiles:get',
   profilesImport: 'profiles:import',
   profilesImportFromUrl: 'profiles:import-from-url',
@@ -191,6 +192,8 @@ export interface DesktopApi {
     onStreamError(listener: (error: MihomoStreamError) => void): () => void
   }
   profiles: {
+    /** Ordered proxy-group names from the ACTIVE profile document (config order). */
+    getActiveGroupOrder(): Promise<string[]>
     list(): Promise<ProfileMeta[]>
     get(id: string): Promise<Profile>
     import(request: ImportRequest): Promise<ProfileMeta>

@@ -94,16 +94,43 @@ describe('ProxySelectionService', () => {
   it('records the accepted selection under the ACTIVE profile', async () => {
     const store = new ProxySelectionStore(dir)
     const service = new ProxySelectionService(mihomoStub(), profilesStub('p1'), store)
-    service.recordSelection('节点选择', '香港 02')
+    const profileId = await service.resolveActiveProfileId()
+    service.recordSelection(profileId!, '节点选择', '香港 02')
     await vi.waitFor(async () => expect(await store.get('p1')).toEqual({ 节点选择: '香港 02' }))
+  })
+
+  it('attributes the pick to the profile active BEFORE the controller write', async () => {
+    // The gateway resolves the id BEFORE the PUT, so even if the active profile
+    // changes (or lookups start failing) between the PUT and the cache write,
+    // the pick lands under the config the user was looking at — never the new
+    // one, and never nowhere.
+    const store = new ProxySelectionStore(dir)
+    const profiles = profilesStub('p1')
+    const mihomo = mihomoStub()
+    let putSettled = false
+    mihomo.selectProxy = vi.fn().mockImplementation(async () => {
+      // Simulate the profile switching while the controller write is in flight.
+      ;(profiles.listProfiles as ReturnType<typeof vi.fn>).mockResolvedValue([meta('p2', true)])
+      putSettled = true
+    })
+    const service = new ProxySelectionService(mihomo, profiles, store)
+    const gateway = new ProxySelectionGateway(mihomo, service)
+
+    await gateway.selectProxy('节点选择', '香港 02')
+    expect(putSettled).toBe(true)
+    await vi.waitFor(async () => expect(await store.get('p1')).toEqual({ 节点选择: '香港 02' }))
+    expect(await store.get('p2')).toEqual({})
   })
 
   it('records nothing when no profile is active', async () => {
     const store = new ProxySelectionStore(dir)
-    const service = new ProxySelectionService(mihomoStub(), profilesStub(null), store)
-    service.recordSelection('节点选择', '香港 02')
+    const inner = mihomoStub()
+    const service = new ProxySelectionService(inner, profilesStub(null), store)
+    const gateway = new ProxySelectionGateway(inner, service)
+    await gateway.selectProxy('节点选择', '香港 02')
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(await store.get('p1')).toEqual({})
+    expect(inner.selectProxy).toHaveBeenCalled()
   })
 
   it('restores only remembered, still-valid, changed selections', async () => {

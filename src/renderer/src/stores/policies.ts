@@ -61,12 +61,27 @@ export const usePoliciesStore = defineStore('policies', () => {
   let lastModeTarget: PolicyMode | null = null
   let lastModeError: string | null = null
 
-  // mihomo 的 /proxies 响应按配置文件中 proxy-groups 的书写顺序序列化
-  // （Go map 按插入序 marshal），zod 的 z.record 解析保留该顺序。这里只做
-  // 类型过滤，绝不二次排序——所有者明确要求展示顺序与原始配置文件一致。
+  // Policy groups render in the ACTIVE PROFILE DOCUMENT's proxy-groups order.
+  // Neither controller endpoint can supply this: `GET /proxies` is a Go map
+  // (JSON-marshaled with sorted keys) and `GET /group` iterates that same map
+  // (Go range order — randomized per request; verified against a real kernel).
+  // The main process parses the active profile YAML it already owns, so the
+  // order below is the config file's own. Ordered names are merged back into
+  // the /proxies payload for full proxy detail; when the profile or the fetch
+  // is unavailable we fall back to the (unsorted but harmless) map order.
+  const orderedGroupNames = ref<string[]>([])
   const groups = computed<MihomoProxy[]>(() => {
     if (!proxies.value) return []
-    return Object.values(proxies.value.proxies).filter((proxy) => POLICY_GROUP_TYPES.includes(proxy.type as PolicyGroupType))
+    const byName = proxies.value.proxies
+    if (orderedGroupNames.value.length > 0) {
+      const merged: MihomoProxy[] = []
+      for (const name of orderedGroupNames.value) {
+        const proxy = byName[name]
+        if (proxy && POLICY_GROUP_TYPES.includes(proxy.type as PolicyGroupType)) merged.push(proxy)
+      }
+      return merged
+    }
+    return Object.values(byName).filter((proxy) => POLICY_GROUP_TYPES.includes(proxy.type as PolicyGroupType))
   })
 
   const groupMembers = computed<string[]>(() => {
@@ -101,9 +116,19 @@ export const usePoliciesStore = defineStore('policies', () => {
     status.value = 'loading'
     lastError.value = null
     try {
-      const result = await window.desktop.mihomo.getProxies()
+      // Fetch BOTH sources up front: the config-file group order (active
+      // profile document, parsed in main) and the full detail map (/proxies).
+      const [orderResult, result] = await Promise.all([
+        window.desktop.profiles.getActiveGroupOrder().catch(() => [] as string[]),
+        window.desktop.mihomo.getProxies()
+      ])
+      orderedGroupNames.value = orderResult.filter((name) => {
+        const proxy = result.proxies[name]
+        return proxy && POLICY_GROUP_TYPES.includes(proxy.type as PolicyGroupType)
+      })
       proxies.value = result
-      const firstGroup = Object.values(result.proxies).find((proxy) => POLICY_GROUP_TYPES.includes(proxy.type as PolicyGroupType))
+      const ordered = groups.value
+      const firstGroup = ordered.length > 0 ? ordered[0] : null
       if (firstGroup) {
         selectedGroup.value = firstGroup.name
         selectedMember.value = typeof firstGroup.now === 'string' ? firstGroup.now : (firstGroup.all?.[0] ?? '')

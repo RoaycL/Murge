@@ -69,7 +69,8 @@ describe('ProfileRepository', () => {
     expect(list[0].active).toBe(true)
   })
 
-  it('writes documents and metadata with 0o600 (no group/other read)', async () => {
+  // POSIX-only: chmod is a no-op on Windows, where the mode reads back 0o666.
+  it.skipIf(process.platform === 'win32')('writes documents and metadata with 0o600 (no group/other read)', async () => {
     const meta = await repository.import('cfg', VALID_DOC, MANUAL_SOURCE, true)
     const docMode = (await stat(join(rootDir, `${meta.id}.yaml`))).mode & 0o777
     const metaMode = (await stat(join(rootDir, `${meta.id}.meta.json`))).mode & 0o777

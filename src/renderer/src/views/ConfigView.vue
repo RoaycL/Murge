@@ -23,6 +23,8 @@ const localFile = ref<File | null>(null)
 const localFileInput = ref<HTMLInputElement | null>(null)
 const urlInput = ref<HTMLInputElement | null>(null)
 const importing = ref(false)
+/** Profile id with an in-flight subscription update (card ↻ spinner guard). */
+const updatingId = ref<string | null>(null)
 const validation = ref<ValidationResult | null>(null)
 const proxyMode = ref<'direct' | 'system'>('direct')
 const showAddDialog = ref(false)
@@ -95,7 +97,10 @@ async function importFromUrl(): Promise<void> {
   if (!url.value.trim()) return
   importing.value = true
   try {
-    await profilesStore.importFromUrl(importName.value.trim() || url.value.trim(), url.value.trim(), false)
+    // An empty name lets the main process derive one from the subscription
+    // itself (Content-Disposition filename, then URL host). NEVER the raw URL:
+    // its path can carry a token and would render as an overlong profile name.
+    await profilesStore.importFromUrl(importName.value.trim(), url.value.trim(), false)
     showAddDialog.value = false
     toast.success('远程配置已添加', '配置已保存，尚未启用')
   } catch {
@@ -177,10 +182,32 @@ async function activate(id: string): Promise<void> {
   }
 }
 
-/** Card ↻: re-apply the profile to the kernel (activate re-materializes the config). */
+/**
+ * Card ↻ semantics depend on the source: a URL-backed profile is RE-FETCHED
+ * from its subscription (更新), and the main process automatically reapplies
+ * the fresh document when that profile is the live one. File/manual profiles
+ * have nothing to re-fetch, so the button falls back to re-applying (启用).
+ */
 async function cardRefresh(id: string): Promise<void> {
-  await activate(id)
   closeMenu()
+  const meta = profilesStore.profiles.find((entry) => entry.id === id)
+  if (!meta || meta.source.type !== 'url') {
+    await activate(id)
+    return
+  }
+  if (updatingId.value === id) return
+  updatingId.value = id
+  try {
+    await profilesStore.updateFromSource(id)
+    toast.success(
+      '配置已更新',
+      meta.active ? '运行中的配置已自动重新加载' : '已保存到配置库，未改变当前运行配置'
+    )
+  } catch {
+    toast.error('配置更新失败', profilesStore.lastError ?? undefined)
+  } finally {
+    updatingId.value = null
+  }
 }
 
 async function remove(id: string): Promise<boolean> {
@@ -337,8 +364,9 @@ function ruleProviderMeta(
             <button
               type="button"
               class="icon-button small"
-              aria-label="重新应用该配置"
-              title="重新应用"
+              :aria-label="meta.source.type === 'url' ? '更新订阅配置' : '重新应用该配置'"
+              :title="meta.source.type === 'url' ? '更新订阅配置' : '重新应用'"
+              :disabled="updatingId === meta.id"
               @click.stop="cardRefresh(meta.id)"
             ><AppIcon name="refresh" :size="15" /></button>
             <button
@@ -679,6 +707,8 @@ function ruleProviderMeta(
   gap: 8px;
 }
 .card-name {
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: 650;
   font-size: 14px;
   overflow: hidden;

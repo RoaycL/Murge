@@ -158,4 +158,67 @@ describe('ProfileAutoReloadGateway', () => {
     expect(inner.profiles.length).toBe(0)
     expect(reload).toHaveBeenCalledTimes(1)
   })
+
+  describe('updateFromSource (subscription update)', () => {
+    it('reloads when updating the ACTIVE profile and preserves the pointer', async () => {
+      const inner = new FakeProfileGateway()
+      inner.profiles.push({
+        meta: { ...meta('p1', 'Sub', true, 0), source: { type: 'url' as const, url: 'https://example.invalid/sub' } },
+        document: 'proxies:\n  - name: node\n    server: 127.0.0.1\n'
+      })
+      inner.activeIndex = 0
+      const { gw, reload } = gatewayWith(inner)
+
+      const result = await gw.updateFromSource('p1')
+
+      expect(reload).toHaveBeenCalledTimes(1)
+      expect(inner.activeIndex).toBe(0)
+      expect(result.active).toBe(true)
+      // The fake swaps the document so the update is observable.
+      expect(inner.profiles[0].document).toContain('node-updated')
+    })
+
+    it('updates a NON-active profile without touching the kernel or pointer', async () => {
+      const inner = new FakeProfileGateway()
+      inner.profiles.push({
+        meta: { ...meta('p1', 'Sub', false, 0), source: { type: 'url' as const, url: 'https://example.invalid/sub' } },
+        document: 'proxies:\n  - name: node\n    server: 127.0.0.1\n'
+      })
+      inner.profiles.push({ meta: meta('p2', 'Other', true, 1), document: 'proxies: []\n' })
+      inner.activeIndex = 1
+      const { gw, reload } = gatewayWith(inner)
+
+      await gw.updateFromSource('p1')
+
+      expect(reload).not.toHaveBeenCalled()
+      expect(inner.activeIndex).toBe(1)
+      expect(inner.profiles[0].document).toContain('node-updated')
+    })
+
+    it('rolls the document back when the post-update reload fails', async () => {
+      const inner = new FakeProfileGateway()
+      inner.profiles.push({
+        meta: { ...meta('p1', 'Sub', true, 0), source: { type: 'url' as const, url: 'https://example.invalid/sub' } },
+        document: 'proxies:\n  - name: node\n    server: 127.0.0.1\n'
+      })
+      inner.activeIndex = 0
+      const reload = vi.fn(async (rollback?: () => Promise<void>) => {
+        try {
+          throw new Error('kernel restart failed')
+        } catch (error) {
+          // The reloader contract: the rollback runs before the failure
+          // propagates (reloadKernelForActiveProfile does this in production).
+          await rollback?.()
+          throw error
+        }
+      })
+      const gw = new ProfileAutoReloadGateway({ inner, reloader: { reload }, autoActivateOnEdit: true })
+
+      await expect(gw.updateFromSource('p1')).rejects.toThrow('kernel restart failed')
+      // The rollback restored the pre-update snapshot.
+      expect(inner.profiles[0].document).toContain('name: node\n')
+      expect(inner.profiles[0].document).not.toContain('node-updated')
+      expect(inner.activeIndex).toBe(0)
+    })
+  })
 })

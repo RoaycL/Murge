@@ -281,6 +281,29 @@ export class ProfileRepository {
     }
     await this.writeBytes(this.metaPath(id), JSON.stringify(updated))
   }
+
+  /**
+   * Atomically replace a profile's document AND source envelope (a subscription
+   * update). The name, id and active pointer are preserved; `updatedAt` and
+   * `size` reflect the fresh document. Callers must validate the document
+   * BEFORE calling — this write is unconditional.
+   */
+  async replaceFromSource(
+    id: string,
+    document: string,
+    source: ProfileSubscription
+  ): Promise<ProfileMeta> {
+    const profile = await this.get(id)
+    await this.writeBytes(this.docPath(id), document)
+    const updated: ProfileMeta = {
+      ...profile.meta,
+      source,
+      updatedAt: this.now(),
+      size: Buffer.byteLength(document, 'utf8')
+    }
+    await this.writeBytes(this.metaPath(id), JSON.stringify(updated))
+    return updated
+  }
 }
 
 /** Replace `<key>: <value>` scalar lines at the top level, preserving the rest. */

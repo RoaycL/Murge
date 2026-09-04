@@ -4,7 +4,7 @@ import type { ProfileGateway } from '../../shared/gateways'
 import type { ConfigValidator } from './config-validator'
 import { ProfileRepository } from './profile-repository'
 import type { SubscriptionFetcher } from '../subscriptions/subscription-fetcher'
-import { redactCredentials } from '../subscriptions/subscription-fetcher'
+import { redactCredentials, deriveFallbackSubscriptionName } from '../subscriptions/subscription-fetcher'
 
 /**
  * Compose the profile store, config validator, and subscription fetcher into the
@@ -52,15 +52,48 @@ export class ProfileService implements ProfileGateway {
   /**
    * Fetch a subscription config and import it. Only the redacted URL is
    * persisted, so credentials can never appear in the stored profile metadata.
+   *
+   * When the caller leaves the name empty, the display name is derived the way
+   * community clients do: from the response's `Content-Disposition` filename,
+   * falling back to the subscription host — never the raw URL, whose path can
+   * carry a token (e.g. gist raw URLs) that would otherwise end up shown as a
+   * profile name on the activity page.
    */
   async importFromUrl(name: string, url: string, activate = false): Promise<ProfileMeta> {
     const fetched = await this.fetcher.fetch(url)
+    const trimmed = name.trim()
+    const effectiveName =
+      trimmed ||
+      fetched.suggestedName ||
+      deriveFallbackSubscriptionName(url) ||
+      '远程订阅'
     return this.importProfile({
-      name,
+      name: effectiveName,
       document: fetched.document,
       source: fetched.source,
       activate
     })
+  }
+
+  /**
+   * Re-fetch a URL-backed profile's subscription and replace its stored
+   * document with the freshly validated one. The name, id and active pointer
+   * are untouched; only the document, source envelope and timestamps update.
+   * File/manual profiles have nothing to re-fetch and are rejected.
+   */
+  async updateFromSource(id: string): Promise<ProfileMeta> {
+    const profile = await this.repository.get(id)
+    const source = profile.meta.source
+    if (source.type !== 'url' || !source.url) {
+      throw new ProtocolError(
+        ProtocolErrorCode.INVALID_ARGUMENT,
+        '该配置没有远程订阅地址，无法更新'
+      )
+    }
+    const fetched = await this.fetcher.fetch(source.url)
+    // Validate BEFORE writing so a failed update cannot corrupt the stored doc.
+    this.throwIfInvalid(this.validator.validate(fetched.document))
+    return this.repository.replaceFromSource(id, fetched.document, fetched.source)
   }
 
   async activateProfile(id: string): Promise<ProfileMeta> {

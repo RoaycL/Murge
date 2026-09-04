@@ -200,6 +200,8 @@ export interface ProfileGateway {
   getProfile(id: string): Profile | Promise<Profile>
   importProfile(request: ImportRequest): ProfileMeta | Promise<ProfileMeta>
   importFromUrl(name: string, url: string, activate?: boolean): ProfileMeta | Promise<ProfileMeta>
+  /** Re-fetch a URL-backed profile's subscription and replace its document. */
+  updateFromSource(id: string): ProfileMeta | Promise<ProfileMeta>
   activateProfile(id: string): ProfileMeta | Promise<ProfileMeta>
   /** Internal recovery primitive; not exposed through renderer IPC. */
   deactivateProfile(): Promise<void>

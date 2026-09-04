@@ -38,6 +38,14 @@ export type FetchFn = (
 export interface FetchSubscriptionResult {
   document: string
   source: ProfileSubscription
+  /**
+   * Display name suggested by the subscription response itself (the
+   * `Content-Disposition` attachment filename, as popularized by community
+   * clients). `null` when the response carries no usable filename — the caller
+   * then falls back to the URL host. Never derived from the raw URL path, so a
+   * token-bearing URL can never become a user-visible profile name.
+   */
+  suggestedName: string | null
 }
 
 export interface SubscriptionFetcherOptions {
@@ -235,6 +243,57 @@ export function redactCredentials(url: string): string {
  */
 function stripInlineUserinfo(value: string): string {
   return value.replace(/[^\s/:@]+:[^\s/@]+@/g, '[redacted]@')
+}
+
+/** Longest auto-derived profile name; anything longer is a URL/abuse, not a name. */
+export const MAX_SUGGESTED_NAME_LENGTH = 48
+
+/**
+ * Extract a human-friendly display filename from a `Content-Disposition`
+ * header, as community clients (e.g. Clash Party) do for remote subscriptions:
+ * prefer the RFC 5987 extended form (`filename*=UTF-8''…`, percent-decoded),
+ * fall back to the plain `filename=` form, strip a config extension, and
+ * sanitize (quotes, control characters, hard length cap). Returns `null` when
+ * nothing usable remains — the caller then falls back to the URL host.
+ */
+export function parseDispositionFilename(header: string | null | undefined): string | null {
+  if (!header) return null
+  let candidate: string | null = null
+  const extended = header.match(/filename\*\s*=\s*(?:UTF-8|utf-8)?''([^;]+)/)
+  if (extended) {
+    try {
+      candidate = decodeURIComponent(extended[1].trim())
+    } catch {
+      candidate = extended[1].trim()
+    }
+  }
+  if (!candidate) {
+    const plain = header.match(/filename\s*=\s*"?([^";]+)"?/)
+    if (plain) candidate = plain[1].trim()
+  }
+  if (!candidate) return null
+  // Strip a config extension so the profile reads as a name, not a file.
+  candidate = candidate.replace(/\.(?:ya?ml|txt|conf)$/i, '').trim()
+  // Quotes, control characters and newlines never belong in a display name.
+  candidate = candidate.replace(/^["']|["']$/g, '').replace(/[\u0000-\u001f\u007f]/g, '').trim()
+  if (!candidate) return null
+  return candidate.length > MAX_SUGGESTED_NAME_LENGTH ? candidate.slice(0, MAX_SUGGESTED_NAME_LENGTH) : candidate
+}
+
+/**
+ * Derive a safe fallback profile name from the subscription URL: the URL host.
+ * Deliberately NOT the URL path — a path segment can be a 32-hex token (gist
+ * raw URLs), which is both unreadable and close to a credential. Returns
+ * `null` for URLs without a parseable host.
+ */
+export function deriveFallbackSubscriptionName(url: string): string | null {
+  try {
+    const host = new URL(url).hostname
+    if (!host) return null
+    return host.length > MAX_SUGGESTED_NAME_LENGTH ? host.slice(0, MAX_SUGGESTED_NAME_LENGTH) : host
+  } catch {
+    return null
+  }
 }
 
 export class SubscriptionFetcher {
@@ -453,7 +512,10 @@ export class SubscriptionFetcher {
           url: redactedUrl, // Only store redacted URL for security
           expire: null,
           usage: null
-        }
+        },
+        suggestedName:
+          parseDispositionFilename(response.headers?.get('content-disposition')) ??
+          deriveFallbackSubscriptionName(redactedUrl)
       }
     } catch (error) {
       // Handle timeout specifically

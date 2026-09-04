@@ -78,6 +78,26 @@ export class ProfileAutoReloadGateway implements ProfileGateway {
     })
   }
 
+  /**
+   * Subscription update: re-fetch the document and, ONLY when the updated
+   * profile is the live one, reapply it to the kernel (the user's contract:
+   * updating a non-active profile must not switch or restart anything). A
+   * failed reload rolls the document back to the pre-update snapshot.
+   */
+  async updateFromSource(id: string): Promise<ProfileMeta> {
+    return this.enqueueMutation(async () => {
+      const previousActiveId = await this.currentActiveId()
+      const previousDocument = (await this.inner.getProfile(id)).document
+      const meta = await this.inner.updateFromSource(id)
+      if (previousActiveId === id) {
+        await this.reloader.reload(() =>
+          this.restoreEdit(previousActiveId, id, previousDocument)
+        )
+      }
+      return meta
+    })
+  }
+
   async activateProfile(id: string): Promise<ProfileMeta> {
     return this.enqueueMutation(async () => {
       const previousActiveId = await this.currentActiveId()

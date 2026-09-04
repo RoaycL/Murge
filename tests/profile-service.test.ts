@@ -170,4 +170,70 @@ describe('ProfileService', () => {
     const list = await service.listProfiles()
     await expect(service.renameProfile(list[0].id, 'b')).rejects.toThrow(/already exists/i)
   })
+
+  describe('subscription naming and updateFromSource', () => {
+    function fetcherReturning(suggestedName: string | null, document = VALID_DOC) {
+      return new SubscriptionFetcher({
+        fetchFn: async () => ({
+          ok: true,
+          status: 200,
+          headers: {
+            has: () => suggestedName !== null,
+            get: () => (suggestedName !== null ? `attachment; filename="${suggestedName}.yaml"` : null)
+          },
+          text: async () => document
+        })
+      })
+    }
+
+    it('derives the profile name from the response filename when the caller leaves it empty', async () => {
+      const derived = new ProfileService(repository, createConfigValidator(), fetcherReturning('机场订阅'))
+      const meta = await derived.importFromUrl('', 'https://example.com/sub')
+      expect(meta.name).toBe('机场订阅')
+    })
+
+    it('falls back to the URL host and then the default label', async () => {
+      const noHeader = new ProfileService(repository, createConfigValidator(), fetcherReturning(null))
+      const byHost = await noHeader.importFromUrl('', 'https://airport.example.com/sub')
+      expect(byHost.name).toBe('airport.example.com')
+
+      const unparseable = new ProfileService(repository, createConfigValidator(), fetcherReturning(null))
+      const fallback = await unparseable.importFromUrl('', 'https://a/b', false)
+      expect(fallback.name.length).toBeGreaterThan(0)
+      expect(fallback.name).not.toContain('https://')
+    })
+
+    it('keeps an explicit caller-provided name untouched', async () => {
+      const explicit = new ProfileService(repository, createConfigValidator(), fetcherReturning('suggested'))
+      const meta = await explicit.importFromUrl('我的名字', 'https://example.com/sub')
+      expect(meta.name).toBe('我的名字')
+    })
+
+    it('updateFromSource re-fetches the subscription and replaces the document, keeping name and pointer', async () => {
+      const original = await service.importProfile({ name: 'sub', document: VALID_DOC, source: { type: 'url', url: 'https://example.com/sub' }, activate: true })
+      const updater = new ProfileService(repository, createConfigValidator(), fetcherReturning('sub', `mixed-port: 7890\nproxies:\n  - name: fresh\n    server: 127.0.0.1\n`))
+      const updated = await updater.updateFromSource(original.id)
+      expect(updated.name).toBe('sub')
+      const profile = await repository.get(original.id)
+      expect(profile.document).toContain('name: fresh')
+      expect(profile.document).not.toContain('name: node-01')
+      expect((await repository.list()).find((meta) => meta.active)?.id).toBe(original.id)
+    })
+
+    it('updateFromSource rejects a profile without a remote source', async () => {
+      const manual = await service.importProfile({ name: 'local', document: VALID_DOC, source: { type: 'manual' } })
+      await expect(service.updateFromSource(manual.id)).rejects.toThrow(/没有远程订阅地址/)
+    })
+
+    it('updateFromSource does not write an update whose document fails validation', async () => {
+      const original = await service.importProfile({ name: 'sub', document: VALID_DOC, source: { type: 'url', url: 'https://example.com/sub' } })
+      const badFetcher = new SubscriptionFetcher({
+        fetchFn: async () => ({ ok: true, status: 200, text: async () => INVALID_DOC })
+      })
+      const breaker = new ProfileService(repository, createConfigValidator(), badFetcher)
+      await expect(breaker.updateFromSource(original.id)).rejects.toThrow(/配置校验失败/i)
+      const profile = await repository.get(original.id)
+      expect(profile.document).toContain('name: node-01')
+    })
+  })
 })

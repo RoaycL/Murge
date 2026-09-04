@@ -20,8 +20,14 @@
   --radius-large: 19px;
   --radius-control: 7px;
   --sidebar-width: 205px;
+  /* 页面内容基准列宽：完全流式布局中的最大内容宽度。低于此宽度时页面
+     收缩为单列/流体网格；高于时内容居中并保留规范留白。 */
   --content-max-width: 709px;
   --activity-content-width: 695px;
+  /* 流体网格的最小卡片尺寸：窗口缩小时卡片可以并排到 1 列，放大时保持
+     接近规范的卡片比例而不是无限拉伸。 */
+  --card-min: 280px;
+  --node-card-min: 150px;
   --frame-radius: 12px;
   --frame-border: rgba(213, 218, 226, 0.85);
   --frame-shadow: 0 18px 55px rgba(24, 31, 45, 0.18);

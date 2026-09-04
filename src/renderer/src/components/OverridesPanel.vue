@@ -371,7 +371,7 @@ onMounted(() => {
 .ov-editor {
   display: flex;
   flex-direction: column;
-  width: 540px;
+  width: min(540px, calc(100vw - 48px));
   max-height: 80vh;
   background: var(--app-surface-solid);
   border: 1px solid var(--app-divider);

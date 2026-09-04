@@ -118,7 +118,7 @@ async function confirmInstall(): Promise<void> {
 .km-modal {
   display: flex;
   flex-direction: column;
-  width: 460px;
+  width: min(460px, calc(100vw - 48px));
   max-height: 78vh;
   background: var(--app-surface-solid);
   border: 1px solid var(--app-divider);

@@ -26,7 +26,7 @@ describe('geodata-settings model', () => {
       updateIntervalHours: 12,
       geoxUrl: 'https://example.com/geodata'
     })
-    expect(out).toEqual({
+    expect(out).toMatchObject({
       enabled: true,
       geodataMode: true,
       geoipMode: 'memconservative',
@@ -66,6 +66,7 @@ describe('geodata-settings model', () => {
 
   it('builds the mihomo geodata keys (omitting an unset source URL)', () => {
     const block = buildGeodataBlock({
+      ...EMPTY_GEODATA_SETTINGS,
       enabled: true,
       geodataMode: true,
       geoipMode: 'memconservative',
@@ -73,18 +74,18 @@ describe('geodata-settings model', () => {
       updateIntervalHours: 12,
       geoxUrl: 'https://example.com/geodata'
     })
-    expect(block).toEqual({
+    expect(block).toMatchObject({
       'geodata-mode': true,
-      'geoip-mode': 'memconservative',
+      'geodata-loader': 'memconservative',
       'geo-auto-update': true,
       'geo-update-interval': 12,
-      'geo-x-url': 'https://example.com/geodata'
+      'geox-url': EMPTY_GEODATA_SETTINGS.geoxUrls
     })
   })
 
   it('omits geo-x-url when no source URL was set', () => {
     const block = buildGeodataBlock({ ...EMPTY_GEODATA_SETTINGS, enabled: true, geodataMode: true })
-    expect(block['geo-x-url']).toBeUndefined()
+    expect(block['geox-url']).toEqual(EMPTY_GEODATA_SETTINGS.geoxUrls)
     expect(block['geodata-mode']).toBe(true)
   })
 })

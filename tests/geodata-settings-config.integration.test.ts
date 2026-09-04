@@ -46,16 +46,16 @@ describe('controlled geodata settings config integration', () => {
   it('read-back: an enabled model is authoritative in the runtime config', () => {
     const out = build(ENABLED)
     expect(out['geodata-mode']).toBe(true)
-    expect(out['geoip-mode']).toBe('memconservative')
+    expect(out['geodata-loader']).toBe('memconservative')
     expect(out['geo-auto-update']).toBe(false)
     expect(out['geo-update-interval']).toBe(12)
-    expect(out['geo-x-url']).toBe('https://controlled.example.com/geodata')
+    expect(out['geox-url']).toEqual(ENABLED.geoxUrls)
   })
 
   it('conflict handling: an enabled model overrides the profile own keys', () => {
     const out = build(ENABLED)
     expect(out['geodata-mode']).not.toBe(false)
-    expect(out['geoip-mode']).not.toBe('standard')
+    expect(out['geodata-loader']).not.toBe('standard')
     expect(out['geo-auto-update']).not.toBe(true)
     expect(out['geo-update-interval']).not.toBe(48)
   })
@@ -72,9 +72,9 @@ describe('controlled geodata settings config integration', () => {
     expect(absent['geo-x-url']).toBe('https://profile.example.com/geodata')
   })
 
-  it('an empty source URL leaves the profile source intact (read-back of the unset override)', () => {
+  it('writes the controlled geox-url database map', () => {
     const out = build({ ...ENABLED, geoxUrl: '' })
-    expect(out['geo-x-url']).toBe('https://profile.example.com/geodata')
+    expect(out['geox-url']).toEqual(ENABLED.geoxUrls)
     // The always-owned keys still reflect the model.
     expect(out['geodata-mode']).toBe(true)
   })

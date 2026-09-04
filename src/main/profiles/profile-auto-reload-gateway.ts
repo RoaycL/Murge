@@ -152,6 +152,19 @@ export class ProfileAutoReloadGateway implements ProfileGateway {
     })
   }
 
+  async replaceDocument(id: string, document: string): Promise<ProfileMeta> {
+    return this.enqueueMutation(async () => {
+      const previousActiveId = await this.currentActiveId()
+      const previousDocument = (await this.inner.getProfile(id)).document
+      const meta = await this.inner.replaceDocument(id, document)
+      if (previousActiveId === id) await this.reloader.reload(() => this.restoreEdit(previousActiveId, id, previousDocument))
+      return meta
+    })
+  }
+
+  getSourceUrl(id: string): string | null | Promise<string | null> { return this.inner.getSourceUrl(id) }
+  setSourceUrl(id: string, url: string): ProfileMeta | Promise<ProfileMeta> { return this.inner.setSourceUrl(id, url) }
+
   validateDocument(document: string): ValidationResult | Promise<ValidationResult> {
     return this.inner.validateDocument(document)
   }

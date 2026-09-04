@@ -9,6 +9,7 @@ import type { TunConfigModel } from '../tun-config'
 import { isValidDnsHijackEntry, isValidTunDevice, isValidTunMtu, isValidTunRouteAddress } from '../tun-config'
 import type { CoreSettings } from '../core-settings'
 import type { GeodataSettings } from '../geodata'
+import { DEFAULT_GEOX_URLS } from '../geodata'
 import type { ProxyBypassPolicy } from '../proxy-bypass'
 import { MAX_CUSTOM_BYPASS_ENTRIES, MAX_CUSTOM_BYPASS_ENTRY_LENGTH } from '../proxy-bypass'
 import type { UsageWindow, UsageRanking } from '../usage'
@@ -438,7 +439,8 @@ const geodataSettingsSchema = z
     geoipMode: z.enum(['memconservative', 'standard']),
     autoUpdate: z.boolean(),
     updateIntervalHours: z.number().int().min(1).max(168),
-    geoxUrl: HTTPS_URL_OR_EMPTY
+    geoxUrl: HTTPS_URL_OR_EMPTY,
+    geoxUrls: z.object({ geoip: HTTPS_URL_OR_EMPTY, mmdb: HTTPS_URL_OR_EMPTY, geosite: HTTPS_URL_OR_EMPTY, asn: HTTPS_URL_OR_EMPTY }).default({ ...DEFAULT_GEOX_URLS })
   })
   .strict()
 

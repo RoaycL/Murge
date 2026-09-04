@@ -62,9 +62,10 @@ describe('GeodataSettingsService', () => {
       geoxUrl: 'https://example.com/geodata'
     })
     expect(preview).toContain('geodata-mode: true')
-    expect(preview).toContain('geoip-mode: memconservative')
+    expect(preview).toContain('geodata-loader: memconservative')
     expect(preview).toContain('geo-auto-update: true')
     expect(preview).toContain('geo-update-interval: 12')
-    expect(preview).toContain('geo-x-url: https://example.com/geodata')
+    expect(preview).toContain('geox-url:')
+    expect(preview).toContain('GeoLite2-ASN.mmdb')
   })
 })

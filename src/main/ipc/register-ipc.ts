@@ -137,7 +137,21 @@ export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemPro
     usageHistory,
     networkMetadata
   }
+  const iconCache = new Map<string, string>()
   const entries = Object.entries(buildIpcHandlers(deps))
+  entries.push([IPC.appGetProcessIcon, async (_event, rawPath) => {
+    if (process.platform !== 'win32') return null
+    // Local drive paths only: never let renderer input make Explorer resolve a
+    // UNC/SMB path (which could cause unintended network access).
+    if (typeof rawPath !== 'string' || !/^[a-zA-Z]:\\/.test(rawPath) || !/\.exe$/i.test(rawPath) || rawPath.length > 1024) return null
+    const cached = iconCache.get(rawPath)
+    if (cached) return cached
+    try {
+      const value = (await app.getFileIcon(rawPath, { size: 'normal' })).toDataURL()
+      if (value.length <= 512_000) iconCache.set(rawPath, value)
+      return value
+    } catch { return null }
+  }])
   for (const [channel, handler] of entries) {
     ipcMain.handle(channel, wrapHandler(handler))
   }

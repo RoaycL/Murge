@@ -282,6 +282,21 @@ export class ProfileRepository {
     await this.writeBytes(this.metaPath(id), JSON.stringify(updated))
   }
 
+  async replaceDocument(id: string, document: string): Promise<ProfileMeta> {
+    const profile = await this.get(id)
+    await this.writeBytes(this.docPath(id), document)
+    const updated = { ...profile.meta, updatedAt: this.now(), size: Buffer.byteLength(document, 'utf8') }
+    await this.writeBytes(this.metaPath(id), JSON.stringify(updated))
+    return updated
+  }
+
+  async replaceSource(id: string, source: ProfileSubscription): Promise<ProfileMeta> {
+    const profile = await this.get(id)
+    const updated = { ...profile.meta, source, updatedAt: this.now() }
+    await this.writeBytes(this.metaPath(id), JSON.stringify(updated))
+    return updated
+  }
+
   /**
    * Atomically replace a profile's document AND source envelope (a subscription
    * update). The name, id and active pointer are preserved; `updatedAt` and

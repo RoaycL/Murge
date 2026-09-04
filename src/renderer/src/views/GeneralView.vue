@@ -1,52 +1,15 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted } from 'vue'
 import { useStartupStore } from '../stores/startup'
 import { useAppSettingsStore } from '../stores/app-settings'
-import { useKernelManagerStore } from '../stores/kernel-manager'
-import KernelVersionModal from '../components/KernelVersionModal.vue'
-import AppSelect from '../components/AppSelect.vue'
 
 const startup = useStartupStore()
 const appSettings = useAppSettingsStore()
-const kernelManager = useKernelManagerStore()
-
-const showVersionModal = ref(false)
-let unsubscribe: (() => void) | null = null
 
 onMounted(() => {
   void startup.refresh()
   void appSettings.refresh()
-  void kernelManager.refresh()
-  unsubscribe = kernelManager.subscribe()
 })
-
-onUnmounted(() => {
-  unsubscribe?.()
-})
-
-function toggleKernelEnabled(): void {
-  void kernelManager.setEnabled(!kernelManager.state.enabled)
-}
-
-function onChannelChange(value: string): void {
-  if (value === 'specific') {
-    showVersionModal.value = true
-  } else {
-    void kernelManager.setChannel('stable')
-  }
-}
-
-function closeVersionModal(): void {
-  showVersionModal.value = false
-}
-
-const channelDescription = (): string => {
-  const state = kernelManager.state
-  if (state.channel === 'specific' && state.specificVersion) {
-    return `当前使用指定版本 ${state.effectiveVersion}`
-  }
-  return `当前使用内置稳定版 ${state.stableVersion}`
-}
 </script>
 
 <template>
@@ -93,42 +56,6 @@ const channelDescription = (): string => {
     </section>
 
     <section>
-      <h2>内核管理</h2>
-      <div class="surface-card preference-list">
-        <label>
-          <span>
-            <strong>启用 Smart 内核</strong>
-            <small>关闭后内核不会启动；仍可手动启用其开关，但内核、系统代理与 TUN 均无法接管。</small>
-          </span>
-          <button
-            type="button"
-            class="switch"
-            :class="{ on: kernelManager.state.enabled }"
-            :aria-checked="kernelManager.state.enabled"
-            :disabled="kernelManager.busy"
-            aria-label="启用 Smart 内核"
-            @click="toggleKernelEnabled"
-          />
-        </label>
-        <label>
-          <span>
-            <strong>内核版本</strong>
-            <small>{{ channelDescription() }}</small>
-          </span>
-          <AppSelect
-            :model-value="kernelManager.state.channel"
-            :options="[{ value: 'stable', label: '稳定版' }, { value: 'specific', label: '选择特定版本…' }]"
-            :disabled="kernelManager.busy || !kernelManager.state.enabled"
-            label="内核版本"
-            @update:model-value="onChannelChange"
-          />
-        </label>
-      </div>
-      <p v-if="kernelManager.state.installing" class="setting-help">正在下载并校验 {{ kernelManager.state.installing }}…</p>
-      <p v-if="kernelManager.errorMessage" class="inline-error">{{ kernelManager.errorMessage }}</p>
-    </section>
-
-    <section>
       <h2>更新</h2>
       <div class="surface-card preference-list">
         <label>
@@ -153,6 +80,5 @@ const channelDescription = (): string => {
       </div>
     </section>
 
-    <KernelVersionModal v-if="showVersionModal" @close="closeVersionModal" />
   </div>
 </template>

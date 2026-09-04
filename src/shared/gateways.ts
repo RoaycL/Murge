@@ -210,6 +210,9 @@ export interface ProfileGateway {
   deleteProfile(id: string): Promise<void>
   renameProfile(id: string, name: string): ProfileMeta | Promise<ProfileMeta>
   editDocument(id: string, edits: ConfigEdit[]): ProfileMeta | Promise<ProfileMeta>
+  replaceDocument(id: string, document: string): ProfileMeta | Promise<ProfileMeta>
+  getSourceUrl(id: string): string | null | Promise<string | null>
+  setSourceUrl(id: string, url: string): ProfileMeta | Promise<ProfileMeta>
   validateDocument(document: string): ValidationResult | Promise<ValidationResult>
 }
 

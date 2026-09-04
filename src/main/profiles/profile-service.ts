@@ -154,6 +154,24 @@ export class ProfileService implements ProfileGateway {
     return this.repository.editDocument(id, edits)
   }
 
+  async replaceDocument(id: string, document: string): Promise<ProfileMeta> {
+    this.throwIfInvalid(this.validator.validate(document))
+    return this.repository.replaceDocument(id, document)
+  }
+
+  getSourceUrl(id: string): Promise<string | null> {
+    return this.sourceStore.get(id)
+  }
+
+  async setSourceUrl(id: string, url: string): Promise<ProfileMeta> {
+    const profile = await this.repository.get(id)
+    if (profile.meta.source.type !== 'url') {
+      throw new ProtocolError(ProtocolErrorCode.INVALID_ARGUMENT, '只有远程配置可以修改订阅地址')
+    }
+    await this.sourceStore.set(id, url)
+    return this.repository.replaceSource(id, { ...profile.meta.source, url: redactCredentials(url) })
+  }
+
   validateDocument(document: string): ValidationResult {
     return this.validator.validate(document)
   }

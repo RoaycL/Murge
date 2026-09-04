@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import SurfaceCard from './SurfaceCard.vue'
 import { useUsageHistoryStore } from '../stores/usage-history'
 import type { UsageBucket, UsageRanking, UsageWindow } from '@shared/usage'
 import { USAGE_WINDOW_CONFIG } from '@shared/usage'
 import { formatBytes, formatBytesParts } from '../lib/format'
+import ConfirmModal from './ConfirmModal.vue'
+import AppIcon from './AppIcon.vue'
 
 const store = useUsageHistoryStore()
+const clearOpen = ref(false)
 
 const WINDOWS: Array<{ value: UsageWindow; label: string }> = [
   { value: '1h', label: '1 小时' },
@@ -95,10 +98,8 @@ function timeLabel(bucketStart: number): string {
 }
 
 async function confirmClear(): Promise<void> {
-  // Light-weight confirm: a positive-returning `clear` is destructive.
-  if (window.confirm('确定要清空全部流量使用记录吗？此操作不可撤销。')) {
-    await store.clear()
-  }
+  await store.clear()
+  clearOpen.value = false
 }
 </script>
 
@@ -164,8 +165,9 @@ async function confirmClear(): Promise<void> {
 
     <footer class="usage-footer">
       <span>{{ capacityText }}</span>
-      <button type="button" class="usage-clear" :disabled="store.busy" @click="confirmClear">清空记录</button>
+      <button type="button" class="usage-clear" :disabled="store.busy" @click="clearOpen = true"><AppIcon name="delete" :size="14" />清空记录</button>
     </footer>
+    <ConfirmModal :open="clearOpen" title="清空使用记录？" description="这会永久删除全部聚合流量历史，此操作不可撤销。" confirm-label="确认清空" :busy="store.busy" @close="clearOpen = false" @confirm="confirmClear" />
   </SurfaceCard>
 </template>
 
@@ -190,6 +192,6 @@ async function confirmClear(): Promise<void> {
 .usage-empty { margin: 14px 0; color: var(--app-muted); font-size: 11px; }
 .usage-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 16px; }
 .usage-footer span { color: var(--app-muted); font-size: 10px; }
-.usage-clear { min-height: 28px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: 7px; background: transparent; color: var(--app-danger, #d64f4f); font-size: 11px; }
+.usage-clear { display: inline-flex; min-height: 28px; align-items: center; gap: 5px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: 7px; background: transparent; color: var(--app-danger, #d64f4f); font-size: 11px; }
 .usage-clear:disabled { opacity: 0.5; }
 </style>

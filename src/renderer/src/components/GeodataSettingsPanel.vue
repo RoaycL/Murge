@@ -3,6 +3,8 @@ import { onMounted, reactive, ref, watch } from 'vue'
 import { useGeodataSettingsStore } from '../stores/geodata-settings'
 import type { GeodataSettings, GeoipMode } from '@shared/geodata'
 import { EMPTY_GEODATA_SETTINGS } from '@shared/geodata'
+import AppSelect from './AppSelect.vue'
+import AppIcon from './AppIcon.vue'
 
 const store = useGeodataSettingsStore()
 
@@ -90,11 +92,7 @@ onMounted(async () => {
           </label>
           <label class="gd-field">
             <span class="gd-label">geoip-mode</span>
-            <select v-model="form.geoipMode" class="gd-select">
-              <option v-for="option in GEOIP_OPTIONS" :key="option.value" :value="option.value">
-                {{ option.label }}
-              </option>
-            </select>
+            <AppSelect v-model="form.geoipMode" :options="GEOIP_OPTIONS" label="GeoIP 模式" />
           </label>
         </div>
       </fieldset>
@@ -145,7 +143,7 @@ onMounted(async () => {
       <div v-if="previewOpen" class="gd-preview">
         <div class="gd-preview-head">
           <span>运行时生效的 mihomo geodata 键</span>
-          <button type="button" class="gd-icon" aria-label="关闭预览" @click="previewOpen = false">✕</button>
+          <button type="button" class="gd-icon" aria-label="关闭预览" @click="previewOpen = false"><AppIcon name="close" :size="15" /></button>
         </div>
         <pre class="gd-preview-body">{{ previewYaml || '（空）' }}</pre>
       </div>

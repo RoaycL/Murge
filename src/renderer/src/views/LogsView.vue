@@ -3,9 +3,14 @@ import { onMounted, onUnmounted } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useLogsStore } from '../stores/logs'
 import { serializeLogs } from '../lib/logs'
+import AppSelect from '../components/AppSelect.vue'
 
 const store = useLogsStore()
 const { status, lastError, search, level, visibleEntries } = storeToRefs(store)
+const LEVEL_OPTIONS = [
+  { value: 'all', label: '所有级别' }, { value: 'debug', label: '调试' },
+  { value: 'info', label: '信息' }, { value: 'warning', label: '警告' }, { value: 'error', label: '错误' }
+] as const
 
 function exportLogs(): void {
   const blob = new Blob([serializeLogs(visibleEntries.value)], { type: 'text/plain;charset=utf-8' })
@@ -32,9 +37,7 @@ onUnmounted(store.disconnect)
     </header>
     <div class="logs-toolbar">
       <input v-model="search" type="search" placeholder="筛选日志" aria-label="筛选日志" />
-      <select v-model="level" aria-label="日志级别">
-        <option value="all">所有级别</option><option value="debug">调试</option><option value="info">信息</option><option value="warning">警告</option><option value="error">错误</option>
-      </select>
+      <AppSelect v-model="level" :options="LEVEL_OPTIONS" label="日志级别" />
     </div>
     <p v-if="lastError" class="inline-error">{{ lastError }}</p>
     <section class="surface-card logs-panel" aria-live="polite">
@@ -47,4 +50,3 @@ onUnmounted(store.disconnect)
     </section>
   </div>
 </template>
-

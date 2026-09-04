@@ -36,4 +36,25 @@ describe('Surge-inspired UI navigation contract', () => {
     expect(profiles).toContain('activate: false')
     expect(profiles).not.toContain('prompt(')
   })
+
+  it('uses the shared visual select and semantic icons instead of native controls', () => {
+    const files = [
+      'views/ConfigView.vue', 'views/ConnectionsView.vue', 'views/DeviceListView.vue',
+      'views/DnsView.vue', 'views/GeneralView.vue', 'views/LogsView.vue',
+      'views/ProcessListView.vue', 'components/CoreSettingsPanel.vue',
+      'components/DnsSettingsPanel.vue', 'components/GeodataSettingsPanel.vue',
+      'components/OverridesPanel.vue', 'components/TunConfigPanel.vue',
+      'components/UsageHistoryPanel.vue'
+    ]
+    const source = files.map((file) => read(`src/renderer/src/${file}`)).join('\n')
+    expect(source).not.toContain('<select')
+    expect(source).not.toMatch(/window\.(?:alert|confirm|prompt)\(/)
+    expect(source).not.toMatch(/>[✕✎↑↓]</)
+    expect(source).toContain('<AppSelect')
+
+    const visualSelect = read('src/renderer/src/components/AppSelect.vue')
+    expect(visualSelect).toContain('role="listbox"')
+    expect(visualSelect).toContain("event.key === 'Escape'")
+    expect(visualSelect).toContain("event.key === 'ArrowDown'")
+  })
 })

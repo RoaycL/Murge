@@ -3,6 +3,8 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useOverridesStore } from '../stores/overrides'
 import type { OverrideInput } from '@shared/overrides'
 import { diffLines } from '@shared/overrides'
+import AppIcon from './AppIcon.vue'
+import AppSelect from './AppSelect.vue'
 
 const props = defineProps<{ activeProfileId: string | null }>()
 
@@ -121,7 +123,7 @@ onMounted(() => {
           在订阅配置之上叠加自定义规则、分组或 DNS，无需改动订阅文件；下次启动内核时生效。
         </p>
       </div>
-      <button type="button" class="ov-add" @click="openCreate">+ 新增</button>
+      <button type="button" class="ov-add" @click="openCreate"><AppIcon name="add" :size="15" />新增</button>
     </header>
 
     <p v-if="store.lastError" class="inline-error" role="alert">{{ store.lastError }}</p>
@@ -145,7 +147,7 @@ onMounted(() => {
             aria-label="上移"
             title="上移"
             @click="store.move(item.id, 'up')"
-          >↑</button>
+          ><AppIcon name="move-up" :size="14" /></button>
           <button
             type="button"
             class="ov-icon"
@@ -153,9 +155,9 @@ onMounted(() => {
             aria-label="下移"
             title="下移"
             @click="store.move(item.id, 'down')"
-          >↓</button>
-          <button type="button" class="ov-icon" aria-label="编辑" title="编辑" @click="openEdit(item)">✎</button>
-          <button type="button" class="ov-icon danger" aria-label="删除" title="删除" @click="store.remove(item.id)">✕</button>
+          ><AppIcon name="move-down" :size="14" /></button>
+          <button type="button" class="ov-icon" aria-label="编辑" title="编辑" @click="openEdit(item)"><AppIcon name="edit" :size="14" /></button>
+          <button type="button" class="ov-icon danger" aria-label="删除" title="删除" @click="store.remove(item.id)"><AppIcon name="delete" :size="14" /></button>
           <label class="ov-toggle" :title="item.enabled ? '停用' : '启用'">
             <input
               :checked="item.enabled"
@@ -183,7 +185,7 @@ onMounted(() => {
     </div>
 
     <div v-if="store.validation" class="ov-validate" :class="{ ok: store.validation.valid, bad: !store.validation.valid }" role="status">
-      <span class="ov-validate-mark">{{ store.validation.valid ? '✓' : '✕' }}</span>
+      <span class="ov-validate-mark"><AppIcon :name="store.validation.valid ? 'check' : 'close'" :size="15" /></span>
       <div class="ov-validate-body">
         <p class="ov-validate-head">
           {{ store.validation.valid ? '覆写校验通过' : `覆写校验未通过 · ${issueSummary()}` }}
@@ -219,22 +221,16 @@ onMounted(() => {
       <div class="ov-editor" role="dialog" aria-modal="true" aria-label="编辑覆写">
         <header class="ov-editor-head">
           <h3>{{ isEditing ? '编辑覆写' : '新增覆写' }}</h3>
-          <button type="button" class="ov-icon" aria-label="关闭" @click="closeEditor">✕</button>
+          <button type="button" class="ov-icon" aria-label="关闭" @click="closeEditor"><AppIcon name="close" :size="15" /></button>
         </header>
 
         <div class="ov-form">
           <input v-model="form.name" class="ov-field" placeholder="覆写名称" aria-label="覆写名称" />
           <div class="ov-form-row">
             <label class="ov-label">类型</label>
-            <select v-model="form.kind" class="ov-field">
-              <option value="yaml">YAML 覆写</option>
-              <option value="js">JS 覆写</option>
-            </select>
+            <AppSelect v-model="form.kind" :options="[{ value: 'yaml', label: 'YAML 覆写' }, { value: 'js', label: 'JS 覆写' }]" label="覆写类型" />
             <label class="ov-label">作用域</label>
-            <select v-model="form.scope" class="ov-field">
-              <option value="global">全局</option>
-              <option value="profile" :disabled="!canUseProfileScope">当前订阅</option>
-            </select>
+            <AppSelect v-model="form.scope" :options="[{ value: 'global', label: '全局' }, { value: 'profile', label: '当前订阅', disabled: !canUseProfileScope }]" label="覆写作用域" />
           </div>
           <p v-if="form.scope === 'profile' && !canUseProfileScope" class="ov-note">
             当前没有使用中的订阅，暂无法绑定到某个订阅。

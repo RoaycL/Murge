@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import {
-  Activity, AppWindow, Boxes, Braces, ChevronLeft, ChevronRight, Clipboard,
+  Activity, AppWindow, ArrowDown, ArrowUp, Boxes, Braces, Check, ChevronDown, ChevronLeft, ChevronRight, Clipboard,
   Code2, Cpu, Database, Download, Ellipsis, FileCog, FilePlus2, Globe2, Info, Laptop,
-  LayoutDashboard, ListTree, Logs, Network, Palette, PanelRightClose, RefreshCw,
+  LayoutDashboard, ListTree, Logs, Network, Palette, PanelRightClose, Pencil, Plus, RefreshCw,
   Route, Search, ServerCog, Settings2, ShieldCheck, SlidersHorizontal, Trash2,
   Upload, Wifi, X
 } from 'lucide-vue-next'
@@ -15,6 +15,7 @@ export type AppIconName =
   | 'logs' | 'about' | 'search' | 'refresh' | 'add-file' | 'clipboard'
   | 'upload' | 'download' | 'delete' | 'close' | 'back' | 'next'
   | 'drawer-close' | 'server' | 'security' | 'code' | 'database' | 'more-horizontal'
+  | 'chevron-down' | 'check' | 'edit' | 'add' | 'move-up' | 'move-down'
 
 defineProps<{ name: AppIconName; size?: number; strokeWidth?: number }>()
 
@@ -52,7 +53,13 @@ const icons: Record<AppIconName, Component> = {
   security: ShieldCheck,
   code: Code2,
   database: Database,
-  'more-horizontal': Ellipsis
+  'more-horizontal': Ellipsis,
+  'chevron-down': ChevronDown,
+  check: Check,
+  edit: Pencil,
+  add: Plus,
+  'move-up': ArrowUp,
+  'move-down': ArrowDown
 }
 </script>
 

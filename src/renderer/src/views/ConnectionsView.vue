@@ -6,11 +6,16 @@ import { formatBytes } from '../lib/format'
 import AppIcon from '../components/AppIcon.vue'
 import DetailDrawer from '../components/DetailDrawer.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
+import AppSelect from '../components/AppSelect.vue'
 
 const store = useConnectionsStore()
 const { status, lastError, search, visibleConnections, selectedConnection, selectedId, closingIds, closingMany, actionError, sort, summary } = storeToRefs(store)
 const confirmClose = ref(false)
 const drawerOpen = computed(() => Boolean(selectedConnection.value))
+const SORT_OPTIONS = [
+  { value: 'traffic', label: '按流量' }, { value: 'started', label: '按建立时间' },
+  { value: 'process', label: '按进程' }, { value: 'host', label: '按主机' }
+] as const
 
 function endpoint(connection: (typeof visibleConnections.value)[number]): string {
   return connection.metadata.host || connection.metadata.destinationIP || '未知目标'
@@ -31,12 +36,7 @@ onUnmounted(store.disconnect)
     </header>
     <div class="connections-toolbar">
       <label class="search-control"><AppIcon name="search" :size="15" /><input v-model="search" type="search" placeholder="进程、域名、IP 或策略" aria-label="筛选连接" /></label>
-      <select v-model="sort" aria-label="连接排序">
-        <option value="traffic">按流量</option>
-        <option value="started">按建立时间</option>
-        <option value="process">按进程</option>
-        <option value="host">按主机</option>
-      </select>
+      <AppSelect v-model="sort" :options="SORT_OPTIONS" label="连接排序" />
       <button type="button" class="danger-button" :disabled="closingMany || !visibleConnections.length" @click="confirmClose = true">
         <AppIcon name="close" :size="14" />{{ closingMany ? '正在关闭…' : search ? '关闭筛选结果' : '关闭全部' }}
       </button>

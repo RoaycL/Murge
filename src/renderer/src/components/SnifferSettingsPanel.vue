@@ -2,6 +2,7 @@
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useSnifferEnhancementStore } from '../stores/sniffer-enhancement'
 import type { SnifferEnhancement } from '@shared/sniffer'
+import AppIcon from './AppIcon.vue'
 
 const store = useSnifferEnhancementStore()
 
@@ -195,7 +196,7 @@ onMounted(async () => {
       <div v-if="previewOpen" class="sniffer-preview">
         <div class="sniffer-preview-head">
           <span>生效的内核 Sniffer 配置</span>
-          <button type="button" class="sniffer-icon" aria-label="关闭预览" @click="previewOpen = false">✕</button>
+          <button type="button" class="sniffer-icon" aria-label="关闭预览" @click="previewOpen = false"><AppIcon name="close" :size="15" /></button>
         </div>
         <pre class="sniffer-preview-body">{{ previewYaml || '（空）' }}</pre>
       </div>

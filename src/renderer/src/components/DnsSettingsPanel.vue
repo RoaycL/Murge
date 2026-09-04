@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref, watch } from 'vue'
+import AppSelect from './AppSelect.vue'
+import AppIcon from './AppIcon.vue'
 import { useDnsEnhancementStore } from '../stores/dns-enhancement'
 import type { DnsEnhancement } from '@shared/dns'
 
@@ -152,11 +154,7 @@ onMounted(async () => {
         <div class="dns-grid">
           <label class="dns-field">
             <span class="dns-label">增强模式</span>
-            <select v-model="form.enhancedMode" class="dns-input">
-              <option value="fake-ip">fake-ip</option>
-              <option value="redir-host">redir-host</option>
-              <option value="normal">normal</option>
-            </select>
+            <AppSelect v-model="form.enhancedMode" :options="[{ value: 'fake-ip', label: 'fake-ip' }, { value: 'redir-host', label: 'redir-host' }, { value: 'normal', label: 'normal' }]" label="DNS 增强模式" />
           </label>
           <label class="dns-field">
             <span class="dns-label">Fake-IP 范围</span>
@@ -164,10 +162,7 @@ onMounted(async () => {
           </label>
           <label class="dns-field">
             <span class="dns-label">Fake-IP 过滤模式</span>
-            <select v-model="form.fakeIpFilterMode" class="dns-input">
-              <option value="blacklist">blacklist</option>
-              <option value="whitelist">whitelist</option>
-            </select>
+            <AppSelect v-model="form.fakeIpFilterMode" :options="[{ value: 'blacklist', label: 'blacklist' }, { value: 'whitelist', label: 'whitelist' }]" label="Fake-IP 过滤模式" />
           </label>
           <label class="dns-switch small">
             <input v-model="form.ipv6" type="checkbox" aria-label="启用 IPv6" />
@@ -243,7 +238,7 @@ onMounted(async () => {
       <div v-if="previewOpen" class="dns-preview">
         <div class="dns-preview-head">
           <span>生效的内核 DNS 配置（敏感信息已隐藏）</span>
-          <button type="button" class="dns-icon" aria-label="关闭预览" @click="previewOpen = false">✕</button>
+          <button type="button" class="dns-icon" aria-label="关闭预览" @click="previewOpen = false"><AppIcon name="close" :size="15" /></button>
         </div>
         <pre class="dns-preview-body">{{ previewYaml || '（空）' }}</pre>
       </div>

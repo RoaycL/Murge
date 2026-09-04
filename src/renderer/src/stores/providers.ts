@@ -5,7 +5,7 @@ import type {
   MihomoProxyProvider,
   MihomoRuleProvider
 } from '@shared/mihomo-api'
-import { toProtocolError } from '@shared/protocol-errors'
+import { toProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
 
 export type ProvidersStatus = 'idle' | 'loading' | 'ready' | 'error'
 
@@ -30,6 +30,33 @@ export type ProviderHealthResult = Record<string, ProviderNodeHealth>
 
 function emptyOp(): ProviderOp {
   return { refreshing: false, healthchecking: false, error: null }
+}
+
+/**
+ * A provider is a "remote" (远端) external resource only when it is backed by a
+ * URL (mihomo reports this as vehicleType 'HTTP'). Inline ('Compatible') and
+ * local-file ('File') providers have no remote address to refresh, and the
+ * controller refuses to re-pull them (HTTP 503), so they must not be offered as
+ * updatable external resources. Case-insensitive because mihomo emits the
+ * capitalized form but some older/embedded builds use lowercase.
+ */
+export function isRemoteResource(provider: { vehicleType?: string; type?: string; url?: string }): boolean {
+  if (provider.url) return true
+  return String(provider.vehicleType ?? '').toLowerCase() === 'http'
+}
+
+/**
+ * A refresh failure on a provider never means "our delay test failed": mihomo
+ * returns 503 (mapped to UPSTREAM_TEST_FAILED) when it cannot re-pull the
+ * source URL. Surface that as an actionable fetch error rather than the
+ * misleading "delay test failed" wording the generic 503 mapping produces.
+ */
+function refreshFailureMessage(error: unknown): string {
+  const err = toProtocolError(error)
+  if (err.code === ProtocolErrorCode.UPSTREAM_TEST_FAILED) {
+    return '更新失败：无法连接源地址（HTTP 503）'
+  }
+  return err.message
 }
 
 /**
@@ -60,6 +87,15 @@ export const useProvidersStore = defineStore('providers', () => {
   )
   const orderedRuleProviders = computed<MihomoRuleProvider[]>(() =>
     Object.values(ruleProviders.value).sort((a, b) => a.name.localeCompare(b.name))
+  )
+
+  /** Only URL-backed providers belong on the external-resources page. */
+  const remoteProxyProviders = computed<MihomoProxyProvider[]>(() =>
+    orderedProxyProviders.value.filter((p) => isRemoteResource(p))
+  )
+  /** Only URL-backed rule providers belong on the external-resources page. */
+  const remoteRuleProviders = computed<MihomoRuleProvider[]>(() =>
+    orderedRuleProviders.value.filter((p) => isRemoteResource(p))
   )
 
   function opOf(name: string): ProviderOp {
@@ -128,7 +164,7 @@ export const useProvidersStore = defineStore('providers', () => {
       await reloadProxyProviders()
       setOp(name, { refreshing: false })
     } catch (error) {
-      setOp(name, { refreshing: false, error: toProtocolError(error).message })
+      setOp(name, { refreshing: false, error: refreshFailureMessage(error) })
     }
   }
 
@@ -139,41 +175,43 @@ export const useProvidersStore = defineStore('providers', () => {
       await reloadRuleProviders()
       setOp(name, { refreshing: false })
     } catch (error) {
-      setOp(name, { refreshing: false, error: toProtocolError(error).message })
+      setOp(name, { refreshing: false, error: refreshFailureMessage(error) })
     }
   }
 
   /**
-   * Refresh every external resource (proxy + rule providers) currently loaded
-   * from the running controller, in one click. Individual provider refreshes are
-   * still reflected in `ops` so a row can show its own in-flight/error state,
-   * while this batch returns a summary the caller can surface without restarting
-   * the kernel. Provider maps are re-pulled only at the end, so a single failing
-   * resource never discards the data the user already sees.
+   * Refresh every remote (URL-backed) external resource — proxy + rule
+   * providers — currently loaded from the running controller, in one click.
+   * Inline/local providers are excluded because the controller cannot re-pull
+   * them (503). Individual provider refreshes are still reflected in `ops` so a
+   * row can show its own in-flight/error state, while this batch returns a
+   * summary the caller can surface without restarting the kernel. Provider maps
+   * are re-pulled only at the end, so a single failing resource never discards
+   * the data the user already sees.
    */
   async function refreshAllProviders(): Promise<{ updated: number; failed: number }> {
-    const proxyNames = Object.keys(proxyProviders.value)
-    const ruleNames = Object.keys(ruleProviders.value)
+    const providers = remoteProxyProviders.value.map((p) => p.name)
+    const ruleSets = remoteRuleProviders.value.map((p) => p.name)
     let updated = 0
     let failed = 0
     await Promise.all(
-      proxyNames.map(async (name) => {
+      providers.map(async (name) => {
         try {
           await window.desktop.mihomo.refreshProxyProvider(name)
           updated++
         } catch (error) {
-          setOp(name, { refreshing: false, error: toProtocolError(error).message })
+          setOp(name, { refreshing: false, error: refreshFailureMessage(error) })
           failed++
         }
       })
     )
     await Promise.all(
-      ruleNames.map(async (name) => {
+      ruleSets.map(async (name) => {
         try {
           await window.desktop.mihomo.refreshRuleProvider(name)
           updated++
         } catch (error) {
-          setOp(name, { refreshing: false, error: toProtocolError(error).message })
+          setOp(name, { refreshing: false, error: refreshFailureMessage(error) })
           failed++
         }
       })
@@ -240,6 +278,8 @@ export const useProvidersStore = defineStore('providers', () => {
     healthResults,
     orderedProxyProviders,
     orderedRuleProviders,
+    remoteProxyProviders,
+    remoteRuleProviders,
     opOf,
     healthOf,
     loadProxyProviders,

@@ -55,7 +55,9 @@ function cardColor(id: string): string {
 
 function relativeTime(value: number | string): string {
   const ms = typeof value === 'string' ? Date.parse(value) : value
-  if (Number.isNaN(ms)) return '—'
+  // Garbage/missing timestamps (epoch-0 or a wildly negative value from a
+  // seconds-vs-ms mixup) would render as e.g. "2055 年前". Treat them as absent.
+  if (Number.isNaN(ms) || ms <= 0) return '—'
   const diff = Date.now() - ms
   if (diff < 0) return '刚刚'
   const min = Math.floor(diff / 60000)
@@ -220,8 +222,36 @@ watch(
 const activeCount = computed(() => profilesStore.profiles.filter((entry) => entry.active).length)
 const activeProfileId = computed(() => profilesStore.profiles.find((entry) => entry.active)?.id ?? null)
 const hasResources = computed(
-  () => Object.keys(providersStore.proxyProviders).length + Object.keys(providersStore.ruleProviders).length > 0
+  () => providersStore.remoteProxyProviders.length + providersStore.remoteRuleProviders.length > 0
 )
+
+function capitalize(s: string): string {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''
+}
+
+/** Human label for a rule provider's format, e.g. 'yaml' → 'YamlRule'. */
+function ruleFormatLabel(format?: string): string {
+  if (!format) return '规则'
+  const base = format.toLowerCase()
+  if (base === 'yaml') return 'YamlRule'
+  if (base === 'text') return 'TextRule'
+  return `${capitalize(format)}Rule`
+}
+
+function behaviorLabel(behavior?: string): string {
+  if (!behavior) return ''
+  return behavior.toLowerCase() === 'classical' ? 'Classical' : capitalize(behavior)
+}
+
+/** Reference-style meta line for a rule provider, e.g. `YamlRule · 35 分钟前 · HTTP::Classical`. */
+function ruleProviderMeta(
+  provider: { format?: string; updatedAt?: string; vehicleType?: string; behavior?: string }
+): string {
+  const parts: string[] = [ruleFormatLabel(provider.format)]
+  if (provider.updatedAt) parts.push(relativeTime(provider.updatedAt))
+  if (provider.vehicleType) parts.push(`${capitalize(provider.vehicleType)}::${behaviorLabel(provider.behavior)}`)
+  return parts.join(' · ')
+}
 </script>
 
 <template>
@@ -372,7 +402,7 @@ const hasResources = computed(
       <header class="section-heading">
         <div>
           <h2>外部资源管理</h2>
-          <p class="section-sub">配置文件中引用的代理集与规则集，可一次全部更新。</p>
+          <p class="section-sub">仅显示已配置远端地址的代理集与规则集，可单独更新或一键全部更新。</p>
         </div>
         <button
           type="button"
@@ -380,7 +410,7 @@ const hasResources = computed(
           :disabled="refreshingAll || kernel.status.phase !== 'running' || !hasResources"
           @click="refreshAllResources"
         >
-          {{ refreshingAll ? '更新中…' : '一键更新' }}
+          {{ refreshingAll ? '更新中…' : '更新全部' }}
         </button>
       </header>
 
@@ -391,61 +421,71 @@ const hasResources = computed(
       <p v-if="kernel.status.phase !== 'running'" class="empty-note">启动内核后即可管理外部资源。</p>
       <template v-else>
         <div class="resource-group">
-          <h3 class="resource-group-title">代理集</h3>
+          <h3 class="resource-group-title">代理集合</h3>
           <div v-if="providersStore.proxyStatus === 'loading' || providersStore.proxyStatus === 'idle'" class="empty-state">
-            <p>正在读取代理集…</p>
+            <p>正在读取代理集合…</p>
           </div>
-          <div v-else-if="providersStore.orderedProxyProviders.length === 0" class="empty-state">
-            <p>当前配置未引用外部代理集。</p>
+          <div v-else-if="providersStore.remoteProxyProviders.length === 0" class="empty-state">
+            <p>当前配置未引用远端地址的代理集。</p>
           </div>
           <div v-else class="resource-list">
-            <div v-for="provider in providersStore.orderedProxyProviders" :key="provider.name" class="resource-row">
+            <div v-for="provider in providersStore.remoteProxyProviders" :key="provider.name" class="resource-row">
               <div class="resource-info">
-                <span class="resource-name">{{ provider.name }}</span>
+                <span class="resource-name">
+                  {{ provider.name }}<span class="resource-count">（{{ provider.proxies?.length ?? 0 }} 节点）</span>
+                </span>
                 <span class="resource-meta">
-                  {{ provider.vehicleType ?? provider.type }} · {{ provider.proxies?.length ?? 0 }} 节点
-                  <template v-if="provider.updatedAt"> · {{ relativeTime(provider.updatedAt) }}</template>
+                  <template v-if="provider.updatedAt">{{ relativeTime(provider.updatedAt) }}</template>
                 </span>
                 <span v-if="providersStore.opOf(provider.name).error" class="resource-error">
                   {{ providersStore.opOf(provider.name).error }}
                 </span>
               </div>
-              <button
-                type="button"
-                class="resource-refresh"
-                :disabled="providersStore.opOf(provider.name).refreshing"
-                @click="providersStore.refreshProxyProvider(provider.name)"
-              >{{ providersStore.opOf(provider.name).refreshing ? '更新中' : '更新' }}</button>
+              <div class="resource-actions">
+                <button
+                  type="button"
+                  class="resource-refresh"
+                  :disabled="providersStore.opOf(provider.name).refreshing"
+                  @click="providersStore.refreshProxyProvider(provider.name)"
+                >{{ providersStore.opOf(provider.name).refreshing ? '更新中' : '更新' }}</button>
+                <button
+                  type="button"
+                  class="resource-refresh"
+                  :disabled="providersStore.opOf(provider.name).healthchecking"
+                  @click="providersStore.healthCheckProxyProvider(provider.name)"
+                >{{ providersStore.opOf(provider.name).healthchecking ? '测速中' : '测速' }}</button>
+              </div>
             </div>
           </div>
         </div>
 
         <div class="resource-group">
-          <h3 class="resource-group-title">规则集</h3>
+          <h3 class="resource-group-title">规则集合</h3>
           <div v-if="providersStore.ruleStatus === 'loading' || providersStore.ruleStatus === 'idle'" class="empty-state">
-            <p>正在读取规则集…</p>
+            <p>正在读取规则集合…</p>
           </div>
-          <div v-else-if="providersStore.orderedRuleProviders.length === 0" class="empty-state">
-            <p>当前配置未引用外部规则集。</p>
+          <div v-else-if="providersStore.remoteRuleProviders.length === 0" class="empty-state">
+            <p>当前配置未引用远端地址的规则集。</p>
           </div>
           <div v-else class="resource-list">
-            <div v-for="provider in providersStore.orderedRuleProviders" :key="provider.name" class="resource-row">
+            <div v-for="provider in providersStore.remoteRuleProviders" :key="provider.name" class="resource-row">
               <div class="resource-info">
-                <span class="resource-name">{{ provider.name }}</span>
-                <span class="resource-meta">
-                  {{ provider.vehicleType ?? provider.type }} · {{ provider.ruleCount ?? 0 }} 条规则
-                  <template v-if="provider.updatedAt"> · {{ relativeTime(provider.updatedAt) }}</template>
+                <span class="resource-name">
+                  {{ provider.name }}<span class="resource-count">（{{ provider.ruleCount ?? 0 }} 条）</span>
                 </span>
+                <span class="resource-meta">{{ ruleProviderMeta(provider) }}</span>
                 <span v-if="providersStore.opOf(provider.name).error" class="resource-error">
                   {{ providersStore.opOf(provider.name).error }}
                 </span>
               </div>
-              <button
-                type="button"
-                class="resource-refresh"
-                :disabled="providersStore.opOf(provider.name).refreshing"
-                @click="providersStore.refreshRuleProvider(provider.name)"
-              >{{ providersStore.opOf(provider.name).refreshing ? '更新中' : '更新' }}</button>
+              <div class="resource-actions">
+                <button
+                  type="button"
+                  class="resource-refresh"
+                  :disabled="providersStore.opOf(provider.name).refreshing"
+                  @click="providersStore.refreshRuleProvider(provider.name)"
+                >{{ providersStore.opOf(provider.name).refreshing ? '更新中' : '更新' }}</button>
+              </div>
             </div>
           </div>
         </div>
@@ -811,6 +851,12 @@ const hasResources = computed(
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.resource-count {
+  margin-left: 6px;
+  color: var(--app-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
 .resource-meta {
   color: var(--app-muted);
   font-size: 11px;
@@ -818,6 +864,12 @@ const hasResources = computed(
 .resource-error {
   color: #e05b5b;
   font-size: 11px;
+}
+.resource-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
 }
 .resource-refresh {
   border: 1px solid var(--app-divider);

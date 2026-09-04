@@ -5,8 +5,10 @@ import { useSystemProxyStore } from '../stores/system-proxy'
 import type { ProxyBypassPolicy } from '@shared/proxy-bypass'
 import { EMPTY_PROXY_BYPASS_POLICY, MAX_CUSTOM_BYPASS_ENTRIES } from '@shared/proxy-bypass'
 import AppIcon from './AppIcon.vue'
+import { useToast } from '../composables/use-toast'
 
 const store = useProxyBypassStore()
+const toast = useToast()
 const systemProxy = useSystemProxyStore()
 
 const form = reactive<ProxyBypassPolicy>({ ...EMPTY_PROXY_BYPASS_POLICY })
@@ -37,7 +39,9 @@ async function save(): Promise<void> {
   if (ok) {
     syncFromPolicy(store.policy)
     await systemProxy.refresh()
+    toast.success('代理绕过设置已保存')
   }
+  else toast.error('代理绕过设置保存失败', store.lastError ?? undefined)
 }
 
 async function preview(): Promise<void> {
@@ -111,7 +115,7 @@ onMounted(async () => {
 
       <div class="pb-actions">
         <button type="button" class="pb-preview" @click="preview">预览 ProxyOverride</button>
-        <button type="button" class="pb-save" :disabled="store.busy" @click="save">保存</button>
+        <button type="button" class="pb-save" :disabled="store.busy" @click="save">{{ store.busy ? '保存中…' : '保存' }}</button>
       </div>
 
       <div v-if="previewOpen" class="pb-preview">

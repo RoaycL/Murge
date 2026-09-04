@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {
-  Activity, AppWindow, ArrowDown, ArrowUp, Boxes, Braces, Check, ChevronDown, ChevronLeft, ChevronRight, Clipboard,
+  Activity, AppWindow, ArrowDown, ArrowUp, Boxes, Braces, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, Clipboard,
   Code2, Cpu, Database, Download, Ellipsis, FileCog, FilePlus2, Globe2, Info, Laptop,
   LayoutDashboard, ListTree, Logs, Network, Palette, PanelRightClose, Pencil, Plus, RefreshCw,
   Route, Search, ServerCog, Settings2, ShieldCheck, SlidersHorizontal, Trash2,
@@ -15,7 +15,7 @@ export type AppIconName =
   | 'logs' | 'about' | 'search' | 'refresh' | 'add-file' | 'clipboard'
   | 'upload' | 'download' | 'delete' | 'close' | 'back' | 'next'
   | 'drawer-close' | 'server' | 'security' | 'code' | 'database' | 'more-horizontal'
-  | 'chevron-down' | 'check' | 'edit' | 'add' | 'move-up' | 'move-down'
+  | 'chevron-down' | 'check' | 'edit' | 'add' | 'move-up' | 'move-down' | 'success' | 'error'
 
 defineProps<{ name: AppIconName; size?: number; strokeWidth?: number }>()
 
@@ -59,7 +59,9 @@ const icons: Record<AppIconName, Component> = {
   edit: Pencil,
   add: Plus,
   'move-up': ArrowUp,
-  'move-down': ArrowDown
+  'move-down': ArrowDown,
+  success: CircleCheck,
+  error: CircleAlert
 }
 </script>
 

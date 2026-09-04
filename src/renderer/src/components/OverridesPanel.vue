@@ -5,10 +5,12 @@ import type { OverrideInput } from '@shared/overrides'
 import { diffLines } from '@shared/overrides'
 import AppIcon from './AppIcon.vue'
 import AppSelect from './AppSelect.vue'
+import { useToast } from '../composables/use-toast'
 
 const props = defineProps<{ activeProfileId: string | null }>()
 
 const store = useOverridesStore()
+const toast = useToast()
 
 const editingId = ref<string | null>(null)
 const editorOpen = ref(false)
@@ -105,8 +107,10 @@ async function save(): Promise<void> {
     profileId: form.scope === 'profile' ? form.profileId ?? props.activeProfileId : null,
     content: form.content
   }
-  const ok = isEditing.value ? await store.update(editingId.value!, input) : await store.create(input)
-  if (ok) closeEditor()
+  const wasEditing = isEditing.value
+  const ok = wasEditing ? await store.update(editingId.value!, input) : await store.create(input)
+  if (ok) { closeEditor(); toast.success(wasEditing ? '覆写已更新' : '覆写已添加') }
+  else toast.error('覆写保存失败', store.lastError ?? undefined)
 }
 
 onMounted(() => {

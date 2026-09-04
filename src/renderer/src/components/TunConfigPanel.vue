@@ -4,8 +4,10 @@ import { useTunConfigStore } from '../stores/tun-config'
 import type { TunConfigModel } from '@shared/tun-config'
 import AppSelect from './AppSelect.vue'
 import AppIcon from './AppIcon.vue'
+import { useToast } from '../composables/use-toast'
 
 const store = useTunConfigStore()
+const toast = useToast()
 
 const form = reactive<TunConfigModel>({
   stack: 'mixed',
@@ -67,7 +69,8 @@ function buildInput(): TunConfigModel {
 
 async function save(): Promise<void> {
   const ok = await store.save(buildInput())
-  if (ok) syncFromConfig(store.config)
+  if (ok) { syncFromConfig(store.config); toast.success('TUN 配置已保存', '下次启用 TUN 时应用') }
+  else toast.error('TUN 配置保存失败', store.lastError ?? undefined)
 }
 
 async function preview(): Promise<void> {
@@ -171,7 +174,7 @@ onMounted(async () => {
 
       <div class="tun-actions">
         <button type="button" class="tun-preview" @click="preview">预览配置</button>
-        <button type="button" class="tun-save" :disabled="store.busy" @click="save">保存</button>
+        <button type="button" class="tun-save" :disabled="store.busy" @click="save">{{ store.busy ? '保存中…' : '保存' }}</button>
       </div>
 
       <div v-if="previewOpen" class="tun-preview">

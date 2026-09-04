@@ -5,8 +5,10 @@ import type { CoreSettings } from '@shared/core-settings'
 import { EMPTY_CORE_SETTINGS } from '@shared/core-settings'
 import AppSelect from './AppSelect.vue'
 import AppIcon from './AppIcon.vue'
+import { useToast } from '../composables/use-toast'
 
 const store = useCoreSettingsStore()
+const toast = useToast()
 
 const form = reactive<CoreSettings>({ ...EMPTY_CORE_SETTINGS })
 
@@ -40,7 +42,8 @@ function syncFromConfig(value: CoreSettings): void {
 
 async function save(): Promise<void> {
   const ok = await store.save({ ...form })
-  if (ok) syncFromConfig(store.settings)
+  if (ok) { syncFromConfig(store.settings); toast.success('内核设置已保存') }
+  else toast.error('内核设置保存失败', store.lastError ?? undefined)
 }
 
 async function preview(): Promise<void> {
@@ -129,7 +132,7 @@ onMounted(async () => {
 
       <div class="core-actions">
         <button type="button" class="core-preview" @click="preview">预览配置</button>
-        <button type="button" class="core-save" :disabled="store.busy" @click="save">保存</button>
+        <button type="button" class="core-save" :disabled="store.busy" @click="save">{{ store.busy ? '保存中…' : '保存' }}</button>
       </div>
 
       <div v-if="previewOpen" class="core-preview">

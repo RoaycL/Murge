@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterView } from 'vue-router'
 import AppSidebar from './components/AppSidebar.vue'
 import UpdateBanner from './components/UpdateBanner.vue'
+import ToastHost from './components/ToastHost.vue'
 import type { BrandConfig } from '@shared/brand'
 import { brand as fallbackBrand } from '@shared/brand'
 import { useKernelStore } from './stores/kernel'
@@ -41,6 +42,7 @@ onBeforeUnmount(() => {
         <UpdateBanner />
         <RouterView />
       </main>
+      <ToastHost />
     </div>
   </div>
 </template>

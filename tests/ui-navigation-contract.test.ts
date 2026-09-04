@@ -57,4 +57,12 @@ describe('Surge-inspired UI navigation contract', () => {
     expect(visualSelect).toContain("event.key === 'Escape'")
     expect(visualSelect).toContain("event.key === 'ArrowDown'")
   })
+
+  it('mounts one global feedback host and provides actionable empty states', () => {
+    expect(read('src/renderer/src/App.vue')).toContain('<ToastHost />')
+    const profiles = read('src/renderer/src/views/ConfigView.vue')
+    expect(profiles).toContain('<EmptyState')
+    expect(profiles).toContain('action-label="添加配置"')
+    expect(profiles).toContain("toast.success('远程配置已添加'")
+  })
 })

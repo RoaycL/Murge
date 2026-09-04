@@ -6,6 +6,7 @@ import { formatBytes } from "../lib/format";
 import AppIcon from "../components/AppIcon.vue";
 import DetailDrawer from "../components/DetailDrawer.vue";
 import AppSelect from "../components/AppSelect.vue";
+import EmptyState from "../components/EmptyState.vue";
 
 const store = useConnectionsStore();
 const selectedKey = ref<string | null>(null);
@@ -59,7 +60,7 @@ onUnmounted(store.disconnect);
           }}<small>{{ group.connections.length }} 个连接</small></strong
         ><AppIcon name="next" :size="15" />
       </button>
-      <p v-if="!groups.length" class="entity-empty">暂无活动设备</p>
+      <EmptyState v-if="!groups.length" icon="devices" title="暂无活动设备" detail="局域网设备产生连接后会自动汇总到这里。" />
     </section>
     <DetailDrawer
       :open="Boolean(selected)"

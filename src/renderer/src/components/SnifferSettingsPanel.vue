@@ -3,8 +3,10 @@ import { onMounted, reactive, ref, watch } from 'vue'
 import { useSnifferEnhancementStore } from '../stores/sniffer-enhancement'
 import type { SnifferEnhancement } from '@shared/sniffer'
 import AppIcon from './AppIcon.vue'
+import { useToast } from '../composables/use-toast'
 
 const store = useSnifferEnhancementStore()
+const toast = useToast()
 
 const form = reactive<SnifferEnhancement>({
   enabled: false,
@@ -74,7 +76,8 @@ function buildInput(): SnifferEnhancement {
 
 async function save(): Promise<void> {
   const ok = await store.save(buildInput())
-  if (ok) syncFromEnhancement(store.enhancement)
+  if (ok) { syncFromEnhancement(store.enhancement); toast.success('嗅探设置已保存') }
+  else toast.error('嗅探设置保存失败', store.lastError ?? undefined)
 }
 
 async function preview(): Promise<void> {
@@ -190,7 +193,7 @@ onMounted(async () => {
 
       <div class="sniffer-actions">
         <button type="button" class="sniffer-preview" @click="preview">预览配置</button>
-        <button type="button" class="sniffer-save" :disabled="store.busy" @click="save">保存</button>
+        <button type="button" class="sniffer-save" :disabled="store.busy" @click="save">{{ store.busy ? '保存中…' : '保存' }}</button>
       </div>
 
       <div v-if="previewOpen" class="sniffer-preview">

@@ -456,6 +456,7 @@ export interface FakeContainer {
   geodata: FakeGeodataSettingsGateway
   usageHistory: FakeUsageHistoryGateway
   networkMetadata: FakeNetworkMetadataGateway
+  internetLatency: { sample(): Promise<{ gatewayMs: number | null; dnsMs: number | null; proxyMs: number | null; proxyNode: string | null }> }
 }
 
 export class FakeGeodataSettingsGateway implements GeodataSettingsGateway {
@@ -821,6 +822,9 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
     geodata,
     usageHistory,
     networkMetadata,
-    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata }
+    internetLatency: {
+      sample: async () => ({ gatewayMs: 2, dnsMs: 6, proxyMs: 42, proxyNode: '香港 01' })
+    },
+    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata, internetLatency: { sample: async () => ({ gatewayMs: 2, dnsMs: 6, proxyMs: 42, proxyNode: '香港 01' }) } }
   }
 }

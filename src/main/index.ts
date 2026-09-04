@@ -2,6 +2,7 @@ import { join } from 'node:path'
 import { writeFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { attachKernelWatchdog } from './kernel/crash-watchdog'
+import { InternetLatencyService } from './services/internet-latency-service'
 import { app, BrowserWindow, dialog, powerMonitor, safeStorage, shell } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { brand } from '@shared/brand'
@@ -1062,7 +1063,12 @@ app.whenReady().then(async () => {
     },
     fetchJsonViaProxy: fetchMetadataJsonViaProxy
   })
+  // INTERNET-latency card: first-hop gateway RTT (direct, kernel-independent),
+  // the kernel's DNS resolve time, and the controller-reported delay of the
+  // node the user's selector currently points at (the full proxy-chain RTT).
+  const internetLatencyService = new InternetLatencyService({ mihomo: gateway })
   disposeIpc = registerIpc({
+    internetLatency: internetLatencyService,
     kernel: queuedKernel,
     kernelManager: kernelManagerService,
     // The selection-recording wrapper is what the renderer talks to; the raw
@@ -1238,21 +1244,24 @@ async function restoreNetworkBeforeQuit(): Promise<boolean> {
   // Inside the ONE mode-transition queue, so a concurrent renderer start/stop
   // can never interleave with the shutdown sequence.
   const task = async (): Promise<boolean> => {
+    // Restore the owned system proxy FIRST, while the live host (the elevated
+    // TUN child or the main kernel) still holds the unified mixed port. This
+    // mirrors every other teardown path (single-kernel-gateway.stop,
+    // ordered-kernel-gateway.stop): the registry must never aim at a port that
+    // is about to close. The quit path never resumes the main kernel, so
+    // stopping the TUN child first would leave a bounded dead-port window.
+    const restored = await restoreSystemProxyBeforeQuit()
     if (tunCoordinator) {
       try {
         const status: TunStatus = await tunCoordinator.emergencyDisable()
         if (status.phase !== 'configured' && status.phase !== 'unsupported') {
           console.error('[tun] TUN stop was not confirmed during quit:', status.phase)
-          // Do NOT short-circuit the proxy restore: restoring the owned proxy is
-          // safe and valuable even when the TUN stop could not be confirmed —
-          // the service still supervises the child, so nothing aims at a dead
-          // port on the TUN side, and the quit decision below stays fail-closed.
         }
       } catch (error) {
         console.error('[tun] restore during quit failed:', error)
       }
     }
-    return restoreSystemProxyBeforeQuit()
+    return restored
   }
   if (modeTransition) return modeTransition.runExclusive(task)
   return task()

@@ -51,6 +51,7 @@ const api: DesktopApi = {
     getConfig: () => invoke(IPC.mihomoGetConfig),
     patchConfig: (patch) => invoke(IPC.mihomoPatchConfig, patch),
     getProxies: () => invoke(IPC.mihomoGetProxies),
+    internetLatency: () => invoke(IPC.mihomoInternetLatency),
     selectProxy: (group, name) => invoke(IPC.mihomoSelectProxy, group, name),
     getRules: () => invoke(IPC.mihomoGetRules),
     getProxyProviders: () => invoke(IPC.mihomoGetProxyProviders),

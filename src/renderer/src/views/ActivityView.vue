@@ -12,6 +12,7 @@ import { useConnectionsStore } from '../stores/connections'
 import { useRuntimeStore } from '../stores/runtime'
 import { useKernelStore } from '../stores/kernel'
 import { useNetworkMetadataStore } from '../stores/network-metadata'
+import { useLatencyStore } from '../stores/latency'
 import { formatBytes, formatBytesParts, formatRate } from '../lib/format'
 import { brand } from '@shared/brand'
 import { useRouter } from 'vue-router'
@@ -23,9 +24,24 @@ const connections = useConnectionsStore()
 const runtime = useRuntimeStore()
 const kernel = useKernelStore()
 const networkMeta = useNetworkMetadataStore()
+const latency = useLatencyStore()
 const router = useRouter()
 const policies = usePoliciesStore()
 const summaryDrawer = ref<'network' | 'usage' | 'topology' | null>(null)
+
+// The card samples itself once a minute so the numbers never go stale.
+const LATENCY_REFRESH_MS = 60_000
+let latencyTimer: number | null = null
+
+// 每一格：实测到显示（ms 保留整数；未测到显示 em dash）。
+function delayText(value: number | null): string {
+  return value == null ? '—' : `${Math.round(value)}`
+}
+const gatewayText = computed(() => delayText(latency.gatewayMs))
+const dnsText = computed(() => delayText(latency.dnsMs))
+const proxyText = computed(() => delayText(latency.proxyMs))
+const headlineText = computed(() => (latency.state === 'idle' || latency.state === 'probing' ? '···' : proxyText.value))
+const diagnosisButtonLabel = computed(() => (latency.state === 'probing' ? '检测中…' : '网络诊断'))
 
 onMounted(() => {
   kernel.connect()
@@ -34,6 +50,10 @@ onMounted(() => {
   void runtime.refresh()
   void policies.load()
   void networkMeta.init()
+  latency.init()
+  // Keep the card honest without hammering the controller: one sample a minute
+  // plus the manual refresh button.
+  latencyTimer = window.setInterval(() => void latency.probe(), LATENCY_REFRESH_MS)
 })
 
 // Same lifecycle contract as ConnectionsView / LogsView / ProcessListView:
@@ -43,6 +63,10 @@ onMounted(() => {
 onUnmounted(() => {
   traffic.disconnect()
   connections.disconnect()
+  if (latencyTimer != null) {
+    window.clearInterval(latencyTimer)
+    latencyTimer = null
+  }
 })
 
 const up = computed(() => formatRate(traffic.current?.up ?? 0))
@@ -138,13 +162,15 @@ const chartBars = computed<number[]>(() => {
 
     <section class="dashboard-grid">
       <SurfaceCard class="latency-card">
-        <span class="metric-label">INTERNET 延迟</span>
-        <button type="button" class="quiet-button" disabled>尚未支持</button>
-        <div class="large-metric">—</div>
+        <div class="card-title-row">
+          <span class="metric-label">INTERNET 延迟<button type="button" class="latency-refresh" :disabled="latency.state === 'probing'" aria-label="重新测速" @click="latency.probe()"><AppIcon name="refresh" :size="12" /></button></span>
+          <button type="button" class="quiet-button" @click="summaryDrawer = 'network'">{{ diagnosisButtonLabel }}</button>
+        </div>
+        <div class="large-metric" :class="{ 'metric-dimmed': headlineText === '—' }">{{ headlineText }}<span>ms</span></div>
         <div class="latency-breakdown">
-          <div><span>路由</span><strong>—</strong></div>
-          <div><span>DNS</span><strong>—</strong></div>
-          <div><span>当前策略</span><strong>—</strong></div>
+          <div><span>路由</span><strong>{{ gatewayText }}<i v-if="gatewayText !== '—'" class="delay-unit">ms</i></strong></div>
+          <div><span>DNS</span><strong>{{ dnsText }}<i v-if="dnsText !== '—'" class="delay-unit">ms</i></strong></div>
+          <div><span>{{ latency.proxyNode ?? '当前策略' }}</span><strong>{{ proxyText }}<i v-if="proxyText !== '—'" class="delay-unit">ms</i></strong></div>
         </div>
       </SurfaceCard>
 
@@ -190,6 +216,34 @@ const chartBars = computed<number[]>(() => {
 <style scoped>
 .stream-state {
   margin-left: 6px;
+}
+/* 标题旁的小刷新按钮：静默重测当前三格延迟。 */
+.latency-refresh {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 2px;
+  border: 0;
+  background: transparent;
+  color: var(--app-muted);
+  cursor: pointer;
+}
+.latency-refresh:hover:not(:disabled) {
+  color: var(--app-fg, inherit);
+}
+.latency-refresh:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.delay-unit {
+  margin-left: 3px;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--app-muted);
+}
+.metric-dimmed {
+  color: var(--app-muted);
 }
 .online-dot.pending {
   background: #c9a227 !important;

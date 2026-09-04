@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, rm, open } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
 import type { ConfigEdit, Profile, ProfileMeta, ProfileSubscription } from '../../shared/profiles'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
@@ -97,8 +97,27 @@ export class ProfileRepository {
     await mkdir(dirname(path), { recursive: true })
     const temp = join(this.options.rootDir, `.tmp-${Date.now()}-${randomUUID()}`)
     assertInsideRoot(this.options.rootDir, temp)
-    await writeFile(temp, content)
-    await rename(temp, path)
+    try {
+      // 0o600: a profile YAML can embed proxy credentials, so it must never be
+      // group/other-readable on a umask-022 machine (the source store already
+      // applies 0o600; this closes the same hole for documents and metadata).
+      // `flush: true` fsyncs the file before the rename so a crash cannot leave
+      // an empty/partial `active.json` that would silently deactivate the
+      // kernel's profile on next launch.
+      const handle = await open(temp, 'w', 0o600)
+      try {
+        await handle.writeFile(content)
+        await handle.sync()
+      } finally {
+        await handle.close()
+      }
+      await rename(temp, path)
+    } catch (error) {
+      // A failed write must not leave a `.tmp-*` behind to accumulate or be
+      // mistaken for a real profile later.
+      await rm(temp, { force: true }).catch(() => undefined)
+      throw error
+    }
   }
 
   private async writeActive(id: string | null): Promise<void> {

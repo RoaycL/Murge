@@ -17,6 +17,7 @@ interface Harness {
   startKernelRejects: { value: Error | null }
   startTunRejects: { value: Error | null }
   networkUpRejects: { value: Error | null }
+  stopKernelRejects: { value: Error | null }
   tick(): Promise<void>
   stop(): void
 }
@@ -28,6 +29,7 @@ function createHarness(options: { online?: boolean; kernelRunning?: boolean; run
   const startKernelRejects = { value: null as Error | null }
   const startTunRejects = { value: null as Error | null }
   const networkUpRejects = { value: null as Error | null }
+  const stopKernelRejects = { value: null as Error | null }
   const gateway: NetworkDetectorGateway = {
     getRunMode: () => runMode.value,
     startKernel: () => {
@@ -44,6 +46,7 @@ function createHarness(options: { online?: boolean; kernelRunning?: boolean; run
     },
     stopKernel: () => {
       calls.push('stopKernel')
+      if (stopKernelRejects.value) return Promise.reject(stopKernelRejects.value)
       runMode.value = 'stopped'
       return Promise.resolve(undefined)
     },
@@ -76,6 +79,7 @@ function createHarness(options: { online?: boolean; kernelRunning?: boolean; run
     startKernelRejects,
     startTunRejects,
     networkUpRejects,
+    stopKernelRejects,
     tick: () => anyDetector.tick(anyDetector.generation),
     stop: () => detector.stop()
   }
@@ -216,5 +220,20 @@ describe('NetworkDetector', () => {
     // kernel and no proxy, the offline tick still marks the outage.
     await h.tick()
     expect(h.calls).toEqual(['handleNetworkDown'])
+  })
+
+  it('retries a failed stopKernel on the next offline tick (no blackhole)', async () => {
+    const h = createHarness({ online: true, runMode: 'tun' })
+    h.online.value = false
+    h.stopKernelRejects.value = new Error('supervisor busy')
+    await h.tick()
+    // handleNetworkDown runs once; the failed stop is NOT latched away.
+    expect(h.calls).toEqual(['handleNetworkDown', 'stopKernel'])
+
+    h.stopKernelRejects.value = null
+    await h.tick()
+    // The second offline tick retries the stop and this time it succeeds.
+    expect(h.calls.filter((call) => call === 'stopKernel')).toHaveLength(2)
+    expect(h.runMode.value).toBe('stopped')
   })
 })

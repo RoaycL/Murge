@@ -229,6 +229,18 @@ describe('policies store', () => {
     expect(store.nodeState('香港 02')).toEqual({ status: 'unavailable', delay: null })
   })
 
+  it('treats a delay of 0 as unavailable, not a successful 0ms measurement', async () => {
+    getProxies.mockResolvedValue(PROXIES)
+    groupDelayTest.mockResolvedValue({ '香港 01': 0, DIRECT: 6 } satisfies MihomoDelayMap)
+    const store = usePoliciesStore()
+    await store.load()
+    await store.testAll()
+    expect(store.groupDelayStatus).toBe('ok')
+    // mihomo reports 0 for a failed/unmeasured probe (same as providers.ts).
+    expect(store.nodeState('香港 01')).toEqual({ status: 'unavailable', delay: null })
+    expect(store.nodeState('DIRECT')).toEqual({ status: 'ok', delay: 6 })
+  })
+
   it('reports a group delay failure and marks all members with the classified state', async () => {
     getProxies.mockResolvedValue(PROXIES)
     const store = usePoliciesStore()

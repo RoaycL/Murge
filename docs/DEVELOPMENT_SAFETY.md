@@ -90,3 +90,23 @@ WinHTTP/Internet-Settings 代理、IPv4/IPv6 默认路由、DNS 客户端
 不得从这台 Mac 调用任何系统代理变更。所有 Windows 代理行为
 均通过使用 `FakeSystemProxyAdapter` 的单元/组件测试验证，并且对于
 真实路径，仅通过上述带门禁的一次性任务验证。
+
+## 订阅抓取 SSRF 防护（统一公网白名单）
+
+订阅 URL 由主进程 `SubscriptionFetcher` 抓取，因此必须拒绝指向内网 / 私网 /
+回环地址的 URL，防止攻击者可控的订阅把主进程 fetcher 指向内部服务（SSRF）。
+
+- 参考项目现状：`mihomo-party` 与 `sparkle` 直接 `axios.get(item.url)`，
+  无任何私网过滤；`clash-verge-rev` 经 `reqwest` 直连（仅 `Proxy::all`），
+  同样无 IP 过滤。三个社区项目均未做订阅私网 IP 拒绝。
+- 本项目保留更严格的 **公网单播白名单** 加固（超出三个参考项目）：
+  `subscription-fetcher.ts` 中的 `isPublicAddress()` 是唯一判定入口，字面量
+  IP 与 DNS 解析结果走同一谓词，覆盖 IPv4（private / loopback / link-local /
+  CGNAT 100.64/10 / benchmarking 198.18/15 / TEST-NET 三段 / multicast /
+  reserved）与 IPv6（unspecified / loopback / ULA fc00::/7 / link-local
+  fe80::/10 / 6to4 2002::/16 / Teredo/ORCHID 2001::/23 / documentation
+  2001:db8::/32 / NAT64 64:ff9b::/96 / multicast ff00::/8）。
+- 唯一豁免由调用方在解析阶段施加：Surge/mihomo fake-ip DNS 会把公网主机
+  映射进 `198.18.0.0/15`，仅对精确的 HTTPS GitHub raw 主机放行，且要求所有
+  解析结果都在该段内；其余任何非公网解析都拒绝。
+

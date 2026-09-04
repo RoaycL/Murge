@@ -54,6 +54,8 @@ export class NetworkDetector {
   private resumeMode: Exclude<NetworkRunMode, 'stopped'> | null = null
   /** Latches the offline actions (proxy off + kernel stop) per outage episode. */
   private outageHandled = false
+  /** A previous outage stop failed; retry `stopKernel` on the next offline tick. */
+  private stopKernelPending = false
 
   constructor(options: NetworkDetectorOptions) {
     const interval = options.intervalSeconds ?? 15
@@ -134,21 +136,27 @@ export class NetworkDetector {
             this.resumeMode = null
           }
         }
-      } else if (!this.outageHandled) {
+      } else if (!this.outageHandled || this.stopKernelPending) {
         this.sawOffline = true
-        this.outageHandled = true
-        const mode = await this.options.gateway.getRunMode()
-        this.resumeMode = mode === 'stopped' ? null : mode
-        try {
-          await this.options.gateway.handleNetworkDown()
-        } catch {
-          // The proxy service reports failures through its status.
+        if (!this.outageHandled) {
+          this.outageHandled = true
+          const mode = await this.options.gateway.getRunMode()
+          this.resumeMode = mode === 'stopped' ? null : mode
+          this.stopKernelPending = mode !== 'stopped'
+          try {
+            await this.options.gateway.handleNetworkDown()
+          } catch {
+            // The proxy service reports failures through its status.
+          }
         }
-        if (mode !== 'stopped') {
+        if (this.stopKernelPending) {
           try {
             await this.options.gateway.stopKernel()
+            this.stopKernelPending = false
           } catch {
-            // The supervisor reports stop failures through its status.
+            // The supervisor reports stop failures through its status. Leave
+            // `stopKernelPending` set so the NEXT offline tick retries instead of
+            // letting TUN routes blackhole traffic for the whole outage.
           }
         }
       }

@@ -66,7 +66,6 @@ export interface SubscriptionFetcherOptions {
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024
 const DEFAULT_MAX_REDIRECTS = 5
 const DEFAULT_TIMEOUT_MS = 30000
-const TRUSTED_FAKE_IP_HOSTS = new Set(['gist.githubusercontent.com', 'raw.githubusercontent.com'])
 const SUBSCRIPTION_REQUEST_HEADERS = {
   'User-Agent': 'ClashforWindows/0.20.39',
   Accept: 'application/x-yaml,text/yaml,text/plain,application/octet-stream,*/*'
@@ -450,12 +449,14 @@ export class SubscriptionFetcher {
         }
       } else {
         const addresses = await this.resolveHost(hostname)
-        // Surge/mihomo fake-ip DNS intentionally maps public hosts into
-        // 198.18.0.0/15. Only permit that result for exact HTTPS GitHub raw
-        // hosts; all other private/non-public answers remain rejected.
-        const trustedFakeIpHost = parsed.protocol === 'https:' && TRUSTED_FAKE_IP_HOSTS.has(parsed.hostname.toLowerCase())
+        // Surge/mihomo fake-ip DNS intentionally maps arbitrary public hosts
+        // into 198.18.0.0/15, so a host allow-list cannot solve this for real
+        // subscription providers. Permit an all-fake-IP answer only for HTTPS:
+        // TLS still authenticates the requested hostname and redirects are
+        // validated again hop-by-hop. Mixed/private answers remain rejected.
+        const trustedFakeIpAnswer = parsed.protocol === 'https:'
         const fakeIpOnly = addresses.length > 0 && addresses.every((address) => /^198\.(?:18|19)\./.test(address))
-        if (addresses.length === 0 || (addresses.some((address) => !isPublicAddress(address)) && !(trustedFakeIpHost && fakeIpOnly))) {
+        if (addresses.length === 0 || (addresses.some((address) => !isPublicAddress(address)) && !(trustedFakeIpAnswer && fakeIpOnly))) {
           throw new ProtocolError(
             ProtocolErrorCode.INVALID_ARGUMENT,
             `订阅域名解析到非公网地址：${redactCredentials(url)}`

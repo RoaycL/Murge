@@ -26,6 +26,8 @@ export interface IpcDependencies {
   geodata: GeodataSettingsGateway
   usageHistory: UsageHistoryGateway
   networkMetadata: NetworkMetadataGateway
+  /** INTERNET-latency sampler for the activity card; constructed by the caller. */
+  internetLatency?: IpcDeps['internetLatency']
   /** Group order parsed from the exact enhanced document materialized for mihomo. */
   resolveActiveGroupOrder?: () => Promise<string[]>
 }
@@ -113,7 +115,7 @@ function resolveExternalIp({ kernel, mihomo }: Pick<IpcDependencies, 'kernel' | 
   })()
 }
 
-export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata, resolveActiveGroupOrder }: IpcDependencies): () => void {
+export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata, internetLatency, resolveActiveGroupOrder }: IpcDependencies): () => void {
   const deps: IpcDeps = {
     brand,
     appInfo: { version: app.getVersion(), platform: process.platform === 'win32' || process.platform === 'darwin' || process.platform === 'linux' ? process.platform : 'other', arch: process.arch },
@@ -137,7 +139,8 @@ export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemPro
     core,
     geodata,
     usageHistory,
-    networkMetadata
+    networkMetadata,
+    internetLatency: internetLatency ?? { sample: async () => ({ gatewayMs: null, dnsMs: null, proxyMs: null, proxyNode: null }) }
   }
   const iconCache = new Map<string, string>()
   const entries = Object.entries(buildIpcHandlers(deps, { resolveActiveGroupOrder }))

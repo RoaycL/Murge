@@ -85,6 +85,16 @@ export interface KernelManagerGateway {
   onState(listener: (state: KernelManagerState) => void): () => void
 }
 
+/** Shape the activity card's latency sampler must expose to the IPC layer. */
+export interface InternetLatencySampler {
+  sample(): Promise<{
+    gatewayMs: number | null
+    dnsMs: number | null
+    proxyMs: number | null
+    proxyNode: string | null
+  }>
+}
+
 export interface MihomoGateway {
   getVersion(): Promise<MihomoVersion>
   getConfig(): Promise<MihomoConfigSnapshot>
@@ -319,6 +329,8 @@ export interface NetworkMetadataGateway {
 export interface IpcDeps {
   brand: BrandConfig
   appInfo: AppInfo
+  /** INTERNET-latency sampler for the activity card (nulls per failed slot). */
+  internetLatency: InternetLatencySampler
   kernel: KernelGateway
   kernelManager: KernelManagerGateway
   mihomo: MihomoGateway

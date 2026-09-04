@@ -32,7 +32,7 @@ export interface IpcHandlerOptions {
 }
 
 export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {}): Record<string, IpcHandler> {
-  const { brand, appInfo, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata } = deps
+  const { brand, appInfo, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata, internetLatency } = deps
 
   return {
     [IPC.appGetBrand]: async () => brand,
@@ -66,6 +66,7 @@ export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {})
     [IPC.mihomoGetConfig]: async () => mihomo.getConfig(),
     [IPC.mihomoPatchConfig]: async (_event, patch) => mihomo.patchConfig(parseConfigPatch(patch)),
     [IPC.mihomoGetProxies]: async () => mihomo.getProxies(),
+    [IPC.mihomoInternetLatency]: async () => internetLatency.sample(),
     [IPC.mihomoSelectProxy]: async (_event, group, name) => {
       const selection = parseProxySelection(group, name)
       return mihomo.selectProxy(selection.group, selection.name)

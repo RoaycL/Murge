@@ -56,6 +56,7 @@ export const IPC = {
   mihomoGetConfig: 'mihomo:get-config',
   mihomoPatchConfig: 'mihomo:patch-config',
   mihomoGetProxies: 'mihomo:get-proxies',
+  mihomoInternetLatency: 'mihomo:internet-latency',
   mihomoSelectProxy: 'mihomo:select-proxy',
   mihomoGetRules: 'mihomo:get-rules',
   mihomoGetProxyProviders: 'mihomo:get-proxy-providers',
@@ -172,6 +173,8 @@ export interface DesktopApi {
     getConfig(): Promise<MihomoConfigSnapshot>
     patchConfig(patch: Partial<MihomoConfigSnapshot>): Promise<void>
     getProxies(): Promise<MihomoProxiesResponse>
+    /** One INTERNET-latency sample (gateway/dns/proxy RTTs; null per failed slot). */
+    internetLatency(): Promise<{ gatewayMs: number | null; dnsMs: number | null; proxyMs: number | null; proxyNode: string | null }>
     selectProxy(group: string, name: string): Promise<void>
     getRules(): Promise<MihomoRulesResponse>
     getProxyProviders(): Promise<MihomoProxyProvidersResponse>

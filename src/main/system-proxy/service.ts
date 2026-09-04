@@ -164,20 +164,28 @@ export class SystemProxyService implements SystemProxyGateway {
             proxyOverride: existingBackup.written.proxyOverride.value as string
           })
         }
-        // A stale bundle whose target differs from the current live target means
-        // the unified port moved between sessions. If the registry still reflects
-        // OUR previous write (route-owned) or is already back at OUR pre-enable
-        // snapshot (a restore that finished but lost its delete), this is a self-
-        // recovery, not an external edit: restore to the true pre-enable state,
-        // drop the bundle, and re-enable fresh at the current target below. Only
-        // a genuinely external mutation surfaces a conflict.
-        const routeOwned =
-          observed.proxyEnable.exists &&
-          observed.proxyEnable.value === 1 &&
+        // A stale bundle means the previous session ended inside the crash
+        // window (restore verified but the bundle delete never ran, or the app
+        // died while WE still owned the write). The registry then shows one of
+        // three SELF-owned shapes — each a self-recovery, never an external
+        // edit to fight:
+        //   a) still aiming at OUR bundle target (route-owned, enable on) —
+        //      the previous enable itself died before finishing;
+        //   b) already back at OUR pre-enable snapshot — the restore finished
+        //      but the delete was lost;
+        //   c) our server value with pieces flipped off/edited inside our own
+        //      envelope (ProxyEnable off, ProxyOverride changed) — degradation
+        //      of a state we own, the same shape the 30s guard repairs.
+        // What is genuinely EXTERNAL is a different proxy server (another
+        // tool's takeover) — that alone surfaces a conflict, fail-closed.
+        // Note these checks apply on a port move as well as on the same target:
+        // a same-target stale bundle used to fall into the conflict branch and
+        // dead-end the proxy until manual `disable`.
+        const serverStillOurs =
           typeof observed.proxyServer.value === 'string' &&
           observed.proxyServer.value === buildProxyServerValue(existingBackup.target)
         const alreadyRestored = matchesPrevious(observed, existingBackup.previous)
-        if (!sameTarget && (routeOwned || alreadyRestored)) {
+        if (serverStillOurs || alreadyRestored) {
           await this.restoreBackupStrict(existingBackup)
         } else {
           const detail = conflictDetail(observed, existingBackup.written)

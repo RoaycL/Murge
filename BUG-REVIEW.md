@@ -13,17 +13,23 @@ landed.
   unified mixed port after the child that owns it has been stopped.
 - **Severity:** medium
 
-## 2. Fresh system-proxy enable never cleared a leftover bundle → self-conflict / dev-prod divergence — FIXED (partial)
+## 2. Fresh system-proxy enable never cleared a leftover bundle → self-conflict / dev-prod divergence — FIXED
 - **File:** `src/main/system-proxy/backup-store.ts`
 - **Fix:** `InMemorySystemProxyBackupStore.write` now REPLACES the stored value,
   exactly like the file-backed store (which overwrites via rename). The previous
   no-op-when-present behaviour silently dropped the new bundle (including a
   `setProxyBypass` superseded `ProxyOverride`) in dev, so a later `disable()`
   restored stale values while the service reported `enabled` with the new target.
-- **Note:** the companion `enable()` self-conflict-on-stale-bundle path in
-  `service.ts` (`restoreBackupStrict` / `backup.write` ordering) is a separate
-  hardening item and is left to a follow-up; the in-memory/store divergence is
-  closed here.
+- **Follow-up (closed):** `enable()` treated a SAME-TARGET stale bundle as a
+  conflict whenever the registry matched neither `written` nor `previous`
+  (`!sameTarget && (routeOwned || alreadyRestored)`), e.g. a crash after
+  restore-verification but before `backup.delete()`, or our server flipped
+  off / override edited inside our own envelope. `enable()` now classifies by
+  ownership, not port identity: `serverStillOurs || alreadyRestored` →
+  `restoreBackupStrict` + fresh enable; only a DIFFERENT proxy server (another
+  tool's takeover) surfaces the conflict. Verified by
+  `tests/system-proxy-stale-bundle.test.ts` (5 cases, incl. the fail-closed
+  external-server case).
 
 ## 3. Production kernel readiness (`readinessPattern: null`) — WONTFIX (accepted)
 - **File:** `src/main/index.ts` (spawn args), `src/main/kernel/supervisor.ts`

@@ -72,9 +72,11 @@ export class FileSystemProxyBackupStore implements SystemProxyBackupStore {
 
 /**
  * In-memory backup store used by the dev build (so the dev process never writes
- * a backup into real user data) and available to unit tests. It honours the
- * same "one backup at a time" semantics: an existing backup is not replaced by a
- * later `write` until `delete` clears it.
+ * a backup into real user data) and available to unit tests. It mirrors the
+ * file-backed store's semantics exactly: `write` REPLACES the current value, so
+ * a later `enable`/`setProxyBypass` supersedes an older bundle rather than being
+ * silently dropped (the previous no-op-when-present behaviour diverged from the
+ * file store, where a write is an overwrite).
  */
 export class InMemorySystemProxyBackupStore implements SystemProxyBackupStore {
   private value: SystemProxyBackup | null = null
@@ -84,7 +86,6 @@ export class InMemorySystemProxyBackupStore implements SystemProxyBackupStore {
   }
 
   async write(backup: SystemProxyBackup): Promise<void> {
-    if (this.value) return
     this.value = backup
   }
 

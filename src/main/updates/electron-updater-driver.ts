@@ -72,9 +72,13 @@ export class ElectronUpdaterDriver implements UpdaterDriver {
 
   check(): void {
     if (!this.supported) return
-    // The 'error' event drives the state machine; swallow the returned promise's
-    // rejection so a transient network failure never becomes an unhandled one.
-    void autoUpdater.checkForUpdates().catch(() => {})
+    // electron-updater normally surfaces failures through the 'error' event, but
+    // a pre-flight failure (bad feed descriptor, unparseable metadata) can reject
+    // the promise WITHOUT emitting 'error'. Convert that rejection into the same
+    // 'error' event so the service's state machine never gets stuck in 'checking'.
+    void autoUpdater.checkForUpdates().catch((error) => {
+      this.emit({ kind: 'error', message: error instanceof Error ? error.message : String(error) })
+    })
   }
 
   download(): void {

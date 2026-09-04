@@ -48,7 +48,15 @@ export class UpdateService implements UpdatesGateway {
       return this.state
     }
     this.transition({ ...this.state, phase: 'checking', error: null })
-    this.driver.check()
+    try {
+      this.driver.check()
+    } catch (error) {
+      // A driver may throw synchronously (a pre-flight failure) WITHOUT ever
+      // emitting an 'error' event. Without this the phase would stay 'checking'
+      // forever and the guard above would reject every later check. Reduce the
+      // throw into the same terminal 'error' state the event path produces.
+      this.set({ phase: 'error', error: error instanceof Error ? error.message : String(error), canInstall: false })
+    }
     return this.state
   }
 

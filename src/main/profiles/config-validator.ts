@@ -1,3 +1,4 @@
+import { LineCounter, parseDocument } from 'yaml'
 import type { ValidationIssue, ValidationResult } from '../../shared/profiles'
 
 /**
@@ -35,6 +36,16 @@ export class FakeConfigValidator implements ConfigValidator {
       return { ok: false, issues }
     }
 
+    // The runtime kernel config parses with `uniqueKeys: true`, so a document
+    // with a duplicated top-level key can pass import validation yet still fail
+    // to start (the kernel rejects it during reload and rolls back). Gate the
+    // same duplicate-key failure here so "import succeeds, activate succeeds,
+    // but it never boots" cannot happen.
+    const duplicateKeyIssues = findDuplicateTopLevelKeys(document)
+    for (const { key, line } of duplicateKeyIssues) {
+      issues.push({ severity: 'error', message: `重复的顶层键：${key}`, line })
+    }
+
     const tabIndent = findTabIndent(document)
     if (tabIndent !== -1) {
       issues.push({ severity: 'error', message: 'YAML 不允许使用制表符缩进', line: tabIndent + 1 })
@@ -69,6 +80,31 @@ export function createConfigValidator(options?: FakeValidatorOptions): ConfigVal
 function findTabIndent(document: string): number {
   const lines = document.split('\n')
   return lines.findIndex((line) => /^\t/.test(line) || /^\s+\t/.test(line))
+}
+
+/**
+ * Detect duplicated top-level mapping keys using the `yaml` parser's own
+ * duplicate-key tracking (same engine the kernel config gate uses), so the two
+ * gates agree on what a "duplicate" is. Returns each repeated key and its
+ * 1-based line. A document that does not parse is left to the other checks (and
+ * the kernel's own parse error) rather than being duplicated here.
+ */
+function findDuplicateTopLevelKeys(document: string): Array<{ key: string; line: number }> {
+  const lineCounter = new LineCounter()
+  const doc = parseDocument(document, { uniqueKeys: true, merge: true, lineCounter })
+  const result: Array<{ key: string; line: number }> = []
+  if (!doc.contents || typeof doc.contents !== 'object' || !('items' in doc.contents)) return result
+  const seen = new Set<string>()
+  for (const item of doc.contents.items as Array<{ key?: unknown }>) {
+    const keyNode = item?.key as { value?: unknown; range?: [number, number, number] } | undefined
+    if (keyNode && typeof keyNode.value === 'string' && typeof keyNode.range?.[0] === 'number') {
+      if (seen.has(keyNode.value)) {
+        result.push({ key: keyNode.value, line: lineCounter.linePos(keyNode.range[0]).line })
+      }
+      seen.add(keyNode.value)
+    }
+  }
+  return result
 }
 
 function findTopLevelKeys(document: string): string[] {

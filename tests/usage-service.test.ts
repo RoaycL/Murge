@@ -36,6 +36,21 @@ describe('UsageHistoryService', () => {
       expect(snap.buckets).toHaveLength(7)
       expect(snap.totals).toEqual({ up: 0, down: 0, total: 0, count: 0 })
     })
+
+    it('does not mint bytes after a wall-clock rollback', async () => {
+      // A non-monotonic clock: the second sample arrives BEFORE the first. The
+      // regression mints a huge fake interval on the following (forward) sample
+      // because lastAt was set backward. The back-dated sample must contribute
+      // zero bytes and leave the cursor so the next sample integrates correctly.
+      const service = new UsageHistoryService({ now: () => FIXED, persistIntervalMs: NO_PERSIST })
+      await service.record({ up: 100, down: 50 }, FIXED + 10_000)
+      await service.record({ up: 100, down: 50 }, FIXED)          // clock jumped back
+      await service.record({ up: 100, down: 50 }, FIXED + 20_000) // forward again
+      const snap = service.getWindow('24h')
+      // Only the real 10s gap (first -> third) may integrate; the rollback is 0.
+      expect(snap.totals.up).toBe(100 * 10)
+      expect(snap.totals.down).toBe(50 * 10)
+    })
   })
 
   describe('bounds', () => {

@@ -84,6 +84,22 @@ describe('UpdateService', () => {
     expect(driver.checkCalls).toBe(1)
   })
 
+  it('check() reduces a synchronous driver throw into error (never stuck in checking)', async () => {
+    const driver = new FakeUpdaterDriver()
+    driver.check = () => {
+      throw new Error('feed descriptor missing')
+    }
+    const service = new UpdateService(driver)
+    service.start()
+    const state = await service.check()
+    expect(state.phase).toBe('error')
+    expect(state.error).toBe('feed descriptor missing')
+    // A later check must not be blocked by the previous stuck phase.
+    driver.check = () => {}
+    const next = await service.check()
+    expect(next.phase).toBe('checking')
+  })
+
   it('check() does not restart when a check or download is already in flight', async () => {
     const driver = new FakeUpdaterDriver()
     const service = new UpdateService(driver)

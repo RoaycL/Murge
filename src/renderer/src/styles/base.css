@@ -36,6 +36,7 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .status-pill i { width: 8px; height: 8px; margin-right: 14px; border-radius: 50%; background: var(--app-green); }
 .runtime-context { display: grid; grid-template-columns: 160px 185px 185px 165px; width: var(--activity-content-width); height: 57px; }
 .runtime-context div { display: flex; flex-direction: column; min-width: 0; }
+.runtime-context .runtime-detail-link{display:grid;grid-template-columns:1fr auto;grid-template-rows:auto auto;min-width:0;padding:0;border:0;background:transparent;color:inherit;text-align:left}.runtime-detail-link span{grid-column:1}.runtime-detail-link strong{grid-column:1}.runtime-detail-link svg{grid-column:2;grid-row:1 / 3;align-self:center;color:var(--app-muted)}
 .runtime-context span, .metric-label { color: var(--app-muted); font-size: 11px; }
 .runtime-context strong { margin-top: 3px; font-size: 16px; line-height: 19px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dashboard-grid { display: grid; grid-template-columns: 347px 347px; grid-template-rows: 166px 165px 165px; gap: 15px; width: 709px; }
@@ -61,6 +62,8 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .spark-upload-area { fill: rgba(102, 82, 237, 0.09); }
 .spark-download-area { fill: rgba(25, 189, 214, 0.1); }
 .connections-card { padding: 16px; }
+.connections-summary-link{display:grid;grid-template-columns:auto 1fr auto;align-items:baseline;gap:8px;width:100%;margin-top:8px;padding:0;border:0;background:transparent;color:inherit;text-align:left}.connections-summary-link>strong{font-size:36px;line-height:42px}.connections-summary-link>span{color:var(--app-muted);font-size:10px}.connections-summary-link>svg{align-self:center;color:var(--app-muted)}
+.topology-inline{display:grid;grid-template-columns:28px 1fr auto;align-items:center;gap:8px;width:100%;min-height:52px;margin-top:13px;padding:7px 9px;border:1px solid var(--app-divider);border-radius:9px;background:rgba(127,127,127,.06);color:inherit;text-align:left}.topology-inline>svg:first-child{color:var(--app-blue)}.topology-inline span{display:flex;flex-direction:column}.topology-inline strong{font-size:11px}.topology-inline small{margin-top:3px;color:var(--app-muted);font-size:9px}
 .connections-link { cursor: pointer; }
 .connections-link:focus-visible { outline: 2px solid var(--app-blue); outline-offset: -2px; }
 .online-dot { float: right; width: 11px; height: 11px; margin-top: -1px; border-radius: 50%; background: var(--app-green); box-shadow: 0 0 0 5px rgba(49, 201, 90, 0.1); }
@@ -95,6 +98,7 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .total-labels span { color: var(--app-muted); font-size: 11px; }
 .total-labels strong { font-size: 16px; font-weight: 650; }
 .total-bar { display: flex; gap: 0; height: 23px; margin-top: 5px; }
+.total-history-link{width:100%;padding:0;border:0;background:transparent;cursor:pointer}.total-history-link:hover{filter:brightness(.96)}
 .total-bar i { border-radius: 5px; background: var(--app-purple); }
 .total-bar i:last-child { background: var(--app-cyan); }
 .overview-view h1 { margin-bottom: 22px; }
@@ -239,6 +243,17 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .connections-toolbar .danger-button { white-space: nowrap; }
 .connections-layout { width: 695px; height: 494px; }
 .connection-list { position: relative; overflow: auto; border-radius: 8px; }
+.connection-view-tabs{display:flex;gap:26px;width:695px;margin:-4px 0 12px;border-bottom:1px solid var(--app-divider)}
+.connection-view-tabs button{position:relative;min-height:38px;padding:0 8px;border:0;background:transparent;color:var(--app-muted)}
+.connection-view-tabs button.selected{color:var(--app-blue)}
+.connection-view-tabs button.selected::after{content:"";position:absolute;right:0;bottom:-1px;left:0;height:2px;border-radius:2px;background:var(--app-blue)}
+.connection-view-tabs span{margin-left:4px;padding:1px 5px;border-radius:999px;background:rgba(127,127,127,.13);font-size:10px}
+.connection-card{position:relative;margin-bottom:8px;border:1px solid var(--app-divider);border-radius:12px;background:var(--app-surface);overflow:hidden}
+.connection-card:hover,.connection-card.selected{border-color:color-mix(in srgb,var(--app-blue) 40%,var(--app-divider));background:color-mix(in srgb,var(--app-blue) 4%,var(--app-surface))}
+.connection-card-main{display:grid;grid-template-columns:48px minmax(0,1fr) auto 16px;align-items:center;gap:10px;width:100%;min-height:82px;padding:10px 48px 10px 12px;border:0;background:transparent;color:inherit;text-align:left}
+.process-icon{display:grid;width:44px;height:44px;place-items:center;border-radius:11px;background:color-mix(in srgb,var(--app-blue) 11%,var(--app-surface));color:var(--app-blue)}
+.connection-identity{min-width:0}.connection-identity strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}.connection-identity strong i{color:var(--app-muted);font-style:normal;font-weight:400}.connection-identity small{display:flex;gap:6px;margin-top:8px}.connection-identity small b{max-width:210px;padding:3px 7px;border:1px solid var(--app-divider);border-radius:6px;overflow:hidden;color:var(--app-muted);font-size:9px;font-weight:500;text-overflow:ellipsis;white-space:nowrap}
+.connection-card-main time{color:var(--app-muted);font-size:10px;white-space:nowrap}.connection-close{position:absolute;right:10px;top:12px;display:grid;width:28px;height:28px;place-items:center;padding:0;border:0;border-radius:7px;background:transparent;color:var(--app-orange,#d8881e)}.connection-close:hover{background:rgba(127,127,127,.12)}
 .connection-row { display: grid; grid-template-columns: 1fr auto; width: 100%; min-height: 51px; padding: 8px 11px; border: 0; border-bottom: 1px solid var(--app-divider); background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .connection-row:hover, .connection-row.selected { background: rgba(127,127,127,.1); }
 .connection-row > span:last-child { text-align: right; }
@@ -283,3 +298,5 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
   .page-shell { margin-left: 0; }
 }
 .unsaved-indicator{display:inline-flex;align-items:center;min-height:24px;padding:0 8px;border-radius:999px;background:color-mix(in srgb,var(--app-orange,#e79a35) 14%,transparent);color:var(--app-orange,#c77b18);font-size:10px;font-weight:600}
+.app-window,.app-frame,.app-sidebar,.app-content{user-select:none;-webkit-user-select:none}
+input,textarea,[contenteditable="true"],code,pre{user-select:text;-webkit-user-select:text}

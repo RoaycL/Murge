@@ -15,6 +15,8 @@ export interface ProcessRank {
 /** Whether the activity breakdown counts every connection or only proxied ones. */
 export type RankScope = 'all' | 'proxy'
 export type ConnectionSort = 'traffic' | 'started' | 'process' | 'host'
+export type ConnectionView = 'active' | 'closed'
+export type TrackedConnection = MihomoConnection & { closedAt?: string }
 
 export interface ConnectionsSummary {
   totalConnections: number
@@ -32,6 +34,8 @@ export const useConnectionsStore = defineStore('connections', () => {
   const status = ref<ConnectionsStreamStatus>('loading')
   const lastError = ref<string | null>(null)
   const snapshot = ref<MihomoConnectionsSnapshot | null>(null)
+  const closedConnections = ref<TrackedConnection[]>([])
+  const view = ref<ConnectionView>('active')
   const selectedId = ref<string | null>(null)
   const search = ref('')
   const closingIds = ref<string[]>([])
@@ -114,9 +118,9 @@ export const useConnectionsStore = defineStore('connections', () => {
     }
   })
 
-  const visibleConnections = computed<MihomoConnection[]>(() => {
+  const visibleConnections = computed<TrackedConnection[]>(() => {
     const term = search.value.trim().toLocaleLowerCase()
-    const rows = snapshot.value?.connections ?? []
+    const rows: TrackedConnection[] = view.value === 'active' ? (snapshot.value?.connections ?? []) : closedConnections.value
     const filtered = term ? rows.filter((connection) => {
       const haystack = [
         connection.metadata.process,
@@ -140,14 +144,25 @@ export const useConnectionsStore = defineStore('connections', () => {
     })
   })
 
-  const selectedConnection = computed<MihomoConnection | null>(() => {
+  const selectedConnection = computed<TrackedConnection | null>(() => {
     if (!selectedId.value) return null
-    return snapshot.value?.connections.find((connection) => connection.id === selectedId.value) ?? null
+    return snapshot.value?.connections.find((connection) => connection.id === selectedId.value) ??
+      closedConnections.value.find((connection) => connection.id === selectedId.value) ?? null
   })
 
   function accept(snap: MihomoConnectionsSnapshot): void {
+    const previous = snapshot.value?.connections ?? []
+    const activeIds = new Set(snap.connections.map((connection) => connection.id))
+    const closedAt = new Date().toISOString()
+    const merged = new Map(closedConnections.value.map((connection) => [connection.id, connection]))
+    for (const connection of previous) {
+      if (!activeIds.has(connection.id)) merged.set(connection.id, { ...connection, closedAt })
+    }
+    for (const id of activeIds) merged.delete(id)
+    closedConnections.value = [...merged.values()]
+      .sort((left, right) => Date.parse(right.closedAt ?? '') - Date.parse(left.closedAt ?? ''))
+      .slice(0, 500)
     snapshot.value = snap
-    if (selectedId.value && !snap.connections.some((connection) => connection.id === selectedId.value)) selectedId.value = null
     // Any valid snapshot proves the stream is alive; recover from loading or
     // disconnected and clear the stale error.
     lastError.value = null
@@ -163,6 +178,16 @@ export const useConnectionsStore = defineStore('connections', () => {
 
   function setRankScope(scope: RankScope): void {
     rankScope.value = scope
+  }
+
+  function setView(next: ConnectionView): void {
+    view.value = next
+    selectedId.value = null
+  }
+
+  function clearClosed(): void {
+    closedConnections.value = []
+    if (view.value === 'closed') selectedId.value = null
   }
 
   async function close(id: string): Promise<boolean> {
@@ -241,9 +266,9 @@ export const useConnectionsStore = defineStore('connections', () => {
   }
 
   return {
-    status, lastError, snapshot, summary,
+    status, lastError, snapshot, summary, closedConnections, view,
     selectedId, selectedConnection, search, visibleConnections, closingIds, closingMany, actionError, sort,
     rankScope, setRankScope, topProcesses, topHosts, topPolicies,
-    connect, disconnect, select, close, closeMany
+    connect, disconnect, select, close, closeMany, setView, clearClosed
   }
 })

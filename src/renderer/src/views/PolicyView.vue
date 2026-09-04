@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { usePoliciesStore, POLICY_MODE_OPTIONS, type PolicyMode } from '../stores/policies'
-import { useProvidersStore } from '../stores/providers'
 import type { MihomoProxy } from '@shared/mihomo-api'
 import { useKernelStore } from '../stores/kernel'
+import AppIcon from '../components/AppIcon.vue'
 
 const policies = usePoliciesStore()
-const providers = useProvidersStore()
 const kernel = useKernelStore()
 
 const MODE_LABELS: Record<PolicyMode, string> = {
@@ -54,19 +53,11 @@ async function onCardClick(name: string): Promise<void> {
   void policies.testNode(name)
 }
 
-function formatUpdatedAt(value?: string): string {
-  if (!value) return '—'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '—'
-  return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
-}
-
 async function init(): Promise<void> {
   await kernel.refresh()
   if (kernel.status.phase !== 'running') return
   await policies.load()
   void policies.testAll()
-  void providers.loadProxyProviders()
   try {
     const config = await window.desktop.mihomo.getConfig()
     if (config.mode && POLICY_MODE_OPTIONS.includes(config.mode as PolicyMode)) {
@@ -101,18 +92,6 @@ watch(() => kernel.status.phase, (phase, previous) => {
       >{{ MODE_LABELS[option] }}</button>
     </div>
 
-    <div v-if="policies.groups.length > 1" class="group-tabs">
-      <button
-        v-for="group in policies.groups"
-        :key="group.name"
-        :class="{ selected: policies.selectedGroup === group.name }"
-        type="button"
-        @click="policies.selectGroup(group.name)"
-      >{{ group.name }}</button>
-    </div>
-
-    <div class="section-caption"><span>代理</span><button type="button" :disabled="kernel.status.phase !== 'running'" @click="policies.testAll()">测试全部</button></div>
-
     <div v-if="kernel.status.phase !== 'running'" class="empty-state">
       <p>内核尚未运行</p>
       <span>请先在“概览”中启动内核，策略将在 Controller 就绪后自动载入。</span>
@@ -124,60 +103,23 @@ watch(() => kernel.status.phase, (phase, previous) => {
       <button type="button" @click="init">重试</button>
     </div>
 
-    <div v-else class="node-grid">
-      <button
-        v-for="member in policies.groupMembers"
-        :key="member"
-        type="button"
-        :class="{ selected: policies.selectedMember === member, unavailable: isUnavailable(member) }"
-        @click="onCardClick(member)"
-      >
-        <small>{{ displayType(policies.nodeByMember[member]) }}</small>
-        <strong>{{ member }}</strong>
-        <span :class="latencyLabel(member).kind">{{ latencyLabel(member).text }}</span>
-      </button>
-    </div>
+    <template v-else>
+      <div class="section-caption"><span>策略组</span></div>
+      <div class="policy-group-grid">
+        <button v-for="group in policies.groups" :key="group.name" type="button" :class="{ selected: policies.selectedGroup === group.name }" @click="policies.selectGroup(group.name)"><small>{{ group.type }}</small><strong>{{ group.name }}</strong><span>{{ group.now || group.all?.[0] || '未选择' }}</span><AppIcon name="next" :size="14" /></button>
+      </div>
+      <div class="section-caption node-caption"><span>{{ policies.selectedGroup || '代理' }}</span><button type="button" :disabled="!policies.selectedGroup" @click="policies.testAll()">测试当前组</button></div>
+      <div class="node-grid"><button v-for="member in policies.groupMembers" :key="member" type="button" :class="{ selected: policies.selectedMember === member, unavailable: isUnavailable(member) }" @click="onCardClick(member)"><small>{{ displayType(policies.nodeByMember[member]) }}</small><strong>{{ member }}</strong><span :class="latencyLabel(member).kind">{{ latencyLabel(member).text }}</span></button></div>
+    </template>
 
     <div v-if="policies.panelError" class="panel-error">{{ policies.panelError }}</div>
 
-    <section v-if="providers.orderedProxyProviders.length" class="provider-section">
-      <header class="section-caption"><span>机场订阅</span></header>
-      <div class="provider-list surface-card">
-        <div v-for="provider in providers.orderedProxyProviders" :key="provider.name" class="provider-row">
-          <div class="provider-info">
-            <strong>{{ provider.name }}</strong>
-            <small>{{ provider.vehicleType || 'unknown' }} · {{ provider.proxies?.length ?? 0 }} 节点 · {{ formatUpdatedAt(provider.updatedAt) }}</small>
-          </div>
-          <div v-if="providers.opOf(provider.name).error" class="provider-error">
-            {{ providers.opOf(provider.name).error }}
-          </div>
-          <div v-if="providers.healthOf(provider.name)" class="provider-health">
-            <span
-              v-for="(nodeHealth, member) in providers.healthOf(provider.name)"
-              :key="member"
-              :class="nodeHealth.status === 'ok' ? 'ok' : 'unavailable'"
-            >{{ member }} {{ nodeHealth.status === 'ok' ? `${nodeHealth.delay}ms` : '不可用' }}</span>
-          </div>
-          <div class="provider-actions">
-            <button
-              type="button"
-              :disabled="providers.opOf(provider.name).healthchecking"
-              @click="providers.healthCheckProxyProvider(provider.name)"
-            >{{ providers.opOf(provider.name).healthchecking ? '检查中' : '健康检查' }}</button>
-            <button
-              type="button"
-              :disabled="providers.opOf(provider.name).refreshing"
-              @click="providers.refreshProxyProvider(provider.name)"
-            >{{ providers.opOf(provider.name).refreshing ? '更新中' : '更新' }}</button>
-          </div>
-        </div>
-      </div>
-    </section>
   </div>
 </template>
 
 <style scoped>
 .mode-selector { width: 510px; }
+.policy-group-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;width:695px}.policy-group-grid button{display:grid;grid-template-columns:1fr auto;grid-template-rows:auto auto auto;min-width:0;min-height:86px;padding:10px;border:1px solid transparent;border-radius:10px;background:var(--app-surface);color:inherit;text-align:left}.policy-group-grid button:hover,.policy-group-grid button.selected{border-color:color-mix(in srgb,var(--app-blue) 48%,var(--app-divider));background:color-mix(in srgb,var(--app-blue) 7%,var(--app-surface))}.policy-group-grid small{grid-column:1;color:var(--app-muted);font-size:9px}.policy-group-grid strong{grid-column:1;overflow:hidden;font-size:12px;text-overflow:ellipsis;white-space:nowrap}.policy-group-grid span{grid-column:1;overflow:hidden;color:var(--app-muted);font-size:9px;text-overflow:ellipsis;white-space:nowrap}.policy-group-grid svg{grid-column:2;grid-row:1 / 4;align-self:center;color:var(--app-muted)}.node-caption{margin-top:28px}
 .group-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
 .group-tabs button { height: 27px; padding: 0 14px; border: 0; border-radius: 8px; background: rgba(127,127,127,.12); }
 .group-tabs button.selected { color: white; background: var(--app-blue); }

@@ -66,6 +66,7 @@ export interface SubscriptionFetcherOptions {
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024
 const DEFAULT_MAX_REDIRECTS = 5
 const DEFAULT_TIMEOUT_MS = 30000
+const TRUSTED_FAKE_IP_HOSTS = new Set(['gist.githubusercontent.com', 'raw.githubusercontent.com'])
 
 /** Check if an IP address is private/internal (SSRF protection). */
 function isPrivateOrInternalHost(host: string): boolean {
@@ -385,7 +386,12 @@ export class SubscriptionFetcher {
       // Literal IPs are already normalized by WHATWG URL and checked above.
       if (isIP(parsed.hostname) === 0) {
         const addresses = await this.resolveHost(parsed.hostname)
-        if (addresses.length === 0 || addresses.some((address) => !isPublicAddress(address))) {
+        // Surge/mihomo fake-ip DNS intentionally maps public hosts into
+        // 198.18.0.0/15. Only permit that result for exact HTTPS GitHub raw
+        // hosts; all other private/non-public answers remain rejected.
+        const trustedFakeIpHost = parsed.protocol === 'https:' && TRUSTED_FAKE_IP_HOSTS.has(parsed.hostname.toLowerCase())
+        const fakeIpOnly = addresses.length > 0 && addresses.every((address) => /^198\.(?:18|19)\./.test(address))
+        if (addresses.length === 0 || (addresses.some((address) => !isPublicAddress(address)) && !(trustedFakeIpHost && fakeIpOnly))) {
           throw new ProtocolError(
             ProtocolErrorCode.INVALID_ARGUMENT,
             `订阅域名解析到非公网地址：${redactCredentials(url)}`

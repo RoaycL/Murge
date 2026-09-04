@@ -212,7 +212,9 @@ const connectionsSnapshotSchema = z
     downloadTotal: z.number(),
     uploadTotal: z.number(),
     memory: z.number(),
-    connections: z.array(connectionSchema)
+    // mihomo may emit null while the tracker is empty/initializing. Normalize
+    // it at the protocol boundary so every renderer consumer still sees an array.
+    connections: z.array(connectionSchema).nullish().transform((value) => value ?? [])
   })
   .passthrough()
 

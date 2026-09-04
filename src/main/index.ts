@@ -585,6 +585,11 @@ app.whenReady().then(async () => {
   const productionControllerPort = productionPorts?.controller ?? null
   const productionMixedPort = productionPorts?.mixed ?? null
   const productionKernelRoot = join(profileRoot, 'kernel')
+  // Installer-shipped geodata databases (Layer 2): resolved relative to the app
+  // resources so the packaged app can seed the kernel's persistent home. Empty
+  // in dev, where the resources dir does not carry them (fail-open: the kernel
+  // then falls back to its own download path exactly as before).
+  const geodataSeedDir = is.dev ? undefined : join(process.resourcesPath, 'geodata')
   const appSettingsService = new AppSettingsService(appDataRoot(app.getPath('appData')))
   const overrideService = new OverrideService(
     appDataRoot(app.getPath('appData')),
@@ -637,6 +642,16 @@ app.whenReady().then(async () => {
             mixedPort: productionMixedPort!,
             controllerPort: productionControllerPort!,
             workspaceDir: join(productionKernelRoot, 'runtime'),
+            // Stable kernel home (`-d`): mihomo resolves geodata databases and
+            // provider caches here, so the directory must persist across runs.
+            // A per-run temp home forced a fresh online geodata download on
+            // every start — which fails before any proxy exists (no DNS to
+            // resolve the download host) and blocked startup entirely when the
+            // profile carried GEOSITE/GEOIP rules.
+            kernelHomeDir: join(productionKernelRoot, 'geodata'),
+            // Installer-shipped geodata seeds the persistent home, so the very
+            // first start never depends on the online download path.
+            seedResourcesDir: geodataSeedDir,
             // Drive the live controller from the ACTIVE profile (proxies, groups,
             // rules, providers) instead of the strict direct-only bootstrap. Falls
             // back to the strict config when no profile is active (e.g. CI smoke).

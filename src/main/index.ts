@@ -33,6 +33,9 @@ import { ProfileRepository } from './profiles/profile-repository'
 import { EncryptedProfileSourceStore } from './profiles/profile-source-store'
 import { ProfileService } from './profiles/profile-service'
 import { ProfileAutoReloadGateway } from './profiles/profile-auto-reload-gateway'
+import { ProxySelectionStore } from './profiles/proxy-selection-store'
+import { ProxySelectionService } from './services/proxy-selection-service'
+import { ProxySelectionGateway } from './services/proxy-selection-gateway'
 import { createConfigValidator } from './profiles/config-validator'
 import { reloadKernelForActiveProfile } from './system-proxy/reload-kernel'
 import { SubscriptionFetcher } from './subscriptions/subscription-fetcher'
@@ -543,6 +546,7 @@ app.whenReady().then(async () => {
       })
     : new SubscriptionFetcher()
 
+  const proxySelectionStore = new ProxySelectionStore(appDataRoot(app.getPath('appData')))
   const profileService = new ProfileService(
     new ProfileRepository({ rootDir: profileRoot, validator }),
     validator,
@@ -551,7 +555,10 @@ app.whenReady().then(async () => {
       isAvailable: () => safeStorage.isEncryptionAvailable(),
       encrypt: (value) => safeStorage.encryptString(value),
       decrypt: (value) => safeStorage.decryptString(value)
-    })
+    }),
+    // Deleting a profile drops its remembered node picks too (fire-and-forget:
+    // the profile is already gone, a cache-cleanup failure must not fail delete).
+    (deletedId) => { void proxySelectionStore.deleteProfile(deletedId).catch(() => undefined) }
   )
 
   // CI-only startup probe (see `windows-gui-smoke`). Verifies production
@@ -915,15 +922,27 @@ app.whenReady().then(async () => {
     inner: profileService,
     autoActivateOnEdit: true,
     reloader: {
-      reload: (rollbackActive) =>
-        modeController.reloadProfile((kernel) =>
+      reload: async (rollbackActive) => {
+        await modeController.reloadProfile((kernel) =>
           reloadKernelForActiveProfile({
             kernel,
             systemProxy: systemProxyService
           }, { rollbackActive })
         )
+        // The kernel came back up on the (possibly new) active profile: replay
+        // that profile's remembered node picks so they survive the restart.
+        await proxySelectionService.restoreSelections()
+      }
     }
   })
+  // Per-profile node-pick cache (sparkle/clash-party model): every accepted
+  // selectProxy is remembered, and each kernel reload replays the picks so a
+  // restart/profile-switch restores the user's nodes instead of config defaults.
+  const proxySelectionService = new ProxySelectionService(
+    gateway,
+    profileGateway,
+    proxySelectionStore
+  )
   const updates = new UpdateService(new ElectronUpdaterDriver())
   updateService = updates
   updates.start()
@@ -951,7 +970,9 @@ app.whenReady().then(async () => {
   disposeIpc = registerIpc({
     kernel: queuedKernel,
     kernelManager: kernelManagerService,
-    mihomo: gateway,
+    // The selection-recording wrapper is what the renderer talks to; the raw
+    // gateway stays available for internal reads (restore, network metadata).
+    mihomo: new ProxySelectionGateway(gateway, proxySelectionService),
     profiles: profileGateway,
     systemProxy: systemProxyService,
     startup: new StartupService(new ElectronStartupAdapter()),
@@ -1032,6 +1053,9 @@ app.whenReady().then(async () => {
           const started = await queuedKernel.start()
           if (started.phase !== 'running') {
             console.warn(`[kernel-autostart] kernel did not become running (${started.phase})`)
+          } else {
+            // Fresh boot on the active profile: restore its remembered picks.
+            await proxySelectionService.restoreSelections()
           }
         }
       }

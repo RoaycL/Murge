@@ -18,7 +18,13 @@ export class ProfileService implements ProfileGateway {
     private readonly repository: ProfileRepository,
     private readonly validator: ConfigValidator,
     private readonly fetcher: SubscriptionFetcher,
-    private readonly sourceStore: ProfileSourceStore = new MemoryProfileSourceStore()
+    private readonly sourceStore: ProfileSourceStore = new MemoryProfileSourceStore(),
+    /**
+     * Optional hook invoked after a profile is deleted so auxiliary per-profile
+     * caches (e.g. remembered proxy selections) can drop the id. Kept as a
+     * callback rather than a store dependency to avoid a service<->service cycle.
+     */
+    private readonly onDeleted?: (id: string) => void
   ) {}
 
   listProfiles(): Promise<ProfileMeta[]> {
@@ -140,6 +146,7 @@ export class ProfileService implements ProfileGateway {
   async deleteProfile(id: string): Promise<void> {
     await this.repository.delete(id)
     await this.sourceStore.delete(id)
+    this.onDeleted?.(id)
   }
 
   renameProfile(id: string, name: string): Promise<ProfileMeta> {

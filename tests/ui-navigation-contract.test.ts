@@ -36,11 +36,12 @@ describe('Surge-inspired UI navigation contract', () => {
     expect(profiles).toContain("importSource === 'url'")
     expect(profiles).toContain("importSource === 'file'")
     expect(profiles).toContain("importSource === 'manual'")
-    // Importing a profile now ACTIVATES it immediately (import-is-apply UX):
-    // every import path passes `activate: true` so the fresh profile loads
-    // straight into the running kernel via the auto-reload gateway.
-    expect(profiles).toContain('activate: true')
-    expect(profiles).not.toContain('activate: false')
+    // Owner-directed behavior (supersedes the earlier import-is-apply UX):
+    // importing a profile does NOT activate it — every import path passes
+    // `activate: false`; the profile loads only when the user selects it in
+    // the list (which routes through the auto-reload gateway).
+    expect(profiles).toContain('activate: false')
+    expect(profiles).not.toContain('activate: true')
     expect(profiles).not.toContain('prompt(')
   })
 

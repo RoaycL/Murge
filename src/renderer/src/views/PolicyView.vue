@@ -42,6 +42,12 @@ function isUnavailable(name: string): boolean {
   return proxy ? proxy.alive === false : false
 }
 
+/** A broken/remote icon must not leave a torn image in the grid: hide it. */
+function onGroupIconError(event: Event): void {
+  const img = event.currentTarget as HTMLImageElement | null
+  if (img) img.style.display = 'none'
+}
+
 async function onCardClick(name: string): Promise<void> {
   // A rejected selection is surfaced via `panelError` by the store; swallow it
   // here so a click never becomes an unhandled promise rejection in the view.
@@ -106,7 +112,7 @@ watch(() => kernel.status.phase, (phase, previous) => {
     <template v-else>
       <div class="section-caption"><span>策略组</span></div>
       <div class="policy-group-grid">
-        <button v-for="group in policies.groups" :key="group.name" type="button" :class="{ selected: policies.selectedGroup === group.name }" @click="policies.selectGroup(group.name)"><small>{{ group.type }}</small><strong>{{ group.name }}</strong><span>{{ group.now || group.all?.[0] || '未选择' }}</span><AppIcon name="next" :size="14" /></button>
+        <button v-for="group in policies.groups" :key="group.name" type="button" :class="{ selected: policies.selectedGroup === group.name }" @click="policies.selectGroup(group.name)"><img v-if="group.icon" class="group-icon" :src="group.icon" alt="" loading="lazy" @error="onGroupIconError" /><small>{{ group.type }}</small><strong>{{ group.name }}</strong><span>{{ group.now || group.all?.[0] || '未选择' }}</span><AppIcon name="next" :size="14" /></button>
       </div>
       <div class="section-caption node-caption"><span>{{ policies.selectedGroup || '代理' }}</span><button type="button" :disabled="!policies.selectedGroup" @click="policies.testAll()">测试当前组</button></div>
       <div class="node-grid"><button v-for="member in policies.groupMembers" :key="member" type="button" :class="{ selected: policies.selectedMember === member, unavailable: isUnavailable(member) }" @click="onCardClick(member)"><small>{{ displayType(policies.nodeByMember[member]) }}</small><strong>{{ member }}</strong><span :class="latencyLabel(member).kind">{{ latencyLabel(member).text }}</span></button></div>
@@ -119,7 +125,7 @@ watch(() => kernel.status.phase, (phase, previous) => {
 
 <style scoped>
 .mode-selector { width: 100%; max-width: 510px; }
-.policy-group-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(150px,100%),1fr));gap:10px;width:100%}.policy-group-grid button{display:grid;grid-template-columns:1fr auto;grid-template-rows:auto auto auto;min-width:0;min-height:86px;padding:10px;border:1px solid transparent;border-radius:10px;background:var(--app-surface);color:inherit;text-align:left}.policy-group-grid button:hover,.policy-group-grid button.selected{border-color:color-mix(in srgb,var(--app-blue) 48%,var(--app-divider));background:color-mix(in srgb,var(--app-blue) 7%,var(--app-surface))}.policy-group-grid small{grid-column:1;color:var(--app-muted);font-size:9px}.policy-group-grid strong{grid-column:1;overflow:hidden;font-size:12px;text-overflow:ellipsis;white-space:nowrap}.policy-group-grid span{grid-column:1;overflow:hidden;color:var(--app-muted);font-size:9px;text-overflow:ellipsis;white-space:nowrap}.policy-group-grid svg{grid-column:2;grid-row:1 / 4;align-self:center;color:var(--app-muted)}.node-caption{margin-top:28px}
+.policy-group-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(150px,100%),1fr));gap:10px;width:100%}.group-icon{grid-column:2;grid-row:1;justify-self:end;width:18px;height:18px;border-radius:4px;object-fit:contain}.policy-group-grid button{display:grid;grid-template-columns:1fr auto;grid-template-rows:auto auto auto;min-width:0;min-height:86px;padding:10px;border:1px solid transparent;border-radius:10px;background:var(--app-surface);color:inherit;text-align:left}.policy-group-grid button:hover,.policy-group-grid button.selected{border-color:color-mix(in srgb,var(--app-blue) 48%,var(--app-divider));background:color-mix(in srgb,var(--app-blue) 7%,var(--app-surface))}.policy-group-grid small{grid-column:1;color:var(--app-muted);font-size:9px}.policy-group-grid strong{grid-column:1;overflow:hidden;font-size:12px;text-overflow:ellipsis;white-space:nowrap}.policy-group-grid span{grid-column:1;overflow:hidden;color:var(--app-muted);font-size:9px;text-overflow:ellipsis;white-space:nowrap}.policy-group-grid svg{grid-column:2;grid-row:1 / 4;align-self:center;color:var(--app-muted)}.node-caption{margin-top:28px}
 .group-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
 .group-tabs button { height: 27px; padding: 0 14px; border: 0; border-radius: 8px; background: rgba(127,127,127,.12); }
 .group-tabs button.selected { color: white; background: var(--app-blue); }

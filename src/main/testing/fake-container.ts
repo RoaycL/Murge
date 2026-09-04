@@ -300,6 +300,18 @@ export class FakeProfileGateway implements ProfileGateway {
     return this.importProfile({ name, document: `proxies:\n  - name: node\n    server: 127.0.0.1\n`, source: { type: 'url', url }, activate })
   }
 
+  async updateFromSource(id: string): Promise<ProfileMeta> {
+    const profile = this.profiles.find((entry) => entry.meta.id === id)
+    if (!profile) throw new Error(`profile ${id} not found`)
+    if (profile.meta.source.type !== 'url' || !profile.meta.source.url) {
+      throw new Error('该配置没有远程订阅地址，无法更新')
+    }
+    profile.document = `proxies:\n  - name: node-updated\n    server: 127.0.0.1\n`
+    profile.meta.size = profile.document.length
+    profile.meta.updatedAt = Date.now()
+    return { ...profile.meta }
+  }
+
   async activateProfile(id: string): Promise<ProfileMeta> {
     const index = this.profiles.findIndex((entry) => entry.meta.id === id)
     if (index === -1) throw new Error(`profile ${id} not found`)

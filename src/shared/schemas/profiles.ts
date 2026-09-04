@@ -126,6 +126,23 @@ export function parseProfileName(name: unknown): string {
   return name
 }
 
+/**
+ * An OPTIONAL profile display name for subscription imports: an empty string
+ * means "derive a name from the subscription itself" (response filename, then
+ * URL host). The raw URL is deliberately NOT a valid name — its path can carry
+ * a token and would render as an overlong profile name on the activity page.
+ */
+export function parseOptionalImportName(name: unknown): string {
+  if (name === undefined || name === null) return ''
+  if (typeof name !== 'string' || name.length > 256) {
+    throw invalid('profile name must be a string of at most 256 characters')
+  }
+  if (name.includes('\n') || name.includes('\r') || name.includes('\0')) {
+    throw invalid('profile name contains invalid control characters')
+  }
+  return name
+}
+
 /** Validate a subscription URL before it reaches the privileged fetch service. */
 export function parseSubscriptionUrl(input: unknown): string {
   if (typeof input !== 'string' || input.length === 0 || input.length > 2048) {

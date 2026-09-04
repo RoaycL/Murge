@@ -74,6 +74,7 @@ const api: DesktopApi = {
     get: (id) => invoke(IPC.profilesGet, id),
     import: (request) => invoke(IPC.profilesImport, request),
     importFromUrl: (name, url, activate) => invoke(IPC.profilesImportFromUrl, name, url, activate),
+    updateFromSource: (id) => invoke(IPC.profilesUpdateFromSource, id),
     activate: (id) => invoke(IPC.profilesActivate, id),
     delete: (id) => invoke(IPC.profilesDelete, id),
     rename: (id, name) => invoke(IPC.profilesRename, id, name),

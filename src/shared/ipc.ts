@@ -77,6 +77,7 @@ export const IPC = {
   profilesGet: 'profiles:get',
   profilesImport: 'profiles:import',
   profilesImportFromUrl: 'profiles:import-from-url',
+  profilesUpdateFromSource: 'profiles:update-from-source',
   profilesActivate: 'profiles:activate',
   profilesDelete: 'profiles:delete',
   profilesRename: 'profiles:rename',
@@ -189,6 +190,7 @@ export interface DesktopApi {
     get(id: string): Promise<Profile>
     import(request: ImportRequest): Promise<ProfileMeta>
     importFromUrl(name: string, url: string, activate?: boolean): Promise<ProfileMeta>
+    updateFromSource(id: string): Promise<ProfileMeta>
     activate(id: string): Promise<ProfileMeta>
     delete(id: string): Promise<void>
     rename(id: string, name: string): Promise<ProfileMeta>

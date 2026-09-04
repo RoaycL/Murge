@@ -21,8 +21,13 @@ button:disabled { cursor: default; opacity: 0.55; }
 .nav-icon { display: grid; place-items: center; flex: 0 0 18px; width: 18px; height: 18px; color: var(--app-muted); }
 .sidebar-footer { position: absolute; left: 10px; right: 10px; bottom: 11px; padding-top: 9px; border-top: 1px solid var(--app-divider); }
 .sidebar-button { cursor: pointer; }
-.app-content { min-width: 0; height: 100%; overflow: auto; }
-.page-shell { width: 100%; min-height: 0; padding: 45px 34px 0 5px; }
+.app-content { min-width: 0; height: 100%; overflow-x: hidden; overflow-y: auto; }
+/* Slim overlay scrollbars: the native-width bar felt heavy inside the frame. */
+.app-content::-webkit-scrollbar { width: 10px; height: 10px; }
+.app-content::-webkit-scrollbar-thumb { border-radius: 5px; background: rgba(127, 127, 127, 0.35); border: 3px solid transparent; background-clip: content-box; }
+.app-content::-webkit-scrollbar-thumb:hover { background-color: rgba(127, 127, 127, 0.55); }
+.app-content::-webkit-scrollbar-track { background: transparent; }
+.page-shell { width: 100%; min-width: 0; min-height: 0; padding: 45px 34px 0 5px; }
 h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font-weight: 700; }
 .surface-card { background: var(--app-surface); border: 1px solid var(--app-surface-border); border-radius: var(--radius-large); box-shadow: var(--app-shadow); overflow: hidden; }
 .activity-header { width: var(--activity-content-width); }
@@ -30,9 +35,9 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .status-pill { display: flex; align-items: center; justify-content: center; min-width: 122px; height: 23px; border-radius: 12px; color: #4f535a; background: rgba(220, 221, 224, 0.9); font-size: 12px; }
 .status-pill i { width: 8px; height: 8px; margin-right: 14px; border-radius: 50%; background: var(--app-green); }
 .runtime-context { display: grid; grid-template-columns: 160px 185px 185px 165px; width: var(--activity-content-width); height: 57px; }
-.runtime-context div { display: flex; flex-direction: column; }
+.runtime-context div { display: flex; flex-direction: column; min-width: 0; }
 .runtime-context span, .metric-label { color: var(--app-muted); font-size: 11px; }
-.runtime-context strong { margin-top: 3px; font-size: 16px; line-height: 19px; font-weight: 650; }
+.runtime-context strong { margin-top: 3px; font-size: 16px; line-height: 19px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dashboard-grid { display: grid; grid-template-columns: 347px 347px; grid-template-rows: 166px 165px 165px; gap: 15px; width: 709px; }
 .latency-card { padding: 15px 16px 13px; }
 .quiet-button { float: right; width: 100px; height: 28px; margin-top: -5px; border: 1px solid var(--app-divider); border-radius: 6px; background: transparent; font-size: 12px; cursor: pointer; }

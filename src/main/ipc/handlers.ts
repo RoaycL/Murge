@@ -5,6 +5,7 @@ import {
   parseConfigEdit,
   parseImportRequest,
   parseOptionalBoolean,
+  parseOptionalImportName,
   parseProfileDocument,
   parseProfileName,
   parseSubscriptionUrl
@@ -85,11 +86,12 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
     [IPC.profilesImport]: async (_event, request) => profiles.importProfile(parseImportRequest(request)),
     [IPC.profilesImportFromUrl]: async (_event, name, url, activate) =>
       profiles.importFromUrl(
-        parseProfileName(name),
+        parseOptionalImportName(name),
         parseSubscriptionUrl(url),
         parseOptionalBoolean(activate, 'activate')
       ),
     [IPC.profilesActivate]: async (_event, id) => profiles.activateProfile(parseProfileName(id)),
+    [IPC.profilesUpdateFromSource]: async (_event, id) => profiles.updateFromSource(parseProfileName(id)),
     [IPC.profilesDelete]: async (_event, id) => profiles.deleteProfile(parseProfileName(id)),
     [IPC.profilesRename]: async (_event, id, name) => profiles.renameProfile(parseProfileName(id), parseProfileName(name)),
     [IPC.profilesEditDocument]: async (_event, id, edits) =>

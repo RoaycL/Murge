@@ -52,6 +52,12 @@ export const useProfilesStore = defineStore('profiles', () => {
     await load()
   }
 
+  /** Re-fetch a URL-backed profile's subscription and replace its document. */
+  async function updateFromSource(id: string): Promise<void> {
+    await mutate(() => window.desktop.profiles.updateFromSource(id))
+    await load()
+  }
+
   async function importProfile(request: ImportRequest): Promise<void> {
     await mutate(() => window.desktop.profiles.import(request))
     await load()
@@ -116,6 +122,7 @@ export const useProfilesStore = defineStore('profiles', () => {
     load,
     get,
     importFromUrl,
+    updateFromSource,
     importProfile,
     activate,
     remove,

@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useGeodataSettingsStore } from '../stores/geodata-settings'
 import type { GeodataSettings, GeoipMode } from '@shared/geodata'
 import { EMPTY_GEODATA_SETTINGS } from '@shared/geodata'
 import AppSelect from './AppSelect.vue'
 import AppIcon from './AppIcon.vue'
 import { useToast } from '../composables/use-toast'
+import { useUnsavedChanges } from '../composables/use-unsaved-changes'
 
 const store = useGeodataSettingsStore()
 const toast = useToast()
+const hydrated = ref(false)
 
 const form = reactive<GeodataSettings>({ ...EMPTY_GEODATA_SETTINGS })
 
@@ -47,6 +49,9 @@ function resetFromStore(): void {
   syncFromConfig(store.settings)
 }
 
+const dirty = computed(() => hydrated.value && JSON.stringify({ ...form }) !== JSON.stringify(store.settings))
+useUnsavedChanges('geodata-settings', 'GeoData 设置', dirty)
+
 watch(
   () => store.settings,
   (value) => syncFromConfig(value),
@@ -56,6 +61,7 @@ watch(
 onMounted(async () => {
   await store.refresh()
   syncFromConfig(store.settings)
+  hydrated.value = true
 })
 </script>
 
@@ -140,7 +146,7 @@ onMounted(async () => {
 
       <div class="gd-actions">
         <button type="button" class="gd-preview" @click="preview">预览配置</button>
-        <button type="button" class="gd-save" :disabled="store.busy" @click="save">{{ store.busy ? '保存中…' : '保存' }}</button>
+        <span v-if="dirty" class="unsaved-indicator">未保存</span><button type="button" class="gd-save" :disabled="store.busy || !dirty" @click="save">{{ store.busy ? '保存中…' : '保存' }}</button>
       </div>
 
       <div v-if="previewOpen" class="gd-preview">

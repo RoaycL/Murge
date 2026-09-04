@@ -65,4 +65,14 @@ describe('Surge-inspired UI navigation contract', () => {
     expect(profiles).toContain('action-label="添加配置"')
     expect(profiles).toContain("toast.success('远程配置已添加'")
   })
+
+  it('guards route changes when settings contain unsaved edits', () => {
+    expect(read('src/renderer/src/router.ts')).toContain('hasUnsavedChanges.value')
+    const app = read('src/renderer/src/App.vue')
+    expect(app).toContain('放弃未保存的修改？')
+    expect(app).toContain('discardAndNavigate')
+    const dns = read('src/renderer/src/components/DnsSettingsPanel.vue')
+    expect(dns).toContain("useUnsavedChanges('dns-enhancement'")
+    expect(dns).toContain('store.busy || !dirty')
+  })
 })

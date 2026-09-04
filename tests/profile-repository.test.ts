@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, rm, writeFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ProfileRepository, applyEdits } from '../src/main/profiles/profile-repository'
@@ -67,6 +67,15 @@ describe('ProfileRepository', () => {
     expect(meta.active).toBe(true)
     const list = await repository.list()
     expect(list[0].active).toBe(true)
+  })
+
+  it('writes documents and metadata with 0o600 (no group/other read)', async () => {
+    const meta = await repository.import('cfg', VALID_DOC, MANUAL_SOURCE, true)
+    const docMode = (await stat(join(rootDir, `${meta.id}.yaml`))).mode & 0o777
+    const metaMode = (await stat(join(rootDir, `${meta.id}.meta.json`))).mode & 0o777
+    // A profile YAML can embed proxy credentials; it must be owner-only.
+    expect(docMode).toBe(0o600)
+    expect(metaMode).toBe(0o600)
   })
 
   it('rejects a duplicate name case-insensitively', async () => {

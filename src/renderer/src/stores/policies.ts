@@ -279,7 +279,11 @@ export const usePoliciesStore = defineStore('policies', () => {
       // catch branch below as UPSTREAM_TIMEOUT -> 'timeout' for every member.
       for (const member of members) {
         const delay = map[member]
-        if (typeof delay === 'number' && delay >= 0) setDelay(member, { status: 'ok', delay })
+        // A delay of exactly 0 (or a negative value) is NOT a successful 0ms
+        // measurement — mihomo reports 0 for a failed/unmeasured probe, exactly
+        // like `providers.ts`'s latestDelay treats it. Only a strictly positive
+        // delay is a real "ok" measurement.
+        if (typeof delay === 'number' && Number.isFinite(delay) && delay > 0) setDelay(member, { status: 'ok', delay })
         else setDelay(member, { status: 'unavailable', delay: null })
       }
       groupDelayStatus.value = 'ok'

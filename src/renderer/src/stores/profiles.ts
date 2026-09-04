@@ -84,6 +84,19 @@ export const useProfilesStore = defineStore('profiles', () => {
     await get(id)
   }
 
+  async function replaceDocument(id: string, document: string): Promise<void> {
+    await mutate(() => window.desktop.profiles.replaceDocument(id, document))
+    await load(); await get(id)
+  }
+
+  async function getSourceUrl(id: string): Promise<string | null> {
+    return window.desktop.profiles.getSourceUrl(id)
+  }
+
+  async function setSourceUrl(id: string, url: string): Promise<void> {
+    await mutate(() => window.desktop.profiles.setSourceUrl(id, url)); await load()
+  }
+
   async function validate(document: string): Promise<ValidationResult> {
     try {
       return await window.desktop.profiles.validate(document)
@@ -128,6 +141,9 @@ export const useProfilesStore = defineStore('profiles', () => {
     remove,
     rename,
     editDocument,
+    replaceDocument,
+    getSourceUrl,
+    setSourceUrl,
     validate,
     clear
   }

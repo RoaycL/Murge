@@ -15,6 +15,8 @@ import { useNetworkMetadataStore } from '../stores/network-metadata'
 import { formatBytes, formatBytesParts, formatRate } from '../lib/format'
 import { brand } from '@shared/brand'
 import { useRouter } from 'vue-router'
+import { usePoliciesStore } from '../stores/policies'
+import AppSelect from '../components/AppSelect.vue'
 
 const traffic = useTrafficStore()
 const connections = useConnectionsStore()
@@ -22,6 +24,7 @@ const runtime = useRuntimeStore()
 const kernel = useKernelStore()
 const networkMeta = useNetworkMetadataStore()
 const router = useRouter()
+const policies = usePoliciesStore()
 const summaryDrawer = ref<'network' | 'usage' | 'topology' | null>(null)
 
 onMounted(() => {
@@ -29,6 +32,7 @@ onMounted(() => {
   traffic.connect()
   connections.connect()
   void runtime.refresh()
+  void policies.load()
   void networkMeta.init()
 })
 
@@ -80,8 +84,19 @@ const directPct = computed(() =>
 )
 
 const modeLabel = computed(() => {
-  const map = { rule: '规则判定', global: '全局', direct: '直连' } as const
+  const map = { rule: '规则判定', global: '全局代理', direct: '直接连接' } as const
   return map[runtime.summary?.mode ?? 'rule']
+})
+const modeOptions = [
+  { value: 'rule', label: '规则判定' },
+  { value: 'global', label: '全局代理' },
+  { value: 'direct', label: '直接连接' }
+]
+const selectedMode = computed({
+  get: () => policies.mode,
+  set: (value: string) => {
+    void policies.setMode(value as 'rule' | 'global' | 'direct').then(() => runtime.refresh())
+  }
 })
 const externalIpText = computed(() => networkMeta.ipText)
 
@@ -117,7 +132,7 @@ const chartBars = computed<number[]>(() => {
     <section class="runtime-context" aria-label="运行上下文">
       <div><span>网络</span><strong>{{ runtime.summary?.networkName ?? '以太网' }}</strong></div>
       <div><span>配置</span><strong>{{ runtime.summary?.profileName ?? brand.defaultProfileName }}</strong></div>
-      <div><span>出站模式</span><strong>{{ modeLabel }}</strong></div>
+      <div class="runtime-mode-picker"><span>出站模式</span><AppSelect v-model="selectedMode" :options="modeOptions" :label="`出站模式：${modeLabel}`" /></div>
       <button type="button" class="runtime-detail-link" aria-label="查看网络信息" @click="summaryDrawer = 'network'"><span>外部 IP</span><strong>{{ externalIpText }}</strong><AppIcon name="next" :size="14" /></button>
     </section>
 

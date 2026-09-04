@@ -2,7 +2,6 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterView } from 'vue-router'
 import AppSidebar from './components/AppSidebar.vue'
-import UpdateBanner from './components/UpdateBanner.vue'
 import ToastHost from './components/ToastHost.vue'
 import ConfirmModal from './components/ConfirmModal.vue'
 import type { BrandConfig } from '@shared/brand'
@@ -47,7 +46,6 @@ onBeforeUnmount(() => {
     <div class="app-frame">
       <AppSidebar :brand="brand" />
       <main class="app-content">
-        <UpdateBanner />
         <RouterView />
       </main>
       <ToastHost />

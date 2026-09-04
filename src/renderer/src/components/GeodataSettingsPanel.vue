@@ -32,6 +32,7 @@ function syncFromConfig(value: GeodataSettings): void {
   form.autoUpdate = value.autoUpdate
   form.updateIntervalHours = value.updateIntervalHours
   form.geoxUrl = value.geoxUrl
+  form.geoxUrls = { ...value.geoxUrls }
 }
 
 async function save(): Promise<void> {
@@ -100,8 +101,8 @@ onMounted(async () => {
             <span class="gd-label"> geodata-mode（二进制数据匹配）</span>
           </label>
           <label class="gd-field">
-            <span class="gd-label">geoip-mode</span>
-            <AppSelect v-model="form.geoipMode" :options="GEOIP_OPTIONS" label="GeoIP 模式" />
+            <span class="gd-label">geodata-loader</span>
+            <AppSelect v-model="form.geoipMode" :options="GEOIP_OPTIONS" label="GeoData 加载器" />
           </label>
         </div>
       </fieldset>
@@ -129,20 +130,7 @@ onMounted(async () => {
         </div>
       </fieldset>
 
-      <fieldset class="gd-group">
-        <legend>数据源 URL（可选）</legend>
-        <label class="gd-field">
-          <span class="gd-label">geo-x-url</span>
-          <input
-            v-model="form.geoxUrl"
-            class="gd-input"
-            type="url"
-            placeholder="https://…（留空则保留配置文件的源）"
-            aria-label="geo-x-url"
-          />
-        </label>
-        <p class="gd-note">留空时不会覆盖配置文件已有的 geodata 源；仅当填写了绝对 http(s) URL 才生效。</p>
-      </fieldset>
+      <fieldset class="gd-group geodata-sources"><legend>数据库来源</legend><label class="gd-source-row"><span>GeoIP-DAT 数据库</span><input v-model="form.geoxUrls.geoip" class="gd-input" type="url" /></label><label class="gd-source-row"><span>GeoIP-MMDB 数据库</span><input v-model="form.geoxUrls.mmdb" class="gd-input" type="url" /></label><label class="gd-source-row"><span>GeoSite 数据库</span><input v-model="form.geoxUrls.geosite" class="gd-input" type="url" /></label><label class="gd-source-row"><span>IP-ASN 数据库</span><input v-model="form.geoxUrls.asn" class="gd-input" type="url" /></label></fieldset>
 
       <div class="gd-actions">
         <button type="button" class="gd-preview" @click="preview">预览配置</button>
@@ -196,6 +184,8 @@ onMounted(async () => {
 .gd-group legend { padding: 0 6px; color: var(--app-muted); font-size: 11px; }
 .gd-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
 .gd-field { display: grid; gap: 5px; }
+.gd-source-row { display:grid; grid-template-columns: 150px 1fr; align-items:center; gap:12px; padding:9px 0; border-bottom:1px solid var(--app-divider); font-size:12px; }
+.gd-source-row:last-child { border-bottom:0; }
 .gd-label { color: var(--app-muted); font-size: 11px; }
 .gd-note { margin: 6px 0 0; color: var(--app-muted); font-size: 10px; }
 .gd-select,

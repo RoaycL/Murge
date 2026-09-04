@@ -41,6 +41,7 @@ import type { UpdateState } from './updates'
 export const IPC = {
   appGetBrand: 'app:get-brand',
   appGetInfo: 'app:get-info',
+  appGetProcessIcon: 'app:get-process-icon',
   kernelGetStatus: 'kernel:get-status',
   kernelStart: 'kernel:start',
   kernelStop: 'kernel:stop',
@@ -82,6 +83,9 @@ export const IPC = {
   profilesDelete: 'profiles:delete',
   profilesRename: 'profiles:rename',
   profilesEditDocument: 'profiles:edit-document',
+  profilesReplaceDocument: 'profiles:replace-document',
+  profilesGetSourceUrl: 'profiles:get-source-url',
+  profilesSetSourceUrl: 'profiles:set-source-url',
   profilesValidate: 'profiles:validate',
   kernelStatusEvent: 'kernel:status-event',
   systemProxyGetStatus: 'system-proxy:get-status',
@@ -143,6 +147,7 @@ export interface DesktopApi {
   app: {
     getBrand(): Promise<BrandConfig>
     getInfo(): Promise<AppInfo>
+    getProcessIcon(path: string): Promise<string | null>
   }
   kernel: {
     getStatus(): Promise<KernelStatus>
@@ -195,6 +200,9 @@ export interface DesktopApi {
     delete(id: string): Promise<void>
     rename(id: string, name: string): Promise<ProfileMeta>
     editDocument(id: string, edits: ConfigEdit[]): Promise<ProfileMeta>
+    replaceDocument(id: string, document: string): Promise<ProfileMeta>
+    getSourceUrl(id: string): Promise<string | null>
+    setSourceUrl(id: string, url: string): Promise<ProfileMeta>
     validate(document: string): Promise<ValidationResult>
   }
   systemProxy: {

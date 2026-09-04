@@ -348,6 +348,23 @@ export class FakeProfileGateway implements ProfileGateway {
     return this.getProfile(id).then((profile) => profile.meta)
   }
 
+  async replaceDocument(id: string, document: string): Promise<ProfileMeta> {
+    const profile = await this.getProfile(id)
+    profile.document = document
+    profile.meta.size = document.length
+    return profile.meta
+  }
+
+  async getSourceUrl(id: string): Promise<string | null> {
+    return (await this.getProfile(id)).meta.source.url ?? null
+  }
+
+  async setSourceUrl(id: string, url: string): Promise<ProfileMeta> {
+    const profile = await this.getProfile(id)
+    profile.meta.source.url = url
+    return profile.meta
+  }
+
   validateDocument(_document: string): ValidationResult {
     return { ok: true, issues: [] }
   }

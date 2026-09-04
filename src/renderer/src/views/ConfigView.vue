@@ -33,6 +33,10 @@ const selectedProfileId = ref<string | null>(null)
 const pendingDeleteId = ref<string | null>(null)
 const pendingRenameId = ref<string | null>(null)
 const renameValue = ref('')
+const editingId = ref<string | null>(null)
+const editingDocument = ref('')
+const editingUrl = ref('')
+const savingEdit = ref(false)
 
 const menuAnchor = ref<{ id: string; top: number; left: number } | null>(null)
 const refreshingAll = ref(false)
@@ -252,6 +256,31 @@ async function confirmRename(): Promise<void> {
   }
 }
 
+async function openEditor(id: string): Promise<void> {
+  closeMenu()
+  const profile = await profilesStore.get(id)
+  if (!profile) return
+  editingId.value = id
+  editingDocument.value = profile.document
+  editingUrl.value = profile.meta.source.type === 'url' ? (await profilesStore.getSourceUrl(id) ?? '') : ''
+}
+
+async function saveEditor(): Promise<void> {
+  const id = editingId.value
+  if (!id) return
+  const result = await profilesStore.validate(editingDocument.value)
+  if (!result.ok) { toast.error('配置校验失败', result.issues.map((i) => i.message).join('；')); return }
+  savingEdit.value = true
+  try {
+    const meta = profilesStore.profiles.find((item) => item.id === id)
+    if (meta?.source.type === 'url' && editingUrl.value.trim()) await profilesStore.setSourceUrl(id, editingUrl.value.trim())
+    await profilesStore.replaceDocument(id, editingDocument.value)
+    editingId.value = null
+    toast.success('配置已保存', meta?.active ? '运行中的配置已重新加载' : undefined)
+  } catch { toast.error('配置保存失败', profilesStore.lastError ?? undefined) }
+  finally { savingEdit.value = false }
+}
+
 async function refreshAllResources(): Promise<void> {
   refreshingAll.value = true
   batchResult.value = null
@@ -320,7 +349,7 @@ function ruleProviderMeta(
 <template>
   <div class="page-shell config-view">
     <header class="config-header">
-      <div><h1>配置文件</h1><p class="config-subtitle">共 {{ profilesStore.ordered.length }} 个配置<template v-if="activeCount"> · 使用中 {{ activeCount }}</template></p></div>
+      <div><h1>配置</h1><p class="config-subtitle">共 {{ profilesStore.ordered.length }} 个配置<template v-if="activeCount"> · 使用中 {{ activeCount }}</template></p></div>
       <button type="button" class="primary-button add-profile-button" @click="showAddDialog = true"><AppIcon name="add-file" :size="16" />添加配置</button>
     </header>
 
@@ -392,6 +421,7 @@ function ruleProviderMeta(
       <template v-for="meta in profilesStore.ordered" :key="meta.id">
         <template v-if="meta.id === menuAnchor.id">
           <button v-if="!meta.active" type="button" role="menuitem" @click="activate(meta.id); closeMenu()">使用</button>
+          <button type="button" role="menuitem" @click="openEditor(meta.id)">编辑配置</button>
           <button type="button" role="menuitem" @click="openRename(meta.id)">重命名</button>
           <button type="button" role="menuitem" class="danger" @click="pendingDeleteId = meta.id; closeMenu()">删除</button>
         </template>
@@ -400,10 +430,11 @@ function ruleProviderMeta(
 
     <DetailDrawer :open="Boolean(selectedProfile)" :title="selectedProfile?.name ?? '配置详情'" :subtitle="selectedProfile ? `${sourceBadge(selectedProfile.source.type)} · ${relativeTime(selectedProfile.updatedAt)}` : ''" @close="selectedProfileId = null">
       <div v-if="selectedProfile" class="entity-detail drawer-detail"><dl><div><dt>来源</dt><dd>{{ sourceBadge(selectedProfile.source.type) }}</dd></div><div><dt>更新时间</dt><dd>{{ relativeTime(selectedProfile.updatedAt) }}</dd></div><div><dt>状态</dt><dd>{{ selectedProfile.active ? '使用中' : '未启用' }}</dd></div></dl></div>
-      <template #footer><button type="button" class="danger-button" :disabled="selectedProfile?.active" @click="selectedProfile && (pendingDeleteId = selectedProfile.id)"><AppIcon name="delete" :size="15" />删除</button><button type="button" class="primary-button" :disabled="selectedProfile?.active" @click="selectedProfile && activate(selectedProfile.id)">{{ selectedProfile?.active ? '正在使用' : '使用此配置' }}</button></template>
+      <template #footer><button type="button" class="secondary-button" @click="selectedProfile && openEditor(selectedProfile.id)"><AppIcon name="code" :size="15" />编辑配置</button><button type="button" class="danger-button" :disabled="selectedProfile?.active" @click="selectedProfile && (pendingDeleteId = selectedProfile.id)"><AppIcon name="delete" :size="15" />删除</button><button type="button" class="primary-button" :disabled="selectedProfile?.active" @click="selectedProfile && activate(selectedProfile.id)">{{ selectedProfile?.active ? '正在使用' : '使用此配置' }}</button></template>
     </DetailDrawer>
     <ConfirmModal :open="Boolean(pendingDeleteId)" title="删除此配置？" description="这会移除本地配置记录；当前正在使用的配置不能删除，远程订阅源不会受到影响。" @close="pendingDeleteId = null" @confirm="confirmRemove" />
     <Teleport to="body"><div v-if="pendingRenameId" class="modal-shade" @click.self="pendingRenameId = null"><section class="rename-modal" role="dialog" aria-modal="true" aria-label="重命名配置"><header><h2>重命名配置</h2><button type="button" class="icon-control" aria-label="关闭" @click="pendingRenameId = null"><AppIcon name="close" /></button></header><input v-model="renameValue" class="field" autofocus aria-label="配置名称" @keyup.enter="confirmRename" /><footer><button type="button" class="secondary-button" @click="pendingRenameId = null">取消</button><button type="button" class="primary-button" :disabled="!renameValue.trim()" @click="confirmRename">保存</button></footer></section></div></Teleport>
+    <Teleport to="body"><div v-if="editingId" class="modal-shade" @click.self="editingId = null"><section class="profile-edit-modal" role="dialog" aria-modal="true" aria-label="编辑配置"><header><div><h2>编辑配置</h2><p>保存前会校验 YAML；正在使用的配置会自动重新加载。</p></div><button type="button" class="icon-control" aria-label="关闭" @click="editingId = null"><AppIcon name="close" /></button></header><label v-if="profilesStore.profiles.find(i => i.id === editingId)?.source.type === 'url'" class="modal-field"><span>订阅地址</span><input v-model="editingUrl" class="field" aria-label="订阅地址（完整）" /></label><label class="modal-field editor-field"><span>配置 YAML</span><textarea v-model="editingDocument" class="field document profile-document-editor" spellcheck="false" aria-label="编辑配置 YAML" /></label><footer><button type="button" class="secondary-button" @click="editingId = null">取消</button><button type="button" class="primary-button" :disabled="savingEdit || !editingDocument.trim()" @click="saveEditor">{{ savingEdit ? '保存中…' : '校验并保存' }}</button></footer></section></div></Teleport>
 
     <section v-if="false" class="resource-section" aria-hidden="true">
       <header class="section-heading">

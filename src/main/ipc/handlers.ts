@@ -96,6 +96,11 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
     [IPC.profilesRename]: async (_event, id, name) => profiles.renameProfile(parseProfileName(id), parseProfileName(name)),
     [IPC.profilesEditDocument]: async (_event, id, edits) =>
       profiles.editDocument(parseProfileName(id), parseEditsArray(edits)),
+    [IPC.profilesReplaceDocument]: async (_event, id, document) =>
+      profiles.replaceDocument(parseProfileName(id), parseProfileDocument(document)),
+    [IPC.profilesGetSourceUrl]: async (_event, id) => profiles.getSourceUrl(parseProfileName(id)),
+    [IPC.profilesSetSourceUrl]: async (_event, id, url) =>
+      profiles.setSourceUrl(parseProfileName(id), parseSubscriptionUrl(url)),
     [IPC.profilesValidate]: async (_event, document) => profiles.validateDocument(parseProfileDocument(document)),
 
     [IPC.systemProxyGetStatus]: async () => systemProxy.getStatus(),

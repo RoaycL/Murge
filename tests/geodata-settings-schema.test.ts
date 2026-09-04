@@ -13,7 +13,7 @@ const valid = {
 
 describe('geodata-settings schema', () => {
   it('accepts a complete valid model', () => {
-    expect(parseGeodataSettings(valid)).toEqual(valid)
+    expect(parseGeodataSettings(valid)).toMatchObject(valid)
   })
 
   it('accepts an empty source URL', () => {

@@ -146,6 +146,15 @@ describe('ProfileService', () => {
     expect(profile.document).toContain('proxies:\n  - name: node-01')
   })
 
+  it('replaces a complete editable YAML document only after validation', async () => {
+    const meta = await service.importProfile({ name: 'cfg', document: VALID_DOC, source: { type: 'manual' } })
+    const replacement = VALID_DOC.replace('node-01', 'edited-node')
+    await service.replaceDocument(meta.id, replacement)
+    expect((await service.getProfile(meta.id)).document).toContain('edited-node')
+    await expect(service.replaceDocument(meta.id, INVALID_DOC)).rejects.toThrow(/配置校验失败/)
+    expect((await service.getProfile(meta.id)).document).toBe(replacement)
+  })
+
   it('does not persist an edit whose result fails validation', async () => {
     // A validator that rejects any document setting mixed-port to the forbidden
     // value, so the edit preview is rejected before it reaches disk.
@@ -247,6 +256,18 @@ describe('ProfileService', () => {
       expect(await sourceStore.get(meta.id)).not.toBeNull()
       await remote.deleteProfile(meta.id)
       expect(await sourceStore.get(meta.id)).toBeNull()
+    })
+
+    it('returns and updates the full remote URL only through the private source API', async () => {
+      const sourceStore = new MemoryProfileSourceStore()
+      const remote = new ProfileService(repository, createConfigValidator(), fetcherReturning(null), sourceStore)
+      const original = 'https://example.com/sub?token=first-secret'
+      const next = 'https://example.com/sub?token=next-secret'
+      const meta = await remote.importFromUrl('sub', original)
+      expect(await remote.getSourceUrl(meta.id)).toBe(original)
+      const updated = await remote.setSourceUrl(meta.id, next)
+      expect(await remote.getSourceUrl(meta.id)).toBe(next)
+      expect(updated.source.url).not.toContain('next-secret')
     })
 
     it('updateFromSource rejects a profile without a remote source', async () => {

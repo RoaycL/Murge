@@ -51,9 +51,17 @@ export interface GeodataSettings {
   autoUpdate: boolean
   /** mihomo `geo-update-interval` in hours (clamped to the allowed bounds). */
   updateIntervalHours: number
-  /** Optional HTTPS `geo-x-url` source template. Empty means "keep the profile's". */
+  /** Deprecated single-source field retained only to migrate older settings. */
   geoxUrl: string
+  geoxUrls: { geoip: string; mmdb: string; geosite: string; asn: string }
 }
+
+export const DEFAULT_GEOX_URLS = Object.freeze({
+  geoip: 'https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat',
+  mmdb: 'https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.metadb',
+  geosite: 'https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat',
+  asn: 'https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/GeoLite2-ASN.mmdb'
+})
 
 /**
  * Safe default: the enhancement is disabled, so a profile's own geodata keys are
@@ -67,7 +75,8 @@ export const EMPTY_GEODATA_SETTINGS: Readonly<GeodataSettings> = Object.freeze({
   geoipMode: 'standard',
   autoUpdate: false,
   updateIntervalHours: DEFAULT_UPDATE_INTERVAL_HOURS,
-  geoxUrl: ''
+  geoxUrl: '',
+  geoxUrls: { ...DEFAULT_GEOX_URLS }
 })
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -115,7 +124,14 @@ export function coerceGeodataSettings(input: unknown): GeodataSettings {
     geoipMode: asGeoipMode(),
     autoUpdate: asBool('autoUpdate'),
     updateIntervalHours: asInterval(),
-    geoxUrl: asUrl()
+    geoxUrl: asUrl(),
+    geoxUrls: (() => {
+      const value = isRecord(source.geoxUrls) ? source.geoxUrls : {}
+      return Object.fromEntries(Object.entries(DEFAULT_GEOX_URLS).map(([key, fallback]) => {
+        const candidate = value[key]
+        return [key, typeof candidate === 'string' && isValidSourceUrl(candidate) && candidate.trim() ? candidate.trim() : fallback]
+      })) as GeodataSettings['geoxUrls']
+    })()
   }
 }
 
@@ -134,12 +150,10 @@ export function coerceGeodataSettings(input: unknown): GeodataSettings {
 export function buildGeodataBlock(settings: GeodataSettings): Record<string, unknown> {
   const block: Record<string, unknown> = {
     'geodata-mode': settings.geodataMode,
-    'geoip-mode': settings.geoipMode,
+    'geodata-loader': settings.geoipMode,
     'geo-auto-update': settings.autoUpdate,
     'geo-update-interval': settings.updateIntervalHours
   }
-  if (settings.geoxUrl.trim().length > 0) {
-    block['geo-x-url'] = settings.geoxUrl.trim()
-  }
+  block['geox-url'] = { ...settings.geoxUrls }
   return block
 }

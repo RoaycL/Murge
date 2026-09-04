@@ -26,7 +26,8 @@ function listen<T>(channel: string, listener: (value: T) => void): () => void {
 const api: DesktopApi = {
   app: {
     getBrand: () => invoke(IPC.appGetBrand),
-    getInfo: () => invoke(IPC.appGetInfo)
+    getInfo: () => invoke(IPC.appGetInfo),
+    getProcessIcon: (path) => invoke(IPC.appGetProcessIcon, path)
   },
   kernel: {
     getStatus: () => invoke(IPC.kernelGetStatus),
@@ -79,6 +80,9 @@ const api: DesktopApi = {
     delete: (id) => invoke(IPC.profilesDelete, id),
     rename: (id, name) => invoke(IPC.profilesRename, id, name),
     editDocument: (id, edits) => invoke(IPC.profilesEditDocument, id, edits),
+    replaceDocument: (id, document) => invoke(IPC.profilesReplaceDocument, id, document),
+    getSourceUrl: (id) => invoke(IPC.profilesGetSourceUrl, id),
+    setSourceUrl: (id, url) => invoke(IPC.profilesSetSourceUrl, id, url),
     validate: (document) => invoke(IPC.profilesValidate, document)
   },
   systemProxy: {

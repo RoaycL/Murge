@@ -94,9 +94,9 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
 .app-select-trigger:focus-visible { outline: 2px solid color-mix(in srgb, var(--app-blue) 55%, transparent); outline-offset: 2px; }
 .app-select-trigger svg { flex: none; color: var(--app-muted); transition: transform .16s ease; }
 .app-select.open .app-select-trigger svg { transform: rotate(180deg); }
-.app-select-menu { position: absolute; z-index: 120; top: calc(100% + 5px); right: 0; min-width: 100%; max-height: 248px; overflow: auto; padding: 5px; border: 1px solid var(--app-divider); border-radius: 9px; background: color-mix(in srgb, var(--app-surface) 96%, var(--app-bg)); box-shadow: 0 12px 32px rgba(0,0,0,.22); }
-.app-select-menu button { display: flex; width: 100%; min-height: 30px; align-items: center; justify-content: space-between; gap: 16px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--app-text); white-space: nowrap; text-align: left; }
-.app-select-menu button.active { background: rgba(127,127,127,.11); }
+.app-select-menu { position: absolute; z-index: 1000; top: calc(100% + 5px); right: 0; min-width: 100%; max-height: 248px; overflow: auto; padding: 5px; border: 1px solid color-mix(in srgb, var(--app-divider) 84%, white 16%); border-radius: 9px; background: var(--app-surface); box-shadow: 0 18px 38px rgba(0,0,0,.38); }
+.app-select-menu button { display: flex; width: 100%; min-height: 30px; align-items: center; justify-content: space-between; gap: 16px; padding: 0 8px; border: 0; border-radius: 6px; background: var(--app-surface); color: var(--app-text); white-space: nowrap; text-align: left; }
+.app-select-menu button.active { background: color-mix(in srgb, var(--app-blue) 14%, var(--app-surface)); }
 .app-select-menu button.selected { color: var(--app-blue); }
 .app-select-menu button:disabled { opacity: .42; }
 .app-select.disabled { opacity: .52; }

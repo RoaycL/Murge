@@ -327,7 +327,7 @@ describe('SubscriptionFetcher transport contract', () => {
   it('passes the abort signal and manual redirect mode to the transport', async () => {
     // Without these, the timeout cannot abort a hung request and the global fetch
     // silently follows redirects, bypassing per-hop SSRF validation entirely.
-    let seen: { signal?: AbortSignal; redirect?: string } | undefined
+    let seen: { signal?: AbortSignal; redirect?: string; headers?: Record<string, string> } | undefined
     const fetcher = new SubscriptionFetcher({
       fetchFn: async (_url, init) => {
         seen = init
@@ -338,6 +338,23 @@ describe('SubscriptionFetcher transport contract', () => {
     expect(seen?.redirect).toBe('manual')
     expect(seen?.signal).toBeInstanceOf(AbortSignal)
     expect(seen?.signal?.aborted).toBe(false)
+    expect(seen?.headers?.['User-Agent']).toBe('ClashforWindows/0.20.39')
+    expect(seen?.headers?.Accept).toContain('text/yaml')
+  })
+
+  it('uses client-compatible headers that avoid subscription servers blocking default fetch', async () => {
+    const fetcher = new SubscriptionFetcher({
+      fetchFn: async (_url, init) => {
+        if (init?.headers?.['User-Agent'] !== 'ClashforWindows/0.20.39') {
+          return { ok: false, status: 403, text: async () => 'forbidden' }
+        }
+        return { ok: true, status: 200, text: async () => 'mode: rule\n' }
+      }
+    })
+
+    await expect(fetcher.fetch('https://example.com/sub')).resolves.toMatchObject({
+      document: 'mode: rule\n'
+    })
   })
 
   it('aborts the request once the timeout elapses', async () => {

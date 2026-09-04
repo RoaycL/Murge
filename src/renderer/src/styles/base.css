@@ -28,6 +28,9 @@ button:disabled { cursor: default; opacity: 0.55; }
 .app-content::-webkit-scrollbar-thumb:hover { background-color: rgba(127, 127, 127, 0.55); }
 .app-content::-webkit-scrollbar-track { background: transparent; }
 .page-shell { width: 100%; max-width: var(--content-max-width); min-width: 0; min-height: 100%; margin: 0 auto; padding: 45px 34px 30px; display: flex; flex-direction: column; }
+/* 活动页壳：最小内容宽与仪表盘网格一致（2×--card-min+15），到达后页面
+   不再收缩（由主进程 848px 最小窗口保证外壳也停在该尺寸）。 */
+.activity-view.page-shell { min-width: calc(2 * var(--card-min) + 15px); }
 h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font-weight: 700; }
 .surface-card { background: var(--app-surface); border: 1px solid var(--app-surface-border); border-radius: var(--radius-large); box-shadow: var(--app-shadow); overflow: hidden; }
 .activity-header { width: 100%; max-width: var(--activity-content-width); }
@@ -41,8 +44,10 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .runtime-context strong { margin-top: 3px; font-size: 16px; line-height: 19px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 完全流式仪表盘：两列等分弹性轨道。所有者要求卡片按比例而非固定行高——
    正方形卡片恒 1:1（见下方 aspect-ratio），长方形卡片（速率、流量）恒 2:1。
-   两行正方形卡片自然叠出与跨行流量卡一致的总高。 */
-.dashboard-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: auto; gap: 15px; width: 100%; }
+   两行正方形卡片自然叠出与跨行流量卡一致的总高。
+   min-width 与主进程 848px 最小窗口互为兜底：网格内容宽永不低于
+   2×--card-min + 间距，卡片到达最小尺寸后不再被压缩。 */
+.dashboard-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: auto; gap: 15px; width: 100%; min-width: calc(2 * var(--card-min) + 15px); margin: 0 auto; }
 /* 正方形模块：恒 1:1。 */
 .latency-card { aspect-ratio: 1 / 1; padding: 15px 16px 13px; overflow: hidden; }
 .quiet-button { float: right; width: 100px; height: 28px; margin-top: -5px; border: 1px solid var(--app-divider); border-radius: 6px; background: transparent; font-size: 12px; cursor: pointer; }

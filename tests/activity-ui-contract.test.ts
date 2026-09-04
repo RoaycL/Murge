@@ -12,7 +12,8 @@ describe('Activity fluid-layout UI contract', () => {
     ])
 
     expect(main).toMatch(/width:\s*934,\s*\n\s*height:\s*672,\s*\n\s*useContentSize:\s*true/)
-    expect(main).toMatch(/minWidth:\s*760,\s*\n\s*minHeight:\s*560,/)
+    // 最小窗口锁在卡片最小尺寸处（正方形 --card-min=280）：宽 848 / 高 756。
+    expect(main).toMatch(/minWidth:\s*848,\s*\n\s*minHeight:\s*756,/)
     expect(main).toMatch(/titleBarStyle:\s*'hidden'/)
     expect(main).toMatch(/titleBarOverlay:\s*\{[^}]*height:\s*34/s)
     expect(tokens).toMatch(/--sidebar-width:\s*205px/)
@@ -28,6 +29,9 @@ describe('Activity fluid-layout UI contract', () => {
     expect(css).toMatch(/\.total-card\s*\{[^}]*aspect-ratio:\s*1 \/ 1/)
     expect(css).toMatch(/\.speed-card\s*\{[^}]*aspect-ratio:\s*2 \/ 1/)
     expect(css).toMatch(/\.traffic-card\s*\{[^}]*aspect-ratio:\s*2 \/ 1/)
+    // 卡片到达最小尺寸后网格不再压缩（与 848px 最小窗口互为兜底）。
+    expect(css).toMatch(/\.dashboard-grid\s*\{[^}]*min-width:\s*calc\(2 \* var\(--card-min\) \+ 15px\)/)
+    expect(css).toMatch(/\.activity-view\.page-shell\s*\{[^}]*min-width:\s*calc\(2 \* var\(--card-min\) \+ 15px\)/)
     expect(css).toMatch(/\.page-shell\s*\{[^}]*max-width:\s*var\(--content-max-width\)/)
     expect(css).toMatch(/\.page-shell\s*\{[^}]*margin:\s*0 auto/)
     // 所有者要求：任何宽度下都保持规范的双列仪表盘，不做单列降级。

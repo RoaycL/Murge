@@ -3,15 +3,10 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useProfilesStore } from '../stores/profiles'
 import { useProvidersStore } from '../stores/providers'
 import { useKernelStore } from '../stores/kernel'
-import OverridesPanel from '../components/OverridesPanel.vue'
-import DnsSettingsPanel from '../components/DnsSettingsPanel.vue'
-import SnifferSettingsPanel from '../components/SnifferSettingsPanel.vue'
-import TunConfigPanel from '../components/TunConfigPanel.vue'
-import TunLifecyclePanel from '../components/TunLifecyclePanel.vue'
-import CoreSettingsPanel from '../components/CoreSettingsPanel.vue'
-import GeodataSettingsPanel from '../components/GeodataSettingsPanel.vue'
-import ProxyBypassPanel from '../components/ProxyBypassPanel.vue'
 import type { ValidationResult } from '@shared/profiles'
+import AppIcon from '../components/AppIcon.vue'
+import DetailDrawer from '../components/DetailDrawer.vue'
+import ConfirmModal from '../components/ConfirmModal.vue'
 
 const profilesStore = useProfilesStore()
 const providersStore = useProvidersStore()
@@ -28,6 +23,8 @@ const validation = ref<ValidationResult | null>(null)
 const proxyMode = ref<'direct' | 'system'>('direct')
 const showFilePanel = ref(false)
 const showManualPanel = ref(false)
+const selectedProfileId = ref<string | null>(null)
+const pendingDeleteId = ref<string | null>(null)
 
 const menuAnchor = ref<{ id: string; top: number; left: number } | null>(null)
 const refreshingAll = ref(false)
@@ -176,6 +173,14 @@ async function remove(id: string): Promise<void> {
   closeMenu()
 }
 
+async function confirmRemove(): Promise<void> {
+  const id = pendingDeleteId.value
+  if (!id) return
+  await remove(id)
+  if (selectedProfileId.value === id) selectedProfileId.value = null
+  pendingDeleteId.value = null
+}
+
 async function rename(id: string): Promise<void> {
   const meta = profilesStore.profiles.find((entry) => entry.id === id)
   const next = prompt('重命名配置文件', meta?.name ?? '')
@@ -220,7 +225,7 @@ watch(
 )
 
 const activeCount = computed(() => profilesStore.profiles.filter((entry) => entry.active).length)
-const activeProfileId = computed(() => profilesStore.profiles.find((entry) => entry.active)?.id ?? null)
+const selectedProfile = computed(() => profilesStore.profiles.find((entry) => entry.id === selectedProfileId.value) ?? null)
 const hasResources = computed(
   () => providersStore.remoteProxyProviders.length + providersStore.remoteRuleProviders.length > 0
 )
@@ -257,7 +262,7 @@ function ruleProviderMeta(
 <template>
   <div class="page-shell config-view">
     <header class="config-header">
-      <h1>订阅管理</h1>
+      <h1>配置文件</h1>
       <p class="config-subtitle">
         共 {{ profilesStore.ordered.length }} 个配置<template v-if="activeCount"> · 使用中 {{ activeCount }}</template>
       </p>
@@ -274,7 +279,7 @@ function ruleProviderMeta(
         placeholder="请输入您的订阅网址"
         @keyup.enter="importFromUrl"
       />
-      <button type="button" class="icon-button" aria-label="粘贴订阅地址" title="粘贴" @click="pasteUrl">⧉</button>
+      <button type="button" class="icon-button" aria-label="粘贴订阅地址" title="粘贴" @click="pasteUrl"><AppIcon name="clipboard" :size="17" /></button>
       <select v-model="proxyMode" class="proxy-select" aria-label="拉取方式">
         <option value="direct">直连</option>
         <option value="system">系统代理</option>
@@ -289,7 +294,7 @@ function ruleProviderMeta(
         title="本地文件"
         :class="{ active: showFilePanel }"
         @click="showFilePanel = !showFilePanel"
-      >▤</button>
+      ><AppIcon name="profiles" :size="17" /></button>
       <button
         type="button"
         class="icon-button"
@@ -297,7 +302,7 @@ function ruleProviderMeta(
         title="手动导入"
         :class="{ active: showManualPanel }"
         @click="showManualPanel = !showManualPanel"
-      >＋</button>
+      ><AppIcon name="add-file" :size="17" /></button>
     </section>
     <p v-if="proxyMode === 'system'" class="import-note">订阅暂由系统直连拉取，系统代理方式即将支持。</p>
 
@@ -354,10 +359,10 @@ function ruleProviderMeta(
         :class="{ active: meta.active }"
         tabindex="0"
         role="button"
-        :aria-label="`使用配置 ${meta.name}`"
-        @click="activate(meta.id)"
-        @keyup.enter="activate(meta.id)"
-        @keyup.space.prevent="activate(meta.id)"
+        :aria-label="`查看配置 ${meta.name}`"
+        @click="selectedProfileId = meta.id"
+        @keyup.enter="selectedProfileId = meta.id"
+        @keyup.space.prevent="selectedProfileId = meta.id"
       >
         <div class="card-top">
           <span class="card-name" :style="{ color: cardColor(meta.id) }">{{ meta.name }}</span>
@@ -368,14 +373,14 @@ function ruleProviderMeta(
               aria-label="重新应用该配置"
               title="重新应用"
               @click.stop="cardRefresh(meta.id)"
-            >↻</button>
+            ><AppIcon name="refresh" :size="15" /></button>
             <button
               type="button"
               class="icon-button small"
               aria-label="更多操作"
               title="更多"
               @click.stop="toggleMenu(meta.id, $event)"
-            >⋮</button>
+            ><AppIcon name="more-horizontal" :size="16" /></button>
           </div>
         </div>
         <div class="card-bottom">
@@ -393,12 +398,18 @@ function ruleProviderMeta(
         <template v-if="meta.id === menuAnchor.id">
           <button v-if="!meta.active" type="button" role="menuitem" @click="activate(meta.id); closeMenu()">使用</button>
           <button type="button" role="menuitem" @click="rename(meta.id)">重命名</button>
-          <button type="button" role="menuitem" class="danger" @click="remove(meta.id)">删除</button>
+          <button type="button" role="menuitem" class="danger" @click="pendingDeleteId = meta.id; closeMenu()">删除</button>
         </template>
       </template>
     </div>
 
-    <section class="resource-section">
+    <DetailDrawer :open="Boolean(selectedProfile)" :title="selectedProfile?.name ?? '配置详情'" :subtitle="selectedProfile ? `${sourceBadge(selectedProfile.source.type)} · ${relativeTime(selectedProfile.updatedAt)}` : ''" @close="selectedProfileId = null">
+      <div v-if="selectedProfile" class="entity-detail drawer-detail"><dl><div><dt>来源</dt><dd>{{ sourceBadge(selectedProfile.source.type) }}</dd></div><div><dt>更新时间</dt><dd>{{ relativeTime(selectedProfile.updatedAt) }}</dd></div><div><dt>状态</dt><dd>{{ selectedProfile.active ? '使用中' : '未启用' }}</dd></div></dl></div>
+      <template #footer><button type="button" class="danger-button" :disabled="selectedProfile?.active" @click="selectedProfile && (pendingDeleteId = selectedProfile.id)"><AppIcon name="delete" :size="15" />删除</button><button type="button" class="primary-button" :disabled="selectedProfile?.active" @click="selectedProfile && activate(selectedProfile.id)">{{ selectedProfile?.active ? '正在使用' : '使用此配置' }}</button></template>
+    </DetailDrawer>
+    <ConfirmModal :open="Boolean(pendingDeleteId)" title="删除此配置？" description="这会移除本地配置记录；当前正在使用的配置不能删除，远程订阅源不会受到影响。" @close="pendingDeleteId = null" @confirm="confirmRemove" />
+
+    <section v-if="false" class="resource-section" aria-hidden="true">
       <header class="section-heading">
         <div>
           <h2>外部资源管理</h2>
@@ -415,7 +426,7 @@ function ruleProviderMeta(
       </header>
 
       <p v-if="batchResult" class="batch-result" aria-live="polite">
-        更新完成：成功 {{ batchResult.updated }} 项<template v-if="batchResult.failed">，失败 {{ batchResult.failed }} 项</template>。
+        更新完成：成功 {{ batchResult?.updated ?? 0 }} 项<template v-if="batchResult?.failed">，失败 {{ batchResult?.failed ?? 0 }} 项</template>。
       </p>
 
       <p v-if="kernel.status.phase !== 'running'" class="empty-note">启动内核后即可管理外部资源。</p>
@@ -435,7 +446,7 @@ function ruleProviderMeta(
                   {{ provider.name }}<span class="resource-count">（{{ provider.proxies?.length ?? 0 }} 节点）</span>
                 </span>
                 <span class="resource-meta">
-                  <template v-if="provider.updatedAt">{{ relativeTime(provider.updatedAt) }}</template>
+                  <template v-if="provider.updatedAt">{{ relativeTime(provider.updatedAt ?? 0) }}</template>
                 </span>
                 <span v-if="providersStore.opOf(provider.name).error" class="resource-error">
                   {{ providersStore.opOf(provider.name).error }}
@@ -492,14 +503,6 @@ function ruleProviderMeta(
       </template>
     </section>
 
-    <overrides-panel :active-profile-id="activeProfileId" />
-    <dns-settings-panel />
-    <sniffer-settings-panel />
-    <tun-config-panel />
-    <tun-lifecycle-panel />
-    <core-settings-panel />
-    <geodata-settings-panel />
-    <proxy-bypass-panel />
   </div>
 </template>
 

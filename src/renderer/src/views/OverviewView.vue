@@ -89,11 +89,9 @@ async function toggleTun(): Promise<void> {
   <div class="page-shell overview-view">
     <h1>概览</h1>
     <section><h2>网络接管</h2><div class="overview-grid">
-      <SurfaceCard><div class="setting-head"><div><h3>系统代理</h3><p>将系统代理指向当前正在接管网络的内核（端口固定：系统代理与内核始终指向同一个混合端口，无论当前是普通模式还是 TUN）。未接管时首次开启会自动启动内核，兼容性和性能最佳。</p></div><button type="button" class="switch" :class="{ on: spEnabled }" :aria-checked="spEnabled" :disabled="spSwitchDisabled" aria-label="切换系统代理" @click="toggleSystemProxy" /></div><div class="setting-status"><i :class="{ active: spEnabled }" />{{ spPhaseLabel }}</div><p v-if="actionError" class="inline-error">{{ actionError }}</p></SurfaceCard>
-      <SurfaceCard><div class="setting-head"><div><h3>TUN 模式</h3><p>接管全部流量（包括不遵循系统代理的程序）。使用当前激活的订阅与分流规则，并且可与系统代理同时开启（两者指向同一内核：系统代理指向其混合端口，TUN 接管全部流量）；启用时会自动以特权方式重启同一内核，无需手动处理，禁用后由 mihomo 自动恢复网络设置。</p></div><button type="button" class="switch" :class="{ on: tunActive }" :aria-checked="tunActive" :disabled="tunSwitchDisabled" aria-label="切换 TUN 模式" @click="toggleTun" /></div><div class="setting-status"><i :class="{ active: tunActive }" />{{ tunPhaseLabel }}</div><p v-if="tun.actionError" class="inline-error">{{ tun.actionError }}</p></SurfaceCard>
+      <SurfaceCard><div class="setting-head"><div><h3>系统代理</h3><p>接管遵循 Windows 系统代理设置的应用流量。</p></div><button type="button" class="switch" :class="{ on: spEnabled }" :aria-checked="spEnabled" :disabled="spSwitchDisabled" aria-label="切换系统代理" @click="toggleSystemProxy" /></div><div class="setting-status"><i :class="{ active: spEnabled }" />{{ spPhaseLabel }}</div><p v-if="actionError" class="inline-error">{{ actionError }}</p></SurfaceCard>
+      <SurfaceCard><div class="setting-head"><div><h3>TUN 模式</h3><p>接管不遵循系统代理的应用；启停由安全生命周期管理。</p></div><button type="button" class="switch" :class="{ on: tunActive }" :aria-checked="tunActive" :disabled="tunSwitchDisabled" aria-label="切换 TUN 模式" @click="toggleTun" /></div><div class="setting-status"><i :class="{ active: tunActive }" />{{ tunPhaseLabel }}</div><p v-if="tun.actionError" class="inline-error">{{ tun.actionError }}</p></SurfaceCard>
     </div></section>
-    <section><h2>局域网设备接管</h2><div class="overview-grid">
-      <SurfaceCard><div class="setting-head"><div><h3>HTTP & SOCKS5 代理</h3><p>内核配置强制只监听本机；开放局域网将在独立安全阶段实现。</p></div><button class="switch" disabled aria-label="局域网接管尚未实现" /></div><div class="setting-status"><i />未开放局域网；启动后仅监听 127.0.0.1</div></SurfaceCard>
-    </div></section>
+    <section><h2>运行状态</h2><div class="runtime-summary surface-card"><div><span>内核</span><strong>{{ running ? '运行中' : kernel.status.phase }}</strong></div><div><span>系统代理</span><strong>{{ spEnabled ? '已启用' : '未启用' }}</strong></div><div><span>TUN</span><strong>{{ tunActive ? '已启用' : '未启用' }}</strong></div></div></section>
   </div>
 </template>

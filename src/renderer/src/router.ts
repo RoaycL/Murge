@@ -14,6 +14,11 @@ import AppearanceView from './views/AppearanceView.vue'
 import GeneralView from './views/GeneralView.vue'
 import DnsView from './views/DnsView.vue'
 import AboutView from './views/AboutView.vue'
+import OverridesView from './views/OverridesView.vue'
+import ResourcesView from './views/ResourcesView.vue'
+import NetworkSettingsView from './views/NetworkSettingsView.vue'
+import DnsSnifferView from './views/DnsSnifferView.vue'
+import KernelSettingsView from './views/KernelSettingsView.vue'
 import { isRcSupportedRoute } from '@shared/release-scope'
 
 export const router = createRouter({
@@ -26,7 +31,10 @@ export const router = createRouter({
     { path: '/devices', component: DeviceListView },
     { path: '/policies', component: PolicyView },
     { path: '/rules', component: RulesView },
-    { path: '/config', component: ConfigView },
+    { path: '/profiles', component: ConfigView },
+    { path: '/config', redirect: '/profiles' },
+    { path: '/overrides', component: OverridesView },
+    { path: '/resources', component: ResourcesView },
     { path: '/providers', component: ProviderSettingsView },
     { path: '/more', component: MoreView },
     { path: '/logs', component: LogsView },
@@ -34,6 +42,9 @@ export const router = createRouter({
     { path: '/appearance', component: AppearanceView },
     { path: '/general', component: GeneralView },
     { path: '/dns', component: DnsView },
+    { path: '/dns-sniffer', component: DnsSnifferView },
+    { path: '/network', component: NetworkSettingsView },
+    { path: '/kernel-settings', component: KernelSettingsView },
     { path: '/about', component: AboutView },
     // Unsupported Surge-like pages are absent from the route table. A stale
     // bookmark cannot reopen a misleading, non-functional control surface.

@@ -2,6 +2,8 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import SpeedSparkline from '../components/SpeedSparkline.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
+import AppIcon from '../components/AppIcon.vue'
+import DetailDrawer from '../components/DetailDrawer.vue'
 import UsageHistoryPanel from '../components/UsageHistoryPanel.vue'
 import NetworkMetadataPanel from '../components/NetworkMetadataPanel.vue'
 import TopologyPanel from '../components/TopologyPanel.vue'
@@ -20,6 +22,7 @@ const runtime = useRuntimeStore()
 const kernel = useKernelStore()
 const networkMeta = useNetworkMetadataStore()
 const router = useRouter()
+const summaryDrawer = ref<'network' | 'usage' | 'topology' | null>(null)
 
 onMounted(() => {
   kernel.connect()
@@ -169,10 +172,13 @@ const chartBars = computed<number[]>(() => {
         <div class="total-bar"><i :style="{ width: `${directPct}%` }" /><i :style="{ width: `${100 - directPct}%` }" /></div>
       </SurfaceCard>
 
-      <UsageHistoryPanel class="usage-history-card" />
-      <NetworkMetadataPanel class="network-metadata-card" />
-      <TopologyPanel class="topology-card" />
     </section>
+    <section class="activity-entry-grid" aria-label="活动详情入口">
+      <button type="button" class="surface-card activity-entry" @click="summaryDrawer = 'network'"><AppIcon name="network" /><span><strong>网络信息</strong><small>{{ externalIpText }}</small></span><AppIcon name="next" :size="15" /></button>
+      <button type="button" class="surface-card activity-entry" @click="summaryDrawer = 'usage'"><AppIcon name="activity" /><span><strong>用量历史</strong><small>{{ total.value }} {{ total.unit }}</small></span><AppIcon name="next" :size="15" /></button>
+      <button type="button" class="surface-card activity-entry" @click="summaryDrawer = 'topology'"><AppIcon name="connections" /><span><strong>连接拓扑</strong><small>{{ activeCount }} 个活动连接</small></span><AppIcon name="next" :size="15" /></button>
+    </section>
+    <DetailDrawer :open="Boolean(summaryDrawer)" :title="summaryDrawer === 'network' ? '网络信息' : summaryDrawer === 'usage' ? '用量历史' : '连接拓扑'" subtitle="活动页的扩展信息，不改变主仪表盘布局" @close="summaryDrawer = null"><NetworkMetadataPanel v-if="summaryDrawer === 'network'" /><UsageHistoryPanel v-else-if="summaryDrawer === 'usage'" /><TopologyPanel v-else-if="summaryDrawer === 'topology'" /></DetailDrawer>
   </div>
 </template>
 

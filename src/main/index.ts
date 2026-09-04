@@ -220,13 +220,16 @@ async function allocateProductionPorts(): Promise<{ controller: number; mixed: n
 
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
-    // The approved Surge-derived reference is a 934 x 672 content viewport.
-    // Keep the initial window on that exact canvas; users may still enlarge it.
+    // The approved Surge-derived reference remains a 934 x 672 content
+    // viewport, so the window still opens on that exact canvas. The layout is
+    // now fully fluid: users may enlarge *or shrink* the window, so the
+    // minimum only guards the smallest usable arrangement (sidebar + one
+    // dashboard column) rather than the reference geometry.
     width: 934,
     height: 672,
     useContentSize: true,
-    minWidth: 934,
-    minHeight: 672,
+    minWidth: 760,
+    minHeight: 560,
     // Surge places its content beneath the traffic-light/title-bar region.
     // The renderer already owns a draggable strip; keep native window controls
     // as an overlay on Windows while avoiding a second 30px layout offset.

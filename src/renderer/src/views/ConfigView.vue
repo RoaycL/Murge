@@ -636,7 +636,7 @@ function ruleProviderMeta(
   gap: 10px;
   margin: 12px 0;
 }
-.profile-import-modal { width: 470px; padding: 20px; border: 1px solid var(--app-divider); border-radius: 16px; color: var(--app-text); background: var(--app-surface-solid); box-shadow: 0 22px 70px rgba(0,0,0,.28); }
+.profile-import-modal { width: min(470px, calc(100vw - 48px)); padding: 20px; border: 1px solid var(--app-divider); border-radius: 16px; color: var(--app-text); background: var(--app-surface-solid); box-shadow: 0 22px 70px rgba(0,0,0,.28); }
 .profile-import-modal header { display:flex; align-items:flex-start; justify-content:space-between; }
 .profile-import-modal h2 { margin:0; font-size:19px; }.profile-import-modal header p{margin:4px 0 0;color:var(--app-muted);font-size:10px}
 .profile-source-tabs { display:grid; grid-template-columns:repeat(3,1fr); gap:7px; margin:18px 0; }
@@ -645,7 +645,7 @@ function ruleProviderMeta(
 .modal-field { display:block; margin-top:12px; }.modal-field>span{display:block;margin-bottom:6px;color:var(--app-muted);font-size:10px}.modal-field .field{min-height:34px}
 .field-with-action{display:grid;grid-template-columns:1fr 34px;gap:7px}.field-with-action .icon-control{width:34px;height:34px}
 .profile-import-modal footer{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
-.rename-modal{width:380px;padding:20px;border:1px solid var(--app-divider);border-radius:16px;color:var(--app-text);background:var(--app-surface-solid);box-shadow:0 22px 70px rgba(0,0,0,.28)}.rename-modal header,.rename-modal footer{display:flex;align-items:center;justify-content:space-between}.rename-modal h2{margin:0;font-size:19px}.rename-modal>.field{min-height:36px;margin-top:18px}.rename-modal footer{justify-content:flex-end;gap:8px;margin-top:18px}
+.rename-modal{width:min(380px,calc(100vw - 48px));padding:20px;border:1px solid var(--app-divider);border-radius:16px;color:var(--app-text);background:var(--app-surface-solid);box-shadow:0 22px 70px rgba(0,0,0,.28)}.rename-modal header,.rename-modal footer{display:flex;align-items:center;justify-content:space-between}.rename-modal h2{margin:0;font-size:19px}.rename-modal>.field{min-height:36px;margin-top:18px}.rename-modal footer{justify-content:flex-end;gap:8px;margin-top:18px}
 .file-input {
   color: var(--app-muted);
 }

@@ -131,7 +131,7 @@ watch(() => kernel.status.phase, (phase, previous) => {
 .empty-state span { color: var(--app-muted); font-size: 12px; }
 .empty-state button { margin-top: 12px; height: 28px; padding: 0 12px; border: 0; border-radius: 6px; background: rgba(127,127,127,.13); }
 .provider-section { margin-top: 42px; }
-.provider-list { width: 675px; }
+.provider-list { width: 100%; }
 .provider-row { display: grid; grid-template-columns: 1fr auto; column-gap: 14px; align-items: center; padding: 13px 16px; border-top: 1px solid var(--app-divider); }
 .provider-row:first-child { border-top: 0; }
 .provider-info strong { display: block; font-size: 14px; }

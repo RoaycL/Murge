@@ -203,16 +203,16 @@ const chartBars = computed<number[]>(() => {
 .usage-history-card {
   grid-column: 1 / -1;
   padding: 15px 16px;
-  width: 709px;
+  width: 100%;
 }
 .network-metadata-card {
   grid-column: 1 / -1;
   padding: 15px 16px;
-  width: 709px;
+  width: 100%;
 }
 .topology-card {
   grid-column: 1 / -1;
   padding: 15px 16px;
-  width: 709px;
+  width: 100%;
 }
 </style>

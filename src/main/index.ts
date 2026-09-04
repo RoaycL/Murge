@@ -1,7 +1,8 @@
 import { join } from 'node:path'
 import { writeFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
-import { app, BrowserWindow, dialog, safeStorage, shell } from 'electron'
+import { attachKernelWatchdog } from './kernel/crash-watchdog'
+import { app, BrowserWindow, dialog, powerMonitor, safeStorage, shell } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { brand } from '@shared/brand'
 import { parseBrandConfig } from '@shared/schemas/brand'
@@ -23,6 +24,7 @@ import { StaticSystemProxyProbe, LiveSystemProxyKernelProbe, type LiveProbeMihom
 import type { KernelGateway } from '../shared/gateways'
 import { SYSTEM_PROXY_LOOPBACK_HOST } from '../shared/system-proxy'
 import { SystemProxyOrderedKernelGateway } from './system-proxy/ordered-kernel-gateway'
+import { NetworkDetector } from './services/network-detector'
 import { NodeKernelProcessAdapter } from './kernel/node-adapter'
 import { MihomoClient } from './services/mihomo-client'
 import { MihomoService } from './services/mihomo-service'
@@ -154,6 +156,8 @@ let trayController: TrayController | null = null
 let tunCoordinator: TunCoordinator | null = null
 let modeTransition: ModeTransitionController | null = null
 let tunExitMonitor: { stop(): void } | null = null
+let proxyGuardTimer: NodeJS.Timeout | null = null
+let networkDetector: NetworkDetector | null = null
 let updateService: UpdateService | null = null
 let usageHistoryServiceRef: UsageHistoryService | null = null
 
@@ -585,6 +589,8 @@ app.whenReady().then(async () => {
   const productionControllerPort = productionPorts?.controller ?? null
   const productionMixedPort = productionPorts?.mixed ?? null
   const productionKernelRoot = join(profileRoot, 'kernel')
+  /** Proxy guard cadence (clash-verge-rev defaults to 30s; keep the same). */
+  const PROXY_GUARD_INTERVAL_MS = 30_000
   // Installer-shipped geodata databases (Layer 2): resolved relative to the app
   // resources so the packaged app can seed the kernel's persistent home. Empty
   // in dev, where the resources dir does not carry them (fail-open: the kernel
@@ -669,7 +675,11 @@ app.whenReady().then(async () => {
             resolveGeodata: () => geodataSettingsService.getRaw()
           }),
       adapter: new NodeKernelProcessAdapter(),
-      secret: is.dev ? devControllerSecret : productionSecret!
+      secret: is.dev ? devControllerSecret : productionSecret!,
+      // Job-Object equivalent (Windows production): if the app is killed while
+      // the kernel lives, the watchdog force-kills the kernel tree so a dead
+      // GUI never leaves an orphan holding the unified ports / TUN device.
+      attachWatchdog: is.dev || process.platform !== 'win32' ? undefined : attachKernelWatchdog
     },
     { readinessPattern: is.dev ? /fixture-ready/ : null }
   )
@@ -766,11 +776,64 @@ app.whenReady().then(async () => {
 
   // Crash the controller while the proxy was owned: the port is now dead, so
   // restore the proxy immediately (conflict is safe — the proxy is not ours —
-  // while a real restore failure stays visible as `restore-failed`).
+  // while a real restore failure stays visible as `restore-failed`). Then, when
+  // the supervisor's own crash-restart brings the kernel back, RE-ENABLE the
+  // proxy automatically: the outage was ours, not the user's choice, and every
+  // HTTP client on the box otherwise stays off-proxy until they notice.
+  let proxyWasEnabledBeforeCrash = false
   orderedKernel.onStatus((status) => {
-    if (status.phase !== 'failed') return
-    void systemProxyService.restoreBeforeKernelUnavailable().catch((error) => {
-      console.error('[system-proxy] kernel crash recovery failed:', error)
+    if (status.phase === 'failed') {
+      proxyWasEnabledBeforeCrash = systemProxyService.getStatus().phase === 'enabled'
+      void systemProxyService.restoreBeforeKernelUnavailable().catch((error) => {
+        console.error('[system-proxy] kernel crash recovery failed:', error)
+      })
+      return
+    }
+    if (status.phase === 'running' && proxyWasEnabledBeforeCrash) {
+      proxyWasEnabledBeforeCrash = false
+      void systemProxyService.enable().catch((error) => {
+        console.error('[system-proxy] re-enable after crash recovery failed:', error)
+      })
+    }
+  })
+
+  // Proxy guard (clash-verge-rev's guard loop on this app's ownership model): while
+  // we own an enabled proxy, re-apply our exact written values if something on
+  // the box mutated them — the "proxy is on but nothing loads" failure. Values
+  // we do not own are never fought; the sweep is a read-only no-op otherwise.
+  proxyGuardTimer = setInterval(() => {
+    void systemProxyService.verifyIntegrity().then((result) => {
+      if (result === 'repaired') console.warn('[system-proxy] guard repaired an externally mutated proxy')
+      else if (result === 'repair-failed') console.error('[system-proxy] guard re-apply failed')
+    })
+  }, PROXY_GUARD_INTERVAL_MS)
+
+  // Connectivity watchdog (sparkle's detector): while offline, an owned proxy
+  // keeps routing HTTP into a dead uplink and TUN routes blackhole traffic, so
+  // the proxy is turned off and (Windows) the kernel is stopped; when the
+  // network returns, the kernel restarts and the proxy re-enables by itself.
+  // This also covers sleep/resume: the first tick after a wake self-heals.
+  networkDetector = new NetworkDetector({
+    intervalSeconds: 15,
+    log: (message) => console.log(message),
+    gateway: {
+      isKernelRunning: () => {
+        const status = ipcKernel.getStatus()
+        return status instanceof Promise
+          ? status.then((value) => value.phase === 'running')
+          : Promise.resolve(status.phase === 'running')
+      },
+      startKernel: () => queuedKernel.start(),
+      stopKernel: () => queuedKernel.stop(),
+      handleNetworkDown: () => systemProxyService.handleNetworkDown(),
+      handleNetworkUp: () => systemProxyService.handleNetworkUp()
+    }
+  })
+  networkDetector.start()
+  // A resume must not wait for the next periodic tick to reconcile.
+  powerMonitor.on('resume', () => {
+    void networkDetector?.probeNow().catch((error) => {
+      console.error('[network-detector] resume probe failed:', error)
     })
   })
 
@@ -1203,6 +1266,12 @@ app.on('before-quit', (event) => {
           disposeIpc?.()
           updateService?.dispose()
           usageHistoryServiceRef?.dispose()
+          if (proxyGuardTimer) {
+            clearInterval(proxyGuardTimer)
+            proxyGuardTimer = null
+          }
+          networkDetector?.stop()
+          networkDetector = null
           mihomo?.dispose()
           await mockServer?.close()
         } catch (error) {

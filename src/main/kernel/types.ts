@@ -11,6 +11,8 @@
  * a proxy port or mutating the system network.
  */
 
+import type { KernelWatchdog } from './crash-watchdog'
+
 /** A resolved command line ready to be spawned. */
 export interface KernelBinary {
   /** Executable path (or on-PATH name). */
@@ -108,4 +110,10 @@ export interface KernelDependencies {
   adapter: KernelProcessAdapter
   /** Controller secret forwarded to the config store on each start. */
   secret: string
+  /**
+   * Crash watchdog (Job-Object equivalent): when the APP dies while the kernel
+   * lives, the returned watch force-kills the kernel; the supervisor releases
+   * it on natural exit/stop. Optional — fixture/dev supervisors omit it.
+   */
+  attachWatchdog?: (kernelPid: number) => KernelWatchdog
 }

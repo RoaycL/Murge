@@ -67,7 +67,7 @@ async function closeSelected(): Promise<void> {
           }}<small>{{ group.connections.length }} 个连接</small></strong
         ><AppIcon name="next" :size="15" />
       </button>
-      <EmptyState v-if="!groups.length" icon="devices" title="暂无活动设备" detail="本机或局域网地址产生连接后会显示；mihomo 不提供 DHCP、MAC 或设备名称。" />
+      <EmptyState v-if="!groups.length" icon="devices" title="暂无活动设备" detail="本机或局域网地址产生连接后会显示在这里。" />
     </section>
     <DetailDrawer
       :open="Boolean(selected)"
@@ -99,7 +99,7 @@ async function closeSelected(): Promise<void> {
               "未知目标"
             }}</small>
           </li>
-        </ul><p class="inline-note">设备身份仅代表当前连接中的来源 IP，不是 DHCP 租约记录。</p><button type="button" class="danger-button" :disabled="closing" @click="closeSelected">{{ closing ? '正在关闭…' : '关闭该地址的全部连接' }}</button>
+        </ul><button type="button" class="danger-button" :disabled="closing" @click="closeSelected">{{ closing ? '正在关闭…' : '关闭该地址的全部连接' }}</button>
       </div></DetailDrawer
     >
   </div>

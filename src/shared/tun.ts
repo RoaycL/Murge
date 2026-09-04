@@ -66,7 +66,7 @@ export const TUN_IPC = {
 } as const
 
 export const TUN_UI_COPY: Readonly<Record<TunPhase, string>> = {
-  configured: 'TUN 未启用（当前平台支持）',
+  configured: 'TUN 未启用',
   starting: 'TUN 正在启动…',
   active: 'TUN 已启用',
   restoring: '正在恢复网络设置…',

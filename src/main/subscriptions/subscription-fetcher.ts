@@ -249,6 +249,14 @@ function stripInlineUserinfo(value: string): string {
 /** Longest auto-derived profile name; anything longer is a URL/abuse, not a name. */
 export const MAX_SUGGESTED_NAME_LENGTH = 48
 
+function sanitizeSuggestedName(value: string): string | null {
+  let candidate = value.split(/[\\/]/).pop() ?? ''
+  candidate = candidate.replace(/\.(?:ya?ml|txt|conf|json)$/i, '').trim()
+  candidate = candidate.replace(/^["']|["']$/g, '').replace(/[\u0000-\u001f\u007f]/g, '').trim()
+  if (!candidate) return null
+  return candidate.length > MAX_SUGGESTED_NAME_LENGTH ? candidate.slice(0, MAX_SUGGESTED_NAME_LENGTH) : candidate
+}
+
 /**
  * Extract a human-friendly display filename from a `Content-Disposition`
  * header, as community clients (e.g. Clash Party) do for remote subscriptions:
@@ -260,7 +268,7 @@ export const MAX_SUGGESTED_NAME_LENGTH = 48
 export function parseDispositionFilename(header: string | null | undefined): string | null {
   if (!header) return null
   let candidate: string | null = null
-  const extended = header.match(/filename\*\s*=\s*(?:UTF-8|utf-8)?''([^;]+)/)
+  const extended = header.match(/filename\*\s*=\s*[^']*'[^']*'([^;]+)/i)
   if (extended) {
     try {
       candidate = decodeURIComponent(extended[1].trim())
@@ -269,27 +277,30 @@ export function parseDispositionFilename(header: string | null | undefined): str
     }
   }
   if (!candidate) {
-    const plain = header.match(/filename\s*=\s*"?([^";]+)"?/)
-    if (plain) candidate = plain[1].trim()
+    const plain = header.match(/(?:^|;)\s*filename\s*=\s*(?:"([^"]*)"|([^;]*))/i)
+    if (plain) candidate = (plain[1] ?? plain[2] ?? '').trim()
   }
   if (!candidate) return null
-  // Strip a config extension so the profile reads as a name, not a file.
-  candidate = candidate.replace(/\.(?:ya?ml|txt|conf)$/i, '').trim()
-  // Quotes, control characters and newlines never belong in a display name.
-  candidate = candidate.replace(/^["']|["']$/g, '').replace(/[\u0000-\u001f\u007f]/g, '').trim()
-  if (!candidate) return null
-  return candidate.length > MAX_SUGGESTED_NAME_LENGTH ? candidate.slice(0, MAX_SUGGESTED_NAME_LENGTH) : candidate
+  return sanitizeSuggestedName(candidate)
 }
 
 /**
- * Derive a safe fallback profile name from the subscription URL: the URL host.
- * Deliberately NOT the URL path — a path segment can be a 32-hex token (gist
- * raw URLs), which is both unreadable and close to a credential. Returns
- * `null` for URLs without a parseable host.
+ * Match Clash Verge Rev's fallback: prefer a decoded final URL filename, then
+ * the host. Token-like and generic route segments are rejected so credentials
+ * never become profile names.
  */
 export function deriveFallbackSubscriptionName(url: string): string | null {
   try {
-    const host = new URL(url).hostname
+    const parsed = new URL(url)
+    const rawSegment = parsed.pathname.split('/').filter(Boolean).pop() ?? ''
+    let decoded = rawSegment
+    try { decoded = decodeURIComponent(rawSegment) } catch { /* keep raw segment */ }
+    const unsafe = /^(?:raw|sub|subscribe|subscription|config|clash|api|v\d+)$/i.test(decoded) || /^[0-9a-f-]{20,}$/i.test(decoded)
+    if (!unsafe) {
+      const filename = sanitizeSuggestedName(decoded)
+      if (filename) return filename
+    }
+    const host = parsed.hostname
     if (!host) return null
     return host.length > MAX_SUGGESTED_NAME_LENGTH ? host.slice(0, MAX_SUGGESTED_NAME_LENGTH) : host
   } catch {

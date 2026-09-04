@@ -12,7 +12,7 @@ const groups: Array<{ label: string; items: Array<{ to: string; label: string; i
       { to: '/overview', label: '概览', icon: 'overview' }
     ]
   },
-  { label: '', items: [{ to: '/connections', label: '连接', icon: 'connections' }] },
+  { label: '', items: [{ to: '/connections', label: '连接', icon: 'connections' }, { to: '/devices', label: '设备', icon: 'devices' }] },
   {
     label: '代理',
     items: [

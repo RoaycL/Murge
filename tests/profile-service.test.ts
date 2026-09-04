@@ -137,6 +137,15 @@ describe('ProfileService', () => {
     expect(await repository.list()).toHaveLength(0)
   })
 
+  it('rejects a document with a duplicated top-level key (kernel gate parity)', async () => {
+    // The runtime kernel config parses with uniqueKeys: true, so this document
+    // would fail during reload and roll back. The import validator must reject it
+    // up front instead of producing "import ok, activate ok, but never boots".
+    const dup = 'port: 1\nport: 2\nproxies: []\n'
+    await expect(service.importProfile({ name: 'dup', document: dup, source: { type: 'manual' } })).rejects.toThrow(/重复的顶层键/)
+    expect(await repository.list()).toHaveLength(0)
+  })
+
   it('applies supported document edits and re-validates the result', async () => {
     const meta = await service.importProfile({ name: 'cfg', document: VALID_DOC, source: { type: 'manual' } })
     const updated = await service.editDocument(meta.id, [{ key: 'mixed-port', value: '8888' }])

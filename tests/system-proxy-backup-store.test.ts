@@ -174,17 +174,20 @@ describe('FileSystemProxyBackupStore', () => {
 })
 
 describe('InMemorySystemProxyBackupStore', () => {
-  it('preserves the first backup until deleted (one-backup-at-a-time)', async () => {
+  it('replaces an existing backup on write (mirrors the file store)', async () => {
     const store = new InMemorySystemProxyBackupStore()
     const first = makeBackup()
     const second = { ...makeBackup(), instanceId: 'other' }
     await store.write(first)
     await store.write(second)
-    await expect(store.read()).resolves.toEqual(first)
+    // The file-backed store overwrites on write; the in-memory store must match,
+    // otherwise a superseded bundle (e.g. after setProxyBypass) is silently
+    // dropped in dev and a later disable() restores stale values.
+    await expect(store.read()).resolves.toEqual(second)
     await store.delete()
     await expect(store.read()).resolves.toBeNull()
-    await store.write(second)
-    await expect(store.read()).resolves.toEqual(second)
+    await store.write(first)
+    await expect(store.read()).resolves.toEqual(first)
   })
 
   it('starts empty', async () => {

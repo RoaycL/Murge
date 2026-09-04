@@ -72,102 +72,146 @@ const SUBSCRIPTION_REQUEST_HEADERS = {
   Accept: 'application/x-yaml,text/yaml,text/plain,application/octet-stream,*/*'
 } as const
 
-/** Check if an IP address is private/internal (SSRF protection). */
-function isPrivateOrInternalHost(host: string): boolean {
-  // Handle IPv6 addresses in bracket notation
-  const normalizedHost = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host
-
-  // Check for localhost variants
-  if (normalizedHost === 'localhost' || normalizedHost === '127.0.0.1' || normalizedHost === '::1') {
-    return true
+/** Convert a canonical dotted-quad IPv4 literal to a 32-bit integer, or null. */
+function ipv4ToInt(ip: string): number | null {
+  const parts = ip.split('.')
+  if (parts.length !== 4) return null
+  let value = 0
+  for (const part of parts) {
+    if (!/^\d{1,3}$/.test(part)) return null
+    const num = Number(part)
+    if (num < 0 || num > 255) return null
+    value = value * 256 + num
   }
-
-  // IPv4-mapped IPv6 addresses (::ffff:x.x.x.x or ::ffff:a.b.c.d where d is hex)
-  const ipv4MappedMatch = /^::ffff:(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/i.exec(normalizedHost)
-  if (ipv4MappedMatch) {
-    const [, a, b, c, d] = ipv4MappedMatch.map(Number)
-    // Apply same IPv4 private range checks
-    if (a === 10) return true
-    if (a === 172 && b >= 16 && b <= 31) return true
-    if (a === 192 && b === 168) return true
-    if (a === 127) return true
-    if (a === 0 && b === 0 && c === 0 && d === 0) return true
-    if (a === 169 && b === 254) return true
-  }
-  
-  // Also check hex-encoded IPv4 in IPv6 (e.g., ::ffff:7f00:1 for 127.0.0.1)
-  const hexIpv4Match = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(normalizedHost)
-  if (hexIpv4Match) {
-    const high = parseInt(hexIpv4Match[1], 16)
-    const low = parseInt(hexIpv4Match[2], 16)
-    // Combine to get full 32-bit address
-    const addr = (high << 16) | low
-    const a = (addr >> 24) & 0xFF
-    const b = (addr >> 16) & 0xFF
-    const c = (addr >> 8) & 0xFF
-    const d = addr & 0xFF
-    
-    if (a === 10) return true
-    if (a === 172 && b >= 16 && b <= 31) return true
-    if (a === 192 && b === 168) return true
-    if (a === 127) return true
-    if (a === 0 && b === 0 && c === 0 && d === 0) return true
-    if (a === 169 && b === 254) return true
-  }
-
-  // IPv6 private ranges
-  // ULA: fc00::/7 (fc00:: to fdff::)
-  if (/^f[cd][0-9a-f]{2}:/i.test(normalizedHost)) return true
-  
-  // Link-local: fe80::/10
-  if (/^fe[89ab][0-9a-f]:/i.test(normalizedHost)) return true
-  
-  // Unspecified address
-  if (normalizedHost === '::' || normalizedHost === '::ffff:') return true
-
-  // IPv4 private ranges (for direct IPv4)
-  const ipv4Match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(normalizedHost)
-  if (ipv4Match) {
-    const [, a, b, c, d] = ipv4Match.map(Number)
-    // 10.0.0.0/8
-    if (a === 10) return true
-    // 172.16.0.0/12
-    if (a === 172 && b >= 16 && b <= 31) return true
-    // 192.168.0.0/16
-    if (a === 192 && b === 168) return true
-    // 127.0.0.0/8
-    if (a === 127) return true
-    // 0.0.0.0
-    if (a === 0 && b === 0 && c === 0 && d === 0) return true
-    // Link-local 169.254.0.0/16
-    if (a === 169 && b === 254) return true
-  }
-
-  return false
+  return value
 }
 
-function isPublicAddress(address: string): boolean {
-  const normalized = address.toLowerCase().split('%')[0]
-  if (isPrivateOrInternalHost(normalized)) return false
-  if (isIP(normalized) === 4) {
-    const parts = normalized.split('.').map(Number)
-    const [a, b] = parts
-    if (parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false
-    if (a === 0 || a === 10 || a === 127 || a >= 224) return false
-    if (a === 100 && b >= 64 && b <= 127) return false
-    if (a === 169 && b === 254) return false
-    if (a === 172 && b >= 16 && b <= 31) return false
-    if (a === 192 && (b === 0 || b === 168)) return false
-    if (a === 198 && (b === 18 || b === 19 || b === 51)) return false
-    if (a === 203 && b === 0) return false
-    return true
+/** [start, end] inclusive 32-bit range for an IPv4 CIDR block. */
+function ipv4CidrRange(base: string, prefix: number): readonly [number, number] {
+  const start = ipv4ToInt(base)
+  if (start === null) throw new Error(`invalid IPv4 base: ${base}`)
+  const size = 2 ** (32 - prefix)
+  return [start, start + size - 1]
+}
+
+/**
+ * IPv4 blocks that are never a legitimate subscription target: private,
+ * loopback, link-local, CGNAT, benchmarking, TEST-NET, multicast and reserved
+ * space. This is the allow-list's reject table — an address is "public" only
+ * when it falls in none of these ranges.
+ */
+const IPV4_NON_PUBLIC_RANGES: ReadonlyArray<readonly [number, number]> = [
+  ipv4CidrRange('0.0.0.0', 8),       // "this" network
+  ipv4CidrRange('10.0.0.0', 8),      // private
+  ipv4CidrRange('100.64.0.0', 10),   // CGNAT shared address space
+  ipv4CidrRange('127.0.0.0', 8),     // loopback
+  ipv4CidrRange('169.254.0.0', 16),  // link-local
+  ipv4CidrRange('172.16.0.0', 12),   // private
+  ipv4CidrRange('192.0.0.0', 24),    // IETF protocol assignments
+  ipv4CidrRange('192.0.2.0', 24),    // TEST-NET-1
+  ipv4CidrRange('192.31.196.0', 24), // AS112-v4
+  ipv4CidrRange('192.52.193.0', 24), // AMT
+  ipv4CidrRange('192.88.99.0', 24),  // deprecated 6to4 relay anycast
+  ipv4CidrRange('192.168.0.0', 16),  // private
+  ipv4CidrRange('192.175.48.0', 24), // AS112
+  ipv4CidrRange('198.18.0.0', 15),   // benchmarking (also Surge/mihomo fake-ip)
+  ipv4CidrRange('198.51.100.0', 24), // TEST-NET-2
+  ipv4CidrRange('203.0.113.0', 24),  // TEST-NET-3
+  ipv4CidrRange('224.0.0.0', 4),     // multicast
+  ipv4CidrRange('240.0.0.0', 4)      // reserved (incl. broadcast)
+]
+
+function isPublicIpv4(ip: string): boolean {
+  const value = ipv4ToInt(ip)
+  if (value === null) return false
+  for (const [start, end] of IPV4_NON_PUBLIC_RANGES) {
+    if (value >= start && value <= end) return false
   }
-  if (isIP(normalized) === 6) {
-    if (normalized === '::' || normalized === '::1') return false
-    if (/^f[cd]/.test(normalized) || /^fe[89ab]/.test(normalized) || /^ff/.test(normalized)) return false
-    if (/^2001:db8(?::|$)/.test(normalized)) return false
-    return true
+  return true
+}
+
+/**
+ * Expand a canonical IPv6 literal to its 8 hextets (0..0xffff), handling `::`
+ * compression and an embedded IPv4 tail. Returns null when unparseable.
+ */
+function expandIpv6(address: string): number[] | null {
+  let text = address
+  // Embedded IPv4 in the final two hextets (e.g. ::ffff:127.0.0.1 or
+  // 2001:db8::192.0.2.1): convert it to two hextets first.
+  const colon = text.lastIndexOf(':')
+  if (colon !== -1 && text.slice(colon + 1).includes('.')) {
+    const ipv4 = ipv4ToInt(text.slice(colon + 1))
+    if (ipv4 === null) return null
+    text = `${text.slice(0, colon + 1)}${(ipv4 >>> 16).toString(16)}:${(ipv4 & 0xffff).toString(16)}`
   }
+  const parts: string[] = []
+  const split = text.split('::')
+  if (split.length > 2) return null
+  if (split.length === 2) {
+    const left = split[0] === '' ? [] : split[0].split(':')
+    const right = split[1] === '' ? [] : split[1].split(':')
+    if (left.length + right.length > 7) return null
+    parts.push(...left)
+    for (let i = 0; i < 8 - left.length - right.length; i += 1) parts.push('0')
+    parts.push(...right)
+  } else {
+    parts.push(...text.split(':'))
+  }
+  if (parts.length !== 8) return null
+  const out: number[] = []
+  for (const part of parts) {
+    if (!/^[0-9a-f]{1,4}$/.test(part)) return null
+    out.push(parseInt(part, 16))
+  }
+  return out
+}
+
+const IPV4_MAPPED_DOTTED = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i
+const IPV4_MAPPED_HEX = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i
+
+function isPublicIpv6(address: string): boolean {
+  // IPv4-mapped forms are judged by their embedded IPv4, not the IPv6 prefix.
+  const mapped = IPV4_MAPPED_DOTTED.exec(address)
+  if (mapped) return isPublicIpv4(mapped[1])
+  const hexMapped = IPV4_MAPPED_HEX.exec(address)
+  if (hexMapped) {
+    const int = (parseInt(hexMapped[1], 16) << 16) | parseInt(hexMapped[2], 16)
+    return isPublicIpv4(`${(int >>> 24) & 0xff}.${(int >>> 16) & 0xff}.${(int >>> 8) & 0xff}.${int & 0xff}`)
+  }
+  const hextets = expandIpv6(address)
+  if (!hextets) return false
+  const a = hextets[0]
+  const b = hextets[1]
+  if (a === 0) return false                               // 0000::/8 (unspecified, loopback, reserved)
+  if (a === 0x0064 && b === 0xff9b) return false          // 64:ff9b::/96 NAT64 well-known
+  if (a === 0x0100 && b === 0x0000) return false          // 100::/64 discard-only
+  if (a === 0x2001 && (b & 0xfe00) === 0) return false    // 2001::/23 (Teredo, ORCHID, IETF)
+  if (a === 0x2001 && b === 0x0db8) return false          // 2001:db8::/32 documentation
+  if (a === 0x2002) return false                          // 2002::/16 6to4
+  if ((a & 0xfe00) === 0xfc00) return false               // fc00::/7 ULA
+  if ((a & 0xffc0) === 0xfe80) return false               // fe80::/10 link-local
+  if ((a & 0xff00) === 0xff00) return false               // ff00::/8 multicast
+  return true
+}
+
+/**
+ * SSRF allow-list: is `address` a globally routable unicast IP?
+ *
+ * Both literal subscription hosts and every DNS answer flow through this single
+ * check, so the literal-IP and resolved-IP verdicts can never diverge again.
+ *
+ * The community references (mihomo-party, clash-verge-rev, sparkle) fetch the
+ * subscription URL directly with no private-IP filtering at all; this project
+ * keeps a stricter DNS-rebinding defence as deliberate hardening. The only
+ * carve-out is applied by the caller: Surge/mihomo fake-ip DNS maps public hosts
+ * into 198.18.0.0/15, which is otherwise rejected here.
+ */
+export function isPublicAddress(address: string): boolean {
+  let normalized = address.trim().toLowerCase()
+  if (normalized.startsWith('[') && normalized.endsWith(']')) normalized = normalized.slice(1, -1)
+  normalized = normalized.split('%')[0]
+  if (isIP(normalized) === 4) return isPublicIpv4(normalized)
+  if (isIP(normalized) === 6) return isPublicIpv6(normalized)
   return false
 }
 
@@ -389,19 +433,23 @@ export class SubscriptionFetcher {
         )
       }
       
-      // Reject private/internal hosts
-      if (isPrivateOrInternalHost(parsed.hostname)) {
-        throw new ProtocolError(
-          ProtocolErrorCode.INVALID_ARGUMENT,
-          `禁止访问内部地址：${redactCredentials(url)}`
-        )
-      }
-      // A harmless-looking hostname can still resolve to loopback/private
-      // space. Resolve every redirect hop immediately before requesting it and
-      // reject the hop unless every returned address is globally routable.
-      // Literal IPs are already normalized by WHATWG URL and checked above.
-      if (isIP(parsed.hostname) === 0) {
-        const addresses = await this.resolveHost(parsed.hostname)
+      const hostname = parsed.hostname
+      // WHATWG URL keeps IPv6 literals in bracket notation; strip them so the
+      // literal check and the allow-list predicate see the bare address.
+      const bareHost = hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname
+      const isLiteral = isIP(bareHost) !== 0 || bareHost.toLowerCase() === 'localhost'
+      // A literal IP (or the localhost alias) is checked directly against the
+      // public-unicast allow-list. A hostname is resolved and every returned
+      // address must be globally routable, so both verdicts share one predicate.
+      if (isLiteral) {
+        if (!isPublicAddress(bareHost)) {
+          throw new ProtocolError(
+            ProtocolErrorCode.INVALID_ARGUMENT,
+            `禁止访问内部地址：${redactCredentials(url)}`
+          )
+        }
+      } else {
+        const addresses = await this.resolveHost(hostname)
         // Surge/mihomo fake-ip DNS intentionally maps public hosts into
         // 198.18.0.0/15. Only permit that result for exact HTTPS GitHub raw
         // hosts; all other private/non-public answers remain rejected.

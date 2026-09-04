@@ -12,13 +12,23 @@ const error = ref<string | null>(null)
 
 const updates = useUpdatesStore()
 
+// Vue registers lifecycle hooks synchronously during setup; registering
+// `onUnmounted` from inside an async `onMounted` callback (after an `await`)
+// has no effect, so the subscription would never be cleaned up. Hold the
+// unsubscribe handle here and register the cleanup at the top level instead.
+let unsubscribeUpdates: (() => void) | null = null
+
 onMounted(async () => {
-  const unsubscribe = updates.subscribe()
+  unsubscribeUpdates = updates.subscribe()
   try {
     ;[brand.value, info.value] = await Promise.all([window.desktop.app.getBrand(), window.desktop.app.getInfo()])
     await updates.refresh()
   } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) }
-  onUnmounted(unsubscribe)
+})
+
+onUnmounted(() => {
+  unsubscribeUpdates?.()
+  unsubscribeUpdates = null
 })
 
 const statusText = computed<string | null>(() => {

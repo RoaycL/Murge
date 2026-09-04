@@ -85,7 +85,7 @@ export class NetworkMetadataService implements NetworkMetadataGateway {
       throw new Error(`unknown network metadata provider: ${id}`)
     }
     this.#providerId = id
-    const cached = this.#cache.get(id)
+    const cached = this.#freshCache(id)
     if (cached) {
       this.#phase = 'ready'
       this.#error = null
@@ -113,8 +113,8 @@ export class NetworkMetadataService implements NetworkMetadataGateway {
     }
 
     if (!force) {
-      const cached = this.#cache.get(this.#providerId)
-      if (cached && this.#now() - cached.fetchedAt <= this.#cacheTtlMs) {
+      const cached = this.#freshCache(this.#providerId)
+      if (cached) {
         this.#phase = 'ready'
         this.#error = null
         return this.#state()
@@ -170,8 +170,15 @@ export class NetworkMetadataService implements NetworkMetadataGateway {
     }
   }
 
+  /** A cache entry that is still within its freshness window, or null. */
+  #freshCache(providerId: string): NetworkMetadata | null {
+    const cached = this.#cache.get(providerId)
+    if (!cached) return null
+    return this.#now() - cached.fetchedAt <= this.#cacheTtlMs ? cached : null
+  }
+
   #state(): NetworkMetadataState {
-    const cached = this.#cache.get(this.#providerId) ?? null
+    const cached = this.#freshCache(this.#providerId)
     if (this.#phase === 'fetching') {
       return { phase: 'fetching', provider: this.#providerId, metadata: cached, error: null }
     }

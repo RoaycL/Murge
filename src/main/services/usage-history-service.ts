@@ -88,7 +88,13 @@ export class UsageHistoryService implements UsageHistoryGateway {
   async record(sample: UsageSample, at?: number): Promise<void> {
     if (!this.loaded) await this.init()
     const time = typeof at === 'number' ? at : (sample as { timestamp?: number }).timestamp ?? this.now()
-    const intervalMs = this.lastAt === null ? 0 : Math.max(0, time - this.lastAt)
+    // Guard against a non-monotonic clock (wall-clock rollback, NTP step, or a
+    // sample timestamp arriving out of order). A negative interval would be
+    // clamped to zero here, but `this.lastAt` would then move BACKWARD, making
+    // the NEXT sample integrate a huge fake interval and mint a bogus byte
+    // count. Only advance `lastAt` on a real forward step; a back-dated sample
+    // contributes zero bytes and does not regress the cursor.
+    const intervalMs = this.lastAt === null || time <= this.lastAt ? 0 : time - this.lastAt
     const factor = intervalMs / 1000
     const upBytes = sample.up * factor
     const downBytes = sample.down * factor
@@ -105,7 +111,7 @@ export class UsageHistoryService implements UsageHistoryGateway {
     current.up += upBytes
     current.down += downBytes
     current.count += 1
-    this.lastAt = time
+    if (this.lastAt === null || time > this.lastAt) this.lastAt = time
 
     this.trimToBound()
     await this.maybePersist(time)

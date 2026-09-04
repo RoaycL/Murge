@@ -140,6 +140,21 @@ describe('NetworkMetadataService', () => {
       expect(fetch.calls).toHaveLength(1)
     })
 
+    it('does not show a stale cached provider as ready (TTL elapsed)', async () => {
+      const clock = makeClock()
+      const fetch = stubFetch([ipwhoisBody()])
+      const service = makeService({ fetch: fetch.fn, now: clock.now, cacheTtlMs: 1000 })
+      await service.resolve()
+      clock.advance(2000)
+      service.selectProvider('ipapi')
+      // Switching back to a provider whose cache is now beyond TTL must NOT
+      // present the expired data as "ready" (the old code showed stale data as
+      // fresh whenever the phase was 'ready').
+      const back = service.selectProvider('ipwhois')
+      expect(back.phase).toBe('idle')
+      expect(back.metadata).toBeNull()
+    })
+
     it('evicts the oldest entry when the bounded cache overflows', async () => {
       const fetch = stubFetch([ipwhoisBody(), ipapiBody()])
       const service = makeService({ fetch: fetch.fn, cacheMaxEntries: 1 })

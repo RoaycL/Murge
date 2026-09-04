@@ -26,7 +26,12 @@ export type IpcHandler = (event: unknown, ...args: unknown[]) => unknown | Promi
  * so a synchronous validation failure surfaces as a rejected promise, matching
  * the semantics Electron uses for `ipcMain.handle`.
  */
-export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
+export interface IpcHandlerOptions {
+  /** Runtime-enhanced profile order; defaults to the raw document in tests/legacy callers. */
+  resolveActiveGroupOrder?: () => Promise<string[]>
+}
+
+export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {}): Record<string, IpcHandler> {
   const { brand, appInfo, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata } = deps
 
   return {
@@ -83,6 +88,7 @@ export function buildIpcHandlers(deps: IpcDeps): Record<string, IpcHandler> {
     [IPC.mihomoFlushFakeIpCache]: async () => mihomo.flushFakeIpCache(),
 
     [IPC.profilesGetActiveGroupOrder]: async () => {
+      if (options.resolveActiveGroupOrder) return options.resolveActiveGroupOrder()
       const metas = await profiles.listProfiles()
       const active = metas.find((meta) => meta.active)
       if (!active) return []

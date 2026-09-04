@@ -5,35 +5,46 @@ type GatewayLog = Array<
   | 'handleNetworkUp'
   | 'handleNetworkDown'
   | 'startKernel'
+  | 'startTun'
   | 'stopKernel'
 >
 
 interface Harness {
   detector: NetworkDetector
   online: { value: boolean }
-  kernelRunning: { value: boolean }
+  runMode: { value: 'stopped' | 'kernel' | 'tun' }
   calls: GatewayLog
   startKernelRejects: { value: Error | null }
+  startTunRejects: { value: Error | null }
+  networkUpRejects: { value: Error | null }
   tick(): Promise<void>
   stop(): void
 }
 
-function createHarness(options: { online?: boolean; kernelRunning?: boolean } = {}): Harness {
+function createHarness(options: { online?: boolean; kernelRunning?: boolean; runMode?: 'stopped' | 'kernel' | 'tun' } = {}): Harness {
   const online = { value: options.online ?? true }
-  const kernelRunning = { value: options.kernelRunning ?? true }
+  const runMode = { value: options.runMode ?? (options.kernelRunning === false ? 'stopped' : 'kernel') }
   const calls: GatewayLog = []
   const startKernelRejects = { value: null as Error | null }
+  const startTunRejects = { value: null as Error | null }
+  const networkUpRejects = { value: null as Error | null }
   const gateway: NetworkDetectorGateway = {
-    isKernelRunning: () => kernelRunning.value,
+    getRunMode: () => runMode.value,
     startKernel: () => {
       calls.push('startKernel')
       if (startKernelRejects.value) return Promise.reject(startKernelRejects.value)
-      kernelRunning.value = true
+      runMode.value = 'kernel'
+      return Promise.resolve(undefined)
+    },
+    startTun: () => {
+      calls.push('startTun')
+      if (startTunRejects.value) return Promise.reject(startTunRejects.value)
+      runMode.value = 'tun'
       return Promise.resolve(undefined)
     },
     stopKernel: () => {
       calls.push('stopKernel')
-      kernelRunning.value = false
+      runMode.value = 'stopped'
       return Promise.resolve(undefined)
     },
     handleNetworkDown: () => {
@@ -42,6 +53,7 @@ function createHarness(options: { online?: boolean; kernelRunning?: boolean } = 
     },
     handleNetworkUp: () => {
       calls.push('handleNetworkUp')
+      if (networkUpRejects.value) return Promise.reject(networkUpRejects.value)
       return Promise.resolve(undefined)
     }
   }
@@ -59,9 +71,11 @@ function createHarness(options: { online?: boolean; kernelRunning?: boolean } = 
   return {
     detector,
     online,
-    kernelRunning,
+    runMode,
     calls,
     startKernelRejects,
+    startTunRejects,
+    networkUpRejects,
     tick: () => anyDetector.tick(anyDetector.generation),
     stop: () => detector.stop()
   }
@@ -121,10 +135,9 @@ describe('NetworkDetector', () => {
     h.online.value = true
     h.startKernelRejects.value = new Error('port race')
     await h.tick()
-    // The kernel restart failed, so the proxy re-enable also ran into a dead
-    // controller — but BOTH are retried on the next tick.
-    expect(h.calls).toEqual(['handleNetworkDown', 'stopKernel', 'startKernel', 'handleNetworkUp'])
-    expect(h.kernelRunning.value).toBe(false)
+    // A failed kernel restart must not point the OS proxy at a dead listener.
+    expect(h.calls).toEqual(['handleNetworkDown', 'stopKernel', 'startKernel'])
+    expect(h.runMode.value).toBe('stopped')
 
     h.startKernelRejects.value = null
     await h.tick()
@@ -132,15 +145,28 @@ describe('NetworkDetector', () => {
       'handleNetworkDown',
       'stopKernel',
       'startKernel',
-      'handleNetworkUp',
       'startKernel',
       'handleNetworkUp'
     ])
-    expect(h.kernelRunning.value).toBe(true)
+    expect(h.runMode.value).toBe('kernel')
 
     // Healed: subsequent healthy ticks are no-ops.
     await h.tick()
-    expect(h.calls).toHaveLength(6)
+    expect(h.calls).toHaveLength(5)
+  })
+
+  it('keeps retrying proxy restoration after the host has recovered', async () => {
+    const h = createHarness({ online: true })
+    h.online.value = false
+    await h.tick()
+    h.online.value = true
+    h.networkUpRejects.value = new Error('registry busy')
+    await h.tick()
+    expect(h.calls).toEqual(['handleNetworkDown', 'stopKernel', 'startKernel', 'handleNetworkUp'])
+
+    h.networkUpRejects.value = null
+    await h.tick()
+    expect(h.calls).toEqual(['handleNetworkDown', 'stopKernel', 'startKernel', 'handleNetworkUp', 'handleNetworkUp'])
   })
 
   it('ignores virtual/loopback interfaces when judging connectivity', async () => {
@@ -151,6 +177,37 @@ describe('NetworkDetector', () => {
     await h.tick()
     // No real interface → treated as offline.
     expect(h.calls).toEqual(['handleNetworkDown', 'stopKernel'])
+  })
+
+  it('restores TUN rather than silently downgrading to the main kernel', async () => {
+    const h = createHarness({ online: true, runMode: 'tun' })
+    h.online.value = false
+    await h.tick()
+    expect(h.calls).toEqual(['handleNetworkDown', 'stopKernel'])
+    expect(h.runMode.value).toBe('stopped')
+
+    h.online.value = true
+    await h.tick()
+    expect(h.calls).toEqual(['handleNetworkDown', 'stopKernel', 'startTun', 'handleNetworkUp'])
+    expect(h.runMode.value).toBe('tun')
+  })
+
+  it('does not forget the prior TUN mode during an online/offline recovery flap', async () => {
+    const h = createHarness({ online: true, runMode: 'tun' })
+    h.online.value = false
+    await h.tick()
+    h.online.value = true
+    h.startTunRejects.value = new Error('adapter busy')
+    await h.tick()
+    expect(h.calls).toContain('startTun')
+
+    h.online.value = false
+    await h.tick()
+    h.online.value = true
+    h.startTunRejects.value = null
+    await h.tick()
+    expect(h.calls.filter((call) => call === 'startTun')).toHaveLength(2)
+    expect(h.runMode.value).toBe('tun')
   })
 
   it('offline with no owned proxy is a safe no-op for the proxy path', async () => {

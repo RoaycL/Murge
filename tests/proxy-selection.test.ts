@@ -95,8 +95,8 @@ describe('ProxySelectionService', () => {
     const store = new ProxySelectionStore(dir)
     const service = new ProxySelectionService(mihomoStub(), profilesStub('p1'), store)
     const profileId = await service.resolveActiveProfileId()
-    service.recordSelection(profileId!, '节点选择', '香港 02')
-    await vi.waitFor(async () => expect(await store.get('p1')).toEqual({ 节点选择: '香港 02' }))
+    await service.recordSelection(profileId!, '节点选择', '香港 02')
+    expect(await store.get('p1')).toEqual({ 节点选择: '香港 02' })
   })
 
   it('attributes the pick to the profile active BEFORE the controller write', async () => {
@@ -118,7 +118,7 @@ describe('ProxySelectionService', () => {
 
     await gateway.selectProxy('节点选择', '香港 02')
     expect(putSettled).toBe(true)
-    await vi.waitFor(async () => expect(await store.get('p1')).toEqual({ 节点选择: '香港 02' }))
+    expect(await store.get('p1')).toEqual({ 节点选择: '香港 02' })
     expect(await store.get('p2')).toEqual({})
   })
 
@@ -186,7 +186,37 @@ describe('ProxySelectionGateway', () => {
 
     await gateway.selectProxy('节点选择', '香港 02')
     expect(inner.selectProxy).toHaveBeenCalledWith('节点选择', '香港 02')
-    await vi.waitFor(async () => expect(await store.get('p1')).toEqual({ 节点选择: '香港 02' }))
+    expect(await store.get('p1')).toEqual({ 节点选择: '香港 02' })
+  })
+
+  it('holds the shared profile boundary through controller acceptance and persistence', async () => {
+    const store = new ProxySelectionStore(dir)
+    const inner = mihomoStub()
+    const profiles = profilesStub('p1')
+    const service = new ProxySelectionService(inner, profiles, store)
+    let tail = Promise.resolve()
+    const runExclusive = <T>(operation: () => Promise<T>): Promise<T> => {
+      const result = tail.then(operation, operation)
+      tail = result.then(() => undefined, () => undefined)
+      return result
+    }
+    let releasePut!: () => void
+    const putGate = new Promise<void>((resolve) => { releasePut = resolve })
+    inner.selectProxy.mockImplementationOnce(() => putGate)
+    const gateway = new ProxySelectionGateway(inner, service, runExclusive)
+
+    const selection = gateway.selectProxy('节点选择', '香港 02')
+    await vi.waitFor(() => expect(inner.selectProxy).toHaveBeenCalledTimes(1))
+    const mutation = runExclusive(async () => {
+      ;(profiles.listProfiles as ReturnType<typeof vi.fn>).mockResolvedValue([meta('p2', true)])
+    })
+    await Promise.resolve()
+    expect(await store.get('p1')).toEqual({})
+    releasePut()
+    await Promise.all([selection, mutation])
+
+    expect(await store.get('p1')).toEqual({ 节点选择: '香港 02' })
+    expect(await store.get('p2')).toEqual({})
   })
 
   it('does NOT cache a rejected selection and propagates the error', async () => {

@@ -1,5 +1,16 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 
+/** Any byte means an intentional release; EOF means the owning app died. */
+export const WATCHDOG_RELEASE_BYTE = 0x52
+
+export function buildWatchdogScript(kernelPid: number): string {
+  return [
+    '$inputStream = [Console]::OpenStandardInput()',
+    '$releaseByte = $inputStream.ReadByte()',
+    `if ($releaseByte -eq -1) { & taskkill.exe /PID ${kernelPid} /T /F | Out-Null }`
+  ].join('; ')
+}
+
 /**
  * Windows kernel crash watchdog — the Job-Object equivalent.
  *
@@ -11,11 +22,10 @@ import { spawn, type ChildProcess } from 'node:child_process'
  * hits EOF, and it `taskkill`s the entire kernel process tree. No polling, no
  * marker files, no extra script assets; the binding is the pipe itself.
  *
- * `release()` must NEVER be a plain stdin close: EOF would fall through to the
- * helper's `taskkill` and force-kill a kernel the app is still using or trying
- * to stop gracefully. Instead release kills the HELPER process tree — a dead
- * helper can never run its kill command, and the app death guarantee only needs
- * helpers that are still alive.
+ * The one-byte protocol distinguishes a healthy release from app death:
+ * `release()` writes a byte before closing the pipe, while an app crash only
+ * produces EOF. The helper kills the kernel exclusively on EOF, eliminating
+ * the race between closing the pipe and trying to kill the helper itself.
  */
 export interface KernelWatchdog {
   /** Dismantle the watch without touching the kernel. */
@@ -29,11 +39,10 @@ export function attachKernelWatchdog(kernelPid: number): KernelWatchdog {
   let released = false
   try {
     helper = spawn(
-      'cmd.exe',
-      // `more` blocks reading stdin; on EOF (the app died) it falls through and
-      // the whole kernel tree is force-killed. `/T` covers any children mihomo
-      // spawned (e.g. Wintun helpers).
-      ['/d', '/s', '/c', `more > NUL & taskkill /PID ${kernelPid} /T /F`],
+      'powershell.exe',
+      // Read exactly one byte. A normal release supplies it; abrupt parent death
+      // closes the inherited pipe without data and ReadByte returns -1.
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', buildWatchdogScript(kernelPid)],
       {
         detached: true,
         stdio: ['pipe', 'ignore', 'ignore'],
@@ -49,31 +58,24 @@ export function attachKernelWatchdog(kernelPid: number): KernelWatchdog {
   helper.on('error', () => {
     /* helper died early: same degraded mode as a failed spawn */
   })
+  // If the helper exits before release(), writing the release byte can raise an
+  // asynchronous EPIPE on stdin. That degraded watchdog must not take down the
+  // Electron main process.
+  helper.stdin?.on('error', () => undefined)
 
   return {
     release(): void {
       if (released) return
       released = true
-      // Kill the helper ITSELF (cmd + its `more` child). Relying on stdin EOF
-      // would run the helper's taskkill against a kernel the app may still be
-      // stopping gracefully — or against a REUSED pid after stop/start cycles.
       const dying: ChildProcess | null = helper
       helper = null
       if (!dying) return
       try {
-        dying.stdin?.destroy()
+        // end(data) preserves write-before-EOF ordering on the pipe. The helper
+        // observes the release byte and exits without ever executing taskkill.
+        dying.stdin?.end(Buffer.from([WATCHDOG_RELEASE_BYTE]))
       } catch {
         /* the pipe is already gone */
-      }
-      if (dying.pid) {
-        try {
-          spawn('taskkill', ['/PID', String(dying.pid), '/T', '/F'], {
-            stdio: 'ignore',
-            windowsHide: true
-          }).unref()
-        } catch {
-          /* a surviving helper is inert unless the app itself dies */
-        }
       }
     }
   }

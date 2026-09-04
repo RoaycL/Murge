@@ -61,6 +61,9 @@ export const usePoliciesStore = defineStore('policies', () => {
   let lastModeTarget: PolicyMode | null = null
   let lastModeError: string | null = null
 
+  // mihomo 的 /proxies 响应按配置文件中 proxy-groups 的书写顺序序列化
+  // （Go map 按插入序 marshal），zod 的 z.record 解析保留该顺序。这里只做
+  // 类型过滤，绝不二次排序——所有者明确要求展示顺序与原始配置文件一致。
   const groups = computed<MihomoProxy[]>(() => {
     if (!proxies.value) return []
     return Object.values(proxies.value.proxies).filter((proxy) => POLICY_GROUP_TYPES.includes(proxy.type as PolicyGroupType))

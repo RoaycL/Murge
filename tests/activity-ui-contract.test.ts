@@ -24,8 +24,8 @@ describe('Activity fluid-layout UI contract', () => {
     expect(css).toMatch(/\.dashboard-grid\s*\{[^}]*width:\s*100%/)
     expect(css).toMatch(/\.page-shell\s*\{[^}]*max-width:\s*var\(--content-max-width\)/)
     expect(css).toMatch(/\.page-shell\s*\{[^}]*margin:\s*0 auto/)
-    // 窄屏降级必须存在，760px 最小窗口才不出现横向滚动。
-    expect(css).toMatch(/@media\s*\(max-width:\s*960px\)\s*\{[^}]*\.dashboard-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s)
+    // 所有者要求：任何宽度下都保持规范的双列仪表盘，不做单列降级。
+    expect(css).not.toMatch(/\.dashboard-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/)
   })
 
   it('renders both speed metrics through the same card surface as the other Activity cards', async () => {

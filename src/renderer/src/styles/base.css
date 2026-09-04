@@ -302,14 +302,8 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .modal-shade{position:fixed;z-index:70;inset:0;display:grid;place-items:center;background:rgba(9,11,15,.42)}.confirm-modal{width:min(420px,calc(100vw - 48px));padding:20px;border:1px solid var(--app-divider);border-radius:16px;color:var(--app-text);background:var(--app-surface-solid);box-shadow:0 22px 70px rgba(0,0,0,.28)}.confirm-modal header,.confirm-modal footer{display:flex;align-items:center;justify-content:space-between}.confirm-modal h2{margin:0;font-size:19px}.confirm-modal p{margin:14px 0 20px;color:var(--app-muted);font-size:11px;line-height:1.5}.confirm-modal footer{justify-content:flex-end;gap:8px}
 
 /* 完全流式布局（2026 年调整，替代原“固定卡片 + 留白”策略）：
-   窗口低于规范宽度时仪表盘降级为单列，避免横向滚动；高于规范宽度时
-   内容以 --content-max-width 居中。 */
-@media (max-width: 960px) {
-  .dashboard-grid { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-auto-rows: minmax(160px, auto); }
-  .traffic-card { grid-column: 1; grid-row: auto; }
-  .activity-entry-grid { grid-template-columns: minmax(0, 1fr); }
-  .page-shell { padding-right: 20px; padding-left: 20px; }
-}
+   任何窗口宽度下仪表盘都保持规范的双列排布（卡片随列轨弹性伸缩），
+   不做单列降级；高于规范宽度时内容以 --content-max-width 居中。 */
 .unsaved-indicator{display:inline-flex;align-items:center;min-height:24px;padding:0 8px;border-radius:999px;background:color-mix(in srgb,var(--app-orange,#e79a35) 14%,transparent);color:var(--app-orange,#c77b18);font-size:10px;font-weight:600}
 .app-window,.app-frame,.app-sidebar,.app-content{user-select:none;-webkit-user-select:none}
 input,textarea,[contenteditable="true"],code,pre{user-select:text;-webkit-user-select:text}

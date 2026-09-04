@@ -56,3 +56,24 @@ Phase 9B 的 TUN 配置写死 `mode: direct` + `rules: [MATCH,DIRECT]`，因此�
 控制器。`-安全直连内核" 概念已被删除。作为配套修复，系统代理 `enable()` 现在会重新
 收养跨会话端口重分配后遗留的自有备份（陈旧 target.port），而非误报"外部修改"冲突；
 真正的外部修改仍会冲突。
+
+## ADR-006: 节点按配置顺序展示、按 profile 记忆，导入不自动启用
+
+状态: 由项目所有者指示（2026-09-04），已接受。
+
+三项相互关联的策略/配置行为，取代此前的相反约定：
+
+1. **策略组顺序与图标。** 策略页按 mihomo `/proxies` 响应的序列化顺序展示策略组——
+   该顺序即原始配置文件中 `proxy-groups` 的书写顺序——绝不按名称二次排序。配置里
+   声明的 `icon` 在策略组卡片上展示，加载失败时静默隐藏（不留破图）。
+2. **节点选择记忆（sparkle/clash-party 模型）。** mihomo 控制器只在内存中保存
+   `Selector` 等组的 `now` 选择，重启即丢失。框架新增按 profile id 键控的持久缓存
+   （`proxy-selections.json`，原子写入、串行队列、损坏时 fail-open）：渲染进程每一次
+   被控制器接受的选择经 `ProxySelectionGateway` 记录；内核自动启动与每次 profile
+   reload 之后由 `ProxySelectionService` 回放该 profile 的记忆选择。已失效的
+   组/节点（配置更新后不再存在）被静默跳过，绝不阻断其余恢复；删除 profile 时
+   同步清除其缓存。
+3. **导入不启用（反转 import-is-apply）。** 此前的"导入即设为当前配置并加载"是
+   有意 UX（见提交 `0007996` 的测试锁定），现按所有者要求反转：三条导入路径
+   （远程/本地/手动）均传 `activate: false`，配置仅在用户在列表中选中后才启用。
+   `ui-navigation-contract.test.ts` 的断言已同步反转，作为新行为的回归锁。

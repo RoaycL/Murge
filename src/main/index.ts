@@ -1066,7 +1066,13 @@ app.whenReady().then(async () => {
   // INTERNET-latency card: first-hop gateway RTT (direct, kernel-independent),
   // the kernel's DNS resolve time, and the controller-reported delay of the
   // node the user's selector currently points at (the full proxy-chain RTT).
-  const internetLatencyService = new InternetLatencyService({ mihomo: gateway })
+  const internetLatencyService = new InternetLatencyService({
+    mihomo: gateway,
+    resolveGroupOrder: async () => {
+      const active = await profileService.getActiveProfile()
+      return active ? parseProxyGroupOrder(active.document) : []
+    }
+  })
   disposeIpc = registerIpc({
     internetLatency: internetLatencyService,
     kernel: queuedKernel,

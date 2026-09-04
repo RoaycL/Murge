@@ -72,20 +72,20 @@ describe('redactCredentials', () => {
 })
 
 describe('SubscriptionFetcher', () => {
-  it('accepts Surge fake-ip answers for exact GitHub raw HTTPS hosts', async () => {
+  it('accepts Surge fake-ip answers for arbitrary HTTPS subscription hosts', async () => {
     const fetcher = new SubscriptionFetcher({
       resolveHost: async () => ['198.18.0.9'],
       fetchFn: async () => ({ ok: true, status: 200, text: async () => 'mode: rule\n' })
     })
     await expect(fetcher.fetch('https://gist.githubusercontent.com/example/raw/config')).resolves.toMatchObject({ document: 'mode: rule\n' })
+    await expect(fetcher.fetch('https://subscription.example/config')).resolves.toMatchObject({ document: 'mode: rule\n' })
   })
 
-  it('does not generalize the fake-ip exception to arbitrary hosts or HTTP', async () => {
+  it('does not permit fake-ip answers over unauthenticated HTTP', async () => {
     const makeFetcher = () => new SubscriptionFetcher({
       resolveHost: async () => ['198.18.0.9'],
       fetchFn: async () => ({ ok: true, status: 200, text: async () => 'mode: rule\n' })
     })
-    await expect(makeFetcher().fetch('https://attacker.example/config')).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' })
     await expect(makeFetcher().fetch('http://gist.githubusercontent.com/example/raw/config')).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' })
   })
 

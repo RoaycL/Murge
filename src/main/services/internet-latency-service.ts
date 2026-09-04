@@ -1,17 +1,18 @@
 import { Resolver } from 'node:dns'
 import { measureGatewayRtt, type GatewayRttResult } from './route-latency-service'
 import type { MihomoGateway } from '@shared/gateways'
+import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
 
 /**
  * One INTERNET-latency sample for the activity card:
  *
  *  - `gateway` — first-hop RTT (TCP handshake to the default gateway; the
  *    mihomo kernel does not own this path, so it is probed directly).
- *  - `dns` — the kernel's DNS resolver answering a real A query, timed
+ *  - `dns` — the kernel's DNS resolver answering a real NS query, timed
  *    end-to-end around the controller call.
- *  - `proxy` — the delay the controller itself reports for the node the user's
- *    selector currently points at (the `now` member of the first selectable
- *    group, i.e. exactly the path new connections take). This already IS the
+ *  - `proxy` — the delay the controller itself reports for the node selected by
+ *    the first selectable group in the active profile's declared order. This
+ *    avoids treating the unordered `/proxies` map as configuration order. It IS the
  *    full INTERNET RTT through the proxy chain, so it is surfaced as the big
  *    headline number and needs no client-side arithmetic.
  *
@@ -53,6 +54,8 @@ const SELECTABLE_GROUP_TYPES = new Set(['Selector', 'URLTest', 'Fallback', 'Load
 
 export interface LatencyServiceOptions {
   mihomo: Pick<MihomoGateway, 'getProxies' | 'delayTest' | 'dnsQuery'>
+  /** Ordered group names parsed from the active profile document. */
+  resolveGroupOrder: () => Promise<string[]>
   measureGatewayRttFn?: () => Promise<GatewayRttResult>
   nowFn?: () => number
   /**
@@ -68,20 +71,27 @@ export class InternetLatencyService {
   private readonly gatewayFn: () => Promise<GatewayRttResult>
   private readonly nowFn: () => number
   private readonly systemDnsProbeFn: (label: string) => Promise<'answered' | 'failed'>
+  private readonly resolveGroupOrder: () => Promise<string[]>
 
   constructor(options: LatencyServiceOptions) {
     this.mihomo = options.mihomo
     this.gatewayFn = options.measureGatewayRttFn ?? measureGatewayRtt
     this.nowFn = options.nowFn ?? Date.now
     this.systemDnsProbeFn = options.systemDnsProbeFn ?? systemDnsNsProbe
+    this.resolveGroupOrder = options.resolveGroupOrder
   }
 
   /**
    * True when the proxy slot is meaningful: a selector exists and currently
    * points at a concrete node (not DIRECT/REJECT placeholders).
    */
-  private resolveProxyNode(proxies: Awaited<ReturnType<MihomoGateway['getProxies']>>['proxies']): string | null {
-    for (const proxy of Object.values(proxies)) {
+  private resolveProxyNode(
+    proxies: Awaited<ReturnType<MihomoGateway['getProxies']>>['proxies'],
+    groupOrder: string[]
+  ): string | null {
+    for (const groupName of groupOrder) {
+      const proxy = proxies[groupName]
+      if (!proxy) continue
       if (!SELECTABLE_GROUP_TYPES.has(proxy.type)) continue
       if (proxy.name.toUpperCase() === 'GLOBAL') continue
       const now = proxy.now
@@ -92,42 +102,55 @@ export class InternetLatencyService {
 
   /** Collect one sample. Never throws; each slot degrades independently. */
   async sample(): Promise<InternetLatencySample> {
-    const [gateway, kernelPaths] = await Promise.all([
+    const [gateway, dnsMs, proxy] = await Promise.all([
       this.gatewayFn().catch(() => ({ gateway: null, rttMs: null }) satisfies GatewayRttResult),
-      this.sampleKernelPaths().catch(() => ({ dnsMs: null, proxyMs: null, proxyNode: null }))
+      this.sampleDns(),
+      this.sampleProxy()
     ])
     return {
       gatewayMs: gateway.rttMs,
-      ...kernelPaths
+      dnsMs,
+      ...proxy
     }
   }
 
-  private async sampleKernelPaths(): Promise<{ dnsMs: number | null; proxyMs: number | null; proxyNode: string | null }> {
-    const proxies = (await this.mihomo.getProxies()).proxies
-    const proxyNode = this.resolveProxyNode(proxies)
+  private async sampleDns(): Promise<number | null> {
+    // The kernel's resolver answers when its DNS module is enabled. Only its
+    // explicit "DNS section is disabled" response permits a system-resolver
+    // fallback; controller/auth/timeout failures must remain visibly unavailable.
+    const kernelStarted = this.nowFn()
+    const label = `murge-latency-${kernelStarted.toString(36)}.example.com`
+    try {
+      await this.mihomo.dnsQuery(label, 'NS')
+      return this.nowFn() - kernelStarted
+    } catch (error) {
+      if (!this.isDnsDisabled(error)) return null
+      const systemStarted = this.nowFn()
+      const answered = await this.systemDnsProbeFn(label).catch(() => 'failed' as const)
+      return answered === 'answered' ? this.nowFn() - systemStarted : null
+    }
+  }
 
-    // The kernel's resolver answers when its DNS module is enabled; a disabled
-    // module returns a message body the zod schema rejects, so the fallback
-    // (a fresh system resolver + a random label, timed the same way) keeps the
-    // slot meaningful — the OS resolve path IS what the machine uses then.
-    const dnsStarted = this.nowFn()
-    const label = `murge-latency-${dnsStarted.toString(36)}.example.com`
-    const dnsPromise = this.mihomo
-      .dnsQuery(label, 'NS')
-      .then(() => this.nowFn() - dnsStarted)
-      .catch(async () => {
-        const answered = await this.systemDnsProbeFn(label).catch(() => 'failed' as const)
-        return answered === 'answered' ? this.nowFn() - dnsStarted : null
-      })
+  private isDnsDisabled(error: unknown): boolean {
+    if (error instanceof ProtocolError) {
+      return error.code === ProtocolErrorCode.UPSTREAM_HTTP_ERROR &&
+        /dns section is disabled/i.test(error.details?.reason ?? error.message)
+    }
+    return error instanceof Error && /dns section is disabled/i.test(error.message)
+  }
 
-    const proxyPromise = proxyNode
-      ? this.mihomo
-          .delayTest(proxyNode)
-          .then((result) => result.delay)
-          .catch(() => null)
-      : Promise.resolve(null)
-
-    const [dnsMs, proxyMs] = await Promise.all([dnsPromise, proxyPromise])
-    return { dnsMs, proxyMs, proxyNode }
+  private async sampleProxy(): Promise<{ proxyMs: number | null; proxyNode: string | null }> {
+    try {
+      const [response, groupOrder] = await Promise.all([
+        this.mihomo.getProxies(),
+        this.resolveGroupOrder()
+      ])
+      const proxyNode = this.resolveProxyNode(response.proxies, groupOrder)
+      if (!proxyNode) return { proxyMs: null, proxyNode: null }
+      const proxyMs = await this.mihomo.delayTest(proxyNode).then((result) => result.delay).catch(() => null)
+      return { proxyMs, proxyNode }
+    } catch {
+      return { proxyMs: null, proxyNode: null }
+    }
   }
 }

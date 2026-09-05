@@ -13,7 +13,12 @@ const props = withDefaults(defineProps<{
   options: readonly AppSelectOption[]
   label: string
   disabled?: boolean
-}>(), { disabled: false })
+  /**
+   * 纯文本模式：常显时与相邻的运行时数值一致（16px 加粗、无控件框/箭头），
+   * 仅打开下拉后才呈现控件态。用于活动页“出站模式”这类行内选择器。
+   */
+  plain?: boolean
+}>(), { disabled: false, plain: false })
 
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 const root = ref<HTMLElement | null>(null)
@@ -75,9 +80,9 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
 </script>
 
 <template>
-  <div ref="root" class="app-select" :class="{ open, disabled }" @keydown="onKeydown">
+  <div ref="root" class="app-select" :class="{ open, disabled, plain }" @keydown="onKeydown">
     <button ref="trigger" type="button" class="app-select-trigger" :disabled="disabled" :aria-label="label" aria-haspopup="listbox" :aria-expanded="open" @click="toggle">
-      <span>{{ selected?.label ?? modelValue }}</span><AppIcon name="chevron-down" :size="15" />
+      <span>{{ selected?.label ?? modelValue }}</span><AppIcon class="trigger-chevron" name="chevron-down" :size="15" />
     </button>
     <div v-if="open" class="app-select-menu" role="listbox" :aria-label="label">
       <button v-for="(option, index) in options" :key="option.value" type="button" role="option" :aria-selected="option.value === modelValue" :disabled="option.disabled" :class="{ active: index === activeIndex, selected: option.value === modelValue }" @mouseenter="activeIndex = index" @click="choose(option)">
@@ -100,4 +105,12 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
 .app-select-menu button.selected { color: var(--app-blue); }
 .app-select-menu button:disabled { opacity: .42; }
 .app-select.disabled { opacity: .52; }
+/* ---- plain 模式：常显如普通加粗文本，打开后进入控件态 ---- */
+.app-select.plain { min-width: 0; }
+.app-select.plain .app-select-trigger { min-height: 0; gap: 5px; padding: 0; border-color: transparent; background: transparent; font-size: 16px; line-height: 19px; font-weight: 650; }
+.app-select.plain .app-select-trigger:hover:not(:disabled) { border-color: transparent; background: transparent; color: var(--app-blue); }
+.app-select.plain .trigger-chevron { opacity: 0; transition: opacity .14s ease, transform .16s ease; }
+.app-select.plain .app-select-trigger:hover:not(:disabled) .trigger-chevron,
+.app-select.plain.open .trigger-chevron { opacity: 1; }
+.app-select.plain.open .app-select-trigger { padding: 0 10px 0 12px; border-color: color-mix(in srgb, var(--app-blue) 55%, var(--app-divider)); background: color-mix(in srgb, var(--app-blue) 7%, var(--app-surface)); font-size: 13px; font-weight: 500; }
 </style>

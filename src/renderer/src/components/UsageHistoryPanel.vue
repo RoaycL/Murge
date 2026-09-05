@@ -3,7 +3,6 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import SurfaceCard from './SurfaceCard.vue'
 import { useUsageHistoryStore } from '../stores/usage-history'
 import type { UsageBucket, UsageRanking, UsageWindow } from '@shared/usage'
-import { USAGE_WINDOW_CONFIG } from '@shared/usage'
 import { formatBytes, formatBytesParts } from '../lib/format'
 import ConfirmModal from './ConfirmModal.vue'
 import AppIcon from './AppIcon.vue'
@@ -78,12 +77,6 @@ const rankingValueText = computed(() => {
   const totals = store.snapshot?.totals
   if (!totals) return ''
   return store.ranking === 'count' ? `${totals.count}` : formatBytes(bucketValue({ bucketStart: 0, up: totals.up, down: totals.down, count: totals.count }, store.ranking))
-})
-
-const capacityText = computed(() => {
-  if (!store.capacity) return `最多保留 ${USAGE_WINDOW_CONFIG['30d'].spanBuckets} 天`
-  const days = Math.round((store.capacity.retentionHours || 0) / 24)
-  return `最多保留 ${store.capacity.maxBuckets} 个分桶（约 ${days} 天），仅存储聚合流量，不保存凭据或原始配置`
 })
 
 const hasData = computed(() => (store.snapshot?.totals?.total ?? 0) > 0 || (store.ranked?.length ?? 0) > 0)
@@ -167,7 +160,6 @@ async function confirmClear(): Promise<void> {
     </template>
 
     <footer class="usage-footer">
-      <span>{{ capacityText }}</span>
       <button type="button" class="usage-clear" :disabled="store.busy" @click="clearOpen = true"><AppIcon name="delete" :size="14" />清空记录</button>
     </footer>
     <ConfirmModal :open="clearOpen" title="清空使用记录？" description="这会永久删除全部聚合流量历史，此操作不可撤销。" confirm-label="确认清空" :busy="store.busy" @close="clearOpen = false" @confirm="confirmClear" />
@@ -193,8 +185,7 @@ async function confirmClear(): Promise<void> {
 .rank-time { color: var(--app-muted); font-size: 11px; }
 .rank-row strong { font-size: 12px; font-weight: 600; }
 .usage-empty { margin: 14px 0; color: var(--app-muted); font-size: 11px; }
-.usage-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 16px; }
-.usage-footer span { color: var(--app-muted); font-size: 10px; }
+.usage-footer { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 16px; }
 .usage-clear { display: inline-flex; min-height: 28px; align-items: center; gap: 5px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: 7px; background: transparent; color: var(--app-danger, #d64f4f); font-size: 11px; white-space: nowrap; flex-shrink: 0; }
 .usage-clear:disabled { opacity: 0.5; }
 </style>

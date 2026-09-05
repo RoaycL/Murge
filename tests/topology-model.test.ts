@@ -26,8 +26,8 @@ describe('read-only topology model', () => {
 
     it('aggregates connections sharing a chain into one path', () => {
       const summary = buildTopology([
-        conn({ chains: ['Proxy', 'US-NYC'], download: 100, upload: 10 }),
-        conn({ chains: ['Proxy', 'US-NYC'], download: 50, upload: 5 })
+        conn({ chains: ['US-NYC', 'Proxy'], download: 100, upload: 10 }),
+        conn({ chains: ['US-NYC', 'Proxy'], download: 50, upload: 5 })
       ])
       expect(summary.paths).toHaveLength(1)
       const path = summary.paths[0]
@@ -40,7 +40,7 @@ describe('read-only topology model', () => {
     })
 
     it('aggregates hops across chains, marking entry and exit', () => {
-      const summary = buildTopology([conn({ chains: ['Proxy', 'US-NYC'], download: 10 }), conn({ chains: ['Proxy', 'JP-Tokyo'], download: 20 })])
+      const summary = buildTopology([conn({ chains: ['US-NYC', 'Proxy'], download: 10 }), conn({ chains: ['JP-Tokyo', 'Proxy'], download: 20 })])
       const nodes = summary.nodes
       const proxy = nodes.find((node) => node.name === 'Proxy')!
       const nyc = nodes.find((node) => node.name === 'US-NYC')!
@@ -55,7 +55,7 @@ describe('read-only topology model', () => {
     it('classifies direct, proxied and unknown chains', () => {
       const summary = buildTopology([
         conn({ chains: ['DIRECT'], download: 1 }),
-        conn({ chains: ['Proxy', 'HK'], download: 2 }),
+        conn({ chains: ['HK', 'Proxy'], download: 2 }),
         conn({ chains: [], download: 3 })
       ])
       expect(summary.directCount).toBe(1)
@@ -65,15 +65,15 @@ describe('read-only topology model', () => {
     })
 
     it('labels the derived rule on a path', () => {
-      const summary = buildTopology([conn({ chains: ['Selector', 'HK'], rule: 'GEOIP', rulePayload: 'HK', download: 5 })])
+      const summary = buildTopology([conn({ chains: ['HK', 'Selector'], rule: 'GEOIP', rulePayload: 'HK', download: 5 })])
       expect(summary.paths[0].rule).toBe('GEOIP')
       expect(summary.paths[0].rulePayload).toBe('HK')
     })
 
     it('orders paths and nodes by bytes descending', () => {
       const summary = buildTopology([
-        conn({ chains: ['A', 'Exit-A'], download: 100 }),
-        conn({ chains: ['B', 'Exit-B'], download: 200 })
+        conn({ chains: ['Exit-A', 'A'], download: 100 }),
+        conn({ chains: ['Exit-B', 'B'], download: 200 })
       ])
       expect(summary.paths.map((path) => path.hops[0])).toEqual(['B', 'A'])
       // The heavier path's hop node should sort first.
@@ -83,9 +83,9 @@ describe('read-only topology model', () => {
     it('caps the number of surfaced paths and nodes', () => {
       const summary = buildTopology(
         [
-          conn({ chains: ['P', 'N1'], download: 10 }),
-          conn({ chains: ['P', 'N2'], download: 20 }),
-          conn({ chains: ['P', 'N3'], download: 30 })
+          conn({ chains: ['N1', 'P'], download: 10 }),
+          conn({ chains: ['N2', 'P'], download: 20 }),
+          conn({ chains: ['N3', 'P'], download: 30 })
         ],
         { maxPaths: 2, maxNodes: 2 }
       )
@@ -94,20 +94,20 @@ describe('read-only topology model', () => {
     })
 
     it('reports a non-zero maxBytes for bar normalization', () => {
-      const summary = buildTopology([conn({ chains: ['P', 'N'], download: 7, upload: 3 })])
+      const summary = buildTopology([conn({ chains: ['N', 'P'], download: 7, upload: 3 })])
       expect(summary.maxBytes).toBe(10)
     })
   })
 
   describe('helpers', () => {
     it('formats a path label and defaults unknown chains to DIRECT', () => {
-      const summary = buildTopology([conn({ chains: ['A', 'B'], download: 1 }), conn({ chains: [], download: 1 })])
+      const summary = buildTopology([conn({ chains: ['B', 'A'], download: 1 }), conn({ chains: [], download: 1 })])
       expect(topologyPathLabel(summary.paths[0])).toBe('A → B')
       expect(topologyPathLabel(summary.paths[1])).toBe('DIRECT')
     })
 
     it('labels hops for direct, entry, exit and plain nodes', () => {
-      const summary = buildTopology([conn({ chains: ['DIRECT', 'Tail'], download: 1 })])
+      const summary = buildTopology([conn({ chains: ['DIRECT'], download: 1 }), conn({ chains: ['Tail', 'Entry'], download: 1 })])
       const direct = summary.nodes.find((node) => node.name === 'DIRECT')!
       const exit = summary.nodes.find((node) => node.name === 'Tail')!
       expect(topologyHopLabel(direct)).toBe('直连')

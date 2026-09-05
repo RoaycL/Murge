@@ -7,6 +7,7 @@ import AppIcon from "../components/AppIcon.vue";
 import DetailDrawer from "../components/DetailDrawer.vue";
 import AppSelect from "../components/AppSelect.vue";
 import EmptyState from "../components/EmptyState.vue";
+import { formatConnectionChain } from "@shared/connection-chain";
 
 const store = useConnectionsStore();
 const selectedKey = ref<string | null>(null);
@@ -88,7 +89,7 @@ onUnmounted(store.disconnect);
               connection.metadata.destinationIP ||
               "未知目标"
             }}</span
-            ><small>{{ connection.chains.join(" → ") || "DIRECT" }}</small>
+            ><small>{{ formatConnectionChain(connection.chains) }}</small>
           </li>
         </ul>
       </div></DetailDrawer

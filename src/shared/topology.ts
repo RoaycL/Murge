@@ -2,8 +2,8 @@
  * Read-only routing topology model.
  *
  * The topology is a derived, best-effort visualization built from the live
- * mihomo `/connections` stream: each connection carries the ordered policy chain
- * it traversed (`chains`), the rule that matched it (`rule` + `rulePayload`),
+ * mihomo `/connections` stream: each connection carries its proxy chain
+ * (`chains`, reported exit-first), the rule that matched it (`rule` + `rulePayload`),
  * and its byte counters. Connections are aggregated into distinct routing paths
  * and hop nodes so the dashboard can render "which chain carries what traffic".
  *
@@ -15,9 +15,11 @@
 
 export type TopologyHopKind = 'direct' | 'node' | 'unknown'
 
+import { connectionChainHops } from './connection-chain'
+
 /** The minimal per-connection projection the topology derivation needs. */
 export interface TopologyConnectionInput {
-  /** The ordered policy chain this connection traversed (mihomo `chains`). */
+  /** Raw mihomo `chains`, ordered from exit node back to the outer policy. */
   chains: string[]
   /** The rule that matched this connection (`rule`). */
   rule?: string
@@ -96,7 +98,7 @@ export function buildTopology(connections: TopologyConnectionInput[], options: B
 
   for (const connection of connections) {
     totalConnections += 1
-    const hops = connection.chains ?? []
+    const hops = connectionChainHops(connection.chains ?? [])
     const incomplete = hops.length === 0
     const isDirect = hops.includes('DIRECT')
     const download = connection.download ?? 0

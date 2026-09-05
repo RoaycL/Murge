@@ -3,7 +3,7 @@ import { writeFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { attachKernelWatchdog } from './kernel/crash-watchdog'
 import { InternetLatencyService } from './services/internet-latency-service'
-import { app, BrowserWindow, dialog, net, powerMonitor, safeStorage, shell } from 'electron'
+import { app, BrowserWindow, dialog, powerMonitor, safeStorage, shell } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { brand } from '@shared/brand'
 import { parseBrandConfig } from '@shared/schemas/brand'
@@ -43,6 +43,7 @@ import { ProxySelectionGateway } from './services/proxy-selection-gateway'
 import { createConfigValidator } from './profiles/config-validator'
 import { reloadKernelForActiveProfile } from './system-proxy/reload-kernel'
 import { SubscriptionFetcher } from './subscriptions/subscription-fetcher'
+import { createSubscriptionProxyFetchFn } from './subscriptions/proxy-fetch-transport'
 import { startMockMihomoServer, type MockMihomoServerHandle } from './testing/mock-mihomo-server'
 import type { MihomoGateway } from '@shared/gateways'
 import { ProtocolError, ProtocolErrorCode } from '../shared/protocol-errors'
@@ -561,9 +562,11 @@ app.whenReady().then(async () => {
   // Production additionally wires a kernel-proxy fallback transport: Node's
   // global fetch ignores the system proxy, so a subscription host that is only
   // reachable through the tunnel fails with a bare "fetch failed". The fallback
-  // goes through Chromium's stack (net.fetch), which DOES honor the system
-  // proxy — i.e. the app's own mixed port when the system proxy is enabled —
-  // so UPDATE reaches the same hosts the ADD path could.
+  // goes through Chromium's network stack (net.request), which DOES honor the
+  // system proxy — i.e. the app's own mixed port when the system proxy is
+  // enabled — so UPDATE reaches the same hosts the ADD path could. Redirects
+  // are intercepted hop-by-hop and re-validated by SubscriptionFetcher (see
+  // createSubscriptionProxyFetchFn for why net.fetch cannot be used here).
   const subscriptionFetcher = is.dev
     ? new SubscriptionFetcher({
         strictUrlValidation: true,
@@ -575,31 +578,7 @@ app.whenReady().then(async () => {
         }
       })
     : new SubscriptionFetcher({
-        proxyFetchFn: async (url, init) => {
-          const res = await net.fetch(url, {
-            signal: init?.signal,
-            headers: init?.headers,
-            // Keep redirects visible to SubscriptionFetcher. Validation after
-            // an automatic redirect is too late: Chromium may already have
-            // requested a loopback/private target before response.url is seen.
-            redirect: init?.redirect ?? 'manual'
-          })
-          return {
-            ok: res.ok,
-            status: res.status,
-            url: res.url,
-            headers: {
-              has: (name: string) => res.headers.has(name),
-              get: (name: string) => res.headers.get(name)
-            },
-            text: () => res.text(),
-            body: res.body
-              ? {
-                  getReader: () => res.body!.getReader()
-                }
-              : undefined
-          }
-        }
+        proxyFetchFn: createSubscriptionProxyFetchFn()
       })
 
   const proxySelectionStore = new ProxySelectionStore(appDataRoot(app.getPath('appData')))

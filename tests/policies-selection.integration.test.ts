@@ -67,4 +67,38 @@ describe('policies store + real mock controller', () => {
     expect(store.selectedMember).toBe(controllerNow)
     expect(store.panelError).toBeNull()
   })
+
+  it('keeps a URLTest pin after selecting a member and after a group-wide test', async () => {
+    setActivePinia(createPinia())
+    const server = await startMockMihomoServer({ trafficIntervalMs: 1000 })
+    handles.push(server)
+    installBridge(new MihomoClient(server.baseUrl, ''))
+
+    const store = usePoliciesStore()
+    await store.load()
+
+    // Open the URLTest group and pin a member. The kernel records the pin in
+    // `fixed` even when the member is currently dead (香港 02 is the mock's
+    // dead node), and the UI must surface the user's choice, not `now`.
+    store.selectGroup('自动选择')
+    expect(store.selectedMember).toBe('香港 01')
+    await store.selectNode('香港 02')
+    expect(store.selectedMember).toBe('香港 02')
+    expect(store.panelError).toBeNull()
+
+    // The controller actually recorded the pin (`fixed`), while `now` stays on
+    // the fastest alive member — exactly how the kernel reports a dead pin.
+    const client = new MihomoClient(server.baseUrl, '')
+    const afterPin = await client.getProxies()
+    expect(afterPin.proxies['自动选择'].fixed).toBe('香港 02')
+    expect(afterPin.proxies['自动选择'].now).toBe('香港 01')
+
+    // A group-wide test must NOT clear the pin. (The kernel's own
+    // /group/:name/delay would — that is why the store probes per node.)
+    await store.testAll()
+    const afterTest = await client.getProxies()
+    expect(afterTest.proxies['自动选择'].fixed).toBe('香港 02')
+    expect(store.selectedMember).toBe('香港 02')
+    expect(store.panelError).toBeNull()
+  })
 })

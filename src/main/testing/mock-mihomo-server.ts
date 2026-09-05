@@ -70,6 +70,13 @@ class MockServer {
   private readonly config: Required<Pick<MihomoConfigSnapshot, 'mode' | 'port' | 'allow-lan'>> & MihomoConfigSnapshot
   /** The currently selected member of the `节点选择` Selector group. */
   private selectorNow = '香港 01'
+  /**
+   * The pinned member of the `自动选择` URLTest group, mirroring the kernel's
+   * `fixed` field: `PUT /proxies/自动选择` sets it, and `now` only follows it
+   * while the pinned node is alive (`香港 02` is intentionally dead, so pinning
+   * it leaves `now` on the fastest alive member).
+   */
+  private urltestFixed = ''
   /** Delay results keyed by node name; `香港 02` is intentionally unreachable. */
   private readonly nodeDelay: Record<string, number> = { '香港 01': 42, DIRECT: 6 }
   /** Proxy provider metadata keyed by provider name. */
@@ -246,6 +253,24 @@ class MockServer {
       request.resume()
       return
     }
+    if (group === '自动选择') {
+      // Mirror the kernel's URLTest.Set: the pin is stored verbatim (the kernel
+      // accepts any member, alive or not) and surfaces as the `fixed` field.
+      const chunks: Buffer[] = []
+      request.on('data', (chunk) => chunks.push(chunk))
+      request.on('end', () => {
+        let payload: Record<string, unknown> = {}
+        try {
+          payload = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
+        } catch {
+          return this.json(response, 400, { message: 'invalid JSON' })
+        }
+        if (typeof payload.name === 'string') this.urltestFixed = payload.name
+        this.json(response, 204)
+      })
+      request.resume()
+      return
+    }
     request.resume()
     this.json(response, 204)
   }
@@ -261,7 +286,11 @@ class MockServer {
   }
 
   private groupDelay(response: ServerResponse, name: string): void {
-    if (name !== '节点选择') return this.json(response, 404, { message: 'group not found' })
+    // Model the kernel's side effect: `GET /group/:name/delay` on a non-Selector
+    // SelectAble group (URLTest/Fallback) FORCE-CLEARS the pinned selection
+    // before probing. The store avoids this endpoint for exactly this reason.
+    if (name === '自动选择') this.urltestFixed = ''
+    if (name !== '节点选择' && name !== '自动选择') return this.json(response, 404, { message: 'group not found' })
     this.json(response, 200, { ...this.nodeDelay })
   }
 
@@ -367,6 +396,15 @@ class MockServer {
     return {
       proxies: {
         '节点选择': { name: '节点选择', type: 'Selector', now: this.selectorNow, all: ['香港 01', '香港 02', 'DIRECT'] },
+        // URLTest group mirroring the kernel: `fixed` is the user's pin (empty
+        // = none), `now` is the fastest ALIVE member (or the pin when alive).
+        '自动选择': {
+          name: '自动选择',
+          type: 'URLTest',
+          now: this.urltestFixed && this.urltestFixed !== '香港 02' ? this.urltestFixed : '香港 01',
+          fixed: this.urltestFixed.length > 0 ? this.urltestFixed : undefined,
+          all: ['香港 01', '香港 02', 'DIRECT']
+        },
         '劫持': { name: '劫持', type: 'Direct' },
         '香港 01': { name: '香港 01', type: 'Shadowsocks', alive: true, udp: true },
         '香港 02': { name: '香港 02', type: 'Shadowsocks', alive: false, udp: true }

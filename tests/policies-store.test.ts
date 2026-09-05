@@ -4,7 +4,6 @@ import { usePoliciesStore } from '../src/renderer/src/stores/policies'
 import { ProtocolError, ProtocolErrorCode } from '../src/shared/protocol-errors'
 import type {
   MihomoProxiesResponse,
-  MihomoDelayMap,
   MihomoDelayResult
 } from '../src/shared/mihomo-api'
 
@@ -215,45 +214,43 @@ describe('policies store', () => {
     expect(store.nodeState('DIRECT').status).toBe('error')
   })
 
-  it('applies a group delay map and marks members omitted by upstream as unavailable (not timeout)', async () => {
+  it('applies per-node delays from testAll and labels a dead node timeout (no group endpoint)', async () => {
     getProxies.mockResolvedValue(PROXIES)
-    groupDelayTest.mockResolvedValue({ '香港 01': 42, DIRECT: 6 } satisfies MihomoDelayMap)
+    // testAll fans out per-node probes (never /group/:name/delay — that endpoint
+    // would clear a URLTest pin). Each member gets its own result or failure.
+    delayTest.mockImplementation(async (name: string) => {
+      if (name === '香港 02') throw error(ProtocolErrorCode.UPSTREAM_TIMEOUT)
+      return { delay: name === '香港 01' ? 42 : 6 } satisfies MihomoDelayResult
+    })
     const store = usePoliciesStore()
     await store.load()
     await store.testAll()
     expect(store.groupDelayStatus).toBe('ok')
     expect(store.nodeState('香港 01')).toEqual({ status: 'ok', delay: 42 })
     expect(store.nodeState('DIRECT')).toEqual({ status: 'ok', delay: 6 })
-    // 香港 02 is absent from the map (upstream omits failed/unmeasured nodes);
-    // it must NOT be reported as a timeout.
-    expect(store.nodeState('香港 02')).toEqual({ status: 'unavailable', delay: null })
+    expect(store.nodeState('香港 02').status).toBe('timeout')
+    expect(groupDelayTest).not.toHaveBeenCalled()
   })
 
-  it('treats a delay of 0 as unavailable, not a successful 0ms measurement', async () => {
-    getProxies.mockResolvedValue(PROXIES)
-    groupDelayTest.mockResolvedValue({ '香港 01': 0, DIRECT: 6 } satisfies MihomoDelayMap)
-    const store = usePoliciesStore()
-    await store.load()
-    await store.testAll()
-    expect(store.groupDelayStatus).toBe('ok')
-    // mihomo reports 0 for a failed/unmeasured probe (same as providers.ts).
-    expect(store.nodeState('香港 01')).toEqual({ status: 'unavailable', delay: null })
-    expect(store.nodeState('DIRECT')).toEqual({ status: 'ok', delay: 6 })
-  })
-
-  it('reports a group delay failure and marks all members with the classified state', async () => {
+  it('reports a group-level failure only when EVERY member probe fails', async () => {
     getProxies.mockResolvedValue(PROXIES)
     const store = usePoliciesStore()
     await store.load()
-    groupDelayTest.mockRejectedValueOnce(error(ProtocolErrorCode.UPSTREAM_TIMEOUT))
+    delayTest.mockRejectedValue(error(ProtocolErrorCode.UPSTREAM_TIMEOUT))
     await store.testAll()
     expect(store.groupDelayStatus).toBe('error')
     expect(store.nodeState('香港 01').status).toBe('timeout')
     expect(store.nodeState('香港 02').status).toBe('timeout')
-    // A stale/generic group failure is an error, not an availability verdict.
-    groupDelayTest.mockRejectedValueOnce(error(ProtocolErrorCode.UPSTREAM_HTTP_ERROR))
+    // One healthy member is enough for the group sweep itself to count as ok —
+    // individual dead nodes were already labeled per-node.
+    delayTest.mockImplementation(async (name: string) => {
+      if (name === '香港 02') throw error(ProtocolErrorCode.UPSTREAM_TEST_FAILED)
+      return { delay: 42 } satisfies MihomoDelayResult
+    })
     await store.testAll()
-    expect(store.nodeState('香港 01').status).toBe('error')
+    expect(store.groupDelayStatus).toBe('ok')
+    expect(store.nodeState('香港 01')).toEqual({ status: 'ok', delay: 42 })
+    expect(store.nodeState('香港 02').status).toBe('unavailable')
   })
 
   it('patches the mode, confirms the controller, and rolls back a rejected patch', async () => {

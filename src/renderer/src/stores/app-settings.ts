@@ -4,7 +4,7 @@ import type { AppSettings } from '@shared/app-settings'
 import { DEFAULT_APP_SETTINGS } from '@shared/app-settings'
 import { toProtocolError } from '@shared/protocol-errors'
 
-/** The shape renderer views read. Only `autoStartKernel` is user-editable today. */
+/** Renderer mirror of durable main-process application preferences. */
 const INITIAL: AppSettings = { ...DEFAULT_APP_SETTINGS }
 
 export const useAppSettingsStore = defineStore('app-settings', () => {

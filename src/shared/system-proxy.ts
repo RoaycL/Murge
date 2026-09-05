@@ -51,6 +51,19 @@ export interface SystemProxyStatus {
 /** Sentinel host that the system proxy may only ever point at. */
 export const SYSTEM_PROXY_LOOPBACK_HOST = '127.0.0.1'
 
+/**
+ * Renderer-safe endpoint label. Current statuses carry `address` as a complete
+ * host:port; the split `port` fallback keeps older/corrupt snapshots readable
+ * without ever producing `host:port:port`.
+ */
+export function formatSystemProxyEndpoint(
+  status: Pick<SystemProxyStatus, 'address' | 'port'>
+): string {
+  const address = status.address?.trim()
+  if (address) return address
+  return `${SYSTEM_PROXY_LOOPBACK_HOST}${status.port ? `:${status.port}` : ''}`
+}
+
 /** The listeners the system proxy may be pointed at (always the loopback mixed-port). */
 export interface SystemProxyTarget {
   host: string

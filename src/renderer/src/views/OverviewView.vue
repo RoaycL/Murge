@@ -5,6 +5,7 @@ import { useKernelStore } from '../stores/kernel'
 import { useSystemProxyStore } from '../stores/system-proxy'
 import { useTunStore } from '../stores/tun'
 import { TUN_UI_COPY } from '@shared/tun'
+import { formatSystemProxyEndpoint } from '@shared/system-proxy'
 
 const kernel = useKernelStore()
 const systemProxy = useSystemProxyStore()
@@ -26,7 +27,7 @@ const spSwitchDisabled = computed(() => spBusy.value || !sp.value.supported)
 const spPhaseLabel = computed(() => {
   switch (sp.value.phase) {
     case 'enabled':
-      return `已启用 · ${sp.value.address ?? '127.0.0.1'}${sp.value.port ? `:${sp.value.port}` : ''}`
+      return `已启用 · ${formatSystemProxyEndpoint(sp.value)}`
     case 'enabling':
       return '正在启用系统代理…'
     case 'disabled':

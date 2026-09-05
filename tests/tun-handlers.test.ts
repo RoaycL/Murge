@@ -20,12 +20,14 @@ describe('TUN IPC single-kernel mode switch', () => {
     const handlers = buildIpcHandlers(container.deps)
     await handlers[IPC.tunEnable]({})
     expect(container.tun.enableCalls).toBe(1)
+    expect(container.appSettings.setCalls).toContainEqual({ tunDesired: true })
     // The handler itself never touches the kernel: the controller inside the
     // queued gateway owns the prepare/stop sequence.
     expect(container.kernel.stopCalls).toBe(0)
 
     await handlers[IPC.tunDisable]({})
     expect(container.tun.disableCalls).toBe(1)
+    expect(container.appSettings.setCalls).toContainEqual({ tunDesired: false })
   })
 
   it('enables TUN while the system proxy is already owned (coexistence)', async () => {

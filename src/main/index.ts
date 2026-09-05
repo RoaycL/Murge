@@ -52,6 +52,7 @@ import { TrayController } from './tray/tray-controller'
 import { createElectronTray } from './tray/electron-tray'
 import { StartupService } from './startup/service'
 import { ElectronStartupAdapter } from './startup/electron-adapter'
+import { restoreRuntimeIntent } from './startup/runtime-intent'
 import { AppSettingsService } from './app-settings/service'
 import { OverrideService } from './kernel/overrides/override-service'
 import { DnsEnhancementService } from './kernel/dns/dns-enhancement-service'
@@ -149,6 +150,7 @@ let systemProxy: SystemProxyService | null = null
 let mockServer: MockMihomoServerHandle | null = null
 let disposeIpc: (() => void) | null = null
 let isQuitting = false
+let shutdownPromise: Promise<void> | null = null
 // Keep a strong reference for the complete lifetime of the native window.
 // A function-local BrowserWindow can be garbage-collected after createWindow
 // returns, which is especially visible in packaged Windows builds as a running
@@ -278,6 +280,14 @@ function createWindow(): BrowserWindow {
     event.preventDefault()
     window.hide()
   })
+  // Windows does not guarantee Electron's application-level before-quit event
+  // during logoff/restart/shutdown. Start the same bounded network cleanup from
+  // the native window session-end notification as a best-effort head start.
+  if (process.platform === 'win32') {
+    window.on('session-end', () => {
+      void beginApplicationShutdown(true)
+    })
+  }
 
   // `ready-to-show` is an optimisation, not a visibility gate. Renderer load
   // failures and some Windows/GPU combinations may never emit it, so also show
@@ -995,7 +1005,6 @@ app.whenReady().then(async () => {
       handleNetworkUp: () => systemProxyService.handleNetworkUp()
     }
   })
-  networkDetector.start()
   // A resume must not wait for the next periodic tick to reconcile.
   powerMonitor.on('resume', () => {
     void networkDetector?.probeNow().catch((error) => {
@@ -1150,36 +1159,41 @@ app.whenReady().then(async () => {
     return
   }
 
-  // Auto-start the single kernel on a normal (non-hidden) launch so the
-  // Policy/Rules views reflect the active profile immediately, matching the
-  // persistent-core model of mihomo-party / clash-verge-rev. Only the ordinary
-  // (non-TUN) host starts here; system proxy and TUN remain explicit,
-  // user-triggered takeovers. Gated on the persisted "启动时自动启动内核"
-  // setting, skipped on login `--hidden` launches (which keep the guarantee
-  // that nothing auto-enables at login), and wrapped so a failure logs without
-  // ever blocking the window from opening.
-  if (!is.dev && !launchHidden && !skipKernelAutostart) {
+  // Restore the user's last requested networking state after BOTH recovery
+  // layers above have completed: systemProxyService.init() has restored an
+  // orphaned registry backup, and tunInstance.initialize() has reconciled an
+  // interrupted privileged transaction. Login launches use `--hidden`, but
+  // must still restore the requested state; only the explicit Actions smoke
+  // flag suppresses it. Operations are sequential and bounded: ordinary host
+  // ready -> TUN mode switch -> system proxy on the unified mixed-port.
+  if (!is.dev && !skipKernelAutostart) {
     try {
       const settings = await appSettingsService.get()
-      if (settings.autoStartKernel && settings.kernelEnabled) {
-        const status = await queuedKernel.getStatus()
-        if (status.phase === 'stopped') {
-          // Through the mode queue like every other start (a leftover TUN
-          // session reconciled at boot makes this a no-op instead of a
-          // conflicting spawn on the unified ports).
-          const started = await queuedKernel.start()
-          if (started.phase !== 'running') {
-            console.warn(`[kernel-autostart] kernel did not become running (${started.phase})`)
-          } else {
-            // Fresh boot on the active profile: restore its remembered picks.
-            await proxySelectionService.restoreSelections()
-          }
-        }
+      const restored = await restoreRuntimeIntent(settings, {
+        kernel: queuedKernel,
+        tun: queuedTun,
+        systemProxy: systemProxyService,
+        restoreSelections: async () => {
+          await proxySelectionService.restoreSelections()
+        },
+        log: (message, error) => console.warn(message, error ?? '')
+      })
+      if (settings.tunDesired && restored.tun.phase !== 'active') {
+        console.warn(`[startup-restore] TUN intent remains pending (${restored.tun.phase})`)
+      }
+      if (settings.systemProxyDesired && restored.systemProxyPhase !== 'enabled') {
+        console.warn(`[startup-restore] system proxy intent remains pending (${restored.systemProxyPhase})`)
       }
     } catch (error) {
-      console.warn('[kernel-autostart] failed to auto-start kernel:', error)
+      console.warn('[startup-restore] failed to restore runtime intent:', error)
     }
   }
+
+  // Arm connectivity recovery only after startup reconciliation. This prevents
+  // the first detector tick from racing a slow Windows TUN service bootstrap;
+  // later offline/online and resume transitions continue to use the same
+  // serialized mode queue.
+  networkDetector.start()
 
   // Auto-check for a newer release on launch, gated on the persisted
   // "启动时自动检查更新" setting. `check()` kicks off the feed request and returns
@@ -1277,11 +1291,10 @@ async function restoreNetworkBeforeQuit(): Promise<boolean> {
   return task()
 }
 
-app.on('before-quit', (event) => {
-  if (isQuitting) return
-  event.preventDefault()
+function beginApplicationShutdown(sessionEnding: boolean): Promise<void> {
+  if (shutdownPromise) return shutdownPromise
   isQuitting = true
-  void (async () => {
+  shutdownPromise = (async () => {
     // Proxy selections share the profile mutation queue through their durable
     // per-profile write. Drain accepted work before tearing IPC and storage down.
     await waitForProfileOperations?.()
@@ -1329,10 +1342,20 @@ app.on('before-quit', (event) => {
           waitForProfileOperations = null
         }
       },
-      quit: () => app.quit(),
+      // Session-end is already inside the Windows logoff/shutdown path; app.exit
+      // avoids re-entering before-quit after the bounded cleanup completes.
+      quit: () => sessionEnding ? app.exit(0) : app.quit(),
       onCleanupError: (error, step) => console.error(`[quit-guard] ${step} failed during quit:`, error)
     })
     if (result === 'restore-failed') {
+      shutdownPromise = null
+      if (sessionEnding) {
+        // Windows may terminate the process immediately. Preserve the proxy
+        // backup/TUN journal so init() can restore them before replaying the
+        // saved user intent on the next launch.
+        app.exit(0)
+        return
+      }
       isQuitting = false
       const window = mainWindow ?? BrowserWindow.getAllWindows()[0]
       if (window && !window.isDestroyed()) {
@@ -1343,4 +1366,11 @@ app.on('before-quit', (event) => {
       return
     }
   })()
+  return shutdownPromise
+}
+
+app.on('before-quit', (event) => {
+  if (isQuitting) return
+  event.preventDefault()
+  void beginApplicationShutdown(false)
 })

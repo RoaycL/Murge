@@ -36,6 +36,12 @@ export class AppSettingsService implements AppSettingsGateway {
           typeof patch.autoCheckUpdate === 'boolean'
             ? patch.autoCheckUpdate
             : current.autoCheckUpdate,
+        systemProxyDesired:
+          typeof patch.systemProxyDesired === 'boolean'
+            ? patch.systemProxyDesired
+            : current.systemProxyDesired,
+        tunDesired:
+          typeof patch.tunDesired === 'boolean' ? patch.tunDesired : current.tunDesired,
         kernelEnabled:
           typeof patch.kernelEnabled === 'boolean' ? patch.kernelEnabled : current.kernelEnabled,
         kernelChannel:

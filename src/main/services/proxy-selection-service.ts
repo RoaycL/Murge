@@ -2,7 +2,7 @@ import type { MihomoGateway, ProfileGateway } from '@shared/gateways'
 import type { ProxySelectionStore } from '../profiles/proxy-selection-store'
 
 /** Group types whose `now` member the user can pick (mirrors the renderer). */
-const SELECTABLE_GROUP_TYPES = new Set(['Selector', 'URLTest', 'Fallback', 'LoadBalance', 'Relay'])
+const SELECTABLE_GROUP_TYPES = new Set(['Selector', 'URLTest', 'Fallback'])
 
 /**
  * Persists the user's node picks and replays them onto a freshly (re)started

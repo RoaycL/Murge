@@ -221,6 +221,18 @@ describe('MihomoClient', () => {
       expect(url).toContain('/proxies/%E9%A6%99%E6%B8%AF%2001/delay')
       expect(url).toContain('timeout=5000')
       expect(url).toContain('url=')
+      expect(result.url).toBe('https://www.gstatic.com/generate_204')
+    })
+
+    it('treats blank and whitespace test URLs as an omitted URL', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(fakeResponse({ delay: 42 }))
+      vi.stubGlobal('fetch', fetchMock)
+      const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
+      await client.delayTest('blank', { url: '' })
+      await client.providerDelayTest('provider', 'space', { url: '   ' })
+      for (const call of fetchMock.mock.calls) {
+        expect(String(call[0])).toContain('url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204')
+      }
     })
 
     it('honors custom delay options', async () => {

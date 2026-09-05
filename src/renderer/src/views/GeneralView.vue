@@ -1,14 +1,47 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useStartupStore } from '../stores/startup'
 import { useAppSettingsStore } from '../stores/app-settings'
+import AppSelect from '../components/AppSelect.vue'
 
 const startup = useStartupStore()
 const appSettings = useAppSettingsStore()
+const delayUrl = ref('')
+const delayUrlError = ref<string | null>(null)
+const delayScopeOptions = [
+  { value: 'group', label: '跟随策略组' },
+  { value: 'global', label: '始终使用全局地址' }
+]
+const delayScope = computed({
+  get: () => appSettings.settings.delayTestUrlScope,
+  set: (value: string) => {
+    if (value === 'group' || value === 'global') void appSettings.set({ delayTestUrlScope: value })
+  }
+})
 
-onMounted(() => {
+async function saveDelayUrl(): Promise<void> {
+  const value = delayUrl.value.trim()
+  if (value) {
+    try {
+      const parsed = new URL(value)
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('scheme')
+    } catch {
+      delayUrlError.value = '请输入有效的 HTTP 或 HTTPS 测试地址。'
+      return
+    }
+  }
+  delayUrlError.value = null
+  if (value === appSettings.settings.delayTestUrl) return
+  if (!(await appSettings.set({ delayTestUrl: value }))) {
+    delayUrl.value = appSettings.settings.delayTestUrl
+    delayUrlError.value = appSettings.errorMessage
+  }
+}
+
+onMounted(async () => {
   void startup.refresh()
-  void appSettings.refresh()
+  await appSettings.refresh()
+  delayUrl.value = appSettings.settings.delayTestUrl
 })
 </script>
 
@@ -79,5 +112,33 @@ onMounted(() => {
       </div>
     </section>
 
+    <section>
+      <h2>延迟测试</h2>
+      <div class="surface-card preference-list delay-preferences">
+        <label>
+          <span><strong>测试地址来源</strong></span>
+          <AppSelect v-model="delayScope" :options="delayScopeOptions" label="测试地址来源" />
+        </label>
+        <label>
+          <span><strong>全局测试地址</strong></span>
+          <input
+            v-model="delayUrl"
+            class="delay-url-field"
+            type="url"
+            spellcheck="false"
+            placeholder="https://www.gstatic.com/generate_204"
+            @change="saveDelayUrl"
+            @blur="saveDelayUrl"
+            @keydown.enter.prevent="saveDelayUrl"
+          />
+        </label>
+      </div>
+      <p v-if="delayUrlError" class="inline-error">{{ delayUrlError }}</p>
+    </section>
+
   </div>
 </template>
+
+<style scoped>
+.delay-url-field{width:min(430px,60vw)!important;height:32px!important;padding:0 10px;border:1px solid var(--app-divider);border-radius:8px;background:color-mix(in srgb,var(--app-surface) 88%,var(--app-bg));color:var(--app-text);font-size:12px}
+</style>

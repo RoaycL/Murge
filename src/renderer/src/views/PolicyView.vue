@@ -38,6 +38,10 @@ function displayType(proxyType: string | null | undefined): string {
   return PROXY_TYPE_LABELS[proxyType.toLowerCase()] ?? proxyType
 }
 
+function groupSummary(group: Parameters<typeof policies.groupSelectedMember>[0]): string {
+  return policies.groupSelectedMember(group) || (policies.isSelectableGroup(group) ? '未选择' : '内核自动')
+}
+
 function latencyLabel(name: string): { text: string; kind: string } {
   const state = policies.nodeState(name)
   switch (state.status) {
@@ -59,6 +63,12 @@ function latencyLabel(name: string): { text: string; kind: string } {
 function isUnavailable(name: string): boolean {
   const proxy = policies.nodeByMember[name]
   return proxy ? proxy.alive === false : false
+}
+
+function delayTitle(name: string): string {
+  const state = policies.nodeState(name)
+  if (state.error) return state.error
+  return state.url ? `测试地址：${state.url}` : '测试此节点'
 }
 
 const drawerSubtitle = computed(() => {
@@ -135,16 +145,16 @@ watch(() => kernel.status.phase, (phase, previous) => {
     <template v-else>
       <div class="section-caption"><span>策略组</span></div>
       <div class="policy-group-grid">
-        <button v-for="group in policies.groups" :key="group.name" type="button" :class="{ selected: policies.selectedGroup === group.name }" @click="openGroup(group.name)"><img v-if="group.icon" class="group-icon" :src="group.icon" alt="" loading="lazy" @error="onGroupIconError" /><small>{{ displayType(group.type) }}</small><strong>{{ group.name }}</strong><span>{{ policies.groupSelectedMember(group) || '未选择' }}</span><AppIcon name="next" :size="14" /></button>
+        <button v-for="group in policies.groups" :key="group.name" type="button" :class="{ selected: policies.selectedGroup === group.name }" @click="openGroup(group.name)"><img v-if="group.icon" class="group-icon" :src="group.icon" alt="" loading="lazy" @error="onGroupIconError" /><small>{{ displayType(group.type) }}</small><strong>{{ group.name }}</strong><span>{{ groupSummary(group) }}</span><AppIcon name="next" :size="14" /></button>
       </div>
     </template>
 
     <div v-if="policies.panelError" class="panel-error">{{ policies.panelError }}</div>
 
     <DetailDrawer :open="groupDrawerOpen && Boolean(policies.selectedGroup)" :title="policies.selectedGroup" :subtitle="drawerSubtitle" @close="groupDrawerOpen = false">
-      <div class="node-caption"><span>节点列表</span><button type="button" @click="policies.testAll()">测试当前组</button></div>
+      <div class="node-caption"><span>节点列表</span><button type="button" :disabled="policies.groupDelayStatus === 'testing'" @click="policies.testAll()">{{ policies.groupDelayStatus === 'testing' ? '测试中…' : '测试当前组' }}</button></div>
       <div class="drawer-body-grid">
-        <div class="node-grid"><div v-for="member in policies.groupMembers" :key="member" class="node-card" :class="{ selected: policies.selectedMember === member, unavailable: isUnavailable(member) }"><button type="button" class="node-select" @click="onCardClick(member)"><small>{{ displayType(policies.nodeByMember[member]?.type) }}</small><strong>{{ member }}</strong></button><button type="button" class="node-delay" :class="latencyLabel(member).kind" :disabled="policies.nodeState(member).status === 'testing'" @click="policies.testNode(member)">{{ latencyLabel(member).text }}</button></div></div>
+        <div class="node-grid"><div v-for="member in policies.groupMembers" :key="member" class="node-card" :class="{ selected: policies.selectedMember === member, unavailable: isUnavailable(member) }"><button type="button" class="node-select" :disabled="!policies.isSelectableGroup(policies.currentGroup)" @click="onCardClick(member)"><small>{{ displayType(policies.nodeByMember[member]?.type) }}</small><strong>{{ member }}</strong></button><button type="button" class="node-delay" :class="latencyLabel(member).kind" :title="delayTitle(member)" :disabled="policies.nodeState(member).status === 'testing'" @click="policies.testNode(member)">{{ latencyLabel(member).text }}</button></div></div>
       </div>
       <div v-if="policies.panelError" class="panel-error drawer-panel-error">{{ policies.panelError }}</div>
     </DetailDrawer>
@@ -168,6 +178,7 @@ watch(() => kernel.status.phase, (phase, previous) => {
 .node-grid .node-card.unavailable { opacity: .78; }
 .node-select,.node-delay { min-width:0; padding:0; border:0; background:transparent; color:inherit; text-align:left; }
 .node-select { display:flex; flex-direction:column; }
+.node-select:disabled { cursor:default; opacity:1; }
 .node-select small { color:var(--app-muted); }
 .node-select strong { overflow:hidden; margin-top:3px; text-overflow:ellipsis; white-space:nowrap; }
 .node-delay { align-self:flex-start; margin-top:auto; color:#68d21d; }

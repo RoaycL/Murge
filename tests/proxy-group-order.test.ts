@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseProxyGroupOrder } from '../src/main/profiles/proxy-group-order'
+import { parseProxyGroupOrder, parseProxyGroupTestUrls } from '../src/main/profiles/proxy-group-order'
 
 describe('parseProxyGroupOrder', () => {
   it('returns proxy-group names in document order', () => {
@@ -79,5 +79,45 @@ describe('parseProxyGroupOrder', () => {
       '    name: 合并组'
     ].join('\n')
     expect(parseProxyGroupOrder(document)).toEqual(['锚点组', '合并组'])
+  })
+})
+
+describe('parseProxyGroupTestUrls', () => {
+  it('distinguishes an omitted URL from an explicit normalized URL', () => {
+    const document = [
+      'proxy-groups:',
+      '  - name: 手动选择',
+      '    type: select',
+      '    proxies: [DIRECT]',
+      '  - name: 自动选择',
+      '    type: url-test',
+      '    url: "  https://probe.example/generate_204  "',
+      '    proxies: [DIRECT]'
+    ].join('\n')
+    expect(parseProxyGroupTestUrls(document)).toEqual({
+      手动选择: null,
+      自动选择: 'https://probe.example/generate_204'
+    })
+  })
+
+  it('fails closed to an empty map for malformed documents', () => {
+    expect(parseProxyGroupTestUrls('proxy-groups: [broken')).toEqual({})
+  })
+
+  it('resolves a URL inherited through a YAML merge anchor', () => {
+    const document = [
+      'proxy-groups:',
+      '  - &base',
+      '    name: base',
+      '    type: url-test',
+      '    url: https://probe.example/204',
+      '    proxies: [DIRECT]',
+      '  - <<: *base',
+      '    name: inherited'
+    ].join('\n')
+    expect(parseProxyGroupTestUrls(document)).toEqual({
+      base: 'https://probe.example/204',
+      inherited: 'https://probe.example/204'
+    })
   })
 })

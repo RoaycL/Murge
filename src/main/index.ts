@@ -36,7 +36,7 @@ import { ProfileRepository } from './profiles/profile-repository'
 import { EncryptedProfileSourceStore } from './profiles/profile-source-store'
 import { ProfileService } from './profiles/profile-service'
 import { ProfileAutoReloadGateway } from './profiles/profile-auto-reload-gateway'
-import { parseProxyGroupOrder } from './profiles/proxy-group-order'
+import { parseProxyGroupOrder, parseProxyGroupTestUrls } from './profiles/proxy-group-order'
 import { ProxySelectionStore } from './profiles/proxy-selection-store'
 import { ProxySelectionService } from './services/proxy-selection-service'
 import { ProxySelectionGateway } from './services/proxy-selection-gateway'
@@ -195,13 +195,21 @@ if (!hasSingleInstanceLock) {
  * system-network setting is changed.
  */
 async function createMihomoGateway(
-  productionController?: { url: string; secret: string }
+  productionController?: { url: string; secret: string },
+  resolveGroupTestUrls?: () => Promise<Record<string, string | null>>,
+  resolveDelayTestSettings?: () => Promise<{ scope: 'group' | 'global'; url: string }>
 ): Promise<MihomoGateway> {
   if (is.dev) {
     const secret = devControllerSecret || 'dev-mock-secret'
     mockServer = await startMockMihomoServer({ secret })
     const client = new MihomoClient(mockServer.baseUrl, secret)
-    mihomo = new MihomoService(client, { wsBaseUrl: mockServer.wsBaseUrl, secret, enabled: true })
+    mihomo = new MihomoService(client, {
+      wsBaseUrl: mockServer.wsBaseUrl,
+      secret,
+      enabled: true,
+      resolveGroupTestUrls,
+      resolveDelayTestSettings
+    })
   } else {
     if (!productionController) {
       throw new ProtocolError(ProtocolErrorCode.INTERNAL, 'Production controller configuration is missing')
@@ -212,7 +220,9 @@ async function createMihomoGateway(
       {
         wsBaseUrl: productionController.url.replace(/^http/, 'ws'),
         secret: productionController.secret,
-        enabled: true
+        enabled: true,
+        resolveGroupTestUrls,
+        resolveDelayTestSettings
       }
     )
   }
@@ -723,7 +733,12 @@ app.whenReady().then(async () => {
       : {
           url: `http://127.0.0.1:${productionControllerPort}`,
           secret: productionSecret!
-        }
+        },
+    async () => parseProxyGroupTestUrls((await resolveEnhancedActiveDocument()) ?? ''),
+    async () => {
+      const settings = await appSettingsService.get()
+      return { scope: settings.delayTestUrlScope, url: settings.delayTestUrl }
+    }
   )
   const ipcKernel = !is.dev && mihomo
     ? new ControllerReadyKernelGateway(

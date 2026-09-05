@@ -50,7 +50,7 @@ async function systemDnsNsProbe(label: string): Promise<'answered' | 'failed'> {
 }
 
 /** First selectable group type whose `now` member represents the default path. */
-const SELECTABLE_GROUP_TYPES = new Set(['Selector', 'URLTest', 'Fallback', 'LoadBalance', 'Relay'])
+const SELECTABLE_GROUP_TYPES = new Set(['Selector', 'URLTest', 'Fallback'])
 
 export interface LatencyServiceOptions {
   mihomo: Pick<MihomoGateway, 'getProxies' | 'delayTest' | 'dnsQuery'>

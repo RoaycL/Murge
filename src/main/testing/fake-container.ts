@@ -653,7 +653,9 @@ export class FakeAppSettingsGateway implements AppSettingsGateway {
     tunDesired: false,
     kernelEnabled: true,
     kernelChannel: 'stable',
-    kernelSpecificVersion: ''
+    kernelSpecificVersion: '',
+    delayTestUrlScope: 'group',
+    delayTestUrl: ''
   }
   setCalls: Array<Partial<AppSettings>> = []
   get(): Promise<AppSettings> { return Promise.resolve({ ...this.settings }) }

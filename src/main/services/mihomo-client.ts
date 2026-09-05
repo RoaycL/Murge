@@ -37,6 +37,12 @@ import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
  */
 const DEFAULT_TEST_URL = 'https://www.gstatic.com/generate_204'
 
+/** Empty controller/config values mean "use the client default", not a URL. */
+function resolveTestUrl(value?: string): string {
+  const normalized = value?.trim()
+  return normalized || DEFAULT_TEST_URL
+}
+
 export interface MihomoClientOptions {
   /** Abort a request that does not complete within this many milliseconds. */
   timeoutMs?: number
@@ -291,19 +297,19 @@ export class MihomoClient {
   }
 
   delayTest(name: string, opts: DelayTestOptions = {}): Promise<MihomoDelayResult> {
-    const url = opts.url ?? DEFAULT_TEST_URL
+    const url = resolveTestUrl(opts.url)
     const timeout = opts.timeout ?? 5000
     this.assertSafeTestUrl(url)
     const query = `?timeout=${encodeURIComponent(String(timeout))}&url=${encodeURIComponent(url)}`
     return this.request(`/proxies/${encodeURIComponent(name)}/delay${query}`, {}, {
       signal: opts.signal,
       timeoutMs: Math.max(this.timeoutMs, timeout + 3000)
-    }).then(parseMihomoDelayResult)
+    }).then((input) => ({ ...parseMihomoDelayResult(input), url }))
   }
 
   /** Test a node through its proxy-provider endpoint so provider history is updated. */
   providerDelayTest(provider: string, name: string, opts: DelayTestOptions = {}): Promise<MihomoDelayResult> {
-    const url = opts.url ?? DEFAULT_TEST_URL
+    const url = resolveTestUrl(opts.url)
     const timeout = opts.timeout ?? 5000
     this.assertSafeTestUrl(url)
     const query = `?timeout=${encodeURIComponent(String(timeout))}&url=${encodeURIComponent(url)}`
@@ -311,11 +317,11 @@ export class MihomoClient {
       `/providers/proxies/${encodeURIComponent(provider)}/${encodeURIComponent(name)}/healthcheck${query}`,
       {},
       { signal: opts.signal, timeoutMs: Math.max(this.timeoutMs, timeout + 3000) }
-    ).then(parseMihomoDelayResult)
+    ).then((input) => ({ ...parseMihomoDelayResult(input), url }))
   }
 
   groupDelayTest(name: string, opts: DelayTestOptions = {}): Promise<MihomoDelayMap> {
-    const url = opts.url ?? DEFAULT_TEST_URL
+    const url = resolveTestUrl(opts.url)
     const timeout = opts.timeout ?? 5000
     this.assertSafeTestUrl(url)
     const query = `?timeout=${encodeURIComponent(String(timeout))}&url=${encodeURIComponent(url)}`

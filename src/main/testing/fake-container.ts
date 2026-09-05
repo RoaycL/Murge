@@ -625,6 +625,8 @@ export class FakeAppSettingsGateway implements AppSettingsGateway {
   settings: AppSettings = {
     autoStartKernel: true,
     autoCheckUpdate: true,
+    systemProxyDesired: false,
+    tunDesired: false,
     kernelEnabled: true,
     kernelChannel: 'stable',
     kernelSpecificVersion: ''

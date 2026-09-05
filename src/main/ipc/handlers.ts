@@ -119,8 +119,19 @@ export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {})
     [IPC.profilesValidate]: async (_event, document) => profiles.validateDocument(parseProfileDocument(document)),
 
     [IPC.systemProxyGetStatus]: async () => systemProxy.getStatus(),
-    [IPC.systemProxyEnable]: async () => systemProxy.enable(),
-    [IPC.systemProxyDisable]: async () => systemProxy.disable(),
+    [IPC.systemProxyEnable]: async () => {
+      // Persist the user's requested end state before touching Windows. A
+      // transient controller/service failure may leave the live state off, but
+      // the next launch should still retry the choice the user made.
+      await appSettings.set({ systemProxyDesired: true })
+      return systemProxy.enable()
+    },
+    [IPC.systemProxyDisable]: async () => {
+      // Turning off is also intent-first: if registry restoration reports an
+      // error, startup must never re-enable the proxy against the user's wish.
+      await appSettings.set({ systemProxyDesired: false })
+      return systemProxy.disable()
+    },
     [IPC.systemProxyGetProxyBypass]: async () => systemProxy.getProxyBypass(),
     [IPC.systemProxySetProxyBypass]: async (_event, input) =>
       systemProxy.setProxyBypass(parseProxyBypassPolicy(input)),
@@ -154,8 +165,14 @@ export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {})
     [IPC.updatesDownload]: async () => updates.download(),
     [IPC.updatesInstall]: () => updates.install(),
     [IPC.tunGetStatus]: async () => tun.getStatus(),
-    [IPC.tunEnable]: async () => tun.enable(),
-    [IPC.tunDisable]: async () => tun.disable(),
+    [IPC.tunEnable]: async () => {
+      await appSettings.set({ tunDesired: true })
+      return tun.enable()
+    },
+    [IPC.tunDisable]: async () => {
+      await appSettings.set({ tunDesired: false })
+      return tun.disable()
+    },
     [IPC.tunConfigGet]: async () => tunConfig.get(),
     [IPC.tunConfigSet]: async (_event, input) => tunConfig.set(parseTunConfig(input)),
     [IPC.tunConfigPreview]: async (_event, input) => tunConfig.preview(parseTunConfig(input)),

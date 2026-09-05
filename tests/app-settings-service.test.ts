@@ -41,6 +41,15 @@ describe('parseAppSettings', () => {
     })
   })
 
+  it('reads durable network intent while older settings default safely off', () => {
+    expect(parseAppSettings('{"systemProxyDesired":true,"tunDesired":true}')).toEqual({
+      ...DEFAULT_OBJ,
+      systemProxyDesired: true,
+      tunDesired: true
+    })
+    expect(parseAppSettings('{"systemProxyDesired":"yes","tunDesired":null}')).toEqual(DEFAULT_OBJ)
+  })
+
   it('defaults kernel management fields when absent', () => {
     expect(parseAppSettings('{"autoStartKernel":false}')).toEqual({ ...DEFAULT_OBJ, autoStartKernel: false })
   })
@@ -97,6 +106,18 @@ describe('AppSettingsService', () => {
 
     await service.set({ autoStartKernel: false })
     expect(await service.get()).toEqual({ ...DEFAULT_OBJ, autoStartKernel: false, autoCheckUpdate: false })
+  })
+
+  it('persists system proxy and TUN intent independently', async () => {
+    base = await mkdtemp(join(tmpdir(), 'app-settings-'))
+    const service = new AppSettingsService(base)
+    await service.set({ systemProxyDesired: true })
+    await service.set({ tunDesired: true })
+    expect(await service.get()).toEqual({
+      ...DEFAULT_OBJ,
+      systemProxyDesired: true,
+      tunDesired: true
+    })
   })
 
   it('persists the kernel management fields independently', async () => {

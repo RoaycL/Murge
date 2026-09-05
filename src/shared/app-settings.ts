@@ -11,9 +11,9 @@ import type { KernelVersionChannel } from './kernel-manager'
 export interface AppSettings {
   /**
    * Start the kernel automatically when the app launches, so the Policy/Rules
-   * views reflect the active profile immediately without a manual start. The
-   * single kernel is started in ordinary (non-TUN) mode; system proxy and TUN
-   * remain explicit, user-triggered takeovers.
+   * views reflect the active profile immediately without a manual start. A
+   * remembered proxy/TUN intent still starts the required host when this is
+   * false; those takeovers cannot function without a live kernel.
    */
   autoStartKernel: boolean
   /**
@@ -23,6 +23,18 @@ export interface AppSettings {
    * this flag.
    */
   autoCheckUpdate: boolean
+  /**
+   * User's durable intent for the Windows system proxy. Clean application/OS
+   * shutdown may temporarily restore the registry, but the next launch applies
+   * this intent again after a kernel host is confirmed ready.
+   */
+  systemProxyDesired: boolean
+  /**
+   * User's durable intent for TUN mode. This is deliberately separate from the
+   * live coordinator phase: boot reconciliation first removes an interrupted
+   * session, then startup may create a fresh one from this intent.
+   */
+  tunDesired: boolean
   /**
    * Master switch for the kernel: when false the kernel refuses to start
    * (automatic and manual). The safe default is enabled.
@@ -43,6 +55,8 @@ export interface AppSettings {
 export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = Object.freeze({
   autoStartKernel: true,
   autoCheckUpdate: true,
+  systemProxyDesired: false,
+  tunDesired: false,
   kernelEnabled: true,
   kernelChannel: 'stable',
   kernelSpecificVersion: ''
@@ -66,6 +80,14 @@ export function parseAppSettings(value: string | null): AppSettings {
         typeof parsed.autoCheckUpdate === 'boolean'
           ? parsed.autoCheckUpdate
           : DEFAULT_APP_SETTINGS.autoCheckUpdate,
+      systemProxyDesired:
+        typeof parsed.systemProxyDesired === 'boolean'
+          ? parsed.systemProxyDesired
+          : DEFAULT_APP_SETTINGS.systemProxyDesired,
+      tunDesired:
+        typeof parsed.tunDesired === 'boolean'
+          ? parsed.tunDesired
+          : DEFAULT_APP_SETTINGS.tunDesired,
       kernelEnabled:
         typeof parsed.kernelEnabled === 'boolean'
           ? parsed.kernelEnabled

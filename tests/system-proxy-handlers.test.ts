@@ -6,6 +6,17 @@ import { buildIpcHandlers } from '../src/main/ipc/handlers'
 import { createFakeContainer } from '../src/main/testing/fake-container'
 import { registerIpc } from '../src/main/ipc/register-ipc'
 import type { SystemProxyStatus } from '@shared/system-proxy'
+import { formatSystemProxyEndpoint } from '@shared/system-proxy'
+
+describe('formatSystemProxyEndpoint', () => {
+  it('does not append an already embedded port twice', () => {
+    expect(formatSystemProxyEndpoint({ address: '127.0.0.1:7889', port: 7889 })).toBe('127.0.0.1:7889')
+  })
+
+  it('falls back to the split legacy port when address is absent', () => {
+    expect(formatSystemProxyEndpoint({ address: null, port: 7889 })).toBe('127.0.0.1:7889')
+  })
+})
 
 describe('buildIpcHandlers — system-proxy channels', () => {
   let container: ReturnType<typeof createFakeContainer>
@@ -34,12 +45,14 @@ describe('buildIpcHandlers — system-proxy channels', () => {
     } as SystemProxyStatus)
     const result = await handlers[IPC.systemProxyEnable](null)
     expect(container.systemProxy.enableCalls).toBe(1)
+    expect(container.appSettings.setCalls).toContainEqual({ systemProxyDesired: true })
     expect(result.phase).toBe('enabled')
   })
 
   it('forwards disable to the gateway', async () => {
     await handlers[IPC.systemProxyDisable](null)
     expect(container.systemProxy.disableCalls).toBe(1)
+    expect(container.appSettings.setCalls).toContainEqual({ systemProxyDesired: false })
   })
 
   it('propagates a typed enable error WITHOUT re-encoding at the handler layer', async () => {
@@ -47,6 +60,7 @@ describe('buildIpcHandlers — system-proxy channels', () => {
     await expect(handlers[IPC.systemProxyEnable](null)).rejects.toMatchObject({
       code: ProtocolErrorCode.SYSTEM_PROXY_KERNEL_REQUIRED
     })
+    expect(container.appSettings.settings.systemProxyDesired).toBe(true)
   })
 
   it('propagates a typed disable error', async () => {
@@ -54,6 +68,7 @@ describe('buildIpcHandlers — system-proxy channels', () => {
     await expect(handlers[IPC.systemProxyDisable](null)).rejects.toMatchObject({
       code: ProtocolErrorCode.SYSTEM_PROXY_RESTORE_FAILED
     })
+    expect(container.appSettings.settings.systemProxyDesired).toBe(false)
   })
 })
 

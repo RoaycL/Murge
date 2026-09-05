@@ -1042,6 +1042,10 @@ app.whenReady().then(async () => {
   const updates = new UpdateService(new ElectronUpdaterDriver())
   updateService = updates
   updates.start()
+  // Poll the feed while the app runs so a Release published mid-session is
+  // picked up without waiting for the next launch (10-minute cadence, same as
+  // mihomo-party/sparkle). The service no-ops this on non-packaged builds.
+  updates.startPolling()
   const usageHistoryService = new UsageHistoryService({
     store: app.isPackaged
       ? FileSystemUsageHistoryStore.forAppDataBase(app.getPath('appData'))

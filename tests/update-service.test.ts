@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { UpdateService } from '../src/main/updates/service'
 import type { UpdaterDriver, UpdaterDriverEvent } from '../src/main/updates/updater-driver'
 import { DEFAULT_UPDATE_STATE, coerceUpdateState } from '../src/shared/updates'
@@ -98,6 +98,68 @@ describe('UpdateService', () => {
     driver.check = () => {}
     const next = await service.check()
     expect(next.phase).toBe('checking')
+  })
+
+  it('startPolling re-checks on the configured cadence without overlapping ticks', () => {
+    vi.useFakeTimers()
+    try {
+      const driver = new FakeUpdaterDriver()
+      const service = new UpdateService(driver, { pollIntervalMs: 10 * 60 * 1000 })
+      service.start()
+      service.startPolling()
+      expect(driver.checkCalls).toBe(0) // polling never fires the first check eagerly
+
+      vi.advanceTimersByTime(10 * 60 * 1000)
+      expect(driver.checkCalls).toBe(1)
+      // The in-flight check is still 'checking', so the next tick is coalesced.
+      vi.advanceTimersByTime(10 * 60 * 1000)
+      expect(driver.checkCalls).toBe(1)
+
+      // After the check resolves to not-available, the following tick checks again.
+      driver.emit({ kind: 'not-available' })
+      vi.advanceTimersByTime(10 * 60 * 1000)
+      expect(driver.checkCalls).toBe(2)
+      service.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('startPolling is a no-op on unsupported builds and stopPolling halts ticks', () => {
+    vi.useFakeTimers()
+    try {
+      const driver = new FakeUpdaterDriver(false)
+      const service = new UpdateService(driver)
+      service.start()
+      service.startPolling()
+      vi.advanceTimersByTime(60 * 60 * 1000)
+      expect(driver.checkCalls).toBe(0)
+
+      const supported = new FakeUpdaterDriver()
+      const svc2 = new UpdateService(supported, { pollIntervalMs: 1000 })
+      svc2.start()
+      svc2.startPolling()
+      svc2.stopPolling()
+      vi.advanceTimersByTime(10_000)
+      expect(supported.checkCalls).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('dispose() stops the poll timer', () => {
+    vi.useFakeTimers()
+    try {
+      const driver = new FakeUpdaterDriver()
+      const service = new UpdateService(driver, { pollIntervalMs: 1000 })
+      service.start()
+      service.startPolling()
+      service.dispose()
+      vi.advanceTimersByTime(10_000)
+      expect(driver.checkCalls).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('check() does not restart when a check or download is already in flight', async () => {

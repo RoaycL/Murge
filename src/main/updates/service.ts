@@ -20,9 +20,12 @@ export class UpdateService implements UpdatesGateway {
   private readonly listeners: Set<(state: UpdateState) => void> = new Set()
   private unsubscribe: (() => void) | null = null
   private started = false
+  private pollTimer: ReturnType<typeof setInterval> | null = null
+  private readonly pollIntervalMs: number
 
-  constructor(private readonly driver: UpdaterDriver) {
+  constructor(private readonly driver: UpdaterDriver, options: { pollIntervalMs?: number } = {}) {
     this.state = { ...DEFAULT_UPDATE_STATE, currentVersion: driver.currentVersion }
+    this.pollIntervalMs = options.pollIntervalMs ?? 10 * 60 * 1000
   }
 
   /** Attach the driver and subscribe to its events. Call once after construction. */
@@ -31,6 +34,27 @@ export class UpdateService implements UpdatesGateway {
     this.started = true
     this.driver.configure()
     this.unsubscribe = this.driver.onEvent((event) => this.handle(event))
+  }
+
+  /**
+   * Poll the feed on a fixed cadence while the app is running (the mihomo-party
+   * / sparkle model), so a Release published mid-session is picked up without a
+   * restart. No-op when the build cannot self-update. `check()` already refuses
+   * to restart an in-flight check/download, so overlapping ticks are safe.
+   */
+  startPolling(): void {
+    if (this.pollTimer || !this.driver.supported) return
+    this.pollTimer = setInterval(() => {
+      void this.check().catch(() => undefined)
+    }, this.pollIntervalMs)
+    // An interval that keeps the process alive would outstay the window.
+    this.pollTimer.unref?.()
+  }
+
+  stopPolling(): void {
+    if (!this.pollTimer) return
+    clearInterval(this.pollTimer)
+    this.pollTimer = null
   }
 
   getState(): UpdateState {
@@ -80,6 +104,7 @@ export class UpdateService implements UpdatesGateway {
   }
 
   dispose(): void {
+    this.stopPolling()
     this.unsubscribe?.()
     this.unsubscribe = null
     this.driver.dispose()

@@ -8,6 +8,7 @@ import {
   type NetworkMetadata,
   type NetworkMetadataPhase,
   type NetworkMetadataProvider,
+  type NetworkMetadataSnapshot,
   type NetworkMetadataState
 } from '@shared/network-metadata'
 
@@ -60,6 +61,7 @@ export class NetworkMetadataService implements NetworkMetadataGateway {
   #phase: NetworkMetadataPhase = 'idle'
   #error: string | null = null
   #fetching: Promise<NetworkMetadataState> | null = null
+  #fetchingAll: Promise<NetworkMetadataSnapshot> | null = null
 
   constructor(options: NetworkMetadataServiceOptions) {
     this.#fetchJsonViaProxy = options.fetchJsonViaProxy
@@ -104,6 +106,70 @@ export class NetworkMetadataService implements NetworkMetadataGateway {
     return this.#fetching
   }
 
+  async resolveAll(force = false): Promise<NetworkMetadataSnapshot> {
+    // Single-flight: a whole-set sweep is already in progress — everyone waits
+    // on it instead of stacking a second set of provider round-trips.
+    if (this.#fetchingAll) return this.#fetchingAll
+    this.#fetchingAll = this.#doResolveAll(force).finally(() => {
+      this.#fetchingAll = null
+    })
+    return this.#fetchingAll
+  }
+
+  /**
+   * Resolve every shipped provider once, concurrently, and return the results
+   * in the shipped display order. Per-provider failures are isolated: one
+   * unreachable source degrades only its own row and never fails the sweep.
+   */
+  async #doResolveAll(force: boolean): Promise<NetworkMetadataSnapshot> {
+    const providers = networkMetadataProviderList()
+    const states = await Promise.all(
+      providers.map(async (provider) => {
+        try {
+          const state = await this.#doResolveFor(provider, force)
+          return { providerId: provider.id, label: provider.label, state }
+        } catch {
+          return { providerId: provider.id, label: provider.label, state: this.#stateFor(provider.id, 'error', PARSE_FAILURE) }
+        }
+      })
+    )
+    return { results: states, fetchedAt: this.#now() }
+  }
+
+  /** Resolve one specific provider (used by both `resolve` and `resolveAll`). */
+  async #doResolveFor(provider: NetworkMetadataProvider, force: boolean): Promise<NetworkMetadataState> {
+    if (!force) {
+      const cached = this.#freshCache(provider.id)
+      if (cached) return this.#stateFor(provider.id, 'ready', null)
+    }
+
+    let port: number | null = null
+    try {
+      port = await this.#resolveProxyPort()
+    } catch {
+      port = null
+    }
+    if (port === null) return this.#stateFor(provider.id, 'error', KERNEL_NOT_RUNNING)
+
+    let body: unknown = null
+    try {
+      body = await this.#fetchJsonViaProxy(provider.endpoint, port, this.#timeoutMs)
+    } catch {
+      body = null
+    }
+
+    const metadata = body === null ? null : parseNetworkMetadataJson(body, provider.id, this.#now())
+    if (!metadata) return this.#stateFor(provider.id, 'error', PARSE_FAILURE)
+
+    this.#storeCache(provider.id, metadata)
+    return this.#stateFor(provider.id, 'ready', null)
+  }
+
+  /** Build a state snapshot for an explicit provider id (no mutation). */
+  #stateFor(providerId: string, phase: NetworkMetadataPhase, error: string | null): NetworkMetadataState {
+    return { phase, provider: providerId, metadata: this.#freshCache(providerId), error }
+  }
+
   async #doResolve(force: boolean): Promise<NetworkMetadataState> {
     const provider = getNetworkMetadataProvider(this.#providerId)
     if (!provider) {
@@ -122,35 +188,11 @@ export class NetworkMetadataService implements NetworkMetadataGateway {
     }
 
     this.#phase = 'fetching'
-    let port: number | null = null
-    try {
-      port = await this.#resolveProxyPort()
-    } catch {
-      port = null
-    }
-    if (port === null) {
-      this.#phase = 'error'
-      this.#error = KERNEL_NOT_RUNNING
-      return this.#state()
-    }
-
-    let body: unknown = null
-    try {
-      body = await this.#fetchJsonViaProxy(provider.endpoint, port, this.#timeoutMs)
-    } catch {
-      body = null
-    }
-
-    const metadata = body === null ? null : parseNetworkMetadataJson(body, provider.id, this.#now())
-    if (!metadata) {
-      this.#phase = 'error'
-      this.#error = PARSE_FAILURE
-      return this.#state()
-    }
-
-    this.#storeCache(provider.id, metadata)
-    this.#phase = 'ready'
-    this.#error = null
+    const resolved = await this.#doResolveFor(provider, force)
+    // Mirror the single-provider outcome back onto the active-provider state
+    // machine so `getState()` stays truthful for the legacy panel surface.
+    this.#phase = resolved.phase
+    this.#error = resolved.error
     return this.#state()
   }
 

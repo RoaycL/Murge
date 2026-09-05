@@ -33,7 +33,7 @@ import type { TunConfigModel, TunConfigSnapshot } from './tun-config'
 import type { CoreSettings } from './core-settings'
 import type { GeodataSettings } from './geodata'
 import type { UsageWindow, UsageRanking, UsageHistorySnapshot, UsageRankingEntry, UsageCapacity } from './usage'
-import type { NetworkMetadataProvider, NetworkMetadataState } from './network-metadata'
+import type { NetworkMetadataProvider, NetworkMetadataSnapshot, NetworkMetadataState } from './network-metadata'
 import type { AppInfo } from './app-info'
 import type { AppSettings } from './app-settings'
 import type { UpdateState } from './updates'
@@ -142,7 +142,8 @@ export const IPC = {
   networkMetadataGetProviders: 'network-metadata:get-providers',
   networkMetadataGetState: 'network-metadata:get-state',
   networkMetadataSelectProvider: 'network-metadata:select-provider',
-  networkMetadataResolve: 'network-metadata:resolve'
+  networkMetadataResolve: 'network-metadata:resolve',
+  networkMetadataResolveAll: 'network-metadata:resolve-all'
 } as const
 
 export interface DesktopApi {
@@ -289,5 +290,6 @@ export interface DesktopApi {
     getState(): Promise<NetworkMetadataState>
     selectProvider(id: string): Promise<NetworkMetadataState>
     resolve(force?: boolean): Promise<NetworkMetadataState>
+    resolveAll(force?: boolean): Promise<NetworkMetadataSnapshot>
   }
 }

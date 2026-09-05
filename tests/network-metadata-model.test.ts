@@ -6,7 +6,8 @@ import {
   networkMetadataDisplayText,
   networkMetadataMaskIp,
   networkMetadataProviderList,
-  parseNetworkMetadataJson
+  parseNetworkMetadataJson,
+  providerDisplayName
 } from '../src/shared/network-metadata'
 
 const NOW = 1_700_000_000_000
@@ -113,6 +114,18 @@ describe('network-metadata model', () => {
 
     it('leaves a non-network value untouched', () => {
       expect(networkMetadataMaskIp('unknown')).toBe('unknown')
+    })
+  })
+
+  describe('provider display names', () => {
+    it('maps every shipped provider id to its label', () => {
+      expect(providerDisplayName('ipwhois')).toBe('ipwho.is')
+      expect(providerDisplayName('ipapi')).toBe('ip-api.com')
+      expect(providerDisplayName('ipinfo')).toBe('ipinfo.io')
+    })
+
+    it('falls back to the raw id for an unknown provider', () => {
+      expect(providerDisplayName('mystery')).toBe('mystery')
     })
   })
 })

@@ -11,7 +11,7 @@ import type { DnsEnhancement, DnsSnapshot } from './dns'
 import type { SnifferEnhancement, SnifferSnapshot } from './sniffer'
 import type { GeodataSettings } from './geodata'
 import type { UsageWindow, UsageRanking, UsageHistorySnapshot, UsageRankingEntry, UsageCapacity } from './usage'
-import type { NetworkMetadataProvider, NetworkMetadataState } from './network-metadata'
+import type { NetworkMetadataProvider, NetworkMetadataSnapshot, NetworkMetadataState } from './network-metadata'
 import type {
   MihomoConfigSnapshot,
   MihomoConnectionsSnapshot,
@@ -323,6 +323,12 @@ export interface NetworkMetadataGateway {
    * is available unless `force` is true; returns the resulting state.
    */
   resolve(force?: boolean): Promise<NetworkMetadataState>
+  /**
+   * Resolve every shipped provider once (concurrently, single-flight) and
+   * return the per-provider outcomes in display order. A per-provider failure
+   * degrades only its own row, never the whole sweep.
+   */
+  resolveAll(force?: boolean): Promise<NetworkMetadataSnapshot>
 }
 
 /** Everything the IPC handler factory needs from the trusted main process. */

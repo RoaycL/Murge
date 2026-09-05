@@ -164,7 +164,8 @@ const api: DesktopApi = {
     getProviders: () => invoke(IPC.networkMetadataGetProviders),
     getState: () => invoke(IPC.networkMetadataGetState),
     selectProvider: (id) => invoke(IPC.networkMetadataSelectProvider, id),
-    resolve: (force) => invoke(IPC.networkMetadataResolve, force)
+    resolve: (force) => invoke(IPC.networkMetadataResolve, force),
+    resolveAll: (force) => invoke(IPC.networkMetadataResolveAll, force)
   }
 }
 

@@ -194,7 +194,9 @@ export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {})
     [IPC.networkMetadataSelectProvider]: async (_event, id) =>
       networkMetadata.selectProvider(parseNetworkMetadataProviderId(id)),
     [IPC.networkMetadataResolve]: async (_event, force) =>
-      networkMetadata.resolve(parseOptionalBoolean(force, 'force'))
+      networkMetadata.resolve(parseOptionalBoolean(force, 'force')),
+    [IPC.networkMetadataResolveAll]: async (_event, force) =>
+      networkMetadata.resolveAll(parseOptionalBoolean(force, 'force'))
   }
 }
 

@@ -1,31 +1,37 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { defaultNetworkMetadataProviderId } from '@shared/network-metadata'
-import type { NetworkMetadataProvider, NetworkMetadataState } from '@shared/network-metadata'
+import { providerDisplayName } from '@shared/network-metadata'
+import type { NetworkMetadata, NetworkMetadataProvider, NetworkMetadataSnapshot } from '@shared/network-metadata'
 
-const IDLE_STATE: NetworkMetadataState = {
-  phase: 'idle',
-  provider: defaultNetworkMetadataProviderId(),
-  metadata: null,
-  error: null
+/** One rendered provider row: label + its resolve outcome. */
+export interface NetworkMetadataRow {
+  providerId: string
+  label: string
+  phase: NetworkMetadataSnapshot['results'][number]['state']['phase']
+  metadata: NetworkMetadata | null
+  error: string | null
 }
 
+const EMPTY_ROWS: NetworkMetadataRow[] = []
+
 /**
- * Read-only network (egress) metadata store. Owns the provider list and the
- * explicit resolve state, and exposes the single privacy-forward IP source for
- * the activity header. All reads go through the main-process bounded cache.
+ * Read-only network (egress) metadata store. Resolves every shipped provider
+ * through the main-process bounded cache so all sources render side by side —
+ * the user never switches between them. Also keeps the activity header's
+ * single egress IP fed from the default provider's row.
  */
 export const useNetworkMetadataStore = defineStore('network-metadata', () => {
   const providers = ref<NetworkMetadataProvider[]>([])
-  const state = ref<NetworkMetadataState>({ ...IDLE_STATE })
+  const rows = ref<NetworkMetadataRow[]>(EMPTY_ROWS)
   const busy = ref(false)
 
-  const currentProviderId = computed(() => state.value.provider)
-  const metadata = computed(() => state.value.metadata)
-  const error = computed(() => state.value.error)
+  /** The primary (default-provider) row, kept for the activity header IP. */
+  const primaryRow = computed<NetworkMetadataRow | null>(() => rows.value[0] ?? null)
+  const metadata = computed(() => primaryRow.value?.metadata ?? null)
+  const error = computed(() => primaryRow.value?.error ?? null)
   const ipText = computed(() => metadata.value?.ip ?? '—')
 
-  /** Load the provider list and warm the cache via a non-forced resolve. */
+  /** Load the provider list and warm every row via a non-forced whole-set sweep. */
   async function init(): Promise<void> {
     try {
       providers.value = await window.desktop.networkMetadata.getProviders()
@@ -38,35 +44,41 @@ export const useNetworkMetadataStore = defineStore('network-metadata', () => {
   async function refresh(force = false): Promise<void> {
     busy.value = true
     try {
-      state.value = await window.desktop.networkMetadata.resolve(force)
+      rows.value = toRows(await window.desktop.networkMetadata.resolveAll(force))
     } catch {
-      state.value = { phase: 'error', provider: currentProviderId.value, metadata: metadata.value, error: '查询失败，请重试' }
+      // Keep the previous rows; only surface a refresh failure through busy
+      // state, matching the old store's fail-quiet retry semantics.
     } finally {
       busy.value = false
     }
   }
 
-  async function selectProvider(id: string): Promise<void> {
-    if (id === currentProviderId.value) return
-    try {
-      state.value = await window.desktop.networkMetadata.selectProvider(id)
-    } catch {
-      state.value = { phase: 'error', provider: id, metadata: metadata.value, error: '未知的数据源' }
-    }
-    await refresh()
+  /** Map a main-process snapshot into display rows (main supplies the order). */
+  function toRows(snapshot: NetworkMetadataSnapshot): NetworkMetadataRow[] {
+    return snapshot.results.map((result) => ({
+      providerId: result.providerId,
+      label: result.label || providerDisplayName(result.providerId),
+      phase: result.state.phase,
+      metadata: result.state.metadata,
+      error: result.state.error
+    }))
   }
 
-  /** Copy a privacy-safe one-line metadata summary to the clipboard. */
+  /** Copy every resolved row as a privacy-safe multi-line clipboard summary. */
   async function copy(): Promise<void> {
-    const meta = metadata.value
-    if (!meta) return
-    const text = `${meta.ip}${meta.country ? ` (${meta.country}${meta.city ? `, ${meta.city}` : ''})` : ''}${meta.asn ? ` ${meta.asn}` : ''}`
+    const lines = rows.value
+      .filter((row) => row.metadata)
+      .map((row) => {
+        const meta = row.metadata as NetworkMetadata
+        return `${row.label}: ${meta.ip}${meta.country ? ` (${meta.country}${meta.city ? `, ${meta.city}` : ''})` : ''}${meta.asn ? ` ${meta.asn}` : ''}`
+      })
+    if (!lines.length) return
     try {
-      await navigator.clipboard.writeText(text)
+      await navigator.clipboard.writeText(lines.join('\n'))
     } catch {
       // Clipboard can be unavailable (no document focus); fail silently.
     }
   }
 
-  return { providers, state, busy, currentProviderId, metadata, error, ipText, init, refresh, selectProvider, copy }
+  return { providers, rows, busy, primaryRow, metadata, error, ipText, init, refresh, copy }
 })

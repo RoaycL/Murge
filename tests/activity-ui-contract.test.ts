@@ -41,6 +41,18 @@ describe('Activity fluid-layout UI contract', () => {
     expect(css).not.toMatch(/\.dashboard-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/)
   })
 
+  it('anchors horizontal-card details to the bottom and compacts them by card width', async () => {
+    const css = await read('src/renderer/src/styles/base.css')
+
+    expect(css).toMatch(/\.latency-card\s*\{[^}]*container-type:\s*inline-size[^}]*display:\s*flex[^}]*flex-direction:\s*column/)
+    expect(css).toMatch(/\.connections-card\s*\{[^}]*container-type:\s*inline-size[^}]*display:\s*flex[^}]*flex-direction:\s*column/)
+    expect(css).toMatch(/\.total-card\s*\{[^}]*container-type:\s*inline-size[^}]*display:\s*flex[^}]*flex-direction:\s*column/)
+    expect(css).toMatch(/\.latency-breakdown\s*\{[^}]*margin-top:\s*auto/)
+    expect(css).toMatch(/\.topology-inline\s*\{[^}]*margin-top:\s*auto/)
+    expect(css).toMatch(/\.total-labels\s*\{[^}]*margin-top:\s*auto/)
+    expect(css).toMatch(/@container\s*\(max-width:\s*320px\)/)
+  })
+
   it('renders both speed metrics through the same card surface as the other Activity cards', async () => {
     const [component, css, tokens] = await Promise.all([
       read('src/renderer/src/components/SpeedSparkline.vue'),

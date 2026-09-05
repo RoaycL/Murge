@@ -195,6 +195,6 @@ async function confirmClear(): Promise<void> {
 .usage-empty { margin: 14px 0; color: var(--app-muted); font-size: 11px; }
 .usage-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 16px; }
 .usage-footer span { color: var(--app-muted); font-size: 10px; }
-.usage-clear { display: inline-flex; min-height: 28px; align-items: center; gap: 5px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: 7px; background: transparent; color: var(--app-danger, #d64f4f); font-size: 11px; }
+.usage-clear { display: inline-flex; min-height: 28px; align-items: center; gap: 5px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: 7px; background: transparent; color: var(--app-danger, #d64f4f); font-size: 11px; white-space: nowrap; flex-shrink: 0; }
 .usage-clear:disabled { opacity: 0.5; }
 </style>

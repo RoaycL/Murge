@@ -1,12 +1,21 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { usePoliciesStore, POLICY_MODE_OPTIONS, type PolicyMode } from '../stores/policies'
 import type { MihomoProxy } from '@shared/mihomo-api'
 import { useKernelStore } from '../stores/kernel'
 import AppIcon from '../components/AppIcon.vue'
+import DetailDrawer from '../components/DetailDrawer.vue'
 
 const policies = usePoliciesStore()
 const kernel = useKernelStore()
+// The node list lives in a drawer since the inline section was removed: the
+// group card IS the entry point now.
+const groupDrawerOpen = ref(false)
+
+function openGroup(name: string): void {
+  policies.selectGroup(name)
+  groupDrawerOpen.value = true
+}
 
 const MODE_LABELS: Record<PolicyMode, string> = {
   direct: '直接连接',
@@ -41,6 +50,13 @@ function isUnavailable(name: string): boolean {
   const proxy = policies.nodeByMember[name]
   return proxy ? proxy.alive === false : false
 }
+
+const drawerSubtitle = computed(() => {
+  const group = policies.currentGroup
+  if (!group) return '组内节点 · 点击节点切换'
+  const count = group.all?.length ?? 0
+  return `${group.type} · ${count} 个节点 · 点击节点切换`
+})
 
 /** A broken/remote icon must not leave a torn image in the grid: hide it. */
 function onGroupIconError(event: Event): void {
@@ -112,20 +128,29 @@ watch(() => kernel.status.phase, (phase, previous) => {
     <template v-else>
       <div class="section-caption"><span>策略组</span></div>
       <div class="policy-group-grid">
-        <button v-for="group in policies.groups" :key="group.name" type="button" :class="{ selected: policies.selectedGroup === group.name }" @click="policies.selectGroup(group.name)"><img v-if="group.icon" class="group-icon" :src="group.icon" alt="" loading="lazy" @error="onGroupIconError" /><small>{{ group.type }}</small><strong>{{ group.name }}</strong><span>{{ group.now || group.all?.[0] || '未选择' }}</span><AppIcon name="next" :size="14" /></button>
+        <button v-for="group in policies.groups" :key="group.name" type="button" :class="{ selected: policies.selectedGroup === group.name }" @click="openGroup(group.name)"><img v-if="group.icon" class="group-icon" :src="group.icon" alt="" loading="lazy" @error="onGroupIconError" /><small>{{ group.type }}</small><strong>{{ group.name }}</strong><span>{{ group.now || group.all?.[0] || '未选择' }}</span><AppIcon name="next" :size="14" /></button>
       </div>
-      <div class="section-caption node-caption"><span>{{ policies.selectedGroup || '代理' }}</span><button type="button" :disabled="!policies.selectedGroup" @click="policies.testAll()">测试当前组</button></div>
-      <div class="node-grid"><button v-for="member in policies.groupMembers" :key="member" type="button" :class="{ selected: policies.selectedMember === member, unavailable: isUnavailable(member) }" @click="onCardClick(member)"><small>{{ displayType(policies.nodeByMember[member]) }}</small><strong>{{ member }}</strong><span :class="latencyLabel(member).kind">{{ latencyLabel(member).text }}</span></button></div>
     </template>
 
     <div v-if="policies.panelError" class="panel-error">{{ policies.panelError }}</div>
+
+    <DetailDrawer :open="groupDrawerOpen && Boolean(policies.selectedGroup)" :title="policies.selectedGroup" :subtitle="drawerSubtitle" @close="groupDrawerOpen = false">
+      <div class="node-caption"><span>节点列表</span><button type="button" @click="policies.testAll()">测试当前组</button></div>
+      <div class="drawer-body-grid">
+        <div class="node-grid"><button v-for="member in policies.groupMembers" :key="member" type="button" :class="{ selected: policies.selectedMember === member, unavailable: isUnavailable(member) }" @click="onCardClick(member)"><small>{{ displayType(policies.nodeByMember[member]) }}</small><strong>{{ member }}</strong><span :class="latencyLabel(member).kind">{{ latencyLabel(member).text }}</span></button></div>
+      </div>
+      <div v-if="policies.panelError" class="panel-error drawer-panel-error">{{ policies.panelError }}</div>
+    </DetailDrawer>
 
   </div>
 </template>
 
 <style scoped>
 .mode-selector { width: 100%; max-width: 510px; }
-.policy-group-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(150px,100%),1fr));gap:10px;width:100%}.group-icon{grid-column:2;grid-row:1;justify-self:end;width:18px;height:18px;border-radius:4px;object-fit:contain}.policy-group-grid button{display:grid;grid-template-columns:1fr auto;grid-template-rows:auto auto auto;min-width:0;min-height:86px;padding:10px;border:1px solid transparent;border-radius:10px;background:var(--app-surface);color:inherit;text-align:left}.policy-group-grid button:hover,.policy-group-grid button.selected{border-color:color-mix(in srgb,var(--app-blue) 48%,var(--app-divider));background:color-mix(in srgb,var(--app-blue) 7%,var(--app-surface))}.policy-group-grid small{grid-column:1;color:var(--app-muted);font-size:9px}.policy-group-grid strong{grid-column:1;overflow:hidden;font-size:12px;text-overflow:ellipsis;white-space:nowrap}.policy-group-grid span{grid-column:1;overflow:hidden;color:var(--app-muted);font-size:9px;text-overflow:ellipsis;white-space:nowrap}.policy-group-grid svg{grid-column:2;grid-row:1 / 4;align-self:center;color:var(--app-muted)}.node-caption{margin-top:28px}
+.policy-group-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(150px,100%),1fr));gap:10px;width:100%}.group-icon{grid-column:2;grid-row:1;justify-self:end;width:18px;height:18px;border-radius:4px;object-fit:contain}.policy-group-grid button{display:grid;grid-template-columns:1fr auto;grid-template-rows:auto auto auto;min-width:0;min-height:86px;padding:10px;border:1px solid transparent;border-radius:10px;background:var(--app-surface);color:inherit;text-align:left}.policy-group-grid button:hover,.policy-group-grid button.selected{border-color:color-mix(in srgb,var(--app-blue) 48%,var(--app-divider));background:color-mix(in srgb,var(--app-blue) 7%,var(--app-surface))}.policy-group-grid small{grid-column:1;color:var(--app-muted);font-size:9px}.policy-group-grid strong{grid-column:1;overflow:hidden;font-size:12px;text-overflow:ellipsis;white-space:nowrap}.policy-group-grid span{grid-column:1;overflow:hidden;color:var(--app-muted);font-size:9px;text-overflow:ellipsis;white-space:nowrap}.policy-group-grid svg{grid-column:2;grid-row:1 / 4;align-self:center;color:var(--app-muted)}.node-caption{display:flex;justify-content:space-between;align-items:center;margin:4px 0 12px;color:var(--app-pink);font-size:12px}.node-caption button{border:0;background:transparent;color:var(--app-muted);font-size:11px}
+.drawer-panel-error{margin-top:12px}
+.drawer-body-grid .node-grid{--node-card-min:128px}
+.policy-view .node-caption{margin-top:4px}
 .group-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
 .group-tabs button { height: 27px; padding: 0 14px; border: 0; border-radius: 8px; background: rgba(127,127,127,.12); }
 .group-tabs button.selected { color: white; background: var(--app-blue); }

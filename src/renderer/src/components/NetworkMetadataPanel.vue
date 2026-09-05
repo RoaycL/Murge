@@ -112,9 +112,9 @@ function toggleReveal(): void {
 .network-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 16px; }
 .network-footer > span { color: var(--app-muted); font-size: 10px; }
 .network-actions { display: flex; gap: 8px; }
-.usage-clear { min-height: 28px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: 7px; background: transparent; color: var(--app-muted); font-size: 11px; }
+.usage-clear { min-height: 28px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: 7px; background: transparent; color: var(--app-muted); font-size: 11px; white-space: nowrap; flex-shrink: 0; }
 .usage-clear.copy { color: var(--app-blue); }
 .usage-clear:disabled { opacity: 0.5; }
-.quiet-button { min-height: 28px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: 7px; background: transparent; color: var(--app-muted); font-size: 11px; }
+.quiet-button { min-height: 28px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: 7px; background: transparent; color: var(--app-muted); font-size: 11px; white-space: nowrap; flex-shrink: 0; }
 .inline-error { margin: 12px 0 0; color: var(--app-danger, #d64f4f); font-size: 12px; }
 </style>

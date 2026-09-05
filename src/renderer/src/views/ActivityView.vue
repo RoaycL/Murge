@@ -109,7 +109,7 @@ const directPct = computed(() =>
 
 const modeLabel = computed(() => {
   const map = { rule: '规则判定', global: '全局代理', direct: '直接连接' } as const
-  return map[runtime.summary?.mode ?? 'rule']
+  return map[policies.mode]
 })
 const modeOptions = [
   { value: 'rule', label: '规则判定' },

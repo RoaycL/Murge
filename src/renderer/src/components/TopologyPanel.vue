@@ -72,7 +72,6 @@ function hopClass(name: string): string {
         <p v-else class="topology-empty">当前连接未提供可用跳点。</p>
       </div>
     </template>
-
   </SurfaceCard>
 </template>
 

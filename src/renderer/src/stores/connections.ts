@@ -89,7 +89,7 @@ export const useConnectionsStore = defineStore('connections', () => {
   // consistently filters whichever dimension the user is viewing.
   const topProcesses = computed(() => buildRank(connections.value, scopeFilter.value, (c) => c.metadata.process ?? 'unknown'))
   const topHosts = computed(() => buildRank(connections.value, scopeFilter.value, (c) => c.metadata.host || c.metadata.destinationIP || '未知目标'))
-  const topPolicies = computed(() => buildRank(connections.value, scopeFilter.value, (c) => c.rule || c.chains[0] || 'DIRECT'))
+  const topPolicies = computed(() => buildRank(connections.value, scopeFilter.value, (c) => c.rule || c.chains.at(-1) || 'DIRECT'))
 
   const summary = computed<ConnectionsSummary | null>(() => {
     const snap = snapshot.value

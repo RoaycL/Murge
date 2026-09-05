@@ -175,8 +175,8 @@ const chartBars = computed<number[]>(() => {
       </SurfaceCard>
 
       <div class="speed-grid">
-        <SpeedSparkline kind="upload" title="上传" :value="up.value" :unit="up.unit" ceiling="1.0 MB/s" middle="524 KB/s" :series="traffic.uploadSeries" />
-        <SpeedSparkline kind="download" title="下载" :value="down.value" :unit="down.unit" ceiling="2.1 MB/s" middle="1.0 MB/s" :series="traffic.downloadSeries" />
+        <SpeedSparkline kind="upload" title="上传" :value="up.value" :unit="up.unit" :series="traffic.uploadSeries" />
+        <SpeedSparkline kind="download" title="下载" :value="down.value" :unit="down.unit" :series="traffic.downloadSeries" />
       </div>
 
       <SurfaceCard class="connections-card">

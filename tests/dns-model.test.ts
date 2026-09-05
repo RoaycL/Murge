@@ -6,6 +6,7 @@ import {
   isValidCidr,
   isValidDomainOrRule,
   isValidNameserver,
+  isValidDefaultNameserver,
   redactServer,
   buildDnsBlock,
   redactDnsEnhancement,
@@ -92,6 +93,20 @@ describe('nameserver validator', () => {
     expect(isValidNameserver('user:pass@tls://8.8.8.8:853')).toBe(false)
     expect(isValidNameserver('')).toBe(false)
     expect(isValidNameserver('https://')).toBe(false)
+    expect(isValidNameserver('tls://8.8.8.8:0')).toBe(false)
+    expect(isValidNameserver('tls://8.8.8.8:65536')).toBe(false)
+  })
+})
+
+describe('default nameserver validator', () => {
+  it('accepts literal IP endpoints and rejects bootstrap hostnames', () => {
+    expect(isValidDefaultNameserver('1.1.1.1')).toBe(true)
+    expect(isValidDefaultNameserver('tls://8.8.8.8:853')).toBe(true)
+    expect(isValidDefaultNameserver('https://[2606:4700:4700::1111]/dns-query')).toBe(true)
+    expect(isValidDefaultNameserver('https://dns.example/dns-query')).toBe(false)
+    expect(isValidDefaultNameserver('system')).toBe(false)
+    expect(isValidDefaultNameserver('dhcp://lan')).toBe(false)
+    expect(isValidDefaultNameserver('tls://8.8.8.8:65536')).toBe(false)
   })
 })
 
@@ -137,6 +152,14 @@ describe('buildDnsBlock', () => {
     expect(block.hosts).toEqual({ 'example.com': '1.2.3.4' })
     expect(block['nameserver-policy']).toEqual({ 'geosite:cn': '1.1.1.1' })
   })
+
+  it('does not emit fake-ip-only keys in redir-host mode', () => {
+    const block = buildDnsBlock({ ...EMPTY_DNS_ENHANCEMENT, enabled: true, enhancedMode: 'redir-host' })
+    expect(block['enhanced-mode']).toBe('redir-host')
+    expect(block['fake-ip-range']).toBeUndefined()
+    expect(block['fake-ip-filter-mode']).toBeUndefined()
+    expect(block['fake-ip-filter']).toBeUndefined()
+  })
 })
 
 describe('coercion', () => {
@@ -146,6 +169,11 @@ describe('coercion', () => {
     expect(out.enhancedMode).toBe('fake-ip')
     expect(out.fakeIpRange).toBe('198.18.0.1/16')
     expect(Array.isArray(out.hosts)).toBe(true)
+  })
+  it('migrates the removed normal mode and disables unsafe stale respect-rules', () => {
+    expect(coerceDnsEnhancement({ enhancedMode: 'normal' }).enhancedMode).toBe('redir-host')
+    expect(coerceDnsEnhancement({ respectRules: true, proxyServerNameserver: [] }).respectRules).toBe(false)
+    expect(coerceDnsEnhancement({ respectRules: true, proxyServerNameserver: ['1.1.1.1'] }).respectRules).toBe(true)
   })
   it('returns the default model for non-object input', () => {
     expect(coerceDnsEnhancement('nope')).toEqual(EMPTY_DNS_ENHANCEMENT)

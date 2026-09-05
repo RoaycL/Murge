@@ -1,4 +1,5 @@
 import { ipcMain, BrowserWindow, app } from 'electron'
+import { networkInterfaces } from 'node:os'
 import { brand } from '@shared/brand'
 import type { IpcDeps, KernelGateway, KernelManagerGateway, MihomoGateway, ProfileGateway, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway, OverridesGateway, DnsEnhancementGateway, SnifferEnhancementGateway, TunConfigGateway, CoreSettingsGateway, GeodataSettingsGateway, UsageHistoryGateway, NetworkMetadataGateway } from '@shared/gateways'
 import type { TunGateway } from '@shared/tun'
@@ -157,6 +158,13 @@ export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemPro
       return value
     } catch { return null }
   }])
+  entries.push([IPC.appListNetworkInterfaces, async () =>
+    Object.entries(networkInterfaces())
+      .filter(([, addresses]) => Array.isArray(addresses) && addresses.length > 0)
+      .map(([name]) => name)
+      .filter((name) => name.length > 0 && name.length <= 255 && !/[\x00-\x1f\x7f]/.test(name))
+      .sort((left, right) => left.localeCompare(right))
+  ])
   for (const [channel, handler] of entries) {
     ipcMain.handle(channel, wrapHandler(handler))
   }

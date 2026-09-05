@@ -39,7 +39,9 @@ export interface SnifferSnapshot {
 
 export const EMPTY_SNIFFER_ENHANCEMENT: SnifferEnhancement = {
   enabled: false,
-  overrideDestination: true,
+  // Match clash-party/sparkle: enabling sniffing should observe metadata first,
+  // not silently rewrite game, QUIC or certificate-pinned destinations.
+  overrideDestination: false,
   forceDnsMapping: true,
   parsePureIp: true,
   ports: { http: ['80', '8080-8880'], tls: ['443', '8443'], quic: ['443'] },

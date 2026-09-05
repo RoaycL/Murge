@@ -202,6 +202,13 @@ export function buildProfileKernelConfig(
   // own values are left untouched.
   if (options.core?.enabled) {
     Object.assign(config, buildCoreSettingsBlock(options.core))
+    if (!options.core.interfaceName) delete config['interface-name']
+    // DNS AAAA behavior and the top-level routing capability must agree. Keeping
+    // two independently-owned IPv6 switches divergent produces either unusable
+    // AAAA answers or a TUN that can never receive IPv6 destinations.
+    if (config.dns && typeof config.dns === 'object' && !Array.isArray(config.dns)) {
+      ;(config.dns as Record<string, unknown>).ipv6 = options.core.ipv6
+    }
   }
 
   // --- Controlled geodata settings (read-back + conflict handling) ---

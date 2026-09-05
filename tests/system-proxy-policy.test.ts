@@ -4,6 +4,7 @@ import { SYSTEM_PROXY_LOOPBACK_HOST } from '@shared/system-proxy'
 import {
   formatAddress,
   buildProxyServerValue,
+  LOCAL_BYPASS_ENTRIES,
   mergeProxyOverride,
   buildWrittenState,
   differingKeys,
@@ -50,16 +51,16 @@ describe('system-proxy policy', () => {
 
   describe('mergeProxyOverride', () => {
     it('always keeps the mandatory local bypass list', () => {
-      expect(mergeProxyOverride(null)).toBe('<local>;localhost;127.*;10.*;172.16.*;192.168.*')
+      expect(mergeProxyOverride(null)).toBe(LOCAL_BYPASS_ENTRIES.join(';'))
     })
 
     it('preserves and de-duplicates an existing value', () => {
       const merged = mergeProxyOverride('*.example.com;<local>;10.0.0.1')
-      expect(merged).toBe('<local>;localhost;127.*;10.*;172.16.*;192.168.*;*.example.com;10.0.0.1')
+      expect(merged).toBe(`${LOCAL_BYPASS_ENTRIES.join(';')};*.example.com;10.0.0.1`)
     })
 
     it('drops empty segments', () => {
-      expect(mergeProxyOverride(';;a.com;;')).toBe('<local>;localhost;127.*;10.*;172.16.*;192.168.*;a.com')
+      expect(mergeProxyOverride(';;a.com;;')).toBe(`${LOCAL_BYPASS_ENTRIES.join(';')};a.com`)
     })
   })
 

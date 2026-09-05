@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { MihomoConfigSnapshot, MihomoDnsQueryType } from '../mihomo-api'
 import type { OverrideInput } from '../overrides'
 import type { DnsEnhancement } from '../dns'
-import { isValidCidr, isValidDomainOrRule, isValidIp, isValidNameserver } from '../dns'
+import { isValidCidr, isValidDefaultNameserver, isValidDomainOrRule, isValidIp, isValidNameserver } from '../dns'
 import type { SnifferEnhancement } from '../sniffer'
 import { isValidAddressOrCidr, isValidPortToken } from '../sniffer'
 import type { TunConfigModel } from '../tun-config'
@@ -324,6 +324,9 @@ export function parseDnsQuery(name: unknown, type: unknown): { name: string; typ
 const serverListSchema = z
   .array(z.string().refine(isValidNameserver, '无效的 DNS 服务器 URI'))
   .max(64)
+const defaultServerListSchema = z
+  .array(z.string().refine(isValidDefaultNameserver, 'default-nameserver 必须使用 IP 地址'))
+  .max(64)
 const domainOrRuleSchema = z
   .string()
   .refine(isValidDomainOrRule, '必须是域名、*. 通配符或 geosite/geoip 规则')
@@ -332,7 +335,7 @@ const ipSchema = z.string().refine(isValidIp, '必须是有效的 IPv4 或 IPv6 
 const dnsEnhancementSchema = z
   .object({
     enabled: z.boolean(),
-    enhancedMode: z.enum(['fake-ip', 'redir-host', 'normal']),
+    enhancedMode: z.enum(['fake-ip', 'redir-host']),
     ipv6: z.boolean(),
     respectRules: z.boolean(),
     fakeIpRange: z.string().refine(isValidCidr, '必须是有效的 CIDR 范围'),
@@ -340,7 +343,7 @@ const dnsEnhancementSchema = z
     fakeIpFilter: z.array(domainOrRuleSchema),
     useHosts: z.boolean(),
     hosts: z.array(z.object({ domain: domainOrRuleSchema, address: ipSchema })),
-    defaultNameserver: serverListSchema,
+    defaultNameserver: defaultServerListSchema,
     proxyServerNameserver: serverListSchema,
     directNameserver: serverListSchema,
     nameserver: serverListSchema,
@@ -348,6 +351,15 @@ const dnsEnhancementSchema = z
     nameserverPolicy: z.array(z.object({ domain: domainOrRuleSchema, server: serverListSchema.element }))
   })
   .strict()
+  .superRefine((value, context) => {
+    if (value.respectRules && value.proxyServerNameserver.length === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['proxyServerNameserver'],
+        message: '启用 respect-rules 时必须配置 proxy-server-nameserver'
+      })
+    }
+  })
 
 /**
  * Validate a renderer-sent DNS enhancement. Every server URI, IP, domain pattern
@@ -445,7 +457,8 @@ const coreSettingsSchema = z
     ipv6: z.boolean(),
     tcpConcurrent: z.boolean(),
     unifiedDelay: z.boolean(),
-    findProcessMode: z.enum(['off', 'strict', 'always'])
+    findProcessMode: z.enum(['off', 'strict', 'always']),
+    interfaceName: z.string().trim().max(255).refine((value) => !/[\x00-\x1f\x7f]/.test(value), 'interface-name 包含非法控制字符')
   })
   .strict()
 

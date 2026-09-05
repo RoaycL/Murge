@@ -58,7 +58,7 @@ describe('SnifferEnhancementService', () => {
     const service = new SnifferEnhancementService(dir)
     await service.set({ ...EMPTY_SNIFFER_ENHANCEMENT, enabled: true })
     const merged = await service.applyToDocument(base)
-    expect((parse(merged) as Record<string, unknown>).sniffer).toMatchObject({ enable: true, 'override-destination': true })
+    expect((parse(merged) as Record<string, unknown>).sniffer).toMatchObject({ enable: true, 'override-destination': false })
 
     await service.set({ ...EMPTY_SNIFFER_ENHANCEMENT, enabled: false })
     expect(await service.applyToDocument(base)).toBe(base)

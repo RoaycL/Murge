@@ -14,6 +14,9 @@ const PROFILE = [
   'tcp-concurrent: true',
   'allow-lan: true',
   'external-controller: 0.0.0.0:9090',
+  'dns:',
+  '  enable: true',
+  '  ipv6: true',
   'proxies:',
   '  - name: P1',
   '    type: ss',
@@ -33,7 +36,8 @@ const ENABLED: CoreSettings = {
   ipv6: false,
   tcpConcurrent: false,
   unifiedDelay: true,
-  findProcessMode: 'off'
+  findProcessMode: 'off',
+  interfaceName: 'Ethernet'
 }
 
 function build(core?: CoreSettings): Record<string, unknown> {
@@ -46,9 +50,11 @@ describe('controlled core settings config integration', () => {
     // Read-back: the runtime config reflects exactly the controlled model.
     expect(out['log-level']).toBe('error')
     expect(out.ipv6).toBe(false)
+    expect((out.dns as Record<string, unknown>).ipv6).toBe(false)
     expect(out['tcp-concurrent']).toBe(false)
     expect(out['unified-delay']).toBe(true)
     expect(out['find-process-mode']).toBe('off')
+    expect(out['interface-name']).toBe('Ethernet')
   })
 
   it('conflict handling: an enabled model overrides the profile own keys', () => {
@@ -65,6 +71,7 @@ describe('controlled core settings config integration', () => {
     const disabled = build({ ...EMPTY_CORE_SETTINGS, enabled: false, logLevel: 'error', tcpConcurrent: true })
     expect(disabled['log-level']).toBe('debug')
     expect(disabled.ipv6).toBe(true)
+    expect((disabled.dns as Record<string, unknown>).ipv6).toBe(true)
     expect(disabled['tcp-concurrent']).toBe(true)
     expect(disabled['unified-delay']).toBeUndefined()
     expect(disabled['find-process-mode']).toBeUndefined()

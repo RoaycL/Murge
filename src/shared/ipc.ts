@@ -43,6 +43,7 @@ export const IPC = {
   appGetBrand: 'app:get-brand',
   appGetInfo: 'app:get-info',
   appGetProcessIcon: 'app:get-process-icon',
+  appListNetworkInterfaces: 'app:list-network-interfaces',
   kernelGetStatus: 'kernel:get-status',
   kernelStart: 'kernel:start',
   kernelStop: 'kernel:stop',
@@ -155,6 +156,8 @@ export interface DesktopApi {
     getBrand(): Promise<BrandConfig>
     getInfo(): Promise<AppInfo>
     getProcessIcon(path: string): Promise<string | null>
+    /** Active host interfaces available for mihomo `interface-name`. */
+    listNetworkInterfaces(): Promise<string[]>
   }
   kernel: {
     getStatus(): Promise<KernelStatus>

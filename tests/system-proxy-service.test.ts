@@ -405,7 +405,7 @@ describe('SystemProxyService', () => {
       expect(adapter.calls.some((c) => c.op === 'restore')).toBe(true)
     })
 
-    it('reports conflict and keeps the backup when the orphan is not owned', async () => {
+    it('restores an orphan whose enable flag drifted while its server is still ours', async () => {
       const adapter = new FakeSystemProxyAdapter()
       const backup = new InMemorySystemProxyBackupStore()
       const first = new SystemProxyService({ adapter, probe: new StaticSystemProxyProbe(TARGET), backup, instanceId: 'owner' })
@@ -413,8 +413,9 @@ describe('SystemProxyService', () => {
       adapter.mutate({ proxyEnable: { exists: true, type: 'REG_DWORD', value: 0 } })
       const next = new SystemProxyService({ adapter, probe: new StaticSystemProxyProbe(TARGET), backup, instanceId: 'growth-2' })
       const status = await next.init()
-      expect(status.phase).toBe('conflict')
-      await expect(backup.read()).resolves.not.toBeNull()
+      expect(status.phase).toBe('disabled')
+      await expect(backup.read()).resolves.toBeNull()
+      expect((await adapter.read()).proxyServer.exists).toBe(false)
     })
 
     it('reports conflict on a corrupt backup without touching the registry', async () => {

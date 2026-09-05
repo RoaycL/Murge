@@ -224,12 +224,12 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .rules-view table { width: 100%; border-collapse: collapse; table-layout: auto; font-size: 11px; }
 .rules-view th, .rules-view td { height: 27px; padding: 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-top: 1px solid var(--app-divider); text-align: left; }
 .rules-view th { border-top: 0; font-weight: 500; }
-/* Auto layout: ID/类型/使用计数 take only what they need; 值/策略 share the rest. */
-.rules-view th:first-child, .rules-view td:first-child { width: 1%; }
-.rules-view th:nth-child(2), .rules-view td:nth-child(2) { width: 1%; }
-.rules-view th:last-child, .rules-view td:last-child { width: 1%; text-align: right; }
-.rules-view th:nth-child(3), .rules-view td:nth-child(3) { width: 55%; }
-.rules-view th:nth-child(4), .rules-view td:nth-child(4) { width: 25%; }
+/* Auto layout: ID/使用计数 take only what they need (fit content); 类型/值/策略 split the rest equally. */
+.rules-view th:first-child, .rules-view td:first-child { width: 1%; white-space: nowrap; }
+.rules-view th:nth-child(2), .rules-view td:nth-child(2) { width: 33.33%; }
+.rules-view th:nth-child(3), .rules-view td:nth-child(3) { width: 33.33%; }
+.rules-view th:nth-child(4), .rules-view td:nth-child(4) { width: 33.33%; }
+.rules-view th:last-child, .rules-view td:last-child { width: 1%; text-align: right; white-space: nowrap; }
 .toggle-title { display: flex; align-items: center; gap: 15px; }
 .page-description { max-width: 680px; margin: 2px 0 22px; color: var(--app-muted); font-size: 11px; }
 .form-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 24px; }

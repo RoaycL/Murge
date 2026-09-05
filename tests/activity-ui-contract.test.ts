@@ -62,6 +62,9 @@ describe('Activity fluid-layout UI contract', () => {
 
     expect(component).toContain("import SurfaceCard from './SurfaceCard.vue'")
     expect(component).toContain('<SurfaceCard class="speed-card">')
+    expect(component).toContain('trafficChartScale(props.series)')
+    expect(component).not.toContain('ceiling: string')
+    expect(component).not.toContain('middle: string')
     expect(css).toMatch(/\.surface-card\s*\{[^}]*border:\s*1px solid var\(--app-surface-border\)/)
     expect(tokens).toContain('--app-surface-border: rgba(255, 255, 255, 0.05);')
   })

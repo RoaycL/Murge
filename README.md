@@ -58,7 +58,7 @@ Murge 依据 [GNU General Public License v3.0](LICENSE) 开源发布。
 
 ## 致谢
 
-- [MetaCubeX/mihomo](https://github.com/MetaCubeX/mihomo) — 规则代理内核
+- [MetaCubeX/mihomo](https://github.com/MetaCubeX/mihomo) — 规则代理内核（本项目基于此构建）
 - [mihomo-party-org/clash-party](https://github.com/mihomo-party-org/clash-party) — 参考实现
 - [clash-verge-rev/clash-verge-rev](https://github.com/clash-verge-rev/clash-verge-rev) — 参考实现
 - [xishang0128/sparkle](https://github.com/xishang0128/sparkle) — 参考实现

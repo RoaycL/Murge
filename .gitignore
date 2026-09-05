@@ -12,8 +12,12 @@ resources/bin/mihomo*.exe
 resources/bin/mihomo*
 resources/bin/*/*.zip
 !resources/bin/.gitkeep
-# Geodata databases fetched by scripts/prepare-mihomo-assets.mjs (pinned in
-# resources/mihomo-assets.json) — large blobs, re-fetchable, never committed.
+# Geodata fetched from upstream latest with per-build digest verification.
+resources/geodata/resolved-assets.json
+resources/geodata/.download-*/
+resources/mihomo-resolved.json
+resources/mihomo-resolved.json.tmp
+resources/SOURCE_CODE.resolved.md
 resources/geodata/*.dat
 resources/geodata/*.metadb
 resources/tun-service/*/tun-service.exe

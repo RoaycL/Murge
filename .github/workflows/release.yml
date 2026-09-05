@@ -62,11 +62,13 @@ jobs:
       - name: Run unit tests
         run: npm test
 
+      - name: Download and verify installer-bundled mihomo archives
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm run kernel:prepare
+
       - name: Build
         run: npm run build
-
-      - name: Download and verify installer-bundled mihomo archives
-        run: npm run kernel:prepare
 
       - name: Test and build privileged TUN service
         run: |

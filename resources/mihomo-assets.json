@@ -3,16 +3,10 @@
   "releaseBase": "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.30",
   "geodata": [
     {
-      "filename": "geosite.dat",
-      "url": "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat",
-      "sha256": "35339fb9eadabe881adca2a74320e24ff2473fe86d2cf3dedf68935994fc61ed",
-      "size": 4242757
+      "filename": "geosite.dat"
     },
     {
-      "filename": "geoip.metadb",
-      "url": "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.metadb",
-      "sha256": "bba9734618d04df92c4291d255e89139580d5f8c33a830875245c7ed6843b470",
-      "size": 8567095
+      "filename": "geoip.metadb"
     }
   ],
   "assets": [

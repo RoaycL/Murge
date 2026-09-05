@@ -20,7 +20,13 @@ const probeDir = join(repoRoot, 'tests', 'electron-redirect-runtime')
  * redirects is the pattern CVE-2026-70605 turned into a local-file exposure.
  * This spec boots the actual Electron binary, loads the compiled transport
  * plus the compiled SubscriptionFetcher in the main process, and asserts the
- * hop-interception contract against live HTTP.
+ * hop-interception contract against a local HTTP server: synthetic 3xx hops,
+ * zero unvalidated follow-through, per-hop private-address rejection (exact
+ * error code + message + zero requests reaching the internal target) and the
+ * redirect budget after exactly maxRedirects+1 requests. The probe is fully
+ * offline — .test hostnames are split across Chromium's connection resolver
+ * (--host-resolver-rules) and the fetcher's injected resolveHost — so no leg
+ * depends on internet reachability.
  *
  * Skipped when the electron binary is unavailable or (on Linux) no display is
  * present; CI runs it explicitly on Windows, locally under xvfb-run.
@@ -71,11 +77,22 @@ describe.skipIf(!shouldRun)('electron redirect runtime', () => {
 
       let stdout = ''
       try {
-        stdout = execFileSync(electronBinary!, ['--no-sandbox', probeDir], {
-          env: { ...process.env, PROBE_BUNDLE_DIR: tempDir! },
-          encoding: 'utf8',
-          timeout: 110000
-        })
+        stdout = execFileSync(
+          electronBinary!,
+          [
+            '--no-sandbox',
+            // Route the RFC-2606 .test probe hosts to the probe's local HTTP
+            // server at the connection layer (Chromium), while the fetcher's
+            // injected resolveHost controls the validation layer's view.
+            '--host-resolver-rules=MAP public-label.test 127.0.0.1,MAP private-label.test 127.0.0.1',
+            probeDir
+          ],
+          {
+            env: { ...process.env, PROBE_BUNDLE_DIR: tempDir! },
+            encoding: 'utf8',
+            timeout: 110000
+          }
+        )
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         // A headless Linux CI without the GUI library set cannot boot
@@ -87,9 +104,13 @@ describe.skipIf(!shouldRun)('electron redirect runtime', () => {
       }
 
       expect(stdout).toContain('PROBE-Begin')
-      const verdicts = stdout.split('\n').filter((line) => /: (PASS|FAIL)/.test(line))
-      expect(verdicts).toHaveLength(5)
+      const verdicts = stdout.split('\n').filter((line) => /: (PASS|FAIL|SKIP)/.test(line))
+      // A1 A2 B1 B2 B3 A3 — see tests/electron-redirect-runtime/probe.cjs.
+      // Every leg is local (the probe is fully offline), so all six must run
+      // and pass; a network hiccup cannot skip or fail any of them.
+      expect(verdicts).toHaveLength(6)
       for (const verdict of verdicts) expect(verdict).toContain('PASS')
+      for (const verdict of verdicts) expect(verdict).not.toContain('FAIL')
       // The regression this suite guards: a manual-mode redirect must surface
       // as a synthetic 302, never as Electron's "Redirect was cancelled".
       expect(stdout).not.toContain('Redirect was cancelled')

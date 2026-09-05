@@ -60,6 +60,7 @@ export const usePoliciesStore = defineStore('policies', () => {
   let lastSelectionError: string | null = null
   let lastModeTarget: PolicyMode | null = null
   let lastModeError: string | null = null
+  const delayGeneration = new Map<string, number>()
 
   // Policy groups render in the ACTIVE PROFILE DOCUMENT's proxy-groups order.
   // Neither controller endpoint can supply this: `GET /proxies` is a Go map
@@ -104,12 +105,16 @@ export const usePoliciesStore = defineStore('policies', () => {
     return out
   })
 
-  function nodeState(name: string): DelayNodeState {
-    return delayByNode.value[name] ?? { status: 'idle', delay: null }
+  function delayKey(group: string, name: string): string {
+    return `${group}\u0000${name}`
   }
 
-  function setDelay(name: string, state: DelayNodeState): void {
-    delayByNode.value = { ...delayByNode.value, [name]: state }
+  function nodeState(name: string): DelayNodeState {
+    return delayByNode.value[delayKey(selectedGroup.value, name)] ?? { status: 'idle', delay: null }
+  }
+
+  function setDelay(group: string, name: string, state: DelayNodeState): void {
+    delayByNode.value = { ...delayByNode.value, [delayKey(group, name)]: state }
   }
 
   /**
@@ -159,6 +164,11 @@ export const usePoliciesStore = defineStore('policies', () => {
     if (!group || !POLICY_GROUP_TYPES.includes(group.type as PolicyGroupType)) return
     selectedGroup.value = name
     selectedMember.value = groupSelectedMember(group)
+    // The aggregate state belongs to the previously open group. Per-member
+    // results remain keyed by group and can be reused, but the new group must
+    // never inherit a stale "testing" or "failed" banner.
+    groupDelayStatus.value = 'idle'
+    panelError.value = null
   }
 
   function setMode(next: PolicyMode): Promise<void> {
@@ -279,12 +289,31 @@ export const usePoliciesStore = defineStore('policies', () => {
   }
 
   async function testNode(name: string): Promise<void> {
-    setDelay(name, { status: 'testing', delay: null })
+    const group = selectedGroup.value
+    if (!group) return
+    await testGroupMember(group, name)
+  }
+
+  /** Run one group-aware probe and discard a stale result from an older run. */
+  async function testGroupMember(group: string, name: string): Promise<boolean> {
+    const key = delayKey(group, name)
+    const generation = (delayGeneration.get(key) ?? 0) + 1
+    delayGeneration.set(key, generation)
+    setDelay(group, name, { status: 'testing', delay: null })
     try {
-      const result = await window.desktop.mihomo.delayTest(name)
-      setDelay(name, { status: 'ok', delay: result.delay })
+      const result = await window.desktop.mihomo.groupMemberDelayTest(group, name, { timeout: 10000 })
+      if (delayGeneration.get(key) !== generation) return false
+      if (!(Number.isFinite(result.delay) && result.delay > 0)) {
+        setDelay(group, name, { status: 'unavailable', delay: null })
+        return false
+      }
+      setDelay(group, name, { status: 'ok', delay: result.delay })
+      return true
     } catch (error) {
-      setDelay(name, { status: classifyDelayError(error), delay: null })
+      if (delayGeneration.get(key) === generation) {
+        setDelay(group, name, { status: classifyDelayError(error), delay: null })
+      }
+      return false
     }
   }
 
@@ -303,14 +332,15 @@ export const usePoliciesStore = defineStore('policies', () => {
    */
   async function testAll(): Promise<void> {
     if (!selectedGroup.value) return
-    const members = groupMembers.value
+    const group = selectedGroup.value
+    const members = [...groupMembers.value]
     groupDelayStatus.value = 'testing'
-    for (const member of members) setDelay(member, { status: 'testing', delay: null })
+    panelError.value = null
 
-    // Bounded fan-out (party/sparkle default to 50 workers): keeps request
-    // pressure on the controller flat for big subscriptions while every probe
-    // still owns its own timeout budget.
-    const WORKERS = 50
+    // A conservative bound follows Verge's production cap. Ten workers avoid
+    // overwhelming the controller/DNS/TLS stack on large subscriptions while
+    // each member still owns its full timeout budget.
+    const WORKERS = 10
     let measured = 0
     let worker = 0
     const runWorker = async (): Promise<void> => {
@@ -318,11 +348,9 @@ export const usePoliciesStore = defineStore('policies', () => {
         const member = members[worker]
         worker += 1
         try {
-          const result = await window.desktop.mihomo.delayTest(member)
-          setDelay(member, { status: 'ok', delay: result.delay })
-          measured += 1
-        } catch (error) {
-          setDelay(member, { status: classifyDelayError(error), delay: null })
+          if (await testGroupMember(group, member)) measured += 1
+        } catch {
+          // testGroupMember has already recorded the per-node error.
         }
       }
     }
@@ -331,19 +359,25 @@ export const usePoliciesStore = defineStore('policies', () => {
     // Only an empty scoreboard is a group-level failure — that mirrors the
     // kernel's own "all proxies timeout" 504, while individual dead nodes were
     // already labeled above and must not take the whole group down with them.
-    if (measured === 0 && members.length > 0) {
-      groupDelayStatus.value = 'error'
-      panelError.value = '测速失败：所有节点均无有效延迟'
-    } else {
-      groupDelayStatus.value = 'ok'
+    if (selectedGroup.value === group) {
+      if (measured === 0 && members.length > 0) {
+        groupDelayStatus.value = 'error'
+        panelError.value = '测速失败：所有节点均无有效延迟'
+      } else {
+        groupDelayStatus.value = 'ok'
+      }
     }
     // Re-pull so the cards' `now`/`alive`/`fixed` reflect the fresh probes
     // (the same re-pull party does via `mutate()` after each result).
     try {
       const result = await window.desktop.mihomo.getProxies()
       proxies.value = result
-      const group = result.proxies[selectedGroup.value]
-      if (group) selectedMember.value = groupSelectedMember(group)
+      // Do not reconcile a different group if the user navigated while this
+      // batch was running.
+      if (selectedGroup.value === group) {
+        const refreshedGroup = result.proxies[group]
+        if (refreshedGroup) selectedMember.value = groupSelectedMember(refreshedGroup)
+      }
     } catch {
       /* keep last good snapshot */
     }
@@ -356,6 +390,7 @@ export const usePoliciesStore = defineStore('policies', () => {
     selectedGroup.value = ''
     selectedMember.value = ''
     delayByNode.value = {}
+    delayGeneration.clear()
     groupDelayStatus.value = 'idle'
     panelError.value = null
   }
@@ -375,6 +410,7 @@ export const usePoliciesStore = defineStore('policies', () => {
     currentGroup,
     nodeByMember,
     nodeState,
+    groupSelectedMember,
     load,
     selectGroup,
     setMode,

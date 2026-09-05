@@ -26,6 +26,7 @@ describe('policies store', () => {
   let getActiveGroupOrder: ReturnType<typeof vi.fn>
   let selectProxy: ReturnType<typeof vi.fn>
   let delayTest: ReturnType<typeof vi.fn>
+  let groupMemberDelayTest: ReturnType<typeof vi.fn>
   let groupDelayTest: ReturnType<typeof vi.fn>
   let patchConfig: ReturnType<typeof vi.fn>
   let getConfig: ReturnType<typeof vi.fn>
@@ -50,12 +51,13 @@ describe('policies store', () => {
     getActiveGroupOrder = vi.fn().mockResolvedValue([])
     selectProxy = vi.fn()
     delayTest = vi.fn()
+    groupMemberDelayTest = vi.fn()
     groupDelayTest = vi.fn()
     patchConfig = vi.fn()
     getConfig = vi.fn()
     ;(globalThis as unknown as { window: unknown }).window = {
       desktop: {
-        mihomo: { getProxies, selectProxy, delayTest, groupDelayTest, patchConfig, getConfig },
+        mihomo: { getProxies, selectProxy, delayTest, groupMemberDelayTest, groupDelayTest, patchConfig, getConfig },
         profiles: { getActiveGroupOrder }
       }
     }
@@ -183,7 +185,7 @@ describe('policies store', () => {
 
   it('records an ok delay from a node test', async () => {
     getProxies.mockResolvedValue(PROXIES)
-    delayTest.mockResolvedValue({ delay: 42 } satisfies MihomoDelayResult)
+    groupMemberDelayTest.mockResolvedValue({ delay: 42 } satisfies MihomoDelayResult)
     const store = usePoliciesStore()
     await store.load()
     await store.testNode('香港 01')
@@ -194,10 +196,10 @@ describe('policies store', () => {
     getProxies.mockResolvedValue(PROXIES)
     const store = usePoliciesStore()
     await store.load()
-    delayTest.mockRejectedValueOnce(error(ProtocolErrorCode.UPSTREAM_TIMEOUT))
+    groupMemberDelayTest.mockRejectedValueOnce(error(ProtocolErrorCode.UPSTREAM_TIMEOUT))
     await store.testNode('香港 02')
     expect(store.nodeState('香港 02').status).toBe('timeout')
-    delayTest.mockRejectedValueOnce(error(ProtocolErrorCode.UPSTREAM_TEST_FAILED))
+    groupMemberDelayTest.mockRejectedValueOnce(error(ProtocolErrorCode.UPSTREAM_TEST_FAILED))
     await store.testNode('香港 01')
     expect(store.nodeState('香港 01').status).toBe('unavailable')
   })
@@ -206,10 +208,10 @@ describe('policies store', () => {
     getProxies.mockResolvedValue(PROXIES)
     const store = usePoliciesStore()
     await store.load()
-    delayTest.mockRejectedValueOnce(error(ProtocolErrorCode.UPSTREAM_HTTP_ERROR))
+    groupMemberDelayTest.mockRejectedValueOnce(error(ProtocolErrorCode.UPSTREAM_HTTP_ERROR))
     await store.testNode('香港 01')
     expect(store.nodeState('香港 01').status).toBe('error')
-    delayTest.mockRejectedValueOnce(error(ProtocolErrorCode.NOT_FOUND))
+    groupMemberDelayTest.mockRejectedValueOnce(error(ProtocolErrorCode.NOT_FOUND))
     await store.testNode('DIRECT')
     expect(store.nodeState('DIRECT').status).toBe('error')
   })
@@ -218,7 +220,7 @@ describe('policies store', () => {
     getProxies.mockResolvedValue(PROXIES)
     // testAll fans out per-node probes (never /group/:name/delay — that endpoint
     // would clear a URLTest pin). Each member gets its own result or failure.
-    delayTest.mockImplementation(async (name: string) => {
+    groupMemberDelayTest.mockImplementation(async (_group: string, name: string) => {
       if (name === '香港 02') throw error(ProtocolErrorCode.UPSTREAM_TIMEOUT)
       return { delay: name === '香港 01' ? 42 : 6 } satisfies MihomoDelayResult
     })
@@ -236,14 +238,14 @@ describe('policies store', () => {
     getProxies.mockResolvedValue(PROXIES)
     const store = usePoliciesStore()
     await store.load()
-    delayTest.mockRejectedValue(error(ProtocolErrorCode.UPSTREAM_TIMEOUT))
+    groupMemberDelayTest.mockRejectedValue(error(ProtocolErrorCode.UPSTREAM_TIMEOUT))
     await store.testAll()
     expect(store.groupDelayStatus).toBe('error')
     expect(store.nodeState('香港 01').status).toBe('timeout')
     expect(store.nodeState('香港 02').status).toBe('timeout')
     // One healthy member is enough for the group sweep itself to count as ok —
     // individual dead nodes were already labeled per-node.
-    delayTest.mockImplementation(async (name: string) => {
+    groupMemberDelayTest.mockImplementation(async (_group: string, name: string) => {
       if (name === '香港 02') throw error(ProtocolErrorCode.UPSTREAM_TEST_FAILED)
       return { delay: 42 } satisfies MihomoDelayResult
     })

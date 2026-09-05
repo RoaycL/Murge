@@ -122,6 +122,39 @@ export class MihomoService implements MihomoGateway {
     return this.client.healthCheckProxyProvider(name)
   }
 
+  /**
+   * Resolve a member from trusted controller state before probing it. This keeps
+   * renderer-controlled URLs out of IPC, uses the group's own test URL, and
+   * routes provider nodes through the provider health-check endpoint.
+   */
+  async groupMemberDelayTest(group: string, name: string, opts?: { timeout?: number }): Promise<MihomoDelayResult> {
+    const snapshot = await this.client.getProxies()
+    const owner = snapshot.proxies[group]
+    if (!owner || !Array.isArray(owner.all) || !owner.all.includes(name)) {
+      throw new ProtocolError(ProtocolErrorCode.NOT_FOUND, `策略组 ${group} 中不存在成员 ${name}`)
+    }
+
+    const testOptions = { ...opts, url: owner.testUrl }
+    const member = snapshot.proxies[name]
+    // A nested policy group is tested through /proxies/:name/delay. Only leaf
+    // nodes are candidates for provider-specific health checks.
+    if (!Array.isArray(member?.all)) {
+      try {
+        const providers = await this.client.getProxyProviders()
+        for (const [providerName, provider] of Object.entries(providers.providers)) {
+          if (provider.proxies?.some((proxy) => proxy.name === name)) {
+            return this.client.providerDelayTest(providerName, name, testOptions)
+          }
+        }
+      } catch (error) {
+        // A controller/provider-list failure must not make a globally resolvable
+        // node untestable; fall through to the standard proxy endpoint.
+        if (error instanceof ProtocolError && error.code === ProtocolErrorCode.UNAUTHORIZED) throw error
+      }
+    }
+    return this.client.delayTest(name, testOptions)
+  }
+
   getRuleProviders(): Promise<MihomoRuleProvidersResponse> {
     return this.client.getRuleProviders()
   }

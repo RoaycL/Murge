@@ -31,6 +31,10 @@ function installBridge(client: MihomoClient): void {
     getRuleProviders: () => client.getRuleProviders(),
     refreshRuleProvider: (name: string) => client.refreshRuleProvider(name),
     delayTest: (name: string) => client.delayTest(name),
+    groupMemberDelayTest: async (group: string, name: string, opts?: { timeout?: number }) => {
+      const proxies = await client.getProxies()
+      return client.delayTest(name, { ...opts, url: proxies.proxies[group]?.testUrl })
+    },
     groupDelayTest: (name: string) => client.groupDelayTest(name)
   }
   ;(globalThis as unknown as { window: unknown }).window = {
@@ -100,5 +104,25 @@ describe('policies store + real mock controller', () => {
     expect(afterTest.proxies['自动选择'].fixed).toBe('香港 02')
     expect(store.selectedMember).toBe('香港 02')
     expect(store.panelError).toBeNull()
+  })
+
+  it('keeps a nested policy group selected after closing and reopening its parent', async () => {
+    setActivePinia(createPinia())
+    const server = await startMockMihomoServer({ trafficIntervalMs: 1000 })
+    handles.push(server)
+    const client = new MihomoClient(server.baseUrl, '')
+    installBridge(client)
+
+    const store = usePoliciesStore()
+    await store.load()
+    store.selectGroup('嵌套选择')
+    await store.selectNode('自动选择')
+    expect(store.selectedMember).toBe('自动选择')
+
+    // Simulate closing the drawer, opening another group, then returning.
+    store.selectGroup('节点选择')
+    store.selectGroup('嵌套选择')
+    expect(store.selectedMember).toBe('自动选择')
+    expect((await client.getProxies()).proxies['嵌套选择'].now).toBe('自动选择')
   })
 })

@@ -579,9 +579,10 @@ app.whenReady().then(async () => {
           const res = await net.fetch(url, {
             signal: init?.signal,
             headers: init?.headers,
-            // Chromium follows redirects internally; the fetcher validates the
-            // final URL (via response.url) so SSRF protection still applies.
-            redirect: 'follow'
+            // Keep redirects visible to SubscriptionFetcher. Validation after
+            // an automatic redirect is too late: Chromium may already have
+            // requested a loopback/private target before response.url is seen.
+            redirect: init?.redirect ?? 'manual'
           })
           return {
             ok: res.ok,

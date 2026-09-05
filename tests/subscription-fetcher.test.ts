@@ -240,6 +240,27 @@ describe('SubscriptionFetcher', () => {
     await expect(fetcher.fetch('https://evil.example.com/redirect')).rejects.toThrow(/内部地址/)
   })
 
+  it('keeps proxy-transport redirects manual and blocks the internal hop before requesting it', async () => {
+    const calls: Array<{ url: string; redirect: string | undefined }> = []
+    const fetcher = new SubscriptionFetcher({
+      fetchFn: async () => {
+        throw new Error('direct transport is not used in this sweep')
+      },
+      proxyFetchFn: async (url, init) => {
+        calls.push({ url: String(url), redirect: init?.redirect })
+        return {
+          ok: true,
+          status: 302,
+          headers: { has: (name) => name.toLowerCase() === 'location', get: () => 'http://127.0.0.1/admin' },
+          text: async () => ''
+        }
+      }
+    })
+
+    await expect(fetcher.fetch('https://public.example/redirect', { viaProxy: true })).rejects.toThrow(/内部地址/)
+    expect(calls).toEqual([{ url: 'https://public.example/redirect', redirect: 'manual' }])
+  })
+
   it('rejects too many redirects', async () => {
     const fetcher = new SubscriptionFetcher({ 
       strictUrlValidation: true,

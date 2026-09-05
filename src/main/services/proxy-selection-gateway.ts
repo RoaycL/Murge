@@ -41,6 +41,9 @@ export class ProxySelectionGateway implements MihomoGateway {
   getRuleProviders(): Promise<MihomoRuleProvidersResponse> { return this.inner.getRuleProviders() }
   refreshRuleProvider(name: string): Promise<void> { return this.inner.refreshRuleProvider(name) }
   delayTest(name: string, opts?: { timeout?: number }): Promise<MihomoDelayResult> { return this.inner.delayTest(name, opts) }
+  groupMemberDelayTest(group: string, name: string, opts?: { timeout?: number }): Promise<MihomoDelayResult> {
+    return this.inner.groupMemberDelayTest(group, name, opts)
+  }
   groupDelayTest(name: string, opts?: { timeout?: number }): Promise<MihomoDelayMap> { return this.inner.groupDelayTest(name, opts) }
   dnsQuery(name: string, type: MihomoDnsQueryType): Promise<MihomoDnsQueryResult> { return this.inner.dnsQuery(name, type) }
   flushDnsCache(): Promise<void> { return this.inner.flushDnsCache() }

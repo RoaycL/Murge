@@ -24,6 +24,7 @@ export const useNetworkMetadataStore = defineStore('network-metadata', () => {
   const providers = ref<NetworkMetadataProvider[]>([])
   const rows = ref<NetworkMetadataRow[]>(EMPTY_ROWS)
   const busy = ref(false)
+  const refreshError = ref<string | null>(null)
 
   /** The primary (default-provider) row, kept for the activity header IP. */
   const primaryRow = computed<NetworkMetadataRow | null>(() => rows.value[0] ?? null)
@@ -43,11 +44,12 @@ export const useNetworkMetadataStore = defineStore('network-metadata', () => {
 
   async function refresh(force = false): Promise<void> {
     busy.value = true
+    refreshError.value = null
     try {
       rows.value = toRows(await window.desktop.networkMetadata.resolveAll(force))
     } catch {
-      // Keep the previous rows; only surface a refresh failure through busy
-      // state, matching the old store's fail-quiet retry semantics.
+      // Keep the previous rows but leave an actionable retry path visible.
+      refreshError.value = '查询失败，请重试'
     } finally {
       busy.value = false
     }
@@ -80,5 +82,5 @@ export const useNetworkMetadataStore = defineStore('network-metadata', () => {
     }
   }
 
-  return { providers, rows, busy, primaryRow, metadata, error, ipText, init, refresh, copy }
+  return { providers, rows, busy, refreshError, primaryRow, metadata, error, ipText, init, refresh, copy }
 })

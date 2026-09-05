@@ -146,6 +146,28 @@ describe('ProxySelectionService', () => {
     expect(mihomo.selectProxy).toHaveBeenCalledWith('节点选择', '香港 02')
   })
 
+  it('treats a URLTest fixed member as the current remembered selection', async () => {
+    const store = new ProxySelectionStore(dir)
+    await store.set('p1', '自动选择', '香港 02')
+    const mihomo = mihomoStub()
+    ;(mihomo.getProxies as ReturnType<typeof vi.fn>).mockResolvedValue({
+      proxies: {
+        ...proxiesResponse().proxies,
+        自动选择: {
+          name: '自动选择',
+          type: 'URLTest',
+          now: '香港 01',
+          fixed: '香港 02',
+          all: ['香港 01', '香港 02']
+        }
+      }
+    })
+    const service = new ProxySelectionService(mihomo, profilesStub('p1'), store)
+
+    expect(await service.restoreSelections()).toBe(0)
+    expect(mihomo.selectProxy).not.toHaveBeenCalled()
+  })
+
   it('skips a remembered node the (updated) config no longer offers', async () => {
     const store = new ProxySelectionStore(dir)
     await store.set('p1', '节点选择', '已下架节点')

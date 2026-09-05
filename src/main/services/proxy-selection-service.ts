@@ -72,7 +72,8 @@ export class ProxySelectionService {
       const target = live[group]
       if (!target || !SELECTABLE_GROUP_TYPES.has(target.type)) continue
       if (!Array.isArray(target.all) || !target.all.includes(node)) continue
-      if (target.now === node) continue
+      const selected = typeof target.fixed === 'string' && target.fixed.length > 0 ? target.fixed : target.now
+      if (selected === node) continue
       try {
         await this.mihomo.selectProxy(group, node)
         restored++

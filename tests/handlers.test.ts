@@ -65,6 +65,19 @@ describe('buildIpcHandlers', () => {
     })
   })
 
+  describe('mihomo:group-member-delay-test', () => {
+    it('validates and forwards the group, member and timeout', async () => {
+      container.mihomo.delayResults['HK-01'] = { delay: 38 }
+      await expect(handlers[IPC.mihomoGroupMemberDelayTest](null, 'Proxy', 'HK-01', { timeout: 10000 })).resolves.toEqual({ delay: 38 })
+      expect(container.mihomo.groupMemberDelayCalls).toEqual([{ group: 'Proxy', name: 'HK-01', timeout: 10000 }])
+    })
+
+    it('rejects invalid input before reaching the gateway', async () => {
+      await expect(handlers[IPC.mihomoGroupMemberDelayTest](null, '', 'HK-01', {})).rejects.toThrow(ProtocolError)
+      expect(container.mihomo.groupMemberDelayCalls).toHaveLength(0)
+    })
+  })
+
   describe('mihomo:close-connection', () => {
     it('forwards a valid id to the gateway', async () => {
       await handlers[IPC.mihomoCloseConnection](null, 'conn-7')

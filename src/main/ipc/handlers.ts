@@ -78,6 +78,10 @@ export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {})
     [IPC.mihomoGetRuleProviders]: async () => mihomo.getRuleProviders(),
     [IPC.mihomoRefreshRuleProvider]: async (_event, name) => mihomo.refreshRuleProvider(parseMihomoName(name)),
     [IPC.mihomoDelayTest]: async (_event, name, opts) => mihomo.delayTest(parseMihomoName(name), parseDelayOptions(opts)),
+    [IPC.mihomoGroupMemberDelayTest]: async (_event, group, name, opts) => {
+      const selection = parseProxySelection(group, name)
+      return mihomo.groupMemberDelayTest(selection.group, selection.name, parseDelayOptions(opts))
+    },
     [IPC.mihomoGroupDelayTest]: async (_event, name, opts) => mihomo.groupDelayTest(parseMihomoName(name), parseDelayOptions(opts)),
     [IPC.mihomoGetConnections]: async () => mihomo.getConnections(),
     [IPC.mihomoCloseConnection]: async (_event, id) => mihomo.closeConnection(parseConnectionId(id)),

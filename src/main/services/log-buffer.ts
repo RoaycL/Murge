@@ -67,8 +67,13 @@ export class MihomoLogBuffer {
     return this.nextSeq
   }
 
-  /** Drop retained lines; sequence numbering continues uninterrupted. */
-  clear(): void {
+  /**
+   * Drop retained lines and return the atomic high-water mark that was cleared.
+   * Sequence numbering continues uninterrupted, so callers can distinguish
+   * messages created after the clear from entries that belonged to the old log.
+   */
+  clear(): number {
     this.entries = []
+    return this.nextSeq
   }
 }

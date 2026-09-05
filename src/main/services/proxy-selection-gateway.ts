@@ -55,5 +55,5 @@ export class ProxySelectionGateway implements MihomoGateway {
   onLogs(listener: (message: MihomoLogMessage) => void): () => void { return this.inner.onLogs(listener) }
   onStreamError(listener: (error: MihomoStreamError) => void): () => void { return this.inner.onStreamError(listener) }
   logsSnapshot(afterSeq?: number): Promise<MihomoLogsSnapshot> { return this.inner.logsSnapshot(afterSeq) }
-  clearLogs(): Promise<void> { return this.inner.clearLogs() }
+  clearLogs(): Promise<number> { return this.inner.clearLogs() }
 }

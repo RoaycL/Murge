@@ -124,8 +124,8 @@ export interface MihomoGateway {
   onStreamError(listener: (error: MihomoStreamError) => void): () => void
   /** Retained log history (log capture is independent of the logs view). */
   logsSnapshot(afterSeq?: number): Promise<MihomoLogsSnapshot>
-  /** Drop retained log history; live streaming and sequence numbering continue. */
-  clearLogs(): Promise<void>
+  /** Drop retained history and return the last sequence included in the clear. */
+  clearLogs(): Promise<number>
 }
 
 export interface RuntimeGateway {

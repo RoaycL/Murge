@@ -27,6 +27,8 @@ let lastSeq = 0
 let pending: MihomoLogMessage[] = []
 let flushTimer: ReturnType<typeof setTimeout> | null = null
 let syncPromise: Promise<void> | null = null
+/** Invalidates a snapshot when clear() starts while that snapshot is in flight. */
+let syncGeneration = 0
 /** Bound to the newest store instance; rebound when Pinia re-creates it. */
 let appendSink: ((messages: readonly MihomoLogMessage[]) => void) | null = null
 let errorSink: ((error: MihomoStreamError) => void) | null = null
@@ -48,9 +50,11 @@ function scheduleFlush(): void {
 
 async function initialSync(): Promise<void> {
   if (syncPromise) return syncPromise
+  const generation = syncGeneration
   const attempt = (async () => {
     try {
       const snapshot = await window.desktop.mihomo.logsSnapshot(lastSeq)
+      if (generation !== syncGeneration) return
       // Snapshot lines first, then the live lines held during the fetch, so the
       // merged order is ascending by seq; append deduplicates any overlap.
       const merged = [...snapshot.entries, ...pending.splice(0)]
@@ -59,14 +63,17 @@ async function initialSync(): Promise<void> {
     } catch {
       // Best-effort: the live stream is already connected and keeps the view
       // updating even when the history channel is unavailable.
-    } finally {
-      flushPending()
     }
   })()
-  syncPromise = attempt.finally(() => {
-    if (syncPromise === attempt) syncPromise = null
+  let tracked: Promise<void>
+  tracked = attempt.finally(() => {
+    // A newer clear/sync operation owns pending when the generation changed.
+    if (syncPromise !== tracked) return
+    syncPromise = null
+    flushPending()
   })
-  return attempt
+  syncPromise = tracked
+  return tracked
 }
 
 function ensurePipelineStarted(): void {
@@ -141,14 +148,34 @@ export const useLogsStore = defineStore('logs', () => {
   }
 
   function clear(): void {
+    const generation = ++syncGeneration
     if (flushTimer !== null) {
       clearTimeout(flushTimer)
       flushTimer = null
     }
     pending = []
     entries.value = []
-    // Also drop the retained history in the main process, matching sparkle.
-    void window.desktop.mihomo.clearLogs().catch(() => undefined)
+    // Supersede an older snapshot. Live rows received while the main process
+    // performs the clear stay pending until its atomic high-water mark returns.
+    const attempt = (async () => {
+      try {
+        const clearedThrough = await window.desktop.mihomo.clearLogs()
+        if (generation !== syncGeneration) return
+        lastSeq = Math.max(lastSeq, clearedThrough)
+      } catch (error) {
+        if (generation === syncGeneration) {
+          lastError.value = error instanceof Error ? error.message : String(error)
+          status.value = 'error'
+        }
+      }
+    })()
+    let tracked: Promise<void>
+    tracked = attempt.finally(() => {
+      if (syncPromise !== tracked) return
+      syncPromise = null
+      flushPending()
+    })
+    syncPromise = tracked
   }
 
   return { status, lastError, entries, search, level, visibleEntries, connect, clear }

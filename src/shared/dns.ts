@@ -21,7 +21,7 @@ import { isValidIp, isValidHostname } from './net'
 // (the IPC schema and tests) keep their import path unchanged.
 export { isIpv4, isIpv6, isValidIp, isValidCidr, isValidDomainOrRule } from './net'
 
-export type DnsEnhancedMode = 'fake-ip' | 'redir-host' | 'normal'
+export type DnsEnhancedMode = 'fake-ip' | 'redir-host'
 
 /** mihomo `dns.fake-ip-filter-mode`. */
 export type FakeIpFilterMode = 'blacklist' | 'whitelist'
@@ -118,16 +118,54 @@ export function isValidNameserver(value: string): boolean {
     if (close === -1) return false
     const inner = host.slice(1, close)
     const after = host.slice(close + 1)
-    if (after && !/^:\d+$/.test(after)) return false
+    if (after && (!/^:\d+$/.test(after) || !isValidDnsPort(after.slice(1)))) return false
     if (isValidIp(inner)) return true
     return false
   }
   const colon = host.lastIndexOf(':')
   if (colon !== -1 && /^\d+$/.test(host.slice(colon + 1))) {
+    if (!isValidDnsPort(host.slice(colon + 1))) return false
     host = host.slice(0, colon)
   }
   if (isValidIp(host)) return true
   return isValidHostname(host)
+}
+
+function isValidDnsPort(value: string): boolean {
+  const port = Number(value)
+  return /^\d{1,5}$/.test(value) && Number.isInteger(port) && port >= 1 && port <= 65535
+}
+
+/**
+ * `default-nameserver` bootstraps resolution of the other DNS server names, so
+ * its endpoint must itself be a literal IP. Mihomo permits a bare IP or a DNS
+ * transport URI whose host is an IP; accepting another hostname here creates a
+ * circular dependency before the configured resolver is reachable.
+ */
+export function isValidDefaultNameserver(value: string): boolean {
+  const v = value.trim()
+  if (isValidIp(v)) return true
+
+  const schemeMatch = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/(.+)$/.exec(v)
+  if (!schemeMatch) return false
+  const scheme = schemeMatch[1].toLowerCase()
+  if (!['udp', 'tcp', 'tls', 'https', 'h3', 'quic'].includes(scheme)) return false
+
+  const authority = schemeMatch[2].split('/')[0]
+  if (!authority) return false
+  let host = authority.includes('@') ? authority.slice(authority.lastIndexOf('@') + 1) : authority
+  if (host.startsWith('[')) {
+    const close = host.indexOf(']')
+    if (close === -1) return false
+    const after = host.slice(close + 1)
+    return (!after || (/^:\d+$/.test(after) && isValidDnsPort(after.slice(1)))) && isValidIp(host.slice(1, close))
+  }
+  const colon = host.lastIndexOf(':')
+  if (colon !== -1 && /^\d+$/.test(host.slice(colon + 1))) {
+    if (!isValidDnsPort(host.slice(colon + 1))) return false
+    host = host.slice(0, colon)
+  }
+  return isValidIp(host)
 }
 
 /**
@@ -167,9 +205,13 @@ export function coerceDnsEnhancement(input: unknown): DnsEnhancement {
       ? (source[key] as unknown[]).filter(isRecord).map((entry) => ({ ...entry })) as unknown as T[]
       : []
 
-  return {
+  const enhancement: DnsEnhancement = {
     enabled: asBool('enabled'),
-    enhancedMode: asEnum('enhancedMode', ['fake-ip', 'redir-host', 'normal'] as const, 'fake-ip'),
+    // `normal` was exposed by older app builds but is not a mihomo mode.
+    // Preserve the user's real-IP intent by migrating it to `redir-host`.
+    enhancedMode: source.enhancedMode === 'normal'
+      ? 'redir-host'
+      : asEnum('enhancedMode', ['fake-ip', 'redir-host'] as const, 'fake-ip'),
     ipv6: asBool('ipv6'),
     respectRules: asBool('respectRules'),
     fakeIpRange: asString('fakeIpRange'),
@@ -184,6 +226,11 @@ export function coerceDnsEnhancement(input: unknown): DnsEnhancement {
     fallback: asStringList('fallback'),
     nameserverPolicy: asPairs<DnsPolicyEntry>('nameserverPolicy')
   }
+  // A stale persisted model must not create a DNS routing bootstrap loop.
+  if (enhancement.respectRules && enhancement.proxyServerNameserver.length === 0) {
+    enhancement.respectRules = false
+  }
+  return enhancement
 }
 
 /** Coerce a snapshot of the persisted enhancement. */
@@ -210,11 +257,13 @@ export function buildDnsBlock(enhancement: DnsEnhancement): Record<string, unkno
     'enhanced-mode': enhancement.enhancedMode,
     ipv6: enhancement.ipv6,
     'respect-rules': enhancement.respectRules,
-    'fake-ip-range': enhancement.fakeIpRange,
-    'fake-ip-filter-mode': enhancement.fakeIpFilterMode,
     'use-hosts': enhancement.useHosts
   }
-  if (enhancement.fakeIpFilter.length > 0) block['fake-ip-filter'] = [...enhancement.fakeIpFilter]
+  if (enhancement.enhancedMode === 'fake-ip') {
+    block['fake-ip-range'] = enhancement.fakeIpRange
+    block['fake-ip-filter-mode'] = enhancement.fakeIpFilterMode
+    if (enhancement.fakeIpFilter.length > 0) block['fake-ip-filter'] = [...enhancement.fakeIpFilter]
+  }
   if (enhancement.hosts.length > 0) {
     const hosts: Record<string, unknown> = {}
     for (const entry of enhancement.hosts) hosts[entry.domain] = entry.address

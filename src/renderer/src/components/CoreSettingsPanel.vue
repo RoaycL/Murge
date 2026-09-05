@@ -11,6 +11,7 @@ import { useUnsavedChanges } from '../composables/use-unsaved-changes'
 const store = useCoreSettingsStore()
 const toast = useToast()
 const hydrated = ref(false)
+const networkInterfaces = ref<string[]>([])
 
 const form = reactive<CoreSettings>({ ...EMPTY_CORE_SETTINGS })
 
@@ -33,6 +34,15 @@ const FIND_PROCESS_OPTIONS: Array<{ value: CoreSettings['findProcessMode']; labe
   { value: 'always', label: 'always' }
 ]
 
+const INTERFACE_OPTIONS = computed(() => {
+  const names = new Set(networkInterfaces.value)
+  if (form.interfaceName) names.add(form.interfaceName)
+  return [
+    { value: '', label: '自动选择' },
+    ...[...names].map((name) => ({ value: name, label: name }))
+  ]
+})
+
 function syncFromConfig(value: CoreSettings): void {
   form.enabled = value.enabled
   form.logLevel = value.logLevel
@@ -40,6 +50,7 @@ function syncFromConfig(value: CoreSettings): void {
   form.tcpConcurrent = value.tcpConcurrent
   form.unifiedDelay = value.unifiedDelay
   form.findProcessMode = value.findProcessMode
+  form.interfaceName = value.interfaceName
 }
 
 async function save(): Promise<void> {
@@ -67,7 +78,11 @@ watch(
 )
 
 onMounted(async () => {
-  await store.refresh()
+  const [, interfaces] = await Promise.all([
+    store.refresh(),
+    window.desktop.app.listNetworkInterfaces().catch(() => [] as string[])
+  ])
+  networkInterfaces.value = interfaces
   syncFromConfig(store.settings)
   hydrated.value = true
 })
@@ -79,7 +94,7 @@ onMounted(async () => {
       <div>
         <h2 class="core-title">mihomo 核心设置</h2>
         <p class="core-subtitle">
-          控制 mihomo 运行时核心参数（日志级别、IPv6、并发拨号、统一延迟、进程匹配），不修改订阅源文件；当启用时这些值会在运行时配置中生效并覆盖配置文件的同名项。
+          控制 mihomo 运行时核心参数（日志级别、IPv6、并发拨号、统一延迟、进程匹配和出站接口），不修改订阅源文件；当启用时这些值会在运行时配置中生效并覆盖配置文件的同名项。
         </p>
       </div>
       <button type="button" class="core-reset" @click="resetFromStore">重置</button>
@@ -111,6 +126,10 @@ onMounted(async () => {
           <label class="core-field">
             <span class="core-label">find-process-mode</span>
             <AppSelect v-model="form.findProcessMode" :options="FIND_PROCESS_OPTIONS" label="进程查找模式" />
+          </label>
+          <label class="core-field">
+            <span class="core-label">interface-name（留空自动选择）</span>
+            <AppSelect v-model="form.interfaceName" :options="INTERFACE_OPTIONS" label="指定出站接口" />
           </label>
         </div>
       </fieldset>

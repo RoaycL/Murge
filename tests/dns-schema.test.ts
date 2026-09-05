@@ -22,6 +22,16 @@ describe('parseDnsEnhancement', () => {
     expect(() => parseDnsEnhancement({ ...complete(), nameserver: ['ftp://evil'] })).toThrowError(ProtocolError)
   })
 
+  it('requires an IP endpoint for default-nameserver', () => {
+    expect(parseDnsEnhancement({ ...complete(), defaultNameserver: ['https://1.1.1.1/dns-query'] })).toBeTruthy()
+    expect(() => parseDnsEnhancement({ ...complete(), defaultNameserver: ['https://dns.example/dns-query'] })).toThrowError(ProtocolError)
+  })
+
+  it('requires proxy-server-nameserver when respect-rules is enabled', () => {
+    expect(() => parseDnsEnhancement({ ...complete(), respectRules: true, proxyServerNameserver: [] })).toThrowError(ProtocolError)
+    expect(parseDnsEnhancement({ ...complete(), respectRules: true, proxyServerNameserver: ['1.1.1.1'] }).respectRules).toBe(true)
+  })
+
   it('rejects a bad domain pattern in fakeIpFilter or policy', () => {
     expect(() => parseDnsEnhancement({ ...complete(), fakeIpFilter: ['a_b.com'] })).toThrowError(ProtocolError)
     expect(() =>
@@ -37,6 +47,7 @@ describe('parseDnsEnhancement', () => {
   })
 
   it('rejects a bad enum value', () => {
+    expect(() => parseDnsEnhancement({ ...complete(), enhancedMode: 'normal' })).toThrowError(ProtocolError)
     expect(() => parseDnsEnhancement({ ...complete(), enhancedMode: 'bogus' })).toThrowError(ProtocolError)
     expect(() => parseDnsEnhancement({ ...complete(), fakeIpFilterMode: 'bogus' })).toThrowError(ProtocolError)
   })

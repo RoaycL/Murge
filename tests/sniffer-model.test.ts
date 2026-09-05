@@ -56,7 +56,7 @@ describe('buildSnifferBlock', () => {
   it('emits owned scalar keys always and skips empty lists', () => {
     const block = buildSnifferBlock({ ...EMPTY_SNIFFER_ENHANCEMENT, enabled: true })
     expect(block.enable).toBe(true)
-    expect(block['override-destination']).toBe(true)
+    expect(block['override-destination']).toBe(false)
     expect(block['force-dns-mapping']).toBe(true)
     expect(block['parse-pure-ip']).toBe(true)
     // Non-empty port families are emitted.
@@ -100,7 +100,7 @@ describe('coercion', () => {
   it('fills defaults for missing fields', () => {
     const out = coerceSnifferEnhancement({ enabled: true })
     expect(out.enabled).toBe(true)
-    expect(out.overrideDestination).toBe(true)
+    expect(out.overrideDestination).toBe(false)
     expect(out.ports.http).toEqual(['80', '8080-8880'])
     expect(Array.isArray(out.skipDomain)).toBe(true)
   })

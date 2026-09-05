@@ -156,13 +156,14 @@ describe('proxied TUN config (real subscription content)', () => {
     expect(config.dns['fake-ip-range']).toBe('198.18.0.1/16')
   })
 
-  it('keeps the profile nameserver split while forcing fake-ip', () => {
+  it('keeps the profile nameserver split and explicit redir-host mode', () => {
     const withDns = `${document}dns:\n  enable: false\n  enhanced-mode: redir-host\n  nameserver:\n    - 223.5.5.5\n  fallback:\n    - 1.1.1.1\n`
     const config = parse(generateProxiedTunConfig({ ...proxied, document: withDns })) as Record<string, any>
-    // fake-ip is non-negotiable for TUN...
-    expect(config.dns['enhanced-mode']).toBe('fake-ip')
+    expect(config.dns['enhanced-mode']).toBe('redir-host')
     expect(config.dns.enable).toBe(true)
-    // ...but the user's own resolver routing is their intent and must survive.
+    expect(config.dns['fake-ip-range']).toBeUndefined()
+    expect(config.dns['fake-ip-filter']).toBeUndefined()
+    // The user's own resolver routing is their intent and must survive.
     expect(config.dns.nameserver).toEqual(['223.5.5.5'])
     expect(config.dns.fallback).toEqual(['1.1.1.1'])
   })

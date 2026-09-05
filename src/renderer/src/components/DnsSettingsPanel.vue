@@ -91,13 +91,21 @@ function syncFromEnhancement(value: DnsEnhancement): void {
 }
 
 function buildInput(): DnsEnhancement {
+  const nameserver = textToList(nameserverText.value)
+  let proxyServerNameserver = textToList(proxyNsText.value)
+  // Mihomo requires a dedicated bootstrap resolver when DNS traffic follows
+  // routing rules. Reuse the chosen resolvers when the owner has not supplied a
+  // separate list, matching the safe defaults used by the reference clients.
+  if (form.respectRules && proxyServerNameserver.length === 0) {
+    proxyServerNameserver = [...nameserver]
+  }
   return {
     ...form,
     fakeIpFilter: textToList(fakeIpFilterText.value),
     defaultNameserver: textToList(defaultNsText.value),
-    proxyServerNameserver: textToList(proxyNsText.value),
+    proxyServerNameserver,
     directNameserver: textToList(directNsText.value),
-    nameserver: textToList(nameserverText.value),
+    nameserver,
     fallback: textToList(fallbackText.value),
     hosts: textToPairs(hostsText.value).map((pair) => ({ domain: pair.domain, address: pair.value })),
     nameserverPolicy: textToPairs(policyText.value).map((pair) => ({ domain: pair.domain, server: pair.value }))
@@ -163,13 +171,13 @@ onMounted(async () => {
         <div class="dns-grid">
           <label class="dns-field">
             <span class="dns-label">增强模式</span>
-            <AppSelect v-model="form.enhancedMode" :options="[{ value: 'fake-ip', label: 'fake-ip' }, { value: 'redir-host', label: 'redir-host' }, { value: 'normal', label: 'normal' }]" label="DNS 增强模式" />
+            <AppSelect v-model="form.enhancedMode" :options="[{ value: 'fake-ip', label: 'fake-ip' }, { value: 'redir-host', label: 'redir-host' }]" label="DNS 增强模式" />
           </label>
-          <label class="dns-field">
+          <label v-if="form.enhancedMode === 'fake-ip'" class="dns-field">
             <span class="dns-label">Fake-IP 范围</span>
             <input v-model="form.fakeIpRange" class="dns-input" spellcheck="false" placeholder="198.18.0.1/16" />
           </label>
-          <label class="dns-field">
+          <label v-if="form.enhancedMode === 'fake-ip'" class="dns-field">
             <span class="dns-label">Fake-IP 过滤模式</span>
             <AppSelect v-model="form.fakeIpFilterMode" :options="[{ value: 'blacklist', label: 'blacklist' }, { value: 'whitelist', label: 'whitelist' }]" label="Fake-IP 过滤模式" />
           </label>
@@ -191,7 +199,7 @@ onMounted(async () => {
         </div>
       </fieldset>
 
-      <fieldset class="dns-group">
+      <fieldset v-if="form.enhancedMode === 'fake-ip'" class="dns-group">
         <legend>Fake-IP 过滤</legend>
         <label class="dns-field">
           <span class="dns-label">过滤规则（每行一个，支持域名、*. 通配符或 geosite:/geoip: 规则）</span>

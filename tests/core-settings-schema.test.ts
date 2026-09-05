@@ -8,7 +8,8 @@ const valid = {
   ipv6: true,
   tcpConcurrent: false,
   unifiedDelay: true,
-  findProcessMode: 'strict'
+  findProcessMode: 'strict',
+  interfaceName: 'Ethernet'
 }
 
 describe('core-settings schema', () => {
@@ -26,6 +27,10 @@ describe('core-settings schema', () => {
 
   it('rejects an invalid find-process-mode', () => {
     expect(() => parseCoreSettings({ ...valid, findProcessMode: 'always2' })).toThrowError(ProtocolError)
+  })
+
+  it('rejects control characters in interface-name', () => {
+    expect(() => parseCoreSettings({ ...valid, interfaceName: 'bad\nname' })).toThrowError(ProtocolError)
   })
 
   it('rejects a non-object', () => {

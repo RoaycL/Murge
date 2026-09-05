@@ -8,7 +8,7 @@
  *
  * The main kernel stays loopback-only. Every one of these keys is a pure mihomo
  * runtime knob (log verbosity, IPv6 handling, concurrent dialing, unified delay
- * in proxy tests, process-name lookup). None of them can bind a public
+ * in proxy tests, process-name lookup and optional outbound interface). None can bind a public
  * listener, install a route, or touch the OS registry / adapters.
  *
  * The model is authoritative when `enabled` is true: the generated runtime
@@ -41,6 +41,8 @@ export interface CoreSettings {
   unifiedDelay: boolean
   /** mihomo `find-process-mode`. */
   findProcessMode: FindProcessMode
+  /** Optional mihomo `interface-name`; empty keeps automatic route selection. */
+  interfaceName: string
 }
 
 /**
@@ -55,7 +57,8 @@ export const EMPTY_CORE_SETTINGS: Readonly<CoreSettings> = Object.freeze({
   ipv6: false,
   tcpConcurrent: false,
   unifiedDelay: false,
-  findProcessMode: 'off'
+  findProcessMode: 'off',
+  interfaceName: ''
 })
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -80,7 +83,10 @@ export function coerceCoreSettings(input: unknown): CoreSettings {
     ipv6: asBool('ipv6'),
     tcpConcurrent: asBool('tcpConcurrent'),
     unifiedDelay: asBool('unifiedDelay'),
-    findProcessMode: asEnum('findProcessMode', FIND_PROCESS_MODES, 'off')
+    findProcessMode: asEnum('findProcessMode', FIND_PROCESS_MODES, 'off'),
+    interfaceName: typeof source.interfaceName === 'string'
+      ? source.interfaceName.trim().slice(0, 255)
+      : ''
   }
 }
 
@@ -95,11 +101,13 @@ export function coerceCoreSettings(input: unknown): CoreSettings {
  * should enforce.
  */
 export function buildCoreSettingsBlock(settings: CoreSettings): Record<string, unknown> {
-  return {
+  const block: Record<string, unknown> = {
     'log-level': settings.logLevel,
     ipv6: settings.ipv6,
     'tcp-concurrent': settings.tcpConcurrent,
     'unified-delay': settings.unifiedDelay,
     'find-process-mode': settings.findProcessMode
   }
+  if (settings.interfaceName) block['interface-name'] = settings.interfaceName
+  return block
 }

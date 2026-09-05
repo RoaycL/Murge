@@ -287,11 +287,9 @@ function validateRouteList(node: Node | undefined, label: string, errors: string
  */
 export const TUN_PROFILE_MAX_BYTES = 64 * 1024
 
-/** The fake-ip keys TUN requires; a profile's own `dns` keys are otherwise kept. */
+/** TUN requires the DNS module to be enabled; its resolution mode remains user intent. */
 const TUN_REQUIRED_DNS = {
-  enable: true,
-  'enhanced-mode': 'fake-ip',
-  'fake-ip-range': '198.18.0.1/16'
+  enable: true
 } as const
 
 /**
@@ -495,8 +493,8 @@ export function generateProxiedTunConfig(options: ProxiedTunConfigOptions): stri
   excludeLiteralProxyServers(data, tunBlock)
   data.tun = tunBlock
 
-  // TUN needs fake-ip to resolve hijacked queries, but the profile's own
-  // nameserver/fallback split is the user's routing intent — merge, never replace.
+  // TUN DNS hijacking works with both mihomo modes. Preserve an explicit
+  // `redir-host`; only choose fake-ip when the profile omitted the mode.
   const existingDns = data.dns
   data.dns = {
     ...(typeof existingDns === 'object' && existingDns !== null && !Array.isArray(existingDns)
@@ -505,13 +503,17 @@ export function generateProxiedTunConfig(options: ProxiedTunConfigOptions): stri
     ...TUN_REQUIRED_DNS
   }
   const dns = data.dns as Record<string, unknown>
+  if (dns['enhanced-mode'] === undefined) dns['enhanced-mode'] = 'fake-ip'
   if (!Array.isArray(dns.nameserver) || dns.nameserver.length === 0) {
     dns.nameserver = ['system']
   }
   // Keep game-/NTP-relevant domains out of fake-ip space only when the profile
   // omitted this key. An explicitly empty list is still user routing intent: it
   // asks mihomo to allocate fake IPs for every domain and must not be rewritten.
-  if (!Object.prototype.hasOwnProperty.call(dns, 'fake-ip-filter')) {
+  if (dns['enhanced-mode'] === 'fake-ip' && dns['fake-ip-range'] === undefined) {
+    dns['fake-ip-range'] = '198.18.0.1/16'
+  }
+  if (dns['enhanced-mode'] === 'fake-ip' && !Object.prototype.hasOwnProperty.call(dns, 'fake-ip-filter')) {
     dns['fake-ip-filter'] = [...TUN_DEFAULT_FAKE_IP_FILTER]
   }
 
@@ -630,7 +632,9 @@ export function proxiedTunConfigErrors(text: string): string[] {
   } else {
     const block = dns as Record<string, unknown>
     if (block.enable !== true) errors.push('dns.enable must equal true')
-    if (block['enhanced-mode'] !== 'fake-ip') errors.push('dns.enhanced-mode must equal fake-ip')
+    if (block['enhanced-mode'] !== 'fake-ip' && block['enhanced-mode'] !== 'redir-host') {
+      errors.push('dns.enhanced-mode must equal fake-ip or redir-host')
+    }
     if ('listen' in block) errors.push('forbidden key for a privileged profile: dns.listen')
     if ('fake-ip-filter' in block) {
       const filter = block['fake-ip-filter']

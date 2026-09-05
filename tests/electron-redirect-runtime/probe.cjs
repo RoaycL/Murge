@@ -28,7 +28,7 @@
 //   B3  a chain longer than maxRedirects fails with the budget error after
 //       exactly maxRedirects+1 requests (runs with strictUrlValidation
 //       disabled: the counter is independent of URL validation)
-const { app } = require('electron')
+const { app, session } = require('electron')
 const http = require('node:http')
 const path = require('node:path')
 
@@ -83,6 +83,11 @@ function startProbeServer() {
 async function main() {
   const bundleDir = process.env.PROBE_BUNDLE_DIR
   if (!bundleDir) throw new Error('PROBE_BUNDLE_DIR not set')
+  // The probe is intentionally loopback-only. Do not inherit the desktop's
+  // current system proxy (often this desktop client itself), otherwise RFC-2606 test hosts are
+  // sent to that proxy before Chromium's host-resolver rules can map them and a
+  // local 200/302 becomes a misleading proxy-generated 503.
+  await session.defaultSession.setProxy({ mode: 'direct' })
   const { createSubscriptionProxyFetchFn } = require(path.join(bundleDir, 'proxy-fetch-transport.cjs'))
   const { SubscriptionFetcher } = require(path.join(bundleDir, 'subscription-fetcher.cjs'))
 

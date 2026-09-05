@@ -22,7 +22,8 @@ describe('core-settings model', () => {
       ipv6: true,
       tcpConcurrent: false,
       unifiedDelay: true,
-      findProcessMode: 'strict'
+      findProcessMode: 'strict',
+      interfaceName: 'Ethernet'
     })
     expect(out).toEqual({
       enabled: true,
@@ -30,7 +31,8 @@ describe('core-settings model', () => {
       ipv6: true,
       tcpConcurrent: false,
       unifiedDelay: true,
-      findProcessMode: 'strict'
+      findProcessMode: 'strict',
+      interfaceName: 'Ethernet'
     })
   })
 
@@ -57,14 +59,16 @@ describe('core-settings model', () => {
       ipv6: false,
       tcpConcurrent: true,
       unifiedDelay: true,
-      findProcessMode: 'always'
+      findProcessMode: 'always',
+      interfaceName: 'Ethernet'
     })
     expect(block).toEqual({
       'log-level': 'error',
       ipv6: false,
       'tcp-concurrent': true,
       'unified-delay': true,
-      'find-process-mode': 'always'
+      'find-process-mode': 'always',
+      'interface-name': 'Ethernet'
     })
   })
 })

@@ -15,6 +15,9 @@ describe('proxy-bypass model', () => {
       expect(DEFAULT_LOCAL_BYPASS_ENTRIES).toContain('<local>')
       expect(DEFAULT_LOCAL_BYPASS_ENTRIES).toContain('localhost')
       expect(DEFAULT_LOCAL_BYPASS_ENTRIES).toContain('127.*')
+      for (let octet = 16; octet <= 31; octet += 1) {
+        expect(DEFAULT_LOCAL_BYPASS_ENTRIES).toContain(`172.${octet}.*` as (typeof DEFAULT_LOCAL_BYPASS_ENTRIES)[number])
+      }
     })
 
     it('caps custom entries and per-entry length', () => {

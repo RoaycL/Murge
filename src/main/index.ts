@@ -53,6 +53,7 @@ import { createElectronTray } from './tray/electron-tray'
 import { StartupService } from './startup/service'
 import { ElectronStartupAdapter } from './startup/electron-adapter'
 import { restoreRuntimeIntent } from './startup/runtime-intent'
+import { RuntimeIntentRecoveryCoordinator } from './startup/runtime-intent-recovery'
 import { AppSettingsService } from './app-settings/service'
 import { OverrideService } from './kernel/overrides/override-service'
 import { DnsEnhancementService } from './kernel/dns/dns-enhancement-service'
@@ -162,6 +163,7 @@ let modeTransition: ModeTransitionController | null = null
 let tunExitMonitor: { stop(): void } | null = null
 let proxyGuardTimer: NodeJS.Timeout | null = null
 let networkDetector: NetworkDetector | null = null
+let runtimeIntentRecovery: RuntimeIntentRecoveryCoordinator | null = null
 let updateService: UpdateService | null = null
 let usageHistoryServiceRef: UsageHistoryService | null = null
 let waitForProfileOperations: (() => Promise<void>) | null = null
@@ -1002,14 +1004,22 @@ app.whenReady().then(async () => {
       startTun: () => queuedTun.enable(),
       stopKernel: () => queuedKernel.stop(),
       handleNetworkDown: () => systemProxyService.handleNetworkDown(),
-      handleNetworkUp: () => systemProxyService.handleNetworkUp()
+      handleNetworkUp: async () => {
+        try {
+          await systemProxyService.handleNetworkUp()
+        } finally {
+          runtimeIntentRecovery?.wake()
+        }
+      }
     }
   })
   // A resume must not wait for the next periodic tick to reconcile.
   powerMonitor.on('resume', () => {
-    void networkDetector?.probeNow().catch((error) => {
-      console.error('[network-detector] resume probe failed:', error)
-    })
+    void networkDetector?.probeNow()
+      .catch((error) => {
+        console.error('[network-detector] resume probe failed:', error)
+      })
+      .finally(() => runtimeIntentRecovery?.wake())
   })
 
   // Reapplies the active profile to the live kernel whenever the user edits,
@@ -1167,17 +1177,18 @@ app.whenReady().then(async () => {
   // flag suppresses it. Operations are sequential and bounded: ordinary host
   // ready -> TUN mode switch -> system proxy on the unified mixed-port.
   if (!is.dev && !skipKernelAutostart) {
+    const runtimeIntentDeps = {
+      kernel: queuedKernel,
+      tun: queuedTun,
+      systemProxy: systemProxyService,
+      restoreSelections: async (): Promise<void> => {
+        await proxySelectionService.restoreSelections()
+      },
+      log: (message: string, error?: unknown): void => console.warn(message, error ?? '')
+    }
     try {
       const settings = await appSettingsService.get()
-      const restored = await restoreRuntimeIntent(settings, {
-        kernel: queuedKernel,
-        tun: queuedTun,
-        systemProxy: systemProxyService,
-        restoreSelections: async () => {
-          await proxySelectionService.restoreSelections()
-        },
-        log: (message, error) => console.warn(message, error ?? '')
-      })
+      const restored = await restoreRuntimeIntent(settings, runtimeIntentDeps)
       if (settings.tunDesired && restored.tun.phase !== 'active') {
         console.warn(`[startup-restore] TUN intent remains pending (${restored.tun.phase})`)
       }
@@ -1187,6 +1198,12 @@ app.whenReady().then(async () => {
     } catch (error) {
       console.warn('[startup-restore] failed to restore runtime intent:', error)
     }
+    runtimeIntentRecovery = new RuntimeIntentRecoveryCoordinator({
+      settings: appSettingsService,
+      restore: runtimeIntentDeps,
+      log: (message, error) => console.warn(message, error ?? '')
+    })
+    runtimeIntentRecovery.start()
   }
 
   // Arm connectivity recovery only after startup reconciliation. This prevents
@@ -1330,6 +1347,8 @@ function beginApplicationShutdown(sessionEnding: boolean): Promise<void> {
           }
           networkDetector?.stop()
           networkDetector = null
+          runtimeIntentRecovery?.stop()
+          runtimeIntentRecovery = null
           mihomo?.dispose()
           await mockServer?.close()
         } catch (error) {

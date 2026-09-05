@@ -161,6 +161,47 @@ describe('SubscriptionFetcher', () => {
     await expect(fetcher.fetch(SECRET_URL)).rejects.toMatchObject({ code: 'UPSTREAM_HTTP_ERROR' })
   })
 
+  it('routes a viaProxy sweep through the fallback transport and redacts its final URL', async () => {
+    const directUrls: string[] = []
+    const proxyUrls: string[] = []
+    const fetcher = new SubscriptionFetcher({
+      // Redirect followed INSIDE the proxy transport: the fetcher must adopt
+      // the final URL (response.url) as the source of truth for the sweep.
+      proxyFetchFn: async () => {
+        proxyUrls.push('proxy')
+        return {
+          ok: true,
+          status: 200,
+          url: 'https://final.example.com/sub?token=secret',
+          text: async () => 'ok'
+        }
+      },
+      fetchFn: async (url) => {
+        directUrls.push(String(url))
+        return { ok: true, status: 200, text: async () => 'ok' }
+      }
+    })
+    const result = await fetcher.fetch(SECRET_URL, { viaProxy: true })
+    expect(result.document).toBe('ok')
+    expect(directUrls).toEqual([])
+    expect(proxyUrls).toEqual(['proxy'])
+    // The adopted final URL is what the source envelope reports, redacted.
+    expect(result.source.url).toBe('https://final.example.com/sub?token=***REDACTED***')
+    expect(result.source.url).not.toContain('secret')
+  })
+
+  it('falls back to the direct transport when viaProxy is requested without a proxyFetchFn', async () => {
+    const directUrls: string[] = []
+    const fetcher = new SubscriptionFetcher({
+      fetchFn: async (url) => {
+        directUrls.push(String(url))
+        return { ok: true, status: 200, text: async () => 'ok' }
+      }
+    })
+    await fetcher.fetch('https://example.com/sub', { viaProxy: true })
+    expect(directUrls).toEqual(['https://example.com/sub'])
+  })
+
   // CRITICAL FIX TESTS: Redirect handling
   it('follows redirects and validates each hop', async () => {
     let callCount = 0

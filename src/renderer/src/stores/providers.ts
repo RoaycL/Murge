@@ -230,6 +230,34 @@ export const useProvidersStore = defineStore('providers', () => {
     return { updated, failed }
   }
 
+  /**
+   * Refresh only the remote RULE providers (规则页的一键更新). Same failure
+   * isolation as the combined batch: one failing rule set shows its own row
+   * error and never discards the other rows' data.
+   */
+  async function refreshAllRuleProviders(): Promise<{ updated: number; failed: number }> {
+    const ruleSets = remoteRuleProviders.value.map((p) => p.name)
+    let updated = 0
+    let failed = 0
+    await Promise.all(
+      ruleSets.map(async (name) => {
+        try {
+          await window.desktop.mihomo.refreshRuleProvider(name)
+          updated++
+        } catch (error) {
+          setOp(name, { refreshing: false, error: refreshFailureMessage(error) })
+          failed++
+        }
+      })
+    )
+    try {
+      await reloadRuleProviders()
+    } catch {
+      /* keep last good data */
+    }
+    return { updated, failed }
+  }
+
   async function healthCheckProxyProvider(name: string): Promise<void> {
     setOp(name, { healthchecking: true, error: null })
     try {
@@ -287,6 +315,7 @@ export const useProvidersStore = defineStore('providers', () => {
     refreshProxyProvider,
     refreshRuleProvider,
     refreshAllProviders,
+    refreshAllRuleProviders,
     healthCheckProxyProvider,
     reset
   }

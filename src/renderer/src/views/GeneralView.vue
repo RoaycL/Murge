@@ -22,13 +22,15 @@ onMounted(() => {
         <label>
           <span>
             <strong>登录 Windows 时启动</strong>
-            <small>应用在后台启动并显示托盘图标，不会自动启动内核或代理。</small>
           </span>
-          <input
-            :checked="startup.status.enabled"
-            type="checkbox"
+          <button
+            type="button"
+            class="switch"
+            :class="{ on: startup.status.enabled }"
+            :aria-checked="startup.status.enabled"
             :disabled="!startup.status.supported || startup.busy"
-            @change="startup.setEnabled(($event.target as HTMLInputElement).checked)"
+            aria-label="登录 Windows 时启动"
+            @click="startup.setEnabled(!startup.status.enabled)"
           />
         </label>
       </div>
@@ -42,13 +44,15 @@ onMounted(() => {
         <label>
           <span>
             <strong>启动时自动启动内核</strong>
-            <small>打开应用后直接运行本机回环内核，策略和规则立即可用，无需手动连接。不影响系统代理与 TUN（仍由你主动启用）。</small>
           </span>
-          <input
-            :checked="appSettings.settings.autoStartKernel"
-            type="checkbox"
+          <button
+            type="button"
+            class="switch"
+            :class="{ on: appSettings.settings.autoStartKernel }"
+            :aria-checked="appSettings.settings.autoStartKernel"
             :disabled="appSettings.busy"
-            @change="appSettings.set({ autoStartKernel: ($event.target as HTMLInputElement).checked })"
+            aria-label="启动时自动启动内核"
+            @click="appSettings.set({ autoStartKernel: !appSettings.settings.autoStartKernel })"
           />
         </label>
       </div>
@@ -61,22 +65,17 @@ onMounted(() => {
         <label>
           <span>
             <strong>启动时自动检查更新</strong>
-            <small>发布新版本后自动检查并后台下载，退出应用时自动安装；可在“关于”中手动检查。关闭后仍可手动检查更新。</small>
           </span>
-          <input
-            :checked="appSettings.settings.autoCheckUpdate"
-            type="checkbox"
+          <button
+            type="button"
+            class="switch"
+            :class="{ on: appSettings.settings.autoCheckUpdate }"
+            :aria-checked="appSettings.settings.autoCheckUpdate"
             :disabled="appSettings.busy"
-            @change="appSettings.set({ autoCheckUpdate: ($event.target as HTMLInputElement).checked })"
+            aria-label="启动时自动检查更新"
+            @click="appSettings.set({ autoCheckUpdate: !appSettings.settings.autoCheckUpdate })"
           />
         </label>
-      </div>
-    </section>
-
-    <section>
-      <h2>安全行为</h2>
-      <div class="surface-card general-info">
-        <p>开机启动只启动桌面程序和托盘；登录时内核、系统代理和 TUN 均不会自动启用。正常打开应用时，内核会在启动后自动运行（可在上方关闭）；开启系统代理时，内核会随之自动启动。</p>
       </div>
     </section>
 

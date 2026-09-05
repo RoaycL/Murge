@@ -15,6 +15,12 @@ import { isIP } from 'node:net'
 export interface FetchResponseLike {
   ok: boolean
   status: number
+  /**
+   * The FINAL url after redirects, when the transport follows redirects
+   * internally (e.g. a Chromium-based proxy transport). When present and
+   * different from the requested url, the fetcher validates and adopts it.
+   */
+  url?: string
   headers?: { has(name: string): boolean; get(name: string): string | null }
   text(): Promise<string>
   body?: {
@@ -51,6 +57,13 @@ export interface FetchSubscriptionResult {
 export interface SubscriptionFetcherOptions {
   /** Injectable transport; defaults to the global fetch implementation. */
   fetchFn?: FetchFn
+  /**
+   * Optional fallback transport used after the direct one fails at the
+   * transport level. Production wires Chromium's net.fetch here, which —
+   * unlike Node's fetch — honors the system proxy (the app's own mixed port
+   * when the system proxy is enabled), so tunnel-only hosts are reachable.
+   */
+  proxyFetchFn?: FetchFn
   /** Maximum accepted document size in bytes. */
   maxBytes?: number
   /** Optional strict URL validation (default: true). Rejects non-http(s) and internal IPs. */
@@ -285,6 +298,27 @@ export function redactCredentials(url: string): string {
 }
 
 /**
+ * True when a URL is a REDACTION ARTIFACT rather than a fetchable address —
+ * i.e. the output of {@link redactCredentials} on a credential-bearing URL.
+ * Persisted metadata stores redacted URLs for display; fetching them can only
+ * fail, so callers must surface a clear error instead of attempting it.
+ */
+export function isRedactedUrl(url: string): boolean {
+  return url.includes('[UUID_REDACTED]') || url.includes('***REDACTED***') || /:\/\/(?:\[?redacted\]?):?[^/\s]*@/.test(url)
+}
+
+/**
+ * True when a fetch failure is TRANSPORT-level (DNS, TLS, connect, abort) —
+ * the class of failure a kernel-proxy retry can plausibly fix. HTTP error
+ * statuses and validation failures are excluded on purpose: retrying them
+ * through the proxy would only double the round-trips.
+ */
+export function isTransportFailure(error: unknown): boolean {
+  if (!(error instanceof ProtocolError)) return false
+  return error.code === ProtocolErrorCode.UPSTREAM_UNREACHABLE
+}
+
+/**
  * Replace any remaining `user:password@host` sequence, wherever it sits in the
  * string. Credentials can end up outside the authority component when a
  * malformed redirect target is resolved against a base URL.
@@ -355,8 +389,18 @@ export function deriveFallbackSubscriptionName(url: string): string | null {
   }
 }
 
+/** Options for a single fetch sweep. */
+export interface FetchOptions {
+  /**
+   * Route this sweep through the fallback transport instead of the direct
+   * one. Used as a retry when the direct transport fails.
+   */
+  viaProxy?: boolean
+}
+
 export class SubscriptionFetcher {
   private readonly fetchFn: FetchFn
+  private readonly proxyFetchFn?: FetchFn
   private readonly maxBytes: number
   private readonly strictUrlValidation: boolean
   private readonly maxRedirects: number
@@ -392,6 +436,7 @@ export class SubscriptionFetcher {
         }
       })
     this.maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES
+    this.proxyFetchFn = options.proxyFetchFn
     this.strictUrlValidation = options.strictUrlValidation !== false // default to true
     this.maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
@@ -476,8 +521,11 @@ export class SubscriptionFetcher {
 
   /**
    * Fetch a subscription config with SSRF protection, redirect tracking, and streaming size limit.
+   * `viaProxy` routes the sweep through the fallback transport (which must
+   * have been configured via `proxyFetchFn`).
    */
-  async fetch(url: string): Promise<FetchSubscriptionResult> {
+  async fetch(url: string, opts?: FetchOptions): Promise<FetchSubscriptionResult> {
+    const transport: FetchFn = opts?.viaProxy && this.proxyFetchFn ? this.proxyFetchFn : this.fetchFn
     const { signal, cancel } = this.createTimeoutSignal()
     let currentUrl = url
     let redirectCount = 0
@@ -489,11 +537,19 @@ export class SubscriptionFetcher {
         await this.validateUrl(currentUrl)
         
         // Use manual redirect mode to detect 3xx responses
-        response = await this.fetchFn(currentUrl, {
+        response = await transport(currentUrl, {
           signal,
           redirect: 'manual',
           headers: SUBSCRIPTION_REQUEST_HEADERS
         })
+        
+        // A transport that follows redirects internally (the kernel-proxy path)
+        // surfaces its final url here: validate where we actually landed and
+        // adopt it so the stored source and error messages reflect reality.
+        if (response.url && response.url !== currentUrl) {
+          await this.validateUrl(response.url)
+          currentUrl = response.url
+        }
         
         // Handle redirects manually with validation
         if (response.status >= 300 && response.status < 400 && response.headers?.has('location')) {

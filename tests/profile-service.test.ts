@@ -7,6 +7,7 @@ import { ProfileService } from '../src/main/profiles/profile-service'
 import { createConfigValidator } from '../src/main/profiles/config-validator'
 import { SubscriptionFetcher } from '../src/main/subscriptions/subscription-fetcher'
 import { MemoryProfileSourceStore } from '../src/main/profiles/profile-source-store'
+import { ProtocolError, ProtocolErrorCode } from '../src/shared/protocol-errors'
 
 const VALID_DOC = `mixed-port: 7890
 proxies:
@@ -256,6 +257,63 @@ describe('ProfileService', () => {
       await remote.updateFromSource(meta.id)
       expect(seen).toEqual([rawUrl, rawUrl])
       expect(JSON.stringify(await remote.listProfiles())).not.toContain('8bb169258b029784d6a534b23b92cc8e')
+    })
+
+    it('updateFromSource refuses a redacted meta URL when the private raw URL is missing (clear error, no bogus fetch)', async () => {
+      // Simulate a legacy/lost secure-store entry: meta.source.url exists but is
+      // the REDACTED display URL. The old code fetched it and failed with a
+      // confusing network error; now it must fail fast with actionable copy.
+      const sourceStore = new MemoryProfileSourceStore()
+      const seen: string[] = []
+      const fetcher = new SubscriptionFetcher({
+        fetchFn: async (url) => {
+          seen.push(String(url))
+          return { ok: true, status: 200, text: async () => VALID_DOC }
+        }
+      })
+      const remote = new ProfileService(repository, createConfigValidator(), fetcher, sourceStore)
+      const original = await service.importProfile({ name: 'legacy', document: VALID_DOC, source: { type: 'url', url: 'https://example.com/sub?token=secret' }, activate: false })
+      // No sourceStore entry was ever written for this profile.
+      await expect(remote.updateFromSource(original.id)).rejects.toThrow(/缺少原始订阅地址/)
+      expect(seen).toEqual([])
+    })
+
+    it('retries a transport-level fetch failure through the proxy transport (add and update)', async () => {
+      const sourceStore = new MemoryProfileSourceStore()
+      const routes: string[] = []
+      let directCalls = 0
+      const fetcher = new SubscriptionFetcher({
+        fetchFn: async () => {
+          directCalls += 1
+          throw new ProtocolError(ProtocolErrorCode.UPSTREAM_UNREACHABLE, '订阅获取失败：fetch failed')
+        },
+        proxyFetchFn: async () => {
+          routes.push('proxy')
+          return { ok: true, status: 200, text: async () => VALID_DOC }
+        }
+      })
+      const remote = new ProfileService(repository, createConfigValidator(), fetcher, sourceStore)
+      const meta = await remote.importFromUrl('tun', 'https://example.com/sub')
+      expect(meta.source.url).toBe('https://example.com/sub')
+      expect(directCalls).toBe(1)
+      expect(routes).toEqual(['proxy'])
+      await remote.updateFromSource(meta.id)
+      expect(directCalls).toBe(2)
+      expect(routes).toEqual(['proxy', 'proxy'])
+    })
+
+    it('does NOT retry HTTP-level failures through the proxy transport', async () => {
+      let proxyCalls = 0
+      const fetcher = new SubscriptionFetcher({
+        fetchFn: async () => ({ ok: false, status: 404, text: async () => 'not found' }),
+        proxyFetchFn: async () => {
+          proxyCalls += 1
+          return { ok: true, status: 200, text: async () => VALID_DOC }
+        }
+      })
+      const remote = new ProfileService(repository, createConfigValidator(), fetcher)
+      await expect(remote.importFromUrl('x', 'https://example.com/missing')).rejects.toThrow(/HTTP 404/)
+      expect(proxyCalls).toBe(0)
     })
 
     it('removes the private refresh URL when a profile is deleted', async () => {

@@ -323,4 +323,31 @@ describe('providers store', () => {
     expect(store.opOf('规则集 A').error).toBe('rule source failed')
     expect(result).toEqual({ updated: 1, failed: 1 })
   })
+
+  it('refreshAllRuleProviders touches only remote rule sets and reloads them', async () => {
+    getProxyProviders.mockResolvedValue({ providers: {} })
+    getRuleProviders.mockResolvedValue({
+      providers: {
+        '规则集 A': { name: '规则集 A', type: 'Rule', behavior: 'rule', vehicleType: 'HTTP' },
+        '规则集 B': { name: '规则集 B', type: 'Rule', behavior: 'rule', vehicleType: 'File' }
+      }
+    })
+    refreshProxyProvider.mockClear()
+    refreshRuleProvider.mockClear()
+    refreshRuleProvider.mockImplementation(async (name: string) => {
+      if (name === '规则集 A') return undefined
+      throw new ProtocolError(ProtocolErrorCode.UPSTREAM_HTTP_ERROR, 'rule source failed')
+    })
+    const store = useProvidersStore()
+    await store.loadProxyProviders()
+    await store.loadRuleProviders()
+    const result = await store.refreshAllRuleProviders()
+    // Only the HTTP-vehicle rule set is fired; File/inline sets are skipped,
+    // so the failing mock (wired for B) never runs and nothing records an error.
+    expect(refreshProxyProvider).not.toHaveBeenCalled()
+    expect(refreshRuleProvider).toHaveBeenCalledTimes(1)
+    expect(refreshRuleProvider).toHaveBeenCalledWith('规则集 A')
+    expect(refreshRuleProvider).not.toHaveBeenCalledWith('规则集 B')
+    expect(result).toEqual({ updated: 1, failed: 0 })
+  })
 })

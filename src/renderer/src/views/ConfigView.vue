@@ -26,7 +26,6 @@ const importing = ref(false)
 /** Profile id with an in-flight subscription update (card ↻ spinner guard). */
 const updatingId = ref<string | null>(null)
 const validation = ref<ValidationResult | null>(null)
-const proxyMode = ref<'direct' | 'system'>('direct')
 const showAddDialog = ref(false)
 const importSource = ref<'url' | 'file' | 'manual'>('url')
 const selectedProfileId = ref<string | null>(null)
@@ -311,7 +310,6 @@ watch(
   }
 )
 
-const activeCount = computed(() => profilesStore.profiles.filter((entry) => entry.active).length)
 const selectedProfile = computed(() => profilesStore.profiles.find((entry) => entry.id === selectedProfileId.value) ?? null)
 const hasResources = computed(
   () => providersStore.remoteProxyProviders.length + providersStore.remoteRuleProviders.length > 0
@@ -349,7 +347,7 @@ function ruleProviderMeta(
 <template>
   <div class="page-shell config-view">
     <header class="config-header">
-      <div><h1>配置</h1><p class="config-subtitle">共 {{ profilesStore.ordered.length }} 个配置<template v-if="activeCount"> · 使用中 {{ activeCount }}</template></p></div>
+      <div><h1>配置</h1></div>
       <button type="button" class="primary-button add-profile-button" @click="showAddDialog = true"><AppIcon name="add-file" :size="16" />添加配置</button>
     </header>
 
@@ -361,7 +359,7 @@ function ruleProviderMeta(
           <header><div><h2>添加配置</h2><p>导入后加入配置列表；在列表中选中后才会设为当前配置并加载到内核。</p></div><button type="button" class="icon-control" aria-label="关闭" @click="showAddDialog = false"><AppIcon name="close" /></button></header>
           <div class="profile-source-tabs" role="tablist"><button type="button" :class="{ selected: importSource === 'url' }" @click="importSource = 'url'"><AppIcon name="resources" :size="16" />远程 URL</button><button type="button" :class="{ selected: importSource === 'file' }" @click="importSource = 'file'"><AppIcon name="profiles" :size="16" />本地文件</button><button type="button" :class="{ selected: importSource === 'manual' }" @click="importSource = 'manual'"><AppIcon name="code" :size="16" />手动编辑</button></div>
           <label class="modal-field"><span>显示名称</span><input v-model="importName" class="field" aria-label="配置显示名称" placeholder="可选，留空时自动生成" /></label>
-          <template v-if="importSource === 'url'"><label class="modal-field"><span>订阅地址</span><div class="field-with-action"><input ref="urlInput" v-model="url" class="field" aria-label="订阅地址" placeholder="https://example.com/subscription" @keyup.enter="importFromUrl" /><button type="button" class="icon-control" aria-label="粘贴订阅地址" @click="pasteUrl"><AppIcon name="clipboard" :size="16" /></button></div></label><label class="modal-field"><span>拉取方式</span><AppSelect v-model="proxyMode" :options="[{ value: 'direct', label: '直连' }, { value: 'system', label: '系统代理' }]" label="订阅拉取方式" /></label></template>
+          <template v-if="importSource === 'url'"><label class="modal-field"><span>订阅地址</span><div class="field-with-action"><input ref="urlInput" v-model="url" class="field" aria-label="订阅地址" placeholder="https://example.com/subscription" @keyup.enter="importFromUrl" /><button type="button" class="icon-control" aria-label="粘贴订阅地址" @click="pasteUrl"><AppIcon name="clipboard" :size="16" /></button></div></label></template>
           <label v-else-if="importSource === 'file'" class="modal-field"><span>本地 mihomo 配置</span><input ref="localFileInput" class="field file-input" type="file" accept=".yaml,.yml,text/yaml,application/yaml" aria-label="本地 mihomo 配置文件" @change="selectLocalFile" /></label>
           <label v-else class="modal-field"><span>配置 YAML</span><textarea v-model="document" class="field document" aria-label="mihomo 配置 YAML" spellcheck="false" placeholder="粘贴 mihomo 配置 YAML…" /></label>
           <p v-if="validation && !validation.ok" class="inline-error" role="alert">{{ validation.issues.map((issue) => issue.message).join('；') }}</p><p v-else-if="validation?.ok" class="inline-ok">配置有效</p>

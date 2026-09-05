@@ -38,6 +38,30 @@ function displayType(proxyType: string | null | undefined): string {
   return PROXY_TYPE_LABELS[proxyType.toLowerCase()] ?? proxyType
 }
 
+/** Group types the kernel nests inside a group (the mihomo group set). */
+const NESTED_GROUP_TYPES = new Set(['Selector', 'URLTest', 'Fallback', 'LoadBalance', 'Relay'])
+
+/** True when a member is itself a (nested) policy group rather than a concrete node. */
+function isNestedGroup(member: string): boolean {
+  const proxy = policies.nodeByMember[member]
+  return Boolean(proxy && NESTED_GROUP_TYPES.has(proxy.type))
+}
+
+/** Capability tags of a concrete node, in the clash-party/sparkle order. */
+const CAPABILITY_TAGS = ['udp', 'xudp', 'tfo', 'mptcp', 'smux'] as const
+
+/** The chips shown under a node name: protocol first, then its true capability flags. */
+function nodeTags(member: string): string[] {
+  const proxy = policies.nodeByMember[member]
+  if (!proxy || isNestedGroup(member)) return []
+  const tags: string[] = []
+  if (proxy.type) tags.push(proxy.type)
+  for (const flag of CAPABILITY_TAGS) {
+    if ((proxy as unknown as Record<string, unknown>)[flag] === true) tags.push(flag)
+  }
+  return tags
+}
+
 function groupSummary(group: Parameters<typeof policies.groupSelectedMember>[0]): string {
   return policies.groupSelectedMember(group) || (policies.isSelectableGroup(group) ? '未选择' : '内核自动')
 }
@@ -151,10 +175,10 @@ watch(() => kernel.status.phase, (phase, previous) => {
 
     <div v-if="policies.panelError" class="panel-error">{{ policies.panelError }}</div>
 
-    <DetailDrawer :open="groupDrawerOpen && Boolean(policies.selectedGroup)" :title="policies.selectedGroup" :subtitle="drawerSubtitle" @close="groupDrawerOpen = false">
+    <DetailDrawer :open="groupDrawerOpen && Boolean(policies.selectedGroup)" :title="policies.selectedGroup" :subtitle="drawerSubtitle" :icon="policies.currentGroup?.icon" @close="groupDrawerOpen = false">
       <div class="node-caption"><span>节点列表</span><button type="button" :disabled="policies.groupDelayStatus === 'testing'" @click="policies.testAll()">{{ policies.groupDelayStatus === 'testing' ? '测试中…' : '测试当前组' }}</button></div>
       <div class="drawer-body-grid">
-        <div class="node-grid"><div v-for="member in policies.groupMembers" :key="member" class="node-card" :class="{ selected: policies.selectedMember === member, unavailable: isUnavailable(member) }"><button type="button" class="node-select" :disabled="!policies.isSelectableGroup(policies.currentGroup)" @click="onCardClick(member)"><small>{{ displayType(policies.nodeByMember[member]?.type) }}</small><strong>{{ member }}</strong></button><button type="button" class="node-delay" :class="latencyLabel(member).kind" :title="delayTitle(member)" :disabled="policies.nodeState(member).status === 'testing'" @click="policies.testNode(member)">{{ latencyLabel(member).text }}</button></div></div>
+        <div class="node-grid"><div v-for="member in policies.groupMembers" :key="member" class="node-card" :class="{ selected: policies.selectedMember === member, unavailable: isUnavailable(member) }"><button type="button" class="node-select" :disabled="!policies.isSelectableGroup(policies.currentGroup)" @click="onCardClick(member)"><small v-if="isNestedGroup(member)">{{ displayType(policies.nodeByMember[member]?.type) }}</small><strong>{{ member }}</strong><span v-if="nodeTags(member).length" class="node-tags"><i v-for="tag in nodeTags(member)" :key="tag">{{ tag }}</i></span></button><button type="button" class="node-delay" :class="latencyLabel(member).kind" :title="delayTitle(member)" :disabled="policies.nodeState(member).status === 'testing'" @click="policies.testNode(member)">{{ latencyLabel(member).text }}</button></div></div>
       </div>
       <div v-if="policies.panelError" class="panel-error drawer-panel-error">{{ policies.panelError }}</div>
     </DetailDrawer>
@@ -181,6 +205,9 @@ watch(() => kernel.status.phase, (phase, previous) => {
 .node-select:disabled { cursor:default; opacity:1; }
 .node-select small { color:var(--app-muted); }
 .node-select strong { overflow:hidden; margin-top:3px; text-overflow:ellipsis; white-space:nowrap; }
+/* 节点协议/能力标签（协议 + udp/xudp/tfo/mptcp/smux），对齐 clash-party/sparkle。 */
+.node-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}
+.node-tags i{padding:1px 6px;border-radius:5px;background:rgba(127,127,127,.16);color:var(--app-muted);font-size:9px;font-style:normal;line-height:1.5;white-space:nowrap}
 .node-delay { align-self:flex-start; margin-top:auto; color:#68d21d; }
 .node-delay.testing { color: var(--app-muted); }
 .node-delay.timeout { color: #e05b5b; }

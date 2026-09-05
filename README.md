@@ -28,6 +28,8 @@ Murge 是一款基于 Electron + Vue 3 构建的现代化 Mihomo 图形客户端
 
 目前支持 Windows x64 与 arm64。
 
+> **macOS 用户**：Murge 不提供 macOS 版本。如需 macOS 客户端，请使用 [Surge](https://nssurge.com) —— Murge 的 UI 设计即参考自此项目。
+
 ## 技术栈
 
 - **前端**：Vue 3 + TypeScript + Vite
@@ -59,6 +61,7 @@ Murge 依据 [GNU General Public License v3.0](LICENSE) 开源发布。
 ## 致谢
 
 - [MetaCubeX/mihomo](https://github.com/MetaCubeX/mihomo) — 规则代理内核（本项目基于此构建）
+- [Surge](https://nssurge.com) — UI 设计参考
 - [mihomo-party-org/clash-party](https://github.com/mihomo-party-org/clash-party) — 参考实现
 - [clash-verge-rev/clash-verge-rev](https://github.com/clash-verge-rev/clash-verge-rev) — 参考实现
 - [xishang0128/sparkle](https://github.com/xishang0128/sparkle) — 参考实现

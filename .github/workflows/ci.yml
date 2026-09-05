@@ -51,6 +51,35 @@ jobs:
       - name: Build
         run: npm run build
 
+  # Real-runtime guard for the kernel-proxy subscription transport: boots the
+  # actual Electron binary and asserts manual-redirect hops surface as
+  # synthetic 3xx responses (never "Redirect was cancelled", never followed
+  # unvalidated — electron/electron#43715, CVE-2026-70605). Windows runners
+  # have a desktop session, so the probe runs there; the Linux verify job
+  # skips it automatically for lack of a display.
+  electron-redirect-runtime:
+    name: Electron redirect runtime probe (Windows)
+    needs: verify
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies (including development)
+        run: npm ci --include=dev
+        env:
+          NODE_ENV: development
+
+      - name: Run Electron redirect runtime probe
+        run: npx vitest run tests/electron-redirect-runtime.test.ts
+
   kernel-real-windows:
     name: Real mihomo kernel integration (Windows)
     needs: verify

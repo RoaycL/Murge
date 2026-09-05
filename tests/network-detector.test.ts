@@ -17,6 +17,8 @@ interface Harness {
   startKernelRejects: { value: Error | null }
   startTunRejects: { value: Error | null }
   networkUpRejects: { value: Error | null }
+  networkUpResult: { value: 'reenabled' | 'idle' | 'failed' }
+  networkDownResult: { value: 'disabled' | 'idle' | 'failed' }
   stopKernelRejects: { value: Error | null }
   tick(): Promise<void>
   stop(): void
@@ -29,6 +31,8 @@ function createHarness(options: { online?: boolean; kernelRunning?: boolean; run
   const startKernelRejects = { value: null as Error | null }
   const startTunRejects = { value: null as Error | null }
   const networkUpRejects = { value: null as Error | null }
+  const networkUpResult: Harness['networkUpResult'] = { value: 'reenabled' }
+  const networkDownResult: Harness['networkDownResult'] = { value: 'disabled' }
   const stopKernelRejects = { value: null as Error | null }
   const gateway: NetworkDetectorGateway = {
     getRunMode: () => runMode.value,
@@ -52,12 +56,12 @@ function createHarness(options: { online?: boolean; kernelRunning?: boolean; run
     },
     handleNetworkDown: () => {
       calls.push('handleNetworkDown')
-      return Promise.resolve(undefined)
+      return Promise.resolve(networkDownResult.value)
     },
     handleNetworkUp: () => {
       calls.push('handleNetworkUp')
       if (networkUpRejects.value) return Promise.reject(networkUpRejects.value)
-      return Promise.resolve(undefined)
+      return Promise.resolve(networkUpResult.value)
     }
   }
   // Run the periodic body directly: the cadence itself is Electron's setInterval.
@@ -79,6 +83,8 @@ function createHarness(options: { online?: boolean; kernelRunning?: boolean; run
     startKernelRejects,
     startTunRejects,
     networkUpRejects,
+    networkUpResult,
+    networkDownResult,
     stopKernelRejects,
     tick: () => anyDetector.tick(anyDetector.generation),
     stop: () => detector.stop()
@@ -171,6 +177,36 @@ describe('NetworkDetector', () => {
     h.networkUpRejects.value = null
     await h.tick()
     expect(h.calls).toEqual(['handleNetworkDown', 'stopKernel', 'startKernel', 'handleNetworkUp', 'handleNetworkUp'])
+  })
+
+  it('keeps retrying when proxy recovery reports failure without throwing', async () => {
+    const h = createHarness({ online: true })
+    h.online.value = false
+    await h.tick()
+    h.online.value = true
+    h.networkUpResult.value = 'failed'
+    await h.tick()
+    await h.tick()
+    expect(h.calls.filter((call) => call === 'handleNetworkUp')).toHaveLength(2)
+
+    h.networkUpResult.value = 'reenabled'
+    await h.tick()
+    await h.tick()
+    expect(h.calls.filter((call) => call === 'handleNetworkUp')).toHaveLength(3)
+  })
+
+  it('does not stop the live host until a failed proxy disable is retried successfully', async () => {
+    const h = createHarness({ online: true, runMode: 'tun' })
+    h.online.value = false
+    h.networkDownResult.value = 'failed'
+    await h.tick()
+    expect(h.calls).toEqual(['handleNetworkDown'])
+    expect(h.runMode.value).toBe('tun')
+
+    h.networkDownResult.value = 'disabled'
+    await h.tick()
+    expect(h.calls).toEqual(['handleNetworkDown', 'handleNetworkDown', 'stopKernel'])
+    expect(h.runMode.value).toBe('stopped')
   })
 
   it('ignores virtual/loopback interfaces when judging connectivity', async () => {

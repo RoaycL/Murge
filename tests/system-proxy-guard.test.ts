@@ -46,6 +46,33 @@ class FailingApplyAdapter implements SystemProxyAdapter {
   }
 }
 
+/** Wraps the fake adapter to fail the NEXT restore() call exactly once. */
+class FailingRestoreAdapter implements SystemProxyAdapter {
+  readonly platform = 'fake'
+  readonly supported = true
+  private armed = false
+  readonly delegate = new FakeSystemProxyAdapter()
+  armOnce(): void {
+    this.armed = true
+  }
+  read(): Promise<SystemProxyRegistryState> {
+    return this.delegate.read()
+  }
+  apply(written: Parameters<SystemProxyAdapter['apply']>[0]): Promise<void> {
+    return this.delegate.apply(written)
+  }
+  async restore(previous: Parameters<SystemProxyAdapter['restore']>[0]): Promise<void> {
+    if (this.armed) {
+      this.armed = false
+      throw new Error('injected restore failure')
+    }
+    await this.delegate.restore(previous)
+  }
+  refresh(): Promise<void> {
+    return this.delegate.refresh()
+  }
+}
+
 function makeService(adapterOverride?: SystemProxyAdapter) {
   const adapter = adapterOverride ?? new FakeSystemProxyAdapter()
   const backup = new InMemorySystemProxyBackupStore()
@@ -160,6 +187,23 @@ describe('SystemProxyService network self-healing', () => {
     kernelUp = true
     expect(await service.handleNetworkUp()).toBe('reenabled')
     expect(service.getStatus().phase).toBe('enabled')
+  })
+
+  it('retries a transient offline restore failure before the host is stopped', async () => {
+    const adapter = new FailingRestoreAdapter()
+    const service = new SystemProxyService({
+      adapter,
+      probe: kernelProbe(),
+      backup: new InMemorySystemProxyBackupStore(),
+      instanceId: 'heal-test'
+    })
+    await service.enable()
+    adapter.armOnce()
+
+    expect(await service.handleNetworkDown()).toBe('failed')
+    expect(service.getStatus().phase).toBe('restore-failed')
+    expect(await service.handleNetworkDown()).toBe('disabled')
+    expect(await service.handleNetworkUp()).toBe('reenabled')
   })
 
   it('a user disable cancels the pending network resume', async () => {

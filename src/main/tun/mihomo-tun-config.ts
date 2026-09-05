@@ -1,4 +1,5 @@
 import { isAlias, isMap, isScalar, isSeq, parseDocument, stringify, type Node } from 'yaml'
+import { isIP } from 'node:net'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
 import { SECRET_PATTERN } from '../kernel/mihomo-config'
 import { buildProfileKernelConfig } from '../kernel/profile-kernel-config'
@@ -359,6 +360,46 @@ function safeProviderFileName(name: string): string {
   return cleaned.length > 0 ? cleaned.slice(0, 64) : 'provider'
 }
 
+/**
+ * Add literal proxy endpoint IPs to mihomo's TUN route exclusions.
+ *
+ * A proxy tunnel cannot carry the socket used to establish itself. Mihomo's
+ * automatic interface detection normally avoids that loop, but a route refresh
+ * or another VPN/WFP filter can still briefly steer a literal endpoint back into
+ * TUN. clash-party applies the same protection for its Smart path; doing it at
+ * the app's final privileged-profile boundary protects every core variant while
+ * leaving hostname endpoints and provider-managed nodes untouched.
+ */
+function excludeLiteralProxyServers(
+  data: Record<string, unknown>,
+  tunBlock: Record<string, unknown>
+): void {
+  const proxies = data.proxies
+  if (!Array.isArray(proxies)) return
+
+  const existing = Array.isArray(tunBlock['route-exclude-address'])
+    ? tunBlock['route-exclude-address'].filter((entry): entry is string => typeof entry === 'string')
+    : []
+  const normalized = new Set(existing.map((entry) => entry.trim().toLowerCase()))
+  let changed = false
+
+  for (const proxy of proxies) {
+    if (typeof proxy !== 'object' || proxy === null || Array.isArray(proxy)) continue
+    const raw = (proxy as Record<string, unknown>).server
+    if (typeof raw !== 'string' && typeof raw !== 'number') continue
+    const host = String(raw).trim().replace(/^\[(.*)\]$/, '$1').toLowerCase()
+    const version = isIP(host)
+    if (version === 0) continue
+    const cidr = `${host}/${version === 4 ? 32 : 128}`
+    if (normalized.has(host) || normalized.has(cidr)) continue
+    existing.push(cidr)
+    normalized.add(cidr)
+    changed = true
+  }
+
+  if (changed) tunBlock['route-exclude-address'] = existing
+}
+
 export interface ProxiedTunConfigOptions {
   /** The ACTIVE profile document, already through overrides/DNS/sniffer. */
   document: string
@@ -451,6 +492,7 @@ export function generateProxiedTunConfig(options: ProxiedTunConfigOptions): stri
         'strict-route': false,
         'dns-hijack': ['any:53']
       }
+  excludeLiteralProxyServers(data, tunBlock)
   data.tun = tunBlock
 
   // TUN needs fake-ip to resolve hijacked queries, but the profile's own

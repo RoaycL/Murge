@@ -7,11 +7,12 @@ export interface NetworkDetectorGateway {
   startKernel(): Promise<unknown>
   startTun(): Promise<unknown>
   stopKernel(): Promise<unknown>
-  handleNetworkDown(): Promise<unknown>
-  handleNetworkUp(): Promise<unknown>
+  handleNetworkDown(): Promise<NetworkProxyTransitionResult>
+  handleNetworkUp(): Promise<NetworkProxyTransitionResult>
 }
 
 export type NetworkRunMode = 'stopped' | 'kernel' | 'tun'
+export type NetworkProxyTransitionResult = 'disabled' | 'reenabled' | 'idle' | 'failed'
 
 export interface NetworkDetectorOptions {
   gateway: NetworkDetectorGateway
@@ -56,6 +57,8 @@ export class NetworkDetector {
   private outageHandled = false
   /** A previous outage stop failed; retry `stopKernel` on the next offline tick. */
   private stopKernelPending = false
+  /** Never stop a host until the owned OS proxy is confirmed safe. */
+  private proxyDisablePending = false
 
   constructor(options: NetworkDetectorOptions) {
     const interval = options.intervalSeconds ?? 15
@@ -125,8 +128,8 @@ export class NetworkDetector {
           let proxyRecovered = false
           if (!this.resumeMode || currentMode !== 'stopped') {
             try {
-              await this.options.gateway.handleNetworkUp()
-              proxyRecovered = true
+              const result = await this.options.gateway.handleNetworkUp()
+              proxyRecovered = result !== 'failed'
             } catch {
               // The proxy service reports failures through its status.
             }
@@ -136,20 +139,28 @@ export class NetworkDetector {
             this.resumeMode = null
           }
         }
-      } else if (!this.outageHandled || this.stopKernelPending) {
+      } else if (!this.outageHandled || this.proxyDisablePending || this.stopKernelPending) {
         this.sawOffline = true
         if (!this.outageHandled) {
           this.outageHandled = true
           const mode = await this.options.gateway.getRunMode()
           this.resumeMode = mode === 'stopped' ? null : mode
           this.stopKernelPending = mode !== 'stopped'
+          this.proxyDisablePending = true
+        }
+        if (this.proxyDisablePending) {
           try {
-            await this.options.gateway.handleNetworkDown()
+            const result = await this.options.gateway.handleNetworkDown()
+            this.proxyDisablePending = result === 'failed'
           } catch {
-            // The proxy service reports failures through its status.
+            this.proxyDisablePending = true
           }
         }
-        if (this.stopKernelPending) {
+        // A failed proxy restore can leave the OS pointing at our live listener.
+        // Keep that listener alive and retry the restore on the next offline tick;
+        // stopping it here would turn a recoverable registry error into a system-
+        // wide dead proxy.
+        if (!this.proxyDisablePending && this.stopKernelPending) {
           try {
             await this.options.gateway.stopKernel()
             this.stopKernelPending = false
@@ -165,7 +176,10 @@ export class NetworkDetector {
       // Keep the episode latched while recovery is incomplete. Otherwise a
       // brief online/offline flap can observe the intentionally stopped host,
       // overwrite resumeMode with null, and forget that TUN must be restored.
-      if (connected && !this.sawOffline) this.outageHandled = false
+      if (connected && !this.sawOffline) {
+        this.outageHandled = false
+        this.proxyDisablePending = false
+      }
     } finally {
       this.checking = false
     }

@@ -217,6 +217,25 @@ describe('proxied TUN config (real subscription content)', () => {
     expect(config.tun['route-exclude-address']).toEqual(['10.0.0.0/8'])
   })
 
+  it('excludes literal proxy server IPs from TUN without replacing user routes', () => {
+    const withLiteralServers = document
+      .replace('server: example.invalid', 'server: 203.0.113.7')
+      .replace(
+        'proxy-groups:',
+        '  - name: v6\n    type: ss\n    server: "[2001:db8::7]"\n    port: 443\n    cipher: aes-128-gcm\n    password: pw\n  - name: hostname\n    type: ss\n    server: proxy.example.com\n    port: 443\n    cipher: aes-128-gcm\n    password: pw\nproxy-groups:'
+      )
+    const model: TunConfigModel = {
+      ...EMPTY_TUN_CONFIG,
+      routeExcludeAddress: ['10.0.0.0/8', '203.0.113.7/32']
+    }
+    const config = parse(generateProxiedTunConfig({ ...proxied, document: withLiteralServers, tunConfig: model })) as Record<string, any>
+    expect(config.tun['route-exclude-address']).toEqual([
+      '10.0.0.0/8',
+      '203.0.113.7/32',
+      '2001:db8::7/128'
+    ])
+  })
+
   it('prefers the brand intent device over the stock tunConfig placeholder', () => {
     // EMPTY_TUN_CONFIG carries the generic 'Mihomo' placeholder; the adapter's
     // brand-derived intent must win until the user customizes. The brand name

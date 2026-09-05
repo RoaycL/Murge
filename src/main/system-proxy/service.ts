@@ -457,7 +457,10 @@ export class SystemProxyService implements SystemProxyGateway {
    */
   async handleNetworkDown(): Promise<'disabled' | 'idle' | 'failed'> {
     return this.serialize(async () => {
-      if (!this.adapter.supported || this.current.phase !== 'enabled') return 'idle'
+      if (
+        !this.adapter.supported ||
+        (this.current.phase !== 'enabled' && this.current.phase !== 'restore-failed')
+      ) return 'idle'
       let backup: SystemProxyBackup | null
       try {
         backup = await this.backup.read()
@@ -465,6 +468,10 @@ export class SystemProxyService implements SystemProxyGateway {
         return 'failed'
       }
       if (!backup) return 'idle'
+      // Latch the user's pre-outage intent before the first restore attempt. If
+      // the registry is temporarily busy, both the offline retry and a fast
+      // online transition still know that the proxy must eventually come back.
+      this.networkResumePending = true
       this.transition('restoring')
       try {
         await this.restoreBackupStrict(backup)
@@ -476,7 +483,6 @@ export class SystemProxyService implements SystemProxyGateway {
         this.transition('restore-failed', { errorMessage: '系统代理还原失败' })
         return 'failed'
       }
-      this.networkResumePending = true
       this.transition('disabled')
       return 'disabled'
     })

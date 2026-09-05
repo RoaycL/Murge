@@ -1032,7 +1032,7 @@ app.whenReady().then(async () => {
       handleNetworkDown: () => systemProxyService.handleNetworkDown(),
       handleNetworkUp: async () => {
         try {
-          await systemProxyService.handleNetworkUp()
+          return await systemProxyService.handleNetworkUp()
         } finally {
           runtimeIntentRecovery?.wake()
         }
@@ -1046,6 +1046,14 @@ app.whenReady().then(async () => {
         console.error('[network-detector] resume probe failed:', error)
       })
       .finally(() => runtimeIntentRecovery?.wake())
+  })
+  // `session-end` is the most direct Windows signal, but it belongs to a native
+  // window and is not guaranteed if Windows tears the session down before that
+  // window receives WM_ENDSESSION. Electron's application-level shutdown event
+  // is an independent best-effort entry point used by clash-party/sparkle. The
+  // shared shutdownPromise makes both signals idempotent.
+  powerMonitor.on('shutdown', () => {
+    void beginApplicationShutdown(true)
   })
 
   // Reapplies the active profile to the live kernel whenever the user edits,

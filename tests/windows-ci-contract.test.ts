@@ -56,5 +56,6 @@ describe('Windows packaging and interactive GUI CI contracts', () => {
   it('starts bounded cleanup from the Windows session-end lifecycle', () => {
     expect(mainEntry).toContain("window.on('session-end'")
     expect(mainEntry).toContain('beginApplicationShutdown(true)')
+    expect(mainEntry).toContain("powerMonitor.on('shutdown'")
   })
 })

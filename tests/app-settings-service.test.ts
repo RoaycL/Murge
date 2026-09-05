@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -118,6 +118,21 @@ describe('AppSettingsService', () => {
       systemProxyDesired: true,
       tunDesired: true
     })
+  })
+
+  it('notifies observers only after a durable settings write', async () => {
+    base = await mkdtemp(join(tmpdir(), 'app-settings-'))
+    const service = new AppSettingsService(base)
+    const listener = vi.fn()
+    const unsubscribe = service.onChange(listener)
+
+    await service.set({ tunDesired: true })
+    expect(listener).toHaveBeenCalledWith({ ...DEFAULT_OBJ, tunDesired: true })
+    expect(JSON.parse(await readFile(join(base, 'app-settings.json'), 'utf8')).tunDesired).toBe(true)
+
+    unsubscribe()
+    await service.set({ tunDesired: false })
+    expect(listener).toHaveBeenCalledTimes(1)
   })
 
   it('persists the kernel management fields independently', async () => {

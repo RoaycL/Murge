@@ -17,6 +17,7 @@ export const APP_SETTINGS_FILE = 'app-settings.json'
  */
 export class AppSettingsService implements AppSettingsGateway {
   private queue: Promise<unknown> = Promise.resolve()
+  private readonly listeners = new Set<(settings: AppSettings) => void>()
 
   constructor(private readonly appDataBase: string) {}
 
@@ -54,8 +55,20 @@ export class AppSettingsService implements AppSettingsGateway {
             : current.kernelSpecificVersion
       }
       await this.write(next)
+      for (const listener of this.listeners) {
+        try {
+          listener({ ...next })
+        } catch {
+          // Preference persistence must not fail because an observer did.
+        }
+      }
       return next
     })
+  }
+
+  onChange(listener: (settings: AppSettings) => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
   }
 
   private async read(): Promise<AppSettings> {

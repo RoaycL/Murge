@@ -1,6 +1,7 @@
 import type { AppSettings } from '@shared/app-settings'
 import type { KernelGateway, SystemProxyGateway } from '@shared/gateways'
 import type { KernelStatus } from '@shared/runtime'
+import type { SystemProxyStatus } from '@shared/system-proxy'
 import type { TunGateway, TunStatus } from '@shared/tun'
 
 export interface RuntimeIntentRestoreDeps {
@@ -10,18 +11,24 @@ export interface RuntimeIntentRestoreDeps {
   restoreSelections?: () => Promise<void>
   /** Injectable delay keeps the retry policy deterministic in unit tests. */
   delay?: (ms: number) => Promise<void>
+  /** Override with an empty list for one background reconciliation attempt. */
+  retryDelaysMs?: readonly number[]
+  /** Cancellation fence checked immediately before every state-changing call. */
+  shouldContinue?: () => boolean
   log?: (message: string, error?: unknown) => void
 }
 
 export interface RuntimeIntentRestoreResult {
   kernel: KernelStatus
   tun: TunStatus
+  systemProxy: SystemProxyStatus
   systemProxyPhase: Awaited<ReturnType<SystemProxyGateway['getStatus']>>['phase']
 }
 
-const MAX_START_ATTEMPTS = 3
 const RETRY_DELAYS_MS = [750, 1_500] as const
+const RETRYABLE_KERNEL_PHASES = new Set(['stopped', 'failed'])
 const RETRYABLE_TUN_PHASES = new Set(['configured', 'failed', 'restore-failed'])
+const RETRYABLE_PROXY_PHASES = new Set(['disabled', 'restore-failed'])
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -40,11 +47,12 @@ export async function restoreRuntimeIntent(
   deps: RuntimeIntentRestoreDeps
 ): Promise<RuntimeIntentRestoreResult> {
   const delay = deps.delay ?? wait
+  const retryDelays = deps.retryDelaysMs ?? RETRY_DELAYS_MS
   const needsHost = settings.autoStartKernel || settings.tunDesired || settings.systemProxyDesired
 
   let kernelStatus = await deps.kernel.getStatus()
-  if (settings.kernelEnabled && needsHost && kernelStatus.phase !== 'running') {
-    kernelStatus = await retryKernelStart(deps, delay)
+  if (settings.kernelEnabled && needsHost && RETRYABLE_KERNEL_PHASES.has(kernelStatus.phase)) {
+    kernelStatus = await retryKernelStart(deps, delay, retryDelays)
   }
 
   if (kernelStatus.phase === 'running') {
@@ -53,7 +61,7 @@ export async function restoreRuntimeIntent(
 
   let tunStatus = await deps.tun.getStatus()
   if (settings.kernelEnabled && kernelStatus.phase === 'running' && settings.tunDesired) {
-    tunStatus = await retryTunStart(deps, delay)
+    tunStatus = await retryTunStart(deps, delay, retryDelays)
     if (tunStatus.phase === 'active') {
       // A successful mode switch starts a fresh elevated mihomo host. Reapply
       // remembered choices to that controller as well as the ordinary host.
@@ -68,29 +76,36 @@ export async function restoreRuntimeIntent(
     settings.systemProxyDesired &&
     kernelStatus.phase === 'running' &&
     proxyStatus.supported &&
-    proxyStatus.phase !== 'enabled'
+    RETRYABLE_PROXY_PHASES.has(proxyStatus.phase)
   ) {
-    proxyStatus = await retrySystemProxyStart(deps, delay)
+    proxyStatus = await retrySystemProxyStart(deps, delay, retryDelays)
   }
 
   return {
     kernel: kernelStatus,
     tun: tunStatus,
+    systemProxy: proxyStatus,
     systemProxyPhase: proxyStatus.phase
   }
 }
 
 async function retryKernelStart(
   deps: RuntimeIntentRestoreDeps,
-  delay: (ms: number) => Promise<void>
+  delay: (ms: number) => Promise<void>,
+  retryDelays: readonly number[]
 ): Promise<KernelStatus> {
   let status = await deps.kernel.getStatus()
-  for (let attempt = 1; attempt <= MAX_START_ATTEMPTS && status.phase !== 'running'; attempt++) {
-    if (attempt > 1) await delay(RETRY_DELAYS_MS[attempt - 2]!)
+  const maxAttempts = retryDelays.length + 1
+  for (let attempt = 1; attempt <= maxAttempts && RETRYABLE_KERNEL_PHASES.has(status.phase); attempt++) {
+    if (!canContinue(deps)) break
+    if (attempt > 1) {
+      await delay(retryDelays[attempt - 2]!)
+      if (!canContinue(deps)) break
+    }
     try {
       status = await deps.kernel.start()
     } catch (error) {
-      deps.log?.(`[startup-restore] kernel start failed (${attempt}/${MAX_START_ATTEMPTS})`, error)
+      deps.log?.(`[startup-restore] kernel start failed (${attempt}/${maxAttempts})`, error)
       status = await deps.kernel.getStatus()
     }
   }
@@ -99,18 +114,24 @@ async function retryKernelStart(
 
 async function retryTunStart(
   deps: RuntimeIntentRestoreDeps,
-  delay: (ms: number) => Promise<void>
+  delay: (ms: number) => Promise<void>,
+  retryDelays: readonly number[]
 ): Promise<TunStatus> {
   let status = await deps.tun.getStatus()
   if (!status.supported || status.phase === 'active') return status
 
-  for (let attempt = 1; attempt <= MAX_START_ATTEMPTS; attempt++) {
+  const maxAttempts = retryDelays.length + 1
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (!RETRYABLE_TUN_PHASES.has(status.phase)) break
-    if (attempt > 1) await delay(RETRY_DELAYS_MS[attempt - 2]!)
+    if (!canContinue(deps)) break
+    if (attempt > 1) {
+      await delay(retryDelays[attempt - 2]!)
+      if (!canContinue(deps)) break
+    }
     try {
       status = await deps.tun.enable()
     } catch (error) {
-      deps.log?.(`[startup-restore] TUN start failed (${attempt}/${MAX_START_ATTEMPTS})`, error)
+      deps.log?.(`[startup-restore] TUN start failed (${attempt}/${maxAttempts})`, error)
       status = await deps.tun.getStatus()
     }
     if (status.phase === 'active') break
@@ -120,20 +141,30 @@ async function retryTunStart(
 
 async function retrySystemProxyStart(
   deps: RuntimeIntentRestoreDeps,
-  delay: (ms: number) => Promise<void>
+  delay: (ms: number) => Promise<void>,
+  retryDelays: readonly number[]
 ): Promise<Awaited<ReturnType<SystemProxyGateway['getStatus']>>> {
   let status = await deps.systemProxy.getStatus()
-  for (let attempt = 1; attempt <= MAX_START_ATTEMPTS && status.phase !== 'enabled'; attempt++) {
-    if (!status.supported || status.phase === 'conflict' || status.phase === 'unsupported') break
-    if (attempt > 1) await delay(RETRY_DELAYS_MS[attempt - 2]!)
+  const maxAttempts = retryDelays.length + 1
+  for (let attempt = 1; attempt <= maxAttempts && RETRYABLE_PROXY_PHASES.has(status.phase); attempt++) {
+    if (!status.supported) break
+    if (!canContinue(deps)) break
+    if (attempt > 1) {
+      await delay(retryDelays[attempt - 2]!)
+      if (!canContinue(deps)) break
+    }
     try {
       status = await deps.systemProxy.enable()
     } catch (error) {
-      deps.log?.(`[startup-restore] system proxy start failed (${attempt}/${MAX_START_ATTEMPTS})`, error)
+      deps.log?.(`[startup-restore] system proxy start failed (${attempt}/${maxAttempts})`, error)
       status = await deps.systemProxy.getStatus()
     }
   }
   return status
+}
+
+function canContinue(deps: RuntimeIntentRestoreDeps): boolean {
+  return deps.shouldContinue?.() ?? true
 }
 
 async function restoreSelections(deps: RuntimeIntentRestoreDeps): Promise<void> {

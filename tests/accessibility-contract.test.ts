@@ -23,7 +23,9 @@ describe('frozen RC accessibility contracts', () => {
       view('RulesView.vue'), view('ProcessListView.vue'), view('DeviceListView.vue'), view('ActivityView.vue')
     ])
     expect(rules).toContain('aria-label="搜索规则"')
-    expect(rules).toContain('`选择规则 ${row.index}`')
+    // The rules table no longer has a selection checkbox column (v0.5.7):
+    // assert the per-row checkbox really is gone.
+    expect(rules).not.toContain('选择规则')
     for (const source of [processes, devices]) {
       expect(source).toContain(':aria-pressed="selectedKey === group.key"')
       expect(source).toContain('aria-live="polite"')

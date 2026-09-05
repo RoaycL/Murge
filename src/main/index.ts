@@ -3,7 +3,7 @@ import { writeFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { attachKernelWatchdog } from './kernel/crash-watchdog'
 import { InternetLatencyService } from './services/internet-latency-service'
-import { app, BrowserWindow, dialog, powerMonitor, safeStorage, shell } from 'electron'
+import { app, BrowserWindow, dialog, net, powerMonitor, safeStorage, shell } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { brand } from '@shared/brand'
 import { parseBrandConfig } from '@shared/schemas/brand'
@@ -558,6 +558,12 @@ app.whenReady().then(async () => {
 
   // SECURITY: In development builds, block all outbound network requests for subscriptions
   // to comply with DEVELOPMENT_SAFETY.md restrictions. Production builds use real fetch.
+  // Production additionally wires a kernel-proxy fallback transport: Node's
+  // global fetch ignores the system proxy, so a subscription host that is only
+  // reachable through the tunnel fails with a bare "fetch failed". The fallback
+  // goes through Chromium's stack (net.fetch), which DOES honor the system
+  // proxy — i.e. the app's own mixed port when the system proxy is enabled —
+  // so UPDATE reaches the same hosts the ADD path could.
   const subscriptionFetcher = is.dev
     ? new SubscriptionFetcher({
         strictUrlValidation: true,
@@ -568,7 +574,32 @@ app.whenReady().then(async () => {
           )
         }
       })
-    : new SubscriptionFetcher()
+    : new SubscriptionFetcher({
+        proxyFetchFn: async (url, init) => {
+          const res = await net.fetch(url, {
+            signal: init?.signal,
+            headers: init?.headers,
+            // Chromium follows redirects internally; the fetcher validates the
+            // final URL (via response.url) so SSRF protection still applies.
+            redirect: 'follow'
+          })
+          return {
+            ok: res.ok,
+            status: res.status,
+            url: res.url,
+            headers: {
+              has: (name: string) => res.headers.has(name),
+              get: (name: string) => res.headers.get(name)
+            },
+            text: () => res.text(),
+            body: res.body
+              ? {
+                  getReader: () => res.body!.getReader()
+                }
+              : undefined
+          }
+        }
+      })
 
   const proxySelectionStore = new ProxySelectionStore(appDataRoot(app.getPath('appData')))
   const profileService = new ProfileService(

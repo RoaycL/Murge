@@ -41,11 +41,7 @@ async function closeSelected(): Promise<void> {
     <header class="page-toolbar">
       <div>
         <h1>已发现设备</h1>
-        <small aria-live="polite">{{
-          store.status === "live"
-            ? `${groups.length} 个活动来源地址 · 根据 mihomo 连接数据汇总`
-            : "正在连接"
-        }}</small>
+        <small v-if="store.status !== 'live'" aria-live="polite">正在连接</small>
       </div>
       <AppSelect v-model="sort" :options="SORT_OPTIONS" label="设备排序方式" />
     </header>

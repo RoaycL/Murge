@@ -4,7 +4,7 @@ import type { ProfileGateway } from '../../shared/gateways'
 import type { ConfigValidator } from './config-validator'
 import { ProfileRepository } from './profile-repository'
 import type { SubscriptionFetcher } from '../subscriptions/subscription-fetcher'
-import { redactCredentials, deriveFallbackSubscriptionName } from '../subscriptions/subscription-fetcher'
+import { isRedactedUrl, isTransportFailure, redactCredentials, deriveFallbackSubscriptionName } from '../subscriptions/subscription-fetcher'
 import { MemoryProfileSourceStore, type ProfileSourceStore } from './profile-source-store'
 
 /**
@@ -68,7 +68,7 @@ export class ProfileService implements ProfileGateway {
    * profile name on the activity page.
    */
   async importFromUrl(name: string, url: string, activate = false): Promise<ProfileMeta> {
-    const fetched = await this.fetcher.fetch(url)
+    const fetched = await this.fetchSubscription(url)
     const trimmed = name.trim()
     const effectiveName =
       trimmed ||
@@ -97,6 +97,12 @@ export class ProfileService implements ProfileGateway {
    * document with the freshly validated one. The name, id and active pointer
    * are untouched; only the document, source envelope and timestamps update.
    * File/manual profiles have nothing to re-fetch and are rejected.
+   *
+   * The fetch prefers the private raw URL held in the source store — the same
+   * address the import used. When that entry is missing (profiles from before
+   * the encrypted store existed), a NON-redacted display URL is still safe to
+   * fetch, but a REDACTED one would only produce a confusing network error, so
+   * it is refused with actionable copy instead.
    */
   async updateFromSource(id: string): Promise<ProfileMeta> {
     const profile = await this.repository.get(id)
@@ -107,14 +113,43 @@ export class ProfileService implements ProfileGateway {
         '该配置没有远程订阅地址，无法更新'
       )
     }
-    const refreshUrl = (await this.sourceStore.get(id)) ?? source.url
-    const fetched = await this.fetcher.fetch(refreshUrl)
+    const refreshUrl = (await this.sourceStore.get(id)) ?? (isRedactedUrl(source.url) ? null : source.url)
+    if (!refreshUrl) {
+      throw new ProtocolError(
+        ProtocolErrorCode.INVALID_ARGUMENT,
+        '缺少原始订阅地址，无法更新；请删除后重新添加该订阅'
+      )
+    }
+    const fetched = await this.fetchSubscription(refreshUrl)
     // Validate BEFORE writing so a failed update cannot corrupt the stored doc.
     this.throwIfInvalid(this.validator.validate(fetched.document))
     // Persist/migrate the private refresh address before replacing a valid
     // existing document. A secure-storage failure must leave that document intact.
     await this.sourceStore.set(id, refreshUrl)
     return this.repository.replaceFromSource(id, fetched.document, fetched.source)
+  }
+
+  /**
+   * Fetch a subscription over the direct route, retrying once through the
+   * system-proxy-aware fallback transport when the direct transport itself
+   * fails (DNS / TLS / connect / abort — NOT HTTP error statuses, which a
+   * retry cannot improve). ADD and UPDATE share this path so both behave
+   * identically in networks where the subscription host is only reachable
+   * through the tunnel.
+   */
+  private async fetchSubscription(url: string) {
+    try {
+      return await this.fetcher.fetch(url)
+    } catch (error) {
+      if (!isTransportFailure(error)) throw error
+      try {
+        return await this.fetcher.fetch(url, { viaProxy: true })
+      } catch {
+        // The fallback also failed — surface the ORIGINAL direct error so the
+        // user sees the failure they recognize instead of a second message.
+        throw error
+      }
+    }
   }
 
   async activateProfile(id: string): Promise<ProfileMeta> {

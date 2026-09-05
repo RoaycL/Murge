@@ -52,7 +52,7 @@ describe('MihomoLogBuffer', () => {
     const buffer = new MihomoLogBuffer()
     buffer.append(msg('a'))
     buffer.append(msg('b'))
-    buffer.clear()
+    expect(buffer.clear()).toBe(2)
     expect(buffer.snapshot()).toEqual([])
     expect(buffer.lastSeq).toBe(2)
     // Next assignment continues past the cleared set — never reuses 1/2.

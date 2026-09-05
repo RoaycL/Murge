@@ -201,8 +201,8 @@ export interface DesktopApi {
     onStreamError(listener: (error: MihomoStreamError) => void): () => void
     /** Retained kernel-log history past `afterSeq` (0 = everything retained). */
     logsSnapshot(afterSeq?: number): Promise<MihomoLogsSnapshot>
-    /** Drop retained log history (the logs view's 清空 button). */
-    clearLogs(): Promise<void>
+    /** Drop retained history and return the last sequence included in the clear. */
+    clearLogs(): Promise<number>
   }
   profiles: {
     /** Ordered proxy-group names from the ACTIVE profile document (config order). */

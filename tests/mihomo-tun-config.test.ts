@@ -167,6 +167,18 @@ describe('proxied TUN config (real subscription content)', () => {
     expect(config.dns.fallback).toEqual(['1.1.1.1'])
   })
 
+  it('injects the safety fake-ip filter only when omitted', () => {
+    const omitted = parse(generateProxiedTunConfig(proxied)) as Record<string, any>
+    expect(omitted.dns['fake-ip-filter']).toContain('*.lan')
+
+    const explicitlyEmpty = `${document}dns:\n  fake-ip-filter: []\n`
+    const preserved = parse(generateProxiedTunConfig({ ...proxied, document: explicitlyEmpty })) as Record<string, any>
+    expect(preserved.dns['fake-ip-filter']).toEqual([])
+
+    const malformed = `${document}dns:\n  fake-ip-filter: invalid\n`
+    expect(() => generateProxiedTunConfig({ ...proxied, document: malformed })).toThrow(/fake-ip-filter must be a sequence/)
+  })
+
   it('still neutralizes host-network mutation and forces the auth keys', () => {
     const hostile = `${document}listeners:\n  - name: in\n    type: http\n    port: 1080\nredir-port: 7892\ntproxy-port: 7893\nexternal-controller-pipe: \\\\.\\pipe\\evil\nexternal-doh-server: /dns-query\ndns:\n  enable: true\n  listen: 0.0.0.0:53\n`
     const text = generateProxiedTunConfig({ ...proxied, document: hostile })

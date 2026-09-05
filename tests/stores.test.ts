@@ -19,7 +19,7 @@ type Mh = {
   onLogs: (listener: (message: MihomoLogMessage) => void) => () => void
   onStreamError: (listener: (error: MihomoStreamError) => void) => () => void
   logsSnapshot: (afterSeq?: number) => Promise<MihomoLogsSnapshot>
-  clearLogs: () => Promise<void>
+  clearLogs: () => Promise<number>
   emitLog: (message: MihomoLogMessage) => void
   setLogHistory: (entries: MihomoLogMessage[]) => void
 }
@@ -75,6 +75,7 @@ beforeEach(() => {
     async clearLogs() {
       logChannel.cleared += 1
       logChannel.history = []
+      return logChannel.nextSeq
     },
     emitLog(message) {
       message.seq = ++logChannel.nextSeq
@@ -439,10 +440,47 @@ describe('logs store (snapshot + live dedup, sparkle-style)', () => {
     expect(payloads).toContain('live-1')
     expect(store.entries.length).toBe(3)
     expect(store.status).toBe('live')
+
+    // Once the initial snapshot has settled, ordinary live rows must resume the
+    // 32 ms flush path. This catches a tracked-Promise identity bug that left
+    // syncPromise permanently non-null and froze the visible log after startup.
+    mihomo.emitLog({ type: 'info', payload: 'after-sync' })
+    await vi.advanceTimersByTimeAsync(50)
+    expect(store.entries.map((entry) => entry.message)).toContain('after-sync')
+
     store.clear()
     await vi.advanceTimersByTimeAsync(0)
     expect(store.entries).toEqual([])
     expect(mihomo).toBeTruthy()
     vi.useRealTimers()
+  })
+
+  it('does not restore an obsolete snapshot after clear and retains post-clear live rows', async () => {
+    vi.useFakeTimers()
+    mihomo.setLogHistory([{ type: 'info', payload: 'obsolete' }])
+    let resolveSnapshot!: (value: MihomoLogsSnapshot) => void
+    let resolveClear!: (value: number) => void
+    mihomo.logsSnapshot = vi.fn(() => new Promise<MihomoLogsSnapshot>((resolve) => {
+      resolveSnapshot = resolve
+    }))
+    mihomo.clearLogs = vi.fn(() => {
+      logChannel.history = []
+      return new Promise<number>((resolve) => {
+        resolveClear = resolve
+      })
+    })
+
+    const { useLogsStore: freshLogsStore } = await importFreshStore()
+    const store = freshLogsStore()
+    store.clear()
+
+    // This row is sequenced after the main-process clear high-water mark and
+    // must survive even though the obsolete startup snapshot is still pending.
+    mihomo.emitLog({ type: 'info', payload: 'after-clear' })
+    resolveClear(1)
+    resolveSnapshot({ entries: [{ type: 'info', payload: 'obsolete', seq: 1 }], lastSeq: 1 })
+    await vi.advanceTimersByTimeAsync(50)
+
+    expect(store.entries.map((entry) => entry.message)).toEqual(['after-clear'])
   })
 })

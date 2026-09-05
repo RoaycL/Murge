@@ -138,7 +138,8 @@ describe('buildIpcHandlers', () => {
     it('drops retained history and resets the snapshot', async () => {
       container.mihomo.emitLogs({ type: 'info', payload: 'gone' })
       expect((await handlers[IPC.mihomoLogsSnapshot](null)).entries).toHaveLength(1)
-      await handlers[IPC.mihomoClearLogs](null)
+      const clearedThrough = await handlers[IPC.mihomoClearLogs](null)
+      expect(clearedThrough).toBe(1)
       expect(container.mihomo.clearLogsCalls).toBe(1)
       expect((await handlers[IPC.mihomoLogsSnapshot](null)).entries).toHaveLength(0)
     })

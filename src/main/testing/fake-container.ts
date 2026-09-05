@@ -247,10 +247,9 @@ export class FakeMihomoGateway implements MihomoGateway {
     return Promise.resolve({ entries: this.logBuffer.snapshot(afterSeq ?? 0), lastSeq: this.logBuffer.lastSeq })
   }
 
-  clearLogs(): Promise<void> {
+  clearLogs(): Promise<number> {
     this.clearLogsCalls += 1
-    this.logBuffer.clear()
-    return Promise.resolve()
+    return Promise.resolve(this.logBuffer.clear())
   }
 
   /** Test helpers: publish push events to subscribers. */

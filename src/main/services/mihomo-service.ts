@@ -278,9 +278,8 @@ export class MihomoService implements MihomoGateway {
   }
 
   /** Drop retained log history (renderer "清空" button). Sequence numbering continues. */
-  clearLogs(): Promise<void> {
-    this.logBuffer.clear()
-    return Promise.resolve()
+  clearLogs(): Promise<number> {
+    return Promise.resolve(this.logBuffer.clear())
   }
 
   onStreamError(listener: (error: MihomoStreamError) => void): () => void {

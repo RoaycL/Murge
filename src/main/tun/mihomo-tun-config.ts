@@ -466,10 +466,10 @@ export function generateProxiedTunConfig(options: ProxiedTunConfigOptions): stri
   if (!Array.isArray(dns.nameserver) || dns.nameserver.length === 0) {
     dns.nameserver = ['system']
   }
-  // Keep game-/NTP-relevant domains out of fake-ip space. Only when the profile
-  // did not declare its own filter: a non-empty user list is routing intent and
-  // stays intact; an absent or empty list gets the safety default.
-  if (!Array.isArray(dns['fake-ip-filter']) || dns['fake-ip-filter'].length === 0) {
+  // Keep game-/NTP-relevant domains out of fake-ip space only when the profile
+  // omitted this key. An explicitly empty list is still user routing intent: it
+  // asks mihomo to allocate fake IPs for every domain and must not be rewritten.
+  if (!Object.prototype.hasOwnProperty.call(dns, 'fake-ip-filter')) {
     dns['fake-ip-filter'] = [...TUN_DEFAULT_FAKE_IP_FILTER]
   }
 
@@ -590,6 +590,15 @@ export function proxiedTunConfigErrors(text: string): string[] {
     if (block.enable !== true) errors.push('dns.enable must equal true')
     if (block['enhanced-mode'] !== 'fake-ip') errors.push('dns.enhanced-mode must equal fake-ip')
     if ('listen' in block) errors.push('forbidden key for a privileged profile: dns.listen')
+    if ('fake-ip-filter' in block) {
+      const filter = block['fake-ip-filter']
+      if (!Array.isArray(filter)) errors.push('dns.fake-ip-filter must be a sequence')
+      else for (const entry of filter) {
+        if (typeof entry !== 'string' || entry.length === 0) {
+          errors.push('dns.fake-ip-filter entries must be non-empty strings')
+        }
+      }
+    }
   }
 
   return [...new Set(errors)]

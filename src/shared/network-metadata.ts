@@ -44,6 +44,25 @@ export interface NetworkMetadataState {
   error: string | null
 }
 
+/** One provider's outcome inside a whole-set resolve. */
+export interface NetworkMetadataProviderResult {
+  providerId: string
+  /** Human-facing provider label (e.g. `ipwho.is`), resolved in the main process. */
+  label: string
+  state: NetworkMetadataState
+}
+
+/**
+ * A whole-set resolve snapshot: every shipped provider resolved once, in
+ * display order, so the panel can show all sources side by side without the
+ * user switching between them.
+ */
+export interface NetworkMetadataSnapshot {
+  results: NetworkMetadataProviderResult[]
+  /** Epoch ms at which this whole-set snapshot was assembled. */
+  fetchedAt: number
+}
+
 const DEFAULT_PROVIDER: NetworkMetadataProviderId = 'ipwhois'
 
 /**
@@ -137,6 +156,11 @@ export function networkMetadataProviderList(): NetworkMetadataProvider[] {
 export function getNetworkMetadataProvider(id: string): NetworkMetadataProvider | null {
   const def = PROVIDER_DEFS.find((provider) => provider.id === id)
   return def ? { id: def.id, label: def.label, description: def.description, endpoint: def.endpoint, kind: def.kind } : null
+}
+
+/** The human-facing label for a provider id, falling back to the raw id. */
+export function providerDisplayName(providerId: string): string {
+  return getNetworkMetadataProvider(providerId)?.label ?? providerId
 }
 
 /** The default provider id. */

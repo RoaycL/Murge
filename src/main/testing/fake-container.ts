@@ -1,7 +1,7 @@
 import type { KernelGateway, KernelManagerGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway, OverridesGateway, DnsEnhancementGateway, SnifferEnhancementGateway, TunConfigGateway, CoreSettingsGateway, GeodataSettingsGateway, UsageHistoryGateway, NetworkMetadataGateway } from '@shared/gateways'
 import type { UsageBucket, UsageWindow, UsageRanking, UsageHistorySnapshot, UsageRankingEntry, UsageCapacity } from '@shared/usage'
 import { aggregateUsageWindow, rankUsageBuckets, usageCapacity } from '@shared/usage'
-import type { NetworkMetadata, NetworkMetadataProvider, NetworkMetadataState } from '@shared/network-metadata'
+import type { NetworkMetadata, NetworkMetadataProvider, NetworkMetadataSnapshot, NetworkMetadataState } from '@shared/network-metadata'
 import { defaultNetworkMetadataProviderId, getNetworkMetadataProvider, networkMetadataProviderList } from '@shared/network-metadata'
 import type { SnifferEnhancement, SnifferSnapshot } from '@shared/sniffer'
 import { coerceSnifferEnhancement, coerceSnifferSnapshot, EMPTY_SNIFFER_ENHANCEMENT } from '@shared/sniffer'
@@ -517,6 +517,7 @@ export class FakeNetworkMetadataGateway implements NetworkMetadataGateway {
   phase: NetworkMetadataState['phase'] = 'idle'
   selectCalls: string[] = []
   resolveCalls: boolean[] = []
+  resolveAllCalls: boolean[] = []
 
   getProviders(): NetworkMetadataProvider[] {
     return networkMetadataProviderList()
@@ -547,6 +548,22 @@ export class FakeNetworkMetadataGateway implements NetworkMetadataGateway {
     this.phase = 'error'
     this.error = this.error ?? '数据源返回了无法解析的响应'
     return this.getState()
+  }
+  async resolveAll(force = false): Promise<NetworkMetadataSnapshot> {
+    this.resolveAllCalls.push(force)
+    // A set-wide fake: a seeded record answers its own provider row; every
+    // other row degrades with the same explicit error instead of inventing data.
+    return {
+      results: networkMetadataProviderList().map((provider) => ({
+        providerId: provider.id,
+        label: provider.label,
+        state:
+          this.metadata && this.metadata.provider === provider.id
+            ? { phase: 'ready', provider: provider.id, metadata: this.metadata, error: null }
+            : { phase: 'error', provider: provider.id, metadata: null, error: this.error ?? '数据源返回了无法解析的响应' }
+      })),
+      fetchedAt: Date.now()
+    }
   }
 }
 

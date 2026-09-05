@@ -136,7 +136,9 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .overview-view h1 { margin-bottom: 22px; }
 .overview-view section { margin-bottom: 29px; }
 .overview-view h2 { margin: 0 0 15px; color: var(--app-pink); font-size: 14px; font-weight: 600; }
-.overview-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(var(--card-min), 100%), 1fr)); gap: 15px; }
+/* 恒两列：概览的网络接管在最小窗口下也必须保持两排卡片，
+   auto-fill 会在窄窗口塌成一列，这里改为固定双列（小屏各占一半）。 */
+.overview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; }
 .overview-grid .surface-card { min-height: 137px; padding: 16px; display: flex; flex-direction: column; }
 .setting-head { display: flex; align-items: flex-start; gap: 12px; min-height: 55px; }
 .setting-head > div { flex: 1; }
@@ -325,7 +327,9 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .activity-entry { display:grid; grid-template-columns:25px 1fr 16px; align-items:center; min-height:58px; padding:9px 12px; border:0; color:inherit; text-align:left; cursor:pointer; }
 .activity-entry > svg { color:var(--app-purple); }.activity-entry strong,.activity-entry small{display:block}.activity-entry strong{font-size:12px}.activity-entry small{margin-top:3px;color:var(--app-muted);font-size:9px}
 .feature-page { width:100%; padding-bottom:30px; }.feature-header{display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:22px}.feature-header p{margin:3px 0 0;color:var(--app-muted);font-size:11px}.feature-header>svg{color:var(--app-purple)}
-.resource-page-groups{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));gap:15px;width:100%;margin-bottom:18px}.resource-page-card{padding:14px}.resource-page-card h2{margin:0 0 8px;font-size:13px}.resource-page-card h2 small{color:var(--app-muted)}.resource-page-card>p,.inline-note{color:var(--app-muted);font-size:11px}.resource-page-row{display:flex;align-items:center;justify-content:space-between;min-height:45px;border-top:1px solid var(--app-divider)}.resource-page-row strong,.resource-page-row small{display:block}.resource-page-row strong{font-size:11px}.resource-page-row small{margin-top:3px;color:var(--app-muted);font-size:9px}
+/* 恒两列：代理 Provider 与规则 Provider 在最小窗口下也必须并排，
+   auto-fit 会在窄窗口塌成一列，这里改为固定双列。 */
+.resource-page-groups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px;width:100%;margin-bottom:18px}.resource-page-card{padding:14px}.resource-page-card h2{margin:0 0 8px;font-size:13px}.resource-page-card h2 small{color:var(--app-muted)}.resource-page-card>p,.inline-note{color:var(--app-muted);font-size:11px}.resource-page-row{display:flex;align-items:center;justify-content:space-between;min-height:45px;border-top:1px solid var(--app-divider)}.resource-page-row strong,.resource-page-row small{display:block}.resource-page-row strong{font-size:11px}.resource-page-row small{margin-top:3px;color:var(--app-muted);font-size:9px}
 /* 抽屉层级强化（所有者要求）：遮罩加深并加背景模糊，抽屉本身浮起为圆角
    面板（与窗口边缘留出间隙），阴影加重，使其在视觉上明确浮于主页之上。 */
 .detail-drawer-shade{position:fixed;z-index:50;inset:0;border:0;background:rgba(10,13,19,.42);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}

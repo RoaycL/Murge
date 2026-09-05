@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { NetworkMetadataService } from '../src/main/services/network-metadata-service'
 
 const NOW = 1_700_000_000_000
@@ -182,6 +182,96 @@ describe('NetworkMetadataService', () => {
     it('lists three privacy-explicit providers', () => {
       const service = makeService()
       expect(service.getProviders().map((provider) => provider.id)).toEqual(['ipwhois', 'ipapi', 'ipinfo'])
+    })
+  })
+
+  describe('resolveAll (whole-set sweep)', () => {
+    it('resolves every provider once and returns them in display order', async () => {
+      const fetch = stubFetch([ipwhoisBody(), ipapiBody(), { ip: '203.0.113.7', country: 'Germany', city: 'Berlin', org: 'AS3320' }])
+      const service = makeService({ fetch: fetch.fn })
+      const snapshot = await service.resolveAll()
+      expect(snapshot.results.map((row) => row.providerId)).toEqual(['ipwhois', 'ipapi', 'ipinfo'])
+      expect(snapshot.results.map((row) => row.label)).toEqual(['ipwho.is', 'ip-api.com', 'ipinfo.io'])
+      expect(snapshot.results.map((row) => row.state.phase)).toEqual(['ready', 'ready', 'ready'])
+      expect(snapshot.results[0].state.metadata).toMatchObject({ ip: '203.0.113.5', provider: 'ipwhois' })
+      expect(snapshot.results[1].state.metadata).toMatchObject({ ip: '198.51.100.9', provider: 'ipapi' })
+      expect(snapshot.results[2].state.metadata).toMatchObject({ ip: '203.0.113.7', provider: 'ipinfo' })
+      expect(fetch.calls.map((call) => call.endpoint)).toEqual(['http://ipwho.is/', 'http://ip-api.com/json/', 'http://ipinfo.io/json'])
+    })
+
+    it('isolates a per-provider failure without failing the sweep', async () => {
+      // ipwhois succeeds; ipapi returns an unusable body; ipinfo throws.
+      const fetch = stubFetch([ipwhoisBody(), { success: false }, Promise.reject(new Error('boom'))])
+      const service = makeService({ fetch: fetch.fn })
+      const snapshot = await service.resolveAll()
+      expect(snapshot.results[0].state.phase).toBe('ready')
+      expect(snapshot.results[1].state.phase).toBe('error')
+      expect(snapshot.results[2].state.phase).toBe('error')
+      expect(snapshot.results[1].state.error).toContain('解析')
+      // The ready row still carries its data.
+      expect(snapshot.results[0].state.metadata).not.toBeNull()
+    })
+
+    it('reports a kernel-not-running error on every row without fetching', async () => {
+      const fetch = stubFetch([])
+      const service = makeService({ fetch: fetch.fn, resolveProxyPort: async () => null })
+      const snapshot = await service.resolveAll()
+      expect(snapshot.results).toHaveLength(3)
+      for (const row of snapshot.results) {
+        expect(row.state.phase).toBe('error')
+        expect(row.state.error).toContain('内核未运行')
+      }
+      expect(fetch.calls).toHaveLength(0)
+    })
+
+    it('serves every row from cache on a second non-forced sweep', async () => {
+      const fetch = stubFetch([ipwhoisBody(), ipapiBody(), { ip: '203.0.113.7' }])
+      const service = makeService({ fetch: fetch.fn })
+      await service.resolveAll()
+      const again = await service.resolveAll()
+      expect(again.results.map((row) => row.state.phase)).toEqual(['ready', 'ready', 'ready'])
+      expect(fetch.calls).toHaveLength(3)
+    })
+
+    it('single-flights concurrent sweeps into one set of fetches', async () => {
+      // A deferred fetch lets the test overlap two sweeps deterministically.
+      let release: (() => void) | null = null
+      const gate = new Promise<void>((resolve) => { release = resolve })
+      const fetch = vi.fn(async () => {
+        await gate
+        return ipwhoisBody()
+      })
+      const service = makeService({ fetch: fetch as unknown as (endpoint: string, port: number, timeoutMs?: number) => Promise<unknown> })
+      const first = service.resolveAll()
+      const second = service.resolveAll()
+      release?.()
+      const [a, b] = await Promise.all([first, second])
+      // One sweep fetches once per provider (3); the joined second sweep must
+      // not stack a second set of round-trips. ipapi's parser requires a
+      // `status` field (absent here) so only rows 1 and 3 parse.
+      expect(fetch).toHaveBeenCalledTimes(3)
+      expect(a.results.map((row) => row.state.phase)).toEqual(['ready', 'error', 'ready'])
+      expect(b.results[0].state.metadata).toMatchObject({ provider: 'ipwhois' })
+    })
+
+    it('refetches the whole set when force is true', async () => {
+      const fetch = stubFetch([ipwhoisBody(), ipapiBody(), { ip: '203.0.113.7' }, ipwhoisBody(), ipapiBody(), { ip: '203.0.113.7' }])
+      const service = makeService({ fetch: fetch.fn })
+      await service.resolveAll()
+      await service.resolveAll(true)
+      expect(fetch.calls).toHaveLength(6)
+    })
+
+    it('keeps the legacy single-provider resolve working alongside the sweep', async () => {
+      const fetch = stubFetch([ipwhoisBody(), ipapiBody()])
+      const service = makeService({ fetch: fetch.fn })
+      const state = await service.resolve()
+      expect(state.phase).toBe('ready')
+      expect(state.provider).toBe('ipwhois')
+      service.selectProvider('ipapi')
+      const switched = await service.resolve()
+      expect(switched.provider).toBe('ipapi')
+      expect(switched.phase).toBe('ready')
     })
   })
 })

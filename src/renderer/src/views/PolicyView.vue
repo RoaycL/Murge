@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { usePoliciesStore, POLICY_MODE_OPTIONS, type PolicyMode } from '../stores/policies'
-import type { MihomoProxy } from '@shared/mihomo-api'
 import { useKernelStore } from '../stores/kernel'
 import AppIcon from '../components/AppIcon.vue'
 import DetailDrawer from '../components/DetailDrawer.vue'
@@ -23,9 +22,20 @@ const MODE_LABELS: Record<PolicyMode, string> = {
   rule: '规则判定'
 }
 
-function displayType(proxy: MihomoProxy | null): string {
-  if (!proxy) return 'Node'
-  return proxy.type ?? 'Node'
+/** Kernel group/node types in Chinese; unknown types fall back to the raw one. */
+const PROXY_TYPE_LABELS: Record<string, string> = {
+  selector: '手动选择',
+  urltest: '自动测试',
+  fallback: '故障转移',
+  loadbalance: '负载均衡',
+  relay: '链式代理',
+  direct: '直接连接',
+  reject: '拒绝'
+}
+
+function displayType(proxyType: string | null | undefined): string {
+  if (!proxyType) return '节点'
+  return PROXY_TYPE_LABELS[proxyType.toLowerCase()] ?? proxyType
 }
 
 function latencyLabel(name: string): { text: string; kind: string } {
@@ -53,9 +63,8 @@ function isUnavailable(name: string): boolean {
 
 const drawerSubtitle = computed(() => {
   const group = policies.currentGroup
-  if (!group) return '组内节点 · 点击节点切换'
-  const count = group.all?.length ?? 0
-  return `${group.type} · ${count} 个节点 · 点击节点切换`
+  if (!group) return '节点列表'
+  return displayType(group.type)
 })
 
 /** A broken/remote icon must not leave a torn image in the grid: hide it. */
@@ -128,7 +137,7 @@ watch(() => kernel.status.phase, (phase, previous) => {
     <template v-else>
       <div class="section-caption"><span>策略组</span></div>
       <div class="policy-group-grid">
-        <button v-for="group in policies.groups" :key="group.name" type="button" :class="{ selected: policies.selectedGroup === group.name }" @click="openGroup(group.name)"><img v-if="group.icon" class="group-icon" :src="group.icon" alt="" loading="lazy" @error="onGroupIconError" /><small>{{ group.type }}</small><strong>{{ group.name }}</strong><span>{{ group.now || group.all?.[0] || '未选择' }}</span><AppIcon name="next" :size="14" /></button>
+        <button v-for="group in policies.groups" :key="group.name" type="button" :class="{ selected: policies.selectedGroup === group.name }" @click="openGroup(group.name)"><img v-if="group.icon" class="group-icon" :src="group.icon" alt="" loading="lazy" @error="onGroupIconError" /><small>{{ displayType(group.type) }}</small><strong>{{ group.name }}</strong><span>{{ group.now || group.all?.[0] || '未选择' }}</span><AppIcon name="next" :size="14" /></button>
       </div>
     </template>
 
@@ -137,7 +146,7 @@ watch(() => kernel.status.phase, (phase, previous) => {
     <DetailDrawer :open="groupDrawerOpen && Boolean(policies.selectedGroup)" :title="policies.selectedGroup" :subtitle="drawerSubtitle" @close="groupDrawerOpen = false">
       <div class="node-caption"><span>节点列表</span><button type="button" @click="policies.testAll()">测试当前组</button></div>
       <div class="drawer-body-grid">
-        <div class="node-grid"><button v-for="member in policies.groupMembers" :key="member" type="button" :class="{ selected: policies.selectedMember === member, unavailable: isUnavailable(member) }" @click="onCardClick(member)"><small>{{ displayType(policies.nodeByMember[member]) }}</small><strong>{{ member }}</strong><span :class="latencyLabel(member).kind">{{ latencyLabel(member).text }}</span></button></div>
+        <div class="node-grid"><button v-for="member in policies.groupMembers" :key="member" type="button" :class="{ selected: policies.selectedMember === member, unavailable: isUnavailable(member) }" @click="onCardClick(member)"><small>{{ displayType(policies.nodeByMember[member]?.type) }}</small><strong>{{ member }}</strong><span :class="latencyLabel(member).kind">{{ latencyLabel(member).text }}</span></button></div>
       </div>
       <div v-if="policies.panelError" class="panel-error drawer-panel-error">{{ policies.panelError }}</div>
     </DetailDrawer>
@@ -154,7 +163,9 @@ watch(() => kernel.status.phase, (phase, previous) => {
 .group-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
 .group-tabs button { height: 27px; padding: 0 14px; border: 0; border-radius: 8px; background: rgba(127,127,127,.12); }
 .group-tabs button.selected { color: white; background: var(--app-blue); }
-.node-grid button.selected { box-shadow: 0 0 0 2px var(--app-blue); background: rgba(22,132,248,.12); }
+/* 选中环用 inset box-shadow 画在卡片内部：outline 型外扩环会溢出网格，
+   在抽屉左缘被裁切，看起来像整列边框错位。 */
+.node-grid button.selected { box-shadow: inset 0 0 0 2px var(--app-blue); background: rgba(22,132,248,.12); }
 .node-grid button.unavailable { opacity: .78; }
 .node-grid span.testing { color: var(--app-muted); }
 .node-grid span.timeout { color: #e05b5b; }

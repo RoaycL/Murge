@@ -25,8 +25,17 @@ import {
 } from '@shared/schemas/mihomo'
 import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
 
-/** Default connectivity probe used when the caller does not supply a URL. */
-const DEFAULT_TEST_URL = 'http://www.gstatic.com/generate_204'
+/**
+ * Default connectivity probe used when the caller does not supply a URL.
+ * Must match the kernel's url-test default: URLTest groups that omit `url`
+ * measure member aliveness against THIS address, so per-node probes against
+ * anything else would disagree with the group's own notion of "alive" — and a
+ * fixed pick in a URLTest group would be silently ignored, because the group
+ * skips members whose AliveForTestUrl(groupUrl) has no successful state.
+ * HTTPS also mirrors the reference clients (party/verge/sparkle all default
+ * to an https 204 endpoint).
+ */
+const DEFAULT_TEST_URL = 'https://www.gstatic.com/generate_204'
 
 export interface MihomoClientOptions {
   /** Abort a request that does not complete within this many milliseconds. */

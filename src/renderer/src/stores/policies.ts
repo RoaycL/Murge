@@ -112,6 +112,19 @@ export const usePoliciesStore = defineStore('policies', () => {
     delayByNode.value = { ...delayByNode.value, [name]: state }
   }
 
+  /**
+   * The member a group should APPEAR to have selected. For Selector groups the
+   * controller's `now` IS the selection, but URLTest/Fallback groups report two
+   * fields: `now` (the currently-dialed fastest ALIVE member) and `fixed` (the
+   * node the user pinned via PUT). The kernel honors the pin only while that
+   * node is alive for the group's test URL, so `now` can legitimately differ
+   * from the user's choice; the UI must surface the user's choice.
+   */
+  function groupSelectedMember(group: MihomoProxy): string {
+    if (typeof group.fixed === 'string' && group.fixed.length > 0) return group.fixed
+    return typeof group.now === 'string' && group.now.length > 0 ? group.now : (group.all?.[0] ?? '')
+  }
+
   async function load(): Promise<void> {
     status.value = 'loading'
     lastError.value = null
@@ -131,7 +144,7 @@ export const usePoliciesStore = defineStore('policies', () => {
       const firstGroup = ordered.length > 0 ? ordered[0] : null
       if (firstGroup) {
         selectedGroup.value = firstGroup.name
-        selectedMember.value = typeof firstGroup.now === 'string' ? firstGroup.now : (firstGroup.all?.[0] ?? '')
+        selectedMember.value = groupSelectedMember(firstGroup)
       }
       status.value = 'ready'
     } catch (error) {
@@ -145,7 +158,7 @@ export const usePoliciesStore = defineStore('policies', () => {
     const group = proxies.value.proxies[name]
     if (!group || !POLICY_GROUP_TYPES.includes(group.type as PolicyGroupType)) return
     selectedGroup.value = name
-    selectedMember.value = typeof group.now === 'string' ? group.now : (group.all?.[0] ?? '')
+    selectedMember.value = groupSelectedMember(group)
   }
 
   function setMode(next: PolicyMode): Promise<void> {
@@ -241,9 +254,20 @@ export const usePoliciesStore = defineStore('policies', () => {
     const submitError = lastSelectionError
     try {
       const result = await window.desktop.mihomo.getProxies()
-      const now = result.proxies[group]?.now
-      const confirmed = typeof now === 'string' && now.length > 0 ? now : null
+      const groupProxy = result.proxies[group]
+      // URLTest/Fallback groups report the user's pin in `fixed` while `now`
+      // keeps pointing at the fastest ALIVE member (the kernel dials the pin
+      // only while it stays alive for the group's test URL). Confirm against
+      // `fixed` when the controller reports one, so a legitimately slower or
+      // cold-but-alive pick is not reported as a failed selection; Selector
+      // groups expose no `fixed`, so they confirm against `now` as before.
+      const pinned = groupProxy ? groupSelectedMember(groupProxy) : null
+      const confirmed = pinned && pinned.length > 0 ? pinned : null
       if (confirmed) selectedMember.value = confirmed
+      // Adopt the controller's fresh snapshot wholesale so group cards (`now`,
+      // `fixed`, `alive`) reflect the write immediately instead of waiting for
+      // the next poll.
+      proxies.value = result
       if (submitError) {
         panelError.value = submitError
       } else if (target !== null && confirmed !== null && confirmed !== target) {
@@ -264,33 +288,64 @@ export const usePoliciesStore = defineStore('policies', () => {
     }
   }
 
+  /**
+   * Probe every member of the open group. mihomo-party abandoned the kernel's
+   * `/group/:name/delay` endpoint for this and so do we, for three reasons:
+   * 1. it runs all probes inside ONE context — a single timeout budget shared
+   *    by the whole group, so a batch of cold TLS handshakes tips the entire
+   *    request into 504 "all proxies timeout" even on a healthy tunnel;
+   * 2. it FORCE-CLEARS a URLTest/Fallback group's pinned selection, so the
+   *    node the user picked is silently reverted on every group test;
+   * 3. results only arrive once the whole batch settles, with no per-node
+   *    feedback.
+   * Per-node probes (party/sparkle style) each get their own full timeout,
+   * leave the pin untouched, and can update the UI as each result lands.
+   */
   async function testAll(): Promise<void> {
     if (!selectedGroup.value) return
-    groupDelayStatus.value = 'testing'
     const members = groupMembers.value
-    try {
-      const map = await window.desktop.mihomo.groupDelayTest(selectedGroup.value)
-      // Upstream's group delay endpoint writes a member into the map ONLY when
-      // its probe succeeded (err == nil); a node that timed out, was unreachable,
-      // or simply wasn't measured is OMITTED. So an absent key is not evidence of
-      // a timeout — label it "unavailable" (no usable measurement) rather than
-      // "timeout", which would mislabel reachable nodes that merely went untested.
-      // The whole-group 504 "all proxies timeout" case still surfaces through the
-      // catch branch below as UPSTREAM_TIMEOUT -> 'timeout' for every member.
-      for (const member of members) {
-        const delay = map[member]
-        // A delay of exactly 0 (or a negative value) is NOT a successful 0ms
-        // measurement — mihomo reports 0 for a failed/unmeasured probe, exactly
-        // like `providers.ts`'s latestDelay treats it. Only a strictly positive
-        // delay is a real "ok" measurement.
-        if (typeof delay === 'number' && Number.isFinite(delay) && delay > 0) setDelay(member, { status: 'ok', delay })
-        else setDelay(member, { status: 'unavailable', delay: null })
+    groupDelayStatus.value = 'testing'
+    for (const member of members) setDelay(member, { status: 'testing', delay: null })
+
+    // Bounded fan-out (party/sparkle default to 50 workers): keeps request
+    // pressure on the controller flat for big subscriptions while every probe
+    // still owns its own timeout budget.
+    const WORKERS = 50
+    let measured = 0
+    let worker = 0
+    const runWorker = async (): Promise<void> => {
+      while (worker < members.length) {
+        const member = members[worker]
+        worker += 1
+        try {
+          const result = await window.desktop.mihomo.delayTest(member)
+          setDelay(member, { status: 'ok', delay: result.delay })
+          measured += 1
+        } catch (error) {
+          setDelay(member, { status: classifyDelayError(error), delay: null })
+        }
       }
-      groupDelayStatus.value = 'ok'
-    } catch (error) {
+    }
+    await Promise.all(Array.from({ length: Math.min(WORKERS, members.length) }, runWorker))
+
+    // Only an empty scoreboard is a group-level failure — that mirrors the
+    // kernel's own "all proxies timeout" 504, while individual dead nodes were
+    // already labeled above and must not take the whole group down with them.
+    if (measured === 0 && members.length > 0) {
       groupDelayStatus.value = 'error'
-      panelError.value = toProtocolError(error).message
-      for (const member of members) setDelay(member, { status: classifyDelayError(error), delay: null })
+      panelError.value = '测速失败：所有节点均无有效延迟'
+    } else {
+      groupDelayStatus.value = 'ok'
+    }
+    // Re-pull so the cards' `now`/`alive`/`fixed` reflect the fresh probes
+    // (the same re-pull party does via `mutate()` after each result).
+    try {
+      const result = await window.desktop.mihomo.getProxies()
+      proxies.value = result
+      const group = result.proxies[selectedGroup.value]
+      if (group) selectedMember.value = groupSelectedMember(group)
+    } catch {
+      /* keep last good snapshot */
     }
   }
 

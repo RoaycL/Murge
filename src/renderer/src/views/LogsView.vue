@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useLogsStore } from '../stores/logs'
 import { serializeLogs } from '../lib/logs'
@@ -23,8 +23,9 @@ function exportLogs(): void {
   URL.revokeObjectURL(url)
 }
 
+// Capture runs app-long at module scope; mount only (re)syncs history so a
+// reopened view recovers the lines emitted while it was closed.
 onMounted(store.connect)
-onUnmounted(store.disconnect)
 </script>
 
 <template>

@@ -110,6 +110,40 @@ describe('buildIpcHandlers', () => {
     })
   })
 
+  describe('mihomo:logs-snapshot', () => {
+    it('returns the retained buffer with clamped cursor', async () => {
+      container.mihomo.emitLogs({ type: 'info', payload: 'hello' })
+      container.mihomo.emitLogs({ type: 'warning', payload: 'careful' })
+      const snapshot = await handlers[IPC.mihomoLogsSnapshot](null, undefined)
+      expect(snapshot.lastSeq).toBe(2)
+      expect(snapshot.entries).toHaveLength(2)
+      expect(snapshot.entries.map((entry) => entry.seq)).toEqual([1, 2])
+      expect(container.mihomo.logsSnapshotCalls).toEqual([0])
+    })
+
+    it('passes a valid non-negative cursor through to the gateway', async () => {
+      await handlers[IPC.mihomoLogsSnapshot](null, 5)
+      expect(container.mihomo.logsSnapshotCalls).toEqual([5])
+    })
+
+    it('rejects a malformed cursor before reaching the gateway', async () => {
+      await expect(handlers[IPC.mihomoLogsSnapshot](null, -1)).rejects.toThrow(ProtocolError)
+      await expect(handlers[IPC.mihomoLogsSnapshot](null, 1.5)).rejects.toThrow(ProtocolError)
+      await expect(handlers[IPC.mihomoLogsSnapshot](null, '0')).rejects.toThrow(ProtocolError)
+      expect(container.mihomo.logsSnapshotCalls).toEqual([])
+    })
+  })
+
+  describe('mihomo:clear-logs', () => {
+    it('drops retained history and resets the snapshot', async () => {
+      container.mihomo.emitLogs({ type: 'info', payload: 'gone' })
+      expect((await handlers[IPC.mihomoLogsSnapshot](null)).entries).toHaveLength(1)
+      await handlers[IPC.mihomoClearLogs](null)
+      expect(container.mihomo.clearLogsCalls).toBe(1)
+      expect((await handlers[IPC.mihomoLogsSnapshot](null)).entries).toHaveLength(0)
+    })
+  })
+
   describe('kernel control', () => {
     it('delegates start to the kernel gateway', async () => {
       await handlers[IPC.kernelStart](null)

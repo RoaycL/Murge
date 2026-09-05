@@ -18,7 +18,7 @@ describe('TUN config model', () => {
     expect(EMPTY_TUN_CONFIG).toEqual({
       stack: 'mixed',
       device: 'Mihomo',
-      mtu: 9000,
+      mtu: 1500,
       strictRoute: false,
       autoRoute: true,
       autoDetectInterface: true,
@@ -96,7 +96,7 @@ describe('TUN config model', () => {
       'strict-route': true,
       device: 'Mihomo',
       stack: 'mixed',
-      mtu: 9000,
+      mtu: 1500,
       'dns-hijack': ['any:53']
     })
     const withRoutes = buildTunBlock({ ...EMPTY_TUN_CONFIG, routeAddress: ['192.168.0.0/16'] })

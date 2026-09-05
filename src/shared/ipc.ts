@@ -7,6 +7,7 @@ import type {
   MihomoDnsQueryResult,
   MihomoDnsQueryType,
   MihomoLogMessage,
+  MihomoLogsSnapshot,
   MihomoProxiesResponse,
   MihomoProxyProvidersResponse,
   MihomoRuleProvidersResponse,
@@ -72,6 +73,8 @@ export const IPC = {
   mihomoDnsQuery: 'mihomo:dns-query',
   mihomoFlushDnsCache: 'mihomo:flush-dns-cache',
   mihomoFlushFakeIpCache: 'mihomo:flush-fakeip-cache',
+  mihomoLogsSnapshot: 'mihomo:logs-snapshot',
+  mihomoClearLogs: 'mihomo:clear-logs',
   mihomoTrafficEvent: 'mihomo:traffic-event',
   mihomoConnectionsEvent: 'mihomo:connections-event',
   mihomoLogEvent: 'mihomo:log-event',
@@ -196,6 +199,10 @@ export interface DesktopApi {
     onConnections(listener: (snapshot: MihomoConnectionsSnapshot) => void): () => void
     onLogs(listener: (message: MihomoLogMessage) => void): () => void
     onStreamError(listener: (error: MihomoStreamError) => void): () => void
+    /** Retained kernel-log history past `afterSeq` (0 = everything retained). */
+    logsSnapshot(afterSeq?: number): Promise<MihomoLogsSnapshot>
+    /** Drop retained log history (the logs view's 清空 button). */
+    clearLogs(): Promise<void>
   }
   profiles: {
     /** Ordered proxy-group names from the ACTIVE profile document (config order). */

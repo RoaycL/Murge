@@ -37,7 +37,7 @@ const TUN_KEYS = new Set([
 /** Configurable TUN keys: only validated when present; never required. */
 const OPTIONAL_TUN_KEYS = new Set(['mtu', 'route-address', 'route-exclude-address'])
 const ALLOW_TUN_KEYS = new Set([...TUN_KEYS, ...OPTIONAL_TUN_KEYS])
-const DNS_KEYS = new Set(['enable', 'enhanced-mode', 'fake-ip-range', 'nameserver'])
+const DNS_KEYS = new Set(['enable', 'enhanced-mode', 'fake-ip-range', 'fake-ip-filter', 'nameserver'])
 
 function invalid(message: string): never {
   throw new ProtocolError(ProtocolErrorCode.INVALID_ARGUMENT, message)
@@ -122,6 +122,10 @@ export function generateMihomoTunConfig(options: MihomoTunConfigOptions): string
     '  enable: true',
     '  enhanced-mode: fake-ip',
     '  fake-ip-range: 198.18.0.1/16',
+    '  fake-ip-filter:',
+    // Quote glob entries: a leading `*` is a YAML alias token and would be
+    // rejected by the no-alias validator.
+    ...TUN_DEFAULT_FAKE_IP_FILTER.map((entry) => `    - ${JSON.stringify(entry)}`),
     '  nameserver:',
     '    - system',
     'rules:',
@@ -185,6 +189,16 @@ export function mihomoTunConfigErrors(text: string): string[] {
     scalarEquals(dns, 'enable', true, errors)
     scalarEquals(dns, 'enhanced-mode', 'fake-ip', errors)
     scalarEquals(dns, 'fake-ip-range', '198.18.0.1/16', errors)
+    const filter = dns.get('fake-ip-filter')
+    if (!isSeq(filter) || filter.items.length === 0) {
+      errors.push('dns.fake-ip-filter must be a non-empty sequence')
+    } else {
+      for (const item of filter.items) {
+        if (!isScalar(item) || typeof nodeText(item) !== 'string' || nodeText(item).length === 0) {
+          errors.push('dns.fake-ip-filter entries must be non-empty strings')
+        }
+      }
+    }
     sequenceEquals(dns.get('nameserver'), ['system'], 'dns.nameserver', errors)
   }
   sequenceEquals(root.get('rules'), ['MATCH,DIRECT'], 'rules', errors)
@@ -278,6 +292,26 @@ const TUN_REQUIRED_DNS = {
   'enhanced-mode': 'fake-ip',
   'fake-ip-range': '198.18.0.1/16'
 } as const
+
+/**
+ * Hosts that must NEVER receive a fake-ip address. Without this guard, NTP /
+ * time sync, LAN/local discovery, ARP reverse and Microsoft's connectivity
+ * probes resolve to 198.18.x.x and silently break under TUN — a known cause of
+ * game / accelerator malfunctions (clash-verge-rev ships the same list as a
+ * built-in default). Only injected when the profile omits its own filter so the
+ * user's routing intent is preserved.
+ */
+const TUN_DEFAULT_FAKE_IP_FILTER = [
+  '*.lan',
+  '*.local',
+  '*.arpa',
+  'time.*.com',
+  'ntp.*.com',
+  '+.market.xiaomi.com',
+  'localhost.ptlogin2.qq.com',
+  '*.msftncsi.com',
+  'www.msftconnecttest.com'
+] as const
 
 /**
  * Top-level keys that must never reach the elevated child, mirroring the
@@ -431,6 +465,12 @@ export function generateProxiedTunConfig(options: ProxiedTunConfigOptions): stri
   const dns = data.dns as Record<string, unknown>
   if (!Array.isArray(dns.nameserver) || dns.nameserver.length === 0) {
     dns.nameserver = ['system']
+  }
+  // Keep game-/NTP-relevant domains out of fake-ip space. Only when the profile
+  // did not declare its own filter: a non-empty user list is routing intent and
+  // stays intact; an absent or empty list gets the safety default.
+  if (!Array.isArray(dns['fake-ip-filter']) || dns['fake-ip-filter'].length === 0) {
+    dns['fake-ip-filter'] = [...TUN_DEFAULT_FAKE_IP_FILTER]
   }
 
   const text = stringify(data)

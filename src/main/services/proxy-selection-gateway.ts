@@ -1,5 +1,5 @@
 import type { MihomoGateway } from '@shared/gateways'
-import type { MihomoProxiesResponse, MihomoVersion, MihomoConfigSnapshot, MihomoRulesResponse, MihomoProxyProvidersResponse, MihomoRuleProvidersResponse, MihomoDelayResult, MihomoDelayMap, MihomoDnsQueryType, MihomoDnsQueryResult, MihomoConnectionsSnapshot, MihomoLogMessage, MihomoStreamError } from '@shared/mihomo-api'
+import type { MihomoProxiesResponse, MihomoVersion, MihomoConfigSnapshot, MihomoRulesResponse, MihomoProxyProvidersResponse, MihomoRuleProvidersResponse, MihomoDelayResult, MihomoDelayMap, MihomoDnsQueryType, MihomoDnsQueryResult, MihomoConnectionsSnapshot, MihomoLogMessage, MihomoLogsSnapshot, MihomoStreamError } from '@shared/mihomo-api'
 import type { TrafficSample } from '@shared/runtime'
 import type { ProxySelectionService } from './proxy-selection-service'
 
@@ -54,4 +54,6 @@ export class ProxySelectionGateway implements MihomoGateway {
   onConnections(listener: (snapshot: MihomoConnectionsSnapshot) => void): () => void { return this.inner.onConnections(listener) }
   onLogs(listener: (message: MihomoLogMessage) => void): () => void { return this.inner.onLogs(listener) }
   onStreamError(listener: (error: MihomoStreamError) => void): () => void { return this.inner.onStreamError(listener) }
+  logsSnapshot(afterSeq?: number): Promise<MihomoLogsSnapshot> { return this.inner.logsSnapshot(afterSeq) }
+  clearLogs(): Promise<void> { return this.inner.clearLogs() }
 }

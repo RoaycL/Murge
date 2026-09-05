@@ -194,6 +194,18 @@ export interface MihomoLogMessage {
   level?: string
   message?: string
   fields?: unknown[]
+  /**
+   * App-assigned monotonic sequence number. Not produced by the kernel: the
+   * main-process log buffer stamps every retained line so the renderer can
+   * deduplicate the snapshot channel against the live event channel.
+   */
+  seq?: number
+}
+
+/** Response of the log-history snapshot channel: retained lines + high-water mark. */
+export interface MihomoLogsSnapshot {
+  entries: MihomoLogMessage[]
+  lastSeq: number
 }
 
 export interface MihomoConfigSnapshot {

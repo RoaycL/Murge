@@ -20,6 +20,7 @@ import type {
   MihomoDnsQueryResult,
   MihomoDnsQueryType,
   MihomoLogMessage,
+  MihomoLogsSnapshot,
   MihomoProxiesResponse,
   MihomoProxyProvidersResponse,
   MihomoRuleProvidersResponse,
@@ -121,6 +122,10 @@ export interface MihomoGateway {
   onConnections(listener: (snapshot: MihomoConnectionsSnapshot) => void): () => void
   onLogs(listener: (message: MihomoLogMessage) => void): () => void
   onStreamError(listener: (error: MihomoStreamError) => void): () => void
+  /** Retained log history (log capture is independent of the logs view). */
+  logsSnapshot(afterSeq?: number): Promise<MihomoLogsSnapshot>
+  /** Drop retained log history; live streaming and sequence numbering continue. */
+  clearLogs(): Promise<void>
 }
 
 export interface RuntimeGateway {

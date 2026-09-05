@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useTrafficStore } from '../src/renderer/src/stores/traffic'
 import { useConnectionsStore } from '../src/renderer/src/stores/connections'
+import { useLogsStore } from '../src/renderer/src/stores/logs'
+import type { MihomoLogMessage, MihomoLogsSnapshot } from '../src/shared/mihomo-api'
 import type { MihomoConnectionsSnapshot, MihomoStreamError } from '../src/shared/mihomo-api'
 import type { TrafficSample } from '../src/shared/runtime'
 
@@ -9,23 +11,42 @@ type Mh = {
   trafficListeners: Set<(sample: TrafficSample) => void>
   connectionsListeners: Set<(snapshot: MihomoConnectionsSnapshot) => void>
   errorListeners: Set<(error: MihomoStreamError) => void>
+  logsListeners: Set<(message: MihomoLogMessage) => void>
   getConnections: ReturnType<typeof vi.fn>
   closeConnection: ReturnType<typeof vi.fn>
   onTraffic: (listener: (sample: TrafficSample) => void) => () => void
   onConnections: (listener: (snapshot: MihomoConnectionsSnapshot) => void) => () => void
-  onLogs: (listener: (message: unknown) => void) => () => void
+  onLogs: (listener: (message: MihomoLogMessage) => void) => () => void
   onStreamError: (listener: (error: MihomoStreamError) => void) => () => void
+  logsSnapshot: (afterSeq?: number) => Promise<MihomoLogsSnapshot>
+  clearLogs: () => Promise<void>
+  emitLog: (message: MihomoLogMessage) => void
+  setLogHistory: (entries: MihomoLogMessage[]) => void
 }
 
 let mihomo: Mh
+
+/** Mutable backing for the logs snapshot channel so tests can stage history. */
+interface LogChannelState {
+  history: MihomoLogMessage[]
+  nextSeq: number
+  cleared: number
+}
+let logChannel: LogChannelState
+
+function resetLogChannel(): LogChannelState {
+  return { history: [], nextSeq: 0, cleared: 0 }
+}
 
 beforeEach(() => {
   setActivePinia(createPinia())
   const listeners = {
     trafficListeners: new Set<(sample: TrafficSample) => void>(),
     connectionsListeners: new Set<(snapshot: MihomoConnectionsSnapshot) => void>(),
-    errorListeners: new Set<(error: MihomoStreamError) => void>()
+    errorListeners: new Set<(error: MihomoStreamError) => void>(),
+    logsListeners: new Set<(message: MihomoLogMessage) => void>()
   }
+  logChannel = resetLogChannel()
   mihomo = {
     ...listeners,
     getConnections: vi.fn(),
@@ -38,10 +59,31 @@ beforeEach(() => {
       listener && listeners.connectionsListeners.add(listener)
       return () => listeners.connectionsListeners.delete(listener)
     },
-    onLogs: () => () => undefined,
+    onLogs: (listener) => {
+      listener && listeners.logsListeners.add(listener)
+      return () => listeners.logsListeners.delete(listener)
+    },
     onStreamError: (listener) => {
       listener && listeners.errorListeners.add(listener)
       return () => listeners.errorListeners.delete(listener)
+    },
+    async logsSnapshot(afterSeq) {
+      const cursor = typeof afterSeq === 'number' && afterSeq > 0 ? afterSeq : 0
+      const entries = logChannel.history.filter((entry) => (entry.seq ?? 0) > cursor)
+      return { entries, lastSeq: logChannel.nextSeq }
+    },
+    async clearLogs() {
+      logChannel.cleared += 1
+      logChannel.history = []
+    },
+    emitLog(message) {
+      message.seq = ++logChannel.nextSeq
+      logChannel.history.push(message)
+      for (const listener of Array.from(listeners.logsListeners)) listener(message)
+    },
+    setLogHistory(entries) {
+      logChannel.history = entries.map((entry) => ({ ...entry, seq: ++logChannel.nextSeq }))
+      logChannel.nextSeq = entries.length
     }
   }
   ;(globalThis as unknown as { window: unknown }).window = { desktop: { mihomo } }
@@ -367,5 +409,40 @@ describe('activity ranking scope', () => {
     expect(store.summary?.topProcesses[0]?.name).toBe('Browser')
     expect(store.summary?.topProcesses[1]?.name).toBe('curl')
     store.disconnect()
+  })
+})
+
+describe('logs store (snapshot + live dedup, sparkle-style)', () => {
+  async function importFreshStore(): Promise<typeof import('../src/renderer/src/stores/logs')> {
+    vi.resetModules()
+    return vi.importActual<typeof import('../src/renderer/src/stores/logs')>('../src/renderer/src/stores/logs')
+  }
+
+  it('merges the retained snapshot and dedups overlapping live lines by seq', async () => {
+    vi.useFakeTimers()
+    // History that existed BEFORE the logs view ever opened (the bug surface).
+    mihomo.setLogHistory([
+      { type: 'info', payload: 'boot-1' },
+      { type: 'info', payload: 'boot-2' }
+    ])
+    const { useLogsStore: freshLogsStore } = await importFreshStore()
+    const store = freshLogsStore()
+    store.connect()
+
+    // A live line that overlaps the snapshot arrives during the in-flight sync.
+    mihomo.emitLog({ type: 'warning', payload: 'live-1' })
+    await vi.advanceTimersByTimeAsync(50)
+    // After the sync flush, all three unique lines are present with no dup.
+    const payloads = store.entries.map((entry) => entry.message)
+    expect(payloads).toContain('boot-1')
+    expect(payloads).toContain('boot-2')
+    expect(payloads).toContain('live-1')
+    expect(store.entries.length).toBe(3)
+    expect(store.status).toBe('live')
+    store.clear()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(store.entries).toEqual([])
+    expect(mihomo).toBeTruthy()
+    vi.useRealTimers()
   })
 })

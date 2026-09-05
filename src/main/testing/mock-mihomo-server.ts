@@ -70,6 +70,8 @@ class MockServer {
   private readonly config: Required<Pick<MihomoConfigSnapshot, 'mode' | 'port' | 'allow-lan'>> & MihomoConfigSnapshot
   /** The currently selected member of the `节点选择` Selector group. */
   private selectorNow = '香港 01'
+  /** Selector whose members include another policy group. */
+  private nestedSelectorNow = 'DIRECT'
   /**
    * The pinned member of the `自动选择` URLTest group, mirroring the kernel's
    * `fixed` field: `PUT /proxies/自动选择` sets it, and `now` only follows it
@@ -78,7 +80,7 @@ class MockServer {
    */
   private urltestFixed = ''
   /** Delay results keyed by node name; `香港 02` is intentionally unreachable. */
-  private readonly nodeDelay: Record<string, number> = { '香港 01': 42, DIRECT: 6 }
+  private readonly nodeDelay: Record<string, number> = { '香港 01': 42, '自动选择': 45, DIRECT: 6 }
   /** Proxy provider metadata keyed by provider name. */
   private readonly proxyProviders: Record<string, MihomoProxyProvider> = {}
   /** Rule provider metadata keyed by provider name. */
@@ -184,6 +186,9 @@ class MockServer {
     if (segments[0] === 'providers' && segments[1] === 'proxies' && segments.length === 2 && method === 'GET') {
       return this.json(response, 200, { providers: this.proxyProviders })
     }
+    if (segments[0] === 'providers' && segments[1] === 'proxies' && segments[2] && segments[3] && segments[4] === 'healthcheck' && method === 'GET') {
+      return this.healthCheckProviderNode(response, segments[2], segments[3])
+    }
     if (segments[0] === 'providers' && segments[1] === 'proxies' && segments[2] && segments[3] === 'healthcheck' && method === 'GET') {
       return this.healthCheckProvider(response, segments[2])
     }
@@ -271,6 +276,21 @@ class MockServer {
       request.resume()
       return
     }
+    if (group === '嵌套选择') {
+      const chunks: Buffer[] = []
+      request.on('data', (chunk) => chunks.push(chunk))
+      request.on('end', () => {
+        try {
+          const payload = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as Record<string, unknown>
+          if (typeof payload.name === 'string') this.nestedSelectorNow = payload.name
+          this.json(response, 204)
+        } catch {
+          this.json(response, 400, { message: 'invalid JSON' })
+        }
+      })
+      request.resume()
+      return
+    }
     request.resume()
     this.json(response, 204)
   }
@@ -307,6 +327,14 @@ class MockServer {
       proxy.history = [...(proxy.history ?? []), { time: timestamp, delay }]
     }
     this.json(response, 204)
+  }
+
+  private healthCheckProviderNode(response: ServerResponse, providerName: string, proxyName: string): void {
+    const provider = this.proxyProviders[providerName]
+    const proxy = provider?.proxies?.find((candidate) => candidate.name === proxyName)
+    if (!proxy) return this.json(response, 404, { message: 'provider proxy not found' })
+    if (proxyName === '香港 02') return this.json(response, 504, { message: 'timeout' })
+    this.json(response, 200, { delay: this.nodeDelay[proxyName] ?? 0 })
   }
 
   private refreshProxyProvider(response: ServerResponse, name: string): void {
@@ -404,6 +432,12 @@ class MockServer {
           now: this.urltestFixed && this.urltestFixed !== '香港 02' ? this.urltestFixed : '香港 01',
           fixed: this.urltestFixed.length > 0 ? this.urltestFixed : undefined,
           all: ['香港 01', '香港 02', 'DIRECT']
+        },
+        '嵌套选择': {
+          name: '嵌套选择',
+          type: 'Selector',
+          now: this.nestedSelectorNow,
+          all: ['自动选择', 'DIRECT']
         },
         '劫持': { name: '劫持', type: 'Direct' },
         '香港 01': { name: '香港 01', type: 'Shadowsocks', alive: true, udp: true },

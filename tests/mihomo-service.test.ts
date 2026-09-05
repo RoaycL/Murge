@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { startMockMihomoServer, type MockMihomoServerHandle } from '../src/main/testing/mock-mihomo-server'
 import { MihomoClient } from '../src/main/services/mihomo-client'
 import { MihomoService } from '../src/main/services/mihomo-service'
@@ -33,6 +33,68 @@ describe('mihomo service gateway', () => {
     service.onTraffic(() => { fired = true })
     await new Promise((resolve) => setTimeout(resolve, 30))
     expect(fired).toBe(false)
+    service.dispose()
+  })
+
+  it('tests group members through provider-aware and nested-group routes', async () => {
+    const server = await startMockMihomoServer({ trafficIntervalMs: 1000 })
+    handles.push(server)
+    const service = new MihomoService(new MihomoClient(server.baseUrl, ''), {
+      wsBaseUrl: server.wsBaseUrl,
+      enabled: false
+    })
+
+    await expect(service.groupMemberDelayTest('节点选择', '香港 01', { timeout: 10000 })).resolves.toEqual({ delay: 42 })
+    await expect(service.groupMemberDelayTest('嵌套选择', '自动选择', { timeout: 10000 })).resolves.toEqual({ delay: 45 })
+    await expect(service.groupMemberDelayTest('节点选择', 'not-a-member')).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    service.dispose()
+  })
+
+  it('uses the owning group test URL and the provider key for leaf-node probes', async () => {
+    const getProxies = vi.fn().mockResolvedValue({
+      proxies: {
+        Select: {
+          name: 'Select',
+          type: 'Selector',
+          now: 'leaf',
+          all: ['leaf', 'Nested'],
+          testUrl: 'https://probe.example/generate_204'
+        },
+        leaf: { name: 'leaf', type: 'Shadowsocks' },
+        Nested: { name: 'Nested', type: 'URLTest', now: 'leaf', all: ['leaf'] }
+      }
+    })
+    const getProxyProviders = vi.fn().mockResolvedValue({
+      providers: {
+        'provider-record-key': {
+          name: 'display name is not an endpoint key',
+          type: 'Proxy',
+          proxies: [{ name: 'leaf', type: 'Shadowsocks' }]
+        }
+      }
+    })
+    const providerDelayTest = vi.fn().mockResolvedValue({ delay: 12 })
+    const delayTest = vi.fn().mockResolvedValue({ delay: 20 })
+    const client = {
+      getProxies,
+      getProxyProviders,
+      providerDelayTest,
+      delayTest
+    } as unknown as MihomoClient
+    const service = new MihomoService(client, { wsBaseUrl: 'ws://127.0.0.1', enabled: false })
+
+    await expect(service.groupMemberDelayTest('Select', 'leaf', { timeout: 9000 })).resolves.toEqual({ delay: 12 })
+    expect(providerDelayTest).toHaveBeenCalledWith('provider-record-key', 'leaf', {
+      timeout: 9000,
+      url: 'https://probe.example/generate_204'
+    })
+
+    await expect(service.groupMemberDelayTest('Select', 'Nested', { timeout: 9000 })).resolves.toEqual({ delay: 20 })
+    expect(delayTest).toHaveBeenCalledWith('Nested', {
+      timeout: 9000,
+      url: 'https://probe.example/generate_204'
+    })
+    expect(getProxyProviders).toHaveBeenCalledTimes(1)
     service.dispose()
   })
 

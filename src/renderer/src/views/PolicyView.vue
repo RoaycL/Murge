@@ -81,14 +81,12 @@ async function onCardClick(name: string): Promise<void> {
   } catch {
     /* no-op: the store keeps the error message in `panelError` */
   }
-  void policies.testNode(name)
 }
 
 async function init(): Promise<void> {
   await kernel.refresh()
   if (kernel.status.phase !== 'running') return
   await policies.load()
-  void policies.testAll()
   try {
     const config = await window.desktop.mihomo.getConfig()
     if (config.mode && POLICY_MODE_OPTIONS.includes(config.mode as PolicyMode)) {
@@ -137,7 +135,7 @@ watch(() => kernel.status.phase, (phase, previous) => {
     <template v-else>
       <div class="section-caption"><span>策略组</span></div>
       <div class="policy-group-grid">
-        <button v-for="group in policies.groups" :key="group.name" type="button" :class="{ selected: policies.selectedGroup === group.name }" @click="openGroup(group.name)"><img v-if="group.icon" class="group-icon" :src="group.icon" alt="" loading="lazy" @error="onGroupIconError" /><small>{{ displayType(group.type) }}</small><strong>{{ group.name }}</strong><span>{{ group.now || group.all?.[0] || '未选择' }}</span><AppIcon name="next" :size="14" /></button>
+        <button v-for="group in policies.groups" :key="group.name" type="button" :class="{ selected: policies.selectedGroup === group.name }" @click="openGroup(group.name)"><img v-if="group.icon" class="group-icon" :src="group.icon" alt="" loading="lazy" @error="onGroupIconError" /><small>{{ displayType(group.type) }}</small><strong>{{ group.name }}</strong><span>{{ policies.groupSelectedMember(group) || '未选择' }}</span><AppIcon name="next" :size="14" /></button>
       </div>
     </template>
 
@@ -146,7 +144,7 @@ watch(() => kernel.status.phase, (phase, previous) => {
     <DetailDrawer :open="groupDrawerOpen && Boolean(policies.selectedGroup)" :title="policies.selectedGroup" :subtitle="drawerSubtitle" @close="groupDrawerOpen = false">
       <div class="node-caption"><span>节点列表</span><button type="button" @click="policies.testAll()">测试当前组</button></div>
       <div class="drawer-body-grid">
-        <div class="node-grid"><button v-for="member in policies.groupMembers" :key="member" type="button" :class="{ selected: policies.selectedMember === member, unavailable: isUnavailable(member) }" @click="onCardClick(member)"><small>{{ displayType(policies.nodeByMember[member]?.type) }}</small><strong>{{ member }}</strong><span :class="latencyLabel(member).kind">{{ latencyLabel(member).text }}</span></button></div>
+        <div class="node-grid"><div v-for="member in policies.groupMembers" :key="member" class="node-card" :class="{ selected: policies.selectedMember === member, unavailable: isUnavailable(member) }"><button type="button" class="node-select" @click="onCardClick(member)"><small>{{ displayType(policies.nodeByMember[member]?.type) }}</small><strong>{{ member }}</strong></button><button type="button" class="node-delay" :class="latencyLabel(member).kind" :disabled="policies.nodeState(member).status === 'testing'" @click="policies.testNode(member)">{{ latencyLabel(member).text }}</button></div></div>
       </div>
       <div v-if="policies.panelError" class="panel-error drawer-panel-error">{{ policies.panelError }}</div>
     </DetailDrawer>
@@ -165,11 +163,17 @@ watch(() => kernel.status.phase, (phase, previous) => {
 .group-tabs button.selected { color: white; background: var(--app-blue); }
 /* 选中环用 inset box-shadow 画在卡片内部：outline 型外扩环会溢出网格，
    在抽屉左缘被裁切，看起来像整列边框错位。 */
-.node-grid button.selected { box-shadow: inset 0 0 0 2px var(--app-blue); background: rgba(22,132,248,.12); }
-.node-grid button.unavailable { opacity: .78; }
-.node-grid span.testing { color: var(--app-muted); }
-.node-grid span.timeout { color: #e05b5b; }
-.node-grid span.idle { color: var(--app-faint); }
+.node-grid .node-card { display:flex; flex-direction:column; min-width:0; height:94px; padding:12px; border-radius:8px; background:rgba(127,127,127,.12); }
+.node-grid .node-card.selected { box-shadow: inset 0 0 0 2px var(--app-blue); background: rgba(22,132,248,.12); }
+.node-grid .node-card.unavailable { opacity: .78; }
+.node-select,.node-delay { min-width:0; padding:0; border:0; background:transparent; color:inherit; text-align:left; }
+.node-select { display:flex; flex-direction:column; }
+.node-select small { color:var(--app-muted); }
+.node-select strong { overflow:hidden; margin-top:3px; text-overflow:ellipsis; white-space:nowrap; }
+.node-delay { align-self:flex-start; margin-top:auto; color:#68d21d; }
+.node-delay.testing { color: var(--app-muted); }
+.node-delay.timeout { color: #e05b5b; }
+.node-delay.idle { color: var(--app-faint); }
 .panel-error { margin-top: 14px; color: #e05b5b; font-size: 12px; }
 .empty-state { margin-top: 26px; padding: 26px; border: 1px dashed var(--app-divider); border-radius: 8px; }
 .empty-state p { margin: 0 0 8px; }

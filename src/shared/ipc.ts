@@ -65,6 +65,7 @@ export const IPC = {
   mihomoGetRuleProviders: 'mihomo:get-rule-providers',
   mihomoRefreshRuleProvider: 'mihomo:refresh-rule-provider',
   mihomoDelayTest: 'mihomo:delay-test',
+  mihomoGroupMemberDelayTest: 'mihomo:group-member-delay-test',
   mihomoGroupDelayTest: 'mihomo:group-delay-test',
   mihomoGetConnections: 'mihomo:get-connections',
   mihomoCloseConnection: 'mihomo:close-connection',
@@ -184,6 +185,7 @@ export interface DesktopApi {
     getRuleProviders(): Promise<MihomoRuleProvidersResponse>
     refreshRuleProvider(name: string): Promise<void>
     delayTest(name: string, opts?: { timeout?: number }): Promise<MihomoDelayResult>
+    groupMemberDelayTest(group: string, name: string, opts?: { timeout?: number }): Promise<MihomoDelayResult>
     groupDelayTest(name: string, opts?: { timeout?: number }): Promise<MihomoDelayMap>
     getConnections(): Promise<MihomoConnectionsSnapshot>
     closeConnection(id: string): Promise<void>

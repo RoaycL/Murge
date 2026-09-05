@@ -60,6 +60,7 @@ const api: DesktopApi = {
     getRuleProviders: () => invoke(IPC.mihomoGetRuleProviders),
     refreshRuleProvider: (name) => invoke(IPC.mihomoRefreshRuleProvider, name),
     delayTest: (name, opts) => invoke(IPC.mihomoDelayTest, name, opts),
+    groupMemberDelayTest: (group, name, opts) => invoke(IPC.mihomoGroupMemberDelayTest, group, name, opts),
     groupDelayTest: (name, opts) => invoke(IPC.mihomoGroupDelayTest, name, opts),
     getConnections: () => invoke(IPC.mihomoGetConnections),
     closeConnection: (id) => invoke(IPC.mihomoCloseConnection, id),

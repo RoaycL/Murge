@@ -234,6 +234,21 @@ describe('MihomoClient', () => {
       expect(url).toContain('url=https%3A%2F%2Fexample.com')
     })
 
+    it('tests a provider node through the provider health-check endpoint', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(fakeResponse({ delay: 18 }))
+      vi.stubGlobal('fetch', fetchMock)
+      const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
+      const result = await client.providerDelayTest('机场 A', '香港 01', {
+        timeout: 7000,
+        url: 'https://probe.example/generate_204'
+      })
+      expect(result.delay).toBe(18)
+      const url = String(fetchMock.mock.calls[0][0])
+      expect(url).toContain('/providers/proxies/%E6%9C%BA%E5%9C%BA%20A/%E9%A6%99%E6%B8%AF%2001/healthcheck')
+      expect(url).toContain('timeout=7000')
+      expect(url).toContain('url=https%3A%2F%2Fprobe.example%2Fgenerate_204')
+    })
+
     it('tests a group delay and parses the member map', async () => {
       const fetchMock = vi.fn().mockResolvedValue(fakeResponse({ '香港 01': 42, DIRECT: 6 }))
       vi.stubGlobal('fetch', fetchMock)

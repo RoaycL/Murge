@@ -108,6 +108,8 @@ export interface MihomoGateway {
   getRuleProviders(): Promise<MihomoRuleProvidersResponse>
   refreshRuleProvider(name: string): Promise<void>
   delayTest(name: string, opts?: { timeout?: number }): Promise<MihomoDelayResult>
+  /** Test one member using its owning group's probe URL and provider route. */
+  groupMemberDelayTest(group: string, name: string, opts?: { timeout?: number }): Promise<MihomoDelayResult>
   groupDelayTest(name: string, opts?: { timeout?: number }): Promise<MihomoDelayMap>
   dnsQuery(name: string, type: MihomoDnsQueryType): Promise<MihomoDnsQueryResult>
   flushDnsCache(): Promise<void>

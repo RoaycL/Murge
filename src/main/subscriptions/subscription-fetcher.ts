@@ -535,14 +535,14 @@ export class SubscriptionFetcher {
       while (true) {
         // Validate current URL before each request
         await this.validateUrl(currentUrl)
-        
+
         // Use manual redirect mode to detect 3xx responses
         response = await transport(currentUrl, {
           signal,
           redirect: 'manual',
           headers: SUBSCRIPTION_REQUEST_HEADERS
         })
-        
+
         // A transport that follows redirects internally (the kernel-proxy path)
         // surfaces its final url here: validate where we actually landed and
         // adopt it so the stored source and error messages reflect reality.
@@ -550,7 +550,7 @@ export class SubscriptionFetcher {
           await this.validateUrl(response.url)
           currentUrl = response.url
         }
-        
+
         // Handle redirects manually with validation
         if (response.status >= 300 && response.status < 400 && response.headers?.has('location')) {
           redirectCount++

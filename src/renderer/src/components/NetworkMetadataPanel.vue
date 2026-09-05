@@ -18,6 +18,7 @@ const busy = computed(() => store.busy)
 
 const statusLabel = computed(() => {
   if (busy.value && !rows.value.length) return '查询中'
+  if (store.refreshError) return '查询失败'
   if (!rows.value.length) return '等待查询'
   if (rows.value.every((row) => row.phase === 'error')) return '查询失败'
   return '已更新'
@@ -72,10 +73,11 @@ function toggleReveal(): void {
         <span class="provider-asn" role="cell" :title="asnText(row)">{{ asnText(row) }}</span>
       </div>
     </div>
+    <p v-if="store.refreshError" class="inline-error" role="alert">{{ store.refreshError }}</p>
 
     <footer class="network-footer">
       <div class="network-actions">
-        <button type="button" class="usage-clear" :disabled="busy || !rows.length" @click="onRefresh">刷新</button>
+        <button type="button" class="usage-clear" :disabled="busy" @click="onRefresh">刷新</button>
         <button type="button" class="usage-clear copy" :disabled="!rows.some((row) => row.metadata)" @click="store.copy">复制信息</button>
       </div>
     </footer>

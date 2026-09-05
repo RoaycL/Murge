@@ -121,6 +121,7 @@ export class FakeMihomoGateway implements MihomoGateway {
 
   /** Configurable results for the delay APIs. */
   delayResults: Record<string, MihomoDelayResult> = {}
+  groupMemberDelayCalls: Array<{ group: string; name: string; timeout?: number }> = []
   groupDelayResults: Record<string, MihomoDelayMap> = {}
   /** If set, these methods reject with this error. */
   delayError: Error | null = null
@@ -177,6 +178,12 @@ export class FakeMihomoGateway implements MihomoGateway {
   }
 
   delayTest(name: string): Promise<MihomoDelayResult> {
+    if (this.delayError) return Promise.reject(this.delayError)
+    return Promise.resolve(this.delayResults[name] ?? { delay: 0 })
+  }
+
+  groupMemberDelayTest(group: string, name: string, opts?: { timeout?: number }): Promise<MihomoDelayResult> {
+    this.groupMemberDelayCalls.push({ group, name, timeout: opts?.timeout })
     if (this.delayError) return Promise.reject(this.delayError)
     return Promise.resolve(this.delayResults[name] ?? { delay: 0 })
   }

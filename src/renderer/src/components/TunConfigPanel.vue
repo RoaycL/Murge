@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useTunConfigStore } from '../stores/tun-config'
-import type { TunConfigModel } from '@shared/tun-config'
+import { EMPTY_TUN_CONFIG, type TunConfigModel } from '@shared/tun-config'
 import AppSelect from './AppSelect.vue'
 import AppIcon from './AppIcon.vue'
 import { useToast } from '../composables/use-toast'
@@ -11,17 +11,7 @@ const store = useTunConfigStore()
 const toast = useToast()
 const hydrated = ref(false)
 
-const form = reactive<TunConfigModel>({
-  stack: 'mixed',
-  device: 'Mihomo',
-  mtu: 9000,
-  strictRoute: false,
-  autoRoute: true,
-  autoDetectInterface: true,
-  dnsHijack: ['any:53'],
-  routeAddress: [],
-  routeExcludeAddress: []
-})
+const form = reactive<TunConfigModel>({ ...EMPTY_TUN_CONFIG })
 
 const dnsHijackText = ref('')
 const routeAddressText = ref('')

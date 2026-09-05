@@ -1,6 +1,6 @@
 import { IPC } from '@shared/ipc'
 import type { IpcDeps } from '@shared/gateways'
-import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions, parseStartupEnabled, parseDnsQuery, parseAppSettingsPatch, parseKernelEnabled, parseKernelChannel, parseKernelVersion, parseOverrideInput, parseOverrideId, parseOverrideEnabled, parseOverrideMove, parseDnsEnhancement, parseSnifferEnhancement, parseTunConfig, parseCoreSettings, parseGeodataSettings, parseProxyBypassPolicy, parseUsageWindow, parseUsageRanking, parseUsageRankLimit, parseNetworkMetadataProviderId } from '@shared/schemas/ipc'
+import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions, parseStartupEnabled, parseDnsQuery, parseLogAfterSeq, parseAppSettingsPatch, parseKernelEnabled, parseKernelChannel, parseKernelVersion, parseOverrideInput, parseOverrideId, parseOverrideEnabled, parseOverrideMove, parseDnsEnhancement, parseSnifferEnhancement, parseTunConfig, parseCoreSettings, parseGeodataSettings, parseProxyBypassPolicy, parseUsageWindow, parseUsageRanking, parseUsageRankLimit, parseNetworkMetadataProviderId } from '@shared/schemas/ipc'
 import {
   parseConfigEdit,
   parseImportRequest,
@@ -91,6 +91,8 @@ export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {})
     },
     [IPC.mihomoFlushDnsCache]: async () => mihomo.flushDnsCache(),
     [IPC.mihomoFlushFakeIpCache]: async () => mihomo.flushFakeIpCache(),
+    [IPC.mihomoLogsSnapshot]: async (_event, afterSeq) => mihomo.logsSnapshot(parseLogAfterSeq(afterSeq)),
+    [IPC.mihomoClearLogs]: async () => mihomo.clearLogs(),
 
     [IPC.profilesGetActiveGroupOrder]: async () => {
       if (options.resolveActiveGroupOrder) return options.resolveActiveGroupOrder()

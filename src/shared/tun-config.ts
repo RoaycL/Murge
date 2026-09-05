@@ -59,7 +59,13 @@ const DEVICE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/
 export const EMPTY_TUN_CONFIG: TunConfigModel = {
   stack: 'mixed',
   device: 'Mihomo',
-  mtu: 9000,
+  /**
+   * 1500 matches the mihomo GUI reference clients (clash-party, sparkle) and is
+   * the Ethernet-safe default: the kernel's own fallback (9000) only works when
+   * path-MTU discovery succeeds end-to-end, and networks/accelerators that
+   * blackhole ICMP fragmentation turn large-MTU sessions into timeouts.
+   */
+  mtu: 1500,
   strictRoute: false,
   autoRoute: true,
   autoDetectInterface: true,
@@ -67,6 +73,9 @@ export const EMPTY_TUN_CONFIG: TunConfigModel = {
   routeAddress: [],
   routeExcludeAddress: []
 }
+
+/** Earlier default; persisted-but-uncustomized installs migrate off it to 1500. */
+export const LEGACY_TUN_MTU_DEFAULT = 9000
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)

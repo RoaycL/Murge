@@ -110,6 +110,19 @@ export function parseConnectionId(id: unknown): string {
   return parsed.data.id
 }
 
+/**
+ * Validate the log-snapshot cursor. `undefined` (the renderer simply calling
+ * `logsSnapshot()`) means "everything retained"; any other value must be a
+ * non-negative safe integer.
+ */
+export function parseLogAfterSeq(value: unknown): number {
+  if (value === undefined) return 0
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw invalid('log snapshot cursor must be a non-negative integer')
+  }
+  return value
+}
+
 export function parseStartupEnabled(value: unknown): boolean {
   if (typeof value !== 'boolean') throw invalid('startup enabled must be a boolean')
   return value

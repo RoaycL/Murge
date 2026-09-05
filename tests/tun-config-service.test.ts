@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { TunConfigService, TUN_CONFIG_FILE } from '../src/main/tun/tun-config-service'
-import { EMPTY_TUN_CONFIG } from '../src/shared/tun-config'
+import { EMPTY_TUN_CONFIG, LEGACY_TUN_MTU_DEFAULT } from '../src/shared/tun-config'
 
 async function makeDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'tun-config-'))
@@ -58,5 +58,35 @@ describe('TunConfigService', () => {
     expect(preview).toContain('192.168.0.0/16')
     const reloaded = new TunConfigService(dir)
     expect((await reloaded.get()).config).toEqual(EMPTY_TUN_CONFIG)
+  })
+
+  it('migrates the legacy 9000 default to 1500 on load and persists it', async () => {
+    const dir = await makeDir()
+    // Simulate a 0.5.7 install that saved the TUN form with the stock default.
+    await writeFile(
+      join(dir, TUN_CONFIG_FILE),
+      JSON.stringify({ config: { ...EMPTY_TUN_CONFIG, mtu: LEGACY_TUN_MTU_DEFAULT } }, null, 2),
+      'utf8'
+    )
+    const service = new TunConfigService(dir)
+    const config = (await service.get()).config
+    expect(config.mtu).toBe(1500)
+    // The migration writes back so the file no longer carries the stale default.
+    const raw = await readFile(join(dir, TUN_CONFIG_FILE), 'utf8')
+    expect(JSON.parse(raw).config.mtu).toBe(1500)
+  })
+
+  it('preserves a user-customized mtu across the default migration', async () => {
+    const dir = await makeDir()
+    await writeFile(
+      join(dir, TUN_CONFIG_FILE),
+      JSON.stringify({ config: { ...EMPTY_TUN_CONFIG, mtu: 1420 } }, null, 2),
+      'utf8'
+    )
+    const service = new TunConfigService(dir)
+    expect((await service.get()).config.mtu).toBe(1420)
+    // No persistence on the untouched-customization path.
+    const raw = await readFile(join(dir, TUN_CONFIG_FILE), 'utf8')
+    expect(JSON.parse(raw).config.mtu).toBe(1420)
   })
 })

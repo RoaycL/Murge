@@ -30,6 +30,7 @@ import type {
   MihomoDnsQueryResult,
   MihomoDnsQueryType,
   MihomoLogMessage,
+  MihomoLogsSnapshot,
   MihomoProxiesResponse,
   MihomoProxyProvidersResponse,
   MihomoRuleProvidersResponse,
@@ -37,6 +38,7 @@ import type {
   MihomoStreamError,
   MihomoVersion
 } from '@shared/mihomo-api'
+import { MihomoLogBuffer } from '../services/log-buffer'
 import type { ConfigEdit, ImportRequest, Profile, ProfileMeta, ValidationResult } from '@shared/profiles'
 import type { KernelStatus, RuntimeSummary, TrafficSample } from '@shared/runtime'
 import type { BrandConfig } from '@shared/brand'
@@ -215,6 +217,10 @@ export class FakeMihomoGateway implements MihomoGateway {
   private readonly connectionsListeners = new Set<(snapshot: MihomoConnectionsSnapshot) => void>()
   private readonly logsListeners = new Set<(message: MihomoLogMessage) => void>()
   private readonly streamErrorListeners = new Set<(error: MihomoStreamError) => void>()
+  /** Mirrors the production main-process retention buffer. */
+  private readonly logBuffer = new MihomoLogBuffer(2000)
+  logsSnapshotCalls: number[] = []
+  clearLogsCalls = 0
 
   onTraffic(listener: (sample: TrafficSample) => void): () => void {
     this.trafficListeners.add(listener)
@@ -236,6 +242,17 @@ export class FakeMihomoGateway implements MihomoGateway {
     return () => this.streamErrorListeners.delete(listener)
   }
 
+  logsSnapshot(afterSeq?: number): Promise<MihomoLogsSnapshot> {
+    this.logsSnapshotCalls.push(afterSeq ?? 0)
+    return Promise.resolve({ entries: this.logBuffer.snapshot(afterSeq ?? 0), lastSeq: this.logBuffer.lastSeq })
+  }
+
+  clearLogs(): Promise<void> {
+    this.clearLogsCalls += 1
+    this.logBuffer.clear()
+    return Promise.resolve()
+  }
+
   /** Test helpers: publish push events to subscribers. */
   emitTraffic(sample: TrafficSample): void {
     for (const listener of this.trafficListeners) listener(sample)
@@ -244,6 +261,9 @@ export class FakeMihomoGateway implements MihomoGateway {
     for (const listener of this.connectionsListeners) listener(snapshot)
   }
   emitLogs(message: MihomoLogMessage): void {
+    // Retain the same way production does (seq stamp + ring) so the fake
+    // exercises the real snapshot/dedup contract instead of a parallel one.
+    this.logBuffer.append(message)
     for (const listener of this.logsListeners) listener(message)
   }
   emitStreamError(error: MihomoStreamError): void {

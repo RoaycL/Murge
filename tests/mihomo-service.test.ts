@@ -3,7 +3,7 @@ import { startMockMihomoServer, type MockMihomoServerHandle } from '../src/main/
 import { MihomoClient } from '../src/main/services/mihomo-client'
 import { MihomoService } from '../src/main/services/mihomo-service'
 import type { TrafficSample } from '../src/shared/runtime'
-import type { MihomoConnectionsSnapshot, MihomoStreamError } from '../src/shared/mihomo-api'
+import type { MihomoConnectionsSnapshot, MihomoStreamError, MihomoLogsSnapshot } from '../src/shared/mihomo-api'
 
 const handles: MockMihomoServerHandle[] = []
 afterEach(async () => {
@@ -223,6 +223,38 @@ describe('mihomo service gateway', () => {
       errors.some((error) => error.source === 'traffic' && error.kind === 'connection' && error.message.includes('traffic stream'))
     )
     expect(errors[0].code).toBe('UPSTREAM_UNREACHABLE')
+    service.dispose()
+  })
+
+  it('retains log history in the main-process buffer independent of subscribers', async () => {
+    // The mock server emits a random /logs line ~60% of each traffic tick.
+    const server = await startMockMihomoServer({ trafficIntervalMs: 25 })
+    handles.push(server)
+    const service = new MihomoService(new MihomoClient(server.baseUrl, ''), {
+      wsBaseUrl: server.wsBaseUrl,
+      enabled: true
+    })
+    // A subscriber keeps the WebSocket connected so messages actually flow.
+    const unsub = service.onLogs(() => undefined)
+    // waitFor takes a SYNC boolean; poll the async snapshot directly.
+    const start = Date.now()
+    let firstSnapshot: MihomoLogsSnapshot = { entries: [], lastSeq: 0 }
+    while (Date.now() - start < 4000) {
+      firstSnapshot = await service.logsSnapshot()
+      if (firstSnapshot.entries.length > 0) break
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    expect(firstSnapshot.lastSeq).toBeGreaterThan(0)
+    expect(firstSnapshot.entries.length).toBeGreaterThan(0)
+    expect(firstSnapshot.entries.every((entry) => typeof entry.seq === 'number' && entry.seq > 0)).toBe(true)
+    const firstSeq = firstSnapshot.lastSeq
+
+    // After the only subscriber leaves, the buffer still serves the retained tail
+    // — this is the invariant that lets a reopened logs view recover history.
+    unsub()
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    const retained = await service.logsSnapshot(firstSeq)
+    expect(retained.entries.every((entry) => (entry.seq ?? 0) > firstSeq)).toBe(true)
     service.dispose()
   })
 })

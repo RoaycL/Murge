@@ -7,6 +7,7 @@ import type {
   MihomoDnsQueryResult,
   MihomoDnsQueryType,
   MihomoLogMessage,
+  MihomoLogsSnapshot,
   MihomoProxiesResponse,
   MihomoProxyProvidersResponse,
   MihomoRuleProvidersResponse,
@@ -18,6 +19,7 @@ import type { TrafficSample } from '@shared/runtime'
 import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
 import { parseMihomoConnections, parseMihomoLog, parseMihomoTraffic } from '@shared/schemas/mihomo'
 import type { MihomoClient } from './mihomo-client'
+import { MihomoLogBuffer } from './log-buffer'
 import { createMihomoStream, type MihomoStream } from './mihomo-stream'
 
 export interface MihomoServiceStreams {
@@ -28,6 +30,13 @@ export interface MihomoServiceStreams {
   /** Explicit group URLs parsed from the active runtime profile document. */
   resolveGroupTestUrls?: () => Promise<Record<string, string | null>>
   resolveDelayTestSettings?: () => Promise<{ scope: 'group' | 'global'; url: string }>
+  /**
+   * Retention buffer for the log history snapshot channel. Created internally
+   * when omitted; injectable for tests. The buffer is fed by tapping `parse`,
+   * so it captures EVERY message that crosses the socket regardless of who is
+   * subscribed — log capture must not depend on the logs page being open.
+   */
+  logBuffer?: MihomoLogBuffer
 }
 
 /**
@@ -47,11 +56,13 @@ export class MihomoService implements MihomoGateway {
   private groupTestUrlsExpiresAt = 0
   private providerOwnersPromise: Promise<Map<string, string | null>> | null = null
   private providerOwnersExpiresAt = 0
+  private readonly logBuffer: MihomoLogBuffer
 
   constructor(private readonly client: MihomoClient, streams: MihomoServiceStreams) {
     this.resolveGroupTestUrls = streams.resolveGroupTestUrls
     this.resolveDelayTestSettings = streams.resolveDelayTestSettings
     const enabled = streams.enabled ?? true
+    this.logBuffer = streams.logBuffer ?? new MihomoLogBuffer()
     const parseHandler = (source: MihomoStreamError['source']) => (error: unknown) => this.emitError(source, 'parse', error)
     const connectionHandler = (source: MihomoStreamError['source']) => (error: unknown) => this.emitError(source, 'connection', error)
     if (enabled) {
@@ -85,7 +96,15 @@ export class MihomoService implements MihomoGateway {
       this.logsStream = createMihomoStream<MihomoLogMessage>({
         url: `${streams.wsBaseUrl}/logs`,
         secret: streams.secret,
-        parse: parseMihomoLog,
+        // Tap the parse boundary to retain history: mihomo's /logs endpoint is a
+        // live tail with no replay, so without this tap every line emitted while
+        // the logs view is unmounted would be lost. Buffering here (not in a
+        // subscriber) keeps capture independent of who is listening.
+        parse: (raw) => {
+          const message = parseMihomoLog(raw)
+          this.logBuffer.append(message)
+          return message
+        },
         onParseError: parseHandler('logs'),
         onConnectionError: connectionHandler('logs'),
         options: { maxRetries: 0 }
@@ -248,6 +267,20 @@ export class MihomoService implements MihomoGateway {
 
   onLogs(listener: (message: MihomoLogMessage) => void): () => void {
     return this.logsStream ? this.logsStream.subscribe(listener) : () => undefined
+  }
+
+  /** Retained log history past `afterSeq` (see {@link MihomoLogBuffer}). */
+  logsSnapshot(afterSeq?: number): Promise<MihomoLogsSnapshot> {
+    const clamped = typeof afterSeq === 'number' && Number.isFinite(afterSeq) && afterSeq > 0
+      ? Math.floor(afterSeq)
+      : 0
+    return Promise.resolve({ entries: this.logBuffer.snapshot(clamped), lastSeq: this.logBuffer.lastSeq })
+  }
+
+  /** Drop retained log history (renderer "清空" button). Sequence numbering continues. */
+  clearLogs(): Promise<void> {
+    this.logBuffer.clear()
+    return Promise.resolve()
   }
 
   onStreamError(listener: (error: MihomoStreamError) => void): () => void {

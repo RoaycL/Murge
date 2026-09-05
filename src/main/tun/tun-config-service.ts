@@ -2,7 +2,7 @@ import { join } from 'node:path'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { stringify } from 'yaml'
 import type { TunConfigModel, TunConfigSnapshot } from '@shared/tun-config'
-import { buildTunBlock, coerceTunConfig, coerceTunConfigSnapshot, EMPTY_TUN_CONFIG } from '@shared/tun-config'
+import { EMPTY_TUN_CONFIG, LEGACY_TUN_MTU_DEFAULT, buildTunBlock, coerceTunConfig, coerceTunConfigSnapshot } from '@shared/tun-config'
 import type { TunConfigGateway } from '@shared/gateways'
 
 /** Filename of the persisted typed TUN configuration model. */
@@ -58,13 +58,24 @@ export class TunConfigService implements TunConfigGateway {
 
   private async ensureLoaded(): Promise<TunConfigModel> {
     if (this.config) return this.config
+    let migrated = false
     try {
       const parsed = JSON.parse(await readFile(this.filePath, 'utf8')) as unknown
       const source = (parsed as { config?: unknown })?.config
       this.config = coerceTunConfig(source)
+      // One-time default migration: 9000 was the stock default before 0.5.8
+      // (written verbatim by the renderer's form initializer), not a deliberate
+      // user choice. Bump it to the Ethernet-safe 1500; any other value is the
+      // user's own and survives untouched. Idempotent by construction: after
+      // the first persist the file no longer carries 9000.
+      if (this.config.mtu === LEGACY_TUN_MTU_DEFAULT) {
+        this.config = { ...this.config, mtu: EMPTY_TUN_CONFIG.mtu }
+        migrated = true
+      }
     } catch {
       this.config = coerceTunConfig(EMPTY_TUN_CONFIG)
     }
+    if (migrated) await this.persist().catch(() => undefined)
     return this.config
   }
 

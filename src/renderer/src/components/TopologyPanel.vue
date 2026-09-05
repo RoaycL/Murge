@@ -73,9 +73,6 @@ function hopClass(name: string): string {
       </div>
     </template>
 
-    <footer class="topology-footer">
-      <span>只读视图，源于当前实时连接/策略链；mihomo 数据不完整时会明确标注，不保存任何凭据或原始配置。</span>
-    </footer>
   </SurfaceCard>
 </template>
 
@@ -105,6 +102,4 @@ function hopClass(name: string): string {
 .node-bar { height: 7px; border-radius: 4px; background: rgba(127, 127, 127, 0.14); overflow: hidden; }
 .node-bar i { display: block; height: 100%; background: var(--app-blue); border-radius: 4px; }
 .node-row strong { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.topology-footer { margin-top: 16px; }
-.topology-footer span { color: var(--app-muted); font-size: 10px; }
 </style>

@@ -88,7 +88,6 @@ function toggleReveal(): void {
     </div>
 
     <footer class="network-footer">
-      <span>仅显示出口节点的公开元数据，不保存凭据或原始配置。</span>
       <div class="network-actions">
         <button type="button" class="usage-clear" :disabled="store.busy || statePhase === 'fetching'" @click="onRefresh">刷新</button>
         <button type="button" class="usage-clear copy" :disabled="!metadata" @click="store.copy">复制信息</button>
@@ -109,9 +108,9 @@ function toggleReveal(): void {
 .meta-grid > div { display: grid; gap: 2px; padding: 8px 10px; border: 1px solid var(--app-surface-border); border-radius: 7px; background: var(--app-surface); }
 .meta-grid dt { color: var(--app-muted); font-size: 10px; }
 .meta-grid dd { margin: 0; font-size: 12px; font-weight: 600; }
-.network-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 16px; }
-.network-footer > span { color: var(--app-muted); font-size: 10px; }
-.network-actions { display: flex; gap: 8px; }
+.network-footer { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+/* 按钮组恒一行，不换行。 */
+.network-actions { display: flex; flex-wrap: nowrap; gap: 8px; }
 .usage-clear { min-height: 28px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: 7px; background: transparent; color: var(--app-muted); font-size: 11px; white-space: nowrap; flex-shrink: 0; }
 .usage-clear.copy { color: var(--app-blue); }
 .usage-clear:disabled { opacity: 0.5; }

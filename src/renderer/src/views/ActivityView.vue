@@ -156,7 +156,7 @@ const chartBars = computed<number[]>(() => {
     <section class="runtime-context" aria-label="运行上下文">
       <div><span>网络</span><strong>{{ runtime.summary?.networkName ?? '以太网' }}</strong></div>
       <div><span>配置</span><strong>{{ runtime.summary?.profileName ?? brand.defaultProfileName }}</strong></div>
-      <div class="runtime-mode-picker"><span>出站模式</span><AppSelect v-model="selectedMode" :options="modeOptions" :label="`出站模式：${modeLabel}`" /></div>
+      <div class="runtime-mode-picker"><span>出站模式</span><AppSelect v-model="selectedMode" :options="modeOptions" :label="`出站模式：${modeLabel}`" plain /></div>
       <button type="button" class="runtime-detail-link" aria-label="查看网络信息" @click="summaryDrawer = 'network'"><span>外部 IP</span><strong>{{ externalIpText }}</strong><AppIcon name="next" :size="14" /></button>
     </section>
 
@@ -209,7 +209,7 @@ const chartBars = computed<number[]>(() => {
       </SurfaceCard>
 
     </section>
-    <DetailDrawer :open="Boolean(summaryDrawer)" :title="summaryDrawer === 'network' ? '网络信息' : summaryDrawer === 'usage' ? '用量历史' : '连接拓扑'" subtitle="活动页的扩展信息，不改变主仪表盘布局" @close="summaryDrawer = null"><NetworkMetadataPanel v-if="summaryDrawer === 'network'" /><UsageHistoryPanel v-else-if="summaryDrawer === 'usage'" /><TopologyPanel v-else-if="summaryDrawer === 'topology'" /></DetailDrawer>
+    <DetailDrawer :open="Boolean(summaryDrawer)" :title="summaryDrawer === 'network' ? '网络信息' : summaryDrawer === 'usage' ? '用量历史' : '连接拓扑'" @close="summaryDrawer = null"><NetworkMetadataPanel v-if="summaryDrawer === 'network'" /><UsageHistoryPanel v-else-if="summaryDrawer === 'usage'" /><TopologyPanel v-else-if="summaryDrawer === 'topology'" /></DetailDrawer>
   </div>
 </template>
 

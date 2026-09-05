@@ -58,11 +58,13 @@ describe('electron-builder brand wiring (Phase 6 metadata)', () => {
   })
 
   it('bundles only the current installer architecture mihomo archive', () => {
-    expect(config.extraResources).toContainEqual({
+    const archives = config.extraResources.find((entry) => entry.to === 'bin')
+    expect(archives).toMatchObject({
       from: 'resources/bin/${arch}',
-      to: 'bin',
-      filter: ['*.zip']
+      to: 'bin'
     })
+    expect(archives.filter).toHaveLength(2)
+    expect(archives.filter.every((name) => /^mihomo-windows-(amd64|arm64)-v\d+\.\d+\.\d+\.zip$/.test(name))).toBe(true)
   })
 
   it('bundles the matching privileged service and requires a per-machine installer', () => {

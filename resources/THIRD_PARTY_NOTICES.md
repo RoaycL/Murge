@@ -61,12 +61,12 @@ part of the application runtime.
 
 ## mihomo (proxy core)
 
-The Windows installers include the official, unmodified mihomo v1.19.30 archive
-for the installer's architecture. Murge verifies the pinned archive SHA-256
+The Windows installers include the official, unmodified mihomo stable archive
+resolved at build time for the installer's architecture. Murge verifies the resolved archive SHA-256
 again before extracting or executing it, and execution remains an explicit user
 action. mihomo is licensed under GPL-3.0; the corresponding source for the exact
-distributed version is available from
-<https://github.com/MetaCubeX/mihomo/tree/v1.19.30>. The complete GPLv3 text is
+distributed version is linked in the bundled `SOURCE_CODE.md`; its version and
+archive hashes are recorded in `mihomo-resolved.json`. The complete GPLv3 text is
 installed as `LICENSE.txt`.
 
 ## Geodata databases
@@ -74,7 +74,8 @@ installed as `LICENSE.txt`.
 The installers also ship the `geosite.dat` (domain-list database) and
 `geoip.metadb` (IP-to-country metadata database) files built by the
 MetaCubeX/meta-rules-dat project, distributed as unmodified release assets
-(pinned by SHA-256 in `resources/mihomo-assets.json`). The kernel requires these
+(resolved from `latest` at build time and verified against the GitHub release
+asset SHA-256 and size; recorded in bundled `geodata/resolved-assets.json`). The kernel requires these
 databases to evaluate `GEOSITE`/`GEOIP` rules. The underlying data is assembled
 by MetaCubeX from the v2fly domain-list-community and geoip projects; consult
 <https://github.com/MetaCubeX/meta-rules-dat> for the data sources and their

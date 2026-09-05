@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
@@ -7,7 +8,7 @@ import process from 'node:process'
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const brand = JSON.parse(await readFile(join(root, 'brand.config.json'), 'utf8'))
-const manifest = JSON.parse(await readFile(join(root, 'resources', 'mihomo-assets.json'), 'utf8'))
+const manifest = JSON.parse(await readFile(join(root, 'resources', existsSync(join(root, 'resources/mihomo-resolved.json')) ? 'mihomo-resolved.json' : 'mihomo-assets.json'), 'utf8'))
 const requested = process.argv.slice(2)
 const arches = requested.includes('--all') ? ['x64', 'arm64'] : requested.filter(value => value === 'x64' || value === 'arm64')
 if (arches.length === 0) throw new Error('Usage: node scripts/build-tun-service.mjs --all|x64|arm64')

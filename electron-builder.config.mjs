@@ -1,6 +1,8 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 
 const brand = JSON.parse(readFileSync(new URL('./brand.config.json', import.meta.url), 'utf8'))
+const resolvedManifestPath = new URL('./resources/mihomo-resolved.json', import.meta.url)
+const kernelManifest = JSON.parse(readFileSync(existsSync(resolvedManifestPath) ? resolvedManifestPath : new URL('./resources/mihomo-assets.json', import.meta.url), 'utf8'))
 
 // Derive the GitHub owner/repo from the brand's repository URL so the update
 // feed never hardcodes the product name (the brand:check gate forbids it in
@@ -9,6 +11,9 @@ const repoUrl = new URL(brand.repositoryUrl)
 const [, owner, repo] = repoUrl.pathname.split('/')
 
 export default {
+  beforePack: async () => {
+    if (!existsSync(resolvedManifestPath)) throw new Error('Run npm run kernel:prepare and npm run build before packaging')
+  },
   // Owner decision: public releases are intentionally unsigned. Checksums and
   // immutable source/tag evidence remain mandatory; Windows will show Unknown
   // publisher until this policy changes and a trusted certificate is supplied.
@@ -34,17 +39,18 @@ export default {
     // Each installer carries only its own architecture's pinned mihomo archive.
     // The archive is verified before packaging and re-verified at runtime before
     // extraction, so first launch never depends on GitHub availability.
-    { from: `resources/bin/${'${arch}'}`, to: 'bin', filter: ['*.zip'] },
+    { from: `resources/bin/${'${arch}'}`, to: 'bin', filter: kernelManifest.assets.filter((asset) => asset.platform === 'win32').map((asset) => asset.filename) },
     { from: `resources/tun-service/${'${arch}'}`, to: 'tun-service', filter: ['tun-service.exe', 'service-template.json'] },
     { from: 'resources/defaults', to: 'defaults', filter: ['**/*'] },
     // Geodata databases shipped with the installer and seeded into the kernel's
     // persistent home at startup, so a profile with GEOSITE/GEOIP rules starts
     // without mihomo's online geodata download (which needs DNS and fails
-    // before any proxy exists). Sources + hashes pinned in mihomo-assets.json.
-    { from: 'resources/geodata', to: 'geodata', filter: ['*.dat', '*.metadb'] },
+    // before any proxy exists). Per-build upstream hashes are recorded alongside.
+    { from: 'resources/geodata', to: 'geodata', filter: ['*.dat', '*.metadb', 'resolved-assets.json'] },
     { from: 'LICENSE', to: 'LICENSE.txt' },
     { from: 'resources/THIRD_PARTY_NOTICES.md', to: 'THIRD_PARTY_NOTICES.md' },
-    { from: 'resources/SOURCE_CODE.md', to: 'SOURCE_CODE.md' },
+    { from: 'resources/SOURCE_CODE.resolved.md', to: 'SOURCE_CODE.md' },
+    { from: 'resources/mihomo-resolved.json', to: 'mihomo-resolved.json' },
     // Retained upstream license texts for every bundled dependency. Shipped
     // alongside the app so the notice-preservation obligation is met by the
     // installed artifact itself, not just the source tree.

@@ -30,7 +30,7 @@ describe('release-candidate artifacts', () => {
     expect(source).toContain(brand.repositoryUrl)
     expect(source).toContain('MetaCubeX/mihomo/tree/v1.19.30')
     const builder = await readFile(path.join(root, 'electron-builder.config.mjs'), 'utf8')
-    expect(builder).toContain("{ from: 'resources/SOURCE_CODE.md', to: 'SOURCE_CODE.md' }")
+    expect(builder).toContain("{ from: 'resources/SOURCE_CODE.resolved.md', to: 'SOURCE_CODE.md' }")
     expect(builder).toContain('forceCodeSigning: false')
   })
 })

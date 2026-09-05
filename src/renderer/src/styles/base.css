@@ -53,11 +53,11 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
    2×--card-min + 间距，卡片到达最小尺寸后不再被压缩。 */
 .dashboard-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: auto; gap: 15px; width: 100%; min-width: calc(2 * var(--card-min) + 15px); margin: 6px auto 0; }
 /* Surge 左列横卡：约 336×160。 */
-.latency-card { aspect-ratio: 2.1 / 1; padding: 15px 16px 13px; overflow: hidden; }
+.latency-card { container-type: inline-size; display: flex; flex-direction: column; aspect-ratio: 2.1 / 1; padding: 15px 16px 13px; overflow: hidden; }
 .quiet-button { float: right; width: 100px; height: 28px; margin-top: -5px; border: 1px solid var(--app-divider); border-radius: 6px; background: transparent; font-size: 12px; cursor: pointer; }
 .large-metric { margin-top: 5px; font-size: 34px; line-height: 37px; font-weight: 650; }
 .large-metric span, .speed-value span { margin-left: 3px; font-size: 13px; font-weight: 500; }
-.latency-breakdown { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 35px; }
+.latency-breakdown { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: auto; }
 .latency-breakdown div { padding-left: 13px; border-left: 1px solid var(--app-divider); }
 .latency-breakdown div:first-child { padding-left: 0; border-left: 0; }
 .latency-breakdown span { display: block; color: var(--app-muted); font-size: 11px; }
@@ -76,9 +76,9 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .spark-upload-area { fill: rgba(102, 82, 237, 0.09); }
 .spark-download-area { fill: rgba(25, 189, 214, 0.1); }
 /* Surge 左列横卡：约 336×160。 */
-.connections-card { aspect-ratio: 2.1 / 1; padding: 16px; overflow: hidden; }
+.connections-card { container-type: inline-size; display: flex; flex-direction: column; aspect-ratio: 2.1 / 1; padding: 16px; overflow: hidden; }
 .connections-summary-link{display:grid;grid-template-columns:auto 1fr auto;align-items:baseline;gap:8px;width:100%;margin-top:8px;padding:0;border:0;background:transparent;color:inherit;text-align:left}.connections-summary-link>strong{font-size:36px;line-height:42px}.connections-summary-link>span{color:var(--app-muted);font-size:10px}.connections-summary-link>svg{align-self:center;color:var(--app-muted)}
-.topology-inline{display:grid;grid-template-columns:28px 1fr auto;align-items:center;gap:8px;width:100%;min-height:52px;margin-top:13px;padding:7px 9px;border:1px solid var(--app-divider);border-radius:9px;background:rgba(127,127,127,.06);color:inherit;text-align:left}.topology-inline>svg:first-child{color:var(--app-blue)}.topology-inline span{display:flex;flex-direction:column}.topology-inline strong{font-size:11px}.topology-inline small{margin-top:3px;color:var(--app-muted);font-size:9px}
+.topology-inline{display:grid;grid-template-columns:28px 1fr auto;align-items:center;gap:8px;width:100%;min-height:52px;margin-top:auto;padding:7px 9px;border:1px solid var(--app-divider);border-radius:9px;background:rgba(127,127,127,.06);color:inherit;text-align:left}.topology-inline>svg:first-child{color:var(--app-blue)}.topology-inline span{display:flex;flex-direction:column}.topology-inline strong{font-size:11px}.topology-inline small{margin-top:3px;color:var(--app-muted);font-size:9px}
 .connections-link { cursor: pointer; }
 .connections-link:focus-visible { outline: 2px solid var(--app-blue); outline-offset: -2px; }
 .online-dot { float: right; width: 11px; height: 11px; margin-top: -1px; border-radius: 50%; background: var(--app-green); box-shadow: 0 0 0 5px rgba(49, 201, 90, 0.1); }
@@ -107,9 +107,9 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .rank-row > div > i > b { display: block; height: 100%; background: #aeb3bc; }
 .rank-row > strong { font-weight: 400; }
 /* Surge 左列横卡：约 336×160。 */
-.total-card { aspect-ratio: 2.1 / 1; padding: 15px 16px; overflow: hidden; }
+.total-card { container-type: inline-size; display: flex; flex-direction: column; aspect-ratio: 2.1 / 1; padding: 15px 16px; overflow: hidden; }
 .total-card .large-metric { margin-top: 2px; }
-.total-labels { display: grid; grid-template-columns: 1fr 1fr; margin-top: 4px; }
+.total-labels { display: grid; grid-template-columns: 1fr 1fr; margin-top: auto; }
 .total-labels div { display: flex; flex-direction: column; }
 .total-labels div:last-child { text-align: right; }
 .total-labels span { color: var(--app-muted); font-size: 11px; }
@@ -118,6 +118,21 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .total-history-link{width:100%;padding:0;border:0;background:transparent;cursor:pointer}.total-history-link:hover{filter:brightness(.96)}
 .total-bar i { border-radius: 5px; background: var(--app-purple); }
 .total-bar i:last-child { background: var(--app-cyan); }
+/* 横卡按自身宽度收紧内部排版，而不是依赖窗口宽度。这样侧栏、窗口缩放
+   或未来网格列宽变化时，底部信息仍保持同一锚点且不会在窄卡中互相挤压。 */
+@container (max-width: 320px) {
+  .latency-card, .connections-card, .total-card { padding: 12px; }
+  .latency-card .large-metric, .total-card .large-metric { margin-top: 3px; font-size: 30px; line-height: 32px; }
+  .latency-breakdown div { padding-left: 9px; }
+  .latency-breakdown span { font-size: 9px; }
+  .latency-breakdown strong { margin-top: 2px; font-size: 13px; }
+  .connections-summary-link { margin-top: 3px; }
+  .connections-summary-link > strong { font-size: 30px; line-height: 32px; }
+  .topology-inline { grid-template-columns: 24px 1fr auto; min-height: 43px; padding: 5px 7px; }
+  .total-labels span { font-size: 9px; }
+  .total-labels strong { font-size: 14px; }
+  .total-bar { height: 18px; margin-top: 3px; }
+}
 .overview-view h1 { margin-bottom: 22px; }
 .overview-view section { margin-bottom: 29px; }
 .overview-view h2 { margin: 0 0 15px; color: var(--app-pink); font-size: 14px; font-weight: 600; }

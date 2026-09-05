@@ -167,7 +167,7 @@ jobs:
           "notes=$((Join-Path $PWD 'dist\RELEASE_NOTES.md'))" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "evidence=$evidencePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
-      - name: Create draft GitHub Release
+      - name: Publish GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -185,8 +185,11 @@ jobs:
             }
             gh release upload $env:GITHUB_REF_NAME $env:X64_INSTALLER $env:ARM64_INSTALLER $env:CHECKSUM_FILE $env:UPDATE_FEED $env:RELEASE_EVIDENCE --clobber
             gh release edit $env:GITHUB_REF_NAME --notes-file $env:RELEASE_NOTES
+            # A re-run against a leftover draft publishes it rather than leaving it draft.
+            gh release edit $env:GITHUB_REF_NAME --draft=false
           } else {
-            gh release create $env:GITHUB_REF_NAME $env:X64_INSTALLER $env:ARM64_INSTALLER $env:CHECKSUM_FILE $env:UPDATE_FEED $env:RELEASE_EVIDENCE --draft --verify-tag --title $env:GITHUB_REF_NAME --notes-file $env:RELEASE_NOTES
+            # Owner directive: publish directly as a final release, never a draft.
+            gh release create $env:GITHUB_REF_NAME $env:X64_INSTALLER $env:ARM64_INSTALLER $env:CHECKSUM_FILE $env:UPDATE_FEED $env:RELEASE_EVIDENCE --verify-tag --title $env:GITHUB_REF_NAME --notes-file $env:RELEASE_NOTES
           }
 
       - name: Preserve installers as workflow artifact

@@ -41,6 +41,15 @@ export interface SystemProxyServiceOptions {
 const NOT_SUPPORTED_MSG = '当前平台不支持系统代理'
 const CONFLICT_MSG = '系统代理已被外部修改，未执行还原'
 
+/** Shared recovery decision for enable, disable, startup and kernel shutdown. */
+function canRestoreBackup(observed: SystemProxyRegistryState, backup: SystemProxyBackup): boolean {
+  return isOwned(observed, backup.written) ||
+    matchesPrevious(observed, backup.previous) ||
+    (observed.proxyServer.exists &&
+      typeof observed.proxyServer.value === 'string' &&
+      observed.proxyServer.value === buildProxyServerValue(backup.target))
+}
+
 /**
  * Ownership-aware system-proxy controller.
  *
@@ -117,7 +126,7 @@ export class SystemProxyService implements SystemProxyGateway {
         }
         return this.transition('disabled')
       }
-      if (!isOwned(observed, backup.written)) {
+      if (!canRestoreBackup(observed, backup)) {
         return this.transition('conflict', {
           errorMessage: CONFLICT_MSG,
           conflictDetail: conflictDetail(observed, backup.written)
@@ -181,11 +190,7 @@ export class SystemProxyService implements SystemProxyGateway {
         // Note these checks apply on a port move as well as on the same target:
         // a same-target stale bundle used to fall into the conflict branch and
         // dead-end the proxy until manual `disable`.
-        const serverStillOurs =
-          typeof observed.proxyServer.value === 'string' &&
-          observed.proxyServer.value === buildProxyServerValue(existingBackup.target)
-        const alreadyRestored = matchesPrevious(observed, existingBackup.previous)
-        if (serverStillOurs || alreadyRestored) {
+        if (canRestoreBackup(observed, existingBackup)) {
           await this.restoreBackupStrict(existingBackup)
         } else {
           const detail = conflictDetail(observed, existingBackup.written)
@@ -335,23 +340,9 @@ export class SystemProxyService implements SystemProxyGateway {
       if (!backup) return this.transition('disabled') // Idempotent: nothing owned.
 
       const observed = await this.adapter.read()
-      if (!isOwned(observed, backup.written)) {
-        // Same ownership classification as `enable`: a registry degraded INSIDE
-        // our envelope (our server value with ProxyEnable flipped off or
-        // ProxyOverride edited — or already back at the pre-enable snapshot) is
-        // still OUR state; disabling restores the true pre-enable values. Only
-        // a different proxy server (another tool's takeover) is a conflict —
-        // and even then `disable` must never fail-closed into a dead-end here:
-        // restoreBeforeKernelUnavailable treats the same shape as safe because
-        // the proxy is not ours, so surface the conflict but keep the machine
-        // restorable (see the stale-bundle tests).
-        const serverStillOurs =
-          typeof observed.proxyServer.value === 'string' &&
-          observed.proxyServer.value === buildProxyServerValue(backup.target)
-        if (!serverStillOurs && !matchesPrevious(observed, backup.previous)) {
-          const detail = conflictDetail(observed, backup.written)
-          return this.fail('conflict', ProtocolErrorCode.SYSTEM_PROXY_STATE_CONFLICT, CONFLICT_MSG, detail)
-        }
+      if (!canRestoreBackup(observed, backup)) {
+        const detail = conflictDetail(observed, backup.written)
+        return this.fail('conflict', ProtocolErrorCode.SYSTEM_PROXY_STATE_CONFLICT, CONFLICT_MSG, detail)
       }
 
       this.transition('restoring')
@@ -377,9 +368,9 @@ export class SystemProxyService implements SystemProxyGateway {
       }
       if (!backup) return
       const observed = await this.adapter.read()
-      if (!isOwned(observed, backup.written)) {
-        // Conflict: the proxy is not ours anymore, so it is safe to stop the
-        // kernel. Report the conflict and do not touch the registry.
+      if (!canRestoreBackup(observed, backup)) {
+        // Another server took over. Bypass/enable drift with our server still
+        // present must instead be restored before allowing the kernel to stop.
         this.transition('conflict', {
           errorMessage: CONFLICT_MSG,
           conflictDetail: conflictDetail(observed, backup.written)

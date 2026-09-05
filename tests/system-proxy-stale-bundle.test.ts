@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { SYSTEM_PROXY_LOOPBACK_HOST } from '@shared/system-proxy'
 import { SystemProxyService } from '../src/main/system-proxy/service'
 import { StaticSystemProxyProbe } from '../src/main/system-proxy/probe'
@@ -56,12 +56,17 @@ describe('enable() recovers from a stale OWNED bundle (BUG-REVIEW #2 follow-up)'
     await service.disable()
     await backup.write(first!)
     // Registry must still match `previous` (disable already restored it).
+    const deleteBackup = vi.spyOn(backup, 'delete')
+    const writeBackup = vi.spyOn(backup, 'write')
 
     const result = await service.enable()
     expect(result.phase).toBe('enabled')
     // The stale bundle was replaced by a fresh one, not left in place.
     const current = await backup.read()
-    expect(current!.createdAt).not.toEqual(first!.createdAt)
+    expect(deleteBackup).toHaveBeenCalledOnce()
+    expect(writeBackup).toHaveBeenCalledOnce()
+    expect(deleteBackup.mock.invocationCallOrder[0]).toBeLessThan(writeBackup.mock.invocationCallOrder[0])
+    expect(current!.previous).toEqual(first!.previous)
     // The proxy really points at the live target.
     const observed = await adapter.read()
     expect(observed.proxyEnable.value).toBe(1)
@@ -155,5 +160,44 @@ describe('enable() recovers from a stale OWNED bundle (BUG-REVIEW #2 follow-up)'
     // The external values were not touched.
     const observed = await adapter.read()
     expect(observed.proxyServer.value).toBe('http://10.9.9.9:8888')
+  })
+
+  it.each(['shutdown', 'startup'] as const)('%s restores bypass drift and consumes the backup', async (path) => {
+    const { service, adapter, backup } = makeService()
+    const previous = await adapter.read()
+    await service.enable()
+    adapter.mutate({ proxyOverride: { exists: true, type: 'REG_SZ', value: '<local>;*.changed' } })
+    const recovering = path === 'startup'
+      ? new SystemProxyService({ adapter, backup, probe: new StaticSystemProxyProbe(TARGET), instanceId: 'restarted' })
+      : service
+    if (path === 'startup') await recovering.init()
+    else await recovering.restoreBeforeKernelUnavailable()
+    expect(recovering.getStatus().phase).toBe('disabled')
+    expect(await adapter.read()).toEqual(previous)
+    expect(await backup.read()).toBeNull()
+  })
+
+  it.each(['shutdown', 'startup'] as const)('%s preserves another proxy server', async (path) => {
+    const { service, adapter, backup } = makeService()
+    await service.enable()
+    adapter.mutate({ proxyServer: { exists: true, type: 'REG_SZ', value: 'http=10.9.9.9:8888' } })
+    const external = await adapter.read()
+    if (path === 'startup') await service.init()
+    else await service.restoreBeforeKernelUnavailable()
+    expect(service.getStatus().phase).toBe('conflict')
+    expect(await adapter.read()).toEqual(external)
+    expect(await backup.read()).not.toBeNull()
+  })
+
+  it.each(['reject', 'restore-mismatch'] as const)('shutdown rejects %s after bypass drift and retains recovery evidence', async (restoreBehavior) => {
+    const adapter = new FakeSystemProxyAdapter({ restoreBehavior })
+    const backup = new InMemorySystemProxyBackupStore()
+    const service = new SystemProxyService({ adapter, backup, probe: new StaticSystemProxyProbe(TARGET), instanceId: 'failure' })
+    await service.enable()
+    const bundle = await backup.read()
+    adapter.mutate({ proxyOverride: { exists: true, type: 'REG_SZ', value: '<local>;*.changed' } })
+    await expect(service.restoreBeforeKernelUnavailable()).rejects.toMatchObject({ code: 'SYSTEM_PROXY_RESTORE_FAILED' })
+    expect(service.getStatus().phase).toBe('restore-failed')
+    expect(await backup.read()).toEqual(bundle)
   })
 })

@@ -78,6 +78,24 @@ describe('policies store', () => {
     expect(store.selectedMember).toBe('香港 01')
   })
 
+  it('shows automatic and future group types but only permits supported manual selection', async () => {
+    const response: MihomoProxiesResponse = {
+      proxies: {
+        Balance: { name: 'Balance', type: 'LoadBalance', all: ['DIRECT'] },
+        Future: { name: 'Future', type: 'SmartGroup', all: ['DIRECT'] },
+        DIRECT: { name: 'DIRECT', type: 'Direct' }
+      }
+    }
+    getProxies.mockResolvedValue(response)
+    const store = usePoliciesStore()
+    await store.load()
+    expect(store.groups.map((group) => group.name)).toEqual(['Balance', 'Future'])
+    expect(store.isSelectableGroup(store.groups[0])).toBe(false)
+    await store.selectNode('DIRECT')
+    expect(selectProxy).not.toHaveBeenCalled()
+    expect(store.panelError).toContain('不支持手动固定节点')
+  })
+
   it('selects a node, confirms the controller applied it, and keeps it', async () => {
     getProxies.mockImplementation(async () => proxiesResponse(controllerNow))
     selectProxy.mockImplementation(async (_group, name) => {

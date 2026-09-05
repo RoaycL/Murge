@@ -70,6 +70,15 @@ describe('parseAppSettings', () => {
       parseAppSettings('{"kernelEnabled":false,"kernelChannel":"specific","kernelSpecificVersion":"v1.19.20"}')
     ).toEqual({ ...DEFAULT_OBJ, kernelEnabled: false, kernelChannel: 'specific', kernelSpecificVersion: 'v1.19.20' })
   })
+
+  it('reads delay-test URL scope and target while older files use safe defaults', () => {
+    expect(parseAppSettings('{"delayTestUrlScope":"global","delayTestUrl":"https://probe.example/204"}')).toEqual({
+      ...DEFAULT_OBJ,
+      delayTestUrlScope: 'global',
+      delayTestUrl: 'https://probe.example/204'
+    })
+    expect(parseAppSettings('{"delayTestUrlScope":"invalid","delayTestUrl":42}')).toEqual(DEFAULT_OBJ)
+  })
 })
 
 describe('AppSettingsService', () => {
@@ -147,6 +156,17 @@ describe('AppSettingsService', () => {
       kernelEnabled: false,
       kernelChannel: 'specific',
       kernelSpecificVersion: 'v1.19.20'
+    })
+  })
+
+  it('persists delay-test preferences independently', async () => {
+    base = await mkdtemp(join(tmpdir(), 'app-settings-'))
+    const service = new AppSettingsService(base)
+    await service.set({ delayTestUrlScope: 'global', delayTestUrl: 'https://probe.example/204' })
+    expect(await service.get()).toEqual({
+      ...DEFAULT_OBJ,
+      delayTestUrlScope: 'global',
+      delayTestUrl: 'https://probe.example/204'
     })
   })
 

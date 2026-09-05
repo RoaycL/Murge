@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions } from '@shared/schemas/ipc'
+import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions, parseAppSettingsPatch } from '@shared/schemas/ipc'
 import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
 
 describe('parseConfigPatch', () => {
@@ -51,6 +51,25 @@ describe('parseConfigPatch', () => {
     } catch (error) {
       expect((error as ProtocolError).code).toBe(ProtocolErrorCode.INVALID_ARGUMENT)
     }
+  })
+})
+
+describe('parseAppSettingsPatch delay-test settings', () => {
+  it('accepts normalized HTTP(S) targets and both URL scopes', () => {
+    expect(parseAppSettingsPatch({ delayTestUrlScope: 'group', delayTestUrl: '  https://probe.example/204  ' })).toEqual({
+      delayTestUrlScope: 'group',
+      delayTestUrl: 'https://probe.example/204'
+    })
+    expect(parseAppSettingsPatch({ delayTestUrlScope: 'global', delayTestUrl: '' })).toEqual({
+      delayTestUrlScope: 'global',
+      delayTestUrl: ''
+    })
+  })
+
+  it('rejects unsupported scopes, malformed URLs and unsafe schemes', () => {
+    expect(() => parseAppSettingsPatch({ delayTestUrlScope: 'provider' })).toThrowError(ProtocolError)
+    expect(() => parseAppSettingsPatch({ delayTestUrl: 'not a url' })).toThrowError(ProtocolError)
+    expect(() => parseAppSettingsPatch({ delayTestUrl: 'file:///etc/passwd' })).toThrowError(ProtocolError)
   })
 })
 

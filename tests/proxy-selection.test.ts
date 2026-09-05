@@ -177,6 +177,20 @@ describe('ProxySelectionService', () => {
     expect(mihomo.selectProxy).not.toHaveBeenCalled()
   })
 
+  it('does not replay selections onto non-selectable load-balance groups', async () => {
+    const store = new ProxySelectionStore(dir)
+    await store.set('p1', '负载均衡', '香港 02')
+    const mihomo = mihomoStub()
+    ;(mihomo.getProxies as ReturnType<typeof vi.fn>).mockResolvedValue({
+      proxies: {
+        负载均衡: { name: '负载均衡', type: 'LoadBalance', all: ['香港 01', '香港 02'] }
+      }
+    })
+    const service = new ProxySelectionService(mihomo, profilesStub('p1'), store)
+    expect(await service.restoreSelections()).toBe(0)
+    expect(mihomo.selectProxy).not.toHaveBeenCalled()
+  })
+
   it('a failing group never aborts the remaining restores', async () => {
     const store = new ProxySelectionStore(dir)
     await store.set('p1', '节点选择', '香港 02')

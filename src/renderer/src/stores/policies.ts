@@ -9,12 +9,22 @@ export type DelayStatus = 'idle' | 'testing' | 'ok' | 'timeout' | 'unavailable' 
 export interface DelayNodeState {
   status: DelayStatus
   delay: number | null
+  url?: string
+  error?: string
 }
 
-export type PolicyGroupType = 'Selector' | 'URLTest' | 'Fallback' | 'LoadBalance' | 'Relay'
-export const POLICY_GROUP_TYPES: readonly PolicyGroupType[] = ['Selector', 'URLTest', 'Fallback', 'LoadBalance', 'Relay']
+export type PolicyGroupType = 'Selector' | 'URLTest' | 'Fallback' | 'LoadBalance'
+export const SELECTABLE_POLICY_GROUP_TYPES = ['Selector', 'URLTest', 'Fallback'] as const
 export const POLICY_MODE_OPTIONS = ['rule', 'global', 'direct'] as const
 export type PolicyMode = (typeof POLICY_MODE_OPTIONS)[number]
+
+function isPolicyGroup(proxy: MihomoProxy | undefined): proxy is MihomoProxy {
+  return Boolean(proxy && Array.isArray(proxy.all))
+}
+
+function isSelectableGroup(proxy: MihomoProxy | null | undefined): boolean {
+  return Boolean(proxy && SELECTABLE_POLICY_GROUP_TYPES.includes(proxy.type as (typeof SELECTABLE_POLICY_GROUP_TYPES)[number]))
+}
 
 /** Map a thrown value onto the visible delay state. */
 function classifyDelayError(value: unknown): DelayStatus {
@@ -61,6 +71,7 @@ export const usePoliciesStore = defineStore('policies', () => {
   let lastModeTarget: PolicyMode | null = null
   let lastModeError: string | null = null
   const delayGeneration = new Map<string, number>()
+  const groupDelayGeneration = new Map<string, number>()
 
   // Policy groups render in the ACTIVE PROFILE DOCUMENT's proxy-groups order.
   // Neither controller endpoint can supply this: `GET /proxies` is a Go map
@@ -78,11 +89,11 @@ export const usePoliciesStore = defineStore('policies', () => {
       const merged: MihomoProxy[] = []
       for (const name of orderedGroupNames.value) {
         const proxy = byName[name]
-        if (proxy && POLICY_GROUP_TYPES.includes(proxy.type as PolicyGroupType)) merged.push(proxy)
+        if (isPolicyGroup(proxy)) merged.push(proxy)
       }
       return merged
     }
-    return Object.values(byName).filter((proxy) => POLICY_GROUP_TYPES.includes(proxy.type as PolicyGroupType))
+    return Object.values(byName).filter((proxy) => isPolicyGroup(proxy))
   })
 
   const groupMembers = computed<string[]>(() => {
@@ -127,12 +138,18 @@ export const usePoliciesStore = defineStore('policies', () => {
    */
   function groupSelectedMember(group: MihomoProxy): string {
     if (typeof group.fixed === 'string' && group.fixed.length > 0) return group.fixed
-    return typeof group.now === 'string' && group.now.length > 0 ? group.now : (group.all?.[0] ?? '')
+    if (typeof group.now === 'string' && group.now.length > 0) return group.now
+    return isSelectableGroup(group) ? (group.all?.[0] ?? '') : ''
   }
 
   async function load(): Promise<void> {
     status.value = 'loading'
     lastError.value = null
+    // A profile/settings reload can change the effective probe URL. Never show
+    // a result measured under the previous profile as if it belonged to this one.
+    delayByNode.value = {}
+    delayGeneration.clear()
+    groupDelayGeneration.clear()
     try {
       // Fetch BOTH sources up front: the config-file group order (active
       // profile document, parsed in main) and the full detail map (/proxies).
@@ -142,7 +159,7 @@ export const usePoliciesStore = defineStore('policies', () => {
       ])
       orderedGroupNames.value = orderResult.filter((name) => {
         const proxy = result.proxies[name]
-        return proxy && POLICY_GROUP_TYPES.includes(proxy.type as PolicyGroupType)
+        return isPolicyGroup(proxy)
       })
       proxies.value = result
       const ordered = groups.value
@@ -161,7 +178,7 @@ export const usePoliciesStore = defineStore('policies', () => {
   function selectGroup(name: string): void {
     if (!proxies.value) return
     const group = proxies.value.proxies[name]
-    if (!group || !POLICY_GROUP_TYPES.includes(group.type as PolicyGroupType)) return
+    if (!isPolicyGroup(group)) return
     selectedGroup.value = name
     selectedMember.value = groupSelectedMember(group)
     // The aggregate state belongs to the previously open group. Per-member
@@ -226,6 +243,10 @@ export const usePoliciesStore = defineStore('policies', () => {
   function selectNode(member: string): Promise<void> {
     const group = selectedGroup.value
     if (!group) return Promise.resolve()
+    if (!isSelectableGroup(currentGroup.value)) {
+      panelError.value = `${currentGroup.value?.type ?? '当前'} 策略组由内核自动选择，不支持手动固定节点`
+      return Promise.resolve()
+    }
     if (member === selectedMember.value) return Promise.resolve()
     pendingSelection = member
     selectionDrainPromise ??= drainSelection(group).finally(() => {
@@ -291,6 +312,9 @@ export const usePoliciesStore = defineStore('policies', () => {
   async function testNode(name: string): Promise<void> {
     const group = selectedGroup.value
     if (!group) return
+    // A direct item probe supersedes any older whole-group sweep for this view.
+    groupDelayGeneration.set(group, (groupDelayGeneration.get(group) ?? 0) + 1)
+    groupDelayStatus.value = 'idle'
     await testGroupMember(group, name)
   }
 
@@ -307,11 +331,16 @@ export const usePoliciesStore = defineStore('policies', () => {
         setDelay(group, name, { status: 'unavailable', delay: null })
         return false
       }
-      setDelay(group, name, { status: 'ok', delay: result.delay })
+      setDelay(group, name, { status: 'ok', delay: result.delay, url: result.url })
       return true
     } catch (error) {
       if (delayGeneration.get(key) === generation) {
-        setDelay(group, name, { status: classifyDelayError(error), delay: null })
+        const protocolError = toProtocolError(error)
+        setDelay(group, name, {
+          status: classifyDelayError(protocolError),
+          delay: null,
+          error: protocolError.message
+        })
       }
       return false
     }
@@ -334,6 +363,8 @@ export const usePoliciesStore = defineStore('policies', () => {
     if (!selectedGroup.value) return
     const group = selectedGroup.value
     const members = [...groupMembers.value]
+    const batchGeneration = (groupDelayGeneration.get(group) ?? 0) + 1
+    groupDelayGeneration.set(group, batchGeneration)
     groupDelayStatus.value = 'testing'
     panelError.value = null
 
@@ -343,23 +374,26 @@ export const usePoliciesStore = defineStore('policies', () => {
     const WORKERS = 10
     let measured = 0
     let worker = 0
-    const runWorker = async (): Promise<void> => {
+    const runWorker = async (workerIndex: number): Promise<void> => {
       while (worker < members.length) {
         const member = members[worker]
         worker += 1
         try {
+          // Verge-style small stagger avoids a synchronized DNS/TLS burst while
+          // preserving each member's independent timeout budget.
+          if (workerIndex > 0) await new Promise((resolve) => setTimeout(resolve, Math.random() * 150))
           if (await testGroupMember(group, member)) measured += 1
         } catch {
           // testGroupMember has already recorded the per-node error.
         }
       }
     }
-    await Promise.all(Array.from({ length: Math.min(WORKERS, members.length) }, runWorker))
+    await Promise.all(Array.from({ length: Math.min(WORKERS, members.length) }, (_, index) => runWorker(index)))
 
     // Only an empty scoreboard is a group-level failure — that mirrors the
     // kernel's own "all proxies timeout" 504, while individual dead nodes were
     // already labeled above and must not take the whole group down with them.
-    if (selectedGroup.value === group) {
+    if (selectedGroup.value === group && groupDelayGeneration.get(group) === batchGeneration) {
       if (measured === 0 && members.length > 0) {
         groupDelayStatus.value = 'error'
         panelError.value = '测速失败：所有节点均无有效延迟'
@@ -371,10 +405,11 @@ export const usePoliciesStore = defineStore('policies', () => {
     // (the same re-pull party does via `mutate()` after each result).
     try {
       const result = await window.desktop.mihomo.getProxies()
+      if (groupDelayGeneration.get(group) !== batchGeneration) return
       proxies.value = result
       // Do not reconcile a different group if the user navigated while this
       // batch was running.
-      if (selectedGroup.value === group) {
+      if (selectedGroup.value === group && groupDelayGeneration.get(group) === batchGeneration) {
         const refreshedGroup = result.proxies[group]
         if (refreshedGroup) selectedMember.value = groupSelectedMember(refreshedGroup)
       }
@@ -391,6 +426,7 @@ export const usePoliciesStore = defineStore('policies', () => {
     selectedMember.value = ''
     delayByNode.value = {}
     delayGeneration.clear()
+    groupDelayGeneration.clear()
     groupDelayStatus.value = 'idle'
     panelError.value = null
   }
@@ -411,6 +447,7 @@ export const usePoliciesStore = defineStore('policies', () => {
     nodeByMember,
     nodeState,
     groupSelectedMember,
+    isSelectableGroup,
     load,
     selectGroup,
     setMode,

@@ -130,6 +130,8 @@ export function parseAppSettingsPatch(
   kernelEnabled?: boolean
   kernelChannel?: 'stable' | 'specific'
   kernelSpecificVersion?: string
+  delayTestUrlScope?: 'group' | 'global'
+  delayTestUrl?: string
 } {
   if (!(typeof input === 'object' && input !== null && !Array.isArray(input))) {
     throw invalid('app settings patch must be an object')
@@ -143,6 +145,8 @@ export function parseAppSettingsPatch(
     kernelEnabled?: boolean
     kernelChannel?: 'stable' | 'specific'
     kernelSpecificVersion?: string
+    delayTestUrlScope?: 'group' | 'global'
+    delayTestUrl?: string
   } = {}
   if ('autoStartKernel' in record) {
     if (typeof record.autoStartKernel !== 'boolean') throw invalid('autoStartKernel must be a boolean')
@@ -175,6 +179,25 @@ export function parseAppSettingsPatch(
       throw invalid('kernelSpecificVersion must be a string')
     }
     patch.kernelSpecificVersion = record.kernelSpecificVersion
+  }
+  if ('delayTestUrlScope' in record) {
+    if (record.delayTestUrlScope !== 'group' && record.delayTestUrlScope !== 'global') {
+      throw invalid('delayTestUrlScope must be "group" or "global"')
+    }
+    patch.delayTestUrlScope = record.delayTestUrlScope
+  }
+  if ('delayTestUrl' in record) {
+    if (typeof record.delayTestUrl !== 'string') throw invalid('delayTestUrl must be a string')
+    const value = record.delayTestUrl.trim()
+    if (value.length > 2048) throw invalid('delayTestUrl is too long')
+    if (value) {
+      let parsed: URL
+      try { parsed = new URL(value) } catch { throw invalid('delayTestUrl must be a valid URL') }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw invalid('delayTestUrl must use http or https')
+      }
+    }
+    patch.delayTestUrl = value
   }
   return patch
 }

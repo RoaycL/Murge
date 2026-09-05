@@ -52,7 +52,13 @@ export class AppSettingsService implements AppSettingsGateway {
         kernelSpecificVersion:
           typeof patch.kernelSpecificVersion === 'string'
             ? patch.kernelSpecificVersion
-            : current.kernelSpecificVersion
+            : current.kernelSpecificVersion,
+        delayTestUrlScope:
+          patch.delayTestUrlScope === 'group' || patch.delayTestUrlScope === 'global'
+            ? patch.delayTestUrlScope
+            : current.delayTestUrlScope,
+        delayTestUrl:
+          typeof patch.delayTestUrl === 'string' ? patch.delayTestUrl : current.delayTestUrl
       }
       await this.write(next)
       for (const listener of this.listeners) {

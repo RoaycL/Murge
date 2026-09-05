@@ -50,6 +50,10 @@ export interface AppSettings {
    * Empty string means none selected; the effective build falls back to stable.
    */
   kernelSpecificVersion: string
+  /** Which URL source interactive proxy delay tests prefer. */
+  delayTestUrlScope: 'group' | 'global'
+  /** Optional global HTTP(S) delay target; blank uses the safe built-in 204 URL. */
+  delayTestUrl: string
 }
 
 export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = Object.freeze({
@@ -59,8 +63,22 @@ export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = Object.freeze({
   tunDesired: false,
   kernelEnabled: true,
   kernelChannel: 'stable',
-  kernelSpecificVersion: ''
+  kernelSpecificVersion: '',
+  delayTestUrlScope: 'group',
+  delayTestUrl: ''
 })
+
+function parseDelayTestUrl(value: unknown): string {
+  if (typeof value !== 'string') return DEFAULT_APP_SETTINGS.delayTestUrl
+  const normalized = value.trim()
+  if (!normalized) return ''
+  try {
+    const parsed = new URL(normalized)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? normalized : ''
+  } catch {
+    return ''
+  }
+}
 
 /**
  * Coerce an on-disk JSON string into a complete {@link AppSettings}. Unknown or
@@ -97,7 +115,11 @@ export function parseAppSettings(value: string | null): AppSettings {
       kernelSpecificVersion:
         typeof parsed.kernelSpecificVersion === 'string'
           ? parsed.kernelSpecificVersion
-          : DEFAULT_APP_SETTINGS.kernelSpecificVersion
+          : DEFAULT_APP_SETTINGS.kernelSpecificVersion,
+      delayTestUrlScope:
+        parsed.delayTestUrlScope === 'global' ? 'global' : DEFAULT_APP_SETTINGS.delayTestUrlScope,
+      delayTestUrl:
+        parseDelayTestUrl(parsed.delayTestUrl)
     }
   } catch {
     return { ...DEFAULT_APP_SETTINGS }

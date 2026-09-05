@@ -25,6 +25,9 @@ export interface MihomoServiceStreams {
   secret?: string
   /** When false the push streams stay closed (e.g. no controller in production). */
   enabled?: boolean
+  /** Explicit group URLs parsed from the active runtime profile document. */
+  resolveGroupTestUrls?: () => Promise<Record<string, string | null>>
+  resolveDelayTestSettings?: () => Promise<{ scope: 'group' | 'global'; url: string }>
 }
 
 /**
@@ -38,8 +41,16 @@ export class MihomoService implements MihomoGateway {
   private readonly connectionsStream: MihomoStream<MihomoConnectionsSnapshot> | null
   private readonly logsStream: MihomoStream<MihomoLogMessage> | null
   private readonly errorListeners = new Set<(error: MihomoStreamError) => void>()
+  private readonly resolveGroupTestUrls?: MihomoServiceStreams['resolveGroupTestUrls']
+  private readonly resolveDelayTestSettings?: MihomoServiceStreams['resolveDelayTestSettings']
+  private groupTestUrlsPromise: Promise<Record<string, string | null>> | null = null
+  private groupTestUrlsExpiresAt = 0
+  private providerOwnersPromise: Promise<Map<string, string | null>> | null = null
+  private providerOwnersExpiresAt = 0
 
   constructor(private readonly client: MihomoClient, streams: MihomoServiceStreams) {
+    this.resolveGroupTestUrls = streams.resolveGroupTestUrls
+    this.resolveDelayTestSettings = streams.resolveDelayTestSettings
     const enabled = streams.enabled ?? true
     const parseHandler = (source: MihomoStreamError['source']) => (error: unknown) => this.emitError(source, 'parse', error)
     const connectionHandler = (source: MihomoStreamError['source']) => (error: unknown) => this.emitError(source, 'connection', error)
@@ -128,24 +139,37 @@ export class MihomoService implements MihomoGateway {
    * routes provider nodes through the provider health-check endpoint.
    */
   async groupMemberDelayTest(group: string, name: string, opts?: { timeout?: number }): Promise<MihomoDelayResult> {
-    const snapshot = await this.client.getProxies()
+    const [snapshot, explicitUrls, settings] = await Promise.all([
+      this.client.getProxies(),
+      this.getGroupTestUrls(),
+      this.resolveDelayTestSettings?.().catch(() => ({ scope: 'group' as const, url: '' })) ??
+        Promise.resolve({ scope: 'group' as const, url: '' })
+    ])
     const owner = snapshot.proxies[group]
     if (!owner || !Array.isArray(owner.all) || !owner.all.includes(name)) {
       throw new ProtocolError(ProtocolErrorCode.NOT_FOUND, `策略组 ${group} 中不存在成员 ${name}`)
     }
 
-    const testOptions = { ...opts, url: owner.testUrl }
+    // A null profile entry means this group intentionally omitted `url`.
+    // Do not reuse the controller's blank Selector value or a provider URL that
+    // mihomo inherited internally for an include-all-providers group: both make
+    // interactive results surprising. Missing profile data keeps the controller
+    // value as a compatibility fallback for temporary/mock groups.
+    const globalUrl = settings.url.trim() || null
+    const hasProfileEntry = Object.prototype.hasOwnProperty.call(explicitUrls, group)
+    const groupUrl = hasProfileEntry ? explicitUrls[group] : owner.testUrl?.trim() || null
+    const resolvedUrl = settings.scope === 'global' ? globalUrl : groupUrl || globalUrl
+    const testOptions = resolvedUrl ? { ...opts, url: resolvedUrl } : { ...opts }
     const member = snapshot.proxies[name]
     // A nested policy group is tested through /proxies/:name/delay. Only leaf
     // nodes are candidates for provider-specific health checks.
     if (!Array.isArray(member?.all)) {
       try {
-        const providers = await this.client.getProxyProviders()
-        for (const [providerName, provider] of Object.entries(providers.providers)) {
-          if (provider.proxies?.some((proxy) => proxy.name === name)) {
-            return this.client.providerDelayTest(providerName, name, testOptions)
-          }
-        }
+        const providerName = (await this.getProviderOwners()).get(name)
+        // null means the same controller name appeared in multiple providers;
+        // the ordinary proxy endpoint is authoritative and avoids testing the
+        // wrong provider record merely because it was enumerated first.
+        if (providerName) return this.client.providerDelayTest(providerName, name, testOptions)
       } catch (error) {
         // A controller/provider-list failure must not make a globally resolvable
         // node untestable; fall through to the standard proxy endpoint.
@@ -153,6 +177,33 @@ export class MihomoService implements MihomoGateway {
       }
     }
     return this.client.delayTest(name, testOptions)
+  }
+
+  /** Coalesce all concurrent members in a batch onto one bounded profile read. */
+  private getGroupTestUrls(): Promise<Record<string, string | null>> {
+    if (!this.resolveGroupTestUrls) return Promise.resolve({})
+    const now = Date.now()
+    if (this.groupTestUrlsPromise && now < this.groupTestUrlsExpiresAt) return this.groupTestUrlsPromise
+    this.groupTestUrlsExpiresAt = now + 1_000
+    this.groupTestUrlsPromise = this.resolveGroupTestUrls().catch(() => ({}))
+    return this.groupTestUrlsPromise
+  }
+
+  /** Provider-name index shared by every member of the current test batch. */
+  private getProviderOwners(): Promise<Map<string, string | null>> {
+    const now = Date.now()
+    if (this.providerOwnersPromise && now < this.providerOwnersExpiresAt) return this.providerOwnersPromise
+    this.providerOwnersExpiresAt = now + 1_000
+    this.providerOwnersPromise = this.client.getProxyProviders().then(({ providers }) => {
+      const owners = new Map<string, string | null>()
+      for (const [providerName, provider] of Object.entries(providers)) {
+        for (const proxy of provider.proxies ?? []) {
+          owners.set(proxy.name, owners.has(proxy.name) ? null : providerName)
+        }
+      }
+      return owners
+    })
+    return this.providerOwnersPromise
   }
 
   getRuleProviders(): Promise<MihomoRuleProvidersResponse> {

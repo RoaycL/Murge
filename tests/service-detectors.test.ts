@@ -180,8 +180,8 @@ describe('per-service detectors', () => {
   })
 
   it('detectService degrades unknown names and detector throws to an error row', async () => {
-    const unknown = await detectService('Murge' as never, scripted([]))
-    expect(unknown).toEqual({ name: 'Murge', status: 'error', region: null })
+    const unknown = await detectService('未知服务' as never, scripted([]))
+    expect(unknown).toEqual({ name: '未知服务', status: 'error', region: null })
     const all = await Promise.all(SERVICE_DETECTORS.map((detector) => detector.steps(scripted([{ status: null, body: '', headers: {} }]))))
     expect(all.every((entry: ServiceUnlockResult) => entry.status === 'error')).toBe(true)
   })

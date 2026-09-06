@@ -3,18 +3,22 @@ import { computed, onMounted, ref } from 'vue'
 import SurfaceCard from './SurfaceCard.vue'
 import { useNetworkMetadataStore, type NetworkMetadataRow } from '../stores/network-metadata'
 import { useLatencyStore } from '../stores/latency'
+import { useUnlockStore } from '../stores/unlock'
+import type { ServiceUnlockResult } from '@shared/unlock'
 import { networkMetadataMaskIp } from '@shared/network-metadata'
 
 const store = useNetworkMetadataStore()
 // Same Pinia instance the activity page probes: the drawer renders the latest
 // shared sample instead of firing its own duplicate measurement on open.
 const latency = useLatencyStore()
+const unlock = useUnlockStore()
 
 /** Privacy-forward default: mask every IP until the user explicitly reveals it. */
 const revealed = ref(false)
 
 onMounted(() => {
   void store.init()
+  if (Object.keys(unlock.results).length === 0) void unlock.testAll()
 })
 
 const rows = computed(() => store.rows)
@@ -62,6 +66,22 @@ function delayText(value: number | null): string {
 const gatewayText = computed(() => delayText(latency.gatewayMs))
 const dnsText = computed(() => delayText(latency.dnsMs))
 const proxyText = computed(() => delayText(latency.proxyMs))
+
+const unlockRows = computed(() => unlock.orderedResults())
+
+const STATUS_LABELS = {
+  supported: '支持',
+  unsupported: '不支持',
+  error: '测试失败'
+} as const
+
+function statusLabel(status: ServiceUnlockResult['status']): string {
+  return STATUS_LABELS[status]
+}
+
+function hasRegion(region: string | null): boolean {
+  return typeof region === 'string' && region.length > 0
+}
 </script>
 
 <template>
@@ -81,6 +101,29 @@ const proxyText = computed(() => delayText(latency.proxyMs))
         <strong role="cell">{{ proxyText }}<i v-if="proxyText !== '—'" class="delay-unit">ms</i></strong>
       </div>
     </div>
+
+    <div class="card-title-row unlock-title-row">
+      <span class="metric-label">服务解锁测试 <em v-if="unlock.testingAll" class="status">检测中…</em></span>
+      <div class="title-actions">
+        <button type="button" class="quiet-button" :disabled="unlock.testingAll" @click="unlock.testAll()">
+          {{ unlock.testingAll ? '检测中…' : '测试全部' }}
+        </button>
+      </div>
+    </div>
+    <div class="unlock-grid" role="table" aria-label="服务解锁测试结果">
+      <div v-for="row in unlockRows" :key="row.name" class="unlock-row" role="row">
+        <span class="unlock-name" role="cell" :title="row.name">{{ row.name }}</span>
+        <span class="unlock-verdict" role="cell">
+          <template v-if="unlock.testing[row.name]"><span class="unlock-pill pending">待检测</span></template>
+          <template v-else>
+            <span class="unlock-pill" :class="row.status">{{ statusLabel(row.status) }}</span>
+            <span v-if="hasRegion(row.region)" class="unlock-region">{{ row.region }}</span>
+          </template>
+        </span>
+        <button type="button" class="icon-control unlock-retest" :disabled="unlock.testing[row.name]" :aria-label="`重新测试 ${row.name}`" @click="unlock.testOne(row.name)">⟳</button>
+      </div>
+    </div>
+    <p v-if="unlock.error" class="inline-error" role="alert">{{ unlock.error }}</p>
 
     <div class="card-title-row info-title-row">
       <span class="metric-label">出口网络信息</span>
@@ -150,6 +193,27 @@ const proxyText = computed(() => delayText(latency.proxyMs))
 .provider-ip { font-weight: 650; font-variant-numeric: tabular-nums; }
 .provider-geo, .provider-asn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inline-error { margin: 12px 0 0; color: var(--app-danger, #d64f4f); font-size: 12px; }
+.unlock-title-row { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--app-divider); }
+.unlock-grid { display: grid; margin-top: 10px; }
+.unlock-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 1.2fr) minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  padding: 3px 0;
+  border-top: 1px solid var(--app-divider);
+  font-size: 12px;
+}
+.unlock-name { overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.unlock-verdict { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.unlock-pill { padding: 1px 8px; border-radius: 999px; font-size: 10px; font-weight: 600; white-space: nowrap; }
+.unlock-pill.supported { background: rgba(49, 201, 90, 0.14); color: var(--app-green); }
+.unlock-pill.unsupported { background: rgba(214, 79, 79, 0.13); color: var(--app-danger, #d64f4f); }
+.unlock-pill.error { background: rgba(214, 79, 79, 0.13); color: var(--app-danger, #d64f4f); }
+.unlock-pill.pending { background: rgba(133, 139, 149, 0.14); color: var(--app-muted); }
+.unlock-region { overflow: hidden; color: var(--app-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.unlock-retest { justify-self: end; }
 .quiet-button { min-height: 28px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: 7px; background: transparent; color: var(--app-muted); font-size: 11px; white-space: nowrap; flex-shrink: 0; }
 .quiet-button:disabled { opacity: 0.5; }
 </style>

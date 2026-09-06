@@ -1,4 +1,5 @@
 import type { MihomoLogMessage } from '@shared/mihomo-api'
+import { formatWallClock, resolveSystemTimeZone } from './format'
 
 export type LogLevel = 'debug' | 'info' | 'warning' | 'error'
 
@@ -41,6 +42,7 @@ export function normalizeLogMessage(message: MihomoLogMessage, id: number, now =
   }
 }
 
-export function serializeLogs(entries: readonly DisplayLogEntry[]): string {
-  return entries.map((entry) => `${entry.time}\t${entry.level.toUpperCase()}\t${redactLogText(entry.message)}`).join('\n') + (entries.length ? '\n' : '')
+/** Human-readable log export: local-zone wall-clock time (to the second) per line. */
+export function serializeLogs(entries: readonly DisplayLogEntry[], timeZone: string | null = resolveSystemTimeZone()): string {
+  return entries.map((entry) => `${formatWallClock(entry.time, { timeZone })}\t${entry.level.toUpperCase()}\t${redactLogText(entry.message)}`).join('\n') + (entries.length ? '\n' : '')
 }

@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import type { MihomoConfigSnapshot, MihomoDnsQueryType } from '../mihomo-api'
+import type { UnlockServiceName } from '../unlock'
+import { UNLOCK_SERVICES } from '../unlock'
 import type { OverrideInput } from '../overrides'
 import type { DnsEnhancement } from '../dns'
 import { isValidCidr, isValidDefaultNameserver, isValidDomainOrRule, isValidIp, isValidNameserver } from '../dns'
@@ -597,4 +599,12 @@ export function parseUsageRankLimit(input: unknown): number | undefined {
     throw invalid(`usage rank limit must be an integer between 1 and ${USAGE_MAX_BUCKETS}`)
   }
   return input
+}
+
+/** Validate an unlock-test service name against the preset set. */
+export function parseUnlockServiceName(input: unknown): UnlockServiceName {
+  if (typeof input !== 'string' || !(UNLOCK_SERVICES as readonly string[]).includes(input)) {
+    throw invalid(`invalid unlock service: ${UNLOCK_SERVICES.join(', ')}`)
+  }
+  return input as UnlockServiceName
 }

@@ -37,6 +37,8 @@ import { EncryptedProfileSourceStore } from './profiles/profile-source-store'
 import { ProfileService } from './profiles/profile-service'
 import { ProfileAutoReloadGateway } from './profiles/profile-auto-reload-gateway'
 import { parseProxyGroupOrder, parseProxyGroupTestUrls } from './profiles/proxy-group-order'
+import { parseProviderCatalog } from './profiles/provider-configs'
+import { ServiceUnlockService } from './services/service-unlock-service'
 import { ProxySelectionStore } from './profiles/proxy-selection-store'
 import { ProxySelectionService } from './services/proxy-selection-service'
 import { ProxySelectionGateway } from './services/proxy-selection-gateway'
@@ -1124,8 +1126,22 @@ app.whenReady().then(async () => {
       return active ? parseProxyGroupOrder(active.document) : []
     }
   })
+  // 解锁测试 probes go through the kernel's LIVE mixed port (clash-verge-rev
+  // semantics) so the verdict is about the selected node's egress regardless
+  // of system-proxy state; kernel down → system default (TUN still covers it).
+  const serviceUnlockService = new ServiceUnlockService({
+    resolveMixedPort: async () => {
+      try {
+        const config = await gateway.getConfig()
+        return config['mixed-port'] ?? null
+      } catch {
+        return null
+      }
+    }
+  })
   disposeIpc = registerIpc({
     internetLatency: internetLatencyService,
+    unlock: serviceUnlockService,
     kernel: queuedKernel,
     kernelManager: kernelManagerService,
     // The selection-recording wrapper is what the renderer talks to; the raw
@@ -1150,7 +1166,9 @@ app.whenReady().then(async () => {
     usageHistory: usageHistoryService,
     networkMetadata: networkMetadataService,
     resolveActiveGroupOrder: async () =>
-      parseProxyGroupOrder((await resolveEnhancedActiveDocument()) ?? '')
+      parseProxyGroupOrder((await resolveEnhancedActiveDocument()) ?? ''),
+    resolveActiveProviderCatalog: async () =>
+      parseProviderCatalog((await resolveEnhancedActiveDocument()) ?? '')
   })
   createWindow()
   const showMainWindow = (): void => {

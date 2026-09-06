@@ -1,4 +1,4 @@
-import type { KernelGateway, KernelManagerGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway, OverridesGateway, DnsEnhancementGateway, SnifferEnhancementGateway, TunConfigGateway, CoreSettingsGateway, GeodataSettingsGateway, UsageHistoryGateway, NetworkMetadataGateway } from '@shared/gateways'
+import type { KernelGateway, KernelManagerGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway, OverridesGateway, DnsEnhancementGateway, SnifferEnhancementGateway, TunConfigGateway, CoreSettingsGateway, GeodataSettingsGateway, UsageHistoryGateway, NetworkMetadataGateway, ServiceUnlockSampler } from '@shared/gateways'
 import type { UsageBucket, UsageWindow, UsageRanking, UsageHistorySnapshot, UsageRankingEntry, UsageCapacity } from '@shared/usage'
 import { aggregateUsageWindow, rankUsageBuckets, usageCapacity } from '@shared/usage'
 import type { NetworkMetadata, NetworkMetadataProvider, NetworkMetadataSnapshot, NetworkMetadataState } from '@shared/network-metadata'
@@ -483,6 +483,7 @@ export interface FakeContainer {
   usageHistory: FakeUsageHistoryGateway
   networkMetadata: FakeNetworkMetadataGateway
   internetLatency: { sample(): Promise<{ gatewayMs: number | null; dnsMs: number | null; proxyMs: number | null; proxyNode: string | null }> }
+  unlock: ServiceUnlockSampler
 }
 
 export class FakeGeodataSettingsGateway implements GeodataSettingsGateway {
@@ -872,6 +873,10 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
     internetLatency: {
       sample: async () => ({ gatewayMs: 2, dnsMs: 6, proxyMs: 42, proxyNode: '香港 01' })
     },
-    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata, internetLatency: { sample: async () => ({ gatewayMs: 2, dnsMs: 6, proxyMs: 42, proxyNode: '香港 01' }) } }
+    unlock: {
+      sample: async () => [],
+      testOne: async (name: string) => ({ name, status: 'error', region: null })
+    },
+    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata, internetLatency: { sample: async () => ({ gatewayMs: 2, dnsMs: 6, proxyMs: 42, proxyNode: '香港 01' }) }, unlock: { sample: async () => [], testOne: async (name) => ({ name, status: 'error', region: null }) } }
   }
 }

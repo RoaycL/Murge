@@ -1,6 +1,7 @@
 import { IPC } from '@shared/ipc'
 import type { IpcDeps } from '@shared/gateways'
-import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions, parseStartupEnabled, parseDnsQuery, parseLogAfterSeq, parseAppSettingsPatch, parseKernelEnabled, parseKernelChannel, parseKernelVersion, parseOverrideInput, parseOverrideId, parseOverrideEnabled, parseOverrideMove, parseDnsEnhancement, parseSnifferEnhancement, parseTunConfig, parseCoreSettings, parseGeodataSettings, parseProxyBypassPolicy, parseUsageWindow, parseUsageRanking, parseUsageRankLimit, parseNetworkMetadataProviderId } from '@shared/schemas/ipc'
+import type { ProfileProviderCatalog } from '@shared/profiles'
+import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions, parseStartupEnabled, parseDnsQuery, parseLogAfterSeq, parseAppSettingsPatch, parseKernelEnabled, parseKernelChannel, parseKernelVersion, parseOverrideInput, parseOverrideId, parseOverrideEnabled, parseOverrideMove, parseDnsEnhancement, parseSnifferEnhancement, parseTunConfig, parseCoreSettings, parseGeodataSettings, parseProxyBypassPolicy, parseUsageWindow, parseUsageRanking, parseUsageRankLimit, parseNetworkMetadataProviderId, parseUnlockServiceName } from '@shared/schemas/ipc'
 import {
   parseConfigEdit,
   parseImportRequest,
@@ -13,6 +14,7 @@ import {
 import type { ConfigEdit } from '@shared/profiles'
 import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
 import { parseProxyGroupOrder } from '../profiles/proxy-group-order'
+import { parseProviderCatalog } from '../profiles/provider-configs'
 
 /** A single IPC handler. The event is opaque to keep the factory Electron-free. */
 export type IpcHandler = (event: unknown, ...args: unknown[]) => unknown | Promise<unknown>
@@ -29,6 +31,8 @@ export type IpcHandler = (event: unknown, ...args: unknown[]) => unknown | Promi
 export interface IpcHandlerOptions {
   /** Runtime-enhanced profile order; defaults to the raw document in tests/legacy callers. */
   resolveActiveGroupOrder?: () => Promise<string[]>
+  /** Runtime-enhanced profile document for the provider catalog; same fallback contract. */
+  resolveActiveProviderCatalog?: () => Promise<ProfileProviderCatalog>
 }
 
 export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {}): Record<string, IpcHandler> {
@@ -67,6 +71,8 @@ export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {})
     [IPC.mihomoPatchConfig]: async (_event, patch) => mihomo.patchConfig(parseConfigPatch(patch)),
     [IPC.mihomoGetProxies]: async () => mihomo.getProxies(),
     [IPC.mihomoInternetLatency]: async () => internetLatency.sample(),
+    [IPC.unlockTestAll]: async () => deps.unlock.sample(),
+    [IPC.unlockTestOne]: async (_event, rawName) => deps.unlock.testOne(parseUnlockServiceName(rawName)),
     [IPC.mihomoSelectProxy]: async (_event, group, name) => {
       const selection = parseProxySelection(group, name)
       return mihomo.selectProxy(selection.group, selection.name)
@@ -101,6 +107,14 @@ export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {})
       if (!active) return []
       const profile = await profiles.getProfile(active.id)
       return parseProxyGroupOrder(profile.document)
+    },
+    [IPC.profilesGetActiveProviderCatalog]: async () => {
+      if (options.resolveActiveProviderCatalog) return options.resolveActiveProviderCatalog()
+      const metas = await profiles.listProfiles()
+      const active = metas.find((meta) => meta.active)
+      if (!active) return { proxy: [], rule: [] }
+      const profile = await profiles.getProfile(active.id)
+      return parseProviderCatalog(profile.document)
     },
     [IPC.profilesList]: async () => profiles.listProfiles(),
     [IPC.profilesGet]: async (_event, id) => profiles.getProfile(parseProfileName(id)),

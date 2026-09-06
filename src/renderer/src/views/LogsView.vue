@@ -3,6 +3,7 @@ import { onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useLogsStore } from '../stores/logs'
 import { serializeLogs } from '../lib/logs'
+import { formatWallClock } from '../lib/format'
 import AppSelect from '../components/AppSelect.vue'
 import EmptyState from '../components/EmptyState.vue'
 
@@ -46,7 +47,7 @@ onMounted(store.connect)
       <EmptyState v-if="!visibleEntries.length && status !== 'loading'" icon="logs" :title="search || level !== 'all' ? '没有匹配的日志' : '暂无运行日志'" :detail="search || level !== 'all' ? '请调整筛选条件或日志级别。' : '内核运行后，实时日志会显示在这里。'" />
       <div v-else-if="!visibleEntries.length" class="logs-empty">正在等待日志…</div>
       <div v-for="entry in visibleEntries" :key="entry.id" class="log-row">
-        <time>{{ new Date(entry.time).toLocaleTimeString([], { hour12: false }) }}</time>
+        <time>{{ formatWallClock(entry.time) }}</time>
         <span class="log-level" :class="`level-${entry.level}`">{{ entry.level }}</span>
         <code>{{ entry.message }}</code>
       </div>

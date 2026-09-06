@@ -10,6 +10,7 @@ import type {
 import type { DnsEnhancement, DnsSnapshot } from './dns'
 import type { SnifferEnhancement, SnifferSnapshot } from './sniffer'
 import type { GeodataSettings } from './geodata'
+import type { ServiceUnlockResult, UnlockServiceName } from './unlock'
 import type { UsageWindow, UsageRanking, UsageHistorySnapshot, UsageRankingEntry, UsageCapacity } from './usage'
 import type { NetworkMetadataProvider, NetworkMetadataSnapshot, NetworkMetadataState } from './network-metadata'
 import type {
@@ -94,6 +95,13 @@ export interface InternetLatencySampler {
     proxyMs: number | null
     proxyNode: string | null
   }>
+}
+
+/** Common-service unlock sampler for the 网络诊断 drawer (支持/不支持 + 区域). */
+export interface ServiceUnlockSampler {
+  sample(): Promise<ServiceUnlockResult[]>
+  /** Re-test a single preset service (row-level refresh). */
+  testOne(name: UnlockServiceName): Promise<ServiceUnlockResult>
 }
 
 export interface MihomoGateway {
@@ -360,6 +368,8 @@ export interface IpcDeps {
   geodata: GeodataSettingsGateway
   usageHistory: UsageHistoryGateway
   networkMetadata: NetworkMetadataGateway
+  /** Common-service unlock sampler for the 网络诊断 drawer. */
+  unlock: ServiceUnlockSampler
   updates: UpdatesGateway
   tun: TunGateway
 }

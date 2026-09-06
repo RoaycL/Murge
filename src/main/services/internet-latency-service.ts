@@ -1,7 +1,6 @@
 import { Resolver } from 'node:dns'
 import { measureGatewayRtt, type GatewayRttResult } from './route-latency-service'
 import type { MihomoGateway } from '@shared/gateways'
-import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
 
 /**
  * One INTERNET-latency sample for the activity card:
@@ -29,7 +28,7 @@ export interface InternetLatencySample {
 
 /**
  * System-resolver fallback: a FRESH Resolver instance per probe (no process
- * cache), asking an NS record for a random label under a busy TLD. An ANSWER
+ * cache), asking an NS record for a random label under a real public zone. An ANSWER
  * OR a definitive negative reply (ENODATA "no records", ENOTFOUND "NXDOMAIN")
  * proves the upstream round trip completed — only timeouts/network errors
  * mean the measurement is unusable.
@@ -59,9 +58,9 @@ export interface LatencyServiceOptions {
   measureGatewayRttFn?: () => Promise<GatewayRttResult>
   nowFn?: () => number
   /**
-   * System-resolver fallback for when the kernel's DNS module is disabled
-   * (`GET /dns/query` answers "DNS section is disabled" then). Returns whether
-   * the upstream ANSWERED — NXDOMAIN counts; only timeouts/network errors fail.
+   * System-resolver fallback when the kernel DNS query cannot provide a
+   * measurement. Returns whether the upstream ANSWERED — NXDOMAIN counts;
+   * only timeouts/network errors fail.
    */
   systemDnsProbeFn?: (label: string) => Promise<'answered' | 'failed'>
 }
@@ -115,28 +114,21 @@ export class InternetLatencyService {
   }
 
   private async sampleDns(): Promise<number | null> {
-    // The kernel's resolver answers when its DNS module is enabled. Only its
-    // explicit "DNS section is disabled" response permits a system-resolver
-    // fallback; controller/auth/timeout failures must remain visibly unavailable.
+    // Prefer the resolver that actually serves mihomo traffic. If that probe
+    // cannot produce a timing (DNS disabled, exchange timeout, controller not
+    // ready during startup, etc.), perform a real bounded query through the OS
+    // resolver. This keeps the DNS slot independent from controller health and
+    // still never invents a number: both paths are timed around an actual query.
     const kernelStarted = this.nowFn()
     const label = `murge-latency-${kernelStarted.toString(36)}.example.com`
     try {
       await this.mihomo.dnsQuery(label, 'NS')
       return this.nowFn() - kernelStarted
-    } catch (error) {
-      if (!this.isDnsDisabled(error)) return null
+    } catch {
       const systemStarted = this.nowFn()
       const answered = await this.systemDnsProbeFn(label).catch(() => 'failed' as const)
       return answered === 'answered' ? this.nowFn() - systemStarted : null
     }
-  }
-
-  private isDnsDisabled(error: unknown): boolean {
-    if (error instanceof ProtocolError) {
-      return error.code === ProtocolErrorCode.UPSTREAM_HTTP_ERROR &&
-        /dns section is disabled/i.test(error.details?.reason ?? error.message)
-    }
-    return error instanceof Error && /dns section is disabled/i.test(error.message)
   }
 
   private async sampleProxy(): Promise<{ proxyMs: number | null; proxyNode: string | null }> {

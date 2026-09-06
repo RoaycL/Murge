@@ -51,7 +51,6 @@ import { KernelManagerService } from './kernel/kernel-manager-service'
 import { runQuitFlow } from './quit-guard'
 import { TrayController } from './tray/tray-controller'
 import { createElectronTray } from './tray/electron-tray'
-import { createRuntimeIcon } from './tray/runtime-icon'
 import { resolveRuntimeAccent } from '@shared/runtime-accent'
 import { StartupService } from './startup/service'
 import { ElectronStartupAdapter } from './startup/electron-adapter'
@@ -1168,7 +1167,10 @@ app.whenReady().then(async () => {
     window.show()
     window.focus()
   }
-  const trayView = createElectronTray(nativeTheme.shouldUseDarkColors)
+  const trayIconRoot = is.dev
+    ? join(app.getAppPath(), 'resources', 'tray')
+    : join(process.resourcesPath, 'tray')
+  const trayView = createElectronTray(trayIconRoot, nativeTheme.shouldUseDarkColors)
   trayController = new TrayController({
     productName: brand.productName,
     // Tray start/stop goes through the ONE mode-transition queue like every
@@ -1189,9 +1191,6 @@ app.whenReady().then(async () => {
     )
     const dark = nativeTheme.shouldUseDarkColors
     trayView.setRuntimeAppearance(accent, dark)
-    if (process.platform === 'win32' && mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setIcon(createRuntimeIcon(accent, dark, 256))
-    }
   }
   const unsubscribeProxyAppearance = systemProxyService.onStatus(updateRuntimeAppearance)
   const unsubscribeTunAppearance = tunInstance.onStatus(updateRuntimeAppearance)

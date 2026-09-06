@@ -4,6 +4,7 @@ import type { AppInfo } from '@shared/app-info'
 import type { BrandConfig } from '@shared/brand'
 import { serializeDiagnosticBundle, type DiagnosticInput } from '../lib/diagnostics'
 import { useUpdatesStore } from '../stores/updates'
+import BrandMark from '../components/BrandMark.vue'
 
 const brand = ref<BrandConfig | null>(null)
 const info = ref<AppInfo | null>(null)
@@ -84,7 +85,7 @@ async function exportDiagnostics(): Promise<void> {
 </script>
 
 <template><div class="page-shell about-view"><h1>关于</h1>
-  <section class="surface-card about-product"><strong>{{ brand?.productName ?? '—' }}</strong><span>版本 {{ info?.version ?? '—' }} · {{ info?.platform ?? '—' }} / {{ info?.arch ?? '—' }}</span><p>{{ brand?.description }}</p></section>
+  <section class="surface-card about-product"><div class="about-product-title"><BrandMark :size="38" /><strong>{{ brand?.productName ?? '—' }}</strong></div><span>版本 {{ info?.version ?? '—' }} · {{ info?.platform ?? '—' }} / {{ info?.arch ?? '—' }}</span><p>{{ brand?.description }}</p></section>
   <section><h2>更新</h2><div class="surface-card general-info">
     <div class="update-row"><span><strong>检查并安装更新</strong><small>发布新版本后会自动推送，也可在此手动检查。</small></span><button type="button" :disabled="busy || updates.state.phase === 'checking' || updates.state.phase === 'downloading'" @click="checkUpdates">检查更新</button></div>
     <p v-if="statusText" class="update-status" :class="statusClass">{{ statusText }}</p>
@@ -101,6 +102,8 @@ async function exportDiagnostics(): Promise<void> {
 </div></template>
 
 <style scoped>
+.about-product-title { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.about-product-title strong { font-size: 20px; }
 .update-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .update-row span { display: flex; flex-direction: column; gap: 0.25rem; }
 .update-status { margin: 0.5rem 0 0; color: var(--fg-secondary, #889); }

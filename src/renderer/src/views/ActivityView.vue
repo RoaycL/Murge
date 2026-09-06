@@ -213,7 +213,10 @@ const chartBars = computed<number[]>(() => {
       </SurfaceCard>
 
     </section>
-    <DetailDrawer :open="Boolean(summaryDrawer)" :title="summaryDrawer === 'network' ? '网络信息' : summaryDrawer === 'usage' ? '用量历史' : '连接拓扑'" @close="summaryDrawer = null"><NetworkMetadataPanel v-if="summaryDrawer === 'network'" /><UsageHistoryPanel v-else-if="summaryDrawer === 'usage'" /><TopologyPanel v-else-if="summaryDrawer === 'topology'" /></DetailDrawer>
+    <DetailDrawer :open="Boolean(summaryDrawer)" :title="summaryDrawer === 'network' ? '网络信息' : summaryDrawer === 'usage' ? '用量历史' : '连接拓扑'" @close="summaryDrawer = null">
+      <template v-if="summaryDrawer === 'network'" #actions><button type="button" class="drawer-probe-button" :disabled="latency.state === 'probing'" @click="latency.probe()">{{ latency.state === 'probing' ? '检测中…' : '重新检测' }}</button></template>
+      <NetworkMetadataPanel v-if="summaryDrawer === 'network'" /><UsageHistoryPanel v-else-if="summaryDrawer === 'usage'" /><TopologyPanel v-else-if="summaryDrawer === 'topology'" />
+    </DetailDrawer>
   </div>
 </template>
 
@@ -249,6 +252,17 @@ const chartBars = computed<number[]>(() => {
 .metric-dimmed {
   color: var(--app-muted);
 }
+.drawer-probe-button {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--app-divider);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--app-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.drawer-probe-button:disabled { opacity: 0.5; cursor: default; }
 .online-dot.pending { opacity: 0.72; }
 .online-dot.offline { opacity: 0.48; animation: none; }
 .pill-dim {

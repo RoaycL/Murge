@@ -53,7 +53,6 @@ const DIAG_LABELS = {
 } as const
 
 const diagLabel = computed(() => DIAG_LABELS[latency.state])
-const diagBusy = computed(() => latency.state === 'probing')
 
 /** 每一格：实测到显示（ms 保留整数；未测到显示 em dash），与活动页口径一致。 */
 function delayText(value: number | null): string {
@@ -67,10 +66,7 @@ const proxyText = computed(() => delayText(latency.proxyMs))
 
 <template>
   <SurfaceCard class="network-card">
-    <div class="diag-title-row">
-      <span class="metric-label">网络诊断 <em class="status">{{ diagLabel }}</em></span>
-      <button type="button" class="quiet-button" :disabled="diagBusy" @click="latency.probe()">重新检测</button>
-    </div>
+    <div class="diag-title-row"><span class="metric-label">网络诊断 <em class="status">{{ diagLabel }}</em></span></div>
     <div class="diag-grid" role="table" aria-label="网络诊断结果">
       <div class="diag-row" role="row">
         <span role="cell">路由网关</span>
@@ -119,7 +115,7 @@ const proxyText = computed(() => delayText(latency.proxyMs))
 .card-title-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .title-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .status { font-style: normal; color: var(--app-muted); font-size: 10px; margin-left: 6px; }
-.diag-title-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.diag-title-row { display: flex; align-items: center; min-height: 28px; }
 .diag-grid { display: grid; margin-top: 10px; }
 .diag-row {
   display: flex;

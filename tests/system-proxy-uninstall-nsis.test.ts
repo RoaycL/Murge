@@ -90,4 +90,15 @@ describe('uninstall-restore.nsh customUnInstall hook', () => {
     expect(source).not.toContain('Abort')
     expect(source).not.toContain('SetErrorLevel 1')
   })
+
+  it('recreates only an existing desktop shortcut so upgraded icon resources are visible', () => {
+    const installStart = source.indexOf('!macro customInstall')
+    const installEnd = source.indexOf('!macroend', installStart)
+    const install = source.slice(installStart, installEnd)
+    expect(install).toContain('IfFileExists "$newDesktopLink" 0 DesktopIconRefreshDone')
+    expect(install).toContain('Delete "$newDesktopLink"')
+    expect(install).toContain('CreateShortCut "$newDesktopLink" "$appExe"')
+    expect(install).toContain('WinShell::SetLnkAUMI "$newDesktopLink" "${APP_ID}"')
+    expect(install).toContain('SHChangeNotify')
+  })
 })

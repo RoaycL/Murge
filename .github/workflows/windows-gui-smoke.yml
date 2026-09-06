@@ -27,6 +27,9 @@ jobs:
         run: npm ci --include=dev
         env:
           NODE_ENV: development
+      # Electron 42+ no longer downloads its binary via a postinstall script.
+      - name: Ensure Electron binary is downloaded
+        run: npx install-electron --no
       - name: Build Windows installer
         shell: pwsh
         run: |

@@ -77,8 +77,16 @@ jobs:
         env:
           NODE_ENV: development
 
+      # Electron 42+ no longer downloads its binary via a postinstall script.
+      # Trigger the download explicitly so a missing binary FAILS the probe
+      # (ELECTRON_PROBE_REQUIRED) instead of being silently skipped.
+      - name: Ensure Electron binary is downloaded
+        run: npx install-electron --no
+
       - name: Run Electron redirect runtime probe
         run: npx vitest run tests/electron-redirect-runtime.test.ts
+        env:
+          ELECTRON_PROBE_REQUIRED: "1"
 
   kernel-real-windows:
     name: Real mihomo kernel integration (Windows)
@@ -300,6 +308,11 @@ jobs:
         run: npm ci --include=dev
         env:
           NODE_ENV: development
+
+      # Electron 42+ no longer downloads its binary via a postinstall script;
+      # electron-builder needs the binary to package installers.
+      - name: Ensure Electron binary is downloaded
+        run: npx install-electron --no
 
       - name: Resolve brand environment
         shell: pwsh

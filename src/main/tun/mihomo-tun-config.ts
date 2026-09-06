@@ -20,6 +20,9 @@ export interface MihomoTunConfigOptions {
   /** Optional typed TUN config model. When present its fields override the safe
    *  defaults and are folded into the `tun:` block the owned adapter enables. */
   tunConfig?: TunConfigModel
+  /** Start the privileged core with TUN dormant; it can then be enabled on the
+   *  same process through the authenticated controller. */
+  tunEnabled?: boolean
 }
 
 const PORT_MIN = 1024
@@ -89,7 +92,7 @@ export function generateMihomoTunConfig(options: MihomoTunConfigOptions): string
 
   const tunLines = [
     'tun:',
-    '  enable: true',
+    `  enable: ${options.tunEnabled ?? true}`,
     `  device: ${device}`,
     `  stack: ${stack}`
   ]
@@ -161,7 +164,7 @@ export function mihomoTunConfigErrors(text: string): string[] {
   else {
     const tun = mapping(tunNode, ALLOW_TUN_KEYS, 'tun', errors)
     requireExactKeys(tun, TUN_KEYS, 'tun', errors)
-    scalarEquals(tun, 'enable', true, errors)
+    scalarMatches(tun, 'enable', value => typeof value === 'boolean', errors, 'tun.enable must be a boolean')
     // auto-route / auto-detect-interface / strict-route are runtime-tunable via
     // the TUN config model; only their type is constrained here.
     scalarMatches(tun, 'auto-route', value => typeof value === 'boolean', errors, 'auto-route must be a boolean')
@@ -279,13 +282,13 @@ function validateRouteList(node: Node | undefined, label: string, errors: string
 /* -------------------------------------------------------------------------- */
 
 /**
- * The service enforces a hard 64 KiB ceiling on the submitted profile
+ * The service enforces a hard 2 MiB ceiling on the submitted profile
  * (`maxProfileBytes` in native/tun-service/protocol.go). Real subscriptions sit
- * far below it because `rule-providers` / `proxy-providers` are URLs that mihomo
- * fetches itself, but an inlined ruleset can exceed it — fail with a legible
- * message instead of letting the service close the pipe without a response.
+ * below it when `rule-providers` / `proxy-providers` remain remote URLs, while
+ * still leaving room for sizeable inline rules. Fail with a legible message
+ * instead of letting the service close the pipe without a response.
  */
-export const TUN_PROFILE_MAX_BYTES = 64 * 1024
+export const TUN_PROFILE_MAX_BYTES = 2 * 1024 * 1024
 
 /** TUN requires the DNS module to be enabled; its resolution mode remains user intent. */
 const TUN_REQUIRED_DNS = {
@@ -409,6 +412,8 @@ export interface ProxiedTunConfigOptions {
   tunConfig?: TunConfigModel
   core?: CoreSettings
   geodata?: GeodataSettings
+  /** Defaults to true for compatibility with the legacy start-on-enable path. */
+  tunEnabled?: boolean
 }
 
 /**
@@ -479,10 +484,11 @@ export function generateProxiedTunConfig(options: ProxiedTunConfigOptions): stri
   }
 
   // `tun` is re-added on top of the transform that intentionally removed it.
+  const tunEnabled = options.tunEnabled ?? true
   const tunBlock: Record<string, unknown> = model
-    ? { enable: true, ...buildTunBlock({ ...model, device, stack }) }
+    ? { enable: tunEnabled, ...buildTunBlock({ ...model, device, stack }) }
     : {
-        enable: true,
+        enable: tunEnabled,
         device,
         stack,
         'auto-route': true,
@@ -595,7 +601,7 @@ export function proxiedTunConfigErrors(text: string): string[] {
     errors.push('tun must be a mapping')
   } else {
     const block = tun as Record<string, unknown>
-    if (block.enable !== true) errors.push('tun.enable must equal true')
+    if (typeof block.enable !== 'boolean') errors.push('tun.enable must be a boolean')
     if (typeof block.device !== 'string' || !DEVICE_PATTERN.test(block.device)) errors.push('tun.device is invalid')
     if (typeof block.stack !== 'string' || !STACKS.has(block.stack as MihomoTunStack)) errors.push('tun.stack is invalid')
     if (block.mtu !== undefined && (typeof block.mtu !== 'number' || !isValidTunMtu(block.mtu))) {

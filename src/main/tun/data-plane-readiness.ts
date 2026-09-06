@@ -46,14 +46,13 @@ export async function waitForTunDataPlaneReady(
   while (!signal.aborted) {
     try {
       await client.getVersion(signal)
-      for (const url of urls) {
-        try {
-          await client.delayTest('DIRECT', { url, timeout: probeTimeoutMs, signal })
-          return
-        } catch {
-          if (signal.aborted) break
-        }
-      }
+      // Regional connectivity endpoints are alternatives, not a sequence. The
+      // first success proves the path; a blocked Microsoft host must not delay
+      // the available Huawei probe by a full request timeout (or vice versa).
+      await Promise.any(urls.map((url) =>
+        client.delayTest('DIRECT', { url, timeout: probeTimeoutMs, signal })
+      ))
+      return
     } catch {
       // The child may still be binding its controller; retry until the owner
       // aborts the bounded startup window.

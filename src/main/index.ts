@@ -15,7 +15,8 @@ import { TempKernelConfigStore } from './kernel/config-store'
 import { findFreePort, MihomoKernelConfigStore } from './kernel/mihomo-config-store'
 import { randomSecret } from './kernel/mihomo-config'
 import { ControllerReadyKernelGateway } from './kernel/controller-ready-gateway'
-import { LateBoundKernelGateway, SingleKernelGateway } from './kernel/single-kernel-gateway'
+import { LateBoundKernelGateway } from './kernel/single-kernel-gateway'
+import { PrivilegedServiceKernelGateway } from './kernel/privileged-service-gateway'
 import { createSystemProxy } from './system-proxy/factory'
 import { SystemProxyService } from './system-proxy/service'
 import { WindowsSystemProxyAdapter } from './system-proxy/adapters/windows-adapter'
@@ -68,7 +69,7 @@ import { GeodataSettingsService } from './kernel/geodata-settings-service'
 import { UpdateService } from './updates/service'
 import { ElectronUpdaterDriver } from './updates/electron-updater-driver'
 import { TunCoordinator, GatedTunMutationAdapter } from './tun/coordinator'
-import { MihomoOwnedTunAdapter } from './tun/mihomo-owned-adapter'
+import { MihomoHotSwitchTunAdapter } from './tun/hot-switch-adapter'
 import { TunConfigService } from './tun/tun-config-service'
 import { TunServiceClient } from './tun/service-client'
 import { NamedPipeTunServiceTransport } from './tun/named-pipe-transport'
@@ -151,7 +152,7 @@ if (!is.dev) {
 }
 
 // Created inside app.whenReady; held here so the quit path can stop it.
-let kernel: KernelSupervisor | null = null
+let kernel: KernelGateway | null = null
 let mihomo: MihomoService | null = null
 let systemProxy: SystemProxyService | null = null
 let mockServer: MockMihomoServerHandle | null = null
@@ -697,7 +698,15 @@ app.whenReady().then(async () => {
     settings: appSettingsService,
     workspaceRoot: productionKernelRoot
   })
-  const kernelInstance = new KernelSupervisor(
+  const tunSupported = !is.dev && process.platform === 'win32'
+  // Windows production uses the installed LocalSystem service as the ONE core
+  // host in both ordinary and TUN modes. The same client is also used by the
+  // liveness monitor, so ownership cannot split across independent handles.
+  const tunServiceClient = tunSupported
+    ? new TunServiceClient(new NamedPipeTunServiceTransport(tunServiceIdentity(brand.appId).pipeName))
+    : null
+
+  const kernelSupervisor = new KernelSupervisor(
     {
       resolver: is.dev
         ? createKernelResolver({ appPath: app.getAppPath(), mode: 'fixture' })
@@ -752,6 +761,58 @@ app.whenReady().then(async () => {
     },
     { readinessPattern: is.dev ? /fixture-ready/ : null }
   )
+  const privilegedKernel = tunSupported && !hasArg('--kernel-smoke')
+    ? new PrivilegedServiceKernelGateway(
+        tunServiceClient!,
+        () => ({
+          controllerPort: productionControllerPort!,
+          mixedPort: productionMixedPort!,
+          secret: productionSecret!
+        }),
+        {
+          readActiveDocument: resolveEnhancedActiveDocument,
+          readTunConfig: () => tunConfigService.readConfig(),
+          readCore: () => coreSettingsService.getRaw(),
+          readGeodata: () => geodataSettingsService.getRaw()
+        },
+        {
+          waitUntilReady: async ({ controllerPort, secret, signal }) => {
+            const client = new MihomoClient(`http://127.0.0.1:${controllerPort}`, secret, { timeoutMs: 750 })
+            while (!signal.aborted) {
+              try {
+                const version = await client.getVersion(signal)
+                return { version: version.version }
+              } catch {
+                await new Promise<void>((resolve) => {
+                  const timer = setTimeout(done, 100)
+                  function done(): void {
+                    clearTimeout(timer)
+                    signal.removeEventListener('abort', done)
+                    resolve()
+                  }
+                  signal.addEventListener('abort', done, { once: true })
+                })
+              }
+            }
+            throw new ProtocolError(ProtocolErrorCode.KERNEL_START_TIMEOUT, 'privileged mihomo controller did not become ready')
+          }
+        },
+        `${brand.shortName} TUN`,
+        10_000,
+        () => kernelManagerService.isEnabled()
+      )
+    : null
+  // A service-owned core surviving an abnormal GUI exit may still own TUN
+  // routes. Stop it first, then replay the durable intent through the normal
+  // startup coordinator. Normal launches therefore never inherit unknown state.
+  if (privilegedKernel) {
+    await privilegedKernel.initialize().catch((error) => {
+      // A delayed Windows service can still be starting. Keep the UI usable;
+      // the gateway's bounded start retry and runtime-intent recovery take over.
+      console.warn('[kernel] privileged service startup reconciliation deferred:', error)
+    })
+  }
+  const kernelInstance: KernelGateway = privilegedKernel ?? kernelSupervisor
   kernel = kernelInstance
   // Await the (mock or disabled) controller gateway before wiring IPC so the
   // renderer's first pull always sees a live controller in dev.
@@ -883,24 +944,10 @@ app.whenReady().then(async () => {
     })
   }, PROXY_GUARD_INTERVAL_MS)
 
-  const tunSupported = !is.dev && process.platform === 'win32'
-  // One pipe transport + client shared by the adapter (enable/restore) and the
-  // liveness probe, so both observe the SAME service session.
-  const tunServiceClient = tunSupported
-    ? new TunServiceClient(
-        new NamedPipeTunServiceTransport(tunServiceIdentity(brand.appId).pipeName)
-      )
-    : null
   const tunAdapter = tunSupported
-    ? new MihomoOwnedTunAdapter(
-        tunServiceClient!,
-        // Single-kernel model: the elevated TUN child reuses the SAME controller,
-        // mixed port and secret as the main kernel, so the data plane (bound to
-        // the production controller) and the owned system proxy (aimed at the
-        // production mixed port) keep working whichever host is live. The child
-        // and the main kernel are mutually exclusive (both bind these ports), but
-        // the logical kernel the app sees never changes ports.
-        async () => ({
+    ? new MihomoHotSwitchTunAdapter(
+        gateway,
+        () => ({
           controllerPort: productionControllerPort!,
           mixedPort: productionMixedPort!,
           secret: productionSecret!
@@ -911,18 +958,8 @@ app.whenReady().then(async () => {
             await waitForTunDataPlaneReady(client, signal)
           }
         },
-        20_000,
         async () => tunConfigService.readConfig(),
-        {
-          // TUN runs the SAME enhanced document as the main kernel, so enabling it
-          // carries the user's proxies, groups, providers and rules (a real proxy)
-          // rather than the DIRECT-only bootstrap. With no active profile the
-          // adapter falls back to DIRECT: a rule-mode config with no proxies would
-          // reference groups that do not exist and mihomo would refuse to start.
-          readActiveDocument: resolveEnhancedActiveDocument,
-          readCore: () => coreSettingsService.getRaw(),
-          readGeodata: () => geodataSettingsService.getRaw()
-        }
+        20_000
       )
     : new GatedTunMutationAdapter()
   const tunInstance = new TunCoordinator(tunAdapter, tunSupported)
@@ -949,74 +986,22 @@ app.whenReady().then(async () => {
     onStatus: (listener) => tunInstance.onStatus(listener)
   }
 
-  // Single-kernel gateway: presents the main kernel and the elevated TUN child
-  // as ONE logical kernel over the unified production controller/mixed ports.
-  // `kernel` (the IPC-facing gateway) reports running whenever EITHER host is
-  // live, so the data plane and the renderer's kernel.status.phase stay correct
-  // in TUN mode (the main kernel being stopped is an implementation detail, not
-  // a down kernel). The raw supervisor is used for the mode-switch stop/start so
-  // the owned system proxy is NOT restored while switching hosts — the unified
-  // mixed port is rebound rather than going dead.
-  const runtimeKernelGateway = new SingleKernelGateway(
-    orderedKernel,
-    kernelInstance,
-    tunInstance,
-    systemProxyService,
-    `http://127.0.0.1:${productionControllerPort}`
-  )
+  // Windows production now has one service-owned process for both modes; on
+  // unsupported/dev platforms this remains the ordinary ordered gateway. No
+  // synthetic "either host" view is needed because there is only one host.
+  const runtimeKernelGateway = orderedKernel
   // Bind the system-proxy probe's holder to the unified gateway once it exists, so
   // the probe and the renderer's kernel.status.phase resolve the same live host.
   singleKernelGatewayRef = runtimeKernelGateway
 
-  // Abnormal TUN exit monitoring. A NORMAL disable goes through the mode
-  // controller (`disableTun`), which resumes the main kernel and keeps the
-  // owned system proxy — the proxy target (the unified mixed port) is rebound,
-  // never dead, so nothing here restores it. What this monitor covers is the
-  // path the coordinator cannot see: the elevated child dies WITHOUT a user
-  // disable (mihomo crash, service-initiated stop). The mode controller's
-  // `recoverTunExit` re-verifies via a fresh service probe (no fixed delays),
-  // resumes the main kernel, and only restores the proxy when the unified
-  // controller is confirmed unreachable.
-  const unifiedControllerReady = async (): Promise<boolean> => {
-    try {
-      const client = new MihomoClient(`http://127.0.0.1:${productionControllerPort}`, productionSecret!, { timeoutMs: 750 })
-      await client.getVersion()
-      return true
-    } catch {
-      return false
-    }
-  }
-  const tunSessionProbe = tunServiceClient
-    ? async () => {
-        const response = await tunServiceClient.reconcile()
-        if (response.outcome === 'running' || response.outcome === 'starting') return 'owned-live'
-        if (response.outcome === 'stopped') return 'owned-gone'
-        return 'unreachable'
-      }
-    : undefined
   const modeController = new ModeTransitionController({
     kernel: runtimeKernelGateway,
     tun: rawTunGateway,
     systemProxy: systemProxyService,
-    // Dev has no TUN support; fall back to the unified kernel status as the
-    // readiness signal there (the mock kernel has no real controller).
-    isControllerReady: is.dev ? undefined : unifiedControllerReady,
-    probeTunSession: tunSessionProbe,
+    strategy: tunSupported ? 'in-place' : 'host-handoff',
     onError: (error, step) => console.error(`[mode-transition] ${step}:`, error)
   })
   modeTransition = modeController
-  if (tunSupported) {
-    const TUN_SESSION_POLL_MS = 5_000
-    const monitor = setInterval(() => {
-      // Only worth probing while the coordinator still believes a child is up.
-      const phase = tunInstance.getStatus().phase
-      if (phase !== 'active' && phase !== 'starting') return
-      void modeController.recoverTunExit().catch((error) => {
-        console.error('[tun] abnormal-exit recovery failed:', error)
-      })
-    }, TUN_SESSION_POLL_MS)
-    tunExitMonitor = { stop: () => clearInterval(monitor) }
-  }
   // The IPC-facing gateways go through THE ONE mode-transition queue, so kernel
   // start/stop and TUN enable/disable can never interleave their
   // prepare/stop/resume sequences (no second host can claim the unified ports
@@ -1024,17 +1009,41 @@ app.whenReady().then(async () => {
   const queuedKernel = queuedKernelGateway(runtimeKernelGateway, modeController)
   const queuedTun = queuedTunGateway(rawTunGateway, modeController)
 
-  // Connectivity watchdog (sparkle's detector): while offline, an owned proxy
-  // keeps routing HTTP into a dead uplink and TUN routes blackhole traffic, so
-  // the proxy is turned off and (only when the unified view says a host is up)
-  // that host is stopped; when the network returns, the host restarts and the
-  // proxy re-enables by itself. The detector MUST observe the unified gateway:
-  // under TUN the main kernel is stopped by design and the child is the live
-  // host — a raw supervisor view would skip the offline stop entirely and then
-  // loop restart attempts every tick. It also lives AFTER `queuedKernel` is
-  // declared, so the lazy closures cannot touch a TDZ binding however slowly
-  // initialization above them runs. This also covers sleep/resume: the first
-  // tick after a wake self-heals.
+  // The service owns the only process, so monitor it regardless of whether TUN
+  // is currently enabled. A confirmed unexpected exit first restores an owned
+  // system proxy, then wakes the durable-intent recovery loop to recreate the
+  // same service core and desired TUN state.
+  if (privilegedKernel) {
+    let probingPrivilegedKernel = false
+    const monitor = setInterval(() => {
+      if (probingPrivilegedKernel) return
+      const phase = privilegedKernel.getStatus().phase
+      if (phase !== 'running' && phase !== 'starting') return
+      probingPrivilegedKernel = true
+      void privilegedKernel.reconcileLiveness()
+        .then(async (live) => {
+          if (live) return
+          await tunInstance.handleHostExit()
+          await systemProxyService.restoreBeforeKernelUnavailable().catch((error) => {
+            console.error('[system-proxy] privileged core exit recovery failed:', error)
+          })
+          const settings = await appSettingsService.get()
+          if (settings.autoStartKernel && !settings.tunDesired && !settings.systemProxyDesired) {
+            await queuedKernel.start().catch((error) => console.error('[kernel] privileged core restart failed:', error))
+          } else {
+            runtimeIntentRecovery?.wake()
+          }
+        })
+        .catch((error) => console.error('[kernel] privileged service liveness probe failed:', error))
+        .finally(() => { probingPrivilegedKernel = false })
+    }, 5_000)
+    tunExitMonitor = { stop: () => clearInterval(monitor) }
+  }
+
+  // Connectivity watchdog: while offline, restore owned proxy/TUN state and
+  // stop the shared host; when the network returns, replay the remembered run
+  // mode through the same service-backed lifecycle. It lives after
+  // `queuedKernel`, so no lazy closure can touch a TDZ binding.
   networkDetector = new NetworkDetector({
     intervalSeconds: 15,
     log: (message) => console.log(message),
@@ -1080,10 +1089,8 @@ app.whenReady().then(async () => {
   // activates or imports-as-active a profile. The reloader runs INSIDE the mode
   // queue (no-op when the kernel is stopped; a running kernel restarts
   // stop-then-start through the unified gateway, preserving any owned system
-  // proxy). While TUN is serving, the unified view reports running but the main
-  // kernel cannot be stop/started (it would collide with the child on the
-  // unified ports), so the reload becomes a mode switch that re-materializes
-  // the profile into the child. The concrete profileService is still used
+  // proxy). A full profile replacement may still restart the one service core,
+  // then restores the previous TUN intent. The concrete profileService is used
   // directly by the kernel config store's resolveActiveDocument, so both paths
   // read the same repository.
   const profileGateway = new ProfileAutoReloadGateway({
@@ -1263,7 +1270,7 @@ app.whenReady().then(async () => {
   // interrupted privileged transaction. Login launches use `--hidden`, but
   // must still restore the requested state; only the explicit Actions smoke
   // flag suppresses it. Operations are sequential and bounded: ordinary host
-  // ready -> TUN mode switch -> system proxy on the unified mixed-port.
+  // ready -> hot-enable TUN -> system proxy on the unchanged mixed-port.
   if (!is.dev && !skipKernelAutostart) {
     const runtimeIntentDeps = {
       kernel: queuedKernel,

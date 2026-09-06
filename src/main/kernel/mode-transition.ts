@@ -70,6 +70,9 @@ export interface ModeTransitionDeps {
    */
   probeTunSession?(): Promise<TunSessionProbe>
   onError?(error: unknown, step: string): void
+  /** `in-place` means one privileged mihomo stays alive and TUN is changed via
+   *  its controller. The legacy default performs a two-host port hand-off. */
+  strategy?: 'host-handoff' | 'in-place'
 }
 
 /** Resting TUN phases from which an enable may actually proceed. */
@@ -104,7 +107,18 @@ export class ModeTransitionController {
     // (main kernel OR elevated child) goes down, so the registry never aims at a
     // dead port — including when TUN is serving (an explicit user "stop" intends
     // to end serving).
-    return this.runExclusive(() => this.deps.kernel.stop())
+    return this.runExclusive(async () => {
+      if (this.deps.strategy === 'in-place') {
+        const tun = await this.deps.tun.getStatus()
+        if (servingPhase(tun.phase) || tun.phase === 'failed' || tun.phase === 'restore-failed') {
+          const disabled = await this.deps.tun.disable()
+          if (disabled.phase !== 'configured' && disabled.phase !== 'unsupported') {
+            throw new Error(`refusing to stop the shared kernel while TUN is ${disabled.phase}`)
+          }
+        }
+      }
+      return this.deps.kernel.stop()
+    })
   }
 
   /**
@@ -172,6 +186,22 @@ export class ModeTransitionController {
    */
   reloadProfile(applyWhileStopped: (kernel: KernelGateway) => Promise<void>): Promise<void> {
     return this.runExclusive(async () => {
+      if (this.deps.strategy === 'in-place') {
+        const wasActive = (await this.deps.tun.getStatus()).phase === 'active'
+        if (wasActive) await this.deps.tun.disable()
+        try {
+          await applyWhileStopped(this.deps.kernel)
+        } finally {
+          // reloadKernelForActiveProfile may already have recovered the prior
+          // profile before rethrowing. Restore the user's TUN intent whenever a
+          // live controller exists; never let one failed edit silently leave a
+          // recovered shared core in ordinary mode.
+          if (wasActive && (await this.deps.kernel.getStatus()).phase === 'running') {
+            await this.deps.tun.enable()
+          }
+        }
+        return
+      }
       if (servingPhase((await this.deps.tun.getStatus()).phase)) {
         await this.disableTunInner()
         await this.enableTunInner()
@@ -192,6 +222,11 @@ export class ModeTransitionController {
     // (reconcile) first, and no prepare churn should happen for a call the
     // coordinator would refuse anyway.
     if (!ENABLE_PROCEEDS_FROM.has(before.phase)) return before
+    if (this.deps.strategy === 'in-place') {
+      const kernel = await this.deps.kernel.getStatus()
+      if (kernel.phase !== 'running') await this.deps.kernel.start()
+      return this.deps.tun.enable()
+    }
     // ALWAYS prepare, including from `restore-failed`: an abnormal-exit recovery
     // may have resumed the main kernel while the coordinator lingers in
     // `restore-failed`, and prepare's own status check makes it a no-op when the
@@ -212,6 +247,7 @@ export class ModeTransitionController {
     // resume and no reason to touch the system proxy.
     if (before.phase === 'configured' || before.phase === 'unsupported') return before
     const status = await this.deps.tun.disable()
+    if (this.deps.strategy === 'in-place') return status
     await this.restoreServingOrProxy('tun-disable-resume')
     return status
   }

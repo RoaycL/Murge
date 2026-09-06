@@ -73,13 +73,16 @@ func (service *windowsService) initialize() error {
 		return err
 	}
 	service.manager = newSessionManager(runtime, ownershipStoreFor(service.config.StateDirectory))
-	service.manager.Handle(serviceRequest{ProtocolVersion: 2, RequestID: "1", Operation: "reconcile"})
+	service.manager.Handle(serviceRequest{ProtocolVersion: protocolVersion, RequestID: "1", Operation: "reconcile"})
 	pipePath := `\\.\pipe\` + service.config.PipeName
 	listener, err := winio.ListenPipe(pipePath, &winio.PipeConfig{
 		SecurityDescriptor: fmt.Sprintf("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;%s)", service.config.AllowedSID),
 		MessageMode:        false,
-		InputBufferSize:    maxProfileBytes + 4096,
-		OutputBufferSize:   4096,
+		// The pipe is a byte stream, so its kernel buffer does not need to match
+		// the bounded application-level profile limit. Keep nonpaged-pool usage
+		// modest while decodeRequest enforces the complete request size.
+		InputBufferSize:  64 * 1024,
+		OutputBufferSize: 4096,
 	})
 	if err != nil {
 		return err
@@ -134,7 +137,10 @@ func (service *windowsService) handleConnection(connection net.Conn) {
 	if err := service.verifyClient(connection); err != nil {
 		return
 	}
-	reader := bufio.NewReaderSize(io.LimitReader(connection, maxProfileBytes+4097), maxProfileBytes+4097)
+	// ReadBytes grows only for the uncommon large profile request. Routine
+	// status/reconcile calls keep a small buffer instead of allocating the full
+	// 2 MiB application limit every five seconds.
+	reader := bufio.NewReaderSize(io.LimitReader(connection, maxProfileBytes+4097), 64*1024)
 	data, err := reader.ReadBytes('\n')
 	if err != nil || len(data) == 0 || len(data) > maxProfileBytes+4096 {
 		return

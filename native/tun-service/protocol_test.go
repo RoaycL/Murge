@@ -95,7 +95,7 @@ rules:
 func encodedStart(profile string) []byte {
 	digest := sha256.Sum256([]byte(profile))
 	data, _ := json.Marshal(serviceRequest{
-		ProtocolVersion: 2, RequestID: "1", Operation: "start",
+		ProtocolVersion: protocolVersion, RequestID: "1", Operation: "start",
 		SessionID: "8a86eb80-621f-4a73-8249-1e4455df80de",
 		Profile:   profile, ProfileSHA256: hex.EncodeToString(digest[:]),
 	})
@@ -149,7 +149,7 @@ func TestRejectUnsafeProfileMutations(t *testing.T) {
 		{"lan bind", "allow-lan: false", "allow-lan: true"},
 		{"public controller", "external-controller: 127.0.0.1:19090", "external-controller: 0.0.0.0:19090"},
 		{"public bind-address", "bind-address: 127.0.0.1", "bind-address: 0.0.0.0"},
-		{"tun disabled", "  enable: true", "  enable: false"},
+		{"tun enable malformed", "  enable: true", "  enable: invalid"},
 		{"bad device", "  device: Product TUN", "  device: bad\\nname"},
 		{"bad stack", "  stack: mixed", "  stack: hyper"},
 		{"short secret", "secret: abababababababababababababababababababababababababababababababab", "secret: abc"},
@@ -175,7 +175,7 @@ func TestRejectUnsafeProfileMutations(t *testing.T) {
 		{"drive relative provider path", "    path: ./ruleset/reject.yaml", "    path: C:evil.dll"},
 		{"public dns bind", "  enhanced-mode: fake-ip", "  enhanced-mode: fake-ip\n  listen: 0.0.0.0:53"},
 		{"dns disabled", "  enable: true\n  enhanced-mode: fake-ip", "  enable: false\n  enhanced-mode: fake-ip"},
-		{"redir-host dns", "  enhanced-mode: fake-ip", "  enhanced-mode: redir-host"},
+		{"invalid dns mode", "  enhanced-mode: fake-ip", "  enhanced-mode: invalid"},
 	}
 	for _, row := range rejected {
 		profile := stringsReplaceOnce(proxiedProfile, row.original, row.replacement)
@@ -185,6 +185,13 @@ func TestRejectUnsafeProfileMutations(t *testing.T) {
 		if _, err := decodeRequest(encodedStart(profile)); err == nil {
 			t.Fatalf("%s: accepted an unsafe profile", row.name)
 		}
+	}
+}
+
+func TestAcceptDormantTunForPersistentCore(t *testing.T) {
+	profile := stringsReplaceOnce(proxiedProfile, "  enable: true", "  enable: false")
+	if _, err := decodeRequest(encodedStart(profile)); err != nil {
+		t.Fatalf("rejected dormant TUN profile: %v", err)
 	}
 }
 
@@ -271,7 +278,7 @@ func TestManagerRetainsOwnershipOnStopFailure(t *testing.T) {
 		t.Fatalf("start: %s", response.Outcome)
 	}
 	runtime.stopErr = errors.New("timeout")
-	response := manager.Handle(serviceRequest{ProtocolVersion: 2, RequestID: "2", Operation: "stop", SessionID: start.SessionID})
+	response := manager.Handle(serviceRequest{ProtocolVersion: protocolVersion, RequestID: "2", Operation: "stop", SessionID: start.SessionID})
 	if response.Outcome != "stopping" || manager.owned == nil {
 		t.Fatal("stop failure lost ownership")
 	}
@@ -281,14 +288,14 @@ func TestReconcileConflictNeitherStartsSecondChildNorKillsReusedPID(t *testing.T
 	runtime := &fakeRuntime{nextPID: 99, live: true, inspectErr: errors.New("executable mismatch")}
 	store := &memoryStore{owned: &ownedProcess{SessionID: "8a86eb80-621f-4a73-8249-1e4455df80de", PID: 42}}
 	manager := newSessionManager(runtime, store)
-	if response := manager.Handle(serviceRequest{ProtocolVersion: 2, RequestID: "1", Operation: "reconcile"}); response.Outcome != "conflict" {
+	if response := manager.Handle(serviceRequest{ProtocolVersion: protocolVersion, RequestID: "1", Operation: "reconcile"}); response.Outcome != "conflict" {
 		t.Fatalf("reconcile: %s", response.Outcome)
 	}
 	start, _ := decodeRequest(encodedStart(safeProfile))
 	if response := manager.Handle(start); response.Outcome != "conflict" {
 		t.Fatalf("start: %s", response.Outcome)
 	}
-	if response := manager.Handle(serviceRequest{ProtocolVersion: 2, RequestID: "2", Operation: "stop", SessionID: store.owned.SessionID}); response.Outcome != "conflict" {
+	if response := manager.Handle(serviceRequest{ProtocolVersion: protocolVersion, RequestID: "2", Operation: "stop", SessionID: store.owned.SessionID}); response.Outcome != "conflict" {
 		t.Fatalf("stop: %s", response.Outcome)
 	}
 	if runtime.nextPID != 99 || !runtime.live {

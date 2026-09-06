@@ -19,9 +19,8 @@ import { buildGeodataBlock } from '../../shared/geodata'
  *  - enforces the main-kernel safety boundary (loopback-only, never mutates the
  *    host network) by neutralizing the blocks that would bind publicly or route
  *    globally:
- *      * `tun` is dropped (global TUN routing belongs to the separate TunService
- *        / MihomoOwnedTunAdapter path, which is mutually exclusive with the main
- *        kernel and owns its own config via `generateMihomoTunConfig`).
+ *      * `tun` is dropped here and re-added only by the privileged-service
+ *        profile builder, so subscriptions cannot control host routing directly.
  *      * `listeners` is dropped (public socks/http listeners),
  *      * `dns.listen` is dropped (avoid binding a public DNS server; mihomo still
  *        uses the nameservers for resolution),

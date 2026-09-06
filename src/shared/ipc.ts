@@ -43,6 +43,7 @@ export const IPC = {
   appGetBrand: 'app:get-brand',
   appGetInfo: 'app:get-info',
   appGetProcessIcon: 'app:get-process-icon',
+  appGetCachedIcon: 'app:get-cached-icon',
   appListNetworkInterfaces: 'app:list-network-interfaces',
   kernelGetStatus: 'kernel:get-status',
   kernelStart: 'kernel:start',
@@ -156,6 +157,8 @@ export interface DesktopApi {
     getBrand(): Promise<BrandConfig>
     getInfo(): Promise<AppInfo>
     getProcessIcon(path: string): Promise<string | null>
+    /** Persistent stale-if-error cache for HTTPS policy icons. */
+    getCachedIcon(cacheKey: string, url?: string, refresh?: boolean): Promise<string | null>
     /** Active host interfaces available for mihomo `interface-name`. */
     listNetworkInterfaces(): Promise<string[]>
   }

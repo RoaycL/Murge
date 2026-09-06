@@ -1,18 +1,14 @@
 <script setup lang="ts">
 import AppIcon from './AppIcon.vue'
+import CachedRemoteIcon from './CachedRemoteIcon.vue'
 import { toRef, ref } from 'vue'
 import { useDialogFocus } from '../composables/use-dialog-focus'
 
-const props = defineProps<{ open: boolean; title: string; subtitle?: string; icon?: string }>()
+const props = defineProps<{ open: boolean; title: string; subtitle?: string; icon?: string; iconCacheKey?: string }>()
 const emit = defineEmits<{ close: [] }>()
 const drawer = ref<HTMLElement | null>(null)
 useDialogFocus(toRef(props, 'open'), drawer, () => emit('close'))
 
-/** A broken/remote icon must not leave a torn image: hide it. */
-function onIconError(event: Event): void {
-  const img = event.currentTarget as HTMLImageElement | null
-  if (img) img.style.display = 'none'
-}
 </script>
 
 <template>
@@ -23,7 +19,7 @@ function onIconError(event: Event): void {
     <Transition name="drawer-slide">
       <aside v-if="open" ref="drawer" class="detail-drawer" aria-modal="true" role="dialog" :aria-label="title">
         <header class="detail-drawer-header">
-          <div class="detail-drawer-heading" :class="{ 'with-icon': icon }"><img v-if="icon" class="detail-drawer-icon" :src="icon" alt="" loading="lazy" @error="onIconError" /><div><h2>{{ title }}</h2><p v-if="subtitle">{{ subtitle }}</p></div></div>
+          <div class="detail-drawer-heading" :class="{ 'with-icon': icon }"><CachedRemoteIcon v-if="icon" class="detail-drawer-icon" :src="icon" :cache-key="iconCacheKey" /><div><h2>{{ title }}</h2><p v-if="subtitle">{{ subtitle }}</p></div></div>
           <div class="detail-drawer-actions"><slot name="actions" /><button type="button" class="icon-control" aria-label="关闭详情" @click="$emit('close')"><AppIcon name="drawer-close" /></button></div>
         </header>
         <div class="detail-drawer-body"><slot /></div>

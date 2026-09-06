@@ -11,5 +11,11 @@ export function createRuntimeIcon(
   const path = join(iconRoot, `tray-${dark ? 'dark' : 'light'}-${accent}.png`)
   const image = nativeImage.createFromPath(path)
   if (image.isEmpty()) throw new Error(`Tray icon could not be loaded: ${path}`)
-  return image
+  // Preserve explicit 1x and 2x representations. Resizing the NativeImage at
+  // the call site collapses it to one bitmap and Windows can keep displaying
+  // the stale notification-area HICON across DPI/theme/status changes.
+  const multiScale = nativeImage.createEmpty()
+  multiScale.addRepresentation({ scaleFactor: 1, buffer: image.resize({ width: 16, height: 16 }).toPNG() })
+  multiScale.addRepresentation({ scaleFactor: 2, buffer: image.toPNG() })
+  return multiScale
 }

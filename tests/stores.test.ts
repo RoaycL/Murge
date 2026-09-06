@@ -202,7 +202,7 @@ describe('connections store', () => {
     memory: 512000,
     connections: [
       { id: 'c1', metadata: { process: 'curl', sourceIP: '10.0.0.1' }, upload: 10, download: 100, start: 'x', chains: ['DIRECT'], rule: 'R', rulePayload: '' },
-      { id: 'c2', metadata: { process: 'Browser', sourceIP: '10.0.0.1' }, upload: 20, download: 200, start: 'x', chains: ['Socks5', 'Proxy'], rule: 'R', rulePayload: '' },
+      { id: 'c2', metadata: { process: 'Browser', processPath: 'C:\\Browser.exe', sourceIP: '10.0.0.1' }, upload: 20, download: 200, start: 'x', chains: ['Socks5', 'Proxy'], rule: 'R', rulePayload: '' },
       { id: 'c3', metadata: { process: 'curl', sourceIP: '10.0.0.2' }, upload: 5, download: 50, start: 'x', chains: ['DIRECT'], rule: 'R', rulePayload: '' }
     ]
   }
@@ -222,6 +222,7 @@ describe('connections store', () => {
     expect(summary?.proxyDownload).toBe(200)
     expect(summary?.topProcesses[0]?.name).toBe('Browser')
     expect(summary?.topProcesses[0]?.download).toBe(200)
+    expect(summary?.topProcesses[0]?.iconPath).toBe('C:\\Browser.exe')
     expect(summary?.topProcesses[1]?.name).toBe('curl')
     expect(store.status).toBe('live')
     store.disconnect()
@@ -388,15 +389,15 @@ describe('activity ranking scope', () => {
     expect(store.topHosts[0]?.name).toBe('b.com')
     expect(store.topHosts[0]?.download).toBe(200)
     expect(store.topHosts[1]?.name).toBe('a.com')
-    // 策略: `GEOIP,CN` (200) ahead of `MATCH` (150).
-    expect(store.topPolicies[0]?.name).toBe('GEOIP,CN')
-    expect(store.topPolicies[1]?.name).toBe('MATCH')
+    // 策略显示实际链路入口，而不是 GeoIP/MATCH 规则匹配器。
+    expect(store.topPolicies[0]?.name).toBe('Proxy')
+    expect(store.topPolicies[1]?.name).toBe('DIRECT')
 
     store.setRankScope('proxy')
     expect(store.rankScope).toBe('proxy')
     // Only the proxied connection (p2) remains in every breakdown slot.
     expect(store.topHosts.map((r) => r.name)).toEqual(['b.com'])
-    expect(store.topPolicies.map((r) => r.name)).toEqual(['GEOIP,CN'])
+    expect(store.topPolicies.map((r) => r.name)).toEqual(['Proxy'])
     expect(store.topProcesses.map((r) => r.name)).toEqual(['Browser'])
     store.disconnect()
   })
@@ -447,6 +448,7 @@ describe('logs store (snapshot + live dedup, sparkle-style)', () => {
     mihomo.emitLog({ type: 'info', payload: 'after-sync' })
     await vi.advanceTimersByTimeAsync(50)
     expect(store.entries.map((entry) => entry.message)).toContain('after-sync')
+    expect(store.visibleEntries[0]?.message).toBe('after-sync')
 
     store.clear()
     await vi.advanceTimersByTimeAsync(0)

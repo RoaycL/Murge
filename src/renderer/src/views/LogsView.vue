@@ -9,8 +9,8 @@ import EmptyState from '../components/EmptyState.vue'
 const store = useLogsStore()
 const { status, lastError, search, level, visibleEntries } = storeToRefs(store)
 const LEVEL_OPTIONS = [
-  { value: 'all', label: '所有级别' }, { value: 'debug', label: '调试' },
-  { value: 'info', label: '信息' }, { value: 'warning', label: '警告' }, { value: 'error', label: '错误' }
+  { value: 'all', label: 'all' }, { value: 'debug', label: 'debug' },
+  { value: 'info', label: 'info' }, { value: 'warning', label: 'warning' }, { value: 'error', label: 'error' }
 ] as const
 
 function exportLogs(): void {

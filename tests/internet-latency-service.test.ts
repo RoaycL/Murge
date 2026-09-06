@@ -97,8 +97,7 @@ describe('InternetLatencyService', () => {
       mihomo,
       resolveGroupOrder: async () => ['节点选择'],
       measureGatewayRttFn: async () => ({ gateway: '192.168.1.1', rttMs: 3 }),
-      // A generic kernel DNS failure must stay null; it must not be disguised
-      // by a successful system-resolver fallback.
+      // Both real DNS paths failed, so the slot remains unavailable.
       systemDnsProbeFn: async () => 'failed',
       nowFn: () => (tick += 7)
     })
@@ -106,7 +105,7 @@ describe('InternetLatencyService', () => {
     expect(sample).toEqual({ gatewayMs: 3, dnsMs: null, proxyMs: null, proxyNode: '香港 01' })
   })
 
-  it('does not disguise a generic kernel DNS failure with a system-DNS result', async () => {
+  it('falls back to a real system-DNS query when the kernel query fails', async () => {
     const mihomo = mihomoStub({ dns: new Error('controller unreachable') })
     const systemDnsProbeFn = vi.fn().mockResolvedValue('answered' as const)
     const service = new InternetLatencyService({
@@ -117,8 +116,8 @@ describe('InternetLatencyService', () => {
     })
 
     const sample = await service.sample()
-    expect(sample.dnsMs).toBeNull()
-    expect(systemDnsProbeFn).not.toHaveBeenCalled()
+    expect(sample.dnsMs).toEqual(expect.any(Number))
+    expect(systemDnsProbeFn).toHaveBeenCalledOnce()
   })
 
   it('dns falls back to the system resolver when the kernel module is disabled', async () => {

@@ -41,6 +41,19 @@
     DetailPrint "TUN service executable is missing; continuing install since TUN is optional"
     MessageBox MB_ICONEXCLAMATION|MB_OK "安装包未包含 TUN 服务组件，本程序将继续完成安装。系统代理模式不受影响。"
   TunServiceInstallDone:
+  ; electron-builder preserves an existing desktop shortcut during an upgrade.
+  ; Its target still points at the replaced executable, but Explorer can retain
+  ; the old icon for that unchanged .lnk path. Recreate only an existing link
+  ; (never restore one the user intentionally removed), keep the same AUMID, and
+  ; explicitly notify Shell after the new executable is already on disk.
+  IfFileExists "$newDesktopLink" 0 DesktopIconRefreshDone
+    DetailPrint "Refreshing the existing desktop shortcut icon..."
+    Delete "$newDesktopLink"
+    CreateShortCut "$newDesktopLink" "$appExe" "" "$appExe" 0 "" "" "${APP_DESCRIPTION}"
+    ClearErrors
+    WinShell::SetLnkAUMI "$newDesktopLink" "${APP_ID}"
+    System::Call 'Shell32::SHChangeNotify(i 0x08000000, i 0, i 0, i 0)'
+  DesktopIconRefreshDone:
 !macroend
 
 !macro customUnInstall

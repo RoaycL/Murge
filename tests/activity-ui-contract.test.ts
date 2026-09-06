@@ -105,11 +105,16 @@ describe('Activity fluid-layout UI contract', () => {
   })
 
   it('pairs the network drawer with the shared diagnosis sample and keeps reveal on the info row', async () => {
-    const network = await read('src/renderer/src/components/NetworkMetadataPanel.vue')
+    const [activity, network] = await Promise.all([
+      read('src/renderer/src/views/ActivityView.vue'),
+      read('src/renderer/src/components/NetworkMetadataPanel.vue')
+    ])
 
     // 网络诊断区块复用活动页的共享延迟样本，不自行发起重复测量。
     expect(network).toContain("import { useLatencyStore } from '../stores/latency'")
-    expect(network).toContain('latency.probe()')
+    expect(activity).toContain('#actions')
+    expect(activity).toContain('latency.probe()')
+    expect(network).not.toContain('latency.probe()')
     expect(network).not.toContain('window.desktop.mihomo.internetLatency')
     expect(network).toContain('网络诊断')
     expect(network).toContain('路由网关')

@@ -169,7 +169,7 @@ watch(() => kernel.status.phase, (phase, previous) => {
     <template v-else>
       <div class="section-caption"><span>策略组</span></div>
       <div class="policy-group-grid">
-        <button v-for="group in policies.groups" :key="group.name" type="button" :class="{ selected: policies.selectedGroup === group.name }" @click="openGroup(group.name)"><img v-if="group.icon" class="group-icon" :src="group.icon" alt="" loading="lazy" @error="onGroupIconError" /><small>{{ displayType(group.type) }}</small><strong>{{ group.name }}</strong><span>{{ groupSummary(group) }}</span><AppIcon name="next" :size="14" /></button>
+        <button v-for="group in policies.groups" :key="group.name" type="button" :class="{ selected: policies.selectedGroup === group.name, 'has-icon': Boolean(group.icon) }" @click="openGroup(group.name)"><img v-if="group.icon" class="group-icon" :src="group.icon" alt="" loading="lazy" @error="onGroupIconError" /><small>{{ displayType(group.type) }}</small><strong>{{ group.name }}</strong><span>{{ groupSummary(group) }}</span><AppIcon name="next" :size="14" /></button>
       </div>
     </template>
 
@@ -188,7 +188,16 @@ watch(() => kernel.status.phase, (phase, previous) => {
 
 <style scoped>
 .mode-selector { width: 100%; max-width: 510px; }
-.policy-group-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(150px,100%),1fr));gap:10px;width:100%}.group-icon{grid-column:2;grid-row:1;justify-self:end;width:18px;height:18px;border-radius:4px;object-fit:contain}.policy-group-grid button{display:grid;grid-template-columns:1fr auto;grid-template-rows:auto auto auto;min-width:0;min-height:86px;padding:10px;border:1px solid transparent;border-radius:10px;background:var(--app-surface);color:inherit;text-align:left}.policy-group-grid button:hover,.policy-group-grid button.selected{border-color:color-mix(in srgb,var(--app-blue) 48%,var(--app-divider));background:color-mix(in srgb,var(--app-blue) 7%,var(--app-surface))}.policy-group-grid small{grid-column:1;color:var(--app-muted);font-size:9px}.policy-group-grid strong{grid-column:1;overflow:hidden;font-size:12px;text-overflow:ellipsis;white-space:nowrap}.policy-group-grid span{grid-column:1;overflow:hidden;color:var(--app-muted);font-size:9px;text-overflow:ellipsis;white-space:nowrap}.policy-group-grid svg{grid-column:2;grid-row:1 / 4;align-self:center;color:var(--app-muted)}.node-caption{display:flex;justify-content:space-between;align-items:center;margin:4px 0 12px;color:var(--app-pink);font-size:12px}.node-caption button{border:0;background:transparent;color:var(--app-muted);font-size:11px}
+.policy-group-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr)); gap: 10px; width: 100%; }
+.policy-group-grid button { display: grid; grid-template-columns: minmax(0, 1fr) 28px; grid-template-rows: 16px 24px 24px; column-gap: 8px; min-width: 0; min-height: 86px; padding: 10px; border: 1px solid transparent; border-radius: 10px; background: var(--app-surface); color: inherit; text-align: left; }
+.policy-group-grid button:hover, .policy-group-grid button.selected { border-color: color-mix(in srgb, var(--app-blue) 48%, var(--app-divider)); background: color-mix(in srgb, var(--app-blue) 7%, var(--app-surface)); }
+.policy-group-grid small { grid-column: 1; grid-row: 1; align-self: start; color: var(--app-muted); font-size: 9px; }
+.policy-group-grid strong { grid-column: 1; grid-row: 2; align-self: center; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.policy-group-grid span { grid-column: 1; grid-row: 3; align-self: end; overflow: hidden; color: var(--app-muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.group-icon { grid-column: 2; grid-row: 1 / 3; align-self: start; justify-self: end; width: 26px; height: 26px; border-radius: 6px; object-fit: contain; }
+.policy-group-grid svg { grid-column: 2; grid-row: 1 / 4; align-self: center; justify-self: end; color: var(--app-muted); }
+.policy-group-grid button.has-icon > svg { grid-row: 3; align-self: end; }
+.node-caption{display:flex;justify-content:space-between;align-items:center;margin:4px 0 12px;color:var(--app-pink);font-size:12px}.node-caption button{border:0;background:transparent;color:var(--app-muted);font-size:11px}
 .drawer-panel-error{margin-top:12px}
 .drawer-body-grid .node-grid{--node-card-min:128px}
 .policy-view .node-caption{margin-top:4px}

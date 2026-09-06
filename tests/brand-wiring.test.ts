@@ -36,6 +36,23 @@ describe('electron-builder brand wiring (Phase 6 metadata)', () => {
     expect(() => readFileSync(join(resourcesDir, config.win.icon))).not.toThrow()
   })
 
+  it('bundles a complete high-contrast runtime tray icon set', () => {
+    expect(config.extraResources).toContainEqual({
+      from: 'resources/tray',
+      to: 'tray',
+      filter: ['*.png']
+    })
+    const trayDir = fileURLToPath(new URL('../resources/tray/', import.meta.url))
+    for (const theme of ['light', 'dark']) {
+      for (const accent of ['idle', 'proxy', 'tun']) {
+        const image = readFileSync(join(trayDir, `tray-${theme}-${accent}.png`))
+        expect(image.subarray(1, 4).toString('ascii')).toBe('PNG')
+        expect(image.readUInt32BE(16)).toBe(32)
+        expect(image.readUInt32BE(20)).toBe(32)
+      }
+    }
+  })
+
   it('preserves user data (profiles) on uninstall by default', () => {
     expect(config.nsis.deleteAppDataOnUninstall).toBe(false)
   })

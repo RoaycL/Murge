@@ -23,8 +23,8 @@ function onIconError(event: Event): void {
     <Transition name="drawer-slide">
       <aside v-if="open" ref="drawer" class="detail-drawer" aria-modal="true" role="dialog" :aria-label="title">
         <header class="detail-drawer-header">
-          <div class="detail-drawer-heading"><img v-if="icon" class="detail-drawer-icon" :src="icon" alt="" loading="lazy" @error="onIconError" /><div><h2>{{ title }}</h2><p v-if="subtitle">{{ subtitle }}</p></div></div>
-          <button type="button" class="icon-control" aria-label="关闭详情" @click="$emit('close')"><AppIcon name="drawer-close" /></button>
+          <div class="detail-drawer-heading" :class="{ 'with-icon': icon }"><img v-if="icon" class="detail-drawer-icon" :src="icon" alt="" loading="lazy" @error="onIconError" /><div><h2>{{ title }}</h2><p v-if="subtitle">{{ subtitle }}</p></div></div>
+          <div class="detail-drawer-actions"><slot name="actions" /><button type="button" class="icon-control" aria-label="关闭详情" @click="$emit('close')"><AppIcon name="drawer-close" /></button></div>
         </header>
         <div class="detail-drawer-body"><slot /></div>
         <footer v-if="$slots.footer" class="detail-drawer-footer"><slot name="footer" /></footer>
@@ -34,6 +34,10 @@ function onIconError(event: Event): void {
 </template>
 
 <style scoped>
-.detail-drawer-heading { display: flex; align-items: flex-start; gap: 9px; min-width: 0; }
-.detail-drawer-icon { flex: none; width: 22px; height: 22px; margin-top: 1px; border-radius: 6px; object-fit: contain; }
+.detail-drawer-heading { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.detail-drawer-heading.with-icon > div { display: flex; flex-direction: column; justify-content: space-between; min-width: 0; height: 40px; }
+.detail-drawer-heading.with-icon h2 { line-height: 24px; }
+.detail-drawer-heading.with-icon p { margin: 0; line-height: 12px; }
+.detail-drawer-icon { flex: none; width: 40px; height: 40px; margin: 0; border-radius: 8px; object-fit: contain; }
+.detail-drawer-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 </style>

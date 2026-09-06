@@ -42,6 +42,11 @@ export interface SubStoreState {
 /** Default pinned release tags (no `v` prefix; Sub-Store tags are bare semver). */
 export const SUB_STORE_BACKEND_DEFAULT_TAG = '2.38.2'
 export const SUB_STORE_FRONTEND_DEFAULT_TAG = '2.31.2'
+/** GitHub-computed digests pinned with the default executable assets. */
+export const SUB_STORE_BACKEND_DEFAULT_DIGEST =
+  'sha256:f1e1430313c0d5df6f937f5d7f3a90b92efec67bc96e1797502c50f94ec9527a'
+export const SUB_STORE_FRONTEND_DEFAULT_DIGEST =
+  'sha256:a30a34fa0af71e8e95a01f25a2b8efeb98942cc6ee3ba2761a000484ffe073c3'
 
 /** Base port for the merged frontend+API listener; increments while busy. */
 export const SUB_STORE_PORT_BASE = 38324
@@ -59,14 +64,25 @@ export const SUB_STORE_BACKEND_LATEST_API =
 export const SUB_STORE_FRONTEND_LATEST_API =
   'https://api.github.com/repos/sub-store-org/Sub-Store-Front-End/releases/latest'
 
+export const SUB_STORE_BACKEND_ASSET = 'sub-store.bundle.js'
+export const SUB_STORE_FRONTEND_ASSET = 'dist.zip'
+
+export function subStoreBackendReleaseApi(tag: string): string {
+  return `https://api.github.com/repos/sub-store-org/Sub-Store/releases/tags/${tag}`
+}
+
+export function subStoreFrontendReleaseApi(tag: string): string {
+  return `https://api.github.com/repos/sub-store-org/Sub-Store-Front-End/releases/tags/${tag}`
+}
+
 /** Backend bundle download URL for a release tag. */
 export function subStoreBackendDownloadUrl(tag: string): string {
-  return `https://github.com/sub-store-org/Sub-Store/releases/download/${tag}/sub-store.bundle.js`
+  return `https://github.com/sub-store-org/Sub-Store/releases/download/${tag}/${SUB_STORE_BACKEND_ASSET}`
 }
 
 /** Frontend distribution (zip) download URL for a release tag. */
 export function subStoreFrontendDownloadUrl(tag: string): string {
-  return `https://github.com/sub-store-org/Sub-Store-Front-End/releases/download/${tag}/dist.zip`
+  return `https://github.com/sub-store-org/Sub-Store-Front-End/releases/download/${tag}/${SUB_STORE_FRONTEND_ASSET}`
 }
 
 /** Sub-Store release tags are bare semver (`2.38.2`), unlike mihomo's `v` prefix. */

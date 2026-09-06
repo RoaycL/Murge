@@ -1,4 +1,4 @@
-import { inflateRawSync } from 'node:zlib'
+import { crc32, inflateRawSync } from 'node:zlib'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
 
@@ -22,6 +22,9 @@ const EOCD_MIN_LEN = 22
 const CENTRAL_FIXED_LEN = 46
 /** Local entry: fixed 30-byte header + name/extra. */
 const LOCAL_FIXED_LEN = 30
+const MAX_ENTRIES = 4096
+const MAX_ENTRY_BYTES = 32 * 1024 * 1024
+const MAX_TOTAL_BYTES = 128 * 1024 * 1024
 
 export class ZipFormatError extends Error {
   constructor(message: string) {
@@ -35,6 +38,8 @@ interface ZipEntry {
   isDirectory: boolean
   method: number
   compressedSize: number
+  uncompressedSize: number
+  crc: number
   localHeaderOffset: number
 }
 
@@ -64,6 +69,7 @@ function parseCentralDirectory(buf: Buffer): ZipEntry[] {
   if (cdOffset === 0xffffffff || entryCount === 0xffff) {
     throw new ZipFormatError('不支持 zip64 归档')
   }
+  if (entryCount > MAX_ENTRIES) throw new ZipFormatError('条目数量超过上限')
   if (cdOffset + cdSize > buf.length) throw new ZipFormatError('中央目录越界')
 
   const entries: ZipEntry[] = []
@@ -73,7 +79,10 @@ function parseCentralDirectory(buf: Buffer): ZipEntry[] {
       throw new ZipFormatError(`中央目录第 ${i + 1} 项损坏`)
     }
     const method = readU16(buf, cursor + 10)
+    const flags = readU16(buf, cursor + 8)
+    const crc = readU32(buf, cursor + 16)
     const compressedSize = readU32(buf, cursor + 20)
+    const uncompressedSize = readU32(buf, cursor + 24)
     const nameLen = readU16(buf, cursor + 28)
     const extraLen = readU16(buf, cursor + 30)
     const commentLen = readU16(buf, cursor + 32)
@@ -83,15 +92,21 @@ function parseCentralDirectory(buf: Buffer): ZipEntry[] {
     if (method !== 0 && method !== 8) {
       throw new ZipFormatError(`不支持的压缩方式 ${method}（${name}）`)
     }
+    if ((flags & 0x1) !== 0) throw new ZipFormatError(`不支持加密条目（${name}）`)
+    if (uncompressedSize > MAX_ENTRY_BYTES) throw new ZipFormatError(`条目解压后过大（${name}）`)
     entries.push({
       name,
       isDirectory: name.endsWith('/') || (externalAttrs & 0x10) !== 0,
       method,
       compressedSize,
+      uncompressedSize,
+      crc,
       localHeaderOffset
     })
     cursor += CENTRAL_FIXED_LEN + nameLen + extraLen + commentLen
   }
+  const totalSize = entries.reduce((sum, entry) => sum + entry.uncompressedSize, 0)
+  if (totalSize > MAX_TOTAL_BYTES) throw new ZipFormatError('解压后总大小超过上限')
   return entries
 }
 
@@ -105,7 +120,12 @@ function entryData(buf: Buffer, entry: ZipEntry): Buffer {
   const dataStart = local + LOCAL_FIXED_LEN + nameLen + extraLen
   const raw = buf.subarray(dataStart, dataStart + entry.compressedSize)
   if (raw.length !== entry.compressedSize) throw new ZipFormatError(`数据越界（${entry.name}）`)
-  return entry.method === 0 ? Buffer.from(raw) : inflateRawSync(raw)
+  const output = entry.method === 0
+    ? Buffer.from(raw)
+    : inflateRawSync(raw, { maxOutputLength: MAX_ENTRY_BYTES })
+  if (output.length !== entry.uncompressedSize) throw new ZipFormatError(`解压大小不匹配（${entry.name}）`)
+  if ((crc32(output) >>> 0) !== entry.crc) throw new ZipFormatError(`CRC 校验失败（${entry.name}）`)
+  return output
 }
 
 /**

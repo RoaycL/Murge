@@ -96,4 +96,31 @@ describe('extractZipToDir', () => {
       await rm(dir, { recursive: true, force: true })
     }
   })
+
+  it('rejects corrupted entry data instead of writing unchecked output', async () => {
+    const dir = await tmpDir()
+    try {
+      const zipPath = join(dir, 'corrupt.zip')
+      const archive = buildTestZip([{ name: 'dist/index.html', data: Buffer.from('healthy') }])
+      archive[30 + Buffer.byteLength('dist/index.html')] ^= 0xff
+      await writeFile(zipPath, archive)
+      await expect(extractZipToDir(zipPath, join(dir, 'out'))).rejects.toThrow(/CRC/)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects an entry whose declared expanded size exceeds the safety ceiling', async () => {
+    const dir = await tmpDir()
+    try {
+      const zipPath = join(dir, 'bomb.zip')
+      const archive = buildTestZip([{ name: 'dist/index.html', data: Buffer.from('tiny') }])
+      const central = archive.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]))
+      archive.writeUInt32LE(33 * 1024 * 1024, central + 24)
+      await writeFile(zipPath, archive)
+      await expect(extractZipToDir(zipPath, join(dir, 'out'))).rejects.toThrow(/过大/)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
 })

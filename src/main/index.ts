@@ -245,23 +245,22 @@ async function createMihomoGateway(
   return mihomo
 }
 
-/** The ecosystem-standard mihomo mixed inbound (clash-party / mihomo-party / sparkle all pin it). */
+/** Preferred ecosystem-standard mihomo mixed inbound. */
 const MIHOMO_MIXED_PORT = 7890
 
 async function allocateProductionPorts(): Promise<{ controller: number; mixed: number }> {
+  const mixed = await findFreePort(MIHOMO_MIXED_PORT)
   let controller = await findFreePort()
-  // clash-party parity: the kernel's mixed inbound is pinned to 7890 instead of
-  // a per-launch random port, so users can hard-code expectations (scripts,
-  // browser extension proxy settings, the connectivity probe default). The
-  // controller port stays a random ephemeral local port — the reference clients
-  // disable the HTTP controller entirely (named-pipe IPC), which this app's
-  // controller-driven readiness and policy plumbing cannot.
-  while (controller === MIHOMO_MIXED_PORT) controller = await findFreePort()
+  // Prefer clash-party's conventional 7890 so scripts and browser extensions
+  // keep working, but fall back when another proxy app already owns it. All
+  // internal consumers receive the resolved port, so a collision must not turn
+  // into a kernel-start failure. The controller remains ephemeral.
+  while (controller === mixed) controller = await findFreePort()
   // Known accepted TOCTOU: nothing is bound here and mihomo binds some seconds
   // later, so another process can claim a port in between. The failure mode is
   // a loud kernel-start error (user retries), not silent corruption — holding
   // the sockets open would starve mihomo's bind instead.
-  return { controller, mixed: MIHOMO_MIXED_PORT }
+  return { controller, mixed }
 }
 
 function createWindow(): BrowserWindow {
@@ -681,6 +680,8 @@ app.whenReady().then(async () => {
     void subStoreServiceRef?.onSettings({
       subStoreEnabled: settings.subStoreEnabled,
       subStoreUseProxy: settings.subStoreUseProxy
+    }).catch((error) => {
+      console.error('[substore] failed to apply settings:', error)
     })
   })
   const overrideService = new OverrideService(

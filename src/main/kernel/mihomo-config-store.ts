@@ -285,18 +285,36 @@ export class MihomoKernelConfigStore implements KernelConfigStore {
   }
 }
 
-/**
- * Reserve and return a free loopback TCP port, so a caller can bind mihomo's
- * mixed port and external controller without colliding with an in-use port.
- */
-export function findFreePort(): Promise<number> {
+function reserveLoopbackPort(port: number): Promise<number> {
   return new Promise((resolvePort, reject) => {
     const server = createServer()
     server.once('error', reject)
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(port, '127.0.0.1', () => {
       const address = server.address()
-      const port = typeof address === 'object' && address !== null ? address.port : 0
-      server.close(() => resolvePort(port))
+      const boundPort = typeof address === 'object' && address !== null ? address.port : 0
+      server.close(() => resolvePort(boundPort))
     })
   })
+}
+
+/**
+ * Reserve and return a free loopback TCP port. A preferred port is retained
+ * when available; an occupied preferred port falls back to an OS-assigned
+ * ephemeral port so another proxy client cannot prevent the app from starting.
+ */
+export async function findFreePort(preferredPort?: number): Promise<number> {
+  if (preferredPort !== undefined) {
+    if (!Number.isInteger(preferredPort) || preferredPort < 1 || preferredPort > 65535) {
+      throw new RangeError('preferred port must be an integer between 1 and 65535')
+    }
+    try {
+      return await reserveLoopbackPort(preferredPort)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code
+      // Windows excluded/reserved port ranges surface as EACCES rather than
+      // EADDRINUSE; both mean the preferred listener is unavailable.
+      if (code !== 'EADDRINUSE' && code !== 'EACCES') throw error
+    }
+  }
+  return reserveLoopbackPort(0)
 }

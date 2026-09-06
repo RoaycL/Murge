@@ -29,6 +29,11 @@ Windows release candidate for the mihomo-based desktop client.
   moved between sessions instead of reporting a bogus "外部修改" conflict; a
   genuine external edit still surfaces a conflict.
 - Profile, activity, connection, policy, provider, rule, DNS and log tools.
+- The conventional mixed port remains 7890 when available and automatically
+  falls back to a free loopback port when another proxy application owns it.
+- Sub-Store downloads are size-bounded and SHA-256 verified; backend, frontend
+  and version metadata update as one rollback-safe set. Disabling the feature
+  also cancels an in-flight start instead of leaving a hidden worker running.
 - Verified Windows system-proxy enable, exact restore and recovery path.
 - Tray, optional start-on-login, diagnostics and brand-configurable desktop UI.
 - Project documentation translated to Chinese.
@@ -46,6 +51,3 @@ Windows will display an **Unknown publisher** warning. Verify the installer
 against `SHA256SUMS.txt` and download it only from the official GitHub Release.
 See `docs/NETWORK_RECOVERY.md` in the matching source tag for emergency
 system-proxy recovery.
-
-This draft must not be published until the release-candidate checklist and
-owner approval are complete.

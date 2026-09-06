@@ -77,7 +77,8 @@ export const PROFILES_SUBDIR = 'profiles'
 /**
  * Temporary-directory prefix for the development-only profile workspace. Dev
  * builds derive a fresh directory per launch so no real application data is ever
- * read or written on the host — see DEVELOPMENT_SAFETY.md.
+ * read or written on the host — dev builds use an ephemeral temp directory
+ * so the real user data store is never touched during development.
  */
 export const DEV_PROFILE_TMP_PREFIX = 'proxy-profiles-'
 

@@ -142,7 +142,7 @@ if (
 // data. This must run before the ready event so every Electron subsystem that
 // derives paths from `userData` (localStorage, caches, session) resolves it
 // consistently. Dev builds leave the default path and the ephemeral profile
-// workspace untouched — see DEVELOPMENT_SAFETY.md.
+// workspace untouched — dev builds never persist real user data.
 if (!is.dev) {
   app.setPath('userData', appDataRoot(app.getPath('appData')))
 }
@@ -571,7 +571,7 @@ app.whenReady().then(async () => {
   const validator = createConfigValidator({ requireProxySections: false })
 
   // SECURITY: In development builds, block all outbound network requests for subscriptions
-  // to comply with DEVELOPMENT_SAFETY.md restrictions. Production builds use real fetch.
+  // to keep the dev machine's network path untouched. Production builds use real fetch.
   // Production additionally wires a kernel-proxy fallback transport: Node's
   // global fetch ignores the system proxy, so a subscription host that is only
   // reachable through the tunnel fails with a bare "fetch failed". The fallback

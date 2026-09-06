@@ -35,7 +35,7 @@
  * `unsupported`; the G1 gate remains UNEXECUTED / UNPROVEN.
  *
  * No value here performs I/O, loads a DLL or spawns a process. Nothing here runs
- * on the Linux/Mac dev host. @see docs/helper-design.md §3.0, §13
+ * on non-Windows hosts.
  */
 
 /** The pinned Wintun release (drives the manifest hash + integrity check). */

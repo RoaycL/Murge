@@ -41,6 +41,7 @@ describe('providers store', () => {
   let refreshProxyProvider: ReturnType<typeof vi.fn>
   let refreshRuleProvider: ReturnType<typeof vi.fn>
   let healthCheckProxyProvider: ReturnType<typeof vi.fn>
+  let getActiveProviderCatalog: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -49,9 +50,11 @@ describe('providers store', () => {
     refreshProxyProvider = vi.fn()
     refreshRuleProvider = vi.fn()
     healthCheckProxyProvider = vi.fn()
+    getActiveProviderCatalog = vi.fn()
     ;(globalThis as unknown as { window: unknown }).window = {
       desktop: {
-        mihomo: { getProxyProviders, getRuleProviders, refreshProxyProvider, refreshRuleProvider, healthCheckProxyProvider }
+        mihomo: { getProxyProviders, getRuleProviders, refreshProxyProvider, refreshRuleProvider, healthCheckProxyProvider },
+        profiles: { getActiveProviderCatalog }
       }
     }
   })
@@ -349,5 +352,60 @@ describe('providers store', () => {
     expect(refreshRuleProvider).toHaveBeenCalledWith('规则集 A')
     expect(refreshRuleProvider).not.toHaveBeenCalledWith('规则集 B')
     expect(result).toEqual({ updated: 1, failed: 0 })
+  })
+
+  it('refreshAllProxyProviders updates remote proxy providers one at a time with failure isolation', async () => {
+    getProxyProviders.mockResolvedValue({
+      providers: {
+        '机场 A': { name: '机场 A', type: 'Proxy', vehicleType: 'HTTP' },
+        '机场 B': { name: '机场 B', type: 'Proxy', vehicleType: 'HTTP' },
+        '机场 C': { name: '机场 C', type: 'Proxy', vehicleType: 'HTTP' }
+      }
+    })
+    refreshProxyProvider.mockClear()
+    let inflight = 0
+    let maxInflight = 0
+    const order: string[] = []
+    refreshProxyProvider.mockImplementation(async (name: string) => {
+      inflight++
+      maxInflight = Math.max(maxInflight, inflight)
+      order.push(name)
+      await new Promise((resolve) => setTimeout(resolve, name === '机场 A' ? 25 : 2))
+      inflight--
+      if (name === '机场 B') throw new ProtocolError(ProtocolErrorCode.UPSTREAM_HTTP_ERROR, 'b failed')
+    })
+    const store = useProvidersStore()
+    await store.loadProxyProviders()
+    const result = await store.refreshAllProxyProviders()
+    // Serialized batch: at most ONE provider update in flight at any moment —
+    // the anti-503 contract — and failures never stop the remaining providers.
+    expect(maxInflight).toBe(1)
+    expect(order).toEqual(['机场 A', '机场 B', '机场 C'])
+    expect(store.opOf('机场 B').error).toBe('b failed')
+    expect(store.opOf('机场 A').error).toBeNull()
+    expect(store.opOf('机场 C').error).toBeNull()
+    expect(result).toEqual({ updated: 2, failed: 1 })
+  })
+
+  it('loads the active profile provider catalog for the 集合配置 viewer and keeps the last good copy on failure', async () => {
+    getActiveProviderCatalog.mockResolvedValue({
+      proxy: [{ name: '机场 A', kind: 'proxy', url: 'https://sub.example.com/a', interval: 86400 }],
+      rule: []
+    })
+    getProxyProviders.mockResolvedValue({ providers: {} })
+    getRuleProviders.mockResolvedValue({ providers: {} })
+    getActiveProviderCatalog.mockResolvedValue({
+      proxy: [{ name: '机场 A', kind: 'proxy', url: 'https://sub.example.com/a', interval: 86400 }],
+      rule: []
+    })
+    const store = useProvidersStore()
+    await store.loadProviderCatalog()
+    expect(store.providerCatalog.proxy).toEqual([
+      { name: '机场 A', kind: 'proxy', url: 'https://sub.example.com/a', interval: 86400 }
+    ])
+    // Next read fails: the viewer keeps rendering the previous declarations.
+    getActiveProviderCatalog.mockRejectedValue(new Error('ipc down'))
+    await store.loadProviderCatalog()
+    expect(store.providerCatalog.proxy).toHaveLength(1)
   })
 })

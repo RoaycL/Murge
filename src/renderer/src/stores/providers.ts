@@ -5,6 +5,7 @@ import type {
   MihomoProxyProvider,
   MihomoRuleProvider
 } from '@shared/mihomo-api'
+import type { ProfileProviderCatalog } from '@shared/profiles'
 import { toProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
 
 export type ProvidersStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -80,6 +81,8 @@ export const useProvidersStore = defineStore('providers', () => {
   const proxyProviders = ref<Record<string, MihomoProxyProvider>>({})
   const ruleProviders = ref<Record<string, MihomoRuleProvider>>({})
   const ops = ref<Record<string, ProviderOp>>({})
+  /** Profile-declared 集合配置 (url/interval/path…), merged at the 外部资源 drawer. */
+  const providerCatalog = ref<ProfileProviderCatalog>({ proxy: [], rule: [] })
   const healthResults = ref<Record<string, ProviderHealthResult>>({})
 
   const orderedProxyProviders = computed<MihomoProxyProvider[]>(() =>
@@ -157,6 +160,19 @@ export const useProvidersStore = defineStore('providers', () => {
     }
   }
 
+  /**
+   * Pull the ACTIVE profile's 集合声明 (url/interval/behavior…) for the 外部资源
+   * viewer. Tolerant: an unreadable/absent catalog keeps the previous value —
+   * the viewer already degrades per field to controller-only metadata.
+   */
+  async function loadProviderCatalog(): Promise<void> {
+    try {
+      providerCatalog.value = await window.desktop.profiles.getActiveProviderCatalog()
+    } catch {
+      /* keep the previous catalog */
+    }
+  }
+
   async function refreshProxyProvider(name: string): Promise<void> {
     setOp(name, { refreshing: true, error: null })
     try {
@@ -180,47 +196,51 @@ export const useProvidersStore = defineStore('providers', () => {
   }
 
   /**
-   * Refresh every remote (URL-backed) external resource — proxy + rule
-   * providers — currently loaded from the running controller, in one click.
-   * Inline/local providers are excluded because the controller cannot re-pull
-   * them (503). Individual provider refreshes are still reflected in `ops` so a
-   * row can show its own in-flight/error state, while this batch returns a
-   * summary the caller can surface without restarting the kernel. Provider maps
-   * are re-pulled only at the end, so a single failing resource never discards
-   * the data the user already sees.
+   * Serialized per-provider batch core shared by every 更新全部 entry point:
+   * ONE provider at a time (mihomo returns 503 when a provider update's own
+   * fetch fails, and parallel re-pulls saturate the kernel's DNS/TLS stack and
+   * trip CDN rate limits — clash-party's subscription "更新全部" pattern) with
+   * per-provider failure isolation, then a single map re-pull so rows reflect
+   * fresh metadata while a failing fetch never discards what the user sees.
    */
-  async function refreshAllProviders(): Promise<{ updated: number; failed: number }> {
-    const providers = remoteProxyProviders.value.map((p) => p.name)
-    const ruleSets = remoteRuleProviders.value.map((p) => p.name)
+  async function refreshProxyProvidersBatch(names: string[]): Promise<{ updated: number; failed: number }> {
     let updated = 0
     let failed = 0
-    await Promise.all(
-      providers.map(async (name) => {
-        try {
-          await window.desktop.mihomo.refreshProxyProvider(name)
-          updated++
-        } catch (error) {
-          setOp(name, { refreshing: false, error: refreshFailureMessage(error) })
-          failed++
-        }
-      })
-    )
-    await Promise.all(
-      ruleSets.map(async (name) => {
-        try {
-          await window.desktop.mihomo.refreshRuleProvider(name)
-          updated++
-        } catch (error) {
-          setOp(name, { refreshing: false, error: refreshFailureMessage(error) })
-          failed++
-        }
-      })
-    )
-    // Re-pull both maps after the batch so rows reflect fresh metadata.
+    for (const name of [...new Set(names)]) {
+      setOp(name, { refreshing: true, error: null })
+      try {
+        await window.desktop.mihomo.refreshProxyProvider(name)
+        updated++
+      } catch (error) {
+        setOp(name, { refreshing: false, error: refreshFailureMessage(error) })
+        failed++
+        continue
+      }
+      setOp(name, { refreshing: false })
+    }
     try {
       await reloadProxyProviders()
     } catch {
       /* keep last good data */
+    }
+    return { updated, failed }
+  }
+
+  /** Rule-provider twin of `refreshProxyProvidersBatch` (see it for rationale). */
+  async function refreshRuleProvidersBatch(names: string[]): Promise<{ updated: number; failed: number }> {
+    let updated = 0
+    let failed = 0
+    for (const name of [...new Set(names)]) {
+      setOp(name, { refreshing: true, error: null })
+      try {
+        await window.desktop.mihomo.refreshRuleProvider(name)
+        updated++
+      } catch (error) {
+        setOp(name, { refreshing: false, error: refreshFailureMessage(error) })
+        failed++
+        continue
+      }
+      setOp(name, { refreshing: false })
     }
     try {
       await reloadRuleProviders()
@@ -231,31 +251,33 @@ export const useProvidersStore = defineStore('providers', () => {
   }
 
   /**
-   * Refresh only the remote RULE providers (规则页的一键更新). Same failure
-   * isolation as the combined batch: one failing rule set shows its own row
-   * error and never discards the other rows' data.
+   * Refresh every remote (URL-backed) external resource — proxy + rule
+   * providers — currently loaded from the running controller, in one click.
+   * Inline/local providers are excluded because the controller cannot re-pull
+   * them (503).
+   */
+  async function refreshAllProviders(): Promise<{ updated: number; failed: number }> {
+    const providers = remoteProxyProviders.value.map((p) => p.name)
+    const ruleSets = remoteRuleProviders.value.map((p) => p.name)
+    const proxyOutcome = await refreshProxyProvidersBatch(providers)
+    const ruleOutcome = await refreshRuleProvidersBatch(ruleSets)
+    return { updated: proxyOutcome.updated + ruleOutcome.updated, failed: proxyOutcome.failed + ruleOutcome.failed }
+  }
+
+  /**
+   * Refresh only the remote RULE providers (规则页的一键更新). Serialized for
+   * the same reason as the combined batch — parallel re-pulls turn kernel /
+   * CDN contention into mihomo 503s — with per-provider failure isolation: one
+   * failing rule set shows its own row error and never discards the others'
+   * data.
    */
   async function refreshAllRuleProviders(): Promise<{ updated: number; failed: number }> {
-    const ruleSets = remoteRuleProviders.value.map((p) => p.name)
-    let updated = 0
-    let failed = 0
-    await Promise.all(
-      ruleSets.map(async (name) => {
-        try {
-          await window.desktop.mihomo.refreshRuleProvider(name)
-          updated++
-        } catch (error) {
-          setOp(name, { refreshing: false, error: refreshFailureMessage(error) })
-          failed++
-        }
-      })
-    )
-    try {
-      await reloadRuleProviders()
-    } catch {
-      /* keep last good data */
-    }
-    return { updated, failed }
+    return refreshRuleProvidersBatch(remoteRuleProviders.value.map((p) => p.name))
+  }
+
+  /** 更新全部 for the 外部资源 page's 代理集合 section only. */
+  async function refreshAllProxyProviders(): Promise<{ updated: number; failed: number }> {
+    return refreshProxyProvidersBatch(remoteProxyProviders.value.map((p) => p.name))
   }
 
   async function healthCheckProxyProvider(name: string): Promise<void> {
@@ -308,13 +330,16 @@ export const useProvidersStore = defineStore('providers', () => {
     orderedRuleProviders,
     remoteProxyProviders,
     remoteRuleProviders,
+    providerCatalog,
     opOf,
     healthOf,
     loadProxyProviders,
     loadRuleProviders,
+    loadProviderCatalog,
     refreshProxyProvider,
     refreshRuleProvider,
     refreshAllProviders,
+    refreshAllProxyProviders,
     refreshAllRuleProviders,
     healthCheckProxyProvider,
     reset

@@ -78,6 +78,7 @@ const api: DesktopApi = {
   },
   profiles: {
     getActiveGroupOrder: () => invoke(IPC.profilesGetActiveGroupOrder),
+    getActiveProviderCatalog: () => invoke(IPC.profilesGetActiveProviderCatalog),
     list: () => invoke(IPC.profilesList),
     get: (id) => invoke(IPC.profilesGet, id),
     import: (request) => invoke(IPC.profilesImport, request),
@@ -105,7 +106,10 @@ const api: DesktopApi = {
     getStatus: () => invoke(IPC.startupGetStatus),
     setEnabled: (enabled) => invoke(IPC.startupSetEnabled, enabled)
   },
-  appSettings: {
+  unlock: {
+    testAll: () => invoke(IPC.unlockTestAll),
+    testOne: (name) => invoke(IPC.unlockTestOne, name)
+  },  appSettings: {
     get: () => invoke(IPC.appSettingsGet),
     set: (patch) => invoke(IPC.appSettingsSet, patch)
   },

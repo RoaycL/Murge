@@ -103,3 +103,29 @@ export type ProfilePatch = Partial<{
   name: string
   source: ProfileSubscription
 }>
+
+/** A `proxy-providers` / `rule-providers` entry as declared by the ACTIVE profile document. */
+export interface ProfileProviderConfig {
+  /** The provider map key (e.g. `机场名` / `规则集名`). */
+  name: string
+  /** `proxy` or `rule`, mirroring the YAML section the entry came from. */
+  kind: 'proxy' | 'rule'
+  /** Declared remote address; absent for File/Inline vehicles. */
+  url?: string
+  /** mihomo `path` override, when the author declared one. */
+  path?: string
+  /** Declared auto-update interval, in seconds. */
+  interval?: number
+  /** `rule` / `ipcidr` / `classical` for rule providers; `domain`/`ipcidr`/`classical` for proxies. */
+  behavior?: string
+  /** `yaml` / `text` / `mrs` for rule providers. */
+  format?: string
+  /** The health-check / delay-test URL the provider declares, when any. */
+  testUrl?: string
+}
+
+/** Provider declarations merged from the active profile document, keyed by kind. */
+export interface ProfileProviderCatalog {
+  proxy: ProfileProviderConfig[]
+  rule: ProfileProviderConfig[]
+}

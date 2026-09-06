@@ -277,7 +277,7 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .logs-toolbar input { flex: 1; height: 29px; padding: 0 12px; border: 1px solid var(--app-divider); border-radius: 7px; background: rgba(255,255,255,.24); color: inherit; }
 .logs-toolbar select { width: 112px; height: 29px; padding: 0 8px; border: 0; border-radius: 7px; background: rgba(127,127,127,.13); color: inherit; }
 .logs-panel { width: 100%; flex: 1; min-height: 240px; overflow: auto; border-radius: 8px; }
-.log-row { display: grid; grid-template-columns: 72px 62px 1fr; align-items: start; min-height: 29px; padding: 6px 10px; border-bottom: 1px solid var(--app-divider); font-size: 11px; }
+.log-row { display: grid; grid-template-columns: 132px 62px 1fr; align-items: start; min-height: 29px; padding: 6px 10px; border-bottom: 1px solid var(--app-divider); font-size: 11px; }
 .log-row time { color: var(--app-muted); font-variant-numeric: tabular-nums; }
 .log-row code { color: inherit; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .log-level { font-size: 10px; text-transform: uppercase; }

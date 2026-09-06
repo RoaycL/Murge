@@ -14,7 +14,8 @@ import type {
   MihomoRulesResponse,
   MihomoStreamError
 } from './mihomo-api'
-import type { ConfigEdit, ImportRequest, Profile, ProfileMeta, ValidationResult } from './profiles'
+import type { ConfigEdit, ImportRequest, Profile, ProfileMeta, ProfileProviderCatalog, ValidationResult } from './profiles'
+import type { ServiceUnlockResult } from './unlock'
 import type { KernelManagerState } from './kernel-manager'
 import type {
   OverrideInput,
@@ -60,6 +61,8 @@ export const IPC = {
   mihomoPatchConfig: 'mihomo:patch-config',
   mihomoGetProxies: 'mihomo:get-proxies',
   mihomoInternetLatency: 'mihomo:internet-latency',
+  unlockTestAll: 'network:unlock-test-all',
+  unlockTestOne: 'network:unlock-test-one',
   mihomoSelectProxy: 'mihomo:select-proxy',
   mihomoGetRules: 'mihomo:get-rules',
   mihomoGetProxyProviders: 'mihomo:get-proxy-providers',
@@ -83,6 +86,7 @@ export const IPC = {
   mihomoStreamErrorEvent: 'mihomo:stream-error-event',
   profilesList: 'profiles:list',
   profilesGetActiveGroupOrder: 'profiles:get-active-group-order',
+  profilesGetActiveProviderCatalog: 'profiles:get-active-provider-catalog',
   profilesGet: 'profiles:get',
   profilesImport: 'profiles:import',
   profilesImportFromUrl: 'profiles:import-from-url',
@@ -213,6 +217,8 @@ export interface DesktopApi {
   profiles: {
     /** Ordered proxy-group names from the ACTIVE profile document (config order). */
     getActiveGroupOrder(): Promise<string[]>
+    /** `proxy-providers`/`rule-providers` declarations from the ACTIVE profile document. */
+    getActiveProviderCatalog(): Promise<ProfileProviderCatalog>
     list(): Promise<ProfileMeta[]>
     get(id: string): Promise<Profile>
     import(request: ImportRequest): Promise<ProfileMeta>
@@ -239,6 +245,12 @@ export interface DesktopApi {
   startup: {
     getStatus(): Promise<StartupStatus>
     setEnabled(enabled: boolean): Promise<StartupStatus>
+  }
+  unlock: {
+    /** Test every preset service (AI / streaming / others) concurrently. */
+    testAll(): Promise<ServiceUnlockResult[]>
+    /** Re-test one preset service (row-level refresh). */
+    testOne(name: string): Promise<ServiceUnlockResult>
   }
   appSettings: {
     get(): Promise<AppSettings>

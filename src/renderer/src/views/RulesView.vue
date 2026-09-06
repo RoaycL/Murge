@@ -113,7 +113,7 @@ watch(() => kernel.status.phase, (phase, previous) => {
       <header class="section-caption rules-provider-caption">
         <span>规则集</span>
         <button type="button" class="rules-refresh-all" :disabled="refreshingAllRules || !providers.orderedRuleProviders.length || kernel.status.phase !== 'running'" @click="refreshAllRules">
-          <AppIcon name="refresh" :size="13" />{{ refreshingAllRules ? '更新中…' : '一键更新' }}
+          <AppIcon name="refresh" :size="13" :class="{ 'spin-icon': refreshingAllRules }" />{{ refreshingAllRules ? '更新中…' : '一键更新' }}
         </button>
       </header>
       <div class="provider-list surface-card">
@@ -128,9 +128,13 @@ watch(() => kernel.status.phase, (phase, previous) => {
           <div class="provider-actions">
             <button
               type="button"
+              class="icon-control"
+              :class="{ spinning: providers.opOf(provider.name).refreshing }"
               :disabled="providers.opOf(provider.name).refreshing"
+              :aria-label="providers.opOf(provider.name).refreshing ? '更新中' : '更新规则集'"
+              title="更新"
               @click="providers.refreshRuleProvider(provider.name)"
-            >{{ providers.opOf(provider.name).refreshing ? '更新中' : '更新' }}</button>
+            ><AppIcon name="refresh" :size="16" /></button>
           </div>
         </div>
       </div>
@@ -156,7 +160,6 @@ watch(() => kernel.status.phase, (phase, previous) => {
 .provider-info strong { display: block; font-size: 14px; }
 .provider-info small { display: block; margin-top: 3px; color: var(--app-muted); font-size: 11px; }
 .provider-actions { display: flex; gap: 8px; }
-.provider-actions button { height: 28px; padding: 0 12px; border: 0; border-radius: 6px; background: rgba(127,127,127,.13); }
-.provider-actions button:disabled { opacity: .5; }
+/* 逐项更新改为图标按钮后移除旧的文本按钮底色规则。 */
 .provider-error { grid-column: 1 / -1; color: #e05b5b; font-size: 11px; }
 </style>

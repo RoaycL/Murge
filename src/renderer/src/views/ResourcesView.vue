@@ -82,16 +82,16 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
 <template><div class="page-shell feature-page">
   <header class="feature-header">
     <div><h1>外部资源</h1><p>集中查看代理集合、规则集合与地理数据库。</p></div>
-    <button type="button" class="secondary-button" :disabled="refreshing || kernel.status.phase !== 'running' || !total" @click="refreshAll"><AppIcon name="refresh" :size="15" />{{ refreshing ? '更新中…' : '全部更新' }}</button>
+    <button type="button" class="secondary-button" :disabled="refreshing || kernel.status.phase !== 'running' || !total" @click="refreshAll"><AppIcon name="refresh" :size="15" :class="{ 'spin-icon': refreshing }" />{{ refreshing ? '更新中…' : '全部更新' }}</button>
   </header>
   <p v-if="kernel.status.phase !== 'running'" class="inline-note">启动内核后即可读取和更新集合。</p>
   <section v-else class="resource-page-groups">
     <article class="surface-card resource-page-card">
       <header class="resource-card-head">
         <h2>代理集合 <small>{{ providers.remoteProxyProviders.length }}</small></h2>
-        <button type="button" class="quiet-button" :disabled="refreshingProxy || !providers.remoteProxyProviders.length" @click="refreshAllProxy">{{ refreshingProxy ? '更新中…' : '更新全部' }}</button>
+        <button type="button" class="quiet-button" :disabled="refreshingProxy || !providers.remoteProxyProviders.length" @click="refreshAllProxy"><AppIcon name="refresh" :size="13" :class="{ 'spin-icon': refreshingProxy }" />{{ refreshingProxy ? '更新中…' : '更新全部' }}</button>
       </header>
-      <div v-for="item in providers.remoteProxyProviders" :key="item.name" class="resource-page-row" :class="{ 'row-failed': providers.opOf(item.name).error }">
+      <div v-for="item in providers.remoteProxyProviders" :key="item.name" class="resource-page-row" :class="{ 'row-failed': providers.opOf(item.name).error, 'row-updating': providers.opOf(item.name).refreshing }">
         <button type="button" class="resource-row-main" @click="viewing = { kind: 'proxy', name: item.name }">
           <strong>{{ item.name }}</strong>
           <small>{{ item.proxies?.length ?? 0 }} 个节点</small>
@@ -99,7 +99,7 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
         </button>
         <span class="row-actions">
           <button class="icon-control" type="button" aria-label="查看代理集合配置" title="查看配置" @click="viewing = { kind: 'proxy', name: item.name }"><AppIcon name="eye" :size="16" /></button>
-          <button class="icon-control" type="button" aria-label="更新代理集合" @click="providers.refreshProxyProvider(item.name)"><AppIcon name="refresh" :size="16" /></button>
+          <button class="icon-control" type="button" :class="{ spinning: providers.opOf(item.name).refreshing }" :disabled="providers.opOf(item.name).refreshing" :aria-label="providers.opOf(item.name).refreshing ? '更新中' : '更新代理集合'" @click="providers.refreshProxyProvider(item.name)"><AppIcon name="refresh" :size="16" /></button>
         </span>
       </div>
       <p v-if="!providers.remoteProxyProviders.length">当前配置没有远程代理集合。</p>
@@ -107,9 +107,9 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
     <article class="surface-card resource-page-card">
       <header class="resource-card-head">
         <h2>规则集合 <small>{{ providers.remoteRuleProviders.length }}</small></h2>
-        <button type="button" class="quiet-button" :disabled="refreshingRule || !providers.remoteRuleProviders.length" @click="refreshAllRule">{{ refreshingRule ? '更新中…' : '更新全部' }}</button>
+        <button type="button" class="quiet-button" :disabled="refreshingRule || !providers.remoteRuleProviders.length" @click="refreshAllRule"><AppIcon name="refresh" :size="13" :class="{ 'spin-icon': refreshingRule }" />{{ refreshingRule ? '更新中…' : '更新全部' }}</button>
       </header>
-      <div v-for="item in providers.remoteRuleProviders" :key="item.name" class="resource-page-row" :class="{ 'row-failed': providers.opOf(item.name).error }">
+      <div v-for="item in providers.remoteRuleProviders" :key="item.name" class="resource-page-row" :class="{ 'row-failed': providers.opOf(item.name).error, 'row-updating': providers.opOf(item.name).refreshing }">
         <button type="button" class="resource-row-main" @click="viewing = { kind: 'rule', name: item.name }">
           <strong>{{ item.name }}</strong>
           <small>{{ item.ruleCount ?? 0 }} 条规则</small>
@@ -117,7 +117,7 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
         </button>
         <span class="row-actions">
           <button class="icon-control" type="button" aria-label="查看规则集合配置" title="查看配置" @click="viewing = { kind: 'rule', name: item.name }"><AppIcon name="eye" :size="16" /></button>
-          <button class="icon-control" type="button" aria-label="更新规则集合" @click="providers.refreshRuleProvider(item.name)"><AppIcon name="refresh" :size="16" /></button>
+          <button class="icon-control" type="button" :class="{ spinning: providers.opOf(item.name).refreshing }" :disabled="providers.opOf(item.name).refreshing" :aria-label="providers.opOf(item.name).refreshing ? '更新中' : '更新规则集合'" @click="providers.refreshRuleProvider(item.name)"><AppIcon name="refresh" :size="16" /></button>
         </span>
       </div>
       <p v-if="!providers.remoteRuleProviders.length">当前配置没有远程规则集合。</p>
@@ -152,6 +152,8 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
 .row-actions { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .row-error { color: var(--app-danger, #d64f4f); }
 .row-failed .resource-row-main strong { color: var(--app-danger, #d64f4f); }
+/* 批量更新时当前正在拉取的那一行轻微高亮，配合旋转图标指示进度。 */
+.row-updating .resource-row-main strong { color: var(--app-purple); }
 .detail-list { display: grid; gap: 0; margin: 0; }
 .detail-item { display: flex; justify-content: space-between; gap: 14px; padding: 8px 0; border-top: 1px solid var(--app-divider); font-size: 12px; }
 .detail-item:first-child { border-top: 0; }

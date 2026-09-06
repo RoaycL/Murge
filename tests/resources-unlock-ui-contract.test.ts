@@ -72,4 +72,25 @@ describe('network drawer + resources UI contract', () => {
     expect(store).toMatch(/refreshProxyProvidersBatch/)
     expect(store).toMatch(/refreshRuleProvidersBatch/)
   })
+
+  it('spins the refresh icon of the row currently updating, in both views', async () => {
+    const [base, resources, rules] = await Promise.all([
+      read('src/renderer/src/styles/base.css'),
+      read('src/renderer/src/views/ResourcesView.vue'),
+      read('src/renderer/src/views/RulesView.vue')
+    ])
+    // Shared spin animation (参考 clash-verge-rev: 1s linear infinite).
+    expect(base).toMatch(/@keyframes icon-spin/)
+    expect(base).toMatch(/icon-spin 1s linear infinite/)
+    // 外部资源: per-row refresh buttons spin while that row's op is refreshing,
+    // and every 更新全部 header button spins too.
+    expect(resources).toMatch(/spinning: providers\.opOf\(item\.name\)\.refreshing/)
+    expect(resources).toMatch(/'spin-icon': refreshingProxy/)
+    expect(resources).toMatch(/'spin-icon': refreshingRule/)
+    expect(resources).toMatch(/'spin-icon': refreshing/)
+    // 规则页: per-row text buttons replaced by icon buttons with the same spin.
+    expect(rules).toMatch(/class="icon-control"/)
+    expect(rules).toMatch(/spinning: providers\.opOf\(provider\.name\)\.refreshing/)
+    expect(rules).toMatch(/'spin-icon': refreshingAllRules/)
+  })
 })

@@ -103,4 +103,28 @@ describe('Activity fluid-layout UI contract', () => {
     expect(css).toMatch(/\.detail-drawer-footer\s*\{[^}]*flex-wrap:\s*nowrap/)
     expect(css).toMatch(/\.detail-drawer button\s*\{[^}]*white-space:\s*nowrap/)
   })
+
+  it('pairs the network drawer with the shared diagnosis sample and keeps reveal on the info row', async () => {
+    const network = await read('src/renderer/src/components/NetworkMetadataPanel.vue')
+
+    // 网络诊断区块复用活动页的共享延迟样本，不自行发起重复测量。
+    expect(network).toContain("import { useLatencyStore } from '../stores/latency'")
+    expect(network).toContain('latency.probe()')
+    expect(network).not.toContain('window.desktop.mihomo.internetLatency')
+    expect(network).toContain('网络诊断')
+    expect(network).toContain('路由网关')
+    expect(network).toContain('DNS 解析')
+    expect(network).toContain('代理出口')
+    // 诊断区块在前；出口信息保留遮罩 + 手动显示，隐私默认不暴露 IP。
+    expect(network.indexOf('网络诊断')).toBeLessThan(network.indexOf('出口网络信息'))
+    expect(network).toMatch(/@click="toggleReveal"/)
+    expect(network).not.toContain('复制信息')
+  })
+
+  it('lays kernel versions out as an adaptive multi-column chip grid', async () => {
+    const modal = await read('src/renderer/src/components/KernelVersionModal.vue')
+
+    expect(modal).toMatch(/grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(96px,\s*1fr\)\)/)
+    expect(modal).not.toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)/)
+  })
 })

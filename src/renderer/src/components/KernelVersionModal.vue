@@ -152,9 +152,9 @@ async function confirmInstall(): Promise<void> {
 .km-hint { margin: 12px 0 0; color: var(--app-muted); font-size: 11px; }
 .km-list {
   display: grid;
-  /* Single-column, full-width rows: each version card claims its own line
-     so the version string is never cramped beside a neighbour. */
-  grid-template-columns: minmax(0, 1fr);
+  /* Adaptive multi-column: auto-fill packs as many version chips per row as
+     the modal width allows (4 at the default 460px, fewer when narrower). */
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
   gap: 6px;
   margin: 12px 0 0;
   padding: 0;

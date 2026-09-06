@@ -82,15 +82,52 @@ describe('network drawer + resources UI contract', () => {
     // Shared spin animation (参考 clash-verge-rev: 1s linear infinite).
     expect(base).toMatch(/@keyframes icon-spin/)
     expect(base).toMatch(/icon-spin 1s linear infinite/)
-    // 外部资源: per-row refresh buttons spin while that row's op is refreshing,
-    // and every 更新全部 header button spins too.
+    // 外部资源: per-row refresh buttons spin while that row's op is refreshing.
     expect(resources).toMatch(/spinning: providers\.opOf\(item\.name\)\.refreshing/)
-    expect(resources).toMatch(/'spin-icon': refreshingProxy/)
-    expect(resources).toMatch(/'spin-icon': refreshingRule/)
-    expect(resources).toMatch(/'spin-icon': refreshing/)
     // 规则页: per-row text buttons replaced by icon buttons with the same spin.
     expect(rules).toMatch(/class="icon-control"/)
     expect(rules).toMatch(/spinning: providers\.opOf\(provider\.name\)\.refreshing/)
-    expect(rules).toMatch(/'spin-icon': refreshingAllRules/)
+  })
+
+  it('keeps batch buttons plain text labelled 全部更新 without icons', async () => {
+    const [resources, rules] = await Promise.all([
+      read('src/renderer/src/views/ResourcesView.vue'),
+      read('src/renderer/src/views/RulesView.vue')
+    ])
+    // 外部资源: 页首 + 两个分区按钮统一为纯文本「全部更新」，不带图标。
+    expect(resources).toMatch(/'全部更新' \}/)
+    expect(resources).not.toMatch(/refreshingProxy \? '更新中…' : '更新全部'/)
+    expect(resources).not.toMatch(/'spin-icon': refreshingProxy/)
+    expect(resources).not.toMatch(/'spin-icon': refreshingRule/)
+    expect(resources).not.toMatch(/'spin-icon': refreshing /)
+    // 规则页: 一键更新 → 全部更新，无图标。
+    expect(rules).toMatch(/refreshingAllRules \? '更新中…' : '全部更新'/)
+    expect(rules).not.toMatch(/'spin-icon': refreshingAllRules/)
+    expect(rules).not.toMatch(/一键更新/)
+  })
+
+  it('opens the four secondary-setting drawers from the overview cards', async () => {
+    const overview = await read('src/renderer/src/views/OverviewView.vue')
+    // 网络管理 (系统代理 + TUN) 与覆写 (嗅探 + DNS) 四张卡片。
+    expect(overview).toMatch(/<h2>网络管理<\/h2>/)
+    expect(overview).toMatch(/<h2>覆写<\/h2>/)
+    expect(overview).toMatch(/<h3>系统代理<\/h3>/)
+    expect(overview).toMatch(/<h3>TUN 模式<\/h3>/)
+    expect(overview).toMatch(/<h3>嗅探覆写<\/h3>/)
+    expect(overview).toMatch(/<h3>DNS 覆写<\/h3>/)
+    // 每张卡片都有二级设置入口，抽屉内复用现有面板组件。
+    expect(overview).toMatch(/settingsDrawer = 'system-proxy'/)
+    expect(overview).toMatch(/settingsDrawer = 'tun'/)
+    expect(overview).toMatch(/settingsDrawer = 'sniffer'/)
+    expect(overview).toMatch(/settingsDrawer = 'dns'/)
+    expect(overview).toMatch(/ProxyBypassPanel/)
+    expect(overview).toMatch(/TunConfigPanel/)
+    expect(overview).toMatch(/SnifferSettingsPanel/)
+    expect(overview).toMatch(/DnsSettingsPanel/)
+    // 覆写卡片上的主开关直接持久化 enabled。
+    expect(overview).toMatch(/toggleSniffer/)
+    expect(overview).toMatch(/toggleDns/)
+    expect(overview).toMatch(/\{ \.\.\.sniffer\.enhancement, enabled: !snifferEnabled\.value \}/)
+    expect(overview).toMatch(/\{ \.\.\.dns\.enhancement, enabled: !dnsEnabled\.value \}/)
   })
 })

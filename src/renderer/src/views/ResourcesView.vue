@@ -82,14 +82,14 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
 <template><div class="page-shell feature-page">
   <header class="feature-header">
     <div><h1>外部资源</h1><p>集中查看代理集合、规则集合与地理数据库。</p></div>
-    <button type="button" class="secondary-button" :disabled="refreshing || kernel.status.phase !== 'running' || !total" @click="refreshAll"><AppIcon name="refresh" :size="15" :class="{ 'spin-icon': refreshing }" />{{ refreshing ? '更新中…' : '全部更新' }}</button>
+    <button type="button" class="secondary-button" :disabled="refreshing || kernel.status.phase !== 'running' || !total" @click="refreshAll">{{ refreshing ? '更新中…' : '全部更新' }}</button>
   </header>
   <p v-if="kernel.status.phase !== 'running'" class="inline-note">启动内核后即可读取和更新集合。</p>
   <section v-else class="resource-page-groups">
     <article class="surface-card resource-page-card">
       <header class="resource-card-head">
         <h2>代理集合 <small>{{ providers.remoteProxyProviders.length }}</small></h2>
-        <button type="button" class="quiet-button" :disabled="refreshingProxy || !providers.remoteProxyProviders.length" @click="refreshAllProxy"><AppIcon name="refresh" :size="13" :class="{ 'spin-icon': refreshingProxy }" />{{ refreshingProxy ? '更新中…' : '更新全部' }}</button>
+        <button type="button" class="quiet-button" :disabled="refreshingProxy || !providers.remoteProxyProviders.length" @click="refreshAllProxy">{{ refreshingProxy ? '更新中…' : '全部更新' }}</button>
       </header>
       <div v-for="item in providers.remoteProxyProviders" :key="item.name" class="resource-page-row" :class="{ 'row-failed': providers.opOf(item.name).error, 'row-updating': providers.opOf(item.name).refreshing }">
         <button type="button" class="resource-row-main" @click="viewing = { kind: 'proxy', name: item.name }">
@@ -107,7 +107,7 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
     <article class="surface-card resource-page-card">
       <header class="resource-card-head">
         <h2>规则集合 <small>{{ providers.remoteRuleProviders.length }}</small></h2>
-        <button type="button" class="quiet-button" :disabled="refreshingRule || !providers.remoteRuleProviders.length" @click="refreshAllRule"><AppIcon name="refresh" :size="13" :class="{ 'spin-icon': refreshingRule }" />{{ refreshingRule ? '更新中…' : '更新全部' }}</button>
+        <button type="button" class="quiet-button" :disabled="refreshingRule || !providers.remoteRuleProviders.length" @click="refreshAllRule">{{ refreshingRule ? '更新中…' : '全部更新' }}</button>
       </header>
       <div v-for="item in providers.remoteRuleProviders" :key="item.name" class="resource-page-row" :class="{ 'row-failed': providers.opOf(item.name).error, 'row-updating': providers.opOf(item.name).refreshing }">
         <button type="button" class="resource-row-main" @click="viewing = { kind: 'rule', name: item.name }">

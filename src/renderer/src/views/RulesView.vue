@@ -37,7 +37,7 @@ async function init(): Promise<void> {
   void providers.loadRuleProviders()
 }
 
-/** Refresh every remote rule provider in one click (规则集一键更新). */
+/** Refresh every remote rule set in one click (规则集全部更新). */
 const refreshingAllRules = ref(false)
 async function refreshAllRules(): Promise<void> {
   if (refreshingAllRules.value) return
@@ -113,7 +113,7 @@ watch(() => kernel.status.phase, (phase, previous) => {
       <header class="section-caption rules-provider-caption">
         <span>规则集</span>
         <button type="button" class="rules-refresh-all" :disabled="refreshingAllRules || !providers.orderedRuleProviders.length || kernel.status.phase !== 'running'" @click="refreshAllRules">
-          <AppIcon name="refresh" :size="13" :class="{ 'spin-icon': refreshingAllRules }" />{{ refreshingAllRules ? '更新中…' : '一键更新' }}
+          {{ refreshingAllRules ? '更新中…' : '全部更新' }}
         </button>
       </header>
       <div class="provider-list surface-card">

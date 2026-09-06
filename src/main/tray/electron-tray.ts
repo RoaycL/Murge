@@ -1,10 +1,9 @@
-import { Menu, Tray, nativeImage, type MenuItemConstructorOptions } from 'electron'
+import { Menu, Tray, type MenuItemConstructorOptions } from 'electron'
 import type { TrayMenuItem, TrayView } from './tray-controller'
+import { createRuntimeIcon } from './runtime-icon'
 
-export function createElectronTray(iconPath: string): TrayView {
-  const image = nativeImage.createFromPath(iconPath)
-  if (image.isEmpty()) throw new Error(`Tray icon could not be loaded: ${iconPath}`)
-  const tray = new Tray(image.resize({ width: 16, height: 16 }))
+export function createElectronTray(dark = false): TrayView {
+  const tray = new Tray(createRuntimeIcon('idle', dark, 64).resize({ width: 16, height: 16 }))
   return {
     isReady: () => !tray.isDestroyed(),
     setToolTip: (value) => tray.setToolTip(value),
@@ -13,6 +12,9 @@ export function createElectronTray(iconPath: string): TrayView {
         ? { type: 'separator' }
         : { label: item.label, enabled: item.enabled, click: item.click })
       tray.setContextMenu(Menu.buildFromTemplate(template))
+    },
+    setRuntimeAppearance: (accent, nextDark) => {
+      tray.setImage(createRuntimeIcon(accent, nextDark, 64).resize({ width: 16, height: 16 }))
     },
     onActivate: (listener) => {
       tray.on('click', listener)

@@ -1,5 +1,6 @@
 import type { KernelGateway } from '@shared/gateways'
 import type { KernelStatus } from '@shared/runtime'
+import type { RuntimeAccent } from '@shared/runtime-accent'
 
 export interface TrayMenuItem {
   id: 'show' | 'status' | 'start' | 'stop' | 'check-update' | 'quit' | 'separator'
@@ -13,6 +14,7 @@ export interface TrayView {
   isReady(): boolean
   setToolTip(value: string): void
   setMenu(items: TrayMenuItem[]): void
+  setRuntimeAppearance(accent: RuntimeAccent, dark: boolean): void
   onActivate(listener: () => void): () => void
   destroy(): void
 }

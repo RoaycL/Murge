@@ -27,6 +27,8 @@ export interface KernelManagerState {
   specificVersion: string | null
   /** The effective version the next start will run (stable or specific). */
   effectiveVersion: string | null
+  /** Whether this runtime can safely install and execute non-bundled versions. */
+  specificVersionsSupported: boolean
   /** Fetched published mihomo versions (transient). */
   versions: string[]
   /** Whether a version refresh is in flight. */
@@ -43,6 +45,7 @@ export const DEFAULT_KERNEL_MANAGER_STATE: Readonly<KernelManagerState> = Object
   stableVersion: '',
   specificVersion: null,
   effectiveVersion: null,
+  specificVersionsSupported: true,
   versions: [],
   versionsLoading: false,
   installing: null,
@@ -71,6 +74,7 @@ export function coerceKernelManagerState(value: unknown): KernelManagerState {
     stableVersion,
     specificVersion,
     effectiveVersion,
+    specificVersionsSupported: o.specificVersionsSupported !== false,
     versions: Array.isArray(o.versions) ? o.versions.filter((v): v is string => typeof v === 'string') : [],
     versionsLoading: o.versionsLoading === true,
     installing: typeof o.installing === 'string' && o.installing.length > 0 ? o.installing : null,

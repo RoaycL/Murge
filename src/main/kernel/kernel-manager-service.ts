@@ -54,6 +54,8 @@ export interface KernelManagerServiceDeps {
   resolveAsset?: (asset: MihomoAsset, workspaceDir: string) => Promise<ResolvedMihomoBinary>
   /** Timeout for the live GitHub metadata requests (default 30s). */
   githubTimeoutMs?: number
+  /** False when a privileged service can only execute the installer-pinned archive. */
+  specificVersionsSupported?: boolean
 }
 
 interface TransientState {
@@ -97,11 +99,19 @@ export class KernelManagerService implements KernelManagerGateway {
   }
 
   async setChannel(channel: 'stable' | 'specific'): Promise<KernelManagerState> {
+    if (channel === 'specific' && this.deps.specificVersionsSupported === false) {
+      this.state.error = '当前 Windows 服务模式仅支持安装包内置的稳定内核。'
+      return this.commit()
+    }
     await this.deps.settings.set({ kernelChannel: channel })
     return this.commit()
   }
 
   async listVersions(): Promise<KernelManagerState> {
+    if (this.deps.specificVersionsSupported === false) {
+      this.state.error = '当前 Windows 服务模式仅支持安装包内置的稳定内核。'
+      return this.commit()
+    }
     this.state.versionsLoading = true
     this.state.error = null
     this.emit(await this.buildState())
@@ -117,6 +127,10 @@ export class KernelManagerService implements KernelManagerGateway {
   }
 
   async install(version: string): Promise<KernelManagerState> {
+    if (this.deps.specificVersionsSupported === false) {
+      this.state.error = '当前 Windows 服务模式不能安装指定内核版本。'
+      return this.commit()
+    }
     if (!VERSION_TAG_RE.test(version)) {
       this.state.error = `无效的版本号：${version}`
       return this.commit()
@@ -178,7 +192,8 @@ export class KernelManagerService implements KernelManagerGateway {
       settings.kernelSpecificVersion && settings.kernelSpecificVersion.trim()
         ? settings.kernelSpecificVersion
         : null
-    const channel = settings.kernelChannel
+    const specificVersionsSupported = this.deps.specificVersionsSupported !== false
+    const channel = specificVersionsSupported ? settings.kernelChannel : 'stable'
     const effectiveVersion =
       channel === 'specific' && specificVersion ? specificVersion : stableVersion
     const state: KernelManagerState = {
@@ -187,6 +202,7 @@ export class KernelManagerService implements KernelManagerGateway {
       stableVersion,
       specificVersion,
       effectiveVersion,
+      specificVersionsSupported,
       versions: this.state.versions,
       versionsLoading: this.state.versionsLoading,
       installing: this.state.installing,

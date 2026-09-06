@@ -9,6 +9,18 @@ import { applyDnsEnhancementToDocument } from './apply-dns'
 /** Filename of the persisted typed DNS enhancement. */
 export const DNS_ENHANCEMENT_FILE = 'dns-enhancement.json'
 
+const LEGACY_WILDCARD_DEFAULT = [
+  '*', '+.lan', '+.local', '+.arpa', 'time.*.com', 'ntp.*.com',
+  '+.market.xiaomi.com', 'localhost.ptlogin2.qq.com', '*.msftncsi.com',
+  'www.msftconnecttest.com'
+]
+
+function isLegacyWildcardDefault(value: DnsEnhancement): boolean {
+  return value.fakeIpFilterMode === 'blacklist' &&
+    value.fakeIpFilter.length === LEGACY_WILDCARD_DEFAULT.length &&
+    value.fakeIpFilter.every((entry, index) => entry === LEGACY_WILDCARD_DEFAULT[index])
+}
+
 /**
  * Durable single-model store for the typed DNS enhancement.
  *
@@ -53,6 +65,12 @@ export class DnsEnhancementService implements DnsEnhancementGateway {
       const parsed = JSON.parse(await readFile(this.filePath, 'utf8')) as unknown
       const source = (parsed as { enhancement?: unknown })?.enhancement
       this.enhancement = coerceDnsEnhancement(source)
+      if (isLegacyWildcardDefault(this.enhancement)) {
+        this.enhancement = { ...this.enhancement, fakeIpFilter: this.enhancement.fakeIpFilter.slice(1) }
+        // The corrected runtime value is still usable if a read-only filesystem
+        // prevents the one-time migration write; do not discard the loaded model.
+        await this.persist().catch(() => undefined)
+      }
     } catch {
       this.enhancement = coerceDnsEnhancement(undefined)
     }

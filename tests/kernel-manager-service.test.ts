@@ -85,6 +85,24 @@ describe('KernelManagerService', () => {
       expect(settings.settings.kernelChannel).toBe('specific')
       await rm(base, { recursive: true, force: true })
     })
+
+    it('does not advertise or persist a specific version in privileged service mode', async () => {
+      const base = await mkdtemp(join(tmpdir(), 'kernel-manager-service-mode-'))
+      const settings = new FakeAppSettingsGateway()
+      await settings.set({ kernelChannel: 'specific', kernelSpecificVersion: 'v1.19.20' })
+      const service = new KernelManagerService({
+        settings,
+        workspaceRoot: join(base, 'kernel'),
+        stableVersion: 'v1.19.30',
+        specificVersionsSupported: false
+      })
+      const initial = await service.getState()
+      expect(initial).toMatchObject({ channel: 'stable', effectiveVersion: 'v1.19.30', specificVersionsSupported: false })
+      const attempted = await service.setChannel('specific')
+      expect(attempted.channel).toBe('stable')
+      expect(attempted.error).toContain('仅支持安装包内置')
+      await rm(base, { recursive: true, force: true })
+    })
   })
 
   describe('listVersions', () => {

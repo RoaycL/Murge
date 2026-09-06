@@ -473,23 +473,23 @@ function ruleProviderMeta(
                 <span class="resource-meta">
                   <template v-if="provider.updatedAt">{{ relativeTime(provider.updatedAt ?? 0) }}</template>
                 </span>
-                <span v-if="providersStore.opOf(provider.name).error" class="resource-error">
-                  {{ providersStore.opOf(provider.name).error }}
+                <span v-if="providersStore.opOf(provider.name, 'proxy').error" class="resource-error">
+                  {{ providersStore.opOf(provider.name, 'proxy').error }}
                 </span>
               </div>
               <div class="resource-actions">
                 <button
                   type="button"
                   class="resource-refresh"
-                  :disabled="providersStore.opOf(provider.name).refreshing"
+                  :disabled="providersStore.opOf(provider.name, 'proxy').refreshing"
                   @click="providersStore.refreshProxyProvider(provider.name)"
-                >{{ providersStore.opOf(provider.name).refreshing ? '更新中' : '更新' }}</button>
+                >{{ providersStore.opOf(provider.name, 'proxy').refreshing ? '更新中' : '更新' }}</button>
                 <button
                   type="button"
                   class="resource-refresh"
-                  :disabled="providersStore.opOf(provider.name).healthchecking"
+                  :disabled="providersStore.opOf(provider.name, 'proxy').healthchecking"
                   @click="providersStore.healthCheckProxyProvider(provider.name)"
-                >{{ providersStore.opOf(provider.name).healthchecking ? '测速中' : '测速' }}</button>
+                >{{ providersStore.opOf(provider.name, 'proxy').healthchecking ? '测速中' : '测速' }}</button>
               </div>
             </div>
           </div>
@@ -510,17 +510,17 @@ function ruleProviderMeta(
                   {{ provider.name }}<span class="resource-count">（{{ provider.ruleCount ?? 0 }} 条）</span>
                 </span>
                 <span class="resource-meta">{{ ruleProviderMeta(provider) }}</span>
-                <span v-if="providersStore.opOf(provider.name).error" class="resource-error">
-                  {{ providersStore.opOf(provider.name).error }}
+                <span v-if="providersStore.opOf(provider.name, 'rule').error" class="resource-error">
+                  {{ providersStore.opOf(provider.name, 'rule').error }}
                 </span>
               </div>
               <div class="resource-actions">
                 <button
                   type="button"
                   class="resource-refresh"
-                  :disabled="providersStore.opOf(provider.name).refreshing"
+                  :disabled="providersStore.opOf(provider.name, 'rule').refreshing"
                   @click="providersStore.refreshRuleProvider(provider.name)"
-                >{{ providersStore.opOf(provider.name).refreshing ? '更新中' : '更新' }}</button>
+                >{{ providersStore.opOf(provider.name, 'rule').refreshing ? '更新中' : '更新' }}</button>
               </div>
             </div>
           </div>

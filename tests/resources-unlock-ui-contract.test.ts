@@ -39,6 +39,12 @@ describe('network drawer + resources UI contract', () => {
     expect(preload).toMatch(/testOne: \(name\) => invoke\(IPC\.unlockTestOne, name\)/)
   })
 
+  it('fails unlock probes closed when no live mixed port exists', async () => {
+    const service = await read('src/main/services/service-unlock-service.ts')
+    expect(service).toMatch(/UPSTREAM_UNREACHABLE/)
+    expect(service).not.toMatch(/setProxy\([^)]*mode:\s*'system'/s)
+  })
+
   it('renames Provider sections to 集合 with per-section 更新全部 and per-row 配置查看', async () => {
     const view = await read('src/renderer/src/views/ResourcesView.vue')
     expect(view).toMatch(/集中查看代理集合、规则集合与地理数据库/)
@@ -83,10 +89,10 @@ describe('network drawer + resources UI contract', () => {
     expect(base).toMatch(/@keyframes icon-spin/)
     expect(base).toMatch(/icon-spin 1s linear infinite/)
     // 外部资源: per-row refresh buttons spin while that row's op is refreshing.
-    expect(resources).toMatch(/spinning: providers\.opOf\(item\.name\)\.refreshing/)
+    expect(resources).toMatch(/spinning: providers\.opOf\(item\.name, 'proxy'\)\.refreshing/)
     // 规则页: per-row text buttons replaced by icon buttons with the same spin.
     expect(rules).toMatch(/class="icon-control"/)
-    expect(rules).toMatch(/spinning: providers\.opOf\(provider\.name\)\.refreshing/)
+    expect(rules).toMatch(/spinning: providers\.opOf\(provider\.name, 'rule'\)\.refreshing/)
   })
 
   it('keeps batch buttons plain text labelled 全部更新 without icons', async () => {
@@ -139,15 +145,17 @@ describe('network drawer + resources UI contract', () => {
       read('src/main/app-settings/service.ts'),
       read('src/renderer/src/views/GeneralView.vue')
     ])
-    // 静默启动/关闭到托盘/代理守护都是持久化字段, 不是摆设开关。
+    // 三个后台行为都是持久化字段；通用页按产品要求只呈现启动/托盘项。
     for (const key of ['silentLaunch', 'closeToTray', 'proxyGuard']) {
       expect(shared).toMatch(new RegExp(`${key}: boolean`))
       expect(service).toMatch(new RegExp(`${key}`))
-      expect(general).toMatch(new RegExp(`${key}`))
     }
+    expect(general).toMatch(/silentLaunch/)
+    expect(general).toMatch(/closeToTray/)
+    expect(general).not.toMatch(/网络守护|系统代理守护|<small>/)
     // 三个行为真正接进主进程: 登录项参数、窗口关闭、守护定时器。
-    expect(read('src/main/startup/electron-adapter.ts')).resolves.toMatch(/getSilentLaunch/)
-    expect(read('src/main/index.ts')).resolves.toMatch(/cachedAppSettings\.closeToTray/)
-    expect(read('src/main/index.ts')).resolves.toMatch(/cachedAppSettings\.proxyGuard/)
+    await expect(read('src/main/startup/electron-adapter.ts')).resolves.toMatch(/getSilentLaunch/)
+    await expect(read('src/main/index.ts')).resolves.toMatch(/cachedAppSettings\.closeToTray/)
+    await expect(read('src/main/index.ts')).resolves.toMatch(/cachedAppSettings\.proxyGuard/)
   })
 })

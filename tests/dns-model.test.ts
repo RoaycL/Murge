@@ -132,7 +132,6 @@ describe('buildDnsBlock', () => {
     expect(block['use-hosts']).toBe(false)
     // Non-empty lists are emitted (party/sparkle/verge merged defaults).
     expect(block['fake-ip-filter']).toEqual([
-      '*',
       '+.lan',
       '+.local',
       '+.arpa',

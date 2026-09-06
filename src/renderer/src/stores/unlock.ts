@@ -26,6 +26,9 @@ export const useUnlockStore = defineStore('unlock', () => {
     if (testingAll.value) return
     testingAll.value = true
     error.value = null
+    // Verdicts describe one point-in-time egress. Clear the previous node's
+    // rows before probing so a failed refresh can never leave stale results.
+    results.value = {}
     for (const name of UNLOCK_SERVICES) testing.value[name] = true
     try {
       const verdicts = await window.desktop.unlock.testAll()
@@ -36,6 +39,12 @@ export const useUnlockStore = defineStore('unlock', () => {
       for (const name of UNLOCK_SERVICES) testing.value[name] = false
       testingAll.value = false
     }
+  }
+
+  function reset(): void {
+    results.value = {}
+    testing.value = {}
+    error.value = null
   }
 
   async function testOne(name: string): Promise<void> {
@@ -51,5 +60,5 @@ export const useUnlockStore = defineStore('unlock', () => {
     }
   }
 
-  return { results, testing, testingAll, error, orderedResults, testAll, testOne }
+  return { results, testing, testingAll, error, orderedResults, testAll, testOne, reset }
 })

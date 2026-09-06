@@ -2,6 +2,7 @@ import { net, session } from 'electron'
 import type { ServiceUnlockResult, UnlockServiceName } from '@shared/unlock'
 import type { ServiceUnlockSampler } from '@shared/gateways'
 import { detectService, SERVICE_DETECTORS } from './service-detectors'
+import { ProtocolError, ProtocolErrorCode } from '@shared/protocol-errors'
 
 /**
  * Common-service unlock probes for the 网络诊断 drawer (参考 clash-verge-rev
@@ -30,8 +31,8 @@ interface ProbeOutcome {
 export interface ServiceUnlockOptions {
   /**
    * Resolve the kernel's LIVE mixed port for proxying probes; `null` (kernel
-   * down / port unknown) falls back to the session default (system proxy,
-   * which still traverses the kernel under TUN).
+   * down / port unknown) fails closed: a direct/system-proxy probe cannot be
+   * represented as the selected node's egress.
    */
   resolveMixedPort?: () => Promise<number | null>
 }
@@ -60,12 +61,15 @@ export class ServiceUnlockService implements ServiceUnlockSampler {
 
   private async ensureSession(): Promise<void> {
     const port = await this.resolveMixedPort().catch(() => null)
-    const rules = port && port > 0 ? `127.0.0.1:${port}` : null
+    if (!port || port <= 0) {
+      throw new ProtocolError(ProtocolErrorCode.UPSTREAM_UNREACHABLE, '内核未运行，无法通过当前节点执行解锁测试。')
+    }
+    const rules = `127.0.0.1:${port}`
     if (!this.probeSession) {
       this.probeSession = session.fromPartition(PROBE_PARTITION, { cache: false })
     }
     if (rules !== this.proxyRules) {
-      await this.probeSession.setProxy(rules ? { proxyRules: rules } : { mode: 'system' })
+      await this.probeSession.setProxy({ proxyRules: rules })
       this.proxyRules = rules
     }
   }

@@ -70,12 +70,10 @@ export const EMPTY_DNS_ENHANCEMENT: DnsEnhancement = {
   respectRules: false,
   fakeIpRange: '198.18.0.1/16',
   fakeIpFilterMode: 'blacklist',
-  // party/sparkle base list ∪ verge's arpa/qq/msft connectivity probes
-  // (deduped): bare `*` keeps every hostname in fake-ip except the real-IP
-  // exceptions below, which must genuinely resolve (NTP, LAN, connectivity
-  // detection, Xiaomi market).
+  // Real-IP exceptions for LAN, NTP and connectivity detection. In mihomo's
+  // blacklist mode every matching entry bypasses fake-ip, so a bare `*` must
+  // never appear here: it would disable fake-ip for every hostname.
   fakeIpFilter: [
-    '*',
     '+.lan',
     '+.local',
     '+.arpa',

@@ -659,13 +659,17 @@ app.whenReady().then(async () => {
   // then falls back to its own download path exactly as before).
   const geodataSeedDir = is.dev ? undefined : join(process.resourcesPath, 'geodata')
   const appSettingsService = new AppSettingsService(appDataRoot(app.getPath('appData')))
-  // Hydrate the synchronous mirror immediately, then keep it in lockstep with
-  // every persisted change (renderer IPC) for the rest of the session.
-  void appSettingsService.get().then((settings) => {
-    cachedAppSettings = settings
-  })
+  // Hydrate before login-item and window behavior consume the synchronous mirror.
+  cachedAppSettings = await appSettingsService.get()
+  const startupService = new StartupService(new ElectronStartupAdapter(() => cachedAppSettings.silentLaunch))
   appSettingsService.onChange((settings) => {
+    const silentLaunchChanged = settings.silentLaunch !== cachedAppSettings.silentLaunch
     cachedAppSettings = settings
+    if (silentLaunchChanged) {
+      void startupService.refreshRegistration().catch((error) => {
+        console.error('[startup] failed to refresh login-item arguments:', error)
+      })
+    }
   })
   const overrideService = new OverrideService(
     appDataRoot(app.getPath('appData')),
@@ -694,11 +698,15 @@ app.whenReady().then(async () => {
     const dnsApplied = await dnsEnhancementService.applyToDocument(overridden)
     return snifferEnhancementService.applyToDocument(dnsApplied)
   }
+  const tunSupported = !is.dev && process.platform === 'win32'
   const kernelManagerService = new KernelManagerService({
     settings: appSettingsService,
-    workspaceRoot: productionKernelRoot
+    workspaceRoot: productionKernelRoot,
+    // The production Windows LocalSystem service intentionally accepts only the
+    // installer-pinned archive. Do not advertise a user-selected binary that the
+    // privileged runtime cannot execute from a writable directory.
+    specificVersionsSupported: !tunSupported
   })
-  const tunSupported = !is.dev && process.platform === 'win32'
   // Windows production uses the installed LocalSystem service as the ONE core
   // host in both ordinary and TUN modes. The same client is also used by the
   // liveness monitor, so ownership cannot split across independent handles.
@@ -1159,7 +1167,7 @@ app.whenReady().then(async () => {
   })
   // 解锁测试 probes go through the kernel's LIVE mixed port (clash-verge-rev
   // semantics) so the verdict is about the selected node's egress regardless
-  // of system-proxy state; kernel down → system default (TUN still covers it).
+  // of system-proxy state; kernel down fails closed instead of sampling DIRECT.
   const serviceUnlockService = new ServiceUnlockService({
     resolveMixedPort: async () => {
       try {
@@ -1184,7 +1192,7 @@ app.whenReady().then(async () => {
     ),
     profiles: profileGateway,
     systemProxy: systemProxyService,
-    startup: new StartupService(new ElectronStartupAdapter(() => cachedAppSettings.silentLaunch)),
+    startup: startupService,
     appSettings: appSettingsService,
     overrides: overrideService,
     dns: dnsEnhancementService,

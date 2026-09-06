@@ -4,6 +4,8 @@ export interface StartupAdapter {
   readonly supported: boolean
   read(): Promise<boolean>
   write(enabled: boolean): Promise<void>
+  /** Rewrites argument-sensitive registration when it already exists. */
+  rewriteIfEnabled?(): Promise<void>
 }
 
 /** Serial, read-after-write ownership boundary for OS login-item state. */
@@ -32,6 +34,20 @@ export class StartupService {
     })
   }
 
+  /** Keep an existing login item enabled while replacing its launch arguments. */
+  refreshRegistration(): Promise<StartupStatus> {
+    return this.serial(async () => {
+      if (!this.adapter.supported) return this.unsupported()
+      try {
+        await this.adapter.rewriteIfEnabled?.()
+        return this.readStatus()
+      } catch (error) {
+        const current = await this.adapter.read().catch(() => false)
+        return { supported: true, enabled: current, phase: 'error', errorMessage: error instanceof Error ? error.message : String(error) }
+      }
+    })
+  }
+
   private async readStatus(): Promise<StartupStatus> {
     if (!this.adapter.supported) return this.unsupported()
     try {
@@ -51,4 +67,3 @@ export class StartupService {
     return result
   }
 }
-

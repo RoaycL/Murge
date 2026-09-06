@@ -158,6 +158,20 @@ export class TunCoordinator {
     })
   }
 
+  /** The one shared core exited, so no TUN adapter or route owned by that
+   * process can still be active. Reset the renderer state before restart; the
+   * durable intent coordinator will explicitly enable it on the new process. */
+  handleHostExit(): Promise<TunStatus> {
+    return this.serialize(async () => {
+      if (!this.status.supported) return
+      this.status = initialTunStatus(true)
+      const snapshot = this.getStatus()
+      for (const listener of this.listeners) {
+        try { listener(snapshot) } catch { /* observer errors never block recovery */ }
+      }
+    })
+  }
+
   private async restoreInternal(): Promise<void> {
     try {
       const result = await this.adapter.restore()

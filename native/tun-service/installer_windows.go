@@ -121,6 +121,12 @@ func installOrUpgradeService(template serviceTemplate, bootstrapDirectory, servi
 	if err := secureStateDirectory(stateDirectory); err != nil {
 		return err
 	}
+	// The persistent service core resolves GEOIP/GEOSITE databases under its
+	// protected state directory. Seed installer-verified copies before the first
+	// core start so bootstrap never depends on DNS/network availability.
+	if err := seedGeodata(filepath.Join(bootstrapDirectory, "..", "geodata"), stateDirectory); err != nil {
+		return err
+	}
 	sourceExe := filepath.Join(bootstrapDirectory, "tun-service.exe")
 	serviceExe := filepath.Join(serviceHome, "tun-service.exe")
 	if err := copyFileAtomic(sourceExe, serviceExe); err != nil {
@@ -151,7 +157,7 @@ func installOrUpgradeService(template serviceTemplate, bootstrapDirectory, servi
 	serviceConfig := mgr.Config{
 		StartType: mgr.StartAutomatic, ErrorControl: mgr.ErrorNormal,
 		ServiceStartName: "LocalSystem", DisplayName: template.ServiceName,
-		Description: "Privileged mihomo TUN lifecycle service",
+		Description: "Privileged mihomo core lifecycle service",
 		SidType:     windows.SERVICE_SID_TYPE_UNRESTRICTED, DelayedAutoStart: true,
 	}
 	service, err := manager.OpenService(template.ServiceName)
@@ -178,6 +184,28 @@ func installOrUpgradeService(template serviceTemplate, bootstrapDirectory, servi
 		return fmt.Errorf("start service: %w", err)
 	}
 	return waitForServiceRunning(service, 30*time.Second)
+}
+
+var geodataSeedNames = []string{"geosite.dat", "geoip.dat", "geoip.metadb", "country.mmdb", "ASN.mmdb"}
+
+func seedGeodata(sourceDirectory, stateDirectory string) error {
+	for _, name := range geodataSeedNames {
+		source := filepath.Join(sourceDirectory, name)
+		info, err := os.Lstat(source)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect geodata seed %s: %w", name, err)
+		}
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() <= 0 || info.Size() > 256*1024*1024 {
+			return fmt.Errorf("invalid geodata seed: %s", name)
+		}
+		if err := copyFileAtomic(source, filepath.Join(stateDirectory, name)); err != nil {
+			return fmt.Errorf("seed geodata %s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 func uninstallService(template serviceTemplate, root, stateDirectory string) error {

@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
-import { assertMihomoTunConfig } from './mihomo-tun-config'
+import { assertProxiedTunConfig } from './mihomo-tun-config'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
 
-export const TUN_SERVICE_PROTOCOL_VERSION = 2 as const
-export const TUN_SERVICE_MAX_PROFILE_BYTES = 64 * 1024
+export const TUN_SERVICE_PROTOCOL_VERSION = 3 as const
+export const TUN_SERVICE_MAX_PROFILE_BYTES = 2 * 1024 * 1024
 
 const uint64Decimal = z.string().regex(/^(?:0|[1-9]\d{0,19})$/).refine(value => BigInt(value) <= 0xffffffffffffffffn)
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/)
@@ -65,7 +65,7 @@ export function parseTunServiceRequest(input: unknown): TunServiceRequest {
     if (Buffer.byteLength(request.profile, 'utf8') > TUN_SERVICE_MAX_PROFILE_BYTES) fail('profile exceeds byte limit')
     const digest = createHash('sha256').update(request.profile, 'utf8').digest('hex')
     if (digest !== request.profileSha256) fail('profile digest mismatch')
-    assertMihomoTunConfig(request.profile)
+    assertProxiedTunConfig(request.profile)
   }
   return request
 }

@@ -1,11 +1,9 @@
 /**
  * Typed TUN configuration model (Phase 12, P1).
  *
- * Unlike the DNS and sniffer enhancements — which merge a generated `dns:` /
- * `sniffer:` block into the main-kernel profile — TUN belongs to the
- * mihomo-owned adapter lifecycle: it runs a self-contained bootstrap profile
- * (`generateMihomoTunConfig`) on an elevated, mihomo-owned kernel that is
- * mutually exclusive with the main kernel (the safety transform drops `tun`).
+ * TUN belongs to the privileged mihomo lifecycle. Windows runs one
+ * service-owned core with this block present but dormant; enabling/disabling
+ * changes `tun.enable` on that same process.
  *
  * This model is the renderer-visible, schema-validated set of user preferences
  * that the owned adapter reads at enable-time and folds into that bootstrap. It

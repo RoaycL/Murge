@@ -16,8 +16,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const protocolVersion = 2
-const maxProfileBytes = 64 * 1024
+const protocolVersion = 3
+const maxProfileBytes = 2 * 1024 * 1024
 
 var (
 	sha256Pattern     = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -213,9 +213,9 @@ func ensureContainedPath(path string) error {
 // that content is the whole purpose of a TUN proxy and is the user's routing
 // intent. What it enforces is the structural boundary: loopback-only controller
 // with a real secret, no extra inbounds, no unauthenticated API surface, TUN
-// actually enabled with a well-formed adapter identity, and none of the YAML
-// tricks (aliases, custom tags, multiple documents) that could smuggle a value
-// past this check.
+// present with a well-formed adapter identity (dormant or active), and none of
+// the YAML tricks (aliases, custom tags, multiple documents) that could smuggle
+// a value past this check.
 func validateTunProfile(text string) error {
 	var syntax yaml.Node
 	if err := yaml.Unmarshal([]byte(text), &syntax); err != nil {
@@ -296,8 +296,8 @@ func validateTunProfile(text string) error {
 	if !ok {
 		return errors.New("tun must be a mapping")
 	}
-	if enable, ok := tunMap["enable"].(bool); !ok || !enable {
-		return errors.New("tun.enable must be true")
+	if _, ok := tunMap["enable"].(bool); !ok {
+		return errors.New("tun.enable must be a boolean")
 	}
 	device, ok := tunMap["device"].(string)
 	if !ok || !devicePattern.MatchString(device) {
@@ -327,8 +327,8 @@ func validateTunProfile(text string) error {
 	if enable, ok := dnsMap["enable"].(bool); !ok || !enable {
 		return errors.New("dns.enable must be true")
 	}
-	if mode, ok := dnsMap["enhanced-mode"].(string); !ok || mode != "fake-ip" {
-		return errors.New("dns.enhanced-mode must be fake-ip")
+	if mode, ok := dnsMap["enhanced-mode"].(string); !ok || (mode != "fake-ip" && mode != "redir-host") {
+		return errors.New("dns.enhanced-mode must be fake-ip or redir-host")
 	}
 	return nil
 }

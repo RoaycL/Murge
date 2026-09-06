@@ -153,6 +153,41 @@ const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 
 /* -------------------------------------------------------------------------- */
 
 describe('P1-1 normal TUN mode switch keeps the owned system proxy', () => {
+  it('uses the same running kernel for an in-place enable and disable', async () => {
+    const kernel = new FakeKernelGateway()
+    const tun = new FakeTunGateway()
+    const controller = new ModeTransitionController({
+      kernel,
+      tun,
+      systemProxy: new FakeSystemProxy(),
+      strategy: 'in-place'
+    })
+    await kernel.start()
+    const startsBefore = kernel.startCalls
+    await controller.enableTun()
+    await controller.disableTun()
+    expect(kernel.startCalls).toBe(startsBefore)
+    expect(kernel.stopCalls).toBe(0)
+    expect(kernel.prepareTunEnableCalls).toBe(0)
+    expect(kernel.resumeAfterTunCalls).toBe(0)
+  })
+
+  it('disables in-place TUN before a user stops the shared kernel', async () => {
+    const kernel = new FakeKernelGateway()
+    const tun = new FakeTunGateway()
+    const controller = new ModeTransitionController({
+      kernel,
+      tun,
+      systemProxy: new FakeSystemProxy(),
+      strategy: 'in-place'
+    })
+    await controller.enableTun()
+    await controller.stopKernel()
+    expect(tun.disableCalls).toBe(1)
+    expect(tun.status.phase).toBe('configured')
+    expect(kernel.stopCalls).toBe(1)
+  })
+
   it('does not restore the proxy across a normal enable → disable cycle', async () => {
     const h = createHarness()
     // Proxy owned before the switch (the kernel carries it through the mode

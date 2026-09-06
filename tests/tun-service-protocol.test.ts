@@ -25,7 +25,7 @@ function response(request: TunServiceRequest, outcome: 'running' | 'stopped' = '
 describe('Phase 9B privileged service protocol', () => {
   it('accepts an exact digest-bound strict profile', () => {
     expect(parseTunServiceRequest({
-      protocolVersion: 2,
+      protocolVersion: TUN_SERVICE_PROTOCOL_VERSION,
       requestId: '1',
       operation: 'start',
       sessionId: '8a86eb80-621f-4a73-8249-1e4455df80de',
@@ -36,7 +36,7 @@ describe('Phase 9B privileged service protocol', () => {
 
   it('rejects digest mismatch, unsafe config and arbitrary command fields', () => {
     const base = {
-      protocolVersion: 2,
+      protocolVersion: TUN_SERVICE_PROTOCOL_VERSION,
       requestId: '1',
       operation: 'start',
       sessionId: '8a86eb80-621f-4a73-8249-1e4455df80de',
@@ -85,7 +85,7 @@ describe('Phase 9B privileged service protocol', () => {
   it('maps a service ownership conflict to a typed protocol error', async () => {
     const transport: TunServiceTransport = {
       request: vi.fn(async request => ({
-        protocolVersion: 2,
+        protocolVersion: TUN_SERVICE_PROTOCOL_VERSION,
         requestId: request.requestId,
         outcome: 'conflict',
         sessionId: null,

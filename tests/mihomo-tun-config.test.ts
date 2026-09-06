@@ -274,8 +274,9 @@ describe('proxied TUN config (real subscription content)', () => {
   })
 
   it('rejects a profile that exceeds the privileged service byte ceiling', () => {
-    // An inlined ruleset is the realistic way to blow the 64 KiB service cap.
-    const huge = `${document}${Array.from({ length: 4000 }, (_, i) => `  - DOMAIN-SUFFIX,host-${i}-padding-padding.example.invalid,PROXY`).join('\n')}\n`
+    // An unusually large inlined ruleset is the realistic way to blow the
+    // generous service cap; normal subscriptions should not hit it.
+    const huge = `${document}${Array.from({ length: 40000 }, (_, i) => `  - DOMAIN-SUFFIX,host-${i}-padding-padding.example.invalid,PROXY`).join('\n')}\n`
     expect(() => generateProxiedTunConfig({ ...proxied, document: huge })).toThrow(/超过特权服务/)
   })
 
@@ -353,7 +354,7 @@ describe('proxied TUN config (real subscription content)', () => {
     const text = generateProxiedTunConfig(proxied)
     expect(proxiedTunConfigErrors(text.replace('allow-lan: false', 'allow-lan: true'))).not.toEqual([])
     expect(proxiedTunConfigErrors(text.replace(`127.0.0.1:${options.controllerPort}`, `0.0.0.0:${options.controllerPort}`))).not.toEqual([])
-    expect(proxiedTunConfigErrors(text.replace('enable: true', 'enable: false'))).not.toEqual([])
+    expect(proxiedTunConfigErrors(text.replace('enable: true', 'enable: invalid'))).not.toEqual([])
     expect(() => assertProxiedTunConfig(`${text}listeners:\n  - name: x\n`)).toThrow(/unsafe TUN config/)
   })
 })

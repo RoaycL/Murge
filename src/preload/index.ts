@@ -113,6 +113,13 @@ const api: DesktopApi = {
     get: () => invoke(IPC.appSettingsGet),
     set: (patch) => invoke(IPC.appSettingsSet, patch)
   },
+  subStore: {
+    getState: () => invoke(IPC.subStoreGetState),
+    ensureRunning: () => invoke(IPC.subStoreEnsureRunning),
+    stop: () => invoke(IPC.subStoreStop),
+    checkUpdate: () => invoke(IPC.subStoreCheckUpdate),
+    openExternal: (url) => invoke(IPC.subStoreOpenExternal, url)
+  },
   overrides: {
     list: () => invoke(IPC.overridesList),
     create: (input) => invoke(IPC.overridesCreate, input),

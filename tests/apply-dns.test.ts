@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { parse } from 'yaml'
-import { applyDnsEnhancementToDocument } from '../src/main/kernel/dns/apply-dns'
+import { applyDnsEnhancementToDocument, documentDnsEnabled } from '../src/main/kernel/dns/apply-dns'
 import { EMPTY_DNS_ENHANCEMENT } from '@shared/dns'
 
 const BASE = `
@@ -61,5 +61,19 @@ describe('applyDnsEnhancementToDocument', () => {
     const result = applyDnsEnhancementToDocument('[:not: yaml', { ...EMPTY_DNS_ENHANCEMENT, enabled: true })
     expect(result.text).toBe('[:not: yaml')
     expect(result.warnings.length).toBeGreaterThan(0)
+  })
+})
+
+describe('documentDnsEnabled', () => {
+  it.each([
+    ['dns block enabled', 'dns:\n  enable: true\n', true],
+    ['dns block disabled', 'dns:\n  enable: false\n', false],
+    ['dns block missing', 'port: 7890\nmode: rule\n', false],
+    ['dns not a mapping', 'dns: 7890\n', false],
+    ['unparseable yaml', '[:not: yaml', false],
+    ['empty input', '', false],
+    ['null input', null, false]
+  ])('%s', (_name, input, expected) => {
+    expect(documentDnsEnabled(input as string | null)).toBe(expected)
   })
 })

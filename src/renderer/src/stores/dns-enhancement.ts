@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import type { DnsEnhancement } from '@shared/dns'
 import { EMPTY_DNS_ENHANCEMENT, coerceDnsEnhancement } from '@shared/dns'
 import { toProtocolError } from '@shared/protocol-errors'
+import { plainJsonClone } from '@shared/plain-clone'
 
 /**
  * Renderer-side source of truth for the typed DNS enhancement (DNS 增强). The
@@ -28,7 +29,7 @@ export const useDnsEnhancementStore = defineStore('dns-enhancement', () => {
     if (busy.value) return false
     busy.value = true
     try {
-      enhancement.value = coerceDnsEnhancement((await window.desktop.dns.set(input)).enhancement)
+      enhancement.value = coerceDnsEnhancement((await window.desktop.dns.set(plainJsonClone(input))).enhancement)
       lastError.value = null
       return true
     } catch (error) {
@@ -44,7 +45,7 @@ export const useDnsEnhancementStore = defineStore('dns-enhancement', () => {
     busy.value = true
     try {
       lastError.value = null
-      return await window.desktop.dns.preview(input)
+      return await window.desktop.dns.preview(plainJsonClone(input))
     } catch (error) {
       lastError.value = toProtocolError(error).message
       return ''

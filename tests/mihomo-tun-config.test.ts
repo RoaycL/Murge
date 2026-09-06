@@ -144,8 +144,10 @@ describe('proxied TUN config (real subscription content)', () => {
     expect(text).not.toMatch(/MATCH,DIRECT/)
   })
 
-  it('enables TUN and forces the fake-ip DNS keys', () => {
-    const text = generateProxiedTunConfig(proxied)
+  it('adds the fake-ip defaults to a dns-enabled profile and keeps the hijack', () => {
+    const withDns = `${document}dns:\n  enable: true\n  nameserver:\n    - 223.5.5.5\n`
+    const text = generateProxiedTunConfig({ ...proxied, document: withDns })
+    expect(proxiedTunConfigErrors(text)).toEqual([])
     const config = parse(text) as Record<string, any>
     expect(config.tun.enable).toBe(true)
     expect(config.tun.device).toBe('Product TUN')
@@ -154,30 +156,58 @@ describe('proxied TUN config (real subscription content)', () => {
     expect(config.dns.enable).toBe(true)
     expect(config.dns['enhanced-mode']).toBe('fake-ip')
     expect(config.dns['fake-ip-range']).toBe('198.18.0.1/16')
+    // clash-party's shipped fake-ip-filter default, including the single-label `*`.
+    expect(config.dns['fake-ip-filter']).toEqual([
+      '*',
+      '+.lan',
+      '+.local',
+      'time.*.com',
+      'ntp.*.com',
+      '+.market.xiaomi.com'
+    ])
+    // The profile's own resolver choices are preserved.
+    expect(config.dns.nameserver).toEqual(['223.5.5.5'])
   })
 
-  it('keeps the profile nameserver split and explicit redir-host mode', () => {
+  it('leaves a dns-less profile untouched and clears port-53 hijack (clash-party DNS takeover parity)', () => {
+    const config = parse(generateProxiedTunConfig(proxied)) as Record<string, any>
+    expect(config.tun.enable).toBe(true)
+    expect(config.tun['dns-hijack']).toEqual([])
+    expect(config.dns).toBeUndefined()
+  })
+
+  it('keeps a disabled dns block verbatim and clears the hijack', () => {
     const withDns = `${document}dns:\n  enable: false\n  enhanced-mode: redir-host\n  nameserver:\n    - 223.5.5.5\n  fallback:\n    - 1.1.1.1\n`
-    const config = parse(generateProxiedTunConfig({ ...proxied, document: withDns })) as Record<string, any>
+    const text = generateProxiedTunConfig({ ...proxied, document: withDns })
+    expect(proxiedTunConfigErrors(text)).toEqual([])
+    const config = parse(text) as Record<string, any>
+    expect(config.tun['dns-hijack']).toEqual([])
+    // No takeover: the profile's dns content passes through unmodified.
+    expect(config.dns.enable).toBe(false)
     expect(config.dns['enhanced-mode']).toBe('redir-host')
-    expect(config.dns.enable).toBe(true)
-    expect(config.dns['fake-ip-range']).toBeUndefined()
-    expect(config.dns['fake-ip-filter']).toBeUndefined()
-    // The user's own resolver routing is their intent and must survive.
     expect(config.dns.nameserver).toEqual(['223.5.5.5'])
     expect(config.dns.fallback).toEqual(['1.1.1.1'])
+    expect(config.dns['fake-ip-range']).toBeUndefined()
+    expect(config.dns['fake-ip-filter']).toBeUndefined()
   })
 
   it('injects the safety fake-ip filter only when omitted', () => {
-    const omitted = parse(generateProxiedTunConfig(proxied)) as Record<string, any>
-    expect(omitted.dns['fake-ip-filter']).toContain('*.lan')
+    const dnsOn = `${document}dns:\n  enable: true\n`
+    const omitted = parse(generateProxiedTunConfig({ ...proxied, document: dnsOn })) as Record<string, any>
+    expect(omitted.dns['fake-ip-filter']).toContain('*')
+    expect(omitted.dns['fake-ip-filter']).toContain('+.lan')
 
-    const explicitlyEmpty = `${document}dns:\n  fake-ip-filter: []\n`
+    const explicitlyEmpty = `${document}dns:\n  enable: true\n  fake-ip-filter: []\n`
     const preserved = parse(generateProxiedTunConfig({ ...proxied, document: explicitlyEmpty })) as Record<string, any>
     expect(preserved.dns['fake-ip-filter']).toEqual([])
 
-    const malformed = `${document}dns:\n  fake-ip-filter: invalid\n`
+    const malformed = `${document}dns:\n  enable: true\n  fake-ip-filter: invalid\n`
     expect(() => generateProxiedTunConfig({ ...proxied, document: malformed })).toThrow(/fake-ip-filter must be a sequence/)
+  })
+
+  it('rejects a dns-hijack next to a disabled dns module (pairing rule)', () => {
+    const mismatched = `${document}dns:\n  enable: false\ntun:\n  enable: true\n  device: Product TUN\n  stack: mixed\n  auto-route: true\n  auto-detect-interface: true\n  strict-route: false\n  dns-hijack:\n    - any:53\n`
+    expect(proxiedTunConfigErrors(mismatched)).toContain('tun.dns-hijack must be empty when dns.enable is not true')
   })
 
   it('still neutralizes host-network mutation and forces the auth keys', () => {

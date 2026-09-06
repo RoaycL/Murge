@@ -290,29 +290,22 @@ function validateRouteList(node: Node | undefined, label: string, errors: string
  */
 export const TUN_PROFILE_MAX_BYTES = 2 * 1024 * 1024
 
-/** TUN requires the DNS module to be enabled; its resolution mode remains user intent. */
-const TUN_REQUIRED_DNS = {
-  enable: true
-} as const
-
 /**
- * Hosts that must NEVER receive a fake-ip address. Without this guard, NTP /
- * time sync, LAN/local discovery, ARP reverse and Microsoft's connectivity
- * probes resolve to 198.18.x.x and silently break under TUN — a known cause of
- * game / accelerator malfunctions (clash-verge-rev ships the same list as a
- * built-in default). Only injected when the profile omits its own filter so the
+ * Hosts kept on real IPs under fake-ip mode, clash-party's shipped default
+ * verbatim (`DEFAULT_MIHOMO_DNS_CONFIG.fake-ip-filter`). The leading bare `*`
+ * only matches dot-less single-label names in mihomo's domain trie — it does
+ * NOT disable fake-ip for regular domains, so LAN names, NTP servers and
+ * connectivity probes resolve to real addresses while everything else still
+ * gets a fake-ip. Only injected when the profile omits its own filter so the
  * user's routing intent is preserved.
  */
 const TUN_DEFAULT_FAKE_IP_FILTER = [
-  '*.lan',
-  '*.local',
-  '*.arpa',
+  '*',
+  '+.lan',
+  '+.local',
   'time.*.com',
   'ntp.*.com',
-  '+.market.xiaomi.com',
-  'localhost.ptlogin2.qq.com',
-  '*.msftncsi.com',
-  'www.msftconnecttest.com'
+  '+.market.xiaomi.com'
 ] as const
 
 /**
@@ -499,28 +492,41 @@ export function generateProxiedTunConfig(options: ProxiedTunConfigOptions): stri
   excludeLiteralProxyServers(data, tunBlock)
   data.tun = tunBlock
 
-  // TUN DNS hijacking works with both mihomo modes. Preserve an explicit
-  // `redir-host`; only choose fake-ip when the profile omitted the mode.
+  // DNS takeover follows clash-party's `controlDns=false` default: the profile
+  // is authoritative and this pass never force-enables the DNS module. When the
+  // final document has no enabled DNS, port-53 hijacking is cleared — a hijack
+  // list without a live DNS module would blackhole every hostname (clash-party
+  // applies the same rule in its final-config merge). When the DNS module IS
+  // enabled (the app's DNS enhancement already merged its block into the
+  // document, or the subscription ships its own), only the fake-ip defaults the
+  // profile omitted are filled in, mirroring clash-party's controlled defaults.
   const existingDns = data.dns
-  data.dns = {
-    ...(typeof existingDns === 'object' && existingDns !== null && !Array.isArray(existingDns)
-      ? (existingDns as Record<string, unknown>)
-      : {}),
-    ...TUN_REQUIRED_DNS
-  }
-  const dns = data.dns as Record<string, unknown>
-  if (dns['enhanced-mode'] === undefined) dns['enhanced-mode'] = 'fake-ip'
-  if (!Array.isArray(dns.nameserver) || dns.nameserver.length === 0) {
-    dns.nameserver = ['system']
-  }
-  // Keep game-/NTP-relevant domains out of fake-ip space only when the profile
-  // omitted this key. An explicitly empty list is still user routing intent: it
-  // asks mihomo to allocate fake IPs for every domain and must not be rewritten.
-  if (dns['enhanced-mode'] === 'fake-ip' && dns['fake-ip-range'] === undefined) {
-    dns['fake-ip-range'] = '198.18.0.1/16'
-  }
-  if (dns['enhanced-mode'] === 'fake-ip' && !Object.prototype.hasOwnProperty.call(dns, 'fake-ip-filter')) {
-    dns['fake-ip-filter'] = [...TUN_DEFAULT_FAKE_IP_FILTER]
+  const dns: Record<string, unknown> =
+    typeof existingDns === 'object' && existingDns !== null && !Array.isArray(existingDns)
+      ? { ...(existingDns as Record<string, unknown>) }
+      : {}
+  if (dns.enable !== true) {
+    // No DNS takeover: the profile's disabled/absent dns block passes through
+    // (Party deletes a controlled dns block in this state) and port-53
+    // hijacking is cleared so lookups flow through the tunnel as ordinary
+    // connections instead of hitting an unprepared DNS module.
+    tunBlock['dns-hijack'] = []
+    if (Object.keys(dns).length > 0) data.dns = dns
+  } else {
+    data.dns = dns
+    if (dns['enhanced-mode'] === undefined) dns['enhanced-mode'] = 'fake-ip'
+    if (!Array.isArray(dns.nameserver) || dns.nameserver.length === 0) {
+      dns.nameserver = ['system']
+    }
+    // Keep game-/NTP-relevant domains out of fake-ip space only when the profile
+    // omitted this key. An explicitly empty list is still user routing intent: it
+    // asks mihomo to allocate fake IPs for every domain and must not be rewritten.
+    if (dns['enhanced-mode'] === 'fake-ip' && dns['fake-ip-range'] === undefined) {
+      dns['fake-ip-range'] = '198.18.0.1/16'
+    }
+    if (dns['enhanced-mode'] === 'fake-ip' && !Object.prototype.hasOwnProperty.call(dns, 'fake-ip-filter')) {
+      dns['fake-ip-filter'] = [...TUN_DEFAULT_FAKE_IP_FILTER]
+    }
   }
 
   const text = stringify(data)
@@ -608,9 +614,21 @@ export function proxiedTunConfigErrors(text: string): string[] {
       errors.push('tun.mtu must be an integer between 576 and 65535')
     }
     const hijack = block['dns-hijack']
-    if (!Array.isArray(hijack) || hijack.length === 0) errors.push('tun.dns-hijack must be a non-empty sequence')
-    else for (const entry of hijack) {
-      if (typeof entry !== 'string' || !isValidDnsHijackEntry(entry)) errors.push(`invalid tun.dns-hijack entry: ${String(entry)}`)
+    if (!Array.isArray(hijack)) errors.push('tun.dns-hijack must be a sequence')
+    else {
+      for (const entry of hijack) {
+        if (typeof entry !== 'string' || !isValidDnsHijackEntry(entry)) errors.push(`invalid tun.dns-hijack entry: ${String(entry)}`)
+      }
+      // clash-party parity: port-53 hijacking only exists when a live DNS module
+      // can answer the hijacked queries. An empty list is legal exactly when the
+      // final config leaves the DNS module off.
+      const dnsBlock = data.dns
+      const dnsEnabled =
+        typeof dnsBlock === 'object' && dnsBlock !== null && !Array.isArray(dnsBlock) &&
+        (dnsBlock as Record<string, unknown>).enable === true
+      if (hijack.length > 0 && !dnsEnabled) {
+        errors.push('tun.dns-hijack must be empty when dns.enable is not true')
+      }
     }
     for (const [key, label] of [['route-address', 'tun.route-address'], ['route-exclude-address', 'tun.route-exclude-address']] as const) {
       const list = block[key]
@@ -633,13 +651,21 @@ export function proxiedTunConfigErrors(text: string): string[] {
   }
 
   const dns = data.dns
-  if (typeof dns !== 'object' || dns === null || Array.isArray(dns)) {
+  if (dns === undefined) {
+    // clash-party parity: a profile without a dns block is legitimate — mihomo
+    // runs its internal resolver and TUN must not hijack port 53 (checked in
+    // the tun block above).
+  } else if (typeof dns !== 'object' || dns === null || Array.isArray(dns)) {
     errors.push('dns must be a mapping')
   } else {
     const block = dns as Record<string, unknown>
-    if (block.enable !== true) errors.push('dns.enable must equal true')
-    if (block['enhanced-mode'] !== 'fake-ip' && block['enhanced-mode'] !== 'redir-host') {
-      errors.push('dns.enhanced-mode must equal fake-ip or redir-host')
+    // clash-party parity: the DNS module may stay off; only an ENABLED module is
+    // held to the mode constraint. The dns-hijack pairing rule lives in the tun
+    // block validation above.
+    if (block.enable === true) {
+      if (block['enhanced-mode'] !== 'fake-ip' && block['enhanced-mode'] !== 'redir-host') {
+        errors.push('dns.enhanced-mode must equal fake-ip or redir-host')
+      }
     }
     if ('listen' in block) errors.push('forbidden key for a privileged profile: dns.listen')
     if ('fake-ip-filter' in block) {

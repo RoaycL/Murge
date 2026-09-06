@@ -47,7 +47,7 @@ describe('network drawer + resources UI contract', () => {
 
   it('renames Provider sections to 集合 with per-section 更新全部 and per-row 配置查看', async () => {
     const view = await read('src/renderer/src/views/ResourcesView.vue')
-    expect(view).toMatch(/集中查看代理集合、规则集合与地理数据库/)
+    expect(view).toMatch(/订阅管理（Sub-Store）、代理集合、规则集合与地理数据库/)
     expect(view).toMatch(/代理集合/)
     expect(view).toMatch(/规则集合/)
     expect(view).not.toMatch(/代理 Provider|规则 Provider/)
@@ -137,6 +137,32 @@ describe('network drawer + resources UI contract', () => {
     expect(overview).toMatch(/toggleDns/)
     expect(overview).toMatch(/\{ \.\.\.sniffer\.enhancement, enabled: !snifferEnabled\.value \}/)
     expect(overview).toMatch(/\{ \.\.\.dns\.enhancement, enabled: !dnsEnabled\.value \}/)
+  })
+
+  it('embeds Sub-Store under 外部资源 with a real lifecycle', async () => {
+    const [resources, shared, service, store] = await Promise.all([
+      read('src/renderer/src/views/ResourcesView.vue'),
+      read('src/shared/substore.ts'),
+      read('src/main/substore/service.ts'),
+      read('src/renderer/src/stores/substore.ts')
+    ])
+    // 页面区块：开关 + 状态行 + 同源 iframe + 浏览器打开/检查更新。
+    expect(resources).toMatch(/toggleSubStore/)
+    expect(resources).toMatch(/subStoreMergedUrl/)
+    expect(resources).toMatch(/<iframe/)
+    expect(resources).toMatch(/subStore.checkUpdate/)
+    expect(resources).toMatch(/subStore.openExternal/)
+    // 共享契约：merge 模式单端口 + 固定官方下载源；服务层绑定 loopback。
+    expect(shared).toMatch(/sub-store-org\/Sub-Store/)
+    expect(shared).toMatch(/subStoreMergedUrl/)
+    expect(service).toMatch(/SUB_STORE_BACKEND_MERGE: '1'/)
+    expect(service).toMatch(/SUB_STORE_BACKEND_API_HOST: '127\.0\.0\.1'/)
+    expect(service).toMatch(/SUB_STORE_FRONTEND_BACKEND_PATH: '\/'/)
+    // 主进程服务：单 flight 启动 + 意外退出监控 + 关闭时终止。
+    expect(service).toMatch(/this\.starting/)
+    expect(service).toMatch(/onUnexpectedExit/)
+    expect(service).toMatch(/async openExternal/)
+    expect(store).toMatch(/ensureRunning/)
   })
 
   it('keeps general settings backed by real persisted preferences', async () => {

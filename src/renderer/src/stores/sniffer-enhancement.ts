@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import type { SnifferEnhancement } from '@shared/sniffer'
 import { EMPTY_SNIFFER_ENHANCEMENT, coerceSnifferEnhancement } from '@shared/sniffer'
 import { toProtocolError } from '@shared/protocol-errors'
+import { plainJsonClone } from '@shared/plain-clone'
 
 /**
  * Renderer-side source of truth for the typed sniffer enhancement (Sniffer 增强).
@@ -28,7 +29,7 @@ export const useSnifferEnhancementStore = defineStore('sniffer-enhancement', () 
     if (busy.value) return false
     busy.value = true
     try {
-      enhancement.value = coerceSnifferEnhancement((await window.desktop.sniffer.set(input)).enhancement)
+      enhancement.value = coerceSnifferEnhancement((await window.desktop.sniffer.set(plainJsonClone(input))).enhancement)
       lastError.value = null
       return true
     } catch (error) {
@@ -44,7 +45,7 @@ export const useSnifferEnhancementStore = defineStore('sniffer-enhancement', () 
     busy.value = true
     try {
       lastError.value = null
-      return await window.desktop.sniffer.preview(input)
+      return await window.desktop.sniffer.preview(plainJsonClone(input))
     } catch (error) {
       lastError.value = toProtocolError(error).message
       return ''

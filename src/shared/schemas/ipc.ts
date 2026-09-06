@@ -147,6 +147,11 @@ export function parseAppSettingsPatch(
   kernelSpecificVersion?: string
   delayTestUrlScope?: 'group' | 'global'
   delayTestUrl?: string
+  silentLaunch?: boolean
+  closeToTray?: boolean
+  proxyGuard?: boolean
+  subStoreEnabled?: boolean
+  subStoreUseProxy?: boolean
 } {
   if (!(typeof input === 'object' && input !== null && !Array.isArray(input))) {
     throw invalid('app settings patch must be an object')
@@ -162,6 +167,11 @@ export function parseAppSettingsPatch(
     kernelSpecificVersion?: string
     delayTestUrlScope?: 'group' | 'global'
     delayTestUrl?: string
+    silentLaunch?: boolean
+    closeToTray?: boolean
+    proxyGuard?: boolean
+    subStoreEnabled?: boolean
+    subStoreUseProxy?: boolean
   } = {}
   if ('autoStartKernel' in record) {
     if (typeof record.autoStartKernel !== 'boolean') throw invalid('autoStartKernel must be a boolean')
@@ -214,7 +224,29 @@ export function parseAppSettingsPatch(
     }
     patch.delayTestUrl = value
   }
+  for (const key of ['silentLaunch', 'closeToTray', 'proxyGuard', 'subStoreEnabled', 'subStoreUseProxy'] as const) {
+    if (key in record) {
+      if (typeof record[key] !== 'boolean') throw invalid(`${key} must be a boolean`)
+      patch[key] = record[key]
+    }
+  }
   return patch
+}
+
+/** An http(s) URL the renderer may hand to the OS browser (sub-store external link). */
+export function parseSubStoreExternalUrl(value: unknown): string {
+  if (typeof value !== 'string') throw invalid('external url must be a string')
+  if (value.length > 2048) throw invalid('external url is too long')
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    throw invalid('external url must be a valid URL')
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw invalid('external url must use http or https')
+  }
+  return parsed.toString()
 }
 
 /** Validate a specific kernel version string (leading `v` + semver-ish). */

@@ -5,12 +5,17 @@ import DetailDrawer from '../components/DetailDrawer.vue'
 import GeodataSettingsPanel from '../components/GeodataSettingsPanel.vue'
 import { useKernelStore } from '../stores/kernel'
 import { useProvidersStore } from '../stores/providers'
+import { useSubStoreStore } from '../stores/substore'
+import { useAppSettingsStore } from '../stores/app-settings'
+import { subStoreMergedUrl, subStoreMergedOrigin } from '@shared/substore'
 import { formatBytes } from '../lib/format'
 import type { MihomoProxyProvider, MihomoRuleProvider } from '@shared/mihomo-api'
 import type { ProfileProviderConfig } from '@shared/profiles'
 
 const kernel = useKernelStore()
 const providers = useProvidersStore()
+const subStore = useSubStoreStore()
+const appSettings = useAppSettingsStore()
 const refreshing = ref(false)
 const refreshingProxy = ref(false)
 const refreshingRule = ref(false)
@@ -30,6 +35,67 @@ async function refreshAllRule(): Promise<void> { refreshingRule.value = true; tr
 
 onMounted(() => void load())
 watch(() => kernel.status.phase, (phase) => { if (phase === 'running') void load() })
+
+/* ------------------------------ Sub-Store ------------------------------ */
+// 初步接入：启用后首次进入页面时下载并启动（单端口 merge 模式），随后把
+// 同源前端嵌入 iframe；「在浏览器中打开」复用同一地址。内核未运行时嵌入仍
+// 可用（Sub-Store 自身的下载与代理切换不依赖内核），仅 useProxy 需要。
+const subStoreToggleBusy = ref(false)
+
+async function toggleSubStore(): Promise<void> {
+  subStoreToggleBusy.value = true
+  try {
+    const next = !subStore.state.enabled
+    await appSettings.set({ subStoreEnabled: next })
+    await subStore.refresh()
+    if (next) await subStore.ensureRunning()
+    else await subStore.stop()
+  } finally {
+    subStoreToggleBusy.value = false
+  }
+}
+
+async function toggleSubStoreProxy(): Promise<void> {
+  await appSettings.set({ subStoreUseProxy: !subStore.state.useProxy })
+  await subStore.refresh()
+  // 代理设置写进 worker env：运行中则由主进程重启 worker 生效。
+  if (subStore.state.phase === 'running') await subStore.ensureRunning()
+}
+
+const subStoreUrl = computed(() =>
+  subStore.state.phase === 'running' && subStore.state.port ? subStoreMergedUrl(subStore.state.port) : null
+)
+const subStoreOrigin = computed(() =>
+  subStore.state.phase === 'running' && subStore.state.port ? subStoreMergedOrigin(subStore.state.port) : null
+)
+const subStoreVersionText = computed(() => {
+  const version = subStore.state.version
+  return version ? `后端 ${version.backend} · 前端 ${version.frontend}` : '未下载'
+})
+const subStorePhaseText = computed(() => {
+  switch (subStore.state.phase) {
+    case 'running': return `运行中 · 端口 ${subStore.state.port}`
+    case 'starting': return '正在启动…'
+    case 'downloading': return '正在下载资源…'
+    case 'error': return subStore.state.error ?? '启动失败'
+    default: return subStore.state.assetsReady ? '已就绪（未运行）' : '未下载'
+  }
+})
+
+watch(
+  () => subStore.state.enabled,
+  (enabled) => {
+    if (enabled && (subStore.state.phase === 'idle' || subStore.state.phase === 'error')) {
+      void subStore.ensureRunning()
+    }
+  }
+)
+onMounted(() => {
+  void subStore.refresh()
+  if (subStore.state.enabled && (subStore.state.phase === 'idle' || subStore.state.phase === 'error')) {
+    void subStore.ensureRunning()
+  }
+})
 
 const viewTarget = computed(() => {
   if (!viewing.value) return null
@@ -81,9 +147,56 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
 
 <template><div class="page-shell feature-page">
   <header class="feature-header">
-    <div><h1>外部资源</h1><p>集中查看代理集合、规则集合与地理数据库。</p></div>
+    <div><h1>外部资源</h1><p>订阅管理（Sub-Store）、代理集合、规则集合与地理数据库。</p></div>
     <button type="button" class="secondary-button" :disabled="refreshing || kernel.status.phase !== 'running' || !total" @click="refreshAll">{{ refreshing ? '更新中…' : '全部更新' }}</button>
   </header>
+  <section class="surface-card resource-page-card substore-section">
+    <header class="resource-card-head">
+      <h2>Sub-Store <small class="substore-phase">{{ subStorePhaseText }}</small></h2>
+      <span class="row-actions">
+        <button
+          type="button"
+          class="quiet-button"
+          :disabled="!subStoreUrl || subStore.busy"
+          title="在系统浏览器中打开 Sub-Store"
+          @click="subStoreOrigin && subStore.openExternal(subStoreUrl ?? subStoreOrigin)"
+        >在浏览器中打开</button>
+        <button
+          type="button"
+          class="quiet-button"
+          :disabled="!subStore.state.enabled || subStore.busy"
+          @click="subStore.checkUpdate()"
+        >{{ subStore.busy ? '处理中…' : '检查更新' }}</button>
+        <label class="substore-switch">
+          <span>启用</span>
+          <button
+            type="button"
+            class="switch"
+            :class="{ on: subStore.state.enabled }"
+            :aria-checked="subStore.state.enabled"
+            :disabled="subStoreToggleBusy"
+            aria-label="启用 Sub-Store"
+            @click="toggleSubStore"
+          />
+        </label>
+      </span>
+    </header>
+    <p class="substore-desc">
+      内置 Sub-Store 订阅管理：从机场拉取、转换、合并订阅并生成配置链接，可直接被本应用的配置页导入。资源首次启用时从官方 Release 下载。
+    </p>
+    <p v-if="subStore.state.enabled" class="substore-meta">
+      {{ subStoreVersionText }}<template v-if="subStore.state.enabled"> · <button type="button" class="substore-inline-toggle" @click="toggleSubStoreProxy">订阅更新{{ subStore.state.useProxy ? '走内核代理' : '直连' }}</button></template>
+    </p>
+    <p v-if="subStore.errorMessage" class="inline-error" role="alert">{{ subStore.errorMessage }}</p>
+    <div v-if="subStoreUrl" class="substore-frame-wrap">
+      <iframe
+        :src="subStoreUrl"
+        class="substore-frame"
+        title="Sub-Store"
+        allow="clipboard-read; clipboard-write"
+      />
+    </div>
+  </section>
   <p v-if="kernel.status.phase !== 'running'" class="inline-note">启动内核后即可读取和更新集合。</p>
   <section v-else class="resource-page-groups">
     <article class="surface-card resource-page-card">
@@ -164,4 +277,13 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
 .inline-error { margin-top: 8px; color: var(--app-danger, #d64f4f); font-size: 12px; }
 .quiet-button { min-height: 28px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: 7px; background: transparent; color: var(--app-muted); font-size: 11px; white-space: nowrap; flex-shrink: 0; }
 .quiet-button:disabled { opacity: 0.5; }
+/* Sub-Store 区块：单端口 merge 模式，同源 iframe 内嵌官方前端。 */
+.substore-section { display: flex; flex-direction: column; gap: 8px; }
+.substore-phase { color: var(--app-muted); font-size: 11px; font-weight: 400; margin-left: 6px; }
+.substore-desc { margin: 0; color: var(--app-muted); font-size: 12px; line-height: 1.5; }
+.substore-meta { margin: 0; color: var(--app-muted); font-size: 11px; }
+.substore-inline-toggle { border: 0; padding: 0; background: transparent; color: var(--app-accent, #7c6cf4); font-size: 11px; cursor: pointer; text-decoration: underline; }
+.substore-switch { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; flex-shrink: 0; }
+.substore-frame-wrap { margin-top: 4px; }
+.substore-frame { display: block; width: 100%; height: min(68vh, 720px); border: 1px solid var(--app-divider); border-radius: 10px; background: #fff; }
 </style>

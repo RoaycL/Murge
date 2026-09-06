@@ -54,6 +54,24 @@ export interface AppSettings {
   delayTestUrlScope: 'group' | 'global'
   /** Optional global HTTP(S) delay target; blank uses the safe built-in 204 URL. */
   delayTestUrl: string
+  /**
+   * Silent start (party/sparkle's 静默启动): when true the Windows login item
+   * is registered with `--hidden`, so a login launch stays in the tray instead
+   * of popping the main window. Manual launches are unaffected.
+   */
+  silentLaunch: boolean
+  /**
+   * Close-to-tray (verge's 最小化到托盘而非退出): when true closing the main
+   * window only hides it and the app keeps running in the tray; when false the
+   * close button quits through the normal restore-and-shutdown flow.
+   */
+  closeToTray: boolean
+  /**
+   * Proxy guard (verge's 代理守护): while the app owns an enabled system proxy,
+   * periodically re-apply the exact written values if something on the box
+   * mutated them. Values the app does not own are never fought.
+   */
+  proxyGuard: boolean
 }
 
 export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = Object.freeze({
@@ -65,7 +83,12 @@ export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = Object.freeze({
   kernelChannel: 'stable',
   kernelSpecificVersion: '',
   delayTestUrlScope: 'group',
-  delayTestUrl: ''
+  delayTestUrl: '',
+  // Reference-client parity: party/sparkle default silent start OFF, verge
+  // keeps close-to-tray ON and its proxy guard ON by default.
+  silentLaunch: false,
+  closeToTray: true,
+  proxyGuard: true
 })
 
 function parseDelayTestUrl(value: unknown): string {
@@ -119,7 +142,19 @@ export function parseAppSettings(value: string | null): AppSettings {
       delayTestUrlScope:
         parsed.delayTestUrlScope === 'global' ? 'global' : DEFAULT_APP_SETTINGS.delayTestUrlScope,
       delayTestUrl:
-        parseDelayTestUrl(parsed.delayTestUrl)
+        parseDelayTestUrl(parsed.delayTestUrl),
+      silentLaunch:
+        typeof parsed.silentLaunch === 'boolean'
+          ? parsed.silentLaunch
+          : DEFAULT_APP_SETTINGS.silentLaunch,
+      closeToTray:
+        typeof parsed.closeToTray === 'boolean'
+          ? parsed.closeToTray
+          : DEFAULT_APP_SETTINGS.closeToTray,
+      proxyGuard:
+        typeof parsed.proxyGuard === 'boolean'
+          ? parsed.proxyGuard
+          : DEFAULT_APP_SETTINGS.proxyGuard
     }
   } catch {
     return { ...DEFAULT_APP_SETTINGS }

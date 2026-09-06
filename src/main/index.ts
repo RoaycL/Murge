@@ -59,6 +59,7 @@ import { ElectronStartupAdapter } from './startup/electron-adapter'
 import { restoreRuntimeIntent } from './startup/runtime-intent'
 import { RuntimeIntentRecoveryCoordinator } from './startup/runtime-intent-recovery'
 import { AppSettingsService } from './app-settings/service'
+import { DEFAULT_APP_SETTINGS, type AppSettings } from '@shared/app-settings'
 import { OverrideService } from './kernel/overrides/override-service'
 import { DnsEnhancementService } from './kernel/dns/dns-enhancement-service'
 import { SnifferEnhancementService } from './kernel/sniffer/sniffer-enhancement-service'
@@ -157,6 +158,12 @@ let mockServer: MockMihomoServerHandle | null = null
 let disposeIpc: (() => void) | null = null
 let isQuitting = false
 let shutdownPromise: Promise<void> | null = null
+/**
+ * Last-known persisted app settings, mirrored from the settings service so
+ * synchronous event handlers (window close, proxy-guard tick, login-item
+ * args) never need an async settings read mid-event.
+ */
+let cachedAppSettings: AppSettings = { ...DEFAULT_APP_SETTINGS }
 // Keep a strong reference for the complete lifetime of the native window.
 // A function-local BrowserWindow can be garbage-collected after createWindow
 // returns, which is especially visible in packaged Windows builds as a running
@@ -296,7 +303,15 @@ function createWindow(): BrowserWindow {
   window.on('close', (event) => {
     if (isQuitting) return
     event.preventDefault()
-    window.hide()
+    // Close-to-tray (verge's 最小化到托盘而非退出): the tray application stays
+    // alive. With the preference off, the close button quits through the SAME
+    // bounded restore-and-shutdown flow as the tray menu, so an owned system
+    // proxy is always restored before the process exits.
+    if (cachedAppSettings.closeToTray) {
+      window.hide()
+      return
+    }
+    void beginApplicationShutdown(false)
   })
   // Windows does not guarantee Electron's application-level before-quit event
   // during logoff/restart/shutdown. Start the same bounded network cleanup from
@@ -643,6 +658,14 @@ app.whenReady().then(async () => {
   // then falls back to its own download path exactly as before).
   const geodataSeedDir = is.dev ? undefined : join(process.resourcesPath, 'geodata')
   const appSettingsService = new AppSettingsService(appDataRoot(app.getPath('appData')))
+  // Hydrate the synchronous mirror immediately, then keep it in lockstep with
+  // every persisted change (renderer IPC) for the rest of the session.
+  void appSettingsService.get().then((settings) => {
+    cachedAppSettings = settings
+  })
+  appSettingsService.onChange((settings) => {
+    cachedAppSettings = settings
+  })
   const overrideService = new OverrideService(
     appDataRoot(app.getPath('appData')),
     undefined,
@@ -853,6 +876,7 @@ app.whenReady().then(async () => {
   // the box mutated them — the "proxy is on but nothing loads" failure. Values
   // we do not own are never fought; the sweep is a read-only no-op otherwise.
   proxyGuardTimer = setInterval(() => {
+    if (!cachedAppSettings.proxyGuard) return
     void systemProxyService.verifyIntegrity().then((result) => {
       if (result === 'repaired') console.warn('[system-proxy] guard repaired an externally mutated proxy')
       else if (result === 'repair-failed') console.error('[system-proxy] guard re-apply failed')
@@ -1153,7 +1177,7 @@ app.whenReady().then(async () => {
     ),
     profiles: profileGateway,
     systemProxy: systemProxyService,
-    startup: new StartupService(new ElectronStartupAdapter()),
+    startup: new StartupService(new ElectronStartupAdapter(() => cachedAppSettings.silentLaunch)),
     appSettings: appSettingsService,
     overrides: overrideService,
     dns: dnsEnhancementService,

@@ -58,7 +58,12 @@ export class AppSettingsService implements AppSettingsGateway {
             ? patch.delayTestUrlScope
             : current.delayTestUrlScope,
         delayTestUrl:
-          typeof patch.delayTestUrl === 'string' ? patch.delayTestUrl : current.delayTestUrl
+          typeof patch.delayTestUrl === 'string' ? patch.delayTestUrl : current.delayTestUrl,
+        silentLaunch:
+          typeof patch.silentLaunch === 'boolean' ? patch.silentLaunch : current.silentLaunch,
+        closeToTray:
+          typeof patch.closeToTray === 'boolean' ? patch.closeToTray : current.closeToTray,
+        proxyGuard: typeof patch.proxyGuard === 'boolean' ? patch.proxyGuard : current.proxyGuard
       }
       await this.write(next)
       for (const listener of this.listeners) {

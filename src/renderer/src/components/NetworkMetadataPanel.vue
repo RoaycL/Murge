@@ -54,9 +54,12 @@ function toggleReveal(): void {
   <SurfaceCard class="network-card">
     <div class="card-title-row">
       <span class="metric-label">网络信息 <em class="status">{{ statusLabel }}</em></span>
-      <button type="button" class="quiet-button" :aria-pressed="revealed" @click="toggleReveal">
-        {{ revealed ? '隐藏' : '显示' }}
-      </button>
+      <div class="title-actions">
+        <button type="button" class="quiet-button" :disabled="busy" @click="onRefresh">刷新</button>
+        <button type="button" class="quiet-button" :aria-pressed="revealed" @click="toggleReveal">
+          {{ revealed ? '隐藏' : '显示' }}
+        </button>
+      </div>
     </div>
 
     <div class="provider-table" :class="{ empty: !rows.length }" role="table" aria-label="出口网络信息（全部数据源）">
@@ -74,19 +77,13 @@ function toggleReveal(): void {
       </div>
     </div>
     <p v-if="store.refreshError" class="inline-error" role="alert">{{ store.refreshError }}</p>
-
-    <footer class="network-footer">
-      <div class="network-actions">
-        <button type="button" class="usage-clear" :disabled="busy" @click="onRefresh">刷新</button>
-        <button type="button" class="usage-clear copy" :disabled="!rows.some((row) => row.metadata)" @click="store.copy">复制信息</button>
-      </div>
-    </footer>
   </SurfaceCard>
 </template>
 
 <style scoped>
 .network-card { min-width: 0; }
 .card-title-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.title-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .status { font-style: normal; color: var(--app-muted); font-size: 10px; margin-left: 6px; }
 .provider-table { display: grid; margin-top: 12px; }
 .provider-row {
@@ -106,12 +103,7 @@ function toggleReveal(): void {
 .provider-name { overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .provider-ip { font-weight: 650; font-variant-numeric: tabular-nums; }
 .provider-geo, .provider-asn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.network-footer { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 14px; }
-/* 按钮组恒一行，不换行。 */
-.network-actions { display: flex; flex-wrap: nowrap; gap: 8px; }
-.usage-clear { min-height: 28px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: 7px; background: transparent; color: var(--app-muted); font-size: 11px; white-space: nowrap; flex-shrink: 0; }
-.usage-clear.copy { color: var(--app-blue); }
-.usage-clear:disabled { opacity: 0.5; }
-.quiet-button { min-height: 28px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: 7px; background: transparent; color: var(--app-muted); font-size: 11px; white-space: nowrap; flex-shrink: 0; }
 .inline-error { margin: 12px 0 0; color: var(--app-danger, #d64f4f); font-size: 12px; }
+.quiet-button { min-height: 28px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: 7px; background: transparent; color: var(--app-muted); font-size: 11px; white-space: nowrap; flex-shrink: 0; }
+.quiet-button:disabled { opacity: 0.5; }
 </style>

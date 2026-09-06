@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { MihomoProxiesResponse, MihomoProxy } from '@shared/mihomo-api'
+import type { MihomoProxiesResponse, MihomoProxy, MihomoProxyProvider } from '@shared/mihomo-api'
 import { ProtocolErrorCode, toProtocolError } from '@shared/protocol-errors'
 
 export type PolicyStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -41,10 +41,36 @@ function classifyDelayError(value: unknown): DelayStatus {
   return 'error'
 }
 
+/**
+ * Flatten every provider's member proxies into a name→proxy index so a group
+ * member absent from the top-level `/proxies` map can still resolve its detail
+ * (protocol + capability flags). Mirrors clash-party's merge in `mihomoGroups`
+ * and sparkle's `resolveProviderProxies`.
+ */
+function indexProviderProxies(providers: Record<string, MihomoProxyProvider>): Record<string, MihomoProxy> {
+  const out: Record<string, MihomoProxy> = {}
+  for (const provider of Object.values(providers)) {
+    for (const proxy of provider.proxies ?? []) {
+      if (proxy && typeof proxy.name === 'string' && !(proxy.name in out)) {
+        out[proxy.name] = proxy
+      }
+    }
+  }
+  return out
+}
+
 export const usePoliciesStore = defineStore('policies', () => {
   const status = ref<PolicyStatus>('idle')
   const lastError = ref<string | null>(null)
   const proxies = ref<MihomoProxiesResponse | null>(null)
+  /**
+   * Provider-resolved proxy detail map, keyed by node name. mihomo does not
+   * always flatten provider proxies into the top-level `/proxies` map (they
+   * live under `/providers/proxies`); this index backfills the missing detail
+   * so `nodeByMember` can still surface protocol + capability tags. Mirrors
+   * clash-party's `mihomoGroups` / sparkle's `resolveProviderProxies` merge.
+   */
+  const providerProxies = ref<Record<string, MihomoProxy>>({})
   const selectedGroup = ref<string>('')
   const selectedMember = ref<string>('')
   const mode = ref<PolicyMode>('rule')
@@ -111,7 +137,8 @@ export const usePoliciesStore = defineStore('policies', () => {
     const out: Record<string, MihomoProxy | null> = {}
     if (!proxies.value) return out
     for (const member of groupMembers.value) {
-      out[member] = proxies.value.proxies[member] ?? null
+      // Top-level /proxies first, then provider-resolved detail as backfill.
+      out[member] = proxies.value.proxies[member] ?? providerProxies.value[member] ?? null
     }
     return out
   })
@@ -153,15 +180,24 @@ export const usePoliciesStore = defineStore('policies', () => {
     try {
       // Fetch BOTH sources up front: the config-file group order (active
       // profile document, parsed in main) and the full detail map (/proxies).
-      const [orderResult, result] = await Promise.all([
+      const [orderResult, result, providersResult] = await Promise.all([
         window.desktop.profiles.getActiveGroupOrder().catch(() => [] as string[]),
-        window.desktop.mihomo.getProxies()
+        window.desktop.mihomo.getProxies(),
+        // Provider proxies backfill nodes absent from /proxies (clash-party /
+        // sparkle pattern). Non-fatal: a missing provider list just leaves
+        // tags blank for those nodes, same as before this backfill existed.
+        // Guarded so an older test fixture or a stubbed desktop without this
+        // method does not crash load() synchronously.
+        typeof window.desktop.mihomo.getProxyProviders === 'function'
+          ? window.desktop.mihomo.getProxyProviders().catch(() => ({ providers: {} as Record<string, MihomoProxyProvider> }))
+          : Promise.resolve({ providers: {} as Record<string, MihomoProxyProvider> })
       ])
       orderedGroupNames.value = orderResult.filter((name) => {
         const proxy = result.proxies[name]
         return isPolicyGroup(proxy)
       })
       proxies.value = result
+      providerProxies.value = indexProviderProxies(providersResult.providers)
       const ordered = groups.value
       const firstGroup = ordered.length > 0 ? ordered[0] : null
       if (firstGroup) {

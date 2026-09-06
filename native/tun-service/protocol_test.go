@@ -174,7 +174,7 @@ func TestRejectUnsafeProfileMutations(t *testing.T) {
 		{"rooted provider path", "    path: ./ruleset/reject.yaml", "    path: /Windows/System32/evil.dll"},
 		{"drive relative provider path", "    path: ./ruleset/reject.yaml", "    path: C:evil.dll"},
 		{"public dns bind", "  enhanced-mode: fake-ip", "  enhanced-mode: fake-ip\n  listen: 0.0.0.0:53"},
-		{"dns disabled", "  enable: true\n  enhanced-mode: fake-ip", "  enable: false\n  enhanced-mode: fake-ip"},
+		{"hijack without dns", "  enable: true\n  enhanced-mode: fake-ip", "  enable: false\n  enhanced-mode: fake-ip"},
 		{"invalid dns mode", "  enhanced-mode: fake-ip", "  enhanced-mode: invalid"},
 	}
 	for _, row := range rejected {
@@ -185,6 +185,30 @@ func TestRejectUnsafeProfileMutations(t *testing.T) {
 		if _, err := decodeRequest(encodedStart(profile)); err == nil {
 			t.Fatalf("%s: accepted an unsafe profile", row.name)
 		}
+	}
+}
+
+// clash-party DNS-takeover parity: a profile with no dns block (or an explicit
+// enable: false) is legitimate as long as it does not hijack port 53.
+func TestAcceptDisabledDnsWithoutHijack(t *testing.T) {
+	noDns := stringsReplaceOnce(
+		proxiedProfile,
+		"dns:\n  enable: true\n  enhanced-mode: fake-ip\n  fake-ip-range: 198.18.0.1/16\n  nameserver:\n    - 223.5.5.5\n  fallback:\n    - 1.1.1.1\n",
+		"",
+	)
+	noDns = stringsReplaceOnce(noDns, "  dns-hijack:\n    - any:53", "  dns-hijack: []")
+	if _, err := decodeRequest(encodedStart(noDns)); err != nil {
+		t.Fatalf("rejected a dns-less profile without hijack: %v", err)
+	}
+
+	explicitOff := stringsReplaceOnce(
+		proxiedProfile,
+		"  enable: true\n  enhanced-mode: fake-ip",
+		"  enable: false",
+	)
+	explicitOff = stringsReplaceOnce(explicitOff, "  dns-hijack:\n    - any:53", "  dns-hijack: []")
+	if _, err := decodeRequest(encodedStart(explicitOff)); err != nil {
+		t.Fatalf("rejected a dns-disabled profile without hijack: %v", err)
 	}
 }
 

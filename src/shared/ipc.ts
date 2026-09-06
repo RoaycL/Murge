@@ -16,6 +16,7 @@ import type {
 } from './mihomo-api'
 import type { ConfigEdit, ImportRequest, Profile, ProfileMeta, ProfileProviderCatalog, ValidationResult } from './profiles'
 import type { ServiceUnlockResult } from './unlock'
+import type { SubStoreState } from './substore'
 import type { KernelManagerState } from './kernel-manager'
 import type {
   OverrideInput,
@@ -111,6 +112,11 @@ export const IPC = {
   startupSetEnabled: 'startup:set-enabled',
   appSettingsGet: 'app-settings:get',
   appSettingsSet: 'app-settings:set',
+  subStoreGetState: 'substore:get-state',
+  subStoreEnsureRunning: 'substore:ensure-running',
+  subStoreStop: 'substore:stop',
+  subStoreCheckUpdate: 'substore:check-update',
+  subStoreOpenExternal: 'substore:open-external',
   overridesList: 'overrides:list',
   overridesCreate: 'overrides:create',
   overridesUpdate: 'overrides:update',
@@ -255,6 +261,13 @@ export interface DesktopApi {
   appSettings: {
     get(): Promise<AppSettings>
     set(patch: Partial<AppSettings>): Promise<AppSettings>
+  }
+  subStore: {
+    getState(): Promise<SubStoreState>
+    ensureRunning(): Promise<SubStoreState>
+    stop(): Promise<SubStoreState>
+    checkUpdate(): Promise<SubStoreState>
+    openExternal(url: string): Promise<void>
   }
   overrides: {
     list(): Promise<OverridesSnapshot>

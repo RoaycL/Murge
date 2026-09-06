@@ -60,9 +60,11 @@ import { ElectronStartupAdapter } from './startup/electron-adapter'
 import { restoreRuntimeIntent } from './startup/runtime-intent'
 import { RuntimeIntentRecoveryCoordinator } from './startup/runtime-intent-recovery'
 import { AppSettingsService } from './app-settings/service'
+import { SubStoreService } from './substore/service'
 import { DEFAULT_APP_SETTINGS, type AppSettings } from '@shared/app-settings'
 import { OverrideService } from './kernel/overrides/override-service'
 import { DnsEnhancementService } from './kernel/dns/dns-enhancement-service'
+import { documentDnsEnabled } from './kernel/dns/apply-dns'
 import { SnifferEnhancementService } from './kernel/sniffer/sniffer-enhancement-service'
 import { CoreSettingsService } from './kernel/core-settings-service'
 import { GeodataSettingsService } from './kernel/geodata-settings-service'
@@ -165,6 +167,7 @@ let shutdownPromise: Promise<void> | null = null
  * args) never need an async settings read mid-event.
  */
 let cachedAppSettings: AppSettings = { ...DEFAULT_APP_SETTINGS }
+let subStoreServiceRef: SubStoreService | null = null
 // Keep a strong reference for the complete lifetime of the native window.
 // A function-local BrowserWindow can be garbage-collected after createWindow
 // returns, which is especially visible in packaged Windows builds as a running
@@ -242,18 +245,23 @@ async function createMihomoGateway(
   return mihomo
 }
 
+/** The ecosystem-standard mihomo mixed inbound (clash-party / mihomo-party / sparkle all pin it). */
+const MIHOMO_MIXED_PORT = 7890
+
 async function allocateProductionPorts(): Promise<{ controller: number; mixed: number }> {
-  const controller = await findFreePort()
-  let mixed = await findFreePort()
-  // Port reservations are released before mihomo starts, so the OS may return
-  // the same ephemeral port twice. Keep asking until both config fields differ.
-  while (mixed === controller) mixed = await findFreePort()
-  // Known accepted TOCTOU: the reservation is closed here and mihomo binds some
-  // seconds later, so another process can claim the port in between. Windows
-  // ephemeral-port reuse for a just-released listener is rare and the failure
-  // mode is a loud kernel-start error (user retries), not silent corruption —
-  // holding the sockets open would starve mihomo's bind instead.
-  return { controller, mixed }
+  let controller = await findFreePort()
+  // clash-party parity: the kernel's mixed inbound is pinned to 7890 instead of
+  // a per-launch random port, so users can hard-code expectations (scripts,
+  // browser extension proxy settings, the connectivity probe default). The
+  // controller port stays a random ephemeral local port — the reference clients
+  // disable the HTTP controller entirely (named-pipe IPC), which this app's
+  // controller-driven readiness and policy plumbing cannot.
+  while (controller === MIHOMO_MIXED_PORT) controller = await findFreePort()
+  // Known accepted TOCTOU: nothing is bound here and mihomo binds some seconds
+  // later, so another process can claim a port in between. The failure mode is
+  // a loud kernel-start error (user retries), not silent corruption — holding
+  // the sockets open would starve mihomo's bind instead.
+  return { controller, mixed: MIHOMO_MIXED_PORT }
 }
 
 function createWindow(): BrowserWindow {
@@ -670,6 +678,10 @@ app.whenReady().then(async () => {
         console.error('[startup] failed to refresh login-item arguments:', error)
       })
     }
+    void subStoreServiceRef?.onSettings({
+      subStoreEnabled: settings.subStoreEnabled,
+      subStoreUseProxy: settings.subStoreUseProxy
+    })
   })
   const overrideService = new OverrideService(
     appDataRoot(app.getPath('appData')),
@@ -967,7 +979,12 @@ app.whenReady().then(async () => {
           }
         },
         async () => tunConfigService.readConfig(),
-        20_000
+        20_000,
+        // clash-party DNS-takeover parity: TUN hijacks port 53 only when the
+        // final active document (overrides -> DNS -> sniffer) leaves the DNS
+        // module enabled. Resolved per enable() call so a toggle in the UI takes
+        // effect on the next TUN switch without a kernel restart.
+        async () => documentDnsEnabled(await resolveEnhancedActiveDocument())
       )
     : new GatedTunMutationAdapter()
   const tunInstance = new TunCoordinator(tunAdapter, tunSupported)
@@ -1142,6 +1159,15 @@ app.whenReady().then(async () => {
   })
   await usageHistoryService.init()
   usageHistoryServiceRef = usageHistoryService
+  // Sub-Store (配置-外部资源): lifecycle owner for the on-demand backend worker.
+  // Started only when the page asks for it while enabled — never at boot.
+  const subStoreService = new SubStoreService({
+    baseDir: join(appDataRoot(app.getPath('appData')), 'substore'),
+    brandName: brand.productName,
+    getMixedPort: () => productionMixedPort,
+    appSettings: appSettingsService
+  })
+  subStoreServiceRef = subStoreService
   const networkMetadataService = new NetworkMetadataService({
     resolveProxyPort: async () => {
       try {
@@ -1204,6 +1230,7 @@ app.whenReady().then(async () => {
     tun: queuedTun,
     usageHistory: usageHistoryService,
     networkMetadata: networkMetadataService,
+    subStore: subStoreService,
     resolveActiveGroupOrder: async () =>
       parseProxyGroupOrder((await resolveEnhancedActiveDocument()) ?? ''),
     resolveActiveProviderCatalog: async () =>
@@ -1454,6 +1481,8 @@ function beginApplicationShutdown(sessionEnding: boolean): Promise<void> {
           networkDetector = null
           runtimeIntentRecovery?.stop()
           runtimeIntentRecovery = null
+          subStoreServiceRef?.dispose()
+          subStoreServiceRef = null
           mihomo?.dispose()
           await mockServer?.close()
         } catch (error) {

@@ -46,6 +46,7 @@ import type { TunConfigModel, TunConfigSnapshot } from './tun-config'
 import type { CoreSettings } from './core-settings'
 import type { AppInfo } from './app-info'
 import type { UpdateState } from './updates'
+import type { SubStoreState } from './substore'
 
 /**
  * Narrow, testable service boundaries. Main-process services implement these
@@ -346,6 +347,26 @@ export interface NetworkMetadataGateway {
   resolveAll(force?: boolean): Promise<NetworkMetadataSnapshot>
 }
 
+/**
+ * Sub-Store lifecycle boundary. The main process owns asset downloads and the
+ * backend worker; the renderer only observes state snapshots and triggers
+ * idempotent lifecycle transitions.
+ */
+export interface SubStoreGateway {
+  /** Full state snapshot (settings mirror + disk facts + phase). */
+  getState(): SubStoreState | Promise<SubStoreState>
+  /** Full snapshot; the IPC get-state handler serves this (persisted mirror). */
+  snapshot(): SubStoreState | Promise<SubStoreState>
+  /** Ensure assets + worker are up (downloads on first use; single-flight). */
+  ensureRunning(): SubStoreState | Promise<SubStoreState>
+  /** Stop the worker; assets and the enabled setting are kept. */
+  stop(): SubStoreState | Promise<SubStoreState>
+  /** Refresh upstream release tags; re-download changed assets. */
+  checkUpdate(): SubStoreState | Promise<SubStoreState>
+  /** Open an http(s) URL in the user's browser (external-link button). */
+  openExternal(url: string): void | Promise<void>
+}
+
 /** Everything the IPC handler factory needs from the trusted main process. */
 export interface IpcDeps {
   brand: BrandConfig
@@ -368,6 +389,7 @@ export interface IpcDeps {
   geodata: GeodataSettingsGateway
   usageHistory: UsageHistoryGateway
   networkMetadata: NetworkMetadataGateway
+  subStore: SubStoreGateway
   /** Common-service unlock sampler for the 网络诊断 drawer. */
   unlock: ServiceUnlockSampler
   updates: UpdatesGateway

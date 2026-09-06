@@ -678,7 +678,9 @@ export class FakeAppSettingsGateway implements AppSettingsGateway {
     delayTestUrl: '',
     silentLaunch: false,
     closeToTray: true,
-    proxyGuard: true
+    proxyGuard: true,
+    subStoreEnabled: false,
+    subStoreUseProxy: false
   }
   setCalls: Array<Partial<AppSettings>> = []
   get(): Promise<AppSettings> { return Promise.resolve({ ...this.settings }) }
@@ -880,6 +882,6 @@ export function createFakeContainer(brand: BrandConfig): FakeContainer {
       sample: async () => [],
       testOne: async (name: string) => ({ name, status: 'error', region: null })
     },
-    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata, internetLatency: { sample: async () => ({ gatewayMs: 2, dnsMs: 6, proxyMs: 42, proxyNode: '香港 01' }) }, unlock: { sample: async () => [], testOne: async (name) => ({ name, status: 'error', region: null }) } }
+    deps: { brand, appInfo: { version: '0.0.0-test', platform: 'linux', arch: 'x64' }, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata, subStore: { getState: async () => ({ enabled: false, useProxy: false, phase: 'idle' as const, port: null, version: null, assetsReady: false, error: null }), snapshot: async () => ({ enabled: false, useProxy: false, phase: 'idle' as const, port: null, version: null, assetsReady: false, error: null }), ensureRunning: async () => ({ enabled: true, useProxy: false, phase: 'running' as const, port: 38324, version: { backend: '2.38.2', frontend: '2.31.2' }, assetsReady: true, error: null }), stop: async () => ({ enabled: false, useProxy: false, phase: 'idle' as const, port: null, version: null, assetsReady: false, error: null }), checkUpdate: async () => ({ enabled: true, useProxy: false, phase: 'idle' as const, port: null, version: null, assetsReady: true, error: null }), openExternal: async () => {} }, internetLatency: { sample: async () => ({ gatewayMs: 2, dnsMs: 6, proxyMs: 42, proxyNode: '香港 01' }) }, unlock: { sample: async () => [], testOne: async (name) => ({ name, status: 'error', region: null }) } }
   }
 }

@@ -307,28 +307,41 @@ func validateTunProfile(text string) error {
 	if !ok || (stack != "mixed" && stack != "system" && stack != "gvisor") {
 		return errors.New("invalid TUN stack")
 	}
+	// DNS hijacking is only meaningful when the config also runs a live DNS
+	// module to answer the hijacked port-53 queries (clash-party parity: its
+	// final-config merge clears dns-hijack whenever the resulting profile has
+	// no enabled dns block). The pairing is enforced, not the presence of DNS.
 	hijack, ok := tunMap["dns-hijack"].([]any)
-	if !ok || len(hijack) == 0 {
-		return errors.New("tun.dns-hijack must be a non-empty sequence")
+	if !ok {
+		return errors.New("tun.dns-hijack must be a sequence")
+	}
+	dnsRaw, present := profile["dns"]
+	var dnsEnabled bool
+	if present {
+		dnsMap, ok := dnsRaw.(map[string]any)
+		if !ok {
+			return errors.New("dns must be a mapping")
+		}
+		if enable, isBool := dnsMap["enable"].(bool); isBool && enable {
+			dnsEnabled = true
+		}
+	}
+	if len(hijack) > 0 && !dnsEnabled {
+		return errors.New("tun.dns-hijack must be empty when dns.enable is not true")
 	}
 
-	// --- DNS boundary: fake-ip required; a public DNS bind is refused ---
-	dnsRaw, present := profile["dns"]
+	// --- DNS boundary: a public DNS bind is always refused ---
 	if !present {
-		return errors.New("dns block is required")
+		return nil
 	}
-	dnsMap, ok := dnsRaw.(map[string]any)
-	if !ok {
-		return errors.New("dns must be a mapping")
-	}
+	dnsMap := dnsRaw.(map[string]any)
 	if _, listens := dnsMap["listen"]; listens {
 		return errors.New("forbidden key for a privileged profile: dns.listen")
 	}
-	if enable, ok := dnsMap["enable"].(bool); !ok || !enable {
-		return errors.New("dns.enable must be true")
-	}
-	if mode, ok := dnsMap["enhanced-mode"].(string); !ok || (mode != "fake-ip" && mode != "redir-host") {
-		return errors.New("dns.enhanced-mode must be fake-ip or redir-host")
+	if dnsEnabled {
+		if mode, ok := dnsMap["enhanced-mode"].(string); !ok || (mode != "fake-ip" && mode != "redir-host") {
+			return errors.New("dns.enhanced-mode must be fake-ip or redir-host")
+		}
 	}
 	return nil
 }

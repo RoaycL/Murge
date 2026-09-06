@@ -72,6 +72,16 @@ export interface AppSettings {
    * mutated them. Values the app does not own are never fought.
    */
   proxyGuard: boolean
+  /**
+   * Sub-Store (订阅管理) master switch under 配置-外部资源. The backend worker
+   * is started on demand when the page is opened with this on — never at boot.
+   */
+  subStoreEnabled: boolean
+  /**
+   * Route Sub-Store's own outbound subscription fetches through the kernel
+   * mixed-port (HTTP_PROXY/HTTPS_PROXY env on the worker).
+   */
+  subStoreUseProxy: boolean
 }
 
 export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = Object.freeze({
@@ -85,10 +95,13 @@ export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = Object.freeze({
   delayTestUrlScope: 'group',
   delayTestUrl: '',
   // Reference-client parity: party/sparkle default silent start OFF, verge
-  // keeps close-to-tray ON and its proxy guard ON by default.
+  // keeps close-to-tray ON and its proxy guard ON by default. Sub-Store is
+  // opt-in (off) until the user enables it on the 外部资源 page.
   silentLaunch: false,
   closeToTray: true,
-  proxyGuard: true
+  proxyGuard: true,
+  subStoreEnabled: false,
+  subStoreUseProxy: false
 })
 
 function parseDelayTestUrl(value: unknown): string {
@@ -154,7 +167,15 @@ export function parseAppSettings(value: string | null): AppSettings {
       proxyGuard:
         typeof parsed.proxyGuard === 'boolean'
           ? parsed.proxyGuard
-          : DEFAULT_APP_SETTINGS.proxyGuard
+          : DEFAULT_APP_SETTINGS.proxyGuard,
+      subStoreEnabled:
+        typeof parsed.subStoreEnabled === 'boolean'
+          ? parsed.subStoreEnabled
+          : DEFAULT_APP_SETTINGS.subStoreEnabled,
+      subStoreUseProxy:
+        typeof parsed.subStoreUseProxy === 'boolean'
+          ? parsed.subStoreUseProxy
+          : DEFAULT_APP_SETTINGS.subStoreUseProxy
     }
   } catch {
     return { ...DEFAULT_APP_SETTINGS }

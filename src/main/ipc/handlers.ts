@@ -1,7 +1,7 @@
 import { IPC } from '@shared/ipc'
 import type { IpcDeps } from '@shared/gateways'
 import type { ProfileProviderCatalog } from '@shared/profiles'
-import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions, parseStartupEnabled, parseDnsQuery, parseLogAfterSeq, parseAppSettingsPatch, parseKernelEnabled, parseKernelChannel, parseKernelVersion, parseOverrideInput, parseOverrideId, parseOverrideEnabled, parseOverrideMove, parseDnsEnhancement, parseSnifferEnhancement, parseTunConfig, parseCoreSettings, parseGeodataSettings, parseProxyBypassPolicy, parseUsageWindow, parseUsageRanking, parseUsageRankLimit, parseNetworkMetadataProviderId, parseUnlockServiceName } from '@shared/schemas/ipc'
+import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions, parseStartupEnabled, parseDnsQuery, parseLogAfterSeq, parseAppSettingsPatch, parseKernelEnabled, parseKernelChannel, parseKernelVersion, parseOverrideInput, parseOverrideId, parseOverrideEnabled, parseOverrideMove, parseDnsEnhancement, parseSnifferEnhancement, parseTunConfig, parseCoreSettings, parseGeodataSettings, parseProxyBypassPolicy, parseUsageWindow, parseUsageRanking, parseUsageRankLimit, parseNetworkMetadataProviderId, parseUnlockServiceName, parseSubStoreExternalUrl } from '@shared/schemas/ipc'
 import {
   parseConfigEdit,
   parseImportRequest,
@@ -36,7 +36,7 @@ export interface IpcHandlerOptions {
 }
 
 export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {}): Record<string, IpcHandler> {
-  const { brand, appInfo, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata, internetLatency } = deps
+  const { brand, appInfo, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata, subStore, internetLatency } = deps
 
   return {
     [IPC.appGetBrand]: async () => brand,
@@ -161,6 +161,14 @@ export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {})
     [IPC.startupSetEnabled]: async (_event, enabled) => startup.setEnabled(parseStartupEnabled(enabled)),
     [IPC.appSettingsGet]: async () => appSettings.get(),
     [IPC.appSettingsSet]: async (_event, patch) => appSettings.set(parseAppSettingsPatch(patch)),
+    // Full snapshot (not the synchronous mirror): the renderer's first read on
+    // page open must see the PERSISTED enabled/useProxy mirror before any
+    // settings change has fired.
+    [IPC.subStoreGetState]: async () => subStore.snapshot(),
+    [IPC.subStoreEnsureRunning]: async () => subStore.ensureRunning(),
+    [IPC.subStoreStop]: async () => subStore.stop(),
+    [IPC.subStoreCheckUpdate]: async () => subStore.checkUpdate(),
+    [IPC.subStoreOpenExternal]: async (_event, url) => subStore.openExternal(parseSubStoreExternalUrl(url)),
     [IPC.overridesList]: async () => overrides.list(),
     [IPC.overridesCreate]: async (_event, input) => overrides.create(parseOverrideInput(input)),
     [IPC.overridesUpdate]: async (_event, id, input) =>

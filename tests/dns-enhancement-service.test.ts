@@ -43,20 +43,16 @@ describe('DnsEnhancementService', () => {
     expect(snapshot.enhancement).toEqual(EMPTY_DNS_ENHANCEMENT)
   })
 
-  it('migrates the old wildcard blacklist default without changing custom filters', async () => {
+  it('persists fake-ip-filter lists verbatim (a leading * is intentional now)', async () => {
     const dir = await makeDir()
-    const legacy = {
-      ...EMPTY_DNS_ENHANCEMENT,
-      fakeIpFilter: ['*', ...EMPTY_DNS_ENHANCEMENT.fakeIpFilter]
-    }
-    await writeFile(join(dir, DNS_ENHANCEMENT_FILE), JSON.stringify({ enhancement: legacy }), 'utf8')
-    const migrated = await new DnsEnhancementService(dir).get()
-    expect(migrated.enhancement.fakeIpFilter).toEqual(EMPTY_DNS_ENHANCEMENT.fakeIpFilter)
-
-    const customDir = await makeDir()
-    const custom = { ...legacy, fakeIpFilter: [...legacy.fakeIpFilter, '+.example.com'] }
-    await writeFile(join(customDir, DNS_ENHANCEMENT_FILE), JSON.stringify({ enhancement: custom }), 'utf8')
-    expect((await new DnsEnhancementService(customDir).get()).enhancement.fakeIpFilter).toContain('*')
+    const service = new DnsEnhancementService(dir)
+    // The old one-time migration stripped a leading bare `*`; clash-party parity
+    // made that entry the legitimate default, so stored lists must survive
+    // a reload byte-for-byte.
+    const custom = { ...EMPTY_DNS_ENHANCEMENT, fakeIpFilter: ['*', ...EMPTY_DNS_ENHANCEMENT.fakeIpFilter, '+.example.com'] }
+    await service.set(custom)
+    const reloaded = new DnsEnhancementService(dir)
+    expect((await reloaded.get()).enhancement.fakeIpFilter).toEqual(custom.fakeIpFilter)
   })
 
   it('preview renders a redacted yaml dns block without writing', async () => {

@@ -48,3 +48,28 @@ export function applyDnsEnhancementToDocument(base: string, enhancement: DnsEnha
   config.dns = { ...existing, ...buildDnsBlock(enhancement) }
   return { text: stringify(config), warnings: [] }
 }
+
+/**
+ * Whether a final profile document carries an ENABLED `dns:` block — the same
+ * condition clash-party checks before deciding TUN may hijack port 53
+ * (`!controlDns && tun && !profile.dns?.enable` → clear `dns-hijack`).
+ *
+ * This is the authoritative source for that decision: the controller's
+ * `GET /configs` does not expose the dns block, and the document here is
+ * exactly what both kernels materialize (overrides → DNS enhancement →
+ * sniffer already applied). Unparseable input reports "disabled", matching the
+ * apply path's fail-safe of leaving the base text untouched.
+ */
+export function documentDnsEnabled(text: string | null | undefined): boolean {
+  if (!text) return false
+  try {
+    const doc = parseDocument(text, { merge: true, uniqueKeys: true })
+    if (doc.errors.length > 0 || !isMap(doc.contents)) return false
+    const data = doc.toJS() as Record<string, unknown>
+    const dns = data.dns
+    if (typeof dns !== 'object' || dns === null || Array.isArray(dns)) return false
+    return (dns as Record<string, unknown>).enable === true
+  } catch {
+    return false
+  }
+}

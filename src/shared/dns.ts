@@ -70,19 +70,17 @@ export const EMPTY_DNS_ENHANCEMENT: DnsEnhancement = {
   respectRules: false,
   fakeIpRange: '198.18.0.1/16',
   fakeIpFilterMode: 'blacklist',
-  // Real-IP exceptions for LAN, NTP and connectivity detection. In mihomo's
-  // blacklist mode every matching entry bypasses fake-ip, so a bare `*` must
-  // never appear here: it would disable fake-ip for every hostname.
+  // Real-IP exceptions for single-label hosts, LAN, NTP and Xiaomi connectivity
+  // probes — clash-party's shipped `fake-ip-filter` default verbatim. In
+  // mihomo's domain trie the leading bare `*` matches only dot-less
+  // single-label names; regular domains still receive fake-ip addresses.
   fakeIpFilter: [
+    '*',
     '+.lan',
     '+.local',
-    '+.arpa',
     'time.*.com',
     'ntp.*.com',
-    '+.market.xiaomi.com',
-    'localhost.ptlogin2.qq.com',
-    '*.msftncsi.com',
-    'www.msftconnecttest.com'
+    '+.market.xiaomi.com'
   ],
   useHosts: false,
   hosts: [],

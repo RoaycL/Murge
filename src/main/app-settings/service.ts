@@ -63,7 +63,15 @@ export class AppSettingsService implements AppSettingsGateway {
           typeof patch.silentLaunch === 'boolean' ? patch.silentLaunch : current.silentLaunch,
         closeToTray:
           typeof patch.closeToTray === 'boolean' ? patch.closeToTray : current.closeToTray,
-        proxyGuard: typeof patch.proxyGuard === 'boolean' ? patch.proxyGuard : current.proxyGuard
+        proxyGuard: typeof patch.proxyGuard === 'boolean' ? patch.proxyGuard : current.proxyGuard,
+        subStoreEnabled:
+          typeof patch.subStoreEnabled === 'boolean'
+            ? patch.subStoreEnabled
+            : current.subStoreEnabled,
+        subStoreUseProxy:
+          typeof patch.subStoreUseProxy === 'boolean'
+            ? patch.subStoreUseProxy
+            : current.subStoreUseProxy
       }
       await this.write(next)
       for (const listener of this.listeners) {

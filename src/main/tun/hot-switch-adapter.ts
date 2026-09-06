@@ -17,7 +17,13 @@ export class MihomoHotSwitchTunAdapter implements TunMutationAdapter {
     private readonly runtimeFactory: () => TunProfileRuntime | Promise<TunProfileRuntime>,
     private readonly readiness: TunControllerReadiness,
     private readonly readTunConfig: () => TunConfigModel | Promise<TunConfigModel>,
-    private readonly readyTimeoutMs = 20_000
+    private readonly readyTimeoutMs = 20_000,
+    /**
+     * Whether the ACTIVE profile's final config enables the DNS module. Defaults
+     * to true for compatibility with callers that predate the clash-party DNS
+     * takeover alignment (their profiles always carried a dns block).
+     */
+    private readonly readDnsEnabled: () => boolean | Promise<boolean> = async () => true
   ) {}
 
   getActiveRuntime(): TunProfileRuntime | null {
@@ -43,11 +49,18 @@ export class MihomoHotSwitchTunAdapter implements TunMutationAdapter {
     const previous = current.tun ?? { enable: false }
     const model = await this.readTunConfig()
     const device = model.device === EMPTY_TUN_CONFIG.device ? intent.device : model.device
-    const next = {
+    const next: Record<string, unknown> = {
       ...previous,
       ...buildTunBlock({ ...model, device, stack: model.stack ?? intent.stack }),
       enable: true
     }
+    // clash-party parity (`!controlDns && tun && !profile.dns?.enable`): port-53
+    // hijacking only makes sense when the kernel also runs a live DNS module —
+    // hijacked queries without one would blackhole every hostname. The state
+    // cannot come from the controller snapshot (mihomo's GET /configs does not
+    // expose the dns block), so the caller supplies the authoritative flag read
+    // from the same enhanced document the kernel was materialized from.
+    if ((await this.readDnsEnabled()) !== true) next['dns-hijack'] = []
     try {
       await this.mihomo.patchConfig({ tun: next })
       const confirmed = await this.mihomo.getConfig()

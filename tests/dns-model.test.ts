@@ -130,17 +130,14 @@ describe('buildDnsBlock', () => {
     expect(block['fake-ip-range']).toBe('198.18.0.1/16')
     expect(block['fake-ip-filter-mode']).toBe('blacklist')
     expect(block['use-hosts']).toBe(false)
-    // Non-empty lists are emitted (party/sparkle/verge merged defaults).
+    // Non-empty lists are emitted (clash-party's shipped fake-ip-filter default).
     expect(block['fake-ip-filter']).toEqual([
+      '*',
       '+.lan',
       '+.local',
-      '+.arpa',
       'time.*.com',
       'ntp.*.com',
-      '+.market.xiaomi.com',
-      'localhost.ptlogin2.qq.com',
-      '*.msftncsi.com',
-      'www.msftconnecttest.com'
+      '+.market.xiaomi.com'
     ])
     expect(block['default-nameserver']).toEqual(['tls://223.5.5.5'])
     expect(block.nameserver).toEqual(['https://doh.pub/dns-query', 'https://dns.alidns.com/dns-query'])

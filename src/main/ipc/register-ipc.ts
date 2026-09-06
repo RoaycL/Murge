@@ -2,7 +2,7 @@ import { ipcMain, BrowserWindow, app } from 'electron'
 import { networkInterfaces } from 'node:os'
 import { join } from 'node:path'
 import { brand } from '@shared/brand'
-import type { IpcDeps, KernelGateway, KernelManagerGateway, MihomoGateway, ProfileGateway, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway, OverridesGateway, DnsEnhancementGateway, SnifferEnhancementGateway, TunConfigGateway, CoreSettingsGateway, GeodataSettingsGateway, UsageHistoryGateway, NetworkMetadataGateway } from '@shared/gateways'
+import type { IpcDeps, KernelGateway, KernelManagerGateway, MihomoGateway, ProfileGateway, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway, OverridesGateway, DnsEnhancementGateway, SnifferEnhancementGateway, TunConfigGateway, CoreSettingsGateway, GeodataSettingsGateway, UsageHistoryGateway, NetworkMetadataGateway, SubStoreGateway } from '@shared/gateways'
 import type { TunGateway } from '@shared/tun'
 import type { OutboundMode, RuntimeSummary } from '@shared/runtime'
 import type { ProfileProviderCatalog } from '@shared/profiles'
@@ -31,6 +31,7 @@ export interface IpcDependencies {
   geodata: GeodataSettingsGateway
   usageHistory: UsageHistoryGateway
   networkMetadata: NetworkMetadataGateway
+  subStore: SubStoreGateway
   /** INTERNET-latency sampler for the activity card; constructed by the caller. */
   internetLatency?: IpcDeps['internetLatency']
   /** Common-service unlock sampler for the network drawer; constructed by the caller. */
@@ -124,7 +125,7 @@ function resolveExternalIp({ kernel, mihomo }: Pick<IpcDependencies, 'kernel' | 
   })()
 }
 
-export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata, internetLatency, unlock, resolveActiveGroupOrder, resolveActiveProviderCatalog }: IpcDependencies): () => void {
+export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata, subStore, internetLatency, unlock, resolveActiveGroupOrder, resolveActiveProviderCatalog }: IpcDependencies): () => void {
   const deps: IpcDeps = {
     brand,
     appInfo: { version: app.getVersion(), platform: process.platform === 'win32' || process.platform === 'darwin' || process.platform === 'linux' ? process.platform : 'other', arch: process.arch },
@@ -149,6 +150,7 @@ export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemPro
     geodata,
     usageHistory,
     networkMetadata,
+    subStore,
     internetLatency: internetLatency ?? { sample: async () => ({ gatewayMs: null, dnsMs: null, proxyMs: null, proxyNode: null }) },
     unlock: unlock ?? { sample: async () => [], testOne: async (name) => ({ name, status: 'error', region: null }) }
   }

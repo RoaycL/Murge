@@ -167,7 +167,7 @@ const chartBars = computed<number[]>(() => {
     <section class="dashboard-grid">
       <SurfaceCard class="latency-card">
         <div class="card-title-row">
-          <span class="metric-label">INTERNET 延迟<button type="button" class="latency-refresh" :disabled="latency.state === 'probing'" aria-label="重新测速" @click="latency.probe()"><AppIcon name="refresh" :size="12" /></button></span>
+          <span class="metric-label latency-label">INTERNET 延迟<button type="button" class="latency-refresh" :disabled="latency.state === 'probing'" aria-label="重新测速" @click="latency.probe()"><AppIcon name="refresh" :size="12" /></button></span>
           <button type="button" class="quiet-button" @click="summaryDrawer = 'network'">{{ diagnosisButtonLabel }}</button>
         </div>
         <div class="large-metric" :class="{ 'metric-dimmed': headlineText === '—' }">{{ headlineText }}<span>ms</span></div>
@@ -225,10 +225,16 @@ const chartBars = computed<number[]>(() => {
   margin-left: 6px;
 }
 /* 标题旁的小刷新按钮：静默重测当前三格延迟。 */
+.latency-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 .latency-refresh {
   display: inline-flex;
   align-items: center;
-  margin-left: 6px;
+  justify-content: center;
+  margin: 0;
   padding: 2px;
   border: 0;
   background: transparent;

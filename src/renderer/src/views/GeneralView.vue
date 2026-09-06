@@ -55,6 +55,7 @@ onMounted(async () => {
         <label>
           <span>
             <strong>登录 Windows 时启动</strong>
+            <small>注册系统登录项，开机后自动拉起应用并恢复内核与代理接管。</small>
           </span>
           <button
             type="button"
@@ -66,9 +67,40 @@ onMounted(async () => {
             @click="startup.setEnabled(!startup.status.enabled)"
           />
         </label>
+        <label>
+          <span>
+            <strong>静默启动</strong>
+            <small>登录自启时不在桌面弹出主窗口，仅保留托盘图标；手动打开应用不受影响。</small>
+          </span>
+          <button
+            type="button"
+            class="switch"
+            :class="{ on: appSettings.settings.silentLaunch }"
+            :aria-checked="appSettings.settings.silentLaunch"
+            :disabled="appSettings.busy"
+            aria-label="静默启动"
+            @click="appSettings.set({ silentLaunch: !appSettings.settings.silentLaunch })"
+          />
+        </label>
+        <label>
+          <span>
+            <strong>关闭窗口时最小化到托盘</strong>
+            <small>关闭后仅隐藏窗口并在托盘继续接管代理；关闭后应用完全退出并还原系统代理。</small>
+          </span>
+          <button
+            type="button"
+            class="switch"
+            :class="{ on: appSettings.settings.closeToTray }"
+            :aria-checked="appSettings.settings.closeToTray"
+            :disabled="appSettings.busy"
+            aria-label="关闭窗口时最小化到托盘"
+            @click="appSettings.set({ closeToTray: !appSettings.settings.closeToTray })"
+          />
+        </label>
       </div>
-      <p v-if="startup.status.phase === 'unsupported'" class="setting-help">此平台不支持该设置；Windows 安装包中可用。</p>
+      <p v-if="startup.status.phase === 'unsupported'" class="setting-help">登录项在此平台不可用；Windows 安装包中可用。</p>
       <p v-else-if="startup.status.errorMessage" class="inline-error">{{ startup.status.errorMessage }}</p>
+      <p v-if="appSettings.errorMessage" class="inline-error">{{ appSettings.errorMessage }}</p>
     </section>
 
     <section>
@@ -77,6 +109,7 @@ onMounted(async () => {
         <label>
           <span>
             <strong>启动时自动启动内核</strong>
+            <small>应用打开后立即拉起 mihomo，策略与规则页无需手动启动即可显示实时数据。</small>
           </span>
           <button
             type="button"
@@ -89,7 +122,27 @@ onMounted(async () => {
           />
         </label>
       </div>
-      <p v-if="appSettings.errorMessage" class="inline-error">{{ appSettings.errorMessage }}</p>
+    </section>
+
+    <section>
+      <h2>网络守护</h2>
+      <div class="surface-card preference-list">
+        <label>
+          <span>
+            <strong>系统代理守护</strong>
+            <small>系统代理开启期间，定时校验并修复被其他程序篡改的代理设置，避免「代理已开启但无法上网」。</small>
+          </span>
+          <button
+            type="button"
+            class="switch"
+            :class="{ on: appSettings.settings.proxyGuard }"
+            :aria-checked="appSettings.settings.proxyGuard"
+            :disabled="appSettings.busy"
+            aria-label="系统代理守护"
+            @click="appSettings.set({ proxyGuard: !appSettings.settings.proxyGuard })"
+          />
+        </label>
+      </div>
     </section>
 
     <section>
@@ -98,6 +151,7 @@ onMounted(async () => {
         <label>
           <span>
             <strong>启动时自动检查更新</strong>
+            <small>有新版本时后台下载，退出应用时提示安装；手动「检查更新」始终可用。</small>
           </span>
           <button
             type="button"
@@ -116,11 +170,17 @@ onMounted(async () => {
       <h2>延迟测试</h2>
       <div class="surface-card preference-list delay-preferences">
         <label>
-          <span><strong>测试地址来源</strong></span>
+          <span>
+            <strong>测试地址来源</strong>
+            <small>策略组自带的测试地址优先，或始终使用下方统一地址。</small>
+          </span>
           <AppSelect v-model="delayScope" :options="delayScopeOptions" label="测试地址来源" />
         </label>
         <label>
-          <span><strong>全局测试地址</strong></span>
+          <span>
+            <strong>全局测试地址</strong>
+            <small>仅「始终使用全局地址」时生效；留空使用内置的 204 无内容地址。</small>
+          </span>
           <input
             v-model="delayUrl"
             class="delay-url-field"

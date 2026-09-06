@@ -115,23 +115,39 @@ describe('network drawer + resources UI contract', () => {
     expect(overview).toMatch(/<h3>TUN 模式<\/h3>/)
     expect(overview).toMatch(/<h3>嗅探覆写<\/h3>/)
     expect(overview).toMatch(/<h3>DNS 覆写<\/h3>/)
-    // 标题+开关行为标注区（不弹抽屉）；状态行整体可点弹抽屉，仅右侧箭头，无文字说明。
-    expect(overview).not.toMatch(/二级设置</)
-    expect(overview).toMatch(/setting-head" @click\.stop/)
-    expect(overview).toMatch(/class="setting-body" aria-label="打开系统代理二级设置"/)
-    expect(overview).toMatch(/class="setting-body" aria-label="打开 TUN 模式二级设置"/)
-    expect(overview).toMatch(/class="setting-body" aria-label="打开嗅探覆写二级设置"/)
-    expect(overview).toMatch(/class="setting-body" aria-label="打开 DNS 覆写二级设置"/)
+    // 概览不再承载抽屉表单: 整卡点击跳转设置页, 开关 stop 不触发导航。
+    expect(overview).not.toMatch(/DetailDrawer/)
+    expect(overview).not.toMatch(/ProxyBypassPanel|TunConfigPanel|SnifferSettingsPanel|DnsSettingsPanel/)
+    expect(overview).toMatch(/openSettings\('system-proxy'\)/)
+    expect(overview).toMatch(/openSettings\('tun'\)/)
+    expect(overview).toMatch(/openSettings\('sniffer'\)/)
+    expect(overview).toMatch(/openSettings\('dns'\)/)
+    expect(overview).toMatch(/@click\.stop="toggleSystemProxy"/)
     expect(overview).toMatch(/setting-arrow/)
-    // 抽屉内复用现有面板组件。
-    expect(overview).toMatch(/ProxyBypassPanel/)
-    expect(overview).toMatch(/TunConfigPanel/)
-    expect(overview).toMatch(/SnifferSettingsPanel/)
-    expect(overview).toMatch(/DnsSettingsPanel/)
+    // 运行状态栏已删除。
+    expect(overview).not.toMatch(/runtime-summary/)
     // 覆写卡片上的主开关直接持久化 enabled。
     expect(overview).toMatch(/toggleSniffer/)
     expect(overview).toMatch(/toggleDns/)
     expect(overview).toMatch(/\{ \.\.\.sniffer\.enhancement, enabled: !snifferEnabled\.value \}/)
     expect(overview).toMatch(/\{ \.\.\.dns\.enhancement, enabled: !dnsEnabled\.value \}/)
+  })
+
+  it('keeps general settings backed by real persisted preferences', async () => {
+    const [shared, service, general] = await Promise.all([
+      read('src/shared/app-settings.ts'),
+      read('src/main/app-settings/service.ts'),
+      read('src/renderer/src/views/GeneralView.vue')
+    ])
+    // 静默启动/关闭到托盘/代理守护都是持久化字段, 不是摆设开关。
+    for (const key of ['silentLaunch', 'closeToTray', 'proxyGuard']) {
+      expect(shared).toMatch(new RegExp(`${key}: boolean`))
+      expect(service).toMatch(new RegExp(`${key}`))
+      expect(general).toMatch(new RegExp(`${key}`))
+    }
+    // 三个行为真正接进主进程: 登录项参数、窗口关闭、守护定时器。
+    expect(read('src/main/startup/electron-adapter.ts')).resolves.toMatch(/getSilentLaunch/)
+    expect(read('src/main/index.ts')).resolves.toMatch(/cachedAppSettings\.closeToTray/)
+    expect(read('src/main/index.ts')).resolves.toMatch(/cachedAppSettings\.proxyGuard/)
   })
 })

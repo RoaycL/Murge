@@ -2,7 +2,8 @@ import { describe, it, expect, vi } from 'vitest'
 import { mkdir, readFile, writeFile, stat, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { MihomoKernelConfigStore } from '../src/main/kernel/mihomo-config-store'
+import { createServer } from 'node:net'
+import { findFreePort, MihomoKernelConfigStore } from '../src/main/kernel/mihomo-config-store'
 import { validateMihomoConfigYaml } from '../src/main/kernel/mihomo-config'
 import { ProtocolErrorCode } from '@shared/protocol-errors'
 
@@ -16,6 +17,26 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     ...actual,
     writeFile: vi.fn(actual.writeFile)
   }
+})
+
+describe('findFreePort', () => {
+  it('keeps a preferred port when free and falls back when it is occupied', async () => {
+    const candidate = await findFreePort()
+    await expect(findFreePort(candidate)).resolves.toBe(candidate)
+
+    const blocker = createServer()
+    await new Promise<void>((resolvePromise, reject) => {
+      blocker.once('error', reject)
+      blocker.listen(candidate, '127.0.0.1', () => resolvePromise())
+    })
+    try {
+      const fallback = await findFreePort(candidate)
+      expect(fallback).not.toBe(candidate)
+      expect(fallback).toBeGreaterThan(0)
+    } finally {
+      await new Promise<void>((resolvePromise) => blocker.close(() => resolvePromise()))
+    }
+  })
 })
 
 const secret = 'b'.repeat(64)

@@ -1,18 +1,22 @@
-import { join } from 'node:path'
-import { mkdir, rm, writeFile, rename, readFile, access } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import { mkdir, rm, writeFile, rename, readFile, access, cp } from 'node:fs/promises'
 import { Worker } from 'node:worker_threads'
-import { randomUUID } from 'node:crypto'
-import { createWriteStream } from 'node:fs'
-import { pipeline } from 'node:stream/promises'
+import { createHash, randomUUID } from 'node:crypto'
 import type { AppSettingsGateway } from '@shared/gateways'
 import {
   SUB_STORE_BACKEND_DEFAULT_TAG,
   SUB_STORE_FRONTEND_DEFAULT_TAG,
+  SUB_STORE_BACKEND_DEFAULT_DIGEST,
+  SUB_STORE_FRONTEND_DEFAULT_DIGEST,
   SUB_STORE_PORT_BASE,
   SUB_STORE_START_TIMEOUT_MS,
   SUB_STORE_FETCH_TIMEOUT_MS,
   SUB_STORE_BACKEND_LATEST_API,
   SUB_STORE_FRONTEND_LATEST_API,
+  SUB_STORE_BACKEND_ASSET,
+  SUB_STORE_FRONTEND_ASSET,
+  subStoreBackendReleaseApi,
+  subStoreFrontendReleaseApi,
   subStoreBackendDownloadUrl,
   subStoreFrontendDownloadUrl,
   isValidSubStoreTag,
@@ -21,6 +25,7 @@ import {
 } from '@shared/substore'
 
 const BACKEND_BUNDLE_FILE = 'sub-store.bundle.cjs'
+const ASSETS_DIR_NAME = 'assets'
 const FRONTEND_DIR_NAME = 'sub-store-frontend'
 const FRONTEND_INDEX_REL = `${FRONTEND_DIR_NAME}/index.html`
 const VERSIONS_FILE = 'versions.json'
@@ -32,9 +37,14 @@ async function defaultOpenExternal(url: string): Promise<void> {
   await shell.openExternal(url)
 }
 const HEALTH_POLL_MS = 300
+const BACKEND_MAX_BYTES = 16 * 1024 * 1024
+const FRONTEND_ZIP_MAX_BYTES = 32 * 1024 * 1024
 
-interface GithubRelease {
-  tag_name?: unknown
+interface ResolvedAsset {
+  tag: string
+  url: string
+  size: number
+  digest: string
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -86,6 +96,8 @@ export interface SubStoreDeps {
   appSettings: AppSettingsGateway
   /** OS-level browser opener; defaults to Electron shell.openExternal. */
   openExternal?: (url: string) => Promise<void>
+  /** Test seam; production always uses the digests pinned in shared/substore. */
+  pinnedDigests?: { backend: string; frontend: string }
 }
 
 /**
@@ -110,6 +122,9 @@ export class SubStoreService {
   private phase: SubStoreState['phase'] = 'idle'
   private error: string | null = null
   private starting: Promise<void> | null = null
+  private updating: Promise<void> | null = null
+  private operationGeneration = 0
+  private operationAbort: AbortController | null = null
   private disposed = false
   // Synchronous-mirror caches, hydrated by refreshCaches() (settings onChange,
   // snapshot) so the fast IPC path never lies about enabled/useProxy/assets.
@@ -121,6 +136,7 @@ export class SubStoreService {
   private readonly fetchFn: typeof fetch
   private readonly findFreePort: NonNullable<SubStoreDeps['findFreePort']>
   private readonly delay: NonNullable<SubStoreDeps['delay']>
+  private readonly pinnedDigests: { backend: string; frontend: string }
 
   constructor(private readonly deps: SubStoreDeps) {
     this.createWorker =
@@ -166,23 +182,48 @@ export class SubStoreService {
     this.delay =
       deps.delay ??
       ((ms) => new Promise((resolvePromise) => setTimeout(resolvePromise, ms)))
+    this.pinnedDigests = deps.pinnedDigests ?? {
+      backend: SUB_STORE_BACKEND_DEFAULT_DIGEST,
+      frontend: SUB_STORE_FRONTEND_DEFAULT_DIGEST
+    }
   }
 
-  private backendBundlePath(): string {
-    return join(this.deps.baseDir, BACKEND_BUNDLE_FILE)
+  private beginOperation(): { generation: number; controller: AbortController } {
+    this.operationAbort?.abort()
+    const controller = new AbortController()
+    this.operationAbort = controller
+    return { generation: ++this.operationGeneration, controller }
   }
 
-  private frontendIndexPath(): string {
-    return join(this.deps.baseDir, FRONTEND_INDEX_REL)
+  private operationIsCurrent(generation: number, controller: AbortController): boolean {
+    return !this.disposed && !controller.signal.aborted && generation === this.operationGeneration
   }
 
-  private versionsPath(): string {
-    return join(this.deps.baseDir, VERSIONS_FILE)
+  private assertCurrentOperation(generation: number, controller: AbortController): void {
+    if (!this.operationIsCurrent(generation, controller)) {
+      throw controller.signal.reason ?? new Error('Sub-Store 操作已取消')
+    }
   }
 
-  private async readVersions(): Promise<SubStoreAssetVersions | null> {
+  private assetsDir(): string {
+    return join(this.deps.baseDir, ASSETS_DIR_NAME)
+  }
+
+  private backendBundlePath(root = this.assetsDir()): string {
+    return join(root, BACKEND_BUNDLE_FILE)
+  }
+
+  private frontendIndexPath(root = this.assetsDir()): string {
+    return join(root, FRONTEND_INDEX_REL)
+  }
+
+  private versionsPath(root = this.assetsDir()): string {
+    return join(root, VERSIONS_FILE)
+  }
+
+  private async readVersions(root = this.assetsDir()): Promise<SubStoreAssetVersions | null> {
     try {
-      const parsed: unknown = JSON.parse(await readFile(this.versionsPath(), 'utf8'))
+      const parsed: unknown = JSON.parse(await readFile(this.versionsPath(root), 'utf8'))
       if (
         isRecord(parsed) &&
         isValidSubStoreTag(parsed.backend) &&
@@ -196,40 +237,105 @@ export class SubStoreService {
     return null
   }
 
-  private async writeVersions(versions: SubStoreAssetVersions): Promise<void> {
-    await mkdir(this.deps.baseDir, { recursive: true })
-    const tmp = join(this.deps.baseDir, `.${VERSIONS_FILE}.${randomUUID()}.tmp`)
+  private async writeVersions(versions: SubStoreAssetVersions, root = this.assetsDir()): Promise<void> {
+    await mkdir(root, { recursive: true })
+    const tmp = join(root, `.${VERSIONS_FILE}.${randomUUID()}.tmp`)
     await writeFile(tmp, `${JSON.stringify(versions, null, 2)}\n`, 'utf8')
-    await rename(tmp, this.versionsPath())
+    await rename(tmp, this.versionsPath(root))
   }
 
-  private async githubLatestTag(apiUrl: string): Promise<string> {
+  private async resolveReleaseAsset(
+    apiUrl: string,
+    expectedAssetName: string,
+    expectedDownloadUrl: (tag: string) => string,
+    maxBytes: number,
+    signal?: AbortSignal
+  ): Promise<ResolvedAsset> {
     const response = await this.fetchFn(apiUrl, {
       headers: { Accept: 'application/vnd.github+json', 'User-Agent': USER_AGENT },
-      signal: AbortSignal.timeout(SUB_STORE_FETCH_TIMEOUT_MS)
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(SUB_STORE_FETCH_TIMEOUT_MS)])
+        : AbortSignal.timeout(SUB_STORE_FETCH_TIMEOUT_MS)
     }).catch((error: unknown) => {
       throw new Error(`GitHub 请求失败：${error instanceof Error ? error.message : String(error)}`)
     })
     if (!response.ok) throw new Error(`GitHub 请求失败：HTTP ${response.status}`)
     const parsed: unknown = await response.json()
-    if (!isRecord(parsed) || !isValidSubStoreTag(parsed.tag_name)) {
+    if (!isRecord(parsed) || !isValidSubStoreTag(parsed.tag_name) || !Array.isArray(parsed.assets)) {
       throw new Error('GitHub 响应格式异常')
     }
-    return parsed.tag_name
+    const matches = parsed.assets.filter(
+      (asset): asset is Record<string, unknown> => isRecord(asset) && asset.name === expectedAssetName
+    )
+    if (matches.length !== 1) throw new Error(`GitHub Release 缺少唯一资源：${expectedAssetName}`)
+    const asset = matches[0]
+    const expectedUrl = expectedDownloadUrl(parsed.tag_name)
+    if (
+      asset.browser_download_url !== expectedUrl ||
+      typeof asset.size !== 'number' ||
+      !Number.isSafeInteger(asset.size) ||
+      asset.size <= 0 ||
+      asset.size > maxBytes ||
+      typeof asset.digest !== 'string' ||
+      !/^sha256:[0-9a-f]{64}$/i.test(asset.digest)
+    ) {
+      throw new Error(`GitHub Release 资源元数据无效：${expectedAssetName}`)
+    }
+    return {
+      tag: parsed.tag_name,
+      url: expectedUrl,
+      size: asset.size,
+      digest: asset.digest.toLowerCase()
+    }
   }
 
-  private async downloadTo(url: string, dest: string): Promise<void> {
-    const response = await this.fetchFn(url, {
+  private async downloadTo(asset: ResolvedAsset, dest: string, maxBytes: number, signal?: AbortSignal): Promise<void> {
+    const combinedSignal = signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(SUB_STORE_FETCH_TIMEOUT_MS)])
+      : AbortSignal.timeout(SUB_STORE_FETCH_TIMEOUT_MS)
+    const response = await this.fetchFn(asset.url, {
       headers: { 'User-Agent': USER_AGENT },
-      signal: AbortSignal.timeout(SUB_STORE_FETCH_TIMEOUT_MS)
+      signal: combinedSignal
     }).catch((error: unknown) => {
       throw new Error(`下载失败：${error instanceof Error ? error.message : String(error)}`)
     })
     if (!response.ok || !response.body) throw new Error(`下载失败：HTTP ${response.status}`)
-    await mkdir(this.deps.baseDir, { recursive: true })
+    const declaredLength = Number(response.headers.get('content-length'))
+    if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+      throw new Error('下载失败：资源超过大小上限')
+    }
+    const reader = response.body.getReader()
+    const chunks: Buffer[] = []
+    let received = 0
+    try {
+      for (;;) {
+        if (combinedSignal.aborted) throw combinedSignal.reason
+        const { done, value } = await reader.read()
+        if (done) break
+        received += value.byteLength
+        if (received > maxBytes || received > asset.size) {
+          await reader.cancel().catch(() => {})
+          throw new Error('下载失败：资源超过声明大小或安全上限')
+        }
+        chunks.push(Buffer.from(value))
+      }
+    } finally {
+      reader.releaseLock()
+    }
+    const bytes = Buffer.concat(chunks, received)
+    if (bytes.length !== asset.size) {
+      throw new Error(`下载失败：资源大小不匹配（预期 ${asset.size}，实际 ${bytes.length}）`)
+    }
+    const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`
+    if (digest !== asset.digest) throw new Error('下载失败：SHA-256 校验不匹配')
+    await mkdir(dirname(dest), { recursive: true })
     const tmp = `${dest}.${randomUUID()}.tmp`
-    await pipeline(response.body, createWriteStream(tmp))
-    await rename(tmp, dest)
+    try {
+      await writeFile(tmp, bytes)
+      await rename(tmp, dest)
+    } finally {
+      await rm(tmp, { force: true }).catch(() => {})
+    }
   }
 
   /** Synchronous mirror snapshot (no disk reads) for fast IPC. */
@@ -269,19 +375,19 @@ export class SubStoreService {
     subStoreUseProxy: boolean
   }): Promise<void> {
     if (this.disposed) return
-    // Keep the synchronous mirror in step with the persisted truth even before
-    // the first snapshot read reaches the IPC path.
+    const previous = this.settingsCache
+    const enabledChanged = settings.subStoreEnabled !== previous.enabled
+    const proxyChanged = settings.subStoreUseProxy !== previous.useProxy
     this.settingsCache = { enabled: settings.subStoreEnabled, useProxy: settings.subStoreUseProxy }
     if (!settings.subStoreEnabled) {
-      if (this.phase === 'running' || this.phase === 'starting' || this.phase === 'error') {
+      if (enabledChanged || this.phase !== 'idle' || this.starting) {
         await this.stop()
       }
       return
     }
-    if (this.phase === 'idle' || this.phase === 'error') {
-      await this.ensureRunning().catch(() => {})
-    } else if (this.phase === 'running' && this.port !== null) {
-      // useProxy changed → restart the worker with the new env.
+    // Enabling remains page-driven/on-demand. Only an actual proxy-mode change
+    // requires a live worker restart; unrelated app settings are ignored.
+    if (proxyChanged && this.phase === 'running' && this.port !== null) {
       await this.restart()
     }
   }
@@ -297,7 +403,9 @@ export class SubStoreService {
       await this.starting
       return this.snapshot()
     }
-    this.starting = (async () => {
+    const { generation, controller } = this.beginOperation()
+    let task!: Promise<void>
+    task = (async () => {
       try {
         let versions = await this.readVersions()
         const [backendOk, frontendOk] = await Promise.all([
@@ -307,57 +415,122 @@ export class SubStoreService {
         if (!backendOk || !frontendOk || !versions) {
           this.phase = 'downloading'
           this.error = null
-          versions = await this.downloadAssets(
+          const staging = await this.stageAssets(
             versions ?? {
               backend: SUB_STORE_BACKEND_DEFAULT_TAG,
               frontend: SUB_STORE_FRONTEND_DEFAULT_TAG
             },
-            { backend: !backendOk, frontend: !frontendOk, force: !versions }
+            { backend: !backendOk, frontend: !frontendOk, force: !versions },
+            controller.signal
           )
+          this.assertCurrentOperation(generation, controller)
+          await this.commitStagedAssets(staging)
+          versions = await this.readVersions()
         }
-        await this.spawnWorker()
+        this.assertCurrentOperation(generation, controller)
+        await this.spawnWorker(generation, controller)
       } catch (error) {
+        if (!this.operationIsCurrent(generation, controller)) return
         this.phase = 'error'
         this.error = error instanceof Error ? error.message : String(error)
         await this.stopWorker()
       } finally {
-        this.starting = null
+        if (this.starting === task) this.starting = null
+        if (this.operationAbort === controller) this.operationAbort = null
       }
     })()
+    this.starting = task
     await this.starting
     return this.snapshot()
   }
 
-  private async downloadAssets(
+  private async stageAssets(
     versions: SubStoreAssetVersions,
-    plan: { backend: boolean; frontend: boolean; force: boolean }
-  ): Promise<SubStoreAssetVersions> {
+    plan: { backend: boolean; frontend: boolean; force: boolean },
+    signal?: AbortSignal
+  ): Promise<string> {
     await mkdir(this.deps.baseDir, { recursive: true })
-    let backendTag = versions.backend
-    let frontendTag = versions.frontend
-    if (plan.backend) {
-      await this.downloadTo(subStoreBackendDownloadUrl(backendTag), this.backendBundlePath())
-    }
-    if (plan.frontend) {
-      const zipPath = join(this.deps.baseDir, 'frontend-dist.zip')
-      await this.downloadTo(subStoreFrontendDownloadUrl(frontendTag), zipPath)
-      const { extractZipToDir } = await import('./substore-zip')
-      const staging = join(this.deps.baseDir, `frontend-staging-${randomUUID()}`)
-      try {
-        await extractZipToDir(zipPath, staging)
-        if (!(await pathExists(join(staging, 'index.html')))) {
+    const staging = join(this.deps.baseDir, `.assets-stage-${randomUUID()}`)
+    const replaceBackend = plan.force || plan.backend
+    const replaceFrontend = plan.force || plan.frontend
+    try {
+      if (!plan.force && await pathExists(this.assetsDir())) {
+        await cp(this.assetsDir(), staging, { recursive: true })
+      } else {
+        await mkdir(staging, { recursive: true })
+      }
+      if (replaceBackend) {
+        const asset = await this.resolveReleaseAsset(
+          subStoreBackendReleaseApi(versions.backend),
+          SUB_STORE_BACKEND_ASSET,
+          subStoreBackendDownloadUrl,
+          BACKEND_MAX_BYTES,
+          signal
+        )
+        if (asset.tag !== versions.backend) throw new Error('Sub-Store 后端版本响应不匹配')
+        if (versions.backend === SUB_STORE_BACKEND_DEFAULT_TAG && asset.digest !== this.pinnedDigests.backend) {
+          throw new Error('Sub-Store 后端默认版本摘要与应用内置值不匹配')
+        }
+        await this.downloadTo(asset, this.backendBundlePath(staging), BACKEND_MAX_BYTES, signal)
+      }
+      if (replaceFrontend) {
+        const asset = await this.resolveReleaseAsset(
+          subStoreFrontendReleaseApi(versions.frontend),
+          SUB_STORE_FRONTEND_ASSET,
+          subStoreFrontendDownloadUrl,
+          FRONTEND_ZIP_MAX_BYTES,
+          signal
+        )
+        if (asset.tag !== versions.frontend) throw new Error('Sub-Store 前端版本响应不匹配')
+        if (versions.frontend === SUB_STORE_FRONTEND_DEFAULT_TAG && asset.digest !== this.pinnedDigests.frontend) {
+          throw new Error('Sub-Store 前端默认版本摘要与应用内置值不匹配')
+        }
+        const zipPath = join(staging, 'frontend-dist.zip')
+        await this.downloadTo(asset, zipPath, FRONTEND_ZIP_MAX_BYTES, signal)
+        const { extractZipToDir } = await import('./substore-zip')
+        const frontendStaging = join(staging, `frontend-staging-${randomUUID()}`)
+        await extractZipToDir(zipPath, frontendStaging)
+        if (!(await pathExists(join(frontendStaging, 'index.html')))) {
           throw new Error('前端压缩包缺少 index.html')
         }
-        await rm(join(this.deps.baseDir, FRONTEND_DIR_NAME), { recursive: true, force: true })
-        await rename(staging, join(this.deps.baseDir, FRONTEND_DIR_NAME))
-      } finally {
-        await rm(staging, { recursive: true, force: true }).catch(() => {})
+        await rm(join(staging, FRONTEND_DIR_NAME), { recursive: true, force: true })
+        await rename(frontendStaging, join(staging, FRONTEND_DIR_NAME))
         await rm(zipPath, { force: true }).catch(() => {})
       }
+      if (!(await pathExists(this.backendBundlePath(staging))) || !(await pathExists(this.frontendIndexPath(staging)))) {
+        throw new Error('Sub-Store 暂存资源不完整')
+      }
+      await this.writeVersions(versions, staging)
+      return staging
+    } catch (error) {
+      await rm(staging, { recursive: true, force: true }).catch(() => {})
+      throw error
     }
-    const next: SubStoreAssetVersions = { backend: backendTag, frontend: frontendTag }
-    if (plan.force || plan.backend || plan.frontend) await this.writeVersions(next)
-    return next
+  }
+
+  /** Replace backend, frontend and their version marker as one rollback-safe set. */
+  private async commitStagedAssets(staging: string): Promise<void> {
+    const current = this.assetsDir()
+    const backup = join(this.deps.baseDir, `.assets-backup-${randomUUID()}`)
+    const hadCurrent = await pathExists(current)
+    try {
+      if (hadCurrent) await rename(current, backup)
+      await rename(staging, current)
+      await rm(backup, { recursive: true, force: true }).catch(() => {})
+      // v0.8.0 stored executable assets directly under baseDir. Once the new
+      // atomic asset set is committed, remove only those exact legacy paths;
+      // the persistent `data/` directory is deliberately untouched.
+      await Promise.all([
+        rm(join(this.deps.baseDir, BACKEND_BUNDLE_FILE), { force: true }),
+        rm(join(this.deps.baseDir, FRONTEND_DIR_NAME), { recursive: true, force: true }),
+        rm(join(this.deps.baseDir, VERSIONS_FILE), { force: true })
+      ]).catch(() => {})
+    } catch (error) {
+      await rm(current, { recursive: true, force: true }).catch(() => {})
+      if (hadCurrent && await pathExists(backup)) await rename(backup, current).catch(() => {})
+      await rm(staging, { recursive: true, force: true }).catch(() => {})
+      throw error
+    }
   }
 
   private workerEnv(port: number, useProxy: boolean): Record<string, string> {
@@ -371,7 +544,7 @@ export class SubStoreService {
       // release): `/api/subs` would become `/subs`.
       SUB_STORE_BACKEND_MERGE: '1',
       SUB_STORE_FRONTEND_BACKEND_PATH: '/',
-      SUB_STORE_FRONTEND_PATH: join(this.deps.baseDir, FRONTEND_DIR_NAME),
+      SUB_STORE_FRONTEND_PATH: join(this.assetsDir(), FRONTEND_DIR_NAME),
       SUB_STORE_DATA_BASE_PATH: join(this.deps.baseDir, 'data'),
       // Setting a custom backend name flips the backend's default Node CORS
       // policy to allow local origins (upstream behavior; merge mode makes it
@@ -390,12 +563,14 @@ export class SubStoreService {
     return env
   }
 
-  private async spawnWorker(): Promise<void> {
+  private async spawnWorker(generation: number, controller: AbortController): Promise<void> {
+    this.assertCurrentOperation(generation, controller)
     const settings = await this.deps.appSettings.get()
     // The bundle writes its root.json at startup WITHOUT creating the data
     // directory — verified against the real 2.38.2 release — so pre-create it.
     await mkdir(join(this.deps.baseDir, 'data'), { recursive: true })
     const port = await this.findFreePort(SUB_STORE_PORT_BASE)
+    this.assertCurrentOperation(generation, controller)
     this.phase = 'starting'
     this.error = null
     const worker = this.createWorker(
@@ -404,6 +579,7 @@ export class SubStoreService {
     )
     this.unexpectedExitError = null
     worker.onUnexpectedExit((error) => {
+      if (this.worker !== worker) return
       this.unexpectedExitError = error
       if (this.phase === 'running') {
         // A crash after a healthy start: surface it instead of leaving the
@@ -416,23 +592,29 @@ export class SubStoreService {
     this.worker = worker
     this.port = port
     try {
-      await this.waitUntilHealthy(port)
+      await this.waitUntilHealthy(port, generation, controller)
+      this.assertCurrentOperation(generation, controller)
       this.phase = 'running'
     } catch (error) {
       await this.stopWorker()
-      this.phase = 'error'
-      this.error = error instanceof Error ? error.message : String(error)
+      if (this.operationIsCurrent(generation, controller)) {
+        this.phase = 'error'
+        this.error = error instanceof Error ? error.message : String(error)
+      }
       throw error
     }
   }
 
-  private async waitUntilHealthy(port: number): Promise<void> {
+  private async waitUntilHealthy(port: number, generation: number, controller: AbortController): Promise<void> {
     const deadline = Date.now() + SUB_STORE_START_TIMEOUT_MS
     const url = `http://127.0.0.1:${port}/`
     for (;;) {
+      this.assertCurrentOperation(generation, controller)
       if (this.unexpectedExitError) throw this.unexpectedExitError
       if (Date.now() > deadline) throw new Error('Sub-Store 启动超时')
-      const ok = await this.fetchFn(url, { signal: AbortSignal.timeout(2000) })
+      const ok = await this.fetchFn(url, {
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)])
+      })
         .then((response) => response.ok)
         .catch(() => false)
       if (ok) return
@@ -451,10 +633,18 @@ export class SubStoreService {
 
   /** Stop the worker; keeps downloaded assets and the enabled setting. */
   async stop(): Promise<SubStoreState> {
-    this.starting = null
+    ++this.operationGeneration
+    this.operationAbort?.abort(new Error('Sub-Store 操作已取消'))
+    this.operationAbort = null
+    const pending = Promise.all(
+      [this.starting, this.updating].filter((task): task is Promise<void> => task !== null)
+    )
     await this.stopWorker()
     if (this.phase !== 'idle') this.phase = 'idle'
     this.error = null
+    await pending.catch(() => {})
+    this.starting = null
+    this.updating = null
     return this.snapshot()
   }
 
@@ -470,34 +660,88 @@ export class SubStoreService {
    */
   async checkUpdate(): Promise<SubStoreState> {
     if (this.disposed) return this.snapshot()
-    const wasRunning = this.phase === 'running'
-    try {
-      const [backendTag, frontendTag] = await Promise.all([
-        this.githubLatestTag(SUB_STORE_BACKEND_LATEST_API),
-        this.githubLatestTag(SUB_STORE_FRONTEND_LATEST_API)
-      ])
-      const current = (await this.readVersions()) ?? {
-        backend: SUB_STORE_BACKEND_DEFAULT_TAG,
-        frontend: SUB_STORE_FRONTEND_DEFAULT_TAG
-      }
-      const plan = {
-        backend: backendTag !== current.backend,
-        frontend: frontendTag !== current.frontend,
-        force: false
-      }
-      if (plan.backend || plan.frontend) {
-        this.phase = 'downloading'
-        await this.downloadAssets({ backend: backendTag, frontend: frontendTag }, plan)
-        await this.stop()
-        if (wasRunning) await this.ensureRunning()
-      }
-    } catch (error) {
-      this.error = error instanceof Error ? error.message : String(error)
-      // A failed update check must not leave the phase stuck on 'downloading':
-      // the worker was never stopped on this path, so restore the truthful
-      // phase (running → still serving; otherwise idle).
-      this.phase = wasRunning && this.worker ? 'running' : 'idle'
+    if (this.updating) {
+      await this.updating
+      return this.snapshot()
     }
+    // Do not queue an update behind a start that may concurrently be cancelled
+    // by the master switch; the caller can retry once the visible phase settles.
+    if (this.starting) return this.snapshot()
+    const wasRunning = this.phase === 'running'
+    const { generation, controller } = this.beginOperation()
+    let stoppedForCommit = false
+    let task!: Promise<void>
+    task = (async () => {
+      try {
+        const [backendAsset, frontendAsset] = await Promise.all([
+          this.resolveReleaseAsset(
+            SUB_STORE_BACKEND_LATEST_API,
+            SUB_STORE_BACKEND_ASSET,
+            subStoreBackendDownloadUrl,
+            BACKEND_MAX_BYTES,
+            controller.signal
+          ),
+          this.resolveReleaseAsset(
+            SUB_STORE_FRONTEND_LATEST_API,
+            SUB_STORE_FRONTEND_ASSET,
+            subStoreFrontendDownloadUrl,
+            FRONTEND_ZIP_MAX_BYTES,
+            controller.signal
+          )
+        ])
+        this.assertCurrentOperation(generation, controller)
+        const current = (await this.readVersions()) ?? {
+          backend: SUB_STORE_BACKEND_DEFAULT_TAG,
+          frontend: SUB_STORE_FRONTEND_DEFAULT_TAG
+        }
+        const plan = {
+          backend: backendAsset.tag !== current.backend,
+          frontend: frontendAsset.tag !== current.frontend,
+          force: !(await pathExists(this.assetsDir()))
+        }
+        if (plan.backend || plan.frontend || plan.force) {
+          this.phase = 'downloading'
+          const staging = await this.stageAssets(
+            { backend: backendAsset.tag, frontend: frontendAsset.tag },
+            plan,
+            controller.signal
+          )
+          this.assertCurrentOperation(generation, controller)
+          if (wasRunning) {
+            await this.stopWorker()
+            stoppedForCommit = true
+          }
+          await this.commitStagedAssets(staging)
+          this.assertCurrentOperation(generation, controller)
+          if (wasRunning) {
+            await this.spawnWorker(generation, controller)
+            stoppedForCommit = false
+          } else {
+            this.phase = 'idle'
+          }
+        } else {
+          this.phase = wasRunning && this.worker ? 'running' : 'idle'
+        }
+        this.error = null
+      } catch (error) {
+        if (!this.operationIsCurrent(generation, controller)) return
+        const message = error instanceof Error ? error.message : String(error)
+        if (stoppedForCommit && wasRunning) {
+          try {
+            await this.spawnWorker(generation, controller)
+          } catch {
+            // spawnWorker already records the more actionable restart failure.
+          }
+        }
+        this.error = message
+        this.phase = wasRunning && this.worker ? 'running' : 'idle'
+      } finally {
+        if (this.updating === task) this.updating = null
+        if (this.operationAbort === controller) this.operationAbort = null
+      }
+    })()
+    this.updating = task
+    await task
     return this.snapshot()
   }
 
@@ -509,7 +753,11 @@ export class SubStoreService {
   /** Terminate the worker during app shutdown; assets persist. */
   dispose(): void {
     this.disposed = true
+    ++this.operationGeneration
+    this.operationAbort?.abort(new Error('Sub-Store 已关闭'))
+    this.operationAbort = null
     this.starting = null
+    this.updating = null
     const worker = this.worker
     this.worker = null
     if (worker) void worker.terminate().catch(() => {})

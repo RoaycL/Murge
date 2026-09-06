@@ -129,15 +129,26 @@ describe('buildDnsBlock', () => {
     expect(block['respect-rules']).toBe(false)
     expect(block['fake-ip-range']).toBe('198.18.0.1/16')
     expect(block['fake-ip-filter-mode']).toBe('blacklist')
-    expect(block['use-hosts']).toBe(true)
-    // Non-empty lists are emitted.
-    expect(block['fake-ip-filter']).toEqual(['*.lan', '*.local', 'local'])
-    expect(block['default-nameserver']).toEqual(['1.1.1.1', '8.8.8.8'])
-    expect(block.nameserver).toEqual(['https://1.1.1.1/dns-query'])
-    expect(block.fallback).toEqual(['tls://8.8.8.8:853'])
+    expect(block['use-hosts']).toBe(false)
+    // Non-empty lists are emitted (party/sparkle/verge merged defaults).
+    expect(block['fake-ip-filter']).toEqual([
+      '*',
+      '+.lan',
+      '+.local',
+      '+.arpa',
+      'time.*.com',
+      'ntp.*.com',
+      '+.market.xiaomi.com',
+      'localhost.ptlogin2.qq.com',
+      '*.msftncsi.com',
+      'www.msftconnecttest.com'
+    ])
+    expect(block['default-nameserver']).toEqual(['tls://223.5.5.5'])
+    expect(block.nameserver).toEqual(['https://doh.pub/dns-query', 'https://dns.alidns.com/dns-query'])
+    expect(block['proxy-server-nameserver']).toEqual(['https://doh.pub/dns-query', 'https://dns.alidns.com/dns-query'])
     // Empty lists are omitted entirely.
     expect(block.hosts).toBeUndefined()
-    expect(block['proxy-server-nameserver']).toBeUndefined()
+    expect(block.fallback).toBeUndefined()
     expect(block['direct-nameserver']).toBeUndefined()
     expect(block['nameserver-policy']).toBeUndefined()
   })

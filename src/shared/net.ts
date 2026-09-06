@@ -51,6 +51,12 @@ export function isValidCidr(value: string): boolean {
   return false
 }
 
+/** A plain DNS-style hostname label, or the single-label wildcard `*`. */
+function isValidDomainLabel(label: string): boolean {
+  if (label === '*') return true
+  return /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(label)
+}
+
 /** A plain DNS-style hostname (no scheme, no port). */
 export function isValidHostname(value: string): boolean {
   if (value.length > 253) return false
@@ -61,14 +67,20 @@ export function isValidHostname(value: string): boolean {
 
 /**
  * A domain pattern used by DNS `fake-ip-filter`/`nameserver-policy` keys or the
- * sniffer `skip-domain`/`force-domain`: a plain hostname, a `*.` wildcard, or a
- * `geosite:`/`geoip:` rule expression.
+ * sniffer `skip-domain`/`force-domain`: a plain hostname, a `*.`/`+.` wildcard
+ * prefix, a mid-domain single-label wildcard (`time.*.com`), or a
+ * `geosite:`/`geoip:` rule expression. `+.` (match any suffix depth) and `*`
+ * (match one label) are the mihomo wildcard forms shipped by the reference
+ * clients (clash-party/sparkle/verge), e.g. `+.push.apple.com`, `time.*.com`.
  */
 export function isValidDomainOrRule(value: string): boolean {
   if (value.startsWith('geosite:') || value.startsWith('geoip:')) return value.length > 'geosite:'.length
-  if (value.length > 1 && value.startsWith('*.')) return isValidHostname(value.slice(2))
   if (value === '*') return true
-  return isValidHostname(value)
+  if (value.length > 1 && (value.startsWith('*.') || value.startsWith('+.'))) return isValidHostname(value.slice(2))
+  if (value.length > 253) return false
+  const labels = value.split('.')
+  if (labels.length === 0) return false
+  return labels.every(isValidDomainLabel)
 }
 
 /** An address list entry that may be a bare IP or a CIDR (`skip-src-address`). */

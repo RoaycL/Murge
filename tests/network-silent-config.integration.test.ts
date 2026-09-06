@@ -120,7 +120,7 @@ describe('composed DNS+Sniffer main-kernel config', () => {
     expect(sniffer['override-destination']).toBe(false)
     expect(sniffer['force-dns-mapping']).toBe(true)
     expect(sniffer['parse-pure-ip']).toBe(true)
-    expect((sniffer.sniff as Record<string, unknown>).HTTP).toEqual({ ports: ['80', '8080-8880'] })
+    expect((sniffer.sniff as Record<string, unknown>).HTTP).toEqual({ ports: ['80', '443'] })
     expect(sniffer['port-black-list']).toEqual([8080])
   })
 

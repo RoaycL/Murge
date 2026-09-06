@@ -44,11 +44,28 @@ export const EMPTY_SNIFFER_ENHANCEMENT: SnifferEnhancement = {
   overrideDestination: false,
   forceDnsMapping: true,
   parsePureIp: true,
-  ports: { http: ['80', '8080-8880'], tls: ['443', '8443'], quic: ['443'] },
-  skipDomain: [],
+  // clash-party/sparkle ship HTTP [80, 443] / TLS [443] with the QUIC probe
+  // opt-in — sniffing QUIC breaks certificate-pinned games and QUIC flows.
+  ports: { http: ['80', '443'], tls: ['443'], quic: [] },
+  // party/sparkle ship this skip list byte-identically: Apple push must never
+  // be sniffed (breaks APNs) and the Telegram ranges must never be rewritten.
+  skipDomain: ['+.push.apple.com'],
   forceDomain: [],
-  skipSrcAddress: ['127.0.0.1/8', '::1/128'],
-  skipDstAddress: ['127.0.0.1/8', '::1/128']
+  skipSrcAddress: [],
+  skipDstAddress: [
+    '91.105.192.0/23',
+    '91.108.4.0/22',
+    '91.108.8.0/21',
+    '91.108.16.0/21',
+    '91.108.56.0/22',
+    '95.161.64.0/20',
+    '149.154.160.0/20',
+    '185.76.151.0/24',
+    '2001:67c:4e8::/48',
+    '2001:b28:f23c::/47',
+    '2001:b28:f23f::/48',
+    '2a0a:f280:203::/48'
+  ]
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

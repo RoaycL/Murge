@@ -134,28 +134,33 @@ const drawerTitle = computed(() => (settingsDrawer.value ? DRAWER_TITLES[setting
       <h2>网络管理</h2>
       <div class="overview-grid">
         <SurfaceCard class="setting-card">
-          <div class="setting-head">
+          <!-- 标注区（标题 + 开关）不触发抽屉；点卡片其余区域弹出二级设置。 -->
+          <div class="setting-head" @click.stop>
             <div>
               <h3>系统代理</h3>
               <p>将系统 HTTP 代理指向内核 mixed-port。</p>
             </div>
-            <button type="button" class="switch" :class="{ on: spEnabled }" :aria-checked="spEnabled" :disabled="spSwitchDisabled" aria-label="切换系统代理" @click="toggleSystemProxy" />
+            <button type="button" class="switch" :class="{ on: spEnabled }" :aria-checked="spEnabled" :disabled="spSwitchDisabled" aria-label="切换系统代理" @click.stop="toggleSystemProxy" />
           </div>
-          <div class="setting-status"><i :class="{ active: spEnabled }" />{{ spPhaseLabel }}</div>
-          <p v-if="actionError" class="inline-error">{{ actionError }}</p>
-          <button type="button" class="setting-open" @click="settingsDrawer = 'system-proxy'">二级设置<AppIcon name="next" :size="13" /></button>
+          <button type="button" class="setting-body" aria-label="打开系统代理二级设置" @click="settingsDrawer = 'system-proxy'">
+            <span class="setting-status"><i :class="{ active: spEnabled }" />{{ spPhaseLabel }}</span>
+            <AppIcon class="setting-arrow" name="next" :size="14" />
+          </button>
+          <p v-if="actionError" class="inline-error" role="alert" @click="settingsDrawer = 'system-proxy'">{{ actionError }}</p>
         </SurfaceCard>
         <SurfaceCard class="setting-card">
-          <div class="setting-head">
+          <div class="setting-head" @click.stop>
             <div>
               <h3>TUN 模式</h3>
               <p>虚拟网卡接管全部流量，需管理员服务。</p>
             </div>
-            <button type="button" class="switch" :class="{ on: tunActive }" :aria-checked="tunActive" :disabled="tunSwitchDisabled" aria-label="切换 TUN 模式" @click="toggleTun" />
+            <button type="button" class="switch" :class="{ on: tunActive }" :aria-checked="tunActive" :disabled="tunSwitchDisabled" aria-label="切换 TUN 模式" @click.stop="toggleTun" />
           </div>
-          <div class="setting-status"><i :class="{ active: tunActive }" />{{ tunPhaseLabel }}</div>
-          <p v-if="tun.actionError" class="inline-error">{{ tun.actionError }}</p>
-          <button type="button" class="setting-open" @click="settingsDrawer = 'tun'">二级设置<AppIcon name="next" :size="13" /></button>
+          <button type="button" class="setting-body" aria-label="打开 TUN 模式二级设置" @click="settingsDrawer = 'tun'">
+            <span class="setting-status"><i :class="{ active: tunActive }" />{{ tunPhaseLabel }}</span>
+            <AppIcon class="setting-arrow" name="next" :size="14" />
+          </button>
+          <p v-if="tun.actionError" class="inline-error" role="alert" @click="settingsDrawer = 'tun'">{{ tun.actionError }}</p>
         </SurfaceCard>
       </div>
     </section>
@@ -163,28 +168,32 @@ const drawerTitle = computed(() => (settingsDrawer.value ? DRAWER_TITLES[setting
       <h2>覆写</h2>
       <div class="overview-grid">
         <SurfaceCard class="setting-card">
-          <div class="setting-head">
+          <div class="setting-head" @click.stop>
             <div>
               <h3>嗅探覆写</h3>
               <p>域名嗅探、端口与跳过/强制域名规则。</p>
             </div>
-            <button type="button" class="switch" :class="{ on: snifferEnabled }" :aria-checked="snifferEnabled" :disabled="snifferBusy" aria-label="切换嗅探覆写" @click="toggleSniffer" />
+            <button type="button" class="switch" :class="{ on: snifferEnabled }" :aria-checked="snifferEnabled" :disabled="snifferBusy" aria-label="切换嗅探覆写" @click.stop="toggleSniffer" />
           </div>
-          <div class="setting-status"><i :class="{ active: snifferEnabled }" />{{ snifferBusy ? '正在保存…' : snifferEnabled ? '已启用 · 下次启动内核生效' : '未启用' }}</div>
-          <p v-if="sniffer.lastError" class="inline-error">{{ sniffer.lastError }}</p>
-          <button type="button" class="setting-open" @click="settingsDrawer = 'sniffer'">二级设置<AppIcon name="next" :size="13" /></button>
+          <button type="button" class="setting-body" aria-label="打开嗅探覆写二级设置" @click="settingsDrawer = 'sniffer'">
+            <span class="setting-status"><i :class="{ active: snifferEnabled }" />{{ snifferBusy ? '正在保存…' : snifferEnabled ? '已启用 · 下次启动内核生效' : '未启用' }}</span>
+            <AppIcon class="setting-arrow" name="next" :size="14" />
+          </button>
+          <p v-if="sniffer.lastError" class="inline-error" role="alert" @click="settingsDrawer = 'sniffer'">{{ sniffer.lastError }}</p>
         </SurfaceCard>
         <SurfaceCard class="setting-card">
-          <div class="setting-head">
+          <div class="setting-head" @click.stop>
             <div>
               <h3>DNS 覆写</h3>
               <p>Fake-IP、解析服务器与分流策略。</p>
             </div>
-            <button type="button" class="switch" :class="{ on: dnsEnabled }" :aria-checked="dnsEnabled" :disabled="dnsBusy" aria-label="切换 DNS 覆写" @click="toggleDns" />
+            <button type="button" class="switch" :class="{ on: dnsEnabled }" :aria-checked="dnsEnabled" :disabled="dnsBusy" aria-label="切换 DNS 覆写" @click.stop="toggleDns" />
           </div>
-          <div class="setting-status"><i :class="{ active: dnsEnabled }" />{{ dnsBusy ? '正在保存…' : dnsEnabled ? '已启用 · 下次启动内核生效' : '未启用' }}</div>
-          <p v-if="dns.lastError" class="inline-error">{{ dns.lastError }}</p>
-          <button type="button" class="setting-open" @click="settingsDrawer = 'dns'">二级设置<AppIcon name="next" :size="13" /></button>
+          <button type="button" class="setting-body" aria-label="打开 DNS 覆写二级设置" @click="settingsDrawer = 'dns'">
+            <span class="setting-status"><i :class="{ active: dnsEnabled }" />{{ dnsBusy ? '正在保存…' : dnsEnabled ? '已启用 · 下次启动内核生效' : '未启用' }}</span>
+            <AppIcon class="setting-arrow" name="next" :size="14" />
+          </button>
+          <p v-if="dns.lastError" class="inline-error" role="alert" @click="settingsDrawer = 'dns'">{{ dns.lastError }}</p>
         </SurfaceCard>
       </div>
     </section>
@@ -199,23 +208,36 @@ const drawerTitle = computed(() => (settingsDrawer.value ? DRAWER_TITLES[setting
 </template>
 
 <style scoped>
-/* 卡片底部二级设置入口：右侧箭头，提示整卡对应一个抽屉页面。 */
-.setting-open {
-  display: inline-flex;
+/* 卡片主体（状态行 + 右侧箭头）整体可点，弹出二级设置抽屉。 */
+.setting-body {
+  display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
+  width: 100%;
   margin-top: auto;
-  min-height: 30px;
-  padding: 0 2px;
+  min-height: 32px;
+  padding: 0;
   border: 0;
   background: transparent;
-  color: var(--app-muted);
-  font-size: 12px;
+  color: inherit;
+  text-align: left;
   cursor: pointer;
 }
-.setting-open:hover { color: var(--app-text); }
+.setting-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--app-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.setting-arrow { flex-shrink: 0; color: var(--app-muted); }
+.setting-body:hover .setting-arrow { color: var(--app-text); }
+.setting-card .setting-head { cursor: default; }
 .setting-card { gap: 8px; }
-.setting-card .setting-head p { margin-top: 2px; }
 .inline-error { margin-top: 8px; color: var(--app-danger, #d64f4f); font-size: 12px; }
 </style>

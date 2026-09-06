@@ -59,12 +59,14 @@ describe('buildSnifferBlock', () => {
     expect(block['override-destination']).toBe(false)
     expect(block['force-dns-mapping']).toBe(true)
     expect(block['parse-pure-ip']).toBe(true)
-    // Non-empty port families are emitted.
-    expect((block.sniff as Record<string, unknown>).HTTP).toEqual({ ports: ['80', '8080-8880'] })
-    expect((block.sniff as Record<string, unknown>).TLS).toEqual({ ports: ['443', '8443'] })
-    expect((block.sniff as Record<string, unknown>).QUIC).toEqual({ ports: ['443'] })
-    // Empty lists are omitted entirely.
-    expect(block['skip-domain']).toBeUndefined()
+    // Non-empty port families are emitted (party/sparkle defaults).
+    expect((block.sniff as Record<string, unknown>).HTTP).toEqual({ ports: ['80', '443'] })
+    expect((block.sniff as Record<string, unknown>).TLS).toEqual({ ports: ['443'] })
+    // QUIC defaults to empty → the family is omitted from the kernel block.
+    expect(block.sniff).not.toHaveProperty('QUIC')
+    // Default skip lists are emitted; force/src lists default empty and are not.
+    expect(block['skip-domain']).toEqual(['+.push.apple.com'])
+    expect(block['skip-dst-address']).toContain('149.154.160.0/20')
     expect(block['force-domain']).toBeUndefined()
   })
 
@@ -101,7 +103,7 @@ describe('coercion', () => {
     const out = coerceSnifferEnhancement({ enabled: true })
     expect(out.enabled).toBe(true)
     expect(out.overrideDestination).toBe(false)
-    expect(out.ports.http).toEqual(['80', '8080-8880'])
+    expect(out.ports.http).toEqual(['80', '443'])
     expect(Array.isArray(out.skipDomain)).toBe(true)
   })
   it('returns the default model for non-object input', () => {

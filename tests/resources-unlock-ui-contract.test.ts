@@ -115,11 +115,15 @@ describe('network drawer + resources UI contract', () => {
     expect(overview).toMatch(/<h3>TUN 模式<\/h3>/)
     expect(overview).toMatch(/<h3>嗅探覆写<\/h3>/)
     expect(overview).toMatch(/<h3>DNS 覆写<\/h3>/)
-    // 每张卡片都有二级设置入口，抽屉内复用现有面板组件。
-    expect(overview).toMatch(/settingsDrawer = 'system-proxy'/)
-    expect(overview).toMatch(/settingsDrawer = 'tun'/)
-    expect(overview).toMatch(/settingsDrawer = 'sniffer'/)
-    expect(overview).toMatch(/settingsDrawer = 'dns'/)
+    // 标题+开关行为标注区（不弹抽屉）；状态行整体可点弹抽屉，仅右侧箭头，无文字说明。
+    expect(overview).not.toMatch(/二级设置</)
+    expect(overview).toMatch(/setting-head" @click\.stop/)
+    expect(overview).toMatch(/class="setting-body" aria-label="打开系统代理二级设置"/)
+    expect(overview).toMatch(/class="setting-body" aria-label="打开 TUN 模式二级设置"/)
+    expect(overview).toMatch(/class="setting-body" aria-label="打开嗅探覆写二级设置"/)
+    expect(overview).toMatch(/class="setting-body" aria-label="打开 DNS 覆写二级设置"/)
+    expect(overview).toMatch(/setting-arrow/)
+    // 抽屉内复用现有面板组件。
     expect(overview).toMatch(/ProxyBypassPanel/)
     expect(overview).toMatch(/TunConfigPanel/)
     expect(overview).toMatch(/SnifferSettingsPanel/)

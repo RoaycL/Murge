@@ -156,11 +156,11 @@ onMounted(async () => {
         <div class="sniffer-grid">
           <label class="sniffer-field">
             <span class="sniffer-label">HTTP（每行一个端口、范围或 *）</span>
-            <textarea v-model="httpPortsText" class="sniffer-textarea" spellcheck="false" placeholder="80&#10;8080-8880" />
+            <textarea v-model="httpPortsText" class="sniffer-textarea" spellcheck="false" placeholder="80&#10;443" />
           </label>
           <label class="sniffer-field">
             <span class="sniffer-label">TLS（每行一个端口、范围或 *）</span>
-            <textarea v-model="tlsPortsText" class="sniffer-textarea" spellcheck="false" placeholder="443&#10;8443" />
+            <textarea v-model="tlsPortsText" class="sniffer-textarea" spellcheck="false" placeholder="443" />
           </label>
           <label class="sniffer-field">
             <span class="sniffer-label">QUIC（每行一个端口、范围或 *）</span>

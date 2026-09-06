@@ -212,15 +212,15 @@ onMounted(async () => {
         <div class="dns-grid">
           <label class="dns-field">
             <span class="dns-label">default-nameserver（每行一个）</span>
-            <textarea v-model="defaultNsText" class="dns-textarea" spellcheck="false" placeholder="1.1.1.1&#10;8.8.8.8" />
+            <textarea v-model="defaultNsText" class="dns-textarea" spellcheck="false" placeholder="tls://223.5.5.5" />
           </label>
           <label class="dns-field">
             <span class="dns-label">nameserver（每行一个）</span>
-            <textarea v-model="nameserverText" class="dns-textarea" spellcheck="false" placeholder="https://1.1.1.1/dns-query" />
+            <textarea v-model="nameserverText" class="dns-textarea" spellcheck="false" placeholder="https://doh.pub/dns-query" />
           </label>
           <label class="dns-field">
             <span class="dns-label">fallback（每行一个）</span>
-            <textarea v-model="fallbackText" class="dns-textarea" spellcheck="false" placeholder="tls://8.8.8.8:853" />
+            <textarea v-model="fallbackText" class="dns-textarea" spellcheck="false" placeholder="留空则不使用 fallback" />
           </label>
           <label class="dns-field">
             <span class="dns-label">proxy-server-nameserver（可选，每行一个）</span>

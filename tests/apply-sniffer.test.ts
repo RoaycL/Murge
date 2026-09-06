@@ -20,7 +20,7 @@ describe('applySnifferEnhancementToDocument', () => {
     const sniffer = doc.sniffer as Record<string, unknown>
     expect(sniffer.enable).toBe(true)
     expect(sniffer['override-destination']).toBe(false)
-    expect(sniffer.sniff).toEqual({ HTTP: { ports: ['80', '8080-8880'] }, TLS: { ports: ['443', '8443'] }, QUIC: { ports: ['443'] } })
+    expect(sniffer.sniff).toEqual({ HTTP: { ports: ['80', '443'] }, TLS: { ports: ['443'] } })
     // Profile key the model does not own is preserved.
     expect(sniffer['port-black-list']).toEqual([23])
     expect(doc.port).toBe(7890)

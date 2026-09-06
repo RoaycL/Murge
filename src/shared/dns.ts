@@ -70,14 +70,32 @@ export const EMPTY_DNS_ENHANCEMENT: DnsEnhancement = {
   respectRules: false,
   fakeIpRange: '198.18.0.1/16',
   fakeIpFilterMode: 'blacklist',
-  fakeIpFilter: ['*.lan', '*.local', 'local'],
-  useHosts: true,
+  // party/sparkle base list ∪ verge's arpa/qq/msft connectivity probes
+  // (deduped): bare `*` keeps every hostname in fake-ip except the real-IP
+  // exceptions below, which must genuinely resolve (NTP, LAN, connectivity
+  // detection, Xiaomi market).
+  fakeIpFilter: [
+    '*',
+    '+.lan',
+    '+.local',
+    '+.arpa',
+    'time.*.com',
+    'ntp.*.com',
+    '+.market.xiaomi.com',
+    'localhost.ptlogin2.qq.com',
+    '*.msftncsi.com',
+    'www.msftconnecttest.com'
+  ],
+  useHosts: false,
   hosts: [],
-  defaultNameserver: ['1.1.1.1', '8.8.8.8'],
-  proxyServerNameserver: [],
+  // majority practice (party+sparkle): AliDoH bootstrap, doh.pub+alidns as the
+  // upstream pair, and proxy-server-nameserver pinned so the proxy's own server
+  // domain never resolves through the tunnel.
+  defaultNameserver: ['tls://223.5.5.5'],
+  proxyServerNameserver: ['https://doh.pub/dns-query', 'https://dns.alidns.com/dns-query'],
   directNameserver: [],
-  nameserver: ['https://1.1.1.1/dns-query'],
-  fallback: ['tls://8.8.8.8:853'],
+  nameserver: ['https://doh.pub/dns-query', 'https://dns.alidns.com/dns-query'],
+  fallback: [],
   nameserverPolicy: []
 }
 

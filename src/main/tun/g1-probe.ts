@@ -30,8 +30,6 @@
  *
  * The orchestrator owns every timeout (P1-7) and maps every failure to an accurate
  * error code rather than degrading everything to `crash`.
- *
- * @see docs/helper-design.md §3.3 (G1 ownership probe), §12 (gates)
  */
 
 import { WINTUN_PINNED_VERSION } from './wintun-abi'

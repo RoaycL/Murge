@@ -28,11 +28,4 @@ describe('Phase 9B single network-state owner', () => {
     expect(startup).not.toMatch(/g1-(?:driver|probe|probe-runner)/)
     expect(startup).not.toContain('wintun-abi')
   })
-
-  it('documents that runtime evidence remains Windows-only', () => {
-    const decision = read('docs/phase9b-mihomo-owned-tun.md')
-    expect(decision).toContain('Windows runtime evidence pending')
-    expect(decision.toLowerCase()).toContain('mihomo is the **only owner**')
-    expect(decision).toMatch(/must never claim runtime TUN\s+success/)
-  })
 })

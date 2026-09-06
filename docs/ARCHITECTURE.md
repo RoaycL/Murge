@@ -1,7 +1,5 @@
 # 架构
 
-> 强制安全边界：在实现或测试进程与网络服务前，先阅读 `DEVELOPMENT_SAFETY.md`。在当前的 Mac 上禁止启动真实内核和修改网络。
-
 ## 目标
 
 - 面向 Windows 优先的桌面用户体验，且 renderer 可在 macOS 上开发。

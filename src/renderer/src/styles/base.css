@@ -81,7 +81,13 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .topology-inline{display:grid;grid-template-columns:28px 1fr auto;align-items:center;gap:8px;width:100%;min-height:52px;margin-top:auto;padding:7px 9px;border:1px solid var(--app-divider);border-radius:9px;background:rgba(127,127,127,.06);color:inherit;text-align:left}.topology-inline>svg:first-child{color:var(--app-blue)}.topology-inline span{display:flex;flex-direction:column}.topology-inline strong{font-size:11px}.topology-inline small{margin-top:3px;color:var(--app-muted);font-size:9px}
 .connections-link { cursor: pointer; }
 .connections-link:focus-visible { outline: 2px solid var(--app-blue); outline-offset: -2px; }
-.online-dot { float: right; width: 11px; height: 11px; margin-top: -1px; border-radius: 50%; background: var(--app-green); box-shadow: 0 0 0 5px rgba(49, 201, 90, 0.1); }
+.online-dot { --runtime-accent: var(--runtime-idle); float: right; width: 11px; height: 11px; margin-top: -1px; border-radius: 50%; background: var(--runtime-accent); animation: runtime-breathe 2.2s ease-in-out infinite; }
+.online-dot.runtime-proxy { --runtime-accent: var(--runtime-proxy); }
+.online-dot.runtime-tun { --runtime-accent: var(--runtime-tun); }
+@keyframes runtime-breathe {
+  0%, 100% { transform: scale(.88); opacity: .68; box-shadow: 0 0 0 2px color-mix(in srgb, var(--runtime-accent) 9%, transparent); }
+  50% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 6px color-mix(in srgb, var(--runtime-accent) 17%, transparent); }
+}
 .connection-breakdown { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 36px; }
 .connection-breakdown div { display: flex; flex-direction: column; padding-left: 15px; border-left: 1px solid var(--app-divider); }
 .connection-breakdown div:first-child { padding-left: 0; border-left: 0; }

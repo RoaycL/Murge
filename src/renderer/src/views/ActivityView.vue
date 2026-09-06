@@ -18,6 +18,9 @@ import { brand } from '@shared/brand'
 import { useRouter } from 'vue-router'
 import { usePoliciesStore } from '../stores/policies'
 import AppSelect from '../components/AppSelect.vue'
+import { useSystemProxyStore } from '../stores/system-proxy'
+import { useTunStore } from '../stores/tun'
+import { resolveRuntimeAccent } from '@shared/runtime-accent'
 
 const traffic = useTrafficStore()
 const connections = useConnectionsStore()
@@ -27,6 +30,8 @@ const networkMeta = useNetworkMetadataStore()
 const latency = useLatencyStore()
 const router = useRouter()
 const policies = usePoliciesStore()
+const systemProxy = useSystemProxyStore()
+const tun = useTunStore()
 const summaryDrawer = ref<'network' | 'usage' | 'topology' | null>(null)
 
 // The card samples itself once a minute so the numbers never go stale.
@@ -126,9 +131,8 @@ const externalIpText = computed(() => networkMeta.ipText)
 
 const connStatus = computed(() => connections.status)
 const connDotClass = computed(() => {
-  if (connStatus.value === 'live') return 'online-dot'
-  if (connStatus.value === 'loading') return 'online-dot pending'
-  return 'online-dot offline'
+  const accent = resolveRuntimeAccent(systemProxy.status.phase, tun.status.phase)
+  return ['online-dot', `runtime-${accent}`, { pending: connStatus.value === 'loading', offline: connStatus.value === 'disconnected' || connStatus.value === 'error' }]
 })
 const connStateLabel = computed(() => {
   if (connStatus.value === 'loading') return '载入中'
@@ -245,12 +249,8 @@ const chartBars = computed<number[]>(() => {
 .metric-dimmed {
   color: var(--app-muted);
 }
-.online-dot.pending {
-  background: #c9a227 !important;
-}
-.online-dot.offline {
-  background: var(--app-danger, #d64f4f) !important;
-}
+.online-dot.pending { opacity: 0.72; }
+.online-dot.offline { opacity: 0.48; animation: none; }
 .pill-dim {
   background: #b7bcc4 !important;
 }

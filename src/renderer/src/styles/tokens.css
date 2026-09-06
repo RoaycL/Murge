@@ -17,6 +17,9 @@
   --app-green: #31c95a;
   --app-pink: #c32bbf;
   --app-blue: #1587f8;
+  --runtime-idle: #8e8e93;
+  --runtime-proxy: #34c759;
+  --runtime-tun: #0a84ff;
   --radius-large: 19px;
   --radius-control: 7px;
   --sidebar-width: 205px;

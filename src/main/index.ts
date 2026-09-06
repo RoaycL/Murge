@@ -3,7 +3,7 @@ import { writeFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { attachKernelWatchdog } from './kernel/crash-watchdog'
 import { InternetLatencyService } from './services/internet-latency-service'
-import { app, BrowserWindow, dialog, powerMonitor, safeStorage, shell } from 'electron'
+import { app, BrowserWindow, dialog, nativeTheme, powerMonitor, safeStorage, shell } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { brand } from '@shared/brand'
 import { parseBrandConfig } from '@shared/schemas/brand'
@@ -51,6 +51,8 @@ import { KernelManagerService } from './kernel/kernel-manager-service'
 import { runQuitFlow } from './quit-guard'
 import { TrayController } from './tray/tray-controller'
 import { createElectronTray } from './tray/electron-tray'
+import { createRuntimeIcon } from './tray/runtime-icon'
+import { resolveRuntimeAccent } from '@shared/runtime-accent'
 import { StartupService } from './startup/service'
 import { ElectronStartupAdapter } from './startup/electron-adapter'
 import { restoreRuntimeIntent } from './startup/runtime-intent'
@@ -159,6 +161,7 @@ let shutdownPromise: Promise<void> | null = null
 // background process with no window.
 let mainWindow: BrowserWindow | null = null
 let trayController: TrayController | null = null
+let disposeRuntimeAppearance: (() => void) | null = null
 let tunCoordinator: TunCoordinator | null = null
 let modeTransition: ModeTransitionController | null = null
 let tunExitMonitor: { stop(): void } | null = null
@@ -1165,22 +1168,40 @@ app.whenReady().then(async () => {
     window.show()
     window.focus()
   }
-  const trayIcon = is.dev
-    ? join(app.getAppPath(), 'resources', 'icon.png')
-    : join(process.resourcesPath, 'icon.png')
+  const trayView = createElectronTray(nativeTheme.shouldUseDarkColors)
   trayController = new TrayController({
     productName: brand.productName,
     // Tray start/stop goes through the ONE mode-transition queue like every
     // other entry point (queuedKernel.stop() keeps the unified gateway's
     // restore-proxy-before-stop ordering when TUN is serving).
     kernel: queuedKernel,
-    view: createElectronTray(trayIcon),
+    view: trayView,
     showWindow: showMainWindow,
     quit: () => app.quit(),
     onCheckUpdate: () => { void updates.check().catch((error) => console.warn('[updates] tray check failed:', error)) },
     onError: (error) => console.error('[tray] kernel action failed:', error)
   })
   await trayController.initialize()
+  const updateRuntimeAppearance = (): void => {
+    const accent = resolveRuntimeAccent(
+      systemProxyService.getStatus().phase,
+      tunInstance.getStatus().phase
+    )
+    const dark = nativeTheme.shouldUseDarkColors
+    trayView.setRuntimeAppearance(accent, dark)
+    if (process.platform === 'win32' && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setIcon(createRuntimeIcon(accent, dark, 256))
+    }
+  }
+  const unsubscribeProxyAppearance = systemProxyService.onStatus(updateRuntimeAppearance)
+  const unsubscribeTunAppearance = tunInstance.onStatus(updateRuntimeAppearance)
+  nativeTheme.on('updated', updateRuntimeAppearance)
+  disposeRuntimeAppearance = () => {
+    unsubscribeProxyAppearance()
+    unsubscribeTunAppearance()
+    nativeTheme.removeListener('updated', updateRuntimeAppearance)
+  }
+  updateRuntimeAppearance()
 
   // CI-only installed-artifact proof for the real login-launch shape. It
   // creates the hidden BrowserWindow and native Tray, but never starts mihomo
@@ -1371,6 +1392,8 @@ function beginApplicationShutdown(sessionEnding: boolean): Promise<void> {
         try {
           tunExitMonitor?.stop()
           tunExitMonitor = null
+          disposeRuntimeAppearance?.()
+          disposeRuntimeAppearance = null
           trayController?.dispose()
           disposeIpc?.()
           updateService?.dispose()

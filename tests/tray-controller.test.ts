@@ -1,15 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeKernelGateway } from '../src/main/testing/fake-container'
 import { TrayController, type TrayMenuItem, type TrayView } from '../src/main/tray/tray-controller'
+import type { RuntimeAccent } from '../src/shared/runtime-accent'
 
 class FakeTrayView implements TrayView {
   tooltip = ''
   menu: TrayMenuItem[] = []
   activate: (() => void) | null = null
   destroyed = false
+  appearance: { accent: RuntimeAccent; dark: boolean } = { accent: 'idle', dark: false }
   isReady(): boolean { return !this.destroyed }
   setToolTip(value: string): void { this.tooltip = value }
   setMenu(items: TrayMenuItem[]): void { this.menu = items }
+  setRuntimeAppearance(accent: RuntimeAccent, dark: boolean): void { this.appearance = { accent, dark } }
   onActivate(listener: () => void): () => void { this.activate = listener; return () => { this.activate = null } }
   destroy(): void { this.destroyed = true }
   item(id: TrayMenuItem['id']): TrayMenuItem | undefined { return this.menu.find((item) => item.id === id) }

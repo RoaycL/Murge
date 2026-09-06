@@ -4,6 +4,7 @@ import { usePoliciesStore, POLICY_MODE_OPTIONS, type PolicyMode } from '../store
 import { useKernelStore } from '../stores/kernel'
 import AppIcon from '../components/AppIcon.vue'
 import DetailDrawer from '../components/DetailDrawer.vue'
+import CachedRemoteIcon from '../components/CachedRemoteIcon.vue'
 
 const policies = usePoliciesStore()
 const kernel = useKernelStore()
@@ -101,12 +102,6 @@ const drawerSubtitle = computed(() => {
   return displayType(group.type)
 })
 
-/** A broken/remote icon must not leave a torn image in the grid: hide it. */
-function onGroupIconError(event: Event): void {
-  const img = event.currentTarget as HTMLImageElement | null
-  if (img) img.style.display = 'none'
-}
-
 async function onCardClick(name: string): Promise<void> {
   // A rejected selection is surfaced via `panelError` by the store; swallow it
   // here so a click never becomes an unhandled promise rejection in the view.
@@ -169,13 +164,13 @@ watch(() => kernel.status.phase, (phase, previous) => {
     <template v-else>
       <div class="section-caption"><span>策略组</span></div>
       <div class="policy-group-grid">
-        <button v-for="group in policies.groups" :key="group.name" type="button" :class="{ selected: policies.selectedGroup === group.name, 'has-icon': Boolean(group.icon) }" @click="openGroup(group.name)"><img v-if="group.icon" class="group-icon" :src="group.icon" alt="" loading="lazy" @error="onGroupIconError" /><small>{{ displayType(group.type) }}</small><strong>{{ group.name }}</strong><span>{{ groupSummary(group) }}</span><AppIcon name="next" :size="14" /></button>
+        <button v-for="group in policies.groups" :key="group.name" type="button" :class="{ selected: policies.selectedGroup === group.name, 'has-icon': Boolean(group.icon) }" @click="openGroup(group.name)"><CachedRemoteIcon v-if="group.icon" class="group-icon" :src="group.icon" :cache-key="`policy:${group.name}`" /><small>{{ displayType(group.type) }}</small><strong>{{ group.name }}</strong><span>{{ groupSummary(group) }}</span><AppIcon name="next" :size="14" /></button>
       </div>
     </template>
 
     <div v-if="policies.panelError" class="panel-error">{{ policies.panelError }}</div>
 
-    <DetailDrawer :open="groupDrawerOpen && Boolean(policies.selectedGroup)" :title="policies.selectedGroup" :subtitle="drawerSubtitle" :icon="policies.currentGroup?.icon" @close="groupDrawerOpen = false">
+    <DetailDrawer :open="groupDrawerOpen && Boolean(policies.selectedGroup)" :title="policies.selectedGroup" :subtitle="drawerSubtitle" :icon="policies.currentGroup?.icon" :icon-cache-key="`policy:${policies.selectedGroup}`" @close="groupDrawerOpen = false">
       <div class="node-caption"><span>节点列表</span><button type="button" :disabled="policies.groupDelayStatus === 'testing'" @click="policies.testAll()">{{ policies.groupDelayStatus === 'testing' ? '测试中…' : '测试当前组' }}</button></div>
       <div class="drawer-body-grid">
         <div class="node-grid"><div v-for="member in policies.groupMembers" :key="member" class="node-card" :class="{ selected: policies.selectedMember === member, unavailable: isUnavailable(member) }"><button type="button" class="node-select" :disabled="!policies.isSelectableGroup(policies.currentGroup)" @click="onCardClick(member)"><small v-if="isNestedGroup(member)">{{ displayType(policies.nodeByMember[member]?.type) }}</small><strong>{{ member }}</strong><span v-if="nodeTags(member).length" class="node-tags"><i v-for="tag in nodeTags(member)" :key="tag">{{ tag }}</i></span></button><button type="button" class="node-delay" :class="latencyLabel(member).kind" :title="delayTitle(member)" :disabled="policies.nodeState(member).status === 'testing'" @click="policies.testNode(member)">{{ latencyLabel(member).text }}</button></div></div>

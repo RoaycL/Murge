@@ -70,6 +70,7 @@ import { TunConfigService } from './tun/tun-config-service'
 import { TunServiceClient } from './tun/service-client'
 import { NamedPipeTunServiceTransport } from './tun/named-pipe-transport'
 import { tunServiceIdentity } from './tun/service-identity'
+import { waitForTunDataPlaneReady } from './tun/data-plane-readiness'
 import { ModeTransitionController, queuedKernelGateway, queuedTunGateway } from './kernel/mode-transition'
 import type { TunGateway, TunStatus } from '../shared/tun'
 
@@ -881,19 +882,10 @@ app.whenReady().then(async () => {
         {
           waitUntilReady: async ({ controllerPort, secret, signal }) => {
             const client = new MihomoClient(`http://127.0.0.1:${controllerPort}`, secret, { timeoutMs: 500 })
-            while (!signal.aborted) {
-              try {
-                await client.getVersion(signal)
-                return
-              } catch {
-                if (signal.aborted) break
-                await new Promise<void>((resolve) => setTimeout(resolve, 100))
-              }
-            }
-            throw new ProtocolError(ProtocolErrorCode.KERNEL_START_TIMEOUT, 'TUN controller readiness timed out')
+            await waitForTunDataPlaneReady(client, signal)
           }
         },
-        10_000,
+        20_000,
         async () => tunConfigService.readConfig(),
         {
           // TUN runs the SAME enhanced document as the main kernel, so enabling it

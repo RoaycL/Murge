@@ -69,6 +69,18 @@ describe('Activity fluid-layout UI contract', () => {
     expect(tokens).toContain('--app-surface-border: rgba(255, 255, 255, 0.05);')
   })
 
+  it('uses native process icons and concrete policy-group icons in the ranking', async () => {
+    const [activity, store] = await Promise.all([
+      read('src/renderer/src/views/ActivityView.vue'),
+      read('src/renderer/src/stores/connections.ts')
+    ])
+
+    expect(activity).toContain("import ProcessIcon from '../components/ProcessIcon.vue'")
+    expect(activity).toContain("import CachedRemoteIcon from '../components/CachedRemoteIcon.vue'")
+    expect(activity).toContain(':path="item.iconPath"')
+    expect(store).toContain('connectionChainHops(c.chains)[0]')
+  })
+
   it('keeps runtime facts aligned while presenting outbound mode as text until clicked', async () => {
     const [activity, select, css] = await Promise.all([
       read('src/renderer/src/views/ActivityView.vue'),

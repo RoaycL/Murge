@@ -1,5 +1,6 @@
 import { ipcMain, BrowserWindow, app } from 'electron'
 import { networkInterfaces } from 'node:os'
+import { join } from 'node:path'
 import { brand } from '@shared/brand'
 import type { IpcDeps, KernelGateway, KernelManagerGateway, MihomoGateway, ProfileGateway, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway, OverridesGateway, DnsEnhancementGateway, SnifferEnhancementGateway, TunConfigGateway, CoreSettingsGateway, GeodataSettingsGateway, UsageHistoryGateway, NetworkMetadataGateway } from '@shared/gateways'
 import type { TunGateway } from '@shared/tun'
@@ -8,6 +9,8 @@ import { IPC } from '@shared/ipc'
 import { ProtocolError, encodeProtocolError } from '@shared/protocol-errors'
 import { fetchExternalIpViaProxy } from '../services/external-ip'
 import { buildIpcHandlers, type IpcHandler } from './handlers'
+import { RemoteIconCache } from '../services/remote-icon-cache'
+import { createSubscriptionProxyFetchFn } from '../subscriptions/proxy-fetch-transport'
 
 export interface IpcDependencies {
   kernel: KernelGateway
@@ -144,6 +147,7 @@ export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemPro
     internetLatency: internetLatency ?? { sample: async () => ({ gatewayMs: null, dnsMs: null, proxyMs: null, proxyNode: null }) }
   }
   const iconCache = new Map<string, string>()
+  let remoteIconCache: RemoteIconCache | null = null
   const entries = Object.entries(buildIpcHandlers(deps, { resolveActiveGroupOrder }))
   entries.push([IPC.appGetProcessIcon, async (_event, rawPath) => {
     if (process.platform !== 'win32') return null
@@ -157,6 +161,24 @@ export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemPro
       if (value.length <= 512_000) iconCache.set(rawPath, value)
       return value
     } catch { return null }
+  }])
+  entries.push([IPC.appGetCachedIcon, async (_event, rawKey, rawUrl, rawRefresh) => {
+    if (typeof rawKey !== 'string' || (rawUrl !== undefined && typeof rawUrl !== 'string') || (rawRefresh !== undefined && typeof rawRefresh !== 'boolean')) return null
+    remoteIconCache ??= new RemoteIconCache(
+      join(app.getPath('userData'), 'icon-cache'),
+      [async (url, init) => {
+        const response = await globalThis.fetch(url, init as RequestInit)
+        return {
+          ok: response.ok,
+          status: response.status,
+          url: response.url,
+          headers: response.headers,
+          text: () => response.text(),
+          body: response.body ?? undefined
+        }
+      }, createSubscriptionProxyFetchFn()]
+    )
+    return remoteIconCache.get(rawKey, rawUrl, rawRefresh === true)
   }])
   entries.push([IPC.appListNetworkInterfaces, async () =>
     Object.entries(networkInterfaces())

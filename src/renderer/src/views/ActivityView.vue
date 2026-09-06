@@ -18,6 +18,8 @@ import { brand } from '@shared/brand'
 import { useRouter } from 'vue-router'
 import { usePoliciesStore } from '../stores/policies'
 import AppSelect from '../components/AppSelect.vue'
+import ProcessIcon from '../components/ProcessIcon.vue'
+import CachedRemoteIcon from '../components/CachedRemoteIcon.vue'
 import { useSystemProxyStore } from '../stores/system-proxy'
 import { useTunStore } from '../stores/tun'
 import { resolveRuntimeAccent } from '@shared/runtime-accent'
@@ -90,6 +92,9 @@ const rankedList = computed(() => {
   if (rankDimension.value === 'policy') return connections.topPolicies
   return connections.topProcesses
 })
+const policyIcons = computed<Record<string, string>>(() => Object.fromEntries(
+  policies.groups.flatMap((group) => group.icon ? [[group.name, group.icon] as const] : [])
+))
 
 // 总计: 当前 = sum of live connections (DIRECT + 代理); 历史 = kernel-lifetime
 // cumulative byte counter from the /traffic stream. The DIRECT/代理 split keeps
@@ -198,7 +203,8 @@ const chartBars = computed<number[]>(() => {
         <div class="rank-tabs" role="group" aria-label="流量排行维度"><button type="button" :class="{ selected: rankDimension === 'process' }" :aria-pressed="rankDimension === 'process'" @click="rankDimension = 'process'">进程与设备</button><button type="button" :class="{ selected: rankDimension === 'host' }" :aria-pressed="rankDimension === 'host'" @click="rankDimension = 'host'">域名</button><button type="button" :class="{ selected: rankDimension === 'policy' }" :aria-pressed="rankDimension === 'policy'" @click="rankDimension = 'policy'">策略</button></div>
         <div class="rank-list">
           <div v-for="item in rankedList" :key="item.name" class="rank-row">
-            <span class="rank-icon">{{ item.name.slice(0, 2) }}</span>
+            <ProcessIcon v-if="rankDimension === 'process'" class="rank-process-icon" :path="item.iconPath" :name="item.name" :size="12" />
+            <span v-else class="rank-icon"><CachedRemoteIcon v-if="rankDimension === 'policy' && policyIcons[item.name]" :src="policyIcons[item.name]" :cache-key="`policy:${item.name}`" /><template v-else>{{ item.name.slice(0, 2) }}</template></span>
             <div><span>{{ item.name }}</span><i><b :style="{ width: `${item.width}%` }" /></i></div>
             <strong>{{ formatBytes(item.download) }}</strong>
           </div>

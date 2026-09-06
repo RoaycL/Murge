@@ -44,12 +44,19 @@ describe('electron-builder brand wiring (Phase 6 metadata)', () => {
     })
     const trayDir = fileURLToPath(new URL('../resources/tray/', import.meta.url))
     for (const theme of ['light', 'dark']) {
+      const variants: Buffer[] = []
       for (const accent of ['idle', 'proxy', 'tun']) {
         const image = readFileSync(join(trayDir, `tray-${theme}-${accent}.png`))
+        variants.push(image)
         expect(image.subarray(1, 4).toString('ascii')).toBe('PNG')
         expect(image.readUInt32BE(16)).toBe(32)
         expect(image.readUInt32BE(20)).toBe(32)
+        // A flattened blank rounded square is roughly 400 bytes; preserve the
+        // actual mark and anti-aliased status stroke in the packaged bitmap.
+        expect(image.byteLength).toBeGreaterThan(1_000)
       }
+      expect(variants[0].equals(variants[1])).toBe(false)
+      expect(variants[1].equals(variants[2])).toBe(false)
     }
   })
 

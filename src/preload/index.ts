@@ -28,6 +28,7 @@ const api: DesktopApi = {
     getBrand: () => invoke(IPC.appGetBrand),
     getInfo: () => invoke(IPC.appGetInfo),
     getProcessIcon: (path) => invoke(IPC.appGetProcessIcon, path),
+    getCachedIcon: (cacheKey, url, refresh) => invoke(IPC.appGetCachedIcon, cacheKey, url, refresh),
     listNetworkInterfaces: () => invoke(IPC.appListNetworkInterfaces)
   },
   kernel: {

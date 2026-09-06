@@ -138,7 +138,7 @@ export const useLogsStore = defineStore('logs', () => {
     return entries.value.filter((entry) => {
       if (level.value !== 'all' && entry.level !== level.value) return false
       return !term || entry.message.toLocaleLowerCase().includes(term)
-    })
+    }).reverse()
   })
 
   /** Idempotent; the view calls it on mount, but capture runs app-long anyway. */

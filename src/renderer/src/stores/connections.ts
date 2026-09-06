@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import type { MihomoConnectionsSnapshot, MihomoStreamError } from '@shared/mihomo-api'
 import type { MihomoConnection } from '@shared/mihomo-api'
 import { toProtocolError } from '@shared/protocol-errors'
+import { connectionChainHops } from '@shared/connection-chain'
 
 export type ConnectionsStreamStatus = 'loading' | 'live' | 'disconnected' | 'error'
 
@@ -10,6 +11,7 @@ export interface ProcessRank {
   name: string
   download: number
   width: number
+  iconPath?: string
 }
 
 /** Whether the activity breakdown counts every connection or only proxied ones. */
@@ -70,26 +72,52 @@ export const useConnectionsStore = defineStore('connections', () => {
     rankScope.value === 'proxy' ? isProxyConnection : () => true
   )
 
-  function buildRank(rows: MihomoConnection[], filter: (connection: MihomoConnection) => boolean, keyFn: (connection: MihomoConnection) => string): ProcessRank[] {
-    const map = new Map<string, number>()
+  function buildRank(
+    rows: MihomoConnection[],
+    filter: (connection: MihomoConnection) => boolean,
+    keyFn: (connection: MihomoConnection) => string,
+    iconPathFn?: (connection: MihomoConnection) => string | undefined
+  ): ProcessRank[] {
+    const map = new Map<string, { download: number; iconPath?: string }>()
     for (const connection of rows) {
       if (!filter(connection)) continue
       const key = keyFn(connection)
       if (!key) continue
-      map.set(key, (map.get(key) ?? 0) + connection.download)
+      const current = map.get(key)
+      map.set(key, {
+        download: (current?.download ?? 0) + connection.download,
+        iconPath: current?.iconPath ?? iconPathFn?.(connection)
+      })
     }
     const ranked = Array.from(map.entries())
-      .map(([name, download]) => ({ name, download }))
+      .map(([name, value]) => ({ name, ...value }))
       .sort((a, b) => b.download - a.download)
     const max = ranked[0]?.download ?? 1
-    return ranked.map(({ name, download }) => ({ name, download, width: Math.round((download / max) * 100) }))
+    return ranked.map(({ name, download, iconPath }) => ({
+      name,
+      download,
+      width: Math.round((download / max) * 100),
+      ...(iconPath ? { iconPath } : {})
+    }))
   }
 
   // Activity breakdown slots; each reacts to the 全部/仅代理 scope so toggling it
   // consistently filters whichever dimension the user is viewing.
-  const topProcesses = computed(() => buildRank(connections.value, scopeFilter.value, (c) => c.metadata.process ?? 'unknown'))
+  const topProcesses = computed(() => buildRank(
+    connections.value,
+    scopeFilter.value,
+    (c) => c.metadata.process ?? 'unknown',
+    (c) => c.metadata.processPath
+  ))
   const topHosts = computed(() => buildRank(connections.value, scopeFilter.value, (c) => c.metadata.host || c.metadata.destinationIP || '未知目标'))
-  const topPolicies = computed(() => buildRank(connections.value, scopeFilter.value, (c) => c.rule || c.chains.at(-1) || 'DIRECT'))
+  // The policy ranking is the concrete outer policy group selected by mihomo,
+  // not the rule matcher type (GeoIP/RuleSet/Match). This matches the connection
+  // drawer's user-facing chain and lets the Activity row reuse the group's icon.
+  const topPolicies = computed(() => buildRank(
+    connections.value,
+    scopeFilter.value,
+    (c) => connectionChainHops(c.chains)[0] || c.rule || 'DIRECT'
+  ))
 
   const summary = computed<ConnectionsSummary | null>(() => {
     const snap = snapshot.value

@@ -21,7 +21,7 @@
     "package:win": "npm run kernel:prepare && npm run tun-service:build && npm run build && electron-builder --win --config electron-builder.config.mjs"
   },
   "engines": {
-    "node": ">=22"
+    "node": "^20.19.0 || >=22.12.0"
   },
   "dependencies": {
     "@vueuse/core": "^13.0.0",
@@ -40,7 +40,7 @@
     "@types/node": "^24.0.0",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-vue": "^6.0.0",
-    "electron": "^38.8.6",
+    "electron": "^44.2.0",
     "electron-builder": "^26.0.0",
     "electron-vite": "^4.0.0",
     "typescript": "^5.9.0",
@@ -49,7 +49,7 @@
     "vue-tsc": "^3.0.0"
   },
   "allowScripts": {
-    "electron@38.8.6": true,
+    "electron@44.2.0": true,
     "esbuild@0.25.12": true,
     "esbuild@0.28.2": true
   }

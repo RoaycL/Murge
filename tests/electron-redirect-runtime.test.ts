@@ -14,22 +14,28 @@ const probeDir = join(repoRoot, 'tests', 'electron-redirect-runtime')
  * Real-runtime guard for the kernel-proxy subscription transport.
  *
  * Unit tests exercise the fetcher with fake transports, which cannot see the
- * Electron-specific failure this transport exists to avoid: on Electron 38,
- * net.fetch with redirect:'manual' rejects every redirect with
+ * Electron-specific behaviour this transport encodes: on Electron <39,
+ * net.fetch with redirect:'manual' rejected every redirect with
  * "Redirect was cancelled" (electron/electron#43715), and auto-following
- * redirects is the pattern CVE-2026-70605 turned into a local-file exposure.
- * This spec boots the actual Electron binary, loads the compiled transport
- * plus the compiled SubscriptionFetcher in the main process, and asserts the
- * hop-interception contract against a local HTTP server: synthetic 3xx hops,
- * zero unvalidated follow-through, per-hop private-address rejection (exact
- * error code + message + zero requests reaching the internal target) and the
- * redirect budget after exactly maxRedirects+1 requests. The probe is fully
- * offline — .test hostnames are split across Chromium's connection resolver
+ * redirects was the pattern CVE-2026-70605 turned into a local-file exposure
+ * (fixed in 39.8.8). Now on Electron 44.2.0 the CVE is patched, but the
+ * transport is intentionally RETAINED: it gives the SubscriptionFetcher
+ * per-hop validation (private-address rejection, redirect budget) that
+ * net.fetch's patched auto-follow still does not provide. This spec boots the
+ * actual Electron binary, loads the compiled transport plus the compiled
+ * SubscriptionFetcher in the main process, and asserts the hop-interception
+ * contract against a local HTTP server: synthetic 3xx hops, zero unvalidated
+ * follow-through, per-hop private-address rejection (exact error code +
+ * message + zero requests reaching the internal target) and the redirect
+ * budget after exactly maxRedirects+1 requests. The probe is fully offline —
+ * .test hostnames are split across Chromium's connection resolver
  * (--host-resolver-rules) and the fetcher's injected resolveHost — so no leg
  * depends on internet reachability.
  *
  * Skipped when the electron binary is unavailable or (on Linux) no display is
- * present; CI runs it explicitly on Windows, locally under xvfb-run.
+ * present. Set ELECTRON_PROBE_REQUIRED=1 (CI does this) to FAIL instead of
+ * skip when the binary is missing — a green CI must never come from a probe
+ * that never ran.
  */
 
 let electronBinary: string | null = null
@@ -43,6 +49,18 @@ try {
 
 const missingDisplay =
   process.platform === 'linux' && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY
+
+const probeRequired = process.env.ELECTRON_PROBE_REQUIRED === '1' || process.env.ELECTRON_PROBE_REQUIRED === 'true'
+
+// Fail loudly when CI expects the probe to run but the binary is missing — a
+// silent skip here would let a broken electron install ship a green pipeline
+// without ever exercising the transport.
+if (probeRequired && !electronBinary) {
+  throw new Error('ELECTRON_PROBE_REQUIRED is set but the electron binary is unavailable; run "npx install-electron" first')
+}
+if (probeRequired && missingDisplay) {
+  throw new Error('ELECTRON_PROBE_REQUIRED is set but no display is available; run under xvfb-run on Linux')
+}
 
 const shouldRun = Boolean(electronBinary) && !missingDisplay
 

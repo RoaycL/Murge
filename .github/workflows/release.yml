@@ -37,6 +37,11 @@ jobs:
         env:
           NODE_ENV: development
 
+      # Electron 42+ no longer downloads its binary via a postinstall script;
+      # electron-builder needs the binary to package installers.
+      - name: Ensure Electron binary is downloaded
+        run: npx install-electron --no
+
       - name: Verify tag matches package version
         shell: pwsh
         run: |

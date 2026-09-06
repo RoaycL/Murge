@@ -66,14 +66,14 @@ export const TUN_IPC = {
 } as const
 
 export const TUN_UI_COPY: Readonly<Record<TunPhase, string>> = {
-  configured: 'TUN 未启用',
-  starting: 'TUN 正在启动…',
-  active: 'TUN 已启用',
+  configured: '未启用',
+  starting: '正在启动…',
+  active: '已启用',
   restoring: '正在恢复网络设置…',
-  failed: 'TUN 启用失败，可重试',
+  failed: '启用失败，可重试',
   // Conflict is recoverable: toggling off re-runs the restore path, which
   // reconciles with the service first (the only way a latched conflict clears).
-  conflict: 'TUN 状态冲突：请先关闭 TUN 以重新对齐服务状态',
+  conflict: '状态冲突：请先关闭以重新对齐服务状态',
   unsupported: '当前平台不支持 TUN',
   'restore-failed': '网络设置恢复失败，可重试关闭'
 }

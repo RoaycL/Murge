@@ -88,6 +88,14 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
   0%, 100% { transform: scale(.88); opacity: .68; box-shadow: 0 0 0 2px color-mix(in srgb, var(--runtime-accent) 9%, transparent); }
   50% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 6px color-mix(in srgb, var(--runtime-accent) 17%, transparent); }
 }
+/* 更新中的刷新图标（参考 clash-verge-rev provider-button：1s 线性无限旋转）。 */
+@keyframes icon-spin {
+  to { transform: rotate(360deg); }
+}
+.icon-control.spinning { color: var(--app-purple); }
+.icon-control.spinning > svg { animation: icon-spin 1s linear infinite; }
+/* 直接挂在 AppIcon（svg 根元素）上的旋转类，用于非 icon-control 按钮。 */
+.spin-icon { animation: icon-spin 1s linear infinite; }
 .connection-breakdown { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 36px; }
 .connection-breakdown div { display: flex; flex-direction: column; padding-left: 15px; border-left: 1px solid var(--app-divider); }
 .connection-breakdown div:first-child { padding-left: 0; border-left: 0; }

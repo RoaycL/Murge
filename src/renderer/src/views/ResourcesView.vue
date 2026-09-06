@@ -91,15 +91,15 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
         <h2>代理集合 <small>{{ providers.remoteProxyProviders.length }}</small></h2>
         <button type="button" class="quiet-button" :disabled="refreshingProxy || !providers.remoteProxyProviders.length" @click="refreshAllProxy">{{ refreshingProxy ? '更新中…' : '全部更新' }}</button>
       </header>
-      <div v-for="item in providers.remoteProxyProviders" :key="item.name" class="resource-page-row" :class="{ 'row-failed': providers.opOf(item.name).error, 'row-updating': providers.opOf(item.name).refreshing }">
+      <div v-for="item in providers.remoteProxyProviders" :key="item.name" class="resource-page-row" :class="{ 'row-failed': providers.opOf(item.name, 'proxy').error, 'row-updating': providers.opOf(item.name, 'proxy').refreshing }">
         <button type="button" class="resource-row-main" @click="viewing = { kind: 'proxy', name: item.name }">
           <strong>{{ item.name }}</strong>
           <small>{{ item.proxies?.length ?? 0 }} 个节点</small>
-          <small v-if="providers.opOf(item.name).error" class="row-error" role="alert">{{ providers.opOf(item.name).error }}</small>
+          <small v-if="providers.opOf(item.name, 'proxy').error" class="row-error" role="alert">{{ providers.opOf(item.name, 'proxy').error }}</small>
         </button>
         <span class="row-actions">
           <button class="icon-control" type="button" aria-label="查看代理集合配置" title="查看配置" @click="viewing = { kind: 'proxy', name: item.name }"><AppIcon name="eye" :size="16" /></button>
-          <button class="icon-control" type="button" :class="{ spinning: providers.opOf(item.name).refreshing }" :disabled="providers.opOf(item.name).refreshing" :aria-label="providers.opOf(item.name).refreshing ? '更新中' : '更新代理集合'" @click="providers.refreshProxyProvider(item.name)"><AppIcon name="refresh" :size="16" /></button>
+          <button class="icon-control" type="button" :class="{ spinning: providers.opOf(item.name, 'proxy').refreshing }" :disabled="providers.opOf(item.name, 'proxy').refreshing" :aria-label="providers.opOf(item.name, 'proxy').refreshing ? '更新中' : '更新代理集合'" @click="providers.refreshProxyProvider(item.name)"><AppIcon name="refresh" :size="16" /></button>
         </span>
       </div>
       <p v-if="!providers.remoteProxyProviders.length">当前配置没有远程代理集合。</p>
@@ -109,15 +109,15 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
         <h2>规则集合 <small>{{ providers.remoteRuleProviders.length }}</small></h2>
         <button type="button" class="quiet-button" :disabled="refreshingRule || !providers.remoteRuleProviders.length" @click="refreshAllRule">{{ refreshingRule ? '更新中…' : '全部更新' }}</button>
       </header>
-      <div v-for="item in providers.remoteRuleProviders" :key="item.name" class="resource-page-row" :class="{ 'row-failed': providers.opOf(item.name).error, 'row-updating': providers.opOf(item.name).refreshing }">
+      <div v-for="item in providers.remoteRuleProviders" :key="item.name" class="resource-page-row" :class="{ 'row-failed': providers.opOf(item.name, 'rule').error, 'row-updating': providers.opOf(item.name, 'rule').refreshing }">
         <button type="button" class="resource-row-main" @click="viewing = { kind: 'rule', name: item.name }">
           <strong>{{ item.name }}</strong>
           <small>{{ item.ruleCount ?? 0 }} 条规则</small>
-          <small v-if="providers.opOf(item.name).error" class="row-error" role="alert">{{ providers.opOf(item.name).error }}</small>
+          <small v-if="providers.opOf(item.name, 'rule').error" class="row-error" role="alert">{{ providers.opOf(item.name, 'rule').error }}</small>
         </button>
         <span class="row-actions">
           <button class="icon-control" type="button" aria-label="查看规则集合配置" title="查看配置" @click="viewing = { kind: 'rule', name: item.name }"><AppIcon name="eye" :size="16" /></button>
-          <button class="icon-control" type="button" :class="{ spinning: providers.opOf(item.name).refreshing }" :disabled="providers.opOf(item.name).refreshing" :aria-label="providers.opOf(item.name).refreshing ? '更新中' : '更新规则集合'" @click="providers.refreshRuleProvider(item.name)"><AppIcon name="refresh" :size="16" /></button>
+          <button class="icon-control" type="button" :class="{ spinning: providers.opOf(item.name, 'rule').refreshing }" :disabled="providers.opOf(item.name, 'rule').refreshing" :aria-label="providers.opOf(item.name, 'rule').refreshing ? '更新中' : '更新规则集合'" @click="providers.refreshRuleProvider(item.name)"><AppIcon name="refresh" :size="16" /></button>
         </span>
       </div>
       <p v-if="!providers.remoteRuleProviders.length">当前配置没有远程规则集合。</p>

@@ -164,7 +164,7 @@ describe('providers store', () => {
     await store.loadRuleProviders()
     await store.refreshRuleProvider('规则集 A')
     expect(refreshRuleProvider).toHaveBeenCalledWith('规则集 A')
-    expect(store.opOf('规则集 A').refreshing).toBe(false)
+    expect(store.opOf('规则集 A', 'rule').refreshing).toBe(false)
   })
 
   it('keeps the last good providers when a refresh API call succeeds but its reload fetch fails', async () => {
@@ -220,8 +220,8 @@ describe('providers store', () => {
     await store.refreshRuleProvider('规则集 A')
     expect(store.orderedRuleProviders.map((p) => p.name)).toEqual(['规则集 A'])
     expect(store.ruleProviders['规则集 A'].format).toBe('yaml')
-    expect(store.opOf('规则集 A').error).toBe('rule reload failed')
-    expect(store.opOf('规则集 A').refreshing).toBe(false)
+    expect(store.opOf('规则集 A', 'rule').error).toBe('rule reload failed')
+    expect(store.opOf('规则集 A', 'rule').refreshing).toBe(false)
   })
 
   it('treats a recorded delay of 0 as unavailable, never as a 0ms success', async () => {
@@ -296,6 +296,20 @@ describe('providers store', () => {
     expect(store.opOf('机场 A').error).toBe('更新失败：无法连接源地址（HTTP 503）')
   })
 
+  it('keeps same-named proxy and rule provider operation state isolated', async () => {
+    getProxyProviders.mockResolvedValue(PROXY_PROVIDERS)
+    getRuleProviders.mockResolvedValue(RULE_PROVIDERS)
+    refreshProxyProvider.mockRejectedValue(new Error('proxy failed'))
+    refreshRuleProvider.mockResolvedValue(undefined)
+    const store = useProvidersStore()
+    await store.refreshProxyProvider('shared')
+    expect(store.opOf('shared', 'proxy').error).toBe('proxy failed')
+    expect(store.opOf('shared', 'rule').error).toBeNull()
+    await store.refreshRuleProvider('shared')
+    expect(store.opOf('shared', 'proxy').error).toBe('proxy failed')
+    expect(store.opOf('shared', 'rule').error).toBeNull()
+  })
+
   it('refreshAllProviders touches only remote resources and reports failures', async () => {
     getProxyProviders.mockResolvedValue({
       providers: {
@@ -323,7 +337,7 @@ describe('providers store', () => {
     expect(refreshProxyProvider).toHaveBeenCalledWith('机场 A')
     expect(refreshRuleProvider).toHaveBeenCalledTimes(1)
     expect(refreshRuleProvider).toHaveBeenCalledWith('规则集 A')
-    expect(store.opOf('规则集 A').error).toBe('rule source failed')
+    expect(store.opOf('规则集 A', 'rule').error).toBe('rule source failed')
     expect(result).toEqual({ updated: 1, failed: 1 })
   })
 

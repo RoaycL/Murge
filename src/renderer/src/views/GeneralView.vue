@@ -38,6 +38,14 @@ async function saveDelayUrl(): Promise<void> {
   }
 }
 
+async function toggleSilentLaunch(): Promise<void> {
+  const saved = await appSettings.set({ silentLaunch: !appSettings.settings.silentLaunch })
+  // Main rewrites the argument-sensitive login item on every setting change.
+  // Confirm it through the StartupService as well so an OS rejection is visible
+  // immediately instead of being left only in the main-process log.
+  if (saved && startup.status.enabled) await startup.setEnabled(true)
+}
+
 onMounted(async () => {
   void startup.refresh()
   await appSettings.refresh()
@@ -55,7 +63,6 @@ onMounted(async () => {
         <label>
           <span>
             <strong>登录 Windows 时启动</strong>
-            <small>注册系统登录项，开机后自动拉起应用并恢复内核与代理接管。</small>
           </span>
           <button
             type="button"
@@ -70,7 +77,6 @@ onMounted(async () => {
         <label>
           <span>
             <strong>静默启动</strong>
-            <small>登录自启时不在桌面弹出主窗口，仅保留托盘图标；手动打开应用不受影响。</small>
           </span>
           <button
             type="button"
@@ -79,13 +85,12 @@ onMounted(async () => {
             :aria-checked="appSettings.settings.silentLaunch"
             :disabled="appSettings.busy"
             aria-label="静默启动"
-            @click="appSettings.set({ silentLaunch: !appSettings.settings.silentLaunch })"
+            @click="toggleSilentLaunch"
           />
         </label>
         <label>
           <span>
             <strong>关闭窗口时最小化到托盘</strong>
-            <small>关闭后仅隐藏窗口并在托盘继续接管代理；关闭后应用完全退出并还原系统代理。</small>
           </span>
           <button
             type="button"
@@ -109,7 +114,6 @@ onMounted(async () => {
         <label>
           <span>
             <strong>启动时自动启动内核</strong>
-            <small>应用打开后立即拉起 mihomo，策略与规则页无需手动启动即可显示实时数据。</small>
           </span>
           <button
             type="button"
@@ -125,33 +129,11 @@ onMounted(async () => {
     </section>
 
     <section>
-      <h2>网络守护</h2>
-      <div class="surface-card preference-list">
-        <label>
-          <span>
-            <strong>系统代理守护</strong>
-            <small>系统代理开启期间，定时校验并修复被其他程序篡改的代理设置，避免「代理已开启但无法上网」。</small>
-          </span>
-          <button
-            type="button"
-            class="switch"
-            :class="{ on: appSettings.settings.proxyGuard }"
-            :aria-checked="appSettings.settings.proxyGuard"
-            :disabled="appSettings.busy"
-            aria-label="系统代理守护"
-            @click="appSettings.set({ proxyGuard: !appSettings.settings.proxyGuard })"
-          />
-        </label>
-      </div>
-    </section>
-
-    <section>
       <h2>更新</h2>
       <div class="surface-card preference-list">
         <label>
           <span>
             <strong>启动时自动检查更新</strong>
-            <small>有新版本时后台下载，退出应用时提示安装；手动「检查更新」始终可用。</small>
           </span>
           <button
             type="button"
@@ -172,14 +154,12 @@ onMounted(async () => {
         <label>
           <span>
             <strong>测试地址来源</strong>
-            <small>策略组自带的测试地址优先，或始终使用下方统一地址。</small>
           </span>
           <AppSelect v-model="delayScope" :options="delayScopeOptions" label="测试地址来源" />
         </label>
         <label>
           <span>
             <strong>全局测试地址</strong>
-            <small>仅「始终使用全局地址」时生效；留空使用内置的 204 无内容地址。</small>
           </span>
           <input
             v-model="delayUrl"

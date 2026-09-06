@@ -32,6 +32,14 @@ export class ElectronStartupAdapter implements StartupAdapter {
     })
   }
 
+  async rewriteIfEnabled(): Promise<void> {
+    if (!this.supported) return
+    // Query without argument matching so a registration created with the old
+    // silent-launch value is still found, then overwrite it with current args.
+    const registered = app.getLoginItemSettings({ path: process.execPath }).openAtLogin
+    if (registered) await this.write(true)
+  }
+
   private loginArgs(): string[] {
     return this.getSilentLaunch() ? ['--hidden'] : []
   }

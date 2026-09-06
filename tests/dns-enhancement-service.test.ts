@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parse } from 'yaml'
@@ -41,6 +41,22 @@ describe('DnsEnhancementService', () => {
     const reloaded = new DnsEnhancementService(dir)
     const snapshot = await reloaded.get()
     expect(snapshot.enhancement).toEqual(EMPTY_DNS_ENHANCEMENT)
+  })
+
+  it('migrates the old wildcard blacklist default without changing custom filters', async () => {
+    const dir = await makeDir()
+    const legacy = {
+      ...EMPTY_DNS_ENHANCEMENT,
+      fakeIpFilter: ['*', ...EMPTY_DNS_ENHANCEMENT.fakeIpFilter]
+    }
+    await writeFile(join(dir, DNS_ENHANCEMENT_FILE), JSON.stringify({ enhancement: legacy }), 'utf8')
+    const migrated = await new DnsEnhancementService(dir).get()
+    expect(migrated.enhancement.fakeIpFilter).toEqual(EMPTY_DNS_ENHANCEMENT.fakeIpFilter)
+
+    const customDir = await makeDir()
+    const custom = { ...legacy, fakeIpFilter: [...legacy.fakeIpFilter, '+.example.com'] }
+    await writeFile(join(customDir, DNS_ENHANCEMENT_FILE), JSON.stringify({ enhancement: custom }), 'utf8')
+    expect((await new DnsEnhancementService(customDir).get()).enhancement.fakeIpFilter).toContain('*')
   })
 
   it('preview renders a redacted yaml dns block without writing', async () => {

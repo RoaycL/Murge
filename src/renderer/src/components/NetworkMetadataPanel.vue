@@ -18,7 +18,9 @@ const revealed = ref(false)
 
 onMounted(() => {
   void store.init()
-  if (Object.keys(unlock.results).length === 0) void unlock.testAll()
+  // Re-opening the drawer may follow a node/profile switch. Unlock verdicts are
+  // egress-specific, so always take a fresh snapshot instead of reusing rows.
+  void unlock.testAll()
 })
 
 const rows = computed(() => store.rows)

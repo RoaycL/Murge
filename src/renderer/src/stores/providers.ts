@@ -17,6 +17,8 @@ export interface ProviderOp {
   error: string | null
 }
 
+export type ProviderKind = 'proxy' | 'rule'
+
 /**
  * A single node's measured health. `status === 'ok'` carries the measured
  * delay; `status === 'unavailable'` means no usable measurement exists
@@ -101,12 +103,13 @@ export const useProvidersStore = defineStore('providers', () => {
     orderedRuleProviders.value.filter((p) => isRemoteResource(p))
   )
 
-  function opOf(name: string): ProviderOp {
-    return ops.value[name] ?? emptyOp()
+  function opOf(name: string, kind: ProviderKind = 'proxy'): ProviderOp {
+    return ops.value[`${kind}\0${name}`] ?? emptyOp()
   }
 
-  function setOp(name: string, patch: Partial<ProviderOp>): void {
-    ops.value = { ...ops.value, [name]: { ...opOf(name), ...patch } }
+  function setOp(name: string, patch: Partial<ProviderOp>, kind: ProviderKind = 'proxy'): void {
+    const key = `${kind}\0${name}`
+    ops.value = { ...ops.value, [key]: { ...opOf(name, kind), ...patch } }
   }
 
   function healthOf(name: string): ProviderHealthResult | null {
@@ -185,13 +188,13 @@ export const useProvidersStore = defineStore('providers', () => {
   }
 
   async function refreshRuleProvider(name: string): Promise<void> {
-    setOp(name, { refreshing: true, error: null })
+    setOp(name, { refreshing: true, error: null }, 'rule')
     try {
       await window.desktop.mihomo.refreshRuleProvider(name)
       await reloadRuleProviders()
-      setOp(name, { refreshing: false })
+      setOp(name, { refreshing: false }, 'rule')
     } catch (error) {
-      setOp(name, { refreshing: false, error: refreshFailureMessage(error) })
+      setOp(name, { refreshing: false, error: refreshFailureMessage(error) }, 'rule')
     }
   }
 
@@ -231,16 +234,16 @@ export const useProvidersStore = defineStore('providers', () => {
     let updated = 0
     let failed = 0
     for (const name of [...new Set(names)]) {
-      setOp(name, { refreshing: true, error: null })
+      setOp(name, { refreshing: true, error: null }, 'rule')
       try {
         await window.desktop.mihomo.refreshRuleProvider(name)
         updated++
       } catch (error) {
-        setOp(name, { refreshing: false, error: refreshFailureMessage(error) })
+        setOp(name, { refreshing: false, error: refreshFailureMessage(error) }, 'rule')
         failed++
         continue
       }
-      setOp(name, { refreshing: false })
+      setOp(name, { refreshing: false }, 'rule')
     }
     try {
       await reloadRuleProviders()

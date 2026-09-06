@@ -7,8 +7,10 @@ class FakeAdapter implements StartupAdapter {
   writes: boolean[] = []
   confirm = true
   fail: Error | null = null
+  rewrites = 0
   async read(): Promise<boolean> { return this.value }
   async write(enabled: boolean): Promise<void> { this.writes.push(enabled); if (this.fail) throw this.fail; if (this.confirm) this.value = enabled }
+  async rewriteIfEnabled(): Promise<void> { this.rewrites++ }
 }
 
 describe('StartupService', () => {
@@ -38,5 +40,13 @@ describe('StartupService', () => {
     const status = await new StartupService(adapter).setEnabled(true)
     expect(status).toEqual({ supported: false, enabled: false, phase: 'unsupported', errorMessage: null })
     expect(adapter.writes).toEqual([])
+  })
+
+  it('rewrites an existing argument-sensitive registration after settings change', async () => {
+    const adapter = new FakeAdapter()
+    adapter.value = true
+    const status = await new StartupService(adapter).refreshRegistration()
+    expect(adapter.rewrites).toBe(1)
+    expect(status).toMatchObject({ enabled: true, phase: 'idle' })
   })
 })

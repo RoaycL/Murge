@@ -122,16 +122,16 @@ watch(() => kernel.status.phase, (phase, previous) => {
             <strong>{{ provider.name }}</strong>
             <small>{{ provider.behavior || 'rule' }} · {{ provider.ruleCount ?? 0 }} 条规则 · {{ formatUpdatedAt(provider.updatedAt) }}</small>
           </div>
-          <div v-if="providers.opOf(provider.name).error" class="provider-error">
-            {{ providers.opOf(provider.name).error }}
+          <div v-if="providers.opOf(provider.name, 'rule').error" class="provider-error">
+            {{ providers.opOf(provider.name, 'rule').error }}
           </div>
           <div class="provider-actions">
             <button
               type="button"
               class="icon-control"
-              :class="{ spinning: providers.opOf(provider.name).refreshing }"
-              :disabled="providers.opOf(provider.name).refreshing"
-              :aria-label="providers.opOf(provider.name).refreshing ? '更新中' : '更新规则集'"
+              :class="{ spinning: providers.opOf(provider.name, 'rule').refreshing }"
+              :disabled="providers.opOf(provider.name, 'rule').refreshing"
+              :aria-label="providers.opOf(provider.name, 'rule').refreshing ? '更新中' : '更新规则集'"
               title="更新"
               @click="providers.refreshRuleProvider(provider.name)"
             ><AppIcon name="refresh" :size="16" /></button>

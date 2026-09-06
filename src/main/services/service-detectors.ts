@@ -102,7 +102,7 @@ export const gemini = defineDetector('Gemini', async (probe) => {
   return { status: GEMINI_BLOCKED.includes(code) ? 'unsupported' : 'supported', region: code }
 })
 
-/** Grok — authored for Murge (Verge has no check): homepage gate + trace region. */
+/** Grok — authored for this app (Verge has no check): homepage gate + trace region. */
 export const grok = defineDetector('Grok', async (probe) => {
   const trace = await probe({ url: 'https://grok.com/cdn-cgi/trace' })
   const region = normalizeRegion(traceLocation(trace.body))
@@ -259,7 +259,7 @@ export const youtube = defineDetector('YouTube', async (probe) => {
   return { status: 'error', region }
 })
 
-/** GitHub — authored for Murge (Verge has no check): homepage gate + trace region. */
+/** GitHub — authored for this app (Verge has no check): homepage gate + trace region. */
 export const github = defineDetector('GitHub', async (probe) => {
   const trace = await probe({ url: 'https://github.com/cdn-cgi/trace' })
   const region = normalizeRegion(traceLocation(trace.body))

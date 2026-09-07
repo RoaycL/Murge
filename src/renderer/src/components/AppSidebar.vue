@@ -25,7 +25,7 @@ const groups: Array<{ label: string; items: Array<{ to: string; label: string; i
     label: '配置',
     items: [
       { to: '/profiles', label: '配置', icon: 'profiles' },
-      { to: '/substore', label: 'Sub-Store', icon: 'database' },
+      { to: '/substore', label: 'Sub-Store', icon: 'substore' },
       { to: '/overrides', label: '覆写', icon: 'overrides' },
       { to: '/resources', label: '外部资源', icon: 'resources' }
     ]

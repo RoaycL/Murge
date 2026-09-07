@@ -80,3 +80,10 @@ databases to evaluate `GEOSITE`/`GEOIP` rules. The underlying data is assembled
 by MetaCubeX from the v2fly domain-list-community and geoip projects; consult
 <https://github.com/MetaCubeX/meta-rules-dat> for the data sources and their
 respective license terms.
+
+## Sub-Store logo
+
+The Sub-Store navigation icon is adapted from the official Sub-Store-Front-End
+favicon at <https://github.com/sub-store-org/Sub-Store-Front-End/blob/master/public/favicon.svg>.
+Sub-Store-Front-End is licensed under GPL-3.0; Murge is distributed under the
+same GPL-3.0-only license and retains the source attribution here.

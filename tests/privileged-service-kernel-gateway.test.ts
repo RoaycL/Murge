@@ -106,4 +106,33 @@ describe('privileged persistent kernel gateway', () => {
     const start = vi.mocked(transport.request).mock.calls.map(call => call[0]).find(request => request.operation === 'start')
     expect(start).toMatchObject({ operation: 'start', version: 'v1.19.29' })
   })
+
+  it('builds the profile before reclaiming ports and starts immediately afterwards', async () => {
+    const events: string[] = []
+    const transport: TunServiceTransport = {
+      request: vi.fn(async request => {
+        if (request.operation === 'start') events.push('start')
+        return response(request, request.operation === 'start' ? 'running' : 'stopped')
+      })
+    }
+    const gateway = new PrivilegedServiceKernelGateway(
+      new TunServiceClient(transport),
+      () => ({ mixedPort: 17890, controllerPort: 19090, secret: 'ab'.repeat(32) }),
+      {
+        readActiveDocument: async () => { events.push('build'); return null },
+        readTunConfig: async () => ({ ...EMPTY_TUN_CONFIG }),
+        readCore: async () => ({ ...EMPTY_CORE_SETTINGS }),
+        readGeodata: async () => ({ ...EMPTY_GEODATA_SETTINGS })
+      },
+      { waitUntilReady: async () => undefined },
+      'Product TUN',
+      10_000,
+      () => true,
+      () => { events.push('reclaim') }
+    )
+
+    await gateway.start()
+
+    expect(events).toEqual(['build', 'reclaim', 'start'])
+  })
 })

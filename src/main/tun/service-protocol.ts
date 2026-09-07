@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { assertProxiedTunConfig } from './mihomo-tun-config'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
 
-export const TUN_SERVICE_PROTOCOL_VERSION = 3 as const
+export const TUN_SERVICE_PROTOCOL_VERSION = 4 as const
 export const TUN_SERVICE_MAX_PROFILE_BYTES = 2 * 1024 * 1024
 
 const uint64Decimal = z.string().regex(/^(?:0|[1-9]\d{0,19})$/).refine(value => BigInt(value) <= 0xffffffffffffffffn)
@@ -17,7 +17,8 @@ export const tunServiceRequestSchema = z.discriminatedUnion('operation', [
     operation: z.literal('start'),
     sessionId,
     profile: z.string().min(1).max(TUN_SERVICE_MAX_PROFILE_BYTES),
-    profileSha256: sha256
+    profileSha256: sha256,
+    version: z.string().regex(/^v\d+\.\d+\.\d+$/).optional()
   }).strict(),
   z.object({
     protocolVersion: z.literal(TUN_SERVICE_PROTOCOL_VERSION),
@@ -34,6 +35,13 @@ export const tunServiceRequestSchema = z.discriminatedUnion('operation', [
     protocolVersion: z.literal(TUN_SERVICE_PROTOCOL_VERSION),
     requestId: uint64Decimal,
     operation: z.literal('reconcile')
+  }).strict(),
+  z.object({
+    protocolVersion: z.literal(TUN_SERVICE_PROTOCOL_VERSION),
+    requestId: uint64Decimal,
+    operation: z.literal('install'),
+    version: z.string().regex(/^v\d+\.\d+\.\d+$/),
+    proxyPort: z.number().int().min(1024).max(65535).optional()
   }).strict()
 ])
 
@@ -42,7 +50,7 @@ export type TunServiceRequest = z.infer<typeof tunServiceRequestSchema>
 export const tunServiceResponseSchema = z.object({
   protocolVersion: z.literal(TUN_SERVICE_PROTOCOL_VERSION),
   requestId: uint64Decimal,
-  outcome: z.enum(['stopped', 'starting', 'running', 'stopping', 'failed', 'conflict']),
+  outcome: z.enum(['stopped', 'starting', 'running', 'stopping', 'installed', 'failed', 'conflict']),
   sessionId: sessionId.nullable(),
   pid: z.number().int().positive().nullable(),
   errorCode: z.string().regex(/^[A-Z0-9_]+$/).nullable()

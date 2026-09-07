@@ -45,14 +45,29 @@ type flakyRuntime struct {
 	startErr  error
 	stopErr   error
 	inspectFn func(pid int) (bool, error)
+	installed []string
 }
 
-func (runtime *flakyRuntime) Start(_ string, _ string) (int, error) {
+func (runtime *flakyRuntime) Start(_ string, _ string, _ string) (int, error) {
 	if runtime.startErr != nil {
 		return 0, runtime.startErr
 	}
 	runtime.started++
 	return 4200 + runtime.started, nil
+}
+
+func (runtime *flakyRuntime) Install(version string, _ int) error {
+	runtime.installed = append(runtime.installed, version)
+	return nil
+}
+
+func TestInstallDelegatesToRuntimeAndReportsInstalled(t *testing.T) {
+	runtime := &flakyRuntime{}
+	manager := newSessionManager(runtime, &flakyStore{})
+	response := manager.Handle(serviceRequest{Operation: "install", Version: "v1.19.29", ProxyPort: 7890})
+	if response.Outcome != "installed" || len(runtime.installed) != 1 || runtime.installed[0] != "v1.19.29" {
+		t.Fatalf("version install did not reach runtime: response=%+v installed=%v", response, runtime.installed)
+	}
 }
 
 func (runtime *flakyRuntime) Stop(pid int) error {

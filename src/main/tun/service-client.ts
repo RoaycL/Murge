@@ -3,7 +3,7 @@ import { parseTunServiceResponse, TUN_SERVICE_PROTOCOL_VERSION, type TunServiceR
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
 
 export interface TunServiceTransport {
-  request(message: TunServiceRequest, signal?: AbortSignal): Promise<unknown>
+  request(message: TunServiceRequest, signal?: AbortSignal, timeoutMs?: number): Promise<unknown>
 }
 
 export interface TunOwnedSession {
@@ -25,7 +25,7 @@ export class TunServiceClient {
     return this.ownedSession ? { ...this.ownedSession } : null
   }
 
-  async start(profile: string, signal?: AbortSignal): Promise<TunOwnedSession> {
+  async start(profile: string, signal?: AbortSignal, version?: string): Promise<TunOwnedSession> {
     if (this.ownedSession) fail(ProtocolErrorCode.KERNEL_RUNNING, 'A TUN session is already owned')
     const requestId = this.takeRequestId()
     const sessionId = randomUUID()
@@ -35,7 +35,8 @@ export class TunServiceClient {
       operation: 'start',
       sessionId,
       profile,
-      profileSha256: createHash('sha256').update(profile, 'utf8').digest('hex')
+      profileSha256: createHash('sha256').update(profile, 'utf8').digest('hex'),
+      ...(version ? { version } : {})
     }, signal)
     if (response.outcome === 'conflict') {
       fail(ProtocolErrorCode.TUN_SERVICE_CONFLICT, response.errorCode ?? 'TUN service ownership conflict')
@@ -45,6 +46,20 @@ export class TunServiceClient {
     }
     this.ownedSession = { sessionId, pid: response.pid }
     return { ...this.ownedSession }
+  }
+
+  /** Ask the privileged service to fetch and verify one official mihomo release. */
+  async installVersion(version: string, proxyPort?: number, signal?: AbortSignal): Promise<void> {
+    const response = await this.exchange({
+      protocolVersion: TUN_SERVICE_PROTOCOL_VERSION,
+      requestId: this.takeRequestId(),
+      operation: 'install',
+      version,
+      ...(proxyPort ? { proxyPort } : {})
+    }, signal, 150_000)
+    if (response.outcome !== 'installed') {
+      fail(ProtocolErrorCode.ARTIFACT_DOWNLOAD_FAILED, response.errorCode ?? `Service returned ${response.outcome}`)
+    }
   }
 
   async stop(signal?: AbortSignal): Promise<void> {
@@ -88,8 +103,8 @@ export class TunServiceClient {
     return this.nextRequestId.toString(10)
   }
 
-  private async exchange(request: TunServiceRequest, signal?: AbortSignal): Promise<TunServiceResponse> {
-    const raw = await this.transport.request(request, signal)
+  private async exchange(request: TunServiceRequest, signal?: AbortSignal, timeoutMs?: number): Promise<TunServiceResponse> {
+    const raw = await this.transport.request(request, signal, timeoutMs)
     return parseTunServiceResponse(raw, request.requestId)
   }
 }

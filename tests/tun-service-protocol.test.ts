@@ -63,6 +63,25 @@ describe('Phase 9B privileged service protocol', () => {
     expect(calls[1]).toMatchObject({ operation: 'stop', sessionId: owned.sessionId })
   })
 
+  it('requests an official version install with the extended timeout', async () => {
+    const transport: TunServiceTransport = {
+      request: vi.fn(async request => ({
+        protocolVersion: TUN_SERVICE_PROTOCOL_VERSION,
+        requestId: request.requestId,
+        outcome: 'installed',
+        sessionId: null,
+        pid: null,
+        errorCode: null
+      }))
+    }
+    await expect(new TunServiceClient(transport).installVersion('v1.19.29', 7890)).resolves.toBeUndefined()
+    expect(vi.mocked(transport.request)).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: 'install', version: 'v1.19.29', proxyPort: 7890 }),
+      undefined,
+      150_000
+    )
+  })
+
   it('retains ownership when stop is not confirmed', async () => {
     const transport: TunServiceTransport = {
       request: vi.fn(async request => request.operation === 'stop'

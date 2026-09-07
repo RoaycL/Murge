@@ -53,7 +53,8 @@ export class PrivilegedServiceKernelGateway implements KernelGateway {
     private readonly device: string,
     private readonly readyTimeoutMs = 10_000,
     private readonly canStart: () => boolean | Promise<boolean> = () => true,
-    private readonly prepareStart: (runtime: PrivilegedKernelRuntime) => void | Promise<void> = () => undefined
+    private readonly prepareStart: (runtime: PrivilegedKernelRuntime) => void | Promise<void> = () => undefined,
+    private readonly versionSelection: () => Promise<{ channel: 'stable' | 'specific'; specificVersion: string | null }> = async () => ({ channel: 'stable', specificVersion: null })
   ) {}
 
   getStatus(): KernelStatus { return { ...this.status } }
@@ -104,14 +105,23 @@ export class PrivilegedServiceKernelGateway implements KernelGateway {
         // service lifecycle when recovering this app's own stale session.
         await this.prepareStart(runtime)
         const profile = await this.buildProfile(runtime)
-        const owned = await this.startProfile(profile)
+        const selection = await this.versionSelection()
+        const requestedVersion = selection.channel === 'specific' ? selection.specificVersion ?? undefined : undefined
+        const owned = await this.startProfile(profile, requestedVersion)
         const controller = new AbortController()
         const timer = setTimeout(() => controller.abort(), this.readyTimeoutMs)
         try {
           const ready = await this.readiness.waitUntilReady({ ...runtime, signal: controller.signal })
+          const observedVersion = ready && typeof ready.version === 'string' ? ready.version : null
+          if (requestedVersion && observedVersion?.replace(/^v/, '') !== requestedVersion.replace(/^v/, '')) {
+            throw new ProtocolError(
+              ProtocolErrorCode.ARTIFACT_HASH_MISMATCH,
+              `内核版本未生效：请求 ${requestedVersion}，实际 ${observedVersion ?? '未知'}`
+            )
+          }
           this.setStatus({
             phase: 'running', pid: owned.pid,
-            version: ready && typeof ready.version === 'string' ? ready.version : null,
+            version: observedVersion,
             controllerUrl: `http://127.0.0.1:${runtime.controllerPort}`,
             startedAt: new Date().toISOString(), lastError: null
           })
@@ -200,12 +210,12 @@ export class PrivilegedServiceKernelGateway implements KernelGateway {
    * case by reconciling ownership before retrying. Blindly sending a second
    * start would turn a successful first start into a conflict and orphan the
    * only live controller from the GUI's point of view. */
-  private async startProfile(profile: string): Promise<{ sessionId: string; pid: number }> {
+  private async startProfile(profile: string, version?: string): Promise<{ sessionId: string; pid: number }> {
     const deadline = Date.now() + this.readyTimeoutMs
     let lastError: unknown
     while (Date.now() < deadline) {
       try {
-        return await this.client.start(profile)
+        return await this.client.start(profile, undefined, version)
       } catch (error) {
         lastError = error
         if (!(error instanceof ProtocolError) || error.code !== ProtocolErrorCode.UPSTREAM_UNREACHABLE) throw error

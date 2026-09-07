@@ -51,7 +51,7 @@ import { createSubscriptionProxyFetchFn } from './subscriptions/proxy-fetch-tran
 import { startMockMihomoServer, type MockMihomoServerHandle } from './testing/mock-mihomo-server'
 import type { MihomoGateway } from '@shared/gateways'
 import { ProtocolError, ProtocolErrorCode } from '../shared/protocol-errors'
-import { KernelManagerService } from './kernel/kernel-manager-service'
+import { KernelManagerService, type KernelManagerServiceDeps } from './kernel/kernel-manager-service'
 import { runQuitFlow } from './quit-guard'
 import { TrayController } from './tray/tray-controller'
 import { createElectronTray } from './tray/electron-tray'
@@ -723,21 +723,22 @@ app.whenReady().then(async () => {
     return snifferEnhancementService.applyToDocument(dnsApplied)
   }
   const tunSupported = !is.dev && process.platform === 'win32'
+  const tunServiceClient = tunSupported
+    ? new TunServiceClient(new NamedPipeTunServiceTransport(tunServiceIdentity(brand.appId).pipeName))
+    : null
+  let applyInstalledKernelVersion: NonNullable<KernelManagerServiceDeps['applyInstalledVersion']> = async () => {
+    throw new ProtocolError(ProtocolErrorCode.INTERNAL, '内核版本切换器尚未就绪')
+  }
   const kernelManagerService = new KernelManagerService({
     settings: appSettingsService,
     workspaceRoot: productionKernelRoot,
-    // The production Windows LocalSystem service intentionally accepts only the
-    // installer-pinned archive. Do not advertise a user-selected binary that the
-    // privileged runtime cannot execute from a writable directory.
-    specificVersionsSupported: !tunSupported
+    specificVersionsSupported: true,
+    installVersion: tunServiceClient ? (version) => tunServiceClient.installVersion(version, productionMixedPort!) : undefined,
+    applyInstalledVersion: (version, previous) => applyInstalledKernelVersion(version, previous)
   })
   // Windows production uses the installed LocalSystem service as the ONE core
   // host in both ordinary and TUN modes. The same client is also used by the
   // liveness monitor, so ownership cannot split across independent handles.
-  const tunServiceClient = tunSupported
-    ? new TunServiceClient(new NamedPipeTunServiceTransport(tunServiceIdentity(brand.appId).pipeName))
-    : null
-
   const kernelSupervisor = new KernelSupervisor(
     {
       resolver: is.dev
@@ -847,7 +848,8 @@ app.whenReady().then(async () => {
           runtime.httpPort,
           runtime.socksPort,
           runtime.controllerPort
-        ])
+        ]),
+        () => kernelManagerService.getVersionSelection()
       )
     : null
   // A service-owned core surviving an abnormal GUI exit may still own TUN
@@ -1050,6 +1052,30 @@ app.whenReady().then(async () => {
     strategy: tunSupported ? 'in-place' : 'host-handoff',
     onError: (error, step) => console.error(`[mode-transition] ${step}:`, error)
   })
+  applyInstalledKernelVersion = async (version, previous) => {
+    const before = await runtimeKernelGateway.getStatus()
+    if (before.phase !== 'running' && before.phase !== 'starting') return
+    const rollback = async (): Promise<void> => {
+      await appSettingsService.set({
+        kernelChannel: previous.channel,
+        kernelSpecificVersion: previous.specificVersion ?? ''
+      })
+    }
+    await modeController.reloadProfile((kernel) =>
+      reloadKernelForActiveProfile({ kernel, systemProxy: systemProxyService }, { rollbackActive: rollback })
+    )
+    const applied = await runtimeKernelGateway.getStatus()
+    if (applied.version?.replace(/^v/, '') !== version.replace(/^v/, '')) {
+      await rollback()
+      await modeController.reloadProfile((kernel) =>
+        reloadKernelForActiveProfile({ kernel, systemProxy: systemProxyService })
+      ).catch(() => undefined)
+      throw new ProtocolError(
+        ProtocolErrorCode.ARTIFACT_HASH_MISMATCH,
+        `内核版本未生效：请求 ${version}，实际 ${applied.version ?? '未知'}`
+      )
+    }
+  }
   modeTransition = modeController
   // The IPC-facing gateways go through THE ONE mode-transition queue, so kernel
   // start/stop and TUN enable/disable can never interleave their

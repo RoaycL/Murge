@@ -86,6 +86,24 @@ describe('KernelManagerService', () => {
       await rm(base, { recursive: true, force: true })
     })
 
+    it('applies a stable-channel switch immediately when a live apply hook is present', async () => {
+      const { settings, base } = await makeService()
+      await settings.set({ kernelChannel: 'specific', kernelSpecificVersion: 'v1.19.20' })
+      const applyInstalledVersion = vi.fn(async () => undefined)
+      const service = new KernelManagerService({
+        settings,
+        workspaceRoot: join(base, 'kernel'),
+        stableVersion: 'v1.19.30',
+        applyInstalledVersion
+      })
+      const state = await service.setChannel('stable')
+      expect(applyInstalledVersion).toHaveBeenCalledWith('v1.19.30', {
+        channel: 'specific', specificVersion: 'v1.19.20'
+      })
+      expect(state).toMatchObject({ channel: 'stable', effectiveVersion: 'v1.19.30', error: null })
+      await rm(base, { recursive: true, force: true })
+    })
+
     it('does not advertise or persist a specific version in privileged service mode', async () => {
       const base = await mkdtemp(join(tmpdir(), 'kernel-manager-service-mode-'))
       const settings = new FakeAppSettingsGateway()
@@ -172,6 +190,25 @@ describe('KernelManagerService', () => {
       expect(state.installing).toBeNull()
       expect(settings.settings.kernelSpecificVersion).toBe('v1.19.20')
       expect(resolveCalledWith).toBe(join(base, 'kernel', 'versions', '1.19.20'))
+      await rm(base, { recursive: true, force: true })
+    })
+
+    it('uses the privileged installer and rolls the selection back when live apply fails', async () => {
+      const base = await mkdtemp(join(tmpdir(), 'kernel-manager-privileged-'))
+      const settings = new FakeAppSettingsGateway()
+      const installVersion = vi.fn(async () => undefined)
+      const service = new KernelManagerService({
+        workspaceRoot: join(base, 'kernel'),
+        settings,
+        stableVersion: 'v1.19.30',
+        installVersion,
+        applyInstalledVersion: async () => { throw new Error('controller reported wrong version') }
+      })
+      const state = await service.install('v1.19.29')
+      expect(installVersion).toHaveBeenCalledWith('v1.19.29')
+      expect(state).toMatchObject({ channel: 'stable', specificVersion: null })
+      expect(state.error).toContain('controller reported wrong version')
+      expect(settings.settings).toMatchObject({ kernelChannel: 'stable', kernelSpecificVersion: '' })
       await rm(base, { recursive: true, force: true })
     })
 

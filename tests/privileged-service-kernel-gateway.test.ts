@@ -81,4 +81,29 @@ describe('privileged persistent kernel gateway', () => {
     await expect(gateway.start()).resolves.toMatchObject({ phase: 'running', pid: 4242 })
     expect(startCalls).toBe(1)
   })
+
+  it('passes the selected version to the service and verifies the controller result', async () => {
+    const transport: TunServiceTransport = {
+      request: vi.fn(async request => response(request, request.operation === 'start' ? 'running' : 'stopped'))
+    }
+    const gateway = new PrivilegedServiceKernelGateway(
+      new TunServiceClient(transport),
+      () => ({ mixedPort: 17890, controllerPort: 19090, secret: 'ab'.repeat(32) }),
+      {
+        readActiveDocument: async () => null,
+        readTunConfig: async () => ({ ...EMPTY_TUN_CONFIG }),
+        readCore: async () => ({ ...EMPTY_CORE_SETTINGS }),
+        readGeodata: async () => ({ ...EMPTY_GEODATA_SETTINGS })
+      },
+      { waitUntilReady: async () => ({ version: '1.19.29' }) },
+      'Product TUN',
+      10_000,
+      () => true,
+      () => undefined,
+      async () => ({ channel: 'specific', specificVersion: 'v1.19.29' })
+    )
+    await expect(gateway.start()).resolves.toMatchObject({ phase: 'running', version: '1.19.29' })
+    const start = vi.mocked(transport.request).mock.calls.map(call => call[0]).find(request => request.operation === 'start')
+    expect(start).toMatchObject({ operation: 'start', version: 'v1.19.29' })
+  })
 })

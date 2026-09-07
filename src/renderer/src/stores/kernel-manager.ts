@@ -81,8 +81,8 @@ export const useKernelManagerStore = defineStore('kernel-manager', () => {
     busy.value = true
     try {
       state.value = coerceKernelManagerState(await window.desktop.kernelManager.install(version))
-      errorMessage.value = null
-      return true
+      errorMessage.value = state.value.error
+      return state.value.error === null
     } catch (error) {
       errorMessage.value = toProtocolError(error).message
       return false

@@ -52,6 +52,10 @@ export interface KernelManagerServiceDeps {
   fetchReleaseAssets?: (version: string) => Promise<MihomoReleaseAsset[]>
   /** Resolve (download + verify + reuse) an asset into a per-version workspace. */
   resolveAsset?: (asset: MihomoAsset, workspaceDir: string) => Promise<ResolvedMihomoBinary>
+  /** Privileged production installer; the service independently fetches and verifies the official release. */
+  installVersion?: (version: string) => Promise<void>
+  /** Restart/reload a live kernel and prove the selected version took effect. */
+  applyInstalledVersion?: (version: string, previous: { channel: 'stable' | 'specific'; specificVersion: string | null }) => Promise<void>
   /** Timeout for the live GitHub metadata requests (default 30s). */
   githubTimeoutMs?: number
   /** False when a privileged service can only execute the installer-pinned archive. */
@@ -103,7 +107,32 @@ export class KernelManagerService implements KernelManagerGateway {
       this.state.error = '当前 Windows 服务模式仅支持安装包内置的稳定内核。'
       return this.commit()
     }
+    const current = await this.deps.settings.get()
+    if (current.kernelChannel === channel) {
+      this.state.error = null
+      return this.commit()
+    }
+    const previous = {
+      channel: current.kernelChannel,
+      specificVersion: current.kernelSpecificVersion || null
+    }
     await this.deps.settings.set({ kernelChannel: channel })
+    const targetVersion = channel === 'specific'
+      ? current.kernelSpecificVersion || null
+      : this.deps.stableVersion ?? MIHOMO_VERSION
+    if (targetVersion && this.deps.applyInstalledVersion) {
+      try {
+        await this.deps.applyInstalledVersion(targetVersion, previous)
+      } catch (error) {
+        await this.deps.settings.set({
+          kernelChannel: previous.channel,
+          kernelSpecificVersion: previous.specificVersion ?? ''
+        })
+        this.state.error = this.errorMessage(error, `切换到 ${targetVersion} 失败`)
+        return this.commit()
+      }
+    }
+    this.state.error = null
     return this.commit()
   }
 
@@ -139,9 +168,27 @@ export class KernelManagerService implements KernelManagerGateway {
     this.state.error = null
     this.emit(await this.buildState())
     try {
-      const asset = await this.resolveVersionAsset(version)
-      await this.resolveAsset(asset, this.versionWorkspaceDir(version))
+      const previousSettings = await this.deps.settings.get()
+      const previous = {
+        channel: previousSettings.kernelChannel,
+        specificVersion: previousSettings.kernelSpecificVersion || null
+      }
+      if (this.deps.installVersion) {
+        await this.deps.installVersion(version)
+      } else {
+        const asset = await this.resolveVersionAsset(version)
+        await this.resolveAsset(asset, this.versionWorkspaceDir(version))
+      }
       await this.deps.settings.set({ kernelChannel: 'specific', kernelSpecificVersion: version })
+      try {
+        await this.deps.applyInstalledVersion?.(version, previous)
+      } catch (error) {
+        await this.deps.settings.set({
+          kernelChannel: previous.channel,
+          kernelSpecificVersion: previous.specificVersion ?? ''
+        })
+        throw error
+      }
     } catch (error) {
       this.state.error = this.errorMessage(error, `安装 ${version} 失败`)
     } finally {

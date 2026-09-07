@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CoreSettingsService, CORE_SETTINGS_FILE } from '../src/main/kernel/core-settings-service'
@@ -50,10 +50,25 @@ describe('CoreSettingsService', () => {
     expect(preview).toContain('log-level: warning')
     expect(preview).toContain('tcp-concurrent: true')
     expect(preview).toContain('ipv6: false')
-    expect(preview).toContain('mixed-port: 7892')
+    expect(preview).toContain('mixed-port: 7890')
     expect(preview).toContain('socks-port: 7891')
-    expect(preview).toContain('port: 7890')
+    expect(preview).toContain('port: 7892')
     expect(preview).toContain('external-controller: 127.0.0.1:9090')
     expect(preview).toContain('allow-lan: false')
+  })
+
+  it('migrates the reversed v0.9.0 default ports exactly once', async () => {
+    const dir = await makeDir()
+    await writeFile(join(dir, CORE_SETTINGS_FILE), JSON.stringify({
+      ...EMPTY_CORE_SETTINGS,
+      mixedPort: 7892,
+      socksPort: 7891,
+      httpPort: 7890
+    }), 'utf8')
+
+    const migrated = await new CoreSettingsService(dir).get()
+    expect(migrated).toMatchObject({ mixedPort: 7890, socksPort: 7891, httpPort: 7892 })
+    const raw = JSON.parse(await readFile(join(dir, CORE_SETTINGS_FILE), 'utf8'))
+    expect(raw).toMatchObject({ storageVersion: 2, mixedPort: 7890, socksPort: 7891, httpPort: 7892 })
   })
 })

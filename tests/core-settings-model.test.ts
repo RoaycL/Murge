@@ -24,9 +24,9 @@ describe('core-settings model', () => {
       unifiedDelay: true,
       findProcessMode: 'strict',
       interfaceName: 'Ethernet',
-      mixedPort: 7892,
+      mixedPort: 7890,
       socksPort: 7891,
-      httpPort: 7890,
+      httpPort: 7892,
       controllerHost: '0.0.0.0',
       controllerPort: 9090,
       controllerSecret: 'a'.repeat(64),
@@ -41,9 +41,9 @@ describe('core-settings model', () => {
       unifiedDelay: true,
       findProcessMode: 'strict',
       interfaceName: 'Ethernet',
-      mixedPort: 7892,
+      mixedPort: 7890,
       socksPort: 7891,
-      httpPort: 7890,
+      httpPort: 7892,
       controllerHost: '0.0.0.0',
       controllerPort: 9090,
       controllerSecret: 'a'.repeat(64),
@@ -91,9 +91,9 @@ describe('core-settings model', () => {
 
   it('repairs duplicate listener ports as one safe default block', () => {
     expect(coerceCoreSettings({ mixedPort: 7890, socksPort: 7890, controllerPort: 9090 })).toMatchObject({
-      mixedPort: 7892,
+      mixedPort: 7890,
       socksPort: 7891,
-      httpPort: 7890,
+      httpPort: 7892,
       controllerPort: 9090
     })
   })

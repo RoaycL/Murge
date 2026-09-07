@@ -43,14 +43,22 @@ export interface CoreSettings {
   findProcessMode: FindProcessMode
   /** Optional mihomo `interface-name`; empty keeps automatic route selection. */
   interfaceName: string
-  /** Required loopback mixed inbound used by the app and Windows system proxy. */
+  /** Mixed inbound used by the app and Windows system proxy. */
   mixedPort: number
-  /** Optional dedicated loopback SOCKS inbound; 0 disables it. */
+  /** Dedicated SOCKS5 inbound. */
   socksPort: number
-  /** Optional dedicated loopback HTTP inbound; 0 disables it. */
+  /** Dedicated HTTP inbound. */
   httpPort: number
-  /** Authenticated loopback controller port. */
+  /** Controller listen address. The app itself always connects through loopback. */
+  controllerHost: '127.0.0.1' | '0.0.0.0'
+  /** Controller port. */
   controllerPort: number
+  /** Persisted controller secret; empty means generate one on next app launch. */
+  controllerSecret: string
+  /** Download and serve the managed MetaCubeXD controller panel. */
+  controllerPanel: boolean
+  /** Permit proxy inbounds to listen on the LAN. */
+  allowLan: boolean
 }
 
 /**
@@ -67,10 +75,14 @@ export const EMPTY_CORE_SETTINGS: Readonly<CoreSettings> = Object.freeze({
   unifiedDelay: false,
   findProcessMode: 'off',
   interfaceName: '',
-  mixedPort: 7890,
-  socksPort: 0,
-  httpPort: 0,
-  controllerPort: 9090
+  mixedPort: 7892,
+  socksPort: 7891,
+  httpPort: 7890,
+  controllerHost: '127.0.0.1',
+  controllerPort: 9090,
+  controllerSecret: '',
+  controllerPanel: false,
+  allowLan: false
 })
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -92,10 +104,10 @@ export function coerceCoreSettings(input: unknown): CoreSettings {
     Number.isInteger(source[key]) && (source[key] as number) >= 1024 && (source[key] as number) <= 65535
       ? (source[key] as number)
       : fallback
-  const asOptionalPort = (key: 'httpPort' | 'socksPort'): number =>
-    source[key] === 0 || (Number.isInteger(source[key]) && (source[key] as number) >= 1024 && (source[key] as number) <= 65535)
+  const asRequiredPort = (key: 'httpPort' | 'socksPort', fallback: number): number =>
+    Number.isInteger(source[key]) && (source[key] as number) >= 1024 && (source[key] as number) <= 65535
       ? (source[key] as number)
-      : 0
+      : fallback
 
   const result: CoreSettings = {
     enabled: asBool('enabled'),
@@ -108,12 +120,17 @@ export function coerceCoreSettings(input: unknown): CoreSettings {
       ? source.interfaceName.trim().slice(0, 255)
       : '',
     mixedPort: asPort('mixedPort', EMPTY_CORE_SETTINGS.mixedPort),
-    socksPort: asOptionalPort('socksPort'),
-    httpPort: asOptionalPort('httpPort'),
-    controllerPort: asPort('controllerPort', EMPTY_CORE_SETTINGS.controllerPort)
+    socksPort: asRequiredPort('socksPort', EMPTY_CORE_SETTINGS.socksPort),
+    httpPort: asRequiredPort('httpPort', EMPTY_CORE_SETTINGS.httpPort),
+    controllerHost: source.controllerHost === '0.0.0.0' ? '0.0.0.0' : '127.0.0.1',
+    controllerPort: asPort('controllerPort', EMPTY_CORE_SETTINGS.controllerPort),
+    controllerSecret: typeof source.controllerSecret === 'string' && /^(?:|[0-9a-f]{64})$/.test(source.controllerSecret)
+      ? source.controllerSecret
+      : '',
+    controllerPanel: asBool('controllerPanel'),
+    allowLan: asBool('allowLan')
   }
   const activePorts = [result.mixedPort, result.socksPort, result.httpPort, result.controllerPort]
-    .filter((port) => port !== 0)
   if (new Set(activePorts).size !== activePorts.length) {
     result.mixedPort = EMPTY_CORE_SETTINGS.mixedPort
     result.socksPort = EMPTY_CORE_SETTINGS.socksPort

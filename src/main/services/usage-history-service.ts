@@ -1,3 +1,4 @@
+import type { MihomoConnectionsSnapshot } from '../../shared/mihomo-api'
 import type { UsageBucket, UsageHistorySnapshot, UsageRankingEntry, UsageWindow, UsageRanking, UsageCapacity } from '../../shared/usage'
 import {
   aggregateUsageWindow,
@@ -27,6 +28,8 @@ export interface UsageHistoryServiceOptions {
   persistIntervalMs?: number
   /** Optional live traffic source the service records from. */
   onTraffic?: (listener: (sample: UsageSample) => void) => () => void
+  /** Optional live connection source used for the human-facing usage count. */
+  onConnections?: (listener: (snapshot: MihomoConnectionsSnapshot) => void) => () => void
 }
 
 /**
@@ -36,7 +39,7 @@ export interface UsageHistoryServiceOptions {
  * over the interval since the previous sample, and accumulates into hourly byte
  * buckets. The bucket list is capped at `maxBuckets` (newest retained), so
  * memory and the on-disk database stay flat for the whole session. Only
- * aggregate byte totals and sample counts are ever stored — credentials, hosts
+ * aggregate byte totals and connection counts are ever stored — credentials, hosts
  * and raw profiles are never recorded.
  */
 export class UsageHistoryService implements UsageHistoryGateway {
@@ -50,7 +53,10 @@ export class UsageHistoryService implements UsageHistoryGateway {
   private lastAt: number | null = null
   private lastPersistAt = 0
   private trafficUnsub: (() => void) | null = null
+  private connectionsUnsub: (() => void) | null = null
+  private activeConnectionIds = new Set<string>()
   private loaded = false
+  private initPromise: Promise<void> | null = null
 
   constructor(options: UsageHistoryServiceOptions = {}) {
     this.maxBuckets = options.maxBuckets ?? USAGE_MAX_BUCKETS
@@ -58,13 +64,20 @@ export class UsageHistoryService implements UsageHistoryGateway {
     this.now = options.now ?? (() => Date.now())
     this.persistIntervalMs = options.persistIntervalMs ?? 10_000
     if (options.onTraffic) this.attachTraffic(options.onTraffic)
+    if (options.onConnections) this.attachConnections(options.onConnections)
   }
 
   /** Load any persisted buckets; safe to call more than once. */
   async init(): Promise<void> {
-    this.buckets = coerceUsageBuckets(await this.store.read(), this.maxBuckets)
-    this.currentBucketStart = this.buckets.length ? this.buckets[this.buckets.length - 1].bucketStart : null
-    this.loaded = true
+    if (this.loaded) return
+    if (!this.initPromise) {
+      this.initPromise = (async () => {
+        this.buckets = coerceUsageBuckets(await this.store.read(), this.maxBuckets)
+        this.currentBucketStart = this.buckets.length ? this.buckets[this.buckets.length - 1].bucketStart : null
+        this.loaded = true
+      })().finally(() => { this.initPromise = null })
+    }
+    await this.initPromise
   }
 
   /** Subscribe to a live traffic source; returns the unsubscribe function. */
@@ -77,6 +90,36 @@ export class UsageHistoryService implements UsageHistoryGateway {
       unsub()
       this.trafficUnsub = null
     }
+  }
+
+  /** Count actual newly observed connections instead of one 1 Hz traffic tick. */
+  attachConnections(
+    onConnections: (listener: (snapshot: MihomoConnectionsSnapshot) => void) => () => void
+  ): () => void {
+    const unsub = onConnections((snapshot) => {
+      void this.recordConnections(snapshot)
+    })
+    this.connectionsUnsub = unsub
+    return () => {
+      unsub()
+      this.connectionsUnsub = null
+    }
+  }
+
+  async recordConnections(snapshot: MihomoConnectionsSnapshot, at = this.now()): Promise<void> {
+    if (!this.loaded) await this.init()
+    const currentIds = new Set(snapshot.connections.map((connection) => connection.id))
+    let added = 0
+    for (const id of currentIds) {
+      if (!this.activeConnectionIds.has(id)) added += 1
+    }
+    this.activeConnectionIds = currentIds
+    if (added === 0) return
+    const current = this.ensureBucket(at)
+    current.count += added
+    current.countType = 'connections'
+    this.trimToBound()
+    await this.maybePersist(at)
   }
 
   /**
@@ -99,18 +142,9 @@ export class UsageHistoryService implements UsageHistoryGateway {
     const upBytes = sample.up * factor
     const downBytes = sample.down * factor
 
-    const bucketStart = usageHourStart(time)
-    if (this.currentBucketStart === null || bucketStart !== this.currentBucketStart) {
-      this.buckets.push({ bucketStart, up: 0, down: 0, count: 0 })
-      this.currentBucketStart = bucketStart
-      // A boundary advance is a low-volume natural flush point.
-      this.lastPersistAt = 0
-    }
-
-    const current = this.buckets[this.buckets.length - 1]
+    const current = this.ensureBucket(time)
     current.up += upBytes
     current.down += downBytes
-    current.count += 1
     if (this.lastAt === null || time > this.lastAt) this.lastAt = time
 
     this.trimToBound()
@@ -133,6 +167,7 @@ export class UsageHistoryService implements UsageHistoryGateway {
     this.buckets = []
     this.currentBucketStart = null
     this.lastAt = null
+    this.activeConnectionIds.clear()
     await this.store.write([])
     this.lastPersistAt = this.now()
   }
@@ -153,11 +188,23 @@ export class UsageHistoryService implements UsageHistoryGateway {
   async dispose(): Promise<void> {
     this.trafficUnsub?.()
     this.trafficUnsub = null
+    this.connectionsUnsub?.()
+    this.connectionsUnsub = null
     await this.flush()
   }
 
   private trimToBound(): void {
     while (this.buckets.length > this.maxBuckets) this.buckets.shift()
+  }
+
+  private ensureBucket(time: number): UsageBucket {
+    const bucketStart = usageHourStart(time)
+    if (this.currentBucketStart === null || bucketStart !== this.currentBucketStart) {
+      this.buckets.push({ bucketStart, up: 0, down: 0, count: 0, countType: 'connections' })
+      this.currentBucketStart = bucketStart
+      this.lastPersistAt = 0
+    }
+    return this.buckets[this.buckets.length - 1]
   }
 
   private async maybePersist(time: number): Promise<void> {

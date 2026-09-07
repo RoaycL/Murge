@@ -4,12 +4,15 @@ import { useTunConfigStore } from '../stores/tun-config'
 import { EMPTY_TUN_CONFIG, type TunConfigModel } from '@shared/tun-config'
 import AppSelect from './AppSelect.vue'
 import AppIcon from './AppIcon.vue'
+import ConfirmModal from './ConfirmModal.vue'
 import { useToast } from '../composables/use-toast'
 import { useUnsavedChanges } from '../composables/use-unsaved-changes'
+import { plainJsonClone } from '@shared/plain-clone'
 
 const store = useTunConfigStore()
 const toast = useToast()
 const hydrated = ref(false)
+const resetOpen = ref(false)
 
 const form = reactive<TunConfigModel>({ ...EMPTY_TUN_CONFIG })
 
@@ -70,8 +73,18 @@ async function preview(): Promise<void> {
   previewOpen.value = true
 }
 
-function resetFromStore(): void {
-  syncFromConfig(store.config)
+function requestReset(): void {
+  resetOpen.value = true
+}
+function restoreSaved(): void { syncFromConfig(store.config) }
+
+async function confirmReset(): Promise<void> {
+  const ok = await store.save(plainJsonClone(EMPTY_TUN_CONFIG))
+  if (ok) {
+    syncFromConfig(store.config)
+    resetOpen.value = false
+    toast.success('TUN 设置已恢复默认', '下次启用 TUN 时应用')
+  } else toast.error('TUN 设置重置失败', store.lastError ?? undefined)
 }
 
 const dirty = computed(() => hydrated.value && JSON.stringify(buildInput()) !== JSON.stringify(store.config))
@@ -99,7 +112,7 @@ onMounted(async () => {
           设置虚拟网卡的协议栈、设备名称、最大传输单元、自动路由和 DNS 劫持。保存后会在下次启用 TUN 时使用。
         </p>
       </div>
-      <button type="button" class="tun-reset" @click="resetFromStore">重置</button>
+      <div v-if="dirty" class="tun-head-actions"><button type="button" class="tun-reset" @click="restoreSaved">撤销更改</button><button type="button" class="tun-reset" @click="requestReset">恢复默认</button></div>
     </header>
 
     <p v-if="store.lastError" class="inline-error" role="alert">{{ store.lastError }}</p>
@@ -180,6 +193,7 @@ onMounted(async () => {
         </div>
         <pre class="tun-preview-body">{{ previewYaml || '（空）' }}</pre>
       </div>
+      <ConfirmModal :open="resetOpen" title="恢复默认 TUN 设置？" description="当前 TUN 设置与默认值不同。确认后将保存默认设置，并在下次启用 TUN 时使用。" confirm-label="恢复默认" :busy="store.busy" @close="resetOpen = false" @confirm="confirmReset" />
     </div>
   </section>
 </template>
@@ -208,6 +222,7 @@ onMounted(async () => {
   font-size: 12px;
   white-space: nowrap;
 }
+.tun-head-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .tun-body { margin-top: 14px; display: grid; gap: 14px; }
 .tun-group {
   margin: 0;

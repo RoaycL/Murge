@@ -10,7 +10,6 @@ import TopologyPanel from '../components/TopologyPanel.vue'
 import { useTrafficStore } from '../stores/traffic'
 import { useConnectionsStore } from '../stores/connections'
 import { useRuntimeStore } from '../stores/runtime'
-import { useKernelStore } from '../stores/kernel'
 import { useNetworkMetadataStore } from '../stores/network-metadata'
 import { useLatencyStore } from '../stores/latency'
 import { formatBytes, formatBytesParts, formatRate } from '../lib/format'
@@ -27,7 +26,6 @@ import { resolveRuntimeAccent } from '@shared/runtime-accent'
 const traffic = useTrafficStore()
 const connections = useConnectionsStore()
 const runtime = useRuntimeStore()
-const kernel = useKernelStore()
 const networkMeta = useNetworkMetadataStore()
 const latency = useLatencyStore()
 const router = useRouter()
@@ -51,9 +49,6 @@ const headlineText = computed(() => (latency.state === 'idle' || latency.state =
 const diagnosisButtonLabel = computed(() => (latency.state === 'probing' ? '检测中…' : '网络诊断'))
 
 onMounted(() => {
-  kernel.connect()
-  traffic.connect()
-  connections.connect()
   void runtime.refresh()
   void policies.load()
   void networkMeta.init()
@@ -63,13 +58,7 @@ onMounted(() => {
   latencyTimer = window.setInterval(() => void latency.probe(), LATENCY_REFRESH_MS)
 })
 
-// Same lifecycle contract as ConnectionsView / LogsView / ProcessListView:
-// drop the push subscriptions when the view unmounts so an inactive page
-// stops accumulating snapshots. The main-process streams stay shared (the
-// IPC forwarder keeps them alive), only this window's listeners detach.
 onUnmounted(() => {
-  traffic.disconnect()
-  connections.disconnect()
   if (latencyTimer != null) {
     window.clearInterval(latencyTimer)
     latencyTimer = null

@@ -5,13 +5,16 @@ import { useSystemProxyStore } from '../stores/system-proxy'
 import type { ProxyBypassPolicy } from '@shared/proxy-bypass'
 import { EMPTY_PROXY_BYPASS_POLICY, MAX_CUSTOM_BYPASS_ENTRIES } from '@shared/proxy-bypass'
 import AppIcon from './AppIcon.vue'
+import ConfirmModal from './ConfirmModal.vue'
 import { useToast } from '../composables/use-toast'
 import { useUnsavedChanges } from '../composables/use-unsaved-changes'
+import { plainJsonClone } from '@shared/plain-clone'
 
 const store = useProxyBypassStore()
 const toast = useToast()
 const hydrated = ref(false)
 const systemProxy = useSystemProxyStore()
+const resetOpen = ref(false)
 
 const form = reactive<ProxyBypassPolicy>({ ...EMPTY_PROXY_BYPASS_POLICY })
 const entryText = ref('')
@@ -51,9 +54,20 @@ async function preview(): Promise<void> {
   previewOpen.value = true
 }
 
-function resetFromStore(): void {
-  syncFromPolicy(store.policy)
-  previewOpen.value = false
+function requestReset(): void {
+  resetOpen.value = true
+}
+function restoreSaved(): void { syncFromPolicy(store.policy); previewOpen.value = false }
+
+async function confirmReset(): Promise<void> {
+  const ok = await store.save(plainJsonClone(EMPTY_PROXY_BYPASS_POLICY))
+  if (ok) {
+    syncFromPolicy(store.policy)
+    await systemProxy.refresh()
+    previewOpen.value = false
+    resetOpen.value = false
+    toast.success('代理绕过设置已恢复默认并生效')
+  } else toast.error('代理绕过设置重置失败', store.lastError ?? undefined)
 }
 
 const dirty = computed(() => hydrated.value && JSON.stringify({ enabled: form.enabled, customEntries: parseEntries() }) !== JSON.stringify(store.policy))
@@ -81,7 +95,7 @@ onMounted(async () => {
           设置不经过系统代理的域名和地址。启用后会与内置的本地及私有地址合并；关闭时保留系统原有列表，停用系统代理后会恢复修改前的设置。
         </p>
       </div>
-      <button type="button" class="pb-reset" @click="resetFromStore">重置</button>
+      <div v-if="dirty" class="pb-head-actions"><button type="button" class="pb-reset" @click="restoreSaved">撤销更改</button><button type="button" class="pb-reset" @click="requestReset">恢复默认</button></div>
     </header>
 
     <p v-if="store.lastError" class="inline-error" role="alert">{{ store.lastError }}</p>
@@ -131,6 +145,7 @@ onMounted(async () => {
         </div>
         <pre class="pb-preview-body">{{ previewValue || '（空）' }}</pre>
       </div>
+      <ConfirmModal :open="resetOpen" title="恢复默认代理绕过设置？" description="当前代理绕过设置与默认值不同。确认后将保存默认设置；系统代理已启用时会立即重新应用。" confirm-label="恢复默认" :busy="store.busy" @close="resetOpen = false" @confirm="confirmReset" />
     </div>
   </section>
 </template>
@@ -159,6 +174,7 @@ onMounted(async () => {
   font-size: 12px;
   white-space: nowrap;
 }
+.pb-head-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .pb-body { margin-top: 14px; display: grid; gap: 14px; }
 .pb-hint { margin: 0; color: var(--app-muted); font-size: 11px; }
 .pb-group {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useConnectionsStore } from '../stores/connections'
 import { formatBytes, formatWallClock } from '../lib/format'
@@ -27,8 +27,6 @@ function elapsed(value?: string): string {
   if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`
   return `${Math.floor(seconds / 3600)} 小时前`
 }
-onMounted(store.connect)
-onUnmounted(store.disconnect)
 </script>
 
 <template>

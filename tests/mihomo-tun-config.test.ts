@@ -38,8 +38,6 @@ describe('Phase 9B mihomo-owned TUN config', () => {
   })
 
   it.each([
-    ['external-controller: 127.0.0.1:19090', 'external-controller: 0.0.0.0:19090'],
-    ['allow-lan: false', 'allow-lan: true'],
     ['- MATCH,DIRECT', '- MATCH,REJECT']
   ])('rejects unsafe mutation %s -> %s', (safe, unsafe) => {
     const text = generateMihomoTunConfig(options).replace(safe, unsafe)
@@ -391,8 +389,8 @@ describe('proxied TUN config (real subscription content)', () => {
 
   it('flags a hand-authored profile that violates a non-negotiable invariant', () => {
     const text = generateProxiedTunConfig(proxied)
-    expect(proxiedTunConfigErrors(text.replace('allow-lan: false', 'allow-lan: true'))).not.toEqual([])
-    expect(proxiedTunConfigErrors(text.replace(`127.0.0.1:${options.controllerPort}`, `0.0.0.0:${options.controllerPort}`))).not.toEqual([])
+    expect(proxiedTunConfigErrors(text.replace('allow-lan: false', 'allow-lan: invalid'))).not.toEqual([])
+    expect(proxiedTunConfigErrors(text.replace(`127.0.0.1:${options.controllerPort}`, `192.168.1.1:${options.controllerPort}`))).not.toEqual([])
     expect(proxiedTunConfigErrors(text.replace('enable: true', 'enable: invalid'))).not.toEqual([])
     expect(() => assertProxiedTunConfig(`${text}listeners:\n  - name: x\n`)).toThrow(/unsafe TUN config/)
   })

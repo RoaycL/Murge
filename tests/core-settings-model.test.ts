@@ -27,7 +27,11 @@ describe('core-settings model', () => {
       mixedPort: 7892,
       socksPort: 7891,
       httpPort: 7890,
-      controllerPort: 9090
+      controllerHost: '0.0.0.0',
+      controllerPort: 9090,
+      controllerSecret: 'a'.repeat(64),
+      controllerPanel: true,
+      allowLan: true
     })
     expect(out).toEqual({
       enabled: true,
@@ -40,7 +44,11 @@ describe('core-settings model', () => {
       mixedPort: 7892,
       socksPort: 7891,
       httpPort: 7890,
-      controllerPort: 9090
+      controllerHost: '0.0.0.0',
+      controllerPort: 9090,
+      controllerSecret: 'a'.repeat(64),
+      controllerPanel: true,
+      allowLan: true
     })
   })
 
@@ -83,9 +91,9 @@ describe('core-settings model', () => {
 
   it('repairs duplicate listener ports as one safe default block', () => {
     expect(coerceCoreSettings({ mixedPort: 7890, socksPort: 7890, controllerPort: 9090 })).toMatchObject({
-      mixedPort: 7890,
-      socksPort: 0,
-      httpPort: 0,
+      mixedPort: 7892,
+      socksPort: 7891,
+      httpPort: 7890,
       controllerPort: 9090
     })
   })

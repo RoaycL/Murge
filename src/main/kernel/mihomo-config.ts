@@ -23,6 +23,9 @@ export interface MihomoConfigOptions {
   socksPort?: number
   /** External controller REST/WebSocket port (loopback only). */
   controllerPort: number
+  controllerHost?: '127.0.0.1' | '0.0.0.0'
+  allowLan?: boolean
+  controllerPanel?: boolean
   /** Controller bearer secret (must be a 64-character hex string). */
   secret: string
   /** Outbound mode. Phase 7 pins DIRECT; other modes are rejected. */
@@ -37,10 +40,14 @@ export const ALLOWED_TOP_LEVEL_KEYS = [
   'socks-port',
   'mixed-port',
   'allow-lan',
+  'bind-address',
   'mode',
   'log-level',
   'ipv6',
   'external-controller',
+  'external-ui',
+  'external-ui-url',
+  'external-ui-name',
   'secret',
   'tun',
   'dns',
@@ -48,7 +55,7 @@ export const ALLOWED_TOP_LEVEL_KEYS = [
 ] as const
 
 const ALLOWED_TOP_SET = new Set<string>(ALLOWED_TOP_LEVEL_KEYS)
-const OPTIONAL_TOP_LEVEL_KEYS = new Set(['port', 'socks-port'])
+const OPTIONAL_TOP_LEVEL_KEYS = new Set(['port', 'socks-port', 'external-ui', 'external-ui-url', 'external-ui-name'])
 const ALLOWED_LOG_LEVELS = new Set(['silent', 'error', 'warn', 'info', 'debug'])
 const ALLOWED_RULES = ['MATCH,DIRECT'] as const
 
@@ -115,12 +122,18 @@ export function generateMihomoConfig(options: MihomoConfigOptions): string {
     ...(options.httpPort ? ['port: ' + options.httpPort] : []),
     ...(options.socksPort ? ['socks-port: ' + options.socksPort] : []),
     'mixed-port: ' + mixedPort,
-    'allow-lan: false',
+    `allow-lan: ${options.allowLan ?? false}`,
+    `bind-address: ${options.allowLan ? "'*'" : '127.0.0.1'}`,
     'mode: ' + mode,
     'log-level: ' + logLevel,
     'ipv6: false',
-    'external-controller: 127.0.0.1:' + controllerPort,
+    `external-controller: ${options.controllerHost ?? '127.0.0.1'}:${controllerPort}`,
     'secret: ' + secret,
+    ...(options.controllerPanel ? [
+      'external-ui: ui',
+      'external-ui-name: metacubexd',
+      'external-ui-url: https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip'
+    ] : []),
     'tun:',
     '  enable: false',
     'dns:',
@@ -131,7 +144,7 @@ export function generateMihomoConfig(options: MihomoConfigOptions): string {
   ].join('\n')
 }
 
-const CONTROLLER_PATTERN = /^127\.0\.0\.1:(\d+)$/
+const CONTROLLER_PATTERN = /^(?:127\.0\.0\.1|0\.0\.0\.0):(\d+)$/
 
 /**
  * Collect every violation in `text` as human-readable messages. Returns an empty
@@ -217,7 +230,9 @@ function collectKeyErrors(key: string, valueNode: unknown): string[] {
       errors.push(`${key} must be an unprivileged port between ${MIN_PORT} and ${MAX_PORT}`)
     }
   } else if (key === 'allow-lan') {
-    if (!isBoolFalse) errors.push('allow-lan must be false')
+    if (!isScalar(valueNode) || typeof valueNode.value !== 'boolean') errors.push('allow-lan must be a boolean')
+  } else if (key === 'bind-address') {
+    if (!isScalar(valueNode) || !['127.0.0.1', '*'].includes(String(valueNode.value))) errors.push('bind-address is invalid')
   } else if (key === 'mode') {
     if (typeof valueNode.value !== 'string' || valueNode.value !== 'direct') {
       errors.push('mode must be direct')
@@ -230,7 +245,7 @@ function collectKeyErrors(key: string, valueNode: unknown): string[] {
     if (!isBoolFalse) errors.push('ipv6 must be false')
   } else if (key === 'external-controller') {
     if (typeof valueNode.value !== 'string' || !CONTROLLER_PATTERN.test(valueNode.value)) {
-      errors.push('external-controller must be bound to 127.0.0.1')
+      errors.push('external-controller must use a supported listen address')
     } else {
       const port = Number(valueNode.value.match(CONTROLLER_PATTERN)![1])
       if (port < MIN_PORT || port > MAX_PORT) {
@@ -241,6 +256,12 @@ function collectKeyErrors(key: string, valueNode: unknown): string[] {
     if (typeof valueNode.value !== 'string' || !SECRET_PATTERN.test(valueNode.value)) {
       errors.push('secret must be a 64-character lowercase hex string')
     }
+  } else if (key === 'external-ui' && valueNode.value !== 'ui') {
+    errors.push('external-ui must use the managed ui directory')
+  } else if (key === 'external-ui-name' && valueNode.value !== 'metacubexd') {
+    errors.push('external-ui-name must be metacubexd')
+  } else if (key === 'external-ui-url' && valueNode.value !== 'https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip') {
+    errors.push('external-ui-url must use the managed dashboard source')
   }
   return errors
 }

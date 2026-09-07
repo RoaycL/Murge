@@ -146,8 +146,6 @@ func TestRejectUnsafeProfileMutations(t *testing.T) {
 		original    string
 		replacement string
 	}{
-		{"lan bind", "allow-lan: false", "allow-lan: true"},
-		{"public controller", "external-controller: 127.0.0.1:19090", "external-controller: 0.0.0.0:19090"},
 		{"public bind-address", "bind-address: 127.0.0.1", "bind-address: 0.0.0.0"},
 		{"tun enable malformed", "  enable: true", "  enable: invalid"},
 		{"bad device", "  device: Product TUN", "  device: bad\\nname"},
@@ -183,6 +181,22 @@ func TestRejectUnsafeProfileMutations(t *testing.T) {
 		if _, err := decodeRequest(encodedStart(profile)); err == nil {
 			t.Fatalf("%s: accepted an unsafe profile", row.name)
 		}
+	}
+}
+
+func TestAcceptExplicitLANAndControllerSettings(t *testing.T) {
+	profile := stringsReplaceOnce(proxiedProfile, "allow-lan: false", "allow-lan: true")
+	profile = stringsReplaceOnce(profile, "bind-address: 127.0.0.1", "bind-address: '*'")
+	profile = stringsReplaceOnce(profile, "external-controller: 127.0.0.1:19090", "external-controller: 0.0.0.0:19090")
+	if _, err := decodeRequest(encodedStart(profile)); err != nil {
+		t.Fatalf("rejected explicitly enabled LAN/controller settings: %v", err)
+	}
+}
+
+func TestAcceptManagedControllerPanel(t *testing.T) {
+	profile := stringsReplaceOnce(proxiedProfile, "mode: rule", "mode: rule\nexternal-ui: ui\nexternal-ui-name: metacubexd\nexternal-ui-url: https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip")
+	if _, err := decodeRequest(encodedStart(profile)); err != nil {
+		t.Fatalf("rejected managed controller panel: %v", err)
 	}
 }
 

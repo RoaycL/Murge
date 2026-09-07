@@ -50,7 +50,14 @@ export class FileSystemUsageHistoryStore implements UsageHistoryStore {
     } catch {
       return coerceUsageBuckets(undefined)
     }
-    return coerceUsageBuckets(parsed, USAGE_MAX_BUCKETS)
+    // Before 0.8.5 `count` meant one traffic sample and therefore saturated at
+    // about 3600 per hourly bucket. Keep the byte history but reset that legacy
+    // counter once; newly persisted buckets carry an explicit semantic marker.
+    return coerceUsageBuckets(parsed, USAGE_MAX_BUCKETS).map((bucket) =>
+      bucket.countType === 'connections'
+        ? bucket
+        : { ...bucket, count: 0, countType: 'connections' as const }
+    )
   }
 
   async write(buckets: UsageBucket[]): Promise<void> {

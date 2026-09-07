@@ -23,7 +23,7 @@ const RANKINGS: Array<{ value: UsageRanking; label: string }> = [
   { value: 'total', label: '总计' },
   { value: 'down', label: '下载' },
   { value: 'up', label: '上传' },
-  { value: 'count', label: '次数' }
+  { value: 'count', label: '连接数' }
 ]
 
 let timer: ReturnType<typeof setInterval> | null = null
@@ -70,9 +70,6 @@ const totalText = computed(() => {
   return formatBytesParts(totals?.total ?? 0)
 })
 
-const rankingUnit = computed(() =>
-  store.ranking === 'count' ? '次' : ''
-)
 const rankingValueText = computed(() => {
   const totals = store.snapshot?.totals
   if (!totals) return ''
@@ -123,7 +120,7 @@ async function confirmClear(): Promise<void> {
     <template v-else>
       <div class="usage-metric">
         <strong>{{ totalText.value }}<span>{{ totalText.unit }}</span></strong>
-        <em>{{ windowLabel }} · {{ rankingUnit || '总流量' }} {{ rankingValueText }}</em>
+        <em>{{ windowLabel }} · {{ store.ranking === 'count' ? '连接数' : '总流量' }} {{ rankingValueText }}</em>
       </div>
 
       <div class="usage-chart" role="img" :aria-label="`${windowLabel}流量柱状图`">
@@ -153,7 +150,7 @@ async function confirmClear(): Promise<void> {
           <span class="rank-index">#{{ item.rank }}</span>
           <div class="rank-bar"><i :style="{ width: `${Math.min(100, (item.value / (store.ranked[0]?.value || 1)) * 100)}%` }" /></div>
           <span class="rank-time">{{ timeLabel(item.bucketStart) }}</span>
-          <strong>{{ store.ranking === 'count' ? `${item.count} 次` : formatBytes(item.value) }}</strong>
+          <strong>{{ store.ranking === 'count' ? `${item.count} 个` : formatBytes(item.value) }}</strong>
         </div>
       </div>
       <p v-else class="usage-empty">该时间范围内没有排名数据。</p>

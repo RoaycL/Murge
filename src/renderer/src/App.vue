@@ -10,6 +10,8 @@ import { useKernelStore } from './stores/kernel'
 import { useSystemProxyStore } from './stores/system-proxy'
 import { useAppearanceStore } from './stores/appearance'
 import { useTunStore } from './stores/tun'
+import { useTrafficStore } from './stores/traffic'
+import { useConnectionsStore } from './stores/connections'
 import { approveNavigation, cancelNavigation, pendingNavigation, unsavedLabels } from './composables/use-unsaved-changes'
 import { router } from './router'
 
@@ -18,6 +20,8 @@ const kernel = useKernelStore()
 const systemProxy = useSystemProxyStore()
 const appearance = useAppearanceStore()
 const tun = useTunStore()
+const traffic = useTrafficStore()
+const connections = useConnectionsStore()
 
 function discardAndNavigate(): void {
   const target = approveNavigation()
@@ -29,6 +33,8 @@ onMounted(async () => {
   kernel.connect()
   systemProxy.connect()
   tun.connect()
+  traffic.connect()
+  connections.connect()
   brand.value = await window.desktop.app.getBrand()
   document.title = brand.value.productName
 })
@@ -38,6 +44,8 @@ onBeforeUnmount(() => {
   systemProxy.disconnect()
   appearance.disconnect()
   tun.disconnect()
+  traffic.disconnect()
+  connections.disconnect()
 })
 </script>
 

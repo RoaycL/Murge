@@ -4,6 +4,24 @@ import { describe, expect, it } from 'vitest'
 const read = (path: string): Promise<string> => readFile(new URL(`../${path}`, import.meta.url), 'utf8')
 
 describe('Activity fluid-layout UI contract', () => {
+  it('starts traffic and connection statistics at app mount instead of page mount', async () => {
+    const [app, activity, connections, processes, devices] = await Promise.all([
+      read('src/renderer/src/App.vue'),
+      read('src/renderer/src/views/ActivityView.vue'),
+      read('src/renderer/src/views/ConnectionsView.vue'),
+      read('src/renderer/src/views/ProcessListView.vue'),
+      read('src/renderer/src/views/DeviceListView.vue')
+    ])
+
+    expect(app).toContain('traffic.connect()')
+    expect(app).toContain('connections.connect()')
+    for (const source of [activity, connections, processes, devices]) {
+      expect(source).not.toContain('store.disconnect')
+      expect(source).not.toContain('connections.disconnect()')
+      expect(source).not.toContain('traffic.disconnect()')
+    }
+  })
+
   it('opens on the 934x672 reference viewport while allowing a smaller fluid minimum', async () => {
     const [main, tokens, css] = await Promise.all([
       read('src/main/index.ts'),

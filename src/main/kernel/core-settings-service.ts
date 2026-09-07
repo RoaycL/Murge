@@ -40,10 +40,17 @@ export class CoreSettingsService implements CoreSettingsGateway {
     const settings = coerceCoreSettings(input)
     return stringify({
       'mixed-port': settings.mixedPort,
-      ...(settings.socksPort ? { 'socks-port': settings.socksPort } : {}),
-      ...(settings.httpPort ? { port: settings.httpPort } : {}),
-      'external-controller': `127.0.0.1:${settings.controllerPort}`,
-      'allow-lan': false,
+      'socks-port': settings.socksPort,
+      port: settings.httpPort,
+      'external-controller': `${settings.controllerHost}:${settings.controllerPort}`,
+      secret: settings.controllerSecret || '（下次启动时自动生成）',
+      'allow-lan': settings.allowLan,
+      'bind-address': settings.allowLan ? '*' : '127.0.0.1',
+      ...(settings.controllerPanel ? {
+        'external-ui': 'ui',
+        'external-ui-name': 'metacubexd',
+        'external-ui-url': 'https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip'
+      } : {}),
       ...(settings.enabled ? buildCoreSettingsBlock(settings) : {})
     })
   }

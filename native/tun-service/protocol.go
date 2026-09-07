@@ -24,7 +24,7 @@ var (
 	uuidPattern       = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 	devicePattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$`)
 	secretPattern     = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	controllerPattern = regexp.MustCompile(`^127\.0\.0\.1:([1-9][0-9]*)$`)
+	controllerPattern = regexp.MustCompile(`^(127\.0\.0\.1|0\.0\.0\.0):([1-9][0-9]*)$`)
 )
 
 type serviceRequest struct {
@@ -125,9 +125,8 @@ func validateUint64(value string) error {
 //     socket, Windows named pipe, TLS controller and external DoH endpoint all
 //     bypass it) and `external-controller-cors`, which widens who may reach the
 //     controller from a browser;
-//   - remote-archive download/extract: the `external-ui*` family makes mihomo
-//     fetch a ZIP and unpack it under the configured directory, then serve it.
-//     This product ships its own UI, so these are never legitimate;
+//   - the controller panel is handled separately below: only the exact managed
+//     MetaCubeXD source and contained `ui` directory are accepted;
 //   - `ntp`, whose `write-to-system: true` lets this SYSTEM-privileged process
 //     set the machine clock — which can invalidate certificate validity windows
 //     and Kerberos tickets host-wide.
@@ -138,7 +137,6 @@ var forbiddenTopKeys = []string{
 	"redir-port", "tproxy-port", "listeners", "tunnels",
 	"external-controller-unix", "external-controller-pipe", "external-controller-tls",
 	"external-controller-routing-mark", "external-controller-cors", "external-doh-server",
-	"external-ui", "external-ui-url", "external-ui-name",
 	"ntp",
 	"ss-config", "vmess-config", "tuic-server",
 }
@@ -252,9 +250,8 @@ func validateTunProfile(text string) error {
 
 	// --- Inbound / authentication boundary (non-negotiable) ---
 	if allowLAN, present := profile["allow-lan"]; present {
-		enabled, ok := allowLAN.(bool)
-		if !ok || enabled {
-			return errors.New("allow-lan must be false")
+		if _, ok := allowLAN.(bool); !ok {
+			return errors.New("allow-lan must be a boolean")
 		}
 	}
 	mixedPort, err := intValue(profile, "mixed-port")
@@ -284,9 +281,9 @@ func validateTunProfile(text string) error {
 	}
 	controller := controllerPattern.FindStringSubmatch(controllerText)
 	if controller == nil {
-		return errors.New("external-controller must bind loopback")
+		return errors.New("external-controller must use a supported listen address")
 	}
-	controllerPort, _ := strconv.Atoi(controller[1])
+	controllerPort, _ := strconv.Atoi(controller[2])
 	if controllerPort < 1024 || controllerPort > 65535 || listenerPorts[controllerPort] {
 		return errors.New("controller port is invalid")
 	}
@@ -296,8 +293,16 @@ func validateTunProfile(text string) error {
 	}
 	if bindAddress, present := profile["bind-address"]; present {
 		address, ok := bindAddress.(string)
-		if !ok || (address != "127.0.0.1" && address != "localhost") {
-			return errors.New("bind-address must stay on loopback")
+		if !ok || (address != "127.0.0.1" && address != "localhost" && address != "*") {
+			return errors.New("bind-address is invalid")
+		}
+	}
+	ui, hasUI := profile["external-ui"]
+	uiName, hasUIName := profile["external-ui-name"]
+	uiURL, hasUIURL := profile["external-ui-url"]
+	if hasUI || hasUIName || hasUIURL {
+		if ui != "ui" || uiName != "metacubexd" || uiURL != "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip" {
+			return errors.New("external-ui settings must use the managed dashboard")
 		}
 	}
 

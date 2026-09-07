@@ -1,63 +1,33 @@
 # Murge {{VERSION}}
 
-Windows release candidate for the mihomo-based desktop client.
+基于 mihomo 内核的 Windows 桌面客户端。
 
-## Included
+## 本次更新
 
-- Windows x64 installer with explicit mihomo kernel lifecycle.
-- TUN service: installs a privileged Windows TUN service that runs the active
-  profile so TUN actually proxies traffic.
-- TUN switch on the Overview (概览) page next to the system-proxy toggle for
-  one-click enable/disable; the config page keeps the full lifecycle panel.
-- Single-kernel (社区式 mihomo) model: one mihomo serves both the system proxy
-  (mixed-port) and TUN. Enabling TUN restarts that same kernel with
-  admin/service privileges and injects the `tun` config; the data plane
-  (rules / groups / delay-test / logs) always reads the one live controller.
-  The "-安全直连内核" concept is removed.
-- The system proxy and TUN are no longer mutually exclusive: a logical kernel
-  keeps running across TUN toggles, so enabling TUN no longer darkens the rules
-  / groups / policy / log views. An owned system proxy is restored only on an
-  explicit kernel stop.
-- Fix: the system-proxy toggle is now directly usable while TUN is on. The
-  enable probe resolves the kernel through the same unified single-kernel
-  gateway the renderer uses, so it no longer mistakes the (intentionally
-  stopped) main kernel for a down kernel and no longer errors with
-  "请先启动内核后再启用系统代理". The Overview (概览) page now surfaces only the
-  system-proxy and TUN switches; kernel startup status is no longer shown
-  there, matching the community single-kernel clients.
-- The system-proxy enable path now re-adopts a stale owned bundle whose port
-  moved between sessions instead of reporting a bogus "外部修改" conflict; a
-  genuine external edit still surfaces a conflict.
-- Windows system proxy now uses the broadly compatible Clash-style single
-  loopback endpoint, fixing applications that reject per-scheme proxy strings.
-- Mixed, HTTP, SOCKS and controller ports are configurable in kernel settings.
-  On startup Murge safely reclaims configured ports from recognized Clash or
-  mihomo processes, while refusing to terminate unrelated applications.
-- Policy member delay tests resolve duplicate provider node names correctly and
-  inherit the provider health-check URL when the group has no explicit URL.
-- Sub-Store now uses a background-free monochrome mark and appears fourth in
-  the configuration navigation group.
-- Profile, activity, connection, policy, provider, rule, DNS and log tools.
-- The conventional mixed port defaults to 7890 and remains stable across
-  restarts; configured proxy ports are reclaimed from recognized Clash-family
-  processes before Murge starts its kernel.
-- Sub-Store downloads are size-bounded and SHA-256 verified; backend, frontend
-  and version metadata update as one rollback-safe set. Disabling the feature
-  also cancels an in-flight start instead of leaving a hidden worker running.
-- Verified Windows system-proxy enable, exact restore and recovery path.
-- Tray, optional start-on-login, diagnostics and brand-configurable desktop UI.
-- Project documentation translated to Chinese.
+- 内核版本切换真正生效：从内核官方发布版本中选择目标版本，下载、摘要校验、安装和运行版本回读全部成功后才会切换，切换后立即以新版本重启内核。
+- 托盘快捷控制扩展：出站模式（规则/全局/直连）、策略组与节点快速切换、网络质量、进程与客户端连接一览、订阅更新、配置重载与内核重启/启动均可直接在托盘菜单完成。
+- 应用与内核日志持久化：应用日志与内核运行日志写入数据目录 `logs/`，托盘可直接打开日志目录；日志写入前对令牌、密钥、凭据等敏感信息统一脱敏。
+- 策略组节点测速修复：不同订阅中重名的节点不再测速失败，会依次通过其所属订阅源探测；组内未显式配置测速地址时沿用订阅源的健康检查地址。
+- Sub-Store 页面铺满整个内容区并跟随窗口缩放，嵌入页在足够宽的窗口下显示左侧悬浮导航栏；页头提供订阅更新直连/代理切换、浏览器打开与检查更新。
+- 默认代理端口与内核社区习惯对齐：混合端口 7890、SOCKS 7891、HTTP 7892；旧配置中的端口组合会自动迁移。
+- DNS 与嗅探设置界面中文化。
+- 运行时设置（DNS、嗅探、覆写等）可靠应用：保存后即时下发到运行中的内核，无需重启。
 
-## Deliberately excluded
+## 包含的既有能力
 
-- HTTP capture, HTTPS decryption, rewrite, LAN listeners and automatic updates.
-- Windows arm64 installers remain test-only until the installed lifecycle is
-  verified on real arm64 hardware.
+- Windows x64 安装包，内核生命周期完全可控。
+- TUN 服务：安装特权 Windows TUN 服务运行当前配置，TUN 真正代理全局流量；概览页提供系统代理与 TUN 一键开关。
+- 单内核模型：一个内核同时服务系统代理（混合端口）与 TUN，启用 TUN 以管理员/服务权限重启同一内核并注入 `tun` 配置；规则、策略组、测速、日志始终读取同一个运行中的控制器，两者可同时开启。
+- 混合、HTTP、SOCKS 与控制器端口均可在内核设置中修改；启动前会从可识别的内核进程安全回收被占用的配置端口，不会终止无关应用。
+- Sub-Store 资源按需下载并经大小限制与 SHA-256 校验，后端、前端与版本元数据作为整体更新，可随时回滚。
+- 策略、连接、设备、进程、规则、DNS、日志、使用量统计与网络诊断工具。
+- 托盘、可选开机自启、诊断信息与品牌可配置的桌面界面。
 
-## Verification and recovery
+## 刻意未包含
 
-This release is intentionally **not Authenticode-signed** by owner decision.
-Windows will display an **Unknown publisher** warning. Verify the installer
-against `SHA256SUMS.txt` and download it only from the official GitHub Release.
-See `docs/NETWORK_RECOVERY.md` in the matching source tag for emergency
-system-proxy recovery.
+- HTTP 抓包、HTTPS 解密、重写、局域网监听与自动更新。
+- Windows arm64 安装包在真实 arm64 硬件验证安装生命周期前仅供测试。
+
+## 校验与恢复
+
+出于所有者决定，本版本**未进行 Authenticode 代码签名（not Authenticode-signed）**，Windows 将显示**未知发布者**警告。请通过 `SHA256SUMS.txt` 校验安装包，并只从官方 GitHub Release 下载。紧急系统代理恢复步骤见对应源码标签中的 `docs/NETWORK_RECOVERY.md`。

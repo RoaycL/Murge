@@ -21,6 +21,7 @@ export class ProxySelectionGateway implements MihomoGateway {
   getVersion(): Promise<MihomoVersion> { return this.inner.getVersion() }
   getConfig(): Promise<MihomoConfigSnapshot> { return this.inner.getConfig() }
   patchConfig(patch: Partial<MihomoConfigSnapshot>): Promise<void> { return this.inner.patchConfig(patch) }
+  reloadConfig(payload: string): Promise<void> { return this.inner.reloadConfig(payload) }
   getProxies(): Promise<MihomoProxiesResponse> { return this.inner.getProxies() }
 
   async selectProxy(group: string, name: string): Promise<void> {

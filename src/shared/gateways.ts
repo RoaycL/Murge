@@ -109,6 +109,8 @@ export interface MihomoGateway {
   getVersion(): Promise<MihomoVersion>
   getConfig(): Promise<MihomoConfigSnapshot>
   patchConfig(patch: Partial<MihomoConfigSnapshot>): Promise<void>
+  /** Atomically parse and apply a complete YAML runtime document in-process. */
+  reloadConfig(payload: string): Promise<void>
   getProxies(): Promise<MihomoProxiesResponse>
   selectProxy(group: string, name: string): Promise<void>
   getRules(): Promise<MihomoRulesResponse>
@@ -244,7 +246,8 @@ export interface ProfileGateway {
 
 /**
  * Typed DNS enhancement boundary. A single global, schema-validated model that
- * is re-applied through the kernel config pipeline at start time.
+ * is re-applied through the kernel config pipeline at start and, when the core
+ * is live, through an atomic full-document controller reload.
  */
 export interface DnsEnhancementGateway {
   get(): DnsSnapshot | Promise<DnsSnapshot>
@@ -255,7 +258,7 @@ export interface DnsEnhancementGateway {
 
 /**
  * Typed sniffer enhancement boundary. A single global, schema-validated model
- * that is re-applied through the kernel config pipeline at start time.
+ * that follows the same startup/live-reload transaction as DNS.
  */
 export interface SnifferEnhancementGateway {
   get(): SnifferSnapshot | Promise<SnifferSnapshot>

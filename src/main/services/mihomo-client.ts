@@ -238,6 +238,21 @@ export class MihomoClient {
     return this.request('/configs', { method: 'PATCH', body: JSON.stringify(patch) }, { empty204: true }).then(() => undefined)
   }
 
+  /**
+   * Ask mihomo to parse and apply a complete runtime document without replacing
+   * the process. `payload` avoids privileged-path coupling: the controller owns
+   * validation and never needs to read an app-writable temporary file.
+   */
+  reloadConfig(payload: string): Promise<void> {
+    // Do not set `force=true`: all DNS/sniffer/proxy sections are still applied,
+    // while mihomo keeps the already-bound HTTP/SOCKS/mixed listeners instead
+    // of tearing them down and recreating identical ports.
+    return this.request('/configs', {
+      method: 'PUT',
+      body: JSON.stringify({ payload })
+    }, { empty204: true }).then(() => undefined)
+  }
+
   getProxies(signal?: AbortSignal): Promise<MihomoProxiesResponse> {
     return this.request('/proxies', {}, { signal }).then(parseMihomoProxies)
   }

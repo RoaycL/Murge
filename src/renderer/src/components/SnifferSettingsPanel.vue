@@ -113,7 +113,7 @@ onMounted(async () => {
       <div>
         <h2 class="sniffer-title">Sniffer 增强</h2>
         <p class="sniffer-subtitle">
-          为所有订阅统一配置内核嗅探：启用/覆盖目标、HTTP / TLS / QUIC 端口、跳过与强制域名、源/目的地址白名单等，无需改动订阅文件；下次启动内核时生效。
+          为所有订阅统一配置内核嗅探：启用/覆盖目标、HTTP / TLS / QUIC 端口、跳过与强制域名、源/目的地址白名单等，无需改动订阅文件；保存后立即应用。
         </p>
       </div>
       <button type="button" class="sniffer-reset" @click="resetFromStore">重置</button>

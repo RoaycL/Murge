@@ -103,6 +103,7 @@ export class FakeMihomoGateway implements MihomoGateway {
 
   getConfigCalls = 0
   patchConfigCalls: Array<Partial<MihomoConfigSnapshot>> = []
+  reloadConfigCalls: string[] = []
   getProxiesCalls = 0
   selectProxyCalls: Array<{ group: string; name: string }> = []
   getRulesCalls = 0
@@ -135,6 +136,11 @@ export class FakeMihomoGateway implements MihomoGateway {
 
   patchConfig(patch: Partial<MihomoConfigSnapshot>): Promise<void> {
     this.patchConfigCalls.push({ ...patch })
+    return Promise.resolve()
+  }
+
+  reloadConfig(payload: string): Promise<void> {
+    this.reloadConfigCalls.push(payload)
     return Promise.resolve()
   }
 

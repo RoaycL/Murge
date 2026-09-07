@@ -78,6 +78,12 @@ import { NamedPipeTunServiceTransport } from './tun/named-pipe-transport'
 import { tunServiceIdentity } from './tun/service-identity'
 import { waitForTunDataPlaneReady } from './tun/data-plane-readiness'
 import { ModeTransitionController, queuedKernelGateway, queuedTunGateway } from './kernel/mode-transition'
+import { LiveConfigReloader } from './kernel/live-config-reloader'
+import {
+  EnhancementApplyCoordinator,
+  LiveDnsEnhancementGateway,
+  LiveSnifferEnhancementGateway
+} from './kernel/enhancement-live-gateway'
 import type { TunGateway, TunStatus } from '../shared/tun'
 
 const devControllerUrl = process.env.MURGE_DEV_CONTROLLER ?? 'http://127.0.0.1:9090'
@@ -974,8 +980,8 @@ app.whenReady().then(async () => {
         20_000,
         // clash-party DNS-takeover parity: TUN hijacks port 53 only when the
         // final active document (overrides -> DNS -> sniffer) leaves the DNS
-        // module enabled. Resolved per enable() call so a toggle in the UI takes
-        // effect on the next TUN switch without a kernel restart.
+        // module enabled. Resolved per enable() call; subsequent UI changes use
+        // the same document builder through an in-process full-config reload.
         async () => documentDnsEnabled(await resolveEnhancedActiveDocument())
       )
     : new GatedTunMutationAdapter()
@@ -1136,6 +1142,35 @@ app.whenReady().then(async () => {
     profileGateway,
     proxySelectionStore
   )
+  const liveConfigReloader = is.dev
+    ? null
+    : new LiveConfigReloader(
+        runtimeKernelGateway,
+        gateway,
+        {
+          mixedPort: productionMixedPort!,
+          controllerPort: productionControllerPort!,
+          secret: productionSecret!,
+          device: `${brand.shortName} TUN`
+        },
+        {
+          readActiveDocument: resolveEnhancedActiveDocument,
+          readTunConfig: () => tunConfigService.readConfig(),
+          readCore: () => coreSettingsService.getRaw(),
+          readGeodata: () => geodataSettingsService.getRaw()
+        }
+      )
+  const enhancementCoordinator = new EnhancementApplyCoordinator(
+    (operation) => modeController.updateRuntimeConfig(operation),
+    async () => {
+      if (!liveConfigReloader) return
+      if (await liveConfigReloader.reloadIfRunning()) {
+        await proxySelectionService.restoreSelections()
+      }
+    }
+  )
+  const liveDnsEnhancement = new LiveDnsEnhancementGateway(dnsEnhancementService, enhancementCoordinator)
+  const liveSnifferEnhancement = new LiveSnifferEnhancementGateway(snifferEnhancementService, enhancementCoordinator)
   const updates = new UpdateService(new ElectronUpdaterDriver())
   updateService = updates
   updates.start()
@@ -1223,8 +1258,8 @@ app.whenReady().then(async () => {
     startup: startupService,
     appSettings: appSettingsService,
     overrides: overrideService,
-    dns: dnsEnhancementService,
-    sniffer: snifferEnhancementService,
+    dns: liveDnsEnhancement,
+    sniffer: liveSnifferEnhancement,
     tunConfig: tunConfigService,
     core: coreSettingsService,
     geodata: geodataSettingsService,

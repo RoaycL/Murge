@@ -128,6 +128,10 @@ export class MihomoService implements MihomoGateway {
     return this.client.patchConfig(patch)
   }
 
+  reloadConfig(payload: string): Promise<void> {
+    return this.client.reloadConfig(payload)
+  }
+
   getProxies(): Promise<MihomoProxiesResponse> {
     return this.client.getProxies()
   }

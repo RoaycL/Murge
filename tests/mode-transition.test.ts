@@ -313,6 +313,25 @@ describe('P1-1 normal TUN mode switch keeps the owned system proxy', () => {
 /* -------------------------------------------------------------------------- */
 
 describe('P1-2 single mode-transition queue', () => {
+  it('serializes a live config update behind an in-flight TUN transition', async () => {
+    const h = createHarness({ controllerReady: true })
+    const order: string[] = []
+    const originalEnable = h.tun.enable.bind(h.tun)
+    h.tun.enable = async () => {
+      order.push('tun:begin')
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      const result = await originalEnable()
+      order.push('tun:end')
+      return result
+    }
+
+    const transition = h.ipcTun.enable().then(() => { order.push('tun:done') })
+    const update = h.controller.updateRuntimeConfig(async () => { order.push('config') })
+    await Promise.all([transition, update])
+
+    expect(order).toEqual(['tun:begin', 'tun:end', 'tun:done', 'config'])
+  })
+
   it('serializes concurrent tunEnable and kernelStart (at most one host transition at a time)', async () => {
     const h = createHarness({ controllerReady: true })
     const order: string[] = []

@@ -3,8 +3,9 @@ import { z } from 'zod'
 import { assertProxiedTunConfig } from './mihomo-tun-config'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
 
-export const TUN_SERVICE_PROTOCOL_VERSION = 4 as const
+export const TUN_SERVICE_PROTOCOL_VERSION = 5 as const
 export const TUN_SERVICE_MAX_PROFILE_BYTES = 2 * 1024 * 1024
+export const TUN_SERVICE_MAX_PROVIDER_CONTENT_BYTES = 4 * 1024 * 1024
 
 const uint64Decimal = z.string().regex(/^(?:0|[1-9]\d{0,19})$/).refine(value => BigInt(value) <= 0xffffffffffffffffn)
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/)
@@ -42,6 +43,13 @@ export const tunServiceRequestSchema = z.discriminatedUnion('operation', [
     operation: z.literal('install'),
     version: z.string().regex(/^v\d+\.\d+\.\d+$/),
     proxyPort: z.number().int().min(1024).max(65535).optional()
+  }).strict(),
+  z.object({
+    protocolVersion: z.literal(TUN_SERVICE_PROTOCOL_VERSION),
+    requestId: uint64Decimal,
+    operation: z.literal('provider-content'),
+    providerKind: z.enum(['proxy', 'rule']),
+    providerName: z.string().min(1).max(256).refine(value => Buffer.byteLength(value, 'utf8') <= 512)
   }).strict()
 ])
 
@@ -50,10 +58,13 @@ export type TunServiceRequest = z.infer<typeof tunServiceRequestSchema>
 export const tunServiceResponseSchema = z.object({
   protocolVersion: z.literal(TUN_SERVICE_PROTOCOL_VERSION),
   requestId: uint64Decimal,
-  outcome: z.enum(['stopped', 'starting', 'running', 'stopping', 'installed', 'failed', 'conflict']),
+  outcome: z.enum(['stopped', 'starting', 'running', 'stopping', 'installed', 'content', 'failed', 'conflict']),
   sessionId: sessionId.nullable(),
   pid: z.number().int().positive().nullable(),
-  errorCode: z.string().regex(/^[A-Z0-9_]+$/).nullable()
+  errorCode: z.string().regex(/^[A-Z0-9_]+$/).nullable(),
+  content: z.string().max(TUN_SERVICE_MAX_PROVIDER_CONTENT_BYTES).optional(),
+  contentFormat: z.enum(['yaml', 'text']).optional(),
+  contentSource: z.enum(['cache', 'inline']).optional()
 }).strict().superRefine((value, context) => {
   const ownsChild = value.outcome === 'starting' || value.outcome === 'running' || value.outcome === 'stopping'
   if (ownsChild && (value.sessionId === null || value.pid === null)) {
@@ -61,6 +72,12 @@ export const tunServiceResponseSchema = z.object({
   }
   if (value.outcome === 'stopped' && (value.sessionId !== null || value.pid !== null)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'stopped must not retain process ownership' })
+  }
+  if (value.outcome === 'content' && (value.content === undefined || value.contentFormat === undefined || value.contentSource === undefined)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'content requires payload metadata' })
+  }
+  if (value.outcome !== 'content' && (value.content !== undefined || value.contentFormat !== undefined || value.contentSource !== undefined)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'non-content response must not carry provider content' })
   }
 })
 

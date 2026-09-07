@@ -80,6 +80,27 @@ describe('network drawer + resources UI contract', () => {
     expect(store).toMatch(/refreshRuleProvidersBatch/)
   })
 
+  it('opens actual provider contents through the restricted service-backed IPC', async () => {
+    const [view, modal, shared, preload, handlers, serviceProtocol] = await Promise.all([
+      read('src/renderer/src/views/ResourcesView.vue'),
+      read('src/renderer/src/components/ProviderContentModal.vue'),
+      read('src/shared/ipc.ts'),
+      read('src/preload/index.ts'),
+      read('src/main/ipc/handlers.ts'),
+      read('src/main/tun/service-protocol.ts')
+    ])
+    expect(view).toMatch(/查看代理集合内容/)
+    expect(view).toMatch(/查看规则集合内容/)
+    expect(view).toMatch(/ProviderContentModal/)
+    expect(modal).toMatch(/mihomo 实际缓存/)
+    expect(modal).toMatch(/getProviderContent\(kind, name\)/)
+    expect(shared).toMatch(/profilesGetProviderContent: 'profiles:get-provider-content'/)
+    expect(preload).toMatch(/getProviderContent: \(kind, name\) => invoke\(IPC\.profilesGetProviderContent, kind, name\)/)
+    expect(handlers).toMatch(/resolveProviderContent\(rawKind, name\)/)
+    expect(serviceProtocol).toMatch(/operation: z\.literal\('provider-content'\)/)
+    expect(serviceProtocol).not.toMatch(/operation: z\.literal\('provider-content'\)[\s\S]{0,300}\bpath:/)
+  })
+
   it('spins the refresh icon of the row currently updating, in both views', async () => {
     const [base, resources, rules] = await Promise.all([
       read('src/renderer/src/styles/base.css'),
@@ -145,10 +166,11 @@ describe('network drawer + resources UI contract', () => {
   })
 
   it('gives default-downloaded Sub-Store its own page in the configuration group', async () => {
-    const [resources, subStoreView, sidebar, settings, main, shared, service, store] = await Promise.all([
+    const [resources, subStoreView, sidebar, subStoreIcon, settings, main, shared, service, store] = await Promise.all([
       read('src/renderer/src/views/ResourcesView.vue'),
       read('src/renderer/src/views/SubStoreView.vue'),
       read('src/renderer/src/components/AppSidebar.vue'),
+      read('src/renderer/src/components/SubStoreIcon.vue'),
       read('src/shared/app-settings.ts'),
       read('src/main/index.ts'),
       read('src/shared/substore.ts'),
@@ -157,6 +179,10 @@ describe('network drawer + resources UI contract', () => {
     ])
     expect(resources).not.toMatch(/Sub-Store|subStore/)
     expect(sidebar).toMatch(/label: '配置'[\s\S]*to: '\/profiles'[\s\S]*to: '\/overrides'[\s\S]*to: '\/resources'[\s\S]*to: '\/substore', label: 'Sub-Store'/)
+    // Optical sizing: the wide Lucide resource glyph is slightly reduced;
+    // Sub-Store's official artwork is cropped to remove its oversized SVG inset.
+    expect(sidebar).toMatch(/icon: 'resources', iconSize: 17/)
+    expect(subStoreIcon).toMatch(/viewBox="14 14 80 80"/)
     expect(settings).toMatch(/subStoreEnabled:\s*true/)
     expect(main).toMatch(/subStoreService\.ensureRunning\(\)/)
     expect(subStoreView).toMatch(/subStoreMergedUrl/)

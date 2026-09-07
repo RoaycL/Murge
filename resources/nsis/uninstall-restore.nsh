@@ -91,4 +91,9 @@
   nsExec::Exec 'schtasks /delete /tn "${APP_ID}" /f'
   Pop $R0
   DetailPrint "auto-start task removal exit code: $R0"
+  ; schtasks may be unavailable or denied by enterprise policy, in which case
+  ; the app deliberately falls back to Electron's per-user Run entry. Remove
+  ; that stable appId-named value too so uninstall never leaves a dead launch.
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APP_ID}"
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "${APP_ID}"
 !macroend

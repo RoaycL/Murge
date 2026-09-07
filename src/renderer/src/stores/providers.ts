@@ -62,6 +62,40 @@ function refreshFailureMessage(error: unknown): string {
   return err.message
 }
 
+const BATCH_REFRESH_GAP_MS = 350
+const TRANSIENT_RETRY_DELAYS_MS = [800, 2_000] as const
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** Retry only failures that can plausibly recover without user intervention. */
+function transientRefreshRetryCount(error: unknown): number {
+  const err = toProtocolError(error)
+  if (err.code === ProtocolErrorCode.UPSTREAM_TEST_FAILED) return TRANSIENT_RETRY_DELAYS_MS.length
+  if (err.code === ProtocolErrorCode.UPSTREAM_TIMEOUT) return 1
+  if (err.code === ProtocolErrorCode.UPSTREAM_HTTP_ERROR && /HTTP\s+(429|502|503|504)\b/i.test(err.message)) {
+    return TRANSIENT_RETRY_DELAYS_MS.length
+  }
+  return 0
+}
+
+async function refreshWithBackoff(action: () => Promise<void>): Promise<void> {
+  let failure: unknown
+  for (let attempt = 0; attempt <= TRANSIENT_RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      await action()
+      return
+    } catch (error) {
+      failure = error
+      const retries = transientRefreshRetryCount(error)
+      if (attempt >= retries) throw error
+      await wait(TRANSIENT_RETRY_DELAYS_MS[attempt])
+    }
+  }
+  throw failure
+}
+
 /**
  * Latest measured delay for a proxy, or `null` when it has no usable history.
  * A delay of `0` (probe failed / not measured), a negative value, NaN, or an
@@ -86,6 +120,7 @@ export const useProvidersStore = defineStore('providers', () => {
   /** Profile-declared 集合配置 (url/interval/path…), merged at the 外部资源 drawer. */
   const providerCatalog = ref<ProfileProviderCatalog>({ proxy: [], rule: [] })
   const healthResults = ref<Record<string, ProviderHealthResult>>({})
+  const batchRefreshing = ref(false)
 
   const orderedProxyProviders = computed<MihomoProxyProvider[]>(() =>
     Object.values(proxyProviders.value).sort((a, b) => a.name.localeCompare(b.name))
@@ -202,24 +237,26 @@ export const useProvidersStore = defineStore('providers', () => {
    * Serialized per-provider batch core shared by every 更新全部 entry point:
    * ONE provider at a time (mihomo returns 503 when a provider update's own
    * fetch fails, and parallel re-pulls saturate the kernel's DNS/TLS stack and
-   * trip CDN rate limits — clash-party's subscription "更新全部" pattern) with
+   * trip CDN rate limits) with
    * per-provider failure isolation, then a single map re-pull so rows reflect
    * fresh metadata while a failing fetch never discards what the user sees.
    */
   async function refreshProxyProvidersBatch(names: string[]): Promise<{ updated: number; failed: number }> {
     let updated = 0
     let failed = 0
-    for (const name of [...new Set(names)]) {
+    const uniqueNames = [...new Set(names)]
+    for (const [index, name] of uniqueNames.entries()) {
       setOp(name, { refreshing: true, error: null })
       try {
-        await window.desktop.mihomo.refreshProxyProvider(name)
+        await refreshWithBackoff(() => window.desktop.mihomo.refreshProxyProvider(name))
         updated++
       } catch (error) {
-        setOp(name, { refreshing: false, error: refreshFailureMessage(error) })
+        setOp(name, { error: refreshFailureMessage(error) })
         failed++
-        continue
+      } finally {
+        setOp(name, { refreshing: false })
       }
-      setOp(name, { refreshing: false })
+      if (index < uniqueNames.length - 1) await wait(BATCH_REFRESH_GAP_MS)
     }
     try {
       await reloadProxyProviders()
@@ -233,17 +270,19 @@ export const useProvidersStore = defineStore('providers', () => {
   async function refreshRuleProvidersBatch(names: string[]): Promise<{ updated: number; failed: number }> {
     let updated = 0
     let failed = 0
-    for (const name of [...new Set(names)]) {
+    const uniqueNames = [...new Set(names)]
+    for (const [index, name] of uniqueNames.entries()) {
       setOp(name, { refreshing: true, error: null }, 'rule')
       try {
-        await window.desktop.mihomo.refreshRuleProvider(name)
+        await refreshWithBackoff(() => window.desktop.mihomo.refreshRuleProvider(name))
         updated++
       } catch (error) {
-        setOp(name, { refreshing: false, error: refreshFailureMessage(error) }, 'rule')
+        setOp(name, { error: refreshFailureMessage(error) }, 'rule')
         failed++
-        continue
+      } finally {
+        setOp(name, { refreshing: false }, 'rule')
       }
-      setOp(name, { refreshing: false }, 'rule')
+      if (index < uniqueNames.length - 1) await wait(BATCH_REFRESH_GAP_MS)
     }
     try {
       await reloadRuleProviders()
@@ -260,11 +299,17 @@ export const useProvidersStore = defineStore('providers', () => {
    * them (503).
    */
   async function refreshAllProviders(): Promise<{ updated: number; failed: number }> {
-    const providers = remoteProxyProviders.value.map((p) => p.name)
-    const ruleSets = remoteRuleProviders.value.map((p) => p.name)
-    const proxyOutcome = await refreshProxyProvidersBatch(providers)
-    const ruleOutcome = await refreshRuleProvidersBatch(ruleSets)
-    return { updated: proxyOutcome.updated + ruleOutcome.updated, failed: proxyOutcome.failed + ruleOutcome.failed }
+    if (batchRefreshing.value) return { updated: 0, failed: 0 }
+    batchRefreshing.value = true
+    try {
+      const providers = remoteProxyProviders.value.map((p) => p.name)
+      const ruleSets = remoteRuleProviders.value.map((p) => p.name)
+      const proxyOutcome = await refreshProxyProvidersBatch(providers)
+      const ruleOutcome = await refreshRuleProvidersBatch(ruleSets)
+      return { updated: proxyOutcome.updated + ruleOutcome.updated, failed: proxyOutcome.failed + ruleOutcome.failed }
+    } finally {
+      batchRefreshing.value = false
+    }
   }
 
   /**
@@ -275,12 +320,24 @@ export const useProvidersStore = defineStore('providers', () => {
    * data.
    */
   async function refreshAllRuleProviders(): Promise<{ updated: number; failed: number }> {
-    return refreshRuleProvidersBatch(remoteRuleProviders.value.map((p) => p.name))
+    if (batchRefreshing.value) return { updated: 0, failed: 0 }
+    batchRefreshing.value = true
+    try {
+      return await refreshRuleProvidersBatch(remoteRuleProviders.value.map((p) => p.name))
+    } finally {
+      batchRefreshing.value = false
+    }
   }
 
   /** 更新全部 for the 外部资源 page's 代理集合 section only. */
   async function refreshAllProxyProviders(): Promise<{ updated: number; failed: number }> {
-    return refreshProxyProvidersBatch(remoteProxyProviders.value.map((p) => p.name))
+    if (batchRefreshing.value) return { updated: 0, failed: 0 }
+    batchRefreshing.value = true
+    try {
+      return await refreshProxyProvidersBatch(remoteProxyProviders.value.map((p) => p.name))
+    } finally {
+      batchRefreshing.value = false
+    }
   }
 
   async function healthCheckProxyProvider(name: string): Promise<void> {
@@ -329,6 +386,7 @@ export const useProvidersStore = defineStore('providers', () => {
     ruleProviders,
     ops,
     healthResults,
+    batchRefreshing,
     orderedProxyProviders,
     orderedRuleProviders,
     remoteProxyProviders,

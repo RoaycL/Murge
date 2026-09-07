@@ -4,6 +4,7 @@ import {
   buildTaskXml,
   taskArguments,
   taskSettingsEnabled,
+  scheduledTaskExitCode,
   SCHEDULED_TASK_NAME,
   SCHEDULED_TASK_RUN_KEY
 } from '../src/main/startup/scheduled-task-adapter'
@@ -129,6 +130,17 @@ describe('task XML', () => {
   })
 })
 
+describe('scheduled-task command result handling', () => {
+  it('preserves real child exit codes and rejects signal-only timeouts', () => {
+    expect(scheduledTaskExitCode(null)).toBe(0)
+    expect(scheduledTaskExitCode(Object.assign(new Error('denied'), { code: 5 }))).toBe(5)
+    expect(() => scheduledTaskExitCode(Object.assign(new Error('timed out'), {
+      code: null,
+      killed: true
+    }))).toThrow('ETIMEDOUT')
+  })
+})
+
 describe('ScheduledTaskStartupAdapter — enable', () => {
   it('creates the logon task named after the appId', async () => {
     const adapter = makeAdapter(OK)
@@ -214,10 +226,21 @@ describe('ScheduledTaskStartupAdapter — rewrite', () => {
   it('recreates the task when registered arguments differ (silent-launch toggle)', async () => {
     const adapter = makeAdapter(
       (call) => (call.args[0] === '/query' ? { stdout: taskXmlWithArgs([]), stderr: '', code: 0 } : OK()),
-      { silentLaunch: true }
+      { silentLaunch: true, legacyRead: true }
     )
     await adapter.rewriteIfEnabled()
     expect(taskCreateCalls(adapter.calls)).toHaveLength(1)
+    expect(adapter.legacy.writes).toEqual([false])
+  })
+
+  it('reports an enabled task argument update that could not be registered', async () => {
+    const adapter = makeAdapter(
+      (call) => call.args[0] === '/query'
+        ? { stdout: taskXmlWithArgs([]), stderr: '', code: 0 }
+        : { stdout: '', stderr: 'denied', code: 1 },
+      { silentLaunch: true }
+    )
+    await expect(adapter.rewriteIfEnabled()).rejects.toThrow('无法更新开机启动计划任务')
   })
 
   it('leaves a matching enabled task untouched', async () => {
@@ -253,10 +276,13 @@ describe('ScheduledTaskStartupAdapter — rewrite', () => {
     // The XML declares encoding="UTF-16"; without the BOM schtasks parses the
     // staged file as ANSI and rejects the definition (clash-party parity).
     const { readFileSync } = await import('node:fs')
+    const { stat } = await import('node:fs/promises')
     let staged: string | null = null
+    let stagedFile: string | null = null
     const adapter = makeAdapter((call) => {
       if (call.args[0] === '/create') {
         const file = call.args[call.args.indexOf('/xml') + 1]!
+        stagedFile = file
         staged = readFileSync(file, 'utf16le')
       }
       return OK()
@@ -265,6 +291,8 @@ describe('ScheduledTaskStartupAdapter — rewrite', () => {
     expect(staged).not.toBeNull()
     expect(staged!.charCodeAt(0)).toBe(0xfeff)
     expect(staged).toContain('<RunLevel>LeastPrivilege</RunLevel>')
+    await expect(stat(stagedFile!)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(stat((await import('node:path')).dirname(stagedFile!))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('carries --hidden arguments in the staged XML for silent launches', async () => {

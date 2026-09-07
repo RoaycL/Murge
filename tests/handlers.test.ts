@@ -32,6 +32,17 @@ describe('buildIpcHandlers', () => {
     expect(resolveActiveGroupOrder).toHaveBeenCalledTimes(1)
   })
 
+  it('validates and forwards provider content requests to the privileged resolver', async () => {
+    const resolveProviderContent = vi.fn().mockResolvedValue({
+      kind: 'rule', name: 'Ads', content: 'payload: []', format: 'yaml', source: 'cache'
+    })
+    handlers = buildIpcHandlers(container.deps, { resolveProviderContent })
+    await expect(handlers[IPC.profilesGetProviderContent](null, 'rule', 'Ads')).resolves.toMatchObject({ name: 'Ads' })
+    expect(resolveProviderContent).toHaveBeenCalledWith('rule', 'Ads')
+    await expect(handlers[IPC.profilesGetProviderContent](null, 'file', '../secret')).rejects.toThrow(ProtocolError)
+    expect(resolveProviderContent).toHaveBeenCalledTimes(1)
+  })
+
   describe('mihomo:patch-config', () => {
     it('forwards a valid patch to the gateway', async () => {
       await handlers[IPC.mihomoPatchConfig](null, { mode: 'rule', 'allow-lan': true })

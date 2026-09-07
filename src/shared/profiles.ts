@@ -129,3 +129,12 @@ export interface ProfileProviderCatalog {
   proxy: ProfileProviderConfig[]
   rule: ProfileProviderConfig[]
 }
+
+/** Read-only contents of one provider as materialized in mihomo's live home. */
+export interface ProfileProviderContent {
+  kind: 'proxy' | 'rule'
+  name: string
+  content: string
+  format: 'yaml' | 'text'
+  source: 'cache' | 'inline'
+}

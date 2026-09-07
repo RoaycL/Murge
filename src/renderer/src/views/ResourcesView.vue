@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import AppIcon from '../components/AppIcon.vue'
 import DetailDrawer from '../components/DetailDrawer.vue'
 import GeodataSettingsPanel from '../components/GeodataSettingsPanel.vue'
+import ProviderContentModal from '../components/ProviderContentModal.vue'
 import { useKernelStore } from '../stores/kernel'
 import { useProvidersStore } from '../stores/providers'
 import { formatBytes } from '../lib/format'
@@ -18,6 +19,7 @@ const total = computed(() => providers.remoteProxyProviders.length + providers.r
 
 /** Row currently opened in the 集合配置 viewer (null = closed). */
 const viewing = ref<{ kind: 'proxy' | 'rule'; name: string } | null>(null)
+const viewingContent = ref<{ kind: 'proxy' | 'rule'; name: string } | null>(null)
 
 async function load(): Promise<void> {
   if (kernel.status.phase !== 'running') return
@@ -82,14 +84,14 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
 <template><div class="page-shell feature-page">
   <header class="feature-header">
     <div><h1>外部资源</h1><p>代理集合、规则集合与地理数据库。</p></div>
-    <button type="button" class="secondary-button" :disabled="refreshing || kernel.status.phase !== 'running' || !total" @click="refreshAll">{{ refreshing ? '更新中…' : '全部更新' }}</button>
+    <button type="button" class="secondary-button" :disabled="providers.batchRefreshing || kernel.status.phase !== 'running' || !total" @click="refreshAll">{{ refreshing ? '更新中…' : '全部更新' }}</button>
   </header>
   <p v-if="kernel.status.phase !== 'running'" class="inline-note">启动内核后即可读取和更新集合。</p>
   <section v-else class="resource-page-groups">
     <article class="surface-card resource-page-card">
       <header class="resource-card-head">
         <h2>代理集合 <small>{{ providers.remoteProxyProviders.length }}</small></h2>
-        <button type="button" class="quiet-button" :disabled="refreshingProxy || !providers.remoteProxyProviders.length" @click="refreshAllProxy">{{ refreshingProxy ? '更新中…' : '全部更新' }}</button>
+        <button type="button" class="quiet-button" :disabled="providers.batchRefreshing || !providers.remoteProxyProviders.length" @click="refreshAllProxy">{{ refreshingProxy ? '更新中…' : '全部更新' }}</button>
       </header>
       <div v-for="item in providers.remoteProxyProviders" :key="item.name" class="resource-page-row" :class="{ 'row-failed': providers.opOf(item.name, 'proxy').error, 'row-updating': providers.opOf(item.name, 'proxy').refreshing }">
         <button type="button" class="resource-row-main" @click="viewing = { kind: 'proxy', name: item.name }">
@@ -98,6 +100,7 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
           <small v-if="providers.opOf(item.name, 'proxy').error" class="row-error" role="alert">{{ providers.opOf(item.name, 'proxy').error }}</small>
         </button>
         <span class="row-actions">
+          <button class="icon-control" type="button" aria-label="查看代理集合内容" title="查看内容" @click="viewingContent = { kind: 'proxy', name: item.name }"><AppIcon name="code" :size="16" /></button>
           <button class="icon-control" type="button" aria-label="查看代理集合配置" title="查看配置" @click="viewing = { kind: 'proxy', name: item.name }"><AppIcon name="eye" :size="16" /></button>
           <button class="icon-control" type="button" :class="{ spinning: providers.opOf(item.name, 'proxy').refreshing }" :disabled="providers.opOf(item.name, 'proxy').refreshing" :aria-label="providers.opOf(item.name, 'proxy').refreshing ? '更新中' : '更新代理集合'" @click="providers.refreshProxyProvider(item.name)"><AppIcon name="refresh" :size="16" /></button>
         </span>
@@ -107,7 +110,7 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
     <article class="surface-card resource-page-card">
       <header class="resource-card-head">
         <h2>规则集合 <small>{{ providers.remoteRuleProviders.length }}</small></h2>
-        <button type="button" class="quiet-button" :disabled="refreshingRule || !providers.remoteRuleProviders.length" @click="refreshAllRule">{{ refreshingRule ? '更新中…' : '全部更新' }}</button>
+        <button type="button" class="quiet-button" :disabled="providers.batchRefreshing || !providers.remoteRuleProviders.length" @click="refreshAllRule">{{ refreshingRule ? '更新中…' : '全部更新' }}</button>
       </header>
       <div v-for="item in providers.remoteRuleProviders" :key="item.name" class="resource-page-row" :class="{ 'row-failed': providers.opOf(item.name, 'rule').error, 'row-updating': providers.opOf(item.name, 'rule').refreshing }">
         <button type="button" class="resource-row-main" @click="viewing = { kind: 'rule', name: item.name }">
@@ -116,6 +119,7 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
           <small v-if="providers.opOf(item.name, 'rule').error" class="row-error" role="alert">{{ providers.opOf(item.name, 'rule').error }}</small>
         </button>
         <span class="row-actions">
+          <button class="icon-control" type="button" aria-label="查看规则集合内容" title="查看内容" @click="viewingContent = { kind: 'rule', name: item.name }"><AppIcon name="code" :size="16" /></button>
           <button class="icon-control" type="button" aria-label="查看规则集合配置" title="查看配置" @click="viewing = { kind: 'rule', name: item.name }"><AppIcon name="eye" :size="16" /></button>
           <button class="icon-control" type="button" :class="{ spinning: providers.opOf(item.name, 'rule').refreshing }" :disabled="providers.opOf(item.name, 'rule').refreshing" :aria-label="providers.opOf(item.name, 'rule').refreshing ? '更新中' : '更新规则集合'" @click="providers.refreshRuleProvider(item.name)"><AppIcon name="refresh" :size="16" /></button>
         </span>
@@ -142,10 +146,18 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
       <p class="detail-note">远程地址与间隔来自当前配置文件的集合声明；运行状态来自控制器。</p>
     </div>
   </DetailDrawer>
+  <ProviderContentModal
+    v-if="viewingContent"
+    :open="true"
+    :kind="viewingContent.kind"
+    :name="viewingContent.name"
+    @close="viewingContent = null"
+  />
 </div></template>
 
 <style scoped>
-.resource-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.resource-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 30px; padding-bottom: 10px; }
+.resource-card-head h2 { margin: 0; }
 .resource-row-main { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; flex: 1; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .resource-row-main strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .resource-row-main small { color: var(--app-muted); font-size: 11px; }

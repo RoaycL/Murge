@@ -17,6 +17,7 @@ type processRuntime interface {
 	Install(version string, proxyPort int) error
 	Stop(pid int) error
 	Inspect(pid int) (bool, error)
+	ReadProvider(kind string, name string) (providerContent, error)
 }
 
 type ownershipStore interface {
@@ -54,17 +55,32 @@ func (manager *sessionManager) Handle(request serviceRequest) serviceResponse {
 		err = manager.reconcile(&response)
 	case "install":
 		err = manager.install(request, &response)
+	case "provider-content":
+		err = manager.providerContent(request, &response)
 	default:
 		err = errors.New("operation is not allowlisted")
 	}
 	if err != nil {
-		code := "TUN_SERVICE_OPERATION_FAILED"
+		code := providerErrorCode(err)
 		response.ErrorCode = &code
 		if response.Outcome == "" {
 			response.Outcome = "failed"
 		}
 	}
 	return response
+}
+
+func (manager *sessionManager) providerContent(request serviceRequest, response *serviceResponse) error {
+	content, err := manager.runtime.ReadProvider(request.ProviderKind, request.ProviderName)
+	if err != nil {
+		response.Outcome = "failed"
+		return err
+	}
+	response.Outcome = "content"
+	response.Content = &content.Text
+	response.ContentFormat = &content.Format
+	response.ContentSource = &content.Source
+	return nil
 }
 
 func (manager *sessionManager) start(request serviceRequest, response *serviceResponse) error {

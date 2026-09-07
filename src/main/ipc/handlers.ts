@@ -1,6 +1,6 @@
 import { IPC } from '@shared/ipc'
 import type { IpcDeps } from '@shared/gateways'
-import type { ProfileProviderCatalog } from '@shared/profiles'
+import type { ProfileProviderCatalog, ProfileProviderContent } from '@shared/profiles'
 import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions, parseStartupEnabled, parseDnsQuery, parseLogAfterSeq, parseAppSettingsPatch, parseKernelEnabled, parseKernelChannel, parseKernelVersion, parseOverrideInput, parseOverrideId, parseOverrideEnabled, parseOverrideMove, parseDnsEnhancement, parseSnifferEnhancement, parseTunConfig, parseCoreSettings, parseGeodataSettings, parseProxyBypassPolicy, parseUsageWindow, parseUsageRanking, parseUsageRankLimit, parseNetworkMetadataProviderId, parseUnlockServiceName, parseSubStoreExternalUrl } from '@shared/schemas/ipc'
 import {
   parseConfigEdit,
@@ -33,6 +33,8 @@ export interface IpcHandlerOptions {
   resolveActiveGroupOrder?: () => Promise<string[]>
   /** Runtime-enhanced profile document for the provider catalog; same fallback contract. */
   resolveActiveProviderCatalog?: () => Promise<ProfileProviderCatalog>
+  /** Reads a provider through the privileged service that owns mihomo's home. */
+  resolveProviderContent?: (kind: 'proxy' | 'rule', name: string) => Promise<ProfileProviderContent>
 }
 
 export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {}): Record<string, IpcHandler> {
@@ -123,6 +125,16 @@ export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {})
       if (!active) return { proxy: [], rule: [] }
       const profile = await profiles.getProfile(active.id)
       return parseProviderCatalog(profile.document)
+    },
+    [IPC.profilesGetProviderContent]: async (_event, rawKind, rawName) => {
+      if (rawKind !== 'proxy' && rawKind !== 'rule') {
+        throw new ProtocolError(ProtocolErrorCode.INVALID_ARGUMENT, '外部资源类型无效')
+      }
+      const name = parseMihomoName(rawName)
+      if (!options.resolveProviderContent) {
+        throw new ProtocolError(ProtocolErrorCode.INTERNAL, '当前运行方式不支持读取外部资源内容')
+      }
+      return options.resolveProviderContent(rawKind, name)
     },
     [IPC.profilesList]: async () => profiles.listProfiles(),
     [IPC.profilesGet]: async (_event, id) => profiles.getProfile(parseProfileName(id)),

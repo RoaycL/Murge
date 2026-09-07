@@ -291,6 +291,32 @@ func TestRejectUnknownEnvelopeField(t *testing.T) {
 	}
 }
 
+func TestProviderContentRequestIsNarrowAndAllowlisted(t *testing.T) {
+	data, _ := json.Marshal(serviceRequest{
+		ProtocolVersion: protocolVersion, RequestID: "7", Operation: "provider-content",
+		ProviderKind: "rule", ProviderName: "广告规则",
+	})
+	request, err := decodeRequest(data)
+	if err != nil || request.ProviderName != "广告规则" {
+		t.Fatalf("valid provider request was rejected: request=%+v err=%v", request, err)
+	}
+	data, _ = json.Marshal(serviceRequest{
+		ProtocolVersion: protocolVersion, RequestID: "8", Operation: "provider-content",
+		ProviderKind: "rule", ProviderName: "x", Profile: "forbidden",
+	})
+	if _, err := decodeRequest(data); err == nil {
+		t.Fatal("provider request accepted unrelated privileged fields")
+	}
+}
+
+func TestManagerReturnsProviderContent(t *testing.T) {
+	manager := newSessionManager(&fakeRuntime{}, &memoryStore{})
+	response := manager.Handle(serviceRequest{RequestID: "9", Operation: "provider-content", ProviderKind: "proxy", ProviderName: "Airport"})
+	if response.Outcome != "content" || response.Content == nil || *response.Content != "proxy: Airport" {
+		t.Fatalf("unexpected provider response: %+v", response)
+	}
+}
+
 type fakeRuntime struct {
 	nextPID    int
 	live       bool
@@ -303,6 +329,9 @@ func (runtime *fakeRuntime) Start(string, string, string) (int, error) {
 	return runtime.nextPID, nil
 }
 func (runtime *fakeRuntime) Install(string, int) error { return nil }
+func (runtime *fakeRuntime) ReadProvider(kind string, name string) (providerContent, error) {
+	return providerContent{Text: kind + ": " + name, Format: "yaml", Source: "cache"}, nil
+}
 func (runtime *fakeRuntime) Stop(int) error {
 	if runtime.stopErr != nil {
 		return runtime.stopErr

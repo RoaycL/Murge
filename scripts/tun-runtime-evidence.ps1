@@ -143,11 +143,11 @@ try {
   if (Test-Path $markerDone) { throw "service exited: $(Get-Content $markerDone) (see $errPath)" }
   Log 'service running'
 
-  $statusResp = Invoke-Pipe (@{ protocolVersion = 4; requestId = '100'; operation = 'status' } | ConvertTo-Json -Compress)
+  $statusResp = Invoke-Pipe (@{ protocolVersion = 5; requestId = '100'; operation = 'status' } | ConvertTo-Json -Compress)
   Log "status      -> $statusResp"
   if ($statusResp -notmatch '"outcome":"stopped"') { throw "expected idle status, got: $statusResp" }
 
-  $reconcileResp = Invoke-Pipe (@{ protocolVersion = 4; requestId = '101'; operation = 'reconcile' } | ConvertTo-Json -Compress)
+  $reconcileResp = Invoke-Pipe (@{ protocolVersion = 5; requestId = '101'; operation = 'reconcile' } | ConvertTo-Json -Compress)
   Log "reconcile   -> $reconcileResp"
   if ($reconcileResp -notmatch '"outcome":"stopped"') { throw "expected idle reconcile, got: $reconcileResp" }
 
@@ -157,7 +157,7 @@ try {
   $bytes = [Text.Encoding]::UTF8.GetBytes($unsafeProfile)
   $sha = [System.Security.Cryptography.SHA256]::Create()
   $digest = [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '').ToLower()
-  $unsafeReq = @{ protocolVersion = 4; requestId = '102'; operation = 'start'; sessionId = '00000000-0000-4000-8000-000000000001'; profile = $unsafeProfile; profileSha256 = $digest }
+  $unsafeReq = @{ protocolVersion = 5; requestId = '102'; operation = 'start'; sessionId = '00000000-0000-4000-8000-000000000001'; profile = $unsafeProfile; profileSha256 = $digest }
   $unsafeResp = Invoke-Pipe ($unsafeReq | ConvertTo-Json -Compress)
   Log "unsafe start -> $unsafeResp"
   if ($unsafeResp -notmatch 'SERVER-REJECTED') { throw "expected unsafe start to be rejected, got: $unsafeResp" }

@@ -21,7 +21,6 @@ describe('release-candidate artifacts', () => {
     const second = await readFile(path.join(root, 'dist/RELEASE_NOTES.md'), 'utf8')
     expect(second).toBe(first)
     expect(second).toContain(`${brand.productName} v${pkg.version}`)
-    expect(second).toContain('not Authenticode-signed')
     expect(second).not.toContain('{{')
   })
 

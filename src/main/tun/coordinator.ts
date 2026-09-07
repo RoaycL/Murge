@@ -1,11 +1,12 @@
 import { mihomoOwnedTunIntentSchema } from '../../shared/schemas/tun'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
 import type { MihomoOwnedTunIntent, TunStatus } from '../../shared/tun'
+import { TUN_DATA_PLANE_UNCONFIRMED } from '../../shared/tun'
 import { initialTunStatus, transitionTunStatus } from './state-machine'
 import { TunAuditLog } from './audit-log'
 
 export type TunEnableResult =
-  | { outcome: 'active' }
+  | { outcome: 'active'; readiness?: Promise<void> }
   | { outcome: 'rollback-required'; errorMessage: string }
   | { outcome: 'conflict'; conflictDetail: string }
 
@@ -58,6 +59,8 @@ export class GatedTunMutationAdapter implements TunMutationAdapter {
 export class TunCoordinator {
   private status: TunStatus
   private queue: Promise<void> = Promise.resolve()
+  /** Invalidates late data-plane results across disable/re-enable cycles. */
+  private readinessGeneration = 0
   private readonly listeners = new Set<(status: TunStatus) => void>()
   /** Machine-code-only lifecycle evidence (see threat model T07). Never secrets. */
   private readonly audit: TunAuditLog
@@ -125,11 +128,13 @@ export class TunCoordinator {
       // here already stopped the main kernel, so retrying the enable is the
       // natural recovery (see TRANSITIONS['restore-failed']).
       const intent = mihomoOwnedTunIntentSchema.parse(input) as MihomoOwnedTunIntent
+      const readinessGeneration = ++this.readinessGeneration
       this.move('enable')
       try {
         const result = await this.adapter.enable(intent)
         if (result.outcome === 'active') {
           this.move('enabled')
+          if (result.readiness) this.observeReadiness(result.readiness, readinessGeneration)
         } else if (result.outcome === 'conflict') {
           this.move('conflict', { conflictDetail: result.conflictDetail })
         } else {
@@ -149,6 +154,7 @@ export class TunCoordinator {
         this.status.phase === 'configured' ||
         this.status.phase === 'unsupported'
       ) return
+      ++this.readinessGeneration
       // `conflict` participates again: the restore path reconciles first, which
       // is the only way a latched service conflict can clear. A disable that
       // fails again simply re-enters conflict/restore-failed — the user may
@@ -164,6 +170,7 @@ export class TunCoordinator {
   handleHostExit(): Promise<TunStatus> {
     return this.serialize(async () => {
       if (!this.status.supported) return
+      ++this.readinessGeneration
       this.status = initialTunStatus(true)
       const snapshot = this.getStatus()
       for (const listener of this.listeners) {
@@ -185,6 +192,37 @@ export class TunCoordinator {
     } catch (error) {
       this.move('fail', { errorMessage: machineMessage(error) })
     }
+  }
+
+  /**
+   * Fast TUN enable publishes `active` after the controller accepts the config,
+   * while an external connectivity probe continues asynchronously. Those
+   * public endpoints are not authoritative proof that Wintun/routes failed, so
+   * a probe failure is surfaced as a warning instead of tearing down a usable
+   * TUN on restricted networks. The generation fence prevents an old probe
+   * from poisoning a newer enable after a quick toggle.
+   */
+  private observeReadiness(readiness: Promise<void>, generation: number): void {
+    void readiness.catch(() => this.serialize(async () => {
+      if (generation !== this.readinessGeneration || this.status.phase !== 'active') return
+      const message = TUN_DATA_PLANE_UNCONFIRMED
+      this.status = {
+        ...this.status,
+        errorMessage: message,
+        updatedAt: new Date().toISOString()
+      }
+      try {
+        this.audit.append('readiness:unconfirmed', this.status.phase, message)
+      } catch {
+        // Audit is diagnostic only.
+      }
+      const snapshot = this.getStatus()
+      for (const listener of this.listeners) {
+        try { listener(snapshot) } catch { /* observer errors never block state */ }
+      }
+    })).catch(() => {
+      // Never create an unhandled rejection if a future observer changes.
+    })
   }
 
   private move(intent: Parameters<typeof transitionTunStatus>[1], detail: Parameters<typeof transitionTunStatus>[2] = {}): void {

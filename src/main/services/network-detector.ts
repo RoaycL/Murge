@@ -23,6 +23,10 @@ export interface NetworkDetectorOptions {
   clearIntervalFn?: typeof clearInterval
   isOnlineFn?: () => boolean
   networkInterfacesFn?: () => NodeJS.Dict<os.NetworkInterfaceInfo[]>
+  /** Re-check delay before a first offline sample may tear networking down. */
+  offlineConfirmationMs?: number
+  /** Injectable delay for deterministic tests. */
+  delayFn?: (ms: number) => Promise<void>
   log?: (message: string) => void
 }
 
@@ -46,7 +50,7 @@ const IGNORED_INTERFACE_PATTERNS = ['lo', 'docker', 'utun', 'tun', 'veth', 'miho
  * fights the supervisor's own crash-restart or the user's explicit stop.
  */
 export class NetworkDetector {
-  private readonly options: NetworkDetectorOptions & { intervalSeconds: number }
+  private readonly options: NetworkDetectorOptions & { intervalSeconds: number; offlineConfirmationMs: number }
   private timer: NodeJS.Timeout | null = null
   private generation = 0
   private checking = false
@@ -64,7 +68,8 @@ export class NetworkDetector {
     const interval = options.intervalSeconds ?? 15
     this.options = {
       ...options,
-      intervalSeconds: Math.min(Math.max(interval, 5), 300)
+      intervalSeconds: Math.min(Math.max(interval, 5), 300),
+      offlineConfirmationMs: Math.min(Math.max(options.offlineConfirmationMs ?? 2_000, 0), 10_000)
     }
   }
 
@@ -99,12 +104,26 @@ export class NetworkDetector {
     })
   }
 
+  private isConnected(): boolean {
+    const isOnline = (this.options.isOnlineFn ?? net.isOnline.bind(net))()
+    return isOnline && this.hasRealInterface()
+  }
+
   private async tick(generation: number): Promise<void> {
     if (this.checking || generation !== this.generation) return
     this.checking = true
     try {
-      const isOnline = (this.options.isOnlineFn ?? net.isOnline.bind(net))()
-      const connected = isOnline && this.hasRealInterface()
+      let connected = this.isConnected()
+      // Chromium/Windows can briefly report offline while routes or the TUN
+      // adapter are changing. A single sample must never restore the proxy and
+      // kill the shared core. Confirm only the first sample of an outage; once
+      // an outage is latched, cleanup retries remain immediate on later ticks.
+      if (!connected && !this.outageHandled && this.options.offlineConfirmationMs > 0) {
+        const delay = this.options.delayFn ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+        await delay(this.options.offlineConfirmationMs)
+        if (generation !== this.generation) return
+        connected = this.isConnected()
+      }
       if (connected) {
         if (this.sawOffline) {
           // Order matters: the proxy re-enable needs a live kernel (enable

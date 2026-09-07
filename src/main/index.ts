@@ -932,24 +932,15 @@ app.whenReady().then(async () => {
 
   // Crash the controller while the proxy was owned: the port is now dead, so
   // restore the proxy immediately (conflict is safe — the proxy is not ours —
-  // while a real restore failure stays visible as `restore-failed`). Then, when
-  // the supervisor's own crash-restart brings the kernel back, RE-ENABLE the
-  // proxy automatically: the outage was ours, not the user's choice, and every
-  // HTTP client on the box otherwise stays off-proxy until they notice.
-  let proxyWasEnabledBeforeCrash = false
+  // while a real restore failure stays visible as `restore-failed`). Re-enable
+  // is deliberately left to the durable-intent recovery coordinator below: a
+  // cached crash-time boolean could otherwise turn the proxy back on after the
+  // user explicitly switched it off while recovery was in flight.
   orderedKernel.onStatus((status) => {
     if (status.phase === 'failed') {
-      proxyWasEnabledBeforeCrash = systemProxyService.getStatus().phase === 'enabled'
       void systemProxyService.restoreBeforeKernelUnavailable().catch((error) => {
         console.error('[system-proxy] kernel crash recovery failed:', error)
-      })
-      return
-    }
-    if (status.phase === 'running' && proxyWasEnabledBeforeCrash) {
-      proxyWasEnabledBeforeCrash = false
-      void systemProxyService.enable().catch((error) => {
-        console.error('[system-proxy] re-enable after crash recovery failed:', error)
-      })
+      }).finally(() => runtimeIntentRecovery?.wake())
     }
   })
 

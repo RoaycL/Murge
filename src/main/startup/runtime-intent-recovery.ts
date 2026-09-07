@@ -58,6 +58,10 @@ export class RuntimeIntentRecoveryCoordinator {
   /** Immediately retry after a confirmed network-up/resume signal. */
   wake(): void {
     if (!this.started) return
+    // A resume/network-up/confirmed host-exit is a fresh recovery episode. The
+    // original startup deadline may be hours old, so without a new window an
+    // immediate attempt that loses a service-start race would never retry.
+    this.resetWindow()
     if (this.running) {
       this.wakePending = true
       return

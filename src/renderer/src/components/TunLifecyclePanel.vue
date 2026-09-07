@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useTunStore } from '../stores/tun'
 import { useProfilesStore } from '../stores/profiles'
-import { TUN_UI_COPY } from '@shared/tun'
+import { TUN_DATA_PLANE_UNCONFIRMED, TUN_UI_COPY } from '@shared/tun'
 import { tunLifecycleDetail, tunLifecycleGating } from '../lib/tun-lifecycle'
 
 const tun = useTunStore()
@@ -10,7 +10,11 @@ const profiles = useProfilesStore()
 
 const phase = computed(() => tun.status.phase)
 const gating = computed(() => tunLifecycleGating(tun.status, tun.busy))
-const phaseLabel = computed(() => TUN_UI_COPY[phase.value])
+const phaseLabel = computed(() => (
+  phase.value === 'active' && tun.status.errorMessage === TUN_DATA_PLANE_UNCONFIRMED
+    ? '已启用 · 连通性未确认'
+    : TUN_UI_COPY[phase.value]
+))
 const detail = computed(() => tunLifecycleDetail(tun.status))
 
 // TUN runs the active subscription's proxies and rules. With no active profile it

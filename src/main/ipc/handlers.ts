@@ -56,8 +56,16 @@ export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {})
     [IPC.kernelStop]: async () => kernel.stop(),
 
     [IPC.kernelManagerGetState]: async () => kernelManager.getState(),
-    [IPC.kernelManagerSetEnabled]: async (_event, enabled) =>
-      kernelManager.setEnabled(parseKernelEnabled(enabled)),
+    [IPC.kernelManagerSetEnabled]: async (_event, enabled) => {
+      const next = parseKernelEnabled(enabled)
+      // The master switch is a runtime boundary, not just a preference. Stop
+      // through the shared mode queue first so an active TUN session and an
+      // owned system proxy are safely unwound before starts are disabled.
+      // Persist only after the stop succeeds: a failed restore must leave the
+      // switch truthful and the live listener available for recovery.
+      if (!next) await kernel.stop()
+      return kernelManager.setEnabled(next)
+    },
     [IPC.kernelManagerSetChannel]: async (_event, channel) =>
       kernelManager.setChannel(parseKernelChannel(channel)),
     [IPC.kernelManagerListVersions]: async () => kernelManager.listVersions(),

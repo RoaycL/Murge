@@ -679,7 +679,7 @@ export class FakeAppSettingsGateway implements AppSettingsGateway {
     silentLaunch: false,
     closeToTray: true,
     proxyGuard: true,
-    subStoreEnabled: false,
+    subStoreEnabled: true,
     subStoreUseProxy: false
   }
   setCalls: Array<Partial<AppSettings>> = []

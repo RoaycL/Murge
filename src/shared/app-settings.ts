@@ -73,8 +73,8 @@ export interface AppSettings {
    */
   proxyGuard: boolean
   /**
-   * Sub-Store (订阅管理) master switch under 配置-外部资源. The backend worker
-   * is started on demand when the page is opened with this on — never at boot.
+   * Sub-Store lifecycle switch. It defaults on because Sub-Store is a first-class
+   * configuration tool; verified assets are downloaded in the background.
    */
   subStoreEnabled: boolean
   /**
@@ -95,12 +95,12 @@ export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = Object.freeze({
   delayTestUrlScope: 'group',
   delayTestUrl: '',
   // Reference-client parity: party/sparkle default silent start OFF, verge
-  // keeps close-to-tray ON and its proxy guard ON by default. Sub-Store is
-  // opt-in (off) until the user enables it on the 外部资源 page.
+  // keeps close-to-tray ON and its proxy guard ON by default. Sub-Store ships
+  // as a first-class configuration tool and prepares its assets by default.
   silentLaunch: false,
   closeToTray: true,
   proxyGuard: true,
-  subStoreEnabled: false,
+  subStoreEnabled: true,
   subStoreUseProxy: false
 })
 

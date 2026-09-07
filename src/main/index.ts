@@ -1151,8 +1151,9 @@ app.whenReady().then(async () => {
   })
   await usageHistoryService.init()
   usageHistoryServiceRef = usageHistoryService
-  // Sub-Store (配置-外部资源): lifecycle owner for the on-demand backend worker.
-  // Started only when the page asks for it while enabled — never at boot.
+  // Sub-Store is a first-class item in the 配置 sidebar group. New installs
+  // default it on and prepare the verified assets in the background; the main
+  // window never waits for GitHub or worker startup.
   const subStoreService = new SubStoreService({
     baseDir: join(appDataRoot(app.getPath('appData')), 'substore'),
     brandName: brand.productName,
@@ -1160,6 +1161,15 @@ app.whenReady().then(async () => {
     appSettings: appSettingsService
   })
   subStoreServiceRef = subStoreService
+  await subStoreService.onSettings({
+    subStoreEnabled: cachedAppSettings.subStoreEnabled,
+    subStoreUseProxy: cachedAppSettings.subStoreUseProxy
+  })
+  if (cachedAppSettings.subStoreEnabled) {
+    void subStoreService.ensureRunning().catch((error) => {
+      console.error('[substore] default asset preparation failed:', error)
+    })
+  }
   const networkMetadataService = new NetworkMetadataService({
     resolveProxyPort: async () => {
       try {

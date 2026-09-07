@@ -82,8 +82,11 @@ onMounted(() => void initialize())
 
 <style scoped>
 /* The embedded Sub-Store page IS the page: the shell must resolve to a real
-   height so the frame's flex fill tracks the window size. */
-.substore-view.page-shell { height: 100%; padding-bottom: 30px; }
+   height so the frame's flex fill tracks the window size. The 709px content
+   column would keep the iframe under Sub-Store's own 768px wide-screen
+   breakpoint (its side nav never appears); break out of it like the activity
+   view so the embedded page gets the window's full content width. */
+.substore-view.page-shell { height: 100%; max-width: none; padding-bottom: 30px; }
 .substore-header { margin-bottom: 14px; flex-shrink: 0; }
 .substore-header p { margin: 3px 0 0; color: var(--app-muted); font-size: 11px; }
 .substore-actions { display: inline-flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }

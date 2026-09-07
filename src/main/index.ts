@@ -83,6 +83,7 @@ import { LiveConfigReloader } from './kernel/live-config-reloader'
 import {
   EnhancementApplyCoordinator,
   LiveDnsEnhancementGateway,
+  LiveGeodataSettingsGateway,
   LiveSnifferEnhancementGateway
 } from './kernel/enhancement-live-gateway'
 import type { TunGateway, TunStatus } from '../shared/tun'
@@ -1177,6 +1178,7 @@ app.whenReady().then(async () => {
   )
   const liveDnsEnhancement = new LiveDnsEnhancementGateway(dnsEnhancementService, enhancementCoordinator)
   const liveSnifferEnhancement = new LiveSnifferEnhancementGateway(snifferEnhancementService, enhancementCoordinator)
+  const liveGeodataSettings = new LiveGeodataSettingsGateway(geodataSettingsService, enhancementCoordinator)
   const updates = new UpdateService(new ElectronUpdaterDriver())
   updateService = updates
   updates.start()
@@ -1268,7 +1270,7 @@ app.whenReady().then(async () => {
     sniffer: liveSnifferEnhancement,
     tunConfig: tunConfigService,
     core: coreSettingsService,
-    geodata: geodataSettingsService,
+    geodata: liveGeodataSettings,
     updates,
     tun: queuedTun,
     usageHistory: usageHistoryService,

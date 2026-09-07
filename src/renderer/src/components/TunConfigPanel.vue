@@ -91,12 +91,12 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="tun-panel" aria-label="TUN 配置模型">
+  <section class="tun-panel" aria-label="TUN 设置">
     <header class="tun-head">
       <div>
-        <h2 class="tun-title">TUN 配置模型</h2>
+        <h2 class="tun-title">TUN 设置</h2>
         <p class="tun-subtitle">
-          为 mihomo 自营 TUN 适配器统一配置栈、设备、MTU、路由与 DNS 劫持等参数，无需改动订阅文件；启用 TUN 时由自营内核读取并合并，属于网络模式之间的独立配置。
+          设置虚拟网卡的协议栈、设备名称、最大传输单元、自动路由和 DNS 劫持。保存后会在下次启用 TUN 时使用。
         </p>
       </div>
       <button type="button" class="tun-reset" @click="resetFromStore">重置</button>
@@ -109,15 +109,15 @@ onMounted(async () => {
         <legend>栈与设备</legend>
         <div class="tun-grid">
           <label class="tun-field">
-            <span class="tun-label">stack</span>
+            <span class="tun-label">协议栈</span>
             <AppSelect v-model="form.stack" :options="STACK_OPTIONS" label="TUN 栈" />
           </label>
           <label class="tun-field">
-            <span class="tun-label">device（适配器标识）</span>
+            <span class="tun-label">设备名称</span>
             <input v-model="form.device" class="tun-input" spellcheck="false" placeholder="Mihomo" />
           </label>
           <label class="tun-field">
-            <span class="tun-label">mtu（576-65535）</span>
+            <span class="tun-label">最大传输单元（576-65535）</span>
             <input v-model.number="form.mtu" class="tun-input" type="number" min="576" max="65535" />
           </label>
         </div>
@@ -129,17 +129,17 @@ onMounted(async () => {
           <label class="tun-switch small">
             <input v-model="form.autoRoute" type="checkbox" aria-label="auto-route" />
             <span class="tun-switch-track" />
-            <span class="tun-label">auto-route</span>
+            <span class="tun-label">自动设置路由</span>
           </label>
           <label class="tun-switch small">
             <input v-model="form.autoDetectInterface" type="checkbox" aria-label="auto-detect-interface" />
             <span class="tun-switch-track" />
-            <span class="tun-label">auto-detect-interface</span>
+            <span class="tun-label">自动检测出口网卡</span>
           </label>
           <label class="tun-switch small">
             <input v-model="form.strictRoute" type="checkbox" aria-label="strict-route" />
             <span class="tun-switch-track" />
-            <span class="tun-label">strict-route</span>
+            <span class="tun-label">严格路由</span>
           </label>
         </div>
       </fieldset>
@@ -148,7 +148,7 @@ onMounted(async () => {
         <legend>DNS 劫持</legend>
         <div class="tun-grid">
           <label class="tun-field">
-            <span class="tun-label">dns-hijack（每行一个：any、主机:端口、IP 或 [IPv6]:端口）</span>
+            <span class="tun-label">劫持地址（每行一个：any、主机:端口、IP 或 [IPv6]:端口）</span>
             <textarea v-model="dnsHijackText" class="tun-textarea" spellcheck="false" placeholder="any:53" />
           </label>
         </div>
@@ -158,11 +158,11 @@ onMounted(async () => {
         <legend>路由地址</legend>
         <div class="tun-grid">
           <label class="tun-field">
-            <span class="tun-label">route-address（每行一个 IP 或 CIDR）</span>
+            <span class="tun-label">接管地址（每行一个 IP 或 CIDR）</span>
             <textarea v-model="routeAddressText" class="tun-textarea" spellcheck="false" placeholder="192.168.0.0/16" />
           </label>
           <label class="tun-field">
-            <span class="tun-label">route-exclude-address（每行一个 IP 或 CIDR）</span>
+            <span class="tun-label">排除地址（每行一个 IP 或 CIDR）</span>
             <textarea v-model="routeExcludeAddressText" class="tun-textarea" spellcheck="false" placeholder="10.0.0.0/8" />
           </label>
         </div>

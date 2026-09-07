@@ -32,7 +32,7 @@ async function refresh(): Promise<void> {
 
 onMounted(() => {
   selected.value = state.value.specificVersion
-  void kernelManager.listVersions()
+  if (state.value.specificVersionsSupported) void kernelManager.listVersions()
 })
 
 async function confirmInstall(): Promise<void> {
@@ -47,10 +47,11 @@ async function confirmInstall(): Promise<void> {
     <div class="km-modal" role="dialog" aria-modal="true" aria-label="选择特定版本">
       <header class="km-head">
         <h2>选择特定版本</h2>
-        <p>安装指定版本前会校验官方发布摘要与大小；下载结束后立即校验并安装。</p>
+        <p v-if="state.specificVersionsSupported">安装指定版本前会校验官方发布摘要与大小；下载结束后立即校验并安装。</p>
+        <p v-else>当前 Windows 安全服务使用随应用安装的稳定内核。更新应用时会同步更新内核版本。</p>
       </header>
 
-      <div class="km-toolbar">
+      <div v-if="state.specificVersionsSupported" class="km-toolbar">
         <input
           v-model="search"
           class="km-search"
@@ -68,13 +69,14 @@ async function confirmInstall(): Promise<void> {
         </button>
       </div>
 
-      <p v-if="state.error" class="inline-error">{{ state.error }}</p>
+      <p v-if="!state.specificVersionsSupported" class="km-hint">当前版本：{{ state.effectiveVersion || state.stableVersion || '内置稳定版' }}</p>
+      <p v-else-if="state.error" class="inline-error">{{ state.error }}</p>
       <p v-else-if="state.versionsLoading" class="km-hint">正在获取版本列表…</p>
       <p v-else-if="!filteredVersions.length" class="km-hint">
         {{ search ? '没有匹配的版本' : '暂无可用版本' }}
       </p>
 
-      <ul v-else class="km-list">
+      <ul v-else-if="state.specificVersionsSupported" class="km-list">
         <li v-for="version in filteredVersions" :key="version">
           <button
             type="button"
@@ -93,6 +95,7 @@ async function confirmInstall(): Promise<void> {
           取消
         </button>
         <button
+          v-if="state.specificVersionsSupported"
           type="button"
           class="km-install"
           :disabled="!selected || installing"

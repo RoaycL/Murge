@@ -18,8 +18,8 @@ const previewYaml = ref('')
 const previewOpen = ref(false)
 
 const GEOIP_OPTIONS: Array<{ value: GeoipMode; label: string }> = [
-  { value: 'standard', label: 'standard' },
-  { value: 'memconservative', label: 'memconservative' }
+  { value: 'standard', label: '标准模式' },
+  { value: 'memconservative', label: '低内存模式' }
 ]
 
 const INTERVAL_MIN = 1
@@ -37,8 +37,8 @@ function syncFromConfig(value: GeodataSettings): void {
 
 async function save(): Promise<void> {
   const ok = await store.save({ ...form })
-  if (ok) { syncFromConfig(store.settings); toast.success('GeoData 设置已保存') }
-  else toast.error('GeoData 设置保存失败', store.lastError ?? undefined)
+  if (ok) { syncFromConfig(store.settings); toast.success('地理数据设置已保存并生效') }
+  else toast.error('地理数据设置保存失败', store.lastError ?? undefined)
 }
 
 async function preview(): Promise<void> {
@@ -51,7 +51,7 @@ function resetFromStore(): void {
 }
 
 const dirty = computed(() => hydrated.value && JSON.stringify({ ...form }) !== JSON.stringify(store.settings))
-useUnsavedChanges('geodata-settings', 'GeoData 设置', dirty)
+useUnsavedChanges('geodata-settings', '地理数据设置', dirty)
 
 watch(
   () => store.settings,
@@ -67,12 +67,12 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="gd-panel" aria-label="mihomo geodata 资源设置">
+  <section class="gd-panel" aria-label="地理数据设置">
     <header class="gd-head">
       <div>
-        <h2 class="gd-title">mihomo geodata 资源</h2>
+        <h2 class="gd-title">地理数据设置</h2>
         <p class="gd-subtitle">
-          控制 mihomo 的 GeoIP / GeoSite 二进制数据匹配与自动更新（geodata-mode、geoip-mode、geo-auto-update、geo-update-interval、geo-x-url），不修改订阅源文件；启用时这些值会在运行时配置中生效并覆盖配置文件的同名项。
+          管理 GeoIP、GeoSite 与 ASN 数据库的匹配方式、加载方式、自动更新和下载地址。保存后立即应用，不会修改订阅源文件。
         </p>
       </div>
       <button type="button" class="gd-reset" @click="resetFromStore">重置</button>
@@ -80,15 +80,15 @@ onMounted(async () => {
 
     <p v-if="store.lastError" class="inline-error" role="alert">{{ store.lastError }}</p>
 
-    <p v-if="!form.enabled" class="gd-hint">当前未启用，运行时会保留配置文件自身的 geodata 设置（不会覆盖）。</p>
+    <p v-if="!form.enabled" class="gd-hint">当前未启用，将使用配置文件中的地理数据设置。</p>
 
     <div class="gd-body">
       <fieldset class="gd-group">
         <legend>启用</legend>
         <label class="gd-switch inline">
-          <input v-model="form.enabled" type="checkbox" aria-label="启用 geodata 覆盖" />
+          <input v-model="form.enabled" type="checkbox" aria-label="启用地理数据设置" />
           <span class="gd-switch-track" />
-          <span class="gd-label">启用后覆盖配置文件的同名 geodata 参数</span>
+          <span class="gd-label">启用后使用此处的地理数据设置</span>
         </label>
       </fieldset>
 
@@ -98,11 +98,11 @@ onMounted(async () => {
           <label class="gd-switch small">
             <input v-model="form.geodataMode" type="checkbox" aria-label="geodata-mode" />
             <span class="gd-switch-track" />
-            <span class="gd-label"> geodata-mode（二进制数据匹配）</span>
+            <span class="gd-label">使用 GeoData 数据格式</span>
           </label>
           <label class="gd-field">
-            <span class="gd-label">geodata-loader</span>
-            <AppSelect v-model="form.geoipMode" :options="GEOIP_OPTIONS" label="GeoData 加载器" />
+            <span class="gd-label">数据加载模式</span>
+            <AppSelect v-model="form.geoipMode" :options="GEOIP_OPTIONS" label="数据加载模式" />
           </label>
         </div>
       </fieldset>
@@ -113,10 +113,10 @@ onMounted(async () => {
           <label class="gd-switch small">
             <input v-model="form.autoUpdate" type="checkbox" aria-label="geo-auto-update" />
             <span class="gd-switch-track" />
-            <span class="gd-label"> geo-auto-update（mihomo 自动更新 geodata）</span>
+            <span class="gd-label">自动更新地理数据库</span>
           </label>
           <label class="gd-field">
-            <span class="gd-label">geo-update-interval（小时）</span>
+            <span class="gd-label">更新间隔（小时）</span>
             <input
               v-model.number="form.updateIntervalHours"
               class="gd-input"
@@ -139,7 +139,7 @@ onMounted(async () => {
 
       <div v-if="previewOpen" class="gd-preview">
         <div class="gd-preview-head">
-          <span>运行时生效的 mihomo geodata 键</span>
+          <span>将应用的地理数据配置</span>
           <button type="button" class="gd-icon" aria-label="关闭预览" @click="previewOpen = false"><AppIcon name="close" :size="15" /></button>
         </div>
         <pre class="gd-preview-body">{{ previewYaml || '（空）' }}</pre>

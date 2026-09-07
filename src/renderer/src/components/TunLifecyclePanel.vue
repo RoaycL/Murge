@@ -24,12 +24,12 @@ const activeProfileName = computed(() => profiles.active?.name ?? null)
 </script>
 
 <template>
-  <section class="tunlife-panel" aria-label="TUN 生命周期">
+  <section class="tunlife-panel" aria-label="TUN 状态">
     <header class="tunlife-head">
       <div>
         <h2 class="tunlife-title">TUN 状态</h2>
         <p class="tunlife-subtitle">
-          启用 mihomo 自营 TUN 适配器，接管全部流量（包括不遵循系统代理设置的程序）。TUN 使用当前激活的订阅节点与分流规则，可与系统代理同时开启；启用时内核会自动以特权方式重启（同一内核），禁用会由 mihomo 自行恢复网络设置。
+          启用后会通过虚拟网卡接管全部流量，包括不遵循系统代理设置的程序。TUN 使用当前配置的节点与分流规则，并可与系统代理同时开启；切换时由同一个内核完成网络接管与恢复。
         </p>
       </div>
       <div class="tunlife-status" :class="{ active: gating.active }">

@@ -431,6 +431,8 @@ describe('logs store (snapshot + live dedup, sparkle-style)', () => {
     const store = freshLogsStore()
     store.connect()
 
+    expect(store.level).toBe('info')
+
     // A live line that overlaps the snapshot arrives during the in-flight sync.
     mihomo.emitLog({ type: 'warning', payload: 'live-1' })
     await vi.advanceTimersByTimeAsync(50)

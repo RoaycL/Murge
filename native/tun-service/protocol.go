@@ -16,8 +16,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const protocolVersion = 4
+const protocolVersion = 5
 const maxProfileBytes = 2 * 1024 * 1024
+const maxProviderContentBytes = 4 * 1024 * 1024
 
 var (
 	sha256Pattern     = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -36,6 +37,8 @@ type serviceRequest struct {
 	ProfileSHA256   string `json:"profileSha256,omitempty"`
 	Version         string `json:"version,omitempty"`
 	ProxyPort       int    `json:"proxyPort,omitempty"`
+	ProviderKind    string `json:"providerKind,omitempty"`
+	ProviderName    string `json:"providerName,omitempty"`
 }
 
 type serviceResponse struct {
@@ -45,6 +48,9 @@ type serviceResponse struct {
 	SessionID       *string `json:"sessionId"`
 	PID             *int    `json:"pid"`
 	ErrorCode       *string `json:"errorCode"`
+	Content         *string `json:"content,omitempty"`
+	ContentFormat   *string `json:"contentFormat,omitempty"`
+	ContentSource   *string `json:"contentSource,omitempty"`
 }
 
 func decodeRequest(data []byte) (serviceRequest, error) {
@@ -87,21 +93,27 @@ func decodeRequest(data []byte) (serviceRequest, error) {
 		if request.Version != "" && !versionPattern.MatchString(request.Version) {
 			return serviceRequest{}, errors.New("invalid start version")
 		}
-		if request.ProxyPort != 0 {
+		if request.ProxyPort != 0 || request.ProviderKind != "" || request.ProviderName != "" {
 			return serviceRequest{}, errors.New("start contains forbidden proxyPort")
 		}
 	case "stop":
-		if !uuidPattern.MatchString(request.SessionID) || request.Profile != "" || request.ProfileSHA256 != "" {
+		if !uuidPattern.MatchString(request.SessionID) || request.Profile != "" || request.ProfileSHA256 != "" || request.ProviderKind != "" || request.ProviderName != "" {
 			return serviceRequest{}, errors.New("invalid stop request")
 		}
 	case "status", "reconcile":
-		if request.SessionID != "" || request.Profile != "" || request.ProfileSHA256 != "" || request.Version != "" || request.ProxyPort != 0 {
+		if request.SessionID != "" || request.Profile != "" || request.ProfileSHA256 != "" || request.Version != "" || request.ProxyPort != 0 || request.ProviderKind != "" || request.ProviderName != "" {
 			return serviceRequest{}, errors.New("read operation contains forbidden fields")
 		}
 	case "install":
-		if request.SessionID != "" || request.Profile != "" || request.ProfileSHA256 != "" || !versionPattern.MatchString(request.Version) ||
+		if request.SessionID != "" || request.Profile != "" || request.ProfileSHA256 != "" || request.ProviderKind != "" || request.ProviderName != "" || !versionPattern.MatchString(request.Version) ||
 			(request.ProxyPort != 0 && (request.ProxyPort < 1024 || request.ProxyPort > 65535)) {
 			return serviceRequest{}, errors.New("invalid install request")
+		}
+	case "provider-content":
+		if request.SessionID != "" || request.Profile != "" || request.ProfileSHA256 != "" || request.Version != "" || request.ProxyPort != 0 ||
+			(request.ProviderKind != "proxy" && request.ProviderKind != "rule") || strings.TrimSpace(request.ProviderName) == "" ||
+			len([]byte(request.ProviderName)) > 512 || strings.ContainsRune(request.ProviderName, '\x00') {
+			return serviceRequest{}, errors.New("invalid provider-content request")
 		}
 	default:
 		return serviceRequest{}, errors.New("operation is not allowlisted")

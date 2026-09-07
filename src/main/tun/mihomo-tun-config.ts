@@ -505,9 +505,12 @@ export function generateProxiedTunConfig(options: ProxiedTunConfigOptions): stri
     for (const [name, entry] of Object.entries(raw as Record<string, unknown>)) {
       if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue
       const record = entry as Record<string, unknown>
-      if (record.path === undefined) continue
-      if (providerPathError(record.path) !== null) {
-        record.path = `./${section}/${safeProviderFileName(name)}.yaml`
+      const vehicle = typeof record.type === 'string' ? record.type.toLowerCase() : ''
+      if (vehicle === 'inline') continue
+      if (record.path === undefined || providerPathError(record.path) !== null) {
+        const format = typeof record.format === 'string' ? record.format.toLowerCase() : ''
+        const extension = format === 'mrs' ? 'mrs' : format === 'text' ? 'txt' : 'yaml'
+        record.path = `./${section}/${safeProviderFileName(name)}.${extension}`
       }
     }
   }

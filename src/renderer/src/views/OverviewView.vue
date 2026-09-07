@@ -146,7 +146,7 @@ function openSettings(key: SettingKey): void {
           <div class="setting-head">
             <div>
               <h3>TUN 模式</h3>
-              <p>虚拟网卡接管全部流量，需管理员服务。</p>
+              <p>虚拟网卡接管全部流量，由系统服务负责运行。</p>
             </div>
             <button type="button" class="switch" :class="{ on: tunActive }" :aria-checked="tunActive" :disabled="tunSwitchDisabled" aria-label="切换 TUN 模式" @click.stop="toggleTun" />
           </div>

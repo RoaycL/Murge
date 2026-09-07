@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"unicode/utf8"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -258,6 +259,42 @@ func (runtime *windowsRuntime) Start(profile string, _ string, version string) (
 	runtime.corePath = corePath
 	runtime.coreSHA256 = coreDigest
 	return command.Process.Pid, nil
+}
+
+func (runtime *windowsRuntime) ReadProvider(kind string, name string) (providerContent, error) {
+	content, err := resolveProviderContent(runtime.config.StateDirectory, kind, name)
+	if err != nil || content.Format != "mrs" {
+		return content, err
+	}
+	if content.Behavior != "domain" && content.Behavior != "ipcidr" && content.Behavior != "classical" {
+		return providerContent{}, errProviderMRSConvert
+	}
+	if digest, err := hashFile(runtime.corePath); err != nil || digest != runtime.coreSHA256 {
+		return providerContent{}, errProviderMRSConvert
+	}
+	temporary, err := os.CreateTemp(runtime.config.StateDirectory, "mrs-view-*.txt")
+	if err != nil {
+		return providerContent{}, errProviderMRSConvert
+	}
+	temporaryPath := temporary.Name()
+	_ = temporary.Close()
+	defer os.Remove(temporaryPath)
+	command := exec.Command(runtime.corePath, "convert-ruleset", content.Behavior, "mrs", content.Path, temporaryPath)
+	command.Dir = runtime.config.StateDirectory
+	command.Env = safeWindowsEnvironment()
+	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	if err := command.Run(); err != nil {
+		return providerContent{}, errProviderMRSConvert
+	}
+	info, err := os.Stat(temporaryPath)
+	if err != nil || info.Size() > maxProviderContentBytes {
+		return providerContent{}, errProviderContentTooLarge
+	}
+	data, err := os.ReadFile(temporaryPath)
+	if err != nil || !utf8.Valid(data) {
+		return providerContent{}, errProviderContentInvalid
+	}
+	return providerContent{Text: string(data), Format: "text", Source: "cache"}, nil
 }
 
 func (runtime *windowsRuntime) Stop(pid int) error {

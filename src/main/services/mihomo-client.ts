@@ -273,7 +273,14 @@ export class MihomoClient {
   }
 
   refreshProxyProvider(name: string): Promise<void> {
-    return this.request(`/providers/proxies/${encodeURIComponent(name)}`, { method: 'PUT' }, { empty204: true }).then(() => undefined)
+    // A provider PUT includes the remote download inside mihomo. Large rule
+    // sets routinely need longer than the controller's normal 10 second REST
+    // budget, so do not abort a healthy download as if the controller hung.
+    return this.request(
+      `/providers/proxies/${encodeURIComponent(name)}`,
+      { method: 'PUT' },
+      { empty204: true, timeoutMs: 45_000 }
+    ).then(() => undefined)
   }
 
   healthCheckProxyProvider(name: string, signal?: AbortSignal): Promise<void> {
@@ -289,7 +296,11 @@ export class MihomoClient {
   }
 
   refreshRuleProvider(name: string): Promise<void> {
-    return this.request(`/providers/rules/${encodeURIComponent(name)}`, { method: 'PUT' }, { empty204: true }).then(() => undefined)
+    return this.request(
+      `/providers/rules/${encodeURIComponent(name)}`,
+      { method: 'PUT' },
+      { empty204: true, timeoutMs: 45_000 }
+    ).then(() => undefined)
   }
 
   /** Reject any probe URL the controller must not be asked to fetch. */

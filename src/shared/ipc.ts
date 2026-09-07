@@ -14,7 +14,7 @@ import type {
   MihomoRulesResponse,
   MihomoStreamError
 } from './mihomo-api'
-import type { ConfigEdit, ImportRequest, Profile, ProfileMeta, ProfileProviderCatalog, ValidationResult } from './profiles'
+import type { ConfigEdit, ImportRequest, Profile, ProfileMeta, ProfileProviderCatalog, ProfileProviderContent, ValidationResult } from './profiles'
 import type { ServiceUnlockResult } from './unlock'
 import type { SubStoreState } from './substore'
 import type { KernelManagerState } from './kernel-manager'
@@ -88,6 +88,7 @@ export const IPC = {
   profilesList: 'profiles:list',
   profilesGetActiveGroupOrder: 'profiles:get-active-group-order',
   profilesGetActiveProviderCatalog: 'profiles:get-active-provider-catalog',
+  profilesGetProviderContent: 'profiles:get-provider-content',
   profilesGet: 'profiles:get',
   profilesImport: 'profiles:import',
   profilesImportFromUrl: 'profiles:import-from-url',
@@ -225,6 +226,8 @@ export interface DesktopApi {
     getActiveGroupOrder(): Promise<string[]>
     /** `proxy-providers`/`rule-providers` declarations from the ACTIVE profile document. */
     getActiveProviderCatalog(): Promise<ProfileProviderCatalog>
+    /** Actual cached/inline contents materialized by the privileged mihomo host. */
+    getProviderContent(kind: 'proxy' | 'rule', name: string): Promise<ProfileProviderContent>
     list(): Promise<ProfileMeta[]>
     get(id: string): Promise<Profile>
     import(request: ImportRequest): Promise<ProfileMeta>

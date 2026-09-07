@@ -61,6 +61,10 @@ func (runtime *flakyRuntime) Install(version string, _ int) error {
 	return nil
 }
 
+func (runtime *flakyRuntime) ReadProvider(kind string, name string) (providerContent, error) {
+	return providerContent{Text: kind + ": " + name, Format: "yaml", Source: "cache"}, nil
+}
+
 func TestInstallDelegatesToRuntimeAndReportsInstalled(t *testing.T) {
 	runtime := &flakyRuntime{}
 	manager := newSessionManager(runtime, &flakyStore{})

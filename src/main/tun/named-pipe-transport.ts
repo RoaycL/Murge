@@ -3,7 +3,9 @@ import type { TunServiceRequest } from './service-protocol'
 import type { TunServiceTransport } from './service-client'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
 
-const MAX_RESPONSE_BYTES = 8 * 1024
+// Provider YAML can legitimately be several MiB. The service caps the raw
+// content at 4 MiB; JSON newline/backslash escaping needs additional headroom.
+const MAX_RESPONSE_BYTES = 12 * 1024 * 1024
 
 export type TunPipeConnector = (path: string) => Socket
 

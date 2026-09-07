@@ -5,7 +5,7 @@ import { brand } from '@shared/brand'
 import type { IpcDeps, KernelGateway, KernelManagerGateway, MihomoGateway, ProfileGateway, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway, OverridesGateway, DnsEnhancementGateway, SnifferEnhancementGateway, TunConfigGateway, CoreSettingsGateway, GeodataSettingsGateway, UsageHistoryGateway, NetworkMetadataGateway, SubStoreGateway } from '@shared/gateways'
 import type { TunGateway } from '@shared/tun'
 import type { OutboundMode, RuntimeSummary } from '@shared/runtime'
-import type { ProfileProviderCatalog } from '@shared/profiles'
+import type { ProfileProviderCatalog, ProfileProviderContent } from '@shared/profiles'
 import { IPC } from '@shared/ipc'
 import { ProtocolError, encodeProtocolError } from '@shared/protocol-errors'
 import { fetchExternalIpViaProxy } from '../services/external-ip'
@@ -40,6 +40,8 @@ export interface IpcDependencies {
   resolveActiveGroupOrder?: () => Promise<string[]>
   /** Provider catalog parsed from the exact enhanced document materialized for mihomo. */
   resolveActiveProviderCatalog?: () => Promise<ProfileProviderCatalog>
+  /** Service-owned provider content reader; never accepts an arbitrary path. */
+  resolveProviderContent?: (kind: 'proxy' | 'rule', name: string) => Promise<ProfileProviderContent>
 }
 
 /**
@@ -125,7 +127,7 @@ function resolveExternalIp({ kernel, mihomo }: Pick<IpcDependencies, 'kernel' | 
   })()
 }
 
-export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata, subStore, internetLatency, unlock, resolveActiveGroupOrder, resolveActiveProviderCatalog }: IpcDependencies): () => void {
+export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata, subStore, internetLatency, unlock, resolveActiveGroupOrder, resolveActiveProviderCatalog, resolveProviderContent }: IpcDependencies): () => void {
   const deps: IpcDeps = {
     brand,
     appInfo: { version: app.getVersion(), platform: process.platform === 'win32' || process.platform === 'darwin' || process.platform === 'linux' ? process.platform : 'other', arch: process.arch },
@@ -156,7 +158,7 @@ export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemPro
   }
   const iconCache = new Map<string, string>()
   let remoteIconCache: RemoteIconCache | null = null
-  const entries = Object.entries(buildIpcHandlers(deps, { resolveActiveGroupOrder, resolveActiveProviderCatalog }))
+  const entries = Object.entries(buildIpcHandlers(deps, { resolveActiveGroupOrder, resolveActiveProviderCatalog, resolveProviderContent }))
   entries.push([IPC.appGetProcessIcon, async (_event, rawPath) => {
     if (process.platform !== 'win32') return null
     // Local drive paths only: never let renderer input make Explorer resolve a

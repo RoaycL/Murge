@@ -101,4 +101,17 @@ describe('uninstall-restore.nsh customUnInstall hook', () => {
     expect(install).toContain('WinShell::SetLnkAUMI "$newDesktopLink" "${APP_ID}"')
     expect(install).toContain('SHChangeNotify')
   })
+
+  it('removes both scheduled-task and registry fallback auto-start registrations', () => {
+    const uninstallStart = source.indexOf('!macro customUnInstall')
+    const uninstallEnd = source.indexOf('!macroend', uninstallStart)
+    const uninstall = source.slice(uninstallStart, uninstallEnd)
+    expect(uninstall).toContain('schtasks /delete /tn "${APP_ID}" /f')
+    expect(uninstall).toContain(
+      'DeleteRegValue HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Run" "${APP_ID}"'
+    )
+    expect(uninstall).toContain(
+      'DeleteRegValue HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run" "${APP_ID}"'
+    )
+  })
 })

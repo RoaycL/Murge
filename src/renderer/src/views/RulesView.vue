@@ -112,7 +112,7 @@ watch(() => kernel.status.phase, (phase, previous) => {
     <section v-if="providers.orderedRuleProviders.length" class="provider-section">
       <header class="section-caption rules-provider-caption">
         <span>规则集</span>
-        <button type="button" class="rules-refresh-all" :disabled="refreshingAllRules || !providers.orderedRuleProviders.length || kernel.status.phase !== 'running'" @click="refreshAllRules">
+        <button type="button" class="rules-refresh-all" :disabled="providers.batchRefreshing || !providers.remoteRuleProviders.length || kernel.status.phase !== 'running'" @click="refreshAllRules">
           {{ refreshingAllRules ? '更新中…' : '全部更新' }}
         </button>
       </header>

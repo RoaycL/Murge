@@ -11,7 +11,7 @@ defineProps<{ size?: number }>()
   <svg
     :width="size ?? 18"
     :height="size ?? 18"
-    viewBox="0 0 108 108"
+    viewBox="14 14 80 80"
     aria-hidden="true"
     class="sub-store-icon"
   >

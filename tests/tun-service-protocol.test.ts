@@ -82,6 +82,31 @@ describe('Phase 9B privileged service protocol', () => {
     )
   })
 
+  it('reads a named provider without exposing a file path', async () => {
+    const transport: TunServiceTransport = {
+      request: vi.fn(async request => ({
+        protocolVersion: TUN_SERVICE_PROTOCOL_VERSION,
+        requestId: request.requestId,
+        outcome: 'content',
+        sessionId: null,
+        pid: null,
+        errorCode: null,
+        content: 'payload:\n  - example.com\n',
+        contentFormat: 'yaml',
+        contentSource: 'cache'
+      }))
+    }
+    await expect(new TunServiceClient(transport).getProviderContent('rule', 'Ads')).resolves.toEqual({
+      kind: 'rule', name: 'Ads', content: 'payload:\n  - example.com\n', format: 'yaml', source: 'cache'
+    })
+    expect(vi.mocked(transport.request)).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: 'provider-content', providerKind: 'rule', providerName: 'Ads' }),
+      undefined,
+      30_000
+    )
+    expect(vi.mocked(transport.request).mock.calls[0]?.[0]).not.toHaveProperty('path')
+  })
+
   it('retains ownership when stop is not confirmed', async () => {
     const transport: TunServiceTransport = {
       request: vi.fn(async request => request.operation === 'stop'

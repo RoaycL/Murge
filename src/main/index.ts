@@ -585,6 +585,10 @@ app.whenReady().then(async () => {
   // entry only covers macOS/Linux — the NSIS target writes no registry keys, so
   // Windows relies on this runtime registration (HKCU, per-user, no elevation).
   if (process.platform === 'win32') {
+    // Keep taskbar grouping, shortcuts and the Electron Run-key fallback on
+    // the same brand-stable identity. This also makes future cleanup independent
+    // of the package/product display name.
+    app.setAppUserModelId(brand.appId)
     app.setAsDefaultProtocolClient(brand.protocolScheme)
   }
 
@@ -717,19 +721,26 @@ app.whenReady().then(async () => {
   // Warmed at module level; this resolves from the store's lazy queue.
   cachedAppSettings = await appSettingsWarm
   const startupService = new StartupService(new ScheduledTaskStartupAdapter(() => cachedAppSettings.silentLaunch))
+  const refreshStartupRegistration = (context: string): void => {
+    void startupService.refreshRegistration()
+      .then((status) => {
+        if (status.phase === 'error') {
+          console.warn(`[startup] ${context}:`, status.errorMessage ?? '系统未确认开机启动设置')
+        }
+      })
+      .catch((error) => {
+        console.warn(`[startup] ${context}:`, error)
+      })
+  }
   // One-shot registration maintenance at startup: migrates v0.9.x Run-key
   // login-item users to the scheduled task and rewrites stale `--hidden`
   // arguments. Best-effort and non-blocking; the toggle still works either way.
-  void startupService.refreshRegistration().catch((error) => {
-    console.warn('[startup] registration maintenance skipped:', error)
-  })
+  refreshStartupRegistration('registration maintenance skipped')
   appSettingsService.onChange((settings) => {
     const silentLaunchChanged = settings.silentLaunch !== cachedAppSettings.silentLaunch
     cachedAppSettings = settings
     if (silentLaunchChanged) {
-      void startupService.refreshRegistration().catch((error) => {
-        console.error('[startup] failed to refresh login-item arguments:', error)
-      })
+      refreshStartupRegistration('failed to refresh login-item arguments')
     }
     void subStoreServiceRef?.onSettings({
       subStoreEnabled: settings.subStoreEnabled,
@@ -1409,7 +1420,10 @@ app.whenReady().then(async () => {
     resolveActiveGroupOrder: async () =>
       parseProxyGroupOrder((await resolveEnhancedActiveDocument()) ?? ''),
     resolveActiveProviderCatalog: async () =>
-      parseProviderCatalog((await resolveEnhancedActiveDocument()) ?? '')
+      parseProviderCatalog((await resolveEnhancedActiveDocument()) ?? ''),
+    resolveProviderContent: tunServiceClient
+      ? (kind, name) => tunServiceClient.getProviderContent(kind, name)
+      : undefined
   })
   createWindow()
   const showMainWindow = (): void => {

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { parseTunServiceResponse, TUN_SERVICE_PROTOCOL_VERSION, type TunServiceRequest, type TunServiceResponse } from './service-protocol'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
+import type { ProfileProviderContent } from '../../shared/profiles'
 
 export interface TunServiceTransport {
   request(message: TunServiceRequest, signal?: AbortSignal, timeoutMs?: number): Promise<unknown>
@@ -95,6 +96,29 @@ export class TunServiceClient {
       this.ownedSession = null
     }
     return response
+  }
+
+  /** Read one provider from the service-owned live mihomo home. */
+  async getProviderContent(kind: 'proxy' | 'rule', name: string, signal?: AbortSignal): Promise<ProfileProviderContent> {
+    const response = await this.exchange({
+      protocolVersion: TUN_SERVICE_PROTOCOL_VERSION,
+      requestId: this.takeRequestId(),
+      operation: 'provider-content',
+      providerKind: kind,
+      providerName: name
+    }, signal, 30_000)
+    if (response.outcome !== 'content' || response.content === undefined || response.contentFormat === undefined || response.contentSource === undefined) {
+      const messages: Record<string, string> = {
+        PROVIDER_NOT_FOUND: '当前运行配置中没有这个外部资源',
+        PROVIDER_CACHE_MISSING: '资源缓存尚未生成，请先更新资源',
+        PROVIDER_PATH_UNAVAILABLE: '该资源没有可读取的缓存路径',
+        PROVIDER_CONTENT_TOO_LARGE: '资源内容超过 4 MiB，暂时无法预览',
+        PROVIDER_CONTENT_INVALID: '资源缓存不是可显示的文本内容',
+        PROVIDER_MRS_CONVERT_FAILED: 'MRS 规则集转换失败'
+      }
+      fail(ProtocolErrorCode.INTERNAL, messages[response.errorCode ?? ''] ?? response.errorCode ?? `Service returned ${response.outcome}`)
+    }
+    return { kind, name, content: response.content, format: response.contentFormat, source: response.contentSource }
   }
 
   private takeRequestId(): string {

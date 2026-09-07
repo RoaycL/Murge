@@ -337,6 +337,24 @@ describe('MihomoClient', () => {
       expect(fetchMock.mock.calls[0][1].method).toBe('PUT')
     })
 
+    it('gives provider downloads a 45 second budget independent of the normal REST timeout', async () => {
+      vi.useFakeTimers()
+      const fetchMock = vi.fn((_url, init) => hangingResponse(init?.signal))
+      vi.stubGlobal('fetch', fetchMock)
+      const client = new MihomoClient('http://127.0.0.1:9090', 'secret', { timeoutMs: 25 })
+      const pending = client.refreshRuleProvider('大型规则集').catch((error) => error)
+      const signal = (fetchMock.mock.calls[0][1] as RequestInit).signal as AbortSignal
+
+      await vi.advanceTimersByTimeAsync(25)
+      expect(signal.aborted).toBe(false)
+      await vi.advanceTimersByTimeAsync(44_975)
+
+      const error = await pending
+      expect(signal.aborted).toBe(true)
+      expect(error).toBeInstanceOf(ProtocolError)
+      expect((error as ProtocolError).code).toBe(ProtocolErrorCode.UPSTREAM_TIMEOUT)
+    })
+
     it('health-checks a proxy provider as a fire-and-forget 204', async () => {
       const fetchMock = vi.fn().mockResolvedValue(fakeResponse('', 204))
       vi.stubGlobal('fetch', fetchMock)

@@ -401,6 +401,31 @@ describe('providers store', () => {
     expect(result).toEqual({ updated: 2, failed: 1 })
   })
 
+  it('retries a transient provider 503 with backoff and clears the row error after recovery', async () => {
+    vi.useFakeTimers()
+    getProxyProviders.mockResolvedValue({
+      providers: {
+        '机场 A': { name: '机场 A', type: 'Proxy', vehicleType: 'HTTP' }
+      }
+    })
+    refreshProxyProvider
+      .mockRejectedValueOnce(new ProtocolError(ProtocolErrorCode.UPSTREAM_TEST_FAILED, 'HTTP 503'))
+      .mockRejectedValueOnce(new ProtocolError(ProtocolErrorCode.UPSTREAM_TEST_FAILED, 'HTTP 503'))
+      .mockResolvedValueOnce(undefined)
+    const store = useProvidersStore()
+    await store.loadProxyProviders()
+
+    const pending = store.refreshAllProxyProviders()
+    expect(store.batchRefreshing).toBe(true)
+    await vi.runAllTimersAsync()
+    const result = await pending
+
+    expect(refreshProxyProvider).toHaveBeenCalledTimes(3)
+    expect(store.opOf('机场 A').error).toBeNull()
+    expect(store.batchRefreshing).toBe(false)
+    expect(result).toEqual({ updated: 1, failed: 0 })
+  })
+
   it('loads the active profile provider catalog for the 集合配置 viewer and keeps the last good copy on failure', async () => {
     getActiveProviderCatalog.mockResolvedValue({
       proxy: [{ name: '机场 A', kind: 'proxy', url: 'https://sub.example.com/a', interval: 86400 }],

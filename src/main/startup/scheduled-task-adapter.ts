@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, writeFile, unlink } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { brand } from '@shared/brand'
@@ -22,6 +22,23 @@ const SCHTASKS_COMMAND = process.platform === 'win32' ? 'schtasks.exe' : 'schtas
 const RUN_KEY_PATH = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'
 const DEFAULT_TIMEOUT_MS = 8000
 
+type ScheduledTaskExecError = Error & {
+  code?: string | number | null
+  killed?: boolean
+}
+
+/** Preserve numeric child exits, but never turn transport failures into success. */
+export function scheduledTaskExitCode(error: ScheduledTaskExecError | null): number {
+  if (!error) return 0
+  if (typeof error.code === 'number') return error.code
+  const reason = typeof error.code === 'string'
+    ? error.code
+    : error.killed
+      ? 'ETIMEDOUT'
+      : 'EXEC_FAILED'
+  throw new Error(`${reason}: ${error.message}`)
+}
+
 function defaultRunner(command: string, args: string[]): Promise<ScheduledTaskRunResult> {
   return new Promise((resolve, reject) => {
     execFile(
@@ -29,17 +46,17 @@ function defaultRunner(command: string, args: string[]): Promise<ScheduledTaskRu
       args,
       { timeout: DEFAULT_TIMEOUT_MS, windowsHide: true, maxBuffer: 1024 * 1024 },
       (error, stdout, stderr) => {
-        const code = error ? (error as NodeJS.ErrnoException & { code?: number }).code : 0
-        // A string `code` (ENOENT, ETIMEDOUT, ...) is a real transport failure and
-        // must reject; a numeric code is the child's exit status.
-        if (typeof error?.code === 'string') {
-          reject(new Error(`${error.code}: ${error.message}`))
+        let code: number
+        try {
+          code = scheduledTaskExitCode(error as ScheduledTaskExecError | null)
+        } catch (transportError) {
+          reject(transportError)
           return
         }
         resolve({
           stdout: String(stdout ?? ''),
           stderr: String(stderr ?? ''),
-          code: typeof code === 'number' ? code : 0
+          code
         })
       }
     )
@@ -216,7 +233,11 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
         return
       }
       // Arguments moved (silent-launch toggle): recreate with desired args.
-      await this.tryCreateTask()
+      const created = await this.tryCreateTask()
+      if (!created) throw new Error('无法更新开机启动计划任务，已保留原有注册')
+      // A previous fallback may coexist with the stale task. Once the task has
+      // been replaced successfully it owns registration again.
+      await this.legacy.write(false)
       return
     }
     // Legacy-only registration (v0.9.x Run-key users): migrate to the task so
@@ -242,9 +263,10 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
 
   /** Create (or replace) the task. Returns false when creation was denied. */
   private async tryCreateTask(): Promise<boolean> {
-    const stagingDir = await mkdtemp(join(tmpdir(), 'murge-startup-'))
-    const taskFile = join(stagingDir, 'task.xml')
+    let stagingDir: string | null = null
     try {
+      stagingDir = await mkdtemp(join(tmpdir(), 'murge-startup-'))
+      const taskFile = join(stagingDir, 'task.xml')
       // The XML declares encoding="UTF-16" and MUST be written with a UTF-16
       // BOM: without it schtasks parses the file as ANSI and rejects the task
       // definition (observed in the reference implementation, which prepends
@@ -257,7 +279,7 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
     } catch {
       return false
     } finally {
-      await unlink(taskFile).catch(() => undefined)
+      if (stagingDir) await rm(stagingDir, { recursive: true, force: true }).catch(() => undefined)
     }
   }
 

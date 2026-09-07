@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import {
-  Activity, AppWindow, ArrowDown, ArrowUp, Boxes, Braces, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, Clipboard,
-  Code2, Cpu, Database, Download, Ellipsis, Eye, FileCog, FilePlus2, Globe2, Info, Laptop,
+  Activity, AppWindow, ArrowDown, ArrowUp, Braces, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, Clipboard,
+  CloudDownload, Code2, Cpu, Database, Download, Ellipsis, Eye, FileCog, FilePlus2, Globe2, Info, Laptop,
   LayoutDashboard, ListTree, Logs, Network, Palette, PanelRightClose, Pencil, Plus, RefreshCw,
   Route, Search, ServerCog, Settings2, ShieldCheck, SlidersHorizontal, Trash2,
   Upload, Wifi, X
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
+import SubStoreIcon from './SubStoreIcon.vue'
 
 export type AppIconName =
   | 'activity' | 'overview' | 'connections' | 'processes' | 'devices'
@@ -14,7 +15,7 @@ export type AppIconName =
   | 'more' | 'general' | 'network' | 'dns' | 'kernel' | 'appearance'
   | 'logs' | 'about' | 'search' | 'refresh' | 'add-file' | 'clipboard'
   | 'upload' | 'download' | 'delete' | 'close' | 'back' | 'next'
-  | 'drawer-close' | 'server' | 'security' | 'code' | 'database' | 'more-horizontal'
+  | 'drawer-close' | 'server' | 'security' | 'code' | 'database' | 'substore' | 'more-horizontal'
   | 'chevron-down' | 'check' | 'edit' | 'add' | 'move-up' | 'move-down' | 'success' | 'error' | 'eye'
 
 defineProps<{ name: AppIconName; size?: number; strokeWidth?: number }>()
@@ -29,7 +30,7 @@ const icons: Record<AppIconName, Component> = {
   rules: ListTree,
   profiles: FileCog,
   overrides: Braces,
-  resources: Boxes,
+  resources: CloudDownload,
   more: Settings2,
   general: SlidersHorizontal,
   network: Wifi,
@@ -53,6 +54,7 @@ const icons: Record<AppIconName, Component> = {
   security: ShieldCheck,
   code: Code2,
   database: Database,
+  substore: SubStoreIcon,
   'more-horizontal': Ellipsis,
   'chevron-down': ChevronDown,
   check: Check,

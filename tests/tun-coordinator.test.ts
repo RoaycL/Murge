@@ -116,6 +116,41 @@ describe('TunCoordinator non-network orchestration', () => {
     expect(coordinator.getStatus().phase).toBe('configured')
   })
 
+  it('surfaces an unconfirmed public readiness probe without disabling a usable TUN', async () => {
+    let rejectReadiness: (error: Error) => void = () => undefined
+    const readiness = new Promise<void>((_resolve, reject) => { rejectReadiness = reject })
+    const adapter = fake({
+      enable: vi.fn(async () => ({ outcome: 'active' as const, readiness }))
+    })
+    const coordinator = new TunCoordinator(adapter, true)
+
+    await coordinator.enable(desired)
+    rejectReadiness(new Error('restricted endpoint'))
+    await vi.waitFor(() => {
+      expect(coordinator.getStatus()).toMatchObject({
+        phase: 'active',
+        errorMessage: 'TUN_DATA_PLANE_UNCONFIRMED'
+      })
+    })
+    expect(adapter.restore).not.toHaveBeenCalled()
+  })
+
+  it('ignores a late readiness failure from a disabled session', async () => {
+    let rejectReadiness: (error: Error) => void = () => undefined
+    const readiness = new Promise<void>((_resolve, reject) => { rejectReadiness = reject })
+    const adapter = fake({
+      enable: vi.fn(async () => ({ outcome: 'active' as const, readiness }))
+    })
+    const coordinator = new TunCoordinator(adapter, true)
+
+    await coordinator.enable(desired)
+    await coordinator.emergencyDisable()
+    rejectReadiness(new Error('late result'))
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(coordinator.getStatus()).toMatchObject({ phase: 'configured', errorMessage: null })
+  })
+
   it('fails closed behind the production gate and never becomes active', async () => {
     const coordinator = new TunCoordinator(new GatedTunMutationAdapter(), true)
     await coordinator.enable(desired)

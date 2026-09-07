@@ -55,13 +55,15 @@ function setupWithDnsFlag(readDnsEnabled: () => boolean) {
 describe('persistent-core TUN hot switch', () => {
   it('enables and disables TUN without waiting for the public data-plane probe', async () => {
     const h = setup()
-    await expect(h.adapter.enable({ schemaVersion: 2, device: 'Product TUN', stack: 'mixed' }))
-      .resolves.toEqual({ outcome: 'active' })
+    const result = await h.adapter.enable({ schemaVersion: 2, device: 'Product TUN', stack: 'mixed' })
+    expect(result.outcome).toBe('active')
+    expect(result.outcome === 'active' && result.readiness).toBeInstanceOf(Promise)
     expect(h.current().enable).toBe(true)
     expect(h.readiness).toHaveBeenCalledOnce()
     await expect(h.adapter.restore()).resolves.toEqual({ outcome: 'restored' })
     expect(h.current().enable).toBe(false)
     h.finishProbe()
+    if (result.outcome === 'active') await result.readiness
   })
 
   it('restores the exact previous TUN block when enable read-back fails', async () => {

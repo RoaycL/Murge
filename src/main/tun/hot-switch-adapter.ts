@@ -73,12 +73,12 @@ export class MihomoHotSwitchTunAdapter implements TunMutationAdapter {
       // a false rollback on a restricted network.
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), this.readyTimeoutMs)
-      void this.readiness.waitUntilReady({
+      const readiness = this.readiness.waitUntilReady({
           controllerPort: runtime.controllerPort,
           secret: runtime.secret,
           signal: controller.signal
-        }).catch(() => undefined).finally(() => clearTimeout(timer))
-      return { outcome: 'active' }
+        }).finally(() => clearTimeout(timer))
+      return { outcome: 'active', readiness }
     } catch (error) {
       try {
         await this.mihomo.patchConfig({ tun: previous })

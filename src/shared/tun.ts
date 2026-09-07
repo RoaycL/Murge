@@ -17,6 +17,9 @@ export interface TunStatus {
   updatedAt: string | null
 }
 
+/** Non-fatal: controller enable succeeded, but public reachability was not proven. */
+export const TUN_DATA_PLANE_UNCONFIRMED = 'TUN_DATA_PLANE_UNCONFIRMED'
+
 export type CanonicalNetLuid = string
 export type CanonicalGuid = string
 

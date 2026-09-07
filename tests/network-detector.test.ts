@@ -24,7 +24,13 @@ interface Harness {
   stop(): void
 }
 
-function createHarness(options: { online?: boolean; kernelRunning?: boolean; runMode?: 'stopped' | 'kernel' | 'tun' } = {}): Harness {
+function createHarness(options: {
+  online?: boolean
+  kernelRunning?: boolean
+  runMode?: 'stopped' | 'kernel' | 'tun'
+  offlineConfirmationMs?: number
+  delayFn?: (ms: number) => Promise<void>
+} = {}): Harness {
   const online = { value: options.online ?? true }
   const runMode = { value: options.runMode ?? (options.kernelRunning === false ? 'stopped' : 'kernel') }
   const calls: GatewayLog = []
@@ -72,6 +78,8 @@ function createHarness(options: { online?: boolean; kernelRunning?: boolean; run
     networkInterfacesFn: () => ({ eth0: iface() }),
     setIntervalFn: (() => 0) as unknown as typeof setInterval,
     clearIntervalFn: (() => undefined) as unknown as typeof clearInterval,
+    offlineConfirmationMs: options.offlineConfirmationMs ?? 0,
+    delayFn: options.delayFn,
     log: () => undefined
   })
   const anyDetector = detector as unknown as { tick(generation: number): Promise<void>; generation: number }
@@ -98,6 +106,19 @@ describe('NetworkDetector', () => {
     const h = createHarness({ online: true, kernelRunning: true })
     await h.tick()
     expect(h.calls).toEqual([])
+  })
+
+  it('ignores a transient offline sample that recovers during confirmation', async () => {
+    let onlineRef: { value: boolean } | null = null
+    const h = createHarness({
+      online: false,
+      offlineConfirmationMs: 2_000,
+      delayFn: async () => { if (onlineRef) onlineRef.value = true }
+    })
+    onlineRef = h.online
+    await h.tick()
+    expect(h.calls).toEqual([])
+    expect(h.runMode.value).toBe('kernel')
   })
 
   it('on going offline: disables the proxy and stops the kernel once', async () => {

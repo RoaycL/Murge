@@ -8,7 +8,7 @@ import { useSystemProxyStore } from '../stores/system-proxy'
 import { useTunStore } from '../stores/tun'
 import { useSnifferEnhancementStore } from '../stores/sniffer-enhancement'
 import { useDnsEnhancementStore } from '../stores/dns-enhancement'
-import { TUN_UI_COPY } from '@shared/tun'
+import { TUN_DATA_PLANE_UNCONFIRMED, TUN_UI_COPY } from '@shared/tun'
 import { formatSystemProxyEndpoint } from '@shared/system-proxy'
 
 const router = useRouter()
@@ -89,6 +89,9 @@ const tunBusy = computed(() => tun.busy || tun.status.phase === 'starting' || tu
 const tunSwitchDisabled = computed(() => tunBusy.value || !tun.status.supported)
 const tunPhaseLabel = computed(() => {
   if (!tun.status.supported) return '当前平台不支持 TUN（需打包后的 Windows 版本）'
+  if (tun.status.phase === 'active' && tun.status.errorMessage === TUN_DATA_PLANE_UNCONFIRMED) {
+    return 'TUN 已启用（连通性未确认）'
+  }
   return TUN_UI_COPY[tun.status.phase] ?? tun.status.phase
 })
 

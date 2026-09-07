@@ -128,4 +128,20 @@ describe('RuntimeIntentRecoveryCoordinator', () => {
     expect(enableTun).toHaveBeenCalledTimes(6)
     coordinator.stop()
   })
+
+  it('opens a fresh retry window when a later crash or network event wakes it', async () => {
+    const settings = new SettingsHarness({ ...DEFAULT_APP_SETTINGS, tunDesired: true })
+    const { coordinator, enableTun } = makeCoordinator(settings, async () => tunStatus('configured'))
+
+    coordinator.start()
+    await vi.advanceTimersByTimeAsync(240_000)
+    expect(enableTun).toHaveBeenCalledTimes(6)
+
+    coordinator.wake()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(enableTun).toHaveBeenCalledTimes(7)
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(enableTun).toHaveBeenCalledTimes(8)
+    coordinator.stop()
+  })
 })

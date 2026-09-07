@@ -282,10 +282,24 @@ describe('buildIpcHandlers', () => {
       expect(result).toEqual(await container.kernelManager.getState())
     })
 
-    it('forwards a valid enable toggle to the gateway', async () => {
+    it('stops the active runtime before disabling the kernel manager', async () => {
       const result = await handlers[IPC.kernelManagerSetEnabled](null, false)
+      expect(container.kernel.stopCalls).toBe(1)
       expect(container.kernelManager.setEnabledCalls).toEqual([false])
       expect(result).toEqual(await container.kernelManager.getState())
+    })
+
+    it('enables the kernel manager without starting a runtime implicitly', async () => {
+      await handlers[IPC.kernelManagerSetEnabled](null, true)
+      expect(container.kernel.startCalls).toBe(0)
+      expect(container.kernel.stopCalls).toBe(0)
+      expect(container.kernelManager.setEnabledCalls).toEqual([true])
+    })
+
+    it('does not persist disabled when runtime shutdown fails', async () => {
+      container.kernel.stop = vi.fn(async () => { throw new Error('restore failed') })
+      await expect(handlers[IPC.kernelManagerSetEnabled](null, false)).rejects.toThrow('restore failed')
+      expect(container.kernelManager.setEnabledCalls).toEqual([])
     })
 
     it('rejects a non-boolean enable toggle BEFORE reaching the gateway', async () => {

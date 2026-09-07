@@ -56,4 +56,10 @@ describe('TUN lifecycle gating', () => {
     expect(tunLifecycleDetail(status({ errorMessage: 'enable failed' }))).toBe('enable failed')
     expect(tunLifecycleDetail(status({ conflictDetail: null, errorMessage: null }))).toBeNull()
   })
+
+  it('shows a safe warning while TUN remains active when public readiness is unconfirmed', () => {
+    const active = status({ phase: 'active', errorMessage: 'TUN_DATA_PLANE_UNCONFIRMED' })
+    expect(tunLifecycleGating(active, false).showError).toBe(true)
+    expect(tunLifecycleDetail(active)).toContain('暂未通过外部连通性探测')
+  })
 })

@@ -168,7 +168,7 @@ onMounted(async () => {
       <div>
         <h2 class="dns-title">DNS 增强</h2>
         <p class="dns-subtitle">
-          为所有订阅统一配置内核 DNS：增强模式、Fake-IP 范围与过滤、IPv6、nameserver / fallback / nameserver-policy 等，无需改动订阅文件；保存后立即应用。
+          为所有订阅统一配置内核 DNS：解析模式、虚拟 IP 范围、服务器与域名分流，无需改动订阅文件；保存后立即应用。
         </p>
       </div>
       <div v-if="dirty" class="dns-head-actions"><button type="button" class="dns-reset" @click="restoreSaved">撤销更改</button><button type="button" class="dns-reset" @click="requestReset">恢复默认</button></div>
@@ -190,15 +190,15 @@ onMounted(async () => {
         <div class="dns-grid">
           <label class="dns-field">
             <span class="dns-label">增强模式</span>
-            <AppSelect v-model="form.enhancedMode" :options="[{ value: 'fake-ip', label: 'fake-ip' }, { value: 'redir-host', label: 'redir-host' }]" label="DNS 增强模式" />
+            <AppSelect v-model="form.enhancedMode" :options="[{ value: 'fake-ip', label: '虚拟 IP' }, { value: 'redir-host', label: '真实地址' }]" label="DNS 增强模式" />
           </label>
           <label v-if="form.enhancedMode === 'fake-ip'" class="dns-field">
-            <span class="dns-label">Fake-IP 范围</span>
+            <span class="dns-label">虚拟 IP 地址范围</span>
             <input v-model="form.fakeIpRange" class="dns-input" spellcheck="false" placeholder="198.18.0.1/16" />
           </label>
           <label v-if="form.enhancedMode === 'fake-ip'" class="dns-field">
-            <span class="dns-label">Fake-IP 过滤模式</span>
-            <AppSelect v-model="form.fakeIpFilterMode" :options="[{ value: 'blacklist', label: 'blacklist' }, { value: 'whitelist', label: 'whitelist' }]" label="Fake-IP 过滤模式" />
+            <span class="dns-label">虚拟 IP 过滤模式</span>
+            <AppSelect v-model="form.fakeIpFilterMode" :options="[{ value: 'blacklist', label: '排除匹配项' }, { value: 'whitelist', label: '仅包含匹配项' }]" label="虚拟 IP 过滤模式" />
           </label>
           <label class="dns-switch small">
             <input v-model="form.ipv6" type="checkbox" aria-label="启用 IPv6" />
@@ -211,42 +211,44 @@ onMounted(async () => {
             <span class="dns-label">遵循规则</span>
           </label>
           <label class="dns-switch small">
-            <input v-model="form.useHosts" type="checkbox" aria-label="使用 hosts" />
+            <input v-model="form.useHosts" type="checkbox" aria-label="使用静态域名映射" />
             <span class="dns-switch-track" />
-            <span class="dns-label">使用 hosts</span>
+            <span class="dns-label">使用静态域名映射</span>
           </label>
         </div>
       </fieldset>
 
       <fieldset v-if="form.enhancedMode === 'fake-ip'" class="dns-group">
-        <legend>Fake-IP 过滤</legend>
+        <legend>虚拟 IP 过滤</legend>
+        <p class="dns-group-hint">每行填写一条规则，支持域名、通配符以及 geosite:/geoip: 规则。</p>
         <label class="dns-field">
-          <span class="dns-label">过滤规则（每行一个，支持域名、*. 通配符或 geosite:/geoip: 规则）</span>
+          <span class="dns-label">过滤规则</span>
           <textarea v-model="fakeIpFilterText" class="dns-textarea" spellcheck="false" placeholder="*.lan&#10;*.local&#10;local" />
         </label>
       </fieldset>
 
       <fieldset class="dns-group">
-        <legend>Nameserver</legend>
+        <legend>DNS 服务器</legend>
+        <p class="dns-group-hint">下列输入框均每行填写一个服务器地址；可使用 IP、DoH、DoT、QUIC 或 DHCP 地址。</p>
         <div class="dns-grid">
           <label class="dns-field">
-            <span class="dns-label">default-nameserver（每行一个）</span>
+            <span class="dns-label">默认解析服务器</span>
             <textarea v-model="defaultNsText" class="dns-textarea" spellcheck="false" placeholder="tls://223.5.5.5" />
           </label>
           <label class="dns-field">
-            <span class="dns-label">nameserver（每行一个）</span>
+            <span class="dns-label">常规解析服务器</span>
             <textarea v-model="nameserverText" class="dns-textarea" spellcheck="false" placeholder="https://doh.pub/dns-query" />
           </label>
           <label class="dns-field">
-            <span class="dns-label">fallback（每行一个）</span>
-            <textarea v-model="fallbackText" class="dns-textarea" spellcheck="false" placeholder="留空则不使用 fallback" />
+            <span class="dns-label">备用解析服务器</span>
+            <textarea v-model="fallbackText" class="dns-textarea" spellcheck="false" placeholder="留空则不启用备用解析" />
           </label>
           <label class="dns-field">
-            <span class="dns-label">proxy-server-nameserver（可选，每行一个）</span>
+            <span class="dns-label">代理节点解析服务器（可选）</span>
             <textarea v-model="proxyNsText" class="dns-textarea" spellcheck="false" />
           </label>
           <label class="dns-field">
-            <span class="dns-label">direct-nameserver（可选，每行一个）</span>
+            <span class="dns-label">直连解析服务器（可选）</span>
             <textarea v-model="directNsText" class="dns-textarea" spellcheck="false" />
           </label>
         </div>
@@ -254,13 +256,14 @@ onMounted(async () => {
 
       <fieldset class="dns-group">
         <legend>映射</legend>
+        <p class="dns-group-hint">每行填写一组“匹配内容 目标值”，内容与目标值之间使用空格分隔。</p>
         <div class="dns-grid">
           <label class="dns-field">
-            <span class="dns-label">hosts（每行：域名 IP）</span>
+            <span class="dns-label">静态域名映射（域名 IP）</span>
             <textarea v-model="hostsText" class="dns-textarea" spellcheck="false" placeholder="example.com 1.2.3.4" />
           </label>
           <label class="dns-field">
-            <span class="dns-label">nameserver-policy（每行：域名规则 服务器）</span>
+            <span class="dns-label">域名分流策略（域名规则 服务器）</span>
             <textarea v-model="policyText" class="dns-textarea" spellcheck="false" placeholder="geosite:cn 1.1.1.1" />
           </label>
         </div>
@@ -318,6 +321,7 @@ onMounted(async () => {
   background: var(--app-panel);
 }
 .dns-group legend { padding: 0 6px; color: var(--app-muted); font-size: 11px; }
+.dns-group-hint { margin: 0 0 10px; color: var(--app-muted); font-size: 11px; line-height: 1.45; }
 .dns-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
 .dns-field { display: grid; gap: 5px; }
 .dns-label { color: var(--app-muted); font-size: 11px; }

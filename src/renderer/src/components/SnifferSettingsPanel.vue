@@ -128,12 +128,12 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="sniffer-panel" aria-label="Sniffer 增强">
+  <section class="sniffer-panel" aria-label="域名嗅探增强">
     <header class="sniffer-head">
       <div>
-        <h2 class="sniffer-title">Sniffer 增强</h2>
+        <h2 class="sniffer-title">域名嗅探增强</h2>
         <p class="sniffer-subtitle">
-          为所有订阅统一配置内核嗅探：启用/覆盖目标、HTTP / TLS / QUIC 端口、跳过与强制域名、源/目的地址白名单等，无需改动订阅文件；保存后立即应用。
+          为所有订阅统一配置内核嗅探：识别连接域名、覆盖目标地址并设置跳过或强制嗅探规则，无需改动订阅文件；保存后立即应用。
         </p>
       </div>
       <div v-if="dirty" class="sniffer-head-actions"><button type="button" class="sniffer-reset" @click="restoreSaved">撤销更改</button><button type="button" class="sniffer-reset" @click="requestReset">恢复默认</button></div>
@@ -144,7 +144,7 @@ onMounted(async () => {
     <div class="sniffer-body">
       <div class="sniffer-row">
         <label class="sniffer-switch">
-          <input v-model="form.enabled" type="checkbox" aria-label="启用 Sniffer 增强" />
+          <input v-model="form.enabled" type="checkbox" aria-label="启用域名嗅探增强" />
           <span class="sniffer-switch-track" />
           <span class="sniffer-label">启用</span>
         </label>
@@ -156,34 +156,35 @@ onMounted(async () => {
           <label class="sniffer-switch small">
             <input v-model="form.overrideDestination" type="checkbox" aria-label="覆盖目标地址" />
             <span class="sniffer-switch-track" />
-            <span class="sniffer-label">override-destination</span>
+            <span class="sniffer-label">覆盖目标地址</span>
           </label>
           <label class="sniffer-switch small">
             <input v-model="form.forceDnsMapping" type="checkbox" aria-label="强制 DNS 映射" />
             <span class="sniffer-switch-track" />
-            <span class="sniffer-label">force-dns-mapping</span>
+            <span class="sniffer-label">强制使用 DNS 映射</span>
           </label>
           <label class="sniffer-switch small">
             <input v-model="form.parsePureIp" type="checkbox" aria-label="解析纯 IP 流" />
             <span class="sniffer-switch-track" />
-            <span class="sniffer-label">parse-pure-ip</span>
+            <span class="sniffer-label">解析纯 IP 流量</span>
           </label>
         </div>
       </fieldset>
 
       <fieldset class="sniffer-group">
         <legend>端口范围</legend>
+        <p class="sniffer-group-hint">每行填写一个端口、端口范围或 *；留空表示不嗅探该协议。</p>
         <div class="sniffer-grid">
           <label class="sniffer-field">
-            <span class="sniffer-label">HTTP（每行一个端口、范围或 *）</span>
+            <span class="sniffer-label">HTTP</span>
             <textarea v-model="httpPortsText" class="sniffer-textarea" spellcheck="false" placeholder="80&#10;443" />
           </label>
           <label class="sniffer-field">
-            <span class="sniffer-label">TLS（每行一个端口、范围或 *）</span>
+            <span class="sniffer-label">TLS</span>
             <textarea v-model="tlsPortsText" class="sniffer-textarea" spellcheck="false" placeholder="443" />
           </label>
           <label class="sniffer-field">
-            <span class="sniffer-label">QUIC（每行一个端口、范围或 *）</span>
+            <span class="sniffer-label">QUIC</span>
             <textarea v-model="quicPortsText" class="sniffer-textarea" spellcheck="false" placeholder="443" />
           </label>
         </div>
@@ -191,13 +192,14 @@ onMounted(async () => {
 
       <fieldset class="sniffer-group">
         <legend>域名</legend>
+        <p class="sniffer-group-hint">每行填写一条规则，支持域名、通配符以及 geosite:/geoip: 规则。</p>
         <div class="sniffer-grid">
           <label class="sniffer-field">
-            <span class="sniffer-label">skip-domain（每行一个，支持域名、*. 通配符或 geosite:/geoip: 规则）</span>
+            <span class="sniffer-label">跳过嗅探的域名</span>
             <textarea v-model="skipDomainText" class="sniffer-textarea" spellcheck="false" placeholder="*.apple.com&#10;Mijia Cloud" />
           </label>
           <label class="sniffer-field">
-            <span class="sniffer-label">force-domain（每行一个）</span>
+            <span class="sniffer-label">强制嗅探的域名</span>
             <textarea v-model="forceDomainText" class="sniffer-textarea" spellcheck="false" placeholder="dns.alidns.com" />
           </label>
         </div>
@@ -205,13 +207,14 @@ onMounted(async () => {
 
       <fieldset class="sniffer-group">
         <legend>地址</legend>
+        <p class="sniffer-group-hint">每行填写一个 IP 地址或 CIDR 网段。</p>
         <div class="sniffer-grid">
           <label class="sniffer-field">
-            <span class="sniffer-label">skip-src-address（每行一个 IP 或 CIDR）</span>
+            <span class="sniffer-label">跳过的源地址</span>
             <textarea v-model="skipSrcText" class="sniffer-textarea" spellcheck="false" placeholder="127.0.0.1/8&#10;::1/128" />
           </label>
           <label class="sniffer-field">
-            <span class="sniffer-label">skip-dst-address（每行一个 IP 或 CIDR）</span>
+            <span class="sniffer-label">跳过的目标地址</span>
             <textarea v-model="skipDstText" class="sniffer-textarea" spellcheck="false" placeholder="127.0.0.1/8&#10;::1/128" />
           </label>
         </div>
@@ -224,7 +227,7 @@ onMounted(async () => {
 
       <div v-if="previewOpen" class="sniffer-preview">
         <div class="sniffer-preview-head">
-          <span>生效的内核 Sniffer 配置</span>
+          <span>生效的内核嗅探配置</span>
           <button type="button" class="sniffer-icon" aria-label="关闭预览" @click="previewOpen = false"><AppIcon name="close" :size="15" /></button>
         </div>
         <pre class="sniffer-preview-body">{{ previewYaml || '（空）' }}</pre>
@@ -269,6 +272,7 @@ onMounted(async () => {
   background: var(--app-panel);
 }
 .sniffer-group legend { padding: 0 6px; color: var(--app-muted); font-size: 11px; }
+.sniffer-group-hint { margin: 0 0 10px; color: var(--app-muted); font-size: 11px; line-height: 1.45; }
 .sniffer-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
 .sniffer-field { display: grid; gap: 5px; }
 .sniffer-label { color: var(--app-muted); font-size: 11px; }

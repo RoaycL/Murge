@@ -25,8 +25,11 @@ sniffer:
 
 function harness(phase: 'stopped' | 'running', tunEnabled = false, mode: 'rule' | 'direct' | 'global' = 'rule') {
   const mihomo = {
-    getConfig: vi.fn(async () => ({ mode, tun: { enable: tunEnabled } })),
-    reloadConfig: vi.fn(async (_payload: string) => undefined)
+    getConfig: vi.fn(async () => ({ mode, tun: { enable: tunEnabled, 'dns-hijack': ['any:53'] } })),
+    patchConfig: vi.fn(async (_patch: Record<string, unknown>) => undefined),
+    reloadConfig: vi.fn(async (_payload: string) => undefined),
+    flushDnsCache: vi.fn(async () => undefined),
+    flushFakeIpCache: vi.fn(async () => undefined)
   }
   const reloader = new LiveConfigReloader(
     { getStatus: vi.fn(async () => ({ phase })) },
@@ -50,13 +53,50 @@ describe('LiveConfigReloader', () => {
     expect(mihomo.reloadConfig).not.toHaveBeenCalled()
   })
 
-  it('hot reloads DNS and sniffer without enabling TUN', async () => {
+  it('full reload preserves DNS and sniffer without enabling TUN', async () => {
     const { reloader, mihomo } = harness('running')
     await expect(reloader.reloadIfRunning()).resolves.toBe(true)
     const config = parse(mihomo.reloadConfig.mock.calls[0][0]) as Record<string, unknown>
     expect(config.dns).toMatchObject({ enable: true })
     expect(config.sniffer).toMatchObject({ enable: true })
     expect(config.tun).toBeUndefined()
+  })
+
+  it('hot patches only DNS without reloading providers or the TUN adapter', async () => {
+    const { reloader, mihomo } = harness('running', true)
+
+    await expect(reloader.patchSectionsIfRunning(['dns'])).resolves.toBe(true)
+
+    expect(mihomo.patchConfig).toHaveBeenCalledOnce()
+    expect(mihomo.patchConfig).toHaveBeenCalledWith({ dns: expect.objectContaining({ enable: true }) })
+    expect(mihomo.reloadConfig).not.toHaveBeenCalled()
+    expect(mihomo.flushDnsCache).toHaveBeenCalledOnce()
+    expect(mihomo.flushFakeIpCache).toHaveBeenCalledOnce()
+  })
+
+  it('hot patches only sniffer without reloading providers', async () => {
+    const { reloader, mihomo } = harness('running')
+
+    await expect(reloader.patchSectionsIfRunning(['sniffer'])).resolves.toBe(true)
+
+    expect(mihomo.patchConfig).toHaveBeenCalledWith({ sniffer: expect.objectContaining({ enable: true }) })
+    expect(mihomo.reloadConfig).not.toHaveBeenCalled()
+    expect(mihomo.flushDnsCache).not.toHaveBeenCalled()
+  })
+
+  it('hot patches geodata controls without reloading providers', async () => {
+    const { reloader, mihomo } = harness('running')
+
+    await expect(reloader.patchSectionsIfRunning(['geodata'])).resolves.toBe(true)
+
+    expect(mihomo.patchConfig).toHaveBeenCalledWith(expect.objectContaining({
+      'geodata-mode': false,
+      'geodata-loader': 'standard',
+      'geo-auto-update': false,
+      'geo-update-interval': 24,
+      'geox-url': expect.any(Object)
+    }))
+    expect(mihomo.reloadConfig).not.toHaveBeenCalled()
   })
 
   it('preserves active TUN and a temporary global outbound mode atomically', async () => {

@@ -44,9 +44,19 @@ describe('buildIpcHandlers — system-proxy channels', () => {
       updatedAt: '2024-01-01T00:00:00.000Z'
     } as SystemProxyStatus)
     const result = await handlers[IPC.systemProxyEnable](null)
+    expect(container.kernel.startCalls).toBe(1)
     expect(container.systemProxy.enableCalls).toBe(1)
     expect(container.appSettings.setCalls).toContainEqual({ systemProxyDesired: true })
     expect(result.phase).toBe('enabled')
+  })
+
+  it('surfaces the kernel start failure instead of replacing it with a proxy-required error', async () => {
+    const conflict = new ProtocolError(ProtocolErrorCode.KERNEL_RUNNING, '其他 Clash 正在反复占用端口 7890')
+    vi.spyOn(container.kernel, 'start').mockRejectedValueOnce(conflict)
+
+    await expect(handlers[IPC.systemProxyEnable](null)).rejects.toBe(conflict)
+    expect(container.systemProxy.enableCalls).toBe(0)
+    expect(container.appSettings.settings.systemProxyDesired).toBe(true)
   })
 
   it('forwards disable to the gateway', async () => {

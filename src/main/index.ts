@@ -1027,7 +1027,7 @@ app.whenReady().then(async () => {
         // clash-party DNS-takeover parity: TUN hijacks port 53 only when the
         // final active document (overrides -> DNS -> sniffer) leaves the DNS
         // module enabled. Resolved per enable() call; subsequent UI changes use
-        // the same document builder through an in-process full-config reload.
+        // the same document builder through a targeted controller hot patch.
         async () => documentDnsEnabled(await resolveEnhancedActiveDocument())
       )
     : new GatedTunMutationAdapter()
@@ -1235,18 +1235,23 @@ app.whenReady().then(async () => {
           readGeodata: () => geodataSettingsService.getRaw()
         }
       )
-  const enhancementCoordinator = new EnhancementApplyCoordinator(
-    (operation) => modeController.updateRuntimeConfig(operation),
-    async () => {
-      if (!liveConfigReloader) return
-      if (await liveConfigReloader.reloadIfRunning()) {
-        await proxySelectionService.restoreSelections()
-      }
-    }
+  const runEnhancementUpdate = <T>(operation: () => Promise<T>): Promise<T> =>
+    modeController.updateRuntimeConfig(operation)
+  const dnsEnhancementCoordinator = new EnhancementApplyCoordinator(
+    runEnhancementUpdate,
+    async () => { await liveConfigReloader?.patchSectionsIfRunning(['dns']) }
   )
-  const liveDnsEnhancement = new LiveDnsEnhancementGateway(dnsEnhancementService, enhancementCoordinator)
-  const liveSnifferEnhancement = new LiveSnifferEnhancementGateway(snifferEnhancementService, enhancementCoordinator)
-  const liveGeodataSettings = new LiveGeodataSettingsGateway(geodataSettingsService, enhancementCoordinator)
+  const snifferEnhancementCoordinator = new EnhancementApplyCoordinator(
+    runEnhancementUpdate,
+    async () => { await liveConfigReloader?.patchSectionsIfRunning(['sniffer']) }
+  )
+  const geodataEnhancementCoordinator = new EnhancementApplyCoordinator(
+    runEnhancementUpdate,
+    async () => { await liveConfigReloader?.patchSectionsIfRunning(['geodata']) }
+  )
+  const liveDnsEnhancement = new LiveDnsEnhancementGateway(dnsEnhancementService, dnsEnhancementCoordinator)
+  const liveSnifferEnhancement = new LiveSnifferEnhancementGateway(snifferEnhancementService, snifferEnhancementCoordinator)
+  const liveGeodataSettings = new LiveGeodataSettingsGateway(geodataSettingsService, geodataEnhancementCoordinator)
   const updates = new UpdateService(new ElectronUpdaterDriver())
   updateService = updates
   updates.start()

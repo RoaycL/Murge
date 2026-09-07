@@ -19,7 +19,6 @@ const sniffer = useSnifferEnhancementStore()
 const dns = useDnsEnhancementStore()
 const actionError = ref('')
 const busy = computed(() => kernel.status.phase === 'starting' || kernel.status.phase === 'stopping')
-const running = computed(() => kernel.status.phase === 'running')
 
 /** The 覆写 quick switches hydrate the persisted models once on page open. */
 onMounted(() => {
@@ -64,13 +63,9 @@ async function toggleSystemProxy(): Promise<void> {
     if (spEnabled.value) {
       await systemProxy.disable()
     } else {
-      // Turning on the system proxy points it at whichever mihomo host is live
-      // over the fixed mixed-port. When a TUN session is active that is the
-      // elevated child and the kernel store already reports running (single
-      // logical kernel), so this is a no-op; when TUN is off, auto-start the
-      // ordinary kernel first, as before. The backend probe still guards the
-      // actual enable against a genuinely dead host.
-      if (!running.value && !tunActive.value) await kernel.start()
+      // The backend owns the atomic start-then-enable sequence. Keeping it out
+      // of the renderer also covers tray/startup callers and preserves the real
+      // kernel-start error (for example, a port takeover failure).
       await systemProxy.enable()
     }
   } catch (error) {

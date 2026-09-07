@@ -149,7 +149,7 @@ onMounted(async () => {
       <div>
         <h2 class="dns-title">DNS 增强</h2>
         <p class="dns-subtitle">
-          为所有订阅统一配置内核 DNS：增强模式、Fake-IP 范围与过滤、IPv6、nameserver / fallback / nameserver-policy 等，无需改动订阅文件；下次启动内核时生效。
+          为所有订阅统一配置内核 DNS：增强模式、Fake-IP 范围与过滤、IPv6、nameserver / fallback / nameserver-policy 等，无需改动订阅文件；保存后立即应用。
         </p>
       </div>
       <button type="button" class="dns-reset" @click="resetFromStore">重置</button>

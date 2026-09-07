@@ -211,6 +211,15 @@ export class ModeTransitionController {
     })
   }
 
+  /**
+   * Serialize an in-process config reload with kernel and TUN transitions. The
+   * caller keeps the same process and ports; this boundary only prevents a
+   * simultaneous TUN mutation from racing the document it is about to apply.
+   */
+  updateRuntimeConfig<T>(operation: () => Promise<T>): Promise<T> {
+    return this.runExclusive(operation)
+  }
+
   /* ------------------------------------------------------------------ */
   /* Inner variants: run inside an already-exclusive queue task.         */
   /* ------------------------------------------------------------------ */

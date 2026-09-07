@@ -52,6 +52,17 @@ afterEach(() => {
 })
 
 describe('MihomoClient', () => {
+  it('hot reloads a complete YAML payload without recreating live listeners', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(fakeResponse('', 204))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new MihomoClient('http://127.0.0.1:9090', 'secret')
+    await client.reloadConfig('mode: rule\n')
+    expect(String(fetchMock.mock.calls[0][0])).toBe('http://127.0.0.1:9090/configs')
+    const init = fetchMock.mock.calls[0][1] as RequestInit
+    expect(init.method).toBe('PUT')
+    expect(JSON.parse(String(init.body))).toEqual({ payload: 'mode: rule\n' })
+  })
+
   it('validates DNS query results and encodes the hostname and type', async () => {
     const fetchMock = vi.fn().mockResolvedValue(fakeResponse({
       Status: 0, Question: [{ name: 'example.com', type: 1 }], TC: false, RD: true, RA: true, AD: false, CD: false,

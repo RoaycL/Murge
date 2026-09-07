@@ -175,7 +175,7 @@ function openSettings(key: SettingKey): void {
             <button type="button" class="switch" :class="{ on: snifferEnabled }" :aria-checked="snifferEnabled" :disabled="snifferBusy" aria-label="切换嗅探覆写" @click.stop="toggleSniffer" />
           </div>
           <div class="setting-body">
-            <span class="setting-status"><i :class="{ active: snifferEnabled }" />{{ snifferBusy ? '正在保存…' : snifferEnabled ? '已启用 · 下次启动内核生效' : '未启用' }}</span>
+            <span class="setting-status"><i :class="{ active: snifferEnabled }" />{{ snifferBusy ? '正在应用…' : snifferEnabled ? '已启用' : '未启用' }}</span>
             <button type="button" class="setting-nav" aria-label="打开嗅探覆写设置" @click="openSettings('sniffer')"><AppIcon name="next" :size="14" /></button>
           </div>
           <p v-if="sniffer.lastError" class="inline-error" role="alert">{{ sniffer.lastError }}</p>
@@ -189,7 +189,7 @@ function openSettings(key: SettingKey): void {
             <button type="button" class="switch" :class="{ on: dnsEnabled }" :aria-checked="dnsEnabled" :disabled="dnsBusy" aria-label="切换 DNS 覆写" @click.stop="toggleDns" />
           </div>
           <div class="setting-body">
-            <span class="setting-status"><i :class="{ active: dnsEnabled }" />{{ dnsBusy ? '正在保存…' : dnsEnabled ? '已启用 · 下次启动内核生效' : '未启用' }}</span>
+            <span class="setting-status"><i :class="{ active: dnsEnabled }" />{{ dnsBusy ? '正在应用…' : dnsEnabled ? '已启用' : '未启用' }}</span>
             <button type="button" class="setting-nav" aria-label="打开 DNS 覆写设置" @click="openSettings('dns')"><AppIcon name="next" :size="14" /></button>
           </div>
           <p v-if="dns.lastError" class="inline-error" role="alert">{{ dns.lastError }}</p>

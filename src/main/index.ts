@@ -1,9 +1,9 @@
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { writeFileSync } from 'node:fs'
-import { writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { attachKernelWatchdog } from './kernel/crash-watchdog'
 import { InternetLatencyService } from './services/internet-latency-service'
-import { app, BrowserWindow, dialog, nativeTheme, powerMonitor, safeStorage, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, nativeTheme, powerMonitor, safeStorage, shell } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { brand } from '@shared/brand'
 import { parseBrandConfig } from '@shared/schemas/brand'
@@ -1300,6 +1300,11 @@ app.whenReady().then(async () => {
       }
     }
   })
+  const selectionGateway = new ProxySelectionGateway(
+    gateway,
+    proxySelectionService,
+    (operation) => profileGateway.runExclusive(operation)
+  )
   disposeIpc = registerIpc({
     internetLatency: internetLatencyService,
     unlock: serviceUnlockService,
@@ -1307,11 +1312,7 @@ app.whenReady().then(async () => {
     kernelManager: kernelManagerService,
     // The selection-recording wrapper is what the renderer talks to; the raw
     // gateway stays available for internal reads (restore, network metadata).
-    mihomo: new ProxySelectionGateway(
-      gateway,
-      proxySelectionService,
-      (operation) => profileGateway.runExclusive(operation)
-    ),
+    mihomo: selectionGateway,
     profiles: profileGateway,
     systemProxy: systemProxyService,
     startup: startupService,
@@ -1343,6 +1344,16 @@ app.whenReady().then(async () => {
     ? join(app.getAppPath(), 'resources', 'tray')
     : join(process.resourcesPath, 'tray')
   const trayView = createElectronTray(trayIconRoot, nativeTheme.shouldUseDarkColors)
+  const openTrayDirectory = async (directory: 'application' | 'working' | 'kernel'): Promise<void> => {
+    const target = directory === 'application'
+      ? dirname(app.getPath('exe'))
+      : directory === 'working'
+        ? app.getPath('userData')
+        : productionKernelRoot
+    if (directory !== 'application') await mkdir(target, { recursive: true })
+    const error = await shell.openPath(target)
+    if (error) throw new Error(error)
+  }
   trayController = new TrayController({
     productName: brand.productName,
     // Tray start/stop goes through the ONE mode-transition queue like every
@@ -1352,6 +1363,24 @@ app.whenReady().then(async () => {
     view: trayView,
     showWindow: showMainWindow,
     quit: () => app.quit(),
+    systemProxy: systemProxyService,
+    tun: queuedTun,
+    mihomo: selectionGateway,
+    profiles: profileGateway,
+    internetLatency: internetLatencyService,
+    resolveGroupOrder: async () => parseProxyGroupOrder((await resolveEnhancedActiveDocument()) ?? ''),
+    reloadConfig: () => modeController.updateRuntimeConfig(async () => {
+      if (!liveConfigReloader) return
+      if (await liveConfigReloader.reloadIfRunning()) await proxySelectionService.restoreSelections()
+    }),
+    restartKernel: async () => {
+      await modeController.reloadProfile((kernel) =>
+        reloadKernelForActiveProfile({ kernel, systemProxy: systemProxyService })
+      )
+      await proxySelectionService.restoreSelections()
+    },
+    openDirectory: openTrayDirectory,
+    copyText: (value) => clipboard.writeText(value),
     onCheckUpdate: () => { void updates.check().catch((error) => console.warn('[updates] tray check failed:', error)) },
     onError: (error) => console.error('[tray] kernel action failed:', error)
   })

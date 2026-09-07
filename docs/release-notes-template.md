@@ -28,9 +28,19 @@ Windows release candidate for the mihomo-based desktop client.
 - The system-proxy enable path now re-adopts a stale owned bundle whose port
   moved between sessions instead of reporting a bogus "外部修改" conflict; a
   genuine external edit still surfaces a conflict.
+- Windows system proxy now uses the broadly compatible Clash-style single
+  loopback endpoint, fixing applications that reject per-scheme proxy strings.
+- Mixed, HTTP, SOCKS and controller ports are configurable in kernel settings.
+  On startup Murge safely reclaims configured ports from recognized Clash or
+  mihomo processes, while refusing to terminate unrelated applications.
+- Policy member delay tests resolve duplicate provider node names correctly and
+  inherit the provider health-check URL when the group has no explicit URL.
+- Sub-Store now uses a background-free monochrome mark and appears fourth in
+  the configuration navigation group.
 - Profile, activity, connection, policy, provider, rule, DNS and log tools.
-- The conventional mixed port remains 7890 when available and automatically
-  falls back to a free loopback port when another proxy application owns it.
+- The conventional mixed port defaults to 7890 and remains stable across
+  restarts; configured proxy ports are reclaimed from recognized Clash-family
+  processes before Murge starts its kernel.
 - Sub-Store downloads are size-bounded and SHA-256 verified; backend, frontend
   and version metadata update as one rollback-safe set. Disabling the feature
   also cancels an in-flight start instead of leaving a hidden worker running.

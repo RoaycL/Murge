@@ -23,6 +23,12 @@ export class ElectronStartupAdapter implements StartupAdapter {
       .openAtLogin
   }
 
+  /** Existence check regardless of registered arguments (used by migration). */
+  async readRegistered(): Promise<boolean> {
+    if (!this.supported) return false
+    return app.getLoginItemSettings({ path: process.execPath }).openAtLogin
+  }
+
   async write(enabled: boolean): Promise<void> {
     if (!this.supported) return
     app.setLoginItemSettings({

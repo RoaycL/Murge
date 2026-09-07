@@ -37,7 +37,15 @@ export class CoreSettingsService implements CoreSettingsGateway {
 
   /** Render the allowlisted mihomo core keys a model would produce (no writes). */
   preview(input: CoreSettings): string {
-    return stringify(buildCoreSettingsBlock(coerceCoreSettings(input)))
+    const settings = coerceCoreSettings(input)
+    return stringify({
+      'mixed-port': settings.mixedPort,
+      ...(settings.socksPort ? { 'socks-port': settings.socksPort } : {}),
+      ...(settings.httpPort ? { port: settings.httpPort } : {}),
+      'external-controller': `127.0.0.1:${settings.controllerPort}`,
+      'allow-lan': false,
+      ...(settings.enabled ? buildCoreSettingsBlock(settings) : {})
+    })
   }
 
   /** Return the persisted model (lazily loaded). */

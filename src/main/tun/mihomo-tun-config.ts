@@ -12,6 +12,8 @@ export type MihomoTunStack = 'mixed' | 'system' | 'gvisor'
 
 export interface MihomoTunConfigOptions {
   mixedPort: number
+  httpPort?: number
+  socksPort?: number
   controllerPort: number
   secret: string
   device: string
@@ -31,9 +33,10 @@ const DEVICE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/
 const STACKS = new Set<MihomoTunStack>(['mixed', 'system', 'gvisor'])
 const LOG_LEVELS = new Set(['silent', 'error', 'warn', 'info', 'debug'])
 const TOP_KEYS = new Set([
-  'mixed-port', 'allow-lan', 'mode', 'log-level', 'ipv6',
+  'port', 'socks-port', 'mixed-port', 'allow-lan', 'mode', 'log-level', 'ipv6',
   'external-controller', 'secret', 'tun', 'dns', 'rules'
 ])
+const REQUIRED_TOP_KEYS = new Set([...TOP_KEYS].filter((key) => key !== 'port' && key !== 'socks-port'))
 const TUN_KEYS = new Set([
   'enable', 'device', 'stack', 'auto-route', 'auto-detect-interface',
   'strict-route', 'dns-hijack'
@@ -80,6 +83,12 @@ export function generateMihomoTunConfig(options: MihomoTunConfigOptions): string
   assertPort(options.mixedPort, 'mixed-port')
   assertPort(options.controllerPort, 'external-controller port')
   if (options.mixedPort === options.controllerPort) invalid('controller and mixed ports must differ')
+  const optionalPorts = [options.httpPort ?? 0, options.socksPort ?? 0]
+  for (const [index, port] of optionalPorts.entries()) {
+    if (port !== 0) assertPort(port, index === 0 ? 'HTTP port' : 'SOCKS port')
+  }
+  const activePorts = [options.mixedPort, options.controllerPort, ...optionalPorts].filter((port) => port !== 0)
+  if (new Set(activePorts).size !== activePorts.length) invalid('listener ports must differ')
   if (!SECRET_PATTERN.test(options.secret)) invalid('secret must be a 64-character lowercase hex string')
   const logLevel = options.logLevel ?? 'info'
   if (!LOG_LEVELS.has(logLevel)) invalid(`unsupported log level: ${logLevel}`)
@@ -114,6 +123,8 @@ export function generateMihomoTunConfig(options: MihomoTunConfigOptions): string
   }
 
   const text = [
+    ...(options.httpPort ? [`port: ${options.httpPort}`] : []),
+    ...(options.socksPort ? [`socks-port: ${options.socksPort}`] : []),
     `mixed-port: ${options.mixedPort}`,
     'allow-lan: false',
     'mode: direct',
@@ -149,12 +160,15 @@ export function mihomoTunConfigErrors(text: string): string[] {
   if (!isMap(doc.contents)) return [...errors, 'config must be a YAML mapping']
   scanUnsafeNodes(doc.contents, errors)
   const root = mapping(doc.contents, TOP_KEYS, 'config', errors)
-  requireExactKeys(root, TOP_KEYS, 'config', errors)
+  requireExactKeys(root, REQUIRED_TOP_KEYS, 'config', errors)
 
   scalarEquals(root, 'allow-lan', false, errors)
   scalarEquals(root, 'mode', 'direct', errors)
   scalarEquals(root, 'ipv6', false, errors)
   scalarMatches(root, 'mixed-port', value => typeof value === 'number' && Number.isInteger(value) && value >= PORT_MIN && value <= PORT_MAX, errors)
+  for (const key of ['port', 'socks-port']) {
+    if (root.has(key)) scalarMatches(root, key, value => typeof value === 'number' && Number.isInteger(value) && value >= PORT_MIN && value <= PORT_MAX, errors)
+  }
   scalarMatches(root, 'external-controller', value => typeof value === 'string' && /^127\.0\.0\.1:(?:[1-9]\d*)$/.test(value), errors)
   scalarMatches(root, 'secret', value => typeof value === 'string' && SECRET_PATTERN.test(value), errors)
   scalarMatches(root, 'log-level', value => typeof value === 'string' && LOG_LEVELS.has(value), errors)
@@ -321,7 +335,7 @@ const TUN_DEFAULT_FAKE_IP_FILTER = [
  * - `external-controller-cors` widens who may reach the controller.
  */
 const FORBIDDEN_TOP_KEYS = [
-  'port', 'socks-port', 'redir-port', 'tproxy-port', 'listeners', 'tunnels',
+  'redir-port', 'tproxy-port', 'listeners', 'tunnels',
   'external-controller-unix', 'external-controller-pipe', 'external-controller-tls',
   'external-controller-routing-mark', 'external-controller-cors', 'external-doh-server',
   'external-ui', 'external-ui-url', 'external-ui-name',
@@ -398,6 +412,8 @@ export interface ProxiedTunConfigOptions {
   /** The ACTIVE profile document, already through overrides/DNS/sniffer. */
   document: string
   mixedPort: number
+  httpPort?: number
+  socksPort?: number
   controllerPort: number
   secret: string
   device: string
@@ -438,6 +454,8 @@ export function generateProxiedTunConfig(options: ProxiedTunConfigOptions): stri
   // neutralised, app-critical listener/auth keys forced).
   const safeText = buildProfileKernelConfig(options.document, {
     mixedPort: options.mixedPort,
+    httpPort: options.httpPort,
+    socksPort: options.socksPort,
     controllerPort: options.controllerPort,
     secret: options.secret,
     core: options.core,
@@ -600,6 +618,21 @@ export function proxiedTunConfigErrors(text: string): string[] {
   const mixedPort = data['mixed-port']
   if (typeof mixedPort !== 'number' || !Number.isInteger(mixedPort) || mixedPort < PORT_MIN || mixedPort > PORT_MAX) {
     errors.push('mixed-port is outside the allowed range')
+  }
+  const listenerPorts = [mixedPort]
+  for (const key of ['port', 'socks-port']) {
+    const port = data[key]
+    if (port === undefined) continue
+    if (typeof port !== 'number' || !Number.isInteger(port) || port < PORT_MIN || port > PORT_MAX) {
+      errors.push(`${key} is outside the allowed range`)
+    } else listenerPorts.push(port)
+  }
+  const controllerMatch = typeof data['external-controller'] === 'string'
+    ? /^127\.0\.0\.1:(\d+)$/.exec(data['external-controller'])
+    : null
+  if (controllerMatch) listenerPorts.push(Number(controllerMatch[1]))
+  if (listenerPorts.every((port) => typeof port === 'number') && new Set(listenerPorts).size !== listenerPorts.length) {
+    errors.push('listener ports must differ')
   }
 
   const tun = data.tun

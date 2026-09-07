@@ -85,10 +85,11 @@ describe('mihomoConfigErrors / validateMihomoConfigYaml', () => {
   })
 
   it('reports any unknown listener/stack key', () => {
-    for (const key of ['socks-port', 'listeners', 'hosts', 'profile', 'sniffer', 'proxy-providers']) {
+    for (const key of ['listeners', 'hosts', 'profile', 'sniffer', 'proxy-providers']) {
       const text = validText() + `${key}: {}\n`
       expect(mihomoConfigErrors(text)).toContain(`unknown top-level key: ${key}`)
     }
+    expect(mihomoConfigErrors(validText() + 'socks-port: {}\n')).toContain('socks-port must be a scalar value')
   })
 
   it('reports a controller that is not loopback-bound', () => {

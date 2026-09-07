@@ -172,7 +172,7 @@ describe('mihomo service gateway', () => {
     service.dispose()
   })
 
-  it('still surfaces a real probe verdict (503) instead of masking it as a name miss', async () => {
+  it('surfaces real probe verdicts and non-404 HTTP failures instead of masking them as name misses', async () => {
     const providerDelayTest = vi.fn().mockRejectedValue(
       new ProtocolError(ProtocolErrorCode.UPSTREAM_TEST_FAILED, 'mihomo delay test failed: HTTP 503', {
         path: '/providers/proxies/sub-a/node/healthcheck',
@@ -202,6 +202,18 @@ describe('mihomo service gateway', () => {
     // name) — do not keep probing the remaining owners.
     expect(providerDelayTest).toHaveBeenCalledTimes(1)
     expect(delayTest).not.toHaveBeenCalled()
+
+    providerDelayTest.mockClear()
+    providerDelayTest.mockRejectedValue(
+      new ProtocolError(ProtocolErrorCode.UPSTREAM_HTTP_ERROR, 'mihomo request failed with HTTP 500', {
+        path: '/providers/proxies/sub-a/node/healthcheck',
+        reason: '500: internal error'
+      })
+    )
+    await expect(service.groupMemberDelayTest('Select', 'node', { timeout: 9000 })).rejects.toMatchObject({
+      code: 'UPSTREAM_HTTP_ERROR'
+    })
+    expect(providerDelayTest).toHaveBeenCalledTimes(1)
     service.dispose()
   })
 
@@ -232,6 +244,44 @@ describe('mihomo service gateway', () => {
 
     await expect(service.groupMemberDelayTest('Select', 'node', { timeout: 9000 })).resolves.toEqual({ delay: 7 })
     expect(delayTest).toHaveBeenCalledWith('node', { timeout: 9000 })
+    service.dispose()
+  })
+
+  it('uses the provider health-check URL when a provider-backed group omitted url', async () => {
+    const providerDelayTest = vi.fn().mockResolvedValue({ delay: 83 })
+    const client = {
+      getProxies: vi.fn().mockResolvedValue({
+        proxies: {
+          Oracle: { name: 'Oracle', type: 'URLTest', all: ['xtls-reality'] },
+          'xtls-reality': { name: 'xtls-reality', type: 'Vless' }
+        }
+      }),
+      getProxyProviders: vi.fn().mockResolvedValue({
+        providers: {
+          Oracle: {
+            name: 'Oracle',
+            type: 'Proxy',
+            testUrl: 'http://www.google.com/blank.html',
+            proxies: [{ name: 'xtls-reality', type: 'Vless' }]
+          }
+        }
+      }),
+      providerDelayTest,
+      delayTest: vi.fn()
+    } as unknown as MihomoClient
+    const service = new MihomoService(client, {
+      wsBaseUrl: 'ws://127.0.0.1',
+      enabled: false,
+      resolveGroupTestUrls: async () => ({ Oracle: null }),
+      resolveDelayTestSettings: async () => ({ scope: 'group', url: '' })
+    })
+
+    await expect(service.groupMemberDelayTest('Oracle', 'xtls-reality', { timeout: 10000 }))
+      .resolves.toEqual({ delay: 83 })
+    expect(providerDelayTest).toHaveBeenCalledWith('Oracle', 'xtls-reality', {
+      timeout: 10000,
+      url: 'http://www.google.com/blank.html'
+    })
     service.dispose()
   })
 

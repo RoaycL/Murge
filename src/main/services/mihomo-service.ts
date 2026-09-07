@@ -39,6 +39,11 @@ export interface MihomoServiceStreams {
   logBuffer?: MihomoLogBuffer
 }
 
+interface ProviderOwner {
+  name: string
+  testUrl: string | null
+}
+
 /**
  * The production-capable {@link MihomoGateway}: REST calls delegate to a
  * {@link MihomoClient}, and the push streams share one WebSocket per stream.
@@ -54,7 +59,7 @@ export class MihomoService implements MihomoGateway {
   private readonly resolveDelayTestSettings?: MihomoServiceStreams['resolveDelayTestSettings']
   private groupTestUrlsPromise: Promise<Record<string, string | null>> | null = null
   private groupTestUrlsExpiresAt = 0
-  private providerOwnersPromise: Promise<Map<string, string[]>> | null = null
+  private providerOwnersPromise: Promise<Map<string, ProviderOwner[]>> | null = null
   private providerOwnersExpiresAt = 0
   private readonly logBuffer: MihomoLogBuffer
 
@@ -181,13 +186,11 @@ export class MihomoService implements MihomoGateway {
     const globalUrl = settings.url.trim() || null
     const hasProfileEntry = Object.prototype.hasOwnProperty.call(explicitUrls, group)
     const groupUrl = hasProfileEntry ? explicitUrls[group] : owner.testUrl?.trim() || null
-    const resolvedUrl = settings.scope === 'global' ? globalUrl : groupUrl || globalUrl
-    const testOptions = resolvedUrl ? { ...opts, url: resolvedUrl } : { ...opts }
     const member = snapshot.proxies[name]
     // A nested policy group is tested through /proxies/:name/delay. Only leaf
     // nodes are candidates for provider-specific health checks.
     if (!Array.isArray(member?.all)) {
-      let candidates: string[] = []
+      let candidates: ProviderOwner[] = []
       try {
         candidates = (await this.getProviderOwners()).get(name) ?? []
       } catch (error) {
@@ -200,18 +203,24 @@ export class MihomoService implements MihomoGateway {
       // shared info nodes), and a provider reloaded moments ago may briefly no
       // longer list a node, so the first candidate can 404 while a later one
       // (or the top-level /proxies map for inline nodes) still resolves it.
-      for (const providerName of candidates) {
+      for (const candidate of candidates) {
+        // Provider-backed groups commonly omit their own `url` and rely on the
+        // provider health-check URL. Test the same destination that produced the
+        // group card's automatic history; a configured global URL still wins.
+        const candidateUrl = settings.scope === 'global'
+          ? globalUrl
+          : groupUrl || candidate.testUrl || globalUrl
+        const candidateOptions = candidateUrl ? { ...opts, url: candidateUrl } : { ...opts }
         try {
-          return await this.client.providerDelayTest(providerName, name, testOptions)
+          return await this.client.providerDelayTest(candidate.name, name, candidateOptions)
         } catch (error) {
-          // 4xx from the provider route means "this provider does not currently
-          // expose the node" — a name-resolution miss, not a probe verdict.
+          // Only a real 404 means this provider no longer exposes the node.
           // Real verdicts (503 probe failed, 504 timeout, 401) and argument
-          // errors must surface immediately instead of being retried.
+          // errors — including any non-404 HTTP error — surface immediately.
           if (
             error instanceof ProtocolError &&
             (error.code === ProtocolErrorCode.NOT_FOUND ||
-              error.code === ProtocolErrorCode.UPSTREAM_HTTP_ERROR)
+              (error.code === ProtocolErrorCode.UPSTREAM_HTTP_ERROR && error.details?.reason?.startsWith('404')))
           ) {
             continue
           }
@@ -219,6 +228,10 @@ export class MihomoService implements MihomoGateway {
         }
       }
     }
+    const resolvedUrl = settings.scope === 'global'
+      ? globalUrl
+      : groupUrl || globalUrl
+    const testOptions = resolvedUrl ? { ...opts, url: resolvedUrl } : { ...opts }
     return this.client.delayTest(name, testOptions)
   }
 
@@ -239,19 +252,20 @@ export class MihomoService implements MihomoGateway {
    * per-candidate probe can resolve the name through whichever provider still
    * lists it instead of being refused as ambiguous.
    */
-  private getProviderOwners(): Promise<Map<string, string[]>> {
+  private getProviderOwners(): Promise<Map<string, ProviderOwner[]>> {
     const now = Date.now()
     if (this.providerOwnersPromise && now < this.providerOwnersExpiresAt) return this.providerOwnersPromise
     this.providerOwnersExpiresAt = now + 1_000
     this.providerOwnersPromise = this.client.getProxyProviders().then(({ providers }) => {
-      const owners = new Map<string, string[]>()
+      const owners = new Map<string, ProviderOwner[]>()
       for (const [providerName, provider] of Object.entries(providers)) {
         for (const proxy of provider.proxies ?? []) {
           const list = owners.get(proxy.name)
+          const owner = { name: providerName, testUrl: provider.testUrl?.trim() || null }
           if (list) {
-            if (!list.includes(providerName)) list.push(providerName)
+            if (!list.some((candidate) => candidate.name === providerName)) list.push(owner)
           } else {
-            owners.set(proxy.name, [providerName])
+            owners.set(proxy.name, [owner])
           }
         }
       }

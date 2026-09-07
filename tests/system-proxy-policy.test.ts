@@ -44,8 +44,8 @@ describe('system-proxy policy', () => {
   })
 
   describe('buildProxyServerValue', () => {
-    it('references the same loopback host:port for every scheme', () => {
-      expect(buildProxyServerValue(TARGET)).toBe('http=127.0.0.1:7890;https=127.0.0.1:7890;socks=127.0.0.1:7890')
+    it('uses the WinINet single-address form supported by mixed-port', () => {
+      expect(buildProxyServerValue(TARGET)).toBe('127.0.0.1:7890')
     })
   })
 
@@ -117,7 +117,7 @@ describe('system-proxy policy', () => {
     it('derives the override from the observed value', () => {
       const written = buildWrittenState(TARGET, state({ proxyOverride: str('a.com') }))
       expect(written.proxyEnable).toEqual(dword(1))
-      expect(written.proxyServer.value).toBe('http=127.0.0.1:7890;https=127.0.0.1:7890;socks=127.0.0.1:7890')
+      expect(written.proxyServer.value).toBe('127.0.0.1:7890')
       expect(written.proxyOverride.value).toBe(mergeProxyOverride('a.com'))
     })
   })

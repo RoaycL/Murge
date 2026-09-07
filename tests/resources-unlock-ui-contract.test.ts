@@ -134,7 +134,7 @@ describe('network drawer + resources UI contract', () => {
     expect(overview).not.toMatch(/setting-card clickable/)
     expect(overview).not.toMatch(/<SurfaceCard[^>]+@click=/)
     expect(overview).toMatch(/\.setting-nav\s*\{[^}]*place-items:\s*center/)
-    expect(overview).toMatch(/\.setting-status\s*\{[^}]*min-height:\s*28px[^}]*margin-top:\s*0[^}]*padding-top:\s*0/)
+    expect(overview).toMatch(/\.setting-nav\s*\{[^}]*align-self:\s*flex-end[^}]*margin:\s*0 -7px -7px 0/)
     // 运行状态栏已删除。
     expect(overview).not.toMatch(/runtime-summary/)
     // 覆写卡片上的主开关直接持久化 enabled。
@@ -156,7 +156,7 @@ describe('network drawer + resources UI contract', () => {
       read('src/renderer/src/stores/substore.ts')
     ])
     expect(resources).not.toMatch(/Sub-Store|subStore/)
-    expect(sidebar).toMatch(/label: '配置'[\s\S]*to: '\/substore', label: 'Sub-Store'/)
+    expect(sidebar).toMatch(/label: '配置'[\s\S]*to: '\/profiles'[\s\S]*to: '\/overrides'[\s\S]*to: '\/resources'[\s\S]*to: '\/substore', label: 'Sub-Store'/)
     expect(settings).toMatch(/subStoreEnabled:\s*true/)
     expect(main).toMatch(/subStoreService\.ensureRunning\(\)/)
     expect(subStoreView).toMatch(/subStoreMergedUrl/)

@@ -118,8 +118,8 @@ func validateUint64(value string) error {
 // forbiddenTopKeys are the top-level keys a profile may never carry into the
 // elevated child:
 //
-//   - extra inbounds beyond the single authorized mixed-port (`port`,
-//     `socks-port`, `redir-port`, `tproxy-port`, `listeners`, and `tunnels`,
+//   - extra inbounds beyond the authorized loopback HTTP/SOCKS/mixed ports
+//     (`redir-port`, `tproxy-port`, `listeners`, and `tunnels`,
 //     which binds arbitrary local ports and forwards them to arbitrary hosts);
 //   - controller surfaces that `secret` does not authenticate (mihomo's Unix
 //     socket, Windows named pipe, TLS controller and external DoH endpoint all
@@ -135,7 +135,7 @@ func validateUint64(value string) error {
 // None of these are needed to proxy traffic, so refusing them keeps a compromised
 // main process from reaching them without depending on mihomo's own checks.
 var forbiddenTopKeys = []string{
-	"port", "socks-port", "redir-port", "tproxy-port", "listeners", "tunnels",
+	"redir-port", "tproxy-port", "listeners", "tunnels",
 	"external-controller-unix", "external-controller-pipe", "external-controller-tls",
 	"external-controller-routing-mark", "external-controller-cors", "external-doh-server",
 	"external-ui", "external-ui-url", "external-ui-name",
@@ -264,6 +264,20 @@ func validateTunProfile(text string) error {
 	if mixedPort < 1024 || mixedPort > 65535 {
 		return errors.New("mixed-port is outside the allowed range")
 	}
+	listenerPorts := map[int]bool{mixedPort: true}
+	for _, key := range []string{"port", "socks-port"} {
+		if _, present := profile[key]; !present {
+			continue
+		}
+		port, err := intValue(profile, key)
+		if err != nil || port < 1024 || port > 65535 {
+			return fmt.Errorf("%s is outside the allowed range", key)
+		}
+		if listenerPorts[port] {
+			return errors.New("listener ports must differ")
+		}
+		listenerPorts[port] = true
+	}
 	controllerText, ok := profile["external-controller"].(string)
 	if !ok {
 		return errors.New("external-controller must be a string")
@@ -273,7 +287,7 @@ func validateTunProfile(text string) error {
 		return errors.New("external-controller must bind loopback")
 	}
 	controllerPort, _ := strconv.Atoi(controller[1])
-	if controllerPort < 1024 || controllerPort > 65535 || controllerPort == mixedPort {
+	if controllerPort < 1024 || controllerPort > 65535 || listenerPorts[controllerPort] {
 		return errors.New("controller port is invalid")
 	}
 	secret, ok := profile["secret"].(string)

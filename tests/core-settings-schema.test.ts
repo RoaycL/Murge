@@ -9,7 +9,11 @@ const valid = {
   tcpConcurrent: false,
   unifiedDelay: true,
   findProcessMode: 'strict',
-  interfaceName: 'Ethernet'
+  interfaceName: 'Ethernet',
+  mixedPort: 7892,
+  socksPort: 7891,
+  httpPort: 7890,
+  controllerPort: 9090
 }
 
 describe('core-settings schema', () => {

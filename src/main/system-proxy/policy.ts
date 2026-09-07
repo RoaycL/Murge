@@ -25,13 +25,12 @@ export function formatAddress(target: SystemProxyTarget): string {
 
 /**
  * The `ProxyServer` value WinINet understands. mihomo's `mixed-port` serves both
- * HTTP CONNECT and SOCKS5 on the same loopback socket, so a single `<p>` is
- * referenced by every scheme. The host is always loopback (never 0.0.0.0, never
- * a LAN address) so no external traffic can be routed through the app.
+ * HTTP CONNECT and SOCKS5 on the same loopback socket. The scheme-less form is
+ * the most broadly compatible WinINet representation and matches Clash-family
+ * clients. The host is always loopback, never a LAN address.
  */
 export function buildProxyServerValue(target: SystemProxyTarget): string {
-  const { host, port } = target
-  return `http=${host}:${port};https=${host}:${port};socks=${host}:${port}`
+  return formatAddress(target)
 }
 
 /** Local/private destinations that must never be proxied. */

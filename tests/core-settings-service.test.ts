@@ -50,5 +50,8 @@ describe('CoreSettingsService', () => {
     expect(preview).toContain('log-level: warning')
     expect(preview).toContain('tcp-concurrent: true')
     expect(preview).toContain('ipv6: false')
+    expect(preview).toContain('mixed-port: 7890')
+    expect(preview).toContain('external-controller: 127.0.0.1:9090')
+    expect(preview).toContain('allow-lan: false')
   })
 })

@@ -9,6 +9,8 @@ import type { TunServiceClient } from '../tun/service-client'
 
 export interface PrivilegedKernelRuntime {
   mixedPort: number
+  httpPort?: number
+  socksPort?: number
   controllerPort: number
   secret: string
 }
@@ -47,7 +49,8 @@ export class PrivilegedServiceKernelGateway implements KernelGateway {
     private readonly readiness: PrivilegedKernelReadiness,
     private readonly device: string,
     private readonly readyTimeoutMs = 10_000,
-    private readonly canStart: () => boolean | Promise<boolean> = () => true
+    private readonly canStart: () => boolean | Promise<boolean> = () => true,
+    private readonly prepareStart: (runtime: PrivilegedKernelRuntime) => void | Promise<void> = () => undefined
   ) {}
 
   getStatus(): KernelStatus { return { ...this.status } }
@@ -86,7 +89,6 @@ export class PrivilegedServiceKernelGateway implements KernelGateway {
         startedAt: null, lastError: null
       })
       try {
-        const profile = await this.buildProfile(runtime)
         // Reconcile every start. An abnormal GUI exit leaves a service-owned
         // core with the previous run's random controller secret/ports; it must
         // be stopped before starting this run's authenticated endpoint.
@@ -94,6 +96,11 @@ export class PrivilegedServiceKernelGateway implements KernelGateway {
         if (stale.outcome === 'running' || stale.outcome === 'starting' || stale.outcome === 'stopping') {
           await this.client.stop()
         }
+        // Only after the service-owned child is gone may we classify a remaining
+        // listener as foreign. This keeps the reclaimer from bypassing the
+        // service lifecycle when recovering this app's own stale session.
+        await this.prepareStart(runtime)
+        const profile = await this.buildProfile(runtime)
         const owned = await this.startProfile(profile)
         const controller = new AbortController()
         const timer = setTimeout(() => controller.abort(), this.readyTimeoutMs)

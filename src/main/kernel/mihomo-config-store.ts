@@ -11,6 +11,8 @@ import { buildProfileKernelConfig, profileKernelConfigErrors } from './profile-k
 
 export interface MihomoConfigStoreOptions {
   mixedPort: number
+  httpPort?: number
+  socksPort?: number
   controllerPort: number
   /**
    * Pin the parent that owns the per-run workspace (e.g. for tests). It is
@@ -233,6 +235,8 @@ export class MihomoKernelConfigStore implements KernelConfigStore {
         return {
           text: buildProfileKernelConfig(document, {
             mixedPort: this.options.mixedPort,
+            httpPort: this.options.httpPort,
+            socksPort: this.options.socksPort,
             controllerPort: this.options.controllerPort,
             secret,
             core,
@@ -245,6 +249,8 @@ export class MihomoKernelConfigStore implements KernelConfigStore {
     return {
       text: generateMihomoConfig({
         mixedPort: this.options.mixedPort,
+        httpPort: this.options.httpPort,
+        socksPort: this.options.socksPort,
         controllerPort: this.options.controllerPort,
         secret
       }),

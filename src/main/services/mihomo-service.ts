@@ -54,7 +54,7 @@ export class MihomoService implements MihomoGateway {
   private readonly resolveDelayTestSettings?: MihomoServiceStreams['resolveDelayTestSettings']
   private groupTestUrlsPromise: Promise<Record<string, string | null>> | null = null
   private groupTestUrlsExpiresAt = 0
-  private providerOwnersPromise: Promise<Map<string, string | null>> | null = null
+  private providerOwnersPromise: Promise<Map<string, string[]>> | null = null
   private providerOwnersExpiresAt = 0
   private readonly logBuffer: MihomoLogBuffer
 
@@ -187,16 +187,36 @@ export class MihomoService implements MihomoGateway {
     // A nested policy group is tested through /proxies/:name/delay. Only leaf
     // nodes are candidates for provider-specific health checks.
     if (!Array.isArray(member?.all)) {
+      let candidates: string[] = []
       try {
-        const providerName = (await this.getProviderOwners()).get(name)
-        // null means the same controller name appeared in multiple providers;
-        // the ordinary proxy endpoint is authoritative and avoids testing the
-        // wrong provider record merely because it was enumerated first.
-        if (providerName) return this.client.providerDelayTest(providerName, name, testOptions)
+        candidates = (await this.getProviderOwners()).get(name) ?? []
       } catch (error) {
         // A controller/provider-list failure must not make a globally resolvable
         // node untestable; fall through to the standard proxy endpoint.
         if (error instanceof ProtocolError && error.code === ProtocolErrorCode.UNAUTHORIZED) throw error
+      }
+      // Try every provider that currently exposes this node name. Duplicate
+      // controller names across subscriptions are routine (merged airports,
+      // shared info nodes), and a provider reloaded moments ago may briefly no
+      // longer list a node, so the first candidate can 404 while a later one
+      // (or the top-level /proxies map for inline nodes) still resolves it.
+      for (const providerName of candidates) {
+        try {
+          return await this.client.providerDelayTest(providerName, name, testOptions)
+        } catch (error) {
+          // 4xx from the provider route means "this provider does not currently
+          // expose the node" — a name-resolution miss, not a probe verdict.
+          // Real verdicts (503 probe failed, 504 timeout, 401) and argument
+          // errors must surface immediately instead of being retried.
+          if (
+            error instanceof ProtocolError &&
+            (error.code === ProtocolErrorCode.NOT_FOUND ||
+              error.code === ProtocolErrorCode.UPSTREAM_HTTP_ERROR)
+          ) {
+            continue
+          }
+          throw error
+        }
       }
     }
     return this.client.delayTest(name, testOptions)
@@ -212,16 +232,27 @@ export class MihomoService implements MihomoGateway {
     return this.groupTestUrlsPromise
   }
 
-  /** Provider-name index shared by every member of the current test batch. */
-  private getProviderOwners(): Promise<Map<string, string | null>> {
+  /**
+   * Provider-name index shared by every member of the current test batch. A
+   * node name may appear in MULTIPLE providers (duplicate names across merged
+   * subscriptions are routine) — every owner is kept, ordered first-seen, so a
+   * per-candidate probe can resolve the name through whichever provider still
+   * lists it instead of being refused as ambiguous.
+   */
+  private getProviderOwners(): Promise<Map<string, string[]>> {
     const now = Date.now()
     if (this.providerOwnersPromise && now < this.providerOwnersExpiresAt) return this.providerOwnersPromise
     this.providerOwnersExpiresAt = now + 1_000
     this.providerOwnersPromise = this.client.getProxyProviders().then(({ providers }) => {
-      const owners = new Map<string, string | null>()
+      const owners = new Map<string, string[]>()
       for (const [providerName, provider] of Object.entries(providers)) {
         for (const proxy of provider.proxies ?? []) {
-          owners.set(proxy.name, owners.has(proxy.name) ? null : providerName)
+          const list = owners.get(proxy.name)
+          if (list) {
+            if (!list.includes(providerName)) list.push(providerName)
+          } else {
+            owners.set(proxy.name, [providerName])
+          }
         }
       }
       return owners

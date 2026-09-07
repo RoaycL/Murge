@@ -7,6 +7,23 @@ import type { CoreSettingsGateway } from '@shared/gateways'
 
 /** Filename of the persisted typed controlled-core-settings model. */
 export const CORE_SETTINGS_FILE = 'core-settings.json'
+const CORE_SETTINGS_STORAGE_VERSION = 2
+
+function migratePersistedSettings(input: unknown): { settings: CoreSettings; changed: boolean } {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    return { settings: coerceCoreSettings(input), changed: false }
+  }
+  const source = input as Record<string, unknown>
+  const changed = source.storageVersion !== CORE_SETTINGS_STORAGE_VERSION
+  // v0.9.0 accidentally reversed Clash Party's HTTP and mixed defaults. Only
+  // migrate that exact tuple from an unversioned file; all custom combinations
+  // remain untouched.
+  const candidate = changed &&
+    source.mixedPort === 7892 && source.socksPort === 7891 && source.httpPort === 7890
+      ? { ...source, mixedPort: 7890, httpPort: 7892 }
+      : source
+  return { settings: coerceCoreSettings(candidate), changed }
+}
 
 /**
  * Durable single-model store for the typed controlled core settings.
@@ -64,7 +81,9 @@ export class CoreSettingsService implements CoreSettingsGateway {
     if (this.settings) return this.settings
     try {
       const parsed = JSON.parse(await readFile(this.filePath, 'utf8')) as unknown
-      this.settings = coerceCoreSettings(parsed)
+      const migrated = migratePersistedSettings(parsed)
+      this.settings = migrated.settings
+      if (migrated.changed) await this.persist()
     } catch {
       this.settings = coerceCoreSettings(undefined)
     }
@@ -74,7 +93,7 @@ export class CoreSettingsService implements CoreSettingsGateway {
   private async persist(): Promise<void> {
     await mkdir(this.appDataBase, { recursive: true })
     const tmp = join(this.appDataBase, `.${CORE_SETTINGS_FILE}.${Date.now()}.tmp`)
-    await writeFile(tmp, `${JSON.stringify(this.settings, null, 2)}\n`, 'utf8')
+    await writeFile(tmp, `${JSON.stringify({ storageVersion: CORE_SETTINGS_STORAGE_VERSION, ...this.settings }, null, 2)}\n`, 'utf8')
     await rename(tmp, this.filePath)
   }
 

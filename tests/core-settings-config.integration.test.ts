@@ -47,8 +47,8 @@ function build(core?: CoreSettings): Record<string, unknown> {
 describe('controlled core settings config integration', () => {
   it('applies the user-owned listener, LAN and managed panel settings', () => {
     const out = parse(buildProfileKernelConfig(PROFILE, {
-      mixedPort: 7892,
-      httpPort: 7890,
+      mixedPort: 7890,
+      httpPort: 7892,
       socksPort: 7891,
       controllerHost: '0.0.0.0',
       controllerPort: 9090,
@@ -58,9 +58,9 @@ describe('controlled core settings config integration', () => {
       core: ENABLED
     })) as Record<string, unknown>
     expect(out).toMatchObject({
-      port: 7890,
+      port: 7892,
       'socks-port': 7891,
-      'mixed-port': 7892,
+      'mixed-port': 7890,
       'external-controller': '0.0.0.0:9090',
       'allow-lan': true,
       'bind-address': '*',

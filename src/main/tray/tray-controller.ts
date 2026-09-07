@@ -12,7 +12,7 @@ import type { RuntimeAccent } from '@shared/runtime-accent'
 import type { SystemProxyStatus } from '@shared/system-proxy'
 import type { TunGateway, TunStatus } from '@shared/tun'
 
-export type TrayDirectory = 'application' | 'working' | 'kernel'
+export type TrayDirectory = 'application' | 'working' | 'kernel' | 'logs'
 
 export interface TrayMenuItem {
   id: string
@@ -350,7 +350,7 @@ export class TrayController {
         { id: 'open-application-directory', label: '应用目录', click: () => open('application') },
         { id: 'open-working-directory', label: '工作目录', click: () => open('working') },
         { id: 'open-kernel-directory', label: '内核目录', click: () => open('kernel') },
-        { id: 'open-log-directory', label: '日志目录（暂未接入）', enabled: false }
+        { id: 'open-log-directory', label: '日志目录', click: () => open('logs') }
       ]
     }
   }

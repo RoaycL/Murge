@@ -98,6 +98,8 @@ export interface SubStoreDeps {
   openExternal?: (url: string) => Promise<void>
   /** Test seam; production always uses the digests pinned in shared/substore. */
   pinnedDigests?: { backend: string; frontend: string }
+  /** Persistent output sink; worker logging must never control its lifecycle. */
+  onLog?: (stream: 'stdout' | 'stderr', text: string) => void
 }
 
 /**
@@ -142,7 +144,9 @@ export class SubStoreService {
     this.createWorker =
       deps.createWorker ??
       ((bundlePath, env) => {
-        const worker = new Worker(bundlePath, { env })
+        const worker = new Worker(bundlePath, { env, stdout: true, stderr: true })
+        worker.stdout.on('data', (chunk) => deps.onLog?.('stdout', String(chunk)))
+        worker.stderr.on('data', (chunk) => deps.onLog?.('stderr', String(chunk)))
         let graceful = false
         const handle: SubStoreWorkerHandle = {
           terminate: () => {

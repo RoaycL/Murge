@@ -4,7 +4,7 @@ import { MihomoClient } from '../src/main/services/mihomo-client'
 import { MihomoService } from '../src/main/services/mihomo-service'
 import { ProtocolError, ProtocolErrorCode } from '../src/shared/protocol-errors'
 import type { TrafficSample } from '../src/shared/runtime'
-import type { MihomoConnectionsSnapshot, MihomoStreamError, MihomoLogsSnapshot } from '../src/shared/mihomo-api'
+import type { MihomoConnectionsSnapshot, MihomoLogMessage, MihomoStreamError, MihomoLogsSnapshot } from '../src/shared/mihomo-api'
 
 const handles: MockMihomoServerHandle[] = []
 afterEach(async () => {
@@ -391,9 +391,11 @@ describe('mihomo service gateway', () => {
     // The mock server emits a random /logs line ~60% of each traffic tick.
     const server = await startMockMihomoServer({ trafficIntervalMs: 25 })
     handles.push(server)
+    const persisted: MihomoLogMessage[] = []
     const service = new MihomoService(new MihomoClient(server.baseUrl, ''), {
       wsBaseUrl: server.wsBaseUrl,
-      enabled: true
+      enabled: true,
+      logSink: (message) => { persisted.push(message) }
     })
     // A subscriber keeps the WebSocket connected so messages actually flow.
     const unsub = service.onLogs(() => undefined)
@@ -408,6 +410,7 @@ describe('mihomo service gateway', () => {
     expect(firstSnapshot.lastSeq).toBeGreaterThan(0)
     expect(firstSnapshot.entries.length).toBeGreaterThan(0)
     expect(firstSnapshot.entries.every((entry) => typeof entry.seq === 'number' && entry.seq > 0)).toBe(true)
+    expect(persisted.length).toBeGreaterThan(0)
     const firstSeq = firstSnapshot.lastSeq
 
     // After the only subscriber leaves, the buffer still serves the retained tail

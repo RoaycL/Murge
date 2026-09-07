@@ -76,7 +76,7 @@ function taskCreateCalls(calls: Call[]): Call[] {
 }
 
 function taskXmlWithArgs(args: string[], enabled = true): string {
-  return buildTaskXml('C:\\app\\Murge.exe', args).replace(
+  return buildTaskXml('C:\\app\\client.exe', args).replace(
     '<Enabled>true</Enabled>\n    <Hidden>',
     `<Enabled>${enabled}</Enabled>\n    <Hidden>`
   )
@@ -84,7 +84,7 @@ function taskXmlWithArgs(args: string[], enabled = true): string {
 
 describe('task XML', () => {
   it('uses a delayed logon trigger with least privilege and no time limit', () => {
-    const xml = buildTaskXml('C:\\Program Files\\Murge\\Murge.exe', [])
+    const xml = buildTaskXml('C:\\Program Files\\Client\\client.exe', [])
     expect(xml).toContain('<LogonTrigger>')
     expect(xml).toContain('<Delay>PT3S</Delay>')
     expect(xml).toContain('<RunLevel>LeastPrivilege</RunLevel>')

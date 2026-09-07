@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, ref } from "vue";
 import { useConnectionsStore } from "../stores/connections";
 import { groupConnectionsByDevice } from "../lib/connection-groups";
 import { formatBytes } from "../lib/format";
@@ -27,8 +27,6 @@ const groups = computed(() => {
 const selected = computed(
   () => groups.value.find((group) => group.key === selectedKey.value) ?? null,
 );
-onMounted(store.connect);
-onUnmounted(store.disconnect);
 async function closeSelected(): Promise<void> {
   if (!selected.value || closing.value) return
   closing.value = true

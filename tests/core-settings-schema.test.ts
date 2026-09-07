@@ -13,7 +13,11 @@ const valid = {
   mixedPort: 7892,
   socksPort: 7891,
   httpPort: 7890,
-  controllerPort: 9090
+  controllerHost: '127.0.0.1',
+  controllerPort: 9090,
+  controllerSecret: 'a'.repeat(64),
+  controllerPanel: false,
+  allowLan: false
 }
 
 describe('core-settings schema', () => {

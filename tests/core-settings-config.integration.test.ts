@@ -45,6 +45,29 @@ function build(core?: CoreSettings): Record<string, unknown> {
 }
 
 describe('controlled core settings config integration', () => {
+  it('applies the user-owned listener, LAN and managed panel settings', () => {
+    const out = parse(buildProfileKernelConfig(PROFILE, {
+      mixedPort: 7892,
+      httpPort: 7890,
+      socksPort: 7891,
+      controllerHost: '0.0.0.0',
+      controllerPort: 9090,
+      secret: SECRET,
+      allowLan: true,
+      controllerPanel: true,
+      core: ENABLED
+    })) as Record<string, unknown>
+    expect(out).toMatchObject({
+      port: 7890,
+      'socks-port': 7891,
+      'mixed-port': 7892,
+      'external-controller': '0.0.0.0:9090',
+      'allow-lan': true,
+      'bind-address': '*',
+      'external-ui': 'ui',
+      'external-ui-name': 'metacubexd'
+    })
+  })
   it('read-back: an enabled model is authoritative in the runtime config', () => {
     const out = build(ENABLED)
     // Read-back: the runtime config reflects exactly the controlled model.

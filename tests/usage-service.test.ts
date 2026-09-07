@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { UsageHistoryService } from '../src/main/services/usage-history-service'
 import { InMemoryUsageHistoryStore } from '../src/main/services/usage-history-store'
+import type { MihomoConnectionsSnapshot } from '../src/shared/mihomo-api'
 
 const HOUR = 3_600_000
 // An arbitrary baseline that is NOT hour-aligned, so the alignment is exercised.
@@ -16,7 +17,7 @@ describe('UsageHistoryService', () => {
       await service.record({ up: 100, down: 50 }, FIXED)
       await service.record({ up: 200, down: 100 }, FIXED + 5_000)
       const snap = service.getWindow('24h')
-      expect(snap.totals).toEqual({ up: 1000, down: 500, total: 1500, count: 2 })
+      expect(snap.totals).toEqual({ up: 1000, down: 500, total: 1500, count: 0 })
     })
 
     it('rolls over into a new hourly bucket at the hour boundary', async () => {
@@ -27,7 +28,7 @@ describe('UsageHistoryService', () => {
       const snap = service.getWindow('24h')
       // First sample is a boundary (0 bytes), second integrates 3601s at 100B/s.
       expect(snap.totals.up).toBe(100 * 3_601)
-      expect(snap.totals.count).toBe(2)
+      expect(snap.totals.count).toBe(0)
     })
 
     it('gives the expected empty totals for a window with no data', async () => {
@@ -50,6 +51,22 @@ describe('UsageHistoryService', () => {
       // Only the real 10s gap (first -> third) may integrate; the rollback is 0.
       expect(snap.totals.up).toBe(100 * 10)
       expect(snap.totals.down).toBe(50 * 10)
+    })
+
+    it('counts newly observed connections without a 3600-per-hour ceiling', async () => {
+      const service = new UsageHistoryService({ now: () => FIXED, persistIntervalMs: NO_PERSIST })
+      const snapshot = (ids: string[]): MihomoConnectionsSnapshot => ({
+        downloadTotal: 0,
+        uploadTotal: 0,
+        memory: 0,
+        connections: ids.map((id) => ({ id }))
+      } as MihomoConnectionsSnapshot)
+      const first = Array.from({ length: 4_001 }, (_, index) => `connection-${index}`)
+
+      await service.recordConnections(snapshot(first), FIXED)
+      await service.recordConnections(snapshot([...first, 'connection-4001']), FIXED + 1_000)
+
+      expect(service.getWindow('24h').totals.count).toBe(4_002)
     })
   })
 
@@ -81,6 +98,12 @@ describe('UsageHistoryService', () => {
       const serviceA = new UsageHistoryService({ now: () => FIXED + 10_000, store, persistIntervalMs: NO_PERSIST })
       await serviceA.record({ up: 300, down: 100 }, FIXED)
       await serviceA.record({ up: 300, down: 100 }, FIXED + 10_000)
+      await serviceA.recordConnections({
+        downloadTotal: 0,
+        uploadTotal: 0,
+        memory: 0,
+        connections: [{ id: 'first' }, { id: 'second' }]
+      } as MihomoConnectionsSnapshot, FIXED + 10_000)
       await serviceA.flush()
 
       const serviceB = new UsageHistoryService({ now: () => FIXED + 10_000, store, persistIntervalMs: NO_PERSIST })

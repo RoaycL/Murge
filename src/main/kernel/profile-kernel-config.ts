@@ -25,11 +25,10 @@ import { buildGeodataBlock } from '../../shared/geodata'
  *      * `dns.listen` is dropped (avoid binding a public DNS server; mihomo still
  *        uses the nameservers for resolution),
  *      * `redir-port` / `tproxy-port` are dropped (transparent-proxy binds),
- *      * `external-controller` is forced to loopback + the app-allocated port,
+ *      * `external-controller` is forced to the app-owned address and port,
  *      * `mixed-port` is forced to the app-allocated non-privileged port,
  *      * `secret` is forced to the caller's kernel secret,
- *      * `allow-lan` is forced to false (loopback-only proxies).
- *      * `bind-address` is forced to 127.0.0.1 as defense in depth.
+ *      * `allow-lan` and `bind-address` follow the persisted user choice.
  *
  * The document is parsed with `merge: true` so YAML anchors / merge keys
  * (`<<: *anchor`) resolve into their merged values; the runtime artifact is then
@@ -44,6 +43,9 @@ export interface ProfileKernelConfigOptions {
   httpPort?: number
   socksPort?: number
   controllerPort: number
+  controllerHost?: '127.0.0.1' | '0.0.0.0'
+  allowLan?: boolean
+  controllerPanel?: boolean
   secret: string
   /**
    * Controlled mihomo core settings. When the model is `enabled` its allowlisted
@@ -111,7 +113,7 @@ export function profileKernelConfigErrors(text: string): string[] {
 }
 
 /**
- * Turn a user profile document into a safe loopback-only runtime config. Content
+ * Turn a user profile document into an app-owned runtime config. Content
  * sections are preserved; the system-mutating blocks are neutralized and the
  * app-critical listener/auth keys are forced. The document must already be
  * structurally valid (the import validator plus this function's own
@@ -180,6 +182,7 @@ export function buildProfileKernelConfig(
   ]) {
     delete config[key]
   }
+  for (const key of ['external-ui', 'external-ui-url', 'external-ui-name']) delete config[key]
 
   // These API variants create additional controller surfaces. In particular,
   // mihomo's Unix socket, Windows named pipe and external DoH endpoint do not
@@ -200,10 +203,16 @@ export function buildProfileKernelConfig(
   config['mixed-port'] = mixedPort
   if (options.httpPort) config.port = options.httpPort
   if (options.socksPort) config['socks-port'] = options.socksPort
-  config['external-controller'] = `127.0.0.1:${controllerPort}`
-  config['allow-lan'] = false
-  config['bind-address'] = '127.0.0.1'
+  const controllerHost = options.controllerHost ?? '127.0.0.1'
+  config['external-controller'] = `${controllerHost}:${controllerPort}`
+  config['allow-lan'] = options.allowLan ?? false
+  config['bind-address'] = options.allowLan ? '*' : '127.0.0.1'
   config.secret = secret
+  if (options.controllerPanel) {
+    config['external-ui'] = 'ui'
+    config['external-ui-name'] = 'metacubexd'
+    config['external-ui-url'] = 'https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip'
+  }
   config.mode = typeof config.mode === 'string' && config.mode === 'rule' ? config.mode : 'rule'
 
   // --- Controlled core settings (read-back + conflict handling) ---

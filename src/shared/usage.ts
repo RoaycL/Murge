@@ -20,13 +20,15 @@ export type UsageRanking = 'down' | 'up' | 'total' | 'count'
  * - `bucketStart` is epoch milliseconds aligned to the bucket grid (hour for
  *   `1h`/`24h`, day for `7d`/`30d`).
  * - `up`/`down` are the integrated byte totals in that bucket.
- * - `count` is the number of traffic samples coalesced into the bucket.
+ * - `count` is the number of newly observed mihomo connections in the bucket.
  */
 export interface UsageBucket {
   bucketStart: number
   up: number
   down: number
   count: number
+  /** Persisted semantic marker used to migrate the old 1 Hz sample counter. */
+  countType?: 'connections'
 }
 
 export interface UsageTotals {
@@ -116,7 +118,8 @@ export function coerceUsageBucket(input: unknown): UsageBucket | null {
     bucketStart: Math.floor(record.bucketStart),
     up: Math.round(record.up),
     down: Math.round(record.down),
-    count: isNonNegative(record.count) ? Math.floor(record.count) : 0
+    count: isNonNegative(record.count) ? Math.floor(record.count) : 0,
+    ...(record.countType === 'connections' ? { countType: 'connections' as const } : {})
   }
 }
 

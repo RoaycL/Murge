@@ -15,6 +15,9 @@ export interface MihomoTunConfigOptions {
   httpPort?: number
   socksPort?: number
   controllerPort: number
+  controllerHost?: '127.0.0.1' | '0.0.0.0'
+  allowLan?: boolean
+  controllerPanel?: boolean
   secret: string
   device: string
   stack?: MihomoTunStack
@@ -33,10 +36,10 @@ const DEVICE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/
 const STACKS = new Set<MihomoTunStack>(['mixed', 'system', 'gvisor'])
 const LOG_LEVELS = new Set(['silent', 'error', 'warn', 'info', 'debug'])
 const TOP_KEYS = new Set([
-  'port', 'socks-port', 'mixed-port', 'allow-lan', 'mode', 'log-level', 'ipv6',
-  'external-controller', 'secret', 'tun', 'dns', 'rules'
+  'port', 'socks-port', 'mixed-port', 'allow-lan', 'bind-address', 'mode', 'log-level', 'ipv6',
+  'external-controller', 'secret', 'external-ui', 'external-ui-url', 'external-ui-name', 'tun', 'dns', 'rules'
 ])
-const REQUIRED_TOP_KEYS = new Set([...TOP_KEYS].filter((key) => key !== 'port' && key !== 'socks-port'))
+const REQUIRED_TOP_KEYS = new Set([...TOP_KEYS].filter((key) => !['port', 'socks-port', 'external-ui', 'external-ui-url', 'external-ui-name'].includes(key)))
 const TUN_KEYS = new Set([
   'enable', 'device', 'stack', 'auto-route', 'auto-detect-interface',
   'strict-route', 'dns-hijack'
@@ -126,12 +129,18 @@ export function generateMihomoTunConfig(options: MihomoTunConfigOptions): string
     ...(options.httpPort ? [`port: ${options.httpPort}`] : []),
     ...(options.socksPort ? [`socks-port: ${options.socksPort}`] : []),
     `mixed-port: ${options.mixedPort}`,
-    'allow-lan: false',
+    `allow-lan: ${options.allowLan ?? false}`,
+    `bind-address: ${options.allowLan ? "'*'" : '127.0.0.1'}`,
     'mode: direct',
     `log-level: ${logLevel}`,
     'ipv6: false',
-    `external-controller: 127.0.0.1:${options.controllerPort}`,
+    `external-controller: ${options.controllerHost ?? '127.0.0.1'}:${options.controllerPort}`,
     `secret: ${options.secret}`,
+    ...(options.controllerPanel ? [
+      'external-ui: ui',
+      'external-ui-name: metacubexd',
+      'external-ui-url: https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip'
+    ] : []),
     ...tunLines,
     'dns:',
     '  enable: true',
@@ -162,16 +171,22 @@ export function mihomoTunConfigErrors(text: string): string[] {
   const root = mapping(doc.contents, TOP_KEYS, 'config', errors)
   requireExactKeys(root, REQUIRED_TOP_KEYS, 'config', errors)
 
-  scalarEquals(root, 'allow-lan', false, errors)
+  scalarMatches(root, 'allow-lan', value => typeof value === 'boolean', errors)
+  scalarMatches(root, 'bind-address', value => value === '127.0.0.1' || value === '*', errors)
   scalarEquals(root, 'mode', 'direct', errors)
   scalarEquals(root, 'ipv6', false, errors)
   scalarMatches(root, 'mixed-port', value => typeof value === 'number' && Number.isInteger(value) && value >= PORT_MIN && value <= PORT_MAX, errors)
   for (const key of ['port', 'socks-port']) {
     if (root.has(key)) scalarMatches(root, key, value => typeof value === 'number' && Number.isInteger(value) && value >= PORT_MIN && value <= PORT_MAX, errors)
   }
-  scalarMatches(root, 'external-controller', value => typeof value === 'string' && /^127\.0\.0\.1:(?:[1-9]\d*)$/.test(value), errors)
+  scalarMatches(root, 'external-controller', value => typeof value === 'string' && /^(?:127\.0\.0\.1|0\.0\.0\.0):(?:[1-9]\d*)$/.test(value), errors)
   scalarMatches(root, 'secret', value => typeof value === 'string' && SECRET_PATTERN.test(value), errors)
   scalarMatches(root, 'log-level', value => typeof value === 'string' && LOG_LEVELS.has(value), errors)
+  if (root.has('external-ui') || root.has('external-ui-name') || root.has('external-ui-url')) {
+    scalarEquals(root, 'external-ui', 'ui', errors)
+    scalarEquals(root, 'external-ui-name', 'metacubexd', errors)
+    scalarEquals(root, 'external-ui-url', 'https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip', errors)
+  }
 
   const tunNode = root.get('tun')
   if (!isMap(tunNode)) errors.push('tun must be a mapping')
@@ -329,8 +344,8 @@ const TUN_DEFAULT_FAKE_IP_FILTER = [
  * because this profile runs as SYSTEM:
  *
  * - `tunnels` binds arbitrary local ports and forwards them to arbitrary hosts.
- * - `external-ui*` makes mihomo download a ZIP and unpack it under the configured
- *   directory, then serve it. This application ships its own UI.
+ * - the external UI family is sanitized by the profile builder and separately
+ *   restricted to the managed MetaCubeXD source and contained `ui` directory.
  * - `ntp.write-to-system` lets the SYSTEM process set the machine clock.
  * - `external-controller-cors` widens who may reach the controller.
  */
@@ -338,7 +353,6 @@ const FORBIDDEN_TOP_KEYS = [
   'redir-port', 'tproxy-port', 'listeners', 'tunnels',
   'external-controller-unix', 'external-controller-pipe', 'external-controller-tls',
   'external-controller-routing-mark', 'external-controller-cors', 'external-doh-server',
-  'external-ui', 'external-ui-url', 'external-ui-name',
   'ntp',
   // Legacy standalone inbound servers. The service refuses these too (protocol.go
   // forbiddenTopKeys) — the lists must stay in lockstep so a subscription that
@@ -415,6 +429,9 @@ export interface ProxiedTunConfigOptions {
   httpPort?: number
   socksPort?: number
   controllerPort: number
+  controllerHost?: '127.0.0.1' | '0.0.0.0'
+  allowLan?: boolean
+  controllerPanel?: boolean
   secret: string
   device: string
   stack?: MihomoTunStack
@@ -457,6 +474,9 @@ export function generateProxiedTunConfig(options: ProxiedTunConfigOptions): stri
     httpPort: options.httpPort,
     socksPort: options.socksPort,
     controllerPort: options.controllerPort,
+    controllerHost: options.controllerHost,
+    allowLan: options.allowLan,
+    controllerPanel: options.controllerPanel,
     secret: options.secret,
     core: options.core,
     geodata: options.geodata
@@ -468,12 +488,10 @@ export function generateProxiedTunConfig(options: ProxiedTunConfigOptions): stri
   }
   const data = parsed.toJS() as Record<string, unknown>
 
-  // Strip rather than reject: `buildProfileKernelConfig` neutralises the inbound
-  // and controller keys for the main kernel, but not the external-UI family, and
-  // real subscriptions do sometimes carry one. Removing it keeps such a profile
-  // usable while still denying the privileged child a download/extract path. The
-  // validator below (and the service) still REFUSE these keys, so a hand-authored
-  // or tampered profile that reaches them directly fails closed.
+  // Strip rather than reject: `buildProfileKernelConfig` has already replaced
+  // subscription-provided external UI values with the optional managed panel.
+  // The remaining forbidden keys are capabilities that must never reach the
+  // privileged child.
   for (const key of FORBIDDEN_TOP_KEYS) delete data[key]
 
   // A provider `path` is only a cache location, but mihomo WRITES downloaded
@@ -608,10 +626,17 @@ export function proxiedTunConfigErrors(text: string): string[] {
       if (problem) errors.push(`${section}.${name}.path ${problem}`)
     }
   }
-  if (data['allow-lan'] !== false) errors.push('allow-lan must equal false')
-  if (typeof data['external-controller'] !== 'string' || !/^127\.0\.0\.1:(?:[1-9]\d*)$/.test(data['external-controller'])) {
-    errors.push('external-controller must bind loopback')
+  if (typeof data['allow-lan'] !== 'boolean') errors.push('allow-lan must be a boolean')
+  if (typeof data['external-controller'] !== 'string' || !/^(?:127\.0\.0\.1|0\.0\.0\.0):(?:[1-9]\d*)$/.test(data['external-controller'])) {
+    errors.push('external-controller must use a supported listen address')
   }
+  const uiKeys = ['external-ui', 'external-ui-name', 'external-ui-url'] as const
+  const hasUi = uiKeys.some((key) => key in data)
+  if (hasUi && (
+    data['external-ui'] !== 'ui' ||
+    data['external-ui-name'] !== 'metacubexd' ||
+    data['external-ui-url'] !== 'https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip'
+  )) errors.push('external-ui settings must use the managed dashboard')
   if (typeof data.secret !== 'string' || !SECRET_PATTERN.test(data.secret)) {
     errors.push('secret must be a 64-character lowercase hex string')
   }
@@ -628,7 +653,7 @@ export function proxiedTunConfigErrors(text: string): string[] {
     } else listenerPorts.push(port)
   }
   const controllerMatch = typeof data['external-controller'] === 'string'
-    ? /^127\.0\.0\.1:(\d+)$/.exec(data['external-controller'])
+    ? /^(?:127\.0\.0\.1|0\.0\.0\.0):(\d+)$/.exec(data['external-controller'])
     : null
   if (controllerMatch) listenerPorts.push(Number(controllerMatch[1]))
   if (listenerPorts.every((port) => typeof port === 'number') && new Set(listenerPorts).size !== listenerPorts.length) {

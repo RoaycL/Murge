@@ -14,6 +14,9 @@ export interface MihomoConfigStoreOptions {
   httpPort?: number
   socksPort?: number
   controllerPort: number
+  controllerHost?: '127.0.0.1' | '0.0.0.0'
+  allowLan?: boolean
+  controllerPanel?: boolean
   /**
    * Pin the parent that owns the per-run workspace (e.g. for tests). It is
    * treated strictly as a parent directory: the store creates an exclusive
@@ -24,8 +27,8 @@ export interface MihomoConfigStoreOptions {
   /**
    * Resolve the active profile's raw YAML document. When it returns a document
    * the kernel runs the profile's proxies/groups/rules (with only the app-critical
-   * listener/auth keys forced); when it returns null the store falls back to the
-   * strict loopback-only direct config. Omitted entirely, this store never leaves
+ * listener/auth keys forced); when it returns null the store falls back to the
+ * strict app-owned direct config. Omitted entirely, this store never leaves
    * the strict Phase-7 behavior (preserving the legacy milestone).
    */
   resolveActiveDocument?: () => Promise<string | null>
@@ -238,6 +241,9 @@ export class MihomoKernelConfigStore implements KernelConfigStore {
             httpPort: this.options.httpPort,
             socksPort: this.options.socksPort,
             controllerPort: this.options.controllerPort,
+            controllerHost: this.options.controllerHost,
+            allowLan: this.options.allowLan,
+            controllerPanel: this.options.controllerPanel,
             secret,
             core,
             geodata
@@ -252,6 +258,9 @@ export class MihomoKernelConfigStore implements KernelConfigStore {
         httpPort: this.options.httpPort,
         socksPort: this.options.socksPort,
         controllerPort: this.options.controllerPort,
+        controllerHost: this.options.controllerHost,
+        allowLan: this.options.allowLan,
+        controllerPanel: this.options.controllerPanel,
         secret
       }),
       fromProfile: false

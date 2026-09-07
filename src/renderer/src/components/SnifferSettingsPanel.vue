@@ -3,13 +3,17 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useSnifferEnhancementStore } from '../stores/sniffer-enhancement'
 import type { SnifferEnhancement } from '@shared/sniffer'
 import AppIcon from './AppIcon.vue'
+import ConfirmModal from './ConfirmModal.vue'
 import { useToast } from '../composables/use-toast'
 import { useUnsavedChanges } from '../composables/use-unsaved-changes'
+import { EMPTY_SNIFFER_ENHANCEMENT } from '@shared/sniffer'
+import { plainJsonClone } from '@shared/plain-clone'
 
 const store = useSnifferEnhancementStore()
 const toast = useToast()
 const hydrated = ref(false)
 const savedBaseline = ref('')
+const resetOpen = ref(false)
 
 const form = reactive<SnifferEnhancement>({
   enabled: false,
@@ -93,8 +97,18 @@ async function preview(): Promise<void> {
   previewOpen.value = true
 }
 
-function resetFromStore(): void {
-  syncAndAccept(store.enhancement)
+function requestReset(): void {
+  resetOpen.value = true
+}
+function restoreSaved(): void { syncAndAccept(store.enhancement) }
+
+async function confirmReset(): Promise<void> {
+  const ok = await store.save(plainJsonClone(EMPTY_SNIFFER_ENHANCEMENT))
+  if (ok) {
+    syncAndAccept(store.enhancement)
+    resetOpen.value = false
+    toast.success('嗅探设置已恢复默认并生效')
+  } else toast.error('嗅探设置重置失败', store.lastError ?? undefined)
 }
 
 const dirty = computed(() => hydrated.value && JSON.stringify(buildInput()) !== savedBaseline.value)
@@ -122,7 +136,7 @@ onMounted(async () => {
           为所有订阅统一配置内核嗅探：启用/覆盖目标、HTTP / TLS / QUIC 端口、跳过与强制域名、源/目的地址白名单等，无需改动订阅文件；保存后立即应用。
         </p>
       </div>
-      <button type="button" class="sniffer-reset" @click="resetFromStore">重置</button>
+      <div v-if="dirty" class="sniffer-head-actions"><button type="button" class="sniffer-reset" @click="restoreSaved">撤销更改</button><button type="button" class="sniffer-reset" @click="requestReset">恢复默认</button></div>
     </header>
 
     <p v-if="store.lastError" class="inline-error" role="alert">{{ store.lastError }}</p>
@@ -215,6 +229,7 @@ onMounted(async () => {
         </div>
         <pre class="sniffer-preview-body">{{ previewYaml || '（空）' }}</pre>
       </div>
+      <ConfirmModal :open="resetOpen" title="恢复默认嗅探设置？" description="当前嗅探设置与默认值不同。确认后将保存默认设置，并立即应用到正在运行的内核。" confirm-label="恢复默认" :busy="store.busy" @close="resetOpen = false" @confirm="confirmReset" />
     </div>
   </section>
 </template>
@@ -243,6 +258,7 @@ onMounted(async () => {
   font-size: 12px;
   white-space: nowrap;
 }
+.sniffer-head-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .sniffer-body { margin-top: 14px; display: grid; gap: 14px; }
 .sniffer-row { display: flex; align-items: center; gap: 10px; }
 .sniffer-group {

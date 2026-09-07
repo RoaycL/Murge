@@ -83,6 +83,25 @@ describe('usage-history store', () => {
       expect(await store.read()).toEqual([])
     })
 
+    it('migrates the legacy traffic-sample count without discarding byte history', async () => {
+      await mkdir(join(dir, 'usage-history'), { recursive: true })
+      await writeFile(resolveUsageHistoryPath(dir), JSON.stringify([
+        { bucketStart: HOUR, up: 10, down: 20, count: 3600 }
+      ]), 'utf8')
+
+      expect(await store.read()).toEqual([
+        { bucketStart: HOUR, up: 10, down: 20, count: 0, countType: 'connections' }
+      ])
+    })
+
+    it('preserves persisted connection counts', async () => {
+      await store.write([
+        { bucketStart: HOUR, up: 10, down: 20, count: 4001, countType: 'connections' }
+      ])
+
+      expect((await store.read())[0]?.count).toBe(4001)
+    })
+
     it('trims a runaway file to the bounded cap', async () => {
       const oversized = Array.from({ length: USAGE_MAX_BUCKETS + 3 }, (_, i) => ({
         bucketStart: i * HOUR,

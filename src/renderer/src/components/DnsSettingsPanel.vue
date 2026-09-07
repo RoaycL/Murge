@@ -2,15 +2,18 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import AppSelect from './AppSelect.vue'
 import AppIcon from './AppIcon.vue'
+import ConfirmModal from './ConfirmModal.vue'
 import { useToast } from '../composables/use-toast'
 import { useUnsavedChanges } from '../composables/use-unsaved-changes'
 import { useDnsEnhancementStore } from '../stores/dns-enhancement'
-import type { DnsEnhancement } from '@shared/dns'
+import { EMPTY_DNS_ENHANCEMENT, type DnsEnhancement } from '@shared/dns'
+import { plainJsonClone } from '@shared/plain-clone'
 
 const store = useDnsEnhancementStore()
 const toast = useToast()
 const hydrated = ref(false)
 const savedBaseline = ref('')
+const resetOpen = ref(false)
 
 const form = reactive<DnsEnhancement>({
   enabled: false,
@@ -129,8 +132,18 @@ async function preview(): Promise<void> {
   previewOpen.value = true
 }
 
-function resetFromStore(): void {
-  syncAndAccept(store.enhancement)
+function requestReset(): void {
+  resetOpen.value = true
+}
+function restoreSaved(): void { syncAndAccept(store.enhancement) }
+
+async function confirmReset(): Promise<void> {
+  const ok = await store.save(plainJsonClone(EMPTY_DNS_ENHANCEMENT))
+  if (ok) {
+    syncAndAccept(store.enhancement)
+    resetOpen.value = false
+    toast.success('DNS 设置已恢复默认并生效')
+  } else toast.error('DNS 设置重置失败', store.lastError ?? undefined)
 }
 
 const dirty = computed(() => hydrated.value && JSON.stringify(buildInput()) !== savedBaseline.value)
@@ -158,7 +171,7 @@ onMounted(async () => {
           为所有订阅统一配置内核 DNS：增强模式、Fake-IP 范围与过滤、IPv6、nameserver / fallback / nameserver-policy 等，无需改动订阅文件；保存后立即应用。
         </p>
       </div>
-      <button type="button" class="dns-reset" @click="resetFromStore">重置</button>
+      <div v-if="dirty" class="dns-head-actions"><button type="button" class="dns-reset" @click="restoreSaved">撤销更改</button><button type="button" class="dns-reset" @click="requestReset">恢复默认</button></div>
     </header>
 
     <p v-if="store.lastError" class="inline-error" role="alert">{{ store.lastError }}</p>
@@ -265,6 +278,7 @@ onMounted(async () => {
         </div>
         <pre class="dns-preview-body">{{ previewYaml || '（空）' }}</pre>
       </div>
+      <ConfirmModal :open="resetOpen" title="恢复默认 DNS 设置？" description="当前 DNS 设置与默认值不同。确认后将保存默认设置，并立即应用到正在运行的内核。" confirm-label="恢复默认" :busy="store.busy" @close="resetOpen = false" @confirm="confirmReset" />
     </div>
   </section>
 </template>
@@ -293,6 +307,7 @@ onMounted(async () => {
   font-size: 12px;
   white-space: nowrap;
 }
+.dns-head-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .dns-body { margin-top: 14px; display: grid; gap: 14px; }
 .dns-row { display: flex; align-items: center; gap: 10px; }
 .dns-group {

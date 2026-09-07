@@ -643,13 +643,25 @@ app.whenReady().then(async () => {
   // build is composed with the verified real resolver, but KernelSupervisor is
   // lazy: resolve/download/spawn happen only after the renderer invokes
   // `kernel:start`. Non-Windows production builds remain fail-closed.
-  const productionSecret = is.dev ? null : randomSecret(32)
   const coreSettingsService = new CoreSettingsService(appDataRoot(app.getPath('appData')))
-  const persistedCoreSettings = await coreSettingsService.getRaw()
+  let persistedCoreSettings = await coreSettingsService.getRaw()
+  // The controller secret is user-configurable and must stay stable across
+  // restarts so a dashboard can reconnect. New/reset installs receive a strong
+  // generated value once; it is never replaced behind the user's back.
+  if (!is.dev && !persistedCoreSettings.controllerSecret) {
+    persistedCoreSettings = await coreSettingsService.set({
+      ...persistedCoreSettings,
+      controllerSecret: randomSecret(32)
+    })
+  }
+  const productionSecret = is.dev ? null : persistedCoreSettings.controllerSecret
   // Listener ports are stable user settings rather than opportunistic free
   // ports. Before a production start, the guarded reclaimer below takes them
   // back from a positively identified Clash-family process.
   const productionControllerPort = is.dev ? null : persistedCoreSettings.controllerPort
+  const productionControllerHost = is.dev ? '127.0.0.1' as const : persistedCoreSettings.controllerHost
+  const productionAllowLan = !is.dev && persistedCoreSettings.allowLan
+  const productionControllerPanel = !is.dev && persistedCoreSettings.controllerPanel
   const productionMixedPort = is.dev ? null : persistedCoreSettings.mixedPort
   const productionHttpPort = !is.dev && persistedCoreSettings.httpPort !== 0
     ? persistedCoreSettings.httpPort
@@ -747,6 +759,9 @@ app.whenReady().then(async () => {
             httpPort: productionHttpPort,
             socksPort: productionSocksPort,
             controllerPort: productionControllerPort!,
+            controllerHost: productionControllerHost,
+            allowLan: productionAllowLan,
+            controllerPanel: productionControllerPanel,
             workspaceDir: join(productionKernelRoot, 'runtime'),
             // Stable kernel home (`-d`): mihomo resolves geodata databases and
             // provider caches here, so the directory must persist across runs.
@@ -788,6 +803,9 @@ app.whenReady().then(async () => {
         tunServiceClient!,
         () => ({
           controllerPort: productionControllerPort!,
+          controllerHost: productionControllerHost,
+          allowLan: productionAllowLan,
+          controllerPanel: productionControllerPanel,
           mixedPort: productionMixedPort!,
           httpPort: productionHttpPort,
           socksPort: productionSocksPort,
@@ -970,6 +988,9 @@ app.whenReady().then(async () => {
         gateway,
         () => ({
           controllerPort: productionControllerPort!,
+          controllerHost: productionControllerHost,
+          allowLan: productionAllowLan,
+          controllerPanel: productionControllerPanel,
           mixedPort: productionMixedPort!,
           httpPort: productionHttpPort,
           socksPort: productionSocksPort,
@@ -1157,6 +1178,9 @@ app.whenReady().then(async () => {
           httpPort: productionHttpPort,
           socksPort: productionSocksPort,
           controllerPort: productionControllerPort!,
+          controllerHost: productionControllerHost,
+          allowLan: productionAllowLan,
+          controllerPanel: productionControllerPanel,
           secret: productionSecret!,
           device: `${brand.shortName} TUN`
         },
@@ -1190,7 +1214,8 @@ app.whenReady().then(async () => {
     store: app.isPackaged
       ? FileSystemUsageHistoryStore.forAppDataBase(app.getPath('appData'))
       : new InMemoryUsageHistoryStore(),
-    onTraffic: (listener) => gateway.onTraffic(listener)
+    onTraffic: (listener) => gateway.onTraffic(listener),
+    onConnections: (listener) => gateway.onConnections(listener)
   })
   await usageHistoryService.init()
   usageHistoryServiceRef = usageHistoryService

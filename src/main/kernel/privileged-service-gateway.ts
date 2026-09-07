@@ -12,6 +12,9 @@ export interface PrivilegedKernelRuntime {
   httpPort?: number
   socksPort?: number
   controllerPort: number
+  controllerHost?: '127.0.0.1' | '0.0.0.0'
+  allowLan?: boolean
+  controllerPanel?: boolean
   secret: string
 }
 

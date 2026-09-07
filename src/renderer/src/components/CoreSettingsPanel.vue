@@ -5,13 +5,17 @@ import type { CoreSettings } from '@shared/core-settings'
 import { EMPTY_CORE_SETTINGS } from '@shared/core-settings'
 import AppSelect from './AppSelect.vue'
 import AppIcon from './AppIcon.vue'
+import ConfirmModal from './ConfirmModal.vue'
 import { useToast } from '../composables/use-toast'
 import { useUnsavedChanges } from '../composables/use-unsaved-changes'
+import { plainJsonClone } from '@shared/plain-clone'
 
 const store = useCoreSettingsStore()
 const toast = useToast()
 const hydrated = ref(false)
 const networkInterfaces = ref<string[]>([])
+const resetOpen = ref(false)
+const secretVisible = ref(false)
 
 const form = reactive<CoreSettings>({ ...EMPTY_CORE_SETTINGS })
 
@@ -42,6 +46,10 @@ const INTERFACE_OPTIONS = computed(() => {
     ...[...names].map((name) => ({ value: name, label: name }))
   ]
 })
+const CONTROLLER_HOST_OPTIONS = [
+  { value: '127.0.0.1', label: '127.0.0.1（仅本机）' },
+  { value: '0.0.0.0', label: '0.0.0.0（所有网卡）' }
+]
 
 function syncFromConfig(value: CoreSettings): void {
   form.enabled = value.enabled
@@ -54,7 +62,11 @@ function syncFromConfig(value: CoreSettings): void {
   form.mixedPort = value.mixedPort
   form.socksPort = value.socksPort
   form.httpPort = value.httpPort
+  form.controllerHost = value.controllerHost
   form.controllerPort = value.controllerPort
+  form.controllerSecret = value.controllerSecret
+  form.controllerPanel = value.controllerPanel
+  form.allowLan = value.allowLan
 }
 
 async function save(): Promise<void> {
@@ -68,8 +80,19 @@ async function preview(): Promise<void> {
   previewOpen.value = true
 }
 
-function resetFromStore(): void {
-  syncFromConfig(store.settings)
+function requestReset(): void {
+  resetOpen.value = true
+}
+
+function restoreSaved(): void { syncFromConfig(store.settings) }
+
+async function confirmReset(): Promise<void> {
+  const ok = await store.save(plainJsonClone(EMPTY_CORE_SETTINGS))
+  if (ok) {
+    syncFromConfig(store.settings)
+    resetOpen.value = false
+    toast.success('内核设置已恢复默认')
+  } else toast.error('内核设置重置失败', store.lastError ?? undefined)
 }
 
 const dirty = computed(() => hydrated.value && JSON.stringify({ ...form }) !== JSON.stringify(store.settings))
@@ -101,7 +124,10 @@ onMounted(async () => {
           管理日志级别、IPv6、并发连接、延迟计算、进程识别、出站网卡和监听端口。启用后会覆盖配置文件中的对应设置。
         </p>
       </div>
-      <button type="button" class="core-reset" @click="resetFromStore">重置</button>
+      <div v-if="dirty" class="core-head-actions">
+        <button type="button" class="core-reset" @click="restoreSaved">撤销更改</button>
+        <button type="button" class="core-reset" @click="requestReset">恢复默认</button>
+      </div>
     </header>
 
     <p v-if="store.lastError" class="inline-error" role="alert">{{ store.lastError }}</p>
@@ -113,36 +139,36 @@ onMounted(async () => {
     <div class="core-body">
       <fieldset class="core-group listener-group">
         <legend>监听与控制器</legend>
-        <p class="listener-note">端口在下次重启应用后生效；0 表示关闭独立 HTTP/SOCKS 入站。所有入口仍只监听本机。</p>
+        <p class="listener-note">监听端口与控制器设置在下次重启应用后生效。端口请直接输入 1024–65535 之间且互不重复的数值。</p>
         <div class="listener-list">
           <label class="listener-row">
             <span><b>混合端口</b><small>系统代理与应用内部统一使用</small></span>
-            <input v-model.number="form.mixedPort" class="core-input port-input" type="number" min="1024" max="65535" aria-label="mixed-port" />
+            <input v-model.number="form.mixedPort" class="core-input port-input" type="text" inputmode="numeric" pattern="[0-9]*" aria-label="mixed-port" />
           </label>
           <label class="listener-row">
-            <span><b>SOCKS 端口</b><small>可选独立 SOCKS5 入口</small></span>
-            <input v-model.number="form.socksPort" class="core-input port-input" type="number" min="0" max="65535" aria-label="socks-port" />
+            <span><b>SOCKS 端口</b><small>独立 SOCKS5 入口</small></span>
+            <input v-model.number="form.socksPort" class="core-input port-input" type="text" inputmode="numeric" pattern="[0-9]*" aria-label="socks-port" />
           </label>
           <label class="listener-row">
-            <span><b>HTTP 端口</b><small>可选独立 HTTP 代理入口</small></span>
-            <input v-model.number="form.httpPort" class="core-input port-input" type="number" min="0" max="65535" aria-label="http-port" />
+            <span><b>HTTP 端口</b><small>独立 HTTP 代理入口</small></span>
+            <input v-model.number="form.httpPort" class="core-input port-input" type="text" inputmode="numeric" pattern="[0-9]*" aria-label="http-port" />
           </label>
           <label class="listener-row">
-            <span><b>控制器监听</b><small>固定回环地址，禁止局域网暴露</small></span>
-            <span class="controller-address"><i>127.0.0.1:</i><input v-model.number="form.controllerPort" class="core-input port-input" type="number" min="1024" max="65535" aria-label="controller-port" /></span>
+            <span><b>控制器监听</b><small>选择仅本机或所有网卡，再填写监听端口</small></span>
+            <span class="controller-address"><AppSelect v-model="form.controllerHost" :options="CONTROLLER_HOST_OPTIONS" label="控制器监听地址" /><input v-model.number="form.controllerPort" class="core-input port-input" type="text" inputmode="numeric" pattern="[0-9]*" aria-label="controller-port" /></span>
           </label>
-          <div class="listener-row">
-            <span><b>访问密钥</b><small>每次启动随机生成，永不发送到界面</small></span>
-            <span class="secret-mask" aria-label="访问密钥已安全隐藏">••••••••••••</span>
-          </div>
-          <div class="listener-row locked-option">
-            <span><b>控制器面板</b><small>未内置 Web 面板，控制器仅供本应用自身使用</small></span>
-            <span class="locked-state">未启用</span>
-          </div>
-          <div class="listener-row locked-option">
-            <span><b>允许局域网连接</b><small>安全策略固定关闭，所有代理入口仅监听本机</small></span>
-            <span class="locked-state">已关闭</span>
-          </div>
+          <label class="listener-row">
+            <span><b>访问密钥</b><small>64 位小写十六进制字符；留空后下次启动会自动生成</small></span>
+            <span class="secret-field"><input v-model.trim="form.controllerSecret" class="core-input secret-input" :type="secretVisible ? 'text' : 'password'" autocomplete="off" aria-label="访问密钥" /><button type="button" class="secret-eye" :aria-label="secretVisible ? '隐藏访问密钥' : '查看访问密钥'" @click.prevent="secretVisible = !secretVisible"><AppIcon name="eye" :size="16" /></button></span>
+          </label>
+          <label class="listener-row">
+            <span><b>控制器面板</b><small>由 mihomo 下载并托管 MetaCubeXD 面板</small></span>
+            <span class="core-switch small"><input v-model="form.controllerPanel" type="checkbox" aria-label="启用控制器面板" /><span class="core-switch-track" /></span>
+          </label>
+          <label class="listener-row">
+            <span><b>允许局域网连接</b><small>允许局域网设备使用 HTTP、SOCKS 与混合端口</small></span>
+            <span class="core-switch small"><input v-model="form.allowLan" type="checkbox" aria-label="允许局域网连接" /><span class="core-switch-track" /></span>
+          </label>
         </div>
       </fieldset>
 
@@ -206,6 +232,7 @@ onMounted(async () => {
         </div>
         <pre class="core-preview-body">{{ previewYaml || '（空）' }}</pre>
       </div>
+      <ConfirmModal :open="resetOpen" title="恢复默认内核设置？" description="当前内核设置与默认值不同。确认后将保存默认设置；监听端口等需要重启应用后生效。" confirm-label="恢复默认" :busy="store.busy" @close="resetOpen = false" @confirm="confirmReset" />
     </div>
   </section>
 </template>
@@ -234,6 +261,7 @@ onMounted(async () => {
   font-size: 12px;
   white-space: nowrap;
 }
+.core-head-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .core-body { margin-top: 14px; display: grid; gap: 14px; }
 .core-hint {
   margin: 0 0 0;
@@ -257,10 +285,10 @@ onMounted(async () => {
 .listener-row b { color: var(--app-text); font-size: 12px; font-weight: 600; }
 .listener-row small { color: var(--app-muted); font-size: 10px; }
 .port-input { width: 112px; text-align: right; font-variant-numeric: tabular-nums; }
-.controller-address { display: inline-flex; align-items: center; gap: 4px; }
-.controller-address i { color: var(--app-muted); font-size: 11px; font-style: normal; }
-.secret-mask { min-width: 112px; padding: 8px 10px; border: 1px solid var(--app-divider); border-radius: 7px; background: var(--app-surface-solid); color: var(--app-muted); font-size: 13px; letter-spacing: 2px; text-align: center; }
-.locked-state { min-width: 64px; padding: 5px 9px; border-radius: 999px; background: var(--app-surface-solid); color: var(--app-muted); font-size: 10px; text-align: center; }
+.controller-address { display: grid; grid-template-columns: 160px 112px; align-items: center; gap: 6px; }
+.secret-field { position: relative; width: 280px; }
+.secret-input { padding-right: 38px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+.secret-eye { position: absolute; top: 50%; right: 5px; width: 28px; height: 28px; transform: translateY(-50%); display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 6px; background: transparent; color: var(--app-muted); }
 .core-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
 .core-field { display: grid; gap: 5px; }
 .core-label { color: var(--app-muted); font-size: 11px; }

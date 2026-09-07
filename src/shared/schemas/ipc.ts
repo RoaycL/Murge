@@ -494,13 +494,17 @@ const coreSettingsSchema = z
     findProcessMode: z.enum(['off', 'strict', 'always']),
     interfaceName: z.string().trim().max(255).refine((value) => !/[\x00-\x1f\x7f]/.test(value), 'interface-name 包含非法控制字符'),
     mixedPort: z.number().int().min(1024).max(65535),
-    socksPort: z.number().int().min(0).max(65535).refine((value) => value === 0 || value >= 1024, 'SOCKS 端口必须为 0 或 1024-65535'),
-    httpPort: z.number().int().min(0).max(65535).refine((value) => value === 0 || value >= 1024, 'HTTP 端口必须为 0 或 1024-65535'),
-    controllerPort: z.number().int().min(1024).max(65535)
+    socksPort: z.number().int().min(1024).max(65535),
+    httpPort: z.number().int().min(1024).max(65535),
+    controllerHost: z.enum(['127.0.0.1', '0.0.0.0']),
+    controllerPort: z.number().int().min(1024).max(65535),
+    controllerSecret: z.string().regex(/^(?:|[0-9a-f]{64})$/, '访问密钥必须留空或填写 64 位小写十六进制字符'),
+    controllerPanel: z.boolean(),
+    allowLan: z.boolean()
   })
   .strict()
   .superRefine((value, context) => {
-    const ports = [value.mixedPort, value.socksPort, value.httpPort, value.controllerPort].filter((port) => port !== 0)
+    const ports = [value.mixedPort, value.socksPort, value.httpPort, value.controllerPort]
     if (new Set(ports).size !== ports.length) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: '启用的监听端口不能重复', path: ['mixedPort'] })
     }

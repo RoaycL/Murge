@@ -92,11 +92,9 @@ describe('mihomoConfigErrors / validateMihomoConfigYaml', () => {
     expect(mihomoConfigErrors(validText() + 'socks-port: {}\n')).toContain('socks-port must be a scalar value')
   })
 
-  it('reports a controller that is not loopback-bound', () => {
+  it('accepts the explicitly supported all-interface controller binding', () => {
     const text = validText().replace('127.0.0.1:20001', '0.0.0.0:20001')
-    expect(mihomoConfigErrors(text)).toEqual(
-      expect.arrayContaining(['external-controller must be bound to 127.0.0.1'])
-    )
+    expect(mihomoConfigErrors(text)).toEqual([])
   })
 
   it('reports a privileged external-controller port', () => {
@@ -113,7 +111,7 @@ describe('mihomoConfigErrors / validateMihomoConfigYaml', () => {
       .replace('allow-lan: false', 'allow-lan: true')
       .replace('mode: direct', 'mode: global')
     const errors = mihomoConfigErrors(text)
-    expect(errors).toContain('allow-lan must be false')
+    expect(errors).not.toContain('allow-lan must be false')
     expect(errors).toContain('mode must be direct')
   })
 

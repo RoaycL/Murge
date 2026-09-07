@@ -55,6 +55,15 @@ function escapeXml(value: string): string {
     .replaceAll("'", '&apos;')
 }
 
+function unescapeXml(value: string): string {
+  return value
+    .replaceAll('&apos;', "'")
+    .replaceAll('&quot;', '"')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&amp;', '&')
+}
+
 /**
  * Logon-trigger task XML. Deliberately different from an HKCU Run entry:
  *
@@ -103,7 +112,7 @@ export function buildTaskXml(executablePath: string, args: readonly string[]): s
   <Actions Context="Author">
     <Exec>
       <Command>"${escapeXml(executablePath)}"</Command>
-      <Arguments>${escapeXml(args.join(' '))}</Arguments>
+      ${args.length > 0 ? `<Arguments>${escapeXml(args.join(' '))}</Arguments>` : ''}
     </Exec>
   </Actions>
 </Task>
@@ -122,7 +131,10 @@ export function taskSettingsEnabled(taskXml: string): boolean {
 export function taskArguments(taskXml: string): string[] {
   const match = /<Arguments>([\s\S]*?)<\/Arguments>/.exec(taskXml)
   const raw = match?.[1] ?? ''
-  return raw.trim().length === 0 ? [] : raw.trim().split(/\s+/)
+  if (raw.trim().length === 0) return []
+  // Compare against the unescaped form: a compare against raw XML entities
+  // would never match and re-create the task on every startup.
+  return unescapeXml(raw).trim().split(/\s+/)
 }
 
 /**
@@ -163,13 +175,12 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
 
   async read(): Promise<boolean> {
     if (!this.supported) return false
-    try {
-      const taskXml = await this.queryTaskXml()
-      if (taskXml !== null && taskSettingsEnabled(taskXml)) return true
-    } catch {
-      // Fall through to the legacy registration below.
-    }
-    return this.legacy.read()
+    // A present task owns the registration: a task disabled in the Task
+    // Scheduler UI reports off even if a stale legacy entry lingers, matching
+    // what the user chose there.
+    const taskXml = await this.queryTaskXml()
+    if (taskXml !== null) return taskSettingsEnabled(taskXml)
+    return (await this.legacy.readRegistered?.()) ?? (await this.legacy.read())
   }
 
   async write(enabled: boolean): Promise<void> {
@@ -191,32 +202,31 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
 
   async rewriteIfEnabled(): Promise<void> {
     if (!this.supported) return
-    const registered = await this.read()
-    if (!registered) return
-    const desiredArgs = this.loginArgs()
-    let taskXml: string | null = null
-    try {
-      taskXml = await this.queryTaskXml()
-    } catch {
-      taskXml = null
-    }
+    const taskXml = await this.queryTaskXml()
     if (taskXml !== null) {
+      // A present task owns the registration. A task disabled in the Task
+      // Scheduler UI means the user turned auto-start off there — leave it.
+      if (!taskSettingsEnabled(taskXml)) return
       const currentArgs = taskArguments(taskXml)
-      if (
-        taskSettingsEnabled(taskXml) &&
-        currentArgs.length === desiredArgs.length &&
-        currentArgs.every((arg, index) => arg === desiredArgs[index])
-      ) {
+      const desiredArgs = this.loginArgs()
+      if (currentArgs.length === desiredArgs.length && currentArgs.every((a, i) => a === desiredArgs[i])) {
+        // Already current; retire a lingering legacy Run-key entry (e.g. the
+        // fallback engaged once) so the app is not started twice at logon.
+        await this.legacy.write(false).catch(() => undefined)
         return
       }
-      // Arguments moved (silent-launch toggle) or the task was disabled in the
-      // Task Scheduler UI: recreate it with the desired definition.
+      // Arguments moved (silent-launch toggle): recreate with desired args.
       await this.tryCreateTask()
       return
     }
     // Legacy-only registration (v0.9.x Run-key users): migrate to the task so
-    // future logins get the delayed, prioritised launch. A failed create keeps
-    // the Run key untouched — degrades to today's behaviour.
+    // future logins get the delayed, prioritised launch. The existence check
+    // MUST be argument-insensitive — an argument-sensitive read cannot see a
+    // Run-key entry written with a stale `--hidden` value, which would silently
+    // skip its migration. A failed create keeps the Run key untouched —
+    // degrades to today's behaviour.
+    const legacyRegistered = (await this.legacy.readRegistered?.()) ?? (await this.legacy.read())
+    if (!legacyRegistered) return
     const created = await this.tryCreateTask()
     if (created) await this.legacy.write(false).catch(() => undefined)
   }
@@ -235,7 +245,11 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
     const stagingDir = await mkdtemp(join(tmpdir(), 'murge-startup-'))
     const taskFile = join(stagingDir, 'task.xml')
     try {
-      await writeFile(taskFile, buildTaskXml(process.execPath, this.loginArgs()), 'utf16le')
+      // The XML declares encoding="UTF-16" and MUST be written with a UTF-16
+      // BOM: without it schtasks parses the file as ANSI and rejects the task
+      // definition (observed in the reference implementation, which prepends
+      // \ufeff for exactly this reason).
+      await writeFile(taskFile, `\ufeff${buildTaskXml(process.execPath, this.loginArgs())}`, 'utf16le')
       const result = await this.runner(SCHTASKS_COMMAND, ['/create', '/tn', TASK_NAME, '/xml', taskFile, '/f'])
       // A resolved runner may still carry the child's non-zero exit (policy
       // denial, XML rejected, ...) — only a zero exit registers the task.

@@ -82,4 +82,13 @@
       DetailPrint "TUN service removal failed with exit code $R0; continuing uninstall so removal is not blocked"
       MessageBox MB_ICONEXCLAMATION|MB_OK "未能确认 TUN 服务已移除。为避免阻塞卸载，本程序将继续执行。若残留的 TUN 服务需清理，请以管理员身份在「Windows 服务」中找到并停止、删除对应服务。"
   TunServiceUninstallDone:
+  ; The scheduled-task auto-start registration (see
+  ; src/main/startup/scheduled-task-adapter.ts) must not outlive the app: a
+  ; leftover task fires a failing launch at every future logon. The task name is
+  ; the brand-stable appId, which electron-builder exposes here as ${APP_ID}.
+  ; Best-effort like every other uninstall step — a failure never blocks removal.
+  DetailPrint "Removing auto-start scheduled task..."
+  nsExec::Exec 'schtasks /delete /tn "${APP_ID}" /f'
+  Pop $R0
+  DetailPrint "auto-start task removal exit code: $R0"
 !macroend

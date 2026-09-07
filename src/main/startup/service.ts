@@ -6,6 +6,13 @@ export interface StartupAdapter {
   write(enabled: boolean): Promise<void>
   /** Rewrites argument-sensitive registration when it already exists. */
   rewriteIfEnabled?(): Promise<void>
+  /**
+   * Existence check regardless of registered arguments. Optional; when absent
+   * `read()` doubles as the existence check. Argument-sensitive reads cannot
+   * see a registration written with a stale `--hidden` value, which would skip
+   * migration/rewrite — so this exists for those paths.
+   */
+  readRegistered?(): Promise<boolean>
 }
 
 /** Serial, read-after-write ownership boundary for OS login-item state. */

@@ -189,7 +189,7 @@ run('real Windows system-proxy lifecycle + crash recovery (gated)', () => {
 
     const now = await adapter.read()
     expect(now.proxyEnable).toEqual(dword(1))
-    expect(now.proxyServer.value).toBe('http=127.0.0.1:7890;https=127.0.0.1:7890;socks=127.0.0.1:7890')
+    expect(now.proxyServer.value).toBe('127.0.0.1:7890')
 
     const duringSnap = await captureNetworkSnapshot()
     assertOnlyProxyChanged(beforeSnap, duringSnap)

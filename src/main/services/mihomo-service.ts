@@ -37,6 +37,8 @@ export interface MihomoServiceStreams {
    * subscribed — log capture must not depend on the logs page being open.
    */
   logBuffer?: MihomoLogBuffer
+  /** Optional persistent sink. File failures never break or disconnect /logs. */
+  logSink?: (message: MihomoLogMessage) => void | Promise<void>
 }
 
 interface ProviderOwner {
@@ -62,12 +64,14 @@ export class MihomoService implements MihomoGateway {
   private providerOwnersPromise: Promise<Map<string, ProviderOwner[]>> | null = null
   private providerOwnersExpiresAt = 0
   private readonly logBuffer: MihomoLogBuffer
+  private readonly logSink?: MihomoServiceStreams['logSink']
 
   constructor(private readonly client: MihomoClient, streams: MihomoServiceStreams) {
     this.resolveGroupTestUrls = streams.resolveGroupTestUrls
     this.resolveDelayTestSettings = streams.resolveDelayTestSettings
     const enabled = streams.enabled ?? true
     this.logBuffer = streams.logBuffer ?? new MihomoLogBuffer()
+    this.logSink = streams.logSink
     const parseHandler = (source: MihomoStreamError['source']) => (error: unknown) => this.emitError(source, 'parse', error)
     const connectionHandler = (source: MihomoStreamError['source']) => (error: unknown) => this.emitError(source, 'connection', error)
     if (enabled) {
@@ -108,6 +112,7 @@ export class MihomoService implements MihomoGateway {
         parse: (raw) => {
           const message = parseMihomoLog(raw)
           this.logBuffer.append(message)
+          void Promise.resolve(this.logSink?.(message)).catch(() => undefined)
           return message
         },
         onParseError: parseHandler('logs'),

@@ -80,6 +80,9 @@ import { tunServiceIdentity } from './tun/service-identity'
 import { waitForTunDataPlaneReady } from './tun/data-plane-readiness'
 import { ModeTransitionController, queuedKernelGateway, queuedTunGateway } from './kernel/mode-transition'
 import { LiveConfigReloader } from './kernel/live-config-reloader'
+import { FileLogService } from './logging/file-log-service'
+import { installConsoleFileLogging } from './logging/console-bridge'
+import type { MihomoLogMessage } from '@shared/mihomo-api'
 import {
   EnhancementApplyCoordinator,
   LiveDnsEnhancementGateway,
@@ -160,6 +163,17 @@ if (
 if (!is.dev) {
   app.setPath('userData', appDataRoot(app.getPath('appData')))
 }
+const logDirectory = join(app.getPath('userData'), 'logs')
+app.setAppLogsPath(logDirectory)
+const fileLogs = new FileLogService(logDirectory)
+installConsoleFileLogging(fileLogs)
+void fileLogs.initialize()
+  .then(() => fileLogs.writeApp('info', [
+    `version=${app.getVersion()}`,
+    `platform=${process.platform}`,
+    `arch=${process.arch}`
+  ], 'startup'))
+  .catch(() => undefined)
 
 // Created inside app.whenReady; held here so the quit path can stop it.
 let kernel: KernelGateway | null = null
@@ -221,7 +235,8 @@ if (!hasSingleInstanceLock) {
 async function createMihomoGateway(
   productionController?: { url: string; secret: string },
   resolveGroupTestUrls?: () => Promise<Record<string, string | null>>,
-  resolveDelayTestSettings?: () => Promise<{ scope: 'group' | 'global'; url: string }>
+  resolveDelayTestSettings?: () => Promise<{ scope: 'group' | 'global'; url: string }>,
+  logSink?: (message: MihomoLogMessage) => void | Promise<void>
 ): Promise<MihomoGateway> {
   if (is.dev) {
     const secret = devControllerSecret || 'dev-mock-secret'
@@ -232,7 +247,8 @@ async function createMihomoGateway(
       secret,
       enabled: true,
       resolveGroupTestUrls,
-      resolveDelayTestSettings
+      resolveDelayTestSettings,
+      logSink
     })
   } else {
     if (!productionController) {
@@ -246,7 +262,8 @@ async function createMihomoGateway(
         secret: productionController.secret,
         enabled: true,
         resolveGroupTestUrls,
-        resolveDelayTestSettings
+        resolveDelayTestSettings,
+        logSink
       }
     )
   }
@@ -877,7 +894,8 @@ app.whenReady().then(async () => {
     async () => {
       const settings = await appSettingsService.get()
       return { scope: settings.delayTestUrlScope, url: settings.delayTestUrl }
-    }
+    },
+    (message) => fileLogs.writeCore(message)
   )
   const ipcKernel = !is.dev && mihomo
     ? new ControllerReadyKernelGateway(
@@ -1252,7 +1270,8 @@ app.whenReady().then(async () => {
     baseDir: join(appDataRoot(app.getPath('appData')), 'substore'),
     brandName: brand.productName,
     getMixedPort: () => productionMixedPort,
-    appSettings: appSettingsService
+    appSettings: appSettingsService,
+    onLog: (stream, text) => { void fileLogs.writeSubStore(stream, text).catch(() => undefined) }
   })
   subStoreServiceRef = subStoreService
   await subStoreService.onSettings({
@@ -1344,12 +1363,14 @@ app.whenReady().then(async () => {
     ? join(app.getAppPath(), 'resources', 'tray')
     : join(process.resourcesPath, 'tray')
   const trayView = createElectronTray(trayIconRoot, nativeTheme.shouldUseDarkColors)
-  const openTrayDirectory = async (directory: 'application' | 'working' | 'kernel'): Promise<void> => {
+  const openTrayDirectory = async (directory: 'application' | 'working' | 'kernel' | 'logs'): Promise<void> => {
     const target = directory === 'application'
       ? dirname(app.getPath('exe'))
       : directory === 'working'
         ? app.getPath('userData')
-        : productionKernelRoot
+        : directory === 'kernel'
+          ? productionKernelRoot
+          : logDirectory
     if (directory !== 'application') await mkdir(target, { recursive: true })
     const error = await shell.openPath(target)
     if (error) throw new Error(error)
@@ -1487,9 +1508,10 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     showMainWindow()
   })
-}).catch((error) => {
+}).catch(async (error) => {
   const message = error instanceof Error ? `${error.message}\n\n${error.stack ?? ''}` : String(error)
   console.error('[startup] fatal initialization failure:', error)
+  await fileLogs.flush()
   // Packaged GUI applications normally have no attached console. Surface the
   // failure instead of leaving an invisible background process behind.
   dialog.showErrorBox(`${brand.productName} failed to start`, message)
@@ -1618,6 +1640,8 @@ function beginApplicationShutdown(sessionEnding: boolean): Promise<void> {
           updateService = null
           usageHistoryServiceRef = null
           waitForProfileOperations = null
+          await fileLogs.writeApp('info', ['application shutdown completed'], 'shutdown').catch(() => undefined)
+          await fileLogs.flush()
         }
       },
       // Session-end is already inside the Windows logoff/shutdown path; app.exit
@@ -1631,6 +1655,7 @@ function beginApplicationShutdown(sessionEnding: boolean): Promise<void> {
         // Windows may terminate the process immediately. Preserve the proxy
         // backup/TUN journal so init() can restore them before replaying the
         // saved user intent on the next launch.
+        await fileLogs.flush()
         app.exit(0)
         return
       }

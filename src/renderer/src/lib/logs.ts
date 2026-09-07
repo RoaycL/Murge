@@ -1,5 +1,8 @@
 import type { MihomoLogMessage } from '@shared/mihomo-api'
+import { redactLogText } from '@shared/log-redaction'
 import { formatWallClock, resolveSystemTimeZone } from './format'
+
+export { redactLogText } from '@shared/log-redaction'
 
 export type LogLevel = 'debug' | 'info' | 'warning' | 'error'
 
@@ -8,20 +11,6 @@ export interface DisplayLogEntry {
   time: string
   level: LogLevel
   message: string
-}
-
-const SENSITIVE_KEY = /(access[_-]?token|api[_-]?key|authorization|cookie|password|secret|token)/i
-
-/** Remove credentials before a log is retained by renderer state or exported. */
-export function redactLogText(input: string): string {
-  let text = input
-  text = text.replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, '$1 [REDACTED]')
-  text = text.replace(/([?&])([^=&\s]+)=([^&\s]*)/g, (match, separator: string, key: string) =>
-    SENSITIVE_KEY.test(key) ? `${separator}${key}=[REDACTED]` : match
-  )
-  text = text.replace(/\b((?:authorization|cookie)|[\w-]*(?:token|secret|password|api[_-]?key)[\w-]*)\s*[:=]\s*([^&\s,;]+)/gi, '$1=[REDACTED]')
-  text = text.replace(/\b(https?:\/\/)([^/@\s]+)@/gi, '$1[REDACTED]@')
-  return text
 }
 
 function normalizeLevel(message: MihomoLogMessage): LogLevel {

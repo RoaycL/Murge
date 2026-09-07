@@ -4,14 +4,22 @@ import { createRuntimeIcon } from './runtime-icon'
 
 export function createElectronTray(iconRoot: string, dark = false): TrayView {
   const tray = new Tray(createRuntimeIcon(iconRoot, 'idle', dark))
+  let menu = Menu.buildFromTemplate([])
   return {
     isReady: () => !tray.isDestroyed(),
     setToolTip: (value) => tray.setToolTip(value),
     setMenu: (items) => {
-      const template = items.map((item): MenuItemConstructorOptions => item.type === 'separator'
+      const toTemplate = (item: TrayMenuItem): MenuItemConstructorOptions => item.type === 'separator'
         ? { type: 'separator' }
-        : { label: item.label, enabled: item.enabled, click: item.click })
-      tray.setContextMenu(Menu.buildFromTemplate(template))
+        : {
+            label: item.label,
+            enabled: item.enabled,
+            type: item.type,
+            checked: item.checked,
+            submenu: item.submenu?.map(toTemplate),
+            click: item.click
+          }
+      menu = Menu.buildFromTemplate(items.map(toTemplate))
     },
     setRuntimeAppearance: (accent, nextDark) => {
       tray.setImage(createRuntimeIcon(iconRoot, accent, nextDark))
@@ -23,6 +31,21 @@ export function createElectronTray(iconRoot: string, dark = false): TrayView {
         tray.removeListener('click', listener)
         tray.removeListener('double-click', listener)
       }
+    },
+    onMenuOpen: (listener) => {
+      let opening = false
+      const open = (): void => {
+        if (opening) return
+        opening = true
+        void listener()
+          .catch(() => undefined)
+          .finally(() => {
+            if (!tray.isDestroyed()) tray.popUpContextMenu(menu)
+            opening = false
+          })
+      }
+      tray.on('right-click', open)
+      return () => tray.removeListener('right-click', open)
     },
     destroy: () => tray.destroy()
   }

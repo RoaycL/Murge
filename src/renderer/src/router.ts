@@ -15,6 +15,7 @@ import DnsView from './views/DnsView.vue'
 import AboutView from './views/AboutView.vue'
 import OverridesView from './views/OverridesView.vue'
 import ResourcesView from './views/ResourcesView.vue'
+import SubStoreView from './views/SubStoreView.vue'
 import NetworkSettingsView from './views/NetworkSettingsView.vue'
 import DnsSnifferView from './views/DnsSnifferView.vue'
 import KernelSettingsView from './views/KernelSettingsView.vue'
@@ -32,6 +33,7 @@ export const router = createRouter({
     { path: '/policies', component: PolicyView },
     { path: '/rules', component: RulesView },
     { path: '/profiles', component: ConfigView },
+    { path: '/substore', component: SubStoreView },
     { path: '/config', redirect: '/profiles' },
     { path: '/overrides', component: OverridesView },
     { path: '/resources', component: ResourcesView },

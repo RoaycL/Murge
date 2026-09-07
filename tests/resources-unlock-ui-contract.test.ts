@@ -47,7 +47,8 @@ describe('network drawer + resources UI contract', () => {
 
   it('renames Provider sections to 集合 with per-section 更新全部 and per-row 配置查看', async () => {
     const view = await read('src/renderer/src/views/ResourcesView.vue')
-    expect(view).toMatch(/订阅管理（Sub-Store）、代理集合、规则集合与地理数据库/)
+    expect(view).toMatch(/代理集合、规则集合与地理数据库/)
+    expect(view).not.toMatch(/Sub-Store|subStore/)
     expect(view).toMatch(/代理集合/)
     expect(view).toMatch(/规则集合/)
     expect(view).not.toMatch(/代理 Provider|规则 Provider/)
@@ -121,7 +122,7 @@ describe('network drawer + resources UI contract', () => {
     expect(overview).toMatch(/<h3>TUN 模式<\/h3>/)
     expect(overview).toMatch(/<h3>嗅探覆写<\/h3>/)
     expect(overview).toMatch(/<h3>DNS 覆写<\/h3>/)
-    // 概览不再承载抽屉表单: 整卡点击跳转设置页, 开关 stop 不触发导航。
+    // 概览不再承载抽屉表单；只有箭头周围的小按钮负责跳转，整卡不响应。
     expect(overview).not.toMatch(/DetailDrawer/)
     expect(overview).not.toMatch(/ProxyBypassPanel|TunConfigPanel|SnifferSettingsPanel|DnsSettingsPanel/)
     expect(overview).toMatch(/openSettings\('system-proxy'\)/)
@@ -129,7 +130,11 @@ describe('network drawer + resources UI contract', () => {
     expect(overview).toMatch(/openSettings\('sniffer'\)/)
     expect(overview).toMatch(/openSettings\('dns'\)/)
     expect(overview).toMatch(/@click\.stop="toggleSystemProxy"/)
-    expect(overview).toMatch(/setting-arrow/)
+    expect(overview.match(/class="setting-nav"/g)).toHaveLength(4)
+    expect(overview).not.toMatch(/setting-card clickable/)
+    expect(overview).not.toMatch(/<SurfaceCard[^>]+@click=/)
+    expect(overview).toMatch(/\.setting-nav\s*\{[^}]*place-items:\s*center/)
+    expect(overview).toMatch(/\.setting-status\s*\{[^}]*min-height:\s*28px[^}]*margin-top:\s*0[^}]*padding-top:\s*0/)
     // 运行状态栏已删除。
     expect(overview).not.toMatch(/runtime-summary/)
     // 覆写卡片上的主开关直接持久化 enabled。
@@ -139,19 +144,25 @@ describe('network drawer + resources UI contract', () => {
     expect(overview).toMatch(/\{ \.\.\.dns\.enhancement, enabled: !dnsEnabled\.value \}/)
   })
 
-  it('embeds Sub-Store under 外部资源 with a real lifecycle', async () => {
-    const [resources, shared, service, store] = await Promise.all([
+  it('gives default-downloaded Sub-Store its own page in the configuration group', async () => {
+    const [resources, subStoreView, sidebar, settings, main, shared, service, store] = await Promise.all([
       read('src/renderer/src/views/ResourcesView.vue'),
+      read('src/renderer/src/views/SubStoreView.vue'),
+      read('src/renderer/src/components/AppSidebar.vue'),
+      read('src/shared/app-settings.ts'),
+      read('src/main/index.ts'),
       read('src/shared/substore.ts'),
       read('src/main/substore/service.ts'),
       read('src/renderer/src/stores/substore.ts')
     ])
-    // 页面区块：开关 + 状态行 + 同源 iframe + 浏览器打开/检查更新。
-    expect(resources).toMatch(/toggleSubStore/)
-    expect(resources).toMatch(/subStoreMergedUrl/)
-    expect(resources).toMatch(/<iframe/)
-    expect(resources).toMatch(/subStore.checkUpdate/)
-    expect(resources).toMatch(/subStore.openExternal/)
+    expect(resources).not.toMatch(/Sub-Store|subStore/)
+    expect(sidebar).toMatch(/label: '配置'[\s\S]*to: '\/substore', label: 'Sub-Store'/)
+    expect(settings).toMatch(/subStoreEnabled:\s*true/)
+    expect(main).toMatch(/subStoreService\.ensureRunning\(\)/)
+    expect(subStoreView).toMatch(/subStoreMergedUrl/)
+    expect(subStoreView).toMatch(/<iframe/)
+    expect(subStoreView).toMatch(/subStore.checkUpdate/)
+    expect(subStoreView).toMatch(/subStore.openExternal/)
     // 共享契约：merge 模式单端口 + 固定官方下载源；服务层绑定 loopback。
     expect(shared).toMatch(/sub-store-org\/Sub-Store/)
     expect(shared).toMatch(/subStoreMergedUrl/)

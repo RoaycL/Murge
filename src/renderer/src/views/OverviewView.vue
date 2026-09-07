@@ -133,7 +133,7 @@ function openSettings(key: SettingKey): void {
     <section>
       <h2>网络管理</h2>
       <div class="overview-grid">
-        <SurfaceCard class="setting-card clickable" role="button" tabindex="0" aria-label="打开系统代理设置" @click="openSettings('system-proxy')" @keydown.enter="openSettings('system-proxy')">
+        <SurfaceCard class="setting-card">
           <div class="setting-head">
             <div>
               <h3>系统代理</h3>
@@ -143,11 +143,11 @@ function openSettings(key: SettingKey): void {
           </div>
           <div class="setting-body">
             <span class="setting-status"><i :class="{ active: spEnabled }" />{{ spPhaseLabel }}</span>
-            <AppIcon class="setting-arrow" name="next" :size="14" />
+            <button type="button" class="setting-nav" aria-label="打开系统代理设置" @click="openSettings('system-proxy')"><AppIcon name="next" :size="14" /></button>
           </div>
           <p v-if="actionError" class="inline-error" role="alert">{{ actionError }}</p>
         </SurfaceCard>
-        <SurfaceCard class="setting-card clickable" role="button" tabindex="0" aria-label="打开 TUN 模式设置" @click="openSettings('tun')" @keydown.enter="openSettings('tun')">
+        <SurfaceCard class="setting-card">
           <div class="setting-head">
             <div>
               <h3>TUN 模式</h3>
@@ -157,7 +157,7 @@ function openSettings(key: SettingKey): void {
           </div>
           <div class="setting-body">
             <span class="setting-status"><i :class="{ active: tunActive }" />{{ tunPhaseLabel }}</span>
-            <AppIcon class="setting-arrow" name="next" :size="14" />
+            <button type="button" class="setting-nav" aria-label="打开 TUN 模式设置" @click="openSettings('tun')"><AppIcon name="next" :size="14" /></button>
           </div>
           <p v-if="tun.actionError" class="inline-error" role="alert">{{ tun.actionError }}</p>
         </SurfaceCard>
@@ -166,7 +166,7 @@ function openSettings(key: SettingKey): void {
     <section>
       <h2>覆写</h2>
       <div class="overview-grid">
-        <SurfaceCard class="setting-card clickable" role="button" tabindex="0" aria-label="打开嗅探覆写设置" @click="openSettings('sniffer')" @keydown.enter="openSettings('sniffer')">
+        <SurfaceCard class="setting-card">
           <div class="setting-head">
             <div>
               <h3>嗅探覆写</h3>
@@ -176,11 +176,11 @@ function openSettings(key: SettingKey): void {
           </div>
           <div class="setting-body">
             <span class="setting-status"><i :class="{ active: snifferEnabled }" />{{ snifferBusy ? '正在保存…' : snifferEnabled ? '已启用 · 下次启动内核生效' : '未启用' }}</span>
-            <AppIcon class="setting-arrow" name="next" :size="14" />
+            <button type="button" class="setting-nav" aria-label="打开嗅探覆写设置" @click="openSettings('sniffer')"><AppIcon name="next" :size="14" /></button>
           </div>
           <p v-if="sniffer.lastError" class="inline-error" role="alert">{{ sniffer.lastError }}</p>
         </SurfaceCard>
-        <SurfaceCard class="setting-card clickable" role="button" tabindex="0" aria-label="打开 DNS 覆写设置" @click="openSettings('dns')" @keydown.enter="openSettings('dns')">
+        <SurfaceCard class="setting-card">
           <div class="setting-head">
             <div>
               <h3>DNS 覆写</h3>
@@ -190,7 +190,7 @@ function openSettings(key: SettingKey): void {
           </div>
           <div class="setting-body">
             <span class="setting-status"><i :class="{ active: dnsEnabled }" />{{ dnsBusy ? '正在保存…' : dnsEnabled ? '已启用 · 下次启动内核生效' : '未启用' }}</span>
-            <AppIcon class="setting-arrow" name="next" :size="14" />
+            <button type="button" class="setting-nav" aria-label="打开 DNS 覆写设置" @click="openSettings('dns')"><AppIcon name="next" :size="14" /></button>
           </div>
           <p v-if="dns.lastError" class="inline-error" role="alert">{{ dns.lastError }}</p>
         </SurfaceCard>
@@ -200,9 +200,6 @@ function openSettings(key: SettingKey): void {
 </template>
 
 <style scoped>
-/* 整卡可点跳转设置页；开关在事件上 stop，不触发卡片导航。 */
-.setting-card.clickable { cursor: pointer; }
-.setting-card.clickable:hover { border-color: var(--app-divider-hover, var(--app-divider)); }
 .setting-body {
   display: flex;
   align-items: center;
@@ -215,15 +212,32 @@ function openSettings(key: SettingKey): void {
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  min-height: 28px;
   min-width: 0;
+  margin-top: 0;
+  padding-top: 0;
   overflow: hidden;
   color: var(--app-muted);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.setting-arrow { flex-shrink: 0; color: var(--app-muted); }
-.setting-body:hover .setting-arrow { color: var(--app-text); }
+.setting-nav {
+  display: grid;
+  place-items: center;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  margin: 0 -7px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--app-muted);
+  cursor: pointer;
+}
+.setting-nav:hover { background: rgba(127, 127, 127, 0.1); color: var(--app-text); }
+.setting-nav:focus-visible { outline: 2px solid var(--app-blue); outline-offset: 1px; }
 .setting-card { gap: 8px; }
 .inline-error { margin-top: 8px; color: var(--app-danger, #d64f4f); font-size: 12px; }
 </style>

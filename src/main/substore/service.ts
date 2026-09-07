@@ -103,14 +103,14 @@ export interface SubStoreDeps {
 /**
  * Sub-Store lifecycle owner (初步接入).
  *
- * Flow: on demand the service downloads the official backend bundle and
+ * Flow: the service downloads the official backend bundle and
  * frontend distribution from the pinned GitHub releases into `baseDir`, then
  * runs the backend in a worker thread with SUB_STORE_BACKEND_MERGE=1 so ONE
  * loopback port serves both the static frontend and the API (same origin —
  * no CORS, no second server). The renderer embeds it in an iframe.
  *
  * Lifecycle rules:
- * - Started only on demand (外部资源 opened while enabled) — never at boot.
+ * - Started in the background when enabled; the dedicated page can retry it.
  * - Single-flight ensure: concurrent calls share one start attempt.
  * - Worker env is fully constructed (never inherits the main process env).
  * - All state changes flow through this class; the renderer sees snapshots.
@@ -385,8 +385,8 @@ export class SubStoreService {
       }
       return
     }
-    // Enabling remains page-driven/on-demand. Only an actual proxy-mode change
-    // requires a live worker restart; unrelated app settings are ignored.
+    // Only an actual proxy-mode change requires a live worker restart;
+    // unrelated app settings are ignored.
     if (proxyChanged && this.phase === 'running' && this.port !== null) {
       await this.restart()
     }

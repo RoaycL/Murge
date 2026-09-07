@@ -8,7 +8,7 @@ const read = (path: string): string => readFileSync(resolve(root, path), 'utf8')
 describe('Surge-inspired UI navigation contract', () => {
   it('keeps feature areas separate and gives every sidebar destination a semantic icon', () => {
     const sidebar = read('src/renderer/src/components/AppSidebar.vue')
-    for (const route of ['/activity', '/overview', '/connections', '/policies', '/rules', '/profiles', '/overrides', '/resources']) {
+    for (const route of ['/activity', '/overview', '/connections', '/policies', '/rules', '/profiles', '/substore', '/overrides', '/resources']) {
       expect(sidebar).toContain(`to: '${route}'`)
     }
     expect(sidebar).toContain('<AppIcon :name="item.icon"')

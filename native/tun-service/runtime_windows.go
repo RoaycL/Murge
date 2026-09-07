@@ -22,10 +22,12 @@ import (
 const maxCoreBytes = 128 * 1024 * 1024
 
 type windowsRuntime struct {
-	config     serviceConfig
-	corePath   string
-	coreSHA256 string
-	job        windows.Handle
+	config            serviceConfig
+	corePath          string
+	coreSHA256        string
+	bundledCorePath   string
+	bundledCoreSHA256 string
+	job               windows.Handle
 }
 
 func newWindowsRuntime(config serviceConfig) (*windowsRuntime, error) {
@@ -46,7 +48,10 @@ func newWindowsRuntime(config serviceConfig) (*windowsRuntime, error) {
 		windows.CloseHandle(job)
 		return nil, err
 	}
-	return &windowsRuntime{config: config, corePath: corePath, coreSHA256: coreDigest, job: job}, nil
+	return &windowsRuntime{
+		config: config, corePath: corePath, coreSHA256: coreDigest,
+		bundledCorePath: corePath, bundledCoreSHA256: coreDigest, job: job,
+	}, nil
 }
 
 // stateDirectorySDDL is the byte-for-byte normative contract mirrored by
@@ -214,15 +219,23 @@ func prepareCore(config serviceConfig) (string, string, error) {
 	return corePath, coreDigest, nil
 }
 
-func (runtime *windowsRuntime) Start(profile string, _ string) (int, error) {
-	if digest, err := hashFile(runtime.corePath); err != nil || digest != runtime.coreSHA256 {
+func (runtime *windowsRuntime) Start(profile string, _ string, version string) (int, error) {
+	corePath, coreDigest := runtime.bundledCorePath, runtime.bundledCoreSHA256
+	if version != "" {
+		var err error
+		corePath, coreDigest, err = runtime.versionCore(version, 0)
+		if err != nil {
+			return 0, err
+		}
+	}
+	if digest, err := hashFile(corePath); err != nil || digest != coreDigest {
 		return 0, errors.New("extracted mihomo integrity check failed")
 	}
 	profilePath := filepath.Join(runtime.config.StateDirectory, "session.yaml")
 	if err := writePrivateFile(profilePath, []byte(profile)); err != nil {
 		return 0, err
 	}
-	command := exec.Command(runtime.corePath, "-d", runtime.config.StateDirectory, "-f", profilePath)
+	command := exec.Command(corePath, "-d", runtime.config.StateDirectory, "-f", profilePath)
 	command.Dir = runtime.config.StateDirectory
 	command.Env = safeWindowsEnvironment()
 	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NEW_PROCESS_GROUP}
@@ -242,6 +255,8 @@ func (runtime *windowsRuntime) Start(profile string, _ string) (int, error) {
 	}
 	windows.CloseHandle(processHandle)
 	go func() { _ = command.Wait() }()
+	runtime.corePath = corePath
+	runtime.coreSHA256 = coreDigest
 	return command.Process.Pid, nil
 }
 

@@ -16,7 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const protocolVersion = 3
+const protocolVersion = 4
 const maxProfileBytes = 2 * 1024 * 1024
 
 var (
@@ -34,6 +34,8 @@ type serviceRequest struct {
 	SessionID       string `json:"sessionId,omitempty"`
 	Profile         string `json:"profile,omitempty"`
 	ProfileSHA256   string `json:"profileSha256,omitempty"`
+	Version         string `json:"version,omitempty"`
+	ProxyPort       int    `json:"proxyPort,omitempty"`
 }
 
 type serviceResponse struct {
@@ -82,13 +84,24 @@ func decodeRequest(data []byte) (serviceRequest, error) {
 		if err := validateTunProfile(request.Profile); err != nil {
 			return serviceRequest{}, fmt.Errorf("unsafe TUN profile: %w", err)
 		}
+		if request.Version != "" && !versionPattern.MatchString(request.Version) {
+			return serviceRequest{}, errors.New("invalid start version")
+		}
+		if request.ProxyPort != 0 {
+			return serviceRequest{}, errors.New("start contains forbidden proxyPort")
+		}
 	case "stop":
 		if !uuidPattern.MatchString(request.SessionID) || request.Profile != "" || request.ProfileSHA256 != "" {
 			return serviceRequest{}, errors.New("invalid stop request")
 		}
 	case "status", "reconcile":
-		if request.SessionID != "" || request.Profile != "" || request.ProfileSHA256 != "" {
+		if request.SessionID != "" || request.Profile != "" || request.ProfileSHA256 != "" || request.Version != "" || request.ProxyPort != 0 {
 			return serviceRequest{}, errors.New("read operation contains forbidden fields")
+		}
+	case "install":
+		if request.SessionID != "" || request.Profile != "" || request.ProfileSHA256 != "" || !versionPattern.MatchString(request.Version) ||
+			(request.ProxyPort != 0 && (request.ProxyPort < 1024 || request.ProxyPort > 65535)) {
+			return serviceRequest{}, errors.New("invalid install request")
 		}
 	default:
 		return serviceRequest{}, errors.New("operation is not allowlisted")

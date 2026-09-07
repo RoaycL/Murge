@@ -108,6 +108,21 @@ func TestDecodeSafeStart(t *testing.T) {
 	}
 }
 
+func TestDecodeOfficialVersionInstall(t *testing.T) {
+	data, _ := json.Marshal(serviceRequest{
+		ProtocolVersion: protocolVersion, RequestID: "2", Operation: "install", Version: "v1.19.29", ProxyPort: 7890,
+	})
+	if _, err := decodeRequest(data); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = json.Marshal(serviceRequest{
+		ProtocolVersion: protocolVersion, RequestID: "3", Operation: "install", Version: "latest",
+	})
+	if _, err := decodeRequest(data); err == nil {
+		t.Fatal("accepted a non-version install target")
+	}
+}
+
 // The service must now accept real proxy content: that is the point of a TUN
 // proxy. Only the structural boundary stays enforced.
 func TestAcceptProxiedProfile(t *testing.T) {
@@ -283,10 +298,11 @@ type fakeRuntime struct {
 	inspectErr error
 }
 
-func (runtime *fakeRuntime) Start(string, string) (int, error) {
+func (runtime *fakeRuntime) Start(string, string, string) (int, error) {
 	runtime.live = true
 	return runtime.nextPID, nil
 }
+func (runtime *fakeRuntime) Install(string, int) error { return nil }
 func (runtime *fakeRuntime) Stop(int) error {
 	if runtime.stopErr != nil {
 		return runtime.stopErr

@@ -15,7 +15,7 @@ export class NamedPipeTunServiceTransport implements TunServiceTransport {
     this.path = `\\\\.\\pipe\\${pipeName}`
   }
 
-  request(message: TunServiceRequest, signal?: AbortSignal): Promise<unknown> {
+  request(message: TunServiceRequest, signal?: AbortSignal, timeoutOverrideMs?: number): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const socket = this.connect(this.path)
       let settled = false
@@ -30,7 +30,8 @@ export class NamedPipeTunServiceTransport implements TunServiceTransport {
         error === undefined ? resolve(value) : reject(error)
       }
       const onAbort = (): void => finish(new ProtocolError(ProtocolErrorCode.UPSTREAM_TIMEOUT, 'TUN service request was cancelled'))
-      const timer = setTimeout(() => finish(new ProtocolError(ProtocolErrorCode.UPSTREAM_TIMEOUT, 'TUN service request timed out')), this.timeoutMs)
+      const timeoutMs = timeoutOverrideMs ?? this.timeoutMs
+      const timer = setTimeout(() => finish(new ProtocolError(ProtocolErrorCode.UPSTREAM_TIMEOUT, 'TUN service request timed out')), timeoutMs)
       timer.unref?.()
       signal?.addEventListener('abort', onAbort, { once: true })
       if (signal?.aborted) { onAbort(); return }

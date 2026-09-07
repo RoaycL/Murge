@@ -159,7 +159,7 @@ describe('Activity fluid-layout UI contract', () => {
   it('lays kernel versions out as an adaptive multi-column chip grid', async () => {
     const modal = await read('src/renderer/src/components/KernelVersionModal.vue')
 
-    expect(modal).toMatch(/grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(96px,\s*1fr\)\)/)
+    expect(modal).toMatch(/grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(min\(220px,\s*100%\),\s*1fr\)\)/)
     expect(modal).not.toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)/)
   })
 })

@@ -13,7 +13,8 @@ type ownedProcess struct {
 }
 
 type processRuntime interface {
-	Start(profile string, sessionID string) (int, error)
+	Start(profile string, sessionID string, version string) (int, error)
+	Install(version string, proxyPort int) error
 	Stop(pid int) error
 	Inspect(pid int) (bool, error)
 }
@@ -51,6 +52,8 @@ func (manager *sessionManager) Handle(request serviceRequest) serviceResponse {
 		manager.status(&response)
 	case "reconcile":
 		err = manager.reconcile(&response)
+	case "install":
+		err = manager.install(request, &response)
 	default:
 		err = errors.New("operation is not allowlisted")
 	}
@@ -85,7 +88,7 @@ func (manager *sessionManager) start(request serviceRequest, response *serviceRe
 		response.PID = &manager.owned.PID
 		return errors.New("a child is already owned")
 	}
-	pid, err := manager.runtime.Start(request.Profile, request.SessionID)
+	pid, err := manager.runtime.Start(request.Profile, request.SessionID, request.Version)
 	if err != nil {
 		response.Outcome = "failed"
 		return err
@@ -106,6 +109,15 @@ func (manager *sessionManager) start(request serviceRequest, response *serviceRe
 	response.Outcome = "running"
 	response.SessionID = &owned.SessionID
 	response.PID = &owned.PID
+	return nil
+}
+
+func (manager *sessionManager) install(request serviceRequest, response *serviceResponse) error {
+	if err := manager.runtime.Install(request.Version, request.ProxyPort); err != nil {
+		response.Outcome = "failed"
+		return err
+	}
+	response.Outcome = "installed"
 	return nil
 }
 

@@ -21,6 +21,7 @@ const filteredVersions = computed(() => {
 const installing = computed(
   () => state.value.installing !== null
 )
+const selectedIsCurrent = computed(() => selected.value === state.value.effectiveVersion)
 
 function selectVersion(version: string): void {
   selected.value = version
@@ -37,8 +38,8 @@ onMounted(() => {
 
 async function confirmInstall(): Promise<void> {
   if (!selected.value || installing.value) return
-  await kernelManager.install(selected.value)
-  if (!kernelManager.state.error) emit('close')
+  const applied = await kernelManager.install(selected.value)
+  if (applied) emit('close')
 }
 </script>
 
@@ -47,7 +48,7 @@ async function confirmInstall(): Promise<void> {
     <div class="km-modal" role="dialog" aria-modal="true" aria-label="选择特定版本">
       <header class="km-head">
         <h2>选择特定版本</h2>
-        <p v-if="state.specificVersionsSupported">安装指定版本前会校验官方发布摘要与大小；下载结束后立即校验并安装。</p>
+        <p v-if="state.specificVersionsSupported">从 mihomo 官方版本中选择。下载、摘要校验、安装和运行版本回读全部成功后才会切换。</p>
         <p v-else>当前 Windows 安全服务使用随应用安装的稳定内核。更新应用时会同步更新内核版本。</p>
       </header>
 
@@ -86,6 +87,7 @@ async function confirmInstall(): Promise<void> {
           >
             <span>{{ version }}</span>
             <em v-if="state.installing === version">安装中…</em>
+            <em v-else-if="state.effectiveVersion === version">当前</em>
           </button>
         </li>
       </ul>
@@ -98,7 +100,7 @@ async function confirmInstall(): Promise<void> {
           v-if="state.specificVersionsSupported"
           type="button"
           class="km-install"
-          :disabled="!selected || installing"
+          :disabled="!selected || installing || selectedIsCurrent"
           @click="confirmInstall"
         >
           {{ installing ? '安装中…' : '安装版本' }}
@@ -121,8 +123,8 @@ async function confirmInstall(): Promise<void> {
 .km-modal {
   display: flex;
   flex-direction: column;
-  width: min(460px, calc(100vw - 48px));
-  max-height: 78vh;
+  width: min(920px, calc(100vw - 40px));
+  max-height: min(82vh, 720px);
   background: var(--app-surface-solid);
   border: 1px solid var(--app-divider);
   border-radius: 14px;
@@ -155,10 +157,8 @@ async function confirmInstall(): Promise<void> {
 .km-hint { margin: 12px 0 0; color: var(--app-muted); font-size: 11px; }
 .km-list {
   display: grid;
-  /* Adaptive multi-column: auto-fill packs as many version chips per row as
-     the modal width allows (4 at the default 460px, fewer when narrower). */
-  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: 8px;
   margin: 12px 0 0;
   padding: 0;
   list-style: none;
@@ -166,7 +166,7 @@ async function confirmInstall(): Promise<void> {
 }
 .km-list button {
   display: flex;
-  min-height: 32px;
+  min-height: 48px;
   align-items: center;
   justify-content: space-between;
   padding: 4px 10px;
@@ -193,4 +193,10 @@ async function confirmInstall(): Promise<void> {
 .km-install { background: var(--app-blue); color: white; }
 .km-cancel:disabled,
 .km-install:disabled { opacity: 0.6; }
+@media (max-width: 560px) {
+  .km-modal { width: calc(100vw - 20px); max-height: calc(100vh - 20px); padding: 14px; }
+  .km-toolbar { align-items: stretch; }
+  .km-refresh { flex: 0 0 auto; }
+  .km-list { grid-template-columns: 1fr; }
+}
 </style>

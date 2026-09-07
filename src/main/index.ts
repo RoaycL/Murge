@@ -673,8 +673,8 @@ app.whenReady().then(async () => {
   }
   const productionSecret = is.dev ? null : persistedCoreSettings.controllerSecret
   // Listener ports are stable user settings rather than opportunistic free
-  // ports. Before a production start, the guarded reclaimer below takes them
-  // back from a positively identified Clash-family process.
+  // ports. Before a production start, the reclaimer below takes them back from
+  // whichever process currently owns them.
   const productionControllerPort = is.dev ? null : persistedCoreSettings.controllerPort
   const productionControllerHost = is.dev ? '127.0.0.1' as const : persistedCoreSettings.controllerHost
   const productionAllowLan = !is.dev && persistedCoreSettings.allowLan

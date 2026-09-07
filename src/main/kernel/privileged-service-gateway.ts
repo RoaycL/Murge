@@ -100,13 +100,17 @@ export class PrivilegedServiceKernelGateway implements KernelGateway {
         if (stale.outcome === 'running' || stale.outcome === 'starting' || stale.outcome === 'stopping') {
           await this.client.stop()
         }
-        // Only after the service-owned child is gone may we classify a remaining
-        // listener as foreign. This keeps the reclaimer from bypassing the
-        // service lifecycle when recovering this app's own stale session.
-        await this.prepareStart(runtime)
+        // Build everything that can take time before reclaiming the ports. The
+        // service start follows the reclaim immediately, leaving a competing
+        // application's watchdog the smallest possible opportunity to bind the
+        // ports again.
         const profile = await this.buildProfile(runtime)
         const selection = await this.versionSelection()
         const requestedVersion = selection.channel === 'specific' ? selection.specificVersion ?? undefined : undefined
+        // Only after the service-owned child is gone may we terminate remaining
+        // listeners. No process-family classification is performed: configured
+        // ports belong to this requested application start.
+        await this.prepareStart(runtime)
         const owned = await this.startProfile(profile, requestedVersion)
         const controller = new AbortController()
         const timer = setTimeout(() => controller.abort(), this.readyTimeoutMs)

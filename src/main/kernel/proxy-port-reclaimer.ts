@@ -7,13 +7,6 @@ const execFileAsync = promisify(execFile)
 export interface ProxyPortOwner {
   pid: number
   ports: number[]
-  name: string
-  executablePath: string
-  commandLine: string
-  parentPid?: number
-  parentName?: string
-  parentExecutablePath?: string
-  parentCommandLine?: string
 }
 
 export interface ProxyPortProcessAdapter {
@@ -21,24 +14,13 @@ export interface ProxyPortProcessAdapter {
   terminate(pid: number): Promise<void>
 }
 
-const KNOWN_CORE_NAMES = new Set([
-  'clash.exe',
-  'clash-meta.exe',
-  'clash-win64.exe',
-  'clash-windows-amd64.exe',
-  'mihomo.exe',
-  'verge-mihomo.exe'
-])
-const PROXY_IDENTITY_MARKER = /(?:^|[\\/\s._-])(clash|mihomo|clash-verge|clash-party|nyanpasu|flclash)(?:[\\/\s._-]|$)/i
-
-export function isRecognizedClashProcess(owner: ProxyPortOwner): boolean {
-  const name = owner.name.trim().toLowerCase()
-  if (KNOWN_CORE_NAMES.has(name)) return true
-  // `core.exe` is intentionally not trusted by name: many unrelated programs
-  // use it. Accept generic names only when their installed path or command line
-  // also carries an unmistakable Clash-family marker.
-  return PROXY_IDENTITY_MARKER.test(`${owner.name} ${owner.executablePath} ${owner.commandLine}`)
+export interface ProxyPortReclaimOptions {
+  maxAttempts?: number
+  retryDelayMs?: number
 }
+
+const DEFAULT_MAX_ATTEMPTS = 6
+const DEFAULT_RETRY_DELAY_MS = 75
 
 function normalizePorts(ports: readonly (number | undefined)[]): number[] {
   return Array.from(new Set(ports.filter((port): port is number =>
@@ -47,54 +29,45 @@ function normalizePorts(ports: readonly (number | undefined)[]): number[] {
 }
 
 /**
- * Reclaim configured listener ports from another Clash-family core.
- * Unknown processes are never terminated: a clear conflict is returned so the
- * user can resolve it without the application guessing about process ownership.
+ * Reclaim configured listener ports from whichever process currently owns them.
+ * Only the listener process is terminated; its parent application is untouched.
  */
 export async function reclaimProxyPorts(
   ports: readonly (number | undefined)[],
   adapter: ProxyPortProcessAdapter = new WindowsProxyPortProcessAdapter(),
-  ownPid = process.pid
+  ownPid = process.pid,
+  options: ProxyPortReclaimOptions = {}
 ): Promise<void> {
   const requested = normalizePorts(ports)
   if (requested.length === 0) return
+  const maxAttempts = Math.max(1, options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS)
+  const retryDelayMs = Math.max(0, options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS)
+  let lastTerminationError: unknown = null
 
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const owners = (await adapter.inspect(requested)).filter((owner) => owner.pid !== ownPid)
     if (owners.length === 0) return
 
-    const unknown = owners.find((owner) => !isRecognizedClashProcess(owner))
-    if (unknown) {
-      throw new ProtocolError(
-        ProtocolErrorCode.KERNEL_RUNNING,
-        `端口 ${unknown.ports.join('、')} 已被 ${unknown.name || `PID ${unknown.pid}`} 占用。为避免误关普通程序，本应用未执行抢占。`
-      )
+    // A listener can disappear between inspection and termination. Treat that
+    // race as provisional success and decide from the next port inspection;
+    // genuine access-denied failures remain visible if the listener survives.
+    const results = await Promise.allSettled(
+      Array.from(new Set(owners.map((owner) => owner.pid)), (pid) => adapter.terminate(pid))
+    )
+    const rejected = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+    if (rejected) lastTerminationError = rejected.reason
+    if (attempt < maxAttempts - 1 && retryDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs))
     }
-
-    const targets = new Set<number>()
-    for (const owner of owners) {
-      const parent = owner.parentPid && owner.parentPid !== ownPid
-        ? {
-            pid: owner.parentPid,
-            ports: [],
-            name: owner.parentName ?? '',
-            executablePath: owner.parentExecutablePath ?? '',
-            commandLine: owner.parentCommandLine ?? ''
-          }
-        : null
-      // End the Clash client when it is the recognized parent; killing only its
-      // core lets the client's watchdog immediately take the ports back.
-      targets.add(parent && isRecognizedClashProcess(parent) ? parent.pid : owner.pid)
-    }
-    for (const pid of targets) await adapter.terminate(pid)
-    if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 250))
   }
 
   const remaining = (await adapter.inspect(requested)).filter((owner) => owner.pid !== ownPid)
   if (remaining.length > 0) {
+    const detail = lastTerminationError instanceof Error ? `：${lastTerminationError.message}` : ''
     throw new ProtocolError(
       ProtocolErrorCode.KERNEL_RUNNING,
-      `其他 Clash 正在反复占用端口 ${remaining.flatMap((owner) => owner.ports).join('、')}，请先退出该 Clash 客户端。`
+      `端口 ${Array.from(new Set(remaining.flatMap((owner) => owner.ports))).join('、')} ` +
+      `仍被进程 ${Array.from(new Set(remaining.map((owner) => owner.pid))).join('、')} 占用，抢占失败${detail}`
     )
   }
 }
@@ -102,23 +75,13 @@ export async function reclaimProxyPorts(
 interface PowerShellOwner {
   pid?: unknown
   port?: unknown
-  name?: unknown
-  executablePath?: unknown
-  commandLine?: unknown
-  parentPid?: unknown
-  parentName?: unknown
-  parentExecutablePath?: unknown
-  parentCommandLine?: unknown
 }
 
-const INSPECT_SCRIPT = [
+export const WINDOWS_PORT_INSPECT_SCRIPT = [
   "$ports = $args[0].Split(',') | ForEach-Object { [int]$_ }",
-  '$rows = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $ports -contains $_.LocalPort } | ForEach-Object {',
-  '  $process = Get-CimInstance Win32_Process -Filter (\'ProcessId = {0}\' -f $_.OwningProcess) -ErrorAction SilentlyContinue',
-  '  $parent = $null',
-  '  if ($process -and $process.ParentProcessId) { $parent = Get-CimInstance Win32_Process -Filter (\'ProcessId = {0}\' -f $process.ParentProcessId) -ErrorAction SilentlyContinue }',
-  '  [PSCustomObject]@{ pid = $_.OwningProcess; port = $_.LocalPort; name = $process.Name; executablePath = $process.ExecutablePath; commandLine = $process.CommandLine; parentPid = $process.ParentProcessId; parentName = $parent.Name; parentExecutablePath = $parent.ExecutablePath; parentCommandLine = $parent.CommandLine }',
-  '}',
+  "$tcp = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $ports -contains $_.LocalPort } | ForEach-Object { [PSCustomObject]@{ pid = $_.OwningProcess; port = $_.LocalPort } }",
+  "$udp = Get-NetUDPEndpoint -ErrorAction SilentlyContinue | Where-Object { $ports -contains $_.LocalPort } | ForEach-Object { [PSCustomObject]@{ pid = $_.OwningProcess; port = $_.LocalPort } }",
+  '$rows = @($tcp) + @($udp)',
   '$rows | ConvertTo-Json -Compress'
 ].join('; ')
 
@@ -127,7 +90,7 @@ export class WindowsProxyPortProcessAdapter implements ProxyPortProcessAdapter {
     if (process.platform !== 'win32' || ports.length === 0) return []
     const { stdout } = await execFileAsync(
       'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-Command', INSPECT_SCRIPT, ports.join(',')],
+      ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_PORT_INSPECT_SCRIPT, ports.join(',')],
       { windowsHide: true, timeout: 5_000, maxBuffer: 1024 * 1024 }
     )
     const text = stdout.trim()
@@ -146,14 +109,7 @@ export class WindowsProxyPortProcessAdapter implements ProxyPortProcessAdapter {
       }
       grouped.set(pid, {
         pid,
-        ports: [port],
-        name: typeof row.name === 'string' ? row.name : '',
-        executablePath: typeof row.executablePath === 'string' ? row.executablePath : '',
-        commandLine: typeof row.commandLine === 'string' ? row.commandLine : '',
-        parentPid: Number.isInteger(Number(row.parentPid)) && Number(row.parentPid) > 0 ? Number(row.parentPid) : undefined,
-        parentName: typeof row.parentName === 'string' ? row.parentName : '',
-        parentExecutablePath: typeof row.parentExecutablePath === 'string' ? row.parentExecutablePath : '',
-        parentCommandLine: typeof row.parentCommandLine === 'string' ? row.parentCommandLine : ''
+        ports: [port]
       })
     }
     return Array.from(grouped.values())
@@ -161,7 +117,9 @@ export class WindowsProxyPortProcessAdapter implements ProxyPortProcessAdapter {
 
   async terminate(pid: number): Promise<void> {
     if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) return
-    await execFileAsync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], {
+    // Kill only the actual listener. In particular, do not walk upward to its
+    // desktop parent or downward through an unrelated child process tree.
+    await execFileAsync('taskkill.exe', ['/PID', String(pid), '/F'], {
       windowsHide: true,
       timeout: 5_000
     })

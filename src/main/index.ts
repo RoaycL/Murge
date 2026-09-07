@@ -57,7 +57,7 @@ import { TrayController } from './tray/tray-controller'
 import { createElectronTray } from './tray/electron-tray'
 import { resolveRuntimeAccent } from '@shared/runtime-accent'
 import { StartupService } from './startup/service'
-import { ElectronStartupAdapter } from './startup/electron-adapter'
+import { ScheduledTaskStartupAdapter } from './startup/scheduled-task-adapter'
 import { restoreRuntimeIntent } from './startup/runtime-intent'
 import { RuntimeIntentRecoveryCoordinator } from './startup/runtime-intent-recovery'
 import { AppSettingsService } from './app-settings/service'
@@ -716,7 +716,13 @@ app.whenReady().then(async () => {
   // Hydrate before login-item and window behavior consume the synchronous mirror.
   // Warmed at module level; this resolves from the store's lazy queue.
   cachedAppSettings = await appSettingsWarm
-  const startupService = new StartupService(new ElectronStartupAdapter(() => cachedAppSettings.silentLaunch))
+  const startupService = new StartupService(new ScheduledTaskStartupAdapter(() => cachedAppSettings.silentLaunch))
+  // One-shot registration maintenance at startup: migrates v0.9.x Run-key
+  // login-item users to the scheduled task and rewrites stale `--hidden`
+  // arguments. Best-effort and non-blocking; the toggle still works either way.
+  void startupService.refreshRegistration().catch((error) => {
+    console.warn('[startup] registration maintenance skipped:', error)
+  })
   appSettingsService.onChange((settings) => {
     const silentLaunchChanged = settings.silentLaunch !== cachedAppSettings.silentLaunch
     cachedAppSettings = settings

@@ -10,6 +10,8 @@ import { EMPTY_TUN_CONFIG } from '../../shared/tun-config'
 
 export interface TunProfileRuntime {
   mixedPort: number
+  httpPort?: number
+  socksPort?: number
   controllerPort: number
   secret: string
 }

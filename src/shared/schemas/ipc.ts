@@ -492,9 +492,19 @@ const coreSettingsSchema = z
     tcpConcurrent: z.boolean(),
     unifiedDelay: z.boolean(),
     findProcessMode: z.enum(['off', 'strict', 'always']),
-    interfaceName: z.string().trim().max(255).refine((value) => !/[\x00-\x1f\x7f]/.test(value), 'interface-name 包含非法控制字符')
+    interfaceName: z.string().trim().max(255).refine((value) => !/[\x00-\x1f\x7f]/.test(value), 'interface-name 包含非法控制字符'),
+    mixedPort: z.number().int().min(1024).max(65535),
+    socksPort: z.number().int().min(0).max(65535).refine((value) => value === 0 || value >= 1024, 'SOCKS 端口必须为 0 或 1024-65535'),
+    httpPort: z.number().int().min(0).max(65535).refine((value) => value === 0 || value >= 1024, 'HTTP 端口必须为 0 或 1024-65535'),
+    controllerPort: z.number().int().min(1024).max(65535)
   })
   .strict()
+  .superRefine((value, context) => {
+    const ports = [value.mixedPort, value.socksPort, value.httpPort, value.controllerPort].filter((port) => port !== 0)
+    if (new Set(ports).size !== ports.length) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: '启用的监听端口不能重复', path: ['mixedPort'] })
+    }
+  })
 
 /**
  * Validate a renderer-sent controlled core-settings model. The log level must be

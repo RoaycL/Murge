@@ -23,7 +23,11 @@ describe('core-settings model', () => {
       tcpConcurrent: false,
       unifiedDelay: true,
       findProcessMode: 'strict',
-      interfaceName: 'Ethernet'
+      interfaceName: 'Ethernet',
+      mixedPort: 7892,
+      socksPort: 7891,
+      httpPort: 7890,
+      controllerPort: 9090
     })
     expect(out).toEqual({
       enabled: true,
@@ -32,7 +36,11 @@ describe('core-settings model', () => {
       tcpConcurrent: false,
       unifiedDelay: true,
       findProcessMode: 'strict',
-      interfaceName: 'Ethernet'
+      interfaceName: 'Ethernet',
+      mixedPort: 7892,
+      socksPort: 7891,
+      httpPort: 7890,
+      controllerPort: 9090
     })
   })
 
@@ -54,6 +62,7 @@ describe('core-settings model', () => {
 
   it('builds the mihomo core keys from the model', () => {
     const block = buildCoreSettingsBlock({
+      ...EMPTY_CORE_SETTINGS,
       enabled: true,
       logLevel: 'error',
       ipv6: false,
@@ -69,6 +78,15 @@ describe('core-settings model', () => {
       'unified-delay': true,
       'find-process-mode': 'always',
       'interface-name': 'Ethernet'
+    })
+  })
+
+  it('repairs duplicate listener ports as one safe default block', () => {
+    expect(coerceCoreSettings({ mixedPort: 7890, socksPort: 7890, controllerPort: 9090 })).toMatchObject({
+      mixedPort: 7890,
+      socksPort: 0,
+      httpPort: 0,
+      controllerPort: 9090
     })
   })
 })

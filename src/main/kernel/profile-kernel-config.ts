@@ -41,6 +41,8 @@ import { buildGeodataBlock } from '../../shared/geodata'
 
 export interface ProfileKernelConfigOptions {
   mixedPort: number
+  httpPort?: number
+  socksPort?: number
   controllerPort: number
   secret: string
   /**
@@ -129,6 +131,14 @@ export function buildProfileKernelConfig(
   if (Number.isInteger(mixedPort) && Number.isInteger(controllerPort) && mixedPort === controllerPort) {
     invalid('mixed-port and external-controller port must differ')
   }
+  const optionalPorts = [options.httpPort ?? 0, options.socksPort ?? 0]
+  for (const [index, port] of optionalPorts.entries()) {
+    if (port !== 0 && (!Number.isInteger(port) || port < 1024 || port > 65535)) {
+      invalid(`invalid ${index === 0 ? 'http' : 'socks'} port: ${port}`)
+    }
+  }
+  const activePorts = [mixedPort, controllerPort, ...optionalPorts].filter((port) => port !== 0)
+  if (new Set(activePorts).size !== activePorts.length) invalid('listener ports must differ')
   if (typeof secret !== 'string' || !SECRET_PATTERN.test(secret)) {
     invalid('secret must be a 64-character lowercase hex string')
   }
@@ -188,6 +198,8 @@ export function buildProfileKernelConfig(
   }
   // --- Force the app-critical listener/auth keys ---
   config['mixed-port'] = mixedPort
+  if (options.httpPort) config.port = options.httpPort
+  if (options.socksPort) config['socks-port'] = options.socksPort
   config['external-controller'] = `127.0.0.1:${controllerPort}`
   config['allow-lan'] = false
   config['bind-address'] = '127.0.0.1'

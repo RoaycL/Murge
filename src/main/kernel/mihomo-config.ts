@@ -17,6 +17,10 @@ export type MihomoMode = 'direct'
 export interface MihomoConfigOptions {
   /** TCP mixed (HTTP+SOCKS) port. */
   mixedPort: number
+  /** Optional dedicated loopback HTTP proxy port. */
+  httpPort?: number
+  /** Optional dedicated loopback SOCKS5 proxy port. */
+  socksPort?: number
   /** External controller REST/WebSocket port (loopback only). */
   controllerPort: number
   /** Controller bearer secret (must be a 64-character hex string). */
@@ -29,6 +33,8 @@ export interface MihomoConfigOptions {
 
 /** Top-level keys the strict config may contain. Anything else is rejected. */
 export const ALLOWED_TOP_LEVEL_KEYS = [
+  'port',
+  'socks-port',
   'mixed-port',
   'allow-lan',
   'mode',
@@ -42,6 +48,7 @@ export const ALLOWED_TOP_LEVEL_KEYS = [
 ] as const
 
 const ALLOWED_TOP_SET = new Set<string>(ALLOWED_TOP_LEVEL_KEYS)
+const OPTIONAL_TOP_LEVEL_KEYS = new Set(['port', 'socks-port'])
 const ALLOWED_LOG_LEVELS = new Set(['silent', 'error', 'warn', 'info', 'debug'])
 const ALLOWED_RULES = ['MATCH,DIRECT'] as const
 
@@ -75,6 +82,14 @@ export function generateMihomoConfig(options: MihomoConfigOptions): string {
       'mixed-port and external-controller port must differ'
     )
   }
+  const optionalPorts = [options.httpPort ?? 0, options.socksPort ?? 0]
+  for (const [index, port] of optionalPorts.entries()) {
+    if (port !== 0) assertPort(port, index === 0 ? 'HTTP port' : 'SOCKS port')
+  }
+  const activePorts = [mixedPort, controllerPort, ...optionalPorts].filter((port) => port !== 0)
+  if (new Set(activePorts).size !== activePorts.length) {
+    throw new ProtocolError(ProtocolErrorCode.INVALID_ARGUMENT, 'listener ports must differ')
+  }
   if (typeof secret !== 'string' || !SECRET_PATTERN.test(secret)) {
     throw new ProtocolError(
       ProtocolErrorCode.INVALID_ARGUMENT,
@@ -97,6 +112,8 @@ export function generateMihomoConfig(options: MihomoConfigOptions): string {
   }
 
   return [
+    ...(options.httpPort ? ['port: ' + options.httpPort] : []),
+    ...(options.socksPort ? ['socks-port: ' + options.socksPort] : []),
     'mixed-port: ' + mixedPort,
     'allow-lan: false',
     'mode: ' + mode,
@@ -171,6 +188,7 @@ export function mihomoConfigErrors(text: string): string[] {
   }
 
   for (const req of ALLOWED_TOP_LEVEL_KEYS) {
+    if (OPTIONAL_TOP_LEVEL_KEYS.has(req)) continue
     if (!seen.has(req)) errors.push(`missing required key: ${req}`)
   }
   return errors
@@ -189,14 +207,14 @@ function collectKeyErrors(key: string, valueNode: unknown): string[] {
     return errors
   }
 
-  if (key === 'mixed-port') {
-    if (typeof valueNode.value !== 'number') errors.push('mixed-port must be a number')
+  if (key === 'mixed-port' || key === 'port' || key === 'socks-port') {
+    if (typeof valueNode.value !== 'number') errors.push(`${key} must be a number`)
     else if (
       !Number.isInteger(valueNode.value) ||
       valueNode.value < MIN_PORT ||
       valueNode.value > MAX_PORT
     ) {
-      errors.push(`mixed-port must be an unprivileged port between ${MIN_PORT} and ${MAX_PORT}`)
+      errors.push(`${key} must be an unprivileged port between ${MIN_PORT} and ${MAX_PORT}`)
     }
   } else if (key === 'allow-lan') {
     if (!isBoolFalse) errors.push('allow-lan must be false')

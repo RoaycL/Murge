@@ -154,8 +154,6 @@ func TestRejectUnsafeProfileMutations(t *testing.T) {
 		{"bad stack", "  stack: mixed", "  stack: hyper"},
 		{"short secret", "secret: abababababababababababababababababababababababababababababababab", "secret: abc"},
 		{"privileged port", "mixed-port: 17890", "mixed-port: 53"},
-		{"extra http inbound", "mode: rule", "mode: rule\nport: 7890"},
-		{"socks inbound", "mode: rule", "mode: rule\nsocks-port: 7891"},
 		{"redir inbound", "mode: rule", "mode: rule\nredir-port: 7892"},
 		{"tproxy inbound", "mode: rule", "mode: rule\ntproxy-port: 7893"},
 		{"extra listeners", "mode: rule", "mode: rule\nlisteners:\n  - name: in\n    type: http\n    port: 1080"},
@@ -185,6 +183,13 @@ func TestRejectUnsafeProfileMutations(t *testing.T) {
 		if _, err := decodeRequest(encodedStart(profile)); err == nil {
 			t.Fatalf("%s: accepted an unsafe profile", row.name)
 		}
+	}
+}
+
+func TestAcceptDedicatedLoopbackProxyPorts(t *testing.T) {
+	profile := stringsReplaceOnce(proxiedProfile, "mode: rule", "mode: rule\nport: 7890\nsocks-port: 7891")
+	if _, err := decodeRequest(encodedStart(profile)); err != nil {
+		t.Fatalf("rejected dedicated loopback proxy ports: %v", err)
 	}
 }
 

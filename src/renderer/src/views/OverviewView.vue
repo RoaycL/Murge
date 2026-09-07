@@ -212,10 +212,7 @@ function openSettings(key: SettingKey): void {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  min-height: 28px;
   min-width: 0;
-  margin-top: 0;
-  padding-top: 0;
   overflow: hidden;
   color: var(--app-muted);
   font-size: 12px;
@@ -225,10 +222,11 @@ function openSettings(key: SettingKey): void {
 .setting-nav {
   display: grid;
   place-items: center;
+  align-self: flex-end;
   flex: 0 0 28px;
   width: 28px;
   height: 28px;
-  margin: 0 -7px 0 0;
+  margin: 0 -7px -7px 0;
   padding: 0;
   border: 0;
   border-radius: 7px;

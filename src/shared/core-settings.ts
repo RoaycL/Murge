@@ -43,6 +43,14 @@ export interface CoreSettings {
   findProcessMode: FindProcessMode
   /** Optional mihomo `interface-name`; empty keeps automatic route selection. */
   interfaceName: string
+  /** Required loopback mixed inbound used by the app and Windows system proxy. */
+  mixedPort: number
+  /** Optional dedicated loopback SOCKS inbound; 0 disables it. */
+  socksPort: number
+  /** Optional dedicated loopback HTTP inbound; 0 disables it. */
+  httpPort: number
+  /** Authenticated loopback controller port. */
+  controllerPort: number
 }
 
 /**
@@ -58,7 +66,11 @@ export const EMPTY_CORE_SETTINGS: Readonly<CoreSettings> = Object.freeze({
   tcpConcurrent: false,
   unifiedDelay: false,
   findProcessMode: 'off',
-  interfaceName: ''
+  interfaceName: '',
+  mixedPort: 7890,
+  socksPort: 0,
+  httpPort: 0,
+  controllerPort: 9090
 })
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -76,8 +88,16 @@ export function coerceCoreSettings(input: unknown): CoreSettings {
     (MIHOMO_LOG_LEVELS as readonly MihomoLogLevel[]).includes(source.logLevel as MihomoLogLevel)
       ? (source.logLevel as MihomoLogLevel)
       : EMPTY_CORE_SETTINGS.logLevel
+  const asPort = (key: 'mixedPort' | 'controllerPort', fallback: number): number =>
+    Number.isInteger(source[key]) && (source[key] as number) >= 1024 && (source[key] as number) <= 65535
+      ? (source[key] as number)
+      : fallback
+  const asOptionalPort = (key: 'httpPort' | 'socksPort'): number =>
+    source[key] === 0 || (Number.isInteger(source[key]) && (source[key] as number) >= 1024 && (source[key] as number) <= 65535)
+      ? (source[key] as number)
+      : 0
 
-  return {
+  const result: CoreSettings = {
     enabled: asBool('enabled'),
     logLevel: asLogLevel(),
     ipv6: asBool('ipv6'),
@@ -86,8 +106,21 @@ export function coerceCoreSettings(input: unknown): CoreSettings {
     findProcessMode: asEnum('findProcessMode', FIND_PROCESS_MODES, 'off'),
     interfaceName: typeof source.interfaceName === 'string'
       ? source.interfaceName.trim().slice(0, 255)
-      : ''
+      : '',
+    mixedPort: asPort('mixedPort', EMPTY_CORE_SETTINGS.mixedPort),
+    socksPort: asOptionalPort('socksPort'),
+    httpPort: asOptionalPort('httpPort'),
+    controllerPort: asPort('controllerPort', EMPTY_CORE_SETTINGS.controllerPort)
   }
+  const activePorts = [result.mixedPort, result.socksPort, result.httpPort, result.controllerPort]
+    .filter((port) => port !== 0)
+  if (new Set(activePorts).size !== activePorts.length) {
+    result.mixedPort = EMPTY_CORE_SETTINGS.mixedPort
+    result.socksPort = EMPTY_CORE_SETTINGS.socksPort
+    result.httpPort = EMPTY_CORE_SETTINGS.httpPort
+    result.controllerPort = EMPTY_CORE_SETTINGS.controllerPort
+  }
+  return result
 }
 
 /* -------------------------------------------------------------------------- */

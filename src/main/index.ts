@@ -12,11 +12,12 @@ import { registerIpc } from './ipc/register-ipc'
 import { KernelSupervisor } from './kernel/supervisor'
 import { createKernelResolver, MihomoKernelResolver } from './kernel/resolvers'
 import { TempKernelConfigStore } from './kernel/config-store'
-import { findFreePort, MihomoKernelConfigStore } from './kernel/mihomo-config-store'
+import { MihomoKernelConfigStore } from './kernel/mihomo-config-store'
 import { randomSecret } from './kernel/mihomo-config'
 import { ControllerReadyKernelGateway } from './kernel/controller-ready-gateway'
 import { LateBoundKernelGateway } from './kernel/single-kernel-gateway'
 import { PrivilegedServiceKernelGateway } from './kernel/privileged-service-gateway'
+import { reclaimProxyPorts } from './kernel/proxy-port-reclaimer'
 import { createSystemProxy } from './system-proxy/factory'
 import { SystemProxyService } from './system-proxy/service'
 import { WindowsSystemProxyAdapter } from './system-proxy/adapters/windows-adapter'
@@ -249,24 +250,6 @@ async function createMihomoGateway(
     )
   }
   return mihomo
-}
-
-/** Preferred ecosystem-standard mihomo mixed inbound. */
-const MIHOMO_MIXED_PORT = 7890
-
-async function allocateProductionPorts(): Promise<{ controller: number; mixed: number }> {
-  const mixed = await findFreePort(MIHOMO_MIXED_PORT)
-  let controller = await findFreePort()
-  // Prefer clash-party's conventional 7890 so scripts and browser extensions
-  // keep working, but fall back when another proxy app already owns it. All
-  // internal consumers receive the resolved port, so a collision must not turn
-  // into a kernel-start failure. The controller remains ephemeral.
-  while (controller === mixed) controller = await findFreePort()
-  // Known accepted TOCTOU: nothing is bound here and mihomo binds some seconds
-  // later, so another process can claim a port in between. The failure mode is
-  // a loud kernel-start error (user retries), not silent corruption — holding
-  // the sockets open would starve mihomo's bind instead.
-  return { controller, mixed }
 }
 
 function createWindow(): BrowserWindow {
@@ -660,9 +643,19 @@ app.whenReady().then(async () => {
   // lazy: resolve/download/spawn happen only after the renderer invokes
   // `kernel:start`. Non-Windows production builds remain fail-closed.
   const productionSecret = is.dev ? null : randomSecret(32)
-  const productionPorts = is.dev ? null : await allocateProductionPorts()
-  const productionControllerPort = productionPorts?.controller ?? null
-  const productionMixedPort = productionPorts?.mixed ?? null
+  const coreSettingsService = new CoreSettingsService(appDataRoot(app.getPath('appData')))
+  const persistedCoreSettings = await coreSettingsService.getRaw()
+  // Listener ports are stable user settings rather than opportunistic free
+  // ports. Before a production start, the guarded reclaimer below takes them
+  // back from a positively identified Clash-family process.
+  const productionControllerPort = is.dev ? null : persistedCoreSettings.controllerPort
+  const productionMixedPort = is.dev ? null : persistedCoreSettings.mixedPort
+  const productionHttpPort = !is.dev && persistedCoreSettings.httpPort !== 0
+    ? persistedCoreSettings.httpPort
+    : undefined
+  const productionSocksPort = !is.dev && persistedCoreSettings.socksPort !== 0
+    ? persistedCoreSettings.socksPort
+    : undefined
   const productionKernelRoot = join(profileRoot, 'kernel')
   /** Proxy guard cadence (clash-verge-rev defaults to 30s; keep the same). */
   const PROXY_GUARD_INTERVAL_MS = 30_000
@@ -701,7 +694,6 @@ app.whenReady().then(async () => {
   const dnsEnhancementService = new DnsEnhancementService(appDataRoot(app.getPath('appData')))
   const snifferEnhancementService = new SnifferEnhancementService(appDataRoot(app.getPath('appData')))
   const tunConfigService = new TunConfigService(appDataRoot(app.getPath('appData')))
-  const coreSettingsService = new CoreSettingsService(appDataRoot(app.getPath('appData')))
   const geodataSettingsService = new GeodataSettingsService(appDataRoot(app.getPath('appData')))
 
   // The single source of the runtime document, shared by the main kernel and the
@@ -751,6 +743,8 @@ app.whenReady().then(async () => {
         ? new TempKernelConfigStore()
         : new MihomoKernelConfigStore({
             mixedPort: productionMixedPort!,
+            httpPort: productionHttpPort,
+            socksPort: productionSocksPort,
             controllerPort: productionControllerPort!,
             workspaceDir: join(productionKernelRoot, 'runtime'),
             // Stable kernel home (`-d`): mihomo resolves geodata databases and
@@ -794,6 +788,8 @@ app.whenReady().then(async () => {
         () => ({
           controllerPort: productionControllerPort!,
           mixedPort: productionMixedPort!,
+          httpPort: productionHttpPort,
+          socksPort: productionSocksPort,
           secret: productionSecret!
         }),
         {
@@ -826,7 +822,13 @@ app.whenReady().then(async () => {
         },
         `${brand.shortName} TUN`,
         10_000,
-        () => kernelManagerService.isEnabled()
+        () => kernelManagerService.isEnabled(),
+        (runtime) => reclaimProxyPorts([
+          runtime.mixedPort,
+          runtime.httpPort,
+          runtime.socksPort,
+          runtime.controllerPort
+        ])
       )
     : null
   // A service-owned core surviving an abnormal GUI exit may still own TUN
@@ -968,6 +970,8 @@ app.whenReady().then(async () => {
         () => ({
           controllerPort: productionControllerPort!,
           mixedPort: productionMixedPort!,
+          httpPort: productionHttpPort,
+          socksPort: productionSocksPort,
           secret: productionSecret!
         }),
         {
@@ -1149,6 +1153,8 @@ app.whenReady().then(async () => {
         gateway,
         {
           mixedPort: productionMixedPort!,
+          httpPort: productionHttpPort,
+          socksPort: productionSocksPort,
           controllerPort: productionControllerPort!,
           secret: productionSecret!,
           device: `${brand.shortName} TUN`

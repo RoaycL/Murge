@@ -51,6 +51,10 @@ function syncFromConfig(value: CoreSettings): void {
   form.unifiedDelay = value.unifiedDelay
   form.findProcessMode = value.findProcessMode
   form.interfaceName = value.interfaceName
+  form.mixedPort = value.mixedPort
+  form.socksPort = value.socksPort
+  form.httpPort = value.httpPort
+  form.controllerPort = value.controllerPort
 }
 
 async function save(): Promise<void> {
@@ -107,6 +111,41 @@ onMounted(async () => {
     </p>
 
     <div class="core-body">
+      <fieldset class="core-group listener-group">
+        <legend>监听与控制器</legend>
+        <p class="listener-note">端口在下次重启应用后生效；0 表示关闭独立 HTTP/SOCKS 入站。所有入口仍只监听本机。</p>
+        <div class="listener-list">
+          <label class="listener-row">
+            <span><b>混合端口</b><small>系统代理与应用内部统一使用</small></span>
+            <input v-model.number="form.mixedPort" class="core-input port-input" type="number" min="1024" max="65535" aria-label="mixed-port" />
+          </label>
+          <label class="listener-row">
+            <span><b>SOCKS 端口</b><small>可选独立 SOCKS5 入口</small></span>
+            <input v-model.number="form.socksPort" class="core-input port-input" type="number" min="0" max="65535" aria-label="socks-port" />
+          </label>
+          <label class="listener-row">
+            <span><b>HTTP 端口</b><small>可选独立 HTTP 代理入口</small></span>
+            <input v-model.number="form.httpPort" class="core-input port-input" type="number" min="0" max="65535" aria-label="http-port" />
+          </label>
+          <label class="listener-row">
+            <span><b>控制器监听</b><small>固定回环地址，禁止局域网暴露</small></span>
+            <span class="controller-address"><i>127.0.0.1:</i><input v-model.number="form.controllerPort" class="core-input port-input" type="number" min="1024" max="65535" aria-label="controller-port" /></span>
+          </label>
+          <div class="listener-row">
+            <span><b>访问密钥</b><small>每次启动随机生成，永不发送到界面</small></span>
+            <span class="secret-mask" aria-label="访问密钥已安全隐藏">••••••••••••</span>
+          </div>
+          <div class="listener-row locked-option">
+            <span><b>控制器面板</b><small>未内置 Web 面板，控制器仅供本应用自身使用</small></span>
+            <span class="locked-state">未启用</span>
+          </div>
+          <div class="listener-row locked-option">
+            <span><b>允许局域网连接</b><small>安全策略固定关闭，所有代理入口仅监听本机</small></span>
+            <span class="locked-state">已关闭</span>
+          </div>
+        </div>
+      </fieldset>
+
       <fieldset class="core-group">
         <legend>启用</legend>
         <label class="core-switch inline">
@@ -210,6 +249,18 @@ onMounted(async () => {
   background: var(--app-panel);
 }
 .core-group legend { padding: 0 6px; color: var(--app-muted); font-size: 11px; }
+.listener-note { margin: 0 0 8px; color: var(--app-muted); font-size: 10px; line-height: 1.45; }
+.listener-list { display: grid; }
+.listener-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px; min-height: 52px; border-bottom: 1px solid var(--app-divider); }
+.listener-row:last-child { border-bottom: 0; }
+.listener-row > span:first-child { display: grid; gap: 3px; }
+.listener-row b { color: var(--app-text); font-size: 12px; font-weight: 600; }
+.listener-row small { color: var(--app-muted); font-size: 10px; }
+.port-input { width: 112px; text-align: right; font-variant-numeric: tabular-nums; }
+.controller-address { display: inline-flex; align-items: center; gap: 4px; }
+.controller-address i { color: var(--app-muted); font-size: 11px; font-style: normal; }
+.secret-mask { min-width: 112px; padding: 8px 10px; border: 1px solid var(--app-divider); border-radius: 7px; background: var(--app-surface-solid); color: var(--app-muted); font-size: 13px; letter-spacing: 2px; text-align: center; }
+.locked-state { min-width: 64px; padding: 5px 9px; border-radius: 999px; background: var(--app-surface-solid); color: var(--app-muted); font-size: 10px; text-align: center; }
 .core-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
 .core-field { display: grid; gap: 5px; }
 .core-label { color: var(--app-muted); font-size: 11px; }

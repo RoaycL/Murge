@@ -243,6 +243,22 @@ describe('buildProfileKernelConfig', () => {
     expect(out).toMatch(/type: http/)
   })
 
+  it('replaces profile listeners with the configured loopback proxy ports', () => {
+    const out = buildProfileKernelConfig(USER_CONFIG, {
+      mixedPort: 34567,
+      httpPort: 34565,
+      socksPort: 34566,
+      controllerPort: 34568,
+      secret: SECRET
+    })
+    const runtime = parse(out) as Record<string, unknown>
+    expect(runtime.port).toBe(34565)
+    expect(runtime['socks-port']).toBe(34566)
+    expect(runtime['mixed-port']).toBe(34567)
+    expect(runtime['bind-address']).toBe('127.0.0.1')
+    expect(runtime['allow-lan']).toBe(false)
+  })
+
   it('strips every extra inbound and unauthenticated controller surface from the runtime copy', () => {
     const dangerous = `${USER_CONFIG}\nexternal-controller-unix: mihomo.sock\nexternal-controller-pipe: '\\\\.\\pipe\\mihomo'\nexternal-controller-tls: 0.0.0.0:9443\nexternal-doh-server: /dns-query\nss-config:\n  listen: 0.0.0.0:10001\nvmess-config:\n  listen: 0.0.0.0:10002\ntuic-server:\n  listen: 0.0.0.0:10003\n`
     const out = buildProfileKernelConfig(dangerous, {

@@ -29,6 +29,14 @@ describe('Phase 9B mihomo-owned TUN config', () => {
     expect(text).toContain('enable: true')
   })
 
+  it('supports distinct dedicated HTTP and SOCKS listeners on loopback', () => {
+    const text = generateMihomoTunConfig({ ...options, httpPort: 17891, socksPort: 17892 })
+    expect(mihomoTunConfigErrors(text)).toEqual([])
+    expect(text).toContain('port: 17891')
+    expect(text).toContain('socks-port: 17892')
+    expect(text).toContain('allow-lan: false')
+  })
+
   it.each([
     ['external-controller: 127.0.0.1:19090', 'external-controller: 0.0.0.0:19090'],
     ['allow-lan: false', 'allow-lan: true'],
@@ -94,6 +102,7 @@ describe('Phase 9B mihomo-owned TUN config', () => {
   it('rejects unsafe identity, ports and secrets before rendering', () => {
     expect(() => generateMihomoTunConfig({ ...options, device: 'bad\nname' })).toThrow()
     expect(() => generateMihomoTunConfig({ ...options, mixedPort: 53 })).toThrow()
+    expect(() => generateMihomoTunConfig({ ...options, httpPort: options.mixedPort })).toThrow()
     expect(() => generateMihomoTunConfig({ ...options, secret: 'secret' })).toThrow()
   })
 })

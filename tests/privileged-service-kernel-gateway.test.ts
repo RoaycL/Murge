@@ -30,7 +30,7 @@ describe('privileged persistent kernel gateway', () => {
     }
     const gateway = new PrivilegedServiceKernelGateway(
       new TunServiceClient(transport),
-      () => ({ mixedPort: 17890, controllerPort: 19090, secret: 'ab'.repeat(32) }),
+      () => ({ mixedPort: 17890, httpPort: 17891, socksPort: 17892, controllerPort: 19090, secret: 'ab'.repeat(32) }),
       {
         readActiveDocument: async () => null,
         readTunConfig: async () => ({ ...EMPTY_TUN_CONFIG }),
@@ -44,7 +44,11 @@ describe('privileged persistent kernel gateway', () => {
     await expect(gateway.start()).resolves.toMatchObject({ phase: 'running', pid: 4242, version: '1.19.30' })
     const start = vi.mocked(transport.request).mock.calls.map(call => call[0]).find(request => request.operation === 'start')
     expect(start?.operation).toBe('start')
-    if (start?.operation === 'start') expect(start.profile).toContain('enable: false')
+    if (start?.operation === 'start') {
+      expect(start.profile).toContain('enable: false')
+      expect(start.profile).toContain('port: 17891')
+      expect(start.profile).toContain('socks-port: 17892')
+    }
     await expect(gateway.stop()).resolves.toMatchObject({ phase: 'stopped', pid: null })
   })
 

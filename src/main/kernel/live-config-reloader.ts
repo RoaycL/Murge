@@ -9,6 +9,8 @@ import { generateMihomoTunConfig, generateProxiedTunConfig } from '../tun/mihomo
 
 export interface LiveConfigRuntime {
   mixedPort: number
+  httpPort?: number
+  socksPort?: number
   controllerPort: number
   secret: string
   device: string

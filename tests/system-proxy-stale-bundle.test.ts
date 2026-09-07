@@ -111,13 +111,13 @@ describe('enable() recovers from a stale OWNED bundle (BUG-REVIEW #2 follow-up)'
     const moved = { ...bundle!, target: { host: TARGET.host, port: 7891 } }
     adapter.mutate({
       proxyEnable: { exists: true, type: 'REG_DWORD', value: 1 },
-      proxyServer: { exists: true, type: 'REG_SZ', value: `http=${TARGET.host}:7891;https=${TARGET.host}:7891;socks=${TARGET.host}:7891` }
+      proxyServer: { exists: true, type: 'REG_SZ', value: `${TARGET.host}:7891` }
     })
     await backup.write(moved)
     const result = await service.enable()
     expect(result.phase).toBe('enabled')
     const observed = await adapter.read()
-    expect(observed.proxyServer.value).toContain(`http=${TARGET.host}:${TARGET.port}`)
+    expect(observed.proxyServer.value).toBe(`${TARGET.host}:${TARGET.port}`)
   })
 
   it('disable() restores a same-target bundle whose ProxyEnable was flipped off', async () => {

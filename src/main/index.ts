@@ -175,6 +175,27 @@ void fileLogs.initialize()
   ], 'startup'))
   .catch(() => undefined)
 
+// Warm the durable-storage prerequisites while Electron finishes its own
+// ready-time initialization: the legacy-namespace migration and the profile
+// workspace must exist before any settings or profile read, so the chain
+// starts at module load and is awaited at first use inside whenReady. The two
+// settings services are constructed here for the same reason — their first
+// read overlaps ready-time work instead of extending the serial startup chain
+// ahead of window creation. Reads are chained on the warmup so a
+// product-rename migration can never be raced by an early settings read.
+const appDataBaseRoot = appDataRoot(app.getPath('appData'))
+const coreSettingsService = new CoreSettingsService(appDataBaseRoot)
+const appSettingsService = new AppSettingsService(appDataBaseRoot)
+const storageWarmup = (async (): Promise<string> => {
+  // Import any data a prior build kept under the old product-name folder into
+  // the stable namespace. Only runs in production (dev never writes real user
+  // data) and is naturally idempotent.
+  if (!is.dev) await migrateLegacyAppData(app.getPath('appData'))
+  return resolveRuntimeProfileRoot(app.getPath('appData'), { dev: is.dev })
+})()
+const coreSettingsWarm = storageWarmup.then(() => coreSettingsService.getRaw())
+const appSettingsWarm = storageWarmup.then(() => appSettingsService.get())
+
 // Created inside app.whenReady; held here so the quit path can stop it.
 let kernel: KernelGateway | null = null
 let mihomo: MihomoService | null = null
@@ -579,12 +600,8 @@ app.whenReady().then(async () => {
     }
   })
 
-  // Import any data a prior build kept under the old product-name folder into
-  // the stable namespace. Only runs in production (dev never writes real user
-  // data) and is naturally idempotent.
-  if (!is.dev) {
-    await migrateLegacyAppData(app.getPath('appData'))
-  }
+  // Legacy-namespace import moved into the module-level `storageWarmup`
+  // (started before the ready event); the profile workspace below awaits it.
 
   // A deep link that launched this instance arrives in the initial argv.
   const launchLink = extractDeepLink(process.argv)
@@ -593,8 +610,10 @@ app.whenReady().then(async () => {
   // Resolve the profile workspace for this build. Development keeps an ephemeral
   // temp dir (never touches real user data); production persists to a stable,
   // product-name-free namespace. We pass the *platform* app-data root, not the
-  // already-pinned `userData`, so the namespace is not doubled.
-  const profileRoot = await resolveRuntimeProfileRoot(app.getPath('appData'), { dev: is.dev })
+  // already-pinned `userData`, so the namespace is not doubled. The work itself
+  // started at module load (migration first, then the workspace), so this await
+  // usually resolves immediately.
+  const profileRoot = await storageWarmup
 
   // Profile/subscription service, created BEFORE the kernel so the kernel config
   // store can resolve the ACTIVE profile's document and run the user's
@@ -660,8 +679,8 @@ app.whenReady().then(async () => {
   // build is composed with the verified real resolver, but KernelSupervisor is
   // lazy: resolve/download/spawn happen only after the renderer invokes
   // `kernel:start`. Non-Windows production builds remain fail-closed.
-  const coreSettingsService = new CoreSettingsService(appDataRoot(app.getPath('appData')))
-  let persistedCoreSettings = await coreSettingsService.getRaw()
+  // Core settings were warmed at module level; this resolves from cache.
+  let persistedCoreSettings = await coreSettingsWarm
   // The controller secret is user-configurable and must stay stable across
   // restarts so a dashboard can reconnect. New/reset installs receive a strong
   // generated value once; it is never replaced behind the user's back.
@@ -694,9 +713,9 @@ app.whenReady().then(async () => {
   // in dev, where the resources dir does not carry them (fail-open: the kernel
   // then falls back to its own download path exactly as before).
   const geodataSeedDir = is.dev ? undefined : join(process.resourcesPath, 'geodata')
-  const appSettingsService = new AppSettingsService(appDataRoot(app.getPath('appData')))
   // Hydrate before login-item and window behavior consume the synchronous mirror.
-  cachedAppSettings = await appSettingsService.get()
+  // Warmed at module level; this resolves from the store's lazy queue.
+  cachedAppSettings = await appSettingsWarm
   const startupService = new StartupService(new ElectronStartupAdapter(() => cachedAppSettings.silentLaunch))
   appSettingsService.onChange((settings) => {
     const silentLaunchChanged = settings.silentLaunch !== cachedAppSettings.silentLaunch
@@ -870,15 +889,18 @@ app.whenReady().then(async () => {
       )
     : null
   // A service-owned core surviving an abnormal GUI exit may still own TUN
-  // routes. Stop it first, then replay the durable intent through the normal
-  // startup coordinator. Normal launches therefore never inherit unknown state.
-  if (privilegedKernel) {
+  // routes. It must be stopped before the durable intent replays a start, but
+  // it does NOT gate window creation: the reconciliation runs after the window
+  // exists, and the serialized mode queue keeps it ordered ahead of any
+  // renderer-triggered kernel start (the renderer reads a stopped kernel until
+  // it settles). A delayed Windows service start is handled by the gateway's
+  // bounded start retry and runtime-intent recovery.
+  const privilegedReconcile = (async (): Promise<void> => {
+    if (!privilegedKernel) return
     await privilegedKernel.initialize().catch((error) => {
-      // A delayed Windows service can still be starting. Keep the UI usable;
-      // the gateway's bounded start retry and runtime-intent recovery take over.
       console.warn('[kernel] privileged service startup reconciliation deferred:', error)
     })
-  }
+  })()
   const kernelInstance: KernelGateway = privilegedKernel ?? kernelSupervisor
   kernel = kernelInstance
   // Await the (mock or disabled) controller gateway before wiring IPC so the
@@ -970,7 +992,13 @@ app.whenReady().then(async () => {
         : undefined
   })
   systemProxy = systemProxyService
-  await systemProxyService.init()
+  // Orphan recovery reads the backup and possibly the registry (reg.exe). It
+  // must complete before the proxy may be enabled and before the runtime intent
+  // replays, but it never gates window creation: until it settles the service
+  // reports its initial (disabled) phase and the renderer shows that state.
+  const systemProxyInit = systemProxyService.init().catch((error) => {
+    console.error('[system-proxy] orphan recovery failed:', error)
+  })
 
   // Order the proxy restore ahead of kernel shutdown: a user stop restores the
   // system proxy first and aborts the stop if that restoration genuinely fails,
@@ -1033,11 +1061,25 @@ app.whenReady().then(async () => {
     : new GatedTunMutationAdapter()
   const tunInstance = new TunCoordinator(tunAdapter, tunSupported)
   tunCoordinator = tunInstance
-  if (tunSupported) {
+  // TUN transaction reconciliation is deliberately ordered AFTER the
+  // privileged-kernel stop (see privilegedReconcile): a stale service core may
+  // still own TUN routes, and stopping it first is what lets the recovery below
+  // see the true (idle) controller state instead of reconciling a dying
+  // session. Both steps run concurrently with window creation.
+  const tunReconcile = (async (): Promise<void> => {
+    if (!tunSupported) return
     await tunInstance.initialize().catch((error) => {
       console.error('[tun] service reconciliation failed:', error)
     })
-  }
+  })()
+  // Recovery layers joined in order: the orphaned proxy backup is restored
+  // first, then the stale service-owned core is stopped (its reconcile may
+  // still own TUN routes), then the TUN transaction reconciles. The runtime
+  // intent replay and the CI hidden-start smoke both await this before
+  // touching the kernel or asserting a stopped kernel; window creation does not.
+  const recoverManagedState = systemProxyInit
+    .then(() => privilegedReconcile)
+    .then(() => tunReconcile)
   // One mode-transition queue for EVERY host switch: kernel start/stop, TUN
   // enable/disable and failure recovery all become exclusive tasks on the same
   // FIFO, so no two of them can interleave a prepare/stop/resume sequence.
@@ -1266,8 +1308,6 @@ app.whenReady().then(async () => {
     onTraffic: (listener) => gateway.onTraffic(listener),
     onConnections: (listener) => gateway.onConnections(listener)
   })
-  await usageHistoryService.init()
-  usageHistoryServiceRef = usageHistoryService
   // Sub-Store is a first-class item in the 配置 sidebar group. New installs
   // default it on and prepare the verified assets in the background; the main
   // window never waits for GitHub or worker startup.
@@ -1279,15 +1319,23 @@ app.whenReady().then(async () => {
     onLog: (stream, text) => { void fileLogs.writeSubStore(stream, text).catch(() => undefined) }
   })
   subStoreServiceRef = subStoreService
-  await subStoreService.onSettings({
-    subStoreEnabled: cachedAppSettings.subStoreEnabled,
-    subStoreUseProxy: cachedAppSettings.subStoreUseProxy
-  })
-  if (cachedAppSettings.subStoreEnabled) {
-    void subStoreService.ensureRunning().catch((error) => {
-      console.error('[substore] default asset preparation failed:', error)
+  // Both are bounded local-file work that the renderer reads over IPC, so they
+  // still settle before IPC registration — but they run concurrently instead of
+  // back-to-back ahead of window creation.
+  await Promise.all([
+    usageHistoryService.init(),
+    subStoreService.onSettings({
+      subStoreEnabled: cachedAppSettings.subStoreEnabled,
+      subStoreUseProxy: cachedAppSettings.subStoreUseProxy
+    }).then(() => {
+      if (cachedAppSettings.subStoreEnabled) {
+        void subStoreService.ensureRunning().catch((error) => {
+          console.error('[substore] default asset preparation failed:', error)
+        })
+      }
     })
-  }
+  ])
+  usageHistoryServiceRef = usageHistoryService
   const networkMetadataService = new NetworkMetadataService({
     resolveProxyPort: async () => {
       try {
@@ -1410,7 +1458,12 @@ app.whenReady().then(async () => {
     onCheckUpdate: () => { void updates.check().catch((error) => console.warn('[updates] tray check failed:', error)) },
     onError: (error) => console.error('[tray] kernel action failed:', error)
   })
-  await trayController.initialize()
+  // Tray initialization no longer gates the startup chain: it runs next to the
+  // recovery/replay work and is only joined by the CI hidden-start probe (and
+  // nothing else — every consumer reads live status through the controller).
+  const trayReady = trayController.initialize().catch((error) => {
+    console.error('[tray] initialization failed:', error)
+  })
   const updateRuntimeAppearance = (): void => {
     const accent = resolveRuntimeAccent(
       systemProxyService.getStatus().phase,
@@ -1433,6 +1486,7 @@ app.whenReady().then(async () => {
   // creates the hidden BrowserWindow and native Tray, but never starts mihomo
   // or mutates proxy/TUN/DNS.
   if (!is.dev && hasArg('--hidden-smoke')) {
+    await Promise.all([recoverManagedState, trayReady])
     if (process.platform !== 'win32' || process.env.GITHUB_ACTIONS !== 'true' || process.env.MURGE_CI_HIDDEN_START !== '1') {
       throw new Error('--hidden-smoke is restricted to the packaged GitHub Actions Windows probe')
     }
@@ -1450,13 +1504,14 @@ app.whenReady().then(async () => {
     return
   }
 
-  // Restore the user's last requested networking state after BOTH recovery
-  // layers above have completed: systemProxyService.init() has restored an
-  // orphaned registry backup, and tunInstance.initialize() has reconciled an
-  // interrupted privileged transaction. Login launches use `--hidden`, but
-  // must still restore the requested state; only the explicit Actions smoke
-  // flag suppresses it. Operations are sequential and bounded: ordinary host
-  // ready -> hot-enable TUN -> system proxy on the unchanged mixed-port.
+  // Restore the user's last requested networking state after the deferred
+  // recovery layers complete: the stale service-owned core is stopped
+  // (privilegedReconcile), the TUN transaction is reconciled (tunReconcile),
+  // and systemProxyService.init() has restored an orphaned registry backup.
+  // Login launches use `--hidden`, but must still restore the requested state;
+  // only the explicit Actions smoke flag suppresses it. Operations are
+  // sequential and bounded: ordinary host ready -> hot-enable TUN -> system
+  // proxy on the unchanged mixed-port.
   if (!is.dev && !skipKernelAutostart) {
     const runtimeIntentDeps = {
       kernel: queuedKernel,
@@ -1468,6 +1523,7 @@ app.whenReady().then(async () => {
       log: (message: string, error?: unknown): void => console.warn(message, error ?? '')
     }
     try {
+      await recoverManagedState
       const settings = await appSettingsService.get()
       const restored = await restoreRuntimeIntent(settings, runtimeIntentDeps)
       if (settings.tunDesired && restored.tun.phase !== 'active') {

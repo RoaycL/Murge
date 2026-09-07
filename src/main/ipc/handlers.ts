@@ -152,6 +152,8 @@ export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {})
       // transient controller/service failure may leave the live state off, but
       // the next launch should still retry the choice the user made.
       await appSettings.set({ systemProxyDesired: true })
+      const status = await kernel.getStatus()
+      if (status.phase !== 'running') await kernel.start()
       return systemProxy.enable()
     },
     [IPC.systemProxyDisable]: async () => {

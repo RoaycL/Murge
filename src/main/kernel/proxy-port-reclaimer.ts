@@ -10,6 +10,10 @@ export interface ProxyPortOwner {
   name: string
   executablePath: string
   commandLine: string
+  parentPid?: number
+  parentName?: string
+  parentExecutablePath?: string
+  parentCommandLine?: string
 }
 
 export interface ProxyPortProcessAdapter {
@@ -67,7 +71,22 @@ export async function reclaimProxyPorts(
       )
     }
 
-    for (const owner of owners) await adapter.terminate(owner.pid)
+    const targets = new Set<number>()
+    for (const owner of owners) {
+      const parent = owner.parentPid && owner.parentPid !== ownPid
+        ? {
+            pid: owner.parentPid,
+            ports: [],
+            name: owner.parentName ?? '',
+            executablePath: owner.parentExecutablePath ?? '',
+            commandLine: owner.parentCommandLine ?? ''
+          }
+        : null
+      // End the Clash client when it is the recognized parent; killing only its
+      // core lets the client's watchdog immediately take the ports back.
+      targets.add(parent && isRecognizedClashProcess(parent) ? parent.pid : owner.pid)
+    }
+    for (const pid of targets) await adapter.terminate(pid)
     if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 250))
   }
 
@@ -86,13 +105,19 @@ interface PowerShellOwner {
   name?: unknown
   executablePath?: unknown
   commandLine?: unknown
+  parentPid?: unknown
+  parentName?: unknown
+  parentExecutablePath?: unknown
+  parentCommandLine?: unknown
 }
 
 const INSPECT_SCRIPT = [
   "$ports = $args[0].Split(',') | ForEach-Object { [int]$_ }",
   '$rows = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $ports -contains $_.LocalPort } | ForEach-Object {',
   '  $process = Get-CimInstance Win32_Process -Filter (\'ProcessId = {0}\' -f $_.OwningProcess) -ErrorAction SilentlyContinue',
-  '  [PSCustomObject]@{ pid = $_.OwningProcess; port = $_.LocalPort; name = $process.Name; executablePath = $process.ExecutablePath; commandLine = $process.CommandLine }',
+  '  $parent = $null',
+  '  if ($process -and $process.ParentProcessId) { $parent = Get-CimInstance Win32_Process -Filter (\'ProcessId = {0}\' -f $process.ParentProcessId) -ErrorAction SilentlyContinue }',
+  '  [PSCustomObject]@{ pid = $_.OwningProcess; port = $_.LocalPort; name = $process.Name; executablePath = $process.ExecutablePath; commandLine = $process.CommandLine; parentPid = $process.ParentProcessId; parentName = $parent.Name; parentExecutablePath = $parent.ExecutablePath; parentCommandLine = $parent.CommandLine }',
   '}',
   '$rows | ConvertTo-Json -Compress'
 ].join('; ')
@@ -124,7 +149,11 @@ export class WindowsProxyPortProcessAdapter implements ProxyPortProcessAdapter {
         ports: [port],
         name: typeof row.name === 'string' ? row.name : '',
         executablePath: typeof row.executablePath === 'string' ? row.executablePath : '',
-        commandLine: typeof row.commandLine === 'string' ? row.commandLine : ''
+        commandLine: typeof row.commandLine === 'string' ? row.commandLine : '',
+        parentPid: Number.isInteger(Number(row.parentPid)) && Number(row.parentPid) > 0 ? Number(row.parentPid) : undefined,
+        parentName: typeof row.parentName === 'string' ? row.parentName : '',
+        parentExecutablePath: typeof row.parentExecutablePath === 'string' ? row.parentExecutablePath : '',
+        parentCommandLine: typeof row.parentCommandLine === 'string' ? row.parentCommandLine : ''
       })
     }
     return Array.from(grouped.values())

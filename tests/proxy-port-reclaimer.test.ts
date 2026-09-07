@@ -13,6 +13,10 @@ function owner(overrides: Partial<ProxyPortOwner> = {}): ProxyPortOwner {
     name: 'mihomo.exe',
     executablePath: 'C:\\Program Files\\Clash Party\\mihomo.exe',
     commandLine: 'mihomo.exe -d profile',
+    parentPid: 1100,
+    parentName: 'Mihomo Party.exe',
+    parentExecutablePath: 'C:\\Program Files\\Clash Party\\Mihomo Party.exe',
+    parentCommandLine: '"C:\\Program Files\\Clash Party\\Mihomo Party.exe"',
     ...overrides
   }
 }
@@ -33,8 +37,19 @@ describe('proxy port reclaimer', () => {
 
     await reclaimProxyPorts([7890, 9090, 0, undefined], adapter, 99)
 
-    expect(terminate).toHaveBeenCalledWith(1200)
+    expect(terminate).toHaveBeenCalledWith(1100)
     expect(inspect).toHaveBeenLastCalledWith([7890, 9090])
+  })
+
+  it('terminates the core itself when its parent is not a recognized Clash application', async () => {
+    const inspect = vi.fn()
+      .mockResolvedValueOnce([owner({ parentName: 'services.exe', parentExecutablePath: 'C:\\Windows\\System32\\services.exe', parentCommandLine: '' })])
+      .mockResolvedValueOnce([])
+    const terminate = vi.fn().mockResolvedValue(undefined)
+
+    await reclaimProxyPorts([7890], { inspect, terminate }, 99)
+
+    expect(terminate).toHaveBeenCalledWith(1200)
   })
 
   it('never terminates an unknown owner', async () => {

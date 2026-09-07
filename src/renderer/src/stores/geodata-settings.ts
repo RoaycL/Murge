@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import type { GeodataSettings } from '@shared/geodata'
 import { coerceGeodataSettings, EMPTY_GEODATA_SETTINGS } from '@shared/geodata'
 import { toProtocolError } from '@shared/protocol-errors'
+import { plainJsonClone } from '@shared/plain-clone'
 
 /**
  * Renderer-side source of truth for the controlled mihomo geodata settings. The
@@ -29,7 +30,7 @@ export const useGeodataSettingsStore = defineStore('geodata-settings', () => {
     if (busy.value) return false
     busy.value = true
     try {
-      settings.value = coerceGeodataSettings(await window.desktop.geodata.set(input))
+      settings.value = coerceGeodataSettings(await window.desktop.geodata.set(plainJsonClone(input)))
       lastError.value = null
       return true
     } catch (error) {
@@ -45,7 +46,7 @@ export const useGeodataSettingsStore = defineStore('geodata-settings', () => {
     busy.value = true
     try {
       lastError.value = null
-      return await window.desktop.geodata.preview(input)
+      return await window.desktop.geodata.preview(plainJsonClone(input))
     } catch (error) {
       lastError.value = toProtocolError(error).message
       return ''

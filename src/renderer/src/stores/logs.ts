@@ -101,7 +101,7 @@ export const useLogsStore = defineStore('logs', () => {
   const lastError = ref<string | null>(null)
   const entries = ref<DisplayLogEntry[]>([])
   const search = ref('')
-  const level = ref<LogLevelFilter>('all')
+  const level = ref<LogLevelFilter>('info')
   let nextId = 1
 
   function append(messages: readonly MihomoLogMessage[]): void {

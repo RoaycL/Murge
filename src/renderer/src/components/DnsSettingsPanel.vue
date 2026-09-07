@@ -10,6 +10,7 @@ import type { DnsEnhancement } from '@shared/dns'
 const store = useDnsEnhancementStore()
 const toast = useToast()
 const hydrated = ref(false)
+const savedBaseline = ref('')
 
 const form = reactive<DnsEnhancement>({
   enabled: false,
@@ -112,9 +113,14 @@ function buildInput(): DnsEnhancement {
   }
 }
 
+function syncAndAccept(value: DnsEnhancement): void {
+  syncFromEnhancement(value)
+  savedBaseline.value = JSON.stringify(buildInput())
+}
+
 async function save(): Promise<void> {
   const ok = await store.save(buildInput())
-  if (ok) { syncFromEnhancement(store.enhancement); toast.success('DNS 设置已保存') }
+  if (ok) { syncAndAccept(store.enhancement); toast.success('DNS 设置已保存') }
   else toast.error('DNS 设置保存失败', store.lastError ?? undefined)
 }
 
@@ -124,21 +130,21 @@ async function preview(): Promise<void> {
 }
 
 function resetFromStore(): void {
-  syncFromEnhancement(store.enhancement)
+  syncAndAccept(store.enhancement)
 }
 
-const dirty = computed(() => hydrated.value && JSON.stringify(buildInput()) !== JSON.stringify(store.enhancement))
+const dirty = computed(() => hydrated.value && JSON.stringify(buildInput()) !== savedBaseline.value)
 useUnsavedChanges('dns-enhancement', 'DNS 设置', dirty)
 
 watch(
   () => store.enhancement,
-  (value) => syncFromEnhancement(value),
+  (value) => syncAndAccept(value),
   { deep: true }
 )
 
 onMounted(async () => {
   await store.refresh()
-  syncFromEnhancement(store.enhancement)
+  syncAndAccept(store.enhancement)
   hydrated.value = true
 })
 </script>

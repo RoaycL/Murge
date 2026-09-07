@@ -73,12 +73,12 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="pb-panel" aria-label="mihomo 系统代理绕过设置">
+  <section class="pb-panel" aria-label="系统代理绕过设置">
     <header class="pb-head">
       <div>
         <h2 class="pb-title">系统代理绕过策略</h2>
         <p class="pb-subtitle">
-          控制应用所拥有系统代理的 <code>ProxyOverride</code>。启用后你自定义的绕过项会与内置的本地/私有地址绕过项合并写入；关闭时保留系统原有的绕过列表，绝不丢弃已有项。无论编辑多少次，禁用系统代理时都精确还原起初的原始值。
+          设置不经过系统代理的域名和地址。启用后会与内置的本地及私有地址合并；关闭时保留系统原有列表，停用系统代理后会恢复修改前的设置。
         </p>
       </div>
       <button type="button" class="pb-reset" @click="resetFromStore">重置</button>
@@ -116,17 +116,17 @@ onMounted(async () => {
 
       <div class="pb-current" v-if="systemProxyEnabled">
         <span class="pb-label">系统代理当前状态</span>
-        <span class="pb-effective" aria-label="当前生效的 ProxyOverride">{{ effectiveOverride || '（未报告）' }}</span>
+        <span class="pb-effective" aria-label="当前生效的系统代理绕过列表">{{ effectiveOverride || '（未报告）' }}</span>
       </div>
 
       <div class="pb-actions">
-        <button type="button" class="pb-preview" @click="preview">预览 ProxyOverride</button>
+        <button type="button" class="pb-preview" @click="preview">预览绕过列表</button>
         <span v-if="dirty" class="unsaved-indicator">未保存</span><button type="button" class="pb-save" :disabled="store.busy || !dirty" @click="save">{{ store.busy ? '保存中…' : '保存' }}</button>
       </div>
 
       <div v-if="previewOpen" class="pb-preview">
         <div class="pb-preview-head">
-          <span>将写入的 ProxyOverride 值</span>
+          <span>将应用的系统代理绕过列表</span>
           <button type="button" class="pb-icon" aria-label="关闭预览" @click="previewOpen = false"><AppIcon name="close" :size="15" /></button>
         </div>
         <pre class="pb-preview-body">{{ previewValue || '（空）' }}</pre>

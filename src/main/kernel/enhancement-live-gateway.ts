@@ -1,6 +1,7 @@
 import type { DnsEnhancement, DnsSnapshot } from '@shared/dns'
 import type { SnifferEnhancement, SnifferSnapshot } from '@shared/sniffer'
-import type { DnsEnhancementGateway, SnifferEnhancementGateway } from '@shared/gateways'
+import type { GeodataSettings } from '@shared/geodata'
+import type { DnsEnhancementGateway, GeodataSettingsGateway, SnifferEnhancementGateway } from '@shared/gateways'
 
 type EnhancementSnapshot<T> = { enhancement: T }
 
@@ -10,7 +11,7 @@ interface PersistedEnhancementGateway<T, S extends EnhancementSnapshot<T>> {
 }
 
 /**
- * One shared transaction boundary for DNS and sniffer mutations. Persist, apply
+ * One shared transaction boundary for DNS, sniffer and geodata mutations. Persist, apply
  * and rollback stay serialized with TUN/kernel transitions supplied by the
  * composition root, so the UI never reports a setting that the live core
  * rejected.
@@ -41,6 +42,25 @@ export class EnhancementApplyCoordinator {
       }
     })
   }
+
+  replace<T>(
+    read: () => T | Promise<T>,
+    write: (input: T) => T | Promise<T>,
+    input: T
+  ): Promise<T> {
+    return this.runExclusive(async () => {
+      const previous = await read()
+      const next = await write(input)
+      try {
+        await this.apply()
+        return next
+      } catch (error) {
+        await write(previous)
+        await this.apply().catch(() => undefined)
+        throw error
+      }
+    })
+  }
 }
 
 export class LiveDnsEnhancementGateway implements DnsEnhancementGateway {
@@ -63,4 +83,22 @@ export class LiveSnifferEnhancementGateway implements SnifferEnhancementGateway 
   get(): SnifferSnapshot | Promise<SnifferSnapshot> { return this.inner.get() }
   set(input: SnifferEnhancement): Promise<SnifferSnapshot> { return this.coordinator.update(this.inner, input) }
   preview(input: SnifferEnhancement): string | Promise<string> { return this.inner.preview(input) }
+}
+
+/** Apply geodata changes immediately and roll persistence back if mihomo rejects them. */
+export class LiveGeodataSettingsGateway implements GeodataSettingsGateway {
+  constructor(
+    private readonly inner: GeodataSettingsGateway,
+    private readonly coordinator: EnhancementApplyCoordinator
+  ) {}
+
+  get(): GeodataSettings | Promise<GeodataSettings> { return this.inner.get() }
+  set(input: GeodataSettings): Promise<GeodataSettings> {
+    return this.coordinator.replace(
+      () => this.inner.get(),
+      (value) => this.inner.set(value),
+      input
+    )
+  }
+  preview(input: GeodataSettings): string | Promise<string> { return this.inner.preview(input) }
 }

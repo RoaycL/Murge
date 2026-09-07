@@ -96,9 +96,9 @@ onMounted(async () => {
   <section class="core-panel" aria-label="mihomo 核心设置">
     <header class="core-head">
       <div>
-        <h2 class="core-title">mihomo 核心设置</h2>
+        <h2 class="core-title">内核运行设置</h2>
         <p class="core-subtitle">
-          控制 mihomo 运行时核心参数（日志级别、IPv6、并发拨号、统一延迟、进程匹配和出站接口），不修改订阅源文件；当启用时这些值会在运行时配置中生效并覆盖配置文件的同名项。
+          管理日志级别、IPv6、并发连接、延迟计算、进程识别、出站网卡和监听端口。启用后会覆盖配置文件中的对应设置。
         </p>
       </div>
       <button type="button" class="core-reset" @click="resetFromStore">重置</button>
@@ -107,7 +107,7 @@ onMounted(async () => {
     <p v-if="store.lastError" class="inline-error" role="alert">{{ store.lastError }}</p>
 
     <p v-if="!form.enabled" class="core-hint">
-      当前未启用，运行时会保留配置文件自身的核心设置（不会覆盖）。
+      当前未启用，将使用配置文件中的内核设置。
     </p>
 
     <div class="core-body">
@@ -159,15 +159,15 @@ onMounted(async () => {
         <legend>运行参数</legend>
         <div class="core-grid">
           <label class="core-field">
-            <span class="core-label">log-level</span>
+            <span class="core-label">日志级别</span>
             <AppSelect v-model="form.logLevel" :options="LOG_LEVEL_OPTIONS" label="日志级别" />
           </label>
           <label class="core-field">
-            <span class="core-label">find-process-mode</span>
+            <span class="core-label">进程识别模式</span>
             <AppSelect v-model="form.findProcessMode" :options="FIND_PROCESS_OPTIONS" label="进程查找模式" />
           </label>
           <label class="core-field">
-            <span class="core-label">interface-name（留空自动选择）</span>
+            <span class="core-label">出站网卡（留空自动选择）</span>
             <AppSelect v-model="form.interfaceName" :options="INTERFACE_OPTIONS" label="指定出站接口" />
           </label>
         </div>
@@ -179,17 +179,17 @@ onMounted(async () => {
           <label class="core-switch small">
             <input v-model="form.ipv6" type="checkbox" aria-label="ipv6" />
             <span class="core-switch-track" />
-            <span class="core-label"> ipv6</span>
+            <span class="core-label">IPv6</span>
           </label>
           <label class="core-switch small">
             <input v-model="form.tcpConcurrent" type="checkbox" aria-label="tcp-concurrent" />
             <span class="core-switch-track" />
-            <span class="core-label"> tcp-concurrent</span>
+            <span class="core-label">TCP 并发连接</span>
           </label>
           <label class="core-switch small">
             <input v-model="form.unifiedDelay" type="checkbox" aria-label="unified-delay" />
             <span class="core-switch-track" />
-            <span class="core-label"> unified-delay</span>
+            <span class="core-label">统一延迟</span>
           </label>
         </div>
       </fieldset>
@@ -201,7 +201,7 @@ onMounted(async () => {
 
       <div v-if="previewOpen" class="core-preview">
         <div class="core-preview-head">
-          <span>运行时生效的 mihomo 核心键</span>
+          <span>将应用的内核运行配置</span>
           <button type="button" class="core-icon" aria-label="关闭预览" @click="previewOpen = false"><AppIcon name="close" :size="15" /></button>
         </div>
         <pre class="core-preview-body">{{ previewYaml || '（空）' }}</pre>

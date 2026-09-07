@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest'
 import { startMockMihomoServer, type MockMihomoServerHandle } from '../src/main/testing/mock-mihomo-server'
 import { MihomoClient } from '../src/main/services/mihomo-client'
 import { MihomoService } from '../src/main/services/mihomo-service'
+import { ProtocolError, ProtocolErrorCode } from '../src/shared/protocol-errors'
 import type { TrafficSample } from '../src/shared/runtime'
 import type { MihomoConnectionsSnapshot, MihomoStreamError, MihomoLogsSnapshot } from '../src/shared/mihomo-api'
 
@@ -127,6 +128,113 @@ describe('mihomo service gateway', () => {
     service.dispose()
   })
 
+  it('probes a provider leaf whose name appears in MULTIPLE providers through each owner until one resolves', async () => {
+    // Duplicate controller names across merged subscriptions are routine. A
+    // provider node is absent from the top-level /proxies map, so the old
+    // single-owner-or-ambiguity logic collapsed duplicates to "unresolvable"
+    // and the /proxies fallback then 404ed — the node was untestable even
+    // though a healthcheck through either provider would have succeeded.
+    const providerDelayTest = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new ProtocolError(ProtocolErrorCode.UPSTREAM_HTTP_ERROR, 'mihomo request failed with HTTP 404', {
+          path: '/providers/proxies/sub-a/shared/healthcheck',
+          reason: '404: {"message":"Resource not found"}'
+        })
+      )
+      .mockResolvedValueOnce({ delay: 33 })
+    const delayTest = vi.fn().mockResolvedValue({ delay: 1 })
+    const client = {
+      getProxies: vi.fn().mockResolvedValue({
+        // NOTE: 'shared' is deliberately ABSENT from the /proxies map — a
+        // provider-only node.
+        proxies: {
+          Select: { name: 'Select', type: 'Selector', all: ['shared'] }
+        }
+      }),
+      getProxyProviders: vi.fn().mockResolvedValue({
+        providers: {
+          'sub-a': { name: 'sub-a', type: 'Proxy', proxies: [{ name: 'shared', type: 'Shadowsocks' }] },
+          'sub-b': { name: 'sub-b', type: 'Proxy', proxies: [{ name: 'shared', type: 'Shadowsocks' }] }
+        }
+      }),
+      providerDelayTest,
+      delayTest
+    } as unknown as MihomoClient
+    const service = new MihomoService(client, { wsBaseUrl: 'ws://127.0.0.1', enabled: false })
+
+    await expect(service.groupMemberDelayTest('Select', 'shared', { timeout: 9000 })).resolves.toEqual({ delay: 33 })
+    // First owner 404ed (name-resolution miss), second owner resolved.
+    expect(providerDelayTest).toHaveBeenNthCalledWith(1, 'sub-a', 'shared', { timeout: 9000 })
+    expect(providerDelayTest).toHaveBeenNthCalledWith(2, 'sub-b', 'shared', { timeout: 9000 })
+    // The top-level /proxies fallback must NOT run once a provider resolved.
+    expect(delayTest).not.toHaveBeenCalled()
+    service.dispose()
+  })
+
+  it('still surfaces a real probe verdict (503) instead of masking it as a name miss', async () => {
+    const providerDelayTest = vi.fn().mockRejectedValue(
+      new ProtocolError(ProtocolErrorCode.UPSTREAM_TEST_FAILED, 'mihomo delay test failed: HTTP 503', {
+        path: '/providers/proxies/sub-a/node/healthcheck',
+        reason: '503'
+      })
+    )
+    const delayTest = vi.fn().mockResolvedValue({ delay: 1 })
+    const client = {
+      getProxies: vi.fn().mockResolvedValue({
+        proxies: { Select: { name: 'Select', type: 'Selector', all: ['node'] } }
+      }),
+      getProxyProviders: vi.fn().mockResolvedValue({
+        providers: {
+          'sub-a': { name: 'sub-a', type: 'Proxy', proxies: [{ name: 'node', type: 'Shadowsocks' }] },
+          'sub-b': { name: 'sub-b', type: 'Proxy', proxies: [{ name: 'node', type: 'Shadowsocks' }] }
+        }
+      }),
+      providerDelayTest,
+      delayTest
+    } as unknown as MihomoClient
+    const service = new MihomoService(client, { wsBaseUrl: 'ws://127.0.0.1', enabled: false })
+
+    await expect(service.groupMemberDelayTest('Select', 'node', { timeout: 9000 })).rejects.toMatchObject({
+      code: 'UPSTREAM_TEST_FAILED'
+    })
+    // A dead node is a verdict about EVERY provider copy (same controller
+    // name) — do not keep probing the remaining owners.
+    expect(providerDelayTest).toHaveBeenCalledTimes(1)
+    expect(delayTest).not.toHaveBeenCalled()
+    service.dispose()
+  })
+
+  it('falls back to the top-level proxy endpoint when no provider currently lists the node', async () => {
+    const providerDelayTest = vi
+      .fn()
+      .mockRejectedValue(
+        new ProtocolError(ProtocolErrorCode.UPSTREAM_HTTP_ERROR, 'mihomo request failed with HTTP 404', {
+          path: '/providers/proxies/sub-a/node/healthcheck',
+          reason: '404'
+        })
+      )
+    const delayTest = vi.fn().mockResolvedValue({ delay: 7 })
+    const client = {
+      getProxies: vi.fn().mockResolvedValue({
+        proxies: {
+          Select: { name: 'Select', type: 'Selector', all: ['node'] },
+          node: { name: 'node', type: 'Shadowsocks' }
+        }
+      }),
+      getProxyProviders: vi.fn().mockResolvedValue({
+        providers: { 'sub-a': { name: 'sub-a', type: 'Proxy', proxies: [{ name: 'node', type: 'Shadowsocks' }] } }
+      }),
+      providerDelayTest,
+      delayTest
+    } as unknown as MihomoClient
+    const service = new MihomoService(client, { wsBaseUrl: 'ws://127.0.0.1', enabled: false })
+
+    await expect(service.groupMemberDelayTest('Select', 'node', { timeout: 9000 })).resolves.toEqual({ delay: 7 })
+    expect(delayTest).toHaveBeenCalledWith('node', { timeout: 9000 })
+    service.dispose()
+  })
+
   it('prefers an explicit group url, or the global url when global scope is selected', async () => {
     const delayTest = vi.fn().mockResolvedValue({ delay: 20 })
     const client = {
@@ -153,7 +261,7 @@ describe('mihomo service gateway', () => {
     service.dispose()
   })
 
-  it('coalesces provider discovery and falls back safely for duplicate provider node names', async () => {
+  it('coalesces provider discovery and resolves a duplicate provider node name through its first owner', async () => {
     const getProxyProviders = vi.fn().mockResolvedValue({
       providers: {
         one: { name: 'one', type: 'Proxy', proxies: [{ name: 'duplicate', type: 'Shadowsocks' }] },
@@ -179,9 +287,12 @@ describe('mihomo service gateway', () => {
       service.groupMemberDelayTest('Select', 'duplicate'),
       service.groupMemberDelayTest('Select', 'duplicate')
     ])
+    // Discovery is coalesced across the concurrent probes (1s cache).
     expect(getProxyProviders).toHaveBeenCalledTimes(1)
-    expect(providerDelayTest).not.toHaveBeenCalled()
-    expect(delayTest).toHaveBeenCalledTimes(2)
+    // Duplicate names are no longer "ambiguous": the node resolves through its
+    // (first) owning provider, whose healthcheck also updates provider history.
+    expect(providerDelayTest).toHaveBeenCalledWith('one', 'duplicate', {})
+    expect(delayTest).not.toHaveBeenCalled()
     service.dispose()
   })
 

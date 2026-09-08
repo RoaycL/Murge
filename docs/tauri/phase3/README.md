@@ -377,7 +377,7 @@ Fourth Phase 3B/3C slice — the network fetch of remote subscriptions:
   deletes the just-created import), the validate-before-write rule on
   update, and both Chinese error copies (没有远程订阅地址 / 缺少原始订阅地址).
 - Un-staged: `profiles:import-from-url`, `profiles:update-from-source`
-  (81/121 live). Still staged on the network path:
+  (81/121 live invoke arms). Still staged on the network path:
   `profiles:get-provider-content` (3D).
 
 ### 11. Icons + network interfaces (`src-tauri/src/icons.rs`)
@@ -386,7 +386,7 @@ Fifth Phase 3B/3C slice — the three desktop-integration channels:
 
 - `app:list-network-interfaces` ports the `os.networkInterfaces()` handler:
   interface names carrying at least one address, sanitized (non-empty,
-  ≤255, no control characters) and sorted — 84/121 live.
+  ≤255, no control characters) and sorted (84/121 live invoke arms).
 - `app:get-cached-icon` ports `RemoteIconCache` verbatim: persistent
   stale-if-error cache keyed by SHA-256 of the semantic key (a refresh
   re-downloads and overwrites; a failed refresh keeps the cached value),
@@ -407,7 +407,7 @@ Fifth Phase 3B/3C slice — the three desktop-integration channels:
 - All three return null/[] quietly on invalid input (no protocol errors),
   matching the Electron handlers.
 - Un-staged: `app:get-process-icon`, `app:get-cached-icon`,
-  `app:list-network-interfaces` (**84/121 live**). Remaining 3C/3D:
+  `app:list-network-interfaces` — **84/121 live invoke arms**. Remaining 3C/3D:
   Sub-Store, internet-latency, mihomo stream-event un-staging, system
   proxy + TUN + privileged provider content (3D), tray/startup (4),
   updates (5).
@@ -417,7 +417,7 @@ Fifth Phase 3B/3C slice — the three desktop-integration channels:
 Sixth Phase 3B/3C slice — the last staged mihomo channel:
 
 - `route_latency.rs` ports `route-latency-service.ts` verbatim: the
-  read-only default-gateway detection (Linux /proc/net/rute row with
+  read-only default-gateway detection (Linux /proc/net/route row with
   destination `00000000` decoded little-endian; Windows `route print
   0.0.0.0` first active row; macOS `route -n get default`), and the
   first-hop RTT as a TCP connect handshake to the gateway itself (its DNS
@@ -432,8 +432,9 @@ Sixth Phase 3B/3C slice — the last staged mihomo channel:
   ACTIVE profile's declared `proxy-groups` order. Every slot degrades
   independently to `null` — a degraded path renders as an em dash, never a
   fake number, never a card-wide error.
-- Un-staged `mihomo:internet-latency` through a mock controller (**85/121
-  live**).
+- Note: `mihomo:internet-latency` is un-staged as an invoke arm; the six
+  event channels from slice 9 stay counted on the emit side, so the invoke
+  total reads **84/121** with **37 staged** (six of them emit-live already)..
 
 ### Dispatch surface
 

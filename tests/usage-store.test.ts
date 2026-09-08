@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtemp, rm, readFile, writeFile, mkdir } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, writeFile, mkdir, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -69,6 +69,19 @@ describe('usage-history store', () => {
       const raw = await readFile(resolveUsageHistoryPath(dir), 'utf8')
       const parsed = JSON.parse(raw)
       expect(parsed).toEqual([{ bucketStart: HOUR, up: 5, down: 6, count: 1 }])
+    })
+
+    it('serializes concurrent writes and removes stale temporary files', async () => {
+      const historyDir = join(dir, 'usage-history')
+      await mkdir(historyDir, { recursive: true })
+      await writeFile(join(historyDir, `.${USAGE_HISTORY_FILE}.stale.tmp`), 'stale', 'utf8')
+
+      await Promise.all(Array.from({ length: 32 }, (_, index) => store.write([
+        { bucketStart: HOUR, up: index, down: 0, count: index, countType: 'connections' }
+      ])))
+
+      expect((await store.read())[0]).toMatchObject({ up: 31, count: 31 })
+      expect((await readdir(historyDir)).filter((name) => name.endsWith('.tmp'))).toEqual([])
     })
 
     it('coerces a malformed file to the safe empty database', async () => {

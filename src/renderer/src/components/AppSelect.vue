@@ -23,12 +23,48 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 const root = ref<HTMLElement | null>(null)
 const trigger = ref<HTMLButtonElement | null>(null)
+const menu = ref<HTMLElement | null>(null)
 const open = ref(false)
 const activeIndex = ref(0)
+const menuAbove = ref(false)
+const menuStyle = ref<Record<string, string>>({})
 const selected = computed(() => props.options.find((item) => item.value === props.modelValue))
+
+const MENU_GAP = 5
+const VIEWPORT_MARGIN = 8
+
+function positionMenu(): void {
+  if (!open.value || !trigger.value || !menu.value) return
+  const triggerRect = trigger.value.getBoundingClientRect()
+  const viewportWidth = document.documentElement.clientWidth
+  const viewportHeight = document.documentElement.clientHeight
+  const width = Math.min(
+    Math.max(triggerRect.width, menu.value.scrollWidth),
+    Math.max(0, viewportWidth - VIEWPORT_MARGIN * 2)
+  )
+  const height = Math.min(menu.value.scrollHeight, 248)
+  const roomBelow = viewportHeight - triggerRect.bottom - MENU_GAP - VIEWPORT_MARGIN
+  const roomAbove = triggerRect.top - MENU_GAP - VIEWPORT_MARGIN
+  menuAbove.value = roomBelow < height && roomAbove > roomBelow
+  const availableHeight = Math.max(0, menuAbove.value ? roomAbove : roomBelow)
+  const top = menuAbove.value
+    ? Math.max(VIEWPORT_MARGIN, triggerRect.top - MENU_GAP - Math.min(height, availableHeight))
+    : triggerRect.bottom + MENU_GAP
+  const left = Math.min(
+    Math.max(VIEWPORT_MARGIN, triggerRect.right - width),
+    Math.max(VIEWPORT_MARGIN, viewportWidth - width - VIEWPORT_MARGIN)
+  )
+  menuStyle.value = {
+    top: `${Math.round(top)}px`,
+    left: `${Math.round(left)}px`,
+    width: `${Math.round(width)}px`,
+    maxHeight: `${Math.floor(availableHeight)}px`
+  }
+}
 
 function close(restoreFocus = false): void {
   open.value = false
+  menuStyle.value = {}
   if (restoreFocus) void nextTick(() => trigger.value?.focus())
 }
 
@@ -37,6 +73,7 @@ function openMenu(): void {
   const index = props.options.findIndex((item) => item.value === props.modelValue)
   activeIndex.value = Math.max(0, index)
   open.value = true
+  void nextTick(positionMenu)
 }
 
 function toggle(): void {
@@ -72,11 +109,18 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 function onDocumentPointer(event: PointerEvent): void {
-  if (open.value && !root.value?.contains(event.target as Node)) close()
+  const target = event.target as Node
+  if (open.value && !root.value?.contains(target) && !menu.value?.contains(target)) close()
 }
 
 document.addEventListener('pointerdown', onDocumentPointer)
-onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPointer))
+window.addEventListener('resize', positionMenu)
+window.addEventListener('scroll', positionMenu, true)
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDocumentPointer)
+  window.removeEventListener('resize', positionMenu)
+  window.removeEventListener('scroll', positionMenu, true)
+})
 </script>
 
 <template>
@@ -84,12 +128,14 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
     <button ref="trigger" type="button" class="app-select-trigger" :disabled="disabled" :aria-label="label" aria-haspopup="listbox" :aria-expanded="open" @click="toggle">
       <span>{{ selected?.label ?? modelValue }}</span><AppIcon class="trigger-chevron" name="chevron-down" :size="15" />
     </button>
-    <div v-if="open" class="app-select-menu" role="listbox" :aria-label="label">
+  </div>
+  <Teleport to="body">
+    <div v-if="open" ref="menu" class="app-select-menu" :class="{ above: menuAbove }" :style="menuStyle" role="listbox" :aria-label="label">
       <button v-for="(option, index) in options" :key="option.value" type="button" role="option" :aria-selected="option.value === modelValue" :disabled="option.disabled" :class="{ active: index === activeIndex, selected: option.value === modelValue }" @mouseenter="activeIndex = index" @click="choose(option)">
         <span>{{ option.label }}</span><AppIcon v-if="option.value === modelValue" name="check" :size="14" />
       </button>
     </div>
-  </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -99,7 +145,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
 .app-select-trigger:focus-visible { outline: 2px solid color-mix(in srgb, var(--app-blue) 55%, transparent); outline-offset: 2px; }
 .app-select-trigger svg { flex: none; color: var(--app-muted); transition: transform .16s ease; }
 .app-select.open .app-select-trigger svg { transform: rotate(180deg); }
-.app-select-menu { position: absolute; z-index: 1000; top: calc(100% + 5px); right: 0; min-width: 100%; max-height: 248px; overflow: auto; padding: 5px; border: 1px solid color-mix(in srgb, var(--app-divider) 84%, white 16%); border-radius: 9px; background: var(--app-surface); box-shadow: 0 18px 38px rgba(0,0,0,.38); }
+.app-select-menu { position: fixed; z-index: 3000; min-width: 132px; max-height: 248px; overflow: auto; box-sizing: border-box; padding: 5px; border: 1px solid color-mix(in srgb, var(--app-divider) 84%, white 16%); border-radius: 9px; background: var(--app-surface-solid, var(--app-surface)); box-shadow: 0 18px 38px rgba(0,0,0,.38); font-size: 12px; }
 .app-select-menu button { display: flex; width: 100%; min-height: 30px; align-items: center; justify-content: space-between; gap: 16px; padding: 0 8px; border: 0; border-radius: 6px; background: var(--app-surface); color: var(--app-text); white-space: nowrap; text-align: left; }
 .app-select-menu button.active { background: color-mix(in srgb, var(--app-blue) 14%, var(--app-surface)); }
 .app-select-menu button.selected { color: var(--app-blue); }

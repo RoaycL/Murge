@@ -162,7 +162,7 @@ describe('UpdateService', () => {
     }
   })
 
-  it('check() does not restart when a check or download is already in flight', async () => {
+  it('coalesces only an in-flight check or download', async () => {
     const driver = new FakeUpdaterDriver()
     const service = new UpdateService(driver)
     service.start()
@@ -170,12 +170,42 @@ describe('UpdateService', () => {
     await service.check()
     expect(driver.checkCalls).toBe(1)
 
-    // Once an update is fully downloaded, a newer check is also deferred so the
-    // ready-to-install state is not clobbered by a transient "checking" phase.
+    // A completed download is deliberately not terminal: newer releases must be
+    // discoverable without installing the older package first.
     driver.emit({ kind: 'available', version: '1.0.1', releaseNotes: null })
     driver.emit({ kind: 'downloaded' })
     await service.check()
-    expect(driver.checkCalls).toBe(1)
+    expect(driver.checkCalls).toBe(2)
+    expect(service.getState()).toMatchObject({ phase: 'checking', availableVersion: '1.0.1', canInstall: true })
+  })
+
+  it('replaces a downloaded update when a newer release is found', async () => {
+    const driver = new FakeUpdaterDriver()
+    const service = new UpdateService(driver)
+    service.start()
+    driver.emit({ kind: 'available', version: '1.0.1', releaseNotes: null })
+    driver.emit({ kind: 'downloaded' })
+
+    await service.check()
+    driver.emit({ kind: 'available', version: '1.0.2', releaseNotes: null })
+    expect(service.getState()).toMatchObject({ phase: 'available', availableVersion: '1.0.2', canInstall: false })
+    driver.emit({ kind: 'download-progress', percent: 10, bytesPerSecond: 1, transferred: 1, total: 10 })
+    expect(service.getState()).toMatchObject({ phase: 'downloading', availableVersion: '1.0.2', canInstall: false })
+  })
+
+  it('keeps the downloaded update installable when a newer check fails', async () => {
+    const driver = new FakeUpdaterDriver()
+    const service = new UpdateService(driver)
+    service.start()
+    driver.emit({ kind: 'available', version: '1.0.1', releaseNotes: null })
+    driver.emit({ kind: 'downloaded' })
+
+    await service.check()
+    driver.emit({ kind: 'error', message: 'feed unavailable' })
+
+    expect(service.getState()).toMatchObject({
+      phase: 'downloaded', availableVersion: '1.0.1', canInstall: true, error: 'feed unavailable'
+    })
   })
 
   it('reduces an available event into the state snapshot', () => {

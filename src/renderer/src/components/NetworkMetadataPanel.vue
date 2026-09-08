@@ -2,15 +2,11 @@
 import { computed, onMounted, ref } from 'vue'
 import SurfaceCard from './SurfaceCard.vue'
 import { useNetworkMetadataStore, type NetworkMetadataRow } from '../stores/network-metadata'
-import { useLatencyStore } from '../stores/latency'
 import { useUnlockStore } from '../stores/unlock'
 import type { ServiceUnlockResult } from '@shared/unlock'
 import { networkMetadataMaskIp } from '@shared/network-metadata'
 
 const store = useNetworkMetadataStore()
-// Same Pinia instance the activity page probes: the drawer renders the latest
-// shared sample instead of firing its own duplicate measurement on open.
-const latency = useLatencyStore()
 const unlock = useUnlockStore()
 
 /** Privacy-forward default: mask every IP until the user explicitly reveals it. */
@@ -51,24 +47,6 @@ function toggleReveal(): void {
   revealed.value = !revealed.value
 }
 
-const DIAG_LABELS = {
-  idle: '待检测',
-  probing: '检测中…',
-  ready: '已完成',
-  error: '检测失败'
-} as const
-
-const diagLabel = computed(() => DIAG_LABELS[latency.state])
-
-/** 每一格：实测到显示（ms 保留整数；未测到显示 em dash），与活动页口径一致。 */
-function delayText(value: number | null): string {
-  return value == null ? '—' : `${Math.round(value)}`
-}
-
-const gatewayText = computed(() => delayText(latency.gatewayMs))
-const dnsText = computed(() => delayText(latency.dnsMs))
-const proxyText = computed(() => delayText(latency.proxyMs))
-
 const unlockRows = computed(() => unlock.orderedResults())
 
 const STATUS_LABELS = {
@@ -88,45 +66,6 @@ function hasRegion(region: string | null): boolean {
 
 <template>
   <SurfaceCard class="network-card">
-    <div class="diag-title-row"><span class="metric-label">网络诊断 <em class="status">{{ diagLabel }}</em></span></div>
-    <div class="diag-grid" role="table" aria-label="网络诊断结果">
-      <div class="diag-row" role="row">
-        <span role="cell">路由网关</span>
-        <strong role="cell">{{ gatewayText }}<i v-if="gatewayText !== '—'" class="delay-unit">ms</i></strong>
-      </div>
-      <div class="diag-row" role="row">
-        <span role="cell">DNS 解析</span>
-        <strong role="cell">{{ dnsText }}<i v-if="dnsText !== '—'" class="delay-unit">ms</i></strong>
-      </div>
-      <div class="diag-row" role="row">
-        <span role="cell">{{ latency.proxyNode ?? '代理出口' }}</span>
-        <strong role="cell">{{ proxyText }}<i v-if="proxyText !== '—'" class="delay-unit">ms</i></strong>
-      </div>
-    </div>
-
-    <div class="card-title-row unlock-title-row">
-      <span class="metric-label">服务解锁测试 <em v-if="unlock.testingAll" class="status">检测中…</em></span>
-      <div class="title-actions">
-        <button type="button" class="quiet-button" :disabled="unlock.testingAll" @click="unlock.testAll()">
-          {{ unlock.testingAll ? '检测中…' : '测试全部' }}
-        </button>
-      </div>
-    </div>
-    <div class="unlock-grid" role="table" aria-label="服务解锁测试结果">
-      <div v-for="row in unlockRows" :key="row.name" class="unlock-row" role="row">
-        <span class="unlock-name" role="cell" :title="row.name">{{ row.name }}</span>
-        <span class="unlock-verdict" role="cell">
-          <template v-if="unlock.testing[row.name]"><span class="unlock-pill pending">待检测</span></template>
-          <template v-else>
-            <span class="unlock-pill" :class="row.status">{{ statusLabel(row.status) }}</span>
-            <span v-if="hasRegion(row.region)" class="unlock-region">{{ row.region }}</span>
-          </template>
-        </span>
-        <button type="button" class="icon-control unlock-retest" :disabled="unlock.testing[row.name]" :aria-label="`重新测试 ${row.name}`" @click="unlock.testOne(row.name)">⟳</button>
-      </div>
-    </div>
-    <p v-if="unlock.error" class="inline-error" role="alert">{{ unlock.error }}</p>
-
     <div class="card-title-row info-title-row">
       <span class="metric-label">出口网络信息</span>
       <div class="title-actions">
@@ -152,6 +91,29 @@ function hasRegion(region: string | null): boolean {
       </div>
     </div>
     <p v-if="store.refreshError" class="inline-error" role="alert">{{ store.refreshError }}</p>
+
+    <div class="card-title-row unlock-title-row">
+      <span class="metric-label">服务解锁测试 <em v-if="unlock.testingAll" class="status">检测中…</em></span>
+      <div class="title-actions">
+        <button type="button" class="quiet-button" :disabled="unlock.testingAll" @click="unlock.testAll()">
+          {{ unlock.testingAll ? '检测中…' : '测试全部' }}
+        </button>
+      </div>
+    </div>
+    <div class="unlock-grid" role="table" aria-label="服务解锁测试结果">
+      <div v-for="row in unlockRows" :key="row.name" class="unlock-row" role="row">
+        <span class="unlock-name" role="cell" :title="row.name">{{ row.name }}</span>
+        <span class="unlock-verdict" role="cell">
+          <template v-if="unlock.testing[row.name]"><span class="unlock-pill pending">待检测</span></template>
+          <template v-else>
+            <span class="unlock-pill" :class="row.status">{{ statusLabel(row.status) }}</span>
+            <span v-if="hasRegion(row.region)" class="unlock-region">{{ row.region }}</span>
+          </template>
+        </span>
+        <button type="button" class="icon-control unlock-retest" :disabled="unlock.testing[row.name]" :aria-label="`重新测试 ${row.name}`" @click="unlock.testOne(row.name)">⟳</button>
+      </div>
+    </div>
+    <p v-if="unlock.error" class="inline-error" role="alert">{{ unlock.error }}</p>
   </SurfaceCard>
 </template>
 
@@ -160,22 +122,7 @@ function hasRegion(region: string | null): boolean {
 .card-title-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .title-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .status { font-style: normal; color: var(--app-muted); font-size: 10px; margin-left: 6px; }
-.diag-title-row { display: flex; align-items: center; min-height: 28px; }
-.diag-grid { display: grid; margin-top: 10px; }
-.diag-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  min-height: 30px;
-  padding: 4px 0;
-  border-top: 1px solid var(--app-divider);
-  font-size: 12px;
-}
-.diag-row span { overflow: hidden; color: var(--app-muted); text-overflow: ellipsis; white-space: nowrap; }
-.diag-row strong { font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.delay-unit { font-style: normal; font-weight: 400; font-size: 10px; color: var(--app-muted); margin-left: 2px; }
-.info-title-row { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--app-divider); }
+.info-title-row { min-height: 28px; }
 .provider-table { display: grid; margin-top: 12px; }
 .provider-row {
   display: grid;

@@ -30,6 +30,8 @@ export interface UsageHistoryServiceOptions {
   onTraffic?: (listener: (sample: UsageSample) => void) => () => void
   /** Optional live connection source used for the human-facing usage count. */
   onConnections?: (listener: (snapshot: MihomoConnectionsSnapshot) => void) => () => void
+  /** Receive background persistence failures without creating unhandled rejections. */
+  onError?: (error: unknown) => void
 }
 
 /**
@@ -47,6 +49,7 @@ export class UsageHistoryService implements UsageHistoryGateway {
   private readonly store: UsageHistoryStore
   private readonly now: () => number
   private readonly persistIntervalMs: number
+  private readonly onError: (error: unknown) => void
 
   private buckets: UsageBucket[] = []
   private currentBucketStart: number | null = null
@@ -63,6 +66,7 @@ export class UsageHistoryService implements UsageHistoryGateway {
     this.store = options.store ?? new InMemoryUsageHistoryStore()
     this.now = options.now ?? (() => Date.now())
     this.persistIntervalMs = options.persistIntervalMs ?? 10_000
+    this.onError = options.onError ?? (() => undefined)
     if (options.onTraffic) this.attachTraffic(options.onTraffic)
     if (options.onConnections) this.attachConnections(options.onConnections)
   }
@@ -83,7 +87,7 @@ export class UsageHistoryService implements UsageHistoryGateway {
   /** Subscribe to a live traffic source; returns the unsubscribe function. */
   attachTraffic(onTraffic: (listener: (sample: UsageSample) => void) => () => void): () => void {
     const unsub = onTraffic((sample) => {
-      void this.record(sample)
+      void this.record(sample).catch((error) => this.reportBackgroundError(error))
     })
     this.trafficUnsub = unsub
     return () => {
@@ -97,7 +101,7 @@ export class UsageHistoryService implements UsageHistoryGateway {
     onConnections: (listener: (snapshot: MihomoConnectionsSnapshot) => void) => () => void
   ): () => void {
     const unsub = onConnections((snapshot) => {
-      void this.recordConnections(snapshot)
+      void this.recordConnections(snapshot).catch((error) => this.reportBackgroundError(error))
     })
     this.connectionsUnsub = unsub
     return () => {
@@ -218,5 +222,14 @@ export class UsageHistoryService implements UsageHistoryGateway {
     if (time - this.lastPersistAt < this.persistIntervalMs) return
     await this.store.write(this.buckets.map((bucket) => ({ ...bucket })))
     this.lastPersistAt = time
+  }
+
+  private reportBackgroundError(error: unknown): void {
+    try {
+      this.onError(error)
+    } catch {
+      // Error reporting must not turn a handled persistence failure back into
+      // another unhandled rejection on the event callback boundary.
+    }
   }
 }

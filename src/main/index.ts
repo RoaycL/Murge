@@ -83,6 +83,7 @@ import { LiveConfigReloader } from './kernel/live-config-reloader'
 import { FileLogService } from './logging/file-log-service'
 import { installConsoleFileLogging } from './logging/console-bridge'
 import type { MihomoLogMessage } from '@shared/mihomo-api'
+import { IPC } from '@shared/ipc'
 import {
   EnhancementApplyCoordinator,
   LiveDnsEnhancementGateway,
@@ -227,6 +228,7 @@ let runtimeIntentRecovery: RuntimeIntentRecoveryCoordinator | null = null
 let updateService: UpdateService | null = null
 let usageHistoryServiceRef: UsageHistoryService | null = null
 let waitForProfileOperations: (() => Promise<void>) | null = null
+let pendingRendererRoute: string | null = null
 
 // Deep links (murge://...) that arrive before the window exists, or while a
 // second instance hands its argv over, are queued here and flushed once the
@@ -409,6 +411,26 @@ function createWindow(): BrowserWindow {
     })
   }
   return window
+}
+
+/** Reveal the existing app window and deliver a trusted internal route after
+ * its renderer is ready. Used by native notification clicks. */
+function showMainWindowAt(route: '/about'): void {
+  pendingRendererRoute = route
+  const window = mainWindow ?? BrowserWindow.getAllWindows()[0] ?? createWindow()
+  if (window.isMinimized()) window.restore()
+  window.show()
+  window.focus()
+  const deliver = (): void => {
+    if (window.isDestroyed() || !pendingRendererRoute) return
+    window.webContents.send(IPC.appNavigateEvent, pendingRendererRoute)
+    pendingRendererRoute = null
+  }
+  if (window.webContents.isLoadingMainFrame()) {
+    window.webContents.once('did-finish-load', deliver)
+  } else {
+    deliver()
+  }
 }
 
 /**
@@ -1311,7 +1333,7 @@ app.whenReady().then(async () => {
   const liveDnsEnhancement = new LiveDnsEnhancementGateway(dnsEnhancementService, dnsEnhancementCoordinator)
   const liveSnifferEnhancement = new LiveSnifferEnhancementGateway(snifferEnhancementService, snifferEnhancementCoordinator)
   const liveGeodataSettings = new LiveGeodataSettingsGateway(geodataSettingsService, geodataEnhancementCoordinator)
-  const updates = new UpdateService(new ElectronUpdaterDriver())
+  const updates = new UpdateService(new ElectronUpdaterDriver(() => showMainWindowAt('/about')))
   updateService = updates
   updates.start()
   // Poll the feed while the app runs so a Release published mid-session is
@@ -1323,7 +1345,8 @@ app.whenReady().then(async () => {
       ? FileSystemUsageHistoryStore.forAppDataBase(app.getPath('appData'))
       : new InMemoryUsageHistoryStore(),
     onTraffic: (listener) => gateway.onTraffic(listener),
-    onConnections: (listener) => gateway.onConnections(listener)
+    onConnections: (listener) => gateway.onConnections(listener),
+    onError: (error) => console.error('[usage-history] background persistence failed:', error)
   })
   // Sub-Store is a first-class item in the 配置 sidebar group. New installs
   // default it on and prepare the verified assets in the background; the main
@@ -1700,7 +1723,7 @@ function beginApplicationShutdown(sessionEnding: boolean): Promise<void> {
           trayController?.dispose()
           disposeIpc?.()
           updateService?.dispose()
-          usageHistoryServiceRef?.dispose()
+          await usageHistoryServiceRef?.dispose()
           if (proxyGuardTimer) {
             clearInterval(proxyGuardTimer)
             proxyGuardTimer = null

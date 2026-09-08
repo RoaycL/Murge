@@ -22,6 +22,7 @@ const appearance = useAppearanceStore()
 const tun = useTunStore()
 const traffic = useTrafficStore()
 const connections = useConnectionsStore()
+let unsubscribeNavigation: (() => void) | null = null
 
 function discardAndNavigate(): void {
   const target = approveNavigation()
@@ -29,6 +30,7 @@ function discardAndNavigate(): void {
 }
 
 onMounted(async () => {
+  unsubscribeNavigation = window.desktop.app.onNavigate((path) => { void router.push(path) })
   appearance.connect()
   kernel.connect()
   systemProxy.connect()
@@ -40,6 +42,8 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  unsubscribeNavigation?.()
+  unsubscribeNavigation = null
   kernel.disconnect()
   systemProxy.disconnect()
   appearance.disconnect()

@@ -1,0 +1,31 @@
+import { readFile } from 'node:fs/promises'
+import { describe, expect, it } from 'vitest'
+
+const read = (path: string): Promise<string> => readFile(new URL(`../${path}`, import.meta.url), 'utf8')
+
+describe('update notification navigation contract', () => {
+  it('publishes only the final feed failure after proxy fallback is exhausted', async () => {
+    const driver = await read('src/main/updates/electron-updater-driver.ts')
+    expect(driver).toContain('private checkingWithFallback = false')
+    expect(driver).toContain('autoUpdater.disableWebInstaller = true')
+    expect(driver).toMatch(/autoUpdater\.on\('error',[\s\S]*if \(this\.checkingWithFallback\) return/)
+    expect(driver).toMatch(/this\.checkingWithFallback = true[\s\S]*finally \{[\s\S]*this\.checkingWithFallback = false/)
+  })
+
+  it('routes native notification clicks to the existing About page', async () => {
+    const [driver, main, shared, preload, app] = await Promise.all([
+      read('src/main/updates/electron-updater-driver.ts'),
+      read('src/main/index.ts'),
+      read('src/shared/ipc.ts'),
+      read('src/preload/index.ts'),
+      read('src/renderer/src/App.vue')
+    ])
+
+    expect(driver).toMatch(/notification\.once\('click',[\s\S]*this\.onNotificationClick\(\)/)
+    expect(main).toContain("new ElectronUpdaterDriver(() => showMainWindowAt('/about'))")
+    expect(main).toMatch(/function showMainWindowAt\(route: '\/about'\)[\s\S]*window\.show\(\)[\s\S]*window\.focus\(\)[\s\S]*IPC\.appNavigateEvent/)
+    expect(shared).toContain("appNavigateEvent: 'app:navigate-event'")
+    expect(preload).toContain('onNavigate: (listener) => listen(IPC.appNavigateEvent, listener)')
+    expect(app).toMatch(/onNavigate\(\(path\) => \{ void router\.push\(path\) \}\)/)
+  })
+})

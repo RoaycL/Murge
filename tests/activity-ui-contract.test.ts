@@ -113,7 +113,10 @@ describe('Activity fluid-layout UI contract', () => {
     expect(css).toMatch(/\.runtime-mode-picker \.app-select\s*\{[^}]*margin-top:\s*3px/)
     expect(select).toMatch(/\.app-select\.plain \.app-select-trigger\s*\{[^}]*font-size:\s*16px[^}]*font-weight:\s*650/)
     expect(select).toMatch(/\.app-select\.plain \.trigger-chevron\s*\{[^}]*opacity:\s*0/)
-    expect(select).toContain('<div v-if="open" class="app-select-menu"')
+    expect(select).toContain('<Teleport to="body">')
+    expect(select).toContain('<div v-if="open" ref="menu" class="app-select-menu"')
+    expect(select).toMatch(/\.app-select-menu\s*\{[^}]*position:\s*fixed[^}]*z-index:\s*3000/)
+    expect(select).toContain("window.addEventListener('scroll', positionMenu, true)")
   })
 
   it('keeps drawer actions on one line and omits Activity drawer explanatory copy', async () => {
@@ -134,24 +137,26 @@ describe('Activity fluid-layout UI contract', () => {
     expect(css).toMatch(/\.detail-drawer button\s*\{[^}]*white-space:\s*nowrap/)
   })
 
-  it('pairs the network drawer with the shared diagnosis sample and keeps reveal on the info row', async () => {
+  it('refreshes the latency card when opening diagnostics and keeps the drawer focused on network information', async () => {
     const [activity, network] = await Promise.all([
       read('src/renderer/src/views/ActivityView.vue'),
       read('src/renderer/src/components/NetworkMetadataPanel.vue')
     ])
 
-    // 网络诊断区块复用活动页的共享延迟样本，不自行发起重复测量。
-    expect(network).toContain("import { useLatencyStore } from '../stores/latency'")
+    // “网络诊断”打开抽屉的同一动作会刷新活动页延迟卡片。
+    expect(activity).toMatch(/function openNetworkDiagnostics\(\): void \{[\s\S]*summaryDrawer\.value = 'network'[\s\S]*latency\.probe\(\)/)
+    expect(activity).toContain('@click="openNetworkDiagnostics"')
     expect(activity).toContain('#actions')
     expect(activity).toContain('latency.probe()')
+    // 抽屉不再重复展示延迟诊断区块。
+    expect(network).not.toContain("import { useLatencyStore } from '../stores/latency'")
     expect(network).not.toContain('latency.probe()')
     expect(network).not.toContain('window.desktop.mihomo.internetLatency')
-    expect(network).toContain('网络诊断')
-    expect(network).toContain('路由网关')
-    expect(network).toContain('DNS 解析')
-    expect(network).toContain('代理出口')
-    // 诊断区块在前；出口信息保留遮罩 + 手动显示，隐私默认不暴露 IP。
-    expect(network.indexOf('网络诊断')).toBeLessThan(network.indexOf('出口网络信息'))
+    expect(network).not.toContain('网络诊断')
+    expect(network).not.toContain('路由网关')
+    expect(network).not.toContain('DNS 解析')
+    // 出口信息在解锁测试之前；仍保留遮罩 + 手动显示，隐私默认不暴露 IP。
+    expect(network.indexOf('出口网络信息')).toBeLessThan(network.indexOf('服务解锁测试'))
     expect(network).toMatch(/@click="toggleReveal"/)
     expect(network).not.toContain('复制信息')
   })

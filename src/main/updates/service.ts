@@ -22,6 +22,8 @@ export class UpdateService implements UpdatesGateway {
   private started = false
   private pollTimer: ReturnType<typeof setInterval> | null = null
   private readonly pollIntervalMs: number
+  /** A ready update remains installable while a newer feed check is in flight. */
+  private downloadedBeforeCheck: UpdateState | null = null
 
   constructor(private readonly driver: UpdaterDriver, options: { pollIntervalMs?: number } = {}) {
     this.state = { ...DEFAULT_UPDATE_STATE, currentVersion: driver.currentVersion }
@@ -66,11 +68,13 @@ export class UpdateService implements UpdatesGateway {
       this.transition({ ...this.state, phase: 'error', error: NOT_SUPPORTED, canInstall: false })
       return this.state
     }
-    // A check is already in flight (or a download already completed) — do not
-    // restart it, which would push the UI back to a transient "checking" state.
-    if (this.state.phase === 'checking' || this.state.phase === 'downloading' || this.state.phase === 'downloaded') {
+    // Only coalesce work that is actually in flight. A downloaded update is not
+    // terminal: a newer release may appear before the user installs it, and the
+    // next manual/poll check must be allowed to replace the stale package.
+    if (this.state.phase === 'checking' || this.state.phase === 'downloading') {
       return this.state
     }
+    this.downloadedBeforeCheck = this.state.phase === 'downloaded' ? { ...this.state } : null
     this.transition({ ...this.state, phase: 'checking', error: null })
     try {
       this.driver.check()
@@ -79,7 +83,13 @@ export class UpdateService implements UpdatesGateway {
       // emitting an 'error' event. Without this the phase would stay 'checking'
       // forever and the guard above would reject every later check. Reduce the
       // throw into the same terminal 'error' state the event path produces.
-      this.set({ phase: 'error', error: error instanceof Error ? error.message : String(error), canInstall: false })
+      const message = error instanceof Error ? error.message : String(error)
+      if (this.downloadedBeforeCheck) {
+        this.transition({ ...this.downloadedBeforeCheck, error: message })
+        this.downloadedBeforeCheck = null
+      } else {
+        this.set({ phase: 'error', error: message, canInstall: false })
+      }
     }
     return this.state
   }
@@ -117,14 +127,22 @@ export class UpdateService implements UpdatesGateway {
         this.set({ phase: 'checking', error: null })
         break
       case 'not-available':
-        this.set({ phase: 'not-available', availableVersion: null, progress: null, canInstall: false, error: null })
+        if (this.downloadedBeforeCheck) {
+          this.transition({ ...this.downloadedBeforeCheck, error: null })
+          this.downloadedBeforeCheck = null
+        } else {
+          this.set({ phase: 'not-available', availableVersion: null, progress: null, canInstall: false, error: null })
+        }
         break
       case 'available':
+        this.downloadedBeforeCheck = null
         this.set({ phase: 'available', availableVersion: event.version, progress: null, canInstall: false, error: null })
         break
       case 'download-progress':
+        this.downloadedBeforeCheck = null
         this.set({
           phase: 'downloading',
+          canInstall: false,
           progress: {
             percent: event.percent,
             bytesPerSecond: event.bytesPerSecond,
@@ -134,10 +152,16 @@ export class UpdateService implements UpdatesGateway {
         })
         break
       case 'downloaded':
+        this.downloadedBeforeCheck = null
         this.set({ phase: 'downloaded', canInstall: true, progress: null, error: null })
         break
       case 'error':
-        this.set({ phase: 'error', error: event.message, canInstall: false })
+        if (this.downloadedBeforeCheck) {
+          this.transition({ ...this.downloadedBeforeCheck, error: event.message })
+          this.downloadedBeforeCheck = null
+        } else {
+          this.set({ phase: 'error', error: event.message, canInstall: false })
+        }
         break
     }
   }

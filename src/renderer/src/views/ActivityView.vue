@@ -48,6 +48,11 @@ const proxyText = computed(() => delayText(latency.proxyMs))
 const headlineText = computed(() => (latency.state === 'idle' || latency.state === 'probing' ? '···' : proxyText.value))
 const diagnosisButtonLabel = computed(() => (latency.state === 'probing' ? '检测中…' : '网络诊断'))
 
+function openNetworkDiagnostics(): void {
+  summaryDrawer.value = 'network'
+  void latency.probe()
+}
+
 onMounted(() => {
   void runtime.refresh()
   void policies.load()
@@ -162,7 +167,7 @@ const chartBars = computed<number[]>(() => {
       <SurfaceCard class="latency-card">
         <div class="card-title-row">
           <span class="metric-label latency-label">INTERNET 延迟<button type="button" class="latency-refresh" :disabled="latency.state === 'probing'" aria-label="重新测速" @click="latency.probe()"><AppIcon name="refresh" :size="12" /></button></span>
-          <button type="button" class="quiet-button" @click="summaryDrawer = 'network'">{{ diagnosisButtonLabel }}</button>
+          <button type="button" class="quiet-button" @click="openNetworkDiagnostics">{{ diagnosisButtonLabel }}</button>
         </div>
         <div class="large-metric" :class="{ 'metric-dimmed': headlineText === '—' }">{{ headlineText }}<span>ms</span></div>
         <div class="latency-breakdown">

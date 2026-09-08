@@ -27,6 +27,7 @@ mod override_model;
 mod override_service;
 mod paths;
 mod profile_parse;
+mod icons;
 mod profile_service;
 mod subscription;
 mod profiles;
@@ -109,7 +110,6 @@ pub fn run() {
                 port: core["controllerPort"].as_i64().unwrap_or(9090),
                 secret: core["controllerSecret"].as_str().unwrap_or_default().to_string(),
             });
-            app.manage(paths);
             app.manage(store);
             app.manage(profiles);
             app.manage(overrides);
@@ -118,6 +118,13 @@ pub fn run() {
             app.manage(kernel);
             app.manage(mihomo);
             app.manage(streams);
+            // Desktop integration channels (icons + network interfaces).
+            let icon_cache_root = match &paths.app_data_root {
+                Some(root) => root.clone().join("icon-cache"),
+                None => std::env::temp_dir().join(format!("murge-dev-icon-cache-{}", std::process::id())),
+            };
+            app.manage(icons::DesktopServices::new(icon_cache_root));
+            app.manage(paths);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![ipc::desktop_ipc])

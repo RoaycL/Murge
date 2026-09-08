@@ -18,6 +18,7 @@ use tauri::State;
 
 use crate::app_info;
 use crate::enhancements;
+use crate::icons;
 use crate::inspection;
 use crate::kernel;
 use crate::mihomo;
@@ -45,8 +46,9 @@ pub async fn desktop_ipc(
     usage: State<'_, usage::UsageHistoryService>,
     kernel: State<'_, kernel::KernelServices>,
     mihomo: State<'_, mihomo::MihomoServices>,
+    desktop: State<'_, icons::DesktopServices>,
 ) -> IpcResult {
-    dispatch(&channel, &payload, &paths, &settings, &profiles, &overrides, &models, &usage, &kernel, &mihomo).await
+    dispatch(&channel, &payload, &paths, &settings, &profiles, &overrides, &models, &usage, &kernel, &mihomo, &desktop).await
 }
 
 /// Payload arrays arrive as a JSON array; positional access mirrors the
@@ -92,9 +94,20 @@ pub async fn dispatch(
     usage: &usage::UsageHistoryService,
     kernel: &kernel::KernelServices,
     mihomo: &mihomo::MihomoServices,
+    desktop: &icons::DesktopServices,
 ) -> IpcResult {
     match channel {
         "app:get-brand" => Ok(brand::brand_document()),
+        // Desktop integrations (Phase 3C): icons + network interfaces. The
+        // TS handlers return null/[] quietly on invalid input — no errors.
+        "app:get-process-icon" => Ok(desktop.get_process_icon(string_arg(payload, 0).as_deref())),
+        "app:get-cached-icon" => {
+            let key = string_arg(payload, 0);
+            let url = string_arg(payload, 1);
+            let refresh = payload.get(2).and_then(Value::as_bool).unwrap_or(false);
+            Ok(desktop.icon_cache.get(key.as_deref(), url.as_deref(), refresh).await)
+        }
+        "app:list-network-interfaces" => Ok(desktop.list_network_interfaces()),
         "app:get-info" => Ok(app_info::app_info(env!("CARGO_PKG_VERSION"))),
         "app-settings:get" => Ok(serde_json::to_value(settings.get()).expect("settings serialize")),
         "app-settings:set" => {
@@ -515,6 +528,7 @@ mod tests {
         usage: usage::UsageHistoryService,
         kernel: kernel::KernelServices,
         mihomo: mihomo::MihomoServices,
+        desktop: icons::DesktopServices,
     }
 
     fn fixtures() -> Fixture {
@@ -527,13 +541,14 @@ mod tests {
         let usage = usage::UsageHistoryService::new(usage::UsageHistoryStore::in_memory());
         let kernel = kernel::KernelServices::new();
         let mihomo = mihomo::MihomoServices::new(temp.path().to_path_buf().into());
-        Fixture { _temp: temp, paths, settings, profiles, overrides, models, usage, kernel, mihomo }
+        let desktop = icons::DesktopServices::new(temp.path().to_path_buf().join("icon-cache"));
+        Fixture { _temp: temp, paths, settings, profiles, overrides, models, usage, kernel, mihomo, desktop }
     }
 
     #[tokio::test]
     async fn serves_brand_document_from_the_checked_in_file() {
         let f = fixtures();
-        let brand = dispatch("app:get-brand", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap();
+        let brand = dispatch("app:get-brand", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop).await.unwrap();
         assert_eq!(brand["appId"], "io.murge.desktop");
         assert_eq!(brand["protocolScheme"], "murge");
     }
@@ -541,7 +556,7 @@ mod tests {
     #[tokio::test]
     async fn serves_app_info_in_electron_vocabulary() {
         let f = fixtures();
-        let info = dispatch("app:get-info", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap();
+        let info = dispatch("app:get-info", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop).await.unwrap();
         assert_eq!(info["version"], env!("CARGO_PKG_VERSION"));
         assert!(matches!(
             info["platform"].as_str(),
@@ -552,7 +567,7 @@ mod tests {
     #[tokio::test]
     async fn settings_round_trip_through_the_dispatch() {
         let f = fixtures();
-        let before = dispatch("app-settings:get", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap();
+        let before = dispatch("app-settings:get", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop).await.unwrap();
         assert_eq!(before["closeToTray"], true);
         let after = dispatch(
             "app-settings:set",
@@ -564,7 +579,7 @@ mod tests {
             &f.models,
             &f.usage,
             &f.kernel,
-            &f.mihomo,
+            &f.mihomo, &f.desktop,
         ).await
         .unwrap();
         assert_eq!(after["closeToTray"], false);
@@ -575,7 +590,7 @@ mod tests {
     #[tokio::test]
     async fn profile_channels_flow_through_the_dispatch() {
         let f = fixtures();
-        let list = dispatch("profiles:list", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap();
+        let list = dispatch("profiles:list", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop).await.unwrap();
         assert_eq!(list, serde_json::json!([]));
         let meta = dispatch(
             "profiles:import",
@@ -587,7 +602,7 @@ mod tests {
             &f.models,
             &f.usage,
             &f.kernel,
-            &f.mihomo,
+            &f.mihomo, &f.desktop,
         ).await
         .unwrap();
         assert_eq!(meta["name"], "Home");
@@ -602,7 +617,7 @@ mod tests {
             &f.models,
             &f.usage,
             &f.kernel,
-            &f.mihomo,
+            &f.mihomo, &f.desktop,
         ).await
         .unwrap();
         assert_eq!(profile["document"], "port: 7890\n");
@@ -616,7 +631,7 @@ mod tests {
             &f.models,
             &f.usage,
             &f.kernel,
-            &f.mihomo,
+            &f.mihomo, &f.desktop,
         ).await
         .unwrap();
         assert_eq!(meta["active"], true);
@@ -634,6 +649,7 @@ mod tests {
             "mixed-port: 7890\nproxies:\n  - name: node-01\n    server: 127.0.0.1\nrules:\n  - MATCH,DIRECT\n".to_string(),
         );
         let temp = TempDir::new().unwrap();
+        let icon_root = temp.path().to_path_buf().join("icon-cache");
         let profiles = ProfilesService::for_development(&temp.path().to_path_buf()).with_fetcher(
             SubscriptionFetcher::for_testing(std::sync::Arc::new(|_| Vec::new()), 5000, 1024 * 1024),
         );
@@ -648,12 +664,13 @@ mod tests {
             usage: usage::UsageHistoryService::new(usage::UsageHistoryStore::in_memory()),
             kernel: kernel::KernelServices::new(),
             mihomo: mihomo::MihomoServices::new(None),
+            desktop: icons::DesktopServices::new(icon_root),
         };
         // Import from URL: the empty name falls back to the response filename.
         let meta = dispatch(
             "profiles:import-from-url",
             &serde_json::json!(["", format!("{base}/sub"), true]),
-            &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo,
+            &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop,
         ).await.unwrap();
         assert_eq!(meta["name"], "机场订阅");
         assert_eq!(meta["active"], true, "activate=true moved the pointer");
@@ -661,21 +678,21 @@ mod tests {
         // The private raw URL went to the source store; meta keeps the display form.
         let id = meta["id"].as_str().unwrap().to_string();
         assert_eq!(
-            dispatch("profiles:get-source-url", &serde_json::json!([id]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap(),
+            dispatch("profiles:get-source-url", &serde_json::json!([id]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop).await.unwrap(),
             serde_json::json!(format!("{base}/sub"))
         );
         // Update from source: same channel chain replaces the document.
         let updated = dispatch(
             "profiles:update-from-source",
             &serde_json::json!([id]),
-            &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo,
+            &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop,
         ).await.unwrap();
         assert_eq!(updated["name"], "机场订阅");
         // Schema gate: a non-http URL is rejected before any fetch.
         let error = dispatch(
             "profiles:import-from-url",
             &serde_json::json!(["x", "ftp://example.com/sub"]),
-            &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo,
+            &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop,
         ).await.unwrap_err();
         assert!(error.0.contains("subscription URL must use http or https"), "{}", error.0);
     }
@@ -686,7 +703,7 @@ mod tests {
         for channel in [
             "profiles:get-provider-content",
         ] {
-            let error = dispatch(channel, &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap_err();
+            let error = dispatch(channel, &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop).await.unwrap_err();
             assert!(error.0.starts_with("PROTOCOL_ERROR:UNSUPPORTED::"), "{channel}: {}", error.0);
         }
     }
@@ -694,7 +711,7 @@ mod tests {
     #[tokio::test]
     async fn inspect_active_config_unavailable_without_a_profile() {
         let f = fixtures();
-        let inspection = dispatch("profiles:inspect-active-config", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap();
+        let inspection = dispatch("profiles:inspect-active-config", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop).await.unwrap();
         assert_eq!(inspection["profileName"], Value::Null);
         assert_eq!(inspection["sections"]["core"]["profileYaml"], "（未配置）");
         assert_eq!(inspection["sections"]["tun"]["notes"][0], "TUN 当前未启用；启用状态和完整 TUN 参数由应用管理。");
@@ -703,6 +720,7 @@ mod tests {
     #[tokio::test]
     async fn inspect_active_config_composes_overrides_and_models() {
         let temp = TempDir::new().unwrap();
+        let icon_root = temp.path().to_path_buf().join("icon-cache");
         let profiles = Arc::new(ProfilesService::for_development(&temp.path().to_path_buf()));
         let profiles_for_import = profiles.clone();
         let imported = profiles_for_import
@@ -724,6 +742,7 @@ mod tests {
             usage: usage::UsageHistoryService::new(usage::UsageHistoryStore::in_memory()),
             kernel: kernel::KernelServices::new(),
             mihomo: mihomo::MihomoServices::new(None),
+            desktop: icons::DesktopServices::new(icon_root),
         };
         // One global override the composition must apply (unified-delay is a
         // CORE_KEYS member, so the core excerpt proves the pipeline ran).
@@ -738,7 +757,7 @@ mod tests {
             .dns
             .set(&serde_json::json!({ "enabled": true, "nameserver": ["tls://223.5.5.5"] }), enhancements::coerce_dns_enhancement)
             .unwrap();
-        let inspection = dispatch("profiles:inspect-active-config", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap();
+        let inspection = dispatch("profiles:inspect-active-config", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop).await.unwrap();
         assert_eq!(inspection["profileName"], "Home");
         let core = &inspection["sections"]["core"];
         assert!(core["effectiveYaml"].as_str().unwrap().contains("unified-delay: true"), "{}", core["effectiveYaml"]);
@@ -758,30 +777,30 @@ mod tests {
     #[tokio::test]
     async fn kernel_channels_flow_through_the_dispatch() {
         let f = fixtures();
-        let status = dispatch("kernel:get-status", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap();
+        let status = dispatch("kernel:get-status", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop).await.unwrap();
         assert_eq!(status["phase"], "stopped");
-        let error = dispatch("kernel:start", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap_err();
+        let error = dispatch("kernel:start", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop).await.unwrap_err();
         assert!(error.0.starts_with("PROTOCOL_ERROR:UNSUPPORTED::Kernel execution is disabled"), "{}", error.0);
-        let status = dispatch("kernel:get-status", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap();
+        let status = dispatch("kernel:get-status", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop).await.unwrap();
         assert_eq!(status["phase"], "failed");
-        let status = dispatch("kernel:stop", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap();
+        let status = dispatch("kernel:stop", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop).await.unwrap();
         assert_eq!(status["phase"], "stopped");
-        let state = dispatch("kernel-manager:get-state", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap();
+        let state = dispatch("kernel-manager:get-state", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop).await.unwrap();
         assert_eq!(state["stableVersion"], "v1.19.30");
-        let state = dispatch("kernel-manager:set-enabled", &serde_json::json!([true]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap();
+        let state = dispatch("kernel-manager:set-enabled", &serde_json::json!([true]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop).await.unwrap();
         assert_eq!(state["error"], "安装 Smart内核失败");
-        let state = dispatch("kernel-manager:set-channel", &serde_json::json!(["specific"]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap();
+        let state = dispatch("kernel-manager:set-channel", &serde_json::json!(["specific"]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop).await.unwrap();
         assert_eq!(state["error"], "当前 Windows 服务模式仅支持安装包内置的稳定内核。");
-        let state = dispatch("kernel-manager:list-versions", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap();
+        let state = dispatch("kernel-manager:list-versions", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop).await.unwrap();
         assert_eq!(state["versions"], serde_json::json!([]));
-        let state = dispatch("kernel-manager:install", &serde_json::json!(["v1.19.31"]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap();
+        let state = dispatch("kernel-manager:install", &serde_json::json!(["v1.19.31"]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop).await.unwrap();
         assert_eq!(state["error"], "当前 Windows 服务模式不能安装指定内核版本。");
     }
 
     #[tokio::test]
     async fn runtime_summary_reflects_the_active_profile() {
         let f = fixtures();
-        let summary = dispatch("runtime:get-summary", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap();
+        let summary = dispatch("runtime:get-summary", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop).await.unwrap();
         assert_eq!(summary["profileName"], "Murge Default");
         let imported = dispatch(
             "profiles:import",
@@ -793,27 +812,27 @@ mod tests {
             &f.models,
             &f.usage,
             &f.kernel,
-            &f.mihomo,
+            &f.mihomo, &f.desktop,
         ).await
         .unwrap();
-        dispatch("profiles:activate", &serde_json::json!([imported["id"]]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap();
-        let summary = dispatch("runtime:get-summary", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap();
+        dispatch("profiles:activate", &serde_json::json!([imported["id"]]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop).await.unwrap();
+        let summary = dispatch("runtime:get-summary", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop).await.unwrap();
         assert_eq!(summary["profileName"], "Home");
-        let external = dispatch("runtime:get-external-ip", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap();
+        let external = dispatch("runtime:get-external-ip", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop).await.unwrap();
         assert_eq!(external, Value::Null);
     }
 
     #[tokio::test]
     async fn unknown_channels_fail_closed_with_unsupported() {
         let f = fixtures();
-        let error = dispatch("kernel:start", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap_err();
+        let error = dispatch("kernel:start", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop).await.unwrap_err();
         assert!(error.0.starts_with("PROTOCOL_ERROR:UNSUPPORTED::"), "{}", error.0);
     }
 
     #[tokio::test]
     async fn non_string_arguments_fail_with_invalid_argument() {
         let f = fixtures();
-        let error = dispatch("profiles:get", &serde_json::json!([42]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap_err();
+        let error = dispatch("profiles:get", &serde_json::json!([42]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop).await.unwrap_err();
         assert!(error.0.contains("INVALID_ARGUMENT"), "{}", error.0);
     }
 }

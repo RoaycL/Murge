@@ -56,6 +56,18 @@ impl IpcError {
         Self::code(code::INTERNAL, message)
     }
 
+    /// Split the wire format back into `(code, message)` for consumers that
+    /// re-shape errors (the stream-error event payload carries both).
+    pub fn parts(&self) -> (&str, &str) {
+        let wire = self.0.as_str();
+        if let Some(rest) = wire.strip_prefix("PROTOCOL_ERROR:") {
+            if let Some(separator) = rest.find("::") {
+                return (&rest[..separator], &rest[separator + 2..]);
+            }
+        }
+        (code::INTERNAL, wire)
+    }
+
     /// The channel has no Rust handler yet (honest fail-closed during the
     /// migration — never a silent no-op).
     pub fn unsupported_channel(channel: &str) -> Self {

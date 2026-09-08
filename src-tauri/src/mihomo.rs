@@ -22,6 +22,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -310,6 +311,35 @@ pub fn parse_mihomo_connections(input: &Value) -> Result<Value, IpcError> {
         ));
     }
     Ok(parsed)
+}
+
+/// Traffic stream frame: `{ up, down, upTotal, downTotal }` + passthrough.
+pub fn parse_mihomo_traffic(input: &Value) -> Result<Value, IpcError> {
+    let object = input
+        .as_object()
+        .ok_or_else(|| invalid_upstream("traffic", "Expected object, received null"))?;
+    expect_number("traffic", object, "up")?;
+    expect_number("traffic", object, "down")?;
+    expect_number("traffic", object, "upTotal")?;
+    expect_number("traffic", object, "downTotal")?;
+    Ok(input.clone())
+}
+
+/// Log stream frame: every field optional; `type` restricted to the 4 levels.
+pub fn parse_mihomo_log(input: &Value) -> Result<Value, IpcError> {
+    if !input.is_object() {
+        return Err(invalid_upstream("log", format!("Expected object, received {}", type_of(input))));
+    }
+    if let Some(kind) = input.get("type") {
+        let kind = kind.as_str().unwrap_or_default();
+        if !matches!(kind, "info" | "warning" | "error" | "debug") {
+            return Err(invalid_upstream(
+                "log",
+                format!("Invalid enum value. Expected 'info' | 'warning' | 'error' | 'debug', received '{kind}'"),
+            ));
+        }
+    }
+    Ok(input.clone())
 }
 
 // ---------------------------------------------------------------------------
@@ -1024,7 +1054,8 @@ const SELECTABLE_GROUP_TYPES: [&str; 3] = ["Selector", "URLTest", "Fallback"];
 /// The service state the renderer-facing mihomo channels run through: the log
 /// buffer, the durable selection store and the bounded provider/group caches.
 pub struct MihomoServices {
-    pub logs: MihomoLogBuffer,
+    /// Shared with the push-stream pipeline (the /logs tap appends here).
+    pub logs: Arc<MihomoLogBuffer>,
     pub selections: ProxySelectionStore,
     mutation: tokio::sync::Mutex<()>,
     provider_owners: Mutex<Option<(Instant, Value)>>,
@@ -1034,7 +1065,7 @@ pub struct MihomoServices {
 impl MihomoServices {
     pub fn new(app_data_base: Option<PathBuf>) -> Self {
         MihomoServices {
-            logs: MihomoLogBuffer::new(),
+            logs: Arc::new(MihomoLogBuffer::new()),
             selections: ProxySelectionStore::new(app_data_base),
             mutation: tokio::sync::Mutex::new(()),
             provider_owners: Mutex::new(None),

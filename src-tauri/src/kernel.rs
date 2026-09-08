@@ -17,6 +17,7 @@ use std::sync::Mutex;
 use serde_json::{json, Value};
 
 use crate::error::IpcError;
+use crate::events::EventHub;
 use crate::settings::SettingsStore;
 
 pub const DISABLED_RESOLVER_MESSAGE: &str =
@@ -51,11 +52,18 @@ fn stopped_status() -> Value {
 pub struct KernelSupervisor {
     status: Mutex<Value>,
     queue: Mutex<()>,
+    /// `status` event listeners — every `setStatus` fans out here (the TS
+    /// supervisor EventEmitter contract; the push forwarder subscribes).
+    pub status_listeners: EventHub,
 }
 
 impl KernelSupervisor {
     pub fn new() -> Self {
-        KernelSupervisor { status: Mutex::new(stopped_status()), queue: Mutex::new(()) }
+        KernelSupervisor {
+            status: Mutex::new(stopped_status()),
+            queue: Mutex::new(()),
+            status_listeners: EventHub::new(),
+        }
     }
 
     pub fn get_status(&self) -> Value {
@@ -69,6 +77,9 @@ impl KernelSupervisor {
                 target.insert(key.clone(), value.clone());
             }
         }
+        let snapshot = status.clone();
+        drop(status);
+        self.status_listeners.emit(&snapshot);
     }
 
     /// Start the kernel. The disabled resolver fails exactly like the Electron
@@ -121,11 +132,13 @@ const DEFAULT_STATE: Value = Value::Null;
 /// the rest is transient state owned by this service.
 pub struct KernelManagerService {
     transient: Mutex<Value>,
+    /// `state` event listeners — every commit fans out here.
+    pub state_listeners: EventHub,
 }
 
 impl KernelManagerService {
     pub fn new() -> Self {
-        KernelManagerService { transient: Mutex::new(DEFAULT_STATE) }
+        KernelManagerService { transient: Mutex::new(DEFAULT_STATE), state_listeners: EventHub::new() }
     }
 
     fn transient_guard(&self) -> std::sync::MutexGuard<'_, Value> {
@@ -176,7 +189,9 @@ impl KernelManagerService {
     }
 
     fn commit(&self, settings: &SettingsStore) -> Value {
-        self.build_state(settings)
+        let state = self.build_state(settings);
+        self.state_listeners.emit(&state);
+        state
     }
 
     /// setEnabled(true) selects Smart, setEnabled(false) back to stable — the

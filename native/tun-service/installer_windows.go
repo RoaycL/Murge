@@ -112,14 +112,18 @@ func installOrUpgradeService(template serviceTemplate, bootstrapDirectory, servi
 	} else if !errors.Is(openErr, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
 		return fmt.Errorf("open existing service: %w", openErr)
 	}
-	if err := os.MkdirAll(serviceHome, 0700); err != nil {
-		return err
-	}
-	if err := secureStateDirectory(serviceHome); err != nil {
-		return err
-	}
-	if err := secureStateDirectory(stateDirectory); err != nil {
-		return err
+	root := filepath.Dir(serviceHome)
+	namespaceRoot := filepath.Dir(root)
+	// Claim and harden each product-owned component from the trusted ProgramData
+	// parent downward. Securing only service/state leaves a pre-created junction
+	// or attacker-owned ancestor able to redirect or replace privileged files.
+	for _, directory := range []string{namespaceRoot, root, serviceHome, stateDirectory} {
+		if err := os.MkdirAll(directory, 0700); err != nil {
+			return err
+		}
+		if err := secureStateDirectory(directory); err != nil {
+			return err
+		}
 	}
 	// The persistent service core resolves GEOIP/GEOSITE databases under its
 	// protected state directory. Seed installer-verified copies before the first
@@ -144,7 +148,7 @@ func installOrUpgradeService(template serviceTemplate, bootstrapDirectory, servi
 	config := serviceConfig{
 		ServiceName: template.ServiceName, PipeName: template.PipeName, AllowedSID: allowedSID,
 		ArchivePath: archivePath, ArchiveSHA256: template.ArchiveSHA256,
-		ArchiveInnerName: template.ArchiveInnerName, StateDirectory: stateDirectory,
+		ArchiveInnerName: template.ArchiveInnerName, StateDirectory: stateDirectory, TrustDirectory: serviceHome,
 		AllowedClientPath: clientPath, AllowedClientSHA256: clientDigest,
 	}
 	configBytes, err := json.Marshal(config)

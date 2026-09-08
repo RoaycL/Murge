@@ -27,8 +27,11 @@ const RANKINGS: Array<{ value: UsageRanking; label: string }> = [
 ]
 
 let timer: ReturnType<typeof setInterval> | null = null
-onMounted(async () => {
-  await store.refresh()
+onMounted(() => {
+  // Arm synchronously: awaiting the first IPC refresh allowed the component to
+  // unmount before timer assignment, after which the continuation leaked an
+  // interval that no mounted instance could clear.
+  void store.refresh()
   timer = setInterval(() => void store.refresh(), 30_000)
 })
 onUnmounted(() => {

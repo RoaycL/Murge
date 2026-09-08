@@ -1,8 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useProfilesStore } from '../stores/profiles'
-import { useProvidersStore } from '../stores/providers'
-import { useKernelStore } from '../stores/kernel'
 import type { ValidationResult } from '@shared/profiles'
 import AppIcon from '../components/AppIcon.vue'
 import AppSelect from '../components/AppSelect.vue'
@@ -12,8 +10,6 @@ import { useToast } from '../composables/use-toast'
 import EmptyState from '../components/EmptyState.vue'
 
 const profilesStore = useProfilesStore()
-const providersStore = useProvidersStore()
-const kernel = useKernelStore()
 const toast = useToast()
 
 const url = ref('')
@@ -38,8 +34,6 @@ const editingUrl = ref('')
 const savingEdit = ref(false)
 
 const menuAnchor = ref<{ id: string; top: number; left: number } | null>(null)
-const refreshingAll = ref(false)
-const batchResult = ref<{ updated: number; failed: number } | null>(null)
 
 const SOURCE_BADGE: Record<string, string> = {
   url: '远程',
@@ -280,68 +274,11 @@ async function saveEditor(): Promise<void> {
   finally { savingEdit.value = false }
 }
 
-async function refreshAllResources(): Promise<void> {
-  refreshingAll.value = true
-  batchResult.value = null
-  try {
-    batchResult.value = await providersStore.refreshAllProviders()
-  } finally {
-    refreshingAll.value = false
-  }
-}
-
-async function loadProviders(): Promise<void> {
-  if (kernel.status.phase !== 'running') return
-  await Promise.all([
-    providersStore.loadProxyProviders(),
-    providersStore.loadRuleProviders()
-  ])
-}
-
 onMounted(() => {
   void profilesStore.load()
-  void loadProviders()
 })
 
-watch(
-  () => kernel.status.phase,
-  (phase, previous) => {
-    if (phase === 'running' && previous !== 'running') void loadProviders()
-  }
-)
-
 const selectedProfile = computed(() => profilesStore.profiles.find((entry) => entry.id === selectedProfileId.value) ?? null)
-const hasResources = computed(
-  () => providersStore.remoteProxyProviders.length + providersStore.remoteRuleProviders.length > 0
-)
-
-function capitalize(s: string): string {
-  return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''
-}
-
-/** Human label for a rule provider's format, e.g. 'yaml' → 'YamlRule'. */
-function ruleFormatLabel(format?: string): string {
-  if (!format) return '规则'
-  const base = format.toLowerCase()
-  if (base === 'yaml') return 'YamlRule'
-  if (base === 'text') return 'TextRule'
-  return `${capitalize(format)}Rule`
-}
-
-function behaviorLabel(behavior?: string): string {
-  if (!behavior) return ''
-  return behavior.toLowerCase() === 'classical' ? 'Classical' : capitalize(behavior)
-}
-
-/** Reference-style meta line for a rule provider, e.g. `YamlRule · 35 分钟前 · HTTP::Classical`. */
-function ruleProviderMeta(
-  provider: { format?: string; updatedAt?: string; vehicleType?: string; behavior?: string }
-): string {
-  const parts: string[] = [ruleFormatLabel(provider.format)]
-  if (provider.updatedAt) parts.push(relativeTime(provider.updatedAt))
-  if (provider.vehicleType) parts.push(`${capitalize(provider.vehicleType)}::${behaviorLabel(provider.behavior)}`)
-  return parts.join(' · ')
-}
 </script>
 
 <template>
@@ -433,100 +370,6 @@ function ruleProviderMeta(
     <ConfirmModal :open="Boolean(pendingDeleteId)" title="删除此配置？" description="这会移除本地配置记录；当前正在使用的配置不能删除，远程订阅源不会受到影响。" @close="pendingDeleteId = null" @confirm="confirmRemove" />
     <Teleport to="body"><div v-if="pendingRenameId" class="modal-shade" @click.self="pendingRenameId = null"><section class="rename-modal" role="dialog" aria-modal="true" aria-label="重命名配置"><header><h2>重命名配置</h2><button type="button" class="icon-control" aria-label="关闭" @click="pendingRenameId = null"><AppIcon name="close" /></button></header><input v-model="renameValue" class="field" autofocus aria-label="配置名称" @keyup.enter="confirmRename" /><footer><button type="button" class="secondary-button" @click="pendingRenameId = null">取消</button><button type="button" class="primary-button" :disabled="!renameValue.trim()" @click="confirmRename">保存</button></footer></section></div></Teleport>
     <Teleport to="body"><div v-if="editingId" class="modal-shade" @click.self="editingId = null"><section class="profile-edit-modal" role="dialog" aria-modal="true" aria-label="编辑配置"><header><div><h2>编辑配置</h2><p>保存前会校验 YAML；正在使用的配置会自动重新加载。</p></div><button type="button" class="icon-control" aria-label="关闭" @click="editingId = null"><AppIcon name="close" /></button></header><label v-if="profilesStore.profiles.find(i => i.id === editingId)?.source.type === 'url'" class="modal-field"><span>订阅地址</span><input v-model="editingUrl" class="field" aria-label="订阅地址（完整）" /></label><label class="modal-field editor-field"><span>配置 YAML</span><textarea v-model="editingDocument" class="field document profile-document-editor" spellcheck="false" aria-label="编辑配置 YAML" /></label><footer><button type="button" class="secondary-button" @click="editingId = null">取消</button><button type="button" class="primary-button" :disabled="savingEdit || !editingDocument.trim()" @click="saveEditor">{{ savingEdit ? '保存中…' : '校验并保存' }}</button></footer></section></div></Teleport>
-
-    <section v-if="false" class="resource-section" aria-hidden="true">
-      <header class="section-heading">
-        <div>
-          <h2>外部资源管理</h2>
-          <p class="section-sub">仅显示已配置远端地址的代理集与规则集，可单独更新或一键全部更新。</p>
-        </div>
-        <button
-          type="button"
-          class="update-all-button"
-          :disabled="refreshingAll || kernel.status.phase !== 'running' || !hasResources"
-          @click="refreshAllResources"
-        >
-          {{ refreshingAll ? '更新中…' : '更新全部' }}
-        </button>
-      </header>
-
-      <p v-if="batchResult" class="batch-result" aria-live="polite">
-        更新完成：成功 {{ batchResult?.updated ?? 0 }} 项<template v-if="batchResult?.failed">，失败 {{ batchResult?.failed ?? 0 }} 项</template>。
-      </p>
-
-      <p v-if="kernel.status.phase !== 'running'" class="empty-note">启动内核后即可管理外部资源。</p>
-      <template v-else>
-        <div class="resource-group">
-          <h3 class="resource-group-title">代理集合</h3>
-          <div v-if="providersStore.proxyStatus === 'loading' || providersStore.proxyStatus === 'idle'" class="empty-state">
-            <p>正在读取代理集合…</p>
-          </div>
-          <div v-else-if="providersStore.remoteProxyProviders.length === 0" class="empty-state">
-            <p>当前配置未引用远端地址的代理集。</p>
-          </div>
-          <div v-else class="resource-list">
-            <div v-for="provider in providersStore.remoteProxyProviders" :key="provider.name" class="resource-row">
-              <div class="resource-info">
-                <span class="resource-name">
-                  {{ provider.name }}<span class="resource-count">（{{ provider.proxies?.length ?? 0 }} 节点）</span>
-                </span>
-                <span class="resource-meta">
-                  <template v-if="provider.updatedAt">{{ relativeTime(provider.updatedAt ?? 0) }}</template>
-                </span>
-                <span v-if="providersStore.opOf(provider.name, 'proxy').error" class="resource-error">
-                  {{ providersStore.opOf(provider.name, 'proxy').error }}
-                </span>
-              </div>
-              <div class="resource-actions">
-                <button
-                  type="button"
-                  class="resource-refresh"
-                  :disabled="providersStore.opOf(provider.name, 'proxy').refreshing"
-                  @click="providersStore.refreshProxyProvider(provider.name)"
-                >{{ providersStore.opOf(provider.name, 'proxy').refreshing ? '更新中' : '更新' }}</button>
-                <button
-                  type="button"
-                  class="resource-refresh"
-                  :disabled="providersStore.opOf(provider.name, 'proxy').healthchecking"
-                  @click="providersStore.healthCheckProxyProvider(provider.name)"
-                >{{ providersStore.opOf(provider.name, 'proxy').healthchecking ? '测速中' : '测速' }}</button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="resource-group">
-          <h3 class="resource-group-title">规则集合</h3>
-          <div v-if="providersStore.ruleStatus === 'loading' || providersStore.ruleStatus === 'idle'" class="empty-state">
-            <p>正在读取规则集合…</p>
-          </div>
-          <div v-else-if="providersStore.remoteRuleProviders.length === 0" class="empty-state">
-            <p>当前配置未引用远端地址的规则集。</p>
-          </div>
-          <div v-else class="resource-list">
-            <div v-for="provider in providersStore.remoteRuleProviders" :key="provider.name" class="resource-row">
-              <div class="resource-info">
-                <span class="resource-name">
-                  {{ provider.name }}<span class="resource-count">（{{ provider.ruleCount ?? 0 }} 条）</span>
-                </span>
-                <span class="resource-meta">{{ ruleProviderMeta(provider) }}</span>
-                <span v-if="providersStore.opOf(provider.name, 'rule').error" class="resource-error">
-                  {{ providersStore.opOf(provider.name, 'rule').error }}
-                </span>
-              </div>
-              <div class="resource-actions">
-                <button
-                  type="button"
-                  class="resource-refresh"
-                  :disabled="providersStore.opOf(provider.name, 'rule').refreshing"
-                  @click="providersStore.refreshRuleProvider(provider.name)"
-                >{{ providersStore.opOf(provider.name, 'rule').refreshing ? '更新中' : '更新' }}</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </template>
-    </section>
 
   </div>
 </template>
@@ -805,123 +648,6 @@ function ruleProviderMeta(
 }
 .card-menu button.danger {
   color: #e05b5b;
-}
-
-.resource-section {
-  margin-top: 36px;
-  background: var(--app-surface);
-  border: 1px solid var(--app-surface-border);
-  border-radius: var(--radius-large);
-  box-shadow: var(--app-shadow);
-  padding: 18px;
-}
-.section-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-.section-heading h2 {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 700;
-}
-.section-sub {
-  margin: 4px 0 0;
-  color: var(--app-muted);
-  font-size: 12px;
-}
-.update-all-button {
-  height: 32px;
-  padding: 0 16px;
-  border: 0;
-  border-radius: var(--radius-control);
-  background: var(--app-purple);
-  color: #fff;
-  font-weight: 600;
-  flex: 0 0 auto;
-}
-.update-all-button:disabled {
-  opacity: 0.5;
-}
-.batch-result {
-  margin: 0 0 8px;
-  color: var(--app-green);
-  font-size: 12px;
-}
-.empty-note {
-  margin: 8px 0 0;
-  color: var(--app-muted);
-  font-size: 12px;
-}
-.resource-group {
-  margin-top: 12px;
-}
-.resource-group-title {
-  margin: 14px 0 8px;
-  font-size: 13px;
-  font-weight: 650;
-  color: var(--app-muted);
-}
-.resource-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.resource-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background: var(--app-surface-solid);
-  border: 1px solid var(--app-divider);
-  border-radius: var(--radius-control);
-  padding: 10px 12px;
-}
-.resource-info {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.resource-name {
-  font-weight: 600;
-  font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.resource-count {
-  margin-left: 6px;
-  color: var(--app-muted);
-  font-size: 12px;
-  font-weight: 500;
-}
-.resource-meta {
-  color: var(--app-muted);
-  font-size: 11px;
-}
-.resource-error {
-  color: #e05b5b;
-  font-size: 11px;
-}
-.resource-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex: 0 0 auto;
-}
-.resource-refresh {
-  border: 1px solid var(--app-divider);
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: var(--app-text);
-  padding: 6px 12px;
-  flex: 0 0 auto;
-}
-.resource-refresh:disabled {
-  opacity: 0.5;
 }
 
 .inline-error {

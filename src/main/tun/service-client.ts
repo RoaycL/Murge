@@ -129,7 +129,9 @@ export class TunServiceClient {
         PROVIDER_PATH_UNAVAILABLE: '该资源没有可读取的缓存路径',
         PROVIDER_CONTENT_TOO_LARGE: '资源内容超过 4 MiB，暂时无法预览',
         PROVIDER_CONTENT_INVALID: '资源缓存不是可显示的文本内容',
-        PROVIDER_MRS_CONVERT_FAILED: 'MRS 规则集转换失败'
+        PROVIDER_CONTENT_READ_FAILED: '读取资源缓存失败，请检查文件权限或重新更新资源',
+        PROVIDER_MRS_CONVERT_FAILED: 'MRS 规则集转换失败',
+        PROVIDER_MRS_CONVERT_TIMEOUT: 'MRS 规则集转换超时'
       }
       fail(ProtocolErrorCode.INTERNAL, messages[response.errorCode ?? ''] ?? response.errorCode ?? `Service returned ${response.outcome}`)
     }

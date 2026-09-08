@@ -19,6 +19,7 @@ use tauri::State;
 use crate::app_info;
 use crate::enhancements;
 use crate::inspection;
+use crate::kernel;
 use crate::usage;
 use crate::brand;
 use crate::error::IpcError;
@@ -41,8 +42,9 @@ pub fn desktop_ipc(
     overrides: State<'_, OverrideService>,
     models: State<'_, enhancements::ModelStores>,
     usage: State<'_, usage::UsageHistoryService>,
+    kernel: State<'_, kernel::KernelServices>,
 ) -> IpcResult {
-    dispatch(&channel, &payload, &paths, &settings, &profiles, &overrides, &models, &usage)
+    dispatch(&channel, &payload, &paths, &settings, &profiles, &overrides, &models, &usage, &kernel)
 }
 
 /// Payload arrays arrive as a JSON array; positional access mirrors the
@@ -86,6 +88,7 @@ pub fn dispatch(
     overrides: &OverrideService,
     models: &enhancements::ModelStores,
     usage: &usage::UsageHistoryService,
+    kernel: &kernel::KernelServices,
 ) -> IpcResult {
     match channel {
         "app:get-brand" => Ok(brand::brand_document()),
@@ -322,6 +325,40 @@ pub fn dispatch(
         "usage-history:clear" => usage.clear().map(|()| Value::Null),
         "usage-history:get-capacity" => Ok(usage.get_capacity()),
 
+        // --- kernel + runtime (Phase 3B) ------------------------------------
+        // The supervisor runs with the DisabledKernelResolver port until the
+        // artifact pipeline lands: start fails with the exact Electron copy
+        // and the status records `failed` + lastError.
+        "kernel:get-status" => Ok(kernel.supervisor.get_status()),
+        "kernel:start" => kernel.supervisor.start(),
+        "kernel:stop" => kernel.supervisor.stop(),
+        "kernel-manager:get-state" => Ok(kernel.manager.get_state(settings)),
+        "kernel-manager:set-enabled" => {
+            let enabled = arg(payload, 0)
+                .and_then(Value::as_bool)
+                .ok_or_else(|| IpcError::invalid_argument("kernel-manager:set-enabled requires a boolean"))?;
+            Ok(kernel.manager.set_enabled(settings, enabled))
+        }
+        "kernel-manager:set-channel" => {
+            let channel = required_string(payload, 0, "kernel-manager:set-channel channel")?;
+            Ok(kernel.manager.set_channel(settings, &channel))
+        }
+        "kernel-manager:list-versions" => Ok(kernel.manager.list_versions(settings)),
+        "kernel-manager:install" => {
+            let version = required_string(payload, 0, "kernel-manager:install version")?;
+            Ok(kernel.manager.install(settings, &version))
+        }
+        "runtime:get-summary" => {
+            let active = profiles.get_active()?;
+            let profile_name = if active.is_null() {
+                None
+            } else {
+                active["meta"]["name"].as_str().map(str::to_string)
+            };
+            Ok(kernel::build_runtime_summary(profile_name.as_deref()))
+        }
+        "runtime:get-external-ip" => Ok(kernel::resolve_external_ip(&kernel.supervisor.get_status())),
+
         _ => Err(IpcError::unsupported_channel(channel)),
     }
 }
@@ -347,6 +384,7 @@ mod tests {
         overrides: OverrideService,
         models: enhancements::ModelStores,
         usage: usage::UsageHistoryService,
+        kernel: kernel::KernelServices,
     }
 
     fn fixtures() -> Fixture {
@@ -357,13 +395,14 @@ mod tests {
         let overrides = OverrideService::new(None);
         let models = enhancements::ModelStores::new(None);
         let usage = usage::UsageHistoryService::new(usage::UsageHistoryStore::in_memory());
-        Fixture { _temp: temp, paths, settings, profiles, overrides, models, usage }
+        let kernel = kernel::KernelServices::new();
+        Fixture { _temp: temp, paths, settings, profiles, overrides, models, usage, kernel }
     }
 
     #[test]
     fn serves_brand_document_from_the_checked_in_file() {
         let f = fixtures();
-        let brand = dispatch("app:get-brand", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage).unwrap();
+        let brand = dispatch("app:get-brand", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel).unwrap();
         assert_eq!(brand["appId"], "io.murge.desktop");
         assert_eq!(brand["protocolScheme"], "murge");
     }
@@ -371,7 +410,7 @@ mod tests {
     #[test]
     fn serves_app_info_in_electron_vocabulary() {
         let f = fixtures();
-        let info = dispatch("app:get-info", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage).unwrap();
+        let info = dispatch("app:get-info", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel).unwrap();
         assert_eq!(info["version"], env!("CARGO_PKG_VERSION"));
         assert!(matches!(
             info["platform"].as_str(),
@@ -382,7 +421,7 @@ mod tests {
     #[test]
     fn settings_round_trip_through_the_dispatch() {
         let f = fixtures();
-        let before = dispatch("app-settings:get", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage).unwrap();
+        let before = dispatch("app-settings:get", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel).unwrap();
         assert_eq!(before["closeToTray"], true);
         let after = dispatch(
             "app-settings:set",
@@ -393,6 +432,7 @@ mod tests {
             &f.overrides,
             &f.models,
             &f.usage,
+            &f.kernel,
         )
         .unwrap();
         assert_eq!(after["closeToTray"], false);
@@ -403,7 +443,7 @@ mod tests {
     #[test]
     fn profile_channels_flow_through_the_dispatch() {
         let f = fixtures();
-        let list = dispatch("profiles:list", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage).unwrap();
+        let list = dispatch("profiles:list", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel).unwrap();
         assert_eq!(list, serde_json::json!([]));
         let meta = dispatch(
             "profiles:import",
@@ -414,6 +454,7 @@ mod tests {
             &f.overrides,
             &f.models,
             &f.usage,
+            &f.kernel,
         )
         .unwrap();
         assert_eq!(meta["name"], "Home");
@@ -427,6 +468,7 @@ mod tests {
             &f.overrides,
             &f.models,
             &f.usage,
+            &f.kernel,
         )
         .unwrap();
         assert_eq!(profile["document"], "port: 7890\n");
@@ -439,6 +481,7 @@ mod tests {
             &f.overrides,
             &f.models,
             &f.usage,
+            &f.kernel,
         )
         .unwrap();
         assert_eq!(meta["active"], true);
@@ -452,7 +495,7 @@ mod tests {
             "profiles:update-from-source",
             "profiles:get-provider-content",
         ] {
-            let error = dispatch(channel, &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage).unwrap_err();
+            let error = dispatch(channel, &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel).unwrap_err();
             assert!(error.0.starts_with("PROTOCOL_ERROR:UNSUPPORTED::"), "{channel}: {}", error.0);
         }
     }
@@ -460,7 +503,7 @@ mod tests {
     #[test]
     fn inspect_active_config_unavailable_without_a_profile() {
         let f = fixtures();
-        let inspection = dispatch("profiles:inspect-active-config", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage).unwrap();
+        let inspection = dispatch("profiles:inspect-active-config", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel).unwrap();
         assert_eq!(inspection["profileName"], Value::Null);
         assert_eq!(inspection["sections"]["core"]["profileYaml"], "（未配置）");
         assert_eq!(inspection["sections"]["tun"]["notes"][0], "TUN 当前未启用；启用状态和完整 TUN 参数由应用管理。");
@@ -488,6 +531,7 @@ mod tests {
             overrides: OverrideService::new(None),
             models: enhancements::ModelStores::new(None),
             usage: usage::UsageHistoryService::new(usage::UsageHistoryStore::in_memory()),
+            kernel: kernel::KernelServices::new(),
         };
         // One global override the composition must apply (unified-delay is a
         // CORE_KEYS member, so the core excerpt proves the pipeline ran).
@@ -502,7 +546,7 @@ mod tests {
             .dns
             .set(&serde_json::json!({ "enabled": true, "nameserver": ["tls://223.5.5.5"] }), enhancements::coerce_dns_enhancement)
             .unwrap();
-        let inspection = dispatch("profiles:inspect-active-config", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage).unwrap();
+        let inspection = dispatch("profiles:inspect-active-config", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel).unwrap();
         assert_eq!(inspection["profileName"], "Home");
         let core = &inspection["sections"]["core"];
         assert!(core["effectiveYaml"].as_str().unwrap().contains("unified-delay: true"), "{}", core["effectiveYaml"]);
@@ -520,16 +564,63 @@ mod tests {
     }
 
     #[test]
+    fn kernel_channels_flow_through_the_dispatch() {
+        let f = fixtures();
+        let status = dispatch("kernel:get-status", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel).unwrap();
+        assert_eq!(status["phase"], "stopped");
+        let error = dispatch("kernel:start", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel).unwrap_err();
+        assert!(error.0.starts_with("PROTOCOL_ERROR:UNSUPPORTED::Kernel execution is disabled"), "{}", error.0);
+        let status = dispatch("kernel:get-status", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel).unwrap();
+        assert_eq!(status["phase"], "failed");
+        let status = dispatch("kernel:stop", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel).unwrap();
+        assert_eq!(status["phase"], "stopped");
+        let state = dispatch("kernel-manager:get-state", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel).unwrap();
+        assert_eq!(state["stableVersion"], "v1.19.30");
+        let state = dispatch("kernel-manager:set-enabled", &serde_json::json!([true]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel).unwrap();
+        assert_eq!(state["error"], "安装 Smart内核失败");
+        let state = dispatch("kernel-manager:set-channel", &serde_json::json!(["specific"]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel).unwrap();
+        assert_eq!(state["error"], "当前 Windows 服务模式仅支持安装包内置的稳定内核。");
+        let state = dispatch("kernel-manager:list-versions", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel).unwrap();
+        assert_eq!(state["versions"], serde_json::json!([]));
+        let state = dispatch("kernel-manager:install", &serde_json::json!(["v1.19.31"]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel).unwrap();
+        assert_eq!(state["error"], "当前 Windows 服务模式不能安装指定内核版本。");
+    }
+
+    #[test]
+    fn runtime_summary_reflects_the_active_profile() {
+        let f = fixtures();
+        let summary = dispatch("runtime:get-summary", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel).unwrap();
+        assert_eq!(summary["profileName"], "Murge Default");
+        let imported = dispatch(
+            "profiles:import",
+            &serde_json::json!([{ "name": "Home", "document": "port: 7890\n", "source": { "type": "manual" } }]),
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+        )
+        .unwrap();
+        dispatch("profiles:activate", &serde_json::json!([imported["id"]]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel).unwrap();
+        let summary = dispatch("runtime:get-summary", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel).unwrap();
+        assert_eq!(summary["profileName"], "Home");
+        let external = dispatch("runtime:get-external-ip", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel).unwrap();
+        assert_eq!(external, Value::Null);
+    }
+
+    #[test]
     fn unknown_channels_fail_closed_with_unsupported() {
         let f = fixtures();
-        let error = dispatch("kernel:start", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage).unwrap_err();
+        let error = dispatch("kernel:start", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel).unwrap_err();
         assert!(error.0.starts_with("PROTOCOL_ERROR:UNSUPPORTED::"), "{}", error.0);
     }
 
     #[test]
     fn non_string_arguments_fail_with_invalid_argument() {
         let f = fixtures();
-        let error = dispatch("profiles:get", &serde_json::json!([42]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage).unwrap_err();
+        let error = dispatch("profiles:get", &serde_json::json!([42]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel).unwrap_err();
         assert!(error.0.contains("INVALID_ARGUMENT"), "{}", error.0);
     }
 }

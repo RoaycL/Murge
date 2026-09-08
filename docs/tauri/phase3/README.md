@@ -235,6 +235,40 @@ Rust ports of `main/profiles/profile-config-inspection.ts`,
 - `documentDnsEnabled` (TUN dns-hijack decision input) ports with the 3D
   privileged slice.
 
+### 7. Kernel supervisor + version manager + runtime summary (`src-tauri/src/kernel.rs`)
+
+First Phase 3B slice — the lifecycle state machines, channel-ready:
+
+- `KernelSupervisor` ports the TS state machine with the serialized-queue
+  semantics (`start`/`stop` run one at a time): `get-status`, `start`
+  (already running/starting/stopping is idempotent; a fresh start runs the
+  resolver step), `stop` (idempotent on `stopped`, clean `stopped` landing
+  with `lastError` cleared). The binary resolver is the
+  `DisabledKernelResolver` port — a fresh start records `phase: failed` +
+  the exact Electron copy (Kernel execution is disabled…) as `lastError` and
+  propagates the same UNSUPPORTED error, until the artifact pipeline lands.
+- `KernelManagerService` ports `buildState` (settings-mirrored channel +
+  specific version, pinned stable version `v1.19.30` from
+  `resources/mihomo-assets.json`, effective-version labels `预览版`/`Smart`),
+  `setEnabled` -> smart/stable delegation, `setChannel` (same-channel no-op
+  clearing the error, `specific` rejected with the service-mode copy,
+  preview/smart attempt-then-rollback with the 安装…内核失败 copy and the
+  previous settings untouched), `listVersions`/`install` (the GitHub-API
+  downloader stages with the network slice; the unsupported guards fire with
+  the verbatim copies, invalid version tags rejected first with
+  无效的版本号：…). `specificVersionsSupported` is false in this milestone,
+  which byte-for-byte matches the Electron service-mode behavior.
+- `runtime:get-summary` ports `buildRuntimeSummary` with its fail-safe
+  fallbacks (mode `rule` when the controller is unreachable — which it always
+  is in this milestone —, ACTIVE profile name or the brand default
+  `Murge Default`, ownership flags false); `runtime:get-external-ip` returns
+  null unless the kernel runs (the probe lands with the controller client).
+- 10 channels live: `kernel:get-status|start|stop`,
+  `kernel-manager:get-state|set-enabled|set-channel|list-versions|install`,
+  `runtime:get-summary|get-external-ip`. Status/events (`kernel:status-event`
+  etc.) emit with the controller slice, when transitions actually occur at
+  runtime.
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,
@@ -256,20 +290,22 @@ the Rust dispatch (mechanical scan, not a manual claim):
 
 - **121 real channels** in the Electron surface (two earlier apparent extras
   were TypeScript type literals, not channels).
-- **50 live** in the Rust dispatch: `app:get-brand|get-info`,
+- **60 live** in the Rust dispatch: `app:get-brand|get-info`,
   `app-settings:get|set`, 14 of 17 `profiles:*`, all 10 `overrides:*`
   (JS kind fails open inside `validate`/`apply`), all 15 typed-model
-  `get|set|preview` channels, all 4 `usage-history:*`.
-- **71 intentionally fail closed** with `PROTOCOL_ERROR:UNSUPPORTED` via the
-  dispatch fallthrough, mapping exactly to the later phases: kernel +
-  kernel-manager + mihomo + runtime + streams (3B), subscription fetching +
+  `get|set|preview` channels, all 4 `usage-history:*`, `kernel:get-status|
+  start|stop`, `kernel-manager:get-state|set-enabled|set-channel|
+  list-versions|install`, `runtime:get-summary|get-external-ip`.
+- **61 intentionally fail closed** with `PROTOCOL_ERROR:UNSUPPORTED` via the
+  dispatch fallthrough, mapping exactly to the later phases: mihomo +
+  streams (3B controller slice), subscription fetching +
   Sub-Store + icons + network-interfaces (3C), system-proxy + TUN lifecycle +
   privileged provider content (3D), startup + tray-adjacent (4), updates (5).
   No channel is silently dropped or no-ops.
 
 ## Verification (Linux ARM64, real execution)
 
-- Rust: `cargo test` — **150 passed / 0 failed**, zero warnings:
+- Rust: `cargo test` — **160 passed / 0 failed**, zero warnings:
   - brand parse/gate (1), app-info vocabulary (2), paths namespace/dev (3),
   - settings store: defaults, quarantine, atomic format, patch merge,
     delayTestUrl read/set split, dev memory store, field salvage (7),
@@ -312,7 +348,11 @@ the Rust dispatch (mechanical scan, not a manual claim):
   - inspection: kernel-config forcing/stripping (3), core/geodata readback +
     panel (2), option rejections (1), DNS/sniffer apply merge + fail-open +
     disabled (2), inspection sections/notes/masking/empty (2), dispatch:
-    inspect unavailable-without-profile + full composition (2).
+    inspect unavailable-without-profile + full composition (2),
+  - kernel: supervisor start-fail/stop-idempotent (2), manager defaults/
+    channel transitions/enabled delegation/staged list+install (4), runtime
+    summary profile-or-default + external-ip null (2), dispatch: kernel
+    channels + runtime summary (2).
 - TypeScript: `npm run typecheck` green; `npx vitest run` 1905 passed / 7
   skipped (unchanged — renderer untouched by this slice).
 

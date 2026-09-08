@@ -13,9 +13,15 @@
 
 mod app_info;
 mod brand;
+mod error;
 mod ipc;
 mod paths;
+mod profile_parse;
+mod profile_service;
+mod profiles;
+mod redact;
 mod settings;
+mod validate;
 
 use tauri::Manager;
 
@@ -38,12 +44,24 @@ pub fn run() {
             // (Electron queues links; Phase 7 decides the UI reaction).
         }))
         .setup(|app| {
-            // Dev builds never persist real user data: the settings store
-            // stays in-memory when the probed paths are None.
+            // Dev builds never persist real user data: an ephemeral workspace
+            // backs the profile store and secrets stay in memory. Production
+            // uses the brand-stable app-data namespace + OS credential store.
             let paths = paths::AppPaths::probe();
             let store = settings::SettingsStore::for_environment(&paths);
+            let profiles = match &paths.profile_root {
+                Some(root) => profile_service::ProfilesService::for_paths(
+                    root,
+                    &paths::app_data_namespace(),
+                ),
+                None => {
+                    let temp = std::env::temp_dir().join(format!("murge-dev-profiles-{}", std::process::id()));
+                    profile_service::ProfilesService::for_development(&temp)
+                }
+            };
             app.manage(paths);
             app.manage(store);
+            app.manage(profiles);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![ipc::desktop_ipc])

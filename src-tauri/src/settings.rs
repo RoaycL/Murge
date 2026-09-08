@@ -9,7 +9,7 @@
 //!   then defaults.
 //! - Parse: per-field type check against defaults (`parseAppSettings` mirror);
 //!   `kernelEnabled` is a deprecated field always normalized to true;
-//!   `delayTestUrl` accepts only absolute http(s) URLs.
+//!   `delayTestUrl` accepts only absolute http(s) URLs on the READ path.
 //! - Write: mkdir -p, temp file `.app-settings.json.<uuid>.tmp`, 2-space
 //!   pretty JSON + trailing newline, atomic rename.
 //! - Set: the patch merge mirrors the TS service field-for-field (unknown
@@ -68,8 +68,9 @@ impl Default for AppSettings {
     }
 }
 
-/// Mirror of TS `parseDelayTestUrl`: absolute http(s) URLs only.
-fn parse_delay_test_url(value: Option<&serde_json::Value>) -> String {
+/// Mirror of TS `parseDelayTestUrl`: absolute http(s) URLs only. Used on the
+/// READ path — the TS set() stores the raw string.
+pub fn parse_delay_test_url(value: Option<&serde_json::Value>) -> String {
     let Some(value) = value.and_then(|v| v.as_str()) else {
         return String::new();
     };

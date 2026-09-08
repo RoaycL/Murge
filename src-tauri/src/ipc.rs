@@ -17,33 +17,10 @@ use tauri::State;
 
 use crate::app_info;
 use crate::brand;
-use crate::settings::{AppSettingsPatch, SettingsStore};
+use crate::error::IpcError;
 use crate::paths::AppPaths;
-
-/// A failed IPC call. Serialized to the ProtocolError wire string so the
-/// renderer-side decoder stays the single error mapping for both shells.
-#[derive(Debug)]
-pub struct IpcError(pub String);
-
-impl serde::Serialize for IpcError {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.0)
-    }
-}
-
-impl IpcError {
-    pub fn new(code: &str, message: impl Into<String>) -> Self {
-        IpcError(format!("PROTOCOL_ERROR:{code}::{}", message.into()))
-    }
-
-    pub fn invalid_argument(message: impl Into<String>) -> Self {
-        Self::new("INVALID_ARGUMENT", message)
-    }
-
-    pub fn unsupported(channel: &str) -> Self {
-        Self::new("UNSUPPORTED", format!("channel '{channel}' has no Tauri handler yet (planned Phase 3 slice)"))
-    }
-}
+use crate::profile_service::ProfilesService;
+use crate::settings::{AppSettingsPatch, SettingsStore};
 
 pub type IpcResult = Result<Value, IpcError>;
 
@@ -55,55 +32,143 @@ pub fn desktop_ipc(
     payload: Value,
     paths: State<'_, AppPaths>,
     settings: State<'_, SettingsStore>,
+    profiles: State<'_, ProfilesService>,
 ) -> IpcResult {
-    dispatch(&channel, &payload, &paths, &settings)
+    dispatch(&channel, &payload, &paths, &settings, &profiles)
+}
+
+/// Payload arrays arrive as a JSON array; positional access mirrors the
+/// preload's argument order.
+fn arg(payload: &Value, index: usize) -> Option<&Value> {
+    payload.get(index)
+}
+
+fn string_arg(payload: &Value, index: usize) -> Option<String> {
+    arg(payload, index).and_then(Value::as_str).map(str::to_string)
 }
 
 /// Channel dispatch table. Phase 3 slices extend this match; channels that do
 /// not yet have a Rust handler fail closed with UNSUPPORTED (never silently
 /// no-op), so the renderer sees an honest error during the migration. The
 /// `paths` parameter is part of the stable dispatch signature from day one —
-/// the profile/log/usage slices (3A) consume it.
+/// the log/usage slices (3A) consume it.
 pub fn dispatch(
     channel: &str,
     payload: &Value,
     _paths: &AppPaths,
     settings: &SettingsStore,
+    profiles: &ProfilesService,
 ) -> IpcResult {
     match channel {
         "app:get-brand" => Ok(brand::brand_document()),
         "app:get-info" => Ok(app_info::app_info(env!("CARGO_PKG_VERSION"))),
         "app-settings:get" => Ok(serde_json::to_value(settings.get()).expect("settings serialize")),
         "app-settings:set" => {
-            let patch: AppSettingsPatch = serde_json::from_value(payload.clone())
+            // The bridge sends positional args; the patch is args[0].
+            let patch_value = arg(payload, 0).cloned().unwrap_or(Value::Null);
+            let patch: AppSettingsPatch = serde_json::from_value(patch_value)
                 .map_err(|_| IpcError::invalid_argument("app-settings:set payload must be a JSON object"))?;
             Ok(serde_json::to_value(settings.set(&patch)).expect("settings serialize"))
         }
-        _ => Err(IpcError::unsupported(channel)),
+
+        // --- profiles (Phase 3A) -------------------------------------------
+        "profiles:list" => profiles.list(),
+        "profiles:get" => profiles.get(&required_string(payload, 0, "profiles:get id")?),
+        "profiles:import" => {
+            let request = arg(payload, 0)
+                .ok_or_else(|| IpcError::invalid_argument("profiles:import requires a request object"))?;
+            profiles.import(request)
+        }
+        "profiles:import-from-url" => Err(IpcError::unsupported(
+            "profiles:import-from-url needs the subscription fetcher (Phase 3C network slice)",
+        )),
+        "profiles:update-from-source" => Err(IpcError::unsupported(
+            "profiles:update-from-source needs the subscription fetcher (Phase 3C network slice)",
+        )),
+        "profiles:activate" => profiles.activate(&required_string(payload, 0, "profiles:activate id")?),
+        "profiles:delete" => profiles.delete(&required_string(payload, 0, "profiles:delete id")?),
+        "profiles:rename" => profiles.rename(
+            &required_string(payload, 0, "profiles:rename id")?,
+            &string_arg(payload, 1).unwrap_or_default(),
+        ),
+        "profiles:edit-document" => {
+            let raw_edits: Vec<serde_json::Value> = arg(payload, 1)
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let edits: Vec<crate::profiles::ConfigEdit> = raw_edits
+                .iter()
+                .filter_map(|edit| {
+                    Some(crate::profiles::ConfigEdit {
+                        key: edit.get("key")?.as_str()?.to_string(),
+                        value: edit.get("value")?.as_str()?.to_string(),
+                    })
+                })
+                .collect();
+            profiles.edit_document(&required_string(payload, 0, "profiles:edit-document id")?, &edits)
+        }
+        "profiles:replace-document" => profiles.replace_document(
+            &required_string(payload, 0, "profiles:replace-document id")?,
+            &string_arg(payload, 1).unwrap_or_default(),
+        ),
+        "profiles:get-source-url" => profiles.get_source_url(&required_string(payload, 0, "profiles:get-source-url id")?),
+        "profiles:set-source-url" => profiles.set_source_url(
+            &required_string(payload, 0, "profiles:set-source-url id")?,
+            &string_arg(payload, 1).unwrap_or_default(),
+        ),
+        "profiles:validate" => profiles.validate(&string_arg(payload, 0).unwrap_or_default()),
+        "profiles:get-active-group-order" => profiles.get_active_group_order(),
+        "profiles:get-active-provider-catalog" => profiles.get_active_provider_catalog(),
+        "profiles:get-provider-content" => Err(IpcError::unsupported(
+            "profiles:get-provider-content reads provider caches through the privileged Go service (Phase 3D)",
+        )),
+        "profiles:inspect-active-config" => Err(IpcError::unsupported(
+            "profiles:inspect-active-config composes the effective document with overrides + TUN (Phase 3 slices)",
+        )),
+
+        _ => Err(IpcError::unsupported_channel(channel)),
     }
+}
+
+fn required_string(payload: &Value, index: usize, what: &'static str) -> Result<String, IpcError> {
+    string_arg(payload, index)
+        .ok_or_else(|| IpcError::invalid_argument(format!("{what} must be a string")))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::profile_service::ProfilesService;
     use crate::settings::SettingsStore;
+    use tempfile::TempDir;
 
-    fn fixtures() -> (AppPaths, SettingsStore) {
-        (AppPaths { app_data_root: None, profile_root: None }, SettingsStore::new(None))
+    struct Fixture {
+        _temp: TempDir,
+        paths: AppPaths,
+        settings: SettingsStore,
+        profiles: ProfilesService,
+    }
+
+    fn fixtures() -> Fixture {
+        let temp = TempDir::new().unwrap();
+        let paths = AppPaths { app_data_root: None, profile_root: None };
+        let settings = SettingsStore::new(None);
+        let profiles = ProfilesService::for_development(&temp.path().to_path_buf());
+        Fixture { _temp: temp, paths, settings, profiles }
     }
 
     #[test]
     fn serves_brand_document_from_the_checked_in_file() {
-        let (paths, settings) = fixtures();
-        let brand = dispatch("app:get-brand", &Value::Null, &paths, &settings).unwrap();
+        let f = fixtures();
+        let brand = dispatch("app:get-brand", &Value::Null, &f.paths, &f.settings, &f.profiles).unwrap();
         assert_eq!(brand["appId"], "io.murge.desktop");
         assert_eq!(brand["protocolScheme"], "murge");
     }
 
     #[test]
     fn serves_app_info_in_electron_vocabulary() {
-        let (paths, settings) = fixtures();
-        let info = dispatch("app:get-info", &Value::Null, &paths, &settings).unwrap();
+        let f = fixtures();
+        let info = dispatch("app:get-info", &Value::Null, &f.paths, &f.settings, &f.profiles).unwrap();
         assert_eq!(info["version"], env!("CARGO_PKG_VERSION"));
         assert!(matches!(
             info["platform"].as_str(),
@@ -113,14 +178,15 @@ mod tests {
 
     #[test]
     fn settings_round_trip_through_the_dispatch() {
-        let (paths, settings) = fixtures();
-        let before = dispatch("app-settings:get", &Value::Null, &paths, &settings).unwrap();
+        let f = fixtures();
+        let before = dispatch("app-settings:get", &Value::Null, &f.paths, &f.settings, &f.profiles).unwrap();
         assert_eq!(before["closeToTray"], true);
         let after = dispatch(
             "app-settings:set",
-            &serde_json::json!({ "closeToTray": false }),
-            &paths,
-            &settings,
+            &serde_json::json!([{ "closeToTray": false }]),
+            &f.paths,
+            &f.settings,
+            &f.profiles,
         )
         .unwrap();
         assert_eq!(after["closeToTray"], false);
@@ -129,9 +195,65 @@ mod tests {
     }
 
     #[test]
+    fn profile_channels_flow_through_the_dispatch() {
+        let f = fixtures();
+        let list = dispatch("profiles:list", &Value::Null, &f.paths, &f.settings, &f.profiles).unwrap();
+        assert_eq!(list, serde_json::json!([]));
+        let meta = dispatch(
+            "profiles:import",
+            &serde_json::json!([{ "name": "Home", "document": "port: 7890\n", "source": { "type": "manual" } }]),
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+        )
+        .unwrap();
+        assert_eq!(meta["name"], "Home");
+        let id = meta["id"].as_str().unwrap().to_string();
+        let profile = dispatch(
+            "profiles:get",
+            &serde_json::json!([id]),
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+        )
+        .unwrap();
+        assert_eq!(profile["document"], "port: 7890\n");
+        let meta = dispatch(
+            "profiles:activate",
+            &serde_json::json!([id]),
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+        )
+        .unwrap();
+        assert_eq!(meta["active"], true);
+    }
+
+    #[test]
+    fn staged_channels_fail_closed_with_unsupported() {
+        let f = fixtures();
+        for channel in [
+            "profiles:import-from-url",
+            "profiles:update-from-source",
+            "profiles:get-provider-content",
+            "profiles:inspect-active-config",
+        ] {
+            let error = dispatch(channel, &Value::Null, &f.paths, &f.settings, &f.profiles).unwrap_err();
+            assert!(error.0.starts_with("PROTOCOL_ERROR:UNSUPPORTED::"), "{channel}: {}", error.0);
+        }
+    }
+
+    #[test]
     fn unknown_channels_fail_closed_with_unsupported() {
-        let (paths, settings) = fixtures();
-        let error = dispatch("kernel:start", &Value::Null, &paths, &settings).unwrap_err();
+        let f = fixtures();
+        let error = dispatch("kernel:start", &Value::Null, &f.paths, &f.settings, &f.profiles).unwrap_err();
         assert!(error.0.starts_with("PROTOCOL_ERROR:UNSUPPORTED::"), "{}", error.0);
+    }
+
+    #[test]
+    fn non_string_arguments_fail_with_invalid_argument() {
+        let f = fixtures();
+        let error = dispatch("profiles:get", &serde_json::json!([42]), &f.paths, &f.settings, &f.profiles).unwrap_err();
+        assert!(error.0.contains("INVALID_ARGUMENT"), "{}", error.0);
     }
 }

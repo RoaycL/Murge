@@ -20,9 +20,15 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# preserve_order: profile metadata JSON is written byte-compatibly with the
+# Electron service, whose `JSON.stringify` emits object keys in insertion
+# order (BTreeMap's alphabetical order would rewrite every meta file).
+serde_json = { version = "1", features = ["preserve_order"] }
 uuid = { version = "1", features = ["v4"] }
 url = "2"
+regex = "1"
+yaml-rust2 = "0.12"
+keyring = { version = "3", features = ["windows-native"] }
 
 [dev-dependencies]
 tempfile = "3"

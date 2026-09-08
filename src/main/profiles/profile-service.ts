@@ -138,23 +138,22 @@ export class ProfileService implements ProfileGateway {
   }
 
   /**
-   * Fetch a subscription over the direct route, retrying once through the
-   * system-proxy-aware fallback transport when the direct transport itself
-   * fails (DNS / TLS / connect / abort — NOT HTTP error statuses, which a
-   * retry cannot improve). ADD and UPDATE share this path so both behave
-   * identically in networks where the subscription host is only reachable
-   * through the tunnel.
+   * Prefer the system-proxy-aware transport when production wired one. This
+   * avoids waiting for the full direct timeout on hosts that are reachable only
+   * through the active proxy/TUN. A transport failure falls back to direct;
+   * HTTP failures do not, because changing routes cannot repair a 4xx/5xx.
    */
   private async fetchSubscription(url: string) {
+    if (!this.fetcher.hasProxyTransport()) return this.fetcher.fetch(url)
     try {
-      return await this.fetcher.fetch(url)
+      return await this.fetcher.fetch(url, { viaProxy: true })
     } catch (error) {
       if (!isTransportFailure(error)) throw error
       try {
-        return await this.fetcher.fetch(url, { viaProxy: true })
+        return await this.fetcher.fetch(url)
       } catch {
-        // The fallback also failed — surface the ORIGINAL direct error so the
-        // user sees the failure they recognize instead of a second message.
+        // Both routes failed — keep the preferred-route failure because it is
+        // the one matching the user's current proxy/TUN network path.
         throw error
       }
     }

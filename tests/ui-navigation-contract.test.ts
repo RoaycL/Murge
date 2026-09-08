@@ -86,8 +86,12 @@ describe('Surge-inspired UI navigation contract', () => {
 
   it('consolidates connection navigation and moves activity details to their data surfaces', () => {
     const connections = read('src/renderer/src/views/ConnectionsView.vue')
+    const css = read('src/renderer/src/styles/base.css')
     expect(connections).toContain('活动中')
     expect(connections).toContain('已关闭')
+    expect(connections.match(/connection-toolbar-action/g)).toHaveLength(2)
+    expect(css).toMatch(/\.connections-toolbar \.connection-toolbar-action \{[^}]*flex: 0 0 120px;[^}]*width: 120px;[^}]*height: 32px;/)
+    expect(css).toContain('.connections-toolbar .search-control { height: 32px; }')
     expect(connections).toContain('<ProcessIcon')
     expect(read('src/renderer/src/components/ProcessIcon.vue')).toContain('getProcessIcon')
     const activity = read('src/renderer/src/views/ActivityView.vue')
@@ -103,6 +107,12 @@ describe('Surge-inspired UI navigation contract', () => {
     expect(policy).not.toContain('机场订阅')
     expect(policy).toContain('class="policy-group-grid"')
     expect(policy.indexOf('策略组')).toBeLessThan(policy.indexOf('class="node-grid"'))
+  })
+
+  it('keeps the rules ID column in source order without a sort control', () => {
+    const rules = read('src/renderer/src/views/RulesView.vue')
+    expect(rules).toContain("{ key: null, label: 'ID' }")
+    expect(rules).not.toContain("{ key: 'index', label: 'ID' }")
   })
 
   it('prevents accidental page text selection while preserving editable fields', () => {

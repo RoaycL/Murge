@@ -10,7 +10,7 @@ const providers = useProvidersStore()
 const kernel = useKernelStore()
 
 const COLUMNS: Array<{ key: RulesSortKey | null; label: string; className?: string }> = [
-  { key: 'index', label: 'ID' },
+  { key: null, label: 'ID' },
   { key: 'type', label: '类型' },
   { key: 'payload', label: '值' },
   { key: 'proxy', label: '策略' },

@@ -368,7 +368,30 @@ describe('providers store', () => {
     expect(result).toEqual({ updated: 1, failed: 0 })
   })
 
-  it('refreshAllProxyProviders updates remote proxy providers one at a time with failure isolation', async () => {
+  it('refreshAllRuleProviders also limits the batch to two concurrent pulls', async () => {
+    getRuleProviders.mockResolvedValue({
+      providers: {
+        '规则集 A': { name: '规则集 A', type: 'Rule', behavior: 'rule', vehicleType: 'HTTP' },
+        '规则集 B': { name: '规则集 B', type: 'Rule', behavior: 'rule', vehicleType: 'HTTP' },
+        '规则集 C': { name: '规则集 C', type: 'Rule', behavior: 'rule', vehicleType: 'HTTP' }
+      }
+    })
+    let inflight = 0
+    let maxInflight = 0
+    refreshRuleProvider.mockImplementation(async () => {
+      inflight++
+      maxInflight = Math.max(maxInflight, inflight)
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      inflight--
+    })
+    const store = useProvidersStore()
+    await store.loadRuleProviders()
+
+    expect(await store.refreshAllRuleProviders()).toEqual({ updated: 3, failed: 0 })
+    expect(maxInflight).toBe(2)
+  })
+
+  it('refreshAllProxyProviders uses bounded concurrency with failure isolation', async () => {
     getProxyProviders.mockResolvedValue({
       providers: {
         '机场 A': { name: '机场 A', type: 'Proxy', vehicleType: 'HTTP' },
@@ -391,9 +414,9 @@ describe('providers store', () => {
     const store = useProvidersStore()
     await store.loadProxyProviders()
     const result = await store.refreshAllProxyProviders()
-    // Serialized batch: at most ONE provider update in flight at any moment —
-    // the anti-503 contract — and failures never stop the remaining providers.
-    expect(maxInflight).toBe(1)
+    // Two workers prevent one slow provider from blocking the whole queue while
+    // keeping request pressure bounded; failures never stop later providers.
+    expect(maxInflight).toBe(2)
     expect(order).toEqual(['机场 A', '机场 B', '机场 C'])
     expect(store.opOf('机场 B').error).toBe('b failed')
     expect(store.opOf('机场 A').error).toBeNull()

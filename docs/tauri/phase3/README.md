@@ -495,6 +495,32 @@ Fifth Phase 3C slice — the last 3C network channels, 2 un-staged:
 - Un-staged `network:unlock-test-all|unlock-test-one` (**91/121 live
   invoke arms**, 30 fail-closed).
 
+### 15. OS login-item state (`src-tauri/src/startup.rs`)
+
+Sixth Phase 3C slice — 开机自启, 2 channels un-staged (Phase 4 prep, the
+invoke surface first):
+
+- The `ScheduledTaskStartupAdapter` ladder ports verbatim: per-user
+  Scheduled Task via `schtasks /query|create|delete /tn io.murge.desktop`
+  (the byte-verbatim logon-trigger XML with `Delay PT3S`, `Priority 3`,
+  `LeastPrivilege`, `ExecutionTimeLimit PT0S`, UTF-16 BOM task file), the
+  stable HKCU Run-key fallback written and verified directly, and the
+  legacy plain-Run-value adapter behind it. A present task owns the
+  registration; task creation denied degrades to the Run key, and the
+  legacy entry is retired the moment the task owns registration.
+- The service serializes operations (read-after-write ownership),
+  reports divergence without pretending the requested value won
+  (`系统未确认开机启动设置`), and fails closed `unsupported` off-Windows.
+- `refreshRegistration` maintenance ports with its triggers: the one-shot
+  non-blocking pass at shell startup (migrates v0.9.x Run-key users to the
+  task, rewrites stale `--hidden` args) and the `app-settings:set` hook
+  when `silentLaunch` moves.
+- The runner is injectable (8s timeout, CREATE_NO_WINDOW, 1 MiB cap on the
+  real `schtasks`/`reg` children), so the win32 ladder is exercised
+  off-Windows exactly like the TS tests.
+- Un-staged `startup:get-status|set-enabled` (**93/121 live invoke arms**,
+  28 fail-closed).
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,
@@ -532,7 +558,7 @@ the Rust dispatch (mechanical scan, not a manual claim):
 
 ## Verification (Linux ARM64, real execution)
 
-- Rust: `cargo test` — **218 passed / 0 failed**, zero warnings:
+- Rust: `cargo test` — **223 passed / 0 failed**, zero warnings:
   - brand parse/gate (1), app-info vocabulary (2), paths namespace/dev (3),
   - settings store: defaults, quarantine, atomic format, patch merge,
     delayTestUrl read/set split, dev memory store, field salvage (7),

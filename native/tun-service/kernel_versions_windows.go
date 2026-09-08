@@ -51,7 +51,13 @@ type cachedCoreMarker struct {
 }
 
 type versionTrustCatalog struct {
-	Versions map[string]cachedCoreMarker `json:"versions"`
+	Versions map[string]cachedCoreMarker  `json:"versions"`
+	Channels map[string]rollingChannelRef `json:"channels,omitempty"`
+}
+
+type rollingChannelRef struct {
+	Current  string `json:"current"`
+	Previous string `json:"previous,omitempty"`
 }
 
 const versionTrustFilename = "version-trust.json"
@@ -64,11 +70,34 @@ func validTrustedMarker(version string, marker cachedCoreMarker) bool {
 		marker.ArchiveBytes > 0 && marker.ArchiveBytes <= maxCoreBytes
 }
 
+func isRollingVersion(version string) bool {
+	return version == "preview" || version == "smart"
+}
+
+func trustKeyForMarker(marker cachedCoreMarker) string {
+	if isRollingVersion(marker.Version) {
+		return marker.Version + "@" + marker.ArchiveSHA
+	}
+	return marker.Version
+}
+
+func validTrustEntry(key string, marker cachedCoreMarker) bool {
+	if !validTrustedMarker(marker.Version, marker) {
+		return false
+	}
+	// Accept the fixed-key preview/smart layout written by v0.9.4 so an existing
+	// verified cache remains usable until the first digest-keyed refresh.
+	return key == trustKeyForMarker(marker) || (isRollingVersion(marker.Version) && key == marker.Version)
+}
+
 func (runtime *windowsRuntime) loadVersionTrust() (versionTrustCatalog, error) {
 	path := filepath.Join(runtime.config.TrustDirectory, versionTrustFilename)
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return versionTrustCatalog{Versions: make(map[string]cachedCoreMarker)}, nil
+		return versionTrustCatalog{
+			Versions: make(map[string]cachedCoreMarker),
+			Channels: make(map[string]rollingChannelRef),
+		}, nil
 	}
 	if err != nil {
 		return versionTrustCatalog{}, err
@@ -80,9 +109,26 @@ func (runtime *windowsRuntime) loadVersionTrust() (versionTrustCatalog, error) {
 	if err := json.Unmarshal(data, &catalog); err != nil || catalog.Versions == nil {
 		return versionTrustCatalog{}, errors.New("version trust catalog is invalid")
 	}
-	for version, marker := range catalog.Versions {
-		if !versionPattern.MatchString(version) || !validTrustedMarker(version, marker) {
+	if catalog.Channels == nil {
+		catalog.Channels = make(map[string]rollingChannelRef)
+	}
+	for key, marker := range catalog.Versions {
+		if !validTrustEntry(key, marker) {
 			return versionTrustCatalog{}, errors.New("version trust catalog contains an invalid entry")
+		}
+	}
+	for channel, ref := range catalog.Channels {
+		if !isRollingVersion(channel) || ref.Current == "" {
+			return versionTrustCatalog{}, errors.New("version trust catalog contains an invalid channel")
+		}
+		for _, key := range []string{ref.Current, ref.Previous} {
+			if key == "" {
+				continue
+			}
+			marker, exists := catalog.Versions[key]
+			if !exists || marker.Version != channel || !validTrustEntry(key, marker) {
+				return versionTrustCatalog{}, errors.New("version trust catalog channel target is invalid")
+			}
 		}
 	}
 	return catalog, nil
@@ -96,18 +142,121 @@ func (runtime *windowsRuntime) storeVersionTrust(marker cachedCoreMarker) error 
 	if err != nil {
 		return err
 	}
-	if pinned, exists := catalog.Versions[marker.Version]; exists {
+	key := trustKeyForMarker(marker)
+	if pinned, exists := catalog.Versions[key]; exists {
 		if pinned != marker {
 			return errors.New("official asset no longer matches the pinned version trust entry")
 		}
-		return nil
+	} else {
+		catalog.Versions[key] = marker
 	}
-	catalog.Versions[marker.Version] = marker
+	if isRollingVersion(marker.Version) {
+		ref := catalog.Channels[marker.Version]
+		if ref.Current == "" {
+			// Preserve the legacy fixed-key generation as the first rollback target.
+			if _, exists := catalog.Versions[marker.Version]; exists {
+				ref.Current = marker.Version
+			}
+		}
+		if ref.Current != key {
+			ref.Previous = ref.Current
+			ref.Current = key
+		}
+		catalog.Channels[marker.Version] = ref
+		// Keep the active and immediately previous immutable generations. Entries
+		// older than that no longer have a live rollback purpose.
+		for candidate, trusted := range catalog.Versions {
+			if trusted.Version == marker.Version && candidate != ref.Current && candidate != ref.Previous {
+				delete(catalog.Versions, candidate)
+			}
+		}
+	}
 	encoded, err := json.Marshal(catalog)
 	if err != nil {
 		return err
 	}
-	return writePrivateFile(filepath.Join(runtime.config.TrustDirectory, versionTrustFilename), encoded)
+	if err := writePrivateFile(filepath.Join(runtime.config.TrustDirectory, versionTrustFilename), encoded); err != nil {
+		return err
+	}
+	if isRollingVersion(marker.Version) {
+		runtime.pruneRollingDirectories(marker.Version, catalog.Channels[marker.Version])
+	}
+	return nil
+}
+
+func rollingDigest(channel, key string) (string, bool) {
+	prefix := channel + "@"
+	if !strings.HasPrefix(key, prefix) {
+		return "", false
+	}
+	digest := strings.TrimPrefix(key, prefix)
+	return digest, sha256Pattern.MatchString(digest)
+}
+
+func (runtime *windowsRuntime) versionDirectory(version, trustKey string) string {
+	root := filepath.Join(runtime.config.StateDirectory, "versions", version)
+	if digest, ok := rollingDigest(version, trustKey); ok {
+		return filepath.Join(root, digest)
+	}
+	return root
+}
+
+func (runtime *windowsRuntime) cachedTrustedCore(version, trustKey string, catalog versionTrustCatalog) (string, string, bool) {
+	trusted, exists := catalog.Versions[trustKey]
+	if !exists || trusted.Version != version || !validTrustEntry(trustKey, trusted) {
+		return "", "", false
+	}
+	directory := runtime.versionDirectory(version, trustKey)
+	data, err := os.ReadFile(filepath.Join(directory, "verified.json"))
+	if err != nil {
+		return "", "", false
+	}
+	var marker cachedCoreMarker
+	if json.Unmarshal(data, &marker) != nil || marker != trusted {
+		return "", "", false
+	}
+	corePath := filepath.Join(directory, "core.exe")
+	digest, err := hashFile(corePath)
+	if err != nil || digest != marker.BinarySHA {
+		return "", "", false
+	}
+	return corePath, digest, true
+}
+
+func (runtime *windowsRuntime) currentCachedCore(version string, catalog versionTrustCatalog) (string, string, bool) {
+	if isRollingVersion(version) {
+		if ref, exists := catalog.Channels[version]; exists {
+			for _, key := range []string{ref.Current, ref.Previous} {
+				if key == "" {
+					continue
+				}
+				if path, digest, ok := runtime.cachedTrustedCore(version, key, catalog); ok {
+					return path, digest, true
+				}
+			}
+			return "", "", false
+		}
+	}
+	return runtime.cachedTrustedCore(version, version, catalog)
+}
+
+func (runtime *windowsRuntime) pruneRollingDirectories(channel string, ref rollingChannelRef) {
+	keep := make(map[string]bool)
+	for _, key := range []string{ref.Current, ref.Previous} {
+		if digest, ok := rollingDigest(channel, key); ok {
+			keep[digest] = true
+		}
+	}
+	root := filepath.Join(runtime.config.StateDirectory, "versions", channel)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && sha256Pattern.MatchString(entry.Name()) && !keep[entry.Name()] {
+			_ = os.RemoveAll(filepath.Join(root, entry.Name()))
+		}
+	}
 }
 
 func mihomoWindowsArch() (string, error) {
@@ -340,11 +489,48 @@ func extractVersionCore(archivePath, innerName, destination string) (string, err
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func (runtime *windowsRuntime) versionCore(version string, proxyPort int) (string, string, error) {
+func (runtime *windowsRuntime) versionCore(version string, proxyPort int, refreshRolling bool) (string, string, error) {
 	if !versionPattern.MatchString(version) {
 		return "", "", errors.New("invalid mihomo version")
 	}
-	directory := filepath.Join(runtime.config.StateDirectory, "versions", version)
+	versionRoot := filepath.Join(runtime.config.StateDirectory, "versions", version)
+	if err := os.MkdirAll(versionRoot, 0700); err != nil {
+		return "", "", err
+	}
+	if err := secureStateDirectory(versionRoot); err != nil {
+		return "", "", err
+	}
+	catalog, trustErr := runtime.loadVersionTrust()
+	if trustErr != nil {
+		return "", "", trustErr
+	}
+	cachedPath, cachedDigest, cached := runtime.currentCachedCore(version, catalog)
+	if cached && (!isRollingVersion(version) || !refreshRolling) {
+		return cachedPath, cachedDigest, nil
+	}
+	asset, err := fetchOfficialAsset(version, proxyPort)
+	if err != nil {
+		// A failed rolling refresh must not destroy a previously verified core.
+		// This also preserves offline startup and offline channel switching.
+		if cached {
+			return cachedPath, cachedDigest, nil
+		}
+		return "", "", err
+	}
+	trustKey := version
+	if isRollingVersion(version) {
+		trustKey = version + "@" + asset.Digest
+		if trusted, exists := catalog.Versions[trustKey]; exists &&
+			trusted.AssetName == asset.Name && trusted.ArchiveBytes == asset.Size {
+			if path, digest, ok := runtime.cachedTrustedCore(version, trustKey, catalog); ok {
+				if err := runtime.storeVersionTrust(trusted); err != nil {
+					return "", "", err
+				}
+				return path, digest, nil
+			}
+		}
+	}
+	directory := runtime.versionDirectory(version, trustKey)
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return "", "", err
 	}
@@ -353,23 +539,6 @@ func (runtime *windowsRuntime) versionCore(version string, proxyPort int) (strin
 	}
 	markerPath := filepath.Join(directory, "verified.json")
 	corePath := filepath.Join(directory, "core.exe")
-	catalog, trustErr := runtime.loadVersionTrust()
-	if trustErr != nil {
-		return "", "", trustErr
-	}
-	if data, err := os.ReadFile(markerPath); err == nil {
-		var marker cachedCoreMarker
-		trusted, pinned := catalog.Versions[version]
-		if json.Unmarshal(data, &marker) == nil && pinned && marker == trusted && validTrustedMarker(version, marker) {
-			if digest, hashErr := hashFile(corePath); hashErr == nil && digest == marker.BinarySHA {
-				return corePath, digest, nil
-			}
-		}
-	}
-	asset, err := fetchOfficialAsset(version, proxyPort)
-	if err != nil {
-		return "", "", err
-	}
 	archivePath := filepath.Join(directory, asset.Name)
 	if digest, hashErr := hashFile(archivePath); hashErr != nil || digest != asset.Digest {
 		if err := downloadOfficialAsset(asset, archivePath, proxyPort); err != nil {
@@ -406,6 +575,6 @@ func (runtime *windowsRuntime) versionCore(version string, proxyPort int) (strin
 func (runtime *windowsRuntime) Install(version string, proxyPort int) error {
 	runtime.versionMu.Lock()
 	defer runtime.versionMu.Unlock()
-	_, _, err := runtime.versionCore(version, proxyPort)
+	_, _, err := runtime.versionCore(version, proxyPort, true)
 	return err
 }

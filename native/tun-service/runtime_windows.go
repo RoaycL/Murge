@@ -42,7 +42,7 @@ func (runtime *windowsRuntime) Validate(profile string, version string) error {
 		runtime.versionMu.Lock()
 		defer runtime.versionMu.Unlock()
 		var err error
-		corePath, coreDigest, err = runtime.versionCore(version, 0)
+		corePath, coreDigest, err = runtime.versionCore(version, 0, false)
 		if err != nil {
 			return err
 		}
@@ -372,7 +372,7 @@ func (runtime *windowsRuntime) Start(profile string, _ string, version string) (
 	if version != "" {
 		runtime.versionMu.Lock()
 		var err error
-		corePath, coreDigest, err = runtime.versionCore(version, 0)
+		corePath, coreDigest, err = runtime.versionCore(version, 0, false)
 		runtime.versionMu.Unlock()
 		if err != nil {
 			return 0, err

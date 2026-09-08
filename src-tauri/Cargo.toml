@@ -1,0 +1,34 @@
+[package]
+name = "murge"
+version = "0.9.8"
+description = "A desktop network client powered by mihomo."
+edition = "2021"
+rust-version = "1.82"
+
+# Murge is dual-shelled during the migration: the Electron entry lives in
+# src/main/, the Tauri shell lives here. The crate name follows
+# brand.config.json `executableName` so the packaged binary keeps the same
+# on-disk identity.
+[lib]
+name = "murge_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+url = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

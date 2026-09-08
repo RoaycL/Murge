@@ -18,12 +18,19 @@
     "kernel:prepare": "node scripts/prepare-mihomo-assets.mjs",
     "tun-service:test": "cd native/tun-service && go test ./...",
     "tun-service:build": "node scripts/build-tun-service.mjs --all",
-    "package:win": "npm run kernel:prepare && npm run tun-service:build && npm run build && electron-builder --win --config electron-builder.config.mjs"
+    "package:win": "npm run kernel:prepare && npm run tun-service:build && npm run build && electron-builder --win --config electron-builder.config.mjs",
+    "dev:renderer": "vite --config vite.renderer.config.ts",
+    "build:renderer": "vite build --config vite.renderer.config.ts",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:bridge": "node scripts/generate-tauri-bridge.mjs"
   },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
     "@vueuse/core": "^13.0.0",
     "electron-updater": "^6.8.9",
     "lucide-vue-next": "^0.468.0",
@@ -37,6 +44,8 @@
   "devDependencies": {
     "@electron-toolkit/preload": "^3.0.0",
     "@electron-toolkit/utils": "^4.0.0",
+    "@tauri-apps/cli": "^2.11.4",
+    "@tauri-apps/cli-linux-arm64-gnu": "^2.11.4",
     "@types/node": "^24.0.0",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-vue": "^6.0.0",

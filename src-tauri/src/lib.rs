@@ -15,6 +15,7 @@ mod app_info;
 mod brand;
 mod enhancements;
 mod error;
+mod inspection;
 mod net_validators;
 mod ipc;
 mod override_apply;

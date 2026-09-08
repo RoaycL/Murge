@@ -17,6 +17,7 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app_info;
+use crate::enhancements;
 use crate::brand;
 use crate::error::IpcError;
 use crate::override_service::OverrideService;
@@ -36,12 +37,30 @@ pub fn desktop_ipc(
     settings: State<'_, SettingsStore>,
     profiles: State<'_, Arc<ProfilesService>>,
     overrides: State<'_, OverrideService>,
+    models: State<'_, enhancements::ModelStores>,
 ) -> IpcResult {
-    dispatch(&channel, &payload, &paths, &settings, &profiles, &overrides)
+    dispatch(&channel, &payload, &paths, &settings, &profiles, &overrides, &models)
 }
 
 /// Payload arrays arrive as a JSON array; positional access mirrors the
 /// preload's argument order.
+/// get() goes through the model coercion so a corrupt file can never leak an
+/// unnormalized document to the renderer (the TS ensureLoaded does the same).
+fn coerce(model: Value) -> Value {
+    if model.is_null() {
+        Value::Null
+    } else {
+        model
+    }
+}
+
+/// The `{ enhancement: ... }` / `{ config: ... }` snapshot envelope.
+fn json_envelope(key: &str, model: Value) -> Value {
+    let mut object = serde_json::Map::new();
+    object.insert(key.to_string(), model);
+    Value::Object(object)
+}
+
 fn arg(payload: &Value, index: usize) -> Option<&Value> {
     payload.get(index)
 }
@@ -62,6 +81,7 @@ pub fn dispatch(
     settings: &SettingsStore,
     profiles: &Arc<ProfilesService>,
     overrides: &OverrideService,
+    models: &enhancements::ModelStores,
 ) -> IpcResult {
     match channel {
         "app:get-brand" => Ok(brand::brand_document()),
@@ -160,6 +180,69 @@ pub fn dispatch(
         "overrides:last-known-good" => overrides.last_known_good(),
         "overrides:reset-to-last-good" => overrides.reset_to_last_good(),
 
+        // --- typed single-model stores (Phase 3A) ---------------------------
+        // get/set return the same envelope shapes the Electron services use;
+        // preview renders the block a model would produce (never writes).
+        "core-settings:get" => Ok(coerce(enhancements::coerce_core_settings(&models.core.get()))),
+        "core-settings:set" => {
+            let input = arg(payload, 0)
+                .ok_or_else(|| IpcError::invalid_argument("core-settings:set requires a settings object"))?;
+            models.core.set(input, enhancements::coerce_core_settings)
+        }
+        "core-settings:preview" => {
+            let input = arg(payload, 0).cloned().unwrap_or(Value::Null);
+            Ok(Value::String(enhancements::core_preview_text(&input)))
+        }
+        "geodata-settings:get" => Ok(coerce(enhancements::coerce_geodata_settings(&models.geodata.get()))),
+        "geodata-settings:set" => {
+            let input = arg(payload, 0)
+                .ok_or_else(|| IpcError::invalid_argument("geodata-settings:set requires a settings object"))?;
+            models.geodata.set(input, enhancements::coerce_geodata_settings)
+        }
+        "geodata-settings:preview" => {
+            let input = arg(payload, 0).cloned().unwrap_or(Value::Null);
+            Ok(Value::String(enhancements::geodata_preview_text(&input)))
+        }
+        "dns:get" => Ok(json_envelope("enhancement", coerce(enhancements::coerce_dns_enhancement(&models.dns.get())))),
+        "dns:set" => {
+            let input = arg(payload, 0)
+                .ok_or_else(|| IpcError::invalid_argument("dns:set requires an enhancement object"))?;
+            models
+                .dns
+                .set(input, enhancements::coerce_dns_enhancement)
+                .map(|model| json_envelope("enhancement", model))
+        }
+        "dns:preview" => {
+            let input = arg(payload, 0).cloned().unwrap_or(Value::Null);
+            Ok(Value::String(enhancements::dns_preview_text(&input)))
+        }
+        "sniffer:get" => Ok(json_envelope("enhancement", coerce(enhancements::coerce_sniffer_enhancement(&models.sniffer.get())))),
+        "sniffer:set" => {
+            let input = arg(payload, 0)
+                .ok_or_else(|| IpcError::invalid_argument("sniffer:set requires an enhancement object"))?;
+            models
+                .sniffer
+                .set(input, enhancements::coerce_sniffer_enhancement)
+                .map(|model| json_envelope("enhancement", model))
+        }
+        "sniffer:preview" => {
+            let input = arg(payload, 0).cloned().unwrap_or(Value::Null);
+            Ok(Value::String(enhancements::sniffer_preview_text(&input)))
+        }
+        "tun-config:get" => Ok(json_envelope("config", coerce(enhancements::coerce_tun_config(&models.tun_config.get())))),
+        "tun-config:set" => {
+            let input = arg(payload, 0)
+                .ok_or_else(|| IpcError::invalid_argument("tun-config:set requires a config object"))?;
+            models
+                .tun_config
+                .set(input, enhancements::coerce_tun_config)
+                .map(|model| json_envelope("config", model))
+        }
+        "tun-config:preview" => {
+            let input = arg(payload, 0).cloned().unwrap_or(Value::Null);
+            Ok(Value::String(enhancements::tun_config_preview_text(&input)))
+        }
+
         _ => Err(IpcError::unsupported_channel(channel)),
     }
 }
@@ -183,6 +266,7 @@ mod tests {
         settings: SettingsStore,
         profiles: Arc<ProfilesService>,
         overrides: OverrideService,
+        models: enhancements::ModelStores,
     }
 
     fn fixtures() -> Fixture {
@@ -191,13 +275,14 @@ mod tests {
         let settings = SettingsStore::new(None);
         let profiles = Arc::new(ProfilesService::for_development(&temp.path().to_path_buf()));
         let overrides = OverrideService::new(None);
-        Fixture { _temp: temp, paths, settings, profiles, overrides }
+        let models = enhancements::ModelStores::new(None);
+        Fixture { _temp: temp, paths, settings, profiles, overrides, models }
     }
 
     #[test]
     fn serves_brand_document_from_the_checked_in_file() {
         let f = fixtures();
-        let brand = dispatch("app:get-brand", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides).unwrap();
+        let brand = dispatch("app:get-brand", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models).unwrap();
         assert_eq!(brand["appId"], "io.murge.desktop");
         assert_eq!(brand["protocolScheme"], "murge");
     }
@@ -205,7 +290,7 @@ mod tests {
     #[test]
     fn serves_app_info_in_electron_vocabulary() {
         let f = fixtures();
-        let info = dispatch("app:get-info", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides).unwrap();
+        let info = dispatch("app:get-info", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models).unwrap();
         assert_eq!(info["version"], env!("CARGO_PKG_VERSION"));
         assert!(matches!(
             info["platform"].as_str(),
@@ -216,7 +301,7 @@ mod tests {
     #[test]
     fn settings_round_trip_through_the_dispatch() {
         let f = fixtures();
-        let before = dispatch("app-settings:get", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides).unwrap();
+        let before = dispatch("app-settings:get", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models).unwrap();
         assert_eq!(before["closeToTray"], true);
         let after = dispatch(
             "app-settings:set",
@@ -225,6 +310,7 @@ mod tests {
             &f.settings,
             &f.profiles,
             &f.overrides,
+            &f.models,
         )
         .unwrap();
         assert_eq!(after["closeToTray"], false);
@@ -235,7 +321,7 @@ mod tests {
     #[test]
     fn profile_channels_flow_through_the_dispatch() {
         let f = fixtures();
-        let list = dispatch("profiles:list", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides).unwrap();
+        let list = dispatch("profiles:list", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models).unwrap();
         assert_eq!(list, serde_json::json!([]));
         let meta = dispatch(
             "profiles:import",
@@ -244,6 +330,7 @@ mod tests {
             &f.settings,
             &f.profiles,
             &f.overrides,
+            &f.models,
         )
         .unwrap();
         assert_eq!(meta["name"], "Home");
@@ -255,6 +342,7 @@ mod tests {
             &f.settings,
             &f.profiles,
             &f.overrides,
+            &f.models,
         )
         .unwrap();
         assert_eq!(profile["document"], "port: 7890\n");
@@ -265,6 +353,7 @@ mod tests {
             &f.settings,
             &f.profiles,
             &f.overrides,
+            &f.models,
         )
         .unwrap();
         assert_eq!(meta["active"], true);
@@ -279,7 +368,7 @@ mod tests {
             "profiles:get-provider-content",
             "profiles:inspect-active-config",
         ] {
-            let error = dispatch(channel, &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides).unwrap_err();
+            let error = dispatch(channel, &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models).unwrap_err();
             assert!(error.0.starts_with("PROTOCOL_ERROR:UNSUPPORTED::"), "{channel}: {}", error.0);
         }
     }
@@ -287,14 +376,14 @@ mod tests {
     #[test]
     fn unknown_channels_fail_closed_with_unsupported() {
         let f = fixtures();
-        let error = dispatch("kernel:start", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides).unwrap_err();
+        let error = dispatch("kernel:start", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models).unwrap_err();
         assert!(error.0.starts_with("PROTOCOL_ERROR:UNSUPPORTED::"), "{}", error.0);
     }
 
     #[test]
     fn non_string_arguments_fail_with_invalid_argument() {
         let f = fixtures();
-        let error = dispatch("profiles:get", &serde_json::json!([42]), &f.paths, &f.settings, &f.profiles, &f.overrides).unwrap_err();
+        let error = dispatch("profiles:get", &serde_json::json!([42]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models).unwrap_err();
         assert!(error.0.contains("INVALID_ARGUMENT"), "{}", error.0);
     }
 }

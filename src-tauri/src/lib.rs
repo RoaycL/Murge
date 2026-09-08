@@ -13,7 +13,9 @@
 
 mod app_info;
 mod brand;
+mod enhancements;
 mod error;
+mod net_validators;
 mod ipc;
 mod override_apply;
 mod override_model;
@@ -78,10 +80,14 @@ pub fn run() {
                         })
                     }))
             };
+            // Typed single-model stores (core/geodata/dns/sniffer/tun-config);
+            // dev resolves to None -> memory-only stores.
+            let models = enhancements::ModelStores::new(paths.app_data_root.clone());
             app.manage(paths);
             app.manage(store);
             app.manage(profiles);
             app.manage(overrides);
+            app.manage(models);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![ipc::desktop_ipc])

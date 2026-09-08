@@ -113,6 +113,54 @@ Rust ports of `shared/overrides.ts` (model + `redactOverrideContent`),
 - YAML parse-error message wording follows the Rust parser engine
   (engine-specific copy, same semantic gate).
 
+### 4. Typed single-model stores (核心/地理数据/DNS/嗅探器/TUN 配置) (`src-tauri/src/{enhancements,net_validators}.rs`)
+
+Rust ports of the five identical single-model services and their shared
+models — `core-settings-service.ts` + `shared/core-settings.ts`,
+`geodata-settings-service.ts` + `shared/geodata.ts`,
+`dns-enhancement-service.ts` + `shared/dns.ts`,
+`sniffer-enhancement-service.ts` + `shared/sniffer.ts`,
+`tun-config-service.ts` + `shared/tun-config.ts`:
+
+- One generic `ModelStore` implements the exact shared persistence contract:
+  file in the app-data namespace, 2-space pretty JSON + trailing newline,
+  temp `.<file>.<epoch-ms>.tmp` + atomic rename, lazy load-through cache,
+  corrupt/missing -> defaults (re-coerced), envelope keys `enhancement` /
+  `config` (or envelope-free for core + geodata, exactly like the TS
+  services), serial mutations. Dev (no app-data root) is memory-only.
+- `coerce*` functions port each model field-for-field: core (allowlisted
+  runtime keys, controller-secret `/^(?:|[0-9a-f]{64})$/`, duplicate active
+  ports reset all four, `interfaceName` trim+255 cap), geodata (HTTP(S)
+  source-URL validation with empty-allowed, interval bounds 1..=168,
+  per-entry fallback to `DEFAULT_GEOX_URLS`), sniffer (probe families fall
+  back to the curated defaults, party-parity skip lists verbatim), TUN
+  (stack/device/MTU validators, `dns-hijack` entry grammar, route CIDR
+  filtering, list keys emitted only when non-empty), DNS (`normal` ->
+  `redir-host` migration, respectRules false when proxyServerNameserver is
+  empty, hosts/nameserverPolicy maps from entries).
+- `build*Block` ports emit the same mihomo keys with the same
+  conditional-emission rules (fake-ip keys only in fake-ip mode, hosts and
+  nameserver-policy as maps, core `interface-name` only when set, TUN
+  route lists only when non-empty). Previews render through the Rust YAML
+  emitter (documented formatting difference — semantically neutral).
+- Migrations ride the load path: core `storageVersion: 2` with the v0.9.0
+  mixed/http default-swap tuple fix; TUN legacy 9000 MTU -> 1500.
+- Previews never write. DNS preview redacts every nameserver string
+  (`redactServer` userinfo masking) and the core preview keeps the
+  `（下次启动时自动生成）` secret placeholder and the conditional
+  `external-ui` panel keys verbatim.
+- `net_validators.rs` ports `shared/net.ts` (IPv4/IPv6, CIDR, hostname,
+  mihomo domain patterns, address-or-CIDR) plus the DNS nameserver and
+  default-nameserver grammars for the schema-validation slice.
+
+**Documented differences (staging):**
+- The Electron zod IPC schemas reject invalid `set` payloads before the
+  service runs; the Tauri shell relies on coerce-on-set (same end state —
+  an invalid payload converges to safe defaults) — the validator functions
+  are ported and staged for a later schema slice.
+- Preview YAML text follows the Rust emitter's quoting/folding (see the
+  overrides slice note).
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,
@@ -120,13 +168,15 @@ Rust ports of `shared/overrides.ts` (model + `redactOverrideContent`),
 `import-from-url`/`update-from-source` fail closed with UNSUPPORTED until the
 Phase 3C network slice; `get-provider-content` until the Phase 3D privileged
 slice; `inspect-active-config` until the effective-document composition
-slice), and all 10 `overrides:*` channels (fully implemented except the JS
-kind, which fails open per the staging note above). Unknown channels keep
-failing closed with UNSUPPORTED — never a silent no-op.
+slice), all 10 `overrides:*` channels (fully implemented except the JS
+kind, which fails open per the staging note above), and all 15 typed
+model channels (`dns|sniffer|tun-config|core-settings|geodata-settings`
+× `get|set|preview` — fully implemented). Unknown channels keep failing
+closed with UNSUPPORTED — never a silent no-op.
 
 ## Verification (Linux ARM64, real execution)
 
-- Rust: `cargo test` — **99 passed / 0 failed**, zero warnings:
+- Rust: `cargo test` — **128 passed / 0 failed**, zero warnings:
   - brand parse/gate (1), app-info vocabulary (2), paths namespace/dev (3),
   - settings store: defaults, quarantine, atomic format, patch merge,
     delayTestUrl read/set split, dev memory store, field salvage (7),
@@ -152,7 +202,14 @@ failing closed with UNSUPPORTED — never a silent no-op.
   - override service: CRUD round trip + persisted format, missing/corrupt
     file, remove/setEnabled reindex, move semantics, unknown-id copy,
     preview unavailable/apply+redact, validate item errors / warnings,
-    last-known-good capture + rollback, scoping via preview (11).
+    last-known-good capture + rollback, scoping via preview (11),
+  - net validators: IPv4/IPv6/CIDR/hostname/domain-rule forms (4),
+  - typed models: core defaults/coercion/port-swap migration/store round
+    trip/preview conditionals (5), geodata defaults+URLs/block+preview/store
+    (3), sniffer defaults/port tokens/block emission/store (4), TUN
+    coercion/hijack forms/legacy-MTU migration/block+preview (4), DNS
+    defaults/nameserver forms/respectRules guard/`normal` migration/block
+    maps/preview redaction/store (7).
 - TypeScript: `npm run typecheck` green; `npx vitest run` 1905 passed / 7
   skipped (unchanged — renderer untouched by this slice).
 

@@ -36,6 +36,7 @@ mod route_latency;
 mod startup;
 mod substore;
 mod substore_zip;
+mod system_proxy;
 mod icons;
 mod profile_service;
 mod subscription;
@@ -223,6 +224,79 @@ pub fn run() {
                 }
             });
             app.manage(substore_service);
+            // System proxy: compose the controller for the current runtime —
+            // the TS factory decision (dev → fake adapter + static probe +
+            // memory stores; production → real registry adapter on Windows +
+            // live kernel probe + durable file stores; elsewhere → the
+            // fail-closed disabled adapter with the `unsupported` phase).
+            let is_dev = paths.app_data_root.is_none();
+            let adapter: std::sync::Arc<dyn system_proxy::SystemProxyAdapter> = if is_dev {
+                std::sync::Arc::new(system_proxy::FakeSystemProxyAdapter::new())
+            } else if cfg!(windows) {
+                std::sync::Arc::new(system_proxy::WindowsSystemProxyAdapter::with_runner(
+                    system_proxy::real_command_runner(),
+                ))
+            } else {
+                std::sync::Arc::new(system_proxy::DisabledSystemProxyAdapter::new(std::env::consts::OS))
+            };
+            let probe: system_proxy::ProbeFn = if is_dev {
+                system_proxy::static_probe(system_proxy::Target {
+                    host: system_proxy::SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+                    port: 7890,
+                })
+            } else {
+                let probe_app_phase = app.handle().clone();
+                let probe_app_client = app.handle().clone();
+                system_proxy::live_probe(
+                    move || {
+                        use tauri::Manager;
+                        probe_app_phase
+                            .try_state::<kernel::KernelServices>()
+                            .map(|services| services.supervisor.get_status()["phase"].as_str().unwrap_or("stopped").to_string())
+                            .unwrap_or_else(|| "stopped".to_string())
+                    },
+                    move || {
+                        use tauri::Manager;
+                        probe_app_client
+                            .try_state::<enhancements::ModelStores>()
+                            .ok_or_else(|| crate::error::IpcError::code(crate::error::code::SYSTEM_PROXY_KERNEL_REQUIRED, "内核控制器未就绪，无法启用系统代理"))
+                            .and_then(|models| {
+                                let core = enhancements::coerce_core_settings(&models.core.get());
+                                mihomo::MihomoClient::new(
+                                    core["controllerPort"].as_i64().unwrap_or(9090),
+                                    core["controllerSecret"].as_str().unwrap_or_default(),
+                                )
+                            })
+                    },
+                )
+            };
+            let (backup_store, bypass_store): (
+                std::sync::Arc<dyn system_proxy::BackupStore>,
+                std::sync::Arc<dyn system_proxy::ProxyBypassStore>,
+            ) = match (&paths.app_data_root, is_dev) {
+                (Some(root), false) => (
+                    std::sync::Arc::new(system_proxy::FileSystemBackupStore::for_base_dir(root)),
+                    std::sync::Arc::new(system_proxy::FileSystemBypassStore::for_base_dir(root)),
+                ),
+                _ => (
+                    std::sync::Arc::new(system_proxy::InMemoryBackupStore::new()),
+                    std::sync::Arc::new(system_proxy::InMemoryBypassStore::new()),
+                ),
+            };
+            let system_proxy_service = system_proxy::SystemProxyService::new(
+                adapter,
+                probe,
+                backup_store,
+                bypass_store,
+                system_proxy::new_uuid(),
+            );
+            // Forward system-proxy status transitions to every renderer window
+            // (the register-ipc.ts `forward` for the status event).
+            let status_app = app.handle().clone();
+            system_proxy_service.listeners.subscribe(std::sync::Arc::new(move |value| {
+                let _ = tauri::Emitter::emit(&status_app, "system-proxy:status-event", value.clone());
+            }));
+            app.manage(system_proxy_service);
             app.manage(paths);
             Ok(())
         })

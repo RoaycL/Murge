@@ -21,6 +21,11 @@ pub mod code {
     pub const UPSTREAM_HTTP_ERROR: &str = "UPSTREAM_HTTP_ERROR";
     pub const UPSTREAM_TEST_FAILED: &str = "UPSTREAM_TEST_FAILED";
     pub const INVALID_UPSTREAM: &str = "INVALID_UPSTREAM";
+    pub const SYSTEM_PROXY_UNSUPPORTED: &str = "SYSTEM_PROXY_UNSUPPORTED";
+    pub const SYSTEM_PROXY_KERNEL_REQUIRED: &str = "SYSTEM_PROXY_KERNEL_REQUIRED";
+    pub const SYSTEM_PROXY_ENABLE_FAILED: &str = "SYSTEM_PROXY_ENABLE_FAILED";
+    pub const SYSTEM_PROXY_STATE_CONFLICT: &str = "SYSTEM_PROXY_STATE_CONFLICT";
+    pub const SYSTEM_PROXY_RESTORE_FAILED: &str = "SYSTEM_PROXY_RESTORE_FAILED";
 }
 
 /// A failed IPC call. Serialized to the ProtocolError wire string so the

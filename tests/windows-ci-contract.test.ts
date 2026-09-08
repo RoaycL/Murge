@@ -12,11 +12,22 @@ describe('Windows packaging and interactive GUI CI contracts', () => {
   let mainEntry: string
 
   beforeAll(async () => {
+    // Phase 1 split the main entry into the thin `index.ts` plus the
+    // `src/main/electron/*` shell modules; the CI contracts span the whole
+    // shell surface, so read them as one logical entry text.
+    const entryFiles = [
+      'src/main/index.ts',
+      'src/main/electron/boot-flags.ts',
+      'src/main/electron/bootstrap.ts',
+      'src/main/electron/window-adapter.ts',
+      'src/main/electron/lifecycle-adapter.ts',
+      'src/main/electron/when-ready.ts'
+    ]
     ;[hostedWorkflow, interactiveWorkflow, interactiveScript, mainEntry] = await Promise.all([
       readFile(path.join(root, '.github/workflows/ci.yml'), 'utf8'),
       readFile(path.join(root, '.github/workflows/windows-gui-smoke.yml'), 'utf8'),
       readFile(path.join(root, 'scripts/windows-interactive-gui-smoke.ps1'), 'utf8'),
-      readFile(path.join(root, 'src/main/index.ts'), 'utf8')
+      Promise.all(entryFiles.map((file) => readFile(path.join(root, file), 'utf8'))).then((parts) => parts.join('\n'))
     ])
   })
 
@@ -43,11 +54,14 @@ describe('Windows packaging and interactive GUI CI contracts', () => {
 
   it('does not leak an unconditional boot marker or user argv', () => {
     expect(mainEntry).not.toContain('murge-boot-marker.json')
-    expect(mainEntry).toContain("process.env.MURGE_CI_BOOT_DIAG === '1'")
+    // Phase 1: boot-flag parsing lives in boot-flags.ts (early-return form).
+    expect(mainEntry).toContain("MURGE_CI_BOOT_DIAG !== '1'")
   })
 
   it('allows the interactive clean-launch probe to suppress kernel autostart only in Actions', () => {
-    expect(mainEntry).toContain("process.env.GITHUB_ACTIONS === 'true' && hasArg('--no-kernel-autostart')")
+    // Phase 1: the Actions gate lives in boot-flags.ts; the intent-restore
+    // guard keeps its exact source form inside when-ready.
+    expect(mainEntry).toContain("env.GITHUB_ACTIONS === 'true' && hasArg('--no-kernel-autostart')")
     expect(mainEntry).toContain('!is.dev && !skipKernelAutostart')
     expect(mainEntry).not.toContain('!launchHidden && !skipKernelAutostart')
     expect(interactiveScript).toContain("@('--no-kernel-autostart')")

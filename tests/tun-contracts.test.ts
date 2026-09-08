@@ -157,7 +157,8 @@ describe('Phase 9 non-network contracts', () => {
   })
 
   it('performs listener takeover inside the LocalSystem service immediately before core start', () => {
-    const appMain = readFileSync(resolve(process.cwd(), 'src/main/index.ts'), 'utf8')
+    // Phase 1: startup orchestration lives in the when-ready shell module.
+    const appMain = readFileSync(resolve(process.cwd(), 'src/main/electron/when-ready.ts'), 'utf8')
     const runtime = readFileSync(resolve(process.cwd(), 'native/tun-service/runtime_windows.go'), 'utf8')
     const takeover = readFileSync(resolve(process.cwd(), 'native/tun-service/port_reclaimer_windows.go'), 'utf8')
 

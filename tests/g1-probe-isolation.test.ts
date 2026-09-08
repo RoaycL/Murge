@@ -24,7 +24,17 @@ const G1_MODULE_MARKERS = ['g1-probe', 'g1-driver', 'g1-probe-runner', 'wintun-a
 describe('G1 probe isolation', () => {
   it('keeps the probe out of the app shell, preload bridge and IPC layer', () => {
     const appFiles = [
+      // Phase 1: the entry delegates to the electron shell modules, so the
+      // isolation contract covers the whole shell surface.
       'src/main/index.ts',
+      'src/main/electron/bootstrap.ts',
+      'src/main/electron/boot-flags.ts',
+      'src/main/electron/window-adapter.ts',
+      'src/main/electron/lifecycle-adapter.ts',
+      'src/main/electron/tray-adapter.ts',
+      'src/main/electron/update-adapter.ts',
+      'src/main/electron/ci-probes-adapter.ts',
+      'src/main/electron/when-ready.ts',
       'src/preload/index.ts',
       'src/main/ipc/handlers.ts',
       'src/main/ipc/register-ipc.ts'

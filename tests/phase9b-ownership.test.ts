@@ -24,7 +24,12 @@ describe('Phase 9B single network-state owner', () => {
   })
 
   it('does not wire the superseded G1 driver into application startup', () => {
-    const startup = read('src/main/index.ts')
+    // Phase 1: startup orchestration lives in the electron shell modules.
+    const startup = [
+      'src/main/index.ts',
+      'src/main/electron/bootstrap.ts',
+      'src/main/electron/when-ready.ts'
+    ].map((path) => read(path)).join('\n')
     expect(startup).not.toMatch(/g1-(?:driver|probe|probe-runner)/)
     expect(startup).not.toContain('wintun-abi')
   })

@@ -172,7 +172,8 @@ describe('network drawer + resources UI contract', () => {
       read('src/renderer/src/components/AppSidebar.vue'),
       read('src/renderer/src/components/SubStoreIcon.vue'),
       read('src/shared/app-settings.ts'),
-      read('src/main/index.ts'),
+      // Phase 1: the Sub-Store launch wiring lives in the when-ready module.
+      read('src/main/electron/when-ready.ts'),
       read('src/shared/substore.ts'),
       read('src/main/substore/service.ts'),
       read('src/renderer/src/stores/substore.ts')
@@ -218,7 +219,9 @@ describe('network drawer + resources UI contract', () => {
     expect(general).not.toMatch(/网络守护|系统代理守护|<small>/)
     // 三个行为真正接进主进程: 登录项参数、窗口关闭、守护定时器。
     await expect(read('src/main/startup/electron-adapter.ts')).resolves.toMatch(/getSilentLaunch/)
-    await expect(read('src/main/index.ts')).resolves.toMatch(/cachedAppSettings\.closeToTray/)
-    await expect(read('src/main/index.ts')).resolves.toMatch(/cachedAppSettings\.proxyGuard/)
+    // Phase 1: the close-to-tray + proxy-guard settings consumers moved to the
+    // window adapter and when-ready module.
+    await expect(read('src/main/electron/window-adapter.ts')).resolves.toMatch(/cachedAppSettings\.closeToTray/)
+    await expect(read('src/main/electron/when-ready.ts')).resolves.toMatch(/cachedAppSettings\.proxyGuard/)
   })
 })

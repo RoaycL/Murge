@@ -23,17 +23,21 @@ describe('update notification navigation contract', () => {
   })
 
   it('routes native notification clicks to the existing About page', async () => {
-    const [driver, main, shared, preload, app] = await Promise.all([
+    const [driver, main, whenReady, shared, preload, app] = await Promise.all([
       read('src/main/updates/electron-updater-driver.ts'),
-      read('src/main/index.ts'),
+      // Phase 1: the showMainWindowAt implementation lives in the window
+      // adapter; the driver construction in when-ready.
+      read('src/main/electron/window-adapter.ts'),
+      read('src/main/electron/when-ready.ts'),
       read('src/shared/ipc.ts'),
       read('src/preload/index.ts'),
       read('src/renderer/src/App.vue')
     ])
 
     expect(driver).toMatch(/notification\.once\('click',[\s\S]*this\.onNotificationClick\(\)/)
-    expect(main).toContain("new ElectronUpdaterDriver(() => showMainWindowAt('/about'))")
-    expect(main).toMatch(/function showMainWindowAt\(route: '\/about'\)[\s\S]*window\.show\(\)[\s\S]*window\.focus\(\)[\s\S]*IPC\.appNavigateEvent/)
+    expect(main).toContain("showMainWindowAt(route: '/about')")
+    expect(main).toMatch(/showMainWindowAt\(route: '\/about'\)[\s\S]*window\.show\(\)[\s\S]*window\.focus\(\)[\s\S]*IPC\.appNavigateEvent/)
+    expect(whenReady).toContain("new ElectronUpdaterDriver(() => windowAdapter.showMainWindowAt('/about'))")
     expect(shared).toContain("appNavigateEvent: 'app:navigate-event'")
     expect(preload).toContain('onNavigate: (listener) => listen(IPC.appNavigateEvent, listener)')
     expect(app).toMatch(/onNavigate\(\(path\) => \{ void router\.push\(path\) \}\)/)

@@ -18,6 +18,7 @@ mod error;
 mod inspection;
 mod net_validators;
 mod ipc;
+mod kernel;
 mod override_apply;
 mod override_model;
 mod override_service;
@@ -90,12 +91,15 @@ pub fn run() {
             let usage = usage::UsageHistoryService::new(usage::UsageHistoryStore::for_app_data_base(
                 paths.app_data_root.clone(),
             ));
+            // Kernel supervisor + version manager (disabled-resolver milestone).
+            let kernel = kernel::KernelServices::new();
             app.manage(paths);
             app.manage(store);
             app.manage(profiles);
             app.manage(overrides);
             app.manage(models);
             app.manage(usage);
+            app.manage(kernel);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![ipc::desktop_ipc])

@@ -2266,6 +2266,8 @@ name = "murge"
 version = "0.9.8"
 dependencies = [
  "base64 0.22.1",
+ "crc32fast",
+ "flate2",
  "futures-util",
  "if-addrs",
  "keyring",

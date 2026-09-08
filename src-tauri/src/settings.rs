@@ -150,6 +150,10 @@ fn epoch_millis() -> u128 {
         .unwrap_or(0)
 }
 
+/// The TS `AppSettingsGateway` analog: resolves the live settings snapshot at
+/// call time through a captured store handle.
+pub type SettingsGateway = std::sync::Arc<dyn Fn() -> futures_util::future::BoxFuture<'static, AppSettings> + Send + Sync>;
+
 /// The settings store. A `Mutex` serializes read-modify-write cycles (the TS
 /// version used a promise queue); dev mode keeps memory-only state.
 pub struct SettingsStore {

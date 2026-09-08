@@ -29,6 +29,8 @@ url = "2"
 sha2 = "0.10"
 base64 = "0.22"
 if-addrs = "0.13"
+flate2 = "1"
+crc32fast = "1"
 regex = "1"
 yaml-rust2 = "0.12"
 keyring = { version = "3", features = ["windows-native"] }

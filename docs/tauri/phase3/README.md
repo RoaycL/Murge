@@ -462,6 +462,39 @@ Fourth Phase 3C slice — 5 channels un-staged:
 - Un-staged `network-metadata:get-providers|get-state|select-provider|
   resolve|resolve-all` (**89/121 live invoke arms**, 32 fail-closed).
 
+### 14. Common-service unlock probes (`src-tauri/src/unlock.rs`)
+
+Fifth Phase 3C slice — the last 3C network channels, 2 un-staged:
+
+- The ten pure detectors port verdict-for-verdict from
+  `service-detectors.ts` (参考 clash-verge-rev 的解锁测试 crate): ChatGPT
+  (compliance `unsupported_country` + trace region), Claude (loc= against
+  the 10-country blocklist), Gemini (the `,2,1,200,"` payload marker →
+  alpha-3 code vs the 9-entry list), Grok (homepage gate + trace; the
+  declared-but-unused blocklist kept for parity), Netflix (fast.com CDN →
+  403 ban → title gates 404/403/200/301 → stage-3 location 4th-segment
+  pre-dash region), Disney+ (device-assertion → token-exchange → graphql
+  countryCode/inSupportedLocation walk with the JP short-circuit), TikTok
+  (keyword blocklist, trace region wins, homepage `region` marker
+  pre-dash fallback), YouTube Premium (availability keywords + `GL`), GitHub
+  (homepage gate + trace), Spotify (country-selector gate + market).
+- Shared helpers are the Verge copies: `classifyBlockedStatus`
+  (403/451 → unsupported, other non-2xx → error), `traceLocation` (loc=
+  line, uppercased), `extractQuotedField` (first case-insensitive
+  `"key":"value"` match).
+- The transport ports the probe session: ONE reqwest client per service
+  test (session-scoped cookie jar for the Disney+ flow), fixed
+  `http://127.0.0.1:<mixed-port>` proxy, Chrome UA, redirect-following,
+  8s per-request timeout, 1 MiB body cap; every transport failure
+  degrades to `{status: null}` → the detector's `error` verdict.
+- Fail-closed composition: the mixed port resolves from the LIVE
+  controller `/configs` (`mixed-port` > 0); kernel down is the typed
+  `UPSTREAM_UNREACHABLE::内核未运行，无法通过当前节点执行解锁测试。` — never a
+  DIRECT sample. Unknown service names are the byte-verbatim TS
+  `invalid unlock service: ...` INVALID_ARGUMENT copy.
+- Un-staged `network:unlock-test-all|unlock-test-one` (**91/121 live
+  invoke arms**, 30 fail-closed).
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,
@@ -499,7 +532,7 @@ the Rust dispatch (mechanical scan, not a manual claim):
 
 ## Verification (Linux ARM64, real execution)
 
-- Rust: `cargo test` — **212 passed / 0 failed**, zero warnings:
+- Rust: `cargo test` — **218 passed / 0 failed**, zero warnings:
   - brand parse/gate (1), app-info vocabulary (2), paths namespace/dev (3),
   - settings store: defaults, quarantine, atomic format, patch merge,
     delayTestUrl read/set split, dev memory store, field salvage (7),

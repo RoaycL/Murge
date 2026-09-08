@@ -1,15 +1,106 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
+
+// seedMissingProviderCaches makes a cold service home bootable without first
+// reaching every remote provider. Mihomo treats an existing cache as the last
+// known good value, so it can bind the controller/TUN listeners first and then
+// refresh the deliberately stale placeholder through the restored data plane.
+// Real caches are never replaced.
+type mrsCacheSeeder func(target, behavior string) error
+
+func seedMissingProviderCaches(profile, stateDirectory string, seedMRS mrsCacheSeeder) ([]string, error) {
+	var document map[string]any
+	if err := yaml.Unmarshal([]byte(profile), &document); err != nil {
+		return nil, err
+	}
+	if err := validateProviderPaths(document); err != nil {
+		return nil, err
+	}
+	seeded := make([]string, 0)
+	for _, section := range providerSections {
+		entries, ok := document[section].(map[string]any)
+		if !ok {
+			continue
+		}
+		for name, raw := range entries {
+			entry, ok := raw.(map[string]any)
+			if !ok || !strings.EqualFold(stringValue(entry, "type"), "http") {
+				continue
+			}
+			path := stringValue(entry, "path")
+			if path == "" {
+				continue
+			}
+			target := filepath.Join(stateDirectory, filepath.Clean(path))
+			if info, err := os.Lstat(target); err == nil {
+				if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+					return nil, fmt.Errorf("provider cache target is not a regular file: %s", path)
+				}
+				continue
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return nil, err
+			}
+			format := strings.ToLower(stringValue(entry, "format"))
+			if format == "mrs" || strings.EqualFold(filepath.Ext(target), ".mrs") {
+				if seedMRS == nil {
+					// Unit callers without a pinned core cannot safely fabricate MRS.
+					continue
+				}
+				if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+					return nil, err
+				}
+				if err := seedMRS(target, strings.ToLower(stringValue(entry, "behavior"))); err != nil {
+					return nil, err
+				}
+				seeded = append(seeded, path)
+				continue
+			}
+			if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+				return nil, err
+			}
+			var content []byte
+			if section == "proxy-providers" {
+				digest := sha256.Sum256([]byte(name))
+				placeholder := map[string]any{"proxies": []any{map[string]any{
+					"name": "Murge Bootstrap " + hex.EncodeToString(digest[:6]),
+					"type": "socks5", "server": "127.0.0.1", "port": 1,
+				}}}
+				content, _ = yaml.Marshal(placeholder)
+			} else if format == "text" || strings.EqualFold(filepath.Ext(target), ".txt") {
+				content = []byte("# Murge cold-start bootstrap; replaced by provider refresh\n")
+			} else {
+				content = []byte("payload: []\n")
+			}
+			if err := writePrivateFile(target, content); err != nil {
+				return nil, err
+			}
+			// Mark it stale so mihomo refreshes it as soon as the restored network
+			// is usable instead of waiting for the configured interval.
+			stale := time.Unix(1, 0)
+			_ = os.Chtimes(target, stale, stale)
+			seeded = append(seeded, path)
+		}
+	}
+	return seeded, nil
+}
+
+func stringValue(entry map[string]any, key string) string {
+	value, _ := entry[key].(string)
+	return strings.TrimSpace(value)
+}
 
 var (
 	errProviderNotFound          = errors.New("provider not found")

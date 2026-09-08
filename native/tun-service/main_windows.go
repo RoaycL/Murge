@@ -35,7 +35,11 @@ func main() {
 	bootstrapDirectory := filepath.Dir(executable)
 	if len(os.Args) == 2 && (os.Args[1] == "--install" || os.Args[1] == "--uninstall") {
 		if err := runInstallerCommand(os.Args[1], bootstrapDirectory); err != nil {
-			panic(err)
+			// The installer captures stderr and presents this contextual error to
+			// the user. A panic only produced Go's generic exit code 2 in NSIS and
+			// hid the actual failing Windows operation.
+			_, _ = fmt.Fprintf(os.Stderr, "%s failed: %v\n", os.Args[1], err)
+			os.Exit(1)
 		}
 		return
 	}

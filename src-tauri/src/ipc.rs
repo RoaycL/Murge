@@ -13,11 +13,13 @@
 //! mapping is shell-independent.
 
 use serde_json::Value;
+use std::sync::Arc;
 use tauri::State;
 
 use crate::app_info;
 use crate::brand;
 use crate::error::IpcError;
+use crate::override_service::OverrideService;
 use crate::paths::AppPaths;
 use crate::profile_service::ProfilesService;
 use crate::settings::{AppSettingsPatch, SettingsStore};
@@ -32,9 +34,10 @@ pub fn desktop_ipc(
     payload: Value,
     paths: State<'_, AppPaths>,
     settings: State<'_, SettingsStore>,
-    profiles: State<'_, ProfilesService>,
+    profiles: State<'_, Arc<ProfilesService>>,
+    overrides: State<'_, OverrideService>,
 ) -> IpcResult {
-    dispatch(&channel, &payload, &paths, &settings, &profiles)
+    dispatch(&channel, &payload, &paths, &settings, &profiles, &overrides)
 }
 
 /// Payload arrays arrive as a JSON array; positional access mirrors the
@@ -57,7 +60,8 @@ pub fn dispatch(
     payload: &Value,
     _paths: &AppPaths,
     settings: &SettingsStore,
-    profiles: &ProfilesService,
+    profiles: &Arc<ProfilesService>,
+    overrides: &OverrideService,
 ) -> IpcResult {
     match channel {
         "app:get-brand" => Ok(brand::brand_document()),
@@ -126,6 +130,36 @@ pub fn dispatch(
             "profiles:inspect-active-config composes the effective document with overrides + TUN (Phase 3 slices)",
         )),
 
+        // --- overrides (Phase 3A) -------------------------------------------
+        "overrides:list" => overrides.list(),
+        "overrides:create" => {
+            let input = arg(payload, 0)
+                .ok_or_else(|| IpcError::invalid_argument("overrides:create requires an input object"))?;
+            overrides.create(input)
+        }
+        "overrides:update" => {
+            let id = required_string(payload, 0, "overrides:update id")?;
+            let input = arg(payload, 1)
+                .ok_or_else(|| IpcError::invalid_argument("overrides:update requires an input object"))?;
+            overrides.update(&id, input)
+        }
+        "overrides:remove" => overrides.remove(&required_string(payload, 0, "overrides:remove id")?),
+        "overrides:set-enabled" => {
+            let id = required_string(payload, 0, "overrides:set-enabled id")?;
+            let enabled = arg(payload, 1)
+                .and_then(Value::as_bool)
+                .ok_or_else(|| IpcError::invalid_argument("overrides:set-enabled requires a boolean"))?;
+            overrides.set_enabled(&id, enabled)
+        }
+        "overrides:move" => overrides.move_item(
+            &required_string(payload, 0, "overrides:move id")?,
+            &string_arg(payload, 1).unwrap_or_default(),
+        ),
+        "overrides:preview" => overrides.preview(),
+        "overrides:validate" => overrides.validate(),
+        "overrides:last-known-good" => overrides.last_known_good(),
+        "overrides:reset-to-last-good" => overrides.reset_to_last_good(),
+
         _ => Err(IpcError::unsupported_channel(channel)),
     }
 }
@@ -140,27 +174,30 @@ mod tests {
     use super::*;
     use crate::profile_service::ProfilesService;
     use crate::settings::SettingsStore;
+    use std::sync::Arc;
     use tempfile::TempDir;
 
     struct Fixture {
         _temp: TempDir,
         paths: AppPaths,
         settings: SettingsStore,
-        profiles: ProfilesService,
+        profiles: Arc<ProfilesService>,
+        overrides: OverrideService,
     }
 
     fn fixtures() -> Fixture {
         let temp = TempDir::new().unwrap();
         let paths = AppPaths { app_data_root: None, profile_root: None };
         let settings = SettingsStore::new(None);
-        let profiles = ProfilesService::for_development(&temp.path().to_path_buf());
-        Fixture { _temp: temp, paths, settings, profiles }
+        let profiles = Arc::new(ProfilesService::for_development(&temp.path().to_path_buf()));
+        let overrides = OverrideService::new(None);
+        Fixture { _temp: temp, paths, settings, profiles, overrides }
     }
 
     #[test]
     fn serves_brand_document_from_the_checked_in_file() {
         let f = fixtures();
-        let brand = dispatch("app:get-brand", &Value::Null, &f.paths, &f.settings, &f.profiles).unwrap();
+        let brand = dispatch("app:get-brand", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides).unwrap();
         assert_eq!(brand["appId"], "io.murge.desktop");
         assert_eq!(brand["protocolScheme"], "murge");
     }
@@ -168,7 +205,7 @@ mod tests {
     #[test]
     fn serves_app_info_in_electron_vocabulary() {
         let f = fixtures();
-        let info = dispatch("app:get-info", &Value::Null, &f.paths, &f.settings, &f.profiles).unwrap();
+        let info = dispatch("app:get-info", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides).unwrap();
         assert_eq!(info["version"], env!("CARGO_PKG_VERSION"));
         assert!(matches!(
             info["platform"].as_str(),
@@ -179,7 +216,7 @@ mod tests {
     #[test]
     fn settings_round_trip_through_the_dispatch() {
         let f = fixtures();
-        let before = dispatch("app-settings:get", &Value::Null, &f.paths, &f.settings, &f.profiles).unwrap();
+        let before = dispatch("app-settings:get", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides).unwrap();
         assert_eq!(before["closeToTray"], true);
         let after = dispatch(
             "app-settings:set",
@@ -187,6 +224,7 @@ mod tests {
             &f.paths,
             &f.settings,
             &f.profiles,
+            &f.overrides,
         )
         .unwrap();
         assert_eq!(after["closeToTray"], false);
@@ -197,7 +235,7 @@ mod tests {
     #[test]
     fn profile_channels_flow_through_the_dispatch() {
         let f = fixtures();
-        let list = dispatch("profiles:list", &Value::Null, &f.paths, &f.settings, &f.profiles).unwrap();
+        let list = dispatch("profiles:list", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides).unwrap();
         assert_eq!(list, serde_json::json!([]));
         let meta = dispatch(
             "profiles:import",
@@ -205,6 +243,7 @@ mod tests {
             &f.paths,
             &f.settings,
             &f.profiles,
+            &f.overrides,
         )
         .unwrap();
         assert_eq!(meta["name"], "Home");
@@ -215,6 +254,7 @@ mod tests {
             &f.paths,
             &f.settings,
             &f.profiles,
+            &f.overrides,
         )
         .unwrap();
         assert_eq!(profile["document"], "port: 7890\n");
@@ -224,6 +264,7 @@ mod tests {
             &f.paths,
             &f.settings,
             &f.profiles,
+            &f.overrides,
         )
         .unwrap();
         assert_eq!(meta["active"], true);
@@ -238,7 +279,7 @@ mod tests {
             "profiles:get-provider-content",
             "profiles:inspect-active-config",
         ] {
-            let error = dispatch(channel, &Value::Null, &f.paths, &f.settings, &f.profiles).unwrap_err();
+            let error = dispatch(channel, &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides).unwrap_err();
             assert!(error.0.starts_with("PROTOCOL_ERROR:UNSUPPORTED::"), "{channel}: {}", error.0);
         }
     }
@@ -246,14 +287,14 @@ mod tests {
     #[test]
     fn unknown_channels_fail_closed_with_unsupported() {
         let f = fixtures();
-        let error = dispatch("kernel:start", &Value::Null, &f.paths, &f.settings, &f.profiles).unwrap_err();
+        let error = dispatch("kernel:start", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides).unwrap_err();
         assert!(error.0.starts_with("PROTOCOL_ERROR:UNSUPPORTED::"), "{}", error.0);
     }
 
     #[test]
     fn non_string_arguments_fail_with_invalid_argument() {
         let f = fixtures();
-        let error = dispatch("profiles:get", &serde_json::json!([42]), &f.paths, &f.settings, &f.profiles).unwrap_err();
+        let error = dispatch("profiles:get", &serde_json::json!([42]), &f.paths, &f.settings, &f.profiles, &f.overrides).unwrap_err();
         assert!(error.0.contains("INVALID_ARGUMENT"), "{}", error.0);
     }
 }

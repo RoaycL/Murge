@@ -9,11 +9,18 @@ use serde::Serialize;
 
 /// Error codes mirrored from `ProtocolErrorCode` (@shared/protocol-errors.ts).
 /// Only the codes the Rust slices raise today; later slices add theirs here.
+#[allow(dead_code)] // staged slices raise their codes when they land
 pub mod code {
     pub const INVALID_ARGUMENT: &str = "INVALID_ARGUMENT";
     pub const NOT_FOUND: &str = "NOT_FOUND";
     pub const UNSUPPORTED: &str = "UNSUPPORTED";
     pub const INTERNAL: &str = "INTERNAL";
+    pub const UNAUTHORIZED: &str = "UNAUTHORIZED";
+    pub const UPSTREAM_UNREACHABLE: &str = "UPSTREAM_UNREACHABLE";
+    pub const UPSTREAM_TIMEOUT: &str = "UPSTREAM_TIMEOUT";
+    pub const UPSTREAM_HTTP_ERROR: &str = "UPSTREAM_HTTP_ERROR";
+    pub const UPSTREAM_TEST_FAILED: &str = "UPSTREAM_TEST_FAILED";
+    pub const INVALID_UPSTREAM: &str = "INVALID_UPSTREAM";
 }
 
 /// A failed IPC call. Serialized to the ProtocolError wire string so the

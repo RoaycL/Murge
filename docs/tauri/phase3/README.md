@@ -269,6 +269,52 @@ First Phase 3B slice — the lifecycle state machines, channel-ready:
   etc.) emit with the controller slice, when transitions actually occur at
   runtime.
 
+### 8. Mihomo controller REST client + 20 live channels (`src-tauri/src/mihomo.rs`)
+
+Second Phase 3B slice — the typed controller client, channel-ready:
+
+- `MihomoClient` ports `mihomo-client.ts` over `reqwest` (rustls — the same
+  choice clash-verge-rev ships): every endpoint of the TS client (version,
+  configs get/patch/reload, proxies/select, rules, providers get/refresh/
+  healthcheck, delay tests incl. provider + group, DNS query, cache flushes,
+  connections + close) with the verbatim error mapping (transport ->
+  UPSTREAM_UNREACHABLE, timeout -> UPSTREAM_TIMEOUT, 401 -> UNAUTHORIZED,
+  504 -> UPSTREAM_TIMEOUT, 503 -> UPSTREAM_TEST_FAILED, other non-2xx ->
+  UPSTREAM_HTTP_ERROR, invalid JSON -> INVALID_UPSTREAM). Provider refreshes
+  keep the 45s budget; delay tests raise their timeout by +3s.
+- `encodeURIComponent` parity for path segments (CJK group/node names) and
+  the exact renderer-argument validators from `shared/schemas/ipc.ts`
+  (non-empty-name, proxy selection, connection id, strict delay options that
+  REJECT renderer-supplied probe URLs, allowlisted config patch that
+  excludes `tun`, DNS hostname + 7-type set, log cursor).
+- Payload parsers port `shared/schemas/mihomo.ts` (required primitives,
+  passthrough, null-connections normalization, DNS/flag validation) with the
+  same INVALID_UPSTREAM wire errors.
+- `MihomoLogBuffer` (monotonic seq, FIFO eviction at 2000, high-water clear)
+  serves `mihomo:logs-snapshot|clear-logs` today; the live log/traffic/
+  connections EVENTS tap it from the stream slice.
+- `ProxySelectionStore` (proxy-selections.json, temp+rename, fail-open) +
+  the selection gateway (resolve active profile -> PUT -> record, shared
+  mutation boundary) + `restore_selections` replay are in place for the 3D
+  kernel start path.
+- The group-member delay test ports `MihomoService::groupMemberDelayTest`:
+  NOT_FOUND guard with the verbatim copy, global-scope/profile-url/owner-
+  testUrl chain, provider-owner index (1s cache) with 404 fall-through.
+- Known staging differences (documented): the controller endpoint/secret are
+  read from the coerced core-settings model (Electron production wires the
+  kernel's materialized config; rebinding lands with the 3D kernel slice);
+  YAML merge keys (`<<`) resolve one level deep for `url`/`name`; the
+  `mihomo:internet-latency` channel stays staged (needs raw-socket gateway
+  RTT + system resolver probes, lands with the 3D system slice); the three
+  push-stream EVENT channels stay staged with the emit pipeline.
+- 20 channels live: `mihomo:get-config|patch-config|get-proxies|
+  select-proxy|get-rules|get-proxy-providers|refresh-proxy-provider|
+  health-check-proxy-provider|get-rule-providers|refresh-rule-provider|
+  delay-test|group-member-delay-test|group-delay-test|get-connections|
+  close-connection|dns-query|flush-dns-cache|flush-fakeip-cache|
+  logs-snapshot|clear-logs`. With no running kernel the REST channels fail
+  UPSTREAM_UNREACHABLE — the exact typed error the renderer already handles.
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,
@@ -290,22 +336,23 @@ the Rust dispatch (mechanical scan, not a manual claim):
 
 - **121 real channels** in the Electron surface (two earlier apparent extras
   were TypeScript type literals, not channels).
-- **60 live** in the Rust dispatch: `app:get-brand|get-info`,
+- **80 live** in the Rust dispatch: `app:get-brand|get-info`,
   `app-settings:get|set`, 14 of 17 `profiles:*`, all 10 `overrides:*`
   (JS kind fails open inside `validate`/`apply`), all 15 typed-model
   `get|set|preview` channels, all 4 `usage-history:*`, `kernel:get-status|
   start|stop`, `kernel-manager:get-state|set-enabled|set-channel|
-  list-versions|install`, `runtime:get-summary|get-external-ip`.
-- **61 intentionally fail closed** with `PROTOCOL_ERROR:UNSUPPORTED` via the
-  dispatch fallthrough, mapping exactly to the later phases: mihomo +
-  streams (3B controller slice), subscription fetching +
+  list-versions|install`, `runtime:get-summary|get-external-ip`, and 20 of
+  23 `mihomo:*` (internet-latency + 2 stream events staged).
+- **41 intentionally fail closed** with `PROTOCOL_ERROR:UNSUPPORTED` via the
+  dispatch fallthrough, mapping exactly to the later phases: mihomo streams +
+  internet-latency (3B/3D), subscription fetching +
   Sub-Store + icons + network-interfaces (3C), system-proxy + TUN lifecycle +
   privileged provider content (3D), startup + tray-adjacent (4), updates (5).
   No channel is silently dropped or no-ops.
 
 ## Verification (Linux ARM64, real execution)
 
-- Rust: `cargo test` — **160 passed / 0 failed**, zero warnings:
+- Rust: `cargo test` — **177 passed / 0 failed**, zero warnings:
   - brand parse/gate (1), app-info vocabulary (2), paths namespace/dev (3),
   - settings store: defaults, quarantine, atomic format, patch merge,
     delayTestUrl read/set split, dev memory store, field salvage (7),
@@ -352,7 +399,13 @@ the Rust dispatch (mechanical scan, not a manual claim):
   - kernel: supervisor start-fail/stop-idempotent (2), manager defaults/
     channel transitions/enabled delegation/staged list+install (4), runtime
     summary profile-or-default + external-ip null (2), dispatch: kernel
-    channels + runtime summary (2).
+    channels + runtime summary (2),
+  - mihomo: mock-controller request success/error/unreachable/delay (4),
+    encodeURIComponent + argument validators (2), payload parsers (1), log
+    buffer (2), selection store (1), group-url parser (1), member test
+    NOT_FOUND/provider-url/404-fallthrough/nested-group (4), select+restore
+    (2), dispatch: channels through mock controller (1), unreachable without
+    kernel (1), group member test with profile url (1).
 - TypeScript: `npm run typecheck` green; `npx vitest run` 1905 passed / 7
   skipped (unchanged — renderer untouched by this slice).
 

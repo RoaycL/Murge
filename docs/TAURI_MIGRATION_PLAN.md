@@ -248,7 +248,7 @@ Update this table in every migration pull request.
 
 | Phase | Status | Evidence | Blockers |
 |---|---|---|---|
-| 0. Baseline | Not started | — | — |
+| 0. Baseline | In progress | `docs/tauri/phase0/`：`IPC_INVENTORY.md`（121/121 `window.desktop` 方法+事件与通道、实现、测试映射；111 invoke 全注册、10 事件全有发送方的脚本核对）；`DIRECTORIES.md`（app-data/logs/kernel/Sub-Store/service 等目录基线）；`PARITY_CHECKLIST.md`（托盘 17 项、设置页 22 项、headless 10 项、深链 5 项、更新器 10 项、关停 12 项）；`BASELINE.md`（TS 1883 通过/7 跳过、Go `go test ./...` 通过，Linux ARM64 真实执行） | Windows 运行时基线（安装包/内存/冷启动/真实 mihomo/系统代理/TUN/交互 smoke 的数值与 CI 链接）需 Windows CI 或真机，见 `BASELINE.md` §1 占位表 |
 | 1. Boundaries | Not started | — | — |
 | 2. Tauri shell | Not started | — | — |
 | 3A. Local state | Not started | — | — |

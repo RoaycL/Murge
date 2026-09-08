@@ -411,6 +411,10 @@ func (runtime *windowsRuntime) Start(profile string, _ string, version string) (
 	if err != nil || digest != coreDigest {
 		return 0, errors.New("extracted mihomo integrity check failed")
 	}
+	listenerPorts, err := listenerPortsFromProfile(profile)
+	if err != nil {
+		return 0, err
+	}
 	profilePath := filepath.Join(runtime.config.StateDirectory, "session.yaml")
 	if err := writePrivateFile(profilePath, []byte(profile)); err != nil {
 		return 0, err
@@ -422,6 +426,13 @@ func (runtime *windowsRuntime) Start(profile string, _ string, version string) (
 	output := newBoundedTailWriter(8 * 1024)
 	command.Stdout = output
 	command.Stderr = output
+	// Port takeover must run inside this LocalSystem service and immediately
+	// precede process creation. The desktop client cannot terminate an elevated
+	// competing core and must never attempt to.
+	if err := reclaimWindowsListenerPorts(listenerPorts); err != nil {
+		_ = os.Remove(profilePath)
+		return 0, fmt.Errorf("reclaim listener ports: %w", err)
+	}
 	if err := command.Start(); err != nil {
 		_ = os.Remove(profilePath)
 		return 0, err

@@ -17,7 +17,7 @@ import { randomSecret } from './kernel/mihomo-config'
 import { ControllerReadyKernelGateway } from './kernel/controller-ready-gateway'
 import { LateBoundKernelGateway } from './kernel/single-kernel-gateway'
 import { PrivilegedServiceKernelGateway } from './kernel/privileged-service-gateway'
-import { proxyPortsOwnedByPid, reclaimProxyPorts } from './kernel/proxy-port-reclaimer'
+import { proxyPortsOwnedByPid } from './kernel/proxy-port-reclaimer'
 import { createSystemProxy } from './system-proxy/factory'
 import { SystemProxyService } from './system-proxy/service'
 import { WindowsSystemProxyAdapter } from './system-proxy/adapters/windows-adapter'
@@ -942,15 +942,21 @@ app.whenReady().then(async () => {
         {
           waitUntilReady: async ({ controllerPort, mixedPort, httpPort, socksPort, secret, pid, signal }) => {
             const client = new MihomoClient(`http://127.0.0.1:${controllerPort}`, secret, { timeoutMs: 750 })
+            const expectedPorts = [mixedPort, httpPort, socksPort, controllerPort].filter(
+              (port): port is number => port !== undefined
+            )
+            let lastFailure = 'controller did not respond'
             while (!signal.aborted) {
               try {
                 const version = await client.getVersion(signal)
                 const listenersOwned = process.platform !== 'win32' || await proxyPortsOwnedByPid(
-                  [mixedPort, httpPort, socksPort, controllerPort],
+                  expectedPorts,
                   pid
                 )
                 if (listenersOwned) return { version: version.version }
-              } catch {
+                lastFailure = `ports ${expectedPorts.join(',')} are not all owned by core process ${pid}`
+              } catch (error) {
+                lastFailure = error instanceof Error ? error.message : 'controller probe failed'
                 // Controller and listener ownership are retried together until
                 // the bounded startup deadline expires.
               }
@@ -964,18 +970,18 @@ app.whenReady().then(async () => {
                 signal.addEventListener('abort', done, { once: true })
               })
             }
-            throw new ProtocolError(ProtocolErrorCode.KERNEL_START_TIMEOUT, 'privileged mihomo controller did not become ready')
+            throw new ProtocolError(
+              ProtocolErrorCode.KERNEL_START_TIMEOUT,
+              `privileged mihomo did not become ready: ${lastFailure}`
+            )
           }
         },
         `${brand.shortName} TUN`,
         10_000,
         () => kernelManagerService.isEnabled(),
-        (runtime) => reclaimProxyPorts([
-          runtime.mixedPort,
-          runtime.httpPort,
-          runtime.socksPort,
-          runtime.controllerPort
-        ]),
+        // The authenticated LocalSystem service performs atomic port takeover
+        // immediately before spawning its pinned core.
+        () => undefined,
         () => kernelManagerService.getVersionSelection()
       )
     : null

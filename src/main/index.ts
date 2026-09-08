@@ -977,7 +977,10 @@ app.whenReady().then(async () => {
           }
         },
         `${brand.shortName} TUN`,
-        10_000,
+        // A cold protected service home may need to initialize provider caches.
+        // Keep polling while the exact child remains alive; liveness monitoring
+        // still fails immediately if it exits, so this is not a blind delay.
+        60_000,
         () => kernelManagerService.isEnabled(),
         // The authenticated LocalSystem service performs atomic port takeover
         // immediately before spawning its pinned core.

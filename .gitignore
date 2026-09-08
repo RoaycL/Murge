@@ -20,6 +20,7 @@ resources/mihomo-resolved.json.tmp
 resources/SOURCE_CODE.resolved.md
 resources/geodata/*.dat
 resources/geodata/*.metadb
+resources/geodata/*.mmdb
 resources/tun-service/*/tun-service.exe
 # Runtime artifacts written next to the service binary by the local TUN evidence
 # harness (scripts/tun-runtime-evidence.ps1). service-config.json embeds this

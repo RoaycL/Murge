@@ -38,7 +38,10 @@ export class TunServiceClient {
       profile,
       profileSha256: createHash('sha256').update(profile, 'utf8').digest('hex'),
       ...(version ? { version } : {})
-    }, signal)
+    // A rolling/specific selection may require the LocalSystem service to fetch
+    // and verify the official core before it can reply. Do not abandon a live
+    // service operation at the transport's ordinary ten-second deadline.
+    }, signal, 150_000)
     if (response.outcome === 'conflict') {
       fail(ProtocolErrorCode.TUN_SERVICE_CONFLICT, response.validationMessage ?? response.errorCode ?? 'TUN service ownership conflict')
     }

@@ -37,6 +37,7 @@ mod startup;
 mod substore;
 mod substore_zip;
 mod system_proxy;
+mod tun;
 mod icons;
 mod profile_service;
 mod subscription;
@@ -297,6 +298,40 @@ pub fn run() {
                 let _ = tauri::Emitter::emit(&status_app, "system-proxy:status-event", value.clone());
             }));
             app.manage(system_proxy_service);
+            // TUN: the coordinator is fully ported; the mutation adapter is
+            // the fail-closed gate (the same boundary this Electron build
+            // ships — the privileged service lands with the G1 review).
+            let tun_supported = !is_dev && cfg!(windows);
+            let tun_coordinator =
+                tun::TunCoordinator::new(std::sync::Arc::new(tun::GatedTunMutationAdapter), tun_supported);
+            // Forward TUN status transitions to every renderer window.
+            let tun_app = app.handle().clone();
+            tun_coordinator.subscribe(std::sync::Arc::new(move |value| {
+                let _ = tauri::Emitter::emit(&tun_app, "tun:status-event", value.clone());
+            }));
+            // Startup reconciliation of an interrupted TUN transaction (the
+            // tunReconcile recovery layer; never a cached crash-time status).
+            let reconcile_coordinator = tun_coordinator.clone();
+            tauri::async_runtime::spawn(async move {
+                reconcile_coordinator.initialize().await;
+            });
+            app.manage(tun_coordinator);
+            // The ordered-kernel-gateway crash hook: when the supervisor
+            // reports `failed` while the system proxy is owned, restore it
+            // immediately (the proxy must never outlive a dead listener).
+            let recovery_app = app.handle().clone();
+            let kernel_services = app.state::<kernel::KernelServices>();
+            kernel_services.supervisor.status_listeners.subscribe(std::sync::Arc::new(move |value| {
+                if value["phase"].as_str() == Some("failed") {
+                    use tauri::Manager;
+                    let recovery_app = recovery_app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Some(system_proxy) = recovery_app.try_state::<system_proxy::SystemProxyService>() {
+                            let _ = system_proxy.restore_before_kernel_unavailable().await;
+                        }
+                    });
+                }
+            }));
             app.manage(paths);
             Ok(())
         })

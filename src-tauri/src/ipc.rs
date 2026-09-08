@@ -18,6 +18,7 @@ use tauri::State;
 
 use crate::app_info;
 use crate::enhancements;
+use crate::usage;
 use crate::brand;
 use crate::error::IpcError;
 use crate::override_service::OverrideService;
@@ -38,8 +39,9 @@ pub fn desktop_ipc(
     profiles: State<'_, Arc<ProfilesService>>,
     overrides: State<'_, OverrideService>,
     models: State<'_, enhancements::ModelStores>,
+    usage: State<'_, usage::UsageHistoryService>,
 ) -> IpcResult {
-    dispatch(&channel, &payload, &paths, &settings, &profiles, &overrides, &models)
+    dispatch(&channel, &payload, &paths, &settings, &profiles, &overrides, &models, &usage)
 }
 
 /// Payload arrays arrive as a JSON array; positional access mirrors the
@@ -82,6 +84,7 @@ pub fn dispatch(
     profiles: &Arc<ProfilesService>,
     overrides: &OverrideService,
     models: &enhancements::ModelStores,
+    usage: &usage::UsageHistoryService,
 ) -> IpcResult {
     match channel {
         "app:get-brand" => Ok(brand::brand_document()),
@@ -243,6 +246,17 @@ pub fn dispatch(
             Ok(Value::String(enhancements::tun_config_preview_text(&input)))
         }
 
+        // --- usage history (Phase 3A) ---------------------------------------
+        "usage-history:get-window" => usage.get_window(&required_string(payload, 0, "usage-history:get-window window")?),
+        "usage-history:rank" => {
+            let window = required_string(payload, 0, "usage-history:rank window")?;
+            let ranking = required_string(payload, 1, "usage-history:rank ranking")?;
+            let limit = arg(payload, 2).and_then(Value::as_u64).map(|value| value as usize);
+            usage.rank(&window, &ranking, limit)
+        }
+        "usage-history:clear" => usage.clear().map(|()| Value::Null),
+        "usage-history:get-capacity" => Ok(usage.get_capacity()),
+
         _ => Err(IpcError::unsupported_channel(channel)),
     }
 }
@@ -267,6 +281,7 @@ mod tests {
         profiles: Arc<ProfilesService>,
         overrides: OverrideService,
         models: enhancements::ModelStores,
+        usage: usage::UsageHistoryService,
     }
 
     fn fixtures() -> Fixture {
@@ -276,13 +291,14 @@ mod tests {
         let profiles = Arc::new(ProfilesService::for_development(&temp.path().to_path_buf()));
         let overrides = OverrideService::new(None);
         let models = enhancements::ModelStores::new(None);
-        Fixture { _temp: temp, paths, settings, profiles, overrides, models }
+        let usage = usage::UsageHistoryService::new(usage::UsageHistoryStore::in_memory());
+        Fixture { _temp: temp, paths, settings, profiles, overrides, models, usage }
     }
 
     #[test]
     fn serves_brand_document_from_the_checked_in_file() {
         let f = fixtures();
-        let brand = dispatch("app:get-brand", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models).unwrap();
+        let brand = dispatch("app:get-brand", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage).unwrap();
         assert_eq!(brand["appId"], "io.murge.desktop");
         assert_eq!(brand["protocolScheme"], "murge");
     }
@@ -290,7 +306,7 @@ mod tests {
     #[test]
     fn serves_app_info_in_electron_vocabulary() {
         let f = fixtures();
-        let info = dispatch("app:get-info", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models).unwrap();
+        let info = dispatch("app:get-info", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage).unwrap();
         assert_eq!(info["version"], env!("CARGO_PKG_VERSION"));
         assert!(matches!(
             info["platform"].as_str(),
@@ -301,7 +317,7 @@ mod tests {
     #[test]
     fn settings_round_trip_through_the_dispatch() {
         let f = fixtures();
-        let before = dispatch("app-settings:get", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models).unwrap();
+        let before = dispatch("app-settings:get", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage).unwrap();
         assert_eq!(before["closeToTray"], true);
         let after = dispatch(
             "app-settings:set",
@@ -311,6 +327,7 @@ mod tests {
             &f.profiles,
             &f.overrides,
             &f.models,
+            &f.usage,
         )
         .unwrap();
         assert_eq!(after["closeToTray"], false);
@@ -321,7 +338,7 @@ mod tests {
     #[test]
     fn profile_channels_flow_through_the_dispatch() {
         let f = fixtures();
-        let list = dispatch("profiles:list", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models).unwrap();
+        let list = dispatch("profiles:list", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage).unwrap();
         assert_eq!(list, serde_json::json!([]));
         let meta = dispatch(
             "profiles:import",
@@ -331,6 +348,7 @@ mod tests {
             &f.profiles,
             &f.overrides,
             &f.models,
+            &f.usage,
         )
         .unwrap();
         assert_eq!(meta["name"], "Home");
@@ -343,6 +361,7 @@ mod tests {
             &f.profiles,
             &f.overrides,
             &f.models,
+            &f.usage,
         )
         .unwrap();
         assert_eq!(profile["document"], "port: 7890\n");
@@ -354,6 +373,7 @@ mod tests {
             &f.profiles,
             &f.overrides,
             &f.models,
+            &f.usage,
         )
         .unwrap();
         assert_eq!(meta["active"], true);
@@ -368,7 +388,7 @@ mod tests {
             "profiles:get-provider-content",
             "profiles:inspect-active-config",
         ] {
-            let error = dispatch(channel, &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models).unwrap_err();
+            let error = dispatch(channel, &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage).unwrap_err();
             assert!(error.0.starts_with("PROTOCOL_ERROR:UNSUPPORTED::"), "{channel}: {}", error.0);
         }
     }
@@ -376,14 +396,14 @@ mod tests {
     #[test]
     fn unknown_channels_fail_closed_with_unsupported() {
         let f = fixtures();
-        let error = dispatch("kernel:start", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models).unwrap_err();
+        let error = dispatch("kernel:start", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage).unwrap_err();
         assert!(error.0.starts_with("PROTOCOL_ERROR:UNSUPPORTED::"), "{}", error.0);
     }
 
     #[test]
     fn non_string_arguments_fail_with_invalid_argument() {
         let f = fixtures();
-        let error = dispatch("profiles:get", &serde_json::json!([42]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models).unwrap_err();
+        let error = dispatch("profiles:get", &serde_json::json!([42]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage).unwrap_err();
         assert!(error.0.contains("INVALID_ARGUMENT"), "{}", error.0);
     }
 }

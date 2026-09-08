@@ -26,6 +26,7 @@ mod profile_service;
 mod profiles;
 mod redact;
 mod settings;
+mod usage;
 mod validate;
 
 use tauri::Manager;
@@ -83,11 +84,17 @@ pub fn run() {
             // Typed single-model stores (core/geodata/dns/sniffer/tun-config);
             // dev resolves to None -> memory-only stores.
             let models = enhancements::ModelStores::new(paths.app_data_root.clone());
+            // Bounded usage history: file-backed in production, memory-only in
+            // dev (the Electron app.isPackaged split).
+            let usage = usage::UsageHistoryService::new(usage::UsageHistoryStore::for_app_data_base(
+                paths.app_data_root.clone(),
+            ));
             app.manage(paths);
             app.manage(store);
             app.manage(profiles);
             app.manage(overrides);
             app.manage(models);
+            app.manage(usage);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![ipc::desktop_ipc])

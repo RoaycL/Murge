@@ -240,8 +240,60 @@ pub fn extract_zip_to_dir(zip_path: &Path, dest_dir: &Path) -> Result<Vec<String
     extract_zip_bytes(&buf, dest_dir)
 }
 
+/// Minimal stored-entry zip (crate-internal fixture builder: the artifact
+/// pipeline tests wrap a verified payload in a real zip member).
+#[cfg_attr(not(test), allow(dead_code))] // artifact-pipeline test fixture
+pub fn zip_stored_bytes(entries: Vec<(&str, Vec<u8>)>) -> Vec<u8> {
+    let mut local = Vec::new();
+    let mut central = Vec::new();
+    let mut offsets = Vec::new();
+    for (name, data) in &entries {
+        offsets.push(local.len() as u32);
+        let crc = crc32fast::hash(data);
+        local.extend_from_slice(&LOCAL_SIGNATURE.to_le_bytes());
+        local.extend_from_slice(&[8, 0]); // version needed
+        local.extend_from_slice(&[0, 0]); // flags
+        local.extend_from_slice(&0u16.to_le_bytes()); // method: stored
+        local.extend_from_slice(&[0, 0, 0, 0]); // time+date
+        local.extend_from_slice(&crc.to_le_bytes());
+        local.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        local.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        local.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        local.extend_from_slice(&[0, 0]); // extra len
+        local.extend_from_slice(name.as_bytes());
+        local.extend_from_slice(data);
+        central.extend_from_slice(&CENTRAL_SIGNATURE.to_le_bytes());
+        central.extend_from_slice(&[20, 0, 20, 0]); // versions
+        central.extend_from_slice(&[0, 0]);
+        central.extend_from_slice(&0u16.to_le_bytes());
+        central.extend_from_slice(&[0, 0, 0, 0]);
+        central.extend_from_slice(&crc.to_le_bytes());
+        central.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        central.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        central.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        central.extend_from_slice(&[0, 0, 0, 0]); // extra + comment len
+        central.extend_from_slice(&[0, 0]); // disk number
+        central.extend_from_slice(&[0, 0]); // internal attrs
+        central.extend_from_slice(&0u32.to_le_bytes()); // external attrs
+        central.extend_from_slice(&offsets.last().unwrap().to_le_bytes());
+        central.extend_from_slice(name.as_bytes());
+    }
+    let mut out = local;
+    let cd_offset = out.len() as u32;
+    out.extend_from_slice(&central);
+    out.extend_from_slice(&EOCD_SIGNATURE.to_le_bytes());
+    out.extend_from_slice(&[0, 0, 0, 0]);
+    out.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+    out.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+    out.extend_from_slice(&(central.len() as u32).to_le_bytes());
+    out.extend_from_slice(&cd_offset.to_le_bytes());
+    out.extend_from_slice(&[0, 0]);
+    out
+}
+
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use std::io::Write;
 

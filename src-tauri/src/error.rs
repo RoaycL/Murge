@@ -32,6 +32,9 @@ pub mod code {
     pub const TUN_BINARY_INTEGRITY_FAILED: &str = "TUN_BINARY_INTEGRITY_FAILED";
     pub const TUN_HELPER_PROTOCOL_INVALID: &str = "TUN_HELPER_PROTOCOL_INVALID";
     pub const TUN_SERVICE_CONFLICT: &str = "TUN_SERVICE_CONFLICT";
+    pub const ARTIFACT_DOWNLOAD_FAILED: &str = "ARTIFACT_DOWNLOAD_FAILED";
+    pub const ARTIFACT_HASH_MISMATCH: &str = "ARTIFACT_HASH_MISMATCH";
+    pub const ARTIFACT_EXTRACT_FAILED: &str = "ARTIFACT_EXTRACT_FAILED";
 }
 
 /// A failed IPC call. Serialized to the ProtocolError wire string so the

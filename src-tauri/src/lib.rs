@@ -39,6 +39,7 @@ mod substore_zip;
 mod system_proxy;
 mod tun;
 mod updates;
+mod mihomo_artifact;
 mod icons;
 mod profile_service;
 mod subscription;

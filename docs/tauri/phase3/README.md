@@ -669,6 +669,39 @@ Fourth Phase 3D slice — verification + the provider-content gate:
   routes through the privileged Go service (named pipe), which lands with
   the real-kernel slice.
 
+### 21. Pinned mihomo artifact pipeline (`src-tauri/src/mihomo_artifact.rs`)
+
+Fifth Phase 3D slice — 内核工件管线 (the real-kernel spawn prerequisite):
+
+- `resources/mihomo-assets.json` embeds at build time (`include_str!`) as
+  the single source of truth: pinned `v1.19.30`, the official release
+  base and the per-platform verified digests (win32 x64/arm64 zip,
+  linux arm64 gz — the same catalog the Electron build pins).
+- `download_and_verify_mihomo` ports the stream-and-hash contract: the
+  reqwest transport follows redirects, refuses a content-length above
+  `size + 64 KiB` before streaming, caps the body mid-stream and enforces
+  the 120 s budget; the written archive is rejected with
+  `ARTIFACT_HASH_MISMATCH` (exact copy, file removed) unless BOTH the
+  SHA-256 and the byte size match the pinned values. A digest-matched
+  but wrong-sized body fails the byte check — the archive is never
+  extracted on any mismatch.
+- `extract_mihomo` ports the extraction guards: gz via flate2, zip via
+  the pinned Sub-Store reader (no shell-out, unlike the TS PowerShell
+  fallback), the destination-escape check, symlink refusal, chmod 0755
+  on non-Windows and the stable target rename (`mihomo`/`mihomo.exe`).
+- Provenance ports: the atomic `.mihomo-verified` marker (tmp + rename)
+  with strict shape; reuse re-hashes the on-disk binary every time, so a
+  tampered, truncated, forged or cross-platform binary is quarantined
+  (binary + marker removed) and re-resolved from a fresh verified
+  archive.
+- `build_mihomo_asset_from_release` ports the specific-version path:
+  name match + upstream release digest/size, so a specific-version
+  install is still verified to the byte.
+- The supervisor keeps the DisabledKernelResolver gate until the spawn +
+  controller-ready composition lands (the next slice); the pipeline
+  module is complete and unit-tested standalone (like the Sub-Store zip
+  reader in slice 16).
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,
@@ -706,7 +739,7 @@ the Rust dispatch (mechanical scan, not a manual claim):
 
 ## Verification (Linux ARM64, real execution)
 
-- Rust: `cargo test` — **292 passed / 0 failed**, zero warnings:
+- Rust: `cargo test` — **306 passed / 0 failed**, zero warnings:
   - brand parse/gate (1), app-info vocabulary (2), paths namespace/dev (3),
   - settings store: defaults, quarantine, atomic format, patch merge,
     delayTestUrl read/set split, dev memory store, field salvage (7),

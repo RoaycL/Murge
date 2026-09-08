@@ -620,6 +620,32 @@ Second Phase 3D slice — TUN 生命周期协调器, 3 channels un-staged:
 - Un-staged 3 channels (**107/121 live invoke arms**, 14 fail-closed; the
   remaining set is updates (5) + the listen-side event channels).
 
+### 19. Application updates (`src-tauri/src/updates.rs`)
+
+Third Phase 3D slice — 应用更新状态机, 4 invoke channels un-staged:
+
+- The `UpdateService` state machine ports completely: the driver seam
+  (`configure/check/download/quit_and_install` + a normalized event
+  stream), the in-flight coalescing (only `checking`/`downloading`
+  refuse re-entry — a downloaded update is deliberately NOT terminal),
+  the `downloadedBeforeCheck` restore semantics (a failed newer check
+  keeps the old package installable, a sync driver failure is reduced
+  into the same terminal `error` state), download only from
+  `available`, install only when `canInstall`, and the mid-session
+  feed polling (10 min cadence, first tick deferred, generation-gated
+  stop).
+- The exact unsupported copy is preserved byte-for-byte:
+  `当前构建不支持自动更新（仅安装版可用）`. The production driver is the
+  fail-closed `GatedUpdaterDriver` (`supported: false`) — this build has
+  no update feed, and the service honestly reports that instead of
+  pretending to update. `coerce_update_state` ports for renderer payload
+  hardening.
+- Renderer channels: `updates:get-state|check|download|install`; state
+  transitions forward as `updates:state-event`.
+- Un-staged 4 channels (**111/121 live invoke arms**; the remaining set
+  is the listen-side event channels, which land with their
+  emitter-side producers).
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,
@@ -657,7 +683,7 @@ the Rust dispatch (mechanical scan, not a manual claim):
 
 ## Verification (Linux ARM64, real execution)
 
-- Rust: `cargo test` — **280 passed / 0 failed**, zero warnings:
+- Rust: `cargo test` — **292 passed / 0 failed**, zero warnings:
   - brand parse/gate (1), app-info vocabulary (2), paths namespace/dev (3),
   - settings store: defaults, quarantine, atomic format, patch merge,
     delayTestUrl read/set split, dev memory store, field salvage (7),

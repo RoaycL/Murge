@@ -38,6 +38,7 @@ mod substore;
 mod substore_zip;
 mod system_proxy;
 mod tun;
+mod updates;
 mod icons;
 mod profile_service;
 mod subscription;
@@ -316,6 +317,19 @@ pub fn run() {
                 reconcile_coordinator.initialize().await;
             });
             app.manage(tun_coordinator);
+            // Updates: the gated driver honestly reports "not supported" in
+            // this build; state transitions forward to every renderer window.
+            let updates_service =
+                updates::UpdateService::new(std::sync::Arc::new(updates::GatedUpdaterDriver::new()));
+            updates_service.start();
+            let updates_app = app.handle().clone();
+            updates_service.subscribe(std::sync::Arc::new(move |value| {
+                let _ = tauri::Emitter::emit(&updates_app, "updates:state-event", value.clone());
+            }));
+            // Mid-session feed polling (the mihomo-party / sparkle model); a
+            // no-op on the gated driver.
+            updates_service.start_polling(10 * 60 * 1000);
+            app.manage(updates_service);
             // The ordered-kernel-gateway crash hook: when the supervisor
             // reports `failed` while the system proxy is owned, restore it
             // immediately (the proxy must never outlive a dead listener).

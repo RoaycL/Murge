@@ -521,6 +521,36 @@ invoke surface first):
 - Un-staged `startup:get-status|set-enabled` (**93/121 live invoke arms**,
   28 fail-closed).
 
+### 16. Sub-Store lifecycle (`src-tauri/src/{substore,substore_zip}.rs`)
+
+Seventh Phase 3C slice — 初步接入, 5 channels un-staged:
+
+- The service ports the full lifecycle state machine: single-flight
+  ensure (phases idle/starting/running/downloading/error), staged asset
+  acquisition with SHA-256 digest pinning (default-tag digests must match
+  the app-embedded values), atomic staged-commit with backup/rollback,
+  generation-based operation cancellation, health polling (300ms cadence,
+  20s budget), and proxy-mode restarts only on an actual flag change.
+- The pinned defaults (tags `2.38.2`/`2.31.2`, sha256 digests, port base
+  38324, GitHub API/download URLs) port byte-for-byte; every failure copy
+  is the Chinese TS text (`GitHub 请求失败：…`, `下载失败：SHA-256 校验不匹配`,
+  `Sub-Store 暂存资源不完整`, `没有可用的本地端口`, `Sub-Store 启动超时`, …).
+- The worker runs the backend bundle as a fully-constructed-environment
+  child process (`SUB_STORE_BACKEND_MERGE=1` on ONE loopback port — the
+  same-origin decision; the env never inherits the host, proxy env appears
+  only when `subStoreUseProxy` is on and the mixed port resolves).
+- `substore_zip.rs` ports the narrow ZIP reader verbatim (EOCD scan,
+  central-directory walk, stored+deflate only, CRC32 verify, absolute/`..`
+  path rejection, single-top-level strip) with flate2 + crc32fast.
+- The renderer-facing 5 channels: `substore:get-state` (snapshot mirrors
+  the PERSISTED settings), `ensure-running`, `stop`, `check-update`,
+  `open-external` (the TS `parseSubStoreExternalUrl` copy + the platform
+  opener). The `app-settings:set` arm feeds `onSettings` on every change,
+  and shell startup hydrates mirrors then prepares assets in the
+  background when enabled (the TS when-ready hydration).
+- Un-staged `substore:get-state|ensure-running|stop|check-update|
+  open-external` (**98/121 live invoke arms**, 23 fail-closed).
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,
@@ -558,7 +588,7 @@ the Rust dispatch (mechanical scan, not a manual claim):
 
 ## Verification (Linux ARM64, real execution)
 
-- Rust: `cargo test` — **223 passed / 0 failed**, zero warnings:
+- Rust: `cargo test` — **232 passed / 0 failed**, zero warnings:
   - brand parse/gate (1), app-info vocabulary (2), paths namespace/dev (3),
   - settings store: defaults, quarantine, atomic format, patch merge,
     delayTestUrl read/set split, dev memory store, field salvage (7),

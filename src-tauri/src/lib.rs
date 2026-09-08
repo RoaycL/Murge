@@ -34,6 +34,8 @@ mod profile_parse;
 mod unlock;
 mod route_latency;
 mod startup;
+mod substore;
+mod substore_zip;
 mod icons;
 mod profile_service;
 mod subscription;
@@ -153,6 +155,74 @@ pub fn run() {
                 }
             });
             app.manage(startup_service);
+            // Sub-Store lifecycle owner: base dir + brand + live core-settings
+            // mixed port. New installs default it on; the verified assets
+            // are prepared in the background (the TS when-ready hydration).
+            let substore_base = match &paths.app_data_root {
+                Some(root) => root.join("substore"),
+                None => std::env::temp_dir().join(format!("murge-dev-substore-{}", std::process::id())),
+            };
+            let brand_name = brand::load_brand().map(|brand| brand.product_name).unwrap_or_else(|_| "Murge".to_string());
+            let substore_service = substore::SubStoreService::new(substore::SubStoreDeps {
+                base_dir: substore_base,
+                brand_name,
+                get_mixed_port: {
+                    let app = app.handle().clone();
+                    Box::new(move || {
+                        use tauri::Manager;
+                        app.try_state::<enhancements::ModelStores>().and_then(|models| {
+                            let core = enhancements::coerce_core_settings(&models.core.get());
+                            core["mixedPort"].as_i64().filter(|port| *port > 0).map(|port| port as u16)
+                        })
+                    })
+                },
+                create_worker: None,
+                fetch_fn: None,
+                find_free_port: None,
+                settings: {
+                    // The TS AppSettingsGateway: the live persisted snapshot,
+                    // resolved at call time through the managed store.
+                    let app = app.handle().clone();
+                    std::sync::Arc::new(move || {
+                        let app = app.clone();
+                        Box::pin(async move {
+                            use tauri::Manager;
+                            app.try_state::<settings::SettingsStore>()
+                                .map(|store| store.get())
+                                .unwrap_or_else(|| settings::AppSettings::default())
+                        }) as futures_util::future::BoxFuture<'static, settings::AppSettings>
+                    })
+                },
+                pinned_digests: (
+                    substore::SUB_STORE_BACKEND_DEFAULT_DIGEST.to_string(),
+                    substore::SUB_STORE_FRONTEND_DEFAULT_DIGEST.to_string(),
+                ),
+            });
+            // Hydrate the persisted mirrors, then prepare the verified assets
+            // in the background when the feature is on (the TS when-ready
+            // hydration; non-blocking, failures surface in state).
+            let hydration_service = substore_service.clone();
+            let hydration_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                use tauri::Manager;
+                let (enabled, use_proxy) = {
+                    match hydration_app.try_state::<settings::SettingsStore>() {
+                        Some(store) => {
+                            let snapshot = store.get();
+                            (snapshot.sub_store_enabled, snapshot.sub_store_use_proxy)
+                        }
+                        None => (false, false),
+                    }
+                };
+                hydration_service.on_settings(enabled, use_proxy).await;
+                if enabled {
+                    let state = hydration_service.ensure_running().await;
+                    if state["phase"] == "error" {
+                        eprintln!("[substore] default asset preparation failed: {}", state["error"].as_str().unwrap_or_default());
+                    }
+                }
+            });
+            app.manage(substore_service);
             app.manage(paths);
             Ok(())
         })

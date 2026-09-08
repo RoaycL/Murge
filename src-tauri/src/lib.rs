@@ -33,6 +33,7 @@ use network_metadata::NetworkMetadataService;
 mod profile_parse;
 mod unlock;
 mod route_latency;
+mod startup;
 mod icons;
 mod profile_service;
 mod subscription;
@@ -134,6 +135,24 @@ pub fn run() {
             // down fails closed with the kernel-not-running copy), cached in
             // memory only.
             app.manage(NetworkMetadataService::for_app(app.handle().clone()));
+            // OS login-item state (开机自启): serialized read-after-write
+            // ownership over the Scheduled Task + Run-key ladder.
+            let startup_service = startup::StartupService::new(startup::ScheduledTaskStartupAdapter::for_app(app.handle().clone()));
+            // One-shot registration maintenance at startup: migrates v0.9.x
+            // Run-key users to the scheduled task and rewrites stale
+            // `--hidden` arguments. Best-effort and non-blocking; the toggle
+            // still works either way.
+            let maintenance_service = startup_service.clone();
+            tauri::async_runtime::spawn(async move {
+                let status = maintenance_service.refresh_registration().await;
+                if status["phase"] == "error" {
+                    eprintln!(
+                        "[startup] registration maintenance skipped: {}",
+                        status["errorMessage"].as_str().unwrap_or("系统未确认开机启动设置")
+                    );
+                }
+            });
+            app.manage(startup_service);
             app.manage(paths);
             Ok(())
         })

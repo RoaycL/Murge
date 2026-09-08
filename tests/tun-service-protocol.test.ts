@@ -56,6 +56,12 @@ describe('Phase 9B privileged service protocol', () => {
     const client = new TunServiceClient(transport)
     const owned = await client.start(profile)
     expect(owned).toEqual({ sessionId: expect.any(String), pid: 4242 })
+    expect(vi.mocked(transport.request)).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ operation: 'start' }),
+      undefined,
+      150_000
+    )
     await expect(client.start(profile)).rejects.toThrow(/already owned/)
     await client.stop()
     expect(client.getOwnedSession()).toBeNull()

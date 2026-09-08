@@ -74,18 +74,26 @@
       DetailPrint "system-proxy restore not confirmed; continuing uninstall so removal is not blocked"
       MessageBox MB_ICONEXCLAMATION|MB_OK "未能确认系统代理已安全还原。为避免阻塞卸载（程序可能异常或已损坏），本程序将继续执行。若系统代理仍指向旧端口，请到「Windows 设置 → 网络和 Internet → 代理」关闭后重新启用。"
   SystemProxyUninstallRestoreDone:
-  ; TUN removal is best-effort for the same reason as the proxy restore: a
-  ; failure to remove the optional TUN service must never trap the user in a
-  ; broken install. Warn and continue; a leftover service can be cleared in the
-  ; Services snap-in (or by re-running the app once it is healthy).
-  IfFileExists "$INSTDIR\resources\tun-service\tun-service.exe" 0 TunServiceUninstallDone
-    DetailPrint "Stopping and removing privileged TUN lifecycle service..."
-    ExecWait '"$INSTDIR\resources\tun-service\tun-service.exe" --uninstall' $R0
-    StrCmp $R0 0 TunServiceUninstallDone TunServiceUninstallWarn
-    TunServiceUninstallWarn:
-      DetailPrint "TUN service removal failed with exit code $R0; continuing uninstall so removal is not blocked"
-      MessageBox MB_ICONEXCLAMATION|MB_OK "未能确认 TUN 服务已移除。为避免阻塞卸载，本程序将继续执行。若残留的 TUN 服务需清理，请以管理员身份在「Windows 服务」中找到并停止、删除对应服务。"
-  TunServiceUninstallDone:
+  ; An updater invokes the old uninstaller before customInstall upgrades the
+  ; existing service in place. Keep the protected state directory on that path:
+  ; it contains geodata/provider caches required for an offline first start.
+  ; A real user uninstall still removes the service and its protected state.
+  ${if} ${isUpdated}
+    DetailPrint "Preserving privileged TUN service state for in-place upgrade..."
+  ${else}
+    ; TUN removal is best-effort for the same reason as the proxy restore: a
+    ; failure to remove the optional TUN service must never trap the user in a
+    ; broken install. Warn and continue; a leftover service can be cleared in
+    ; the Services snap-in (or by re-running the app once it is healthy).
+    IfFileExists "$INSTDIR\resources\tun-service\tun-service.exe" 0 TunServiceUninstallDone
+      DetailPrint "Stopping and removing privileged TUN lifecycle service..."
+      ExecWait '"$INSTDIR\resources\tun-service\tun-service.exe" --uninstall' $R0
+      StrCmp $R0 0 TunServiceUninstallDone TunServiceUninstallWarn
+      TunServiceUninstallWarn:
+        DetailPrint "TUN service removal failed with exit code $R0; continuing uninstall so removal is not blocked"
+        MessageBox MB_ICONEXCLAMATION|MB_OK "未能确认 TUN 服务已移除。为避免阻塞卸载，本程序将继续执行。若残留的 TUN 服务需清理，请以管理员身份在「Windows 服务」中找到并停止、删除对应服务。"
+    TunServiceUninstallDone:
+  ${endif}
   ; The scheduled-task auto-start registration (see
   ; src/main/startup/scheduled-task-adapter.ts) must not outlive the app: a
   ; leftover task fires a failing launch at every future logon. The task name is

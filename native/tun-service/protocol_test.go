@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 )
 
@@ -147,6 +148,18 @@ func TestDecodeOfficialVersionInstall(t *testing.T) {
 func TestAcceptProxiedProfile(t *testing.T) {
 	if _, err := decodeRequest(encodedStart(proxiedProfile)); err != nil {
 		t.Fatalf("rejected a legitimate proxied profile: %v", err)
+	}
+}
+
+func TestExtractListenerPortsFromValidatedProfile(t *testing.T) {
+	profile := stringsReplaceOnce(proxiedProfile, "mode: rule", "mode: rule\nport: 7890\nsocks-port: 7891")
+	ports, err := listenerPortsFromProfile(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := []int{17890, 7890, 7891, 19090}
+	if !reflect.DeepEqual(ports, expected) {
+		t.Fatalf("unexpected listener ports: %v", ports)
 	}
 }
 

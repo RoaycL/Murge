@@ -99,6 +99,20 @@ describe('uninstall-restore.nsh customUnInstall hook', () => {
     expect(source).not.toContain('SetErrorLevel 1')
   })
 
+  it('preserves protected service caches during an upgrade but removes them on a real uninstall', () => {
+    const uninstallStart = source.indexOf('!macro customUnInstall')
+    const uninstallEnd = source.indexOf('!macroend', uninstallStart)
+    const uninstall = source.slice(uninstallStart, uninstallEnd)
+    const upgradeBranch = uninstall.indexOf('${if} ${isUpdated}')
+    const realUninstallBranch = uninstall.indexOf('${else}', upgradeBranch)
+    const branchEnd = uninstall.indexOf('${endif}', realUninstallBranch)
+
+    expect(upgradeBranch).toBeGreaterThanOrEqual(0)
+    expect(uninstall.slice(upgradeBranch, realUninstallBranch)).not.toContain('--uninstall')
+    expect(uninstall.slice(realUninstallBranch, branchEnd)).toContain('--uninstall')
+    expect(uninstall).toContain('Preserving privileged TUN service state for in-place upgrade')
+  })
+
   it('recreates only an existing desktop shortcut so upgraded icon resources are visible', () => {
     const installStart = source.indexOf('!macro customInstall')
     const installEnd = source.indexOf('!macroend', installStart)

@@ -47,7 +47,7 @@ export default {
     // persistent home at startup, so a profile with GEOSITE/GEOIP rules starts
     // without mihomo's online geodata download (which needs DNS and fails
     // before any proxy exists). Per-build upstream hashes are recorded alongside.
-    { from: 'resources/geodata', to: 'geodata', filter: ['*.dat', '*.metadb', 'resolved-assets.json'] },
+    { from: 'resources/geodata', to: 'geodata', filter: ['*.dat', '*.metadb', '*.mmdb', 'resolved-assets.json'] },
     { from: 'LICENSE', to: 'LICENSE.txt' },
     { from: 'resources/THIRD_PARTY_NOTICES.md', to: 'THIRD_PARTY_NOTICES.md' },
     { from: 'resources/SOURCE_CODE.resolved.md', to: 'SOURCE_CODE.md' },

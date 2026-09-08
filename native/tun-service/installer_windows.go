@@ -22,8 +22,10 @@ import (
 // the 30s stop budget and far beyond how long Windows holds a terminated
 // service's image for.
 const (
-	maxRemoveAllAttempts   = 5
-	removeAllRetryInterval = 250 * time.Millisecond
+	maxRemoveAllAttempts       = 5
+	removeAllRetryInterval     = 250 * time.Millisecond
+	maxAtomicReplaceAttempts   = 20
+	atomicReplaceRetryInterval = 250 * time.Millisecond
 )
 
 type serviceTemplate struct {
@@ -329,10 +331,24 @@ func copyFileAtomic(source, destination string) error {
 		_ = os.Remove(temporary)
 		return closeErr
 	}
-	_ = os.Remove(destination)
-	if err := os.Rename(temporary, destination); err != nil {
-		_ = os.Remove(temporary)
-		return fmt.Errorf("replace service executable: %w", err)
+	// The SCM can report Stopped just before Windows releases the service image.
+	// Retry the final replace so an in-place upgrade does not strand the service
+	// stopped merely because the old executable still has a transient image lock.
+	var replaceErr error
+	for attempt := 0; attempt < maxAtomicReplaceAttempts; attempt++ {
+		removeErr := os.Remove(destination)
+		if removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			replaceErr = removeErr
+		} else {
+			replaceErr = os.Rename(temporary, destination)
+			if replaceErr == nil {
+				return nil
+			}
+		}
+		if attempt+1 < maxAtomicReplaceAttempts {
+			time.Sleep(atomicReplaceRetryInterval)
+		}
 	}
-	return nil
+	_ = os.Remove(temporary)
+	return fmt.Errorf("replace destination file: %w", replaceErr)
 }

@@ -37,6 +37,11 @@ pub const ACTIVE_FILE: &str = "active.json";
 
 pub type ProfileResult<T> = Result<T, IpcError>;
 
+/// Epoch milliseconds — shared clock for store timestamps.
+pub fn epoch_millis_now() -> u64 {
+    epoch_millis()
+}
+
 fn epoch_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

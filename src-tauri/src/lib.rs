@@ -15,6 +15,9 @@ mod app_info;
 mod brand;
 mod error;
 mod ipc;
+mod override_apply;
+mod override_model;
+mod override_service;
 mod paths;
 mod profile_parse;
 mod profile_service;
@@ -49,7 +52,7 @@ pub fn run() {
             // uses the brand-stable app-data namespace + OS credential store.
             let paths = paths::AppPaths::probe();
             let store = settings::SettingsStore::for_environment(&paths);
-            let profiles = match &paths.profile_root {
+            let profiles = std::sync::Arc::new(match &paths.profile_root {
                 Some(root) => profile_service::ProfilesService::for_paths(
                     root,
                     &paths::app_data_namespace(),
@@ -58,10 +61,27 @@ pub fn run() {
                     let temp = std::env::temp_dir().join(format!("murge-dev-profiles-{}", std::process::id()));
                     profile_service::ProfilesService::for_development(&temp)
                 }
+            });
+            // Preview/validate resolve the base document from the ACTIVE
+            // profile (document + id), mirroring the Electron composition.
+            let overrides = {
+                let profiles = profiles.clone();
+                override_service::OverrideService::new(paths.app_data_root.clone())
+                    .with_base_resolver(Box::new(move || {
+                        profiles.get_active().ok().and_then(|profile| {
+                            if profile.is_null() {
+                                return None;
+                            }
+                            let document = profile["document"].as_str()?.to_string();
+                            let profile_id = profile["meta"]["id"].as_str()?.to_string();
+                            Some((document, Some(profile_id)))
+                        })
+                    }))
             };
             app.manage(paths);
             app.manage(store);
             app.manage(profiles);
+            app.manage(overrides);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![ipc::desktop_ipc])

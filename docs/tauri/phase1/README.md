@@ -33,6 +33,14 @@ a verbatim extraction whose only edits are the extraction seams.
   static lock (brand -> identity/deep links -> storage warmup -> pre-kernel
   services -> headless probes -> kernel graph -> proxy/TUN wiring -> recovery
   joins -> IPC -> window -> tray -> recovery loops -> auto-update check).
+- One deliberate micro-reordering, documented per the plan's
+  no-silent-change rule: `app.requestSingleInstanceLock()` now runs before any
+  module-level side effect (the former monolith requested it at the end of the
+  module-level block, after diagnostics/watchdogs/logging/warmup had started).
+  A second instance therefore quits without performing any side effects; a
+  first instance or any CI probe proceeds through the identical sequence. No
+  contract test asserted the old position and single-instance semantics are
+  unchanged (the lock is still requested before the ready event).
 - Single mihomo process / single ownership chain unchanged; the privileged
   service remains the only production core host on Windows.
 - Proxy restore still runs BEFORE kernel stop on every teardown path, including

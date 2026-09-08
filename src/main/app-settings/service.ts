@@ -91,9 +91,31 @@ export class AppSettingsService implements AppSettingsGateway {
   }
 
   private async read(): Promise<AppSettings> {
+    let raw: string
     try {
-      return parseAppSettings(await readFile(this.filePath, 'utf8'))
-    } catch {
+      raw = await readFile(this.filePath, 'utf8')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.error('[app-settings] unable to read persisted settings:', error)
+      }
+      return { ...DEFAULT_APP_SETTINGS }
+    }
+    try {
+      const decoded = JSON.parse(raw) as unknown
+      if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) {
+        throw new TypeError('settings document must be an object')
+      }
+      return parseAppSettings(raw)
+    } catch (error) {
+      // Preserve the damaged document for support/recovery instead of silently
+      // allowing the next settings write to overwrite the only evidence.
+      const quarantine = join(this.appDataBase, `${APP_SETTINGS_FILE}.corrupt-${Date.now()}`)
+      try {
+        await rename(this.filePath, quarantine)
+        console.error(`[app-settings] quarantined invalid settings at ${quarantine}:`, error)
+      } catch (quarantineError) {
+        console.error('[app-settings] invalid settings could not be quarantined:', error, quarantineError)
+      }
       return { ...DEFAULT_APP_SETTINGS }
     }
   }

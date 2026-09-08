@@ -21,6 +21,7 @@ type serviceConfig struct {
 	ArchiveSHA256       string `json:"archiveSha256"`
 	ArchiveInnerName    string `json:"archiveInnerName"`
 	StateDirectory      string `json:"stateDirectory"`
+	TrustDirectory      string `json:"trustDirectory"`
 	AllowedClientPath   string `json:"allowedClientPath"`
 	AllowedClientSHA256 string `json:"allowedClientSha256"`
 }
@@ -40,14 +41,22 @@ func loadServiceConfig(path string) (serviceConfig, error) {
 	if err := ensureJSONEOF(decoder); err != nil {
 		return serviceConfig{}, err
 	}
+	// Upgrade compatibility: older installers placed service-config.json beside
+	// the service binary but did not spell that protected directory out.
+	if config.TrustDirectory == "" {
+		config.TrustDirectory = filepath.Dir(path)
+	}
 	if !safeNamePattern.MatchString(config.ServiceName) || !safeNamePattern.MatchString(config.PipeName) {
 		return serviceConfig{}, errors.New("unsafe service or pipe name")
 	}
 	if !sidPattern.MatchString(config.AllowedSID) {
 		return serviceConfig{}, errors.New("invalid allowedSid")
 	}
-	if !filepath.IsAbs(config.ArchivePath) || !filepath.IsAbs(config.StateDirectory) || !filepath.IsAbs(config.AllowedClientPath) {
+	if !filepath.IsAbs(config.ArchivePath) || !filepath.IsAbs(config.StateDirectory) || !filepath.IsAbs(config.TrustDirectory) || !filepath.IsAbs(config.AllowedClientPath) {
 		return serviceConfig{}, errors.New("service paths must be absolute")
+	}
+	if strings.EqualFold(filepath.Clean(config.StateDirectory), filepath.Clean(config.TrustDirectory)) {
+		return serviceConfig{}, errors.New("state and trust directories must be separate")
 	}
 	if !sha256Pattern.MatchString(config.ArchiveSHA256) || !sha256Pattern.MatchString(config.AllowedClientSHA256) {
 		return serviceConfig{}, errors.New("invalid pinned digest")

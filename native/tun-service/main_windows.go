@@ -159,20 +159,15 @@ func (service *windowsService) handleConnection(connection net.Conn) {
 }
 
 // clientIdentityCache pins the verified digest of the allowed client to the
-// exact file identity it was computed from. Re-hashing a ~150MB Electron
+// exact NTFS volume/file identity it was computed from. Re-hashing a ~150MB Electron
 // executable on EVERY pipe request (including the 5s liveness reconcile while
 // TUN is active) would burn sustained disk reads for no security gain: the
 // client executable lives in an administrator-owned install directory, and a
-// replaced file necessarily changes size and/or modification time, which
-// invalidates the cache and forces a fresh hash+compare on the next request.
+// replacement necessarily changes its file index, even if size and modification
+// time are restored, which forces a fresh hash+compare on the next request.
 var clientIdentityCache struct {
 	sync.Mutex
-	known *clientIdentity
-}
-
-type clientIdentity struct {
-	size    int64
-	modTime time.Time
+	known *fileIdentity
 }
 
 // verifyAllowedClientDigest re-verifies the pinned client digest unless the
@@ -180,23 +175,24 @@ type clientIdentity struct {
 // digest mismatch or an unreadable file is always a rejection (fail closed);
 // only the steady-state re-hash is skipped.
 func verifyAllowedClientDigest(config serviceConfig) error {
-	info, err := os.Stat(config.AllowedClientPath)
+	file, identity, err := openFileIdentity(config.AllowedClientPath)
 	if err != nil {
 		return fmt.Errorf("pipe client executable unreadable: %w", err)
 	}
+	defer file.Close()
 	clientIdentityCache.Lock()
 	defer clientIdentityCache.Unlock()
-	if cache := clientIdentityCache.known; cache != nil && cache.size == info.Size() && cache.modTime.Equal(info.ModTime()) {
+	if cache := clientIdentityCache.known; cache != nil && *cache == identity {
 		return nil
 	}
-	digest, err := hashFile(config.AllowedClientPath)
+	digest, err := hashOpenFile(file, identity)
 	if err != nil {
 		return fmt.Errorf("pipe client executable unreadable: %w", err)
 	}
 	if digest != config.AllowedClientSHA256 {
 		return errors.New("pipe client executable digest mismatch")
 	}
-	clientIdentityCache.known = &clientIdentity{size: info.Size(), modTime: info.ModTime()}
+	clientIdentityCache.known = &identity
 	return nil
 }
 

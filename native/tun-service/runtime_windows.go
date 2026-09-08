@@ -29,6 +29,7 @@ type windowsRuntime struct {
 	config            serviceConfig
 	corePath          string
 	coreSHA256        string
+	coreIdentity      *fileIdentity
 	bundledCorePath   string
 	bundledCoreSHA256 string
 	job               windows.Handle
@@ -89,6 +90,9 @@ func (runtime *windowsRuntime) Validate(profile string, version string) error {
 }
 
 func newWindowsRuntime(config serviceConfig) (*windowsRuntime, error) {
+	if err := secureStateDirectory(config.TrustDirectory); err != nil {
+		return nil, err
+	}
 	if err := secureStateDirectory(config.StateDirectory); err != nil {
 		return nil, err
 	}
@@ -106,9 +110,14 @@ func newWindowsRuntime(config serviceConfig) (*windowsRuntime, error) {
 		windows.CloseHandle(job)
 		return nil, err
 	}
+	coreIdentity, err := fileIdentityForPath(corePath)
+	if err != nil {
+		windows.CloseHandle(job)
+		return nil, err
+	}
 	return &windowsRuntime{
 		config: config, corePath: corePath, coreSHA256: coreDigest,
-		bundledCorePath: corePath, bundledCoreSHA256: coreDigest, job: job,
+		coreIdentity: &coreIdentity, bundledCorePath: corePath, bundledCoreSHA256: coreDigest, job: job,
 	}, nil
 }
 
@@ -125,16 +134,20 @@ func secureStateDirectory(path string) error {
 	if err := os.MkdirAll(path, 0700); err != nil {
 		return err
 	}
-	attributes, err := windows.GetFileAttributes(windows.StringToUTF16Ptr(path))
-	if err != nil {
+	if err := rejectReparsePath(path); err != nil {
 		return err
-	}
-	if attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-		return errors.New("refusing reparse-point service directory")
 	}
 	sd, err := windows.SecurityDescriptorFromString(stateDirectorySDDL)
 	if err != nil {
 		return err
+	}
+	owner, _, err := sd.Owner()
+	if err != nil || owner == nil {
+		return errors.New("state directory owner SID is unavailable")
+	}
+	group, _, err := sd.Group()
+	if err != nil || group == nil {
+		return errors.New("state directory group SID is unavailable")
 	}
 	dacl, _, err := sd.DACL()
 	if err != nil {
@@ -144,26 +157,103 @@ func secureStateDirectory(path string) error {
 	if err != nil {
 		return err
 	}
-	// Setting the mandatory label requires SeSecurityPrivilege to be ENABLED.
-	// Both an elevated installer token and LocalSystem normally contain it but
-	// Windows keeps privileges disabled until explicitly requested. Restore the
-	// prior token state immediately after the one protected operation.
-	restorePrivilege, err := enableSecurityPrivilege()
+	// SeSecurity is required for the mandatory label. SeRestore lets both the
+	// elevated installer and LocalSystem take ownership of a directory that was
+	// pre-created with a hostile DACL. Restore both token states immediately.
+	restorePrivileges, err := enablePrivileges("SeSecurityPrivilege", "SeRestorePrivilege")
 	if err != nil {
-		return fmt.Errorf("enable SeSecurityPrivilege: %w", err)
+		return fmt.Errorf("enable directory-hardening privileges: %w", err)
 	}
-	defer restorePrivilege()
-	err = windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION|
+	defer restorePrivileges()
+
+	// Hold a no-follow directory handle without FILE_SHARE_DELETE while applying
+	// security. This prevents the checked final component from being swapped for
+	// a junction between validation and SetSecurityInfo.
+	pathPtr, err := windows.UTF16PtrFromString(filepath.Clean(path))
+	if err != nil {
+		return err
+	}
+	handle, err := windows.CreateFile(
+		pathPtr,
+		windows.READ_CONTROL|windows.WRITE_DAC|windows.WRITE_OWNER|windows.ACCESS_SYSTEM_SECURITY|windows.FILE_READ_ATTRIBUTES,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT,
+		0,
+	)
+	if err != nil {
+		return fmt.Errorf("open state directory without following reparse points: %w", err)
+	}
+	defer windows.CloseHandle(handle)
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(handle, &info); err != nil {
+		return err
+	}
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 || info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		return errors.New("refusing non-directory or reparse-point service path")
+	}
+	err = windows.SetSecurityInfo(handle, windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.GROUP_SECURITY_INFORMATION|
+			windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION|
 			windows.SACL_SECURITY_INFORMATION|windows.LABEL_SECURITY_INFORMATION,
-		nil, nil, dacl, sacl)
+		owner, group, dacl, sacl)
 	if err != nil {
 		return fmt.Errorf("state directory hardening failed: %w", err)
 	}
 	return nil
 }
 
-func enableSecurityPrivilege() (func(), error) {
+// rejectReparsePath checks every existing path component, not only the leaf.
+// A junction at namespace/tun-service would otherwise make a normal-looking
+// state leaf resolve into an attacker-controlled tree.
+func rejectReparsePath(path string) error {
+	clean := filepath.Clean(path)
+	if !filepath.IsAbs(clean) {
+		return errors.New("service directory must be absolute")
+	}
+	volume := filepath.VolumeName(clean)
+	if len(volume) != 2 || volume[1] != ':' {
+		return errors.New("service directory must be on a local drive")
+	}
+	current := volume + string(filepath.Separator)
+	remainder := strings.TrimPrefix(clean, current)
+	for _, segment := range strings.Split(remainder, string(filepath.Separator)) {
+		if segment == "" {
+			continue
+		}
+		current = filepath.Join(current, segment)
+		attributes, err := windows.GetFileAttributes(windows.StringToUTF16Ptr(current))
+		if err != nil {
+			return err
+		}
+		if attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+			return fmt.Errorf("refusing reparse-point service path component: %s", current)
+		}
+	}
+	return nil
+}
+
+func enablePrivileges(names ...string) (func(), error) {
+	restores := make([]func(), 0, len(names))
+	for _, name := range names {
+		restore, err := enablePrivilege(name)
+		if err != nil {
+			for index := len(restores) - 1; index >= 0; index-- {
+				restores[index]()
+			}
+			return nil, fmt.Errorf("enable %s: %w", name, err)
+		}
+		restores = append(restores, restore)
+	}
+	return func() {
+		for index := len(restores) - 1; index >= 0; index-- {
+			restores[index]()
+		}
+	}, nil
+}
+
+func enablePrivilege(privilegeName string) (func(), error) {
 	var token windows.Token
 	if err := windows.OpenProcessToken(
 		windows.CurrentProcess(),
@@ -172,7 +262,7 @@ func enableSecurityPrivilege() (func(), error) {
 	); err != nil {
 		return nil, err
 	}
-	name, err := windows.UTF16PtrFromString("SeSecurityPrivilege")
+	name, err := windows.UTF16PtrFromString(privilegeName)
 	if err != nil {
 		token.Close()
 		return nil, err
@@ -288,7 +378,8 @@ func (runtime *windowsRuntime) Start(profile string, _ string, version string) (
 			return 0, err
 		}
 	}
-	if digest, err := hashFile(corePath); err != nil || digest != coreDigest {
+	digest, coreIdentity, err := hashFileWithIdentity(corePath)
+	if err != nil || digest != coreDigest {
 		return 0, errors.New("extracted mihomo integrity check failed")
 	}
 	profilePath := filepath.Join(runtime.config.StateDirectory, "session.yaml")
@@ -317,6 +408,7 @@ func (runtime *windowsRuntime) Start(profile string, _ string, version string) (
 	go func() { _ = command.Wait() }()
 	runtime.corePath = corePath
 	runtime.coreSHA256 = coreDigest
+	runtime.coreIdentity = &coreIdentity
 	return command.Process.Pid, nil
 }
 
@@ -333,7 +425,7 @@ func (runtime *windowsRuntime) ReadProvider(kind string, name string) (providerC
 	}
 	temporary, err := os.CreateTemp(runtime.config.StateDirectory, "mrs-view-*.txt")
 	if err != nil {
-		return providerContent{}, errProviderMRSConvert
+		return providerContent{}, fmt.Errorf("%w: temporary output: %v", errProviderContentRead, err)
 	}
 	temporaryPath := temporary.Name()
 	_ = temporary.Close()
@@ -345,6 +437,9 @@ func (runtime *windowsRuntime) ReadProvider(kind string, name string) (providerC
 	command.Env = safeWindowsEnvironment()
 	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	if err := command.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return providerContent{}, errProviderMRSConvertTimeout
+		}
 		return providerContent{}, errProviderMRSConvert
 	}
 	info, err := os.Stat(temporaryPath)
@@ -417,12 +512,19 @@ func (runtime *windowsRuntime) Inspect(pid int) (bool, error) {
 	if !strings.EqualFold(filepath.Clean(observedPath), filepath.Clean(runtime.corePath)) {
 		return false, errors.New("owned PID executable path mismatch")
 	}
-	digest, err := hashFile(observedPath)
+	identity, err := fileIdentityForPath(observedPath)
 	if err != nil {
 		return false, err
 	}
-	if digest != runtime.coreSHA256 {
-		return false, errors.New("owned PID executable digest mismatch")
+	// The protected core is immutable in steady state. Re-hash only when its
+	// stable file identity changed instead of reading the whole binary every five
+	// seconds during liveness reconciliation.
+	if runtime.coreIdentity == nil || *runtime.coreIdentity != identity {
+		digest, verifiedIdentity, hashErr := hashFileWithIdentity(observedPath)
+		if hashErr != nil || digest != runtime.coreSHA256 {
+			return false, errors.New("owned PID executable digest mismatch")
+		}
+		runtime.coreIdentity = &verifiedIdentity
 	}
 	if err := windows.AssignProcessToJobObject(runtime.job, handle); err != nil {
 		return false, errors.New("failed to attach owned mihomo to service job object")
@@ -431,16 +533,8 @@ func (runtime *windowsRuntime) Inspect(pid int) (bool, error) {
 }
 
 func hashFile(path string) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(hash.Sum(nil)), nil
+	digest, _, err := hashFileWithIdentity(path)
+	return digest, err
 }
 
 func writePrivateFile(path string, data []byte) error {

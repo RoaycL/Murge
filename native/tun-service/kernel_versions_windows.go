@@ -41,6 +41,66 @@ type cachedCoreMarker struct {
 	ArchiveBytes int64  `json:"archiveBytes"`
 }
 
+type versionTrustCatalog struct {
+	Versions map[string]cachedCoreMarker `json:"versions"`
+}
+
+const versionTrustFilename = "version-trust.json"
+
+func validTrustedMarker(version string, marker cachedCoreMarker) bool {
+	return marker.Version == version &&
+		sha256Pattern.MatchString(marker.ArchiveSHA) &&
+		sha256Pattern.MatchString(marker.BinarySHA) &&
+		filepath.Base(marker.AssetName) == marker.AssetName &&
+		marker.ArchiveBytes > 0 && marker.ArchiveBytes <= maxCoreBytes
+}
+
+func (runtime *windowsRuntime) loadVersionTrust() (versionTrustCatalog, error) {
+	path := filepath.Join(runtime.config.TrustDirectory, versionTrustFilename)
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return versionTrustCatalog{Versions: make(map[string]cachedCoreMarker)}, nil
+	}
+	if err != nil {
+		return versionTrustCatalog{}, err
+	}
+	if len(data) == 0 || len(data) > 1024*1024 {
+		return versionTrustCatalog{}, errors.New("version trust catalog size is invalid")
+	}
+	var catalog versionTrustCatalog
+	if err := json.Unmarshal(data, &catalog); err != nil || catalog.Versions == nil {
+		return versionTrustCatalog{}, errors.New("version trust catalog is invalid")
+	}
+	for version, marker := range catalog.Versions {
+		if !versionPattern.MatchString(version) || !validTrustedMarker(version, marker) {
+			return versionTrustCatalog{}, errors.New("version trust catalog contains an invalid entry")
+		}
+	}
+	return catalog, nil
+}
+
+func (runtime *windowsRuntime) storeVersionTrust(marker cachedCoreMarker) error {
+	if !validTrustedMarker(marker.Version, marker) {
+		return errors.New("refusing invalid version trust entry")
+	}
+	catalog, err := runtime.loadVersionTrust()
+	if err != nil {
+		return err
+	}
+	if pinned, exists := catalog.Versions[marker.Version]; exists {
+		if pinned != marker {
+			return errors.New("official asset no longer matches the pinned version trust entry")
+		}
+		return nil
+	}
+	catalog.Versions[marker.Version] = marker
+	encoded, err := json.Marshal(catalog)
+	if err != nil {
+		return err
+	}
+	return writePrivateFile(filepath.Join(runtime.config.TrustDirectory, versionTrustFilename), encoded)
+}
+
 func mihomoWindowsArch() (string, error) {
 	switch runtime.GOARCH {
 	case "amd64":
@@ -243,9 +303,14 @@ func (runtime *windowsRuntime) versionCore(version string, proxyPort int) (strin
 	}
 	markerPath := filepath.Join(directory, "verified.json")
 	corePath := filepath.Join(directory, "core.exe")
+	catalog, trustErr := runtime.loadVersionTrust()
+	if trustErr != nil {
+		return "", "", trustErr
+	}
 	if data, err := os.ReadFile(markerPath); err == nil {
 		var marker cachedCoreMarker
-		if json.Unmarshal(data, &marker) == nil && marker.Version == version && sha256Pattern.MatchString(marker.BinarySHA) {
+		trusted, pinned := catalog.Versions[version]
+		if json.Unmarshal(data, &marker) == nil && pinned && marker == trusted && validTrustedMarker(version, marker) {
 			if digest, hashErr := hashFile(corePath); hashErr == nil && digest == marker.BinarySHA {
 				return corePath, digest, nil
 			}
@@ -270,10 +335,16 @@ func (runtime *windowsRuntime) versionCore(version string, proxyPort int) (strin
 	if err != nil {
 		return "", "", err
 	}
-	marker, err := json.Marshal(cachedCoreMarker{
+	trustedMarker := cachedCoreMarker{
 		Version: version, ArchiveSHA: asset.Digest, BinarySHA: binaryDigest,
 		AssetName: asset.Name, ArchiveBytes: asset.Size,
-	})
+	}
+	// Persist the trust anchor outside the service-writable mihomo state tree.
+	// A forged core.exe + verified.json pair can no longer certify itself.
+	if err := runtime.storeVersionTrust(trustedMarker); err != nil {
+		return "", "", err
+	}
+	marker, err := json.Marshal(trustedMarker)
 	if err != nil {
 		return "", "", err
 	}

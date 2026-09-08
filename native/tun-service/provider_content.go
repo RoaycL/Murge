@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,13 +12,15 @@ import (
 )
 
 var (
-	errProviderNotFound        = errors.New("provider not found")
-	errProviderCacheMissing    = errors.New("provider cache missing")
-	errProviderPathUnavailable = errors.New("provider path unavailable")
-	errProviderContentTooLarge = errors.New("provider content too large")
-	errProviderContentInvalid  = errors.New("provider content invalid")
-	errProviderMRSConvert      = errors.New("provider MRS conversion failed")
-	errConfigInvalid           = errors.New("mihomo config validation failed")
+	errProviderNotFound          = errors.New("provider not found")
+	errProviderCacheMissing      = errors.New("provider cache missing")
+	errProviderPathUnavailable   = errors.New("provider path unavailable")
+	errProviderContentTooLarge   = errors.New("provider content too large")
+	errProviderContentInvalid    = errors.New("provider content invalid")
+	errProviderContentRead       = errors.New("provider content read failed")
+	errProviderMRSConvert        = errors.New("provider MRS conversion failed")
+	errProviderMRSConvertTimeout = errors.New("provider MRS conversion timed out")
+	errConfigInvalid             = errors.New("mihomo config validation failed")
 )
 
 type providerContent struct {
@@ -40,6 +43,10 @@ func providerErrorCode(err error) string {
 		return "PROVIDER_CONTENT_TOO_LARGE"
 	case errors.Is(err, errProviderContentInvalid):
 		return "PROVIDER_CONTENT_INVALID"
+	case errors.Is(err, errProviderContentRead):
+		return "PROVIDER_CONTENT_READ_FAILED"
+	case errors.Is(err, errProviderMRSConvertTimeout):
+		return "PROVIDER_MRS_CONVERT_TIMEOUT"
 	case errors.Is(err, errProviderMRSConvert):
 		return "PROVIDER_MRS_CONVERT_FAILED"
 	case errors.Is(err, errConfigInvalid):
@@ -53,8 +60,11 @@ func providerErrorCode(err error) string {
 // touches disk. This is deliberately not an arbitrary service-side file reader.
 func resolveProviderContent(stateDirectory, kind, name string) (providerContent, error) {
 	profile, err := os.ReadFile(filepath.Join(stateDirectory, "session.yaml"))
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
 		return providerContent{}, errProviderCacheMissing
+	}
+	if err != nil {
+		return providerContent{}, fmt.Errorf("%w: session profile: %v", errProviderContentRead, err)
 	}
 	var document map[string]any
 	if err := yaml.Unmarshal(profile, &document); err != nil {
@@ -102,7 +112,10 @@ func resolveProviderContent(stateDirectory, kind, name string) (providerContent,
 	if errors.Is(err, os.ErrNotExist) {
 		return providerContent{}, errProviderCacheMissing
 	}
-	if err != nil || info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+	if err != nil {
+		return providerContent{}, fmt.Errorf("%w: provider cache metadata: %v", errProviderContentRead, err)
+	}
+	if info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return providerContent{}, errProviderContentInvalid
 	}
 	if info.Size() > maxProviderContentBytes {
@@ -114,7 +127,10 @@ func resolveProviderContent(stateDirectory, kind, name string) (providerContent,
 		return providerContent{Format: "mrs", Source: "cache", Path: target, Behavior: behavior}, nil
 	}
 	data, err := os.ReadFile(target)
-	if err != nil || !utf8.Valid(data) {
+	if err != nil {
+		return providerContent{}, fmt.Errorf("%w: provider cache: %v", errProviderContentRead, err)
+	}
+	if !utf8.Valid(data) {
 		return providerContent{}, errProviderContentInvalid
 	}
 	displayFormat := "yaml"

@@ -416,16 +416,33 @@ export async function captureNetworkSnapshot(): Promise<G1NetworkSnapshot> {
 
 async function runCapture(command: string, args: string[]): Promise<string> {
   return await new Promise<string>((resolve) => {
+    const MAX_CAPTURE_BYTES = 512 * 1024
+    const CAPTURE_TIMEOUT_MS = 10_000
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const finish = (value: string): void => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      resolve(value)
+    }
     try {
-      const child = spawn(command, args, { shell: false })
+      const child = spawn(command, args, { shell: false, windowsHide: true })
       let out = ''
       let err = ''
-      child.stdout.on('data', (d: Buffer) => (out += d.toString()))
-      child.stderr.on('data', (d: Buffer) => (err += d.toString()))
-      child.on('error', (e) => resolve(`UNAVAILABLE:${e.message}`))
-      child.on('close', () => resolve(`${out}\n${err}`.trim()))
+      const append = (current: string, data: Buffer): string =>
+        (current + data.toString()).slice(-MAX_CAPTURE_BYTES)
+      child.stdout.on('data', (d: Buffer) => { out = append(out, d) })
+      child.stderr.on('data', (d: Buffer) => { err = append(err, d) })
+      child.on('error', (e) => finish(`UNAVAILABLE:${e.message}`))
+      child.on('close', () => finish(`${out}\n${err}`.trim()))
+      timer = setTimeout(() => {
+        try { child.kill('SIGKILL') } catch { /* already exited */ }
+        finish(`UNAVAILABLE:${command} timed out after ${CAPTURE_TIMEOUT_MS}ms`)
+      }, CAPTURE_TIMEOUT_MS)
+      timer.unref?.()
     } catch (e) {
-      resolve(`UNAVAILABLE:${(e as Error).message}`)
+      finish(`UNAVAILABLE:${(e as Error).message}`)
     }
   })
 }

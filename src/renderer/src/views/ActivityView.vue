@@ -90,25 +90,15 @@ const policyIcons = computed<Record<string, string>>(() => Object.fromEntries(
   policies.groups.flatMap((group) => group.icon ? [[group.name, group.icon] as const] : [])
 ))
 
-// 总计: 当前 = sum of live connections (DIRECT + 代理); 历史 = kernel-lifetime
-// cumulative byte counter from the /traffic stream. The DIRECT/代理 split keeps
-// using the live connection ratio so both figures always reconcile to the total.
-const totalScope = ref<'current' | 'history'>('current')
+// The card is an exact snapshot of current live connections. Persisted history
+// has different dimensions and lives in UsageHistoryPanel; do not extrapolate a
+// historical DIRECT/proxy split from the current connection ratio.
 const currentTotalBytes = computed(() => directBytes.value + proxyBytes.value)
-const displayedTotalBytes = computed(() =>
-  totalScope.value === 'history' ? traffic.totalDownload : currentTotalBytes.value
-)
-const directRatio = computed(() => {
-  const totalBytes = currentTotalBytes.value
-  return totalBytes ? directBytes.value / totalBytes : 0
-})
-const directDisplayed = computed(() => Math.round(displayedTotalBytes.value * directRatio.value))
-const proxyDisplayed = computed(() => displayedTotalBytes.value - directDisplayed.value)
-const total = computed(() => formatBytesParts(displayedTotalBytes.value))
-const direct = computed(() => formatBytesParts(directDisplayed.value))
-const proxy = computed(() => formatBytesParts(proxyDisplayed.value))
+const total = computed(() => formatBytesParts(currentTotalBytes.value))
+const direct = computed(() => formatBytesParts(directBytes.value))
+const proxy = computed(() => formatBytesParts(proxyBytes.value))
 const directPct = computed(() =>
-  displayedTotalBytes.value ? Math.round((directDisplayed.value / displayedTotalBytes.value) * 100) : 0
+  currentTotalBytes.value ? Math.round((directBytes.value / currentTotalBytes.value) * 100) : 0
 )
 
 const modeLabel = computed(() => {
@@ -206,7 +196,7 @@ const chartBars = computed<number[]>(() => {
       </SurfaceCard>
 
       <SurfaceCard class="total-card">
-        <div class="card-title-row"><span class="metric-label">总计</span><div class="segmented" role="group" aria-label="总计时间范围"><button type="button" :class="{ selected: totalScope === 'current' }" :aria-pressed="totalScope === 'current'" @click="totalScope = 'current'">当前</button><button type="button" :class="{ selected: totalScope === 'history' }" :aria-pressed="totalScope === 'history'" @click="totalScope = 'history'">历史</button></div></div>
+        <div class="card-title-row"><span class="metric-label">当前连接总计</span><button type="button" class="quiet-button" @click="summaryDrawer = 'usage'">查看历史</button></div>
         <div class="large-metric">{{ total.value }}<span>{{ total.unit }}</span></div>
         <div class="total-labels"><div><span>DIRECT</span><strong>{{ direct.value }} {{ direct.unit }}</strong></div><div><span>代理</span><strong>{{ proxy.value }} {{ proxy.unit }}</strong></div></div>
         <button type="button" class="total-bar total-history-link" aria-label="查看用量历史" @click="summaryDrawer = 'usage'"><i :style="{ width: `${directPct}%` }" /><i :style="{ width: `${100 - directPct}%` }" /></button>

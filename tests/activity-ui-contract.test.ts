@@ -135,6 +135,10 @@ describe('Activity fluid-layout UI contract', () => {
     expect(source).not.toMatch(/最多保留 .* 个分桶/)
     expect(css).toMatch(/\.detail-drawer-footer\s*\{[^}]*flex-wrap:\s*nowrap/)
     expect(css).toMatch(/\.detail-drawer button\s*\{[^}]*white-space:\s*nowrap/)
+    expect(usage).toMatch(/onMounted\(\(\) => \{[\s\S]*void store\.refresh\(\)[\s\S]*timer = setInterval/)
+    expect(usage).not.toMatch(/onMounted\(async \(\) => \{[\s\S]*await store\.refresh/)
+    expect(activity).toContain('当前连接总计')
+    expect(activity).not.toContain("totalScope")
   })
 
   it('refreshes the latency card when opening diagnostics and keeps the drawer focused on network information', async () => {

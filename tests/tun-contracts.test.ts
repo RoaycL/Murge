@@ -132,6 +132,26 @@ describe('Phase 9 non-network contracts', () => {
     // (this pairing was the source of a reviewed ML-label drift).
     const go = readFileSync(resolve(process.cwd(), 'native/tun-service/runtime_windows.go'), 'utf8')
     expect(go).toContain(`const stateDirectorySDDL = "${STATE_DIRECTORY_SDDL}"`)
+    expect(go).toContain('rejectReparsePath(path)')
+    expect(go).toContain('windows.FILE_FLAG_OPEN_REPARSE_POINT')
+    expect(go).toContain('windows.OWNER_SECURITY_INFORMATION|windows.GROUP_SECURITY_INFORMATION')
+    expect(go).toContain('owner, group, dacl, sacl')
+  })
+
+  it('keeps version trust and executable identity outside mutable metadata', () => {
+    const versions = readFileSync(resolve(process.cwd(), 'native/tun-service/kernel_versions_windows.go'), 'utf8')
+    const config = readFileSync(resolve(process.cwd(), 'native/tun-service/config.go'), 'utf8')
+    const identity = readFileSync(resolve(process.cwd(), 'native/tun-service/file_identity_windows.go'), 'utf8')
+    const main = readFileSync(resolve(process.cwd(), 'native/tun-service/main_windows.go'), 'utf8')
+
+    expect(config).toContain('TrustDirectory')
+    expect(versions).toContain('versionTrustFilename = "version-trust.json"')
+    expect(versions).toContain('marker == trusted')
+    expect(versions).toContain('runtime.config.TrustDirectory')
+    expect(versions).toContain('pinned != marker')
+    expect(identity).toContain('VolumeSerialNumber')
+    expect(identity).toContain('FileIndexHigh')
+    expect(main).toContain('*cache == identity')
   })
 
   it('rotates the audit log by entry and byte limits without exposing mutable entries', () => {

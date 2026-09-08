@@ -10,6 +10,8 @@
 
 import { describe, it, expect } from 'vitest'
 import { spawn } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import {
   createRealG1ProbeDriver,
   PINNED_WINTUN_MANIFEST,
@@ -49,6 +51,13 @@ function expectCode(fn: () => unknown, code: G1ErrorCode): void {
 }
 
 describe('createRealG1ProbeDriver (fail-closed seam)', () => {
+  it('bounds diagnostic child processes independently of the outer probe timeout', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/main/tun/g1-driver.ts'), 'utf8')
+    expect(source).toContain('CAPTURE_TIMEOUT_MS = 10_000')
+    expect(source).toContain("child.kill('SIGKILL')")
+    expect(source).toContain('MAX_CAPTURE_BYTES = 512 * 1024')
+  })
+
   it('pins official amd64/arm64 digests but still fails closed without a configured DLL path', async () => {
     expect(PINNED_WINTUN_MANIFEST.digests).toEqual({
       x64: 'e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce',

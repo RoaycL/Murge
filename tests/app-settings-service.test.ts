@@ -182,7 +182,13 @@ describe('AppSettingsService', () => {
     base = await mkdtemp(join(tmpdir(), 'app-settings-'))
     await writeFile(join(base, 'app-settings.json'), 'not-json', 'utf8')
     const service = new AppSettingsService(base)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     expect(await service.get()).toEqual(DEFAULT_OBJ)
+    const files = await readdir(base)
+    expect(files).not.toContain('app-settings.json')
+    expect(files.some((name) => name.startsWith('app-settings.json.corrupt-'))).toBe(true)
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('quarantined invalid settings'), expect.anything())
+    error.mockRestore()
   })
 
   it('does not leave a temp file behind after a write', async () => {

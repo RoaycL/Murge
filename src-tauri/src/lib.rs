@@ -17,6 +17,7 @@ mod enhancements;
 mod error;
 mod inspection;
 mod net_validators;
+mod events;
 mod ipc;
 #[allow(dead_code)] // wired incrementally; the lint fires on staged-but-unwired items
 mod mihomo;
@@ -97,6 +98,16 @@ pub fn run() {
             let kernel = kernel::KernelServices::new();
             // Mihomo controller services: log retention + selection cache.
             let mihomo = mihomo::MihomoServices::new(Some(paths.app_data_root.clone().unwrap_or_default()));
+            // Push-stream transports + event forwarders. The endpoint binds
+            // the coerced core-settings controller (rebuilt on kernel
+            // transitions by the Phase 3D slice), exactly like the REST client.
+            let streams = events::MihomoStreams::new(mihomo.logs.clone());
+            events::start_forwarding(app.handle().clone(), &streams, &kernel);
+            let core = enhancements::coerce_core_settings(&models.core.get());
+            streams.ensure(&events::ControllerEndpoint {
+                port: core["controllerPort"].as_i64().unwrap_or(9090),
+                secret: core["controllerSecret"].as_str().unwrap_or_default().to_string(),
+            });
             app.manage(paths);
             app.manage(store);
             app.manage(profiles);
@@ -105,6 +116,7 @@ pub fn run() {
             app.manage(usage);
             app.manage(kernel);
             app.manage(mihomo);
+            app.manage(streams);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![ipc::desktop_ipc])

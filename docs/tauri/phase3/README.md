@@ -315,6 +315,39 @@ Second Phase 3B slice — the typed controller client, channel-ready:
   logs-snapshot|clear-logs`. With no running kernel the REST channels fail
   UPSTREAM_UNREACHABLE — the exact typed error the renderer already handles.
 
+### 9. Push-stream transports + event emit pipeline (`src-tauri/src/events.rs`)
+
+Third Phase 3B slice — the push streams and the renderer event wiring:
+
+- `MihomoStreams` ports the three shared WebSocket transports
+  (`/traffic`, `/connections`, `/logs`) over tokio-tungstenite with the TS
+  reconnect semantics verbatim: reconnect forever while listeners remain
+  (`maxRetries: 0`), exponential backoff (250 ms base, 5 s cap, +/-20%
+  jitter), the attempt counter resets only after a socket stayed open past
+  the 10 s "stable" window, and every failure surfaces to the stream-error
+  hub immediately (never waiting for retries to exhaust).
+- Message handling ports the service parse boundary: traffic samples are
+  stamped with an arrival `timestamp`, log messages tap the shared
+  `MihomoLogBuffer` (retention independent of subscribers; the event copy
+  and the retained copy agree on `seq`), connections normalize null -> [],
+  and parse failures emit the exact `MihomoStreamError` shape
+  (`{ code, message: "<source> stream: <message>", source, kind }`).
+- `EventHub` mirrors the TS `Set<listener>` + unsubscribe contract (clone =
+  same hub; used by the streams, the stream-error hub, kernel status and
+  kernel-manager state).
+- `start_forwarding` ports the register-ipc push forwarder: one
+  subscription per channel at startup, delivered to every renderer through
+  Tauri's broadcast emit (`mihomo:traffic-event|connections-event|
+  log-event|stream-error-event`, `kernel:status-event`,
+  `kernel-manager:state-event`). The supervisor's `setStatus` and the
+  manager's `commit` now fan out through their hubs, matching the TS
+  EventEmitter contract. The streams bind the core-settings controller
+  endpoint at startup exactly like the REST client (rebinds at 3D).
+- Remaining event channels stay staged with their owning slices:
+  `app:navigate-event` (window slice), `system-proxy:status-event` /
+  `tun:status-event` (3D), `updates:state-event` (Phase 5). The `logSink`
+  file capture lands with the Phase 4 logging slice.
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,
@@ -352,7 +385,7 @@ the Rust dispatch (mechanical scan, not a manual claim):
 
 ## Verification (Linux ARM64, real execution)
 
-- Rust: `cargo test` — **177 passed / 0 failed**, zero warnings:
+- Rust: `cargo test` — **183 passed / 0 failed**, zero warnings:
   - brand parse/gate (1), app-info vocabulary (2), paths namespace/dev (3),
   - settings store: defaults, quarantine, atomic format, patch merge,
     delayTestUrl read/set split, dev memory store, field salvage (7),

@@ -380,6 +380,38 @@ Fourth Phase 3B/3C slice — the network fetch of remote subscriptions:
   (81/121 live). Still staged on the network path:
   `profiles:get-provider-content` (3D).
 
+### 11. Icons + network interfaces (`src-tauri/src/icons.rs`)
+
+Fifth Phase 3B/3C slice — the three desktop-integration channels:
+
+- `app:list-network-interfaces` ports the `os.networkInterfaces()` handler:
+  interface names carrying at least one address, sanitized (non-empty,
+  ≤255, no control characters) and sorted — 84/121 live.
+- `app:get-cached-icon` ports `RemoteIconCache` verbatim: persistent
+  stale-if-error cache keyed by SHA-256 of the semantic key (a refresh
+  re-downloads and overwrites; a failed refresh keeps the cached value),
+  HTTPS-only SSRF validation on every hop (public-IP allow-list with the
+  icon-specific fake-ip DNS carve-out — no scheme gate needed because the
+  scheme check is unconditional), ≤5 redirects, 12 s whole-sweep timeout,
+  512 KiB cap, a seven-type image mime allow-list, base64 data-URL output,
+  in-flight refresh dedup (a per-key `OnceCell` mirrors the TS promise
+  map), and the LRU prune (256 files / 96 MiB, oldest mtime first). The
+  URL itself never touches disk — only the hashed key and image bytes.
+- `app:get-process-icon` ports the Windows shell-icon handler: local
+  drive paths only (`^[a-zA-Z]:\` + `.exe`, ≤1024 chars) so renderer
+  input can never make the shell resolve a UNC/SMB path, 512-entry LRU
+  memory cache, real extraction via SHGetFileInfoW → GetDIBits → PNG
+  behind `#[cfg(windows)]` (compile-gated; Windows verification is a
+  deferred-to-CI item), null on every other platform and every failure —
+  exactly the TS null contract (no channel ever throws here).
+- All three return null/[] quietly on invalid input (no protocol errors),
+  matching the Electron handlers.
+- Un-staged: `app:get-process-icon`, `app:get-cached-icon`,
+  `app:list-network-interfaces` (**84/121 live**). Remaining 3C/3D:
+  Sub-Store, internet-latency, mihomo stream-event un-staging, system
+  proxy + TUN + privileged provider content (3D), tray/startup (4),
+  updates (5).
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,
@@ -401,14 +433,14 @@ the Rust dispatch (mechanical scan, not a manual claim):
 
 - **121 real channels** in the Electron surface (two earlier apparent extras
   were TypeScript type literals, not channels).
-- **80 live** in the Rust dispatch: `app:get-brand|get-info`,
+- **84 live** in the Rust dispatch: `app:get-brand|get-info`,
   `app-settings:get|set`, 14 of 17 `profiles:*`, all 10 `overrides:*`
   (JS kind fails open inside `validate`/`apply`), all 15 typed-model
   `get|set|preview` channels, all 4 `usage-history:*`, `kernel:get-status|
   start|stop`, `kernel-manager:get-state|set-enabled|set-channel|
   list-versions|install`, `runtime:get-summary|get-external-ip`, and 20 of
   23 `mihomo:*` (internet-latency + 2 stream events staged).
-- **41 intentionally fail closed** with `PROTOCOL_ERROR:UNSUPPORTED` via the
+- **37 intentionally fail closed** with `PROTOCOL_ERROR:UNSUPPORTED` via the
   dispatch fallthrough, mapping exactly to the later phases: mihomo streams +
   internet-latency (3B/3D), subscription fetching +
   Sub-Store + icons + network-interfaces (3C), system-proxy + TUN lifecycle +
@@ -417,7 +449,7 @@ the Rust dispatch (mechanical scan, not a manual claim):
 
 ## Verification (Linux ARM64, real execution)
 
-- Rust: `cargo test` — **196 passed / 0 failed**, zero warnings:
+- Rust: `cargo test` — **200 passed / 0 failed**, zero warnings:
   - brand parse/gate (1), app-info vocabulary (2), paths namespace/dev (3),
   - settings store: defaults, quarantine, atomic format, patch merge,
     delayTestUrl read/set split, dev memory store, field salvage (7),

@@ -249,6 +249,24 @@ channels (`get-window`/`rank`/`clear`/`get-capacity` — fully implemented;
 recording attaches with the kernel streams). Unknown channels keep failing
 closed with UNSUPPORTED — never a silent no-op.
 
+## Channel-coverage audit (against the Electron IPC surface)
+
+Every string in the shared `src/shared/ipc.ts` IPC const was matched against
+the Rust dispatch (mechanical scan, not a manual claim):
+
+- **121 real channels** in the Electron surface (two earlier apparent extras
+  were TypeScript type literals, not channels).
+- **50 live** in the Rust dispatch: `app:get-brand|get-info`,
+  `app-settings:get|set`, 14 of 17 `profiles:*`, all 10 `overrides:*`
+  (JS kind fails open inside `validate`/`apply`), all 15 typed-model
+  `get|set|preview` channels, all 4 `usage-history:*`.
+- **71 intentionally fail closed** with `PROTOCOL_ERROR:UNSUPPORTED` via the
+  dispatch fallthrough, mapping exactly to the later phases: kernel +
+  kernel-manager + mihomo + runtime + streams (3B), subscription fetching +
+  Sub-Store + icons + network-interfaces (3C), system-proxy + TUN lifecycle +
+  privileged provider content (3D), startup + tray-adjacent (4), updates (5).
+  No channel is silently dropped or no-ops.
+
 ## Verification (Linux ARM64, real execution)
 
 - Rust: `cargo test` — **150 passed / 0 failed**, zero warnings:

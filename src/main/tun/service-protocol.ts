@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { assertProxiedTunConfig } from './mihomo-tun-config'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
 
-export const TUN_SERVICE_PROTOCOL_VERSION = 5 as const
+export const TUN_SERVICE_PROTOCOL_VERSION = 6 as const
 export const TUN_SERVICE_MAX_PROFILE_BYTES = 2 * 1024 * 1024
 export const TUN_SERVICE_MAX_PROVIDER_CONTENT_BYTES = 4 * 1024 * 1024
 
@@ -50,6 +50,14 @@ export const tunServiceRequestSchema = z.discriminatedUnion('operation', [
     operation: z.literal('provider-content'),
     providerKind: z.enum(['proxy', 'rule']),
     providerName: z.string().min(1).max(256).refine(value => Buffer.byteLength(value, 'utf8') <= 512)
+  }).strict(),
+  z.object({
+    protocolVersion: z.literal(TUN_SERVICE_PROTOCOL_VERSION),
+    requestId: uint64Decimal,
+    operation: z.literal('validate'),
+    profile: z.string().min(1).max(TUN_SERVICE_MAX_PROFILE_BYTES),
+    profileSha256: sha256,
+    version: z.string().regex(/^v\d+\.\d+\.\d+$/).optional()
   }).strict()
 ])
 
@@ -58,13 +66,14 @@ export type TunServiceRequest = z.infer<typeof tunServiceRequestSchema>
 export const tunServiceResponseSchema = z.object({
   protocolVersion: z.literal(TUN_SERVICE_PROTOCOL_VERSION),
   requestId: uint64Decimal,
-  outcome: z.enum(['stopped', 'starting', 'running', 'stopping', 'installed', 'content', 'failed', 'conflict']),
+  outcome: z.enum(['stopped', 'starting', 'running', 'stopping', 'installed', 'content', 'valid', 'failed', 'conflict']),
   sessionId: sessionId.nullable(),
   pid: z.number().int().positive().nullable(),
   errorCode: z.string().regex(/^[A-Z0-9_]+$/).nullable(),
   content: z.string().max(TUN_SERVICE_MAX_PROVIDER_CONTENT_BYTES).optional(),
   contentFormat: z.enum(['yaml', 'text']).optional(),
-  contentSource: z.enum(['cache', 'inline']).optional()
+  contentSource: z.enum(['cache', 'inline']).optional(),
+  validationMessage: z.string().max(4096).optional()
 }).strict().superRefine((value, context) => {
   const ownsChild = value.outcome === 'starting' || value.outcome === 'running' || value.outcome === 'stopping'
   if (ownsChild && (value.sessionId === null || value.pid === null)) {
@@ -79,6 +88,9 @@ export const tunServiceResponseSchema = z.object({
   if (value.outcome !== 'content' && (value.content !== undefined || value.contentFormat !== undefined || value.contentSource !== undefined)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'non-content response must not carry provider content' })
   }
+  if (value.outcome !== 'failed' && value.validationMessage !== undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'only failed responses may carry validationMessage' })
+  }
 })
 
 export type TunServiceResponse = z.infer<typeof tunServiceResponseSchema>
@@ -86,7 +98,7 @@ export type TunServiceResponse = z.infer<typeof tunServiceResponseSchema>
 /** Validate the privileged boundary request, including exact profile digest/content. */
 export function parseTunServiceRequest(input: unknown): TunServiceRequest {
   const request = tunServiceRequestSchema.parse(input)
-  if (request.operation === 'start') {
+  if (request.operation === 'start' || request.operation === 'validate') {
     if (Buffer.byteLength(request.profile, 'utf8') > TUN_SERVICE_MAX_PROFILE_BYTES) fail('profile exceeds byte limit')
     const digest = createHash('sha256').update(request.profile, 'utf8').digest('hex')
     if (digest !== request.profileSha256) fail('profile digest mismatch')

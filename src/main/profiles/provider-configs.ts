@@ -1,5 +1,5 @@
-import { parseDocument, isMap, isScalar } from 'yaml'
-import type { Document, YAMLMap } from 'yaml'
+import { parseDocument } from 'yaml'
+import type { Document } from 'yaml'
 import type { ProfileProviderConfig, ProfileProviderCatalog } from '@shared/profiles'
 
 /**
@@ -25,36 +25,42 @@ export function parseProviderCatalog(document: string): ProfileProviderCatalog {
     return { proxy: [], rule: [] }
   }
   if (doc.errors.length > 0) return { proxy: [], rule: [] }
-  const content = doc.contents
-  if (!isMap(content)) return { proxy: [], rule: [] }
+  // Node.get() does not project YAML `<<` merge keys onto the target map.
+  // Convert once through toJS(), which resolves anchors exactly like the
+  // runtime config builder, so inherited interval/type/health-check fields are
+  // visible in the 外部资源 detail panel too.
+  let content: unknown
+  try {
+    content = doc.toJS({ mapAsMap: true })
+  } catch {
+    return { proxy: [], rule: [] }
+  }
+  if (!(content instanceof Map)) return { proxy: [], rule: [] }
   return {
     proxy: parseProviderSection(content, 'proxy-providers', 'proxy'),
     rule: parseProviderSection(content, 'rule-providers', 'rule')
   }
 }
 
-function parseProviderSection(content: YAMLMap, key: string, kind: 'proxy' | 'rule'): ProfileProviderConfig[] {
-  const section = content.get(key, true)
-  if (!isMap(section)) return []
+function parseProviderSection(content: Map<unknown, unknown>, key: string, kind: 'proxy' | 'rule'): ProfileProviderConfig[] {
+  const section = content.get(key)
+  if (!(section instanceof Map)) return []
   const out: ProfileProviderConfig[] = []
-  for (const pair of section.items) {
-    const nameNode = pair.key
-    const configNode = pair.value
-    const name = isScalar(nameNode) && typeof nameNode.value === 'string' ? nameNode.value : null
-    if (!name || !isMap(configNode)) continue
+  for (const [name, configNode] of section.entries()) {
+    if (typeof name !== 'string' || !name || !(configNode instanceof Map)) continue
     const config: ProfileProviderConfig = { name, kind }
-    const url = scalarString(configNode.get('url', true))
+    const url = scalarString(configNode.get('url'))
     if (url) config.url = url
-    const path = scalarString(configNode.get('path', true))
+    const path = scalarString(configNode.get('path'))
     if (path) config.path = path
-    const interval = scalarNumber(configNode.get('interval', true))
+    const interval = scalarNumber(configNode.get('interval'))
     if (interval !== null) config.interval = interval
-    const behavior = scalarString(configNode.get('behavior', true))
+    const behavior = scalarString(configNode.get('behavior'))
     if (behavior) config.behavior = behavior
-    const format = scalarString(configNode.get('format', true))
+    const format = scalarString(configNode.get('format'))
     if (format) config.format = format
-    const health = configNode.get('health-check', true)
-    const testUrl = isMap(health) ? scalarString(health.get('url', true)) : null
+    const health = configNode.get('health-check')
+    const testUrl = health instanceof Map ? scalarString(health.get('url')) : null
     if (testUrl) config.testUrl = testUrl
     out.push(config)
   }
@@ -62,10 +68,9 @@ function parseProviderSection(content: YAMLMap, key: string, kind: 'proxy' | 'ru
 }
 
 function scalarString(value: unknown): string | null {
-  return isScalar(value) && typeof value.value === 'string' && value.value.length > 0 ? value.value : null
+  return typeof value === 'string' && value.length > 0 ? value : null
 }
 
 function scalarNumber(value: unknown): number | null {
-  if (!isScalar(value) || typeof value.value !== 'number' || !Number.isFinite(value.value)) return null
-  return value.value
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
 }

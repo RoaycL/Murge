@@ -24,6 +24,17 @@ function cloneOrThrow<T>(value: T): T {
 }
 
 describe('Sniffer enhancement store IPC payload', () => {
+  it('marks the model hydrated only after a successful persisted read', async () => {
+    const get = vi.mocked(window.desktop.sniffer.get)
+    get.mockRejectedValueOnce(new Error('read failed'))
+    const store = useSnifferEnhancementStore()
+    await store.refresh()
+    expect(store.hydrated).toBe(false)
+    get.mockResolvedValueOnce({ enhancement: EMPTY_SNIFFER_ENHANCEMENT })
+    await store.refresh()
+    expect(store.hydrated).toBe(true)
+  })
+
   it('sends a plain model when saving a reactive spread like the overview quick toggle builds', async () => {
     snifferSet.mockImplementation((input: unknown) => Promise.resolve({ enhancement: cloneOrThrow(input) }))
     const store = useSnifferEnhancementStore()

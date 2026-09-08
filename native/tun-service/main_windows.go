@@ -134,6 +134,9 @@ func (service *windowsService) serve() {
 
 func (service *windowsService) handleConnection(connection net.Conn) {
 	defer connection.Close()
+	// A connected client must not retain a service goroutine forever by sending
+	// a partial request or by refusing the response.
+	_ = connection.SetReadDeadline(time.Now().Add(15 * time.Second))
 	if err := service.verifyClient(connection); err != nil {
 		return
 	}
@@ -150,6 +153,7 @@ func (service *windowsService) handleConnection(connection net.Conn) {
 		return
 	}
 	response := service.manager.Handle(request)
+	_ = connection.SetWriteDeadline(time.Now().Add(15 * time.Second))
 	encoder := json.NewEncoder(connection)
 	_ = encoder.Encode(response)
 }

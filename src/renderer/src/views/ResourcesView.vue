@@ -9,6 +9,7 @@ import { useProvidersStore } from '../stores/providers'
 import { formatBytes } from '../lib/format'
 import type { MihomoProxyProvider, MihomoRuleProvider } from '@shared/mihomo-api'
 import type { ProfileProviderConfig } from '@shared/profiles'
+import ConfigInspectionCard from '../components/ConfigInspectionCard.vue'
 
 const kernel = useKernelStore()
 const providers = useProvidersStore()
@@ -127,6 +128,7 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
       <p v-if="!providers.remoteRuleProviders.length">当前配置没有远程规则集合。</p>
     </article>
   </section>
+  <ConfigInspectionCard section="geodata" title="Geodata" />
   <GeodataSettingsPanel />
 
   <DetailDrawer :open="Boolean(viewing)" :title="viewTitle" subtitle="集合配置" @close="viewing = null">

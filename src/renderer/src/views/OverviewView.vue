@@ -98,13 +98,15 @@ async function toggleTun(): Promise<void> {
 // 覆写 quick switches persist the master switch on the spot (clash-party's
 // card toggles); the full model is edited in the secondary drawer.
 const snifferEnabled = computed(() => sniffer.enhancement.enabled)
-const snifferBusy = computed(() => sniffer.busy)
+const snifferBusy = computed(() => sniffer.busy || !sniffer.hydrated)
 async function toggleSniffer(): Promise<void> {
+  if (!sniffer.hydrated || sniffer.busy) return
   await sniffer.save({ ...sniffer.enhancement, enabled: !snifferEnabled.value })
 }
 const dnsEnabled = computed(() => dns.enhancement.enabled)
-const dnsBusy = computed(() => dns.busy)
+const dnsBusy = computed(() => dns.busy || !dns.hydrated)
 async function toggleDns(): Promise<void> {
+  if (!dns.hydrated || dns.busy) return
   await dns.save({ ...dns.enhancement, enabled: !dnsEnabled.value })
 }
 

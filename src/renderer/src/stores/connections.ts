@@ -48,6 +48,7 @@ export const useConnectionsStore = defineStore('connections', () => {
   let connectionsUnsub: (() => void) | null = null
   let errorUnsub: (() => void) | null = null
   let watchdog: ReturnType<typeof setTimeout> | null = null
+  let connectionGeneration = 0
 
   function armWatchdog(): void {
     if (watchdog) clearTimeout(watchdog)
@@ -92,7 +93,7 @@ export const useConnectionsStore = defineStore('connections', () => {
     const ranked = Array.from(map.entries())
       .map(([name, value]) => ({ name, ...value }))
       .sort((a, b) => b.download - a.download)
-    const max = ranked[0]?.download ?? 1
+    const max = Math.max(ranked[0]?.download ?? 0, 1)
     return ranked.map(({ name, download, iconPath }) => ({
       name,
       download,
@@ -273,13 +274,17 @@ export const useConnectionsStore = defineStore('connections', () => {
 
   function connect(): void {
     if (connectionsUnsub) return
+    const generation = ++connectionGeneration
     connectionsUnsub = window.desktop.mihomo.onConnections(accept)
     errorUnsub = window.desktop.mihomo.onStreamError(onError)
-    void window.desktop.mihomo.getConnections().then(accept).catch(() => undefined)
+    void window.desktop.mihomo.getConnections().then((snapshot) => {
+      if (generation === connectionGeneration && connectionsUnsub) accept(snapshot)
+    }).catch(() => undefined)
     armWatchdog()
   }
 
   function disconnect(): void {
+    connectionGeneration += 1
     connectionsUnsub?.()
     errorUnsub?.()
     connectionsUnsub = null

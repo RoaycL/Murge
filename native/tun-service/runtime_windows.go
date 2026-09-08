@@ -4,6 +4,7 @@ package main
 
 import (
 	"archive/zip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -13,7 +14,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 	"unicode/utf8"
 	"unsafe"
 
@@ -29,6 +32,60 @@ type windowsRuntime struct {
 	bundledCorePath   string
 	bundledCoreSHA256 string
 	job               windows.Handle
+	versionMu         sync.Mutex
+}
+
+func (runtime *windowsRuntime) Validate(profile string, version string) error {
+	corePath, coreDigest := runtime.bundledCorePath, runtime.bundledCoreSHA256
+	if version != "" {
+		runtime.versionMu.Lock()
+		defer runtime.versionMu.Unlock()
+		var err error
+		corePath, coreDigest, err = runtime.versionCore(version, 0)
+		if err != nil {
+			return err
+		}
+	}
+	if digest, err := hashFile(corePath); err != nil || digest != coreDigest {
+		return errors.New("extracted mihomo integrity check failed")
+	}
+	temporary, err := os.CreateTemp(runtime.config.StateDirectory, "validate-*.yaml")
+	if err != nil {
+		return err
+	}
+	path := temporary.Name()
+	defer os.Remove(path)
+	if _, err = temporary.Write([]byte(profile)); err == nil {
+		err = temporary.Sync()
+	}
+	closeErr := temporary.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, corePath, "-t", "-d", runtime.config.StateDirectory, "-f", path)
+	command.Dir = runtime.config.StateDirectory
+	command.Env = safeWindowsEnvironment()
+	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	output, runErr := command.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("%w: timeout", errConfigInvalid)
+	}
+	if runErr != nil {
+		message := strings.TrimSpace(string(output))
+		if len(message) > 3500 {
+			message = message[len(message)-3500:]
+		}
+		if message == "" {
+			message = runErr.Error()
+		}
+		return fmt.Errorf("%w: %s", errConfigInvalid, message)
+	}
+	return nil
 }
 
 func newWindowsRuntime(config serviceConfig) (*windowsRuntime, error) {
@@ -223,8 +280,10 @@ func prepareCore(config serviceConfig) (string, string, error) {
 func (runtime *windowsRuntime) Start(profile string, _ string, version string) (int, error) {
 	corePath, coreDigest := runtime.bundledCorePath, runtime.bundledCoreSHA256
 	if version != "" {
+		runtime.versionMu.Lock()
 		var err error
 		corePath, coreDigest, err = runtime.versionCore(version, 0)
+		runtime.versionMu.Unlock()
 		if err != nil {
 			return 0, err
 		}
@@ -279,7 +338,9 @@ func (runtime *windowsRuntime) ReadProvider(kind string, name string) (providerC
 	temporaryPath := temporary.Name()
 	_ = temporary.Close()
 	defer os.Remove(temporaryPath)
-	command := exec.Command(runtime.corePath, "convert-ruleset", content.Behavior, "mrs", content.Path, temporaryPath)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, runtime.corePath, "convert-ruleset", content.Behavior, "mrs", content.Path, temporaryPath)
 	command.Dir = runtime.config.StateDirectory
 	command.Env = safeWindowsEnvironment()
 	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
@@ -298,7 +359,7 @@ func (runtime *windowsRuntime) ReadProvider(kind string, name string) (providerC
 }
 
 func (runtime *windowsRuntime) Stop(pid int) error {
-	handle, err := windows.OpenProcess(windows.PROCESS_TERMINATE|windows.SYNCHRONIZE, false, uint32(pid))
+	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.PROCESS_TERMINATE|windows.SYNCHRONIZE, false, uint32(pid))
 	if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
 		return nil
 	}
@@ -306,6 +367,18 @@ func (runtime *windowsRuntime) Stop(pid int) error {
 		return err
 	}
 	defer windows.CloseHandle(handle)
+	buffer := make([]uint16, 32768)
+	size := uint32(len(buffer))
+	if err := windows.QueryFullProcessImageName(handle, 0, &buffer[0], &size); err != nil {
+		return err
+	}
+	observedPath := windows.UTF16ToString(buffer[:size])
+	if !strings.EqualFold(filepath.Clean(observedPath), filepath.Clean(runtime.corePath)) {
+		return errors.New("refusing to stop reused PID")
+	}
+	if digest, err := hashFile(observedPath); err != nil || digest != runtime.coreSHA256 {
+		return errors.New("refusing to stop unverified process")
+	}
 	if err := windows.TerminateProcess(handle, 0); err != nil {
 		return err
 	}

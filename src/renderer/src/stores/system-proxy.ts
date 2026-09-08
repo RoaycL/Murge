@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { SystemProxyStatus } from '@shared/system-proxy'
+import { toProtocolError } from '@shared/protocol-errors'
 
 /**
  * Live system-proxy status. The main process (and the OS registry on Windows)
@@ -20,10 +21,18 @@ export const useSystemProxyStore = defineStore('system-proxy', () => {
     conflictDetail: null,
     updatedAt: null
   })
+  const lastError = ref<string | null>(null)
   let unsub: (() => void) | null = null
 
-  async function refresh(): Promise<void> {
-    status.value = await window.desktop.systemProxy.getStatus()
+  async function refresh(): Promise<boolean> {
+    try {
+      status.value = await window.desktop.systemProxy.getStatus()
+      lastError.value = null
+      return true
+    } catch (error) {
+      lastError.value = toProtocolError(error).message
+      return false
+    }
   }
 
   async function enable(): Promise<void> {
@@ -47,5 +56,5 @@ export const useSystemProxyStore = defineStore('system-proxy', () => {
     unsub = null
   }
 
-  return { status, refresh, enable, disable, connect, disconnect }
+  return { status, lastError, refresh, enable, disable, connect, disconnect }
 })

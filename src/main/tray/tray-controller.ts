@@ -17,6 +17,8 @@ export type TrayDirectory = 'application' | 'working' | 'kernel' | 'logs'
 export interface TrayMenuItem {
   id: string
   label?: string
+  /** Cached image data URL converted to a native 16px menu icon by the view. */
+  icon?: string
   enabled?: boolean
   checked?: boolean
   type?: 'separator' | 'checkbox' | 'radio'
@@ -47,6 +49,8 @@ export interface TrayControllerOptions {
   profiles?: ProfileGateway
   internetLatency?: InternetLatencySampler
   resolveGroupOrder?(): Promise<string[]>
+  /** Resolve the shared persistent policy-icon cache without blocking menu open on network I/O. */
+  resolveGroupIcon?(cacheKey: string, url?: string, refresh?: boolean): Promise<string | null>
   reloadConfig?(): Promise<void>
   restartKernel?(): Promise<void>
   openDirectory?(directory: TrayDirectory): void | Promise<void>
@@ -115,6 +119,9 @@ export class TrayController {
   private profiles: ProfileMeta[] = []
   private connections: MihomoConnection[] = []
   private networkLatencyMs: number | null = null
+  private readonly groupIcons = new Map<string, string>()
+  private readonly groupIconSources = new Map<string, string>()
+  private activeProfileStamp = ''
   private busy = false
   private disposed = false
   private refreshPromise: Promise<void> | null = null
@@ -172,6 +179,14 @@ export class TrayController {
     if (tun) this.tunStatus = tun
     if (profiles) this.profiles = profiles
     if (groupOrder) this.groupOrder = groupOrder
+    const active = this.profiles.find((profile) => profile.active)
+    const activeStamp = active ? `${active.id}:${active.updatedAt}` : ''
+    if (activeStamp !== this.activeProfileStamp) {
+      this.activeProfileStamp = activeStamp
+      // A subscription update may keep the same icon URL while replacing its
+      // bytes. Re-arm one background refresh for every group in the new revision.
+      this.groupIconSources.clear()
+    }
 
     if (kernel.phase === 'running' && this.options.mihomo) {
       const [config, proxies, connections] = await Promise.all([
@@ -182,6 +197,7 @@ export class TrayController {
       if (config?.mode) this.mode = config.mode
       if (config) this.mixedPort = config['mixed-port'] ?? config.port ?? null
       if (proxies) this.proxies = proxies.proxies
+      this.refreshGroupIcons()
       if (connections) this.connections = connections.connections
       this.refreshLatency()
     } else {
@@ -234,6 +250,57 @@ export class TrayController {
       .sort(([left], [right]) => (order.get(left) ?? Number.MAX_SAFE_INTEGER) - (order.get(right) ?? Number.MAX_SAFE_INTEGER))
   }
 
+  /**
+   * Paint cached icons immediately, then refresh each URL once per active
+   * profile revision. A failed/missing URL deliberately leaves the stale disk
+   * cache in place, matching the renderer's policy-icon contract.
+   */
+  private refreshGroupIcons(): void {
+    if (!this.options.resolveGroupIcon) return
+    const activeNames = new Set<string>()
+    for (const [groupName, proxy] of this.selectableGroups()) {
+      activeNames.add(groupName)
+      const rawIcon = typeof proxy.icon === 'string' ? proxy.icon.trim() : ''
+      if (rawIcon.startsWith('data:image/') && rawIcon.length <= 512_000) {
+        if (this.groupIcons.get(groupName) !== rawIcon) {
+          this.groupIcons.set(groupName, rawIcon)
+          this.render()
+        }
+        continue
+      }
+      const url = rawIcon.startsWith('https://') ? rawIcon : undefined
+      const shouldRefresh = Boolean(url && this.groupIconSources.get(groupName) !== url)
+      if (url && shouldRefresh) this.groupIconSources.set(groupName, url)
+      void this.resolveGroupIcon(groupName, url, shouldRefresh)
+    }
+    for (const name of this.groupIcons.keys()) {
+      if (!activeNames.has(name)) this.groupIcons.delete(name)
+    }
+    for (const name of this.groupIconSources.keys()) {
+      if (!activeNames.has(name)) this.groupIconSources.delete(name)
+    }
+  }
+
+  private async resolveGroupIcon(groupName: string, url: string | undefined, refresh: boolean): Promise<void> {
+    const resolver = this.options.resolveGroupIcon
+    if (!resolver || this.disposed) return
+    try {
+      const cached = await resolver(`policy:${groupName}`)
+      if (cached && !this.disposed && this.proxies[groupName]) {
+        this.groupIcons.set(groupName, cached)
+        this.render()
+      }
+      if (!refresh || !url) return
+      const refreshed = await resolver(`policy:${groupName}`, url, true)
+      if (refreshed && !this.disposed && this.proxies[groupName]) {
+        this.groupIcons.set(groupName, refreshed)
+        this.render()
+      }
+    } catch {
+      // Icons are decorative. Keep the previous cache and never delay controls.
+    }
+  }
+
   private modeMenu(transition: boolean): TrayMenuItem {
     return {
       id: 'outbound-mode',
@@ -256,6 +323,7 @@ export class TrayController {
       return {
         id: `group:${groupName}`,
         label: selected ? `${groupName} · ${selected}` : groupName,
+        icon: this.groupIcons.get(groupName),
         enabled: !transition,
         submenu: proxy.all!.map((member) => ({
           id: `group:${groupName}:${member}`,

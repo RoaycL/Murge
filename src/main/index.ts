@@ -34,12 +34,16 @@ import { MihomoService } from './services/mihomo-service'
 import { UsageHistoryService } from './services/usage-history-service'
 import { FileSystemUsageHistoryStore, InMemoryUsageHistoryStore } from './services/usage-history-store'
 import { NetworkMetadataService, fetchMetadataJsonViaProxy } from './services/network-metadata-service'
+import { RemoteIconCache } from './services/remote-icon-cache'
 import { ProfileRepository } from './profiles/profile-repository'
 import { EncryptedProfileSourceStore } from './profiles/profile-source-store'
 import { ProfileService } from './profiles/profile-service'
 import { ProfileAutoReloadGateway } from './profiles/profile-auto-reload-gateway'
 import { parseProxyGroupOrder, parseProxyGroupTestUrls } from './profiles/proxy-group-order'
 import { parseProviderCatalog } from './profiles/provider-configs'
+import { inspectActiveProfileConfig } from './profiles/profile-config-inspection'
+import { buildProfileKernelConfig } from './kernel/profile-kernel-config'
+import { generateProxiedTunConfig } from './tun/mihomo-tun-config'
 import { ServiceUnlockService } from './services/service-unlock-service'
 import { ProxySelectionStore } from './profiles/proxy-selection-store'
 import { ProxySelectionService } from './services/proxy-selection-service'
@@ -140,6 +144,16 @@ if (hasArg('--packaging-smoke')) {
   }, 60000)
 }
 
+// The NSIS uninstaller waits synchronously for this headless command. Bound the
+// whole Electron bootstrap/registry restore path so a damaged install can never
+// leave the uninstaller waiting forever.
+if (hasArg('--restore-system-proxy')) {
+  setTimeout(() => {
+    console.error('[restore-system-proxy] watchdog: restore did not finish within 30s')
+    process.exit(1)
+  }, 30_000)
+}
+
 // Headless CI runners often have no GPU/display, and Electron can stall in
 // window-ready waiting on GPU init. For the CI probe modes (which never open a
 // GUI and exit fast) disable hardware acceleration so startup resolves; normal
@@ -149,7 +163,8 @@ if (
   hasArg('--kernel-smoke') ||
   hasArg('--ui-smoke') ||
   hasArg('--hidden-smoke') ||
-  hasArg('--system-proxy-enable')
+  hasArg('--system-proxy-enable') ||
+  hasArg('--restore-system-proxy')
 ) {
   app.disableHardwareAcceleration()
   app.commandLine.appendSwitch('disable-gpu')
@@ -811,6 +826,35 @@ app.whenReady().then(async () => {
     installVersion: tunServiceClient ? (version) => tunServiceClient.installVersion(version, productionMixedPort!) : undefined,
     applyInstalledVersion: (version, previous) => applyInstalledKernelVersion(version, previous)
   })
+  if (tunServiceClient) {
+    profileService.setSemanticValidator(async (document) => {
+      const dnsApplied = await dnsEnhancementService.applyToDocument(document)
+      const enhanced = await snifferEnhancementService.applyToDocument(dnsApplied)
+      const [core, geodata, tunConfig, selection] = await Promise.all([
+        coreSettingsService.getRaw(),
+        geodataSettingsService.getRaw(),
+        tunConfigService.readConfig(),
+        kernelManagerService.getVersionSelection()
+      ])
+      const runtime = {
+        mixedPort: productionMixedPort!,
+        httpPort: productionHttpPort,
+        socksPort: productionSocksPort,
+        controllerPort: productionControllerPort!,
+        controllerHost: productionControllerHost,
+        allowLan: productionAllowLan,
+        controllerPanel: productionControllerPanel,
+        secret: productionSecret!,
+        device: `${brand.shortName} TUN`
+      }
+      const effective = generateProxiedTunConfig({
+        ...runtime, document: enhanced, core, geodata, tunConfig, tunEnabled: true
+      })
+      const version = selection.channel === 'specific' ? selection.specificVersion ?? undefined : undefined
+      await tunServiceClient.validateProfile(effective, version)
+      return { ok: true, issues: [] }
+    })
+  }
   // Windows production uses the installed LocalSystem service as the ONE core
   // host in both ordinary and TUN modes. The same client is also used by the
   // liveness monitor, so ownership cannot split across independent handles.
@@ -1417,6 +1461,20 @@ app.whenReady().then(async () => {
     proxySelectionService,
     (operation) => profileGateway.runExclusive(operation)
   )
+  const remoteIconCache = new RemoteIconCache(
+    join(app.getPath('userData'), 'icon-cache'),
+    [async (url, init) => {
+      const response = await globalThis.fetch(url, init as RequestInit)
+      return {
+        ok: response.ok,
+        status: response.status,
+        url: response.url,
+        headers: response.headers,
+        text: () => response.text(),
+        body: response.body ?? undefined
+      }
+    }, createSubscriptionProxyFetchFn()]
+  )
   disposeIpc = registerIpc({
     internetLatency: internetLatencyService,
     unlock: serviceUnlockService,
@@ -1446,7 +1504,47 @@ app.whenReady().then(async () => {
       parseProviderCatalog((await resolveEnhancedActiveDocument()) ?? ''),
     resolveProviderContent: tunServiceClient
       ? (kind, name) => tunServiceClient.getProviderContent(kind, name)
-      : undefined
+      : undefined,
+    resolveActiveConfigInspection: async () => {
+      const profile = await profileService.getActiveProfile()
+      if (!profile) return inspectActiveProfileConfig(null, '', '', {
+        coreOverride: false, dnsOverride: false, snifferOverride: false,
+        geodataOverride: false, tunEnabled: false
+      })
+      const [enhanced, core, geodata, tunConfig, dnsSnapshot, snifferSnapshot] = await Promise.all([
+        resolveEnhancedActiveDocument(),
+        coreSettingsService.getRaw(),
+        geodataSettingsService.getRaw(),
+        tunConfigService.readConfig(),
+        dnsEnhancementService.get(),
+        snifferEnhancementService.get()
+      ])
+      const tunPhase = tunInstance.getStatus().phase
+      const tunEnabled = tunPhase === 'active' || tunPhase === 'starting' || tunPhase === 'restoring'
+      const runtime = {
+        mixedPort: productionMixedPort ?? 7890,
+        httpPort: productionHttpPort,
+        socksPort: productionSocksPort,
+        controllerPort: productionControllerPort ?? 9090,
+        controllerHost: productionControllerHost,
+        allowLan: productionAllowLan,
+        controllerPanel: productionControllerPanel,
+        secret: productionSecret ?? '0'.repeat(64),
+        device: `${brand.shortName} TUN`
+      }
+      const base = enhanced ?? profile.document
+      const effective = tunEnabled
+        ? generateProxiedTunConfig({ ...runtime, document: base, core, geodata, tunConfig, tunEnabled: true })
+        : buildProfileKernelConfig(base, { ...runtime, core, geodata })
+      return inspectActiveProfileConfig(profile.meta.name, profile.document, effective, {
+        coreOverride: core.enabled,
+        dnsOverride: dnsSnapshot.enhancement.enabled,
+        snifferOverride: snifferSnapshot.enhancement.enabled,
+        geodataOverride: geodata.enabled,
+        tunEnabled
+      })
+    },
+    remoteIconCache
   })
   createWindow()
   const showMainWindow = (): void => {
@@ -1486,6 +1584,7 @@ app.whenReady().then(async () => {
     profiles: profileGateway,
     internetLatency: internetLatencyService,
     resolveGroupOrder: async () => parseProxyGroupOrder((await resolveEnhancedActiveDocument()) ?? ''),
+    resolveGroupIcon: (cacheKey, url, refresh) => remoteIconCache.get(cacheKey, url, refresh),
     reloadConfig: () => modeController.updateRuntimeConfig(async () => {
       if (!liveConfigReloader) return
       if (await liveConfigReloader.reloadIfRunning()) await proxySelectionService.restoreSelections()

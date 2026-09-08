@@ -82,6 +82,42 @@ describe('Phase 9B privileged service protocol', () => {
     )
   })
 
+  it('validates the exact digest-bound profile with the service-owned kernel', async () => {
+    const transport: TunServiceTransport = {
+      request: vi.fn(async request => ({
+        protocolVersion: TUN_SERVICE_PROTOCOL_VERSION,
+        requestId: request.requestId,
+        outcome: 'valid',
+        sessionId: null,
+        pid: null,
+        errorCode: null
+      }))
+    }
+    await expect(new TunServiceClient(transport).validateProfile(profile, 'v1.19.30')).resolves.toBeUndefined()
+    expect(vi.mocked(transport.request)).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: 'validate', version: 'v1.19.30', profile }),
+      undefined,
+      45_000
+    )
+  })
+
+  it('surfaces mihomo validation output without starting or replacing the owned session', async () => {
+    const transport: TunServiceTransport = {
+      request: vi.fn(async request => ({
+        protocolVersion: TUN_SERVICE_PROTOCOL_VERSION,
+        requestId: request.requestId,
+        outcome: 'failed',
+        sessionId: null,
+        pid: null,
+        errorCode: 'CONFIG_INVALID',
+        validationMessage: 'mihomo config validation failed: invalid proxy type'
+      }))
+    }
+    const client = new TunServiceClient(transport)
+    await expect(client.validateProfile(profile)).rejects.toThrow(/invalid proxy type/)
+    expect(client.getOwnedSession()).toBeNull()
+  })
+
   it('reads a named provider without exposing a file path', async () => {
     const transport: TunServiceTransport = {
       request: vi.fn(async request => ({

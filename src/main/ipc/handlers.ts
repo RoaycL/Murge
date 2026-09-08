@@ -1,6 +1,6 @@
 import { IPC } from '@shared/ipc'
 import type { IpcDeps } from '@shared/gateways'
-import type { ProfileProviderCatalog, ProfileProviderContent } from '@shared/profiles'
+import type { ActiveProfileConfigInspection, ProfileProviderCatalog, ProfileProviderContent } from '@shared/profiles'
 import { parseConfigPatch, parseProxySelection, parseConnectionId, parseMihomoName, parseDelayOptions, parseStartupEnabled, parseDnsQuery, parseLogAfterSeq, parseAppSettingsPatch, parseKernelEnabled, parseKernelChannel, parseKernelVersion, parseOverrideInput, parseOverrideId, parseOverrideEnabled, parseOverrideMove, parseDnsEnhancement, parseSnifferEnhancement, parseTunConfig, parseCoreSettings, parseGeodataSettings, parseProxyBypassPolicy, parseUsageWindow, parseUsageRanking, parseUsageRankLimit, parseNetworkMetadataProviderId, parseUnlockServiceName, parseSubStoreExternalUrl } from '@shared/schemas/ipc'
 import {
   parseConfigEdit,
@@ -35,6 +35,7 @@ export interface IpcHandlerOptions {
   resolveActiveProviderCatalog?: () => Promise<ProfileProviderCatalog>
   /** Reads a provider through the privileged service that owns mihomo's home. */
   resolveProviderContent?: (kind: 'proxy' | 'rule', name: string) => Promise<ProfileProviderContent>
+  resolveActiveConfigInspection?: () => Promise<ActiveProfileConfigInspection>
 }
 
 export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {}): Record<string, IpcHandler> {
@@ -135,6 +136,12 @@ export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {})
         throw new ProtocolError(ProtocolErrorCode.INTERNAL, '当前运行方式不支持读取外部资源内容')
       }
       return options.resolveProviderContent(rawKind, name)
+    },
+    [IPC.profilesInspectActiveConfig]: async () => {
+      if (!options.resolveActiveConfigInspection) {
+        throw new ProtocolError(ProtocolErrorCode.INTERNAL, '当前运行方式不支持读取生效配置')
+      }
+      return options.resolveActiveConfigInspection()
     },
     [IPC.profilesList]: async () => profiles.listProfiles(),
     [IPC.profilesGet]: async (_event, id) => profiles.getProfile(parseProfileName(id)),

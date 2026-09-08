@@ -14,11 +14,13 @@ import { plainJsonClone } from '@shared/plain-clone'
 export const useDnsEnhancementStore = defineStore('dns-enhancement', () => {
   const enhancement = ref<DnsEnhancement>({ ...EMPTY_DNS_ENHANCEMENT })
   const busy = ref(false)
+  const hydrated = ref(false)
   const lastError = ref<string | null>(null)
 
   async function refresh(): Promise<void> {
     try {
       enhancement.value = coerceDnsEnhancement((await window.desktop.dns.get()).enhancement)
+      hydrated.value = true
       lastError.value = null
     } catch (error) {
       lastError.value = toProtocolError(error).message
@@ -54,5 +56,5 @@ export const useDnsEnhancementStore = defineStore('dns-enhancement', () => {
     }
   }
 
-  return { enhancement, busy, lastError, refresh, save, preview }
+  return { enhancement, busy, hydrated, lastError, refresh, save, preview }
 })

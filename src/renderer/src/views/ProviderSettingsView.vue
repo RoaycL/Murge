@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useProfilesStore } from '../stores/profiles'
 import type { ConfigEdit } from '@shared/profiles'
+import { parse } from 'yaml'
 
 const profilesStore = useProfilesStore()
 
@@ -31,11 +32,10 @@ async function loadActiveProfile(): Promise<void> {
 }
 
 function parseScalar(document: string, key: string): string | null {
-  for (const line of document.split('\n')) {
-    const match = /^([A-Za-z0-9_.-]+)\s*:\s*(.*)$/.exec(line)
-    if (match && match[1] === key) return (match[2] ?? '').trim().replace(/\s+#.*$/, '')
-  }
-  return null
+  try {
+    const value = (parse(document) as Record<string, unknown> | null)?.[key]
+    return typeof value === 'string' || typeof value === 'number' ? String(value) : null
+  } catch { return null }
 }
 
 async function save(): Promise<void> {

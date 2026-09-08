@@ -57,6 +57,10 @@
 !macroend
 
 !macro customUnInstall
+  ; perMachine installers enter this hook with the all-users shell context,
+  ; where $APPDATA resolves to ProgramData. Proxy ownership is per-user under
+  ; Roaming AppData, so explicitly restore the current-user context first.
+  SetShellVarContext current
   ; Attempt to restore the owned system proxy, but never hard-block removal.
   ; The restore runs the installed app binary, so a non-bootable release (crash
   ; bug) would otherwise make uninstall and upgrade impossible. Warn & continue.

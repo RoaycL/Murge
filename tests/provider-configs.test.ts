@@ -86,4 +86,32 @@ rule-providers:
       { name: 'r1', kind: 'rule', url: 'https://x', behavior: 'domain' }
     ])
   })
+
+  it('resolves YAML merge-key fields exactly like the runtime builder', () => {
+    const doc = `
+proxy-base: &proxy-base
+  type: http
+  interval: 3600
+  health-check:
+    enable: true
+    url: https://example.com/ping
+rule-base: &rule-base
+  type: http
+  behavior: classical
+  format: yaml
+  interval: 7200
+proxy-providers:
+  airport:
+    <<: *proxy-base
+    url: https://example.com/sub
+rule-providers:
+  rules:
+    <<: *rule-base
+    url: https://example.com/rules
+`
+    expect(parseProviderCatalog(doc)).toEqual({
+      proxy: [{ name: 'airport', kind: 'proxy', url: 'https://example.com/sub', interval: 3600, testUrl: 'https://example.com/ping' }],
+      rule: [{ name: 'rules', kind: 'rule', url: 'https://example.com/rules', interval: 7200, behavior: 'classical', format: 'yaml' }]
+    })
+  })
 })

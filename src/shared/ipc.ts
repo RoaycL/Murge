@@ -14,7 +14,7 @@ import type {
   MihomoRulesResponse,
   MihomoStreamError
 } from './mihomo-api'
-import type { ConfigEdit, ImportRequest, Profile, ProfileMeta, ProfileProviderCatalog, ProfileProviderContent, ValidationResult } from './profiles'
+import type { ActiveProfileConfigInspection, ConfigEdit, ImportRequest, Profile, ProfileMeta, ProfileProviderCatalog, ProfileProviderContent, ValidationResult } from './profiles'
 import type { ServiceUnlockResult } from './unlock'
 import type { SubStoreState } from './substore'
 import type { KernelManagerState } from './kernel-manager'
@@ -90,6 +90,7 @@ export const IPC = {
   profilesGetActiveGroupOrder: 'profiles:get-active-group-order',
   profilesGetActiveProviderCatalog: 'profiles:get-active-provider-catalog',
   profilesGetProviderContent: 'profiles:get-provider-content',
+  profilesInspectActiveConfig: 'profiles:inspect-active-config',
   profilesGet: 'profiles:get',
   profilesImport: 'profiles:import',
   profilesImportFromUrl: 'profiles:import-from-url',
@@ -231,6 +232,8 @@ export interface DesktopApi {
     getActiveProviderCatalog(): Promise<ProfileProviderCatalog>
     /** Actual cached/inline contents materialized by the privileged mihomo host. */
     getProviderContent(kind: 'proxy' | 'rule', name: string): Promise<ProfileProviderContent>
+    /** Stored profile versus the exact safe runtime document the app would materialize now. */
+    inspectActiveConfig(): Promise<ActiveProfileConfigInspection>
     list(): Promise<ProfileMeta[]>
     get(id: string): Promise<Profile>
     import(request: ImportRequest): Promise<ProfileMeta>

@@ -97,7 +97,7 @@ function closeMenu(): void {
 }
 
 async function importFromUrl(): Promise<void> {
-  if (!url.value.trim()) return
+  if (importing.value || !url.value.trim()) return
   importing.value = true
   try {
     // An empty name lets the main process derive one from the subscription
@@ -129,7 +129,7 @@ function selectLocalFile(event: Event): void {
 
 async function importLocalFile(): Promise<void> {
   const file = localFile.value
-  if (!file) return
+  if (importing.value || !file) return
   importing.value = true
   try {
     const raw = await file.text()
@@ -152,7 +152,7 @@ async function importLocalFile(): Promise<void> {
 }
 
 async function importManual(): Promise<void> {
-  if (!document.value.trim()) return
+  if (importing.value || !document.value.trim()) return
   importing.value = true
   try {
     await profilesStore.importProfile({
@@ -362,7 +362,7 @@ function ruleProviderMeta(
           <template v-if="importSource === 'url'"><label class="modal-field"><span>订阅地址</span><div class="field-with-action"><input ref="urlInput" v-model="url" class="field" aria-label="订阅地址" placeholder="https://example.com/subscription" @keyup.enter="importFromUrl" /><button type="button" class="icon-control" aria-label="粘贴订阅地址" @click="pasteUrl"><AppIcon name="clipboard" :size="16" /></button></div></label></template>
           <label v-else-if="importSource === 'file'" class="modal-field"><span>本地 mihomo 配置</span><input ref="localFileInput" class="field file-input" type="file" accept=".yaml,.yml,text/yaml,application/yaml" aria-label="本地 mihomo 配置文件" @change="selectLocalFile" /></label>
           <label v-else class="modal-field"><span>配置 YAML</span><textarea v-model="document" class="field document" aria-label="mihomo 配置 YAML" spellcheck="false" placeholder="粘贴 mihomo 配置 YAML…" /></label>
-          <p v-if="validation && !validation.ok" class="inline-error" role="alert">{{ validation.issues.map((issue) => issue.message).join('；') }}</p><p v-else-if="validation?.ok" class="inline-ok">配置有效</p>
+          <p v-if="validation && !validation.ok" class="inline-error" role="alert">{{ validation.issues.map((issue) => issue.message).join('；') }}</p><template v-else-if="validation?.ok"><p class="inline-ok">配置有效</p><ul v-if="validation.issues.length" class="validation-warnings"><li v-for="(issue, index) in validation.issues" :key="index">第 {{ issue.line ?? '—' }} 行：{{ issue.message }}</li></ul></template>
           <footer><button type="button" class="secondary-button" @click="showAddDialog = false">取消</button><button v-if="importSource === 'manual'" type="button" class="secondary-button" :disabled="!document.trim()" @click="previewValidation">校验</button><button type="button" class="primary-button" :disabled="importing || (importSource === 'url' ? !url.trim() : importSource === 'file' ? !localFile : !document.trim())" @click="importSource === 'url' ? importFromUrl() : importSource === 'file' ? importLocalFile() : importManual()">{{ importing ? '导入中…' : '验证并添加' }}</button></footer>
         </section>
       </div>
@@ -931,5 +931,12 @@ function ruleProviderMeta(
 .inline-ok {
   color: var(--app-green);
   font-size: 12px;
+}
+.validation-warnings {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: #b97800;
+  font-size: 11px;
+  line-height: 1.5;
 }
 </style>

@@ -277,6 +277,19 @@ describe('connections store', () => {
     store.disconnect()
   })
 
+  it('keeps zero-byte ranking widths finite', () => {
+    const store = useConnectionsStore()
+    mihomo.getConnections.mockResolvedValue({ ...snapshot, connections: [] })
+    store.connect()
+    emitConnections(store, {
+      ...snapshot,
+      connections: [{ ...snapshot.connections[0], upload: 0, download: 0 }]
+    })
+    expect(store.topProcesses[0]?.width).toBe(0)
+    expect(Number.isFinite(store.topProcesses[0]?.width)).toBe(true)
+    store.disconnect()
+  })
+
   it('moves vanished connections into the bounded closed view', () => {
     const store = useConnectionsStore()
     mihomo.getConnections.mockResolvedValue(snapshot)

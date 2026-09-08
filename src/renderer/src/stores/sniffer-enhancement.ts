@@ -14,11 +14,13 @@ import { plainJsonClone } from '@shared/plain-clone'
 export const useSnifferEnhancementStore = defineStore('sniffer-enhancement', () => {
   const enhancement = ref<SnifferEnhancement>({ ...EMPTY_SNIFFER_ENHANCEMENT })
   const busy = ref(false)
+  const hydrated = ref(false)
   const lastError = ref<string | null>(null)
 
   async function refresh(): Promise<void> {
     try {
       enhancement.value = coerceSnifferEnhancement((await window.desktop.sniffer.get()).enhancement)
+      hydrated.value = true
       lastError.value = null
     } catch (error) {
       lastError.value = toProtocolError(error).message
@@ -54,5 +56,5 @@ export const useSnifferEnhancementStore = defineStore('sniffer-enhancement', () 
     }
   }
 
-  return { enhancement, busy, lastError, refresh, save, preview }
+  return { enhancement, busy, hydrated, lastError, refresh, save, preview }
 })

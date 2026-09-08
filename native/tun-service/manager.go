@@ -14,6 +14,7 @@ type ownedProcess struct {
 
 type processRuntime interface {
 	Start(profile string, sessionID string, version string) (int, error)
+	Validate(profile string, version string) error
 	Install(version string, proxyPort int) error
 	Stop(pid int) error
 	Inspect(pid int) (bool, error)
@@ -27,12 +28,14 @@ type ownershipStore interface {
 }
 
 type sessionManager struct {
-	mu       sync.Mutex
-	runtime  processRuntime
-	store    ownershipStore
-	owned    *ownedProcess
-	conflict bool
-	blocked  bool
+	mu         sync.Mutex
+	installMu  sync.Mutex
+	validateMu sync.Mutex
+	runtime    processRuntime
+	store      ownershipStore
+	owned      *ownedProcess
+	conflict   bool
+	blocked    bool
 }
 
 func newSessionManager(runtime processRuntime, store ownershipStore) *sessionManager {
@@ -40,6 +43,25 @@ func newSessionManager(runtime processRuntime, store ownershipStore) *sessionMan
 }
 
 func (manager *sessionManager) Handle(request serviceRequest) serviceResponse {
+	// Version downloads can legitimately take minutes. They do not read or
+	// mutate process ownership, so never hold the lifecycle mutex while waiting
+	// on the network; status/stop/provider calls must remain responsive.
+	if request.Operation == "install" {
+		manager.installMu.Lock()
+		defer manager.installMu.Unlock()
+		response := serviceResponse{ProtocolVersion: protocolVersion, RequestID: request.RequestID}
+		err := manager.install(request, &response)
+		manager.applyError(request, err, &response)
+		return response
+	}
+	if request.Operation == "validate" {
+		manager.validateMu.Lock()
+		defer manager.validateMu.Unlock()
+		response := serviceResponse{ProtocolVersion: protocolVersion, RequestID: request.RequestID}
+		err := manager.validate(request, &response)
+		manager.applyError(request, err, &response)
+		return response
+	}
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 	response := serviceResponse{ProtocolVersion: protocolVersion, RequestID: request.RequestID}
@@ -53,21 +75,39 @@ func (manager *sessionManager) Handle(request serviceRequest) serviceResponse {
 		manager.status(&response)
 	case "reconcile":
 		err = manager.reconcile(&response)
-	case "install":
-		err = manager.install(request, &response)
 	case "provider-content":
 		err = manager.providerContent(request, &response)
 	default:
 		err = errors.New("operation is not allowlisted")
 	}
+	manager.applyError(request, err, &response)
+	return response
+}
+
+func (manager *sessionManager) applyError(request serviceRequest, err error, response *serviceResponse) {
 	if err != nil {
 		code := providerErrorCode(err)
 		response.ErrorCode = &code
 		if response.Outcome == "" {
 			response.Outcome = "failed"
 		}
+		if request.Operation == "validate" {
+			message := err.Error()
+			if len(message) > 4096 {
+				message = message[len(message)-4096:]
+			}
+			response.ValidationMessage = &message
+		}
 	}
-	return response
+}
+
+func (manager *sessionManager) validate(request serviceRequest, response *serviceResponse) error {
+	if err := manager.runtime.Validate(request.Profile, request.Version); err != nil {
+		response.Outcome = "failed"
+		return err
+	}
+	response.Outcome = "valid"
+	return nil
 }
 
 func (manager *sessionManager) providerContent(request serviceRequest, response *serviceResponse) error {

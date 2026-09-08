@@ -5,7 +5,7 @@ import { brand } from '@shared/brand'
 import type { IpcDeps, KernelGateway, KernelManagerGateway, MihomoGateway, ProfileGateway, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway, OverridesGateway, DnsEnhancementGateway, SnifferEnhancementGateway, TunConfigGateway, CoreSettingsGateway, GeodataSettingsGateway, UsageHistoryGateway, NetworkMetadataGateway, SubStoreGateway } from '@shared/gateways'
 import type { TunGateway } from '@shared/tun'
 import type { OutboundMode, RuntimeSummary } from '@shared/runtime'
-import type { ProfileProviderCatalog, ProfileProviderContent } from '@shared/profiles'
+import type { ActiveProfileConfigInspection, ProfileProviderCatalog, ProfileProviderContent } from '@shared/profiles'
 import { IPC } from '@shared/ipc'
 import { ProtocolError, encodeProtocolError } from '@shared/protocol-errors'
 import { fetchExternalIpViaProxy } from '../services/external-ip'
@@ -42,6 +42,9 @@ export interface IpcDependencies {
   resolveActiveProviderCatalog?: () => Promise<ProfileProviderCatalog>
   /** Service-owned provider content reader; never accepts an arbitrary path. */
   resolveProviderContent?: (kind: 'proxy' | 'rule', name: string) => Promise<ProfileProviderContent>
+  resolveActiveConfigInspection?: () => Promise<ActiveProfileConfigInspection>
+  /** Shared renderer/tray persistent icon cache. */
+  remoteIconCache?: RemoteIconCache
 }
 
 /**
@@ -127,7 +130,7 @@ function resolveExternalIp({ kernel, mihomo }: Pick<IpcDependencies, 'kernel' | 
   })()
 }
 
-export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata, subStore, internetLatency, unlock, resolveActiveGroupOrder, resolveActiveProviderCatalog, resolveProviderContent }: IpcDependencies): () => void {
+export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata, subStore, internetLatency, unlock, resolveActiveGroupOrder, resolveActiveProviderCatalog, resolveProviderContent, resolveActiveConfigInspection, remoteIconCache: sharedRemoteIconCache }: IpcDependencies): () => void {
   const deps: IpcDeps = {
     brand,
     appInfo: { version: app.getVersion(), platform: process.platform === 'win32' || process.platform === 'darwin' || process.platform === 'linux' ? process.platform : 'other', arch: process.arch },
@@ -157,18 +160,30 @@ export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemPro
     unlock: unlock ?? { sample: async () => [], testOne: async (name) => ({ name, status: 'error', region: null }) }
   }
   const iconCache = new Map<string, string>()
-  let remoteIconCache: RemoteIconCache | null = null
-  const entries = Object.entries(buildIpcHandlers(deps, { resolveActiveGroupOrder, resolveActiveProviderCatalog, resolveProviderContent }))
+  const PROCESS_ICON_CACHE_LIMIT = 512
+  let remoteIconCache: RemoteIconCache | null = sharedRemoteIconCache ?? null
+  const entries = Object.entries(buildIpcHandlers(deps, { resolveActiveGroupOrder, resolveActiveProviderCatalog, resolveProviderContent, resolveActiveConfigInspection }))
   entries.push([IPC.appGetProcessIcon, async (_event, rawPath) => {
     if (process.platform !== 'win32') return null
     // Local drive paths only: never let renderer input make Explorer resolve a
     // UNC/SMB path (which could cause unintended network access).
     if (typeof rawPath !== 'string' || !/^[a-zA-Z]:\\/.test(rawPath) || !/\.exe$/i.test(rawPath) || rawPath.length > 1024) return null
     const cached = iconCache.get(rawPath)
-    if (cached) return cached
+    if (cached) {
+      iconCache.delete(rawPath)
+      iconCache.set(rawPath, cached)
+      return cached
+    }
     try {
       const value = (await app.getFileIcon(rawPath, { size: 'normal' })).toDataURL()
-      if (value.length <= 512_000) iconCache.set(rawPath, value)
+      if (value.length <= 512_000) {
+        iconCache.set(rawPath, value)
+        while (iconCache.size > PROCESS_ICON_CACHE_LIMIT) {
+          const oldest = iconCache.keys().next().value
+          if (typeof oldest !== 'string') break
+          iconCache.delete(oldest)
+        }
+      }
       return value
     } catch { return null }
   }])

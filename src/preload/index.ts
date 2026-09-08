@@ -81,6 +81,7 @@ const api: DesktopApi = {
     getActiveGroupOrder: () => invoke(IPC.profilesGetActiveGroupOrder),
     getActiveProviderCatalog: () => invoke(IPC.profilesGetActiveProviderCatalog),
     getProviderContent: (kind, name) => invoke(IPC.profilesGetProviderContent, kind, name),
+    inspectActiveConfig: () => invoke(IPC.profilesInspectActiveConfig),
     list: () => invoke(IPC.profilesList),
     get: (id) => invoke(IPC.profilesGet, id),
     import: (request) => invoke(IPC.profilesImport, request),

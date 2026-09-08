@@ -146,9 +146,11 @@ describe('Phase 9 non-network contracts', () => {
 
     expect(config).toContain('TrustDirectory')
     expect(versions).toContain('versionTrustFilename = "version-trust.json"')
-    expect(versions).toContain('marker == trusted')
+    expect(versions).toContain('marker != trusted')
     expect(versions).toContain('runtime.config.TrustDirectory')
     expect(versions).toContain('pinned != marker')
+    expect(versions).toContain('version + "@" + asset.Digest')
+    expect(versions).toContain('versionCore(version, proxyPort, true)')
     expect(identity).toContain('VolumeSerialNumber')
     expect(identity).toContain('FileIndexHigh')
     expect(main).toContain('*cache == identity')

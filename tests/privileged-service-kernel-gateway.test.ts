@@ -82,6 +82,73 @@ describe('privileged persistent kernel gateway', () => {
     expect(startCalls).toBe(1)
   })
 
+  it('fails immediately with the service diagnostic when the owned core exits before readiness', async () => {
+    let running = false
+    const transport: TunServiceTransport = {
+      request: vi.fn(async request => {
+        if (request.operation === 'start') {
+          running = true
+          return response(request, 'running')
+        }
+        if (request.operation === 'reconcile' && running) {
+          running = false
+          return {
+            protocolVersion: TUN_SERVICE_PROTOCOL_VERSION,
+            requestId: request.requestId,
+            outcome: 'failed',
+            sessionId: null,
+            pid: null,
+            errorCode: 'TUN_SERVICE_OPERATION_FAILED',
+            validationMessage: 'mihomo rejected the generated configuration'
+          }
+        }
+        return response(request, 'stopped')
+      })
+    }
+    const gateway = new PrivilegedServiceKernelGateway(
+      new TunServiceClient(transport),
+      () => ({ mixedPort: 17890, controllerPort: 19090, secret: 'ab'.repeat(32) }),
+      {
+        readActiveDocument: async () => null,
+        readTunConfig: async () => ({ ...EMPTY_TUN_CONFIG }),
+        readCore: async () => ({ ...EMPTY_CORE_SETTINGS }),
+        readGeodata: async () => ({ ...EMPTY_GEODATA_SETTINGS })
+      },
+      { waitUntilReady: async ({ signal }) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })) },
+      'Product TUN',
+      5_000
+    )
+
+    await expect(gateway.start()).rejects.toMatchObject({
+      code: ProtocolErrorCode.KERNEL_SPAWN_FAILED,
+      message: 'mihomo rejected the generated configuration'
+    })
+    expect(gateway.getStatus()).toMatchObject({ phase: 'failed', lastError: 'mihomo rejected the generated configuration' })
+  })
+
+  it('preserves a port reclaim failure instead of misreporting it as a controller timeout', async () => {
+    const gateway = new PrivilegedServiceKernelGateway(
+      new TunServiceClient({ request: async request => response(request, 'stopped') }),
+      () => ({ mixedPort: 17890, controllerPort: 19090, secret: 'ab'.repeat(32) }),
+      {
+        readActiveDocument: async () => null,
+        readTunConfig: async () => ({ ...EMPTY_TUN_CONFIG }),
+        readCore: async () => ({ ...EMPTY_CORE_SETTINGS }),
+        readGeodata: async () => ({ ...EMPTY_GEODATA_SETTINGS })
+      },
+      { waitUntilReady: async () => undefined },
+      'Product TUN',
+      100,
+      () => true,
+      () => { throw new ProtocolError(ProtocolErrorCode.KERNEL_RUNNING, '端口仍被占用') }
+    )
+
+    await expect(gateway.start()).rejects.toMatchObject({
+      code: ProtocolErrorCode.KERNEL_RUNNING,
+      message: '端口仍被占用'
+    })
+  })
+
   it('passes the selected version to the service and verifies the controller result', async () => {
     const transport: TunServiceTransport = {
       request: vi.fn(async request => response(request, request.operation === 'start' ? 'running' : 'stopped'))

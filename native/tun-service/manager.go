@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+var errOwnedProcessExited = errors.New("owned mihomo process exited")
+
 type ownedProcess struct {
 	SessionID string `json:"sessionId"`
 	PID       int    `json:"pid"`
@@ -91,7 +93,7 @@ func (manager *sessionManager) applyError(request serviceRequest, err error, res
 		if response.Outcome == "" {
 			response.Outcome = "failed"
 		}
-		if request.Operation == "validate" {
+		if response.Outcome == "failed" {
 			message := err.Error()
 			if len(message) > 4096 {
 				message = message[len(message)-4096:]
@@ -245,6 +247,17 @@ func (manager *sessionManager) reconcile(response *serviceResponse) error {
 	}
 	live, err := manager.runtime.Inspect(recorded.PID)
 	if err != nil {
+		if errors.Is(err, errOwnedProcessExited) {
+			if clearErr := manager.store.Clear(); clearErr != nil {
+				response.Outcome = "failed"
+				return fmt.Errorf("%v; clear exited process ownership: %w", err, clearErr)
+			}
+			manager.owned = nil
+			manager.blocked = false
+			manager.conflict = false
+			response.Outcome = "failed"
+			return err
+		}
 		manager.owned = recorded
 		manager.conflict = true
 		response.Outcome = "conflict"

@@ -128,6 +128,20 @@ pub async fn dispatch(
             let force = crate::subscription::parse_optional_boolean(arg(payload, 0), "force")?;
             Ok(metadata.resolve(force).await)
         }
+        // 解锁测试 probes — Phase 3C slice 14. The transport goes through the
+        // kernel's LIVE mixed port (kernel down fails closed with the typed
+        // UPSTREAM_UNREACHABLE copy, never a DIRECT sample).
+        "network:unlock-test-all" => {
+            let port = resolve_mixed_port(models).await?;
+            Ok(Value::Array(crate::unlock::sample(|_| crate::unlock::real_probe(port)).await))
+        }
+        "network:unlock-test-one" => {
+            let name = crate::unlock::parse_unlock_service_name(arg(payload, 0).unwrap_or(&Value::Null))?;
+            let port = resolve_mixed_port(models).await?;
+            Ok(Value::Array(vec![crate::unlock::result_to_value(
+                &crate::unlock::detect_service(&name, crate::unlock::real_probe(port)).await,
+            )]))
+        }
         "network-metadata:resolve-all" => {
             let force = crate::subscription::parse_optional_boolean(arg(payload, 0), "force")?;
             Ok(metadata.resolve_all(force).await)
@@ -510,6 +524,21 @@ pub async fn dispatch(
 /// The controller endpoint: the TS production wiring hardcodes the host and
 /// reads the port + secret from the persisted core settings (the kernel's
 /// materialized config rebinds at the Phase 3D slice).
+/// The kernel's LIVE mixed port for proxied probes — the TS
+/// `resolveMixedPort` composition: `config['mixed-port'] ?? null`, every
+/// failure (controller down, missing key, port <= 0) fails closed null.
+async fn resolve_mixed_port(models: &enhancements::ModelStores) -> Result<u16, IpcError> {
+    let client = controller_client(models)?;
+    let Ok(config) = client.get_config().await else {
+        return Err(IpcError::code(crate::error::code::UPSTREAM_UNREACHABLE, "内核未运行，无法通过当前节点执行解锁测试。"));
+    };
+    let port = config["mixed-port"].as_i64().unwrap_or(0);
+    if port <= 0 || port > u16::MAX as i64 {
+        return Err(IpcError::code(crate::error::code::UPSTREAM_UNREACHABLE, "内核未运行，无法通过当前节点执行解锁测试。"));
+    }
+    Ok(port as u16)
+}
+
 fn controller_client(models: &enhancements::ModelStores) -> Result<mihomo::MihomoClient, IpcError> {
     let core = enhancements::coerce_core_settings(&models.core.get());
     mihomo::MihomoClient::new(
@@ -839,6 +868,44 @@ mod tests {
         let state = dispatch("network-metadata:select-provider", &serde_json::json!(["ipapi"]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata).await.unwrap();
         assert_eq!(state["provider"], "ipapi");
         assert_eq!(state["phase"], "idle");
+    }
+
+    #[tokio::test]
+    async fn unlock_channels_fail_closed_and_degrade_to_error_rows() {
+        use crate::mihomo::mock_controller::MockServer;
+        let f = fixtures();
+        // No controller: the typed fail-closed copy, never a DIRECT sample.
+        let error = dispatch("network:unlock-test-all", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata).await.unwrap_err();
+        assert_eq!(error.0, "PROTOCOL_ERROR:UPSTREAM_UNREACHABLE::内核未运行，无法通过当前节点执行解锁测试。");
+        // Invalid service name: the TS invalid-argument list copy.
+        let error = dispatch("network:unlock-test-one", &serde_json::json!(["未知服务"]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata).await.unwrap_err();
+        assert!(error.0.starts_with("PROTOCOL_ERROR:INVALID_ARGUMENT::"), "{}", error.0);
+        assert!(error.0.contains("invalid unlock service: ChatGPT, Gemini, Claude, Grok, Netflix, Disney+, TikTok, YouTube, GitHub, Spotify"), "{}", error.0);
+        // With a live controller reporting a mixed port, the real probes run
+        // through that port (a dead proxy degrades every row to `error` —
+        // the honest verdict, never a throw and never a fabricated number).
+        let server = MockServer::start("s3cret", |_method, path, _body| {
+            if path.starts_with("/configs") {
+                (200, r#"{"mixed-port":7897}"#.to_string())
+            } else {
+                (404, String::new())
+            }
+        });
+        let mut core = enhancements::coerce_core_settings(&f.models.core.get());
+        if let Some(object) = core.as_object_mut() {
+            object.insert("controllerPort".into(), serde_json::json!(server.port));
+            object.insert("controllerSecret".into(), serde_json::json!("s3cret"));
+        }
+        f.models.core.set(&core, enhancements::coerce_core_settings).unwrap();
+        let results = dispatch("network:unlock-test-all", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata).await.unwrap();
+        let rows = results.as_array().unwrap();
+        assert_eq!(rows.len(), 10);
+        let names: Vec<&str> = rows.iter().filter_map(|row| row["name"].as_str()).collect();
+        assert_eq!(names, vec!["ChatGPT", "Gemini", "Claude", "Grok", "Netflix", "Disney+", "TikTok", "YouTube", "GitHub", "Spotify"]);
+        for row in rows {
+            assert!(row["status"].is_string(), "{}", row);
+            assert!(row["region"].is_null() || row["region"].is_string(), "{}", row);
+        }
     }
 
     #[tokio::test]

@@ -31,6 +31,7 @@ mod network_metadata;
 // Network metadata service: shared, cached, single-flight app state.
 use network_metadata::NetworkMetadataService;
 mod profile_parse;
+mod unlock;
 mod route_latency;
 mod icons;
 mod profile_service;

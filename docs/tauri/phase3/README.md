@@ -436,6 +436,32 @@ Sixth Phase 3B/3C slice — the last staged mihomo channel:
   event channels from slice 9 stay counted on the emit side, so the invoke
   total reads **84/121** with **37 staged** (six of them emit-live already)..
 
+### 13. Egress metadata (`src-tauri/src/network_metadata.rs`)
+
+Fourth Phase 3C slice — 5 channels un-staged:
+
+- The shared model ports verbatim: three privacy-explicit providers
+  (`ipwhois` / `ipapi` / `ipinfo`, display order, function-free wire shape,
+  `kind: "ip-geo"`), per-provider parse (ipwhois `success!==false` +
+  `connection.asn`; ipapi `status==="success"` + `query`/`as`; ipinfo
+  `org`??`asn`), the `ASxxxx` normalizer, and the byte-verbatim Chinese
+  copies (`查询失败，请重试` / `内核未运行，无法查询出口信息` /
+  `数据源返回了无法解析的响应`).
+- `NetworkMetadataService` ports the state machine: bounded in-memory cache
+  (4 entries, 30min TTL, oldest-fetchedAt eviction), single-flight resolve,
+  per-provider isolation in the whole-set sweep, `selectProvider` restoring
+  a cached provider to ready / resetting an uncached one to idle. Nothing is
+  persisted to disk.
+- The mixed-port transport ports `fetchMetadataJsonViaProxy` verbatim: an
+  absolute-form `GET` request line to `127.0.0.1:<mixed-port>` (Host header
+  = the real target, `Connection: close`, Accept json), plain-http only,
+  5s timeout, any transport/status/parse failure resolves null.
+- The production composition reads the kernel supervisor phase (non-running
+  fails closed with the kernel copy), then the LIVE controller `/configs`
+  for `mixed-port` ?? `port` > 0 — exactly the TS `when-ready.ts` wiring.
+- Un-staged `network-metadata:get-providers|get-state|select-provider|
+  resolve|resolve-all` (**89/121 live invoke arms**, 32 fail-closed).
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,
@@ -473,7 +499,7 @@ the Rust dispatch (mechanical scan, not a manual claim):
 
 ## Verification (Linux ARM64, real execution)
 
-- Rust: `cargo test` — **205 passed / 0 failed**, zero warnings:
+- Rust: `cargo test` — **212 passed / 0 failed**, zero warnings:
   - brand parse/gate (1), app-info vocabulary (2), paths namespace/dev (3),
   - settings store: defaults, quarantine, atomic format, patch merge,
     delayTestUrl read/set split, dev memory store, field salvage (7),

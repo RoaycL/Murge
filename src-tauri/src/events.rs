@@ -494,7 +494,6 @@ pub fn start_forwarding(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::VecDeque;
 
     fn collector() -> (Arc<Mutex<Vec<Value>>>, EventListener) {
         let events: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));

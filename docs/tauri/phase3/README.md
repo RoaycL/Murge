@@ -161,6 +161,39 @@ models — `core-settings-service.ts` + `shared/core-settings.ts`,
 - Preview YAML text follows the Rust emitter's quoting/folding (see the
   overrides slice note).
 
+### 5. Usage history (`src-tauri/src/usage.rs`)
+
+Rust ports of `shared/usage.ts`, `services/usage-history-store.ts` and
+`services/usage-history-service.ts`:
+
+- Model: hourly byte buckets with the exact coerce semantics (non-negative
+  finite numbers only, `bucketStart` floored, `up`/`down` rounded, `count`
+  floored defaulting to 0, the `countType: "connections"` marker preserved),
+  bounded sorted lists (newest `USAGE_MAX_BUCKETS` = 720 retained), window
+  aggregation with fixed-length zero-filled slots (`1h/24h/7d/30d` grids,
+  day-slot folding for `7d/30d`), 1-based ranking with zero-bucket omission,
+  value-desc/earliest-first tie order and the `limit` cap, capacity facts.
+- Store: `<app-data>/usage-history/usage-history.json` — compact JSON +
+  trailing newline, temp `.<file>.<uuid>.tmp` + rename with the
+  EPERM/EACCES/EBUSY retry ladder, stale-temp pruning on read, corrupt file
+  -> empty database (never an error), and the pre-0.8.5 count reset (legacy
+  buckets without the marker keep bytes but zero `count`).
+- Service: rate integration over the interval since the previous sample
+  (`0`-interval guards against non-monotonic clocks — a back-dated sample
+  contributes zero bytes and never regresses the cursor), hourly bucket
+  rolls, newest-wins trimming, connection counting for newly observed ids
+  only, the 10 s persist throttle (`0` disables), clear/flush/capacity.
+  Numbers serialize through a `JSON.stringify`-parity helper (integral
+  floats emit without a decimal point).
+- The traffic/connections sources attach in the Phase 3B/3D controller
+  slice; the record/flush surface is compiled and staged (documented).
+
+### File logging (staged, no IPC surface)
+
+`FileLogService` has NO IPC channel in Electron (main-process only
+consumer); it is intentionally not ported yet — it lands with the 3B
+controller slice that produces the app/core log lines it writes.
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,
@@ -171,12 +204,14 @@ slice; `inspect-active-config` until the effective-document composition
 slice), all 10 `overrides:*` channels (fully implemented except the JS
 kind, which fails open per the staging note above), and all 15 typed
 model channels (`dns|sniffer|tun-config|core-settings|geodata-settings`
-× `get|set|preview` — fully implemented). Unknown channels keep failing
+× `get|set|preview` — fully implemented), and all 4 `usage-history:*`
+channels (`get-window`/`rank`/`clear`/`get-capacity` — fully implemented;
+recording attaches with the kernel streams). Unknown channels keep failing
 closed with UNSUPPORTED — never a silent no-op.
 
 ## Verification (Linux ARM64, real execution)
 
-- Rust: `cargo test` — **128 passed / 0 failed**, zero warnings:
+- Rust: `cargo test` — **139 passed / 0 failed**, zero warnings:
   - brand parse/gate (1), app-info vocabulary (2), paths namespace/dev (3),
   - settings store: defaults, quarantine, atomic format, patch merge,
     delayTestUrl read/set split, dev memory store, field salvage (7),
@@ -209,7 +244,13 @@ closed with UNSUPPORTED — never a silent no-op.
     (3), sniffer defaults/port tokens/block emission/store (4), TUN
     coercion/hijack forms/legacy-MTU migration/block+preview (4), DNS
     defaults/nameserver forms/respectRules guard/`normal` migration/block
-    maps/preview redaction/store (7).
+    maps/preview redaction/store (7),
+  - usage history: bucket coerce+bound, window aggregation (slot fill/
+    fold/exclusion/totals), ranking (order/tie/limit/bad metric), capacity,
+    store round trip (compact JSON + legacy count reset + corrupt file),
+    stale-temp pruning, rate integration (first sample zero, back-dated
+    guard), hourly rolls + bound, connection counting + clear, persist +
+    reload, rank channel shape (10), dispatch: usage channels (1).
 - TypeScript: `npm run typecheck` green; `npx vitest run` 1905 passed / 7
   skipped (unchanged — renderer untouched by this slice).
 

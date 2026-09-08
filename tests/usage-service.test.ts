@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { UsageHistoryService } from '../src/main/services/usage-history-service'
 import { InMemoryUsageHistoryStore } from '../src/main/services/usage-history-store'
 import type { MihomoConnectionsSnapshot } from '../src/shared/mihomo-api'
@@ -11,6 +11,26 @@ const FIXED = 1_000_000_000
 const NO_PERSIST = Number.MAX_SAFE_INTEGER
 
 describe('UsageHistoryService', () => {
+  it('reports background persistence failures instead of rejecting unhandled', async () => {
+    let trafficListener: ((sample: { up: number; down: number }) => void) | null = null
+    const onError = vi.fn()
+    new UsageHistoryService({
+      persistIntervalMs: 0,
+      store: {
+        read: async () => [],
+        write: async () => { throw new Error('disk locked') }
+      },
+      onTraffic: (listener) => {
+        trafficListener = listener
+        return () => undefined
+      },
+      onError
+    })
+
+    trafficListener?.({ up: 1, down: 1 })
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'disk locked' })))
+  })
+
   describe('record / getWindow', () => {
     it('integrates the rate over the interval since the previous sample', async () => {
       const service = new UsageHistoryService({ now: () => FIXED + 5_000, persistIntervalMs: NO_PERSIST })

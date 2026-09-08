@@ -43,8 +43,11 @@ export class ElectronUpdaterDriver implements UpdaterDriver {
   private listeners: Set<(event: UpdaterDriverEvent) => void> = new Set()
   /** The feed base URL that worked most recently; reused until it fails. */
   private resolvedFeedBase: string | null = null
+  /** Per-source failures are internal to fallback; publish only the final result. */
+  private checkingWithFallback = false
+  private readonly notifications = new Set<Notification>()
 
-  constructor() {
+  constructor(private readonly onNotificationClick: () => void = () => undefined) {
     this.currentVersion = app.getVersion()
     this.supported = app.isPackaged
   }
@@ -54,6 +57,7 @@ export class ElectronUpdaterDriver implements UpdaterDriver {
     autoUpdater.autoDownload = true
     autoUpdater.autoInstallOnAppQuit = true
     autoUpdater.allowPrerelease = false
+    autoUpdater.disableWebInstaller = true
     autoUpdater.on('checking-for-update', () => this.emit({ kind: 'checking' }))
     autoUpdater.on('update-available', (info) => {
       const version = info.version
@@ -74,14 +78,25 @@ export class ElectronUpdaterDriver implements UpdaterDriver {
       this.emit({ kind: 'downloaded' })
       this.notify(`新版本 v${info.version} 已就绪`, '退出应用时自动安装，或点击“重启并安装”立即更新。')
     })
-    autoUpdater.on('error', (error) => this.emit({ kind: 'error', message: error instanceof Error ? error.message : String(error) }))
+    autoUpdater.on('error', (error) => {
+      if (this.checkingWithFallback) return
+      this.emit({ kind: 'error', message: error instanceof Error ? error.message : String(error) })
+    })
   }
 
   /** Show a native OS notification, guarded so it is a no-op where unsupported. */
   private notify(title: string, body: string): void {
     try {
       if (!Notification.isSupported()) return
-      new Notification({ title, body }).show()
+      const notification = new Notification({ title, body })
+      this.notifications.add(notification)
+      const release = (): void => { this.notifications.delete(notification) }
+      notification.once('click', () => {
+        release()
+        this.onNotificationClick()
+      })
+      notification.once('close', release)
+      notification.show()
     } catch {
       // A failing notification must never take down the updater event stream.
     }
@@ -109,15 +124,20 @@ export class ElectronUpdaterDriver implements UpdaterDriver {
   private async checkWithProxyFallback(): Promise<void> {
     const bases = this.feedBaseCandidates()
     let lastError: unknown = null
-    for (const base of bases) {
-      try {
-        await this.tryCheck(base)
-        this.resolvedFeedBase = base
-        return
-      } catch (error) {
-        lastError = error
-        this.resolvedFeedBase = null
+    this.checkingWithFallback = true
+    try {
+      for (const base of bases) {
+        try {
+          await this.tryCheck(base)
+          this.resolvedFeedBase = base
+          return
+        } catch (error) {
+          lastError = error
+          this.resolvedFeedBase = null
+        }
       }
+    } finally {
+      this.checkingWithFallback = false
     }
     this.emit({
       kind: 'error',
@@ -188,6 +208,7 @@ export class ElectronUpdaterDriver implements UpdaterDriver {
   }
 
   dispose(): void {
+    this.notifications.clear()
     this.listeners.clear()
   }
 

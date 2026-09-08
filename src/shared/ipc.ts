@@ -47,6 +47,7 @@ export const IPC = {
   appGetProcessIcon: 'app:get-process-icon',
   appGetCachedIcon: 'app:get-cached-icon',
   appListNetworkInterfaces: 'app:list-network-interfaces',
+  appNavigateEvent: 'app:navigate-event',
   kernelGetStatus: 'kernel:get-status',
   kernelStart: 'kernel:start',
   kernelStop: 'kernel:stop',
@@ -172,6 +173,8 @@ export interface DesktopApi {
     getCachedIcon(cacheKey: string, url?: string, refresh?: boolean): Promise<string | null>
     /** Active host interfaces available for mihomo `interface-name`. */
     listNetworkInterfaces(): Promise<string[]>
+    /** Main-process requests such as notification clicks navigate an existing window. */
+    onNavigate(listener: (path: string) => void): () => void
   }
   kernel: {
     getStatus(): Promise<KernelStatus>

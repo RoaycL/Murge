@@ -16,7 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const protocolVersion = 6
+const protocolVersion = 7
 const maxProfileBytes = 2 * 1024 * 1024
 const maxProviderContentBytes = 4 * 1024 * 1024
 

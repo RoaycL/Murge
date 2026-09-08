@@ -328,6 +328,7 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
             <button
               type="button"
               class="icon-button small"
+              :class="{ spinning: updatingId === meta.id }"
               :aria-label="meta.source.type === 'url' ? '更新订阅配置' : '重新应用该配置'"
               :title="meta.source.type === 'url' ? '更新订阅配置' : '重新应用'"
               :disabled="updatingId === meta.id"

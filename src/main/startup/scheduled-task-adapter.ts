@@ -19,6 +19,7 @@ export type ScheduledTaskCommandRunner = (
 
 const TASK_NAME = brand.appId
 const SCHTASKS_COMMAND = process.platform === 'win32' ? 'schtasks.exe' : 'schtasks'
+const REG_COMMAND = process.platform === 'win32' ? 'reg.exe' : 'reg'
 const RUN_KEY_PATH = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'
 const DEFAULT_TIMEOUT_MS = 8000
 
@@ -197,6 +198,7 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
     // what the user chose there.
     const taskXml = await this.queryTaskXml()
     if (taskXml !== null) return taskSettingsEnabled(taskXml)
+    if (await this.hasStableRunEntry()) return true
     return (await this.legacy.readRegistered?.()) ?? (await this.legacy.read())
   }
 
@@ -210,11 +212,13 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
     if (created) {
       // The task now owns the registration; drop any legacy Run-key entry so
       // the app is not started twice at logon.
-      await this.legacy.write(false).catch(() => undefined)
+      await this.clearRunFallbacks()
       return
     }
-    // Scheduled-task creation was denied: fall back to the previous mechanism.
-    await this.legacy.write(true)
+    // Scheduled-task creation was denied. Own one deterministic Run value and
+    // verify it directly instead of relying on Electron's argument-sensitive
+    // login-item lookup (which can report false for an entry it just wrote).
+    if (!(await this.writeStableRunEntry())) await this.legacy.write(true)
   }
 
   async rewriteIfEnabled(): Promise<void> {
@@ -229,7 +233,7 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
       if (currentArgs.length === desiredArgs.length && currentArgs.every((a, i) => a === desiredArgs[i])) {
         // Already current; retire a lingering legacy Run-key entry (e.g. the
         // fallback engaged once) so the app is not started twice at logon.
-        await this.legacy.write(false).catch(() => undefined)
+        await this.clearRunFallbacks()
         return
       }
       // Arguments moved (silent-launch toggle): recreate with desired args.
@@ -237,7 +241,7 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
       if (!created) throw new Error('无法更新开机启动计划任务，已保留原有注册')
       // A previous fallback may coexist with the stale task. Once the task has
       // been replaced successfully it owns registration again.
-      await this.legacy.write(false)
+      await this.clearRunFallbacks()
       return
     }
     // Legacy-only registration (v0.9.x Run-key users): migrate to the task so
@@ -246,10 +250,12 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
     // Run-key entry written with a stale `--hidden` value, which would silently
     // skip its migration. A failed create keeps the Run key untouched —
     // degrades to today's behaviour.
-    const legacyRegistered = (await this.legacy.readRegistered?.()) ?? (await this.legacy.read())
+    const stableRegistered = await this.hasStableRunEntry()
+    const legacyRegistered = stableRegistered || ((await this.legacy.readRegistered?.()) ?? (await this.legacy.read()))
     if (!legacyRegistered) return
     const created = await this.tryCreateTask()
-    if (created) await this.legacy.write(false).catch(() => undefined)
+    if (created) await this.clearRunFallbacks()
+    else if (!stableRegistered) await this.writeStableRunEntry()
   }
 
   private loginArgs(): string[] {
@@ -258,6 +264,47 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
 
   private async disable(): Promise<void> {
     await this.runner(SCHTASKS_COMMAND, ['/delete', '/tn', TASK_NAME, '/f']).catch(() => undefined)
+    await this.clearRunFallbacks()
+  }
+
+  private runValue(): string {
+    const executable = `"${process.execPath}"`
+    return this.getSilentLaunch() ? `${executable} --hidden` : executable
+  }
+
+  private async hasStableRunEntry(): Promise<boolean> {
+    try {
+      const result = await this.runner(REG_COMMAND, ['query', RUN_KEY_PATH, '/v', TASK_NAME])
+      if (result.code !== 0) return false
+      const output = `${result.stdout}\n${result.stderr}`.toLowerCase()
+      return output.includes(TASK_NAME.toLowerCase()) && output.includes(process.execPath.toLowerCase())
+    } catch {
+      return false
+    }
+  }
+
+  private async writeStableRunEntry(): Promise<boolean> {
+    try {
+      const args = [
+        'add', RUN_KEY_PATH, '/v', TASK_NAME, '/t', 'REG_SZ', '/d', this.runValue(), '/f'
+      ]
+      // Prove direct registry writes work before touching a working legacy
+      // entry. Then retire every historical name and write the one canonical
+      // value again because Electron's cleanup also removes the app-id value.
+      const probe = await this.runner(REG_COMMAND, args)
+      if (probe.code !== 0) return false
+      await this.legacy.write(false).catch(() => undefined)
+      const result = await this.runner(REG_COMMAND, args)
+      if (result.code === 0 && await this.hasStableRunEntry()) return true
+      await this.legacy.write(true).catch(() => undefined)
+      return false
+    } catch {
+      return false
+    }
+  }
+
+  private async clearRunFallbacks(): Promise<void> {
+    await this.runner(REG_COMMAND, ['delete', RUN_KEY_PATH, '/v', TASK_NAME, '/f']).catch(() => undefined)
     await this.legacy.write(false).catch(() => undefined)
   }
 

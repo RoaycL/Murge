@@ -93,7 +93,8 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
   to { transform: rotate(360deg); }
 }
 .icon-control.spinning { color: var(--app-purple); }
-.icon-control.spinning > svg { animation: icon-spin 1s linear infinite; }
+.icon-control.spinning > svg,
+.icon-button.spinning > svg { animation: icon-spin 1s linear infinite; }
 /* 直接挂在 AppIcon（svg 根元素）上的旋转类，用于非 icon-control 按钮。 */
 .spin-icon { animation: icon-spin 1s linear infinite; }
 .connection-breakdown { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 36px; }
@@ -364,6 +365,6 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 /* 完全流式布局（2026 年调整，替代原“固定卡片 + 留白”策略）：
    任何窗口宽度下仪表盘都保持规范的双列排布（卡片随列轨弹性伸缩），
    不做单列降级；高于规范宽度时内容以 --content-max-width 居中。 */
-.unsaved-indicator{display:inline-flex;align-items:center;min-height:24px;padding:0 8px;border-radius:999px;background:color-mix(in srgb,var(--app-orange,#e79a35) 14%,transparent);color:var(--app-orange,#c77b18);font-size:10px;font-weight:600}
+.unsaved-indicator{display:inline-flex;align-items:center;justify-content:center;min-width:58px;min-height:32px;padding:0 12px;border:1px solid color-mix(in srgb,var(--app-orange,#e79a35) 38%,var(--app-divider));border-radius:7px;background:color-mix(in srgb,var(--app-orange,#e79a35) 8%,transparent);color:var(--app-orange,#c77b18);font-size:11px;font-weight:600;line-height:1;white-space:nowrap}
 .app-window,.app-frame,.app-sidebar,.app-content{user-select:none;-webkit-user-select:none}
 input,textarea,[contenteditable="true"],code,pre{user-select:text;-webkit-user-select:text}

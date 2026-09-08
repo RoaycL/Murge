@@ -5,11 +5,21 @@ const read = (path: string): Promise<string> => readFile(new URL(`../${path}`, i
 
 describe('update notification navigation contract', () => {
   it('publishes only the final feed failure after proxy fallback is exhausted', async () => {
-    const driver = await read('src/main/updates/electron-updater-driver.ts')
+    const [driver, about] = await Promise.all([
+      read('src/main/updates/electron-updater-driver.ts'),
+      read('src/renderer/src/views/AboutView.vue')
+    ])
     expect(driver).toContain('private checkingWithFallback = false')
     expect(driver).toContain('autoUpdater.disableWebInstaller = true')
     expect(driver).toMatch(/autoUpdater\.on\('error',[\s\S]*if \(this\.checkingWithFallback\) return/)
     expect(driver).toMatch(/this\.checkingWithFallback = true[\s\S]*finally \{[\s\S]*this\.checkingWithFallback = false/)
+    expect(driver).toMatch(/net\.fetch\(`\$\{base\}\/latest\.yml`/)
+    expect(driver).toMatch(/releases\/latest\/download/)
+    expect(driver).toMatch(/autoUpdater\.setFeedURL\(\{ provider: 'generic', url: selectedBase \}\)[\s\S]*autoUpdater\.checkForUpdates\(\)/)
+    expect(driver.match(/autoUpdater\.checkForUpdates\(\)/g)).toHaveLength(1)
+    expect(driver).not.toContain('withTimeout(autoUpdater.checkForUpdates')
+    expect(driver).toContain('private checkInFlight = false')
+    expect(about).not.toMatch(/error \|\| updates\.state\.error/)
   })
 
   it('routes native notification clicks to the existing About page', async () => {

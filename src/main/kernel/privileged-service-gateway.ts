@@ -54,7 +54,7 @@ export class PrivilegedServiceKernelGateway implements KernelGateway {
     private readonly readyTimeoutMs = 10_000,
     private readonly canStart: () => boolean | Promise<boolean> = () => true,
     private readonly prepareStart: (runtime: PrivilegedKernelRuntime) => void | Promise<void> = () => undefined,
-    private readonly versionSelection: () => Promise<{ channel: 'stable' | 'specific'; specificVersion: string | null }> = async () => ({ channel: 'stable', specificVersion: null })
+    private readonly versionSelection: () => Promise<{ channel: 'stable' | 'preview' | 'smart' | 'specific'; specificVersion: string | null }> = async () => ({ channel: 'stable', specificVersion: null })
   ) {}
 
   getStatus(): KernelStatus { return { ...this.status } }
@@ -106,7 +106,9 @@ export class PrivilegedServiceKernelGateway implements KernelGateway {
         // ports again.
         const profile = await this.buildProfile(runtime)
         const selection = await this.versionSelection()
-        const requestedVersion = selection.channel === 'specific' ? selection.specificVersion ?? undefined : undefined
+        const requestedVersion = selection.channel === 'specific'
+          ? selection.specificVersion ?? undefined
+          : selection.channel === 'preview' || selection.channel === 'smart' ? selection.channel : undefined
         // Only after the service-owned child is gone may we terminate remaining
         // listeners. No process-family classification is performed: configured
         // ports belong to this requested application start.
@@ -117,7 +119,7 @@ export class PrivilegedServiceKernelGateway implements KernelGateway {
         try {
           const ready = await this.readiness.waitUntilReady({ ...runtime, signal: controller.signal })
           const observedVersion = ready && typeof ready.version === 'string' ? ready.version : null
-          if (requestedVersion && observedVersion?.replace(/^v/, '') !== requestedVersion.replace(/^v/, '')) {
+          if (/^v\d+\.\d+\.\d+$/.test(requestedVersion ?? '') && observedVersion?.replace(/^v/, '') !== requestedVersion!.replace(/^v/, '')) {
             throw new ProtocolError(
               ProtocolErrorCode.ARTIFACT_HASH_MISMATCH,
               `内核版本未生效：请求 ${requestedVersion}，实际 ${observedVersion ?? '未知'}`

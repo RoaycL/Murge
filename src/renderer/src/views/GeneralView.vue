@@ -109,26 +109,6 @@ onMounted(async () => {
     </section>
 
     <section>
-      <h2>内核</h2>
-      <div class="surface-card preference-list">
-        <label>
-          <span>
-            <strong>启动时自动启动内核</strong>
-          </span>
-          <button
-            type="button"
-            class="switch"
-            :class="{ on: appSettings.settings.autoStartKernel }"
-            :aria-checked="appSettings.settings.autoStartKernel"
-            :disabled="appSettings.busy"
-            aria-label="启动时自动启动内核"
-            @click="appSettings.set({ autoStartKernel: !appSettings.settings.autoStartKernel })"
-          />
-        </label>
-      </div>
-    </section>
-
-    <section>
       <h2>更新</h2>
       <div class="surface-card preference-list">
         <label>

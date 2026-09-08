@@ -22,6 +22,8 @@ describe('core-settings model', () => {
       ipv6: true,
       tcpConcurrent: false,
       unifiedDelay: true,
+      storeSelected: true,
+      storeFakeIp: true,
       findProcessMode: 'strict',
       interfaceName: 'Ethernet',
       mixedPort: 7890,
@@ -39,6 +41,8 @@ describe('core-settings model', () => {
       ipv6: true,
       tcpConcurrent: false,
       unifiedDelay: true,
+      storeSelected: true,
+      storeFakeIp: true,
       findProcessMode: 'strict',
       interfaceName: 'Ethernet',
       mixedPort: 7890,
@@ -84,6 +88,7 @@ describe('core-settings model', () => {
       ipv6: false,
       'tcp-concurrent': true,
       'unified-delay': true,
+      profile: { 'store-selected': true, 'store-fake-ip': true },
       'find-process-mode': 'always',
       'interface-name': 'Ethernet'
     })

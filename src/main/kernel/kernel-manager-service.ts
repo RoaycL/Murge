@@ -55,7 +55,7 @@ export interface KernelManagerServiceDeps {
   /** Privileged production installer; the service independently fetches and verifies the official release. */
   installVersion?: (version: string) => Promise<void>
   /** Restart/reload a live kernel and prove the selected version took effect. */
-  applyInstalledVersion?: (version: string, previous: { channel: 'stable' | 'specific'; specificVersion: string | null }) => Promise<void>
+  applyInstalledVersion?: (version: string, previous: { channel: KernelManagerState['channel']; specificVersion: string | null }) => Promise<void>
   /** Timeout for the live GitHub metadata requests (default 30s). */
   githubTimeoutMs?: number
   /** False when a privileged service can only execute the installer-pinned archive. */
@@ -98,11 +98,10 @@ export class KernelManagerService implements KernelManagerGateway {
   }
 
   async setEnabled(enabled: boolean): Promise<KernelManagerState> {
-    await this.deps.settings.set({ kernelEnabled: enabled })
-    return this.commit()
+    return this.setChannel(enabled ? 'smart' : 'stable')
   }
 
-  async setChannel(channel: 'stable' | 'specific'): Promise<KernelManagerState> {
+  async setChannel(channel: KernelManagerState['channel']): Promise<KernelManagerState> {
     if (channel === 'specific' && this.deps.specificVersionsSupported === false) {
       this.state.error = '当前 Windows 服务模式仅支持安装包内置的稳定内核。'
       return this.commit()
@@ -116,10 +115,22 @@ export class KernelManagerService implements KernelManagerGateway {
       channel: current.kernelChannel,
       specificVersion: current.kernelSpecificVersion || null
     }
-    await this.deps.settings.set({ kernelChannel: channel })
+    if ((channel === 'preview' || channel === 'smart') && this.deps.installVersion) {
+      this.state.installing = channel
+      this.emit(await this.buildState())
+      try {
+        await this.deps.installVersion(channel)
+      } catch (error) {
+        this.state.installing = null
+        this.state.error = this.errorMessage(error, `安装${channel === 'smart' ? ' Smart' : '预览'}内核失败`)
+        return this.commit()
+      }
+      this.state.installing = null
+    }
+    await this.deps.settings.set({ kernelChannel: channel, kernelEnabled: true })
     const targetVersion = channel === 'specific'
       ? current.kernelSpecificVersion || null
-      : this.deps.stableVersion ?? MIHOMO_VERSION
+      : channel === 'stable' ? this.deps.stableVersion ?? MIHOMO_VERSION : channel
     if (targetVersion && this.deps.applyInstalledVersion) {
       try {
         await this.deps.applyInstalledVersion(targetVersion, previous)
@@ -214,12 +225,11 @@ export class KernelManagerService implements KernelManagerGateway {
 
   /** The gate consulted by the kernel resolver before it resolves/start. */
   async isEnabled(): Promise<boolean> {
-    const settings = await this.deps.settings.get()
-    return settings.kernelEnabled
+    return true
   }
 
   /** The version selection consulted by the kernel resolver. */
-  async getVersionSelection(): Promise<{ channel: 'stable' | 'specific'; specificVersion: string | null }> {
+  async getVersionSelection(): Promise<{ channel: KernelManagerState['channel']; specificVersion: string | null }> {
     const settings = await this.deps.settings.get()
     const specificVersion =
       settings.kernelSpecificVersion && settings.kernelSpecificVersion.trim()
@@ -241,10 +251,12 @@ export class KernelManagerService implements KernelManagerGateway {
         : null
     const specificVersionsSupported = this.deps.specificVersionsSupported !== false
     const channel = specificVersionsSupported ? settings.kernelChannel : 'stable'
-    const effectiveVersion =
-      channel === 'specific' && specificVersion ? specificVersion : stableVersion
+    const effectiveVersion = channel === 'specific' && specificVersion
+      ? specificVersion
+      : channel === 'preview' ? '预览版' : channel === 'smart' ? 'Smart' : stableVersion
     const state: KernelManagerState = {
-      enabled: settings.kernelEnabled,
+      enabled: true,
+      smartEnabled: channel === 'smart',
       channel,
       stableVersion,
       specificVersion,

@@ -626,19 +626,26 @@ export class FakeKernelManagerGateway implements KernelManagerGateway {
     effectiveVersion: 'v1.19.30'
   }
   setEnabledCalls: boolean[] = []
-  setChannelCalls: Array<'stable' | 'specific'> = []
+  setChannelCalls: KernelManagerState['channel'][] = []
   listVersionsCalls = 0
   installCalls: string[] = []
   private readonly listeners = new Set<(state: KernelManagerState) => void>()
   getState(): Promise<KernelManagerState> { return Promise.resolve({ ...this.state }) }
   async setEnabled(enabled: boolean): Promise<KernelManagerState> {
     this.setEnabledCalls.push(enabled)
-    this.state = { ...this.state, enabled }
-    return Promise.resolve({ ...this.state })
+    return this.setChannel(enabled ? 'smart' : 'stable')
   }
-  async setChannel(channel: 'stable' | 'specific'): Promise<KernelManagerState> {
+  async setChannel(channel: KernelManagerState['channel']): Promise<KernelManagerState> {
     this.setChannelCalls.push(channel)
-    this.state = { ...this.state, channel, effectiveVersion: channel === 'specific' ? this.state.specificVersion ?? this.state.stableVersion : this.state.stableVersion }
+    this.state = {
+      ...this.state,
+      enabled: true,
+      smartEnabled: channel === 'smart',
+      channel,
+      effectiveVersion: channel === 'specific'
+        ? this.state.specificVersion ?? this.state.stableVersion
+        : channel === 'preview' ? '预览版' : channel === 'smart' ? 'Smart' : this.state.stableVersion
+    }
     return Promise.resolve({ ...this.state })
   }
   async listVersions(): Promise<KernelManagerState> {

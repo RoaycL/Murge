@@ -27,7 +27,7 @@ const DEFAULT_BACKGROUND_BACKOFF_MS = [5_000, 10_000, 20_000, 30_000, 30_000, 25
  * Each timer performs only one reconciliation attempt; the existing mode queue
  * remains the sole owner of host transitions. Settings are re-read before every
  * attempt, and a settings change invalidates the in-flight generation, so a
- * user's later OFF request can never be followed by a stale background ON.
+ * a user's later network-mode change can never be followed by stale work.
  */
 export class RuntimeIntentRecoveryCoordinator {
   private readonly backoff: readonly number[]
@@ -88,10 +88,6 @@ export class RuntimeIntentRecoveryCoordinator {
     this.generation += 1
     this.clearTimer()
     this.resetWindow()
-    if (!settings.kernelEnabled || (!settings.tunDesired && !settings.systemProxyDesired)) {
-      this.wakePending = false
-      return
-    }
     if (this.running) {
       this.wakePending = true
       return
@@ -126,11 +122,6 @@ export class RuntimeIntentRecoveryCoordinator {
       const settings = await this.options.settings.get()
       this.lastSettings = { ...settings }
       if (generation !== this.generation) return
-      // This coordinator owns takeover recovery, not the user's explicit
-      // kernel stop. `autoStartKernel` is handled by the one initial fast pass;
-      // with both network intents off, a later resume must not restart it.
-      if (!settings.kernelEnabled || (!settings.tunDesired && !settings.systemProxyDesired)) return
-
       const result = await restoreRuntimeIntent(settings, {
         ...this.options.restore,
         // One attempt per background interval; retries belong to this outer
@@ -169,16 +160,12 @@ export class RuntimeIntentRecoveryCoordinator {
 }
 
 function runtimeIntentChanged(before: AppSettings, after: AppSettings): boolean {
-  return before.autoStartKernel !== after.autoStartKernel ||
-    before.kernelEnabled !== after.kernelEnabled ||
-    before.tunDesired !== after.tunDesired ||
+  return before.tunDesired !== after.tunDesired ||
     before.systemProxyDesired !== after.systemProxyDesired
 }
 
 function needsAnotherAttempt(settings: AppSettings, result: RuntimeIntentRestoreResult): boolean {
-  if (!settings.kernelEnabled) return false
-  const hostDesired = settings.tunDesired || settings.systemProxyDesired
-  if (hostDesired && result.kernel.phase !== 'running') return true
+  if (result.kernel.phase !== 'running') return true
 
   if (
     settings.tunDesired &&

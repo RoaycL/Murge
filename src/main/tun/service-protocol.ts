@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { assertProxiedTunConfig } from './mihomo-tun-config'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
 
-export const TUN_SERVICE_PROTOCOL_VERSION = 6 as const
+export const TUN_SERVICE_PROTOCOL_VERSION = 7 as const
 export const TUN_SERVICE_MAX_PROFILE_BYTES = 2 * 1024 * 1024
 export const TUN_SERVICE_MAX_PROVIDER_CONTENT_BYTES = 4 * 1024 * 1024
 
@@ -19,7 +19,7 @@ export const tunServiceRequestSchema = z.discriminatedUnion('operation', [
     sessionId,
     profile: z.string().min(1).max(TUN_SERVICE_MAX_PROFILE_BYTES),
     profileSha256: sha256,
-    version: z.string().regex(/^v\d+\.\d+\.\d+$/).optional()
+    version: z.string().regex(/^(?:v\d+\.\d+\.\d+|preview|smart)$/).optional()
   }).strict(),
   z.object({
     protocolVersion: z.literal(TUN_SERVICE_PROTOCOL_VERSION),
@@ -41,7 +41,7 @@ export const tunServiceRequestSchema = z.discriminatedUnion('operation', [
     protocolVersion: z.literal(TUN_SERVICE_PROTOCOL_VERSION),
     requestId: uint64Decimal,
     operation: z.literal('install'),
-    version: z.string().regex(/^v\d+\.\d+\.\d+$/),
+    version: z.string().regex(/^(?:v\d+\.\d+\.\d+|preview|smart)$/),
     proxyPort: z.number().int().min(1024).max(65535).optional()
   }).strict(),
   z.object({
@@ -57,7 +57,7 @@ export const tunServiceRequestSchema = z.discriminatedUnion('operation', [
     operation: z.literal('validate'),
     profile: z.string().min(1).max(TUN_SERVICE_MAX_PROFILE_BYTES),
     profileSha256: sha256,
-    version: z.string().regex(/^v\d+\.\d+\.\d+$/).optional()
+    version: z.string().regex(/^(?:v\d+\.\d+\.\d+|preview|smart)$/).optional()
   }).strict()
 ])
 

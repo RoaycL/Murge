@@ -57,6 +57,8 @@ function syncFromConfig(value: CoreSettings): void {
   form.ipv6 = value.ipv6
   form.tcpConcurrent = value.tcpConcurrent
   form.unifiedDelay = value.unifiedDelay
+  form.storeSelected = value.storeSelected
+  form.storeFakeIp = value.storeFakeIp
   form.findProcessMode = value.findProcessMode
   form.interfaceName = value.interfaceName
   form.mixedPort = value.mixedPort
@@ -210,12 +212,22 @@ onMounted(async () => {
           <label class="core-switch small">
             <input v-model="form.tcpConcurrent" type="checkbox" aria-label="tcp-concurrent" />
             <span class="core-switch-track" />
-            <span class="core-label">TCP 并发连接</span>
+            <span class="core-label">TCP 并发</span>
           </label>
           <label class="core-switch small">
             <input v-model="form.unifiedDelay" type="checkbox" aria-label="unified-delay" />
             <span class="core-switch-track" />
-            <span class="core-label">统一延迟</span>
+            <span class="core-label">使用 1-RTT 延迟测试</span>
+          </label>
+          <label class="core-switch small">
+            <input v-model="form.storeSelected" type="checkbox" aria-label="store-selected" />
+            <span class="core-switch-track" />
+            <span class="core-label">存储选择节点</span>
+          </label>
+          <label class="core-switch small">
+            <input v-model="form.storeFakeIp" type="checkbox" aria-label="store-fake-ip" />
+            <span class="core-switch-track" />
+            <span class="core-label">存储 FakeIP</span>
           </label>
         </div>
       </fieldset>

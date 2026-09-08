@@ -850,7 +850,9 @@ app.whenReady().then(async () => {
       const effective = generateProxiedTunConfig({
         ...runtime, document: enhanced, core, geodata, tunConfig, tunEnabled: true
       })
-      const version = selection.channel === 'specific' ? selection.specificVersion ?? undefined : undefined
+      const version = selection.channel === 'specific'
+        ? selection.specificVersion ?? undefined
+        : selection.channel === 'preview' || selection.channel === 'smart' ? selection.channel : undefined
       await tunServiceClient.validateProfile(effective, version)
       return { ok: true, issues: [] }
     })
@@ -1208,7 +1210,7 @@ app.whenReady().then(async () => {
       reloadKernelForActiveProfile({ kernel, systemProxy: systemProxyService }, { rollbackActive: rollback })
     )
     const applied = await runtimeKernelGateway.getStatus()
-    if (applied.version?.replace(/^v/, '') !== version.replace(/^v/, '')) {
+    if (/^v\d+\.\d+\.\d+$/.test(version) && applied.version?.replace(/^v/, '') !== version.replace(/^v/, '')) {
       await rollback()
       await modeController.reloadProfile((kernel) =>
         reloadKernelForActiveProfile({ kernel, systemProxy: systemProxyService })

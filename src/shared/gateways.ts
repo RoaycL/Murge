@@ -79,7 +79,7 @@ export interface KernelGateway {
 export interface KernelManagerGateway {
   getState(): KernelManagerState | Promise<KernelManagerState>
   setEnabled(enabled: boolean): Promise<KernelManagerState>
-  setChannel(channel: 'stable' | 'specific'): Promise<KernelManagerState>
+  setChannel(channel: KernelManagerState['channel']): Promise<KernelManagerState>
   /** Fetch the published mihomo version list. */
   listVersions(): Promise<KernelManagerState>
   /** Download + verify + install a specific version, then select it. */

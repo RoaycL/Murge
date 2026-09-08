@@ -91,7 +91,7 @@ async function exportDiagnostics(): Promise<void> {
     <p v-if="statusText" class="update-status" :class="statusClass">{{ statusText }}</p>
     <div v-if="updates.state.phase === 'downloading' && updates.state.progress" class="progress"><div class="progress-fill" :style="{ width: `${updates.state.progress.percent}%` }"></div><span v-if="progressLabel" class="progress-label">{{ progressLabel }}</span></div>
     <div v-if="updates.state.canInstall" class="update-row"><span><strong>已就绪</strong></span><button type="button" @click="updates.install">重启并安装</button></div>
-    <p v-if="error || updates.state.error" class="inline-error">{{ error ?? updates.state.error }}</p>
+    <p v-if="error" class="inline-error">{{ error }}</p>
   </div></section>
   <section><h2>支持</h2><div class="surface-card preference-list">
     <a v-if="brand?.repositoryUrl" :href="brand.repositoryUrl" target="_blank" rel="noreferrer"><span><strong>源代码仓库</strong><small>{{ brand.repositoryUrl }}</small></span><b>打开</b></a>

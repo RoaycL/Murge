@@ -143,7 +143,7 @@ export function parseAppSettingsPatch(
   systemProxyDesired?: boolean
   tunDesired?: boolean
   kernelEnabled?: boolean
-  kernelChannel?: 'stable' | 'specific'
+  kernelChannel?: 'stable' | 'preview' | 'smart' | 'specific'
   kernelSpecificVersion?: string
   delayTestUrlScope?: 'group' | 'global'
   delayTestUrl?: string
@@ -163,7 +163,7 @@ export function parseAppSettingsPatch(
     systemProxyDesired?: boolean
     tunDesired?: boolean
     kernelEnabled?: boolean
-    kernelChannel?: 'stable' | 'specific'
+    kernelChannel?: 'stable' | 'preview' | 'smart' | 'specific'
     kernelSpecificVersion?: string
     delayTestUrlScope?: 'group' | 'global'
     delayTestUrl?: string
@@ -194,8 +194,8 @@ export function parseAppSettingsPatch(
     patch.kernelEnabled = record.kernelEnabled
   }
   if ('kernelChannel' in record) {
-    if (record.kernelChannel !== 'stable' && record.kernelChannel !== 'specific') {
-      throw invalid('kernelChannel must be "stable" or "specific"')
+    if (record.kernelChannel !== 'stable' && record.kernelChannel !== 'preview' && record.kernelChannel !== 'smart' && record.kernelChannel !== 'specific') {
+      throw invalid('kernelChannel must be "stable", "preview", "smart" or "specific"')
     }
     patch.kernelChannel = record.kernelChannel
   }
@@ -258,9 +258,9 @@ export function parseKernelVersion(version: unknown): string {
 }
 
 /** Validate a kernel-version channel toggle. */
-export function parseKernelChannel(channel: unknown): 'stable' | 'specific' {
-  if (channel !== 'stable' && channel !== 'specific') {
-    throw invalid('kernel channel must be "stable" or "specific"')
+export function parseKernelChannel(channel: unknown): 'stable' | 'preview' | 'smart' | 'specific' {
+  if (channel !== 'stable' && channel !== 'preview' && channel !== 'smart' && channel !== 'specific') {
+    throw invalid('kernel channel must be "stable", "preview", "smart" or "specific"')
   }
   return channel
 }
@@ -491,6 +491,8 @@ const coreSettingsSchema = z
     ipv6: z.boolean(),
     tcpConcurrent: z.boolean(),
     unifiedDelay: z.boolean(),
+    storeSelected: z.boolean(),
+    storeFakeIp: z.boolean(),
     findProcessMode: z.enum(['off', 'strict', 'always']),
     interfaceName: z.string().trim().max(255).refine((value) => !/[\x00-\x1f\x7f]/.test(value), 'interface-name 包含非法控制字符'),
     mixedPort: z.number().int().min(1024).max(65535),

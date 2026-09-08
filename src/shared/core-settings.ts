@@ -39,6 +39,10 @@ export interface CoreSettings {
   tcpConcurrent: boolean
   /** mihomo `unified-delay` (unified delay used in proxy/delay tests). */
   unifiedDelay: boolean
+  /** mihomo `profile.store-selected` (persist selected proxy-group members). */
+  storeSelected: boolean
+  /** mihomo `profile.store-fake-ip` (persist fake-IP mappings). */
+  storeFakeIp: boolean
   /** mihomo `find-process-mode`. */
   findProcessMode: FindProcessMode
   /** Optional mihomo `interface-name`; empty keeps automatic route selection. */
@@ -73,6 +77,8 @@ export const EMPTY_CORE_SETTINGS: Readonly<CoreSettings> = Object.freeze({
   ipv6: false,
   tcpConcurrent: false,
   unifiedDelay: false,
+  storeSelected: true,
+  storeFakeIp: true,
   findProcessMode: 'off',
   interfaceName: '',
   mixedPort: 7890,
@@ -115,6 +121,8 @@ export function coerceCoreSettings(input: unknown): CoreSettings {
     ipv6: asBool('ipv6'),
     tcpConcurrent: asBool('tcpConcurrent'),
     unifiedDelay: asBool('unifiedDelay'),
+    storeSelected: asBool('storeSelected'),
+    storeFakeIp: asBool('storeFakeIp'),
     findProcessMode: asEnum('findProcessMode', FIND_PROCESS_MODES, 'off'),
     interfaceName: typeof source.interfaceName === 'string'
       ? source.interfaceName.trim().slice(0, 255)
@@ -156,6 +164,10 @@ export function buildCoreSettingsBlock(settings: CoreSettings): Record<string, u
     ipv6: settings.ipv6,
     'tcp-concurrent': settings.tcpConcurrent,
     'unified-delay': settings.unifiedDelay,
+    profile: {
+      'store-selected': settings.storeSelected,
+      'store-fake-ip': settings.storeFakeIp
+    },
     'find-process-mode': settings.findProcessMode
   }
   if (settings.interfaceName) block['interface-name'] = settings.interfaceName

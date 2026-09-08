@@ -11,7 +11,7 @@ import (
 
 var sidPattern = regexp.MustCompile(`^S-1-[0-9-]+$`)
 var safeNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,96}$`)
-var versionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
+var versionPattern = regexp.MustCompile(`^(?:v[0-9]+\.[0-9]+\.[0-9]+|preview|smart)$`)
 
 type serviceConfig struct {
 	ServiceName         string `json:"serviceName"`

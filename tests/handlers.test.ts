@@ -43,6 +43,21 @@ describe('buildIpcHandlers', () => {
     expect(resolveProviderContent).toHaveBeenCalledTimes(1)
   })
 
+  it('returns the injected active profile/effective config inspection', async () => {
+    const inspection = {
+      profileName: 'current',
+      diagnostics: [],
+      sections: Object.fromEntries(['core', 'dns', 'sniffer', 'tun', 'geodata'].map((section) => [section, {
+        profileYaml: '（未配置）', effectiveYaml: '（未配置）', managedKeys: [], notes: []
+      }]))
+    }
+    const resolveActiveConfigInspection = vi.fn().mockResolvedValue(inspection)
+    handlers = buildIpcHandlers(container.deps, { resolveActiveConfigInspection })
+
+    await expect(handlers[IPC.profilesInspectActiveConfig](null)).resolves.toBe(inspection)
+    expect(resolveActiveConfigInspection).toHaveBeenCalledTimes(1)
+  })
+
   describe('mihomo:patch-config', () => {
     it('forwards a valid patch to the gateway', async () => {
       await handlers[IPC.mihomoPatchConfig](null, { mode: 'rule', 'allow-lan': true })

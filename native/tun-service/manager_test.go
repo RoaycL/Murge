@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"testing"
+	"time"
 )
 
 // flakyStore fails its first N reads, then behaves. It models the transient
@@ -40,12 +41,14 @@ func (store *flakyStore) Clear() error {
 }
 
 type flakyRuntime struct {
-	started   int
-	stopped   []int
-	startErr  error
-	stopErr   error
-	inspectFn func(pid int) (bool, error)
-	installed []string
+	started      int
+	stopped      []int
+	startErr     error
+	stopErr      error
+	inspectFn    func(pid int) (bool, error)
+	installed    []string
+	installGate  <-chan struct{}
+	validateGate <-chan struct{}
 }
 
 func (runtime *flakyRuntime) Start(_ string, _ string, _ string) (int, error) {
@@ -56,9 +59,60 @@ func (runtime *flakyRuntime) Start(_ string, _ string, _ string) (int, error) {
 	return 4200 + runtime.started, nil
 }
 
+func (runtime *flakyRuntime) Validate(_ string, _ string) error {
+	if runtime.validateGate != nil {
+		<-runtime.validateGate
+	}
+	return nil
+}
+
 func (runtime *flakyRuntime) Install(version string, _ int) error {
+	if runtime.installGate != nil {
+		<-runtime.installGate
+	}
 	runtime.installed = append(runtime.installed, version)
 	return nil
+}
+
+func TestSlowInstallDoesNotBlockLifecycleStatus(t *testing.T) {
+	gate := make(chan struct{})
+	runtime := &flakyRuntime{installGate: gate}
+	manager := newSessionManager(runtime, &flakyStore{})
+	done := make(chan serviceResponse, 1)
+	go func() {
+		done <- manager.Handle(serviceRequest{Operation: "install", Version: "v1.19.29"})
+	}()
+	time.Sleep(10 * time.Millisecond)
+	statusDone := make(chan serviceResponse, 1)
+	go func() { statusDone <- manager.Handle(serviceRequest{Operation: "status"}) }()
+	select {
+	case response := <-statusDone:
+		if response.Outcome != "stopped" {
+			t.Fatalf("unexpected status during install: %+v", response)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("status was blocked behind version download")
+	}
+	close(gate)
+	if response := <-done; response.Outcome != "installed" {
+		t.Fatalf("install did not finish: %+v", response)
+	}
+}
+
+func TestSlowValidationDoesNotBlockLifecycleStatus(t *testing.T) {
+	gate := make(chan struct{})
+	manager := newSessionManager(&flakyRuntime{validateGate: gate}, &flakyStore{})
+	done := make(chan serviceResponse, 1)
+	go func() { done <- manager.Handle(serviceRequest{Operation: "validate", Profile: safeProfile}) }()
+	time.Sleep(10 * time.Millisecond)
+	status := manager.Handle(serviceRequest{Operation: "status"})
+	if status.Outcome != "stopped" {
+		t.Fatalf("unexpected status during validation: %+v", status)
+	}
+	close(gate)
+	if response := <-done; response.Outcome != "valid" {
+		t.Fatalf("validation did not finish: %+v", response)
+	}
 }
 
 func (runtime *flakyRuntime) ReadProvider(kind string, name string) (providerContent, error) {
@@ -71,6 +125,15 @@ func TestInstallDelegatesToRuntimeAndReportsInstalled(t *testing.T) {
 	response := manager.Handle(serviceRequest{Operation: "install", Version: "v1.19.29", ProxyPort: 7890})
 	if response.Outcome != "installed" || len(runtime.installed) != 1 || runtime.installed[0] != "v1.19.29" {
 		t.Fatalf("version install did not reach runtime: response=%+v installed=%v", response, runtime.installed)
+	}
+}
+
+func TestValidateDelegatesToRuntimeAndReportsValid(t *testing.T) {
+	runtime := &flakyRuntime{}
+	manager := newSessionManager(runtime, &flakyStore{})
+	response := manager.Handle(serviceRequest{Operation: "validate", Profile: safeProfile})
+	if response.Outcome != "valid" || response.ErrorCode != nil {
+		t.Fatalf("validation did not succeed: %+v", response)
 	}
 }
 

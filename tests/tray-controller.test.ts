@@ -101,6 +101,28 @@ describe('TrayController', () => {
     controller.dispose()
   })
 
+  it('shows a cached policy icon and refreshes it without blocking the native menu', async () => {
+    kernel.status = { ...kernel.status, phase: 'running', pid: 42 }
+    mihomo.proxies = {
+      proxies: {
+        AI: {
+          name: 'AI', type: 'Selector', now: 'Oracle', all: ['Oracle'],
+          icon: 'https://example.com/ai.png'
+        }
+      }
+    }
+    const cached = 'data:image/png;base64,Y2FjaGVk'
+    const refreshed = 'data:image/png;base64,cmVmcmVzaGVk'
+    const resolveGroupIcon = vi.fn(async (_key: string, url?: string) => url ? refreshed : cached)
+    const controller = create({ resolveGroupIcon })
+    await controller.initialize()
+
+    await vi.waitFor(() => expect(view.item('group:AI')?.icon).toBe(refreshed))
+    expect(resolveGroupIcon).toHaveBeenNthCalledWith(1, 'policy:AI')
+    expect(resolveGroupIcon).toHaveBeenNthCalledWith(2, 'policy:AI', 'https://example.com/ai.png', true)
+    controller.dispose()
+  })
+
   it('auto-starts the kernel for system proxy and toggles TUN through their gateways', async () => {
     const controller = create()
     await controller.initialize()

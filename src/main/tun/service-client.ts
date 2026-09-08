@@ -63,6 +63,21 @@ export class TunServiceClient {
     }
   }
 
+  /** Validate with the same pinned binary the LocalSystem service will run. */
+  async validateProfile(profile: string, version?: string, signal?: AbortSignal): Promise<void> {
+    const response = await this.exchange({
+      protocolVersion: TUN_SERVICE_PROTOCOL_VERSION,
+      requestId: this.takeRequestId(),
+      operation: 'validate',
+      profile,
+      profileSha256: createHash('sha256').update(profile, 'utf8').digest('hex'),
+      ...(version ? { version } : {})
+    }, signal, 45_000)
+    if (response.outcome !== 'valid') {
+      fail(ProtocolErrorCode.INVALID_ARGUMENT, response.validationMessage || response.errorCode || `Service returned ${response.outcome}`)
+    }
+  }
+
   async stop(signal?: AbortSignal): Promise<void> {
     if (!this.ownedSession) return
     const owned = this.ownedSession

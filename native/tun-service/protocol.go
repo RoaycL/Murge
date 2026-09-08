@@ -16,7 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const protocolVersion = 5
+const protocolVersion = 6
 const maxProfileBytes = 2 * 1024 * 1024
 const maxProviderContentBytes = 4 * 1024 * 1024
 
@@ -42,15 +42,16 @@ type serviceRequest struct {
 }
 
 type serviceResponse struct {
-	ProtocolVersion int     `json:"protocolVersion"`
-	RequestID       string  `json:"requestId"`
-	Outcome         string  `json:"outcome"`
-	SessionID       *string `json:"sessionId"`
-	PID             *int    `json:"pid"`
-	ErrorCode       *string `json:"errorCode"`
-	Content         *string `json:"content,omitempty"`
-	ContentFormat   *string `json:"contentFormat,omitempty"`
-	ContentSource   *string `json:"contentSource,omitempty"`
+	ProtocolVersion   int     `json:"protocolVersion"`
+	RequestID         string  `json:"requestId"`
+	Outcome           string  `json:"outcome"`
+	SessionID         *string `json:"sessionId"`
+	PID               *int    `json:"pid"`
+	ErrorCode         *string `json:"errorCode"`
+	Content           *string `json:"content,omitempty"`
+	ContentFormat     *string `json:"contentFormat,omitempty"`
+	ContentSource     *string `json:"contentSource,omitempty"`
+	ValidationMessage *string `json:"validationMessage,omitempty"`
 }
 
 func decodeRequest(data []byte) (serviceRequest, error) {
@@ -114,6 +115,19 @@ func decodeRequest(data []byte) (serviceRequest, error) {
 			(request.ProviderKind != "proxy" && request.ProviderKind != "rule") || strings.TrimSpace(request.ProviderName) == "" ||
 			len([]byte(request.ProviderName)) > 512 || strings.ContainsRune(request.ProviderName, '\x00') {
 			return serviceRequest{}, errors.New("invalid provider-content request")
+		}
+	case "validate":
+		if request.SessionID != "" || request.ProxyPort != 0 || request.ProviderKind != "" || request.ProviderName != "" ||
+			len([]byte(request.Profile)) == 0 || len([]byte(request.Profile)) > maxProfileBytes || !sha256Pattern.MatchString(request.ProfileSHA256) ||
+			(request.Version != "" && !versionPattern.MatchString(request.Version)) {
+			return serviceRequest{}, errors.New("invalid validate request")
+		}
+		digest := sha256.Sum256([]byte(request.Profile))
+		if hex.EncodeToString(digest[:]) != request.ProfileSHA256 {
+			return serviceRequest{}, errors.New("profile digest mismatch")
+		}
+		if err := validateTunProfile(request.Profile); err != nil {
+			return serviceRequest{}, fmt.Errorf("unsafe validation profile: %w", err)
 		}
 	default:
 		return serviceRequest{}, errors.New("operation is not allowlisted")
@@ -219,7 +233,12 @@ func ensureContainedPath(path string) error {
 		return errors.New("must not name a drive or alternate stream")
 	}
 	for _, segment := range strings.Split(strings.ReplaceAll(path, `\`, "/"), "/") {
-		if segment == ".." {
+		// Win32 trims trailing dots/spaces while normalizing DOS paths. Refuse
+		// every multi-dot segment (.., ..., including spaced forms) instead of
+		// looking only for the literal ".." spelling. A single "." remains a
+		// safe current-directory prefix for normal ./provider paths.
+		normalized := strings.TrimSpace(segment)
+		if len(normalized) >= 2 && strings.Trim(normalized, ".") == "" {
 			return errors.New("must not traverse outside the state directory")
 		}
 	}

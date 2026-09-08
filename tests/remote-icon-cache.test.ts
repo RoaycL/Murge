@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -58,5 +58,15 @@ describe('RemoteIconCache', () => {
     expect(fetcher).toHaveBeenCalledOnce()
     // No cache file was committed after the rejected redirect.
     await expect(readFile(join(root, 'missing.json'))).rejects.toThrow()
+  })
+
+  it('bounds persistent cache growth by pruning the oldest records', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'murge-icons-'))
+    for (let index = 0; index < 260; index += 1) {
+      await writeFile(join(root, `${index.toString(16).padStart(64, '0')}.json`), '{"dataUrl":"data:image/png;base64,AQ=="}')
+    }
+    const cache = new RemoteIconCache(root, [vi.fn<FetchFn>().mockResolvedValue(response(new Uint8Array([1])))], async () => ['1.1.1.1'])
+    await cache.get('new-policy', 'https://icons.example/new.png', true)
+    expect((await readdir(root)).filter((name) => name.endsWith('.json')).length).toBeLessThanOrEqual(256)
   })
 })

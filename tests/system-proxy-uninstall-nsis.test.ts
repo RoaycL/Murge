@@ -29,6 +29,13 @@ describe('uninstall-restore.nsh customUnInstall hook', () => {
     expect(source).toMatch(/ExecWait[^\n]*\$R0/)
   })
 
+  it('bounds the headless restore bootstrap and disables GPU initialization', async () => {
+    const main = await readFile(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'src/main/index.ts'), 'utf8')
+    expect(main).toContain("if (hasArg('--restore-system-proxy'))")
+    expect(main).toContain('[restore-system-proxy] watchdog: restore did not finish within 30s')
+    expect(main).toMatch(/hasArg\('--restore-system-proxy'\)[\s\S]{0,120}\)\s*\{\s*app\.disableHardwareAcceleration\(\)/)
+  })
+
   it('branches on the restore exit code (must not be ignored)', () => {
     expect(source).toContain('StrCmp $R0 0')
   })
@@ -62,6 +69,7 @@ describe('uninstall-restore.nsh customUnInstall hook', () => {
   })
 
   it('launches Electron restore only when the durable ownership backup exists', () => {
+    expect(source).toContain('SetShellVarContext current')
     expect(source).toContain('IfFileExists "$APPDATA\\system-proxy\\owned-backup.json"')
     expect(source).toContain(
       'IfFileExists "$INSTDIR\\${APP_EXECUTABLE_FILENAME}" 0 SystemProxyUninstallRestoreWarn'

@@ -6,6 +6,7 @@ import { ProfileRepository } from './profile-repository'
 import type { SubscriptionFetcher } from '../subscriptions/subscription-fetcher'
 import { isRedactedUrl, isTransportFailure, redactCredentials, deriveFallbackSubscriptionName } from '../subscriptions/subscription-fetcher'
 import { MemoryProfileSourceStore, type ProfileSourceStore } from './profile-source-store'
+import { profileCompatibilityDiagnostics } from './profile-diagnostics'
 
 /**
  * Compose the profile store, config validator, and subscription fetcher into the
@@ -14,6 +15,8 @@ import { MemoryProfileSourceStore, type ProfileSourceStore } from './profile-sou
  * activation cannot move the active pointer.
  */
 export class ProfileService implements ProfileGateway {
+  private semanticValidator: ((document: string) => Promise<ValidationResult>) | null = null
+
   constructor(
     private readonly repository: ProfileRepository,
     private readonly validator: ConfigValidator,
@@ -26,6 +29,11 @@ export class ProfileService implements ProfileGateway {
      */
     private readonly onDeleted?: (id: string) => void
   ) {}
+
+  /** Attach the packaged-host mihomo `-t` gate after the service is composed. */
+  setSemanticValidator(validator: (document: string) => Promise<ValidationResult>): void {
+    this.semanticValidator = validator
+  }
 
   listProfiles(): Promise<ProfileMeta[]> {
     return this.repository.list()
@@ -45,7 +53,7 @@ export class ProfileService implements ProfileGateway {
   }
 
   async importProfile(request: ImportRequest): Promise<ProfileMeta> {
-    const result = this.validator.validate(request.document)
+    const result = await this.validateDocument(request.document)
     this.throwIfInvalid(result)
     
     // Ensure URL is redacted before persisting
@@ -122,7 +130,7 @@ export class ProfileService implements ProfileGateway {
     }
     const fetched = await this.fetchSubscription(refreshUrl)
     // Validate BEFORE writing so a failed update cannot corrupt the stored doc.
-    this.throwIfInvalid(this.validator.validate(fetched.document))
+    this.throwIfInvalid(await this.validateDocument(fetched.document))
     // Persist/migrate the private refresh address before replacing a valid
     // existing document. A secure-storage failure must leave that document intact.
     await this.sourceStore.set(id, refreshUrl)
@@ -154,7 +162,7 @@ export class ProfileService implements ProfileGateway {
 
   async activateProfile(id: string): Promise<ProfileMeta> {
     const profile = await this.repository.get(id)
-    const result = this.validator.validate(profile.document)
+    const result = await this.validateDocument(profile.document)
     this.throwIfInvalid(result)
     const previousActive = (await this.repository.list()).find((meta) => meta.active)?.id ?? null
     try {
@@ -174,7 +182,7 @@ export class ProfileService implements ProfileGateway {
   }
 
   async restoreProfileDocument(id: string, document: string): Promise<void> {
-    this.throwIfInvalid(this.validator.validate(document))
+    this.throwIfInvalid(await this.validateDocument(document))
     await this.repository.restoreDocument(id, document)
   }
 
@@ -192,12 +200,12 @@ export class ProfileService implements ProfileGateway {
     // Validate the WOULD-BE document before writing so a rejected edit cannot
     // leave a half-edited (invalid) document on disk.
     const nextDocument = await this.repository.previewEdit(id, edits)
-    this.throwIfInvalid(this.validator.validate(nextDocument))
+    this.throwIfInvalid(await this.validateDocument(nextDocument))
     return this.repository.editDocument(id, edits)
   }
 
   async replaceDocument(id: string, document: string): Promise<ProfileMeta> {
-    this.throwIfInvalid(this.validator.validate(document))
+    this.throwIfInvalid(await this.validateDocument(document))
     return this.repository.replaceDocument(id, document)
   }
 
@@ -214,8 +222,24 @@ export class ProfileService implements ProfileGateway {
     return this.repository.replaceSource(id, { ...profile.meta.source, url: redactCredentials(url) })
   }
 
-  validateDocument(document: string): ValidationResult {
-    return this.validator.validate(document)
+  async validateDocument(document: string): Promise<ValidationResult> {
+    const structural = this.validator.validate(document)
+    if (!structural.ok) return structural
+    let semantic: ValidationResult = { ok: true, issues: [] }
+    if (this.semanticValidator) {
+      try {
+        semantic = await this.semanticValidator(document)
+      } catch (error) {
+        semantic = {
+          ok: false,
+          issues: [{ severity: 'error', message: error instanceof Error ? error.message : String(error) }]
+        }
+      }
+    }
+    return {
+      ok: semantic.ok,
+      issues: [...structural.issues, ...semantic.issues, ...profileCompatibilityDiagnostics(document)]
+    }
   }
 
   private async restoreActive(previousActive: string | null): Promise<void> {

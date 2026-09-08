@@ -138,3 +138,22 @@ export interface ProfileProviderContent {
   format: 'yaml' | 'text'
   source: 'cache' | 'inline'
 }
+
+export type ProfileConfigSection = 'core' | 'dns' | 'sniffer' | 'tun' | 'geodata'
+
+export interface ProfileConfigSectionInspection {
+  /** YAML excerpt from the stored, unmodified active profile. */
+  profileYaml: string
+  /** YAML excerpt from the exact document the app would materialize now. */
+  effectiveYaml: string
+  /** Fields whose final value is owned or constrained by the app. */
+  managedKeys: string[]
+  notes: string[]
+}
+
+/** Read-only comparison; it never enables an override or edits the subscription. */
+export interface ActiveProfileConfigInspection {
+  profileName: string | null
+  sections: Record<ProfileConfigSection, ProfileConfigSectionInspection>
+  diagnostics: ValidationIssue[]
+}

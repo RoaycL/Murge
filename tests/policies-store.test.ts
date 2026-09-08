@@ -151,6 +151,40 @@ describe('policies store', () => {
     expect(store.panelError).toBeNull()
   })
 
+  it('does not drop a new selection when the user changes groups during an in-flight write', async () => {
+    const secondGroup = '备用选择'
+    let firstNow = '香港 01'
+    let secondNow = 'DIRECT'
+    const response = (): MihomoProxiesResponse => ({
+      proxies: {
+        ...PROXIES.proxies,
+        [GROUP]: { ...PROXIES.proxies[GROUP], now: firstNow },
+        [secondGroup]: { name: secondGroup, type: 'Selector', now: secondNow, all: ['DIRECT', '香港 02'] }
+      }
+    })
+    getActiveGroupOrder.mockResolvedValue([GROUP, secondGroup])
+    getProxies.mockImplementation(async () => response())
+    let releaseFirst!: () => void
+    selectProxy.mockImplementation((group: string, member: string) => {
+      if (group === GROUP) return new Promise<void>((resolve) => {
+        releaseFirst = () => { firstNow = member; resolve() }
+      })
+      secondNow = member
+      return Promise.resolve()
+    })
+    const store = usePoliciesStore()
+    await store.load()
+    void store.selectNode('香港 02')
+    store.selectGroup(secondGroup)
+    const latest = store.selectNode('香港 02')
+    releaseFirst()
+    await latest
+    expect(selectProxy).toHaveBeenCalledWith(GROUP, '香港 02')
+    expect(selectProxy).toHaveBeenCalledWith(secondGroup, '香港 02')
+    expect(store.selectedGroup).toBe(secondGroup)
+    expect(store.selectedMember).toBe('香港 02')
+  })
+
   it('ignores a superseded selection failure and keeps the latest intent on success', async () => {
     getProxies.mockImplementation(async () => proxiesResponse(controllerNow))
     const store = usePoliciesStore()

@@ -4,10 +4,11 @@ import type { ValidationIssue, ValidationResult } from '../../shared/profiles'
 /**
  * Validation boundary for config documents.
  *
- * The real implementation (a later milestone) shells out to `mihomo -t` on the
- * host. On this development build we ship a deterministic, dependency-free
- * structural validator so the renderer and tests can exercise the same
- * accept/reject contract without a real binary, real config, or system changes.
+ * This deterministic structural pass gives immediate line-oriented feedback.
+ * In packaged Windows builds ProfileService follows it with `mihomo -t` through
+ * the LocalSystem service, using the same selected binary and safe materialized
+ * document that will run. Tests and unsupported development hosts retain this
+ * dependency-free first pass.
  */
 export interface ConfigValidator {
   validate(document: string): ValidationResult
@@ -22,8 +23,8 @@ export interface FakeValidatorOptions {
  * Structural fake validator. It intentionally does NOT fully parse YAML; it
  * rejects the malformation classes that are cheap and unambiguous to detect
  * (empty documents, tab indentation, and unbalanced flow collections) and
- * optionally requires a proxy section. Full mihomo semantics arrive with the
- * real `-t` validator.
+ * optionally requires a proxy section. Full mihomo semantics are delegated to
+ * ProfileService's packaged-host semantic validator.
  */
 export class FakeConfigValidator implements ConfigValidator {
   constructor(private readonly options: FakeValidatorOptions = {}) {}

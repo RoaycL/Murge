@@ -284,6 +284,8 @@ func (runtime *windowsRuntime) versionCore(version string, proxyPort int) (strin
 }
 
 func (runtime *windowsRuntime) Install(version string, proxyPort int) error {
+	runtime.versionMu.Lock()
+	defer runtime.versionMu.Unlock()
 	_, _, err := runtime.versionCore(version, proxyPort)
 	return err
 }

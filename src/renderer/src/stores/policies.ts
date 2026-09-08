@@ -86,14 +86,12 @@ export const usePoliciesStore = defineStore('policies', () => {
   // controller's true state with a fresh read and reconcile the optimistic value
   // to it. An intent superseded by a newer one never mutates the UI or surfaces
   // an error.
-  let pendingSelection: string | null = null
+  let pendingSelection: { group: string; member: string } | null = null
   let pendingMode: PolicyMode | null = null
   let selectionDrainPromise: Promise<void> | null = null
   let modeDrainPromise: Promise<void> | null = null
   // The most recent intent actually submitted, and the error it produced (if any).
   // Only the FINAL intent is used to reconcile against the controller read.
-  let lastSelectionTarget: string | null = null
-  let lastSelectionError: string | null = null
   let lastModeTarget: PolicyMode | null = null
   let lastModeError: string | null = null
   const delayGeneration = new Map<string, number>()
@@ -284,41 +282,39 @@ export const usePoliciesStore = defineStore('policies', () => {
       return Promise.resolve()
     }
     if (member === selectedMember.value) return Promise.resolve()
-    pendingSelection = member
-    selectionDrainPromise ??= drainSelection(group).finally(() => {
+    pendingSelection = { group, member }
+    selectionDrainPromise ??= drainSelection().finally(() => {
       selectionDrainPromise = null
-      pendingSelection = null
     })
     return selectionDrainPromise
   }
 
-  async function drainSelection(group: string): Promise<void> {
-    try {
-      while (pendingSelection !== null) {
-        if (selectedGroup.value !== group) return
-        const intent = pendingSelection
-        pendingSelection = null
-        lastSelectionTarget = intent
-        lastSelectionError = null
-        if (intent === selectedMember.value) continue
-        selectedMember.value = intent
+  async function drainSelection(): Promise<void> {
+    while (pendingSelection !== null) {
+      const intent = pendingSelection
+      pendingSelection = null
+      // A group change can supersede an intent before it reaches the wire.
+      if (selectedGroup.value !== intent.group) continue
+      let submitError: string | null = null
+      if (intent.member !== selectedMember.value) {
+        selectedMember.value = intent.member
         panelError.value = null
         try {
-          await window.desktop.mihomo.selectProxy(group, intent)
+          await window.desktop.mihomo.selectProxy(intent.group, intent.member)
         } catch (error) {
-          if (pendingSelection === null) lastSelectionError = toProtocolError(error).message
+          if (pendingSelection === null) submitError = toProtocolError(error).message
         }
       }
-      if (selectedGroup.value === group) await confirmSelection(group)
-    } finally {
-      lastSelectionTarget = null
-      lastSelectionError = null
+      // Confirm each submitted group's final intent before re-checking the
+      // queue. A click for a newly selected group that arrives during this
+      // read-back remains queued and is handled by the same drain.
+      if (selectedGroup.value === intent.group && pendingSelection === null) {
+        await confirmSelection(intent.group, intent.member, submitError)
+      }
     }
   }
 
-  async function confirmSelection(group: string): Promise<void> {
-    const target = lastSelectionTarget
-    const submitError = lastSelectionError
+  async function confirmSelection(group: string, target: string, submitError: string | null): Promise<void> {
     try {
       const result = await window.desktop.mihomo.getProxies()
       const groupProxy = result.proxies[group]
@@ -337,7 +333,7 @@ export const usePoliciesStore = defineStore('policies', () => {
       proxies.value = result
       if (submitError) {
         panelError.value = submitError
-      } else if (target !== null && confirmed !== null && confirmed !== target) {
+      } else if (confirmed !== null && confirmed !== target) {
         panelError.value = `选择未生效：controller 当前为 "${confirmed}"，期望 "${target}"`
       }
     } catch (error) {

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { lookup } from 'node:dns/promises'
 import { isIP } from 'node:net'
@@ -8,6 +8,8 @@ import { isPublicAddress, type FetchFn, type FetchResponseLike } from '../subscr
 const MAX_ICON_BYTES = 512 * 1024
 const MAX_REDIRECTS = 5
 const FETCH_TIMEOUT_MS = 12_000
+const MAX_CACHE_FILES = 256
+const MAX_CACHE_BYTES = 96 * 1024 * 1024
 const ALLOWED_TYPES = new Set([
   'image/png', 'image/jpeg', 'image/webp', 'image/gif',
   'image/svg+xml', 'image/x-icon', 'image/vnd.microsoft.icon'
@@ -68,6 +70,25 @@ export class RemoteIconCache {
     // bytes under the hashed semantic key, never the raw URL.
     await writeFile(temporary, JSON.stringify({ dataUrl } satisfies CachedIconRecord), { encoding: 'utf8', mode: 0o600 })
     await rename(temporary, target)
+    await this.prune().catch(() => undefined)
+  }
+
+  private async prune(): Promise<void> {
+    const names = (await readdir(this.root)).filter((name) => /^[0-9a-f]{64}\.json$/.test(name))
+    const entries = (await Promise.all(names.map(async (name) => {
+      const info = await stat(join(this.root, name))
+      return { name, size: info.size, modified: info.mtimeMs }
+    }))).sort((left, right) => left.modified - right.modified)
+    let bytes = entries.reduce((total, entry) => total + entry.size, 0)
+    let count = entries.length
+    for (const entry of entries) {
+      if (count <= MAX_CACHE_FILES && bytes <= MAX_CACHE_BYTES) break
+      try {
+        await unlink(join(this.root, entry.name))
+        count -= 1
+        bytes -= entry.size
+      } catch { /* another refresh may already have removed it */ }
+    }
   }
 
   private async validate(url: string): Promise<URL> {

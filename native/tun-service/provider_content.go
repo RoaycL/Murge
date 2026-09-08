@@ -17,6 +17,7 @@ var (
 	errProviderContentTooLarge = errors.New("provider content too large")
 	errProviderContentInvalid  = errors.New("provider content invalid")
 	errProviderMRSConvert      = errors.New("provider MRS conversion failed")
+	errConfigInvalid           = errors.New("mihomo config validation failed")
 )
 
 type providerContent struct {
@@ -41,6 +42,8 @@ func providerErrorCode(err error) string {
 		return "PROVIDER_CONTENT_INVALID"
 	case errors.Is(err, errProviderMRSConvert):
 		return "PROVIDER_MRS_CONVERT_FAILED"
+	case errors.Is(err, errConfigInvalid):
+		return "CONFIG_INVALID"
 	default:
 		return "TUN_SERVICE_OPERATION_FAILED"
 	}

@@ -108,6 +108,17 @@ func TestDecodeSafeStart(t *testing.T) {
 	}
 }
 
+func TestDecodeSafeValidate(t *testing.T) {
+	digest := sha256.Sum256([]byte(safeProfile))
+	data, _ := json.Marshal(serviceRequest{
+		ProtocolVersion: protocolVersion, RequestID: "4", Operation: "validate",
+		Profile: safeProfile, ProfileSHA256: hex.EncodeToString(digest[:]),
+	})
+	if _, err := decodeRequest(data); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDecodeOfficialVersionInstall(t *testing.T) {
 	data, _ := json.Marshal(serviceRequest{
 		ProtocolVersion: protocolVersion, RequestID: "2", Operation: "install", Version: "v1.19.29", ProxyPort: 7890,
@@ -182,6 +193,8 @@ func TestRejectUnsafeProfileMutations(t *testing.T) {
 		{"controller cors", "mode: rule", "mode: rule\nexternal-controller-cors:\n  allow-origins:\n    - '*'\n  allow-private-network: true"},
 		{"absolute provider path", "    path: ./ruleset/reject.yaml", "    path: C:\\Windows\\System32\\evil.dll"},
 		{"traversing provider path", "    path: ./ruleset/reject.yaml", "    path: ../../../../Windows/System32/evil.dll"},
+		{"all-dot provider segment", "    path: ./ruleset/reject.yaml", "    path: ...\\...\\Windows\\win.ini"},
+		{"spaced all-dot provider segment", "    path: ./ruleset/reject.yaml", "    path: '... \\cache.yaml'"},
 		{"rooted provider path", "    path: ./ruleset/reject.yaml", "    path: /Windows/System32/evil.dll"},
 		{"drive relative provider path", "    path: ./ruleset/reject.yaml", "    path: C:evil.dll"},
 		{"public dns bind", "  enhanced-mode: fake-ip", "  enhanced-mode: fake-ip\n  listen: 0.0.0.0:53"},
@@ -328,7 +341,8 @@ func (runtime *fakeRuntime) Start(string, string, string) (int, error) {
 	runtime.live = true
 	return runtime.nextPID, nil
 }
-func (runtime *fakeRuntime) Install(string, int) error { return nil }
+func (runtime *fakeRuntime) Validate(string, string) error { return nil }
+func (runtime *fakeRuntime) Install(string, int) error     { return nil }
 func (runtime *fakeRuntime) ReadProvider(kind string, name string) (providerContent, error) {
 	return providerContent{Text: kind + ": " + name, Format: "yaml", Source: "cache"}, nil
 }

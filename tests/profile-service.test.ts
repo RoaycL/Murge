@@ -46,6 +46,31 @@ describe('ProfileService', () => {
     expect(meta.active).toBe(false)
   })
 
+  it('runs the attached mihomo semantic gate before import and save', async () => {
+    const validated: string[] = []
+    service.setSemanticValidator(async (document) => {
+      validated.push(document)
+      return document.includes('semantic-invalid')
+        ? { ok: false, issues: [{ severity: 'error', message: 'mihomo -t rejected the profile' }] }
+        : { ok: true, issues: [] }
+    })
+    const meta = await service.importProfile({ name: 'cfg', document: VALID_DOC, source: { type: 'manual' } })
+    const rejected = VALID_DOC.replace('node-01', 'semantic-invalid')
+    await expect(service.replaceDocument(meta.id, rejected)).rejects.toThrow(/mihomo -t rejected/)
+    expect((await service.getProfile(meta.id)).document).toBe(VALID_DOC)
+    expect(validated).toEqual([VALID_DOC, rejected])
+  })
+
+  it('returns compatibility diagnostics as warnings without rejecting or rewriting the profile', async () => {
+    const document = `${VALID_DOC}global-client-fingerprint: chrome\nudp: true\n`
+    const result = await service.validateDocument(document)
+    expect(result.ok).toBe(true)
+    expect(result.issues).toHaveLength(2)
+    expect(result.issues.every((issue) => issue.severity === 'warning')).toBe(true)
+    const meta = await service.importProfile({ name: 'legacy', document, source: { type: 'manual' } })
+    expect((await service.getProfile(meta.id)).document).toBe(document)
+  })
+
   it('rejects an invalid YAML document at import time (failed start leaves active unchanged)', async () => {
     await service.importProfile({ name: 'good', document: VALID_DOC, source: { type: 'manual' }, activate: true })
     await expect(

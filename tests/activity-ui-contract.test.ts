@@ -24,7 +24,8 @@ describe('Activity fluid-layout UI contract', () => {
 
   it('opens on the 934x672 reference viewport while allowing a smaller fluid minimum', async () => {
     const [main, tokens, css] = await Promise.all([
-      read('src/main/index.ts'),
+      // Phase 1: window geometry lives in the window adapter, not the entry.
+      read('src/main/electron/window-adapter.ts'),
       read('src/renderer/src/styles/tokens.css'),
       read('src/renderer/src/styles/base.css')
     ])

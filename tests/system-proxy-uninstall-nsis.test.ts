@@ -30,10 +30,16 @@ describe('uninstall-restore.nsh customUnInstall hook', () => {
   })
 
   it('bounds the headless restore bootstrap and disables GPU initialization', async () => {
-    const main = await readFile(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'src/main/index.ts'), 'utf8')
-    expect(main).toContain("if (hasArg('--restore-system-proxy'))")
-    expect(main).toContain('[restore-system-proxy] watchdog: restore did not finish within 30s')
-    expect(main).toMatch(/hasArg\('--restore-system-proxy'\)[\s\S]{0,120}\)\s*\{\s*app\.disableHardwareAcceleration\(\)/)
+    // Phase 1: module-load watchdog + GPU gating moved from the entry into
+    // boot-flags.ts / bootstrap.ts; the same behavior, split across files.
+    const bootFlags = await readFile(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'src/main/electron/boot-flags.ts'), 'utf8')
+    const bootstrap = await readFile(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'src/main/electron/bootstrap.ts'), 'utf8')
+    expect(bootFlags).toContain("hasArg('--restore-system-proxy')")
+    expect(bootFlags).toContain('[restore-system-proxy] watchdog: restore did not finish within 30s')
+    // GPU init is disabled exactly when a headless probe flag (incl. the
+    // uninstaller's --restore-system-proxy) is present.
+    expect(bootFlags).toMatch(/shouldDisableHardwareAcceleration[\s\S]*hasArg\('--restore-system-proxy'\)/)
+    expect(bootstrap).toMatch(/shouldDisableHardwareAcceleration\([^)]*\)\s*\)\s*\{\s*app\.disableHardwareAcceleration\(\)/)
   })
 
   it('branches on the restore exit code (must not be ignored)', () => {

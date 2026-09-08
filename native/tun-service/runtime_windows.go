@@ -419,6 +419,12 @@ func (runtime *windowsRuntime) Start(profile string, _ string, version string) (
 	if err := writePrivateFile(profilePath, []byte(profile)); err != nil {
 		return 0, err
 	}
+	if _, err := seedMissingProviderCaches(profile, runtime.config.StateDirectory, func(target, behavior string) error {
+		return runtime.seedMRSProviderCache(corePath, target, behavior)
+	}); err != nil {
+		_ = os.Remove(profilePath)
+		return 0, fmt.Errorf("seed missing provider caches: %w", err)
+	}
 	command := exec.Command(corePath, "-d", runtime.config.StateDirectory, "-f", profilePath)
 	command.Dir = runtime.config.StateDirectory
 	command.Env = safeWindowsEnvironment()
@@ -459,6 +465,65 @@ func (runtime *windowsRuntime) Start(profile string, _ string, version string) (
 	runtime.coreSHA256 = coreDigest
 	runtime.coreIdentity = &coreIdentity
 	return command.Process.Pid, nil
+}
+
+func (runtime *windowsRuntime) seedMRSProviderCache(corePath, target, behavior string) error {
+	var seed string
+	switch behavior {
+	case "domain":
+		seed = "murge-bootstrap.invalid\n"
+	case "ipcidr":
+		seed = "192.0.2.0/32\n"
+	case "classical":
+		seed = "DOMAIN,murge-bootstrap.invalid\n"
+	default:
+		return fmt.Errorf("unsupported MRS provider behavior: %s", behavior)
+	}
+	input, err := os.CreateTemp(runtime.config.StateDirectory, "mrs-bootstrap-*.txt")
+	if err != nil {
+		return err
+	}
+	inputPath := input.Name()
+	defer os.Remove(inputPath)
+	if _, err = input.WriteString(seed); err == nil {
+		err = input.Sync()
+	}
+	closeErr := input.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	temporary := target + ".tmp"
+	_ = os.Remove(temporary)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, corePath, "convert-ruleset", behavior, "text", inputPath, temporary)
+	command.Dir = runtime.config.StateDirectory
+	command.Env = safeWindowsEnvironment()
+	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	output, runErr := command.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		_ = os.Remove(temporary)
+		return errors.New("MRS bootstrap conversion timed out")
+	}
+	if runErr != nil {
+		_ = os.Remove(temporary)
+		return fmt.Errorf("MRS bootstrap conversion failed: %s", strings.TrimSpace(string(output)))
+	}
+	info, err := os.Lstat(temporary)
+	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maxProviderContentBytes {
+		_ = os.Remove(temporary)
+		return errors.New("MRS bootstrap output is invalid")
+	}
+	if err := os.Rename(temporary, target); err != nil {
+		_ = os.Remove(temporary)
+		return err
+	}
+	stale := time.Unix(1, 0)
+	_ = os.Chtimes(target, stale, stale)
+	return nil
 }
 
 func (runtime *windowsRuntime) ReadProvider(kind string, name string) (providerContent, error) {

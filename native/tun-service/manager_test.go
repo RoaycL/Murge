@@ -196,6 +196,27 @@ func TestReconcileClearsExitedChildAndReturnsItsDiagnostic(t *testing.T) {
 	}
 }
 
+func TestExitedChildDiagnosticSurvivesLaterStatusAndReconcile(t *testing.T) {
+	store := &flakyStore{record: &ownedProcess{SessionID: "session-1", PID: 4242}}
+	runtime := &flakyRuntime{inspectFn: func(int) (bool, error) {
+		return false, fmt.Errorf("%w: provider download failed", errOwnedProcessExited)
+	}}
+	manager := newSessionManager(runtime, store)
+	first := manager.Handle(serviceRequest{Operation: "reconcile"})
+	if first.ValidationMessage == nil || !strings.Contains(*first.ValidationMessage, "provider download failed") {
+		t.Fatalf("first reconcile lost diagnostic: %+v", first)
+	}
+	for _, operation := range []string{"status", "reconcile", "status"} {
+		response := manager.Handle(serviceRequest{Operation: operation})
+		if response.Outcome != "failed" {
+			t.Fatalf("%s returned protocol-incompatible outcome: %+v", operation, response)
+		}
+		if response.ValidationMessage == nil || !strings.Contains(*response.ValidationMessage, "provider download failed") {
+			t.Fatalf("%s consumed diagnostic: %+v", operation, response)
+		}
+	}
+}
+
 func TestStartAttemptsRecoveryBeforeRefusingWhileBlocked(t *testing.T) {
 	store := &flakyStore{failReads: 1_000_000}
 	runtime := &flakyRuntime{}

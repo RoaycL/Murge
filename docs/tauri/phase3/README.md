@@ -646,6 +646,29 @@ Third Phase 3D slice — 应用更新状态机, 4 invoke channels un-staged:
   is the listen-side event channels, which land with their
   emitter-side producers).
 
+### 20. Event channels + provider-content gate alignment
+
+Fourth Phase 3D slice — verification + the provider-content gate:
+
+- **All 10 remaining staged channels are listen-side event channels, and
+  every one already has a live emitter side in the Rust shell**:
+  `mihomo:traffic|connections|log|stream-error-event` + the
+  stream-error/kernel/kernel-manager hubs (events.rs `start_forwarding`),
+  `system-proxy:status-event` / `tun:status-event` / `updates:state-event`
+  (slice 17/18/19 wiring), and `app:navigate-event` — which has no Rust
+  producer because its only producer is the window-adapter deep-link /
+  notification path (the Phase 4 tray + window slice). They stay staged in
+  the channel-count sense (no invoke arm exists for an emit-only channel)
+  but are NOT missing implementations.
+- `profiles:get-provider-content` now matches the exact Electron handler
+  shape instead of a generic UNSUPPORTED: kind validation first
+  (`INVALID_ARGUMENT::外部资源类型无效`), then the mihomo-name parse
+  (`INVALID_ARGUMENT::name must be a non-empty string`), then the reader
+  gate (`INTERNAL::当前运行方式不支持读取外部资源内容` — the same copy the
+  Electron build surfaces when no service client is composed). The reader
+  routes through the privileged Go service (named pipe), which lands with
+  the real-kernel slice.
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,

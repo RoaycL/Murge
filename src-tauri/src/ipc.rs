@@ -113,12 +113,21 @@ pub async fn dispatch(
                 .ok_or_else(|| IpcError::invalid_argument("profiles:import requires a request object"))?;
             profiles.import(request)
         }
-        "profiles:import-from-url" => Err(IpcError::unsupported(
-            "profiles:import-from-url needs the subscription fetcher (Phase 3C network slice)",
-        )),
-        "profiles:update-from-source" => Err(IpcError::unsupported(
-            "profiles:update-from-source needs the subscription fetcher (Phase 3C network slice)",
-        )),
+        "profiles:import-from-url" => {
+            // Positional args: [name?, url, activate?] — the bridge forwards
+            // the renderer's arg list; schema validation mirrors
+            // shared/schemas/profiles.ts (parseOptionalImportName +
+            // parseSubscriptionUrl + parseOptionalBoolean).
+            let name = crate::subscription::parse_optional_import_name(string_arg(payload, 0).as_deref())?;
+            let url = crate::subscription::parse_subscription_url(string_arg(payload, 1).as_deref())?;
+            let activate = crate::subscription::parse_optional_boolean(payload.get(2), "activate")?;
+            profiles.import_from_url(&name, &url, activate).await
+        }
+        "profiles:update-from-source" => {
+            profiles
+                .update_from_source(&required_string(payload, 0, "profiles:update-from-source id")?)
+                .await
+        }
         "profiles:activate" => profiles.activate(&required_string(payload, 0, "profiles:activate id")?),
         "profiles:delete" => profiles.delete(&required_string(payload, 0, "profiles:delete id")?),
         "profiles:rename" => profiles.rename(
@@ -614,11 +623,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn subscription_channels_flow_through_the_dispatch() {
+        use crate::subscription::SubscriptionFetcher;
+        // A loopback stub answers both the import and the update fetch.
+        let (base, _server) = crate::subscription::test_support::start_http_stub(
+            200,
+            // RFC 5987 extended form (percent-encoded, ASCII on the wire) —
+            // what real providers send for non-ASCII filenames.
+            vec![("content-disposition", "attachment; filename*=UTF-8''%E6%9C%BA%E5%9C%BA%E8%AE%A2%E9%98%85.yaml".to_string())],
+            "mixed-port: 7890\nproxies:\n  - name: node-01\n    server: 127.0.0.1\nrules:\n  - MATCH,DIRECT\n".to_string(),
+        );
+        let temp = TempDir::new().unwrap();
+        let profiles = ProfilesService::for_development(&temp.path().to_path_buf()).with_fetcher(
+            SubscriptionFetcher::for_testing(std::sync::Arc::new(|_| Vec::new()), 5000, 1024 * 1024),
+        );
+        let profiles = Arc::new(profiles);
+        let f = Fixture {
+            _temp: temp,
+            paths: AppPaths { app_data_root: None, profile_root: None },
+            settings: SettingsStore::new(None),
+            profiles: profiles.clone(),
+            overrides: OverrideService::new(None),
+            models: enhancements::ModelStores::new(None),
+            usage: usage::UsageHistoryService::new(usage::UsageHistoryStore::in_memory()),
+            kernel: kernel::KernelServices::new(),
+            mihomo: mihomo::MihomoServices::new(None),
+        };
+        // Import from URL: the empty name falls back to the response filename.
+        let meta = dispatch(
+            "profiles:import-from-url",
+            &serde_json::json!(["", format!("{base}/sub"), true]),
+            &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo,
+        ).await.unwrap();
+        assert_eq!(meta["name"], "机场订阅");
+        assert_eq!(meta["active"], true, "activate=true moved the pointer");
+        assert_eq!(meta["source"]["type"], "url");
+        // The private raw URL went to the source store; meta keeps the display form.
+        let id = meta["id"].as_str().unwrap().to_string();
+        assert_eq!(
+            dispatch("profiles:get-source-url", &serde_json::json!([id]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap(),
+            serde_json::json!(format!("{base}/sub"))
+        );
+        // Update from source: same channel chain replaces the document.
+        let updated = dispatch(
+            "profiles:update-from-source",
+            &serde_json::json!([id]),
+            &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo,
+        ).await.unwrap();
+        assert_eq!(updated["name"], "机场订阅");
+        // Schema gate: a non-http URL is rejected before any fetch.
+        let error = dispatch(
+            "profiles:import-from-url",
+            &serde_json::json!(["x", "ftp://example.com/sub"]),
+            &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo,
+        ).await.unwrap_err();
+        assert!(error.0.contains("subscription URL must use http or https"), "{}", error.0);
+    }
+
+    #[tokio::test]
     async fn staged_channels_fail_closed_with_unsupported() {
         let f = fixtures();
         for channel in [
-            "profiles:import-from-url",
-            "profiles:update-from-source",
             "profiles:get-provider-content",
         ] {
             let error = dispatch(channel, &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo).await.unwrap_err();

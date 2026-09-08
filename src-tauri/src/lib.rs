@@ -28,6 +28,7 @@ mod override_service;
 mod paths;
 mod profile_parse;
 mod profile_service;
+mod subscription;
 mod profiles;
 mod redact;
 mod settings;

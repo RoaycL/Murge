@@ -23,7 +23,13 @@ export class MihomoHotSwitchTunAdapter implements TunMutationAdapter {
      * to true for compatibility with callers that predate the clash-party DNS
      * takeover alignment (their profiles always carried a dns block).
      */
-    private readonly readDnsEnabled: () => boolean | Promise<boolean> = async () => true
+    private readonly readDnsEnabled: () => boolean | Promise<boolean> = async () => true,
+    /**
+     * Windows top-level TUN uses mihomo's fixed 28.0.0.1/30 address. If another
+     * client still owns that adapter/address, applying tun.enable would make
+     * the shared core exit and leave an enabled system proxy with no listener.
+     */
+    private readonly externalTunInUse: (device: string) => boolean | Promise<boolean> = async () => false
   ) {}
 
   getActiveRuntime(): TunProfileRuntime | null {
@@ -49,6 +55,9 @@ export class MihomoHotSwitchTunAdapter implements TunMutationAdapter {
     const previous = current.tun ?? { enable: false }
     const model = await this.readTunConfig()
     const device = model.device === EMPTY_TUN_CONFIG.device ? intent.device : model.device
+    if (current.tun?.enable !== true && await this.externalTunInUse(device)) {
+      return { outcome: 'conflict', conflictDetail: 'TUN_INTERFACE_IN_USE' }
+    }
     const next: Record<string, unknown> = {
       ...previous,
       ...buildTunBlock({ ...model, device, stack: model.stack ?? intent.stack }),

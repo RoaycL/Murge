@@ -194,15 +194,55 @@ Rust ports of `shared/usage.ts`, `services/usage-history-store.ts` and
 consumer); it is intentionally not ported yet — it lands with the 3B
 controller slice that produces the app/core log lines it writes.
 
+### 6. Active-config inspection (`src-tauri/src/inspection.rs`)
+
+Rust ports of `main/profiles/profile-config-inspection.ts`,
+`kernel/dns/apply-dns.ts`, `kernel/sniffer/apply-sniffer.ts` and
+`kernel/profile-kernel-config.ts` (`buildProfileKernelConfig`):
+
+- `build_profile_kernel_config`: content sections preserved
+  (`proxies`/`proxy-groups`/`rules`/…), the host-network surface neutralized
+  (`tun`, `listeners`, `redir-port`/`tproxy-port`, `ss-config`/`vmess-config`/
+  `tuic-server`, every extra `external-controller-*` variant and
+  `external-doh-server` removed; `dns.listen` stripped), app-critical keys
+  forced (`mixed-port`, optional `port`/`socks-port`, `external-controller`,
+  `allow-lan`/`bind-address`, 64-hex `secret`, optional metacubexd panel,
+  `mode` normalized), controlled core/geodata models read back when enabled
+  (profile sub-map merged with the model winning the spread, DNS `ipv6`
+  synced, `interface-name` removed when empty), and the same INVALID_ARGUMENT
+  rejections (port ranges, `listener ports must differ`, secret grammar,
+  unparseable top level).
+- `apply_dns_to_document` / `apply_sniffer_to_document`: the model's block
+  merges over the profile's own section keys (unknown keys preserved);
+  disabled or unparseable base returns the base verbatim with the exact
+  warnings (基础配置文件无法解析，已跳过 DNS/Sniffer 增强).
+- `inspect_active_profile_config`: per-section excerpts (CORE_KEYS /
+  GEODATA_KEYS picks, `secret` masked to `********`, empty renders 未配置),
+  managed-key lists, the Chinese notes verbatim, and the compatibility
+  diagnostics.
+- Channel: `profiles:inspect-active-config` now composes the ACTIVE profile
+  through overrides → DNS enhancement → sniffer enhancement →
+  `build_profile_kernel_config` (14 of 17 profile channels live). The
+  kernel-runtime knobs (bound ports, TUN phase, generated secret) arrive with
+  the 3B/3D supervisor slices; until then the core-settings model is the
+  authoritative source and the Electron pre-kernel fallbacks apply (mixed-port
+  7890, controller 9090, 64-zero secret, TUN disabled).
+
+**Documented differences (staging):**
+- yaml-rust2 does not resolve YAML anchors/merge keys (`<<`), so anchor-heavy
+  profiles carry the unexpanded form into the runtime copy (the overrides
+  slice already documents the emitter differences).
+- `documentDnsEnabled` (TUN dns-hijack decision input) ports with the 3D
+  privileged slice.
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,
-`app-settings:get|set`, all 17 `profiles:*` channels (13 fully implemented;
+`app-settings:get|set`, all 17 `profiles:*` channels (14 fully implemented;
 `import-from-url`/`update-from-source` fail closed with UNSUPPORTED until the
 Phase 3C network slice; `get-provider-content` until the Phase 3D privileged
-slice; `inspect-active-config` until the effective-document composition
 slice), all 10 `overrides:*` channels (fully implemented except the JS
-kind, which fails open per the staging note above), and all 15 typed
+kind, which fails open per the staging note above), all 15 typed
 model channels (`dns|sniffer|tun-config|core-settings|geodata-settings`
 × `get|set|preview` — fully implemented), and all 4 `usage-history:*`
 channels (`get-window`/`rank`/`clear`/`get-capacity` — fully implemented;
@@ -211,7 +251,7 @@ closed with UNSUPPORTED — never a silent no-op.
 
 ## Verification (Linux ARM64, real execution)
 
-- Rust: `cargo test` — **139 passed / 0 failed**, zero warnings:
+- Rust: `cargo test` — **150 passed / 0 failed**, zero warnings:
   - brand parse/gate (1), app-info vocabulary (2), paths namespace/dev (3),
   - settings store: defaults, quarantine, atomic format, patch merge,
     delayTestUrl read/set split, dev memory store, field salvage (7),
@@ -250,7 +290,11 @@ closed with UNSUPPORTED — never a silent no-op.
     store round trip (compact JSON + legacy count reset + corrupt file),
     stale-temp pruning, rate integration (first sample zero, back-dated
     guard), hourly rolls + bound, connection counting + clear, persist +
-    reload, rank channel shape (10), dispatch: usage channels (1).
+    reload, rank channel shape (10), dispatch: usage channels (1),
+  - inspection: kernel-config forcing/stripping (3), core/geodata readback +
+    panel (2), option rejections (1), DNS/sniffer apply merge + fail-open +
+    disabled (2), inspection sections/notes/masking/empty (2), dispatch:
+    inspect unavailable-without-profile + full composition (2).
 - TypeScript: `npm run typecheck` green; `npx vitest run` 1905 passed / 7
   skipped (unchanged — renderer untouched by this slice).
 

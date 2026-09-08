@@ -18,6 +18,7 @@ use tauri::State;
 
 use crate::app_info;
 use crate::enhancements;
+use crate::inspection;
 use crate::usage;
 use crate::brand;
 use crate::error::IpcError;
@@ -149,9 +150,73 @@ pub fn dispatch(
         "profiles:get-provider-content" => Err(IpcError::unsupported(
             "profiles:get-provider-content reads provider caches through the privileged Go service (Phase 3D)",
         )),
-        "profiles:inspect-active-config" => Err(IpcError::unsupported(
-            "profiles:inspect-active-config composes the effective document with overrides + TUN (Phase 3 slices)",
-        )),
+        "profiles:inspect-active-config" => {
+            // The Electron composition: overrides -> DNS enhancement ->
+            // sniffer enhancement -> buildProfileKernelConfig. TUN is disabled
+            // inside the Rust shell until the Phase 3D privileged slice, so
+            // the runtime config always follows the non-TUN branch (matching
+            // Electron's tunEnabled=false behavior).
+            let profile = profiles.get_active()?;
+            if profile.is_null() {
+                return Ok(inspection::inspect_active_profile_config(
+                    None,
+                    "",
+                    "",
+                    &serde_json::json!({
+                        "coreOverride": false, "dnsOverride": false, "snifferOverride": false,
+                        "geodataOverride": false, "tunEnabled": false
+                    }),
+                ));
+            }
+            let document = profile["document"].as_str().unwrap_or_default().to_string();
+            let profile_id = profile["meta"]["id"].as_str().unwrap_or_default().to_string();
+            let profile_name = profile["meta"]["name"].as_str().map(str::to_string);
+            let overridden = overrides.apply_for_profile(&document, Some(&profile_id))?;
+            let dns = enhancements::coerce_dns_enhancement(&models.dns.get());
+            let (dns_text, _) = inspection::apply_dns_to_document(&overridden, &dns);
+            let sniffer = enhancements::coerce_sniffer_enhancement(&models.sniffer.get());
+            let (base, _) = inspection::apply_sniffer_to_document(&dns_text, &sniffer);
+            let core = enhancements::coerce_core_settings(&models.core.get());
+            let geodata = enhancements::coerce_geodata_settings(&models.geodata.get());
+            // The kernel runtime knobs are staged with the Phase 3B/3D
+            // supervisor; until then the core-settings model is the
+            // authoritative source (the pre-kernel Electron fallbacks match:
+            // mixed-port 7890, controller 9090, secret 64 zeros when absent).
+            let secret = core["controllerSecret"].as_str().unwrap_or("");
+            let secret = if regex::Regex::new(inspection::SECRET_PATTERN)
+                .expect("secret pattern")
+                .is_match(secret)
+            {
+                secret.to_string()
+            } else {
+                "0".repeat(64)
+            };
+            let runtime = serde_json::json!({
+                "mixedPort": core["mixedPort"],
+                "httpPort": if core["enabled"].as_bool() == Some(true) { core["httpPort"].clone() } else { serde_json::json!(0) },
+                "socksPort": if core["enabled"].as_bool() == Some(true) { core["socksPort"].clone() } else { serde_json::json!(0) },
+                "controllerPort": core["controllerPort"],
+                "controllerHost": core["controllerHost"],
+                "allowLan": core["allowLan"],
+                "controllerPanel": core["controllerPanel"],
+                "secret": secret,
+                "core": core,
+                "geodata": geodata
+            });
+            let effective = inspection::build_profile_kernel_config(&base, &runtime)?;
+            Ok(inspection::inspect_active_profile_config(
+                profile_name.as_deref(),
+                &document,
+                &effective,
+                &serde_json::json!({
+                    "coreOverride": core["enabled"].as_bool() == Some(true),
+                    "dnsOverride": dns["enabled"].as_bool() == Some(true),
+                    "snifferOverride": sniffer["enabled"].as_bool() == Some(true),
+                    "geodataOverride": geodata["enabled"].as_bool() == Some(true),
+                    "tunEnabled": false
+                }),
+            ))
+        }
 
         // --- overrides (Phase 3A) -------------------------------------------
         "overrides:list" => overrides.list(),
@@ -386,11 +451,72 @@ mod tests {
             "profiles:import-from-url",
             "profiles:update-from-source",
             "profiles:get-provider-content",
-            "profiles:inspect-active-config",
         ] {
             let error = dispatch(channel, &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage).unwrap_err();
             assert!(error.0.starts_with("PROTOCOL_ERROR:UNSUPPORTED::"), "{channel}: {}", error.0);
         }
+    }
+
+    #[test]
+    fn inspect_active_config_unavailable_without_a_profile() {
+        let f = fixtures();
+        let inspection = dispatch("profiles:inspect-active-config", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage).unwrap();
+        assert_eq!(inspection["profileName"], Value::Null);
+        assert_eq!(inspection["sections"]["core"]["profileYaml"], "（未配置）");
+        assert_eq!(inspection["sections"]["tun"]["notes"][0], "TUN 当前未启用；启用状态和完整 TUN 参数由应用管理。");
+    }
+
+    #[test]
+    fn inspect_active_config_composes_overrides_and_models() {
+        let temp = TempDir::new().unwrap();
+        let profiles = Arc::new(ProfilesService::for_development(&temp.path().to_path_buf()));
+        let profiles_for_import = profiles.clone();
+        let imported = profiles_for_import
+            .import(&serde_json::json!({
+                "name": "Home",
+                "document": "proxies: []\nrules:\n  - \"MATCH,A\"\nmixed-port: 1\nsecret: bad\n",
+                "source": { "type": "manual" }
+            }))
+            .unwrap();
+        let id = imported["id"].as_str().unwrap().to_string();
+        profiles.activate(&id).unwrap();
+        let f = Fixture {
+            _temp: temp,
+            paths: AppPaths { app_data_root: None, profile_root: None },
+            settings: SettingsStore::new(None),
+            profiles,
+            overrides: OverrideService::new(None),
+            models: enhancements::ModelStores::new(None),
+            usage: usage::UsageHistoryService::new(usage::UsageHistoryStore::in_memory()),
+        };
+        // One global override the composition must apply (unified-delay is a
+        // CORE_KEYS member, so the core excerpt proves the pipeline ran).
+        f.overrides
+            .create(&serde_json::json!({
+                "name": "Port", "kind": "yaml", "scope": "global", "profileId": null,
+                "content": "unified-delay: true\n"
+            }))
+            .unwrap();
+        // DNS enhancement on: the composed effective config must carry it.
+        f.models
+            .dns
+            .set(&serde_json::json!({ "enabled": true, "nameserver": ["tls://223.5.5.5"] }), enhancements::coerce_dns_enhancement)
+            .unwrap();
+        let inspection = dispatch("profiles:inspect-active-config", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage).unwrap();
+        assert_eq!(inspection["profileName"], "Home");
+        let core = &inspection["sections"]["core"];
+        assert!(core["effectiveYaml"].as_str().unwrap().contains("unified-delay: true"), "{}", core["effectiveYaml"]);
+        assert!(core["effectiveYaml"].as_str().unwrap().contains("mixed-port: 7890"), "{}", core["effectiveYaml"]);
+        // The section excerpt masks the secret (exercised by the unit test).
+        assert!(core["effectiveYaml"].as_str().unwrap().contains("secret: \"********\""), "{}", core["effectiveYaml"]);
+        // The DNS excerpt carries the enhancement's nameserver.
+        assert!(
+            inspection["sections"]["dns"]["effectiveYaml"].as_str().unwrap().contains("tls://223.5.5.5"),
+            "{}",
+            inspection["sections"]["dns"]["effectiveYaml"]
+        );
+        assert_eq!(core["effectiveYaml"].as_str().unwrap().contains("（未配置）"), false);
+        assert_eq!(inspection["sections"]["dns"]["notes"][0], "DNS 覆写已启用，应用字段优先，未知字段保留。");
     }
 
     #[test]

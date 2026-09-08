@@ -176,6 +176,6 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
 .break-all { word-break: break-all; }
 .detail-note { margin: 14px 0 0; color: var(--app-muted); font-size: 11px; }
 .inline-error { margin-top: 8px; color: var(--app-danger, #d64f4f); font-size: 12px; }
-.quiet-button { min-height: 28px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: 7px; background: transparent; color: var(--app-muted); font-size: 11px; white-space: nowrap; flex-shrink: 0; }
+.quiet-button { width: 102px; min-height: 30px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: 7px; background: transparent; color: var(--app-muted); font-size: 11px; white-space: nowrap; flex-shrink: 0; }
 .quiet-button:disabled { opacity: 0.5; }
 </style>

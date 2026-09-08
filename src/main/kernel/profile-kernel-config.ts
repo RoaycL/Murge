@@ -221,7 +221,14 @@ export function buildProfileKernelConfig(
   // config therefore reflects the model (read-back). When disabled the profile's
   // own values are left untouched.
   if (options.core?.enabled) {
-    Object.assign(config, buildCoreSettingsBlock(options.core))
+    const existingProfile = config.profile && typeof config.profile === 'object' && !Array.isArray(config.profile)
+      ? config.profile as Record<string, unknown>
+      : {}
+    const controlled = buildCoreSettingsBlock(options.core)
+    const controlledProfile = controlled.profile as Record<string, unknown>
+    delete controlled.profile
+    Object.assign(config, controlled)
+    config.profile = { ...existingProfile, ...controlledProfile }
     if (!options.core.interfaceName) delete config['interface-name']
     // DNS AAAA behavior and the top-level routing capability must agree. Keeping
     // two independently-owned IPv6 switches divergent produces either unusable

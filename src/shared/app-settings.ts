@@ -10,10 +10,8 @@ import type { KernelVersionChannel } from './kernel-manager'
 
 export interface AppSettings {
   /**
-   * Start the kernel automatically when the app launches, so the Policy/Rules
-   * views reflect the active profile immediately without a manual start. A
-   * remembered proxy/TUN intent still starts the required host when this is
-   * false; those takeovers cannot function without a live kernel.
+   * Deprecated compatibility field. The kernel now always follows the app,
+   * regardless of this historical preference.
    */
   autoStartKernel: boolean
   /**
@@ -36,13 +34,13 @@ export interface AppSettings {
    */
   tunDesired: boolean
   /**
-   * Master switch for the kernel: when false the kernel refuses to start
-   * (automatic and manual). The safe default is enabled.
+   * Deprecated compatibility field. Reads and writes are normalized to true;
+   * Smart selection is represented by `kernelChannel` instead.
    */
   kernelEnabled: boolean
   /**
-   * Which kernel build the next start uses. `stable` is the built-in pinned
-   * build; `specific` runs the user-selected mihomo version.
+   * Which kernel build the next start uses: built-in stable, upstream preview,
+   * Smart fork, or a user-selected official version.
    */
   kernelChannel: KernelVersionChannel
   /**
@@ -142,12 +140,13 @@ export function parseAppSettings(value: string | null): AppSettings {
         typeof parsed.tunDesired === 'boolean'
           ? parsed.tunDesired
           : DEFAULT_APP_SETTINGS.tunDesired,
-      kernelEnabled:
-        typeof parsed.kernelEnabled === 'boolean'
-          ? parsed.kernelEnabled
-          : DEFAULT_APP_SETTINGS.kernelEnabled,
+      // The kernel now follows the application's lifecycle. Preserve the field
+      // on disk for backward compatibility, but migrate every older OFF value.
+      kernelEnabled: true,
       kernelChannel:
-        parsed.kernelChannel === 'specific' ? 'specific' : DEFAULT_APP_SETTINGS.kernelChannel,
+        parsed.kernelChannel === 'specific' || parsed.kernelChannel === 'preview' || parsed.kernelChannel === 'smart'
+          ? parsed.kernelChannel
+          : DEFAULT_APP_SETTINGS.kernelChannel,
       kernelSpecificVersion:
         typeof parsed.kernelSpecificVersion === 'string'
           ? parsed.kernelSpecificVersion

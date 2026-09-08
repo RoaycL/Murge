@@ -186,7 +186,7 @@ export interface DesktopApi {
   kernelManager: {
     getState(): Promise<KernelManagerState>
     setEnabled(enabled: boolean): Promise<KernelManagerState>
-    setChannel(channel: 'stable' | 'specific'): Promise<KernelManagerState>
+    setChannel(channel: KernelManagerState['channel']): Promise<KernelManagerState>
     listVersions(): Promise<KernelManagerState>
     install(version: string): Promise<KernelManagerState>
     onState(listener: (state: KernelManagerState) => void): () => void

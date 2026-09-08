@@ -8,6 +8,8 @@ const valid = {
   ipv6: true,
   tcpConcurrent: false,
   unifiedDelay: true,
+  storeSelected: true,
+  storeFakeIp: true,
   findProcessMode: 'strict',
   interfaceName: 'Ethernet',
   mixedPort: 7892,

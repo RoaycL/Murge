@@ -308,9 +308,9 @@ describe('buildIpcHandlers', () => {
       expect(result).toEqual(await container.kernelManager.getState())
     })
 
-    it('stops the active runtime before disabling the kernel manager', async () => {
+    it('switches Smart off without stopping the app-owned kernel', async () => {
       const result = await handlers[IPC.kernelManagerSetEnabled](null, false)
-      expect(container.kernel.stopCalls).toBe(1)
+      expect(container.kernel.stopCalls).toBe(0)
       expect(container.kernelManager.setEnabledCalls).toEqual([false])
       expect(result).toEqual(await container.kernelManager.getState())
     })
@@ -322,10 +322,10 @@ describe('buildIpcHandlers', () => {
       expect(container.kernelManager.setEnabledCalls).toEqual([true])
     })
 
-    it('does not persist disabled when runtime shutdown fails', async () => {
+    it('does not depend on the standalone kernel-stop path', async () => {
       container.kernel.stop = vi.fn(async () => { throw new Error('restore failed') })
-      await expect(handlers[IPC.kernelManagerSetEnabled](null, false)).rejects.toThrow('restore failed')
-      expect(container.kernelManager.setEnabledCalls).toEqual([])
+      await expect(handlers[IPC.kernelManagerSetEnabled](null, false)).resolves.toBeDefined()
+      expect(container.kernelManager.setEnabledCalls).toEqual([false])
     })
 
     it('rejects a non-boolean enable toggle BEFORE reaching the gateway', async () => {

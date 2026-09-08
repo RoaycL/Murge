@@ -80,6 +80,12 @@ describe('Phase 9B privileged service protocol', () => {
       undefined,
       150_000
     )
+    await expect(new TunServiceClient(transport).installVersion('smart')).resolves.toBeUndefined()
+    expect(vi.mocked(transport.request)).toHaveBeenLastCalledWith(
+      expect.objectContaining({ operation: 'install', version: 'smart' }),
+      undefined,
+      150_000
+    )
   })
 
   it('validates the exact digest-bound profile with the service-owned kernel', async () => {

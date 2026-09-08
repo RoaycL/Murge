@@ -76,8 +76,17 @@ describe('controlled core settings config integration', () => {
     expect((out.dns as Record<string, unknown>).ipv6).toBe(false)
     expect(out['tcp-concurrent']).toBe(false)
     expect(out['unified-delay']).toBe(true)
+    expect(out.profile).toEqual({ 'store-selected': true, 'store-fake-ip': true })
     expect(out['find-process-mode']).toBe('off')
     expect(out['interface-name']).toBe('Ethernet')
+  })
+
+  it('merges controlled persistence flags without deleting other profile keys', () => {
+    const document = `${PROFILE}\nprofile:\n  tracing: true\n  store-selected: false\n`
+    const out = parse(buildProfileKernelConfig(document, {
+      mixedPort: 2080, controllerPort: 2090, secret: SECRET, core: ENABLED
+    })) as Record<string, unknown>
+    expect(out.profile).toEqual({ tracing: true, 'store-selected': true, 'store-fake-ip': true })
   })
 
   it('conflict handling: an enabled model overrides the profile own keys', () => {

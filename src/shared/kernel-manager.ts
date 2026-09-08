@@ -2,14 +2,13 @@
  * Kernel management contract shared across main, preload and renderer.
  *
  * The kernel is a pinned, checksum-verified mihomo build. This module adds a
- * user-facing version manager: a master enable switch plus the ability to run a
- * specific published mihomo version ("specific" channel) instead of the built-in
- * pinned "stable" build. Every install is still verified against the SHA-256 the
+ * user-facing version manager: stable, preview, Smart and specific published
+ * builds. Every install is still verified against the SHA-256 the
  * upstream release publishes for its asset before any binary is extracted, so a
  * specific version can never smuggle in an unverified payload.
  */
 
-export type KernelVersionChannel = 'stable' | 'specific'
+export type KernelVersionChannel = 'stable' | 'preview' | 'smart' | 'specific'
 
 /**
  * Snapshot of the kernel manager. The durable choices (enabled / channel /
@@ -17,8 +16,10 @@ export type KernelVersionChannel = 'stable' | 'specific'
  * transient runtime state owned by the main-process service.
  */
 export interface KernelManagerState {
-  /** Master switch: when false the kernel refuses to start. */
+  /** Kept for wire compatibility; the kernel now always follows the app. */
   enabled: boolean
+  /** Whether the Smart fork is currently selected. */
+  smartEnabled: boolean
   /** Which kernel build the next start will use. */
   channel: KernelVersionChannel
   /** The built-in pinned build, e.g. `v1.19.30`. */
@@ -41,6 +42,7 @@ export interface KernelManagerState {
 
 export const DEFAULT_KERNEL_MANAGER_STATE: Readonly<KernelManagerState> = Object.freeze({
   enabled: true,
+  smartEnabled: false,
   channel: 'stable',
   stableVersion: '',
   specificVersion: null,
@@ -56,7 +58,8 @@ export const DEFAULT_KERNEL_MANAGER_STATE: Readonly<KernelManagerState> = Object
 export function coerceKernelManagerState(value: unknown): KernelManagerState {
   if (!value || typeof value !== 'object') return { ...DEFAULT_KERNEL_MANAGER_STATE }
   const o = value as Record<string, unknown>
-  const channel: KernelVersionChannel = o.channel === 'specific' ? 'specific' : 'stable'
+  const channel: KernelVersionChannel =
+    o.channel === 'specific' || o.channel === 'preview' || o.channel === 'smart' ? o.channel : 'stable'
   const stableVersion = typeof o.stableVersion === 'string' ? o.stableVersion : ''
   const specificVersion =
     typeof o.specificVersion === 'string' && o.specificVersion.trim().length > 0
@@ -65,11 +68,10 @@ export function coerceKernelManagerState(value: unknown): KernelManagerState {
   const effectiveVersion =
     typeof o.effectiveVersion === 'string' && o.effectiveVersion.trim().length > 0
       ? o.effectiveVersion
-      : channel === 'specific'
-        ? specificVersion
-        : stableVersion
+      : channel === 'specific' ? specificVersion : channel === 'preview' ? '预览版' : channel === 'smart' ? 'Smart' : stableVersion
   return {
-    enabled: o.enabled !== false,
+    enabled: true,
+    smartEnabled: channel === 'smart',
     channel,
     stableVersion,
     specificVersion,

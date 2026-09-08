@@ -68,7 +68,7 @@ describe('parseAppSettings', () => {
   it('reads persisted kernel channel and version', () => {
     expect(
       parseAppSettings('{"kernelEnabled":false,"kernelChannel":"specific","kernelSpecificVersion":"v1.19.20"}')
-    ).toEqual({ ...DEFAULT_OBJ, kernelEnabled: false, kernelChannel: 'specific', kernelSpecificVersion: 'v1.19.20' })
+    ).toEqual({ ...DEFAULT_OBJ, kernelEnabled: true, kernelChannel: 'specific', kernelSpecificVersion: 'v1.19.20' })
   })
 
   it('reads delay-test URL scope and target while older files use safe defaults', () => {
@@ -148,12 +148,12 @@ describe('AppSettingsService', () => {
     base = await mkdtemp(join(tmpdir(), 'app-settings-'))
     const service = new AppSettingsService(base)
     await service.set({ kernelEnabled: false })
-    expect(await service.get()).toEqual({ ...DEFAULT_OBJ, kernelEnabled: false })
+    expect(await service.get()).toEqual({ ...DEFAULT_OBJ, kernelEnabled: true })
 
     await service.set({ kernelChannel: 'specific', kernelSpecificVersion: 'v1.19.20' })
     expect(await service.get()).toEqual({
       ...DEFAULT_OBJ,
-      kernelEnabled: false,
+      kernelEnabled: true,
       kernelChannel: 'specific',
       kernelSpecificVersion: 'v1.19.20'
     })

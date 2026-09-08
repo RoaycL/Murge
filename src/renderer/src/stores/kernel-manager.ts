@@ -44,7 +44,7 @@ export const useKernelManagerStore = defineStore('kernel-manager', () => {
     }
   }
 
-  async function setChannel(channel: 'stable' | 'specific'): Promise<boolean> {
+  async function setChannel(channel: KernelManagerState['channel']): Promise<boolean> {
     if (busy.value) return false
     const previous = { ...state.value }
     state.value = { ...state.value, channel }

@@ -43,10 +43,9 @@ export class AppSettingsService implements AppSettingsGateway {
             : current.systemProxyDesired,
         tunDesired:
           typeof patch.tunDesired === 'boolean' ? patch.tunDesired : current.tunDesired,
-        kernelEnabled:
-          typeof patch.kernelEnabled === 'boolean' ? patch.kernelEnabled : current.kernelEnabled,
+        kernelEnabled: true,
         kernelChannel:
-          patch.kernelChannel === 'stable' || patch.kernelChannel === 'specific'
+          patch.kernelChannel === 'stable' || patch.kernelChannel === 'preview' || patch.kernelChannel === 'smart' || patch.kernelChannel === 'specific'
             ? patch.kernelChannel
             : current.kernelChannel,
         kernelSpecificVersion:

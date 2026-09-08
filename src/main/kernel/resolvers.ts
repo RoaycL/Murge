@@ -123,7 +123,7 @@ export interface MihomoKernelResolverOptions {
    * version routes the resolve through `ensureSpecificBinary`; otherwise the
    * pinned stable build is used. Defaults to `{ channel: 'stable' }`.
    */
-  versionSelection?: () => Promise<{ channel: 'stable' | 'specific'; specificVersion: string | null }>
+  versionSelection?: () => Promise<{ channel: 'stable' | 'preview' | 'smart' | 'specific'; specificVersion: string | null }>
   /**
    * Resolve (download + verify + reuse) a specific mihomo version into its own
    * workspace. Called by the resolver only when the selected channel is
@@ -171,12 +171,10 @@ export class MihomoKernelResolver implements KernelBinaryResolver {
     }
     if (this.options.versionSelection) {
       const selection = await this.options.versionSelection()
-      if (
-        selection.channel === 'specific' &&
-        selection.specificVersion &&
-        this.options.ensureSpecificBinary
-      ) {
-        const bin = await this.options.ensureSpecificBinary(selection.specificVersion)
+      const selectedVersion = selection.channel === 'specific' ? selection.specificVersion :
+        selection.channel === 'preview' || selection.channel === 'smart' ? selection.channel : null
+      if (selectedVersion && this.options.ensureSpecificBinary) {
+        const bin = await this.options.ensureSpecificBinary(selectedVersion)
         return {
           command: bin.path,
           args: [],

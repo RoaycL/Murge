@@ -21,6 +21,15 @@ import (
 
 const githubAPIBase = "https://api.github.com/repos/MetaCubeX/mihomo/releases/tags/"
 
+type coreReleaseSpec struct {
+	APIBase     string
+	OwnerRepo   string
+	Tag         string
+	AssetPrefix string
+	AssetExact  string
+	InnerName   string
+}
+
 type githubReleaseAsset struct {
 	Name               string `json:"name"`
 	Digest             string `json:"digest"`
@@ -114,6 +123,44 @@ func mihomoWindowsArch() (string, error) {
 	}
 }
 
+func releaseSpec(version string) (coreReleaseSpec, error) {
+	arch, err := mihomoWindowsArch()
+	if err != nil {
+		return coreReleaseSpec{}, err
+	}
+	standardArch := arch
+	if arch == "amd64" {
+		standardArch = "amd64-compatible"
+	}
+	if version == "preview" {
+		prefix := fmt.Sprintf("mihomo-windows-%s", standardArch)
+		return coreReleaseSpec{
+			APIBase: githubAPIBase, OwnerRepo: "MetaCubeX/mihomo", Tag: "Prerelease-Alpha",
+			AssetPrefix: prefix + "-", InnerName: prefix + ".exe",
+		}, nil
+	}
+	if version == "smart" {
+		smartArch := arch
+		if arch == "amd64" {
+			smartArch = "amd64-v2-go120"
+		}
+		if arch == "386" {
+			smartArch = "386-go120"
+		}
+		prefix := fmt.Sprintf("mihomo-windows-%s", smartArch)
+		return coreReleaseSpec{
+			APIBase:   "https://api.github.com/repos/vernesong/mihomo/releases/tags/",
+			OwnerRepo: "vernesong/mihomo", Tag: "Prerelease-Alpha",
+			AssetPrefix: prefix + "-", InnerName: prefix + ".exe",
+		}, nil
+	}
+	name := fmt.Sprintf("mihomo-windows-%s-%s.zip", arch, version)
+	return coreReleaseSpec{
+		APIBase: githubAPIBase, OwnerRepo: "MetaCubeX/mihomo", Tag: version,
+		AssetExact: name, InnerName: fmt.Sprintf("mihomo-windows-%s.exe", arch),
+	}, nil
+}
+
 func officialHTTPClient(timeout time.Duration, proxyPort int) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if proxyPort > 0 {
@@ -148,7 +195,11 @@ func fetchOfficialAsset(version string, proxyPort int) (githubReleaseAsset, erro
 }
 
 func fetchOfficialAssetWithClient(version string, client *http.Client) (githubReleaseAsset, error) {
-	request, err := http.NewRequest(http.MethodGet, githubAPIBase+url.PathEscape(version), nil)
+	spec, err := releaseSpec(version)
+	if err != nil {
+		return githubReleaseAsset{}, err
+	}
+	request, err := http.NewRequest(http.MethodGet, spec.APIBase+url.PathEscape(spec.Tag), nil)
 	if err != nil {
 		return githubReleaseAsset{}, err
 	}
@@ -167,22 +218,21 @@ func fetchOfficialAssetWithClient(version string, client *http.Client) (githubRe
 	if err := decoder.Decode(&release); err != nil {
 		return githubReleaseAsset{}, err
 	}
-	if release.TagName != version {
+	if release.TagName != spec.Tag {
 		return githubReleaseAsset{}, errors.New("GitHub release tag mismatch")
 	}
-	arch, err := mihomoWindowsArch()
-	if err != nil {
-		return githubReleaseAsset{}, err
-	}
-	expectedName := fmt.Sprintf("mihomo-windows-%s-%s.zip", arch, version)
 	for _, asset := range release.Assets {
-		if asset.Name != expectedName {
+		matches := asset.Name == spec.AssetExact
+		if spec.AssetPrefix != "" {
+			matches = strings.HasPrefix(asset.Name, spec.AssetPrefix) && strings.HasSuffix(asset.Name, ".zip")
+		}
+		if !matches {
 			continue
 		}
 		digest := strings.TrimPrefix(asset.Digest, "sha256:")
 		parsed, parseErr := url.Parse(asset.BrowserDownloadURL)
 		if parseErr != nil || parsed.Scheme != "https" || parsed.Hostname() != "github.com" ||
-			!strings.HasPrefix(parsed.Path, "/MetaCubeX/mihomo/releases/download/"+version+"/") {
+			!strings.HasPrefix(parsed.Path, "/"+spec.OwnerRepo+"/releases/download/"+spec.Tag+"/") {
 			return githubReleaseAsset{}, errors.New("unsafe mihomo release URL")
 		}
 		if !sha256Pattern.MatchString(digest) || asset.Size <= 0 || asset.Size > maxCoreBytes {
@@ -191,7 +241,7 @@ func fetchOfficialAssetWithClient(version string, client *http.Client) (githubRe
 		asset.Digest = digest
 		return asset, nil
 	}
-	return githubReleaseAsset{}, fmt.Errorf("official mihomo asset %s was not found", expectedName)
+	return githubReleaseAsset{}, fmt.Errorf("official mihomo asset for %s was not found", version)
 }
 
 func downloadOfficialAsset(asset githubReleaseAsset, destination string, proxyPort int) error {
@@ -326,12 +376,11 @@ func (runtime *windowsRuntime) versionCore(version string, proxyPort int) (strin
 			return "", "", err
 		}
 	}
-	arch, err := mihomoWindowsArch()
+	spec, err := releaseSpec(version)
 	if err != nil {
 		return "", "", err
 	}
-	innerName := fmt.Sprintf("mihomo-windows-%s.exe", arch)
-	binaryDigest, err := extractVersionCore(archivePath, innerName, corePath)
+	binaryDigest, err := extractVersionCore(archivePath, spec.InnerName, corePath)
 	if err != nil {
 		return "", "", err
 	}

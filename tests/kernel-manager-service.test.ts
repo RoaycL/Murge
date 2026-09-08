@@ -57,21 +57,23 @@ describe('KernelManagerService', () => {
       await rm(base, { recursive: true, force: true })
     })
 
-    it('reflects a disabled kernel', async () => {
+    it('migrates a legacy disabled kernel to always-on', async () => {
       const { service, settings, base } = await makeService()
       await settings.set({ kernelEnabled: false })
       const state = await service.getState()
-      expect(state.enabled).toBe(false)
+      expect(state.enabled).toBe(true)
       await rm(base, { recursive: true, force: true })
     })
   })
 
   describe('setEnabled / setChannel', () => {
-    it('persists the enable toggle through the settings gateway', async () => {
+    it('uses the former enable toggle for Smart core selection', async () => {
       const { service, settings, base } = await makeService()
-      const state = await service.setEnabled(false)
-      expect(state.enabled).toBe(false)
-      expect(settings.settings.kernelEnabled).toBe(false)
+      const smart = await service.setEnabled(true)
+      expect(smart).toMatchObject({ enabled: true, smartEnabled: true, channel: 'smart', effectiveVersion: 'Smart' })
+      expect(settings.settings.kernelChannel).toBe('smart')
+      const stable = await service.setEnabled(false)
+      expect(stable).toMatchObject({ enabled: true, smartEnabled: false, channel: 'stable' })
       await rm(base, { recursive: true, force: true })
     })
 
@@ -101,6 +103,25 @@ describe('KernelManagerService', () => {
         channel: 'specific', specificVersion: 'v1.19.20'
       })
       expect(state).toMatchObject({ channel: 'stable', effectiveVersion: 'v1.19.30', error: null })
+      await rm(base, { recursive: true, force: true })
+    })
+
+    it('installs and applies the trusted Smart channel before selecting it', async () => {
+      const base = await mkdtemp(join(tmpdir(), 'kernel-manager-smart-'))
+      const settings = new FakeAppSettingsGateway()
+      const installVersion = vi.fn(async () => undefined)
+      const applyInstalledVersion = vi.fn(async () => undefined)
+      const service = new KernelManagerService({
+        settings,
+        workspaceRoot: join(base, 'kernel'),
+        stableVersion: 'v1.19.30',
+        installVersion,
+        applyInstalledVersion
+      })
+      const state = await service.setEnabled(true)
+      expect(installVersion).toHaveBeenCalledWith('smart')
+      expect(applyInstalledVersion).toHaveBeenCalledWith('smart', { channel: 'stable', specificVersion: null })
+      expect(state).toMatchObject({ enabled: true, smartEnabled: true, channel: 'smart', effectiveVersion: 'Smart' })
       await rm(base, { recursive: true, force: true })
     })
 
@@ -292,11 +313,11 @@ describe('KernelManagerService', () => {
   })
 
   describe('resolver callbacks', () => {
-    it('isEnabled reflects the settings gate', async () => {
+    it('isEnabled remains true because the kernel follows the app', async () => {
       const { service, settings, base } = await makeService()
       expect(await service.isEnabled()).toBe(true)
       await settings.set({ kernelEnabled: false })
-      expect(await service.isEnabled()).toBe(false)
+      expect(await service.isEnabled()).toBe(true)
       await rm(base, { recursive: true, force: true })
     })
 

@@ -48,10 +48,8 @@ export async function restoreRuntimeIntent(
 ): Promise<RuntimeIntentRestoreResult> {
   const delay = deps.delay ?? wait
   const retryDelays = deps.retryDelaysMs ?? RETRY_DELAYS_MS
-  const needsHost = settings.autoStartKernel || settings.tunDesired || settings.systemProxyDesired
-
   let kernelStatus = await deps.kernel.getStatus()
-  if (settings.kernelEnabled && needsHost && RETRYABLE_KERNEL_PHASES.has(kernelStatus.phase)) {
+  if (RETRYABLE_KERNEL_PHASES.has(kernelStatus.phase)) {
     kernelStatus = await retryKernelStart(deps, delay, retryDelays)
   }
 
@@ -60,7 +58,7 @@ export async function restoreRuntimeIntent(
   }
 
   let tunStatus = await deps.tun.getStatus()
-  if (settings.kernelEnabled && kernelStatus.phase === 'running' && settings.tunDesired) {
+  if (kernelStatus.phase === 'running' && settings.tunDesired) {
     tunStatus = await retryTunStart(deps, delay, retryDelays)
     if (tunStatus.phase === 'active') {
       // A successful mode switch starts a fresh elevated mihomo host. Reapply
@@ -72,7 +70,6 @@ export async function restoreRuntimeIntent(
   kernelStatus = await deps.kernel.getStatus()
   let proxyStatus = await deps.systemProxy.getStatus()
   if (
-    settings.kernelEnabled &&
     settings.systemProxyDesired &&
     kernelStatus.phase === 'running' &&
     proxyStatus.supported &&

@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module'
-import { app, Notification } from 'electron'
+import { app, net, Notification } from 'electron'
 import { brand } from '@shared/brand'
 import type { UpdaterDriver, UpdaterDriverEvent } from './updater-driver'
 
@@ -41,10 +41,11 @@ export class ElectronUpdaterDriver implements UpdaterDriver {
   readonly currentVersion: string
   readonly supported: boolean
   private listeners: Set<(event: UpdaterDriverEvent) => void> = new Set()
-  /** The feed base URL that worked most recently; reused until it fails. */
+  /** The complete generic feed URL that worked most recently; reused first. */
   private resolvedFeedBase: string | null = null
   /** Per-source failures are internal to fallback; publish only the final result. */
   private checkingWithFallback = false
+  private checkInFlight = false
   private readonly notifications = new Set<Notification>()
 
   constructor(private readonly onNotificationClick: () => void = () => undefined) {
@@ -103,75 +104,87 @@ export class ElectronUpdaterDriver implements UpdaterDriver {
   }
 
   check(): void {
-    if (!this.supported) return
+    if (!this.supported || this.checkInFlight) return
     // electron-updater normally surfaces failures through the 'error' event, but
     // a pre-flight failure (bad feed descriptor, unparseable metadata) can reject
     // the promise WITHOUT emitting 'error'. The fallback runner below routes every
     // outcome — including a synchronous throw — into the same 'error' event so the
     // service's state machine never gets stuck in 'checking'.
-    void this.checkWithProxyFallback().catch((error) => {
-      this.emit({ kind: 'error', message: error instanceof Error ? error.message : String(error) })
-    })
+    this.checkInFlight = true
+    void this.checkWithProxyFallback()
+      .catch((error) => {
+        this.emit({ kind: 'error', message: error instanceof Error ? error.message : String(error) })
+      })
+      .finally(() => { this.checkInFlight = false })
   }
 
   /**
-   * Try the update check against the last-known-good feed, then each GitHub
-   * mirror, then a direct connection, re-pointing electron-updater's feed URL
-   * at the first source that yields a usable response. Only when ALL sources
-   * fail is an 'error' event emitted. This is what keeps update checks working
-   * where `github.com` is unreachable (the mihomo-party proxy-fallback model).
+   * Probe metadata with cancellable HTTP requests, then invoke electron-updater
+   * exactly once against the selected source. Timing out checkForUpdates itself
+   * cannot cancel its internal request; starting another check after that races
+   * two updater requests and produces ERR_CONNECTION_ABORTED/CLOSED.
    */
   private async checkWithProxyFallback(): Promise<void> {
     const bases = this.feedBaseCandidates()
     let lastError: unknown = null
     this.checkingWithFallback = true
     try {
-      for (const base of bases) {
-        try {
-          await this.tryCheck(base)
-          this.resolvedFeedBase = base
-          return
-        } catch (error) {
-          lastError = error
-          this.resolvedFeedBase = null
-        }
-      }
+      // Metadata probes are independent and cancellable, so race them instead
+      // of making an unreachable source add five seconds before every fallback.
+      const selectedBase = await this.selectFeedBase(bases)
+      this.resolvedFeedBase = selectedBase
+      autoUpdater.setFeedURL({ provider: 'generic', url: selectedBase })
+      await autoUpdater.checkForUpdates()
+      return
+    } catch (error) {
+      this.resolvedFeedBase = null
+      lastError = error
     } finally {
       this.checkingWithFallback = false
     }
     this.emit({
       kind: 'error',
-      message: lastError instanceof Error ? lastError.message : String(lastError ?? 'update check failed on all sources')
+      message: `无法连接更新源，请检查网络或稍后重试（${lastError instanceof Error ? lastError.message : String(lastError ?? 'unknown error')}）`
     })
   }
 
   /**
-   * Ordered feed bases: the previously-working one first, then each mirror,
-   * then direct ('' = electron-updater's baked-in github provider). De-duplicated
-   * and without repeats of the resolved base.
+   * Ordered complete feed URLs: last-known-good first, direct GitHub next (so
+   * Windows/system proxy handling remains native), then prefix mirrors.
    */
   private feedBaseCandidates(): string[] {
-    const all = [this.resolvedFeedBase ?? '', ...GITHUB_PROXIES, '']
+    const { owner, repo } = this.ownerRepo()
+    const direct = `https://github.com/${owner}/${repo}/releases/latest/download`
+    const mirrors = GITHUB_PROXIES.map((proxy) => `${proxy}/${direct}`)
+    const all = [this.resolvedFeedBase ?? direct, direct, ...mirrors]
     return [...new Set(all)]
   }
 
   /**
-   * Point electron-updater at `base` and run a single check. When `base` is a
-   * mirror the baked-in GitHub provider is overridden with a generic feed whose
-   * URL is `<mirror>/<github-release-url>`; when empty the original provider is
-   * restored. The GitHub release layout (…/releases/latest/download/latest.yml)
-   * is what both the real feed and every mirror serve.
+   * A real, cancellable metadata request. The response body is deliberately
+   * consumed so connection failures are observed before selecting the source.
    */
-  private async tryCheck(base: string): Promise<void> {
-    const { owner, repo } = this.ownerRepo()
-    if (base) {
-      // Mirror: serve the release layout from `<mirror>/<owner>/<repo>` via the
-      // generic provider (a plain static directory holding latest.yml).
-      autoUpdater.setFeedURL({ provider: 'generic', url: `${base}/${owner}/${repo}` })
-    } else {
-      autoUpdater.setFeedURL({ provider: 'github', owner, repo })
+  private async selectFeedBase(bases: readonly string[]): Promise<string> {
+    const controllers = bases.map(() => new AbortController())
+    try {
+      return await Promise.any(bases.map(async (base, index) => {
+        await this.probeFeed(base, controllers[index]!.signal)
+        return base
+      }))
+    } finally {
+      for (const controller of controllers) controller.abort()
     }
-    await this.withTimeout(autoUpdater.checkForUpdates(), FEED_PROBE_TIMEOUT_MS)
+  }
+
+  private async probeFeed(base: string, signal: AbortSignal): Promise<void> {
+    const response = await net.fetch(`${base}/latest.yml`, {
+      method: 'GET',
+      signal: AbortSignal.any([signal, AbortSignal.timeout(FEED_PROBE_TIMEOUT_MS)]),
+      cache: 'no-store'
+    })
+    if (!response.ok) throw new Error(`update feed returned HTTP ${response.status}`)
+    const body = await response.text()
+    if (!/^(version|path|files):/m.test(body)) throw new Error('update feed returned invalid metadata')
   }
 
   /** `{owner, repo}` parsed from the brand's repository URL (never hardcoded). */
@@ -179,17 +192,6 @@ export class ElectronUpdaterDriver implements UpdaterDriver {
     const path = new URL(brand.repositoryUrl).pathname.replace(/^\/+|\/+$/g, '')
     const [owner = '', repo = ''] = path.split('/')
     return { owner, repo }
-  }
-
-  /** Reject after `ms` so a hung source does not stall the fallback chain. */
-  private withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`update feed timed out after ${ms}ms`)), ms)
-      promise.then(
-        (value) => { clearTimeout(timer); resolve(value) },
-        (error) => { clearTimeout(timer); reject(error) }
-      )
-    })
   }
 
   download(): void {

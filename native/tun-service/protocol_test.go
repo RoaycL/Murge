@@ -132,6 +132,14 @@ func TestDecodeOfficialVersionInstall(t *testing.T) {
 	if _, err := decodeRequest(data); err == nil {
 		t.Fatal("accepted a non-version install target")
 	}
+	for _, channel := range []string{"preview", "smart"} {
+		data, _ = json.Marshal(serviceRequest{
+			ProtocolVersion: protocolVersion, RequestID: "4", Operation: "install", Version: channel,
+		})
+		if _, err := decodeRequest(data); err != nil {
+			t.Fatalf("rejected trusted %s channel: %v", channel, err)
+		}
+	}
 }
 
 // The service must now accept real proxy content: that is the point of a TUN

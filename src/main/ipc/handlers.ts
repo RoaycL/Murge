@@ -61,12 +61,8 @@ export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {})
     [IPC.kernelManagerGetState]: async () => kernelManager.getState(),
     [IPC.kernelManagerSetEnabled]: async (_event, enabled) => {
       const next = parseKernelEnabled(enabled)
-      // The master switch is a runtime boundary, not just a preference. Stop
-      // through the shared mode queue first so an active TUN session and an
-      // owned system proxy are safely unwound before starts are disabled.
-      // Persist only after the stop succeeds: a failed restore must leave the
-      // switch truthful and the live listener available for recovery.
-      if (!next) await kernel.stop()
+      // This switch selects the Smart build. The kernel itself remains app-owned
+      // and the manager performs the ordered verified install + live reload.
       return kernelManager.setEnabled(next)
     },
     [IPC.kernelManagerSetChannel]: async (_event, channel) =>

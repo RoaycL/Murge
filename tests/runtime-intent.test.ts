@@ -147,7 +147,7 @@ describe('restoreRuntimeIntent', () => {
     expect(proxyEnable).not.toHaveBeenCalled()
   })
 
-  it('keeps existing installations inert when both durable intents are absent', async () => {
+  it('starts the always-on kernel without enabling unrequested network modes', async () => {
     const start = vi.fn(async () => runningKernel())
     const tunEnable = vi.fn(async () => tunStatus('active'))
     const proxyEnable = vi.fn(async () => proxyStatus('enabled'))
@@ -162,7 +162,7 @@ describe('restoreRuntimeIntent', () => {
       }
     )
 
-    expect(start).not.toHaveBeenCalled()
+    expect(start).toHaveBeenCalledTimes(1)
     expect(tunEnable).not.toHaveBeenCalled()
     expect(proxyEnable).not.toHaveBeenCalled()
   })

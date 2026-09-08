@@ -533,7 +533,7 @@ mod tests {
         let png: &[u8] = &[
             0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // signature
         ];
-        let (base, _server) = crate::subscription::test_support::start_http_stub(
+        let (_base, _server) = crate::subscription::test_support::start_http_stub(
             200,
             vec![("content-type", "image/png".to_string())],
             // The stub writes a String; encode the bytes as latin-1-safe chars.

@@ -27,6 +27,9 @@ mod override_model;
 mod override_service;
 mod paths;
 mod internet_latency;
+mod network_metadata;
+// Network metadata service: shared, cached, single-flight app state.
+use network_metadata::NetworkMetadataService;
 mod profile_parse;
 mod route_latency;
 mod icons;
@@ -126,6 +129,10 @@ pub fn run() {
                 None => std::env::temp_dir().join(format!("murge-dev-icon-cache-{}", std::process::id())),
             };
             app.manage(icons::DesktopServices::new(icon_cache_root));
+            // Egress metadata: resolved through the LIVE mixed port (kernel
+            // down fails closed with the kernel-not-running copy), cached in
+            // memory only.
+            app.manage(NetworkMetadataService::for_app(app.handle().clone()));
             app.manage(paths);
             Ok(())
         })

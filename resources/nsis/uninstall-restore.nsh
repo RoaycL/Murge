@@ -16,30 +16,34 @@
 ; exits 0 both when it restored and when it reported a safe conflict (so it never
 ; overwrites an external edit).
 ;
-; Both the system-proxy restore AND the privileged TUN service lifecycle are
+; Both the system-proxy restore AND the privileged core service lifecycle are
 ; BEST-EFFORT: neither is allowed to hard-block install or uninstall. The proxy
 ; restore is performed by launching the *installed* executable, so any release
 ; whose app cannot boot (e.g. a crash bug) would otherwise make removal — and
 ; therefore every future upgrade — impossible, trapping the user on a broken
-; install. The TUN service only serves the optional TUN-adapter mode; the core
-; system-proxy mode launches the mihomo kernel directly and never needs it. On
-; failure each path warns and continues, so the user is never locked out of
-; installing, uninstalling or upgrading; if a proxy was still registered it is
-; reset manually in Windows Settings afterwards, and a leftover TUN service can be
-; removed in the Services snap-in. The operations are still ATTEMPTED so the
-; common healthy case keeps full protection.
+; install. The privileged service owns the mihomo process used by BOTH system
+; proxy and TUN mode, so a failed service upgrade makes both modes unavailable.
+; Installation retries once after the helper's own bounded file-replacement
+; retry, covering transient SCM/antivirus locks without making removal impossible.
+; A persistent failure is surfaced accurately and the installer remains usable
+; for a repair run instead of trapping the user on a broken release.
 !macro customInstall
   IfFileExists "$INSTDIR\resources\tun-service\tun-service.exe" 0 TunServiceInstallMissing
-    DetailPrint "Installing privileged TUN lifecycle service..."
+    DetailPrint "Installing privileged core lifecycle service..."
     ExecWait '"$INSTDIR\resources\tun-service\tun-service.exe" --install' $R0
-    StrCmp $R0 0 TunServiceInstallDone TunServiceInstallWarn
+    StrCmp $R0 0 TunServiceInstallDone TunServiceInstallRetry
+    TunServiceInstallRetry:
+      DetailPrint "Privileged core service installation failed with exit code $R0; retrying after service teardown..."
+      Sleep 1500
+      ExecWait '"$INSTDIR\resources\tun-service\tun-service.exe" --install' $R0
+      StrCmp $R0 0 TunServiceInstallDone TunServiceInstallWarn
     TunServiceInstallWarn:
-      DetailPrint "TUN service installation failed with exit code $R0; continuing install since TUN is optional"
-      MessageBox MB_ICONEXCLAMATION|MB_OK "TUN 服务安装失败，本程序将继续完成安装。系统代理模式不受影响。若需 TUN 网卡模式，请以管理员身份重新安装并确认系统服务可正常启动。"
+      DetailPrint "Privileged core service installation failed twice with exit code $R0; system proxy and TUN will remain unavailable until repaired"
+      MessageBox MB_ICONEXCLAMATION|MB_OK "核心服务安装失败（错误码 $R0），系统代理和 TUN 模式暂时均不可用。请关闭 Murge 后，以管理员身份重新运行当前版本安装包完成修复。您的配置不会丢失。"
       Goto TunServiceInstallDone
   TunServiceInstallMissing:
-    DetailPrint "TUN service executable is missing; continuing install since TUN is optional"
-    MessageBox MB_ICONEXCLAMATION|MB_OK "安装包未包含 TUN 服务组件，本程序将继续完成安装。系统代理模式不受影响。"
+    DetailPrint "Privileged core service executable is missing; system proxy and TUN cannot start"
+    MessageBox MB_ICONEXCLAMATION|MB_OK "安装包缺少核心服务组件，系统代理和 TUN 模式均不可用。请重新下载完整安装包后安装。"
   TunServiceInstallDone:
   ; electron-builder preserves an existing desktop shortcut during an upgrade.
   ; Its target still points at the replaced executable, but Explorer can retain
@@ -81,8 +85,8 @@
   ${if} ${isUpdated}
     DetailPrint "Preserving privileged TUN service state for in-place upgrade..."
   ${else}
-    ; TUN removal is best-effort for the same reason as the proxy restore: a
-    ; failure to remove the optional TUN service must never trap the user in a
+    ; Service removal is best-effort for the same reason as the proxy restore: a
+    ; failure to remove the privileged core service must never trap the user in a
     ; broken install. Warn and continue; a leftover service can be cleared in
     ; the Services snap-in (or by re-running the app once it is healthy).
     IfFileExists "$INSTDIR\resources\tun-service\tun-service.exe" 0 TunServiceUninstallDone

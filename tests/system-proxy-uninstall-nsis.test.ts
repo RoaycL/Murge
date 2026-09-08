@@ -78,18 +78,21 @@ describe('uninstall-restore.nsh customUnInstall hook', () => {
     expect(source).not.toContain('GITHUB_ACTIONS')
   })
 
-  it('treats the privileged TUN service as optional (install/remove warn and continue)', () => {
+  it('retries privileged core service installation and reports both dependent modes accurately', () => {
     expect(source).toContain('--install')
     expect(source).toContain('--uninstall')
-    expect(source).toMatch(/ExecWait[^\n]*--install[^\n]*\$R0/)
+    expect(source.match(/ExecWait[^\n]*--install[^\n]*\$R0/g)).toHaveLength(2)
     expect(source).toMatch(/ExecWait[^\n]*--uninstall[^\n]*\$R0/)
-    // The TUN service only backs TUN-adapter mode; the core system-proxy mode
-    // launches the mihomo kernel directly and never needs it. So a TUN install or
-    // removal failure must NOT abort — it must warn and continue, matching the
-    // proxy-restore policy. No hard Abort / error level may remain anywhere.
+    expect(source).toContain('TunServiceInstallRetry:')
+    expect(source).toMatch(/StrCmp \$R0 0[^\n]*TunServiceInstallDone[^\n]*TunServiceInstallRetry/)
+    expect(source).toMatch(/TunServiceInstallRetry:[\s\S]*Sleep 1500[\s\S]*ExecWait[^\n]*--install/)
+    // System proxy and TUN share this service. A persistent failure must never
+    // claim that system proxy is unaffected, while uninstall remains non-blocking.
+    expect(source).toContain('系统代理和 TUN 模式暂时均不可用')
+    expect(source).not.toContain('系统代理模式不受影响')
     expect(source).toContain('TunServiceInstallWarn:')
     expect(source).toContain('TunServiceUninstallWarn:')
-    expect(source).toMatch(/StrCmp \$R0 0[^\n]*TunServiceInstallDone[^\n]*TunServiceInstallWarn/)
+    expect(source).toMatch(/TunServiceInstallRetry:[\s\S]*StrCmp \$R0 0[^\n]*TunServiceInstallDone[^\n]*TunServiceInstallWarn/)
     expect(source).toMatch(/StrCmp \$R0 0[^\n]*TunServiceUninstallDone[^\n]*TunServiceUninstallWarn/)
     const installWarn = source.indexOf('TunServiceInstallWarn:')
     expect(source.slice(installWarn)).toMatch(/MessageBox/)

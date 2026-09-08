@@ -101,4 +101,23 @@ describe('persistent-core TUN hot switch', () => {
     expect(h.current().enable).toBe(true)
     expect(h.current()['dns-hijack']).toEqual([])
   })
+
+  it('reports an existing external TUN before patching the shared core', async () => {
+    const built = buildGateway({ enable: false, device: 'Mihomo', stack: 'mixed' })
+    const adapter = new MihomoHotSwitchTunAdapter(
+      built.gateway,
+      () => ({ mixedPort: 17890, controllerPort: 19090, secret: 'ab'.repeat(32) }),
+      { waitUntilReady: vi.fn(async () => undefined) },
+      () => ({ ...EMPTY_TUN_CONFIG }),
+      5_000,
+      async () => true,
+      async (device) => device === 'Mihomo'
+    )
+
+    await expect(adapter.enable({ schemaVersion: 2, device: 'Mihomo', stack: 'mixed' })).resolves.toEqual({
+      outcome: 'conflict',
+      conflictDetail: 'TUN_INTERFACE_IN_USE'
+    })
+    expect(built.patchConfig).not.toHaveBeenCalled()
+  })
 })

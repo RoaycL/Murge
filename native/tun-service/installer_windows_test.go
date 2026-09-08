@@ -5,11 +5,34 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/svc/mgr"
 )
+
+func TestProtectedServiceDirectoriesExcludeSharedParents(t *testing.T) {
+	root := filepath.Join(`C:\ProgramData`, "murge", "tun-service")
+	serviceHome := filepath.Join(root, "service")
+	stateDirectory := filepath.Join(root, "state")
+	want := []string{serviceHome, stateDirectory}
+	if got := protectedServiceDirectories(serviceHome, stateDirectory); !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected protected directories: got %v want %v", got, want)
+	}
+}
+
+func TestPrivilegedServiceConfigSetsTypeForUpgrade(t *testing.T) {
+	template := serviceTemplate{ServiceName: "ProxyDesktopTun_test"}
+	config := privilegedServiceConfig(template)
+	if config.ServiceType != windows.SERVICE_WIN32_OWN_PROCESS {
+		t.Fatalf("upgrade service type must be explicit, got %d", config.ServiceType)
+	}
+	if config.StartType != mgr.StartAutomatic || !config.DelayedAutoStart {
+		t.Fatalf("unexpected startup configuration: %+v", config)
+	}
+}
 
 func TestCopyFileAtomicWaitsForDestinationImageLock(t *testing.T) {
 	root := t.TempDir()

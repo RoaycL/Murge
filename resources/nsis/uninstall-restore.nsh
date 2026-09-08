@@ -30,16 +30,21 @@
 !macro customInstall
   IfFileExists "$INSTDIR\resources\tun-service\tun-service.exe" 0 TunServiceInstallMissing
     DetailPrint "Installing privileged core lifecycle service..."
-    ExecWait '"$INSTDIR\resources\tun-service\tun-service.exe" --install' $R0
+    nsExec::ExecToStack '"$INSTDIR\resources\tun-service\tun-service.exe" --install'
+    Pop $R0
+    Pop $R1
     StrCmp $R0 0 TunServiceInstallDone TunServiceInstallRetry
     TunServiceInstallRetry:
-      DetailPrint "Privileged core service installation failed with exit code $R0; retrying after service teardown..."
+      DetailPrint "Privileged core service installation failed with exit code $R0: $R1"
+      DetailPrint "Retrying after service teardown..."
       Sleep 1500
-      ExecWait '"$INSTDIR\resources\tun-service\tun-service.exe" --install' $R0
+      nsExec::ExecToStack '"$INSTDIR\resources\tun-service\tun-service.exe" --install'
+      Pop $R0
+      Pop $R1
       StrCmp $R0 0 TunServiceInstallDone TunServiceInstallWarn
     TunServiceInstallWarn:
-      DetailPrint "Privileged core service installation failed twice with exit code $R0; system proxy and TUN will remain unavailable until repaired"
-      MessageBox MB_ICONEXCLAMATION|MB_OK "核心服务安装失败（错误码 $R0），系统代理和 TUN 模式暂时均不可用。请关闭 Murge 后，以管理员身份重新运行当前版本安装包完成修复。您的配置不会丢失。"
+      DetailPrint "Privileged core service installation failed twice with exit code $R0: $R1"
+      MessageBox MB_ICONEXCLAMATION|MB_OK "核心服务安装失败（错误码 $R0），系统代理和 TUN 模式暂时均不可用。$\r$\n$\r$\n详细原因：$R1$\r$\n$\r$\n请关闭 Murge 后，以管理员身份重新运行当前版本安装包完成修复。您的配置不会丢失。"
       Goto TunServiceInstallDone
   TunServiceInstallMissing:
     DetailPrint "Privileged core service executable is missing; system proxy and TUN cannot start"

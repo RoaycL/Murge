@@ -81,14 +81,17 @@ describe('uninstall-restore.nsh customUnInstall hook', () => {
   it('retries privileged core service installation and reports both dependent modes accurately', () => {
     expect(source).toContain('--install')
     expect(source).toContain('--uninstall')
-    expect(source.match(/ExecWait[^\n]*--install[^\n]*\$R0/g)).toHaveLength(2)
+    expect(source.match(/nsExec::ExecToStack[^\n]*--install/g)).toHaveLength(2)
+    expect(source.match(/Pop \$R0/g)?.length).toBeGreaterThanOrEqual(2)
+    expect(source.match(/Pop \$R1/g)?.length).toBeGreaterThanOrEqual(2)
     expect(source).toMatch(/ExecWait[^\n]*--uninstall[^\n]*\$R0/)
     expect(source).toContain('TunServiceInstallRetry:')
     expect(source).toMatch(/StrCmp \$R0 0[^\n]*TunServiceInstallDone[^\n]*TunServiceInstallRetry/)
-    expect(source).toMatch(/TunServiceInstallRetry:[\s\S]*Sleep 1500[\s\S]*ExecWait[^\n]*--install/)
+    expect(source).toMatch(/TunServiceInstallRetry:[\s\S]*Sleep 1500[\s\S]*nsExec::ExecToStack[^\n]*--install/)
     // System proxy and TUN share this service. A persistent failure must never
     // claim that system proxy is unaffected, while uninstall remains non-blocking.
     expect(source).toContain('系统代理和 TUN 模式暂时均不可用')
+    expect(source).toContain('详细原因：$R1')
     expect(source).not.toContain('系统代理模式不受影响')
     expect(source).toContain('TunServiceInstallWarn:')
     expect(source).toContain('TunServiceUninstallWarn:')

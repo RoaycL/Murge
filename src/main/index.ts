@@ -1,4 +1,5 @@
 import { dirname, join } from 'node:path'
+import { networkInterfaces } from 'node:os'
 import { writeFileSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { attachKernelWatchdog } from './kernel/crash-watchdog'
@@ -95,6 +96,7 @@ import {
   LiveSnifferEnhancementGateway
 } from './kernel/enhancement-live-gateway'
 import type { TunGateway, TunStatus } from '../shared/tun'
+import { EMPTY_TUN_CONFIG } from '../shared/tun-config'
 
 const devControllerUrl = process.env.MURGE_DEV_CONTROLLER ?? 'http://127.0.0.1:9090'
 const devControllerSecret = process.env.MURGE_DEV_SECRET ?? ''
@@ -845,7 +847,7 @@ app.whenReady().then(async () => {
         allowLan: productionAllowLan,
         controllerPanel: productionControllerPanel,
         secret: productionSecret!,
-        device: `${brand.shortName} TUN`
+        device: EMPTY_TUN_CONFIG.device
       }
       const effective = generateProxiedTunConfig({
         ...runtime, document: enhanced, core, geodata, tunConfig, tunEnabled: true
@@ -976,7 +978,7 @@ app.whenReady().then(async () => {
             )
           }
         },
-        `${brand.shortName} TUN`,
+        EMPTY_TUN_CONFIG.device,
         // A cold protected service home may need to initialize provider caches.
         // Keep polling while the exact child remains alive; liveness monitoring
         // still fails immediately if it exits, so this is not a blind delay.
@@ -1156,7 +1158,13 @@ app.whenReady().then(async () => {
         // final active document (overrides -> DNS -> sniffer) leaves the DNS
         // module enabled. Resolved per enable() call; subsequent UI changes use
         // the same document builder through a targeted controller hot patch.
-        async () => documentDnsEnabled(await resolveEnhancedActiveDocument())
+        async () => documentDnsEnabled(await resolveEnhancedActiveDocument()),
+        (device) => Object.entries(networkInterfaces()).some(([name, addresses]) =>
+          name.localeCompare(device, undefined, { sensitivity: 'accent' }) === 0 ||
+          addresses?.some(({ address }) =>
+            address === '28.0.0.1' || address.toLowerCase() === 'fdfe:dcba:9876::1'
+          ) === true
+        )
       )
     : new GatedTunMutationAdapter()
   const tunInstance = new TunCoordinator(tunAdapter, tunSupported)
@@ -1190,7 +1198,7 @@ app.whenReady().then(async () => {
     enable: () =>
       tunInstance.enable({
         schemaVersion: 2,
-        device: `${brand.shortName} TUN`,
+        device: EMPTY_TUN_CONFIG.device,
         stack: 'mixed'
       }),
     disable: () => tunInstance.emergencyDisable(),
@@ -1380,7 +1388,7 @@ app.whenReady().then(async () => {
           allowLan: productionAllowLan,
           controllerPanel: productionControllerPanel,
           secret: productionSecret!,
-          device: `${brand.shortName} TUN`
+          device: EMPTY_TUN_CONFIG.device
         },
         {
           readActiveDocument: resolveEnhancedActiveDocument,
@@ -1559,7 +1567,7 @@ app.whenReady().then(async () => {
         allowLan: productionAllowLan,
         controllerPanel: productionControllerPanel,
         secret: productionSecret ?? '0'.repeat(64),
-        device: `${brand.shortName} TUN`
+        device: EMPTY_TUN_CONFIG.device
       }
       const base = enhanced ?? profile.document
       const effective = tunEnabled

@@ -304,9 +304,19 @@ pub async fn dispatch(
         "profiles:validate" => profiles.validate(&string_arg(payload, 0).unwrap_or_default()),
         "profiles:get-active-group-order" => profiles.get_active_group_order(),
         "profiles:get-active-provider-catalog" => profiles.get_active_provider_catalog(),
-        "profiles:get-provider-content" => Err(IpcError::unsupported(
-            "profiles:get-provider-content reads provider caches through the privileged Go service (Phase 3D)",
-        )),
+        "profiles:get-provider-content" => {
+            // Exact handler shape (handlers.ts): kind validation first, then
+            // the mihomo-name parse, then the reader gate. The reader routes
+            // through the privileged Go service (named pipe), which this
+            // build does not transport yet — the same INTERNAL copy the
+            // Electron build surfaces when no service client is composed.
+            let raw_kind = arg(payload, 0).and_then(Value::as_str).unwrap_or_default();
+            if raw_kind != "proxy" && raw_kind != "rule" {
+                return Err(IpcError::code(crate::error::code::INVALID_ARGUMENT, "外部资源类型无效"));
+            }
+            let _name = mihomo::parse_mihomo_name(arg(payload, 1).unwrap_or(&Value::Null))?;
+            Err(IpcError::code(crate::error::code::INTERNAL, "当前运行方式不支持读取外部资源内容"))
+        }
         "profiles:inspect-active-config" => {
             // The Electron composition: overrides -> DNS enhancement ->
             // sniffer enhancement -> buildProfileKernelConfig. TUN is disabled
@@ -1118,14 +1128,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn staged_channels_fail_closed_with_unsupported() {
+    async fn provider_content_matches_the_electron_gate_shape() {
         let f = fixtures();
-        for channel in [
-            "profiles:get-provider-content",
-        ] {
-            let error = dispatch(channel, &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap_err();
-            assert!(error.0.starts_with("PROTOCOL_ERROR:UNSUPPORTED::"), "{channel}: {}", error.0);
-        }
+        // Kind validation first (the exact handler order).
+        let error = dispatch("profiles:get-provider-content", &serde_json::json!(["node", "a"]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap_err();
+        assert_eq!(error.0, "PROTOCOL_ERROR:INVALID_ARGUMENT::外部资源类型无效");
+        // Name parse second.
+        let error = dispatch("profiles:get-provider-content", &serde_json::json!(["proxy", ""]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap_err();
+        assert_eq!(error.0, "PROTOCOL_ERROR:INVALID_ARGUMENT::name must be a non-empty string");
+        // The reader itself routes through the privileged Go service — the
+        // same INTERNAL copy the Electron build surfaces with no client.
+        let error = dispatch("profiles:get-provider-content", &serde_json::json!(["proxy", "a"]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap_err();
+        assert_eq!(error.0, "PROTOCOL_ERROR:INTERNAL::当前运行方式不支持读取外部资源内容");
     }
 
     #[tokio::test]

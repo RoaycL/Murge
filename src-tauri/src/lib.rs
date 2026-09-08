@@ -18,6 +18,8 @@ mod error;
 mod inspection;
 mod net_validators;
 mod ipc;
+#[allow(dead_code)] // wired incrementally; the lint fires on staged-but-unwired items
+mod mihomo;
 mod kernel;
 mod override_apply;
 mod override_model;
@@ -93,6 +95,8 @@ pub fn run() {
             ));
             // Kernel supervisor + version manager (disabled-resolver milestone).
             let kernel = kernel::KernelServices::new();
+            // Mihomo controller services: log retention + selection cache.
+            let mihomo = mihomo::MihomoServices::new(Some(paths.app_data_root.clone().unwrap_or_default()));
             app.manage(paths);
             app.manage(store);
             app.manage(profiles);
@@ -100,6 +104,7 @@ pub fn run() {
             app.manage(models);
             app.manage(usage);
             app.manage(kernel);
+            app.manage(mihomo);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![ipc::desktop_ipc])

@@ -549,7 +549,43 @@ Seventh Phase 3C slice — 初步接入, 5 channels un-staged:
   and shell startup hydrates mirrors then prepares assets in the
   background when enabled (the TS when-ready hydration).
 - Un-staged `substore:get-state|ensure-running|stop|check-update|
-  open-external` (**98/121 live invoke arms**, 23 fail-closed).
+  open-external` (slice 16).
+
+### 17. System proxy (`src-tauri/src/system_proxy.rs`)
+
+First Phase 3D slice — 所有权感知系统代理, 6 channels un-staged:
+
+- The full decision machine ports: strict policy helpers (`ProxyOverride`
+  merge with insertion-ordered local-first dedup, exact-registry-type
+  equality, pre-enable restorability validation, loopback target gate),
+  the ownership state machine (single-flight serialization, staged
+  enable with read-back verification, confirmed rollback on partial
+  apply, conflict fail-closed on external takeover, strict restore with
+  read-back verify + delete-on-success), the 30s guard
+  (degradation repaired / takeover never fought), network down/up
+  latching, init crash recovery, and the kernel-shutdown restore.
+- The backup bundle schema ports strictly (literal schemaVersion 1,
+  loopback-only target, offset-ISO createdAt, exact-key objects, registry
+  triple consistency, safe-integer bounds) — a corrupt bundle fails
+  closed and is never trusted to write back.
+- The Windows adapter ports the `reg.exe` argv builders (per-type restore
+  incl. `reg delete` for absent values) and the byte-for-byte PowerShell
+  scripts (the .NET registry snapshot read with 3×75ms retries and the
+  WinINet refresh); the runner is injectable so the argv/script layer is
+  tested on Linux. Non-Windows production gets the disabled adapter and
+  the `unsupported` phase — honest, never a fake write.
+- The live probe composes kernel running → authenticated controller → a
+  `/configs` mixed-port → parallel HTTP CONNECT + SOCKS5 greeting socket
+  probes (the loopback-literal CONNECT, never an external dial), with the
+  exact failure copies (`内核未运行，无法启用系统代理`, `内核混合端口未就绪（N）：…`).
+- Renderer channels: `system-proxy:get-status|enable|disable|
+  get-proxy-bypass|set-proxy-bypass|preview-proxy-bypass`; enable/disable
+  are intent-first (`systemProxyDesired` persists before the registry
+  work) and enable starts the kernel when it is not running. Status
+  transitions forward to every renderer as `system-proxy:status-event`.
+- Un-staged 6 channels (**104/121 live invoke arms**, 17 fail-closed; the
+  remaining staged set is TUN (3) + updates (5) + the listen-side event
+  channels).
 
 ### Dispatch surface
 
@@ -588,7 +624,7 @@ the Rust dispatch (mechanical scan, not a manual claim):
 
 ## Verification (Linux ARM64, real execution)
 
-- Rust: `cargo test` — **232 passed / 0 failed**, zero warnings:
+- Rust: `cargo test` — **268 passed / 0 failed**, zero warnings:
   - brand parse/gate (1), app-info vocabulary (2), paths namespace/dev (3),
   - settings store: defaults, quarantine, atomic format, patch merge,
     delayTestUrl read/set split, dev memory store, field salvage (7),

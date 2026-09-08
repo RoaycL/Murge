@@ -71,8 +71,9 @@ installed as `LICENSE.txt`.
 
 ## Geodata databases
 
-The installers also ship the `geosite.dat` (domain-list database) and
-`geoip.metadb` (IP-to-country metadata database) files built by the
+The installers also ship the `geosite.dat` (domain-list database),
+`geoip.metadb` (IP-to-country metadata database), and `ASN.mmdb`
+(autonomous-system metadata, published upstream as `GeoLite2-ASN.mmdb`) files built by the
 MetaCubeX/meta-rules-dat project, distributed as unmodified release assets
 (resolved from `latest` at build time and verified against the GitHub release
 asset SHA-256 and size; recorded in bundled `geodata/resolved-assets.json`). The kernel requires these

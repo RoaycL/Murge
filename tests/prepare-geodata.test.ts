@@ -31,6 +31,40 @@ it('refreshes metadata after a latest race and records only verified resources',
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
 
+it('verifies the upstream ASN asset and publishes it under mihomo\'s expected filename', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'geodata-asn-test-'))
+  const content = 'asn-database'
+  const filename = 'GeoLite2-ASN.mmdb'
+  try {
+    const result = await prepareGeodata(directory, [{ filename, outputFilename: 'ASN.mmdb' }], {
+      fetchFn: async (url) => url.startsWith('https://api.github.com/')
+        ? Response.json({
+            id: 123,
+            tag_name: 'latest',
+            assets: [{
+              id: 789,
+              name: filename,
+              size: Buffer.byteLength(content),
+              digest: 'sha256:' + createHash('sha256').update(content).digest('hex'),
+              browser_download_url: `https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/${filename}`
+            }]
+          })
+        : new Response(content)
+    })
+    expect(await readFile(join(directory, 'ASN.mmdb'), 'utf8')).toBe(content)
+    expect(await readdir(directory)).not.toContain(filename)
+    expect(result.assets[0]).toMatchObject({ filename, outputFilename: 'ASN.mmdb' })
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
+it('keeps the installer manifest wired to the ASN filename mihomo loads', async () => {
+  const manifest = JSON.parse(await readFile(join(process.cwd(), 'resources', 'mihomo-assets.json'), 'utf8'))
+  expect(manifest.geodata).toContainEqual({
+    filename: 'GeoLite2-ASN.mmdb',
+    outputFilename: 'ASN.mmdb'
+  })
+})
+
 it.each(['missing-digest', 'wrong-content', 'oversize', 'http-error'])('rejects %s without replacing previous data', async (failure) => {
   const directory = await mkdtemp(join(tmpdir(), 'geodata-test-'))
   let lookups = 0

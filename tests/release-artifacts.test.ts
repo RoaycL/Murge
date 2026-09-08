@@ -31,5 +31,6 @@ describe('release-candidate artifacts', () => {
     const builder = await readFile(path.join(root, 'electron-builder.config.mjs'), 'utf8')
     expect(builder).toContain("{ from: 'resources/SOURCE_CODE.resolved.md', to: 'SOURCE_CODE.md' }")
     expect(builder).toContain('forceCodeSigning: false')
+    expect(builder).toMatch(/from: 'resources\/geodata'[\s\S]{0,160}filter: \[[^\]]*'\*\.mmdb'/)
   })
 })

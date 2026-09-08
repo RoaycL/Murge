@@ -10,8 +10,9 @@ const BASE = 'https://github.com/MetaCubeX/meta-rules-dat/releases/download/late
 
 export function resolveGeodata(release, requested) {
   if (!Number.isSafeInteger(release?.id) || !Array.isArray(release.assets)) throw new Error('Invalid geodata release metadata')
-  return requested.map(({ filename }) => {
+  return requested.map(({ filename, outputFilename = filename }) => {
     if (!/^[a-zA-Z0-9._-]+$/.test(filename) || filename === '.' || filename === '..') throw new Error('Invalid geodata filename')
+    if (!/^[a-zA-Z0-9._-]+$/.test(outputFilename) || outputFilename === '.' || outputFilename === '..') throw new Error('Invalid geodata output filename')
     const matches = release.assets.filter((asset) => asset.name === filename)
     const asset = matches[0]
     if (matches.length !== 1 || !Number.isSafeInteger(asset.id) ||
@@ -19,7 +20,7 @@ export function resolveGeodata(release, requested) {
         !/^sha256:[a-f0-9]{64}$/i.test(asset.digest ?? '') || asset.browser_download_url !== BASE + filename) {
       throw new Error(`Missing or invalid upstream digest/size/asset: ${filename}`)
     }
-    return { filename, assetId: asset.id, url: asset.browser_download_url, size: asset.size, sha256: asset.digest.slice(7).toLowerCase(), updatedAt: asset.updated_at }
+    return { filename, outputFilename, assetId: asset.id, url: asset.browser_download_url, size: asset.size, sha256: asset.digest.slice(7).toLowerCase(), updatedAt: asset.updated_at }
   })
 }
 
@@ -48,12 +49,12 @@ export async function prepareGeodata(directory, requested, { fetchFn = fetch, to
           hash.update(chunk)
           callback(null, chunk)
         } })
-        await pipeline(Readable.fromWeb(download.body), hashing, createWriteStream(join(staging, asset.filename)))
+        await pipeline(Readable.fromWeb(download.body), hashing, createWriteStream(join(staging, asset.outputFilename)))
         if (bytes !== asset.size || hash.digest('hex') !== asset.sha256) throw new Error(`Geodata verification failed: ${asset.filename}`)
       }
       const provenance = { releaseId: release.id, tag: release.tag_name, preparedAt: new Date().toISOString(), assets }
       await writeFile(join(staging, 'resolved-assets.json'), JSON.stringify(provenance, null, 2) + '\n')
-      for (const asset of assets) await rename(join(staging, asset.filename), join(directory, asset.filename))
+      for (const asset of assets) await rename(join(staging, asset.outputFilename), join(directory, asset.outputFilename))
       await rename(join(staging, 'resolved-assets.json'), join(directory, 'resolved-assets.json'))
       console.log(`Prepared geodata release ${release.id}: ${assets.map((a) => `${a.filename} sha256=${a.sha256}`).join(', ')}`)
       return provenance

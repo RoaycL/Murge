@@ -7,6 +7,10 @@
     },
     {
       "filename": "geoip.metadb"
+    },
+    {
+      "filename": "GeoLite2-ASN.mmdb",
+      "outputFilename": "ASN.mmdb"
     }
   ],
   "assets": [

@@ -429,6 +429,37 @@ func intValue(profile map[string]any, key string) (int, error) {
 	}
 }
 
+func listenerPortsFromProfile(text string) ([]int, error) {
+	var profile map[string]any
+	if err := yaml.Unmarshal([]byte(text), &profile); err != nil {
+		return nil, err
+	}
+	ports := make([]int, 0, 4)
+	for _, key := range []string{"mixed-port", "port", "socks-port"} {
+		if _, present := profile[key]; !present {
+			continue
+		}
+		port, err := intValue(profile, key)
+		if err != nil {
+			return nil, err
+		}
+		ports = append(ports, port)
+	}
+	controller, ok := profile["external-controller"].(string)
+	if !ok {
+		return nil, errors.New("external-controller must be a string")
+	}
+	match := controllerPattern.FindStringSubmatch(controller)
+	if match == nil {
+		return nil, errors.New("external-controller must use a supported listen address")
+	}
+	port, err := strconv.Atoi(match[2])
+	if err != nil {
+		return nil, err
+	}
+	return uniqueListenerPorts(append(ports, port)), nil
+}
+
 // standardYAMLTags is the exact set yaml.v3 auto-assigns while resolving a plain
 // document. Anything else is an explicitly authored tag.
 var standardYAMLTags = map[string]bool{

@@ -34,6 +34,35 @@ type windowsRuntime struct {
 	bundledCoreSHA256 string
 	job               windows.Handle
 	versionMu         sync.Mutex
+	processMu         sync.Mutex
+	processOutput     map[int]*boundedTailWriter
+}
+
+type boundedTailWriter struct {
+	mu    sync.Mutex
+	data  []byte
+	limit int
+}
+
+func newBoundedTailWriter(limit int) *boundedTailWriter {
+	return &boundedTailWriter{limit: limit}
+}
+
+func (writer *boundedTailWriter) Write(data []byte) (int, error) {
+	written := len(data)
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	writer.data = append(writer.data, data...)
+	if len(writer.data) > writer.limit {
+		writer.data = append([]byte(nil), writer.data[len(writer.data)-writer.limit:]...)
+	}
+	return written, nil
+}
+
+func (writer *boundedTailWriter) String() string {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	return strings.TrimSpace(string(writer.data))
 }
 
 func (runtime *windowsRuntime) Validate(profile string, version string) error {
@@ -390,6 +419,9 @@ func (runtime *windowsRuntime) Start(profile string, _ string, version string) (
 	command.Dir = runtime.config.StateDirectory
 	command.Env = safeWindowsEnvironment()
 	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NEW_PROCESS_GROUP}
+	output := newBoundedTailWriter(8 * 1024)
+	command.Stdout = output
+	command.Stderr = output
 	if err := command.Start(); err != nil {
 		_ = os.Remove(profilePath)
 		return 0, err
@@ -405,6 +437,12 @@ func (runtime *windowsRuntime) Start(profile string, _ string, version string) (
 		return 0, errors.New("failed to bind mihomo to the service job object")
 	}
 	windows.CloseHandle(processHandle)
+	runtime.processMu.Lock()
+	if runtime.processOutput == nil {
+		runtime.processOutput = make(map[int]*boundedTailWriter)
+	}
+	runtime.processOutput[command.Process.Pid] = output
+	runtime.processMu.Unlock()
 	go func() { _ = command.Wait() }()
 	runtime.corePath = corePath
 	runtime.coreSHA256 = coreDigest
@@ -484,6 +522,9 @@ func (runtime *windowsRuntime) Stop(pid int) error {
 	if event != windows.WAIT_OBJECT_0 {
 		return errors.New("mihomo stop was not confirmed")
 	}
+	runtime.processMu.Lock()
+	delete(runtime.processOutput, pid)
+	runtime.processMu.Unlock()
 	return nil
 }
 
@@ -501,7 +542,20 @@ func (runtime *windowsRuntime) Inspect(pid int) (bool, error) {
 		return false, err
 	}
 	if event == windows.WAIT_OBJECT_0 {
-		return false, nil
+		var exitCode uint32
+		_ = windows.GetExitCodeProcess(handle, &exitCode)
+		runtime.processMu.Lock()
+		output := runtime.processOutput[pid]
+		delete(runtime.processOutput, pid)
+		runtime.processMu.Unlock()
+		detail := ""
+		if output != nil {
+			detail = output.String()
+		}
+		if detail == "" {
+			detail = fmt.Sprintf("exit code %d", exitCode)
+		}
+		return false, fmt.Errorf("%w: %s", errOwnedProcessExited, detail)
 	}
 	buffer := make([]uint16, 32768)
 	size := uint32(len(buffer))

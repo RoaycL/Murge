@@ -17,7 +17,7 @@ import { randomSecret } from './kernel/mihomo-config'
 import { ControllerReadyKernelGateway } from './kernel/controller-ready-gateway'
 import { LateBoundKernelGateway } from './kernel/single-kernel-gateway'
 import { PrivilegedServiceKernelGateway } from './kernel/privileged-service-gateway'
-import { reclaimProxyPorts } from './kernel/proxy-port-reclaimer'
+import { proxyPortsOwnedByPid, reclaimProxyPorts } from './kernel/proxy-port-reclaimer'
 import { createSystemProxy } from './system-proxy/factory'
 import { SystemProxyService } from './system-proxy/service'
 import { WindowsSystemProxyAdapter } from './system-proxy/adapters/windows-adapter'
@@ -940,23 +940,29 @@ app.whenReady().then(async () => {
           readGeodata: () => geodataSettingsService.getRaw()
         },
         {
-          waitUntilReady: async ({ controllerPort, secret, signal }) => {
+          waitUntilReady: async ({ controllerPort, mixedPort, httpPort, socksPort, secret, pid, signal }) => {
             const client = new MihomoClient(`http://127.0.0.1:${controllerPort}`, secret, { timeoutMs: 750 })
             while (!signal.aborted) {
               try {
                 const version = await client.getVersion(signal)
-                return { version: version.version }
+                const listenersOwned = process.platform !== 'win32' || await proxyPortsOwnedByPid(
+                  [mixedPort, httpPort, socksPort, controllerPort],
+                  pid
+                )
+                if (listenersOwned) return { version: version.version }
               } catch {
-                await new Promise<void>((resolve) => {
-                  const timer = setTimeout(done, 100)
-                  function done(): void {
-                    clearTimeout(timer)
-                    signal.removeEventListener('abort', done)
-                    resolve()
-                  }
-                  signal.addEventListener('abort', done, { once: true })
-                })
+                // Controller and listener ownership are retried together until
+                // the bounded startup deadline expires.
               }
+              await new Promise<void>((resolve) => {
+                const timer = setTimeout(done, 100)
+                function done(): void {
+                  clearTimeout(timer)
+                  signal.removeEventListener('abort', done)
+                  resolve()
+                }
+                signal.addEventListener('abort', done, { once: true })
+              })
             }
             throw new ProtocolError(ProtocolErrorCode.KERNEL_START_TIMEOUT, 'privileged mihomo controller did not become ready')
           }

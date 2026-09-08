@@ -26,7 +26,7 @@ export interface PrivilegedKernelProfileSources {
 }
 
 export interface PrivilegedKernelReadiness {
-  waitUntilReady(input: PrivilegedKernelRuntime & { signal: AbortSignal }): Promise<{ version?: string } | void>
+  waitUntilReady(input: PrivilegedKernelRuntime & { pid: number; signal: AbortSignal }): Promise<{ version?: string } | void>
 }
 
 const STOPPED: KernelStatus = {
@@ -117,7 +117,7 @@ export class PrivilegedServiceKernelGateway implements KernelGateway {
         const controller = new AbortController()
         const timer = setTimeout(() => controller.abort(), this.readyTimeoutMs)
         try {
-          const ready = await this.readiness.waitUntilReady({ ...runtime, signal: controller.signal })
+          const ready = await this.waitUntilReadyOrExited(runtime, owned.pid, controller.signal)
           const observedVersion = ready && typeof ready.version === 'string' ? ready.version : null
           if (/^v\d+\.\d+\.\d+$/.test(requestedVersion ?? '') && observedVersion?.replace(/^v/, '') !== requestedVersion!.replace(/^v/, '')) {
             throw new ProtocolError(
@@ -133,13 +133,15 @@ export class PrivilegedServiceKernelGateway implements KernelGateway {
           })
           return this.getStatus()
         } finally {
+          controller.abort()
           clearTimeout(timer)
         }
       } catch (error) {
         await this.client.stop().catch(() => undefined)
         const message = error instanceof Error ? error.message : 'Privileged mihomo failed to start'
         this.setStatus({ ...STOPPED, phase: 'failed', lastError: message })
-        throw new ProtocolError(ProtocolErrorCode.KERNEL_START_TIMEOUT, message)
+        if (error instanceof ProtocolError) throw error
+        throw new ProtocolError(ProtocolErrorCode.KERNEL_SPAWN_FAILED, message)
       }
     })
   }
@@ -187,6 +189,36 @@ export class PrivilegedServiceKernelGateway implements KernelGateway {
     return document
       ? generateProxiedTunConfig({ ...common, document, core, geodata })
       : generateMihomoTunConfig(common)
+  }
+
+  private async waitUntilReadyOrExited(
+    runtime: PrivilegedKernelRuntime,
+    pid: number,
+    signal: AbortSignal
+  ): Promise<{ version?: string } | void> {
+    const readiness = this.readiness.waitUntilReady({ ...runtime, pid, signal })
+    const liveness = (async (): Promise<never> => {
+      while (!signal.aborted) {
+        const response = await this.client.reconcile()
+        if (response.outcome === 'failed' || response.outcome === 'stopped') {
+          throw new ProtocolError(
+            ProtocolErrorCode.KERNEL_SPAWN_FAILED,
+            response.validationMessage ?? response.errorCode ?? 'privileged mihomo exited before its controller became ready'
+          )
+        }
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(done, 100)
+          function done(): void {
+            clearTimeout(timer)
+            signal.removeEventListener('abort', done)
+            resolve()
+          }
+          signal.addEventListener('abort', done, { once: true })
+        })
+      }
+      throw new ProtocolError(ProtocolErrorCode.KERNEL_START_TIMEOUT, 'privileged mihomo controller did not become ready')
+    })()
+    return Promise.race([readiness, liveness])
   }
 
   private serialize<T>(task: () => Promise<T>): Promise<T> {

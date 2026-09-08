@@ -72,47 +72,53 @@ export async function reclaimProxyPorts(
   }
 }
 
-interface PowerShellOwner {
-  pid?: unknown
-  port?: unknown
+/** Proves that every configured TCP listener belongs to the expected core. */
+export async function proxyPortsOwnedByPid(
+  ports: readonly (number | undefined)[],
+  pid: number,
+  adapter: ProxyPortProcessAdapter = new WindowsProxyPortProcessAdapter()
+): Promise<boolean> {
+  const requested = normalizePorts(ports)
+  if (requested.length === 0 || !Number.isInteger(pid) || pid <= 0) return false
+  const owned = new Set(
+    (await adapter.inspect(requested))
+      .filter((owner) => owner.pid === pid)
+      .flatMap((owner) => owner.ports)
+  )
+  return requested.every((port) => owned.has(port))
 }
 
-export const WINDOWS_PORT_INSPECT_SCRIPT = [
-  "$ports = $args[0].Split(',') | ForEach-Object { [int]$_ }",
-  "$tcp = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $ports -contains $_.LocalPort } | ForEach-Object { [PSCustomObject]@{ pid = $_.OwningProcess; port = $_.LocalPort } }",
-  "$udp = Get-NetUDPEndpoint -ErrorAction SilentlyContinue | Where-Object { $ports -contains $_.LocalPort } | ForEach-Object { [PSCustomObject]@{ pid = $_.OwningProcess; port = $_.LocalPort } }",
-  '$rows = @($tcp) + @($udp)',
-  '$rows | ConvertTo-Json -Compress'
-].join('; ')
+export function parseWindowsNetstat(text: string, ports: readonly number[]): ProxyPortOwner[] {
+  const requested = new Set(ports)
+  const grouped = new Map<number, ProxyPortOwner>()
+  for (const line of text.split(/\r?\n/)) {
+    const fields = line.trim().split(/\s+/)
+    const protocol = fields[0]?.toUpperCase()
+    if (protocol !== 'TCP' && protocol !== 'UDP') continue
+    if (protocol === 'TCP' && fields.at(-2)?.toUpperCase() !== 'LISTENING') continue
+    const endpoint = fields[1] ?? ''
+    const port = Number(endpoint.slice(endpoint.lastIndexOf(':') + 1))
+    const pid = Number(fields.at(-1))
+    if (!requested.has(port) || !Number.isInteger(pid) || pid <= 0) continue
+    const existing = grouped.get(pid)
+    if (existing) {
+      if (!existing.ports.includes(port)) existing.ports.push(port)
+    } else {
+      grouped.set(pid, { pid, ports: [port] })
+    }
+  }
+  return Array.from(grouped.values())
+}
 
 export class WindowsProxyPortProcessAdapter implements ProxyPortProcessAdapter {
   async inspect(ports: readonly number[]): Promise<ProxyPortOwner[]> {
     if (process.platform !== 'win32' || ports.length === 0) return []
-    const { stdout } = await execFileAsync(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_PORT_INSPECT_SCRIPT, ports.join(',')],
-      { windowsHide: true, timeout: 5_000, maxBuffer: 1024 * 1024 }
-    )
-    const text = stdout.trim()
-    if (!text) return []
-    const parsed = JSON.parse(text) as PowerShellOwner | PowerShellOwner[]
-    const rows = Array.isArray(parsed) ? parsed : [parsed]
-    const grouped = new Map<number, ProxyPortOwner>()
-    for (const row of rows) {
-      const pid = Number(row.pid)
-      const port = Number(row.port)
-      if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port)) continue
-      const existing = grouped.get(pid)
-      if (existing) {
-        if (!existing.ports.includes(port)) existing.ports.push(port)
-        continue
-      }
-      grouped.set(pid, {
-        pid,
-        ports: [port]
-      })
-    }
-    return Array.from(grouped.values())
+    const { stdout } = await execFileAsync('netstat.exe', ['-ano'], {
+      windowsHide: true,
+      timeout: 2_000,
+      maxBuffer: 4 * 1024 * 1024
+    })
+    return parseWindowsNetstat(stdout, ports)
   }
 
   async terminate(pid: number): Promise<void> {

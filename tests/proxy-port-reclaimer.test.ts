@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   reclaimProxyPorts,
-  WINDOWS_PORT_INSPECT_SCRIPT,
+  proxyPortsOwnedByPid,
+  parseWindowsNetstat,
+  WindowsProxyPortProcessAdapter,
   type ProxyPortOwner,
   type ProxyPortProcessAdapter
 } from '../src/main/kernel/proxy-port-reclaimer'
@@ -62,10 +64,31 @@ describe('proxy port reclaimer', () => {
     expect(terminate).toHaveBeenNthCalledWith(2, 1201)
   })
 
-  it('inspects both TCP listeners and UDP endpoints', () => {
-    expect(WINDOWS_PORT_INSPECT_SCRIPT).toContain('Get-NetTCPConnection')
-    expect(WINDOWS_PORT_INSPECT_SCRIPT).toContain('Get-NetUDPEndpoint')
+  it('parses TCP listeners and UDP endpoints without treating established TCP connections as owners', () => {
+    expect(parseWindowsNetstat([
+      'TCP    127.0.0.1:7890    0.0.0.0:0    LISTENING    1200',
+      'TCP    127.0.0.1:7891    1.1.1.1:443  ESTABLISHED  1300',
+      'UDP    [::]:7892         *:*                       1200'
+    ].join('\r\n'), [7890, 7891, 7892])).toEqual([{ pid: 1200, ports: [7890, 7892] }])
   })
+
+  it.runIf(process.platform === 'win32')('finds a live listener with the production netstat inspector', async () => {
+    const { createServer } = await import('node:net')
+    const server = createServer()
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(0, '127.0.0.1', resolve)
+    })
+    try {
+      const address = server.address()
+      expect(address).not.toBeNull()
+      if (!address || typeof address === 'string') return
+      const owners = await new WindowsProxyPortProcessAdapter().inspect([address.port])
+      expect(owners).toContainEqual({ pid: process.pid, ports: [address.port] })
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  }, 10_000)
 
   it('does not terminate the current process', async () => {
     const adapter: ProxyPortProcessAdapter = {
@@ -74,5 +97,17 @@ describe('proxy port reclaimer', () => {
     }
     await reclaimProxyPorts([7890], adapter, 88)
     expect(adapter.terminate).not.toHaveBeenCalled()
+  })
+
+  it('requires every configured listener to belong to the expected core', async () => {
+    const adapter: ProxyPortProcessAdapter = {
+      inspect: vi.fn().mockResolvedValue([
+        owner({ pid: 42, ports: [7890, 7891] }),
+        owner({ pid: 77, ports: [9090] })
+      ]),
+      terminate: vi.fn()
+    }
+    await expect(proxyPortsOwnedByPid([7890, 7891], 42, adapter)).resolves.toBe(true)
+    await expect(proxyPortsOwnedByPid([7890, 9090], 42, adapter)).resolves.toBe(false)
   })
 })

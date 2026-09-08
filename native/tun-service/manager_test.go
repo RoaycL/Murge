@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -176,6 +178,21 @@ func TestReconcileStillLatchesBlockedOnPersistentStoreFailure(t *testing.T) {
 	}
 	if !manager.blocked {
 		t.Fatal("a persistent store failure must latch blocked")
+	}
+}
+
+func TestReconcileClearsExitedChildAndReturnsItsDiagnostic(t *testing.T) {
+	store := &flakyStore{record: &ownedProcess{SessionID: "session-1", PID: 4242}}
+	runtime := &flakyRuntime{inspectFn: func(int) (bool, error) {
+		return false, fmt.Errorf("%w: configuration rejected", errOwnedProcessExited)
+	}}
+	manager := newSessionManager(runtime, store)
+	response := manager.Handle(serviceRequest{Operation: "reconcile"})
+	if response.Outcome != "failed" || response.ValidationMessage == nil || !strings.Contains(*response.ValidationMessage, "configuration rejected") {
+		t.Fatalf("exited child diagnostic was not returned: %+v", response)
+	}
+	if store.record != nil || manager.owned != nil || manager.conflict || manager.blocked {
+		t.Fatalf("exited child ownership was not cleared: store=%+v manager=%+v", store.record, manager.owned)
 	}
 }
 

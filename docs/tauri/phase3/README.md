@@ -348,6 +348,38 @@ Third Phase 3B slice — the push streams and the renderer event wiring:
   `tun:status-event` (3D), `updates:state-event` (Phase 5). The `logSink`
   file capture lands with the Phase 4 logging slice.
 
+### 10. Subscription fetch pipeline (`src-tauri/src/subscription.rs`)
+
+Fourth Phase 3B/3C slice — the network fetch of remote subscriptions:
+
+- `SubscriptionFetcher` ports `subscription-fetcher.ts` verbatim: the SSRF
+  allow-list (one `is_public_address` predicate for literal hosts AND every
+  DNS answer — v4 private/loopback/CGNAT/benchmarking/TEST-NET/multicast/
+  reserved, v6 mapped-v4/0000::/8/NAT64/discard/2001::/23/documentation/6to4/
+  ULA/link-local/multicast), the fake-ip DNS carve-out (an ALL-198.18.0.0/15
+  answer is trusted on HTTPS only), per-hop redirect validation with a
+  budget of 5, the streaming 2 MiB size cap (trips mid-stream, never
+  buffers first), the 30 s whole-sweep timeout, and the
+  `ClashforWindows/0.20.39` request headers.
+- Credential hygiene: the stored envelope and every user-visible message use
+  `redact_credentials`; the private raw URL goes to the OS credential store
+  (`KeyringProfileSourceStore`), delete removes it,
+  `profiles:get|set-source-url` remain the only private-URL APIs.
+- Display name: Content-Disposition filename (RFC 5987 first) → final-URL
+  filename (token-like segments rejected) → URL host → 远程订阅.
+- Transport composition: `fetch_with_fallback` prefers the system-proxy-aware
+  client and falls back to direct ONLY on a transport-level failure
+  (`UPSTREAM_UNREACHABLE`); HTTP failures never retry across routes. The
+  proxy client itself is wired by the 3D system-proxy slice; until then
+  fetches go direct.
+- `ProfilesService::import_from_url` / `update_from_source` port the TS
+  composition byte-for-byte, including the rollback (a secure-store failure
+  deletes the just-created import), the validate-before-write rule on
+  update, and both Chinese error copies (没有远程订阅地址 / 缺少原始订阅地址).
+- Un-staged: `profiles:import-from-url`, `profiles:update-from-source`
+  (81/121 live). Still staged on the network path:
+  `profiles:get-provider-content` (3D).
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,
@@ -385,7 +417,7 @@ the Rust dispatch (mechanical scan, not a manual claim):
 
 ## Verification (Linux ARM64, real execution)
 
-- Rust: `cargo test` — **183 passed / 0 failed**, zero warnings:
+- Rust: `cargo test` — **196 passed / 0 failed**, zero warnings:
   - brand parse/gate (1), app-info vocabulary (2), paths namespace/dev (3),
   - settings store: defaults, quarantine, atomic format, patch merge,
     delayTestUrl read/set split, dev memory store, field salvage (7),

@@ -29,12 +29,16 @@ use crate::error::IpcError;
 use crate::profiles::{
     ConfigEdit, MemoryProfileSourceStore, ProfileRepository, ProfileResult, ProfileSourceStore,
 };
-use crate::redact::redact_credentials;
+use crate::redact::{is_redacted_url, redact_credentials};
+use crate::subscription::SubscriptionFetcher;
 use crate::validate::{throw_if_invalid, validate_document};
 
 pub struct ProfilesService {
     repository: ProfileRepository,
-    source_store: Box<dyn ProfileSourceStore>,
+    source_store: Box<dyn ProfileSourceStore + Send + Sync>,
+    /// Subscription transport (Phase 3C); the system-proxy-aware client is
+    /// wired by the 3D system-proxy slice, until then fetches go direct only.
+    fetcher: SubscriptionFetcher,
     /// Serializes mutations, mirroring the TS gateway's `runExclusive`.
     lock: Mutex<()>,
 }
@@ -45,6 +49,7 @@ impl ProfilesService {
         ProfilesService {
             repository: ProfileRepository::new(profile_root.clone()),
             source_store: Box::new(crate::profiles::KeyringProfileSourceStore::new(service_name.to_string())),
+            fetcher: SubscriptionFetcher::new(None),
             lock: Mutex::new(()),
         }
     }
@@ -54,8 +59,22 @@ impl ProfilesService {
         ProfilesService {
             repository: ProfileRepository::new(profile_root.clone()),
             source_store: Box::new(MemoryProfileSourceStore::default()),
+            fetcher: SubscriptionFetcher::new(None),
             lock: Mutex::new(()),
         }
+    }
+
+    /// Test builder: swap in a fetcher with an injected resolver/timeout.
+    #[allow(dead_code)] // exercised by tests; production uses the default fetcher
+    pub fn with_fetcher(mut self, fetcher: SubscriptionFetcher) -> Self {
+        self.fetcher = fetcher;
+        self
+    }
+
+    /// Test hook: replace the fetcher in place (Fixture-style composition).
+    #[allow(dead_code)] // exercised by tests; production uses the default fetcher
+    pub fn set_fetcher(&mut self, fetcher: SubscriptionFetcher) {
+        self.fetcher = fetcher;
     }
 
     fn guard(&self) -> std::sync::MutexGuard<'_, ()> {
@@ -99,6 +118,77 @@ impl ProfilesService {
         // redacted inside the repository).
         throw_if_invalid(&validate_document(&document)?)?;
         self.repository.import(&name, &document, &source, activate)
+    }
+
+    /// `importFromUrl`: fetch the subscription, derive the effective name
+    /// (explicit → Content-Disposition suggestion → URL host → 远程订阅),
+    /// import WITHOUT activating, secure the raw refresh URL, then activate.
+    /// A secure-storage failure deletes the just-created profile and
+    /// rethrows, exactly like the TS composition.
+    pub async fn import_from_url(&self, name: &str, url: &str, activate: bool) -> ProfileResult<Value> {
+        let fetched = crate::subscription::fetch_with_fallback(&self.fetcher, url).await?;
+        let trimmed = name.trim();
+        let effective_name = if !trimmed.is_empty() {
+            trimmed.to_string()
+        } else if let Some(suggested) = &fetched.suggested_name {
+            suggested.clone()
+        } else if let Some(fallback) = crate::subscription::derive_fallback_subscription_name(url) {
+            fallback
+        } else {
+            "远程订阅".to_string()
+        };
+        let meta = self.import(&json!({
+            "name": effective_name,
+            "document": fetched.document,
+            "source": fetched.source,
+            // Secure the refresh URL before moving the active pointer. If
+            // secure storage fails, the previously active profile remains
+            // untouched.
+            "activate": false,
+        }))?;
+        let id = meta["id"].as_str().unwrap_or_default().to_string();
+        if let Err(error) = self.source_store.set(&id, url) {
+            let _ = self.repository.delete(&id);
+            return Err(error);
+        }
+        if activate {
+            self.activate(&id)
+        } else {
+            Ok(meta)
+        }
+    }
+
+    /// `updateFromSource`: re-fetch a URL-backed profile's subscription and
+    /// replace its stored document with the freshly validated one. The name,
+    /// id and active pointer are untouched. The fetch prefers the private raw
+    /// URL held in the source store; a REDACTED display URL is refused with
+    /// actionable copy instead of a confusing network error.
+    pub async fn update_from_source(&self, id: &str) -> ProfileResult<Value> {
+        let profile = self.repository.get(id)?;
+        let source = &profile["meta"]["source"];
+        if source["type"] != json!("url") || source["url"].as_str().map(str::is_empty).unwrap_or(true) {
+            return Err(IpcError::invalid_argument("该配置没有远程订阅地址，无法更新"));
+        }
+        let display_url = source["url"].as_str().unwrap_or_default().to_string();
+        let refresh_url = match self.source_store.get(id)? {
+            Some(url) => Some(url),
+            // A NON-redacted display URL is still safe to fetch.
+            None if !is_redacted_url(&display_url) => Some(display_url.clone()),
+            None => None,
+        };
+        let Some(refresh_url) = refresh_url else {
+            return Err(IpcError::invalid_argument(
+                "缺少原始订阅地址，无法更新；请删除后重新添加该订阅",
+            ));
+        };
+        let fetched = crate::subscription::fetch_with_fallback(&self.fetcher, &refresh_url).await?;
+        // Validate BEFORE writing so a failed update cannot corrupt the doc.
+        throw_if_invalid(&validate_document(&fetched.document)?)?;
+        // Persist/migrate the private refresh address before replacing a
+        // valid existing document. A secure-storage failure must leave that
+        // document intact.
+        self.source_store.set(id, &refresh_url)?;
+        self.repository.replace_from_source(id, &fetched.document, &fetched.source)
     }
 
     pub fn activate(&self, id: &str) -> ProfileResult<Value> {

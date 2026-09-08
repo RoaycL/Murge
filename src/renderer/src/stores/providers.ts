@@ -62,7 +62,7 @@ function refreshFailureMessage(error: unknown): string {
   return err.message
 }
 
-const BATCH_REFRESH_GAP_MS = 350
+const BATCH_REFRESH_CONCURRENCY = 2
 const TRANSIENT_RETRY_DELAYS_MS = [800, 2_000] as const
 
 function wait(ms: number): Promise<void> {
@@ -94,6 +94,21 @@ async function refreshWithBackoff(action: () => Promise<void>): Promise<void> {
     }
   }
   throw failure
+}
+
+/** Run provider pulls with bounded concurrency so one slow source cannot block every later row. */
+async function runProviderBatch(names: string[], task: (name: string) => Promise<void>): Promise<void> {
+  const queue = [...new Set(names)]
+  let cursor = 0
+  const worker = async (): Promise<void> => {
+    while (cursor < queue.length) {
+      const name = queue[cursor++]
+      await task(name)
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(BATCH_REFRESH_CONCURRENCY, queue.length) }, () => worker())
+  )
 }
 
 /**
@@ -234,18 +249,16 @@ export const useProvidersStore = defineStore('providers', () => {
   }
 
   /**
-   * Serialized per-provider batch core shared by every 更新全部 entry point:
-   * ONE provider at a time (mihomo returns 503 when a provider update's own
-   * fetch fails, and parallel re-pulls saturate the kernel's DNS/TLS stack and
-   * trip CDN rate limits) with
+   * Bounded-concurrency batch core shared by every 更新全部 entry point. Two
+   * provider pulls may run together, avoiding a slow source blocking the whole
+   * queue without flooding mihomo's DNS/TLS stack, with
    * per-provider failure isolation, then a single map re-pull so rows reflect
    * fresh metadata while a failing fetch never discards what the user sees.
    */
   async function refreshProxyProvidersBatch(names: string[]): Promise<{ updated: number; failed: number }> {
     let updated = 0
     let failed = 0
-    const uniqueNames = [...new Set(names)]
-    for (const [index, name] of uniqueNames.entries()) {
+    await runProviderBatch(names, async (name) => {
       setOp(name, { refreshing: true, error: null })
       try {
         await refreshWithBackoff(() => window.desktop.mihomo.refreshProxyProvider(name))
@@ -256,8 +269,7 @@ export const useProvidersStore = defineStore('providers', () => {
       } finally {
         setOp(name, { refreshing: false })
       }
-      if (index < uniqueNames.length - 1) await wait(BATCH_REFRESH_GAP_MS)
-    }
+    })
     try {
       await reloadProxyProviders()
     } catch {
@@ -270,8 +282,7 @@ export const useProvidersStore = defineStore('providers', () => {
   async function refreshRuleProvidersBatch(names: string[]): Promise<{ updated: number; failed: number }> {
     let updated = 0
     let failed = 0
-    const uniqueNames = [...new Set(names)]
-    for (const [index, name] of uniqueNames.entries()) {
+    await runProviderBatch(names, async (name) => {
       setOp(name, { refreshing: true, error: null }, 'rule')
       try {
         await refreshWithBackoff(() => window.desktop.mihomo.refreshRuleProvider(name))
@@ -282,8 +293,7 @@ export const useProvidersStore = defineStore('providers', () => {
       } finally {
         setOp(name, { refreshing: false }, 'rule')
       }
-      if (index < uniqueNames.length - 1) await wait(BATCH_REFRESH_GAP_MS)
-    }
+    })
     try {
       await reloadRuleProviders()
     } catch {

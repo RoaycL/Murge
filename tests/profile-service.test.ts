@@ -303,14 +303,14 @@ describe('ProfileService', () => {
       expect(seen).toEqual([])
     })
 
-    it('retries a transport-level fetch failure through the proxy transport (add and update)', async () => {
+    it('prefers the proxy transport for add and update without paying a direct timeout first', async () => {
       const sourceStore = new MemoryProfileSourceStore()
       const routes: string[] = []
       let directCalls = 0
       const fetcher = new SubscriptionFetcher({
         fetchFn: async () => {
           directCalls += 1
-          throw new ProtocolError(ProtocolErrorCode.UPSTREAM_UNREACHABLE, '订阅获取失败：fetch failed')
+          return { ok: true, status: 200, text: async () => VALID_DOC }
         },
         proxyFetchFn: async () => {
           routes.push('proxy')
@@ -320,25 +320,41 @@ describe('ProfileService', () => {
       const remote = new ProfileService(repository, createConfigValidator(), fetcher, sourceStore)
       const meta = await remote.importFromUrl('tun', 'https://example.com/sub')
       expect(meta.source.url).toBe('https://example.com/sub')
-      expect(directCalls).toBe(1)
+      expect(directCalls).toBe(0)
       expect(routes).toEqual(['proxy'])
       await remote.updateFromSource(meta.id)
-      expect(directCalls).toBe(2)
+      expect(directCalls).toBe(0)
       expect(routes).toEqual(['proxy', 'proxy'])
     })
 
-    it('does NOT retry HTTP-level failures through the proxy transport', async () => {
-      let proxyCalls = 0
+    it('falls back to direct only when the preferred proxy transport fails', async () => {
+      let directCalls = 0
       const fetcher = new SubscriptionFetcher({
-        fetchFn: async () => ({ ok: false, status: 404, text: async () => 'not found' }),
-        proxyFetchFn: async () => {
-          proxyCalls += 1
+        fetchFn: async () => {
+          directCalls += 1
           return { ok: true, status: 200, text: async () => VALID_DOC }
+        },
+        proxyFetchFn: async () => {
+          throw new ProtocolError(ProtocolErrorCode.UPSTREAM_UNREACHABLE, '订阅获取失败：proxy failed')
         }
       })
       const remote = new ProfileService(repository, createConfigValidator(), fetcher)
+      await remote.importFromUrl('x', 'https://example.com/sub')
+      expect(directCalls).toBe(1)
+    })
+
+    it('does NOT retry an HTTP-level proxy failure over direct transport', async () => {
+      let directCalls = 0
+      const fetcher = new SubscriptionFetcher({
+        fetchFn: async () => {
+          directCalls += 1
+          return { ok: true, status: 200, text: async () => VALID_DOC }
+        },
+        proxyFetchFn: async () => ({ ok: false, status: 404, text: async () => 'not found' })
+      })
+      const remote = new ProfileService(repository, createConfigValidator(), fetcher)
       await expect(remote.importFromUrl('x', 'https://example.com/missing')).rejects.toThrow(/HTTP 404/)
-      expect(proxyCalls).toBe(0)
+      expect(directCalls).toBe(0)
     })
 
     it('removes the private refresh URL when a profile is deleted', async () => {

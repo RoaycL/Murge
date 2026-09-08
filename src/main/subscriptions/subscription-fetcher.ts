@@ -451,6 +451,11 @@ export class SubscriptionFetcher {
         })
   }
 
+  /** Whether a distinct system-proxy-aware transport is available. */
+  hasProxyTransport(): boolean {
+    return this.proxyFetchFn !== undefined
+  }
+
   /**
    * Create an abort signal plus its cleanup handle. The timer MUST be cleared in
    * a `finally`, otherwise every fetch keeps a pending timer alive for the full

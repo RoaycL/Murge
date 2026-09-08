@@ -1303,19 +1303,31 @@ app.whenReady().then(async () => {
     void beginApplicationShutdown(true)
   })
 
-  // Reapplies the active profile to the live kernel whenever the user edits,
-  // activates or imports-as-active a profile. The reloader runs INSIDE the mode
-  // queue (no-op when the kernel is stopped; a running kernel restarts
-  // stop-then-start through the unified gateway, preserving any owned system
-  // proxy). A full profile replacement may still restart the one service core,
-  // then restores the previous TUN intent. The concrete profileService is used
-  // directly by the kernel config store's resolveActiveDocument, so both paths
-  // read the same repository.
+  // Reapply active-profile mutations through the controller first. Keeping the
+  // process alive preserves TUN, listeners and the owned system proxy; only a
+  // failed controller reload falls back to the full lifecycle path. The value
+  // is assigned after profile/proxy-selection composition but before any UI can
+  // invoke this callback.
+  let liveConfigReloader: LiveConfigReloader | null = null
   const profileGateway = new ProfileAutoReloadGateway({
     inner: profileService,
     autoActivateOnEdit: true,
     reloader: {
       reload: async (rollbackActive) => {
+        if (liveConfigReloader) {
+          let applied: boolean | null = null
+          try {
+            applied = await modeController.updateRuntimeConfig(() =>
+              liveConfigReloader!.reloadIfRunning()
+            )
+          } catch (error) {
+            console.warn('[profiles] hot reload failed; falling back to kernel restart:', error)
+          }
+          if (applied !== null) {
+            if (applied) await proxySelectionService.restoreSelections()
+            return
+          }
+        }
         await modeController.reloadProfile((kernel) =>
           reloadKernelForActiveProfile({
             kernel,
@@ -1337,7 +1349,7 @@ app.whenReady().then(async () => {
     profileGateway,
     proxySelectionStore
   )
-  const liveConfigReloader = is.dev
+  liveConfigReloader = is.dev
     ? null
     : new LiveConfigReloader(
         runtimeKernelGateway,

@@ -156,6 +156,19 @@ describe('Phase 9 non-network contracts', () => {
     expect(main).toContain('*cache == identity')
   })
 
+  it('performs listener takeover inside the LocalSystem service immediately before core start', () => {
+    const appMain = readFileSync(resolve(process.cwd(), 'src/main/index.ts'), 'utf8')
+    const runtime = readFileSync(resolve(process.cwd(), 'native/tun-service/runtime_windows.go'), 'utf8')
+    const takeover = readFileSync(resolve(process.cwd(), 'native/tun-service/port_reclaimer_windows.go'), 'utf8')
+
+    expect(appMain).not.toContain('reclaimProxyPorts')
+    expect(runtime).toContain('reclaimWindowsListenerPorts(listenerPorts)')
+    expect(runtime.indexOf('reclaimWindowsListenerPorts(listenerPorts)')).toBeLessThan(runtime.indexOf('command.Start()'))
+    expect(takeover).toContain('windows.TerminateProcess')
+    expect(takeover).not.toContain('taskkill')
+    expect(takeover).not.toContain('ParentProcess')
+  })
+
   it('rotates the audit log by entry and byte limits without exposing mutable entries', () => {
     const log = new TunAuditLog(10_000, 2)
     log.append('enable-intent', 'configured', null, new Date('2026-01-01T00:00:00Z'))

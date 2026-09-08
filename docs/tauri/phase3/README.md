@@ -412,6 +412,29 @@ Fifth Phase 3B/3C slice — the three desktop-integration channels:
   proxy + TUN + privileged provider content (3D), tray/startup (4),
   updates (5).
 
+### 12. INTERNET-latency sample (`src-tauri/src/{route_latency,internet_latency}.rs`)
+
+Sixth Phase 3B/3C slice — the last staged mihomo channel:
+
+- `route_latency.rs` ports `route-latency-service.ts` verbatim: the
+  read-only default-gateway detection (Linux /proc/net/rute row with
+  destination `00000000` decoded little-endian; Windows `route print
+  0.0.0.0` first active row; macOS `route -n get default`), and the
+  first-hop RTT as a TCP connect handshake to the gateway itself (its DNS
+  proxy on :53 first, then the admin UI on :80, 1.2 s timeout) — no raw
+  packets, no host mutation.
+- `internet_latency.rs` ports the service: `gatewayMs` from the gateway
+  probe, `dnsMs` timed end-to-end around the kernel `/dns/query` NS probe
+  (system-resolver UDP fallback on controller failure — a response or a
+  definitive negative proves the round trip), `proxyMs`+`proxyNode` from
+  the node selected by the first selectable group (Selector/URLTest/
+  Fallback, GLOBAL skipped, DIRECT/REJECT placeholders skipped) in the
+  ACTIVE profile's declared `proxy-groups` order. Every slot degrades
+  independently to `null` — a degraded path renders as an em dash, never a
+  fake number, never a card-wide error.
+- Un-staged `mihomo:internet-latency` through a mock controller (**85/121
+  live**).
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,
@@ -433,14 +456,14 @@ the Rust dispatch (mechanical scan, not a manual claim):
 
 - **121 real channels** in the Electron surface (two earlier apparent extras
   were TypeScript type literals, not channels).
-- **84 live** in the Rust dispatch: `app:get-brand|get-info`,
+- **85 live** in the Rust dispatch: `app:get-brand|get-info`,
   `app-settings:get|set`, 14 of 17 `profiles:*`, all 10 `overrides:*`
   (JS kind fails open inside `validate`/`apply`), all 15 typed-model
   `get|set|preview` channels, all 4 `usage-history:*`, `kernel:get-status|
   start|stop`, `kernel-manager:get-state|set-enabled|set-channel|
   list-versions|install`, `runtime:get-summary|get-external-ip`, and 20 of
   23 `mihomo:*` (internet-latency + 2 stream events staged).
-- **37 intentionally fail closed** with `PROTOCOL_ERROR:UNSUPPORTED` via the
+- **36 intentionally fail closed** with `PROTOCOL_ERROR:UNSUPPORTED` via the
   dispatch fallthrough, mapping exactly to the later phases: mihomo streams +
   internet-latency (3B/3D), subscription fetching +
   Sub-Store + icons + network-interfaces (3C), system-proxy + TUN lifecycle +
@@ -449,7 +472,7 @@ the Rust dispatch (mechanical scan, not a manual claim):
 
 ## Verification (Linux ARM64, real execution)
 
-- Rust: `cargo test` — **200 passed / 0 failed**, zero warnings:
+- Rust: `cargo test` — **205 passed / 0 failed**, zero warnings:
   - brand parse/gate (1), app-info vocabulary (2), paths namespace/dev (3),
   - settings store: defaults, quarantine, atomic format, patch merge,
     delayTestUrl read/set split, dev memory store, field salvage (7),

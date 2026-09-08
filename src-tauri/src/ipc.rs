@@ -459,6 +459,20 @@ pub async fn dispatch(
         }
         "mihomo:flush-dns-cache" => Ok(controller_client(models)?.flush_dns_cache().await?),
         "mihomo:flush-fakeip-cache" => Ok(controller_client(models)?.flush_fakeip_cache().await?),
+        "mihomo:internet-latency" => {
+            // The INTERNET 延迟 card: gateway RTT + kernel DNS + selected-node
+            // chain RTT. Each slot degrades independently to null (never a
+            // fake number, never a card-wide error).
+            let client = controller_client(models)?;
+            let active = profiles.get_active()?;
+            let document = if active.is_null() {
+                None
+            } else {
+                Some(active["document"].as_str().unwrap_or_default().to_string())
+            };
+            let sample = crate::internet_latency::sample(&client, document.as_deref()).await;
+            Ok(crate::internet_latency::to_value(&sample))
+        }
         "mihomo:logs-snapshot" => {
             let after_seq = mihomo::parse_log_after_seq(arg(payload, 0))?;
             Ok(mihomo.logs_snapshot(after_seq))
@@ -695,6 +709,70 @@ mod tests {
             &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop,
         ).await.unwrap_err();
         assert!(error.0.contains("subscription URL must use http or https"), "{}", error.0);
+    }
+
+    #[tokio::test]
+    async fn internet_latency_samples_through_the_mock_controller() {
+        use crate::mihomo::mock_controller::MockServer;
+        // The mock controller serves the proxy map + delay endpoint; DNS is
+        // NOT served so the slot degrades to the system fallback (loopback CI
+        // has no 1.1.1.1 route guarantee — the system probe returns false on
+        // failure, and the slot reads null either way; the gateway slot is
+        // environment-dependent and only shape-checked).
+        let server = MockServer::start("s3cret", |method, path, _body| match (method, path) {
+            ("GET", "/proxies") if !path.contains("/delay") && !path.contains("/dns") => (
+                200,
+                r#"{"proxies":{"节点选择":{"type":"Selector","name":"节点选择","now":"香港 01"},"香港 01":{"type":"Shadowsocks","name":"香港 01"}}}"#.to_string(),
+            ),
+            // The delay path carries a query string; prefix-match it.
+            (_, p) if p.starts_with("/proxies/%E9%A6%99%E6%B8%AF%2001/delay") => (200, r#"{"delay":220}"#.to_string()),
+            (_, p) if p.starts_with("/dns/query") => (500, String::new()),
+            _ => (404, String::new()),
+        });
+        let temp = TempDir::new().unwrap();
+        let profiles = ProfilesService::for_development(&temp.path().to_path_buf());
+        profiles
+            .import(&serde_json::json!({
+                "name": "Home",
+                "document": "mixed-port: 7890\nproxy-groups:\n  - name: 节点选择\n    type: select\n    proxies:\n      - 香港 01\n",
+                "source": { "type": "manual" },
+                "activate": true
+            }))
+            .unwrap();
+        let mut core = enhancements::coerce_core_settings(&enhancements::ModelStores::new(None).core.get());
+        if let Some(object) = core.as_object_mut() {
+            object.insert("controllerPort".into(), serde_json::json!(server.port));
+            object.insert("controllerSecret".into(), serde_json::json!("s3cret"));
+        }
+        let models = enhancements::ModelStores::new(None);
+        models.core.set(&core, enhancements::coerce_core_settings).unwrap();
+        let f = Fixture {
+            _temp: temp,
+            paths: AppPaths { app_data_root: None, profile_root: None },
+            settings: SettingsStore::new(None),
+            profiles: Arc::new(profiles),
+            overrides: OverrideService::new(None),
+            models,
+            usage: usage::UsageHistoryService::new(usage::UsageHistoryStore::in_memory()),
+            kernel: kernel::KernelServices::new(),
+            mihomo: mihomo::MihomoServices::new(None),
+            desktop: icons::DesktopServices::new(std::env::temp_dir().join("icon-cache-test")),
+        };
+        let sample = dispatch("mihomo:internet-latency", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop).await.unwrap();
+        // The proxy slot followed the DECLARED order (节点选择 -> 香港 01) and
+        // carries the controller-reported delay.
+        assert_eq!(sample["proxyMs"], 220, "{}", sample);
+        assert_eq!(sample["proxyNode"], "香港 01");
+        // Gateway + DNS slots are present (numbers or nulls — environment
+        // dependent on CI), never missing.
+        for key in ["gatewayMs", "dnsMs", "proxyMs", "proxyNode"] {
+            assert!(sample.get(key).is_some(), "missing {key}");
+        }
+        // Every numeric slot that IS present is a real number (never a fake
+        // placeholder).
+        for key in ["gatewayMs", "dnsMs", "proxyMs"] {
+            assert!(sample[key].is_null() || sample[key].is_u64(), "{key}={}", sample[key]);
+        }
     }
 
     #[tokio::test]

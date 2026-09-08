@@ -587,6 +587,39 @@ First Phase 3D slice — 所有权感知系统代理, 6 channels un-staged:
   remaining staged set is TUN (3) + updates (5) + the listen-side event
   channels).
 
+### 18. TUN lifecycle (`src-tauri/src/tun.rs`)
+
+Second Phase 3D slice — TUN 生命周期协调器, 3 channels un-staged:
+
+- The state machine ports as a pure transition table (`configured →
+  starting → active → restoring → …`, the conflict latch with the
+  disable-only escape, the `restore-failed` enable retry, the
+  unsupported phase) with the exact machine copies
+  (`Invalid TUN transition: {phase} + {intent}` with TUN_INVALID_TRANSITION,
+  `TUN conflict transition requires conflictDetail` with INVALID_ARGUMENT).
+- The coordinator ports: serial renderer-independent serialization, the
+  readiness generation fence (a disable/re-enable cycle invalidates late
+  probe results; a probe failure warns with
+  `TUN_DATA_PLANE_UNCONFIRMED` instead of tearing down a usable TUN),
+  startup reconciliation of an interrupted transaction, emergency
+  disable (before-quit / recovery CLI), host-exit reset, and the
+  machine-code audit log (bounded 128KB/1000 entries, detail codes only —
+  never secrets).
+- The privileged mutation stays behind the injected `TunMutationAdapter`
+  seam with the fail-closed `GatedTunMutationAdapter` — the SAME boundary
+  this Electron build ships (`Windows TUN service transport is not
+  available in this build`, TUN_IMPLEMENTATION_GATED) until the G1
+  helper design review. Honest: no fake Wintun/routes/DNS calls.
+- Renderer channels: `tun:get-status|enable|disable`; enable/disable are
+  intent-first (`tunDesired` persists before the transition) and carry
+  the standard intent (`{shortName} TUN`, mixed stack). Status
+  transitions forward as `tun:status-event`, and the ordered-kernel-gate
+  semantics land: `kernel:stop` now restores the owned system proxy
+  BEFORE the shared core stops, and a supervisor `failed` phase triggers
+  the system-proxy crash recovery.
+- Un-staged 3 channels (**107/121 live invoke arms**, 14 fail-closed; the
+  remaining set is updates (5) + the listen-side event channels).
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,
@@ -624,7 +657,7 @@ the Rust dispatch (mechanical scan, not a manual claim):
 
 ## Verification (Linux ARM64, real execution)
 
-- Rust: `cargo test` — **268 passed / 0 failed**, zero warnings:
+- Rust: `cargo test` — **280 passed / 0 failed**, zero warnings:
   - brand parse/gate (1), app-info vocabulary (2), paths namespace/dev (3),
   - settings store: defaults, quarantine, atomic format, patch merge,
     delayTestUrl read/set split, dev memory store, field salvage (7),

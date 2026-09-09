@@ -123,6 +123,14 @@ impl SubStoreWorkerHandle {
             let _ = child.kill().await;
         }
     }
+
+    /// The exit-path kill: SIGKILL delivered synchronously, no await.
+    pub fn kill_now(&self) {
+        let taken = self.child.lock().unwrap().take();
+        if let Some(mut child) = taken {
+            let _ = child.start_kill();
+        }
+    }
 }
 
 /// The injectable transport for GitHub HTTP calls (API + asset downloads).
@@ -896,15 +904,18 @@ impl SubStoreService {
         }
     }
 
-    /// Terminate the worker during app shutdown; assets persist.
-    #[cfg_attr(not(test), allow(dead_code))] // wired with the quit lifecycle (3D)
+    /// Terminate the worker during app shutdown; assets persist. The kill is
+    /// SYNCHRONOUS (`start_kill` delivers SIGKILL without awaiting) because
+    /// this runs on the exit path where a spawned task could be dropped
+    /// before it completes — the TS quit flow awaits dispose(), the Tauri
+    /// exit hook cannot.
     pub fn dispose(&self) {
         *self.inner.disposed.lock().unwrap() = true;
         self.inner.operation_generation.fetch_add(1, Ordering::SeqCst);
         *self.inner.starting.lock().unwrap() = None;
         *self.inner.updating.lock().unwrap() = None;
         if let Some(worker) = self.inner.worker.lock().unwrap().take() {
-            tokio::spawn(async move { worker.terminate().await });
+            worker.kill_now();
         }
         *self.inner.port.lock().unwrap() = None;
         *self.inner.phase.lock().unwrap() = "idle";

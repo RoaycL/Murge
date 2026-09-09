@@ -19,6 +19,7 @@ mod inspection;
 mod net_validators;
 mod events;
 mod file_log;
+mod js_sandbox;
 mod lifecycle;
 mod ipc;
 #[allow(dead_code)] // wired incrementally; the lint fires on staged-but-unwired items

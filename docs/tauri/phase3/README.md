@@ -1064,6 +1064,36 @@ Sixteenth Phase 3D slice — the quit lifecycle (`quit-guard.ts` +
   order, cleanup errors never block, retry transient/permanent), 431 total,
   0 warnings, 15x sweep clean; typecheck + vitest unchanged.
 
+Seventeenth Phase 3D slice — the JS override sandbox (un-staging the
+`js` override kind; the last staged IPC surface of Phase 3):
+
+- `src/js_sandbox.rs` ports the `node:vm` contract (`runJsOverride` +
+  `validateJsOverride`) onto `boa_engine` 0.20 (pure-Rust ECMAScript, new
+  direct dependency). The sealed-sandbox guarantees carry over: the sandbox
+  exposes ONLY a shadow `console` (written IN the sandbox as a JS preamble,
+  so `String(arg)`/join semantics stay engine-native), no `require` /
+  `process` / Node globals are reachable, and a runaway script aborts with
+  an error instead of stalling the host — the TS wall-clock 2000 ms bound
+  maps to boa's loop-iteration trap (5M iterations) plus default
+  recursion/stack limits (documented difference).
+- Error copy is byte-exact at the prefix level:
+  `JS 覆写脚本执行失败：` / `JS 覆写 main(config) 执行失败：` /
+  `JS 覆写脚本无法解析：` / `JS 覆写未定义 main(config) 函数`; the embedded
+  engine text after the prefix is engine-specific (boa vs V8), matching the
+  TS `error.message.split('\n')[0]` shape. `main(config)` may mutate in
+  place and/or return a plain object (which wins); console output joins the
+  warnings AFTER the script-failure entry, `[...warnings, ...messages]`
+  like the TS.
+- `override_apply.rs` drops `JS_STAGED_MESSAGE` and the staged fail-open
+  branch: `validate_override_content` now really validates JS bodies, and
+  the apply loop executes them fail-open per item (a throwing `main`
+  leaves the config untouched and wraps the warning `覆写「{name}」：…`).
+  No channel re-staging was needed — the `js` kinds were always accepted,
+  only their execution was staged.
+- Verify: 10 sandbox unit tests + 3 end-to-end engine tests (mutation,
+  fail-open wrap, warning order), 443 total, 0 warnings, 10x sweep clean;
+  typecheck + vitest unchanged.
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,

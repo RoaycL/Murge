@@ -119,8 +119,92 @@ pub fn run() {
             // packaged Windows resolves the verified real mihomo artifact,
             // and any other production environment stays fail-closed.
             let is_dev = paths.app_data_root.is_none();
+            // The version manager owns the per-version workspaces and the
+            // GitHub metadata client; every composition shares it.
+            let mut manager = kernel::KernelManagerService::for_workspace(
+                paths.kernel_root().unwrap_or_else(|| std::env::temp_dir().join("murge-kernel-versions")),
+            );
+            // The `applyInstalledKernelVersionFinal` port: restart a live
+            // kernel through the profile-reload coordinator and PROVE the
+            // selected version took effect; a mismatch rolls the durable
+            // channel selection back and restarts on it (the TS contract).
+            {
+                let handle = app.handle().clone();
+                manager.apply_installed_version =
+                    Some(std::sync::Arc::new(move |version, previous_channel, previous_specific| {
+                        let handle = handle.clone();
+                        Box::pin(async move {
+                            let _gate = kernel::RUNTIME_UPDATE.lock().await;
+                            let kernel_state = handle.state::<kernel::KernelServices>();
+                            let status = kernel_state.get_status_value();
+                            if status["phase"].as_str() != Some("running")
+                                && status["phase"].as_str() != Some("starting")
+                            {
+                                return Ok(());
+                            }
+                            let rollback: crate::live_config::RollbackActiveFn = {
+                                let handle = handle.clone();
+                                let previous_channel = previous_channel.clone();
+                                let previous_specific = previous_specific.clone();
+                                std::sync::Arc::new(move || {
+                                    let handle = handle.clone();
+                                    let previous_channel = previous_channel.clone();
+                                    let previous_specific = previous_specific.clone();
+                                    Box::pin(async move {
+                                        let settings = handle.state::<settings::SettingsStore>();
+                                        settings.set(&crate::settings::AppSettingsPatch(
+                                            serde_json::json!({
+                                                "kernelChannel": previous_channel,
+                                                "kernelSpecificVersion": previous_specific.unwrap_or_default()
+                                            }),
+                                        ));
+                                        Ok(())
+                                    })
+                                })
+                            };
+                            let system_proxy = handle.state::<system_proxy::SystemProxyService>();
+                            let profiles =
+                                handle.state::<std::sync::Arc<profile_service::ProfilesService>>();
+                            let overrides = handle.state::<override_service::OverrideService>();
+                            let models = handle.state::<enhancements::ModelStores>();
+                            crate::live_config::reload_active_profile_with_rollback(
+                                &profiles, &overrides, &models, &kernel_state, &system_proxy,
+                                Some(rollback.clone()),
+                            )
+                            .await?;
+                            // The verification only applies to release tags
+                            // (the TS `/^v\d+\.\d+\.\d+$/` gate).
+                            let version_tag = regex::Regex::new(r"^v\d+\.\d+\.\d+$")
+                                .expect("version tag regex");
+                            if version_tag.is_match(&version) {
+                                let applied = kernel_state.get_status_value();
+                                let requested = version.trim_start_matches('v');
+                                let effective =
+                                    applied["version"].as_str().map(|v| v.trim_start_matches('v'));
+                                if effective != Some(requested) {
+                                    // Roll the durable selection back and
+                                    // restart on it (best-effort).
+                                    (rollback)().await.ok();
+                                    let _ = crate::live_config::reload_active_profile(
+                                        &profiles, &overrides, &models, &kernel_state, &system_proxy,
+                                    )
+                                    .await;
+                                    return Err(crate::error::IpcError::code(
+                                        crate::error::code::ARTIFACT_HASH_MISMATCH,
+                                        format!(
+                                            "内核版本未生效：请求 {version}，实际 {}",
+                                            effective.unwrap_or("未知")
+                                        ),
+                                    ));
+                                }
+                            }
+                            Ok(())
+                        })
+                    }));
+            }
+            let manager = std::sync::Arc::new(manager);
             let kernel = if is_dev {
-                kernel::KernelServices::for_development()
+                kernel::KernelServices::for_development(manager)
             } else if cfg!(windows) {
                 // The controller secret is user-configurable and stable
                 // across restarts; a fresh install receives a strong value
@@ -170,6 +254,17 @@ pub fn run() {
                     std::sync::Arc::new(move || {
                         handle_for_geodata.state::<enhancements::ModelStores>().geodata.get()
                     });
+                let handle_for_selection = app.handle().clone();
+                let version_selection: kernel_process::VersionSelectionFn =
+                    std::sync::Arc::new(move || {
+                        let settings = handle_for_selection.state::<settings::SettingsStore>();
+                        let current = settings.get();
+                        let specific = {
+                            let raw = current.kernel_specific_version.trim();
+                            if raw.is_empty() { None } else { Some(raw.to_string()) }
+                        };
+                        (current.kernel_channel.clone(), specific)
+                    });
                 kernel::KernelServices::for_real_kernel(
                     paths.kernel_root().unwrap_or_default(),
                     None, // staged: bundled archive dir with the installer slice
@@ -179,11 +274,13 @@ pub fn run() {
                     Some(resolve_core),
                     Some(resolve_geodata),
                     std::sync::Arc::new(|| true), // isEnabled: always true
+                    manager,
+                    Some(version_selection),
                     probe,
                 )
             } else {
                 // Non-Windows production: fail-closed (the disabled resolver).
-                kernel::KernelServices::new()
+                kernel::KernelServices::with_manager(manager)
             };
             // Mihomo controller services: log retention + selection cache.
             let mihomo = mihomo::MihomoServices::new(Some(paths.app_data_root.clone().unwrap_or_default()));

@@ -40,7 +40,7 @@ pub fn mihomo_version_no_v() -> String {
 }
 
 /// One pinned asset spec (`mihomo-artifact.ts` MihomoAsset).
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MihomoAsset {
     /// Platform value the asset targets (`win32`/`linux`/`darwin`).
@@ -595,6 +595,100 @@ pub fn build_mihomo_asset_from_release(
     })
 }
 
+// ---------------------------------------------------------------------------
+// Release-metadata client (kernel-manager-service.ts githubRequest)
+// ---------------------------------------------------------------------------
+
+/// Every other network path in the app is bounded; the release-metadata API
+/// call must be too (a hung api.github.com connection would latch the
+/// renderer busy flag for minutes).
+pub const GITHUB_API_TIMEOUT_SECS: u64 = 30;
+const MIHOMO_OWNER: &str = "MetaCubeX";
+const MIHOMO_REPO: &str = "mihomo";
+
+/// One published release asset (`kernel-manager-service.ts` GithubRelease).
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MihomoReleaseAsset {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    pub browser_download_url: String,
+}
+
+/// GET a GitHub API URL and decode the JSON body with the exact TS error
+/// mapping (timeout vs failure vs status).
+async fn github_get_json(url: &str) -> Result<Value, IpcError> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(GITHUB_API_TIMEOUT_SECS))
+        .build()
+        .map_err(|error| IpcError::code(code::ARTIFACT_DOWNLOAD_FAILED, format!("GitHub 请求失败：{error}")))?;
+    let response = client
+        .get(url)
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "mihomo-kernel-manager")
+        .timeout(std::time::Duration::from_secs(GITHUB_API_TIMEOUT_SECS))
+        .send()
+        .await
+        .map_err(|error| {
+            let message = error.to_string();
+            if regex::Regex::new(r"(?i)timeout|abort").expect("timeout regex").is_match(&message) {
+                IpcError::code(
+                    code::ARTIFACT_DOWNLOAD_FAILED,
+                    format!("GitHub 请求超时（{}ms）", GITHUB_API_TIMEOUT_SECS * 1000),
+                )
+            } else {
+                IpcError::code(code::ARTIFACT_DOWNLOAD_FAILED, format!("GitHub 请求失败：{message}"))
+            }
+        })?;
+    if !response.status().is_success() {
+        return Err(IpcError::code(
+            code::ARTIFACT_DOWNLOAD_FAILED,
+            format!("GitHub 请求失败：{}", response.status().as_u16()),
+        ));
+    }
+    response.json::<Value>().await.map_err(|error| {
+        IpcError::code(code::ARTIFACT_DOWNLOAD_FAILED, format!("GitHub 请求失败：{error}"))
+    })
+}
+
+/// The published version tags (`fetchGithubVersions`): per_page=50, tags
+/// filtered to the strict release shape.
+pub async fn fetch_github_versions() -> Result<Vec<String>, IpcError> {
+    let url = format!("https://api.github.com/repos/{MIHOMO_OWNER}/{MIHOMO_REPO}/releases?per_page=50");
+    let releases = github_get_json(&url).await?;
+    let pattern = regex::Regex::new(r"^v\d+\.\d+\.\d+$").expect("version tag regex");
+    let Some(releases) = releases.as_array() else {
+        return Ok(Vec::new());
+    };
+    Ok(releases
+        .iter()
+        .filter_map(|release| release["tag_name"].as_str())
+        .filter(|tag| pattern.is_match(tag))
+        .map(str::to_string)
+        .collect())
+}
+
+/// One release's asset metadata (`fetchGithubReleaseAssets`).
+pub async fn fetch_github_release_assets(version: &str) -> Result<Vec<MihomoReleaseAsset>, IpcError> {
+    let url = format!("https://api.github.com/repos/{MIHOMO_OWNER}/{MIHOMO_REPO}/releases/tags/{version}");
+    let release = github_get_json(&url).await?;
+    let Some(assets) = release["assets"].as_array() else {
+        return Ok(Vec::new());
+    };
+    Ok(assets
+        .iter()
+        .map(|asset| MihomoReleaseAsset {
+            name: asset["name"].as_str().unwrap_or_default().to_string(),
+            digest: asset["digest"].as_str().map(str::to_string),
+            size: asset["size"].as_u64(),
+            browser_download_url: asset["browser_download_url"].as_str().unwrap_or_default().to_string(),
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -634,7 +728,7 @@ mod tests {
         })
     }
 
-    fn transport_error(message: &'static str) -> DownloadTransport {
+    pub(crate) fn transport_error(message: &'static str) -> DownloadTransport {
         Arc::new(move |_url: String, _max: u64| {
             let message = message.to_string();
             Box::pin(async move { Err(message) })

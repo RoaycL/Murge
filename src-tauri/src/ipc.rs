@@ -39,7 +39,7 @@ pub type IpcResult = Result<Value, IpcError>;
 /// (profile reloads, enhancement live-apply) are mutually exclusive — the
 /// `ModeTransitionController` serialization the TS build gets from its
 /// queued kernel/TUN gateways. One process, one queue.
-static RUNTIME_UPDATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+use crate::kernel::RUNTIME_UPDATE;
 
 /// The one command the webview is allowed to call. Everything else —
 /// filesystem, registry, the privileged named pipe — stays in Rust.
@@ -651,16 +651,16 @@ pub async fn dispatch(
             let enabled = arg(payload, 0)
                 .and_then(Value::as_bool)
                 .ok_or_else(|| IpcError::invalid_argument("kernel-manager:set-enabled requires a boolean"))?;
-            Ok(kernel.manager.set_enabled(settings, enabled))
+            Ok(kernel.manager.set_enabled(settings, enabled).await)
         }
         "kernel-manager:set-channel" => {
             let channel = required_string(payload, 0, "kernel-manager:set-channel channel")?;
-            Ok(kernel.manager.set_channel(settings, &channel))
+            Ok(kernel.manager.set_channel(settings, &channel).await)
         }
-        "kernel-manager:list-versions" => Ok(kernel.manager.list_versions(settings)),
+        "kernel-manager:list-versions" => Ok(kernel.manager.list_versions(settings).await),
         "kernel-manager:install" => {
             let version = required_string(payload, 0, "kernel-manager:install version")?;
-            Ok(kernel.manager.install(settings, &version))
+            Ok(kernel.manager.install(settings, &version).await)
         }
         "runtime:get-summary" => {
             let active = profiles.get_active()?;
@@ -1419,14 +1419,25 @@ mod tests {
         assert_eq!(status["phase"], "stopped");
         let state = dispatch("kernel-manager:get-state", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
         assert_eq!(state["stableVersion"], "v1.19.30");
+        // Supported mode (no privileged-service gate in this build): the
+        // smart channel persists and the state clears its error.
         let state = dispatch("kernel-manager:set-enabled", &serde_json::json!([true]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
-        assert_eq!(state["error"], "安装 Smart内核失败");
-        let state = dispatch("kernel-manager:set-channel", &serde_json::json!(["specific"]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
-        assert_eq!(state["error"], "当前 Windows 服务模式仅支持安装包内置的稳定内核。");
+        assert_eq!(state["channel"], "smart");
+        assert_eq!(state["error"], Value::Null);
+        let state = dispatch("kernel-manager:set-channel", &serde_json::json!(["stable"]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        assert_eq!(state["channel"], "stable");
+        // The scripted seam (never the live GitHub API inside tests).
+        let mut f = f;
+        let sole = std::sync::Arc::get_mut(&mut f.kernel.manager).expect("sole manager owner");
+        sole.fetch_versions = Some(std::sync::Arc::new(|| {
+            Box::pin(async { Ok(vec!["v1.19.30".to_string()]) })
+        }));
         let state = dispatch("kernel-manager:list-versions", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
-        assert_eq!(state["versions"], serde_json::json!([]));
-        let state = dispatch("kernel-manager:install", &serde_json::json!(["v1.19.31"]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
-        assert_eq!(state["error"], "当前 Windows 服务模式不能安装指定内核版本。");
+        assert_eq!(state["versions"], serde_json::json!(["v1.19.30"]));
+        assert_eq!(state["versionsLoading"], false);
+        // Invalid tags are rejected before any network work.
+        let state = dispatch("kernel-manager:install", &serde_json::json!(["latest"]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        assert_eq!(state["error"], "无效的版本号：latest");
     }
 
     #[tokio::test]
@@ -1494,7 +1505,7 @@ mod tests {
         crate::kernel_process::tests::start_to_running(&harness).await;
         f.kernel = kernel::KernelServices {
             supervisor: harness.supervisor.clone(),
-            manager: kernel::KernelManagerService::new(),
+            manager: std::sync::Arc::new(kernel::KernelManagerService::new()),
             ready: None,
         };
         let before = f.models.dns.get();

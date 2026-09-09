@@ -601,6 +601,19 @@ impl KernelBinaryResolver for DisabledKernelBinaryResolver {
 /// Resolves the pinned official mihomo binary for the real-kernel milestone
 /// (`resolvers.ts` MihomoKernelResolver). It refuses to run unless explicitly
 /// enabled via `allow_real`, so the default build still fails closed.
+/// The version-selection reader: `(channel, specific_version)`.
+pub type VersionSelectionFn = Arc<dyn Fn() -> (String, Option<String>) + Send + Sync>;
+
+/// Resolve (download + verify + reuse) a specific mihomo version into its
+/// own per-version workspace (`resolvers.ts` ensureSpecificBinary).
+pub type EnsureSpecificBinaryFn = Arc<
+    dyn Fn(String) -> futures_util::future::BoxFuture<
+            'static,
+            Result<crate::mihomo_artifact::ResolvedMihomoBinary, IpcError>,
+        > + Send
+        + Sync,
+>;
+
 pub struct MihomoKernelBinaryResolver {
     pub allow_real: bool,
     pub workspace_dir: PathBuf,
@@ -615,14 +628,13 @@ pub struct MihomoKernelBinaryResolver {
     pub bundled_archive_dir: Option<PathBuf>,
     /// The current kernel version selection:
     /// `(channel, specific_version)` — `resolvers.ts` versionSelection.
-    pub version_selection: Option<Arc<dyn Fn() -> (String, Option<String>) + Send + Sync>>,
+    pub version_selection: Option<VersionSelectionFn>,
     /// Resolve (download + verify + reuse) a specific mihomo version into
     /// its own workspace. Consulted only when the selected channel routes a
     /// version (`specific`+version, `preview`, `smart`); absent → pinned
     /// stable build (the TS falls through identically when the hook is
     /// missing).
-    pub ensure_specific_binary:
-        Option<Arc<dyn Fn(String) -> futures_util::future::BoxFuture<'static, Result<crate::mihomo_artifact::ResolvedMihomoBinary, IpcError>> + Send + Sync>>,
+    pub ensure_specific_binary: Option<EnsureSpecificBinaryFn>,
 }
 
 impl KernelBinaryResolver for MihomoKernelBinaryResolver {
@@ -1529,6 +1541,80 @@ fn describe_exit(code: Option<i32>, signal: Option<String>) -> String {
 pub(crate) mod tests {
     use super::*;
     use std::sync::atomic::AtomicBool;
+
+    #[tokio::test]
+    async fn version_selection_routes_through_the_ensure_hook() {
+        // `specific` + a selected version routes the resolve through the
+        // install hook (the same binary the manager verified byte-level).
+        let resolver = MihomoKernelBinaryResolver {
+            allow_real: true,
+            workspace_dir: std::env::temp_dir().join("murge-resolver-selection"),
+            transport: crate::mihomo_artifact::real_download_transport(),
+            kernel_enabled: Arc::new(|| true),
+            bundled_archive_dir: None,
+            version_selection: Some(Arc::new(|| ("specific".to_string(), Some("v1.19.31".to_string())))),
+            ensure_specific_binary: Some(Arc::new(|version| {
+                Box::pin(async move {
+                    assert_eq!(version, "v1.19.31");
+                    Ok(crate::mihomo_artifact::ResolvedMihomoBinary {
+                        path: std::env::temp_dir().join("murge-versions").join("1.19.31").join("mihomo"),
+                        version: "1.19.31".to_string(),
+                        asset: crate::mihomo_artifact::MihomoAsset {
+                            platform: "linux".to_string(),
+                            arch: "x64".to_string(),
+                            filename: "mihomo-linux-amd64-v1.19.31.gz".to_string(),
+                            url: "https://example.invalid".to_string(),
+                            sha256: "a".repeat(64),
+                            size: 1024,
+                            kind: "gz".to_string(),
+                            inner_name: "mihomo-linux-amd64".to_string(),
+                            version: Some("v1.19.31".to_string()),
+                        },
+                        sha256: "a".repeat(64),
+                        url: "https://example.invalid".to_string(),
+                        reused: false,
+                    })
+                })
+            })),
+        };
+        let binary = resolver.resolve().await.unwrap();
+        assert_eq!(binary.version.as_deref(), Some("1.19.31"));
+        assert!(binary.command.ends_with("mihomo"));
+        // The env still carries the platform identity (the TS parity).
+        assert_eq!(binary.env.get("MIHOMO_PLATFORM").map(String::as_str), Some(std::env::consts::OS.replace("macos", "darwin").replace("windows", "win32").as_str()));
+    }
+
+    #[tokio::test]
+    async fn stable_selection_without_a_hook_uses_the_pinned_path() {
+        // ('stable', None) with no ensure hook falls through to the pinned
+        // resolve — which for this workspace/network pair fails at the
+        // DOWNLOAD stage (never a silent local reuse).
+        let workspace = tempfile::TempDir::new().unwrap();
+        let resolver = MihomoKernelBinaryResolver {
+            allow_real: true,
+            workspace_dir: workspace.path().to_path_buf(),
+            transport: {
+                // A local error transport (the tests-module helper in
+                // mihomo_artifact is private): every download attempt fails.
+                let owned: std::sync::Arc<String> =
+                    std::sync::Arc::new("network sealed in tests".to_string());
+                std::sync::Arc::new(move |_url: String, _max: u64| {
+                    let message = owned.clone();
+                    Box::pin(async move { Err((*message).clone()) })
+                        as futures_util::future::BoxFuture<
+                            'static,
+                            Result<crate::mihomo_artifact::DownloadResponse, String>,
+                        >
+                }) as crate::mihomo_artifact::DownloadTransport
+            },
+            kernel_enabled: Arc::new(|| true),
+            bundled_archive_dir: None,
+            version_selection: Some(Arc::new(|| ("stable".to_string(), None))),
+            ensure_specific_binary: None,
+        };
+        let error = resolver.resolve().await.unwrap_err();
+        assert!(error.0.contains("network sealed in tests"), "{error:?}");
+    }
 
     pub(crate) struct StubResolver {
         resolve_calls: std::sync::atomic::AtomicU32,

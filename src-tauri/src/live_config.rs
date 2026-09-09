@@ -364,12 +364,36 @@ impl<'a> LiveConfigReloader<'a> {
 /// stop (the ordered `kernel:stop` restores the system proxy first) then
 /// start; the proxy is only re-enabled when it was owned before the
 /// restart. The active-pointer rollback belongs to the caller.
+/// A caller-supplied rollback (`KernelReloadOptions.rollbackActive`): runs
+/// when the restart cannot be applied (stop failure or replacement failure).
+pub type RollbackActiveFn =
+    Arc<dyn Fn() -> futures_util::future::BoxFuture<'static, Result<(), IpcError>> + Send + Sync>;
+
 pub async fn reload_active_profile(
     profiles: &Arc<ProfilesService>,
     overrides: &OverrideService,
     models: &enhancements::ModelStores,
     kernel: &crate::kernel::KernelServices,
     system_proxy: &crate::system_proxy::SystemProxyService,
+) -> Result<bool, IpcError> {
+    reload_active_profile_with_rollback(
+        profiles,
+        overrides,
+        models,
+        kernel,
+        system_proxy,
+        None,
+    )
+    .await
+}
+
+pub async fn reload_active_profile_with_rollback(
+    profiles: &Arc<ProfilesService>,
+    overrides: &OverrideService,
+    models: &enhancements::ModelStores,
+    kernel: &crate::kernel::KernelServices,
+    system_proxy: &crate::system_proxy::SystemProxyService,
+    rollback_active: Option<RollbackActiveFn>,
 ) -> Result<bool, IpcError> {
     let reloader = LiveConfigReloader::from_ipc(&kernel.supervisor, models, profiles, overrides)?;
     if let Ok(applied) = reloader.reload_if_running().await {
@@ -381,7 +405,12 @@ pub async fn reload_active_profile(
         return Ok(false);
     }
     let proxy_was_enabled = system_proxy.get_status().phase == "enabled";
-    kernel.stop().await?;
+    if let Err(error) = kernel.stop().await {
+        if let Some(rollback) = &rollback_active {
+            let _ = rollback().await; // Preserve the lifecycle failure.
+        }
+        return Err(error);
+    }
     match kernel.start().await {
         Ok(_) => {
             if proxy_was_enabled {
@@ -389,7 +418,22 @@ pub async fn reload_active_profile(
             }
             Ok(true)
         }
-        Err(replacement_error) => Err(replacement_error),
+        Err(replacement_error) => {
+            if let Some(rollback) = &rollback_active {
+                let rollback_succeeded = rollback().await.is_ok();
+                // Best-effort recovery BEFORE propagating the original
+                // failure: never restart against a pointer whose restoration
+                // failed, and the kernel status/logs retain any recovery
+                // failure for diagnostics.
+                if rollback_succeeded {
+                    let _ = kernel.start().await;
+                    if proxy_was_enabled {
+                        let _ = system_proxy.enable().await;
+                    }
+                }
+            }
+            Err(replacement_error)
+        }
     }
 }
 

@@ -971,6 +971,41 @@ strict-store live resolvers):
   gate passthroughs unchanged); build + test profiles both 0-warning;
   typecheck green; vitest 1905 passed / 7 skipped.
 
+Fourteenth Phase 3D slice — version install (the `kernel-manager-service.ts`
+install surface, un-staging the artifact pipeline):
+
+- The GitHub release-metadata client lands (`githubRequest` port, 30 s
+  bound, the exact timeout/failure/status error copies) and
+  `specificVersionsSupported` flips to TRUE — the Tauri build has no
+  Windows privileged service, so the TS service-mode gate never fires.
+  The staged guards (`当前 Windows 服务模式…`) are gone.
+- `listVersions` / `install` / `setChannel` / `setEnabled` are now async
+  and port the full state machine: installing/versionsLoading transient
+  flags with an emit before the await, tag-shape validation before any
+  network work (`无效的版本号：…`), the
+  `获取版本列表失败` fallback, per-version workspaces under
+  `versions/<v>` with the `.mihomo-asset.json` sidecar cache (a later
+  start reuses the same verified digest offline), the
+  `未找到 {platform}/{arch} 的 mihomo {version} 资产` ARTIFACT_DOWNLOAD_FAILED
+  copy, and channel persistence ONLY after the install succeeded.
+- `applyInstalledKernelVersionFinal` ports as the manager's apply handler
+  wired at composition: a live kernel restarts through the
+  profile-reload coordinator (proxy restore before stop, the new
+  `rollbackActive` option restoring the durable channel/version pair when
+  the restart cannot be applied), then the applied version is VERIFIED —
+  a mismatch rolls back, restarts on the previous selection and throws
+  `内核版本未生效：请求 {v}，实际 {actual}` (ARTIFACT_HASH_MISMATCH).
+  The apply runs inside the shared RUNTIME_UPDATE gate (the TS
+  modeController serialization point, now hoisted to kernel.rs).
+- The kernel resolver now routes `specific`+version, `preview` and `smart`
+  through `ensureVersionBinary` — the same byte-level verification as the
+  stable build, never trusting an on-disk file. `isEnabled` stays true.
+- Verify: `cargo test --lib` 413 passed / 0 failed / 0 warnings (scripted
+  GitHub seams throughout — no test touches the network; sidecar cache,
+  rollback-on-apply-failure, missing-asset copy, resolver routing); build
+  + test profiles 0-warning; typecheck green; vitest 1905 passed /
+  7 skipped.
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,

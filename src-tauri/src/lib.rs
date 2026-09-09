@@ -38,6 +38,7 @@ mod substore;
 mod substore_zip;
 mod system_proxy;
 mod tun;
+mod tun_profile;
 mod updates;
 mod mihomo_artifact;
 mod kernel_config_validation;

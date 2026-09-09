@@ -39,6 +39,7 @@ mod substore_zip;
 mod system_proxy;
 mod tun;
 mod tun_profile;
+mod tun_hot_switch;
 mod updates;
 mod mihomo_artifact;
 mod kernel_config_validation;
@@ -304,12 +305,68 @@ pub fn run() {
                 let _ = tauri::Emitter::emit(&status_app, "system-proxy:status-event", value.clone());
             }));
             app.manage(system_proxy_service);
-            // TUN: the coordinator is fully ported; the mutation adapter is
-            // the fail-closed gate (the same boundary this Electron build
-            // ships — the privileged service lands with the G1 review).
+            // TUN: the coordinator is fully ported. The mutation adapter is
+            // the controller hot-switch (controller REST only, platform
+            // independent) when the build can run a kernel at all; dev and
+            // non-Windows keep the fail-closed gate — the same boundary this
+            // Electron build ships (the privileged service composition lands
+            // with the real-kernel slice).
             let tun_supported = !is_dev && cfg!(windows);
-            let tun_coordinator =
-                tun::TunCoordinator::new(std::sync::Arc::new(tun::GatedTunMutationAdapter), tun_supported);
+            // The TS composition root (`tunSupported ? hotSwitch : Gated`):
+            // the hot-switch adapter talks ONLY controller REST; dev and
+            // non-Windows keep the fail-closed gate (the privileged service
+            // composition lands with the real-kernel slice).
+            let tun_adapter: std::sync::Arc<dyn tun::TunMutationAdapter> = if tun_supported {
+                let handle = app.handle().clone();
+                let client_factory: tun_hot_switch::ControllerClientFactory = {
+                    let handle = handle.clone();
+                    std::sync::Arc::new(move || {
+                        let handle = handle.clone();
+                        Box::pin(async move {
+                            let core = enhancements::coerce_core_settings(
+                                &handle.state::<enhancements::ModelStores>().core.get(),
+                            );
+                            let port = core["controllerPort"].as_i64().unwrap_or(9090);
+                            let secret = core["controllerSecret"].as_str().unwrap_or_default().to_string();
+                            crate::mihomo::MihomoClient::new(port, &secret)
+                        })
+                    })
+                };
+                let read_tun_config = {
+                    let handle = handle.clone();
+                    move || {
+                        let handle = handle.clone();
+                        Box::pin(async move {
+                            enhancements::coerce_tun_config(
+                                &handle.state::<enhancements::ModelStores>().tun_config.get(),
+                            )
+                        }) as tun_hot_switch::BoxFutValue
+                    }
+                };
+                // The authoritative DNS-enabled flag: read from the SAME
+                // enhanced document the kernel materializes (overrides → DNS
+                // → sniffer); no profile → no DNS module → false.
+                let read_dns_enabled = move || {
+                    let handle = handle.clone();
+                    Box::pin(async move {
+                        let profiles =
+                            handle.state::<std::sync::Arc<crate::profile_service::ProfilesService>>();
+                        let overrides = handle.state::<crate::override_service::OverrideService>();
+                        let models = handle.state::<enhancements::ModelStores>();
+                        crate::live_config::resolve_enhanced_document(&profiles, &overrides, &models)
+                            .ok()
+                            .flatten()
+                    }) as tun_hot_switch::BoxFutDocument
+                };
+                std::sync::Arc::new(tun_hot_switch::MihomoHotSwitchTunAdapter::new(
+                    client_factory,
+                    read_tun_config,
+                    read_dns_enabled,
+                ))
+            } else {
+                std::sync::Arc::new(tun::GatedTunMutationAdapter)
+            };
+            let tun_coordinator = tun::TunCoordinator::new(tun_adapter, tun_supported);
             // Forward TUN status transitions to every renderer window.
             let tun_app = app.handle().clone();
             tun_coordinator.subscribe(std::sync::Arc::new(move |value| {

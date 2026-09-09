@@ -896,6 +896,41 @@ Eleventh Phase 3D slice — TUN profile generators (the
   generator/validator cases incl. hostile provider paths/names); channel
   audit unchanged; typecheck green; vitest unchanged.
 
+Twelfth Phase 3D slice — TUN hot-switch adapter (the production mutation
+path, `main/tun/hot-switch-adapter.ts` + `data-plane-readiness.ts` +
+`documentDnsEnabled`):
+
+- `tun_hot_switch.rs` ports `MihomoHotSwitchTunAdapter`: TUN switches on the
+  ALREADY-RUNNING kernel through its loopback controller (no process stop,
+  no listener rebind, the system-proxy target never changes). Enable =
+  previous tun block ∪ rebuilt `build_tun_block` (the stock `Mihomo` device
+  defers to the intent device) with `enable: true`; clash-party DNS-takeover
+  parity clears `dns-hijack` when the FINAL active document (the same
+  enhanced pipeline the kernel materializes) leaves the DNS module off —
+  the authoritative flag comes from `resolve_enhanced_document`, never from
+  the controller snapshot (GET /configs does not expose the dns block).
+  The patch is CONFIRMED with a follow-up GET (`TUN_HOT_SWITCH_ENABLE_NOT_APPLIED`
+  when it did not stick); a failed patch rolls the previous block back, and
+  a failed rollback is the `TUN_HOT_SWITCH_ROLLBACK_UNCONFIRMED` machine
+  code. Restore re-patches `enable: false` and reports
+  `TUN_HOT_SWITCH_DISABLE_NOT_APPLIED` when the disable did not stick.
+- `wait_for_tun_data_plane_ready` ports the probe: a responsive controller
+  only proves the config parsed — one real DIRECT delay test through the
+  regional endpoints (msftconnecttest + hicloud, ALTERNATIVES not a
+  sequence, Promise.any parity) confirms the route; 150 ms retry inside the
+  bounded 20 s window, then the exact `TUN data-plane readiness timed out`
+  KERNEL_START_TIMEOUT copy. It runs in the BACKGROUND of a locally
+  confirmed enable (diagnostics only — never a 20-second UI block or a
+  false rollback on a restricted network).
+- `document_dns_enabled` ports with the apply fail-safe (unparseable →
+  disabled). The composition root now selects the adapter exactly like the
+  TS (`tunSupported ? hotSwitch : Gated`): dev and non-Windows keep the
+  fail-closed gate; the hot-switch path (controller REST only) is fully
+  exercised against the mock controller.
+- Verify: `cargo test --lib` 404 passed / 0 failed / 0 warnings (6 new
+  hot-switch/readiness cases); channel audit unchanged 121 / 111 live /
+  0 unmapped; typecheck green; vitest 1905 passed / 7 skipped.
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,

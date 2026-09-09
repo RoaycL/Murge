@@ -710,6 +710,7 @@ impl ProxySelectionStore {
 // Client (main/services/mihomo-client.ts)
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
 pub struct MihomoClient {
     http: reqwest::Client,
     /// `http://127.0.0.1:{port}` (the TS production wiring hardcodes the host).

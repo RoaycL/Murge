@@ -87,9 +87,15 @@ pub fn random_secret() -> String {
 // Strict config generation (mihomo-config.ts generateMihomoConfig)
 // ---------------------------------------------------------------------------
 
-fn assert_port(port: u64, label: &str) -> Result<(), IpcError> {
-    if port == 0 || port > 65535 {
-        return Err(IpcError::invalid_argument(format!("{label} must be between 1 and 65535")));
+/// Unprivileged port range: high ports only, never a privileged (<1024) port.
+const MIN_PORT: i64 = 1024;
+const MAX_PORT: i64 = 65535;
+
+fn assert_port(port: i64, label: &str) -> Result<(), IpcError> {
+    if !(MIN_PORT..=MAX_PORT).contains(&port) {
+        return Err(IpcError::invalid_argument(format!(
+            "Invalid {label}: must be an unprivileged integer port between {MIN_PORT} and {MAX_PORT}, got {port}"
+        )));
     }
     Ok(())
 }
@@ -98,10 +104,10 @@ fn assert_port(port: u64, label: &str) -> Result<(), IpcError> {
 /// output. No profile: proxies, groups and rules come from the profile branch
 /// of the config store, never from this strict generator.
 pub fn generate_mihomo_config(options: &Value) -> Result<String, IpcError> {
-    let mixed_port = options["mixedPort"].as_u64().unwrap_or(7890);
-    let controller_port = options["controllerPort"].as_u64().unwrap_or(9090);
-    let http_port = options["httpPort"].as_u64().unwrap_or(0);
-    let socks_port = options["socksPort"].as_u64().unwrap_or(0);
+    let mixed_port = options["mixedPort"].as_i64().unwrap_or(0);
+    let controller_port = options["controllerPort"].as_i64().unwrap_or(0);
+    let http_port = options["httpPort"].as_i64().unwrap_or(0);
+    let socks_port = options["socksPort"].as_i64().unwrap_or(0);
     let allow_lan = options["allowLan"].as_bool().unwrap_or(false);
     let controller_host = options["controllerHost"].as_str().unwrap_or("127.0.0.1");
     let controller_panel = options["controllerPanel"].as_bool().unwrap_or(false);
@@ -124,14 +130,20 @@ pub fn generate_mihomo_config(options: &Value) -> Result<String, IpcError> {
     if socks_port != 0 {
         active_ports.push(socks_port);
     }
-    let unique: std::collections::HashSet<u64> = active_ports.iter().copied().collect();
+    let unique: std::collections::HashSet<i64> = active_ports.iter().copied().collect();
     if unique.len() != active_ports.len() {
         return Err(IpcError::invalid_argument("listener ports must differ"));
     }
     if !is_valid_secret(secret) {
         return Err(IpcError::invalid_argument("secret must be a 64-character lowercase hex string"));
     }
-    if !matches!(log_level, "silent" | "error" | "warning" | "info" | "debug") {
+    // Phase 7 pins DIRECT; other modes are rejected before any directory is
+    // created (the TS generateMihomoConfig order).
+    let mode = options["mode"].as_str().unwrap_or("direct");
+    if mode != "direct" {
+        return Err(IpcError::invalid_argument(format!("Unsupported mihomo mode: {mode}; Phase 7 requires 'direct'")));
+    }
+    if !matches!(log_level, "silent" | "error" | "warn" | "info" | "debug") {
         return Err(IpcError::invalid_argument(format!("Unsupported log level: {log_level}")));
     }
     Ok(
@@ -206,69 +218,79 @@ impl KernelConfigStore for TempKernelConfigStore {
     }
 }
 
-/// The production store: writes the strict runtime config into an exclusive
-/// per-run child of `workspaceDir` and keeps the persistent kernel home
-/// (`-d`) that holds geodata + provider caches across restarts.
-///
-/// Staged (documented): the profile-driven branch reuses the composed
-/// document from `inspection::build_profile_kernel_config` and the
-/// YAML-allowlist safety validation (`mihomoConfigErrors`) lands with the
-/// config-validation slice; geodata seeding activates when the installer
-/// resources ship with the packaged build.
+/// The production store (`mihomo-config-store.ts`): writes the strict runtime
+/// config into an exclusive per-run child of `workspaceDir` and keeps the
+/// persistent kernel home (`-d`) that holds geodata + provider caches across
+/// restarts. Validations run FIRST (secret → generated/config document →
+/// YAML schema) so an invalid secret or profile never leaves a stale
+/// `mihomo-workspace-*` child behind; the written document is gated by
+/// `kernel_config_validation` (strict allowlist for the direct branch, the
+/// `配置文件构建失败：…` profile gate for the profile branch). Cleanup deletes
+/// ONLY the exact per-run child this store created — never the stable
+/// kernel home whose geodata must survive restarts.
 pub struct StrictMihomoConfigStore {
-    pub mixed_port: u64,
-    pub http_port: u64,
-    pub socks_port: u64,
-    pub controller_port: u64,
+    pub mixed_port: i64,
+    pub http_port: i64,
+    pub socks_port: i64,
+    pub controller_port: i64,
     pub controller_host: String,
     pub allow_lan: bool,
     pub controller_panel: bool,
     pub workspace_dir: PathBuf,
     pub kernel_home_dir: Option<PathBuf>,
+    /// Installer-shipped geodata seeded into the persistent home on every
+    /// materialize (fail-open, mtime-refresh semantics).
+    pub seed_resources_dir: Option<PathBuf>,
+    /// The exact directory this store created; unknown until materialize runs.
+    owned_dir: Mutex<Option<PathBuf>>,
     /// When set, the composed ACTIVE profile document becomes the runtime
     /// config instead of the strict direct-only bootstrap.
     pub resolve_active_document: Option<Arc<dyn Fn() -> Option<String> + Send + Sync>>,
+}
+
+struct BuiltConfig {
+    text: String,
+    from_profile: bool,
 }
 
 impl KernelConfigStore for StrictMihomoConfigStore {
     fn materialize<'a>(&'a self, _binary: &'a KernelBinary, secret: &'a str) -> BoxFuture<'a, Result<KernelConfig, IpcError>> {
         let secret = secret.to_string();
         Box::pin(async move {
-            let secret: &str = &secret;
-            if !is_valid_secret(secret) {
+            // (1) Run EVERY filesystem-independent validation FIRST. The
+            // secret, the generated config and the YAML schema are all
+            // validated before any directory is created, so an invalid secret
+            // or config never leaves a stale `mihomo-workspace-*` child
+            // behind (a failed materialize returns no KernelConfig, so the
+            // supervisor could never clean it up).
+            if !is_valid_secret(&secret) {
                 return Err(IpcError::invalid_argument(
                     "Mihomo controller secret must be a 64-character lowercase hex string",
                 ));
             }
-            let mut options = json!({
-                "mixedPort": self.mixed_port,
-                "httpPort": self.http_port,
-                "socksPort": self.socks_port,
-                "controllerPort": self.controller_port,
-                "controllerHost": self.controller_host,
-                "allowLan": self.allow_lan,
-                "controllerPanel": self.controller_panel,
-                "secret": secret,
-            });
-            let text = match self.resolve_active_document.as_ref().and_then(|resolve| resolve()) {
-                Some(document) if !document.trim().is_empty() => {
-                    // The app-critical listener/auth keys stay authoritative in
-                    // the runtime config even when the profile disagrees.
-                    let composed = crate::inspection::build_profile_kernel_config(
-                        &document,
-                        &json!({
-                            "coreOverride": false, "dnsOverride": false, "snifferOverride": false,
-                            "geodataOverride": false, "tunEnabled": false
-                        }),
-                    )?;
-                    let _ = &mut options;
-                    composed
+            let built = self.build_config_text(&secret)?;
+            if built.from_profile {
+                let profile_errors =
+                    crate::kernel_config_validation::profile_kernel_config_errors(&built.text);
+                if !profile_errors.is_empty() {
+                    return Err(IpcError::invalid_argument(format!(
+                        "配置文件构建失败：{}",
+                        profile_errors.join("；")
+                    )));
                 }
-                _ => generate_mihomo_config(&options)?,
-            };
+            } else {
+                crate::kernel_config_validation::validate_mihomo_config_yaml(&built.text)?;
+            }
+
+            // (2) Only now create the exclusive per-run child plus the
+            // persistent home. `workspace_dir` (if given) is a parent; the
+            // caller's own files under it must survive a later cleanup.
             let parent = if !self.workspace_dir.as_os_str().is_empty() {
                 std::fs::create_dir_all(&self.workspace_dir).map_err(|error| {
-                    IpcError::code(code::KERNEL_SPAWN_FAILED, format!("Failed to create the workspace parent: {error}"))
+                    IpcError::code(
+                        code::KERNEL_SPAWN_FAILED,
+                        format!("Failed to create the workspace parent: {error}"),
+                    )
                 })?;
                 self.workspace_dir.clone()
             } else {
@@ -276,25 +298,50 @@ impl KernelConfigStore for StrictMihomoConfigStore {
             };
             let root_dir = parent.join(format!("mihomo-workspace-{}", crate::system_proxy::new_uuid()));
             std::fs::create_dir_all(&root_dir).map_err(|error| {
-                IpcError::code(code::KERNEL_SPAWN_FAILED, format!("Failed to create the kernel workspace: {error}"))
+                IpcError::code(
+                    code::KERNEL_SPAWN_FAILED,
+                    format!("Failed to create the kernel workspace: {error}"),
+                )
             })?;
+            *self.owned_dir.lock().expect("owned dir poisoned") = Some(root_dir.clone());
             let config_path = root_dir.join("config.yaml");
-            if let Err(error) = std::fs::write(&config_path, &text) {
-                // Anything that can fail after the child exists removes exactly
-                // that child before rethrowing.
-                let _ = std::fs::remove_dir_all(&root_dir);
-                return Err(IpcError::code(code::KERNEL_SPAWN_FAILED, format!("Failed to write the kernel config: {error}")));
+            // The kernel home is a stable sibling: it holds the geodata
+            // databases and provider caches that must survive restarts, so it
+            // is NEVER cleaned up. Without a configured home the per-run dir
+            // keeps the historical behavior (fixture/dev runs).
+            let home_dir = self
+                .kernel_home_dir
+                .clone()
+                .unwrap_or_else(|| root_dir.clone());
+            if let Err(error) = std::fs::create_dir_all(&home_dir) {
+                self.remove_owned_dir();
+                return Err(IpcError::code(
+                    code::KERNEL_SPAWN_FAILED,
+                    format!("Failed to create the kernel home: {error}"),
+                ));
             }
-            // The kernel home is a stable sibling: geodata + provider caches
-            // must survive restarts, so it is NEVER cleaned up.
-            let home_dir = self.kernel_home_dir.clone().unwrap_or_else(|| root_dir.clone());
-            std::fs::create_dir_all(&home_dir).map_err(|error| {
-                IpcError::code(code::KERNEL_SPAWN_FAILED, format!("Failed to create the kernel home: {error}"))
-            })?;
+            let mut seeded: Vec<String> = Vec::new();
+            if let Some(seed_dir) = &self.seed_resources_dir {
+                // Fail-open by contract: a missing/corrupt seed never blocks a
+                // start that could otherwise succeed.
+                seeded = crate::kernel_config_validation::seed_geodata_files(&home_dir, seed_dir);
+            }
+
+            // (3) Anything that can fail AFTER the child exists (the config
+            // write) must remove exactly that child before rethrowing the
+            // original error. The caller-provided parent — and any
+            // pre-existing file inside it — is never touched.
+            if let Err(error) = std::fs::write(&config_path, &built.text) {
+                self.remove_owned_dir();
+                return Err(IpcError::code(
+                    code::KERNEL_SPAWN_FAILED,
+                    format!("Failed to write the kernel config: {error}"),
+                ));
+            }
             let mut env = BTreeMap::new();
             env.insert("MIHOMO_PLATFORM".to_string(), std::env::consts::OS.to_string());
             env.insert("MIHOMO_ARCH".to_string(), std::env::consts::ARCH.to_string());
-            env.insert("MIHOMO_GEODATA_SEEDED".to_string(), String::new());
+            env.insert("MIHOMO_GEODATA_SEEDED".to_string(), seeded.join(","));
             let args = vec![
                 "-f".to_string(),
                 config_path.to_string_lossy().to_string(),
@@ -305,18 +352,83 @@ impl KernelConfigStore for StrictMihomoConfigStore {
         })
     }
 
+    /// Build the config document to write. When an active-profile resolver is
+    /// configured and returns a document, the profile's proxies/groups/rules
+    /// are used with only the app-critical listener/auth keys forced
+    /// (from_profile=true). Otherwise the strict loopback-only direct config
+    /// is generated (from_profile=false).
     fn cleanup<'a>(&'a self, config: &'a KernelConfig) -> BoxFuture<'a, Result<(), IpcError>> {
         let config = config.clone();
         Box::pin(async move {
-            // Only the owned per-run child is removed; the caller-provided
-            // parent and the persistent home are never touched.
-            let root = config.root_dir.canonicalize().unwrap_or_else(|_| config.root_dir.clone());
-            if root.file_name().map(|name| name.to_string_lossy().starts_with("mihomo-workspace-")).unwrap_or(false) {
-                let _ = std::fs::remove_dir_all(&root);
+            // Only ever delete the exact per-run child this store created —
+            // NEVER the stable kernel home, whose geodata databases and
+            // provider caches must survive restarts (deleting it would
+            // reintroduce the first-run online download and its pre-proxy DNS
+            // failure mode on every start).
+            let owned = self.owned_dir.lock().expect("owned dir poisoned").clone();
+            let Some(owned) = owned else { return Ok(()) };
+            if config.root_dir != owned {
+                return Ok(());
             }
+            let child = config.config_path.canonicalize().unwrap_or_else(|_| config.config_path.clone());
+            let owned_canonical = owned.canonicalize().unwrap_or_else(|_| owned.clone());
+            if child != owned_canonical && !child.starts_with(&owned_canonical) {
+                return Ok(());
+            }
+            let _ = std::fs::remove_dir_all(&owned);
+            *self.owned_dir.lock().expect("owned dir poisoned") = None;
             Ok(())
         })
     }
+}
+impl StrictMihomoConfigStore {
+    fn build_config_text(&self, secret: &str) -> Result<BuiltConfig, IpcError> {
+        if let Some(resolve) = &self.resolve_active_document {
+            if let Some(document) = resolve() {
+                if !document.trim().is_empty() {
+                    let text = crate::inspection::build_profile_kernel_config(
+                        &document,
+                        &json!({
+                            "mixedPort": self.mixed_port,
+                            "httpPort": self.http_port,
+                            "socksPort": self.socks_port,
+                            "controllerPort": self.controller_port,
+                            "controllerHost": self.controller_host,
+                            "allowLan": self.allow_lan,
+                            "controllerPanel": self.controller_panel,
+                            "secret": secret
+                        }),
+                    )?;
+                    return Ok(BuiltConfig { text, from_profile: true });
+                }
+            }
+        }
+        Ok(BuiltConfig {
+            text: generate_mihomo_config(&json!({
+                "mixedPort": self.mixed_port,
+                "httpPort": self.http_port,
+                "socksPort": self.socks_port,
+                "controllerPort": self.controller_port,
+                "controllerHost": self.controller_host,
+                "allowLan": self.allow_lan,
+                "controllerPanel": self.controller_panel,
+                "secret": secret
+            }))?,
+            from_profile: false,
+        })
+    }
+
+    /// Delete the exact per-run child this store created and clear the
+    /// ownership marker. Used only when materialize() fails AFTER creating
+    /// the child but BEFORE returning a KernelConfig. Best-effort; never
+    /// touches the caller-provided parent.
+    fn remove_owned_dir(&self) {
+        let dir = self.owned_dir.lock().expect("owned dir poisoned").take();
+        if let Some(dir) = dir {
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
 }
 
 // ---------------------------------------------------------------------------
@@ -1939,7 +2051,8 @@ mod tests {
     #[test]
     fn strict_config_generation_is_byte_shaped_like_the_ts_output() {
         let secret = "a".repeat(64);
-        let text = generate_mihomo_config(&json!({ "secret": secret })).unwrap();
+        let text =
+            generate_mihomo_config(&json!({ "mixedPort": 7890, "controllerPort": 9090, "secret": secret })).unwrap();
         assert!(text.contains("mixed-port: 7890"));
         assert!(text.contains("allow-lan: false"));
         assert!(text.contains("bind-address: 127.0.0.1"));
@@ -1952,7 +2065,7 @@ mod tests {
         assert!(text.ends_with('\n'));
         // Panel + lan + explicit ports.
         let text = generate_mihomo_config(&json!({
-            "mixedPort": 7897, "httpPort": 7898, "socksPort": 7899,
+            "mixedPort": 7897, "controllerPort": 9097, "httpPort": 7898, "socksPort": 7899,
             "allowLan": true, "controllerPanel": true, "secret": secret
         }))
         .unwrap();
@@ -1965,11 +2078,25 @@ mod tests {
     #[test]
     fn strict_config_rejects_invalid_inputs() {
         let secret = "a".repeat(64);
-        assert!(generate_mihomo_config(&json!({ "mixedPort": 0, "secret": secret })).is_err());
-        assert!(generate_mihomo_config(&json!({ "mixedPort": 9090, "secret": secret })).is_err());
-        assert!(generate_mihomo_config(&json!({ "httpPort": 7890, "secret": secret })).is_err());
-        assert!(generate_mihomo_config(&json!({ "secret": "nothex" })).is_err());
-        assert!(generate_mihomo_config(&json!({ "logLevel": "verbose", "secret": secret })).is_err());
+        // Privileged + out-of-range + missing ports are all rejected (TS copies).
+        assert!(generate_mihomo_config(&json!({ "mixedPort": 0, "controllerPort": 9090, "secret": secret })).is_err());
+        assert!(generate_mihomo_config(&json!({ "mixedPort": 80, "controllerPort": 9090, "secret": secret })).is_err());
+        assert!(generate_mihomo_config(&json!({ "mixedPort": 65536, "controllerPort": 9090, "secret": secret })).is_err());
+        // mixed-port/controller collision.
+        assert!(generate_mihomo_config(&json!({ "mixedPort": 9090, "controllerPort": 9090, "secret": secret })).is_err());
+        // HTTP-port collision with the mixed port.
+        assert!(generate_mihomo_config(&json!({ "mixedPort": 7890, "controllerPort": 9090, "httpPort": 7890, "secret": secret })).is_err());
+        assert!(generate_mihomo_config(&json!({ "mixedPort": 7890, "controllerPort": 9090, "secret": "nothex" })).is_err());
+        assert!(generate_mihomo_config(&json!({ "mixedPort": 7890, "controllerPort": 9090, "logLevel": "verbose", "secret": secret })).is_err());
+        let error = generate_mihomo_config(&json!({ "mixedPort": 80, "controllerPort": 9090, "secret": secret }))
+            .unwrap_err()
+            .0;
+        assert!(error.contains("Invalid mixed-port: must be an unprivileged integer port between 1024 and 65535, got 80"), "{error}");
+        // Non-direct mode is rejected with the Phase-7 copy.
+        let error = generate_mihomo_config(&json!({ "mixedPort": 7890, "controllerPort": 9090, "mode": "global", "secret": secret }))
+            .unwrap_err()
+            .0;
+        assert!(error.contains("Unsupported mihomo mode: global; Phase 7 requires 'direct'"), "{error}");
     }
 
     #[test]
@@ -2016,6 +2143,8 @@ mod tests {
             controller_panel: false,
             workspace_dir: base.path().to_path_buf(),
             kernel_home_dir: Some(home.clone()),
+            seed_resources_dir: None,
+            owned_dir: Mutex::new(None),
             resolve_active_document: None,
         };
         let binary = KernelBinary {
@@ -2043,6 +2172,131 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn strict_store_output_passes_the_strict_schema_gate() {
+        let base = tempfile::TempDir::new().unwrap();
+        let store = StrictMihomoConfigStore {
+            mixed_port: 7897,
+            http_port: 0,
+            socks_port: 0,
+            controller_port: 9097,
+            controller_host: "127.0.0.1".to_string(),
+            allow_lan: false,
+            controller_panel: false,
+            workspace_dir: base.path().to_path_buf(),
+            kernel_home_dir: None,
+            seed_resources_dir: None,
+            owned_dir: Mutex::new(None),
+            resolve_active_document: None,
+        };
+        let binary = KernelBinary {
+            command: PathBuf::from("/fake/mihomo"),
+            args: Vec::new(),
+            version: None,
+            env: BTreeMap::new(),
+        };
+        let config = store.materialize(&binary, &random_secret()).await.unwrap();
+        let text = std::fs::read_to_string(&config.config_path).unwrap();
+        assert!(crate::kernel_config_validation::mihomo_config_errors(&text).is_empty(), "{text}");
+        store.cleanup(&config).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn secret_failures_leave_no_workspace_child_behind() {
+        // Validations run BEFORE any directory is created.
+        let base = tempfile::TempDir::new().unwrap();
+        let store = StrictMihomoConfigStore {
+            mixed_port: 24000,
+            http_port: 0,
+            socks_port: 0,
+            controller_port: 24001,
+            controller_host: "127.0.0.1".to_string(),
+            allow_lan: false,
+            controller_panel: false,
+            workspace_dir: base.path().to_path_buf(),
+            kernel_home_dir: None,
+            seed_resources_dir: None,
+            owned_dir: Mutex::new(None),
+            resolve_active_document: None,
+        };
+        let binary = KernelBinary {
+            command: PathBuf::from("/bin/mihomo"),
+            args: Vec::new(),
+            version: None,
+            env: BTreeMap::new(),
+        };
+        let error = store.materialize(&binary, "").await.unwrap_err();
+        assert!(
+            error.0.contains("Mihomo controller secret must be a 64-character lowercase hex string"),
+            "{}",
+            error.0
+        );
+        let error = store.materialize(&binary, "short").await.unwrap_err();
+        assert!(error.0.starts_with("PROTOCOL_ERROR:INVALID_ARGUMENT::"), "{}", error.0);
+        let children: Vec<_> = std::fs::read_dir(base.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with("mihomo-workspace-"))
+            .collect();
+        assert!(children.is_empty(), "leaked workspace children: {children:?}");
+    }
+
+    #[tokio::test]
+    async fn profile_branch_gates_the_document_and_forces_the_app_keys() {
+        let base = tempfile::TempDir::new().unwrap();
+        let store = StrictMihomoConfigStore {
+            mixed_port: 28000,
+            http_port: 0,
+            socks_port: 0,
+            controller_port: 28001,
+            controller_host: "127.0.0.1".to_string(),
+            allow_lan: false,
+            controller_panel: false,
+            workspace_dir: base.path().to_path_buf(),
+            kernel_home_dir: None,
+            seed_resources_dir: None,
+            owned_dir: Mutex::new(None),
+            resolve_active_document: Some(Arc::new(|| {
+                Some("proxies:\n  - name: a\n    type: ss\n    server: s\n    port: 1\ntun:\n  enable: true\n".to_string())
+            })),
+        };
+        let binary = KernelBinary {
+            command: PathBuf::from("/bin/mihomo"),
+            args: Vec::new(),
+            version: None,
+            env: BTreeMap::new(),
+        };
+        let secret = random_secret();
+        let config = store.materialize(&binary, &secret).await.unwrap();
+        let text = std::fs::read_to_string(&config.config_path).unwrap();
+        // The profile content is carried; the safety-critical keys are forced.
+        assert!(text.contains("name: a"), "{text}");
+        assert!(text.contains("mixed-port: 28000"), "{text}");
+        assert!(text.contains("28001"), "{text}");
+        assert!(text.contains(&format!("secret: {secret}")), "{text}");
+        // The system-mutating tun block is neutralized on the main kernel.
+        assert!(!text.contains("enable: true"), "{text}");
+        store.cleanup(&config).await.unwrap();
+
+        // A degenerate document is rejected BEFORE any directory exists.
+        let store = StrictMihomoConfigStore {
+            resolve_active_document: Some(Arc::new(|| Some("mode: rule\n".to_string()))),
+            ..store
+        };
+        let error = store.materialize(&binary, &secret).await.unwrap_err();
+        assert!(
+            error.0.starts_with("PROTOCOL_ERROR:INVALID_ARGUMENT::配置文件构建失败："),
+            "{}",
+            error.0
+        );
+        let children: Vec<_> = std::fs::read_dir(base.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with("mihomo-workspace-"))
+            .collect();
+        assert!(children.is_empty(), "leaked workspace children: {children:?}");
+    }
+
+    #[tokio::test]
     async fn strict_store_rejects_an_invalid_secret_with_the_ts_copy() {
         let base = tempfile::TempDir::new().unwrap();
         let store = StrictMihomoConfigStore {
@@ -2055,6 +2309,8 @@ mod tests {
             controller_panel: false,
             workspace_dir: base.path().to_path_buf(),
             kernel_home_dir: None,
+            seed_resources_dir: None,
+            owned_dir: Mutex::new(None),
             resolve_active_document: None,
         };
         let binary = KernelBinary {

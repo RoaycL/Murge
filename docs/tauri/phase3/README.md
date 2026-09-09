@@ -760,6 +760,45 @@ machine, previously a disabled stub):
   supervisor-lifecycle cases); channel audit unchanged 121 / 111 live /
   0 unmapped; `npm run typecheck` green; vitest 1905 passed / 7 skipped.
 
+Seventh Phase 3D slice — 内核配置校验与门禁 (the `mihomo-config.ts` strict
+schema + `profile-kernel-config.ts` structural gate + geodata seeding):
+
+- `kernel_config_validation.rs` builds the YAML node tree from yaml-rust2's
+  EVENT stream (duplicate pairs, aliases, explicit tags and missing values
+  are preserved — the hash-based `YamlLoader` would silently swallow them)
+  and then runs the TS-shaped walk with byte-identical copies:
+  `unknown top-level key:` / `duplicate key: X` / `config must not use YAML
+  aliases` / `key X uses a YAML tag, which is not allowed` /
+  `top-level keys must be plain scalar strings` / the exact per-key
+  port/boolean/mode/log-level/ipv6/controller/secret/ui checks (unprivileged
+  1024–65535 range, `warn` not `warning`, core-schema scalar classification
+  so quoted values never masquerade as numbers/booleans) and the nested
+  tun/dns/rules allowlist. `validateMihomoConfigYaml` →
+  `Unsafe mihomo config: …` INVALID_ARGUMENT; unresolved `*anchor` maps onto
+  the same alias error the TS parser produces.
+- `profileKernelConfigErrors` ports with the Chinese copies (配置文档为空 /
+  YAML 解析错误 / 配置顶层必须是一个 YAML 映射 / 文档缺少 proxies、
+  proxy-groups、proxy-providers 或 rules 段); top-level merge-key content is
+  approximated for the content check (documented).
+- `generateMihomoConfig` fixed to the TS contract: unprivileged port range
+  with the `Invalid mixed-port: must be an unprivileged integer port between
+  1024 and 65535, got N` copy, required ports (no defaults), the
+  `Unsupported mihomo mode: X; Phase 7 requires 'direct'` gate and `warn`
+  level.
+- `StrictMihomoConfigStore` reworked to the TS `MihomoKernelConfigStore`
+  ordering: secret → config document → schema validation BEFORE any
+  directory exists (a bad secret or degenerate profile leaves no
+  `mihomo-workspace-*` child), profile branch via
+  `build_profile_kernel_config` gated by the profile errors
+  (`配置文件构建失败：…`), owned-dir tracking so cleanup deletes ONLY the
+  exact per-run child (never the stable kernel home), and
+  `seedGeodataFiles` (five installer artifacts, fail-open, mtime-refresh,
+  `MIHOMO_GEODATA_SEEDED` diagnostics).
+- `sanitizeMihomoConfig` ports (secret line + stray 64-hex token redaction).
+- Verify: `cargo test --lib` 369 passed / 0 failed / 0 warnings (32 new
+  validation/gate/seed cases); channel audit unchanged 121 / 111 live /
+  0 unmapped; typecheck green; vitest 1905 passed / 7 skipped.
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,

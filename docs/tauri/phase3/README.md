@@ -799,6 +799,20 @@ schema + `profile-kernel-config.ts` structural gate + geodata seeding):
   validation/gate/seed cases); channel audit unchanged 121 / 111 live /
   0 unmapped; typecheck green; vitest 1905 passed / 7 skipped.
 
+Eighth Phase 3D slice — quit-lifecycle dispose hook (the Electron
+`lifecycle-adapter.ts` dispose step that must never be skipped):
+
+- `RunEvent::Exit` now terminates the Sub-Store worker SYNCHRONOUSLY
+  (`start_kill` — the exit path cannot await a spawned task) under the same
+  "dispose during app shutdown; assets persist" contract; `dispose()` also
+  invalidates every in-flight generation so a raced ensure/update lands
+  fail-closed.
+- The ordered quit gateway (proxy restore BEFORE kernel stop, no-quit-on
+  failed-restore) already runs through the `kernel:stop` arm and the
+  failed-phase crash hook; TUN `handleHostExit` stays with the Phase 4
+  lifecycle-adapter slice where it can be awaited ahead of process teardown
+  (the gated adapter owns no device, so nothing is skipped today).
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,

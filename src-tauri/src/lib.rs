@@ -353,6 +353,25 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![ipc::desktop_ipc])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // The quit lifecycle (lifecycle-adapter.ts): the ordered gateway
+            // (proxy restore BEFORE kernel stop) already runs through the
+            // kernel:stop arm and the failed-phase crash hook; this hook is
+            // the residual dispose step that must never be skipped when the
+            // host tears the process down.
+            if let tauri::RunEvent::Exit = event {
+                // Terminate the Sub-Store worker synchronously (the process is
+                // exiting; a spawned async task could be dropped first) — the
+                // same "dispose during app shutdown; assets persist" contract.
+                if let Some(substore) = app_handle.try_state::<substore::SubStoreService>() {
+                    substore.dispose();
+                }
+                // TUN handleHostExit (emergency-disable of a live device)
+                // stays with the ordered quit flow, where it can be awaited
+                // ahead of process teardown; the gated adapter in this build
+                // owns no device, so nothing is skipped today.
+            }
+        });
 }

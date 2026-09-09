@@ -1006,6 +1006,33 @@ install surface, un-staging the artifact pipeline):
   + test profiles 0-warning; typecheck green; vitest 1905 passed /
   7 skipped.
 
+Fifteenth Phase 3D slice — bounded file logging (the `file-log-service.ts`
+surface: application / kernel / Sub-Store daily logs):
+
+- `shared/log-redaction.ts` ports verbatim as `redact_log_text` — the five
+  ordered passes (Bearer/Basic, secret query keys via the `SENSITIVE_KEY`
+  regex, secret `key: value` pairs, inline userinfo, fixed-width 64-hex
+  controller secrets), case-insensitive like the TS `/gi`.
+- `src/file_log.rs` is the `FileLogService` port: one file per kind per
+  LOCAL day, lines rendered + capped at 64 KiB + redacted at ENQUEUE time
+  (preserving call order), a single ordered consumer, the 10 MiB cap
+  retaining the newest 50% around the incoming line plus the exact
+  truncation marker, 7-day retention sweeping only `^(app|core|substore)-
+  YYYY-MM-DD\.log$`, and the memoized-once failed initialize.
+- The parity load-bearing detail: tokio's `fs::File` buffers completed
+  `write_all` calls internally, so the consumer `shutdown()`s the handle
+  BEFORE advancing the flush watermark — `flush()` (seq-tracked through a
+  watch channel) resolves when the bytes are actually durable, matching the
+  TS `await appendFile(...)`. A 300-round burst test locks the contract.
+- Wiring mirrors `bootstrap.ts` / `when-ready.ts`: the startup
+  `version/platform/arch` line (module `startup`), the kernel `/logs` tap
+  (`logSink` -> `writeCore`, independent of who subscribes), and the
+  Sub-Store worker stdout/stderr pipes -> `writeSubStore` (replacing the
+  staged `Stdio::null()`; `on_log` is injectable for tests).
+- Verify: `cargo test --lib` 426 passed / 0 failed / 1 ignored (the
+  documented 85 s burst), 0 warnings both profiles, 20x full-suite sweep
+  with zero flakes after the shutdown fix; typecheck + vitest unchanged.
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,

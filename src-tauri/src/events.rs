@@ -465,6 +465,7 @@ pub fn start_forwarding(
     app: tauri::AppHandle,
     streams: &MihomoStreams,
     kernel: &crate::kernel::KernelServices,
+    file_logs: std::sync::Arc<crate::file_log::FileLogService>,
 ) {
     let emit = move |channel: &str, value: Value| {
         let _ = tauri::Emitter::emit(&app, channel, value);
@@ -477,6 +478,12 @@ pub fn start_forwarding(
             Arc::new(move |value| emitter(channel, value.clone())),
         );
     }
+    // The `logSink` wiring (when-ready.ts): every VALID kernel log message
+    // lands in the bounded daily file, independent of who is subscribed.
+    streams.subscribe(
+        StreamKind::Logs,
+        Arc::new(move |value| file_logs.write_core(value)),
+    );
     let emitter = emit.clone();
     streams.errors.subscribe(Arc::new(move |value| {
         emitter("mihomo:stream-error-event", value.clone())

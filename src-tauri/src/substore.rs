@@ -114,6 +114,10 @@ fn versions_value(versions: &Versions) -> Value {
 /// interface so tests can inject a recording fake instead of spawning.
 pub struct SubStoreWorkerHandle {
     child: StdMutex<Option<tokio::process::Child>>,
+    /// The `onLog` sink; None = `Stdio::null()` (no pipes at all). Held for
+    /// the handle lifetime so the forwarded readers own a stable sink.
+    #[allow(dead_code)]
+    on_log: Option<Arc<dyn Fn(&str, &str) + Send + Sync>>,
 }
 
 impl SubStoreWorkerHandle {
@@ -165,6 +169,9 @@ pub struct SubStoreDeps {
     pub fetch_fn: Option<Fetch>,
     /// Injectable port probe for tests.
     pub find_free_port: Option<Arc<dyn Fn(u16) -> futures_util::future::BoxFuture<'static, Result<u16, String>> + Send + Sync>>,
+    /// The worker output sink (the TS `onLog`): None = discard (the old
+    /// `Stdio::null()`), Some = line chunks land in the bounded log files.
+    pub on_log: Option<Arc<dyn Fn(&str, &str) + Send + Sync>>,
     /// Persisted preference mirrors, resolved at call time (the TS
     /// AppSettingsGateway shape: `get()` reads the live store).
     pub settings: crate::settings::SettingsGateway,
@@ -726,7 +733,7 @@ impl SubStoreService {
         let bundle_path = self.backend_bundle_path().to_string_lossy().to_string();
         let worker = match &self.deps.create_worker {
             Some(create) => create(bundle_path, env),
-            None => default_create_worker(&bundle_path, env),
+            None => default_create_worker(&bundle_path, env, self.deps.on_log.clone()),
         };
         let worker = Arc::new(worker);
         *self.inner.unexpected_exit_error.lock().unwrap() = None;
@@ -934,17 +941,63 @@ impl SubStoreService {
     }
 }
 
-fn default_create_worker(bundle_path: &str, env: HashMap<String, String>) -> SubStoreWorkerHandle {
-    let mut command = tokio::process::Command::new(&bundle_path);
+fn default_create_worker(
+    bundle_path: &str,
+    env: HashMap<String, String>,
+    on_log: Option<Arc<dyn Fn(&str, &str) + Send + Sync>>,
+) -> SubStoreWorkerHandle {
+    let mut command = tokio::process::Command::new(bundle_path);
     command.env_clear();
     for (key, value) in env {
         command.env(key, value);
     }
     command.stdin(std::process::Stdio::null());
-    command.stdout(std::process::Stdio::null());
-    command.stderr(std::process::Stdio::null());
-    let child = command.spawn().ok();
-    SubStoreWorkerHandle { child: StdMutex::new(child) }
+    let pipe_output = on_log.is_some();
+    if pipe_output {
+        command.stdout(std::process::Stdio::piped());
+        command.stderr(std::process::Stdio::piped());
+    } else {
+        command.stdout(std::process::Stdio::null());
+        command.stderr(std::process::Stdio::null());
+    }
+    let mut child = command.spawn().ok();
+    // Forward each pipe as raw chunks (the TS `worker.stdout.on('data')` —
+    // the service layer does no line framing either).
+    if let (Some(sink), Some(child)) = (&on_log, child.as_mut()) {
+        if let Some(mut stdout) = child.stdout.take() {
+            let sink = sink.clone();
+            tauri::async_runtime::spawn(async move {
+                use tokio::io::AsyncReadExt;
+                let mut buffer = [0u8; 4096];
+                loop {
+                    match stdout.read(&mut buffer).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(read) => {
+                            let text = String::from_utf8_lossy(&buffer[..read]).to_string();
+                            sink("stdout", &text);
+                        }
+                    }
+                }
+            });
+        }
+        if let Some(mut stderr) = child.stderr.take() {
+            let sink = sink.clone();
+            tauri::async_runtime::spawn(async move {
+                use tokio::io::AsyncReadExt;
+                let mut buffer = [0u8; 4096];
+                loop {
+                    match stderr.read(&mut buffer).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(read) => {
+                            let text = String::from_utf8_lossy(&buffer[..read]).to_string();
+                            sink("stderr", &text);
+                        }
+                    }
+                }
+            });
+        }
+    }
+    SubStoreWorkerHandle { child: StdMutex::new(child), on_log }
 }
 
 fn uuid() -> String {
@@ -1004,6 +1057,7 @@ mod tests {
             base_dir: std::env::temp_dir().join(format!("murge-substore-test-{}", uuid())),
             brand_name: "Murge".to_string(),
             get_mixed_port: Box::new(|| None),
+            on_log: None,
             create_worker: None,
             fetch_fn: Some(fetch),
             find_free_port: Some(Arc::new(|base: u16| {
@@ -1052,6 +1106,7 @@ mod tests {
             base_dir: std::env::temp_dir().join(format!("murge-substore-test-{}", uuid())),
             brand_name: "Murge".to_string(),
             get_mixed_port: Box::new(|| Some(7897)),
+            on_log: None,
             create_worker: None,
             fetch_fn: Some(Arc::new(|_request: FetchRequest| {
                 Box::pin(async { Err("unused".to_string()) })

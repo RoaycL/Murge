@@ -25,6 +25,9 @@ serde = { version = "1", features = ["derive"] }
 # order (BTreeMap's alphabetical order would rewrite every meta file).
 serde_json = { version = "1", features = ["preserve_order"] }
 uuid = { version = "1", features = ["v4"] }
+# Local-date stamps for the daily log files (file-log-service.ts parity);
+# already resolved transitively — no new crates enter the lockfile.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 rand = "0.8"
 url = "2"
 sha2 = "0.10"

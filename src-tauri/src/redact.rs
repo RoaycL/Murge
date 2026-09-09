@@ -219,3 +219,98 @@ mod tests {
         assert!(!is_redacted_url("https://example.com/plain"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Log redaction — the `shared/log-redaction.ts` port (disk-log + export mask)
+// ---------------------------------------------------------------------------
+
+static SENSITIVE_KEY: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+
+/// The `SENSITIVE_KEY` regex (`/(access[_-]?token|api[_-]?key|authorization|cookie|password|secret|token)/i`).
+fn is_sensitive_query_key(name: &str) -> bool {
+    SENSITIVE_KEY
+        .get_or_init(|| {
+            regex::Regex::new(r"(access[_-]?token|api[_-]?key|authorization|cookie|password|secret|token)")
+                .expect("sensitive-key regex compiles")
+        })
+        .is_match(name)
+}
+
+/// Best-effort credential masking shared by renderer exports and disk logs.
+/// The five ordered passes of the TS implementation, byte-comparable.
+pub fn redact_log_text(input: &str) -> String {
+    // 1. Bearer/Basic credentials.
+    let bearer = regex::Regex::new(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+")
+        .expect("bearer regex compiles");
+    let text = bearer.replace_all(input, "${1} [REDACTED]").to_string();
+
+    // 2. Secret-looking query parameters.
+    let query = regex::Regex::new(r"([?&])([^=&\s]+)=([^&\s]*)").expect("query regex compiles");
+    let text = query
+        .replace_all(&text, |captures: &regex::Captures| {
+            let separator = captures.get(1).map(|m| m.as_str()).unwrap_or("");
+            let key = captures.get(2).map(|m| m.as_str()).unwrap_or("");
+            if is_sensitive_query_key(key) {
+                format!("{separator}{key}=[REDACTED]")
+            } else {
+                captures.get(0).map(|m| m.as_str()).unwrap_or("").to_string()
+            }
+        })
+        .to_string();
+
+    // 3. Key/value pairs whose key looks secret-bearing.
+    let kv = regex::Regex::new(
+        r"(?i)\b((?:authorization|cookie)|[\w-]*(?:token|secret|password|api[_-]?key)[\w-]*)\s*[:=]\s*([^&\s,;]+)",
+    )
+    .expect("kv regex compiles");
+    let text = kv.replace_all(&text, "${1}=[REDACTED]").to_string();
+
+    // 4. Inline userinfo (`https://user:pass@host`).
+    let userinfo = regex::Regex::new(r"(?i)\b(https?://)([^/@\s]+)@").expect("userinfo regex compiles");
+    let text = userinfo.replace_all(&text, "${1}[REDACTED]@").to_string();
+
+    // 5. Generated mihomo controller secrets are fixed-width lowercase hex.
+    // Mask them even when an upstream error omitted the key name.
+    let hex64 = regex::Regex::new(r"(?i)\b[0-9a-f]{64}\b").expect("hex regex compiles");
+    hex64.replace_all(&text, "[REDACTED]").to_string()
+}
+
+#[cfg(test)]
+mod log_redaction_tests {
+    use super::*;
+
+    #[test]
+    fn log_text_masks_bearer_and_basic_credentials() {
+        // The TS applies the kv pass AFTER the bearer pass, so the value
+        // "Bearer" itself gets kv-masked — byte-true to the shared helper.
+        assert_eq!(redact_log_text("Authorization: Bearer abc.def_ghi/jkl="), "Authorization=[REDACTED] [REDACTED]");
+        assert_eq!(redact_log_text("basic XYZ123abc"), "basic [REDACTED]");
+        assert_eq!(redact_log_text("bearerish stays"), "bearerish stays");
+    }
+
+    #[test]
+    fn log_text_masks_secret_query_keys_only() {
+        assert_eq!(redact_log_text("/x?token=abc&keep=1"), "/x?token=[REDACTED]&keep=1");
+        assert_eq!(redact_log_text("/x?api-key=zz&flag="), "/x?api-key=[REDACTED]&flag=");
+        assert_eq!(redact_log_text("/x?name=jane"), "/x?name=jane");
+    }
+
+    #[test]
+    fn log_text_masks_secret_key_value_pairs() {
+        assert_eq!(redact_log_text("password=hunter2;"), "password=[REDACTED];");
+        assert_eq!(redact_log_text("cookie: session=xyz"), "cookie=[REDACTED]");
+        assert_eq!(redact_log_text("x-api-key: ABC"), "x-api-key=[REDACTED]");
+        assert_eq!(redact_log_text("color: blue"), "color: blue");
+    }
+
+    #[test]
+    fn log_text_masks_inline_userinfo() {
+        assert_eq!(redact_log_text("failed https://user:pass@host/x"), "failed https://[REDACTED]@host/x");
+    }
+
+    #[test]
+    fn log_text_masks_64_hex_controller_secrets() {
+        let secret = "a".repeat(64);
+        assert_eq!(redact_log_text(&format!("dial tcp: use of secret {secret} closed")), "dial tcp: use of secret [REDACTED] closed");
+    }
+}

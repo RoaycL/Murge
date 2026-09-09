@@ -18,6 +18,7 @@ mod error;
 mod inspection;
 mod net_validators;
 mod events;
+mod file_log;
 mod ipc;
 #[allow(dead_code)] // wired incrementally; the lint fires on staged-but-unwired items
 mod mihomo;
@@ -282,13 +283,32 @@ pub fn run() {
                 // Non-Windows production: fail-closed (the disabled resolver).
                 kernel::KernelServices::with_manager(manager)
             };
+            // The bounded daily log files (bootstrap.ts `fileLogs`): app log
+            // under the stable namespace, dev keeps an ephemeral directory.
+            let log_directory = match &paths.app_data_root {
+                Some(root) => root.join("logs"),
+                None => std::env::temp_dir().join(format!("murge-dev-logs-{}", std::process::id())),
+            };
+            let file_logs = file_log::FileLogService::new(log_directory);
+            // The startup line (bootstrap.ts, module `startup`).
+            file_logs.write_app(
+                file_log::FileLogLevel::Info,
+                &format!(
+                    "version={} platform={} arch={}",
+                    env!("CARGO_PKG_VERSION"),
+                    std::env::consts::OS,
+                    std::env::consts::ARCH
+                ),
+                "startup",
+            );
+            app.manage(file_logs.clone());
             // Mihomo controller services: log retention + selection cache.
             let mihomo = mihomo::MihomoServices::new(Some(paths.app_data_root.clone().unwrap_or_default()));
             // Push-stream transports + event forwarders. The endpoint binds
             // the coerced core-settings controller (rebuilt on kernel
             // transitions by the Phase 3D slice), exactly like the REST client.
             let streams = events::MihomoStreams::new(mihomo.logs.clone());
-            events::start_forwarding(app.handle().clone(), &streams, &kernel);
+            events::start_forwarding(app.handle().clone(), &streams, &kernel, file_logs.clone());
             let core = enhancements::coerce_core_settings(&models.core.get());
             streams.ensure(&events::ControllerEndpoint {
                 port: core["controllerPort"].as_i64().unwrap_or(9090),
@@ -341,6 +361,14 @@ pub fn run() {
             let substore_service = substore::SubStoreService::new(substore::SubStoreDeps {
                 base_dir: substore_base,
                 brand_name,
+                on_log: {
+                    // The TS `onLog` wiring: worker output lands in the
+                    // bounded substore log file (best-effort, never blocks).
+                    let file_logs = file_logs.clone();
+                    Some(std::sync::Arc::new(move |stream: &str, text: &str| {
+                        file_logs.write_substore(stream, text)
+                    }))
+                },
                 get_mixed_port: {
                     let app = app.handle().clone();
                     Box::new(move || {

@@ -926,6 +926,7 @@ mod tests {
         crate::substore::SubStoreService::new(crate::substore::SubStoreDeps {
             base_dir: std::env::temp_dir().join("murge-substore-fixture"),
             brand_name: "Murge".to_string(),
+            on_log: None,
             get_mixed_port: Box::new(|| None),
             create_worker: None,
             fetch_fn: Some(std::sync::Arc::new(|_request: crate::substore::FetchRequest| {

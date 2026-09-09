@@ -1401,15 +1401,15 @@ app.whenReady().then(async () => {
     modeController.updateRuntimeConfig(operation)
   const dnsEnhancementCoordinator = new EnhancementApplyCoordinator(
     runEnhancementUpdate,
-    async () => { await liveConfigReloader?.patchSectionsIfRunning(['dns']) }
+    async () => { await liveConfigReloader?.applySectionsIfRunning(['dns']) }
   )
   const snifferEnhancementCoordinator = new EnhancementApplyCoordinator(
     runEnhancementUpdate,
-    async () => { await liveConfigReloader?.patchSectionsIfRunning(['sniffer']) }
+    async () => { await liveConfigReloader?.applySectionsIfRunning(['sniffer']) }
   )
   const geodataEnhancementCoordinator = new EnhancementApplyCoordinator(
     runEnhancementUpdate,
-    async () => { await liveConfigReloader?.patchSectionsIfRunning(['geodata']) }
+    async () => { await liveConfigReloader?.applySectionsIfRunning(['geodata']) }
   )
   const liveDnsEnhancement = new LiveDnsEnhancementGateway(dnsEnhancementService, dnsEnhancementCoordinator)
   const liveSnifferEnhancement = new LiveSnifferEnhancementGateway(snifferEnhancementService, snifferEnhancementCoordinator)

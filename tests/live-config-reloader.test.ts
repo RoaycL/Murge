@@ -3,6 +3,7 @@ import { parse } from 'yaml'
 import { LiveConfigReloader } from '../src/main/kernel/live-config-reloader'
 import { EMPTY_CORE_SETTINGS } from '../src/shared/core-settings'
 import { EMPTY_GEODATA_SETTINGS } from '../src/shared/geodata'
+import { EMPTY_SNIFFER_ENHANCEMENT } from '../src/shared/sniffer'
 import { EMPTY_TUN_CONFIG } from '../src/shared/tun-config'
 
 const runtime = {
@@ -28,10 +29,20 @@ sniffer:
   parse-pure-ip: true
 `
 
-function harness(phase: 'stopped' | 'running', tunEnabled = false, mode: 'rule' | 'direct' | 'global' = 'rule') {
+function harness(
+  phase: 'stopped' | 'running',
+  tunEnabled = false,
+  mode: 'rule' | 'direct' | 'global' = 'rule',
+  baseDocument = 'mode: rule\nproxies: []\nproxy-groups: []\nrules: [MATCH,DIRECT]\n'
+) {
+  const snapshot: Record<string, unknown> = {
+    mode,
+    sniffing: true,
+    tun: { enable: tunEnabled, 'dns-hijack': ['any:53'] }
+  }
   const mihomo = {
-    getConfig: vi.fn(async () => ({ mode, tun: { enable: tunEnabled, 'dns-hijack': ['any:53'] } })),
-    patchConfig: vi.fn(async (_patch: Record<string, unknown>) => undefined),
+    getConfig: vi.fn(async () => ({ ...snapshot })),
+    patchConfig: vi.fn(async (patch: Record<string, unknown>) => { Object.assign(snapshot, patch) }),
     reloadConfig: vi.fn(async (_payload: string) => undefined),
     flushDnsCache: vi.fn(async () => undefined),
     flushFakeIpCache: vi.fn(async () => undefined)
@@ -42,6 +53,7 @@ function harness(phase: 'stopped' | 'running', tunEnabled = false, mode: 'rule' 
     runtime,
     {
       readActiveDocument: vi.fn(async () => document),
+      readBaseDocument: vi.fn(async () => baseDocument),
       readTunConfig: vi.fn(async () => ({ ...EMPTY_TUN_CONFIG })),
       readCore: vi.fn(async () => ({ ...EMPTY_CORE_SETTINGS })),
       readGeodata: vi.fn(async () => ({ ...EMPTY_GEODATA_SETTINGS }))
@@ -112,6 +124,47 @@ describe('LiveConfigReloader', () => {
     const config = parse(mihomo.reloadConfig.mock.calls[0][0]) as Record<string, unknown>
     expect(config.dns).toMatchObject({ enable: true })
     expect(config.sniffer).toMatchObject({ enable: true })
+  })
+
+  it('mutes and restores an already-loaded sniffer without reloading TUN or providers', async () => {
+    const { reloader, mihomo } = harness('running', true)
+    const enabled = { ...EMPTY_SNIFFER_ENHANCEMENT, enabled: true }
+    const disabled = { ...enabled, enabled: false }
+
+    await expect(reloader.applySnifferTransitionIfRunning(enabled, disabled)).resolves.toBe(true)
+    await expect(reloader.applySnifferTransitionIfRunning(disabled, enabled)).resolves.toBe(true)
+
+    expect(mihomo.patchConfig.mock.calls).toEqual([
+      [{ sniffing: false }],
+      [{ sniffing: true }]
+    ])
+    expect(mihomo.reloadConfig).not.toHaveBeenCalled()
+  })
+
+  it('falls back to a full reload when the base profile owns an enabled sniffer', async () => {
+    const { reloader, mihomo } = harness('running', true, 'rule', document)
+    const enabled = { ...EMPTY_SNIFFER_ENHANCEMENT, enabled: true }
+
+    await expect(reloader.applySnifferTransitionIfRunning(
+      enabled,
+      { ...enabled, enabled: false }
+    )).resolves.toBe(true)
+
+    expect(mihomo.patchConfig).not.toHaveBeenCalled()
+    expect(mihomo.reloadConfig).toHaveBeenCalledOnce()
+  })
+
+  it('uses a full reload for the first enable after startup because no dispatcher is cached', async () => {
+    const { reloader, mihomo } = harness('running', true)
+    const disabled = { ...EMPTY_SNIFFER_ENHANCEMENT, enabled: false }
+
+    await expect(reloader.applySnifferTransitionIfRunning(
+      disabled,
+      { ...disabled, enabled: true }
+    )).resolves.toBe(true)
+
+    expect(mihomo.patchConfig).not.toHaveBeenCalled()
+    expect(mihomo.reloadConfig).toHaveBeenCalledOnce()
   })
 
   it('hot patches geodata controls without reloading providers', async () => {

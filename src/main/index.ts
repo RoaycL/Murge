@@ -70,10 +70,13 @@ import { SubStoreService } from './substore/service'
 import { DEFAULT_APP_SETTINGS, type AppSettings } from '@shared/app-settings'
 import { OverrideService } from './kernel/overrides/override-service'
 import { DnsEnhancementService } from './kernel/dns/dns-enhancement-service'
+import type { DnsEnhancement } from '@shared/dns'
 import { documentDnsEnabled } from './kernel/dns/apply-dns'
 import { SnifferEnhancementService } from './kernel/sniffer/sniffer-enhancement-service'
+import type { SnifferEnhancement } from '@shared/sniffer'
 import { CoreSettingsService } from './kernel/core-settings-service'
 import { GeodataSettingsService } from './kernel/geodata-settings-service'
+import type { GeodataSettings } from '@shared/geodata'
 import { UpdateService } from './updates/service'
 import { ElectronUpdaterDriver } from './updates/electron-updater-driver'
 import { TunCoordinator, GatedTunMutationAdapter } from './tun/coordinator'
@@ -807,10 +810,14 @@ app.whenReady().then(async () => {
   // pass applied afterwards by whichever consumer materializes the config. Keeping
   // this in one place is what stops TUN from silently ignoring the user's
   // overrides / DNS / sniffer settings.
-  const resolveEnhancedActiveDocument = async (): Promise<string | null> => {
+  const resolveOverriddenActiveDocument = async (): Promise<string | null> => {
     const profile = await profileService.getActiveProfile()
     if (!profile) return null
-    const overridden = await overrideService.applyForProfile(profile.document, profile.meta.id)
+    return overrideService.applyForProfile(profile.document, profile.meta.id)
+  }
+  const resolveEnhancedActiveDocument = async (): Promise<string | null> => {
+    const overridden = await resolveOverriddenActiveDocument()
+    if (!overridden) return null
     const dnsApplied = await dnsEnhancementService.applyToDocument(overridden)
     return snifferEnhancementService.applyToDocument(dnsApplied)
   }
@@ -1392,6 +1399,7 @@ app.whenReady().then(async () => {
         },
         {
           readActiveDocument: resolveEnhancedActiveDocument,
+          readBaseDocument: resolveOverriddenActiveDocument,
           readTunConfig: () => tunConfigService.readConfig(),
           readCore: () => coreSettingsService.getRaw(),
           readGeodata: () => geodataSettingsService.getRaw()
@@ -1399,15 +1407,15 @@ app.whenReady().then(async () => {
       )
   const runEnhancementUpdate = <T>(operation: () => Promise<T>): Promise<T> =>
     modeController.updateRuntimeConfig(operation)
-  const dnsEnhancementCoordinator = new EnhancementApplyCoordinator(
+  const dnsEnhancementCoordinator = new EnhancementApplyCoordinator<DnsEnhancement>(
     runEnhancementUpdate,
     async () => { await liveConfigReloader?.applySectionsIfRunning(['dns']) }
   )
-  const snifferEnhancementCoordinator = new EnhancementApplyCoordinator(
+  const snifferEnhancementCoordinator = new EnhancementApplyCoordinator<SnifferEnhancement>(
     runEnhancementUpdate,
-    async () => { await liveConfigReloader?.applySectionsIfRunning(['sniffer']) }
+    async (previous, next) => { await liveConfigReloader?.applySnifferTransitionIfRunning(previous, next) }
   )
-  const geodataEnhancementCoordinator = new EnhancementApplyCoordinator(
+  const geodataEnhancementCoordinator = new EnhancementApplyCoordinator<GeodataSettings>(
     runEnhancementUpdate,
     async () => { await liveConfigReloader?.applySectionsIfRunning(['geodata']) }
   )

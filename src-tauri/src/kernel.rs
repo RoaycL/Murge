@@ -12,16 +12,13 @@
 //! service-mode behavior byte for byte (same guards, same error copies, the
 //! renderer hides the specific-version UI).
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 
-use crate::error::IpcError;
 use crate::events::EventHub;
 use crate::settings::SettingsStore;
 
-pub const DISABLED_RESOLVER_MESSAGE: &str =
-    "Kernel execution is disabled in this build; no real kernel is started.";
 /// The pinned bundled mihomo build (resources/mihomo-assets.json `version`).
 pub const MIHOMO_VERSION: &str = "v1.19.30";
 
@@ -36,6 +33,7 @@ fn is_valid_channel(value: &str) -> bool {
 // Kernel status + supervisor
 // ---------------------------------------------------------------------------
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn stopped_status() -> Value {
     json!({
         "phase": "stopped",
@@ -47,79 +45,16 @@ fn stopped_status() -> Value {
     })
 }
 
-/// The supervisor state machine. Serialization mirrors the TS `chain` promise:
-/// operations run one at a time against the status store.
-pub struct KernelSupervisor {
-    status: Mutex<Value>,
-    queue: Mutex<()>,
-    /// `status` event listeners — every `setStatus` fans out here (the TS
-    /// supervisor EventEmitter contract; the push forwarder subscribes).
-    pub status_listeners: EventHub,
-}
+/// The supervisor is the full lifecycle machine (`kernel_process.rs`); the
+/// disabled-resolver composition in `KernelServices::new` keeps the current
+/// fail-closed behavior until the artifact pipeline is wired into setup.
+pub type KernelSupervisor = crate::kernel_process::KernelSupervisor;
 
-impl KernelSupervisor {
-    pub fn new() -> Self {
-        KernelSupervisor {
-            status: Mutex::new(stopped_status()),
-            queue: Mutex::new(()),
-            status_listeners: EventHub::new(),
-        }
-    }
-
-    pub fn get_status(&self) -> Value {
-        self.status.lock().expect("kernel status mutex poisoned").clone()
-    }
-
-    fn set_status(&self, patch: Value) {
-        let mut status = self.status.lock().expect("kernel status mutex poisoned");
-        if let (Some(target), Some(patch)) = (status.as_object_mut(), patch.as_object()) {
-            for (key, value) in patch {
-                target.insert(key.clone(), value.clone());
-            }
-        }
-        let snapshot = status.clone();
-        drop(status);
-        self.status_listeners.emit(&snapshot);
-    }
-
-    /// Start the kernel. The disabled resolver fails exactly like the Electron
-    /// fixture/disabled milestone: phase `failed` + the UNSUPPORTED message as
-    /// `lastError`, and the same error propagates to the renderer.
-    pub fn start(&self) -> Result<Value, IpcError> {
-        let _serial = self.queue.lock().expect("kernel queue mutex poisoned");
-        let phase = self.get_status()["phase"].take().as_str().unwrap_or("stopped").to_string();
-        if phase == "running" || phase == "starting" || phase == "stopping" {
-            return Ok(self.get_status());
-        }
-        self.set_status(json!({ "phase": "starting", "lastError": null }));
-        // Resolver step: this build stages the artifact pipeline, so resolve
-        // fails with the DisabledKernelResolver copy (raiseFailed: phase
-        // `failed` + lastError, and the error propagates).
-        self.set_status(json!({ "phase": "failed", "lastError": DISABLED_RESOLVER_MESSAGE, "pid": null }));
-        Err(IpcError::unsupported(DISABLED_RESOLVER_MESSAGE))
-    }
-
-    /// Stop the kernel. With no process ever spawned (the resolver gate fails
-    /// first), every transition lands on a clean `stopped` state.
-    pub fn stop(&self) -> Result<Value, IpcError> {
-        let _serial = self.queue.lock().expect("kernel queue mutex poisoned");
-        let phase = self.get_status()["phase"].take().as_str().unwrap_or("stopped").to_string();
-        if phase == "stopped" {
-            return Ok(self.get_status());
-        }
-        if phase == "running" || phase == "starting" {
-            self.set_status(json!({ "phase": "stopping" }));
-        }
-        self.set_status(json!({ "phase": "stopped", "pid": null, "lastError": null }));
-        Ok(self.get_status())
-    }
-}
-
-impl Default for KernelSupervisor {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+pub use crate::kernel_process::{
+    DISABLED_RESOLVER_MESSAGE, KernelDependencies, SupervisorOptions,
+};
+#[allow(unused_imports)]
+use DISABLED_RESOLVER_MESSAGE as _DISABLED_REEXPORT;
 
 // ---------------------------------------------------------------------------
 // Kernel manager (version channels)
@@ -295,13 +230,30 @@ impl Default for KernelManagerService {
 
 /// The supervisor + manager pair managed in app state.
 pub struct KernelServices {
-    pub supervisor: KernelSupervisor,
+    pub supervisor: Arc<KernelSupervisor>,
     pub manager: KernelManagerService,
 }
 
 impl KernelServices {
+    /// The default composition is fail-closed: the disabled resolver never
+    /// resolves a binary, so start() fails with the UNSUPPORTED copy exactly
+    /// like the Electron build outside packaged Windows. The real-kernel
+    /// composition (MihomoKernelBinaryResolver + StrictMihomoConfigStore +
+    /// NodeKernelProcessAdapter) is wired when the installer ships.
     pub fn new() -> Self {
-        KernelServices { supervisor: KernelSupervisor::new(), manager: KernelManagerService::new() }
+        KernelServices {
+            supervisor: KernelSupervisor::create(
+                KernelDependencies {
+                    resolver: Arc::new(crate::kernel_process::DisabledKernelBinaryResolver),
+                    config_store: Arc::new(crate::kernel_process::TempKernelConfigStore),
+                    adapter: Arc::new(crate::kernel_process::NodeKernelProcessAdapter),
+                    secret: crate::kernel_process::random_secret(),
+                    attach_watchdog: None,
+                },
+                SupervisorOptions::default(),
+            ),
+            manager: KernelManagerService::new(),
+        }
     }
 }
 
@@ -349,11 +301,25 @@ pub fn resolve_external_ip(kernel_status: &Value) -> Value {
 mod tests {
     use super::*;
 
-    #[test]
-    fn status_starts_stopped_and_start_fails_with_disabled_resolver() {
-        let supervisor = KernelSupervisor::new();
+    /// The disabled composition mirrors KernelServices::new for unit tests.
+    fn test_supervisor() -> Arc<KernelSupervisor> {
+        KernelSupervisor::create(
+            KernelDependencies {
+                resolver: Arc::new(crate::kernel_process::DisabledKernelBinaryResolver),
+                config_store: Arc::new(crate::kernel_process::TempKernelConfigStore),
+                adapter: Arc::new(crate::kernel_process::NodeKernelProcessAdapter),
+                secret: crate::kernel_process::random_secret(),
+                attach_watchdog: None,
+            },
+            SupervisorOptions::default(),
+        )
+    }
+
+    #[tokio::test]
+    async fn status_starts_stopped_and_start_fails_with_disabled_resolver() {
+        let supervisor = test_supervisor();
         assert_eq!(supervisor.get_status(), stopped_status());
-        let error = supervisor.start().unwrap_err();
+        let error = supervisor.start().await.unwrap_err();
         assert_eq!(error.0, format!("PROTOCOL_ERROR:UNSUPPORTED::{DISABLED_RESOLVER_MESSAGE}"));
         let status = supervisor.get_status();
         assert_eq!(status["phase"], "failed");
@@ -361,15 +327,17 @@ mod tests {
         assert_eq!(status["pid"], Value::Null);
     }
 
-    #[test]
-    fn stop_from_failed_returns_to_stopped() {
-        let supervisor = KernelSupervisor::new();
-        let _ = supervisor.start();
-        let status = supervisor.stop().unwrap();
+    #[tokio::test]
+    async fn stop_from_failed_returns_to_stopped() {
+        let supervisor = test_supervisor();
+        let _ = supervisor.start().await;
+        let status = supervisor.stop().await.unwrap();
         assert_eq!(status["phase"], "stopped");
-        assert_eq!(status["lastError"], Value::Null);
+        // The TS machine PATCHES stopped without clearing lastError (only
+        // doStart resets it); the old stub cleared it, which diverged.
+        assert_eq!(status["lastError"], DISABLED_RESOLVER_MESSAGE);
         // Idempotent stop.
-        assert_eq!(supervisor.stop().unwrap()["phase"], "stopped");
+        assert_eq!(supervisor.stop().await.unwrap()["phase"], "stopped");
     }
 
     #[test]
@@ -458,7 +426,7 @@ mod tests {
 
     #[test]
     fn external_ip_is_null_until_the_kernel_runs() {
-        let supervisor = KernelSupervisor::new();
+        let supervisor = test_supervisor();
         assert_eq!(resolve_external_ip(&supervisor.get_status()), Value::Null);
     }
 }

@@ -35,6 +35,11 @@ pub mod code {
     pub const ARTIFACT_DOWNLOAD_FAILED: &str = "ARTIFACT_DOWNLOAD_FAILED";
     pub const ARTIFACT_HASH_MISMATCH: &str = "ARTIFACT_HASH_MISMATCH";
     pub const ARTIFACT_EXTRACT_FAILED: &str = "ARTIFACT_EXTRACT_FAILED";
+    pub const KERNEL_SPAWN_FAILED: &str = "KERNEL_SPAWN_FAILED";
+    pub const KERNEL_START_TIMEOUT: &str = "KERNEL_START_TIMEOUT";
+    pub const KERNEL_STOP_TIMEOUT: &str = "KERNEL_STOP_TIMEOUT";
+    pub const KERNEL_CRASHED: &str = "KERNEL_CRASHED";
+    pub const KERNEL_RUNNING: &str = "KERNEL_RUNNING";
 }
 
 /// A failed IPC call. Serialized to the ProtocolError wire string so the
@@ -49,6 +54,15 @@ impl Serialize for IpcError {
 }
 
 impl IpcError {
+    /// The human message segment of the wire string (after the `::`).
+    pub fn extract_message(&self) -> String {
+        self.0
+            .splitn(2, "::")
+            .nth(1)
+            .map(str::to_string)
+            .unwrap_or_else(|| self.0.clone())
+    }
+
     /// Encode with an explicit ProtocolErrorCode.
     pub fn code(code: &str, message: impl Into<String>) -> Self {
         IpcError(format!("PROTOCOL_ERROR:{code}::{}", message.into()))

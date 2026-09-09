@@ -33,15 +33,11 @@ const GEODATA_KEYS = [
   'geodata-mode', 'geodata-loader', 'geo-auto-update', 'geo-update-interval', 'geox-url'
 ] as const
 
-function sameStringList(left: unknown, right: unknown): boolean {
-  return Array.isArray(left) && Array.isArray(right) &&
-    left.length === right.length && left.every((value, index) => value === right[index])
-}
-
 /**
  * Rebuild and hot-apply the exact complete runtime document used at startup.
- * DNS, sniffer and geodata mutations use the partial endpoint below; callers
- * that replace the complete profile can still use the full-document reload.
+ * Mihomo's PATCH /configs endpoint silently ignores nested DNS and sniffer
+ * blocks, so those sections must use the payload reload endpoint. The reload
+ * stays in-process and does not force-close unchanged listeners.
  */
 export class LiveConfigReloader {
   constructor(
@@ -64,15 +60,31 @@ export class LiveConfigReloader {
   }
 
   /**
-   * Apply controlled sections through mihomo's partial config endpoint. Unlike
-   * a full PUT this does not recreate providers, listeners or the TUN route.
+   * Apply controlled sections through the lightest endpoint that actually owns
+   * them. DNS/sniffer require an in-process payload reload; geodata supports the
+   * partial config endpoint.
    */
-  async patchSectionsIfRunning(sections: readonly LiveConfigSection[]): Promise<boolean> {
+  async applySectionsIfRunning(sections: readonly LiveConfigSection[]): Promise<boolean> {
     const status = await this.kernel.getStatus()
     if (status.phase !== 'running' && status.phase !== 'starting') return false
 
     const current = await this.mihomo.getConfig()
-    const data = parse(await this.buildPayload(current)) as Record<string, unknown>
+    const payload = await this.buildPayload(current)
+
+    if (sections.includes('dns') || sections.includes('sniffer')) {
+      await this.mihomo.reloadConfig(payload)
+      if (sections.includes('dns')) {
+        // A changed fake-IP range must not keep mappings from the previous DNS
+        // model. Cache cleanup is best-effort because the reload succeeded.
+        await Promise.allSettled([
+          this.mihomo.flushDnsCache(),
+          this.mihomo.flushFakeIpCache()
+        ])
+      }
+      return true
+    }
+
+    const data = parse(payload) as Record<string, unknown>
     const patch: Record<string, unknown> = {}
     for (const section of sections) {
       if (section === 'geodata') {
@@ -86,27 +98,7 @@ export class LiveConfigReloader {
         : { enable: false }
     }
 
-    // DNS control and TUN DNS hijacking are one contract. Patch TUN only when
-    // that list actually changes; sending an unchanged TUN block can recreate
-    // the Windows adapter and briefly interrupt the route.
-    if (sections.includes('dns') && current.tun?.enable === true) {
-      const desiredTun = data.tun as Record<string, unknown> | undefined
-      const desiredHijack = desiredTun?.['dns-hijack']
-      const currentHijack = current.tun['dns-hijack']
-      if (!sameStringList(currentHijack, desiredHijack)) {
-        patch.tun = { ...current.tun, 'dns-hijack': Array.isArray(desiredHijack) ? desiredHijack : [] }
-      }
-    }
-
     await this.mihomo.patchConfig(patch)
-    if (sections.includes('dns')) {
-      // A changed fake-IP range must not keep mappings from the previous DNS
-      // model. Cache cleanup is best-effort because the patch itself succeeded.
-      await Promise.allSettled([
-        this.mihomo.flushDnsCache(),
-        this.mihomo.flushFakeIpCache()
-      ])
-    }
     return true
   }
 

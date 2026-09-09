@@ -19,8 +19,13 @@ rules:
   - MATCH,DIRECT
 dns:
   enable: true
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
 sniffer:
   enable: true
+  override-destination: false
+  force-dns-mapping: true
+  parse-pure-ip: true
 `
 
 function harness(phase: 'stopped' | 'running', tunEnabled = false, mode: 'rule' | 'direct' | 'global' = 'rule') {
@@ -62,32 +67,57 @@ describe('LiveConfigReloader', () => {
     expect(config.tun).toBeUndefined()
   })
 
-  it('hot patches only DNS without reloading providers or the TUN adapter', async () => {
+  it('reloads the full payload for DNS because mihomo ignores DNS in PATCH /configs', async () => {
     const { reloader, mihomo } = harness('running', true)
 
-    await expect(reloader.patchSectionsIfRunning(['dns'])).resolves.toBe(true)
+    await expect(reloader.applySectionsIfRunning(['dns'])).resolves.toBe(true)
 
-    expect(mihomo.patchConfig).toHaveBeenCalledOnce()
-    expect(mihomo.patchConfig).toHaveBeenCalledWith({ dns: expect.objectContaining({ enable: true }) })
-    expect(mihomo.reloadConfig).not.toHaveBeenCalled()
+    expect(mihomo.patchConfig).not.toHaveBeenCalled()
+    expect(mihomo.reloadConfig).toHaveBeenCalledOnce()
+    const config = parse(mihomo.reloadConfig.mock.calls[0][0]) as Record<string, unknown>
+    expect(config.dns).toMatchObject({
+      enable: true,
+      'enhanced-mode': 'fake-ip',
+      'fake-ip-range': '198.18.0.1/16'
+    })
+    expect(config.tun).toMatchObject({ enable: true })
     expect(mihomo.flushDnsCache).toHaveBeenCalledOnce()
     expect(mihomo.flushFakeIpCache).toHaveBeenCalledOnce()
   })
 
-  it('hot patches only sniffer without reloading providers', async () => {
+  it('reloads the full payload for sniffer because mihomo ignores sniffer in PATCH /configs', async () => {
     const { reloader, mihomo } = harness('running')
 
-    await expect(reloader.patchSectionsIfRunning(['sniffer'])).resolves.toBe(true)
+    await expect(reloader.applySectionsIfRunning(['sniffer'])).resolves.toBe(true)
 
-    expect(mihomo.patchConfig).toHaveBeenCalledWith({ sniffer: expect.objectContaining({ enable: true }) })
-    expect(mihomo.reloadConfig).not.toHaveBeenCalled()
+    expect(mihomo.patchConfig).not.toHaveBeenCalled()
+    expect(mihomo.reloadConfig).toHaveBeenCalledOnce()
+    const config = parse(mihomo.reloadConfig.mock.calls[0][0]) as Record<string, unknown>
+    expect(config.sniffer).toMatchObject({
+      enable: true,
+      'override-destination': false,
+      'force-dns-mapping': true,
+      'parse-pure-ip': true
+    })
     expect(mihomo.flushDnsCache).not.toHaveBeenCalled()
+  })
+
+  it('uses one payload reload when DNS and sniffer are applied together', async () => {
+    const { reloader, mihomo } = harness('running', true)
+
+    await expect(reloader.applySectionsIfRunning(['dns', 'sniffer'])).resolves.toBe(true)
+
+    expect(mihomo.reloadConfig).toHaveBeenCalledOnce()
+    expect(mihomo.patchConfig).not.toHaveBeenCalled()
+    const config = parse(mihomo.reloadConfig.mock.calls[0][0]) as Record<string, unknown>
+    expect(config.dns).toMatchObject({ enable: true })
+    expect(config.sniffer).toMatchObject({ enable: true })
   })
 
   it('hot patches geodata controls without reloading providers', async () => {
     const { reloader, mihomo } = harness('running')
 
-    await expect(reloader.patchSectionsIfRunning(['geodata'])).resolves.toBe(true)
+    await expect(reloader.applySectionsIfRunning(['geodata'])).resolves.toBe(true)
 
     expect(mihomo.patchConfig).toHaveBeenCalledWith(expect.objectContaining({
       'geodata-mode': false,

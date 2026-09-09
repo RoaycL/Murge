@@ -114,11 +114,9 @@ func installOrUpgradeService(template serviceTemplate, bootstrapDirectory, servi
 	} else if !errors.Is(openErr, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
 		return fmt.Errorf("open existing service: %w", openErr)
 	}
-	// Keep ACL hardening scoped to the two security-sensitive leaf directories.
-	// Hardening the shared namespace and product parent was introduced later and
-	// makes service upgrades fail with ERROR_INVALID_PARAMETER on some supported
-	// Windows builds. The path walker inside secureStateDirectory still rejects
-	// reparse points in every existing ancestor before either leaf is secured.
+	// Claim and harden every product-owned component from the namespace root
+	// downward. Securing only service/state would leave a writable ancestor able
+	// to redirect or replace privileged files after the reparse-point check.
 	for _, directory := range protectedServiceDirectories(serviceHome, stateDirectory) {
 		if err := os.MkdirAll(directory, 0700); err != nil {
 			return fmt.Errorf("create protected directory %s: %w", directory, err)
@@ -204,7 +202,9 @@ func privilegedServiceConfig(template serviceTemplate) mgr.Config {
 }
 
 func protectedServiceDirectories(serviceHome, stateDirectory string) []string {
-	return []string{serviceHome, stateDirectory}
+	root := filepath.Dir(serviceHome)
+	namespaceRoot := filepath.Dir(root)
+	return []string{namespaceRoot, root, serviceHome, stateDirectory}
 }
 
 var geodataSeedNames = []string{"geosite.dat", "geoip.dat", "geoip.metadb", "country.mmdb", "ASN.mmdb"}

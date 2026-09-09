@@ -78,6 +78,7 @@ const configSchema = z
     'log-level': z.string().optional(),
     'allow-lan': z.boolean().optional(),
     ipv6: z.boolean().optional(),
+    sniffing: z.boolean().optional(),
     tun: z.record(z.string(), z.unknown()).optional()
   })
   .passthrough()

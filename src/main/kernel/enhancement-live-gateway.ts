@@ -16,13 +16,13 @@ interface PersistedEnhancementGateway<T, S extends EnhancementSnapshot<T>> {
  * composition root, so the UI never reports a setting that the live core
  * rejected.
  */
-export class EnhancementApplyCoordinator {
+export class EnhancementApplyCoordinator<T> {
   constructor(
     private readonly runExclusive: <T>(operation: () => Promise<T>) => Promise<T>,
-    private readonly apply: () => Promise<void>
+    private readonly apply: (previous: T, next: T) => Promise<void>
   ) {}
 
-  update<T, S extends EnhancementSnapshot<T>>(
+  update<S extends EnhancementSnapshot<T>>(
     gateway: PersistedEnhancementGateway<T, S>,
     input: T
   ): Promise<S> {
@@ -30,20 +30,20 @@ export class EnhancementApplyCoordinator {
       const previous = await gateway.get()
       const next = await gateway.set(input)
       try {
-        await this.apply()
+        await this.apply(previous.enhancement, next.enhancement)
         return next
       } catch (error) {
         await gateway.set(previous.enhancement)
         // The failed candidate is normally rejected before application. Still
         // re-apply the restored model so partial controller failures cannot leave
         // persistence and the running core divergent.
-        await this.apply().catch(() => undefined)
+        await this.apply(next.enhancement, previous.enhancement).catch(() => undefined)
         throw error
       }
     })
   }
 
-  replace<T>(
+  replace(
     read: () => T | Promise<T>,
     write: (input: T) => T | Promise<T>,
     input: T
@@ -52,11 +52,11 @@ export class EnhancementApplyCoordinator {
       const previous = await read()
       const next = await write(input)
       try {
-        await this.apply()
+        await this.apply(previous, next)
         return next
       } catch (error) {
         await write(previous)
-        await this.apply().catch(() => undefined)
+        await this.apply(next, previous).catch(() => undefined)
         throw error
       }
     })
@@ -66,7 +66,7 @@ export class EnhancementApplyCoordinator {
 export class LiveDnsEnhancementGateway implements DnsEnhancementGateway {
   constructor(
     private readonly inner: DnsEnhancementGateway,
-    private readonly coordinator: EnhancementApplyCoordinator
+    private readonly coordinator: EnhancementApplyCoordinator<DnsEnhancement>
   ) {}
 
   get(): DnsSnapshot | Promise<DnsSnapshot> { return this.inner.get() }
@@ -77,7 +77,7 @@ export class LiveDnsEnhancementGateway implements DnsEnhancementGateway {
 export class LiveSnifferEnhancementGateway implements SnifferEnhancementGateway {
   constructor(
     private readonly inner: SnifferEnhancementGateway,
-    private readonly coordinator: EnhancementApplyCoordinator
+    private readonly coordinator: EnhancementApplyCoordinator<SnifferEnhancement>
   ) {}
 
   get(): SnifferSnapshot | Promise<SnifferSnapshot> { return this.inner.get() }
@@ -89,7 +89,7 @@ export class LiveSnifferEnhancementGateway implements SnifferEnhancementGateway 
 export class LiveGeodataSettingsGateway implements GeodataSettingsGateway {
   constructor(
     private readonly inner: GeodataSettingsGateway,
-    private readonly coordinator: EnhancementApplyCoordinator
+    private readonly coordinator: EnhancementApplyCoordinator<GeodataSettings>
   ) {}
 
   get(): GeodataSettings | Promise<GeodataSettings> { return this.inner.get() }

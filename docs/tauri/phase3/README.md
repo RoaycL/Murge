@@ -813,6 +813,89 @@ Eighth Phase 3D slice — quit-lifecycle dispose hook (the Electron
   lifecycle-adapter slice where it can be awaited ahead of process teardown
   (the gated adapter owns no device, so nothing is skipped today).
 
+Ninth Phase 3D slice — live runtime-config layer (the
+`main/kernel/live-config-reloader.ts` contract + the external-IP probe):
+
+- `live_config.rs` ports the reloader verbatim: `reload_if_running` rebuilds
+  the EXACT startup document (active profile → overrides → DNS → sniffer via
+  `resolve_enhanced_document`, the strict direct config without one) and PUTs
+  it to `/configs` WITHOUT `force=true` (mihomo keeps the bound listeners);
+  it returns `false` (deferred) when the kernel is not running/starting.
+  `patch_sections` applies `dns|sniffer|geodata` through the partial PATCH
+  endpoint: geodata falls back to `build_geodata_block` PER KEY at the top
+  level, dns/sniffer degrade to `{"enable":false}` when absent, the TUN
+  dns-hijack is re-patched ONLY when the kernel runs TUN AND the list
+  actually differs (an unchanged block can recreate the Windows adapter),
+  and a DNS patch flushes both caches best-effort (`tokio::join!` over the
+  two POSTs — `Promise.allSettled` parity). Mode is runtime intent folded
+  into the SAME atomic reload (document branch only, direct/global only) —
+  never a second PATCH that could fail after the new document committed.
+- Dispatch wiring (TS parity): the dns/sniffer/geodata `:set` arms run the
+  `EnhancementApplyCoordinator` semantics — persist → live-apply → on
+  failure roll the model back to the previous value, re-apply the restored
+  model best-effort, then rethrow. `core-settings:set` stays a PLAIN
+  persist (the TS core gateway is NOT live-wrapped; a first-round wiring
+  mistake was reverted before landing). `runtime:get-external-ip` now runs
+  the REAL chain: phase must be exactly `running`, the port comes from the
+  controller `/configs` (`mixed-port` ?? `port`), the probe is an
+  absolute-form GET through the mixed port (plain http targets only,
+  5 s default), and every failure degrades to `null` (`extract_ip` keeps
+  the TS first-line-exact-quad-else-scan semantics, no octet-range check).
+- Profile auto-reload gateway: the mutating `profiles:*` arms
+  (import/import-from-url with the activate flag, activate, delete-of-
+  active, edit-document with auto-activate, replace-document,
+  update-from-source-when-active) hot-reload first via `reloadIfRunning`,
+  then fall back to the ordered restart (`reloadKernelForActiveProfile`):
+  the system proxy restores BEFORE the stop, is re-enabled only when it was
+  owned before the restart, the document is restored BEFORE the pointer
+  (restoreEdit order), delete-of-active keeps NO rollback, and the
+  active profile's remembered node picks are replayed after a successful
+  reload (`restore_selections`, best-effort).
+- `RUNTIME_UPDATE` (a process-wide `tokio::sync::Mutex`): kernel start/stop
+  and every runtime-config update are mutually exclusive — the
+  `ModeTransitionController` serialization, staged at dispatcher level
+  (the Phase 4 lifecycle adapter moves it into the kernel gateway).
+- Verify: `cargo test --lib` 386 passed / 0 failed / 0 warnings (17
+  reloader/probe cases + a dispatch-level rollback integration); channel
+  audit unchanged 121 / 111 live / 0 unmapped; typecheck green; vitest
+  1905 passed / 7 skipped.
+
+Eleventh Phase 3D slice — TUN profile generators (the
+`main/tun/mihomo-tun-config.ts` port, 750 lines):
+
+- `tun_profile.rs` ports all four exports. The BOOTSTRAP profile
+  (`generate_mihomo_tun_config` + strict `mihomo_tun_config_errors`) is the
+  exact top-level-allowlist Phase-9B document: `mode: direct`,
+  `MATCH,DIRECT`, controlled fake-ip DNS block with JSON-quoted filter
+  entries (a bare `*` is an alias token), the device/stack/mtu/hijack/route
+  folds from the persisted TUN model (the stock `Mihomo` device counts as
+  "not customized" so the brand-derived `<shortName> TUN` intent wins), and
+  self-validation before returning.
+- The PROXIED profile (`generate_proxied_tun_config` +
+  `proxied_tun_config_errors`) carries real subscription content:
+  `build_profile_kernel_config` is REUSED verbatim (the same neutralization
+  the main kernel gets), forbidden capabilities are STRIPPED not rejected
+  (the service-side `forbiddenTopKeys` list in lockstep), unsafe provider
+  `path`s are rewritten to deterministic contained locations
+  (`./<section>/<safe-name>.<ext>`) instead of failing the subscription,
+  literal proxy endpoint IPs are added to `route-exclude-address` (a tunnel
+  cannot carry its own socket), `tun` is re-added on top of the transform
+  that removed it, and DNS takeover follows clash-party's `controlDns=false`
+  default: never force-enabled, port-53 hijacking CLEARED when no live DNS
+  module can answer, fake-ip defaults filled only when the profile omitted
+  them. Validation holds the NON-NEGOTIABLES the privileged service
+  re-checks (no public bind, no unauthenticated controller surface, no
+  alias/tag tricks, TUN on, the auto-route black-hole rule) and the 2 MiB
+  service ceiling fails with the Chinese copy.
+- `build_payload`'s staged TUN rejection is GONE: the live reloader now
+  composes both TUN branches exactly like the TS (`tunEnabled` from the
+  controller's reported tun state, proxied for profile documents,
+  bootstrap without one); the privileged-service client that would SUBMIT
+  them stays with the real-kernel slice.
+- Verify: `cargo test --lib` 398 passed / 0 failed / 0 warnings (12
+  generator/validator cases incl. hostile provider paths/names); channel
+  audit unchanged; typecheck green; vitest unchanged.
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,

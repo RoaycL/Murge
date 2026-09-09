@@ -34,7 +34,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::enhancements;
-use crate::error::{code, IpcError};
+use crate::error::IpcError;
 use crate::override_apply;
 use crate::override_service::OverrideService;
 use crate::profile_service::ProfilesService;
@@ -63,6 +63,8 @@ pub struct LiveConfigRuntime {
     pub allow_lan: bool,
     pub controller_panel: bool,
     pub secret: String,
+    /// The brand-derived privileged adapter identity (`<shortName> TUN`).
+    pub device: String,
 }
 
 impl LiveConfigRuntime {
@@ -83,6 +85,10 @@ impl LiveConfigRuntime {
             allow_lan: core["allowLan"].as_bool() == Some(true),
             controller_panel: core["controllerPanel"].as_bool() == Some(true),
             secret: core["controllerSecret"].as_str().unwrap_or_default().to_string(),
+            device: format!(
+                "{} TUN",
+                crate::brand::load_brand().map(|brand| brand.short_name).unwrap_or_else(|_| "Murge".to_string())
+            ),
         }
     }
 
@@ -96,6 +102,7 @@ impl LiveConfigRuntime {
             "allowLan": self.allow_lan,
             "controllerPanel": self.controller_panel,
             "secret": self.secret,
+            "device": self.device,
         })
     }
 }
@@ -299,14 +306,29 @@ impl<'a> LiveConfigReloader<'a> {
             .and_then(|tun| tun.get("enable"))
             .and_then(Value::as_bool)
             == Some(true);
-        let (document, core, geodata, _tun_config) = self.resolve_sources()?;
+        let (document, core, geodata, tun_config) = self.resolve_sources()?;
 
         let payload = match (&document, tun_enabled) {
-            (_, true) => {
-                return Err(IpcError::code(
-                    code::INTERNAL,
-                    "TUN runtime composition lands with the privileged TUN slice",
-                ));
+            (Some(document), true) => {
+                // The privileged TUN composition: the same safety transform
+                // with the tun block re-added (mihomo owns the adapter).
+                let mut options = self.runtime.builder_options();
+                if let Some(options) = options.as_object_mut() {
+                    options.insert("document".into(), json!(document));
+                    options.insert("tunConfig".into(), tun_config);
+                    options.insert("core".into(), core);
+                    options.insert("geodata".into(), geodata);
+                    options.insert("tunEnabled".into(), json!(true));
+                }
+                crate::tun_profile::generate_proxied_tun_config(&options)?
+            }
+            (None, true) => {
+                let mut options = self.runtime.builder_options();
+                if let Some(options) = options.as_object_mut() {
+                    options.insert("tunConfig".into(), tun_config);
+                    options.insert("tunEnabled".into(), json!(true));
+                }
+                crate::tun_profile::generate_mihomo_tun_config(&options)?
             }
             (Some(document), false) => {
                 let mut options = self.runtime.builder_options();
@@ -538,6 +560,7 @@ mod tests {
             allow_lan: false,
             controller_panel: false,
             secret: "a".repeat(64),
+            device: "Murge TUN".to_string(),
         }
     }
 
@@ -682,7 +705,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn payload_rejects_the_staged_tun_branch() {
+    async fn payload_composes_the_tun_branch_when_the_kernel_runs_tun() {
         let (_temp, profiles, overrides, models) = service();
         let kernel = running_kernel().await;
         let reloader = LiveConfigReloader::with_client(
@@ -693,8 +716,11 @@ mod tests {
             &overrides,
             &models,
         );
-        let error = reloader.build_payload(&json!({ "tun": { "enable": true } })).unwrap_err();
-        assert!(error.0.contains("TUN runtime composition lands with the privileged TUN slice"), "{}", error.0);
+        // No active profile + tun enabled → the privileged bootstrap profile.
+        let payload = reloader.build_payload(&json!({ "tun": { "enable": true } })).unwrap();
+        assert!(crate::tun_profile::mihomo_tun_config_errors(&payload).is_empty(), "{payload}");
+        assert!(payload.contains("tun:"), "{payload}");
+        assert!(payload.contains("enable: true"), "{payload}");
     }
 
     // -- section patch ---------------------------------------------------------

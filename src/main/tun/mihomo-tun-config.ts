@@ -544,13 +544,29 @@ export function generateProxiedTunConfig(options: ProxiedTunConfigOptions): stri
     typeof existingDns === 'object' && existingDns !== null && !Array.isArray(existingDns)
       ? { ...(existingDns as Record<string, unknown>) }
       : {}
-  if (dns.enable !== true) {
-    // No DNS takeover: the profile's disabled/absent dns block passes through
-    // (Party deletes a controlled dns block in this state) and port-53
-    // hijacking is cleared so lookups flow through the tunnel as ordinary
-    // connections instead of hitting an unprepared DNS module.
+  if (dns.enable !== true && existingDns === undefined) {
+    // "DNS override off" means the profile is authoritative, but a profile
+    // with no dns block still needs a safe runtime fallback while TUN owns port
+    // 53. Keeping this baseline enabled also keeps both the TUN prefix and its
+    // dns-hijack config byte-identical when the override is toggled, allowing
+    // mihomo's ReCreateTun equality guard to preserve the Windows adapter.
+    data.dns = {
+      enable: true,
+      'enhanced-mode': 'fake-ip',
+      'fake-ip-range': '198.18.0.1/16',
+      'fake-ip-filter': [...TUN_DEFAULT_FAKE_IP_FILTER],
+      nameserver: ['system']
+    }
+  } else if (dns.enable !== true) {
+    // An explicit profile dns.enable=false remains authoritative. Port-53
+    // hijacking must be removed, even though this uncommon transition requires
+    // TUN to rebuild.
     tunBlock['dns-hijack'] = []
-    if (Object.keys(dns).length > 0) data.dns = dns
+    // Smart cores derive the TUN IPv4 prefix from dns.fake-ip-range even while
+    // DNS is explicitly disabled, so retain a stable prefix in that case too.
+    dns.enable = false
+    if (dns['fake-ip-range'] === undefined) dns['fake-ip-range'] = '198.18.0.1/16'
+    data.dns = dns
   } else {
     data.dns = dns
     if (dns['enhanced-mode'] === undefined) dns['enhanced-mode'] = 'fake-ip'

@@ -13,11 +13,11 @@ import (
 	"golang.org/x/sys/windows/svc/mgr"
 )
 
-func TestProtectedServiceDirectoriesExcludeSharedParents(t *testing.T) {
+func TestProtectedServiceDirectoriesCoverProductOwnedAncestors(t *testing.T) {
 	root := filepath.Join(`C:\ProgramData`, "murge", "tun-service")
 	serviceHome := filepath.Join(root, "service")
 	stateDirectory := filepath.Join(root, "state")
-	want := []string{serviceHome, stateDirectory}
+	want := []string{filepath.Dir(root), root, serviceHome, stateDirectory}
 	if got := protectedServiceDirectories(serviceHome, stateDirectory); !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected protected directories: got %v want %v", got, want)
 	}

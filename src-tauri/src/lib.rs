@@ -19,6 +19,7 @@ mod inspection;
 mod net_validators;
 mod events;
 mod file_log;
+mod lifecycle;
 mod ipc;
 #[allow(dead_code)] // wired incrementally; the lint fires on staged-but-unwired items
 mod mihomo;
@@ -609,22 +610,40 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
-            // The quit lifecycle (lifecycle-adapter.ts): the ordered gateway
-            // (proxy restore BEFORE kernel stop) already runs through the
-            // kernel:stop arm and the failed-phase crash hook; this hook is
-            // the residual dispose step that must never be skipped when the
-            // host tears the process down.
-            if let tauri::RunEvent::Exit = event {
-                // Terminate the Sub-Store worker synchronously (the process is
-                // exiting; a spawned async task could be dropped first) — the
-                // same "dispose during app shutdown; assets persist" contract.
-                if let Some(substore) = app_handle.try_state::<substore::SubStoreService>() {
-                    substore.dispose();
+            use tauri::Manager;
+            match event {
+                // The `before-quit` equivalent (lifecycle-adapter.ts): the FIRST
+                // user-interaction exit request is prevented, and the one
+                // idempotent ordered flow runs instead — restore the owned
+                // system proxy, stop the kernel, dispose services, flush logs,
+                // then really exit. `code: Some(_)` comes from OUR
+                // `AppHandle::exit(0)` (or a restart) and passes straight
+                // through; a second user request while the flow is in flight
+                // is also prevented, but the idempotency flag makes it a no-op.
+                tauri::RunEvent::ExitRequested { code, api, .. }
+                    if code.is_none() =>
+                {
+                    // `window-all-closed` on non-darwin is the TS default
+                    // behavior — Tauri's exit-on-last-window-closed IS that
+                    // path, so the ordered flow covers it too.
+                    api.prevent_exit();
+                    if !lifecycle::is_quitting() {
+                        let app = app_handle.clone();
+                        tauri::async_runtime::spawn(async move {
+                            lifecycle::begin_application_shutdown(app, false).await;
+                        });
+                    }
                 }
-                // TUN handleHostExit (emergency-disable of a live device)
-                // stays with the ordered quit flow, where it can be awaited
-                // ahead of process teardown; the gated adapter in this build
-                // owns no device, so nothing is skipped today.
+                // The process-teardown residual (RunEvent::Exit): dispose
+                // whatever the async flow could no longer reach. A spawned
+                // async task could be dropped before the process exits, so
+                // this stays synchronous.
+                tauri::RunEvent::Exit => {
+                    if let Some(substore) = app_handle.try_state::<substore::SubStoreService>() {
+                        substore.dispose();
+                    }
+                }
+                _ => {}
             }
         });
 }

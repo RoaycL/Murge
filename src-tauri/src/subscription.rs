@@ -825,6 +825,8 @@ pub(crate) mod test_support {
     use std::sync::mpsc::Receiver;
 
     pub struct HttpStub {
+        /// Read by tests that assert the stub observed the request.
+        #[allow(dead_code)]
         pub receiver: Receiver<String>,
     }
 
@@ -930,6 +932,7 @@ mod tests {
     use crate::redact::is_redacted_url;
 
     const VALID_DOC: &str = "mixed-port: 7890\nproxies:\n  - name: node-01\n    server: 127.0.0.1\nrules:\n  - MATCH,DIRECT\n";
+    #[allow(dead_code)]
     const INVALID_DOC: &str = "proxies: [\n  - name: node-01\n";
 
     #[test]

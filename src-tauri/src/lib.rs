@@ -114,8 +114,77 @@ pub fn run() {
             let usage = usage::UsageHistoryService::new(usage::UsageHistoryStore::for_app_data_base(
                 paths.app_data_root.clone(),
             ));
-            // Kernel supervisor + version manager (disabled-resolver milestone).
-            let kernel = kernel::KernelServices::new();
+            // Kernel supervisor + version manager. The composition follows
+            // the TS three-way split: dev resolves the harmless fixture,
+            // packaged Windows resolves the verified real mihomo artifact,
+            // and any other production environment stays fail-closed.
+            let is_dev = paths.app_data_root.is_none();
+            let kernel = if is_dev {
+                kernel::KernelServices::for_development()
+            } else if cfg!(windows) {
+                // The controller secret is user-configurable and stable
+                // across restarts; a fresh install receives a strong value
+                // exactly once (the when-ready.ts seeding).
+                let core_model = enhancements::coerce_core_settings(&models.core.get());
+                let secret = if core_model["controllerSecret"].as_str().map(str::is_empty).unwrap_or(true) {
+                    let generated = crate::kernel_process::random_secret();
+                    let mut updated = core_model.clone();
+                    updated["controllerSecret"] = serde_json::json!(generated);
+                    let _ = models.core.set(&updated, enhancements::coerce_core_settings);
+                    generated
+                } else {
+                    core_model["controllerSecret"].as_str().unwrap_or_default().to_string()
+                };
+                let ports = enhancements::coerce_core_settings(&models.core.get());
+                // The controller-ready probe: one authenticated /version
+                // through the SAME loopback URL the streams endpoint binds.
+                let probe = crate::mihomo::MihomoClient::new(
+                    ports["controllerPort"].as_i64().unwrap_or(9090),
+                    &secret,
+                )
+                .ok()
+                .map(|client| {
+                    std::sync::Arc::new(kernel_process::MihomoVersionProbe { client })
+                        as std::sync::Arc<dyn kernel_process::VersionProbe>
+                });
+                // The enhanced-document closure (the TS resolveEnhancedActiveDocument):
+                // read through managed state at call time, after setup completes.
+                let handle_for_doc = app.handle().clone();
+                let resolve_active_document: std::sync::Arc<dyn Fn() -> Option<String> + Send + Sync> =
+                    std::sync::Arc::new(move || {
+                        let profiles = handle_for_doc
+                            .state::<std::sync::Arc<crate::profile_service::ProfilesService>>();
+                        let overrides = handle_for_doc.state::<crate::override_service::OverrideService>();
+                        let models = handle_for_doc.state::<enhancements::ModelStores>();
+                        crate::live_config::resolve_enhanced_document(&profiles, &overrides, &models)
+                            .ok()
+                            .flatten()
+                    });
+                let handle_for_core = app.handle().clone();
+                let resolve_core: std::sync::Arc<dyn Fn() -> serde_json::Value + Send + Sync> =
+                    std::sync::Arc::new(move || {
+                        handle_for_core.state::<enhancements::ModelStores>().core.get()
+                    });
+                let handle_for_geodata = app.handle().clone();
+                let resolve_geodata: std::sync::Arc<dyn Fn() -> serde_json::Value + Send + Sync> =
+                    std::sync::Arc::new(move || {
+                        handle_for_geodata.state::<enhancements::ModelStores>().geodata.get()
+                    });
+                kernel::KernelServices::for_real_kernel(
+                    paths.kernel_root().unwrap_or_default(),
+                    None, // staged: bundled archive dir with the installer slice
+                    secret,
+                    ports,
+                    Some(resolve_active_document),
+                    Some(resolve_core),
+                    Some(resolve_geodata),
+                    std::sync::Arc::new(|| true), // isEnabled: always true
+                    probe,
+                )
+            } else {
+                // Non-Windows production: fail-closed (the disabled resolver).
+                kernel::KernelServices::new()
+            };
             // Mihomo controller services: log retention + selection cache.
             let mihomo = mihomo::MihomoServices::new(Some(paths.app_data_root.clone().unwrap_or_default()));
             // Push-stream transports + event forwarders. The endpoint binds

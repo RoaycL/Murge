@@ -242,10 +242,15 @@ pub struct StrictMihomoConfigStore {
     /// materialize (fail-open, mtime-refresh semantics).
     pub seed_resources_dir: Option<PathBuf>,
     /// The exact directory this store created; unknown until materialize runs.
-    owned_dir: Mutex<Option<PathBuf>>,
+    pub owned_dir: Mutex<Option<PathBuf>>,
     /// When set, the composed ACTIVE profile document becomes the runtime
     /// config instead of the strict direct-only bootstrap.
     pub resolve_active_document: Option<Arc<dyn Fn() -> Option<String> + Send + Sync>>,
+    /// Controlled core settings folded into the profile-backed runtime
+    /// config (read-back + conflict handling). Absent = profile preserved.
+    pub resolve_core: Option<Arc<dyn Fn() -> Value + Send + Sync>>,
+    /// Controlled geodata settings — same contract as core.
+    pub resolve_geodata: Option<Arc<dyn Fn() -> Value + Send + Sync>>,
 }
 
 struct BuiltConfig {
@@ -386,19 +391,23 @@ impl StrictMihomoConfigStore {
         if let Some(resolve) = &self.resolve_active_document {
             if let Some(document) = resolve() {
                 if !document.trim().is_empty() {
-                    let text = crate::inspection::build_profile_kernel_config(
-                        &document,
-                        &json!({
-                            "mixedPort": self.mixed_port,
-                            "httpPort": self.http_port,
-                            "socksPort": self.socks_port,
-                            "controllerPort": self.controller_port,
-                            "controllerHost": self.controller_host,
-                            "allowLan": self.allow_lan,
-                            "controllerPanel": self.controller_panel,
-                            "secret": secret
-                        }),
-                    )?;
+                    let mut options = json!({
+                        "mixedPort": self.mixed_port,
+                        "httpPort": self.http_port,
+                        "socksPort": self.socks_port,
+                        "controllerPort": self.controller_port,
+                        "controllerHost": self.controller_host,
+                        "allowLan": self.allow_lan,
+                        "controllerPanel": self.controller_panel,
+                        "secret": secret
+                    });
+                    if let Some(resolve_core) = &self.resolve_core {
+                        options["core"] = resolve_core();
+                    }
+                    if let Some(resolve_geodata) = &self.resolve_geodata {
+                        options["geodata"] = resolve_geodata();
+                    }
+                    let text = crate::inspection::build_profile_kernel_config(&document, &options)?;
                     return Ok(BuiltConfig { text, from_profile: true });
                 }
             }
@@ -574,11 +583,6 @@ impl KernelProcessAdapter for NodeKernelProcessAdapter {
     }
 }
 
-/// The config workspace is the child's cwd when it still exists (the TS
-/// spawn passes `cwd: config.rootDir`); a removed dir falls back to inherit.
-fn env_current_dir(root_dir: &Path) -> Option<PathBuf> {
-    root_dir.exists().then(|| root_dir.to_path_buf())
-}
 
 // ---------------------------------------------------------------------------
 // Binary resolvers (resolvers.ts)
@@ -603,6 +607,22 @@ pub struct MihomoKernelBinaryResolver {
     pub transport: crate::mihomo_artifact::DownloadTransport,
     /// The kernel-manager enabled gate (`kernelEnabled`).
     pub kernel_enabled: Arc<dyn Fn() -> bool + Send + Sync>,
+    /// Directory containing the installer-bundled, checksum-pinned archive.
+    /// When set, the pinned resolve streams the LOCAL archive instead of
+    /// downloading — but every byte is still streamed, size-checked and
+    /// hashed by the artifact verifier, so a tampered installer archive is
+    /// refused exactly like a tampered download.
+    pub bundled_archive_dir: Option<PathBuf>,
+    /// The current kernel version selection:
+    /// `(channel, specific_version)` — `resolvers.ts` versionSelection.
+    pub version_selection: Option<Arc<dyn Fn() -> (String, Option<String>) + Send + Sync>>,
+    /// Resolve (download + verify + reuse) a specific mihomo version into
+    /// its own workspace. Consulted only when the selected channel routes a
+    /// version (`specific`+version, `preview`, `smart`); absent → pinned
+    /// stable build (the TS falls through identically when the hook is
+    /// missing).
+    pub ensure_specific_binary:
+        Option<Arc<dyn Fn(String) -> futures_util::future::BoxFuture<'static, Result<crate::mihomo_artifact::ResolvedMihomoBinary, IpcError>> + Send + Sync>>,
 }
 
 impl KernelBinaryResolver for MihomoKernelBinaryResolver {
@@ -627,8 +647,33 @@ impl KernelBinaryResolver for MihomoKernelBinaryResolver {
                 "x86" => "x86",
                 other => other,
             };
-            let resolved =
-                crate::mihomo_artifact::resolve_mihomo(&platform, arch, &self.workspace_dir, &self.transport).await?;
+            // The kernel-manager version selection routes `specific`+version,
+            // `preview` and `smart` through the install hook; the pinned
+            // stable build is used when no hook is wired or the channel is
+            // `stable` (the TS falls through identically).
+            let selected = self
+                .version_selection
+                .as_ref()
+                .map(|resolve| resolve())
+                .unwrap_or_else(|| ("stable".to_string(), None));
+            let selected_version = match (selected.0.as_str(), &selected.1) {
+                ("specific", Some(version)) => Some(version.clone()),
+                ("preview", _) | ("smart", _) => Some(selected.0.clone()),
+                _ => None,
+            };
+            let resolved = if let (Some(version), Some(ensure)) =
+                (&selected_version, &self.ensure_specific_binary)
+            {
+                ensure(version.clone()).await?
+            } else {
+                let transport = self
+                    .bundled_archive_dir
+                    .as_ref()
+                    .map(|dir| bundled_archive_transport(dir, &platform, &arch))
+                    .transpose()?
+                    .unwrap_or_else(|| self.transport.clone());
+                crate::mihomo_artifact::resolve_mihomo(&platform, arch, &self.workspace_dir, &transport).await?
+            };
             let mut env = BTreeMap::new();
             env.insert("MIHOMO_PLATFORM".to_string(), platform);
             env.insert("MIHOMO_ARCH".to_string(), arch.to_string());
@@ -637,6 +682,87 @@ impl KernelBinaryResolver for MihomoKernelBinaryResolver {
                 args: Vec::new(),
                 version: Some(resolved.version),
                 env,
+            })
+        })
+    }
+}
+
+/// The `bundledRequest` port: a transport over the installer-shipped pinned
+/// archive. The archive is NOT trusted merely because it exists — the artifact
+/// verifier still streams, size-checks and hashes every byte before it
+/// extracts anything. A missing bundle fails loudly with the exact TS copy.
+fn bundled_archive_transport(
+    dir: &std::path::Path,
+    platform: &str,
+    arch: &str,
+) -> Result<crate::mihomo_artifact::DownloadTransport, IpcError> {
+    let Some(asset) = crate::mihomo_artifact::mihomo_asset_for(platform, arch) else {
+        return Err(IpcError::unsupported(format!(
+            "No pinned mihomo artifact for {platform}/{arch} (version {})",
+            crate::mihomo_artifact::mihomo_version()
+        )));
+    };
+    let archive_path = dir.join(&asset.filename);
+    let body = std::fs::read(&archive_path).map_err(|_| {
+        IpcError::code(
+            crate::error::code::ARTIFACT_DOWNLOAD_FAILED,
+            format!("Bundled mihomo archive is missing: {}", asset.filename),
+        )
+    })?;
+    Ok(std::sync::Arc::new(move |_url: String, max_bytes: u64| {
+        let body = body.clone();
+        Box::pin(async move {
+            if body.len() as u64 > max_bytes {
+                return Err(format!(
+                    "Mihomo artifact exceeds the {} byte safety limit",
+                    max_bytes
+                ));
+            }
+            Ok(crate::mihomo_artifact::DownloadResponse {
+                status: 200,
+                content_length: Some(body.len() as u64),
+                body,
+            })
+        }) as BoxFuture<'static, Result<crate::mihomo_artifact::DownloadResponse, String>>
+    }) as crate::mihomo_artifact::DownloadTransport)
+}
+
+/// The dev/fixture resolver (`resolvers.ts` FixtureKernelResolver): resolves a
+/// harmless fixture command that opens NO socket, so lifecycle behaviour can
+/// be proven without ever executing a real kernel. The fixture path defaults
+/// to the shared `src/main/testing/kernel-fixture.mjs` script; the command
+/// defaults to `node` on PATH (override `MURGE_KERNEL_FIXTURE_COMMAND`).
+pub struct FixtureKernelBinaryResolver {
+    pub command: String,
+    pub fixture_path: std::path::PathBuf,
+    pub extra_args: Vec<String>,
+    pub version: Option<String>,
+}
+
+impl Default for FixtureKernelBinaryResolver {
+    fn default() -> Self {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        FixtureKernelBinaryResolver {
+            command: std::env::var("MURGE_KERNEL_FIXTURE_COMMAND").unwrap_or_else(|_| "node".to_string()),
+            fixture_path: manifest.join("../src/main/testing/kernel-fixture.mjs"),
+            extra_args: Vec::new(),
+            version: None,
+        }
+    }
+}
+
+impl KernelBinaryResolver for FixtureKernelBinaryResolver {
+    fn resolve(&self) -> BoxFuture<'_, Result<KernelBinary, IpcError>> {
+        let mut args = vec![self.fixture_path.clone()];
+        args.extend(self.extra_args.iter().cloned().map(std::path::PathBuf::from));
+        let command = self.command.clone();
+        let version = self.version.clone();
+        Box::pin(async move {
+            Ok(KernelBinary {
+                command: std::path::PathBuf::from(command),
+                args: args.into_iter().map(|path| path.to_string_lossy().into_owned()).collect(),
+                version,
+                env: BTreeMap::new(),
             })
         })
     }
@@ -1092,7 +1218,11 @@ impl KernelSupervisor {
             let mut state = self.state.lock().expect("kernel status mutex poisoned");
             state.is_stopping = true;
             if let Some(handle) = state.handle.as_mut() {
-                handle.watchdog = None; // exiting on OUR request
+                // Exiting on OUR request: release FIRST so the watchdog never
+                // kills the kernel mid-graceful-stop, then drop it.
+                if let Some(watchdog) = handle.watchdog.take() {
+                    watchdog.release();
+                }
             }
             self.healthy_epoch.fetch_add(1, Ordering::SeqCst);
         }
@@ -1153,7 +1283,12 @@ impl KernelSupervisor {
         // The config may hold the controller secret: reject readiness first.
         {
             let mut state = self.state.lock().expect("kernel status mutex poisoned");
-            state.handle = None;
+            // The process has exited: release (then drop) the watchdog.
+            if let Some(handle) = state.handle.take() {
+                if let Some(watchdog) = handle.watchdog {
+                    watchdog.release();
+                }
+            }
             self.healthy_epoch.fetch_add(1, Ordering::SeqCst);
         }
         let supervisor = self.clone();
@@ -1291,6 +1426,10 @@ impl ControllerReadyKernelGateway {
         ControllerReadyKernelGateway { kernel, probe, timeout_ms, retry_ms }
     }
 
+    /// Part of the KernelGateway seam (the TS shape): the dispatch reads
+    /// status through `KernelServices::supervisor` and routes stop through
+    /// `KernelServices::stop`, so these two arms stay unused in this crate.
+    #[allow(dead_code)]
     pub fn get_status(&self) -> Value {
         self.kernel.get_status()
     }
@@ -1317,6 +1456,9 @@ impl ControllerReadyKernelGateway {
         ))
     }
 
+    /// The TS `stop()` pass-through (the gateway is a start wrapper; the
+    /// dispatch routes stop through `KernelServices::stop`).
+    #[allow(dead_code)]
     pub async fn stop(&self) -> Result<Value, IpcError> {
         self.kernel.stop().await
     }
@@ -1388,7 +1530,7 @@ pub(crate) mod tests {
     use super::*;
     use std::sync::atomic::AtomicBool;
 
-    struct StubResolver {
+    pub(crate) struct StubResolver {
         resolve_calls: std::sync::atomic::AtomicU32,
         error: Mutex<Option<IpcError>>,
         binary: KernelBinary,
@@ -1422,7 +1564,7 @@ pub(crate) mod tests {
     }
 
     /// A store whose cleanup() can be held open so tests can observe ordering.
-    struct StubStore {
+    pub(crate) struct StubStore {
         materialize_calls: std::sync::atomic::AtomicU32,
         cleanup_calls: Mutex<Vec<KernelConfig>>,
         last_secret: Mutex<Option<String>>,
@@ -1490,7 +1632,7 @@ pub(crate) mod tests {
         }
     }
 
-    struct FakeAdapter {
+    pub(crate) struct FakeAdapter {
         spawn_calls: Mutex<Vec<KernelBinary>>,
         alive_pids: Mutex<std::collections::HashSet<u32>>,
         handles: Mutex<Vec<Arc<FakeHandleState>>>,
@@ -1500,12 +1642,14 @@ pub(crate) mod tests {
         last_sink: Mutex<Option<Arc<dyn KernelProcessSink>>>,
     }
 
-    struct FakeHandleState {
-        pid: Option<u32>,
-        signals: Mutex<Vec<String>>,
-        on_sigterm_exits: AtomicBool,
-        on_sigkill_exits: AtomicBool,
-        exited: AtomicBool,
+    pub(crate) struct FakeHandleState {
+        pub pid: Option<u32>,
+        pub signals: Mutex<Vec<String>>,
+        pub on_sigterm_exits: AtomicBool,
+        pub on_sigkill_exits: AtomicBool,
+        /// Observed via `load` only in harness diagnostics.
+        #[allow(dead_code)]
+        pub exited: AtomicBool,
     }
 
     impl FakeAdapter {
@@ -2146,6 +2290,8 @@ pub(crate) mod tests {
             seed_resources_dir: None,
             owned_dir: Mutex::new(None),
             resolve_active_document: None,
+            resolve_core: None,
+            resolve_geodata: None,
         };
         let binary = KernelBinary {
             command: PathBuf::from("/fake/mihomo"),
@@ -2187,6 +2333,8 @@ pub(crate) mod tests {
             seed_resources_dir: None,
             owned_dir: Mutex::new(None),
             resolve_active_document: None,
+            resolve_core: None,
+            resolve_geodata: None,
         };
         let binary = KernelBinary {
             command: PathBuf::from("/fake/mihomo"),
@@ -2217,6 +2365,8 @@ pub(crate) mod tests {
             seed_resources_dir: None,
             owned_dir: Mutex::new(None),
             resolve_active_document: None,
+            resolve_core: None,
+            resolve_geodata: None,
         };
         let binary = KernelBinary {
             command: PathBuf::from("/bin/mihomo"),
@@ -2258,6 +2408,8 @@ pub(crate) mod tests {
             resolve_active_document: Some(Arc::new(|| {
                 Some("proxies:\n  - name: a\n    type: ss\n    server: s\n    port: 1\ntun:\n  enable: true\n".to_string())
             })),
+            resolve_core: None,
+            resolve_geodata: None,
         };
         let binary = KernelBinary {
             command: PathBuf::from("/bin/mihomo"),
@@ -2312,6 +2464,8 @@ pub(crate) mod tests {
             seed_resources_dir: None,
             owned_dir: Mutex::new(None),
             resolve_active_document: None,
+            resolve_core: None,
+            resolve_geodata: None,
         };
         let binary = KernelBinary {
             command: PathBuf::from("/fake/mihomo"),

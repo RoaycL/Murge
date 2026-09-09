@@ -234,7 +234,7 @@ pub fn extract_zip_bytes(buf: &[u8], dest_dir: &Path) -> Result<Vec<String>, Zip
 
 /// Read the archive from disk and extract it (the TS `extractZipToDir`
 /// shape; the service uses the byte-level entry).
-#[cfg_attr(not(test), allow(dead_code))]
+#[allow(dead_code)]
 pub fn extract_zip_to_dir(zip_path: &Path, dest_dir: &Path) -> Result<Vec<String>, ZipFormatError> {
     let buf = std::fs::read(zip_path).map_err(|_| ZipFormatError("归档读取失败".into()))?;
     extract_zip_bytes(&buf, dest_dir)

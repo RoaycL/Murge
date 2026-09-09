@@ -1036,7 +1036,7 @@ mod tests {
 
     #[test]
     fn worker_env_is_fully_constructed_and_never_inherits() {
-        let mut service = service_with(Arc::new(|_request: FetchRequest| {
+        let service = service_with(Arc::new(|_request: FetchRequest| {
             Box::pin(async { Err("unused".to_string()) })
         }));
         let env = service.worker_env(38324, false);
@@ -1117,7 +1117,7 @@ mod tests {
         })
         .to_string()
         .into_bytes();
-        let service = service_with(Arc::new(move |request: FetchRequest| {
+        let service = service_with(Arc::new(move |_request: FetchRequest| {
             let body = api_body.clone();
             Box::pin(async move { Ok(FetchResponse { status: 200, headers: Vec::new(), body }) })
         }));

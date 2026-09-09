@@ -34,7 +34,7 @@ use crate::subscription::SubscriptionFetcher;
 use crate::validate::{throw_if_invalid, validate_document};
 
 pub struct ProfilesService {
-    repository: ProfileRepository,
+    pub(crate) repository: ProfileRepository,
     source_store: Box<dyn ProfileSourceStore + Send + Sync>,
     /// Subscription transport (Phase 3C); the system-proxy-aware client is
     /// wired by the 3D system-proxy slice, until then fetches go direct only.
@@ -280,6 +280,21 @@ impl ProfilesService {
     }
 
     /// Declared provider catalog from the active profile document.
+    /// `restoreProfileDocument`: write a previous document back (the edit
+    /// rollback path of the profile auto-reload gateway). The active pointer
+    /// is restored separately.
+    pub fn restore_document(&self, id: &str, document: &str) -> ProfileResult<()> {
+        let _guard = self.guard();
+        self.repository.restore_document(id, document)
+    }
+
+    /// `deactivateProfile`: clear the active pointer (rollback of a first
+    /// activation).
+    pub fn deactivate(&self) -> ProfileResult<()> {
+        let _guard = self.guard();
+        self.repository.deactivate()
+    }
+
     pub fn get_active_provider_catalog(&self) -> ProfileResult<Value> {
         let _guard = self.guard();
         let document = self.active_document()?;

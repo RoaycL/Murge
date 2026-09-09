@@ -41,6 +41,7 @@ mod tun;
 mod updates;
 mod mihomo_artifact;
 mod kernel_config_validation;
+mod live_config;
 mod kernel_process;
 mod icons;
 mod profile_service;

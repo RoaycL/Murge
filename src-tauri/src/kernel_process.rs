@@ -1384,7 +1384,7 @@ fn describe_exit(code: Option<i32>, signal: Option<String>) -> String {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::sync::atomic::AtomicBool;
 
@@ -1607,14 +1607,14 @@ mod tests {
         }
     }
 
-    struct Harness {
-        supervisor: Arc<KernelSupervisor>,
-        adapter: Arc<FakeAdapter>,
-        resolver: Arc<StubResolver>,
-        store: Arc<StubStore>,
+    pub(crate) struct Harness {
+        pub(crate) supervisor: Arc<KernelSupervisor>,
+        pub(crate) adapter: Arc<FakeAdapter>,
+        pub(crate) resolver: Arc<StubResolver>,
+        pub(crate) store: Arc<StubStore>,
     }
 
-    fn create_harness() -> Harness {
+    pub(crate) fn create_harness() -> Harness {
         create_harness_with(SupervisorOptions {
             readiness_pattern: Some("fixture-ready".to_string()),
             start_timeout_ms: 2000,
@@ -1627,7 +1627,7 @@ mod tests {
         })
     }
 
-    fn create_harness_with(options: SupervisorOptions) -> Harness {
+    pub(crate) fn create_harness_with(options: SupervisorOptions) -> Harness {
         let resolver = Arc::new(StubResolver::new());
         let store = Arc::new(StubStore::new());
         let adapter = Arc::new(FakeAdapter::new());
@@ -1660,7 +1660,7 @@ mod tests {
 
     /// Start on a task and drive to readiness by emitting the fixture marker
     /// (the TS startToRunning).
-    async fn start_to_running(h: &Harness) -> Value {
+    pub(crate) async fn start_to_running(h: &Harness) -> Value {
         let supervisor = h.supervisor.clone();
         let task = tokio::spawn(async move { supervisor.start().await });
         wait_for(|| readiness_pending(&h.supervisor)).await;

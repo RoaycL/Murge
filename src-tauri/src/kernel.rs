@@ -284,18 +284,6 @@ pub fn build_runtime_summary(active_profile_name: Option<&str>) -> Value {
     })
 }
 
-/// The external-IP probe: null unless the kernel is running (which it never is
-/// in this build — the resolver gate). The probe itself lands with the network
-/// slice.
-pub fn resolve_external_ip(kernel_status: &Value) -> Value {
-    if kernel_status["phase"].as_str() == Some("running") {
-        // Staged: the proxy probe (fetchExternalIpViaProxy) lands with the
-        // controller client; a running kernel in that slice will probe.
-        Value::Null
-    } else {
-        Value::Null
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -424,9 +412,4 @@ mod tests {
         assert_eq!(summary["profileName"], "Murge Default", "brand defaultProfileName");
     }
 
-    #[test]
-    fn external_ip_is_null_until_the_kernel_runs() {
-        let supervisor = test_supervisor();
-        assert_eq!(resolve_external_ip(&supervisor.get_status()), Value::Null);
-    }
 }

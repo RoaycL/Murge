@@ -749,10 +749,13 @@ machine, previously a disabled stub):
   `allow_real` gate plus the `内核已停用：…` enabled-gate copy.
 - `KernelServices::new()` composes the disabled resolver by default
   (fail-closed UNSUPPORTED, unchanged wire behavior); `kernel:start` /
-  `kernel:stop` / auto-start are now async. The full real-kernel
-  composition (resolver + strict store + controller-ready gateway)
-  activates when the installer ships; the ControllerReadyKernelGateway
-  poll lands with the next slice.
+  `kernel:stop` / auto-start are now async. The `ControllerReadyKernelGateway`
+  port also lands in this slice (the authenticated `/version` probe via
+  `MihomoVersionProbe`/`VersionProbe`, 10 s deadline / 100 ms retry, the
+  exact `mihomo process started but its authenticated loopback controller
+  did not become ready.` KERNEL_START_TIMEOUT copy, half-ready stop
+  pass-through) — it composes over the supervisor when the real-kernel
+  wiring activates with the installer.
 - Verify: `cargo test --lib` 334 passed / 0 failed / 0 warnings (28 new
   supervisor-lifecycle cases); channel audit unchanged 121 / 111 live /
   0 unmapped; `npm run typecheck` green; vitest 1905 passed / 7 skipped.

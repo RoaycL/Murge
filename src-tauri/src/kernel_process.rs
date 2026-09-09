@@ -1144,6 +1144,72 @@ impl KernelSupervisor {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Controller-ready gateway (controller-ready-gateway.ts)
+// ---------------------------------------------------------------------------
+
+/// Abstraction over the authenticated loopback probe so the gateway is
+/// testable; the production probe is `MihomoClient::get_version`.
+pub trait VersionProbe: Send + Sync {
+    fn probe(&self) -> BoxFuture<'_, Result<(), IpcError>>;
+}
+
+/// The production probe: GET /version with the controller secret.
+pub struct MihomoVersionProbe {
+    pub client: crate::mihomo::MihomoClient,
+}
+
+impl VersionProbe for MihomoVersionProbe {
+    fn probe(&self) -> BoxFuture<'_, Result<(), IpcError>> {
+        Box::pin(async move { self.client.get_version().await.map(|_| ()) })
+    }
+}
+
+/// Makes the user-facing start action wait for the loopback controller's
+/// authenticated /version response. Process spawn alone is not readiness.
+pub struct ControllerReadyKernelGateway {
+    kernel: Arc<KernelSupervisor>,
+    probe: Arc<dyn VersionProbe>,
+    timeout_ms: u64,
+    retry_ms: u64,
+}
+
+impl ControllerReadyKernelGateway {
+    pub fn new(kernel: Arc<KernelSupervisor>, probe: Arc<dyn VersionProbe>, timeout_ms: u64, retry_ms: u64) -> Self {
+        ControllerReadyKernelGateway { kernel, probe, timeout_ms, retry_ms }
+    }
+
+    pub fn get_status(&self) -> Value {
+        self.kernel.get_status()
+    }
+
+    pub async fn start(&self) -> Result<Value, IpcError> {
+        let status = self.kernel.start().await?;
+        if status["phase"] != "running" {
+            return Ok(status);
+        }
+        let deadline = std::time::Instant::now() + Duration::from_millis(self.timeout_ms);
+        while std::time::Instant::now() < deadline {
+            if self.probe.probe().await.is_ok() {
+                return Ok(self.kernel.get_status());
+            }
+            tokio::time::sleep(Duration::from_millis(self.retry_ms)).await;
+        }
+        // The typed readiness failure remains the primary error. The
+        // supervisor retains any process that survives termination, so this
+        // cannot permit a duplicate start or erase its live config.
+        let _ = self.kernel.stop().await;
+        Err(IpcError::code(
+            code::KERNEL_START_TIMEOUT,
+            "mihomo process started but its authenticated loopback controller did not become ready.",
+        ))
+    }
+
+    pub async fn stop(&self) -> Result<Value, IpcError> {
+        self.kernel.stop().await
+    }
+}
+
 /// Bridges adapter process events into the supervisor state machine. Holds a
 /// Weak reference: a leaked sink can never pin the supervisor alive.
 struct SinkBridge {
@@ -2050,6 +2116,62 @@ mod tests {
         assert_eq!(exits.len(), 1);
         // Terminated by SIGTERM (signal 15) — not a clean code-0 exit.
         assert!(exits[0].1.is_some(), "expected a signal exit, got {:?}", exits[0]);
+    }
+
+    // -- controller-ready gateway -------------------------------------------
+
+    struct ScriptedProbe {
+        failures: std::sync::atomic::AtomicU32,
+    }
+
+    impl VersionProbe for ScriptedProbe {
+        fn probe(&self) -> BoxFuture<'_, Result<(), IpcError>> {
+            Box::pin(async move {
+                if self.failures.fetch_sub(1, Ordering::SeqCst) > 1 {
+                    return Err(IpcError::code(code::UPSTREAM_HTTP_ERROR, "not ready"));
+                }
+                Ok(())
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn gateway_resolves_start_only_after_the_controller_answers() {
+        let h = create_harness();
+        let status = start_to_running(&h).await;
+        let _ = status;
+        let probe = Arc::new(ScriptedProbe { failures: std::sync::atomic::AtomicU32::new(2) });
+        let gateway = ControllerReadyKernelGateway::new(h.supervisor.clone(), probe, 100, 1);
+        let status = gateway.start().await.unwrap();
+        assert_eq!(status["phase"], "running");
+    }
+
+    #[tokio::test]
+    async fn gateway_stops_a_half_ready_process_with_a_typed_timeout() {
+        let h = create_harness();
+        start_to_running(&h).await;
+        // Always-failing probe (u32::MAX failures).
+        let probe = Arc::new(ScriptedProbe { failures: std::sync::atomic::AtomicU32::new(u32::MAX) });
+        let gateway = ControllerReadyKernelGateway::new(h.supervisor.clone(), probe, 20, 1);
+        let error = gateway.start().await.unwrap_err();
+        assert_eq!(error_code(&error), "KERNEL_START_TIMEOUT");
+        assert!(error.0.contains("did not become ready"));
+        // The half-ready process was stopped through the supervisor.
+        assert_eq!(h.supervisor.get_status()["phase"], "stopped");
+        assert_eq!(h.store.cleanup_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn gateway_passes_through_a_non_running_start() {
+        let h = create_harness();
+        // A failing resolver → start fails before any probe would matter.
+        *h.resolver.error.lock().expect("err poisoned") =
+            Some(IpcError::unsupported(crate::kernel_process::DISABLED_RESOLVER_MESSAGE));
+        let probe = Arc::new(ScriptedProbe { failures: std::sync::atomic::AtomicU32::new(1) });
+        let gateway = ControllerReadyKernelGateway::new(h.supervisor.clone(), probe, 100, 1);
+        assert!(gateway.start().await.is_err());
+        // No probe side effects leaked into a running kernel.
+        assert_eq!(h.adapter.spawn_count(), 0);
     }
 
     #[cfg(unix)]

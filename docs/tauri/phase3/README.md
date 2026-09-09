@@ -1033,6 +1033,37 @@ surface: application / kernel / Sub-Store daily logs):
   documented 85 s burst), 0 warnings both profiles, 20x full-suite sweep
   with zero flakes after the shutdown fix; typecheck + vitest unchanged.
 
+Sixteenth Phase 3D slice — the quit lifecycle (`quit-guard.ts` +
+`lifecycle-adapter.ts`, Phase 4's `runQuitFlow` port pulled forward):
+
+- `src/lifecycle.rs` ports the before-quit decision verbatim:
+  `run_quit_flow` (restore MUST confirm, or stop/dispose/quit never run and
+  post-restore cleanup failures are swallowed — never blocking), the 3×
+  250 ms bounded restore retry, and `restore_network_before_quit` (owned
+  proxy restore BEFORE kernel stop, then TUN `emergency_disable`, all inside
+  the shared `RUNTIME_UPDATE` gate).
+- Tauri wiring: `RunEvent::ExitRequested` with `code: None` (user
+  interaction / last window closed — the `window-all-closed` TS default) is
+  prevented once, the one idempotent shutdown flow runs, and the real exit
+  goes through `AppHandle::exit(0)` (re-entering `ExitRequested` with a
+  code, which passes straight through). `RunEvent::Exit` stays as the
+  synchronous residual dispose.
+- The TS `waitForProfileOperations` maps to acquire-and-release of the
+  `RUNTIME_UPDATE` gate (draining accepted dispatcher mutations WITHOUT
+  holding the boundary — holding it across the flow would deadlock against
+  the restore step's own acquisition). Each step re-acquires separately,
+  matching the TS `runExclusive` sections.
+- The dispose step covers Sub-Store worker termination, the update-service
+  dispose, and the file-log shutdown marker + flush (`application shutdown
+  completed`); tray/IPC/exit-monitor/intent-recovery dispose follows their
+  own slices. `session_ending` keeps the TS parameter for the Windows
+  CI slice (Tauri exposes no session-end event); the updater restart path
+  must call the flow explicitly when that slice lands (Tauri restarts skip
+  `code: None`).
+- Verify: 5 new unit tests (restore-failed skips everything, confirmed
+  order, cleanup errors never block, retry transient/permanent), 431 total,
+  0 warnings, 15x sweep clean; typecheck + vitest unchanged.
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,

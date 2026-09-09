@@ -702,6 +702,61 @@ Fifth Phase 3D slice — 内核工件管线 (the real-kernel spawn prerequisite)
   module is complete and unit-tested standalone (like the Sub-Store zip
   reader in slice 16).
 
+Sixth Phase 3D slice — 内核进程监督器 (the full `supervisor.ts` lifecycle
+machine, previously a disabled stub):
+
+- `kernel_process.rs` ports the injected-seam architecture:
+  `KernelBinaryResolver` / `KernelConfigStore` / `KernelProcessAdapter` +
+  `KernelProcessSink` / `KernelWatchdog` traits, with the Fake/Stub test
+  harness mirroring `tests/kernel-supervisor.test.ts` (28 Rust cases,
+  including the TS log-buffer byte-cap tests).
+- Lifecycle parity: single serialized lifecycle queue (`withLifecycle`
+  chain → tokio Mutex) so a stop submitted during an in-flight start waits;
+  idempotent double-start; `KERNEL_RUNNING` refusal while a process is
+  still tracked (survived-SIGKILL case); stale-pid handling before spawn;
+  SIGTERM → bounded wait → SIGKILL → bounded wait ladder;
+  never-reported-stopped survivor (pid + handle kept, config preserved for
+  a later stop() retry); no-PID spawn → `KERNEL_SPAWN_FAILED` +
+  `Kernel process did not report a PID.`; readiness marker on accumulated
+  stdout (start-timeout copy exact) with the ORIGINAL error code preserved
+  through the abort path (`KERNEL_CRASHED` on exit-during-start,
+  `KERNEL_START_TIMEOUT`, resolver UNSUPPORTED pass-through); post-exit
+  `exitWork` ordering (config cleanup → exit-wait release →
+  stopped/failed + crash-restart schedule) so stop()/start() never finish
+  while a secret-bearing workspace remains on disk; operational `error`
+  events keep a live pid tracked (KERNEL_SPAWN_FAILED readiness reject)
+  but clean up a dead one; crash restarts back off exponentially
+  (250ms → 5s cap), respect the maxRestarts budget, are invalidated by a
+  stop()/start() epoch bump, and refill after a sustained run
+  (restartBudgetResetMs 60s); the rolling log honors both caps
+  (256 KiB / 4000 entries); the crash-watchdog attach point is a
+  `KernelDependencies` seam (Job-Object attach lands with the Windows
+  production slice).
+- Stores: `TempKernelConfigStore` (isolated `kernel-workspace-` temp dir,
+  harmless fixture config, cleanup refuses outside-workspace) and
+  `StrictMihomoConfigStore` (per-run `mihomo-workspace-` child, persistent
+  kernel home `-d` never cleaned, `MIHOMO_PLATFORM`/`MIHOMO_ARCH` env,
+  `-f config -d home` args, strict 64-hex secret gate with the TS copy,
+  profile-document passthrough via `build_profile_kernel_config`).
+  `generate_mihomo_config` ports the strict loopback-only YAML shape
+  (port uniqueness + 64-hex secret + log-level allowlist) and
+  `random_secret()` the CSPRNG 64-hex controller secret.
+- Adapters: the real Unix `NodeKernelProcessAdapter` (tokio process,
+  inherited-free env, pipe readers feeding the sink, SIGTERM/SIGKILL via
+  libc, exit code/signal surfaced through the sink) unit-tested against
+  `/bin/sh`; the `MihomoKernelBinaryResolver` resolves the pinned verified
+  artifact via slice ㉑ (`resolve_mihomo`) behind an explicit
+  `allow_real` gate plus the `内核已停用：…` enabled-gate copy.
+- `KernelServices::new()` composes the disabled resolver by default
+  (fail-closed UNSUPPORTED, unchanged wire behavior); `kernel:start` /
+  `kernel:stop` / auto-start are now async. The full real-kernel
+  composition (resolver + strict store + controller-ready gateway)
+  activates when the installer ships; the ControllerReadyKernelGateway
+  poll lands with the next slice.
+- Verify: `cargo test --lib` 334 passed / 0 failed / 0 warnings (28 new
+  supervisor-lifecycle cases); channel audit unchanged 121 / 111 live /
+  0 unmapped; `npm run typecheck` green; vitest 1905 passed / 7 skipped.
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,

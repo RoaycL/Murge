@@ -40,6 +40,7 @@ mod system_proxy;
 mod tun;
 mod updates;
 mod mihomo_artifact;
+mod kernel_process;
 mod icons;
 mod profile_service;
 mod subscription;

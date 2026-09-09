@@ -157,7 +157,7 @@ pub async fn dispatch(
         "system-proxy:enable" => {
             settings.set(&crate::settings::AppSettingsPatch(serde_json::json!({"systemProxyDesired": true})));
             if kernel.supervisor.get_status()["phase"].as_str() != Some("running") {
-                kernel.supervisor.start()?;
+                kernel.supervisor.start().await?;
             }
             Ok(serde_json::to_value(system_proxy.enable().await?).expect("status serializes"))
         }
@@ -494,12 +494,12 @@ pub async fn dispatch(
         // artifact pipeline lands: start fails with the exact Electron copy
         // and the status records `failed` + lastError.
         "kernel:get-status" => Ok(kernel.supervisor.get_status()),
-        "kernel:start" => kernel.supervisor.start(),
+        "kernel:start" => kernel.supervisor.start().await,
         "kernel:stop" => {
             // The ordered gateway (system-proxy precondition): a user stop,
             // mode switch or shutdown must never leave a dead-port proxy.
             system_proxy.restore_before_kernel_unavailable().await?;
-            kernel.supervisor.stop()
+            kernel.supervisor.stop().await
         }
         "kernel-manager:get-state" => Ok(kernel.manager.get_state(settings)),
         "kernel-manager:set-enabled" => {

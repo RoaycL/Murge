@@ -164,7 +164,7 @@ pub async fn dispatch(
         "system-proxy:enable" => {
             settings.set(&crate::settings::AppSettingsPatch(serde_json::json!({"systemProxyDesired": true})));
             if kernel.supervisor.get_status()["phase"].as_str() != Some("running") {
-                kernel.supervisor.start().await?;
+                kernel.start().await?;
             }
             Ok(serde_json::to_value(system_proxy.enable().await?).expect("status serializes"))
         }
@@ -637,14 +637,14 @@ pub async fn dispatch(
         "kernel:get-status" => Ok(kernel.supervisor.get_status()),
         "kernel:start" => {
             let _gate = RUNTIME_UPDATE.lock().await;
-            kernel.supervisor.start().await
+            kernel.start().await
         },
         "kernel:stop" => {
             let _gate = RUNTIME_UPDATE.lock().await;
             // The ordered gateway (system-proxy precondition): a user stop,
             // mode switch or shutdown must never leave a dead-port proxy.
             system_proxy.restore_before_kernel_unavailable().await?;
-            kernel.supervisor.stop().await
+            kernel.stop().await
         }
         "kernel-manager:get-state" => Ok(kernel.manager.get_state(settings)),
         "kernel-manager:set-enabled" => {
@@ -856,7 +856,7 @@ async fn profile_reload_step(
     mihomo: &mihomo::MihomoServices,
 ) -> Result<(), IpcError> {
     let result =
-        live_config::reload_active_profile(profiles, overrides, models, &kernel.supervisor, system_proxy).await;
+        live_config::reload_active_profile(profiles, overrides, models, kernel, system_proxy).await;
     if matches!(&result, Ok(true)) {
         // The kernel came back up on the (possibly new) active profile:
         // replay that profile's remembered node picks so they survive the
@@ -1488,16 +1488,6 @@ mod tests {
             enhancements::coerce_core_settings,
         )
         .unwrap();
-        let kernel = crate::kernel_process::KernelSupervisor::create(
-            crate::kernel_process::KernelDependencies {
-                resolver: std::sync::Arc::new(crate::kernel_process::DisabledKernelBinaryResolver),
-                config_store: std::sync::Arc::new(crate::kernel_process::TempKernelConfigStore),
-                adapter: std::sync::Arc::new(crate::kernel_process::NodeKernelProcessAdapter),
-                secret: crate::kernel_process::random_secret(),
-                attach_watchdog: None,
-            },
-            crate::kernel_process::SupervisorOptions::default(),
-        );
         // The disabled supervisor is never "running", so the patch defers —
         // exercise the rollback via a running harness instead.
         let harness = crate::kernel_process::tests::create_harness();
@@ -1505,6 +1495,7 @@ mod tests {
         f.kernel = kernel::KernelServices {
             supervisor: harness.supervisor.clone(),
             manager: kernel::KernelManagerService::new(),
+            ready: None,
         };
         let before = f.models.dns.get();
         let result = dispatch("dns:set", &serde_json::json!([{ "enabled": true }]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await;

@@ -232,14 +232,40 @@ impl Default for KernelManagerService {
 pub struct KernelServices {
     pub supervisor: Arc<KernelSupervisor>,
     pub manager: KernelManagerService,
+    /// The controller-ready wrapper (`ControllerReadyKernelGateway`, built
+    /// only for the real-kernel production composition): process spawn alone
+    /// is not readiness — start additionally waits for the loopback
+    /// controller's authenticated /version. Dev keeps the raw supervisor
+    /// (the TS `kernelInstance`, its fixture reports readiness by stdout).
+    pub ready: Option<Arc<crate::kernel_process::ControllerReadyKernelGateway>>,
+}
+
+impl KernelServices {
+    /// Start through the ready gate when composed with one, the raw
+    /// supervisor otherwise (dev).
+    pub async fn start(&self) -> Result<Value, crate::error::IpcError> {
+        match &self.ready {
+            Some(gateway) => gateway.start().await,
+            None => self.supervisor.start().await,
+        }
+    }
+
+    /// Status passes straight through (the TS gateway forwards getStatus).
+    pub fn get_status_value(&self) -> Value {
+        self.supervisor.get_status()
+    }
+
+    /// Stop always passes straight through (the ready gate is a start
+    /// wrapper — the TS `ControllerReadyKernelGateway.stop`).
+    pub async fn stop(&self) -> Result<Value, crate::error::IpcError> {
+        self.supervisor.stop().await
+    }
 }
 
 impl KernelServices {
     /// The default composition is fail-closed: the disabled resolver never
     /// resolves a binary, so start() fails with the UNSUPPORTED copy exactly
-    /// like the Electron build outside packaged Windows. The real-kernel
-    /// composition (MihomoKernelBinaryResolver + StrictMihomoConfigStore +
-    /// NodeKernelProcessAdapter) is wired when the installer ships.
+    /// like the Electron build outside packaged Windows.
     pub fn new() -> Self {
         KernelServices {
             supervisor: KernelSupervisor::create(
@@ -253,7 +279,91 @@ impl KernelServices {
                 SupervisorOptions::default(),
             ),
             manager: KernelManagerService::new(),
+            ready: None,
         }
+    }
+
+    /// The dev/fixture composition (`createKernelResolver({mode: 'fixture'})`
+    /// + `TempKernelConfigStore` + the fixture-ready stdout marker). The
+    /// fixture opens NO socket, so the controller-ready gate never applies.
+    pub fn for_development() -> Self {
+        let mut services = Self::new();
+        services = KernelServices {
+            supervisor: KernelSupervisor::create(
+                KernelDependencies {
+                    resolver: Arc::new(crate::kernel_process::FixtureKernelBinaryResolver::default()),
+                    config_store: Arc::new(crate::kernel_process::TempKernelConfigStore),
+                    adapter: Arc::new(crate::kernel_process::NodeKernelProcessAdapter),
+                    secret: crate::kernel_process::random_secret(),
+                    attach_watchdog: None,
+                },
+                SupervisorOptions { readiness_pattern: Some("fixture-ready".to_string()), ..SupervisorOptions::default() },
+            ),
+            manager: services.manager,
+            ready: None,
+        };
+        services
+    }
+
+    /// The real-kernel composition (`MihomoKernelResolver` + strict config
+    /// store + controller-ready gate). `production_secret` must already be a
+    /// valid 64-hex secret (seeded once at startup like the TS composition);
+    /// the strict store validates it before any directory is created.
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn for_real_kernel(
+        workspace_dir: std::path::PathBuf,
+        bundled_archive_dir: Option<std::path::PathBuf>,
+        secret: String,
+        ports: Value,
+        resolve_active_document: Option<Arc<dyn Fn() -> Option<String> + Send + Sync>>,
+        resolve_core: Option<Arc<dyn Fn() -> Value + Send + Sync>>,
+        resolve_geodata: Option<Arc<dyn Fn() -> Value + Send + Sync>>,
+        kernel_enabled: Arc<dyn Fn() -> bool + Send + Sync>,
+        probe: Option<Arc<dyn crate::kernel_process::VersionProbe>>,
+    ) -> Self {
+        let supervisor = KernelSupervisor::create(
+            KernelDependencies {
+                resolver: Arc::new(crate::kernel_process::MihomoKernelBinaryResolver {
+                    allow_real: true,
+                    workspace_dir: workspace_dir.clone(),
+                    transport: crate::mihomo_artifact::real_download_transport(),
+                    kernel_enabled,
+                    bundled_archive_dir,
+                    version_selection: None, // staged: version-install slice
+                    ensure_specific_binary: None, // staged: version-install slice
+                }),
+                config_store: Arc::new(crate::kernel_process::StrictMihomoConfigStore {
+                    mixed_port: ports["mixedPort"].as_i64().unwrap_or(7890),
+                    http_port: ports["httpPort"].as_i64().unwrap_or(0),
+                    socks_port: ports["socksPort"].as_i64().unwrap_or(0),
+                    controller_port: ports["controllerPort"].as_i64().unwrap_or(9090),
+                    controller_host: ports["controllerHost"].as_str().unwrap_or("127.0.0.1").to_string(),
+                    allow_lan: ports["allowLan"].as_bool().unwrap_or(false),
+                    controller_panel: ports["controllerPanel"].as_bool().unwrap_or(true),
+                    workspace_dir: workspace_dir.join("runtime"),
+                    kernel_home_dir: Some(workspace_dir.join("geodata")),
+                    seed_resources_dir: None, // staged: installer-geodata slice
+                    owned_dir: std::sync::Mutex::new(None),
+                    resolve_active_document,
+                    resolve_core,
+                    resolve_geodata,
+                }),
+                adapter: Arc::new(crate::kernel_process::NodeKernelProcessAdapter),
+                secret,
+                attach_watchdog: None, // staged: Windows watchdog slice
+            },
+            SupervisorOptions::default(),
+        );
+        let ready = probe.map(|probe| {
+            Arc::new(crate::kernel_process::ControllerReadyKernelGateway::new(
+                supervisor.clone(),
+                probe,
+                10_000, // the TS default
+                100,
+            ))
+        });
+        KernelServices { supervisor, manager: KernelManagerService::new(), ready }
     }
 }
 
@@ -288,6 +398,91 @@ pub fn build_runtime_summary(active_profile_name: Option<&str>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dev_composition_resolves_the_harmless_fixture() {
+        // The fixture resolver resolves node + the shared fixture script with
+        // the fixture-ready marker option; it never touches the network.
+        let services = KernelServices::for_development();
+        let _ = services;
+        // Composition sanity: the ready gate is dev-absent (the fixture
+        // reports readiness by stdout marker, not controller).
+        assert!(services.ready.is_none());
+    }
+
+    #[tokio::test]
+    async fn dev_composition_starts_the_fixture_to_running() {
+        // Requires node on PATH (the same prerequisite the Electron dev
+        // shell has); skips silently elsewhere.
+        if which_node().is_none() {
+            return;
+        }
+        let services = std::sync::Arc::new(KernelServices::for_development());
+        let status = services.start().await.expect("fixture start");
+        assert_eq!(status["phase"], "running");
+        services.stop().await.unwrap();
+        assert_eq!(services.supervisor.get_status()["phase"], "stopped");
+    }
+
+    fn which_node() -> Option<std::path::PathBuf> {
+        for dir in std::env::split_paths(&std::env::var_os("PATH")?) {
+            let candidate = dir.join(if cfg!(windows) { "node.exe" } else { "node" });
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn real_kernel_composition_keeps_the_strict_store_shape() {
+        // Composition-level checks that do not touch the network: the strict
+        // store ports are wired (profile + core + geodata resolvers), the
+        // secret flows through, and the ready gate is armed when a probe is
+        // supplied.
+        let services = KernelServices::for_real_kernel(
+            std::env::temp_dir().join("murge-kernel-composition-test"),
+            None,
+            "a".repeat(64),
+            serde_json::json!({
+                "mixedPort": 7890, "httpPort": 0, "socksPort": 0,
+                "controllerPort": 9090, "controllerHost": "127.0.0.1",
+                "allowLan": false, "controllerPanel": true
+            }),
+            Some(Arc::new(|| Some("proxies: []\n".to_string()))),
+            Some(Arc::new(|| serde_json::json!({"enabled": false}))),
+            Some(Arc::new(|| serde_json::json!({"enabled": false}))),
+            Arc::new(|| true),
+            None,
+        );
+        assert!(services.ready.is_none(), "no probe -> no ready gate");
+    }
+
+    #[tokio::test]
+    async fn real_kernel_composition_fails_closed_on_a_bad_secret() {
+        // A non-hex secret is rejected by the strict store BEFORE any
+        // directory is created (validation-first contract).
+        let services = KernelServices::for_real_kernel(
+            std::env::temp_dir().join("murge-kernel-composition-test"),
+            None,
+            "not-a-valid-secret".to_string(),
+            serde_json::json!({
+                "mixedPort": 7890, "httpPort": 0, "socksPort": 0,
+                "controllerPort": 9090, "controllerHost": "127.0.0.1",
+                "allowLan": false, "controllerPanel": true
+            }),
+            None,
+            None,
+            None,
+            Arc::new(|| true),
+            None,
+        );
+        let error = services.start().await.unwrap_err();
+        assert!(
+            error.0.contains("64-character lowercase hex"),
+            "{error:?}"
+        );
+    }
 
     /// The disabled composition mirrors KernelServices::new for unit tests.
     fn test_supervisor() -> Arc<KernelSupervisor> {

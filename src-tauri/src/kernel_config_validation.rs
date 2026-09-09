@@ -854,8 +854,6 @@ mod tests {
 
     #[test]
     fn profile_gate_handles_merge_anchors_for_the_content_check() {
-        let text = "<<: *base\nextra: 1\n".replace("<<: *base", "base: &base") + "";
-        // A literal merge map carrying a content section passes.
         let text = "defaults: &d\n  rules:\n    - MATCH,DIRECT\n<<: *d\n";
         assert!(profile_kernel_config_errors(text).is_empty(), "{:?}", profile_kernel_config_errors(text));
     }

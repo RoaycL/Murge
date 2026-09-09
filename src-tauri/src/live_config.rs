@@ -368,14 +368,14 @@ pub async fn reload_active_profile(
     profiles: &Arc<ProfilesService>,
     overrides: &OverrideService,
     models: &enhancements::ModelStores,
-    kernel: &crate::kernel_process::KernelSupervisor,
+    kernel: &crate::kernel::KernelServices,
     system_proxy: &crate::system_proxy::SystemProxyService,
 ) -> Result<bool, IpcError> {
-    let reloader = LiveConfigReloader::from_ipc(kernel, models, profiles, overrides)?;
+    let reloader = LiveConfigReloader::from_ipc(&kernel.supervisor, models, profiles, overrides)?;
     if let Ok(applied) = reloader.reload_if_running().await {
         return Ok(applied);
     }
-    if !live_phase(&kernel.get_status()) {
+    if !live_phase(&kernel.get_status_value()) {
         // No running core: the active profile is picked up on the next
         // manual start; never spin up a kernel the user did not ask for.
         return Ok(false);

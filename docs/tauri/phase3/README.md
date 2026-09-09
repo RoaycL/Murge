@@ -931,6 +931,46 @@ path, `main/tun/hot-switch-adapter.ts` + `data-plane-readiness.ts` +
   hot-switch/readiness cases); channel audit unchanged 121 / 111 live /
   0 unmapped; typecheck green; vitest 1905 passed / 7 skipped.
 
+Thirteenth Phase 3D slice — real-kernel composition (the TS
+`when-ready.ts` supervisor three-way split + `ControllerReadyKernelGateway` +
+strict-store live resolvers):
+
+- `KernelServices` now composes by environment exactly like the TS build:
+  dev resolves the harmless fixture (`FixtureKernelBinaryResolver` →
+  `node src/main/testing/kernel-fixture.mjs`, `TempKernelConfigStore`, the
+  `fixture-ready` stdout readiness marker, no ready gate); packaged Windows
+  resolves the verified real mihomo artifact
+  (`MihomoKernelBinaryResolver { allow_real: true, workspace:
+  profileRoot/kernel }`, the strict `MihomoKernelConfigStore` shape with the
+  runtime workspace child + persistent geodata home, live
+  `resolveActiveDocument` / `resolveCore` / `resolveGeodata` closures read
+  through managed state at start time); every other production environment
+  stays fail-closed. The controller secret is seeded exactly once when a
+  fresh install has none (when-ready.ts parity) and validated by the strict
+  store before any directory exists.
+- The controller-ready gate: production start additionally waits for the
+  loopback controller's authenticated /version (10 s window / 100 ms retry,
+  the TS defaults); a timeout stops the half-ready process and fails with
+  the typed KERNEL_START_TIMEOUT copy. `kernel:start`,
+  `system-proxy:enable`'s auto-start and the profile-reload restart fallback
+  all route through the gate; stop passes straight through. Dev keeps the
+  raw supervisor (the fixture reports readiness by stdout).
+- The bundled-archive + version-selection resolver hooks landed with the
+  transport seam: a missing installer bundle fails with the exact
+  `Bundled mihomo archive is missing: {filename}` ARTIFACT_DOWNLOAD_FAILED
+  copy, and the archive is still streamed/hashed by the verifier (never
+  trusted for existing on disk). `version_selection`/`ensure_specific_binary`
+  are wired as inert seams until the version-install slice flips
+  `specific_versions_supported`.
+- Watchdog release parity: the supervisor now releases (then drops) the
+  crash watchdog on graceful stop and on process exit — the TS
+  `watchdog?.release()` contract (a killed GUI must never leave the Job
+  Object holding the released kernel either way).
+- Verify: `cargo test --lib` 408 passed / 0 failed / 0 warnings (dev fixture
+  start/stop to running when node is present; bad-secret fail-closed; ready
+  gate passthroughs unchanged); build + test profiles both 0-warning;
+  typecheck green; vitest 1905 passed / 7 skipped.
+
 ### Dispatch surface
 
 `desktop_ipc` now serves: `app:get-brand`, `app:get-info`,

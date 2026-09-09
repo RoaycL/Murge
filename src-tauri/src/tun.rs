@@ -672,7 +672,7 @@ mod tests {
     }
 
     fn active_adapter() -> Arc<FakeAdapter> {
-        let mut adapter = FakeAdapter::new(
+        let adapter = FakeAdapter::new(
             TunEnableResult::Active { readiness: None },
             TunRestoreResult::Restored,
         );

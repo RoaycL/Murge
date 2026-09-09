@@ -247,7 +247,8 @@ export interface ProfileGateway {
 /**
  * Typed DNS enhancement boundary. A single global, schema-validated model that
  * is re-applied through the kernel config pipeline at start and, when the core
- * is live, through an atomic full-document controller reload.
+ * is live, through a verified controller update. DNS configuration changes use
+ * a full document because mihomo has no nested-DNS PATCH contract.
  */
 export interface DnsEnhancementGateway {
   get(): DnsSnapshot | Promise<DnsSnapshot>
@@ -258,7 +259,8 @@ export interface DnsEnhancementGateway {
 
 /**
  * Typed sniffer enhancement boundary. A single global, schema-validated model
- * that follows the same startup/live-reload transaction as DNS.
+ * that follows the same startup/live transaction as DNS. Enable-only changes
+ * may use mihomo's verified runtime sniffer gate when its dispatcher is loaded.
  */
 export interface SnifferEnhancementGateway {
   get(): SnifferSnapshot | Promise<SnifferSnapshot>

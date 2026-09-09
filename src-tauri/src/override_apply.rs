@@ -7,9 +7,9 @@
 //! per-item level: a malformed YAML override leaves the current config intact
 //! and adds a warning, so one bad override can never break the kernel start.
 //!
-//! Staging: the `js` kind needs a JS engine in Rust and is skipped with an
-//! explicit warning until that slice lands (the sealed-VM sandbox contract is
-//! security-critical and is not approximated). YAML output formatting may
+//! The `js` kind runs through the sealed boa sandbox (`crate::js_sandbox`) —
+//! the `node:vm` contract port (shadow console, no Node globals, hard
+//! runaway-trap bound). YAML output formatting may
 //! differ byte-wise from the Electron `yaml.stringify` (no 80-column folding,
 //! no leading `---`), which is semantically neutral for mihomo and documented
 //! in docs/tauri/phase3/README.md.
@@ -187,7 +187,7 @@ fn is_runnable(item: &OverrideItem) -> bool {
 
 /// Structural validation for a single override item, independent of any base
 /// document. Returns Some(copy) when the item is malformed, None when
-/// structurally acceptable. JS overrides are staged fail-closed.
+/// structurally acceptable.
 pub fn validate_override_content(item: &OverrideItem) -> Option<String> {
     if item.content.trim().is_empty() {
         return Some("覆写内容为空".into());
@@ -200,13 +200,10 @@ pub fn validate_override_content(item: &OverrideItem) -> Option<String> {
         };
     }
     if item.kind == KIND_JS {
-        return Some(JS_STAGED_MESSAGE.into());
+        return crate::js_sandbox::validate_js_override(&item.content);
     }
     Some("未知的覆写类型".into())
 }
-
-/// The staging copy for JS overrides (documented difference; see module doc).
-pub const JS_STAGED_MESSAGE: &str = "JS 覆写需要 JS 沙箱，当前 Tauri 版本暂未支持，已跳过";
 
 /// Apply every enabled override (already selected & ordered by the caller) to
 /// a base profile document. With no runnable overrides the base text is
@@ -237,8 +234,15 @@ pub fn apply_overrides_to_document(base: &str, items: &[OverrideItem]) -> ApplyO
             };
             merge_override_object(&mut config, &r#override);
         } else {
-            // JS kind: staged fail-open (see module doc + JS_STAGED_MESSAGE).
-            warnings.push(format!("覆写「{}」{}", item.name, JS_STAGED_MESSAGE));
+            // JS kind: the sealed sandbox (see module doc).
+            let result = crate::js_sandbox::run_js_override(&item.content, &Value::Object(config.clone()));
+            config = match result.next {
+                Value::Object(map) => map,
+                // run_js_override always returns an object here; the guard
+                // keeps the merge chain object-typed regardless.
+                _ => continue,
+            };
+            warnings.extend(result.warnings.into_iter().map(|message| format!("覆写「{}」：{}", item.name, message)));
         }
     }
 
@@ -401,11 +405,31 @@ mod tests {
     }
 
     #[test]
-    fn js_overrides_are_staged_fail_open() {
+    fn js_overrides_run_through_the_sealed_sandbox() {
         let base = "mode: rule\n";
         let result = apply_overrides_to_document(base, &[item("js", "function main(c) { c.mode = 'global' }", 0)]);
-        assert!(result.warnings.iter().any(|w| w.contains("JS 覆写")), "{:?}", result.warnings);
-        assert_eq!(parse_yaml_to_object(&result.text).unwrap()["mode"], json!("rule"), "js override skipped");
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+        assert_eq!(parse_yaml_to_object(&result.text).unwrap()["mode"], json!("global"));
+    }
+
+    #[test]
+    fn a_failing_js_override_is_fail_open_with_the_wrapped_warning() {
+        let base = "mode: rule\n";
+        let result = apply_overrides_to_document(base, &[item("js", "function main(c) { throw new Error('boom') }", 0)]);
+        assert_eq!(parse_yaml_to_object(&result.text).unwrap()["mode"], json!("rule"), "config untouched");
+        assert_eq!(result.warnings.len(), 1, "{:?}", result.warnings);
+        assert!(result.warnings[0].starts_with("覆写「override-0」：JS 覆写 main(config) 执行失败："), "{}", result.warnings[0]);
+    }
+
+    #[test]
+    fn a_js_override_with_console_output_keeps_call_order_after_script_warnings() {
+        let base = "mode: rule\n";
+        let content = "function main(c) { console.log('hi'); throw new Error('x') }";
+        let result = apply_overrides_to_document(base, &[item("js", content, 0)]);
+        // TS: [...warnings, ...messages] — the script failure first, console after.
+        assert_eq!(result.warnings.len(), 2, "{:?}", result.warnings);
+        assert!(result.warnings[0].contains("JS 覆写 main(config) 执行失败："));
+        assert!(result.warnings[1].ends_with("：hi"));
     }
 
     #[test]
@@ -440,9 +464,11 @@ mod tests {
             Some("YAML 覆写解析失败，需要是一个映射对象")
         );
         assert_eq!(validate_override_content(&item("yaml", "  \n", 0)).as_deref(), Some("覆写内容为空"));
-        assert!(validate_override_content(&item("js", "function main() {}", 0))
-            .unwrap()
-            .contains("JS 覆写"));
+        assert_eq!(validate_override_content(&item("js", "function main() {}", 0)), None);
+        assert_eq!(
+            validate_override_content(&item("js", "const x = 1", 0)).as_deref(),
+            Some("JS 覆写未定义 main(config) 函数")
+        );
     }
 
     #[test]

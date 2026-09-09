@@ -1193,3 +1193,57 @@ the Rust dispatch (mechanical scan, not a manual claim):
 overrides / DNS / sniffer / core / geodata / TUN-config persistence, usage
 history + file logging, dialog/clipboard/open-directory equivalents — then
 3B (controller + streams), 3C (downloads/Sub-Store), 3D (privileged core).
+
+Eighteenth Phase 3D slice — the tray (`tray-controller.ts` +
+`electron-tray.ts` + `tray-adapter.ts`): the main-process tray state owner
+runs natively on Tauri (`tauri` `tray-icon` feature + muda 0.19 menus).
+
+- `src/tray.rs` ports the controller contract: `TrayView` seam (tooltip /
+  menu / runtime-appearance repaint), the exact dependency set, the
+  busy-guarded `act()` loop (action → authoritative refresh → re-render),
+  and the full menu tree — byte-exact Chinese labels
+  (显示主窗口 / 出站模式 · … / 组 · 成员 / 网络质量 · {ms|—} /
+  进程与客户端 · N 个连接 / 系统代理 / TUN 模式 / 复制终端代理命令 / 配置 /
+  打开目录 / 检查更新 / 退出 {product}), radio selection via
+  `fixed ?? now`, top-12 process rows with the TS `formatBytes` ladder,
+  profile radio list + URL update entries gated on
+  `source.type === 'url'`, and the transitional/busy disable rules
+  (starting|stopping|busy disable the runtime controls; enabling|restoring
+  phases disable their toggle; a stopped kernel clears latency, connections,
+  and the mode submenu enablement).
+- Gateway parity without duplication: the tray's TUN toggle and profile
+  actions dispatch through the REAL ipc arms (`tun:enable` / `tun:disable` /
+  `profiles:activate` / `profiles:update-from-source` via
+  `ipc::dispatch`), so kernel-start-before-TUN, `tunDesired` persistence,
+  RUNTIME_UPDATE gating, and the reload/rollback choreography live in ONE
+  place and cannot drift from the renderer. The restart item keeps the TS
+  split (running → ordered reloadProfile fallback; stopped → bare queued
+  kernel start); the mode patch and proxy selection keep their TS direct /
+  attribution-PUT-recorded semantics. `resolveGroupOrder` reuses the exact
+  enhanced-document chain (active profile → overrides → DNS → sniffer →
+  `parseProxyGroupOrder`).
+- Documented Tauri differences: there is no menu-open hook, so the
+  controller refreshes on every status event plus a bounded 3 s cadence
+  (the menu the OS draws is the latest snapshot; Electron re-rendered on
+  `onMenuOpen`); muda menus are rebuilt per render instead of mutated; the
+  bounded 3 s latency probe replaces the TS unbounded refresh read (degrades
+  to —); group icons are not attached (decorative in the TS contract); the
+  native menu carries ids instead of per-item click closures, dispatched
+  through ONE `on_menu_event` handler.
+- `src/tray_view.rs` is the native view: `TrayIconBuilder` + muda
+  `CheckMenuItem`/`Submenu`/separator reconstruction of the tree, tray
+  assets `resources/tray/tray-{dark,light}-{idle,proxy,tun}.png` bundled
+  via `bundle.resources` (dev reads the checkout; packaged builds read the
+  resource dir), theme-dark default with the
+  `resolveRuntimeAccent` port (tun active → tun icon, verified system proxy
+  → proxy icon, else idle), and a menu-rebuild failure keeps the previous
+  menu instead of dropping the tray. Initialization never gates startup:
+  a headless session (or any native failure) logs and continues tray-less,
+  matching the TS `trayReady` contract. Directory entries open via the
+  platform file manager (mkdir first, application dir without mkdir);
+  clipboard writes are best-effort (`arboard`).
+- Tests (12): byte-exact labels, `formatBytes`, fixed-selection precedence,
+  process-row merge/rank/12-cap, accent resolution, and pure-tree renders
+  for the full menu, transitional/busy disabling, stopped-kernel clearing,
+  unsupported-platform toggles, and URL-profile update gating — 455 total,
+  0 warnings.

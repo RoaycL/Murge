@@ -53,6 +53,7 @@ pub fn is_dev() -> bool {
 }
 
 /// Resolved application paths, shared with IPC handlers through Tauri state.
+#[derive(Clone)]
 pub struct AppPaths {
     /// The stable namespace root (`…/io.murge.desktop`). Null in dev: dev uses
     /// an ephemeral workspace and never persists real user data.

@@ -186,6 +186,29 @@ pub async fn dispatch(
         // boundary this Electron build ships). Enable/disable are intent-first.
         "tun:get-status" => Ok(tun.get_status_value()),
         "tun:enable" => {
+            // queuedTunGateway parity: a TUN toggle shares THE ONE transition
+            // queue with kernel start/stop (the coordinator's own queue only
+            // serializes TUN work against itself).
+            let _gate = RUNTIME_UPDATE.lock().await;
+            // enableTunInner in-place parity: a stopped kernel must be started
+            // BEFORE the TUN adapter patches the live device — the elevated
+            // runtime and the main kernel cannot share the unified ports, and
+            // the TS controller starts it explicitly on this path.
+            {
+                let phase = kernel.supervisor.get_status()["phase"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                if phase != "running" {
+                    if phase == "starting" {
+                        return Err(IpcError::code(
+                            crate::error::code::KERNEL_RUNNING,
+                            "A kernel start is already in progress.",
+                        ));
+                    }
+                    kernel.start().await?;
+                }
+            }
             settings.set(&crate::settings::AppSettingsPatch(serde_json::json!({"tunDesired": true})));
             let intent = serde_json::json!({
                 "schemaVersion": 2,
@@ -195,6 +218,7 @@ pub async fn dispatch(
             Ok(serde_json::to_value(tun.enable(&intent).await?).expect("tun status serializes"))
         }
         "tun:disable" => {
+            let _gate = RUNTIME_UPDATE.lock().await;
             settings.set(&crate::settings::AppSettingsPatch(serde_json::json!({"tunDesired": false})));
             Ok(serde_json::to_value(tun.emergency_disable().await).expect("tun status serializes"))
         }
@@ -684,6 +708,11 @@ pub async fn dispatch(
         }
         "mihomo:get-proxies" => Ok(controller_client(models)?.get_proxies().await?),
         "mihomo:select-proxy" => {
+            // ProxySelectionGateway parity: the attribution -> PUT -> durable
+            // record triple runs inside the profile mutation boundary, so a
+            // concurrent activation can never swap the live config between
+            // attribution and application.
+            let _gate = RUNTIME_UPDATE.lock().await;
             let (group, name) = mihomo::parse_proxy_selection(
                 arg(payload, 0).unwrap_or(&Value::Null),
                 arg(payload, 1).unwrap_or(&Value::Null),

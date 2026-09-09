@@ -21,6 +21,8 @@ mod events;
 mod file_log;
 mod js_sandbox;
 mod lifecycle;
+mod tray;
+mod tray_view;
 mod ipc;
 #[allow(dead_code)] // wired incrementally; the lint fires on staged-but-unwired items
 mod mihomo;
@@ -605,6 +607,15 @@ pub fn run() {
                 }
             }));
             app.manage(paths);
+
+            // The tray slice: construct the native tray + controller with the
+            // exact dependency set the TS tray adapter wired. Initialization
+            // never gates startup (the TS `trayReady` contract): a headless
+            // session (or a failed tray) logs and continues tray-less.
+            match tray::wire_tray(app.handle().clone()) {
+                Ok(()) => {}
+                Err(error) => eprintln!("[tray] initialization failed (continuing tray-less): {error}"),
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![ipc::desktop_ipc])

@@ -85,8 +85,8 @@ function unescapeXml(value: string): string {
 /**
  * Logon-trigger task XML. Deliberately different from an HKCU Run entry:
  *
- * - `Delay PT3S` starts the app a few seconds after logon, outside the worst of
- *   the login disk/CPU storm (clash-party parity).
+ * - The logon trigger has no artificial delay, so the kernel recovery can begin
+ *   as soon as the user's interactive session is ready.
  * - `Priority 3` schedules the process above the default background class.
  * - `LeastPrivilege` needs no elevation: the kernel's privileges live in the
  *   LocalSystem TUN service, not in the GUI process.
@@ -99,7 +99,6 @@ export function buildTaskXml(executablePath: string, args: readonly string[]): s
   <Triggers>
     <LogonTrigger>
       <Enabled>true</Enabled>
-      <Delay>PT3S</Delay>
     </LogonTrigger>
   </Triggers>
   <Principals>
@@ -145,7 +144,7 @@ export function taskSettingsEnabled(taskXml: string): boolean {
   return match?.[1] === 'true'
 }
 
-/** Task arguments as registered (`--hidden` for silent launches, none otherwise). */
+/** Task arguments parsed from either current or legacy registrations. */
 export function taskArguments(taskXml: string): string[] {
   const match = /<Arguments>([\s\S]*?)<\/Arguments>/.exec(taskXml)
   const raw = match?.[1] ?? ''
@@ -155,35 +154,40 @@ export function taskArguments(taskXml: string): string[] {
   return unescapeXml(raw).trim().split(/\s+/)
 }
 
+/** Whether an older registration still postpones launch after logon. */
+export function taskHasLogonDelay(taskXml: string): boolean {
+  const trigger = /<LogonTrigger>[\s\S]*?<\/LogonTrigger>/.exec(taskXml)?.[0] ?? ''
+  return /<Delay>[^<]+<\/Delay>/.test(trigger)
+}
+
 /**
  * Windows auto-start via a per-user Scheduled Task (schtasks), with the legacy
  * HKCU Run-key registration kept as a fallback.
  *
  * Why a task instead of Electron's login item (the old default): the task can
- * carry a logon delay and a process priority, which makes login launches land
- * after the post-logon resource storm. The Run key remains for machines where
+ * carry an explicit process priority and stable identity while launching as
+ * soon as the interactive session is ready. The Run key remains for machines where
  * scheduled-task creation is denied (enterprise policy, stripped-down SKUs) so
  * auto-start degrades to exactly the previous behaviour instead of failing.
  *
- * Read and write agree on the same `--hidden` argument convention as the
- * Run-key adapter: silent launches register the flag, loud launches register
- * none. `read()` is argument-insensitive (it reports what is registered);
- * `rewriteIfEnabled()` rewrites the stored arguments when the persisted
- * silent-launch preference has moved, and migrates a legacy Run-key-only
- * registration to the task form.
+ * Read and write agree on the same always-`--hidden` argument convention as the
+ * Run-key adapter. `read()` is argument-insensitive (it reports what is
+ * registered); `rewriteIfEnabled()` removes old visible/delayed registrations
+ * and migrates a legacy Run-key-only registration to the task form.
  */
 export class ScheduledTaskStartupAdapter implements StartupAdapter {
   readonly supported: boolean
   private readonly legacy: StartupAdapter
 
   /**
-   * Sync provider for the persisted silent-launch preference. A test may inject
-   * a runner in place of the real `schtasks` child process, a supported flag to
+   * The legacy preference provider is retained for source compatibility while
+   * every new registration is hidden. A test may inject a runner in place of
+   * the real `schtasks` child process, a supported flag to
    * exercise the win32 logic off-Windows, and a legacy adapter in place of the
    * Electron login-item fallback.
    */
   constructor(
-    private readonly getSilentLaunch: () => boolean = () => false,
+    getSilentLaunch: () => boolean = () => false,
     private readonly runner: ScheduledTaskCommandRunner = defaultRunner,
     options?: { supported?: boolean; legacy?: StartupAdapter }
   ) {
@@ -230,7 +234,11 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
       if (!taskSettingsEnabled(taskXml)) return
       const currentArgs = taskArguments(taskXml)
       const desiredArgs = this.loginArgs()
-      if (currentArgs.length === desiredArgs.length && currentArgs.every((a, i) => a === desiredArgs[i])) {
+      if (
+        !taskHasLogonDelay(taskXml) &&
+        currentArgs.length === desiredArgs.length &&
+        currentArgs.every((a, i) => a === desiredArgs[i])
+      ) {
         // Already current; retire a lingering legacy Run-key entry (e.g. the
         // fallback engaged once) so the app is not started twice at logon.
         await this.clearRunFallbacks()
@@ -245,7 +253,7 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
       return
     }
     // Legacy-only registration (v0.9.x Run-key users): migrate to the task so
-    // future logins get the delayed, prioritised launch. The existence check
+    // future logins get the immediate, prioritised launch. The existence check
     // MUST be argument-insensitive — an argument-sensitive read cannot see a
     // Run-key entry written with a stale `--hidden` value, which would silently
     // skip its migration. A failed create keeps the Run key untouched —
@@ -259,7 +267,10 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
   }
 
   private loginArgs(): string[] {
-    return this.getSilentLaunch() ? ['--hidden'] : []
+    // Login launches are always tray-only. Keep the provider in the constructor
+    // for backwards-compatible composition, but do not let a stale pre-0.9.17
+    // preference recreate a visible startup task.
+    return ['--hidden']
   }
 
   private async disable(): Promise<void> {
@@ -269,7 +280,7 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
 
   private runValue(): string {
     const executable = `"${process.execPath}"`
-    return this.getSilentLaunch() ? `${executable} --hidden` : executable
+    return `${executable} --hidden`
   }
 
   private async hasStableRunEntry(): Promise<boolean> {

@@ -4,19 +4,17 @@ import type { StartupAdapter } from './service'
 
 /**
  * Windows login-item adapter. The registration args depend on the persisted
- * `silentLaunch` preference: silent launches carry `--hidden` (the flag the
- * window-creation path reads to skip showing the main window), while a loud
- * login launch registers without args. Read and write MUST agree on the same
- * args — Electron's `getLoginItemSettings({ args })` matches the login item
- * registered with exactly those arguments, so a mismatch would make the
- * toggle read as off right after enabling it.
+ * Every login launch carries `--hidden`: starting with Windows is a tray-only
+ * action and a manual launch remains the explicit way to open the dashboard.
+ * Read and write MUST agree on the same args — Electron's
+ * `getLoginItemSettings({ args })` matches the exact argument shape.
  */
 export class ElectronStartupAdapter implements StartupAdapter {
   readonly supported: boolean
 
-  /** Sync provider for the persisted silent-launch preference. */
+  /** Legacy provider retained for constructor compatibility. */
   constructor(
-    private readonly getSilentLaunch: () => boolean = () => false,
+    _getSilentLaunch: () => boolean = () => false,
     options?: { supported?: boolean }
   ) {
     this.supported = options?.supported ?? process.platform === 'win32'
@@ -81,6 +79,6 @@ export class ElectronStartupAdapter implements StartupAdapter {
   }
 
   private loginArgs(): string[] {
-    return this.getSilentLaunch() ? ['--hidden'] : []
+    return ['--hidden']
   }
 }

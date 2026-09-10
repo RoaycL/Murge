@@ -638,6 +638,9 @@ app.whenReady().then(async () => {
   app.on('second-instance', (_event, argv) => {
     const link = extractDeepLink(argv)
     if (link) pendingDeepLinks.push(link)
+    // A duplicate login registration must never turn a tray-only startup into
+    // a visible launch. Deep links and normal manual launches still reveal it.
+    if (argv.includes('--hidden') && !link) return
     const window = mainWindow ?? BrowserWindow.getAllWindows()[0]
     if (window) {
       if (window.isMinimized()) window.restore()
@@ -1381,6 +1384,43 @@ app.whenReady().then(async () => {
     profileGateway,
     proxySelectionStore
   )
+  // Start the safety-ordered kernel/TUN/proxy replay as soon as its required
+  // gateways exist. It deliberately runs alongside usage-history, Sub-Store,
+  // renderer and tray initialization instead of waiting behind those unrelated
+  // startup tasks (the same parallel-start shape used by the references).
+  const runtimeIntentDeps = {
+    kernel: queuedKernel,
+    tun: queuedTun,
+    systemProxy: systemProxyService,
+    restoreSelections: async (): Promise<void> => {
+      await proxySelectionService.restoreSelections()
+    },
+    shouldContinue: () => !isQuitting,
+    log: (message: string, error?: unknown): void => console.warn(message, error ?? '')
+  }
+  const startupRuntimeReady = (async (): Promise<void> => {
+    if (is.dev || skipKernelAutostart || hasArg('--hidden-smoke')) return
+    try {
+      await recoverManagedState
+      const settings = await appSettingsService.get()
+      const restored = await restoreRuntimeIntent(settings, runtimeIntentDeps)
+      if (settings.tunDesired && restored.tun.phase !== 'active') {
+        console.warn(`[startup-restore] TUN intent remains pending (${restored.tun.phase})`)
+      }
+      if (settings.systemProxyDesired && restored.systemProxyPhase !== 'enabled') {
+        console.warn(`[startup-restore] system proxy intent remains pending (${restored.systemProxyPhase})`)
+      }
+    } catch (error) {
+      console.warn('[startup-restore] failed to restore runtime intent:', error)
+    }
+    if (isQuitting) return
+    runtimeIntentRecovery = new RuntimeIntentRecoveryCoordinator({
+      settings: appSettingsService,
+      restore: runtimeIntentDeps,
+      log: (message, error) => console.warn(message, error ?? '')
+    })
+    runtimeIntentRecovery.start()
+  })()
   liveConfigReloader = is.dev
     ? null
     : new LiveConfigReloader(
@@ -1593,6 +1633,7 @@ app.whenReady().then(async () => {
   })
   createWindow()
   const showMainWindow = (): void => {
+    if (isQuitting) return
     const window = mainWindow ?? BrowserWindow.getAllWindows()[0] ?? createWindow()
     if (window.isMinimized()) window.restore()
     window.show()
@@ -1622,7 +1663,10 @@ app.whenReady().then(async () => {
     kernel: queuedKernel,
     view: trayView,
     showWindow: showMainWindow,
-    quit: () => app.quit(),
+    // Enter cleanup directly from the native menu callback. Waiting for a
+    // second application event here can leave Windows holding the process until
+    // another tray/window interaction pumps it again.
+    quit: () => { void beginApplicationShutdown(false) },
     systemProxy: systemProxyService,
     tun: queuedTun,
     mihomo: selectionGateway,
@@ -1691,49 +1735,11 @@ app.whenReady().then(async () => {
     return
   }
 
-  // Restore the user's last requested networking state after the deferred
-  // recovery layers complete: the stale service-owned core is stopped
-  // (privilegedReconcile), the TUN transaction is reconciled (tunReconcile),
-  // and systemProxyService.init() has restored an orphaned registry backup.
-  // Login launches use `--hidden`, but must still restore the requested state;
-  // only the explicit Actions smoke flag suppresses it. Operations are
-  // sequential and bounded: ordinary host ready -> hot-enable TUN -> system
-  // proxy on the unchanged mixed-port.
-  if (!is.dev && !skipKernelAutostart) {
-    const runtimeIntentDeps = {
-      kernel: queuedKernel,
-      tun: queuedTun,
-      systemProxy: systemProxyService,
-      restoreSelections: async (): Promise<void> => {
-        await proxySelectionService.restoreSelections()
-      },
-      log: (message: string, error?: unknown): void => console.warn(message, error ?? '')
-    }
-    try {
-      await recoverManagedState
-      const settings = await appSettingsService.get()
-      const restored = await restoreRuntimeIntent(settings, runtimeIntentDeps)
-      if (settings.tunDesired && restored.tun.phase !== 'active') {
-        console.warn(`[startup-restore] TUN intent remains pending (${restored.tun.phase})`)
-      }
-      if (settings.systemProxyDesired && restored.systemProxyPhase !== 'enabled') {
-        console.warn(`[startup-restore] system proxy intent remains pending (${restored.systemProxyPhase})`)
-      }
-    } catch (error) {
-      console.warn('[startup-restore] failed to restore runtime intent:', error)
-    }
-    runtimeIntentRecovery = new RuntimeIntentRecoveryCoordinator({
-      settings: appSettingsService,
-      restore: runtimeIntentDeps,
-      log: (message, error) => console.warn(message, error ?? '')
-    })
-    runtimeIntentRecovery.start()
-  }
-
   // Arm connectivity recovery only after startup reconciliation. This prevents
   // the first detector tick from racing a slow Windows TUN service bootstrap;
   // later offline/online and resume transitions continue to use the same
   // serialized mode queue.
+  await startupRuntimeReady
   networkDetector.start()
 
   // Auto-check for a newer release on launch, gated on the persisted
@@ -1892,9 +1898,10 @@ function beginApplicationShutdown(sessionEnding: boolean): Promise<void> {
           await fileLogs.flush()
         }
       },
-      // Session-end is already inside the Windows logoff/shutdown path; app.exit
-      // avoids re-entering before-quit after the bounded cleanup completes.
-      quit: () => sessionEnding ? app.exit(0) : app.quit(),
+      // Cleanup is complete, so terminate directly. Re-entering app.quit() from
+      // an asynchronous before-quit/tray callback is the Windows stall fixed by
+      // this flow; app.exit() intentionally emits no second quit lifecycle.
+      quit: () => app.exit(0),
       onCleanupError: (error, step) => console.error(`[quit-guard] ${step} failed during quit:`, error)
     })
     if (result === 'restore-failed') {

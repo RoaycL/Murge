@@ -58,8 +58,9 @@ export class AppSettingsService implements AppSettingsGateway {
             : current.delayTestUrlScope,
         delayTestUrl:
           typeof patch.delayTestUrl === 'string' ? patch.delayTestUrl : current.delayTestUrl,
-        silentLaunch:
-          typeof patch.silentLaunch === 'boolean' ? patch.silentLaunch : current.silentLaunch,
+        // Kept in the persisted schema for compatibility; login launches are
+        // always hidden, so an older renderer cannot opt back into a popup.
+        silentLaunch: true,
         closeToTray:
           typeof patch.closeToTray === 'boolean' ? patch.closeToTray : current.closeToTray,
         proxyGuard: typeof patch.proxyGuard === 'boolean' ? patch.proxyGuard : current.proxyGuard,

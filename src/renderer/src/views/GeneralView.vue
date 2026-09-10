@@ -38,14 +38,6 @@ async function saveDelayUrl(): Promise<void> {
   }
 }
 
-async function toggleSilentLaunch(): Promise<void> {
-  const saved = await appSettings.set({ silentLaunch: !appSettings.settings.silentLaunch })
-  // Main rewrites the argument-sensitive login item on every setting change.
-  // Confirm it through the StartupService as well so an OS rejection is visible
-  // immediately instead of being left only in the main-process log.
-  if (saved && startup.status.enabled) await startup.setEnabled(true)
-}
-
 onMounted(async () => {
   void startup.refresh()
   await appSettings.refresh()
@@ -74,20 +66,13 @@ onMounted(async () => {
             @click="startup.setEnabled(!startup.status.enabled)"
           />
         </label>
-        <label>
+        <div class="startup-behavior">
           <span>
-            <strong>静默启动</strong>
+            <strong>开机后仅显示托盘图标</strong>
+            <span class="startup-detail">不会自动弹出主窗口；手动启动应用仍会正常显示。</span>
           </span>
-          <button
-            type="button"
-            class="switch"
-            :class="{ on: appSettings.settings.silentLaunch }"
-            :aria-checked="appSettings.settings.silentLaunch"
-            :disabled="appSettings.busy"
-            aria-label="静默启动"
-            @click="toggleSilentLaunch"
-          />
-        </label>
+          <span class="fixed-state">已启用</span>
+        </div>
         <label>
           <span>
             <strong>关闭窗口时最小化到托盘</strong>
@@ -161,4 +146,8 @@ onMounted(async () => {
 
 <style scoped>
 .delay-url-field{width:min(430px,60vw)!important;height:32px!important;padding:0 10px;border:1px solid var(--app-divider);border-radius:8px;background:color-mix(in srgb,var(--app-surface) 88%,var(--app-bg));color:var(--app-text);font-size:12px}
+.startup-behavior{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 12px}
+.startup-behavior span:first-child{display:flex;flex-direction:column;gap:3px}
+.startup-detail{color:var(--app-text-secondary);font-size:11px;font-weight:400}
+.fixed-state{color:var(--app-accent);font-size:12px;font-weight:600}
 </style>

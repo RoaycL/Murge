@@ -213,7 +213,7 @@ describe('network drawer + resources UI contract', () => {
       expect(shared).toMatch(new RegExp(`${key}: boolean`))
       expect(service).toMatch(new RegExp(`${key}`))
     }
-    expect(general).toMatch(/silentLaunch/)
+    expect(general).toMatch(/开机后仅显示托盘图标/)
     expect(general).toMatch(/closeToTray/)
     expect(general).not.toMatch(/网络守护|系统代理守护|<small>/)
     // 三个行为真正接进主进程: 登录项参数、窗口关闭、守护定时器。

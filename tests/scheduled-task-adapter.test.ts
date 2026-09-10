@@ -3,6 +3,7 @@ import {
   ScheduledTaskStartupAdapter,
   buildTaskXml,
   taskArguments,
+  taskHasLogonDelay,
   taskSettingsEnabled,
   scheduledTaskExitCode,
   SCHEDULED_TASK_NAME,
@@ -88,14 +89,23 @@ function taskXmlWithArgs(args: string[], enabled = true): string {
 }
 
 describe('task XML', () => {
-  it('uses a delayed logon trigger with least privilege and no time limit', () => {
+  it('uses an immediate logon trigger with least privilege and no time limit', () => {
     const xml = buildTaskXml('C:\\Program Files\\Client\\client.exe', [])
     expect(xml).toContain('<LogonTrigger>')
-    expect(xml).toContain('<Delay>PT3S</Delay>')
+    expect(xml).not.toContain('<Delay>')
+    expect(taskHasLogonDelay(xml)).toBe(false)
     expect(xml).toContain('<RunLevel>LeastPrivilege</RunLevel>')
     expect(xml).toContain('<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>')
     expect(xml).toContain('<Priority>3</Priority>')
     expect(xml).toContain('<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>')
+  })
+
+  it('detects an older delayed logon task so upgrades can rewrite it', () => {
+    const xml = buildTaskXml('C:\\a.exe', ['--hidden']).replace(
+      '<Enabled>true</Enabled>',
+      '<Enabled>true</Enabled>\n      <Delay>PT3S</Delay>'
+    )
+    expect(taskHasLogonDelay(xml)).toBe(true)
   })
 
   it('escapes XML-special characters in the command and arguments', () => {
@@ -111,7 +121,7 @@ describe('task XML', () => {
     expect(xml).not.toContain('<Arguments')
   })
 
-  it('carries --hidden for silent launches and no args otherwise', () => {
+  it('parses hidden and empty task argument shapes', () => {
     expect(taskArguments(buildTaskXml('C:\\a.exe', ['--hidden']))).toEqual(['--hidden'])
     expect(taskArguments(buildTaskXml('C:\\a.exe', []))).toEqual([])
   })
@@ -153,8 +163,8 @@ describe('ScheduledTaskStartupAdapter — enable', () => {
     expect(create[0]!.args).toContain('/f')
   })
 
-  it('writes --hidden arguments when silent launch is on', async () => {
-    const adapter = makeAdapter(OK, { silentLaunch: true })
+  it('always writes --hidden arguments for a tray-only login launch', async () => {
+    const adapter = makeAdapter(OK, { silentLaunch: false })
     await adapter.write(true)
     expect(taskCreateCalls(adapter.calls)).toHaveLength(1)
   })
@@ -223,7 +233,7 @@ describe('ScheduledTaskStartupAdapter — read', () => {
 })
 
 describe('ScheduledTaskStartupAdapter — rewrite', () => {
-  it('recreates the task when registered arguments differ (silent-launch toggle)', async () => {
+  it('rewrites a legacy visible task to the tray-only argument shape', async () => {
     const adapter = makeAdapter(
       (call) => (call.args[0] === '/query' ? { stdout: taskXmlWithArgs([]), stderr: '', code: 0 } : OK()),
       { silentLaunch: true, legacyRead: true }
@@ -245,10 +255,22 @@ describe('ScheduledTaskStartupAdapter — rewrite', () => {
 
   it('leaves a matching enabled task untouched', async () => {
     const adapter = makeAdapter((call) =>
-      call.args[0] === '/query' ? { stdout: taskXmlWithArgs([]), stderr: '', code: 0 } : OK()
+      call.args[0] === '/query' ? { stdout: taskXmlWithArgs(['--hidden']), stderr: '', code: 0 } : OK()
     )
     await adapter.rewriteIfEnabled()
     expect(taskCreateCalls(adapter.calls)).toHaveLength(0)
+  })
+
+  it('rewrites a matching hidden task when it still has the legacy login delay', async () => {
+    const delayed = taskXmlWithArgs(['--hidden']).replace(
+      '<Enabled>true</Enabled>',
+      '<Enabled>true</Enabled>\n      <Delay>PT3S</Delay>'
+    )
+    const adapter = makeAdapter((call) =>
+      call.args[0] === '/query' ? { stdout: delayed, stderr: '', code: 0 } : OK()
+    )
+    await adapter.rewriteIfEnabled()
+    expect(taskCreateCalls(adapter.calls)).toHaveLength(1)
   })
 
   it('treats a task disabled in the Task Scheduler UI as unregistered (no rewrite)', async () => {
@@ -295,7 +317,7 @@ describe('ScheduledTaskStartupAdapter — rewrite', () => {
     await expect(stat((await import('node:path')).dirname(stagedFile!))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('carries --hidden arguments in the staged XML for silent launches', async () => {
+  it('carries --hidden arguments in the staged XML even for a legacy visible preference', async () => {
     const { readFileSync } = await import('node:fs')
     let staged: string | null = null
     const adapter = makeAdapter(
@@ -306,7 +328,7 @@ describe('ScheduledTaskStartupAdapter — rewrite', () => {
         }
         return OK()
       },
-      { silentLaunch: true }
+      { silentLaunch: false }
     )
     await adapter.write(true)
     expect(staged).toContain('<Arguments>--hidden</Arguments>')

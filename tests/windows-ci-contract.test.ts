@@ -48,7 +48,7 @@ describe('Windows packaging and interactive GUI CI contracts', () => {
 
   it('allows the interactive clean-launch probe to suppress kernel autostart only in Actions', () => {
     expect(mainEntry).toContain("process.env.GITHUB_ACTIONS === 'true' && hasArg('--no-kernel-autostart')")
-    expect(mainEntry).toContain('!is.dev && !skipKernelAutostart')
+    expect(mainEntry).toContain("if (is.dev || skipKernelAutostart || hasArg('--hidden-smoke')) return")
     expect(mainEntry).not.toContain('!launchHidden && !skipKernelAutostart')
     expect(interactiveScript).toContain("@('--no-kernel-autostart')")
   })
@@ -57,5 +57,11 @@ describe('Windows packaging and interactive GUI CI contracts', () => {
     expect(mainEntry).toContain("window.on('session-end'")
     expect(mainEntry).toContain('beginApplicationShutdown(true)')
     expect(mainEntry).toContain("powerMonitor.on('shutdown'")
+  })
+
+  it('routes tray exit directly through cleanup and terminates without re-entering quit events', () => {
+    expect(mainEntry).toContain('quit: () => { void beginApplicationShutdown(false) }')
+    expect(mainEntry).toContain('quit: () => app.exit(0)')
+    expect(mainEntry).not.toContain('quit: () => sessionEnding ? app.exit(0) : app.quit()')
   })
 })

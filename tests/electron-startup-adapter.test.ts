@@ -68,7 +68,7 @@ describe('ElectronStartupAdapter', () => {
   })
 
   it('uses the stable appId as the registry value name when enabling', async () => {
-    const adapter = new ElectronStartupAdapter(() => true, { supported: true })
+    const adapter = new ElectronStartupAdapter(() => false, { supported: true })
     await adapter.write(true)
     expect(electron.setLoginItemSettings).toHaveBeenCalledWith({
       openAtLogin: true,
@@ -76,5 +76,14 @@ describe('ElectronStartupAdapter', () => {
       args: ['--hidden'],
       name: brand.appId
     })
+  })
+
+  it('keeps login launches hidden even when an old preference requests a popup', async () => {
+    const adapter = new ElectronStartupAdapter(() => false, { supported: true })
+    await adapter.write(true)
+    expect(electron.setLoginItemSettings).toHaveBeenCalledWith(expect.objectContaining({
+      openAtLogin: true,
+      args: ['--hidden']
+    }))
   })
 })

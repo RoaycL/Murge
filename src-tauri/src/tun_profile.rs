@@ -858,11 +858,33 @@ pub fn generate_proxied_tun_config(options: &Value) -> Result<String, IpcError> 
         Some(ref dns) if dns.is_object() => dns.as_object().cloned().unwrap_or_default(),
         _ => Map::new(),
     };
-    if dns.get("enable") != Some(&Value::Bool(true)) {
+    if dns.get("enable") != Some(&Value::Bool(true)) && existing_dns.is_none() {
+        // "DNS override off" means the profile is authoritative, but a profile
+        // with no dns block still needs a safe runtime fallback while TUN owns
+        // port 53. Keeping this baseline enabled also keeps both the TUN prefix
+        // and its dns-hijack config byte-identical when the override is toggled,
+        // allowing mihomo's ReCreateTun equality guard to preserve the Windows
+        // adapter.
+        let mut baseline = Map::new();
+        baseline.insert("enable".into(), json!(true));
+        baseline.insert("enhanced-mode".into(), json!("fake-ip"));
+        baseline.insert("fake-ip-range".into(), json!("198.18.0.1/16"));
+        baseline.insert("fake-ip-filter".into(), json!(TUN_DEFAULT_FAKE_IP_FILTER));
+        baseline.insert("nameserver".into(), json!(["system"]));
+        data.insert("dns".into(), Value::Object(baseline));
+    } else if dns.get("enable") != Some(&Value::Bool(true)) {
+        // An explicit profile dns.enable=false remains authoritative. Port-53
+        // hijacking must be removed, even though this uncommon transition
+        // requires TUN to rebuild.
         tun_block.insert("dns-hijack".into(), json!([]));
-        if !dns.is_empty() {
-            data.insert("dns".into(), Value::Object(dns));
+        // Smart cores derive the TUN IPv4 prefix from dns.fake-ip-range even
+        // while DNS is explicitly disabled, so retain a stable prefix in that
+        // case too.
+        dns.insert("enable".into(), json!(false));
+        if !dns.contains_key("fake-ip-range") {
+            dns.insert("fake-ip-range".into(), json!("198.18.0.1/16"));
         }
+        data.insert("dns".into(), Value::Object(dns));
     } else {
         if !dns.contains_key("enhanced-mode") {
             dns.insert("enhanced-mode".into(), json!("fake-ip"));
@@ -1294,8 +1316,10 @@ mod tests {
     }
 
     #[test]
-    fn proxied_profile_clears_hijack_without_a_live_dns_module() {
-        // The document has no dns block → hijack must be cleared.
+    fn dns_without_a_live_module_follows_the_authority_contract() {
+        // A document with NO dns block gets the baseline enabled fake-ip DNS
+        // while TUN owns port 53 (byte-identical prefix + hijack across the
+        // override toggle, so mihomo's ReCreateTun guard keeps the adapter).
         let text = generate_proxied_tun_config(&proxied_options(proxied_document())).unwrap();
         let dns_hijack = text
             .lines()
@@ -1303,7 +1327,28 @@ mod tests {
             .take_while(|line| !line.starts_with("rules:") && !line.starts_with("dns:"))
             .collect::<Vec<_>>()
             .join("\n");
+        assert!(dns_hijack.contains("dns-hijack:"), "{dns_hijack}");
+        assert!(!dns_hijack.contains("dns-hijack: []"), "{dns_hijack}");
+        assert!(text.contains("dns:"), "{text}");
+        assert!(text.contains("enhanced-mode: fake-ip"), "{text}");
+        assert!(text.contains("fake-ip-range: 198.18.0.1/16"), "{text}");
+        assert!(text.contains("nameserver:"), "{text}");
+        assert!(proxied_tun_config_errors(&text).is_empty(), "{text}");
+
+        // An EXPLICIT dns.enable=false stays authoritative: port-53 hijacking
+        // is cleared and the fake-ip prefix is retained for smart cores.
+        let disabled = format!("dns:\n  enable: false\n{}", proxied_document());
+        let text = generate_proxied_tun_config(&proxied_options(&disabled)).unwrap();
+        let dns_hijack = text
+            .lines()
+            .skip_while(|line| !line.starts_with("tun:"))
+            .take_while(|line| !line.starts_with("rules:") && !line.starts_with("dns:"))
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(dns_hijack.contains("dns-hijack: []"), "{dns_hijack}");
+        assert!(text.contains("enable: false"), "{text}");
+        assert!(text.contains("fake-ip-range: 198.18.0.1/16"), "{text}");
+        assert!(proxied_tun_config_errors(&text).is_empty(), "{text}");
 
         // With an enabled dns block (fake-ip, no filter) the defaults are filled.
         let with_dns = format!("dns:\n  enable: true\n  enhanced-mode: fake-ip\n{}", proxied_document());

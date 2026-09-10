@@ -38,6 +38,7 @@ type sessionManager struct {
 	owned      *ownedProcess
 	conflict   bool
 	blocked    bool
+	lastExit   string
 }
 
 func newSessionManager(runtime processRuntime, store ownershipStore) *sessionManager {
@@ -164,6 +165,7 @@ func (manager *sessionManager) start(request serviceRequest, response *serviceRe
 		return fmt.Errorf("persist ownership: %w", err)
 	}
 	manager.owned = &owned
+	manager.lastExit = ""
 	response.Outcome = "running"
 	response.SessionID = &owned.SessionID
 	response.PID = &owned.PID
@@ -224,6 +226,7 @@ func (manager *sessionManager) status(response *serviceResponse) {
 	}
 	if manager.owned == nil {
 		response.Outcome = "stopped"
+		manager.attachLastExit(response)
 		return
 	}
 	response.Outcome = "running"
@@ -243,6 +246,7 @@ func (manager *sessionManager) reconcile(response *serviceResponse) error {
 		manager.blocked = false
 		manager.conflict = false
 		response.Outcome = "stopped"
+		manager.attachLastExit(response)
 		return nil
 	}
 	live, err := manager.runtime.Inspect(recorded.PID)
@@ -255,6 +259,7 @@ func (manager *sessionManager) reconcile(response *serviceResponse) error {
 			manager.owned = nil
 			manager.blocked = false
 			manager.conflict = false
+			manager.lastExit = err.Error()
 			response.Outcome = "failed"
 			return err
 		}
@@ -283,6 +288,23 @@ func (manager *sessionManager) reconcile(response *serviceResponse) error {
 	response.SessionID = &recorded.SessionID
 	response.PID = &recorded.PID
 	return nil
+}
+
+func (manager *sessionManager) attachLastExit(response *serviceResponse) {
+	if manager.lastExit == "" {
+		return
+	}
+	// The wire protocol permits validationMessage only on failed responses.
+	// Keep reporting the last child failure until a replacement starts so a
+	// later liveness poll cannot erase the only actionable mihomo diagnostic.
+	response.Outcome = "failed"
+	message := manager.lastExit
+	if len(message) > 4096 {
+		message = message[len(message)-4096:]
+	}
+	response.ValidationMessage = &message
+	code := "CHILD_EXITED"
+	response.ErrorCode = &code
 }
 
 // readStoreResilient reads the ownership store with a short bounded retry so a

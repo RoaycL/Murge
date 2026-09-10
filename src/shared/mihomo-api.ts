@@ -216,6 +216,8 @@ export interface MihomoConfigSnapshot {
   'log-level'?: string
   'allow-lan'?: boolean
   ipv6?: boolean
+  /** Runtime sniffer gate exposed by GET/PATCH /configs. */
+  sniffing?: boolean
   tun?: Record<string, unknown>
   [key: string]: unknown
 }

@@ -9,12 +9,17 @@
 //!   models folded by the builders) and PUTs it to `/configs`. No
 //!   `force=true`: mihomo keeps the already-bound listeners. `false` when
 //!   the kernel is not running/starting (the persisted change is deferred).
-//! - `patch_sections` applies the controlled sections through the partial
-//!   PATCH endpoint; geodata falls back to `buildGeodataBlock` per key; the
-//!   TUN dns-hijack is only re-patched when the list actually changed (an
-//!   unchanged TUN block can recreate the Windows adapter and briefly
-//!   interrupt the route); a DNS patch also flushes both caches
-//!   best-effort (`Promise.allSettled`).
+//! - `apply_sections` routes every controlled section through the lightest
+//!   endpoint that actually owns it: mihomo's PATCH /configs silently
+//!   ignores nested DNS and sniffer blocks, so those use the in-process
+//!   payload reload (a DNS reload also flushes both caches best-effort,
+//!   `Promise.allSettled`); geodata keeps the partial endpoint with the
+//!   `buildGeodataBlock` per-key fallback.
+//! - `apply_sniffer_transition_if_running` toggles an already-loaded
+//!   sniffer dispatcher through mihomo's verified runtime `sniffing` gate
+//!   (enable-only change, base document without a live sniffer module);
+//!   the suspended signature survives across dispatcher instances (the TS
+//!   reloader is a singleton), falling back to the payload reload.
 //! - Mode is runtime intent folded into the SAME atomic reload (never a
 //!   second PATCH that could fail after the new DNS/sniffer document was
 //!   already committed).
@@ -44,6 +49,12 @@ pub const LIVE_SECTIONS: [&str; 3] = ["dns", "sniffer", "geodata"];
 
 const GEODATA_KEYS: [&str; 5] =
     ["geodata-mode", "geodata-loader", "geo-auto-update", "geo-update-interval", "geox-url"];
+
+/// The loaded-sniffer dispatcher signature temporarily muted by the runtime
+/// `sniffing` gate (`LiveConfigReloader.suspendedSnifferSignature`). The TS
+/// reloader is a single app-lifetime instance; the Rust reloader is built per
+/// dispatch, so the shared state lives here instead.
+static SUSPENDED_SNIFFER_SIGNATURE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 const DEFAULT_IP_URL: &str = "http://ip.sb";
 const DEFAULT_TIMEOUT_MS: u64 = 5000;
@@ -107,14 +118,12 @@ impl LiveConfigRuntime {
     }
 }
 
-fn same_string_list(left: &Value, right: &Value) -> bool {
-    match (left.as_array(), right.as_array()) {
-        (Some(left), Some(right)) => {
-            left.len() == right.len()
-                && left.iter().zip(right.iter()).all(|(a, b)| a == b)
-        }
-        _ => false,
-    }
+/// `snifferSignature` — the model with `enabled` normalized to `true`, so a
+/// signature comparison checks everything EXCEPT the enabled flag.
+fn sniffer_signature(value: &Value) -> String {
+    let mut object = value.as_object().cloned().unwrap_or_default();
+    object.insert("enabled".into(), json!(true));
+    Value::Object(object).to_string()
 }
 
 /// The exact `resolveEnhancedActiveDocument` composition: active profile →
@@ -140,6 +149,26 @@ pub fn resolve_enhanced_document(
     let sniffer = enhancements::coerce_sniffer_enhancement(&models.sniffer.get());
     let (text, _) = crate::inspection::apply_sniffer_to_document(&dns_text, &sniffer);
     Ok(Some(text))
+}
+
+/// `resolveOverriddenActiveDocument` — active profile → overrides ONLY (the
+/// base document before DNS/sniffer enhancement). `None` when no active
+/// profile exists.
+pub fn resolve_overridden_document(
+    profiles: &Arc<ProfilesService>,
+    overrides: &OverrideService,
+) -> Result<Option<String>, IpcError> {
+    let profile = profiles.get_active()?;
+    if profile.is_null() {
+        return Ok(None);
+    }
+    let document = profile["document"].as_str().unwrap_or_default().to_string();
+    let profile_id = profile["meta"]["id"].as_str().unwrap_or_default();
+    let overridden = overrides.apply_for_profile(
+        &document,
+        if profile_id.is_empty() { None } else { Some(profile_id) },
+    )?;
+    Ok(Some(overridden))
 }
 
 /// `LiveConfigReloader` — one instance per dispatch call; everything it
@@ -214,10 +243,11 @@ impl<'a> LiveConfigReloader<'a> {
         Ok(true)
     }
 
-    /// Apply controlled sections through mihomo's partial config endpoint.
-    /// Unlike a full PUT this does not recreate providers, listeners or the
-    /// TUN route.
-    pub async fn patch_sections(&self, sections: &[&str]) -> Result<bool, IpcError> {
+    /// Apply controlled sections through the lightest endpoint that actually
+    /// owns them: mihomo's PATCH /configs endpoint silently ignores nested
+    /// DNS and sniffer blocks, so those use the full payload reload;
+    /// geodata supports the partial endpoint.
+    pub async fn apply_sections(&self, sections: &[&str]) -> Result<bool, IpcError> {
         for section in sections {
             if !LIVE_SECTIONS.contains(section) {
                 return Err(IpcError::invalid_argument(format!(
@@ -230,6 +260,21 @@ impl<'a> LiveConfigReloader<'a> {
         }
         let current = self.client.get_config().await?;
         let payload = self.build_payload(&current)?;
+
+        if sections.contains(&"dns") || sections.contains(&"sniffer") {
+            self.client.reload_config(&payload).await?;
+            *SUSPENDED_SNIFFER_SIGNATURE
+                .lock()
+                .expect("suspended sniffer signature") = None;
+            if sections.contains(&"dns") {
+                // A changed fake-IP range must not keep mappings from the
+                // previous DNS model. Cache cleanup is best-effort because
+                // the reload succeeded (`Promise.allSettled`).
+                let _ = tokio::join!(self.client.flush_dns_cache(), self.client.flush_fakeip_cache());
+            }
+            return Ok(true);
+        }
+
         let data = override_apply::parse_yaml_to_object(&payload)
             .ok_or_else(|| IpcError::internal("live config payload failed to parse"))?;
         let mut patch = serde_json::Map::new();
@@ -254,45 +299,76 @@ impl<'a> LiveConfigReloader<'a> {
             );
         }
 
-        // DNS control and TUN DNS hijacking are one contract. Patch TUN only
-        // when that list actually changes; sending an unchanged TUN block can
-        // recreate the Windows adapter and briefly interrupt the route.
-        let tun_enabled = current
-            .get("tun")
-            .and_then(|tun| tun.get("enable"))
-            .and_then(Value::as_bool)
-            == Some(true);
-        if sections.contains(&"dns") && tun_enabled {
-            let current_hijack = current
-                .get("tun")
-                .and_then(|tun| tun.get("dns-hijack"))
-                .cloned()
-                .unwrap_or(Value::Null);
-            let desired_hijack = data
-                .get("tun")
-                .and_then(|tun| tun.get("dns-hijack"))
-                .cloned()
-                .unwrap_or(Value::Null);
-            if !same_string_list(&current_hijack, &desired_hijack) {
-                let mut tun = current
-                    .get("tun")
-                    .and_then(Value::as_object)
-                    .cloned()
-                    .unwrap_or_default();
-                let hijack = desired_hijack.as_array().cloned().unwrap_or_default();
-                tun.insert("dns-hijack".into(), Value::Array(hijack));
-                patch.insert("tun".into(), Value::Object(tun));
+        self.client.patch_config(&Value::Object(patch)).await?;
+        Ok(true)
+    }
+
+    /// Toggle an already-loaded sniffer dispatcher through mihomo's
+    /// lightweight legacy `sniffing` runtime flag. A full payload reload
+    /// remains the safe fallback when the underlying dispatcher/config must
+    /// change.
+    pub async fn apply_sniffer_transition_if_running(
+        &self,
+        previous: &Value,
+        next: &Value,
+    ) -> Result<bool, IpcError> {
+        if !self.kernel_running() {
+            return Ok(false);
+        }
+        let signature = sniffer_signature(next);
+        let enabled_only = previous.get("enabled").and_then(Value::as_bool)
+            != next.get("enabled").and_then(Value::as_bool)
+            && sniffer_signature(previous) == signature;
+        let base_has_enabled_sniffer = self.base_document_sniffer_enabled()?;
+
+        if enabled_only && !base_has_enabled_sniffer {
+            // Decide under the lock, never hold it across an await.
+            let disabling = next.get("enabled").and_then(Value::as_bool) == Some(false);
+            let armed = {
+                let suspended =
+                    SUSPENDED_SNIFFER_SIGNATURE.lock().expect("suspended sniffer signature");
+                disabling || suspended.as_deref() == Some(signature.as_str())
+            };
+            if armed {
+                if disabling {
+                    self.client.patch_config(&json!({ "sniffing": false })).await?;
+                    if let Ok(confirmed) = self.client.get_config().await {
+                        if confirmed.get("sniffing") == Some(&json!(false)) {
+                            *SUSPENDED_SNIFFER_SIGNATURE
+                                .lock()
+                                .expect("suspended sniffer signature") = Some(signature);
+                            return Ok(true);
+                        }
+                    }
+                } else {
+                    self.client.patch_config(&json!({ "sniffing": true })).await?;
+                    if let Ok(confirmed) = self.client.get_config().await {
+                        if confirmed.get("sniffing") == Some(&json!(true)) {
+                            *SUSPENDED_SNIFFER_SIGNATURE
+                                .lock()
+                                .expect("suspended sniffer signature") = None;
+                            return Ok(true);
+                        }
+                    }
+                }
             }
         }
+        *SUSPENDED_SNIFFER_SIGNATURE.lock().expect("suspended sniffer signature") = None;
+        self.apply_sections(&["sniffer"]).await
+    }
 
-        self.client.patch_config(&Value::Object(patch)).await?;
-        if sections.contains(&"dns") {
-            // A changed fake-IP range must not keep mappings from the
-            // previous DNS model. Cache cleanup is best-effort because the
-            // patch itself succeeded (`Promise.allSettled`).
-            let _ = tokio::join!(self.client.flush_dns_cache(), self.client.flush_fakeip_cache());
-        }
-        Ok(true)
+    /// `baseDocumentSnifferEnabled`: whether the OVERRIDES-ONLY base document
+    /// (before DNS/sniffer enhancement) carries a live sniffer module.
+    fn base_document_sniffer_enabled(&self) -> Result<bool, IpcError> {
+        let Some(text) = resolve_overridden_document(self.profiles, self.overrides)? else {
+            return Ok(false);
+        };
+        let Some(data) = override_apply::parse_yaml_to_object(&text) else {
+            return Ok(false);
+        };
+        let sniffer = data.get("sniffer");
+        Ok(matches!(sniffer, Some(sniffer) if sniffer.is_object()
+            && sniffer.get("enable") == Some(&json!(true))))
     }
 
     /// `buildPayload` — the document branch goes through the safety builder
@@ -770,7 +846,7 @@ mod tests {
     // -- section patch ---------------------------------------------------------
 
     #[tokio::test]
-    async fn patch_sections_sends_the_dns_block_and_flushes_caches() {
+    async fn apply_sections_reloads_the_payload_for_dns_and_flushes_caches() {
         let (temp, profiles, overrides, models) = service();
         let requests: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let captured = requests.clone();
@@ -778,6 +854,7 @@ mod tests {
             captured.lock().unwrap().push(format!("{method} {path} {body}"));
             match (method, path) {
                 ("GET", "/configs") => (200, json!({ "mode": "rule", "tun": { "enable": false } }).to_string()),
+                ("PUT", "/configs") => (204, String::new()),
                 ("PATCH", "/configs") => (204, String::new()),
                 ("POST", "/cache/dns/flush") => (204, String::new()),
                 ("POST", "/cache/fakeip/flush") => (204, String::new()),
@@ -794,12 +871,15 @@ mod tests {
             &models,
         );
         let _ = temp;
-        let applied = reloader.patch_sections(&["dns"]).await.unwrap();
+        let applied = reloader.apply_sections(&["dns"]).await.unwrap();
         assert!(applied);
         let log = requests.lock().unwrap();
-        assert!(log.iter().any(|entry| entry.starts_with("PATCH /configs")), "{log:?}");
-        let patch = log.iter().find(|entry| entry.starts_with("PATCH /configs")).unwrap();
-        assert!(patch.contains("\"enable\":false"), "{patch}");
+        // mihomo's PATCH /configs silently ignores nested DNS blocks: the DNS
+        // section applies through the full payload reload instead.
+        assert!(log.iter().any(|entry| entry.starts_with("PUT /configs")), "{log:?}");
+        let put = log.iter().find(|entry| entry.starts_with("PUT /configs")).unwrap();
+        assert!(put.contains("dns:"), "{put}");
+        assert!(!log.iter().any(|entry| entry.starts_with("PATCH /configs")), "{log:?}");
         assert!(log.iter().any(|entry| entry.starts_with("POST /cache/dns/flush")), "{log:?}");
         assert!(log.iter().any(|entry| entry.starts_with("POST /cache/fakeip/flush")), "{log:?}");
     }
@@ -831,7 +911,7 @@ mod tests {
             &models,
         );
         let _ = temp;
-        reloader.patch_sections(&["geodata"]).await.unwrap();
+        reloader.apply_sections(&["geodata"]).await.unwrap();
         let log = requests.lock().unwrap();
         let patch = log.iter().find(|entry| entry.starts_with("PATCH /configs")).unwrap();
         for key in ["geodata-mode", "geodata-loader", "geo-auto-update", "geo-update-interval", "geox-url"] {
@@ -841,7 +921,88 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn patch_sections_defers_when_the_kernel_is_not_running() {
+    async fn sniffer_transition_disables_through_the_runtime_gate() {
+        // Enable-only change on a base document WITHOUT a live sniffer module:
+        // the runtime `sniffing` gate owns the toggle, no payload reload.
+        let (temp, profiles, overrides, models) = service();
+        let requests: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let captured = requests.clone();
+        let sniffing = std::sync::Arc::new(std::sync::Mutex::new(true));
+        let sniffing_state = sniffing.clone();
+        let server = crate::mihomo::mock_controller::MockServer::start("s3cret", move |method, path, body| {
+            captured.lock().unwrap().push(format!("{method} {path} {body}"));
+            match (method, path) {
+                ("GET", "/configs") => (200, json!({ "mode": "rule", "sniffing": *sniffing_state.lock().unwrap() }).to_string()),
+                ("PATCH", "/configs") => {
+                    let patch: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+                    if let Some(value) = patch.get("sniffing").and_then(Value::as_bool) {
+                        *sniffing_state.lock().unwrap() = value;
+                    }
+                    (204, String::new())
+                }
+                _ => (404, String::new()),
+            }
+        });
+        let kernel = running_kernel().await;
+        let reloader = LiveConfigReloader::with_client(
+            kernel.as_ref(),
+            crate::mihomo::MihomoClient::new(server.port, "s3cret").unwrap(),
+            runtime(),
+            &profiles,
+            &overrides,
+            &models,
+        );
+        let _ = temp;
+        let previous = json!({ "enabled": true });
+        let next = json!({ "enabled": false });
+        let applied = reloader
+            .apply_sniffer_transition_if_running(&previous, &next)
+            .await
+            .unwrap();
+        assert!(applied);
+        let log = requests.lock().unwrap();
+        assert!(log.iter().any(|entry| entry.starts_with("PATCH /configs {\"sniffing\":false}")), "{log:?}");
+        assert!(!log.iter().any(|entry| entry.starts_with("PUT /configs")), "{log:?}");
+    }
+
+    #[tokio::test]
+    async fn sniffer_transition_falls_back_to_the_payload_reload_for_model_changes() {
+        // A value change (not enable-only) must NOT use the runtime gate.
+        let (temp, profiles, overrides, models) = service();
+        let requests: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let captured = requests.clone();
+        let server = crate::mihomo::mock_controller::MockServer::start("s3cret", move |method, path, body| {
+            captured.lock().unwrap().push(format!("{method} {path} {body}"));
+            match (method, path) {
+                ("GET", "/configs") => (200, json!({ "mode": "rule" }).to_string()),
+                ("PUT", "/configs") => (204, String::new()),
+                _ => (404, String::new()),
+            }
+        });
+        let kernel = running_kernel().await;
+        let reloader = LiveConfigReloader::with_client(
+            kernel.as_ref(),
+            crate::mihomo::MihomoClient::new(server.port, "s3cret").unwrap(),
+            runtime(),
+            &profiles,
+            &overrides,
+            &models,
+        );
+        let _ = temp;
+        let previous = json!({ "enabled": true, "overrideDestinations": false });
+        let next = json!({ "enabled": true, "overrideDestinations": true });
+        let applied = reloader
+            .apply_sniffer_transition_if_running(&previous, &next)
+            .await
+            .unwrap();
+        assert!(applied);
+        let log = requests.lock().unwrap();
+        assert!(log.iter().any(|entry| entry.starts_with("PUT /configs")), "{log:?}");
+        assert!(!log.iter().any(|entry| entry.starts_with("PATCH /configs")), "{log:?}");
+    }
+
+    #[tokio::test]
+    async fn apply_sections_defers_when_the_kernel_is_not_running() {
         let (_temp, profiles, overrides, models) = service();
         // The DISABLED supervisor never reports running — the change is
         // deferred and no HTTP call happens (port 1 has no listener).
@@ -863,7 +1024,7 @@ mod tests {
             &overrides,
             &models,
         );
-        assert_eq!(reloader.patch_sections(&["dns"]).await.unwrap(), false);
+        assert_eq!(reloader.apply_sections(&["dns"]).await.unwrap(), false);
         assert_eq!(reloader.reload_if_running().await.unwrap(), false);
     }
 

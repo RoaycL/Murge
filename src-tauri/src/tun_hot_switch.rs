@@ -118,6 +118,11 @@ where
     read_tun_config: T,
     read_dns_enabled: D,
     ready_timeout_ms: u64,
+    /// Windows top-level TUN uses mihomo's fixed 28.0.0.1/30 address. If
+    /// another client still owns that adapter/address, applying tun.enable
+    /// would make the shared core exit and leave an enabled system proxy with
+    /// no listener.
+    external_tun_in_use: Box<dyn for<'a> Fn(&'a str) -> BoxFut<'a, bool> + Send + Sync>,
 }
 
 impl<T, D> MihomoHotSwitchTunAdapter<T, D>
@@ -131,7 +136,18 @@ where
             read_tun_config,
             read_dns_enabled,
             ready_timeout_ms: DEFAULT_READY_TIMEOUT_MS,
+            external_tun_in_use: Box::new(|_| Box::pin(async { false })),
         }
+    }
+
+    /// The TS externalTunInUse probe: the composition root supplies the real
+    /// network-interface scan (fixed TUN addresses / device-name match).
+    pub fn with_external_tun_in_use(
+        mut self,
+        probe: impl for<'a> Fn(&'a str) -> BoxFut<'a, bool> + Send + Sync + 'static,
+    ) -> Self {
+        self.external_tun_in_use = Box::new(probe);
+        self
     }
 
     #[cfg(test)]
@@ -182,6 +198,13 @@ where
             } else {
                 model["device"].as_str().unwrap_or(&intent.device).to_string()
             };
+            if current["tun"]["enable"] != Value::Bool(true)
+                && (self.external_tun_in_use)(&device).await
+            {
+                return Ok(TunEnableResult::Conflict {
+                    conflict_detail: "TUN_INTERFACE_IN_USE".to_string(),
+                });
+            }
             let mut model_value = model.clone();
             model_value["device"] = json!(device);
             model_value["stack"] = json!(model["stack"].as_str().unwrap_or(&intent.stack));
@@ -344,6 +367,31 @@ mod tests {
 
     fn dns_reader(document: Option<&'static str>) -> impl Fn() -> BoxFut<'static, Option<String>> {
         move || Box::pin(async move { document.map(str::to_string) }) as BoxFutDocument
+    }
+
+    #[tokio::test]
+    async fn external_tun_in_use_reports_a_conflict_before_any_patch() {
+        let log: SharedLog = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let configs: Configs = std::sync::Arc::new(Mutex::new(vec![
+            json!({ "tun": { "enable": false } }),
+        ]));
+        let adapter = MihomoHotSwitchTunAdapter::new(
+            factory(configs, log.clone(), false),
+            model_reader(json!({ "device": EMPTY_TUN_DEVICE, "stack": "mixed", "mtu": 1500 })),
+            dns_reader(None),
+        )
+        .with_external_tun_in_use(|_| Box::pin(async { true }));
+        let intent = MihomoOwnedTunIntent { schema_version: 2, device: EMPTY_TUN_DEVICE.into(), stack: "mixed".into() };
+        let result = TunMutationAdapter::enable(&adapter, &intent).await;
+        match result {
+            Ok(TunEnableResult::Conflict { conflict_detail }) => {
+                assert_eq!(conflict_detail, "TUN_INTERFACE_IN_USE");
+            }
+            other => panic!("expected a conflict, got {other:?}"),
+        }
+        // The probe fires BEFORE any mutation: no PATCH reached the controller.
+        let log = log.lock().unwrap();
+        assert!(!log.iter().any(|entry| entry.starts_with("PATCH")), "{log:?}");
     }
 
     #[tokio::test]

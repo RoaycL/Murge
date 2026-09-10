@@ -556,11 +556,45 @@ pub fn run() {
                             .flatten()
                     }) as tun_hot_switch::BoxFutDocument
                 };
-                std::sync::Arc::new(tun_hot_switch::MihomoHotSwitchTunAdapter::new(
-                    client_factory,
-                    read_tun_config,
-                    read_dns_enabled,
-                ))
+                std::sync::Arc::new(
+                    tun_hot_switch::MihomoHotSwitchTunAdapter::new(
+                        client_factory,
+                        read_tun_config,
+                        read_dns_enabled,
+                    )
+                    // The TS externalTunInUse probe: the fixed 28.0.0.1/30
+                    // TUN adapter is shared mihomo real estate — a foreign
+                    // owner (name match or either fixed address) makes enable
+                    // a conflict instead of killing the shared core. The
+                    // TS localeCompare(sensitivity: 'accent') approximation
+                    // is a case-insensitive name match (device names carry no
+                    // accent-sensitive distinctions in practice).
+                    .with_external_tun_in_use(|device| {
+                        Box::pin(async move {
+                            if_addrs::get_if_addrs().map(|interfaces| {
+                                let wanted = device.to_lowercase();
+                                interfaces.iter().any(|interface| {
+                                    let name_match =
+                                        interface.name.to_lowercase() == wanted;
+                                    let ip = interface.addr.ip();
+                                    let addr_match = ip
+                                        == std::net::IpAddr::V4(std::net::Ipv4Addr::new(
+                                            28, 0, 0, 1,
+                                        ))
+                                        || ip
+                                            == std::net::IpAddr::V6(
+                                                "fdfe:dcba:9876::1"
+                                                    .parse()
+                                                    .unwrap_or_else(|_| {
+                                                        std::net::Ipv6Addr::UNSPECIFIED.into()
+                                                    }),
+                                            );
+                                    name_match || addr_match
+                                })
+                            }).unwrap_or(false)
+                        })
+                    }),
+                )
             } else {
                 std::sync::Arc::new(tun::GatedTunMutationAdapter)
             };

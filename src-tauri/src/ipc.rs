@@ -210,9 +210,12 @@ pub async fn dispatch(
                 }
             }
             settings.set(&crate::settings::AppSettingsPatch(serde_json::json!({"tunDesired": true})));
+            // The intent device is the shared stock default ('Mihomo'): the
+            // profile model overrides it only when the user actually
+            // customized the device (EMPTY_TUN_CONFIG parity).
             let intent = serde_json::json!({
                 "schemaVersion": 2,
-                "device": format!("{} TUN", crate::brand::load_brand().map(|brand| brand.short_name).unwrap_or_else(|_| "Murge".to_string())),
+                "device": "Mihomo",
                 "stack": "mixed"
             });
             Ok(serde_json::to_value(tun.enable(&intent).await?).expect("tun status serializes"))
@@ -553,7 +556,7 @@ pub async fn dispatch(
             let previous = models.geodata.get();
             let next = models.geodata.set(input, enhancements::coerce_geodata_settings)?;
             match live_config::LiveConfigReloader::from_ipc(&kernel.supervisor, models, profiles, overrides)?
-                .patch_sections(&["geodata"])
+                .apply_sections(&["geodata"])
                 .await
             {
                 Ok(_) => Ok(next),
@@ -561,7 +564,7 @@ pub async fn dispatch(
                     let _ = models.geodata.set(&previous, enhancements::coerce_geodata_settings);
                     let reloader =
                         live_config::LiveConfigReloader::from_ipc(&kernel.supervisor, models, profiles, overrides)?;
-                    let _ = reloader.patch_sections(&["geodata"]).await;
+                    let _ = reloader.apply_sections(&["geodata"]).await;
                     Err(apply_error)
                 }
             }
@@ -584,7 +587,7 @@ pub async fn dispatch(
             // failure roll the persistence back and re-apply the restored
             // model, then propagate the original error.
             match live_config::LiveConfigReloader::from_ipc(&kernel.supervisor, models, profiles, overrides)?
-                .patch_sections(&["dns"])
+                .apply_sections(&["dns"])
                 .await
             {
                 Ok(_) => Ok(next),
@@ -592,7 +595,7 @@ pub async fn dispatch(
                     let _ = models.dns.set(&previous, enhancements::coerce_dns_enhancement);
                     let reloader =
                         live_config::LiveConfigReloader::from_ipc(&kernel.supervisor, models, profiles, overrides)?;
-                    let _ = reloader.patch_sections(&["dns"]).await;
+                    let _ = reloader.apply_sections(&["dns"]).await;
                     Err(apply_error)
                 }
             }
@@ -607,20 +610,28 @@ pub async fn dispatch(
             let input = arg(payload, 0)
                 .ok_or_else(|| IpcError::invalid_argument("sniffer:set requires an enhancement object"))?;
             let previous = models.sniffer.get();
-            let next = models
-                .sniffer
-                .set(input, enhancements::coerce_sniffer_enhancement)
-                .map(|model| json_envelope("enhancement", model))?;
+            let next_model = models.sniffer.set(input, enhancements::coerce_sniffer_enhancement)?;
+            // EnhancementApplyCoordinator.update with the sniffer transition
+            // apply: the runtime `sniffing` gate fast path, payload-reload
+            // fallback. Rollback transitions FROM the failed model TO the
+            // restored one.
             match live_config::LiveConfigReloader::from_ipc(&kernel.supervisor, models, profiles, overrides)?
-                .patch_sections(&["sniffer"])
+                .apply_sniffer_transition_if_running(&previous, &next_model)
                 .await
             {
-                Ok(_) => Ok(next),
+                Ok(_) => Ok(json_envelope("enhancement", next_model)),
                 Err(apply_error) => {
-                    let _ = models.sniffer.set(&previous, enhancements::coerce_sniffer_enhancement);
+                    let restored = models.sniffer.set(&previous, enhancements::coerce_sniffer_enhancement);
                     let reloader =
                         live_config::LiveConfigReloader::from_ipc(&kernel.supervisor, models, profiles, overrides)?;
-                    let _ = reloader.patch_sections(&["sniffer"]).await;
+                    let _ = match &restored {
+                        Ok(restored_model) => {
+                            reloader
+                                .apply_sniffer_transition_if_running(&next_model, restored_model)
+                                .await
+                        }
+                        Err(_) => reloader.apply_sections(&["sniffer"]).await,
+                    };
                     Err(apply_error)
                 }
             }

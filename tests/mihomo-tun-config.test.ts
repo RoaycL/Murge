@@ -176,11 +176,28 @@ describe('proxied TUN config (real subscription content)', () => {
     expect(config.dns.nameserver).toEqual(['223.5.5.5'])
   })
 
-  it('leaves a dns-less profile untouched and clears port-53 hijack (clash-party DNS takeover parity)', () => {
+  it('uses a system-DNS fallback for a dns-less profile without rebuilding TUN', () => {
     const config = parse(generateProxiedTunConfig(proxied)) as Record<string, any>
     expect(config.tun.enable).toBe(true)
-    expect(config.tun['dns-hijack']).toEqual([])
-    expect(config.dns).toBeUndefined()
+    expect(config.tun['dns-hijack']).toEqual(['any:53'])
+    expect(config.dns).toMatchObject({
+      enable: true,
+      'enhanced-mode': 'fake-ip',
+      'fake-ip-range': '198.18.0.1/16',
+      nameserver: ['system']
+    })
+    expect(config.dns['fake-ip-filter']).toContain('+.lan')
+  })
+
+  it('keeps the complete TUN block identical when the DNS override is enabled', () => {
+    const withoutOverride = parse(generateProxiedTunConfig(proxied)) as Record<string, any>
+    const withOverrideDocument = `${document}dns:\n  enable: true\n  enhanced-mode: fake-ip\n  fake-ip-range: 198.18.0.1/16\n  nameserver:\n    - system\n`
+    const withOverride = parse(generateProxiedTunConfig({
+      ...proxied,
+      document: withOverrideDocument
+    })) as Record<string, any>
+
+    expect(withOverride.tun).toEqual(withoutOverride.tun)
   })
 
   it('keeps a disabled dns block verbatim and clears the hijack', () => {
@@ -189,12 +206,13 @@ describe('proxied TUN config (real subscription content)', () => {
     expect(proxiedTunConfigErrors(text)).toEqual([])
     const config = parse(text) as Record<string, any>
     expect(config.tun['dns-hijack']).toEqual([])
-    // No takeover: the profile's dns content passes through unmodified.
+    // No takeover: the profile's dns content passes through, plus the inert
+    // fake-ip prefix that keeps the Smart-core TUN address stable.
     expect(config.dns.enable).toBe(false)
     expect(config.dns['enhanced-mode']).toBe('redir-host')
     expect(config.dns.nameserver).toEqual(['223.5.5.5'])
     expect(config.dns.fallback).toEqual(['1.1.1.1'])
-    expect(config.dns['fake-ip-range']).toBeUndefined()
+    expect(config.dns['fake-ip-range']).toBe('198.18.0.1/16')
     expect(config.dns['fake-ip-filter']).toBeUndefined()
   })
 

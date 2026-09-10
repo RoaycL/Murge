@@ -22,8 +22,10 @@ import (
 // the 30s stop budget and far beyond how long Windows holds a terminated
 // service's image for.
 const (
-	maxRemoveAllAttempts   = 5
-	removeAllRetryInterval = 250 * time.Millisecond
+	maxRemoveAllAttempts       = 5
+	removeAllRetryInterval     = 250 * time.Millisecond
+	maxAtomicReplaceAttempts   = 20
+	atomicReplaceRetryInterval = 250 * time.Millisecond
 )
 
 type serviceTemplate struct {
@@ -96,14 +98,14 @@ func loadServiceTemplate(path string) (serviceTemplate, error) {
 func installOrUpgradeService(template serviceTemplate, bootstrapDirectory, serviceHome, stateDirectory, allowedSID string) error {
 	manager, err := mgr.Connect()
 	if err != nil {
-		return err
+		return fmt.Errorf("connect service manager: %w", err)
 	}
 	defer manager.Disconnect()
 	existing, openErr := manager.OpenService(template.ServiceName)
 	if openErr == nil {
 		if err := stopServiceAndWait(existing, 30*time.Second); err != nil {
 			existing.Close()
-			return err
+			return fmt.Errorf("stop existing service: %w", err)
 		}
 		existing.Close()
 		if _, err := os.Stat(filepath.Join(stateDirectory, "ownership.json")); err == nil {
@@ -112,17 +114,15 @@ func installOrUpgradeService(template serviceTemplate, bootstrapDirectory, servi
 	} else if !errors.Is(openErr, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
 		return fmt.Errorf("open existing service: %w", openErr)
 	}
-	root := filepath.Dir(serviceHome)
-	namespaceRoot := filepath.Dir(root)
-	// Claim and harden each product-owned component from the trusted ProgramData
-	// parent downward. Securing only service/state leaves a pre-created junction
-	// or attacker-owned ancestor able to redirect or replace privileged files.
-	for _, directory := range []string{namespaceRoot, root, serviceHome, stateDirectory} {
+	// Claim and harden every product-owned component from the namespace root
+	// downward. Securing only service/state would leave a writable ancestor able
+	// to redirect or replace privileged files after the reparse-point check.
+	for _, directory := range protectedServiceDirectories(serviceHome, stateDirectory) {
 		if err := os.MkdirAll(directory, 0700); err != nil {
-			return err
+			return fmt.Errorf("create protected directory %s: %w", directory, err)
 		}
 		if err := secureStateDirectory(directory); err != nil {
-			return err
+			return fmt.Errorf("secure protected directory %s: %w", directory, err)
 		}
 	}
 	// The persistent service core resolves GEOIP/GEOSITE databases under its
@@ -134,7 +134,7 @@ func installOrUpgradeService(template serviceTemplate, bootstrapDirectory, servi
 	sourceExe := filepath.Join(bootstrapDirectory, "tun-service.exe")
 	serviceExe := filepath.Join(serviceHome, "tun-service.exe")
 	if err := copyFileAtomic(sourceExe, serviceExe); err != nil {
-		return err
+		return fmt.Errorf("install service executable: %w", err)
 	}
 	archivePath := filepath.Clean(filepath.Join(bootstrapDirectory, "..", "bin", template.ArchiveFilename))
 	if digest, err := hashFile(archivePath); err != nil || digest != template.ArchiveSHA256 {
@@ -156,24 +156,19 @@ func installOrUpgradeService(template serviceTemplate, bootstrapDirectory, servi
 		return err
 	}
 	if err := writePrivateFile(filepath.Join(serviceHome, "service-config.json"), configBytes); err != nil {
-		return err
+		return fmt.Errorf("write service config: %w", err)
 	}
-	serviceConfig := mgr.Config{
-		StartType: mgr.StartAutomatic, ErrorControl: mgr.ErrorNormal,
-		ServiceStartName: "LocalSystem", DisplayName: template.ServiceName,
-		Description: "Privileged mihomo core lifecycle service",
-		SidType:     windows.SERVICE_SID_TYPE_UNRESTRICTED, DelayedAutoStart: true,
-	}
+	serviceConfig := privilegedServiceConfig(template)
 	service, err := manager.OpenService(template.ServiceName)
 	if err == nil {
 		defer service.Close()
 		if err := service.UpdateConfig(serviceConfig); err != nil {
-			return err
+			return fmt.Errorf("update service configuration: %w", err)
 		}
 	} else if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
 		service, err = manager.CreateService(template.ServiceName, serviceExe, serviceConfig)
 		if err != nil {
-			return err
+			return fmt.Errorf("create service: %w", err)
 		}
 		defer service.Close()
 	} else {
@@ -187,7 +182,29 @@ func installOrUpgradeService(template serviceTemplate, bootstrapDirectory, servi
 	if err := service.Start(); err != nil {
 		return fmt.Errorf("start service: %w", err)
 	}
-	return waitForServiceRunning(service, 30*time.Second)
+	if err := waitForServiceRunning(service, 30*time.Second); err != nil {
+		return fmt.Errorf("wait for service startup: %w", err)
+	}
+	return nil
+}
+
+func privilegedServiceConfig(template serviceTemplate) mgr.Config {
+	return mgr.Config{
+		// CreateService supplies WIN32_OWN_PROCESS when ServiceType is zero,
+		// but UpdateConfig forwards zero to ChangeServiceConfig, where it is
+		// invalid. Preserved-service upgrades require this field explicitly.
+		ServiceType: windows.SERVICE_WIN32_OWN_PROCESS,
+		StartType:   mgr.StartAutomatic, ErrorControl: mgr.ErrorNormal,
+		ServiceStartName: "LocalSystem", DisplayName: template.ServiceName,
+		Description: "Privileged mihomo core lifecycle service",
+		SidType:     windows.SERVICE_SID_TYPE_UNRESTRICTED, DelayedAutoStart: true,
+	}
+}
+
+func protectedServiceDirectories(serviceHome, stateDirectory string) []string {
+	root := filepath.Dir(serviceHome)
+	namespaceRoot := filepath.Dir(root)
+	return []string{namespaceRoot, root, serviceHome, stateDirectory}
 }
 
 var geodataSeedNames = []string{"geosite.dat", "geoip.dat", "geoip.metadb", "country.mmdb", "ASN.mmdb"}
@@ -329,10 +346,24 @@ func copyFileAtomic(source, destination string) error {
 		_ = os.Remove(temporary)
 		return closeErr
 	}
-	_ = os.Remove(destination)
-	if err := os.Rename(temporary, destination); err != nil {
-		_ = os.Remove(temporary)
-		return fmt.Errorf("replace service executable: %w", err)
+	// The SCM can report Stopped just before Windows releases the service image.
+	// Retry the final replace so an in-place upgrade does not strand the service
+	// stopped merely because the old executable still has a transient image lock.
+	var replaceErr error
+	for attempt := 0; attempt < maxAtomicReplaceAttempts; attempt++ {
+		removeErr := os.Remove(destination)
+		if removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			replaceErr = removeErr
+		} else {
+			replaceErr = os.Rename(temporary, destination)
+			if replaceErr == nil {
+				return nil
+			}
+		}
+		if attempt+1 < maxAtomicReplaceAttempts {
+			time.Sleep(atomicReplaceRetryInterval)
+		}
 	}
-	return nil
+	_ = os.Remove(temporary)
+	return fmt.Errorf("replace destination file: %w", replaceErr)
 }

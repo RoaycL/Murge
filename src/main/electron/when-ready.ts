@@ -1,7 +1,12 @@
 import { app, powerMonitor, safeStorage } from 'electron'
 import { join } from 'node:path'
 import { is } from '@electron-toolkit/utils'
+import { networkInterfaces } from 'node:os'
 import { brand } from '@shared/brand'
+import { EMPTY_TUN_CONFIG } from '@shared/tun-config'
+import type { DnsEnhancement } from '@shared/dns'
+import type { SnifferEnhancement } from '@shared/sniffer'
+import type { GeodataSettings } from '@shared/geodata'
 import type { KernelGateway } from '@shared/gateways'
 import { parseBrandConfig } from '@shared/schemas/brand'
 import { registerIpc } from '../ipc/register-ipc'
@@ -284,10 +289,14 @@ export async function runWhenReady(shell: ShellBootstrap): Promise<void> {
     // pass applied afterwards by whichever consumer materializes the config. Keeping
     // this in one place is what stops TUN from silently ignoring the user's
     // overrides / DNS / sniffer settings.
-    const resolveEnhancedActiveDocument = async (): Promise<string | null> => {
+    const resolveOverriddenActiveDocument = async (): Promise<string | null> => {
       const profile = await profileService.getActiveProfile()
       if (!profile) return null
-      const overridden = await overrideService.applyForProfile(profile.document, profile.meta.id)
+      return overrideService.applyForProfile(profile.document, profile.meta.id)
+    }
+    const resolveEnhancedActiveDocument = async (): Promise<string | null> => {
+      const overridden = await resolveOverriddenActiveDocument()
+      if (!overridden) return null
       const dnsApplied = await dnsEnhancementService.applyToDocument(overridden)
       return snifferEnhancementService.applyToDocument(dnsApplied)
     }
@@ -324,7 +333,7 @@ export async function runWhenReady(shell: ShellBootstrap): Promise<void> {
           allowLan: productionAllowLan,
           controllerPanel: productionControllerPanel,
           secret: productionSecret!,
-          device: `${brand.shortName} TUN`
+          device: EMPTY_TUN_CONFIG.device
         }
         const effective = generateProxiedTunConfig({
           ...runtime, document: enhanced, core, geodata, tunConfig, tunEnabled: true
@@ -451,7 +460,7 @@ export async function runWhenReady(shell: ShellBootstrap): Promise<void> {
               )
             }
           },
-          `${brand.shortName} TUN`,
+          EMPTY_TUN_CONFIG.device,
           // A cold protected service home may need to initialize provider caches.
           // Keep polling while the exact child remains alive; liveness monitoring
           // still fails immediately if it exits, so this is not a blind delay.
@@ -598,7 +607,15 @@ export async function runWhenReady(shell: ShellBootstrap): Promise<void> {
           // clash-party DNS-takeover parity: TUN hijacks port 53 only when the
           // final active document (overrides -> DNS -> sniffer) leaves the DNS
           // module enabled.
-          async () => documentDnsEnabled(await resolveEnhancedActiveDocument())
+          async () => documentDnsEnabled(await resolveEnhancedActiveDocument()),
+          // Windows top-level TUN owns mihomo's fixed 28.0.0.1/30 adapter: a
+          // foreign owner means the shared core would exit on enable.
+          (device) => Object.entries(networkInterfaces()).some(([name, addresses]) =>
+            name.localeCompare(device, undefined, { sensitivity: 'accent' }) === 0 ||
+            addresses?.some(({ address }) =>
+              address === '28.0.0.1' || address.toLowerCase() === 'fdfe:dcba:9876::1'
+            ) === true
+          )
         )
       : new GatedTunMutationAdapter()
     const tunInstance = new TunCoordinator(tunAdapter, tunSupported)
@@ -624,7 +641,7 @@ export async function runWhenReady(shell: ShellBootstrap): Promise<void> {
       enable: () =>
         tunInstance.enable({
           schemaVersion: 2,
-          device: `${brand.shortName} TUN`,
+          device: EMPTY_TUN_CONFIG.device,
           stack: 'mixed'
         }),
       disable: () => tunInstance.emergencyDisable(),
@@ -798,10 +815,11 @@ export async function runWhenReady(shell: ShellBootstrap): Promise<void> {
             allowLan: productionAllowLan,
             controllerPanel: productionControllerPanel,
             secret: productionSecret!,
-            device: `${brand.shortName} TUN`
+            device: EMPTY_TUN_CONFIG.device
           },
           {
             readActiveDocument: resolveEnhancedActiveDocument,
+            readBaseDocument: resolveOverriddenActiveDocument,
             readTunConfig: () => tunConfigService.readConfig(),
             readCore: () => coreSettingsService.getRaw(),
             readGeodata: () => geodataSettingsService.getRaw()
@@ -809,17 +827,17 @@ export async function runWhenReady(shell: ShellBootstrap): Promise<void> {
         )
     const runEnhancementUpdate = <T>(operation: () => Promise<T>): Promise<T> =>
       modeController.updateRuntimeConfig(operation)
-    const dnsEnhancementCoordinator = new EnhancementApplyCoordinator(
+    const dnsEnhancementCoordinator = new EnhancementApplyCoordinator<DnsEnhancement>(
       runEnhancementUpdate,
-      async () => { await liveConfigReloader?.patchSectionsIfRunning(['dns']) }
+      async () => { await liveConfigReloader?.applySectionsIfRunning(['dns']) }
     )
-    const snifferEnhancementCoordinator = new EnhancementApplyCoordinator(
+    const snifferEnhancementCoordinator = new EnhancementApplyCoordinator<SnifferEnhancement>(
       runEnhancementUpdate,
-      async () => { await liveConfigReloader?.patchSectionsIfRunning(['sniffer']) }
+      async (previous, next) => { await liveConfigReloader?.applySnifferTransitionIfRunning(previous, next) }
     )
-    const geodataEnhancementCoordinator = new EnhancementApplyCoordinator(
+    const geodataEnhancementCoordinator = new EnhancementApplyCoordinator<GeodataSettings>(
       runEnhancementUpdate,
-      async () => { await liveConfigReloader?.patchSectionsIfRunning(['geodata']) }
+      async () => { await liveConfigReloader?.applySectionsIfRunning(['geodata']) }
     )
     const liveDnsEnhancement = new LiveDnsEnhancementGateway(dnsEnhancementService, dnsEnhancementCoordinator)
     const liveSnifferEnhancement = new LiveSnifferEnhancementGateway(snifferEnhancementService, snifferEnhancementCoordinator)
@@ -970,7 +988,7 @@ export async function runWhenReady(shell: ShellBootstrap): Promise<void> {
           allowLan: productionAllowLan,
           controllerPanel: productionControllerPanel,
           secret: productionSecret ?? '0'.repeat(64),
-          device: `${brand.shortName} TUN`
+          device: EMPTY_TUN_CONFIG.device
         }
         const base = enhanced ?? profile.document
         const effective = tunEnabled

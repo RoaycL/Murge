@@ -1005,8 +1005,8 @@ app.whenReady().then(async () => {
   // it does NOT gate window creation: the reconciliation runs after the window
   // exists, and the serialized mode queue keeps it ordered ahead of any
   // renderer-triggered kernel start (the renderer reads a stopped kernel until
-  // it settles). A delayed Windows service start is handled by the gateway's
-  // bounded start retry and runtime-intent recovery.
+  // it settles). A Windows service still starting at boot is handled by the
+  // gateway's bounded start retry and runtime-intent recovery.
   const privilegedReconcile = (async (): Promise<void> => {
     if (!privilegedKernel) return
     await privilegedKernel.initialize().catch((error) => {

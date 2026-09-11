@@ -70,8 +70,8 @@ export class PrivilegedServiceKernelGateway implements KernelGateway {
   initialize(): Promise<void> {
     return this.serialize(async () => {
       // One immediate probe keeps application startup responsive. If the SCM
-      // delayed-auto-start service is not listening yet, start() performs the
-      // bounded retry and repeats this stale-session reconciliation.
+      // auto-start service is still coming online, start() performs the bounded
+      // retry and repeats this stale-session reconciliation.
       const response = await this.client.reconcile()
       if (response.outcome === 'running' || response.outcome === 'starting' || response.outcome === 'stopping') {
         await this.client.stop()
@@ -227,8 +227,8 @@ export class PrivilegedServiceKernelGateway implements KernelGateway {
     return run
   }
 
-  /** The SCM service is delayed-auto-start. Absorb that bounded boot window so
-   * login startup does not show two spurious failures before the pipe appears. */
+  /** Absorb the bounded SCM startup window so login startup or an in-progress
+   * upgrade does not show spurious failures before the pipe appears. */
   private async retryService<T>(operation: () => Promise<T>): Promise<T> {
     const deadline = Date.now() + this.readyTimeoutMs
     let lastError: unknown

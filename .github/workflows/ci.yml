@@ -447,8 +447,12 @@ jobs:
             throw 'installer did not register its per-user startup task'
           }
           $installerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-          if ($startupTask.Principal.UserId -ne $installerSid) { throw 'startup task principal is not the installer user' }
-          if ($startupTask.Triggers.Count -ne 1 -or $startupTask.Triggers[0].UserId -ne $installerSid) { throw 'startup task is not scoped to this user logon' }
+          function Resolve-TaskUserSid([string]$userId) {
+            if ($userId -like 'S-1-*') { return $userId }
+            return ([Security.Principal.NTAccount]$userId).Translate([Security.Principal.SecurityIdentifier]).Value
+          }
+          if ((Resolve-TaskUserSid $startupTask.Principal.UserId) -ne $installerSid) { throw "startup task principal is not the installer user: $($startupTask.Principal.UserId)" }
+          if ($startupTask.Triggers.Count -ne 1 -or (Resolve-TaskUserSid $startupTask.Triggers[0].UserId) -ne $installerSid) { throw "startup task is not scoped to this user logon: $($startupTask.Triggers[0].UserId)" }
           if ($startupTask.Principal.RunLevel -ne 'Limited') { throw 'startup task would elevate the GUI' }
           if ($startupTask.Settings.Priority -ne 3) { throw 'startup task priority was not installed' }
           if ($startupTask.Settings.Enabled) { throw 'fresh install unexpectedly enabled auto-start' }

@@ -1400,10 +1400,16 @@ app.whenReady().then(async () => {
   }
   const startupRuntimeReady = (async (): Promise<void> => {
     if (is.dev || skipKernelAutostart || hasArg('--hidden-smoke')) return
+    const startedAt = performance.now()
     try {
       await recoverManagedState
+      console.info(`[startup-timing] managed state recovered in ${Math.round(performance.now() - startedAt)}ms`)
       const settings = await appSettingsService.get()
       const restored = await restoreRuntimeIntent(settings, runtimeIntentDeps)
+      console.info(
+        `[startup-timing] runtime restored in ${Math.round(performance.now() - startedAt)}ms ` +
+        `(kernel=${restored.kernel.phase}, proxy=${restored.systemProxyPhase}, TUN=${restored.tun.phase})`
+      )
       if (settings.tunDesired && restored.tun.phase !== 'active') {
         console.warn(`[startup-restore] TUN intent remains pending (${restored.tun.phase})`)
       }

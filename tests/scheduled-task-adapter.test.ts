@@ -11,6 +11,7 @@ import {
 } from '../src/main/startup/scheduled-task-adapter'
 import type { StartupAdapter } from '../src/main/startup/service'
 import { StartupService } from '../src/main/startup/service'
+import { brand } from '../src/shared/brand'
 
 // The default legacy fallback imports `electron`; stub the surface it uses so
 // the module imports cleanly outside Electron.
@@ -90,7 +91,7 @@ function taskXmlWithArgs(args: string[], enabled = true): string {
 
 describe('task XML', () => {
   it('uses an immediate logon trigger with least privilege and no time limit', () => {
-    const xml = buildTaskXml('C:\\Program Files\\Client\\client.exe', [])
+    const xml = buildTaskXml('C:\\Program Files\\Client\\client.exe', [], 'PC\\user')
     expect(xml).toContain('<LogonTrigger>')
     expect(xml).not.toContain('<Delay>')
     expect(taskHasLogonDelay(xml)).toBe(false)
@@ -98,6 +99,9 @@ describe('task XML', () => {
     expect(xml).toContain('<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>')
     expect(xml).toContain('<Priority>3</Priority>')
     expect(xml).toContain('<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>')
+    expect(xml).toContain('<UserId>PC\\user</UserId>')
+    expect(xml).toContain('<Command>C:\\Program Files\\Client\\client.exe</Command>')
+    expect(xml).not.toContain('<Command>"')
   })
 
   it('detects an older delayed logon task so upgrades can rewrite it', () => {
@@ -109,8 +113,9 @@ describe('task XML', () => {
   })
 
   it('escapes XML-special characters in the command and arguments', () => {
-    const xml = buildTaskXml('C:\\dir&More\\app<1>.exe', ['--hidden'])
+    const xml = buildTaskXml('C:\\dir&More\\app<1>.exe', ['--hidden'], 'PC\\a&b')
     expect(xml).toContain('C:\\dir&amp;More\\app&lt;1&gt;.exe')
+    expect(xml).toContain('<UserId>PC\\a&amp;b</UserId>')
     expect(xml).toContain('<Arguments>--hidden</Arguments>')
   })
 
@@ -292,6 +297,21 @@ describe('ScheduledTaskStartupAdapter — rewrite', () => {
     await adapter.rewriteIfEnabled()
     expect(taskCreateCalls(adapter.calls)).toHaveLength(1)
     expect(adapter.legacy.writes).toEqual([false])
+  })
+
+  it('recognises the existing Electron Run value even when Electron misses it', async () => {
+    const legacyName = `electron.app.${brand.productName}`
+    const adapter = makeAdapter((call) => {
+      if (call.args[0] === '/query' && call.command.includes('schtasks')) return TASK_MISSING(call)
+      if (call.args[0] === 'query' && call.args.includes(legacyName)) {
+        return { stdout: `${legacyName} REG_SZ "${process.execPath}" --hidden`, stderr: '', code: 0 }
+      }
+      return OK(call)
+    })
+    expect(await adapter.read()).toBe(true)
+    await adapter.rewriteIfEnabled()
+    expect(taskCreateCalls(adapter.calls)).toHaveLength(1)
+    expect(adapter.calls.some((call) => call.args[0] === 'delete' && call.args.includes(legacyName))).toBe(true)
   })
 
   it('stages the task XML as UTF-16LE with a BOM', async () => {

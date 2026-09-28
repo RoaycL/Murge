@@ -46,7 +46,7 @@ const settings = (patch: Partial<AppSettings>): AppSettings => ({
 })
 
 describe('restoreRuntimeIntent', () => {
-  it('restores kernel -> TUN (bounded retry) -> system proxy in dependency order', async () => {
+  it('restores kernel -> system proxy before selections and TUN retries', async () => {
     const order: string[] = []
     let kernel = stoppedKernel()
     let tun = tunStatus('configured')
@@ -94,15 +94,62 @@ describe('restoreRuntimeIntent', () => {
     expect(result.systemProxyPhase).toBe('enabled')
     expect(order).toEqual([
       'kernel',
-      'selections',
+      'proxy',
       'tun',
       'delay:750',
       'tun',
       'delay:1500',
       'tun',
-      'selections',
-      'proxy'
+      'selections'
     ])
+  })
+
+  it('unblocks the system proxy before a slow selection replay finishes', async () => {
+    const order: string[] = []
+    await restoreRuntimeIntent(settings({ systemProxyDesired: true }), {
+      kernel: {
+        getStatus: async () => runningKernel(),
+        start: vi.fn()
+      },
+      tun: { getStatus: async () => tunStatus('configured'), enable: vi.fn() },
+      systemProxy: {
+        getStatus: async () => proxyStatus(order.includes('proxy') ? 'enabled' : 'disabled'),
+        enable: async () => {
+          order.push('proxy')
+          return proxyStatus('enabled')
+        }
+      },
+      restoreSelections: async () => {
+        order.push('selections')
+      }
+    })
+    expect(order).toEqual(['proxy', 'selections'])
+  })
+
+  it('lets TUN start before retrying a failed first proxy attempt', async () => {
+    const order: string[] = []
+    let proxy = proxyStatus('disabled')
+    await restoreRuntimeIntent(settings({ tunDesired: true, systemProxyDesired: true }), {
+      kernel: { getStatus: async () => runningKernel(), start: vi.fn() },
+      tun: {
+        getStatus: async () => tunStatus(order.includes('tun') ? 'active' : 'configured'),
+        enable: async () => {
+          order.push('tun')
+          return tunStatus('active')
+        }
+      },
+      systemProxy: {
+        getStatus: async () => proxy,
+        enable: async () => {
+          order.push('proxy')
+          if (order.filter((step) => step === 'proxy').length > 1) proxy = proxyStatus('enabled')
+          return proxy
+        }
+      },
+      restoreSelections: async () => { order.push('selections') },
+      delay: async () => undefined
+    })
+    expect(order).toEqual(['proxy', 'tun', 'proxy', 'selections'])
   })
 
   it('starts the required host even when ordinary kernel autostart is disabled', async () => {

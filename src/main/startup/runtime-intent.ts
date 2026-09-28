@@ -37,10 +37,12 @@ const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(
  *
  * Startup services have already restored any orphaned proxy backup and TUN
  * mutation journal before this runs. The order is therefore deliberate:
- * establish an authenticated kernel/controller first, switch that one logical
- * host to TUN with bounded retries, then point the system proxy at the unified
- * mixed-port. No operation is launched concurrently, so a slow Windows service
- * cannot race a second mihomo process for the same ports.
+ * establish an authenticated kernel/controller first, then point the system
+ * proxy at its live mixed-port before retrying TUN. If that first proxy attempt
+ * fails, TUN gets its chance before proxy retries. Selection replay comes last:
+ * it must not leave other applications waiting on a dead proxy or TUN route.
+ * No operation is launched concurrently, so a slow Windows service cannot race
+ * a second mihomo process for the same ports.
  */
 export async function restoreRuntimeIntent(
   settings: AppSettings,
@@ -53,22 +55,22 @@ export async function restoreRuntimeIntent(
     kernelStatus = await retryKernelStart(deps, delay, retryDelays)
   }
 
-  if (kernelStatus.phase === 'running') {
-    await restoreSelections(deps)
+  let proxyStatus = await deps.systemProxy.getStatus()
+  if (
+    settings.systemProxyDesired &&
+    kernelStatus.phase === 'running' &&
+    proxyStatus.supported &&
+    RETRYABLE_PROXY_PHASES.has(proxyStatus.phase)
+  ) {
+    proxyStatus = await retrySystemProxyStart(deps, delay, [])
   }
 
   let tunStatus = await deps.tun.getStatus()
   if (kernelStatus.phase === 'running' && settings.tunDesired) {
     tunStatus = await retryTunStart(deps, delay, retryDelays)
-    if (tunStatus.phase === 'active') {
-      // A successful mode switch starts a fresh elevated mihomo host. Reapply
-      // remembered choices to that controller as well as the ordinary host.
-      await restoreSelections(deps)
-    }
   }
 
   kernelStatus = await deps.kernel.getStatus()
-  let proxyStatus = await deps.systemProxy.getStatus()
   if (
     settings.systemProxyDesired &&
     kernelStatus.phase === 'running' &&
@@ -77,6 +79,8 @@ export async function restoreRuntimeIntent(
   ) {
     proxyStatus = await retrySystemProxyStart(deps, delay, retryDelays)
   }
+  if (kernelStatus.phase === 'running') await restoreSelections(deps)
+  proxyStatus = await deps.systemProxy.getStatus()
 
   return {
     kernel: kernelStatus,

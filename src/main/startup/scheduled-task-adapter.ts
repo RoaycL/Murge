@@ -21,6 +21,7 @@ const TASK_NAME = brand.appId
 const SCHTASKS_COMMAND = process.platform === 'win32' ? 'schtasks.exe' : 'schtasks'
 const REG_COMMAND = process.platform === 'win32' ? 'reg.exe' : 'reg'
 const RUN_KEY_PATH = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'
+const LEGACY_RUN_VALUE = `electron.app.${brand.productName}`
 const DEFAULT_TIMEOUT_MS = 8000
 
 type ScheduledTaskExecError = Error & {
@@ -93,7 +94,7 @@ function unescapeXml(value: string): string {
  * - `ExecutionTimeLimit PT0S` stops Windows from killing the app after a
  *   default 72h task limit.
  */
-export function buildTaskXml(executablePath: string, args: readonly string[]): string {
+export function buildTaskXml(executablePath: string, args: readonly string[], userId = ''): string {
   return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <Triggers>
@@ -103,6 +104,7 @@ export function buildTaskXml(executablePath: string, args: readonly string[]): s
   </Triggers>
   <Principals>
     <Principal id="Author">
+      ${userId ? `<UserId>${escapeXml(userId)}</UserId>` : ''}
       <LogonType>InteractiveToken</LogonType>
       <RunLevel>LeastPrivilege</RunLevel>
     </Principal>
@@ -128,7 +130,7 @@ export function buildTaskXml(executablePath: string, args: readonly string[]): s
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>"${escapeXml(executablePath)}"</Command>
+      <Command>${escapeXml(executablePath)}</Command>
       ${args.length > 0 ? `<Arguments>${escapeXml(args.join(' '))}</Arguments>` : ''}
     </Exec>
   </Actions>
@@ -203,6 +205,7 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
     const taskXml = await this.queryTaskXml()
     if (taskXml !== null) return taskSettingsEnabled(taskXml)
     if (await this.hasStableRunEntry()) return true
+    if (await this.hasLegacyRunEntry()) return true
     return (await this.legacy.readRegistered?.()) ?? (await this.legacy.read())
   }
 
@@ -259,7 +262,8 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
     // skip its migration. A failed create keeps the Run key untouched —
     // degrades to today's behaviour.
     const stableRegistered = await this.hasStableRunEntry()
-    const legacyRegistered = stableRegistered || ((await this.legacy.readRegistered?.()) ?? (await this.legacy.read()))
+    const legacyRegistered = stableRegistered || await this.hasLegacyRunEntry() ||
+      ((await this.legacy.readRegistered?.()) ?? (await this.legacy.read()))
     if (!legacyRegistered) return
     const created = await this.tryCreateTask()
     if (created) await this.clearRunFallbacks()
@@ -294,6 +298,17 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
     }
   }
 
+  private async hasLegacyRunEntry(): Promise<boolean> {
+    try {
+      const result = await this.runner(REG_COMMAND, ['query', RUN_KEY_PATH, '/v', LEGACY_RUN_VALUE])
+      if (result.code !== 0) return false
+      const output = `${result.stdout}\n${result.stderr}`.toLowerCase()
+      return output.includes(LEGACY_RUN_VALUE.toLowerCase()) && output.includes(process.execPath.toLowerCase())
+    } catch {
+      return false
+    }
+  }
+
   private async writeStableRunEntry(): Promise<boolean> {
     try {
       const args = [
@@ -305,6 +320,7 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
       const probe = await this.runner(REG_COMMAND, args)
       if (probe.code !== 0) return false
       await this.legacy.write(false).catch(() => undefined)
+      await this.clearLegacyRunEntry()
       const result = await this.runner(REG_COMMAND, args)
       if (result.code === 0 && await this.hasStableRunEntry()) return true
       await this.legacy.write(true).catch(() => undefined)
@@ -316,7 +332,13 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
 
   private async clearRunFallbacks(): Promise<void> {
     await this.runner(REG_COMMAND, ['delete', RUN_KEY_PATH, '/v', TASK_NAME, '/f']).catch(() => undefined)
+    await this.clearLegacyRunEntry()
     await this.legacy.write(false).catch(() => undefined)
+  }
+
+  private async clearLegacyRunEntry(): Promise<void> {
+    if (!await this.hasLegacyRunEntry()) return
+    await this.runner(REG_COMMAND, ['delete', RUN_KEY_PATH, '/v', LEGACY_RUN_VALUE, '/f']).catch(() => undefined)
   }
 
   /** Create (or replace) the task. Returns false when creation was denied. */
@@ -329,12 +351,20 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
       // BOM: without it schtasks parses the file as ANSI and rejects the task
       // definition (observed in the reference implementation, which prepends
       // \ufeff for exactly this reason).
-      await writeFile(taskFile, `\ufeff${buildTaskXml(process.execPath, this.loginArgs())}`, 'utf16le')
+      const domain = process.env.USERDOMAIN
+      const username = process.env.USERNAME
+      if (!username) throw new Error('missing current Windows user name')
+      const userId = domain ? `${domain}\\${username}` : username
+      await writeFile(taskFile, `\ufeff${buildTaskXml(process.execPath, this.loginArgs(), userId)}`, 'utf16le')
       const result = await this.runner(SCHTASKS_COMMAND, ['/create', '/tn', TASK_NAME, '/xml', taskFile, '/f'])
       // A resolved runner may still carry the child's non-zero exit (policy
       // denial, XML rejected, ...) — only a zero exit registers the task.
+      if (result.code !== 0) {
+        console.warn('[startup] scheduled task creation failed:', result.code, result.stderr.trim() || result.stdout.trim())
+      }
       return result.code === 0
-    } catch {
+    } catch (error) {
+      console.warn('[startup] scheduled task creation failed:', error)
       return false
     } finally {
       if (stagingDir) await rm(stagingDir, { recursive: true, force: true }).catch(() => undefined)

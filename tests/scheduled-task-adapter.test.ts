@@ -71,7 +71,7 @@ function makeAdapter(
       calls.push(call)
       return responder(call)
     },
-    { supported: true, legacy }
+    { supported: true, legacy, userId: 'PC\\test' }
   ) as ScheduledTaskStartupAdapter & { calls: Call[]; legacy: ReturnType<typeof fakeLegacy> }
   adapter.calls = calls
   adapter.legacy = legacy

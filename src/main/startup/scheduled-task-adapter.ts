@@ -191,11 +191,14 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
   constructor(
     getSilentLaunch: () => boolean = () => false,
     private readonly runner: ScheduledTaskCommandRunner = defaultRunner,
-    options?: { supported?: boolean; legacy?: StartupAdapter }
+    options?: { supported?: boolean; legacy?: StartupAdapter; userId?: string }
   ) {
     this.supported = options?.supported ?? process.platform === 'win32'
     this.legacy = options?.legacy ?? new ElectronStartupAdapter(getSilentLaunch)
+    this.userId = options?.userId
   }
+
+  private readonly userId?: string
 
   async read(): Promise<boolean> {
     if (!this.supported) return false
@@ -353,8 +356,8 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
       // \ufeff for exactly this reason).
       const domain = process.env.USERDOMAIN
       const username = process.env.USERNAME
-      if (!username) throw new Error('missing current Windows user name')
-      const userId = domain ? `${domain}\\${username}` : username
+      const userId = this.userId ?? (username ? (domain ? `${domain}\\${username}` : username) : null)
+      if (!userId) throw new Error('missing current Windows user name')
       await writeFile(taskFile, `\ufeff${buildTaskXml(process.execPath, this.loginArgs(), userId)}`, 'utf16le')
       const result = await this.runner(SCHTASKS_COMMAND, ['/create', '/tn', TASK_NAME, '/xml', taskFile, '/f'])
       // A resolved runner may still carry the child's non-zero exit (policy

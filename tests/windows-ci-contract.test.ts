@@ -28,6 +28,9 @@ describe('Windows packaging and interactive GUI CI contracts', () => {
     expect(hostedWorkflow).toContain("'out/renderer/index.html'")
     expect(hostedWorkflow).not.toContain('MURGE_CI_SKIP_ELECTRON_RESTORE')
     expect(hostedWorkflow).toContain("-ArgumentList '--uninstall' -Label 'installed TUN service removal'")
+    expect(hostedWorkflow).toContain('Get-ScheduledTask -TaskName $env:APP_ID -ErrorAction Stop')
+    expect(hostedWorkflow).toContain("if ($startupTask.Settings.Enabled) { throw 'fresh install unexpectedly enabled auto-start' }")
+    expect(hostedWorkflow).toContain("if (Get-ScheduledTask -TaskName $env:APP_ID -ErrorAction SilentlyContinue) { throw 'startup task remained after uninstall' }")
   })
 
   it('runs packaged Electron probes only on an explicitly interactive self-hosted runner', () => {

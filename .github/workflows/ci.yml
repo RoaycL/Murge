@@ -433,6 +433,19 @@ jobs:
           Write-Host "ProductName=$($version.ProductName) ProductVersion=$($version.ProductVersion)"
           if ($version.ProductName -ne $env:PRODUCT_NAME) { throw "installed ProductName '$($version.ProductName)' != '$env:PRODUCT_NAME'" }
 
+          # The installer must actually register the new per-user task. A
+          # successful NSIS exit alone is insufficient: registration is
+          # deliberately best-effort so a denied task never blocks installation.
+          $startupTask = Get-ScheduledTask -TaskName $env:APP_ID -ErrorAction Stop
+          $installerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+          if ($startupTask.Principal.UserId -ne $installerSid) { throw 'startup task principal is not the installer user' }
+          if ($startupTask.Triggers.Count -ne 1 -or $startupTask.Triggers[0].UserId -ne $installerSid) { throw 'startup task is not scoped to this user logon' }
+          if ($startupTask.Principal.RunLevel -ne 'Limited') { throw 'startup task would elevate the GUI' }
+          if ($startupTask.Settings.Priority -ne 3) { throw 'startup task priority was not installed' }
+          if ($startupTask.Settings.Enabled) { throw 'fresh install unexpectedly enabled auto-start' }
+          if ($startupTask.Actions.Count -ne 1 -or $startupTask.Actions[0].Execute -ne $exe -or $startupTask.Actions[0].Arguments -ne '--hidden') { throw 'startup task action is not the installed hidden GUI' }
+          Write-Host "installer-managed startup task registered for $installerSid (disabled by default): PASS"
+
           # Validate the actual installed application archive. ELECTRON_RUN_AS_NODE
           # below proves only that the executable can host Node; it deliberately
           # bypasses app.asar and therefore is not an application-entry check.
@@ -722,6 +735,7 @@ jobs:
 
           if (Test-Path $exe) { throw "program files still present after uninstall: $exe" }
           if (Get-Service -Name $serviceTemplate.serviceName -ErrorAction SilentlyContinue) { throw 'TUN service remained registered after uninstall' }
+          if (Get-ScheduledTask -TaskName $env:APP_ID -ErrorAction SilentlyContinue) { throw 'startup task remained after uninstall' }
           if (-not (Test-Path $sentinel)) { throw 'sentinel was removed on uninstall; deleteAppDataOnUninstall must stay false' }
           Write-Host 'uninstall removed program files but preserved user data (sentinel survives)'
 

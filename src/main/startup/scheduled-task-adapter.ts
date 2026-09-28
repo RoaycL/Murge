@@ -1,7 +1,4 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { brand } from '@shared/brand'
 import type { StartupAdapter } from './service'
 import { ElectronStartupAdapter } from './electron-adapter'
@@ -65,79 +62,6 @@ function defaultRunner(command: string, args: string[]): Promise<ScheduledTaskRu
   })
 }
 
-function escapeXml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&apos;')
-}
-
-function unescapeXml(value: string): string {
-  return value
-    .replaceAll('&apos;', "'")
-    .replaceAll('&quot;', '"')
-    .replaceAll('&gt;', '>')
-    .replaceAll('&lt;', '<')
-    .replaceAll('&amp;', '&')
-}
-
-/**
- * Logon-trigger task XML. Deliberately different from an HKCU Run entry:
- *
- * - The logon trigger has no artificial delay, so the kernel recovery can begin
- *   as soon as the user's interactive session is ready.
- * - `Priority 3` schedules the process above the default background class.
- * - `LeastPrivilege` needs no elevation: the kernel's privileges live in the
- *   LocalSystem TUN service, not in the GUI process.
- * - `ExecutionTimeLimit PT0S` stops Windows from killing the app after a
- *   default 72h task limit.
- */
-export function buildTaskXml(executablePath: string, args: readonly string[], userId = ''): string {
-  return `<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <Triggers>
-    <LogonTrigger>
-      <Enabled>true</Enabled>
-    </LogonTrigger>
-  </Triggers>
-  <Principals>
-    <Principal id="Author">
-      ${userId ? `<UserId>${escapeXml(userId)}</UserId>` : ''}
-      <LogonType>InteractiveToken</LogonType>
-      <RunLevel>LeastPrivilege</RunLevel>
-    </Principal>
-  </Principals>
-  <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
-    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
-    <AllowHardTerminate>false</AllowHardTerminate>
-    <StartWhenAvailable>false</StartWhenAvailable>
-    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
-    <IdleSettings>
-      <StopOnIdleEnd>false</StopOnIdleEnd>
-      <RestartOnIdle>false</RestartOnIdle>
-    </IdleSettings>
-    <AllowStartOnDemand>true</AllowStartOnDemand>
-    <Enabled>true</Enabled>
-    <Hidden>false</Hidden>
-    <RunOnlyIfIdle>false</RunOnlyIfIdle>
-    <WakeToRun>false</WakeToRun>
-    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
-    <Priority>3</Priority>
-  </Settings>
-  <Actions Context="Author">
-    <Exec>
-      <Command>${escapeXml(executablePath)}</Command>
-      ${args.length > 0 ? `<Arguments>${escapeXml(args.join(' '))}</Arguments>` : ''}
-    </Exec>
-  </Actions>
-</Task>
-`
-}
-
 /** True when the task-level `<Settings><Enabled>` element is `true`. */
 export function taskSettingsEnabled(taskXml: string): boolean {
   const settingsIndex = taskXml.indexOf('<Settings>')
@@ -146,36 +70,16 @@ export function taskSettingsEnabled(taskXml: string): boolean {
   return match?.[1] === 'true'
 }
 
-/** Task arguments parsed from either current or legacy registrations. */
-export function taskArguments(taskXml: string): string[] {
-  const match = /<Arguments>([\s\S]*?)<\/Arguments>/.exec(taskXml)
-  const raw = match?.[1] ?? ''
-  if (raw.trim().length === 0) return []
-  // Compare against the unescaped form: a compare against raw XML entities
-  // would never match and re-create the task on every startup.
-  return unescapeXml(raw).trim().split(/\s+/)
-}
-
-/** Whether an older registration still postpones launch after logon. */
-export function taskHasLogonDelay(taskXml: string): boolean {
-  const trigger = /<LogonTrigger>[\s\S]*?<\/LogonTrigger>/.exec(taskXml)?.[0] ?? ''
-  return /<Delay>[^<]+<\/Delay>/.test(trigger)
-}
-
 /**
- * Windows auto-start via a per-user Scheduled Task (schtasks), with the legacy
- * HKCU Run-key registration kept as a fallback.
+ * Windows auto-start via a task registered by the elevated installer. The GUI
+ * only toggles that task; it never tries to create one without elevation.
  *
- * Why a task instead of Electron's login item (the old default): the task can
- * carry an explicit process priority and stable identity while launching as
- * soon as the interactive session is ready. The Run key remains for machines where
- * scheduled-task creation is denied (enterprise policy, stripped-down SKUs) so
- * auto-start degrades to exactly the previous behaviour instead of failing.
+ * The Run key remains for installations where task registration or management
+ * is denied, and for users who enable auto-start before upgrading the installer.
  *
  * Read and write agree on the same always-`--hidden` argument convention as the
- * Run-key adapter. `read()` is argument-insensitive (it reports what is
- * registered); `rewriteIfEnabled()` removes old visible/delayed registrations
- * and migrates a legacy Run-key-only registration to the task form.
+ * Run-key adapter. `rewriteIfEnabled()` only maintains a working registration;
+ * task definition and ACL upgrades are the installer's responsibility.
  */
 export class ScheduledTaskStartupAdapter implements StartupAdapter {
   readonly supported: boolean
@@ -191,22 +95,18 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
   constructor(
     getSilentLaunch: () => boolean = () => false,
     private readonly runner: ScheduledTaskCommandRunner = defaultRunner,
-    options?: { supported?: boolean; legacy?: StartupAdapter; userId?: string }
+    options?: { supported?: boolean; legacy?: StartupAdapter }
   ) {
     this.supported = options?.supported ?? process.platform === 'win32'
     this.legacy = options?.legacy ?? new ElectronStartupAdapter(getSilentLaunch)
-    this.userId = options?.userId
   }
-
-  private readonly userId?: string
 
   async read(): Promise<boolean> {
     if (!this.supported) return false
-    // A present task owns the registration: a task disabled in the Task
-    // Scheduler UI reports off even if a stale legacy entry lingers, matching
-    // what the user chose there.
     const taskXml = await this.queryTaskXml()
-    if (taskXml !== null) return taskSettingsEnabled(taskXml)
+    if (taskXml !== null && taskSettingsEnabled(taskXml)) return true
+    // A Run entry can be intentional fallback when changing a preinstalled
+    // disabled task was denied by Windows.
     if (await this.hasStableRunEntry()) return true
     if (await this.hasLegacyRunEntry()) return true
     return (await this.legacy.readRegistered?.()) ?? (await this.legacy.read())
@@ -218,16 +118,21 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
       await this.disable()
       return
     }
-    const created = await this.tryCreateTask()
-    if (created) {
-      // The task now owns the registration; drop any legacy Run-key entry so
-      // the app is not started twice at logon.
-      await this.clearRunFallbacks()
-      return
+    const taskXml = await this.queryTaskXml()
+    if (taskXml !== null) {
+      if (taskSettingsEnabled(taskXml)) {
+        await this.clearRunFallbacks()
+        return
+      }
+      const result = await this.runner(SCHTASKS_COMMAND, ['/change', '/tn', TASK_NAME, '/enable'])
+        .catch(() => null)
+      if (result?.code === 0 && taskSettingsEnabled(await this.queryTaskXml() ?? '')) {
+        await this.clearRunFallbacks()
+        return
+      }
     }
-    // Scheduled-task creation was denied. Own one deterministic Run value and
-    // verify it directly instead of relying on Electron's argument-sensitive
-    // login-item lookup (which can report false for an entry it just wrote).
+    // An installer has not registered a task yet, or changing it was denied.
+    // Preserve a functional auto-start without spawning a UAC prompt here.
     if (!(await this.writeStableRunEntry())) await this.legacy.write(true)
   }
 
@@ -235,53 +140,27 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
     if (!this.supported) return
     const taskXml = await this.queryTaskXml()
     if (taskXml !== null) {
-      // A present task owns the registration. A task disabled in the Task
-      // Scheduler UI means the user turned auto-start off there — leave it.
-      if (!taskSettingsEnabled(taskXml)) return
-      const currentArgs = taskArguments(taskXml)
-      const desiredArgs = this.loginArgs()
-      if (
-        !taskHasLogonDelay(taskXml) &&
-        currentArgs.length === desiredArgs.length &&
-        currentArgs.every((a, i) => a === desiredArgs[i])
-      ) {
-        // Already current; retire a lingering legacy Run-key entry (e.g. the
-        // fallback engaged once) so the app is not started twice at logon.
-        await this.clearRunFallbacks()
-        return
-      }
-      // Arguments moved (silent-launch toggle): recreate with desired args.
-      const created = await this.tryCreateTask()
-      if (!created) throw new Error('无法更新开机启动计划任务，已保留原有注册')
-      // A previous fallback may coexist with the stale task. Once the task has
-      // been replaced successfully it owns registration again.
-      await this.clearRunFallbacks()
+      if (taskSettingsEnabled(taskXml)) await this.clearRunFallbacks()
       return
     }
-    // Legacy-only registration (v0.9.x Run-key users): migrate to the task so
-    // future logins get the immediate, prioritised launch. The existence check
-    // MUST be argument-insensitive — an argument-sensitive read cannot see a
-    // Run-key entry written with a stale `--hidden` value, which would silently
-    // skip its migration. A failed create keeps the Run key untouched —
-    // degrades to today's behaviour.
+    // No task: keep one canonical Run value until an elevated installer can
+    // create the task, including after a legacy Electron registration.
     const stableRegistered = await this.hasStableRunEntry()
     const legacyRegistered = stableRegistered || await this.hasLegacyRunEntry() ||
       ((await this.legacy.readRegistered?.()) ?? (await this.legacy.read()))
     if (!legacyRegistered) return
-    const created = await this.tryCreateTask()
-    if (created) await this.clearRunFallbacks()
-    else if (!stableRegistered) await this.writeStableRunEntry()
-  }
-
-  private loginArgs(): string[] {
-    // Login launches are always tray-only. Keep the provider in the constructor
-    // for backwards-compatible composition, but do not let a stale pre-0.9.17
-    // preference recreate a visible startup task.
-    return ['--hidden']
+    if (!stableRegistered) await this.writeStableRunEntry()
   }
 
   private async disable(): Promise<void> {
-    await this.runner(SCHTASKS_COMMAND, ['/delete', '/tn', TASK_NAME, '/f']).catch(() => undefined)
+    const taskXml = await this.queryTaskXml()
+    if (taskXml !== null && taskSettingsEnabled(taskXml)) {
+      const result = await this.runner(SCHTASKS_COMMAND, ['/change', '/tn', TASK_NAME, '/disable'])
+      const updated = result.code === 0 ? await this.queryTaskXml() : null
+      if (updated === null || taskSettingsEnabled(updated)) {
+        throw new Error('无法禁用开机启动计划任务，请检查任务权限')
+      }
+    }
     await this.clearRunFallbacks()
   }
 
@@ -342,36 +221,6 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
   private async clearLegacyRunEntry(): Promise<void> {
     if (!await this.hasLegacyRunEntry()) return
     await this.runner(REG_COMMAND, ['delete', RUN_KEY_PATH, '/v', LEGACY_RUN_VALUE, '/f']).catch(() => undefined)
-  }
-
-  /** Create (or replace) the task. Returns false when creation was denied. */
-  private async tryCreateTask(): Promise<boolean> {
-    let stagingDir: string | null = null
-    try {
-      stagingDir = await mkdtemp(join(tmpdir(), 'murge-startup-'))
-      const taskFile = join(stagingDir, 'task.xml')
-      // The XML declares encoding="UTF-16" and MUST be written with a UTF-16
-      // BOM: without it schtasks parses the file as ANSI and rejects the task
-      // definition (observed in the reference implementation, which prepends
-      // \ufeff for exactly this reason).
-      const domain = process.env.USERDOMAIN
-      const username = process.env.USERNAME
-      const userId = this.userId ?? (username ? (domain ? `${domain}\\${username}` : username) : null)
-      if (!userId) throw new Error('missing current Windows user name')
-      await writeFile(taskFile, `\ufeff${buildTaskXml(process.execPath, this.loginArgs(), userId)}`, 'utf16le')
-      const result = await this.runner(SCHTASKS_COMMAND, ['/create', '/tn', TASK_NAME, '/xml', taskFile, '/f'])
-      // A resolved runner may still carry the child's non-zero exit (policy
-      // denial, XML rejected, ...) — only a zero exit registers the task.
-      if (result.code !== 0) {
-        console.warn('[startup] scheduled task creation failed:', result.code, result.stderr.trim() || result.stdout.trim())
-      }
-      return result.code === 0
-    } catch (error) {
-      console.warn('[startup] scheduled task creation failed:', error)
-      return false
-    } finally {
-      if (stagingDir) await rm(stagingDir, { recursive: true, force: true }).catch(() => undefined)
-    }
   }
 
   /** The registered task definition, or null when the task does not exist. */

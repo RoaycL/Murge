@@ -40,6 +40,7 @@ import { ProfileRepository } from './profiles/profile-repository'
 import { EncryptedProfileSourceStore } from './profiles/profile-source-store'
 import { ProfileService } from './profiles/profile-service'
 import { ProfileAutoReloadGateway } from './profiles/profile-auto-reload-gateway'
+import { ProfileAutoUpdateService } from './profiles/profile-auto-update-service'
 import { parseProxyGroupOrder, parseProxyGroupTestUrls } from './profiles/proxy-group-order'
 import { parseProviderCatalog } from './profiles/provider-configs'
 import { inspectActiveProfileConfig } from './profiles/profile-config-inspection'
@@ -244,6 +245,7 @@ let modeTransition: ModeTransitionController | null = null
 let tunExitMonitor: { stop(): void } | null = null
 let proxyGuardTimer: NodeJS.Timeout | null = null
 let networkDetector: NetworkDetector | null = null
+let profileAutoUpdater: ProfileAutoUpdateService | null = null
 let runtimeIntentRecovery: RuntimeIntentRecoveryCoordinator | null = null
 let updateService: UpdateService | null = null
 let usageHistoryServiceRef: UsageHistoryService | null = null
@@ -777,9 +779,9 @@ app.whenReady().then(async () => {
         console.warn(`[startup] ${context}:`, error)
       })
   }
-  // One-shot registration maintenance at startup: migrates v0.9.x Run-key
-  // login-item users to the scheduled task and rewrites stale `--hidden`
-  // arguments. Best-effort and non-blocking; the toggle still works either way.
+  // One-shot registration maintenance at startup: normalizes legacy Run-key
+  // entries. The elevated installer owns scheduled-task creation and upgrades;
+  // this best-effort check never gates app startup.
   refreshStartupRegistration('registration maintenance skipped')
   appSettingsService.onChange((settings) => {
     const silentLaunchChanged = settings.silentLaunch !== cachedAppSettings.silentLaunch
@@ -1317,6 +1319,7 @@ app.whenReady().then(async () => {
           return await systemProxyService.handleNetworkUp()
         } finally {
           runtimeIntentRecovery?.wake()
+          profileAutoUpdater?.retryFailed()
         }
       }
     }
@@ -1375,7 +1378,15 @@ app.whenReady().then(async () => {
       }
     }
   })
-  waitForProfileOperations = () => profileGateway.waitForIdle()
+  profileAutoUpdater = new ProfileAutoUpdateService(
+    profileGateway,
+    () => !isQuitting,
+    (message) => console.info(message)
+  )
+  waitForProfileOperations = async () => {
+    await profileAutoUpdater?.waitForIdle()
+    await profileGateway.waitForIdle()
+  }
   // Per-profile node-pick cache (sparkle/clash-party model): every accepted
   // selectProxy is remembered, and each kernel reload replays the picks so a
   // restart/profile-switch restores the user's nodes instead of config defaults.
@@ -1747,6 +1758,7 @@ app.whenReady().then(async () => {
   // serialized mode queue.
   await startupRuntimeReady
   networkDetector.start()
+  if (!is.dev && !hasArg('--ui-smoke')) profileAutoUpdater.start()
 
   // Auto-check for a newer release on launch, gated on the persisted
   // "启动时自动检查更新" setting. `check()` kicks off the feed request and returns
@@ -1886,6 +1898,8 @@ function beginApplicationShutdown(sessionEnding: boolean): Promise<void> {
           }
           networkDetector?.stop()
           networkDetector = null
+          profileAutoUpdater?.stop()
+          profileAutoUpdater = null
           runtimeIntentRecovery?.stop()
           runtimeIntentRecovery = null
           subStoreServiceRef?.dispose()

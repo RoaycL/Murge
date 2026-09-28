@@ -42,6 +42,7 @@ export default {
     // extraction, so first launch never depends on GitHub availability.
     { from: `resources/bin/${'${arch}'}`, to: 'bin', filter: kernelManifest.assets.filter((asset) => asset.platform === 'win32').map((asset) => asset.filename) },
     { from: `resources/tun-service/${'${arch}'}`, to: 'tun-service', filter: ['tun-service.exe', 'service-template.json'] },
+    { from: 'resources/startup', to: 'startup', filter: ['register-task.ps1'] },
     { from: 'resources/defaults', to: 'defaults', filter: ['**/*'] },
     // Geodata databases shipped with the installer and seeded into the kernel's
     // persistent home at startup, so a profile with GEOSITE/GEOIP rules starts

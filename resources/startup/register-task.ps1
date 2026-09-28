@@ -24,10 +24,13 @@ try {
   $existing = $null
   try {
     $existing = $folder.GetTask("\$TaskName")
-  } catch [System.Runtime.InteropServices.COMException] {
+  } catch {
     # Task Scheduler may report a missing task as either Win32 file-not-found
-    # or SCHED_E_UNKNOWN_OBJECT, depending on the Windows build.
-    if ($_.Exception.HResult -notin @(-2147024894, -2147216625)) { throw }
+    # or SCHED_E_UNKNOWN_OBJECT. PowerShell may wrap the COM error in a method
+    # invocation exception, so inspect its innermost HRESULT.
+    $taskError = $_.Exception
+    while ($null -ne $taskError.InnerException) { $taskError = $taskError.InnerException }
+    if ($taskError.HResult -notin @(-2147024894, -2147216625)) { throw }
   }
   if ($null -ne $existing) {
     $existingUser = [string]$existing.Definition.Principal.UserId

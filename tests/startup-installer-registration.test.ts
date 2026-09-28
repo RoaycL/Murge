@@ -42,5 +42,7 @@ describe('installer-owned startup registration', () => {
     expect(script).toContain('D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;$sid)')
     expect(script).toContain('$PreviouslyEnabled -eq \'1\'')
     expect(script).toContain('$folder.RegisterTaskDefinition')
+    expect(script).toContain('while ($null -ne $taskError.InnerException)')
+    expect(script).toContain('$taskError.HResult -notin @(-2147024894, -2147216625)')
   })
 })

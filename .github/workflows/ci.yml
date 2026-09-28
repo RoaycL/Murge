@@ -436,7 +436,16 @@ jobs:
           # The installer must actually register the new per-user task. A
           # successful NSIS exit alone is insufficient: registration is
           # deliberately best-effort so a denied task never blocks installation.
-          $startupTask = Get-ScheduledTask -TaskName $env:APP_ID -ErrorAction Stop
+          $startupTask = Get-ScheduledTask -TaskName $env:APP_ID -ErrorAction SilentlyContinue
+          if (-not $startupTask) {
+            # Surface the script's actual failure text; silent NSIS does not
+            # expose DetailPrint output in Actions logs. Keep this run failed
+            # even if the direct diagnostic retry happens to register it.
+            $registerScript = Join-Path $installDir 'resources\startup\register-task.ps1'
+            Write-Host "startup task missing after installer; diagnostic retry: $registerScript"
+            & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $registerScript -TaskName $env:APP_ID -ExecutablePath $exe -PreviouslyEnabled 0 2>&1 | ForEach-Object { Write-Host $_ }
+            throw 'installer did not register its per-user startup task'
+          }
           $installerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
           if ($startupTask.Principal.UserId -ne $installerSid) { throw 'startup task principal is not the installer user' }
           if ($startupTask.Triggers.Count -ne 1 -or $startupTask.Triggers[0].UserId -ne $installerSid) { throw 'startup task is not scoped to this user logon' }

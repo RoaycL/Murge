@@ -41,6 +41,7 @@ import type { AppInfo } from './app-info'
 import type { AppSettings } from './app-settings'
 import type { UpdateState } from './updates'
 import type { DiagnosticReport } from './diagnostics'
+import type { ConfigBackupPreview, ConfigBackupResult } from './config-backup'
 
 export const IPC = {
   appGetBrand: 'app:get-brand',
@@ -49,6 +50,9 @@ export const IPC = {
   appGetCachedIcon: 'app:get-cached-icon',
   appListNetworkInterfaces: 'app:list-network-interfaces',
   diagnosticsCollect: 'diagnostics:collect',
+  backupCreate: 'backup:create',
+  backupPreview: 'backup:preview',
+  backupRestore: 'backup:restore',
   appNavigateEvent: 'app:navigate-event',
   kernelGetStatus: 'kernel:get-status',
   kernelStart: 'kernel:start',
@@ -182,6 +186,11 @@ export interface DesktopApi {
   diagnostics: {
     /** User-triggered, local-only report with no raw logs or configuration. */
     collect(): Promise<DiagnosticReport>
+  }
+  backup: {
+    create(password: string): Promise<ConfigBackupResult>
+    preview(password: string): Promise<ConfigBackupPreview | null>
+    restore(token: string): Promise<void>
   }
   kernel: {
     getStatus(): Promise<KernelStatus>

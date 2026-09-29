@@ -3,11 +3,20 @@ import { computed, onMounted, ref } from 'vue'
 import { useStartupStore } from '../stores/startup'
 import { useAppSettingsStore } from '../stores/app-settings'
 import AppSelect from '../components/AppSelect.vue'
+import type { ConfigBackupPreview } from '@shared/config-backup'
 
 const startup = useStartupStore()
 const appSettings = useAppSettingsStore()
 const delayUrl = ref('')
 const delayUrlError = ref<string | null>(null)
+const backupPassword = ref('')
+const backupConfirm = ref('')
+const restorePassword = ref('')
+const backupBusy = ref(false)
+const backupError = ref('')
+const backupNotice = ref('')
+const backupPreview = ref<ConfigBackupPreview | null>(null)
+const restoreConfirmed = ref(false)
 const delayScopeOptions = [
   { value: 'group', label: '跟随策略组' },
   { value: 'global', label: '始终使用全局地址' }
@@ -36,6 +45,42 @@ async function saveDelayUrl(): Promise<void> {
     delayUrl.value = appSettings.settings.delayTestUrl
     delayUrlError.value = appSettings.errorMessage
   }
+}
+
+async function createBackup(): Promise<void> {
+  if (backupBusy.value) return
+  backupError.value = ''; backupNotice.value = ''
+  if (backupPassword.value.length < 8 || backupPassword.value !== backupConfirm.value) {
+    backupError.value = '请设置至少 8 位密码，并确认两次输入一致。'
+    return
+  }
+  backupBusy.value = true
+  try {
+    const result = await window.desktop.backup.create(backupPassword.value)
+    if (result.saved) { backupNotice.value = '加密备份已保存到你选择的位置。'; backupPassword.value = ''; backupConfirm.value = '' }
+  } catch (error) { backupError.value = error instanceof Error ? error.message : '备份失败' }
+  finally { backupBusy.value = false }
+}
+
+async function previewBackup(): Promise<void> {
+  if (backupBusy.value) return
+  backupError.value = ''; backupNotice.value = ''; backupPreview.value = null; restoreConfirmed.value = false
+  if (!restorePassword.value) { backupError.value = '请先输入备份密码。'; return }
+  backupBusy.value = true
+  try { backupPreview.value = await window.desktop.backup.preview(restorePassword.value) }
+  catch (error) { backupError.value = error instanceof Error ? error.message : '读取备份失败' }
+  finally { backupBusy.value = false }
+}
+
+async function restoreBackup(): Promise<void> {
+  if (!backupPreview.value?.compatible || !restoreConfirmed.value || backupBusy.value) return
+  backupBusy.value = true; backupError.value = ''
+  try {
+    await window.desktop.backup.restore(backupPreview.value.token)
+    backupNotice.value = '备份已校验并安排恢复，应用即将重启。'
+    restorePassword.value = ''
+  } catch (error) { backupError.value = error instanceof Error ? error.message : '恢复失败' }
+  finally { backupBusy.value = false }
 }
 
 onMounted(async () => {
@@ -114,6 +159,38 @@ onMounted(async () => {
     </section>
 
     <section>
+      <h2>配置备份与恢复</h2>
+      <div class="surface-card backup-panel">
+        <div class="backup-intro"><strong>本地加密备份</strong><p>包含配置、订阅及 Sub-Store 用户数据，不包含日志和缓存。密码只用于本次操作；忘记密码将无法恢复。暂不上传到 WebDAV。</p></div>
+        <div class="backup-grid">
+          <div class="backup-action">
+            <strong>创建备份</strong>
+            <input v-model="backupPassword" type="password" autocomplete="new-password" placeholder="设置至少 8 位备份密码" aria-label="设置备份密码" />
+            <input v-model="backupConfirm" type="password" autocomplete="new-password" placeholder="再次输入密码" aria-label="确认备份密码" />
+            <button type="button" :disabled="backupBusy" @click="createBackup">保存加密备份…</button>
+          </div>
+          <div class="backup-action">
+            <strong>从备份恢复</strong>
+            <input v-model="restorePassword" type="password" autocomplete="off" placeholder="输入备份密码" aria-label="备份恢复密码" />
+            <button type="button" :disabled="backupBusy" @click="previewBackup">选择文件并预览</button>
+            <div v-if="backupPreview" class="backup-preview" :class="{ incompatible: !backupPreview.compatible }">
+              <strong>恢复前预览</strong>
+              <span>备份版本 {{ backupPreview.appVersion }} · {{ new Date(backupPreview.createdAt).toLocaleString() }}</span>
+              <span>{{ backupPreview.profileCount }} 个配置 · {{ backupPreview.subscriptionSourceCount }} 个订阅地址 · {{ backupPreview.fileCount }} 个文件</span>
+              <span>将替换 {{ backupPreview.replaceCount }} 个现有文件、新增 {{ backupPreview.addCount }} 个、移除 {{ backupPreview.removeCount }} 个</span>
+              <span>覆写：{{ backupPreview.includesOverrides ? '包含' : '无' }} · Sub-Store：{{ backupPreview.includesSubStore ? '包含' : '无' }}</span>
+              <span>{{ backupPreview.compatibilityMessage }}</span>
+              <label v-if="backupPreview.compatible"><input v-model="restoreConfirmed" type="checkbox" /> 我了解恢复将替换当前配置，应用需要重启</label>
+              <button v-if="backupPreview.compatible" type="button" :disabled="backupBusy || !restoreConfirmed" @click="restoreBackup">确认恢复并重启</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p v-if="backupError" class="inline-error" role="alert">{{ backupError }}</p>
+      <p v-if="backupNotice" class="setting-help" role="status">{{ backupNotice }}</p>
+    </section>
+
+    <section>
       <h2>延迟测试</h2>
       <div class="surface-card preference-list delay-preferences">
         <label>
@@ -150,4 +227,18 @@ onMounted(async () => {
 .startup-behavior span:first-child{display:flex;flex-direction:column;gap:3px}
 .startup-detail{color:var(--app-text-secondary);font-size:11px;font-weight:400}
 .fixed-state{color:var(--app-accent);font-size:12px;font-weight:600}
+.backup-panel{padding:20px}
+.backup-intro strong{font-size:14px}
+.backup-intro p{max-width:650px;margin:5px 0 18px;color:var(--app-muted);font-size:11px;line-height:1.6}
+.backup-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.backup-action{display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:16px;border:1px solid var(--app-divider);border-radius:13px;background:color-mix(in srgb,var(--app-bg) 55%,var(--app-surface))}
+.backup-action>strong{font-size:13px}
+.backup-action>input{width:100%;max-width:320px;height:35px;padding:0 11px;border:1px solid var(--app-divider);border-radius:8px;background:var(--app-surface);color:var(--app-text)}
+.backup-action>button,.backup-preview>button{border:0;border-radius:8px;background:var(--app-accent);color:white;padding:8px 13px;cursor:pointer}
+.backup-action button:disabled{opacity:.5;cursor:not-allowed}
+.backup-preview{display:flex;flex-direction:column;gap:7px;width:100%;padding:12px;border-radius:10px;background:color-mix(in srgb,var(--app-accent) 9%,var(--app-surface));font-size:11px;line-height:1.5}
+.backup-preview.incompatible{background:color-mix(in srgb,#e96952 10%,var(--app-surface))}
+.backup-preview span{overflow-wrap:anywhere}
+.backup-preview label{display:flex;align-items:center;gap:7px;margin:5px 0}
+@media(max-width:760px){.backup-grid{grid-template-columns:1fr}}
 </style>

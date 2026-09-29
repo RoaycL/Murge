@@ -35,6 +35,11 @@ const api: DesktopApi = {
   diagnostics: {
     collect: () => invoke(IPC.diagnosticsCollect)
   },
+  backup: {
+    create: (password) => invoke(IPC.backupCreate, password),
+    preview: (password) => invoke(IPC.backupPreview, password),
+    restore: (token) => invoke(IPC.backupRestore, token)
+  },
   kernel: {
     getStatus: () => invoke(IPC.kernelGetStatus),
     start: () => invoke(IPC.kernelStart),

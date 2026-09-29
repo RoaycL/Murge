@@ -1,7 +1,8 @@
 import { dirname, join } from 'node:path'
 import { networkInterfaces } from 'node:os'
 import { writeFileSync } from 'node:fs'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { attachKernelWatchdog } from './kernel/crash-watchdog'
 import { InternetLatencyService } from './services/internet-latency-service'
 import { app, BrowserWindow, clipboard, dialog, nativeTheme, powerMonitor, safeStorage, shell } from 'electron'
@@ -69,6 +70,7 @@ import { RuntimeIntentRecoveryCoordinator } from './startup/runtime-intent-recov
 import { StartupTimeline } from './startup/startup-timeline'
 import { collectDiagnosticReport } from './diagnostics/report-service'
 import { WindowsDiagnosticHost } from './diagnostics/windows-host'
+import { applyPendingConfigRestore, createConfigBackup, describeConfigRestoreImpact, inspectConfigBackup, stageConfigRestore, type ConfigBackupPayload } from './backup/config-backup'
 import { AppSettingsService } from './app-settings/service'
 import { SubStoreService } from './substore/service'
 import { DEFAULT_APP_SETTINGS, type AppSettings } from '@shared/app-settings'
@@ -214,6 +216,7 @@ void fileLogs.initialize()
 // ahead of window creation. Reads are chained on the warmup so a
 // product-rename migration can never be raced by an early settings read.
 const appDataBaseRoot = appDataRoot(app.getPath('appData'))
+let startupConfigRestoreOutcome: 'none' | 'restored' | 'rolled-back' = 'none'
 const coreSettingsService = new CoreSettingsService(appDataBaseRoot)
 const appSettingsService = new AppSettingsService(appDataBaseRoot)
 const storageWarmup = (async (): Promise<string> => {
@@ -221,6 +224,10 @@ const storageWarmup = (async (): Promise<string> => {
   // the stable namespace. Only runs in production (dev never writes real user
   // data) and is naturally idempotent.
   if (!is.dev) await migrateLegacyAppData(app.getPath('appData'))
+  if (!is.dev) {
+    startupConfigRestoreOutcome = await applyPendingConfigRestore(appDataBaseRoot)
+    if (startupConfigRestoreOutcome !== 'none') console.info(`[config-backup] startup restore: ${startupConfigRestoreOutcome}`)
+  }
   return resolveRuntimeProfileRoot(app.getPath('appData'), { dev: is.dev })
 })()
 const coreSettingsWarm = storageWarmup.then(() => coreSettingsService.getRaw())
@@ -241,6 +248,7 @@ let shutdownPromise: Promise<void> | null = null
  */
 let cachedAppSettings: AppSettings = { ...DEFAULT_APP_SETTINGS }
 let subStoreServiceRef: SubStoreService | null = null
+let pendingBackupPreview: { token: string; payload: ConfigBackupPayload; compatible: boolean } | null = null
 // Keep a strong reference for the complete lifetime of the native window.
 // A function-local BrowserWindow can be garbage-collected after createWindow
 // returns, which is especially visible in packaged Windows builds as a running
@@ -1608,6 +1616,49 @@ app.whenReady().then(async () => {
         tunConfig: tunConfigService, host: new WindowsDiagnosticHost(), logDirectory
       })
     },
+    backup: {
+      create: async (password) => {
+        if (is.dev) throw new Error('配置备份仅在安装版中可用')
+        const codec = {
+          isAvailable: () => safeStorage.isEncryptionAvailable(),
+          encrypt: (value: string) => safeStorage.encryptString(value),
+          decrypt: (value: Buffer) => safeStorage.decryptString(value)
+        }
+        const archive = await createConfigBackup(appDataBaseRoot, password, app.getVersion(), codec)
+        const choice = await dialog.showSaveDialog({ title: `保存 ${brand.productName} 配置备份`, defaultPath: `${brand.executableName}-config-${new Date().toISOString().slice(0, 10)}.murge-backup`, filters: [{ name: `${brand.productName} 加密备份`, extensions: ['murge-backup'] }] })
+        if (choice.canceled || !choice.filePath) return { saved: false }
+        const temporary = join(dirname(choice.filePath), `.murge-backup-${randomUUID()}.tmp`)
+        try {
+          await writeFile(temporary, archive, { mode: 0o600 })
+          await rename(temporary, choice.filePath)
+        } finally { await rm(temporary, { force: true }).catch(() => undefined) }
+        return { saved: true }
+      },
+      preview: async (password) => {
+        if (is.dev) throw new Error('配置恢复仅在安装版中可用')
+        pendingBackupPreview = null
+        const choice = await dialog.showOpenDialog({ title: `选择 ${brand.productName} 配置备份`, properties: ['openFile'], filters: [{ name: `${brand.productName} 加密备份`, extensions: ['murge-backup'] }] })
+        if (choice.canceled || !choice.filePaths[0]) return null
+        const path = choice.filePaths[0]
+        if ((await stat(path)).size > 48 * 1024 * 1024) throw new Error('备份文件超过上限')
+        const inspected = inspectConfigBackup(await readFile(path), password, app.getVersion())
+        const impact = await describeConfigRestoreImpact(appDataBaseRoot, inspected.payload)
+        const token = randomUUID()
+        pendingBackupPreview = { token, payload: inspected.payload, compatible: inspected.preview.compatible }
+        return { ...inspected.preview, ...impact, token }
+      },
+      restore: async (token) => {
+        if (!pendingBackupPreview || token !== pendingBackupPreview.token || !pendingBackupPreview.compatible) throw new Error('请重新选择兼容的备份并确认预览')
+        const payload = pendingBackupPreview.payload
+        pendingBackupPreview = null
+        await stageConfigRestore(appDataBaseRoot, payload, app.getVersion(), {
+          isAvailable: () => safeStorage.isEncryptionAvailable(),
+          encrypt: (value) => safeStorage.encryptString(value),
+          decrypt: (value) => safeStorage.decryptString(value)
+        })
+        setTimeout(() => { app.relaunch(); app.quit() }, 250)
+      }
+    },
     internetLatency: internetLatencyService,
     unlock: serviceUnlockService,
     kernel: queuedKernel,
@@ -1681,6 +1732,9 @@ app.whenReady().then(async () => {
   startupTimeline.mark('ipc-ready')
   createWindow()
   startupTimeline.mark('window-created')
+  if (startupConfigRestoreOutcome === 'rolled-back') {
+    void dialog.showMessageBox({ type: 'warning', title: `${brand.productName} 配置恢复未完成`, message: '配置恢复失败，已回滚到恢复前的配置。请查看运行日志后重试。' })
+  }
   const showMainWindow = (): void => {
     if (isQuitting) return
     const window = mainWindow ?? BrowserWindow.getAllWindows()[0] ?? createWindow()

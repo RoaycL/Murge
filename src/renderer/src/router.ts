@@ -8,6 +8,7 @@ import ProviderSettingsView from './views/ProviderSettingsView.vue'
 import MoreView from './views/MoreView.vue'
 import LogsView from './views/LogsView.vue'
 import ConnectionsView from './views/ConnectionsView.vue'
+import ProcessListView from './views/ProcessListView.vue'
 import DeviceListView from './views/DeviceListView.vue'
 import AppearanceView from './views/AppearanceView.vue'
 import GeneralView from './views/GeneralView.vue'
@@ -28,7 +29,7 @@ export const router = createRouter({
     { path: '/', redirect: '/activity' },
     { path: '/activity', component: ActivityView },
     { path: '/overview', component: OverviewView },
-    { path: '/processes', redirect: '/connections' },
+    { path: '/processes', component: ProcessListView },
     { path: '/devices', component: DeviceListView },
     { path: '/policies', component: PolicyView },
     { path: '/rules', component: RulesView },

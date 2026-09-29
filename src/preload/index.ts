@@ -32,6 +32,9 @@ const api: DesktopApi = {
     listNetworkInterfaces: () => invoke(IPC.appListNetworkInterfaces),
     onNavigate: (listener) => listen(IPC.appNavigateEvent, listener)
   },
+  diagnostics: {
+    collect: () => invoke(IPC.diagnosticsCollect)
+  },
   kernel: {
     getStatus: () => invoke(IPC.kernelGetStatus),
     start: () => invoke(IPC.kernelStart),

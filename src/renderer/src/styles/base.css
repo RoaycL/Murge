@@ -282,6 +282,13 @@ h1 { margin: 0; font-size: 28px; line-height: 34px; letter-spacing: -0.7px; font
 .logs-header p { margin: 2px 0 0; color: var(--app-muted); font-size: 11px; }
 .logs-actions { display: flex; gap: 8px; }
 .logs-actions button { height: 28px; padding: 0 12px; border: 0; border-radius: 6px; background: rgba(127,127,127,.13); cursor: pointer; }
+.diagnostic-export-card { display: flex; align-items: center; gap: 13px; margin-top: 18px; padding: 14px 16px; }
+.diagnostic-export-symbol { display: grid; flex: 0 0 35px; place-items: center; width: 35px; height: 35px; border-radius: 10px; color: var(--app-purple); background: color-mix(in srgb, var(--app-purple) 11%, transparent); }
+.diagnostic-export-copy { flex: 1; min-width: 0; }
+.diagnostic-export-copy strong { font-size: 13px; font-weight: 650; }
+.diagnostic-export-copy p { margin: 3px 0 0; color: var(--app-muted); font-size: 10px; line-height: 1.5; }
+.diagnostic-export-card button { flex: 0 0 auto; white-space: nowrap; }
+@media (max-width: 620px) { .diagnostic-export-card { flex-wrap: wrap; } .diagnostic-export-card button { margin-left: 48px; } }
 .logs-toolbar { display: flex; gap: 10px; width: 100%; margin: 17px 0 12px; }
 .logs-toolbar input { flex: 1; height: 29px; padding: 0 12px; border: 1px solid var(--app-divider); border-radius: 7px; background: rgba(255,255,255,.24); color: inherit; }
 .logs-toolbar select { width: 112px; height: 29px; padding: 0 8px; border: 0; border-radius: 7px; background: rgba(127,127,127,.13); color: inherit; }

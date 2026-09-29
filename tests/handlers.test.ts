@@ -24,6 +24,27 @@ describe('buildIpcHandlers', () => {
     expect(result).toEqual(container.runtime.summary)
   })
 
+  it('waits for ordered startup before initial controller reads', async () => {
+    let release!: () => void
+    const ready = new Promise<void>((resolve) => { release = resolve })
+    const getProxies = vi.spyOn(container.mihomo, 'getProxies')
+    const getProviders = vi.spyOn(container.mihomo, 'getProxyProviders')
+    const getConnections = vi.spyOn(container.mihomo, 'getConnections')
+    handlers = buildIpcHandlers(container.deps, { waitForStartup: () => ready })
+    const proxies = handlers[IPC.mihomoGetProxies](null)
+    const providers = handlers[IPC.mihomoGetProxyProviders](null)
+    const connections = handlers[IPC.mihomoGetConnections](null)
+    await Promise.resolve()
+    expect(getProxies).not.toHaveBeenCalled()
+    expect(getProviders).not.toHaveBeenCalled()
+    expect(getConnections).not.toHaveBeenCalled()
+    release()
+    await Promise.all([proxies, providers, connections])
+    expect(getProxies).toHaveBeenCalledOnce()
+    expect(getProviders).toHaveBeenCalledOnce()
+    expect(getConnections).toHaveBeenCalledOnce()
+  })
+
   it('uses the injected enhanced runtime document order for policy groups', async () => {
     const resolveActiveGroupOrder = vi.fn().mockResolvedValue(['Runtime A', 'Runtime B'])
     handlers = buildIpcHandlers(container.deps, { resolveActiveGroupOrder })

@@ -40,6 +40,7 @@ import type { NetworkMetadataProvider, NetworkMetadataSnapshot, NetworkMetadataS
 import type { AppInfo } from './app-info'
 import type { AppSettings } from './app-settings'
 import type { UpdateState } from './updates'
+import type { DiagnosticReport } from './diagnostics'
 
 export const IPC = {
   appGetBrand: 'app:get-brand',
@@ -47,6 +48,7 @@ export const IPC = {
   appGetProcessIcon: 'app:get-process-icon',
   appGetCachedIcon: 'app:get-cached-icon',
   appListNetworkInterfaces: 'app:list-network-interfaces',
+  diagnosticsCollect: 'diagnostics:collect',
   appNavigateEvent: 'app:navigate-event',
   kernelGetStatus: 'kernel:get-status',
   kernelStart: 'kernel:start',
@@ -176,6 +178,10 @@ export interface DesktopApi {
     listNetworkInterfaces(): Promise<string[]>
     /** Main-process requests such as notification clicks navigate an existing window. */
     onNavigate(listener: (path: string) => void): () => void
+  }
+  diagnostics: {
+    /** User-triggered, local-only report with no raw logs or configuration. */
+    collect(): Promise<DiagnosticReport>
   }
   kernel: {
     getStatus(): Promise<KernelStatus>

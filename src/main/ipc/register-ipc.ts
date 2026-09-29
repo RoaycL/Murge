@@ -7,6 +7,7 @@ import type { TunGateway } from '@shared/tun'
 import type { OutboundMode, RuntimeSummary } from '@shared/runtime'
 import type { ActiveProfileConfigInspection, ProfileProviderCatalog, ProfileProviderContent } from '@shared/profiles'
 import { IPC } from '@shared/ipc'
+import type { DiagnosticReport } from '@shared/diagnostics'
 import { ProtocolError, encodeProtocolError } from '@shared/protocol-errors'
 import { fetchExternalIpViaProxy } from '../services/external-ip'
 import { buildIpcHandlers, type IpcHandler } from './handlers'
@@ -45,6 +46,9 @@ export interface IpcDependencies {
   resolveActiveConfigInspection?: () => Promise<ActiveProfileConfigInspection>
   /** Shared renderer/tray persistent icon cache. */
   remoteIconCache?: RemoteIconCache
+  /** First-launch controller reads wait for the ordered boot recovery to settle. */
+  waitForStartup?: () => Promise<void>
+  diagnostics?: { collect(): Promise<DiagnosticReport> }
 }
 
 /**
@@ -130,7 +134,7 @@ function resolveExternalIp({ kernel, mihomo }: Pick<IpcDependencies, 'kernel' | 
   })()
 }
 
-export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata, subStore, internetLatency, unlock, resolveActiveGroupOrder, resolveActiveProviderCatalog, resolveProviderContent, resolveActiveConfigInspection, remoteIconCache: sharedRemoteIconCache }: IpcDependencies): () => void {
+export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata, subStore, internetLatency, unlock, resolveActiveGroupOrder, resolveActiveProviderCatalog, resolveProviderContent, resolveActiveConfigInspection, remoteIconCache: sharedRemoteIconCache, waitForStartup, diagnostics }: IpcDependencies): () => void {
   const deps: IpcDeps = {
     brand,
     appInfo: { version: app.getVersion(), platform: process.platform === 'win32' || process.platform === 'darwin' || process.platform === 'linux' ? process.platform : 'other', arch: process.arch },
@@ -162,7 +166,8 @@ export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemPro
   const iconCache = new Map<string, string>()
   const PROCESS_ICON_CACHE_LIMIT = 512
   let remoteIconCache: RemoteIconCache | null = sharedRemoteIconCache ?? null
-  const entries = Object.entries(buildIpcHandlers(deps, { resolveActiveGroupOrder, resolveActiveProviderCatalog, resolveProviderContent, resolveActiveConfigInspection }))
+  const entries = Object.entries(buildIpcHandlers(deps, { resolveActiveGroupOrder, resolveActiveProviderCatalog, resolveProviderContent, resolveActiveConfigInspection, waitForStartup }))
+  if (diagnostics) entries.push([IPC.diagnosticsCollect, async () => diagnostics.collect()])
   entries.push([IPC.appGetProcessIcon, async (_event, rawPath) => {
     if (process.platform !== 'win32') return null
     // Local drive paths only: never let renderer input make Explorer resolve a

@@ -29,6 +29,8 @@ export type IpcHandler = (event: unknown, ...args: unknown[]) => unknown | Promi
  * the semantics Electron uses for `ipcMain.handle`.
  */
 export interface IpcHandlerOptions {
+  /** Keep initial controller reads behind the boot reconciliation, not a stale service controller. */
+  waitForStartup?: () => Promise<void>
   /** Runtime-enhanced profile order; defaults to the raw document in tests/legacy callers. */
   resolveActiveGroupOrder?: () => Promise<string[]>
   /** Runtime-enhanced profile document for the provider catalog; same fallback contract. */
@@ -40,6 +42,10 @@ export interface IpcHandlerOptions {
 
 export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {}): Record<string, IpcHandler> {
   const { brand, appInfo, kernel, kernelManager, mihomo, runtime, profiles, systemProxy, startup, appSettings, overrides, dns, sniffer, tunConfig, updates, tun, core, geodata, usageHistory, networkMetadata, subStore, internetLatency } = deps
+  const afterStartup = async <T>(read: () => Promise<T>): Promise<T> => {
+    await options.waitForStartup?.()
+    return read()
+  }
 
   return {
     [IPC.appGetBrand]: async () => brand,
@@ -74,9 +80,9 @@ export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {})
     [IPC.runtimeGetSummary]: async () => runtime.getSummary(),
     [IPC.runtimeGetExternalIp]: async () => runtime.getExternalIp(),
 
-    [IPC.mihomoGetConfig]: async () => mihomo.getConfig(),
+    [IPC.mihomoGetConfig]: async () => afterStartup(() => mihomo.getConfig()),
     [IPC.mihomoPatchConfig]: async (_event, patch) => mihomo.patchConfig(parseConfigPatch(patch)),
-    [IPC.mihomoGetProxies]: async () => mihomo.getProxies(),
+    [IPC.mihomoGetProxies]: async () => afterStartup(() => mihomo.getProxies()),
     [IPC.mihomoInternetLatency]: async () => internetLatency.sample(),
     [IPC.unlockTestAll]: async () => deps.unlock.sample(),
     [IPC.unlockTestOne]: async (_event, rawName) => deps.unlock.testOne(parseUnlockServiceName(rawName)),
@@ -84,11 +90,11 @@ export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {})
       const selection = parseProxySelection(group, name)
       return mihomo.selectProxy(selection.group, selection.name)
     },
-    [IPC.mihomoGetRules]: async () => mihomo.getRules(),
-    [IPC.mihomoGetProxyProviders]: async () => mihomo.getProxyProviders(),
+    [IPC.mihomoGetRules]: async () => afterStartup(() => mihomo.getRules()),
+    [IPC.mihomoGetProxyProviders]: async () => afterStartup(() => mihomo.getProxyProviders()),
     [IPC.mihomoRefreshProxyProvider]: async (_event, name) => mihomo.refreshProxyProvider(parseMihomoName(name)),
     [IPC.mihomoHealthCheckProxyProvider]: async (_event, name) => mihomo.healthCheckProxyProvider(parseMihomoName(name)),
-    [IPC.mihomoGetRuleProviders]: async () => mihomo.getRuleProviders(),
+    [IPC.mihomoGetRuleProviders]: async () => afterStartup(() => mihomo.getRuleProviders()),
     [IPC.mihomoRefreshRuleProvider]: async (_event, name) => mihomo.refreshRuleProvider(parseMihomoName(name)),
     [IPC.mihomoDelayTest]: async (_event, name, opts) => mihomo.delayTest(parseMihomoName(name), parseDelayOptions(opts)),
     [IPC.mihomoGroupMemberDelayTest]: async (_event, group, name, opts) => {
@@ -96,7 +102,7 @@ export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {})
       return mihomo.groupMemberDelayTest(selection.group, selection.name, parseDelayOptions(opts))
     },
     [IPC.mihomoGroupDelayTest]: async (_event, name, opts) => mihomo.groupDelayTest(parseMihomoName(name), parseDelayOptions(opts)),
-    [IPC.mihomoGetConnections]: async () => mihomo.getConnections(),
+    [IPC.mihomoGetConnections]: async () => afterStartup(() => mihomo.getConnections()),
     [IPC.mihomoCloseConnection]: async (_event, id) => mihomo.closeConnection(parseConnectionId(id)),
     [IPC.mihomoDnsQuery]: async (_event, name, type) => {
       const query = parseDnsQuery(name, type)

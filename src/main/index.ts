@@ -66,6 +66,9 @@ import { StartupService } from './startup/service'
 import { ScheduledTaskStartupAdapter } from './startup/scheduled-task-adapter'
 import { restoreRuntimeIntent } from './startup/runtime-intent'
 import { RuntimeIntentRecoveryCoordinator } from './startup/runtime-intent-recovery'
+import { StartupTimeline } from './startup/startup-timeline'
+import { collectDiagnosticReport } from './diagnostics/report-service'
+import { WindowsDiagnosticHost } from './diagnostics/windows-host'
 import { AppSettingsService } from './app-settings/service'
 import { SubStoreService } from './substore/service'
 import { DEFAULT_APP_SETTINGS, type AppSettings } from '@shared/app-settings'
@@ -189,6 +192,11 @@ const logDirectory = join(app.getPath('userData'), 'logs')
 app.setAppLogsPath(logDirectory)
 const fileLogs = new FileLogService(logDirectory)
 installConsoleFileLogging(fileLogs)
+const startupTimeline = new StartupTimeline(
+  () => performance.now(),
+  () => new Date(),
+  ({ stage, elapsedMs }) => console.info(`[startup-timing] ${stage} in ${elapsedMs}ms`)
+)
 void fileLogs.initialize()
   .then(() => fileLogs.writeApp('info', [
     `version=${app.getVersion()}`,
@@ -615,6 +623,7 @@ async function runSystemProxyEnable(
 }
 
 app.whenReady().then(async () => {
+  startupTimeline.mark('electron-ready')
   try {
     parseBrandConfig(brand)
   } catch (error) {
@@ -767,6 +776,7 @@ app.whenReady().then(async () => {
   // Hydrate before login-item and window behavior consume the synchronous mirror.
   // Warmed at module level; this resolves from the store's lazy queue.
   cachedAppSettings = await appSettingsWarm
+  startupTimeline.mark('settings-ready')
   const startupService = new StartupService(new ScheduledTaskStartupAdapter(() => cachedAppSettings.silentLaunch))
   const refreshStartupRegistration = (context: string): void => {
     void startupService.refreshRegistration()
@@ -1263,6 +1273,15 @@ app.whenReady().then(async () => {
   // in between).
   const queuedKernel = queuedKernelGateway(runtimeKernelGateway, modeController)
   const queuedTun = queuedTunGateway(rawTunGateway, modeController)
+  queuedKernel.onStatus((status) => {
+    if (status.phase === 'running') startupTimeline.mark('kernel-ready')
+  })
+  systemProxyService.onStatus((status) => {
+    if (status.phase === 'enabled') startupTimeline.mark('system-proxy-enabled')
+  })
+  queuedTun.onStatus((status) => {
+    if (status.phase === 'active') startupTimeline.mark('tun-active')
+  })
 
   // The service owns the only process, so monitor it regardless of whether TUN
   // is currently enabled. A confirmed unexpected exit first restores an owned
@@ -1414,9 +1433,11 @@ app.whenReady().then(async () => {
     const startedAt = performance.now()
     try {
       await recoverManagedState
+      startupTimeline.mark('managed-state-recovered')
       console.info(`[startup-timing] managed state recovered in ${Math.round(performance.now() - startedAt)}ms`)
       const settings = await appSettingsService.get()
       const restored = await restoreRuntimeIntent(settings, runtimeIntentDeps)
+      startupTimeline.mark('runtime-reconciled')
       console.info(
         `[startup-timing] runtime restored in ${Math.round(performance.now() - startedAt)}ms ` +
         `(kernel=${restored.kernel.phase}, proxy=${restored.systemProxyPhase}, TUN=${restored.tun.phase})`
@@ -1578,6 +1599,15 @@ app.whenReady().then(async () => {
     }, createSubscriptionProxyFetchFn()]
   )
   disposeIpc = registerIpc({
+    waitForStartup: () => startupRuntimeReady,
+    diagnostics: {
+      collect: () => collectDiagnosticReport({
+        version: app.getVersion(), platform: process.platform, arch: process.arch,
+        timeline: startupTimeline, kernel: queuedKernel, systemProxy: systemProxyService,
+        tun: queuedTun, settings: appSettingsService, core: coreSettingsService,
+        tunConfig: tunConfigService, host: new WindowsDiagnosticHost(), logDirectory
+      })
+    },
     internetLatency: internetLatencyService,
     unlock: serviceUnlockService,
     kernel: queuedKernel,
@@ -1648,7 +1678,9 @@ app.whenReady().then(async () => {
     },
     remoteIconCache
   })
+  startupTimeline.mark('ipc-ready')
   createWindow()
+  startupTimeline.mark('window-created')
   const showMainWindow = (): void => {
     if (isQuitting) return
     const window = mainWindow ?? BrowserWindow.getAllWindows()[0] ?? createWindow()
@@ -1758,6 +1790,8 @@ app.whenReady().then(async () => {
   // serialized mode queue.
   await startupRuntimeReady
   networkDetector.start()
+  startupTimeline.mark('network-monitor-started')
+  startupTimeline.seal()
   if (!is.dev && !hasArg('--ui-smoke')) profileAutoUpdater.start()
 
   // Auto-check for a newer release on launch, gated on the persisted

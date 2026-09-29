@@ -6,6 +6,7 @@ import { usePoliciesStore } from "../stores/policies";
 import { groupConnectionsByProcess } from "../lib/connection-groups";
 import { formatBytes } from "../lib/format";
 import AppIcon from "../components/AppIcon.vue";
+import ProcessIcon from "../components/ProcessIcon.vue";
 import DetailDrawer from "../components/DetailDrawer.vue";
 import AppSelect from "../components/AppSelect.vue";
 import EmptyState from "../components/EmptyState.vue";
@@ -122,8 +123,8 @@ onMounted(() => {
         :aria-pressed="selectedKey === group.key"
         @click="selectProcess(group.key)"
       >
-        <i><AppIcon name="processes" :size="16" /></i
-        ><span
+        <ProcessIcon class="process-list-icon" :path="group.connections[0]?.metadata.processPath" :name="group.label" :size="16" />
+        <span
           >{{ group.label }}<small>{{ group.subtitle }}</small></span
         ><strong
           >{{ formatBytes(group.upload + group.download)
@@ -177,6 +178,7 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.process-list-icon{width:29px;height:29px;border-radius:7px;background:rgba(127,127,127,.14)}
 .process-rule-notice{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 16px;margin:12px 0}
 .process-rule-notice span{display:flex;flex-direction:column;gap:3px;min-width:0}
 .process-rule-notice small{color:var(--app-muted);overflow-wrap:anywhere}

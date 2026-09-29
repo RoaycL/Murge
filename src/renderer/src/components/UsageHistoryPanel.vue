@@ -79,7 +79,7 @@ const rankingValueText = computed(() => {
   return store.ranking === 'count' ? `${totals.count}` : formatBytes(bucketValue({ bucketStart: 0, up: totals.up, down: totals.down, count: totals.count }, store.ranking))
 })
 
-const hasData = computed(() => (store.snapshot?.totals?.total ?? 0) > 0 || (store.ranked?.length ?? 0) > 0)
+const hasData = computed(() => (store.snapshot?.totals?.total ?? 0) > 0 || (store.ranked?.length ?? 0) > 0 || (store.processes?.entries.length ?? 0) > 0)
 
 /** Short human label for a bucket start, scaled to the current window grid. */
 function timeLabel(bucketStart: number): string {
@@ -157,12 +157,20 @@ async function confirmClear(): Promise<void> {
         </div>
       </div>
       <p v-else class="usage-empty">该时间范围内没有排名数据。</p>
+      <section class="process-usage" aria-label="应用流量历史">
+        <h3>应用流量</h3>
+        <p>按连接快照观察到的流量统计；连接结束前的最后一段、程序未上报的流量可能缺失，因此不与上方总量相等。仅在本机保存进程名。</p>
+        <div v-for="item in store.processes?.entries.slice(0, 20) ?? []" :key="item.name" class="process-usage-row">
+          <span>{{ item.name }}</span><strong>{{ formatBytes(item.total) }}</strong>
+        </div>
+        <p v-if="!store.processes?.entries.length" class="usage-empty">该时间范围内暂无应用流量记录。</p>
+      </section>
     </template>
 
     <footer class="usage-footer">
       <button type="button" class="usage-clear" :disabled="store.busy" @click="clearOpen = true"><AppIcon name="delete" :size="14" />清空记录</button>
     </footer>
-    <ConfirmModal :open="clearOpen" title="清空使用记录？" description="这会永久删除全部聚合流量历史，此操作不可撤销。" confirm-label="确认清空" :busy="store.busy" @close="clearOpen = false" @confirm="confirmClear" />
+    <ConfirmModal :open="clearOpen" title="清空使用记录？" description="这会永久删除全部聚合流量和应用流量历史，此操作不可撤销。" confirm-label="确认清空" :busy="store.busy" @close="clearOpen = false" @confirm="confirmClear" />
   </SurfaceCard>
 </template>
 
@@ -188,4 +196,11 @@ async function confirmClear(): Promise<void> {
 .usage-footer { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 16px; }
 .usage-clear { display: inline-flex; min-height: 28px; align-items: center; gap: 5px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: 7px; background: transparent; color: var(--app-danger, #d64f4f); font-size: 11px; white-space: nowrap; flex-shrink: 0; }
 .usage-clear:disabled { opacity: 0.5; }
+.process-usage{display:grid;gap:7px;margin-top:18px;padding-top:14px;border-top:1px solid var(--app-divider)}
+.process-usage h3,.process-usage p{margin:0}
+.process-usage h3{font-size:13px}
+.process-usage p{color:var(--app-muted);font-size:11px;line-height:1.5}
+.process-usage-row{display:flex;justify-content:space-between;gap:10px;font-size:11px}
+.process-usage-row span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.process-usage-row strong{flex:none;font-weight:600}
 </style>

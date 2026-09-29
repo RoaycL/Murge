@@ -9,6 +9,7 @@ import type { ActiveProfileConfigInspection, ProfileProviderCatalog, ProfileProv
 import { IPC } from '@shared/ipc'
 import type { DiagnosticReport } from '@shared/diagnostics'
 import type { ConfigBackupPreview, ConfigBackupResult } from '@shared/config-backup'
+import type { WebDavBackupTarget } from '@shared/webdav-backup'
 import { ProtocolError, encodeProtocolError } from '@shared/protocol-errors'
 import { fetchExternalIpViaProxy } from '../services/external-ip'
 import { buildIpcHandlers, type IpcHandler } from './handlers'
@@ -54,6 +55,8 @@ export interface IpcDependencies {
     create(password: string): Promise<ConfigBackupResult>
     preview(password: string): Promise<ConfigBackupPreview | null>
     restore(token: string): Promise<void>
+    webdavUpload(target: WebDavBackupTarget, password: string): Promise<ConfigBackupResult>
+    webdavPreview(target: WebDavBackupTarget, password: string): Promise<ConfigBackupPreview>
   }
 }
 
@@ -178,6 +181,8 @@ export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemPro
     entries.push([IPC.backupCreate, async (_event, password) => backup.create(password as string)])
     entries.push([IPC.backupPreview, async (_event, password) => backup.preview(password as string)])
     entries.push([IPC.backupRestore, async (_event, token) => backup.restore(token as string)])
+    entries.push([IPC.backupWebDavUpload, async (_event, target, password) => backup.webdavUpload(target as WebDavBackupTarget, password as string)])
+    entries.push([IPC.backupWebDavPreview, async (_event, target, password) => backup.webdavPreview(target as WebDavBackupTarget, password as string)])
   }
   entries.push([IPC.appGetProcessIcon, async (_event, rawPath) => {
     if (process.platform !== 'win32') return null

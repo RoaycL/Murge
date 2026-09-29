@@ -1,5 +1,6 @@
 import type { KernelGateway, KernelManagerGateway, MihomoGateway, RuntimeGateway, ProfileGateway, IpcDeps, SystemProxyGateway, StartupGateway, AppSettingsGateway, UpdatesGateway, OverridesGateway, DnsEnhancementGateway, SnifferEnhancementGateway, TunConfigGateway, CoreSettingsGateway, GeodataSettingsGateway, UsageHistoryGateway, NetworkMetadataGateway, ServiceUnlockSampler } from '@shared/gateways'
 import type { UsageBucket, UsageWindow, UsageRanking, UsageHistorySnapshot, UsageRankingEntry, UsageCapacity } from '@shared/usage'
+import type { ProcessUsageSnapshot } from '@shared/process-usage'
 import { aggregateUsageWindow, rankUsageBuckets, usageCapacity } from '@shared/usage'
 import type { NetworkMetadata, NetworkMetadataProvider, NetworkMetadataSnapshot, NetworkMetadataState } from '@shared/network-metadata'
 import { defaultNetworkMetadataProviderId, getNetworkMetadataProvider, networkMetadataProviderList } from '@shared/network-metadata'
@@ -528,6 +529,9 @@ export class FakeUsageHistoryGateway implements UsageHistoryGateway {
   rank(window: UsageWindow, ranking: UsageRanking, limit?: number): UsageRankingEntry[] {
     this.rankCalls.push({ window, ranking, limit })
     return rankUsageBuckets(aggregateUsageWindow(this.buckets, window, Date.now()).buckets, ranking, limit)
+  }
+  processRanking(window: UsageWindow): ProcessUsageSnapshot {
+    return { window, observedBytes: 0, entries: [] }
   }
   async clear(): Promise<void> {
     this.clearCalls += 1

@@ -17,6 +17,9 @@ const backupError = ref('')
 const backupNotice = ref('')
 const backupPreview = ref<ConfigBackupPreview | null>(null)
 const restoreConfirmed = ref(false)
+const webdavUrl = ref('')
+const webdavUsername = ref('')
+const webdavPassword = ref('')
 const delayScopeOptions = [
   { value: 'group', label: '跟随策略组' },
   { value: 'global', label: '始终使用全局地址' }
@@ -69,6 +72,37 @@ async function previewBackup(): Promise<void> {
   backupBusy.value = true
   try { backupPreview.value = await window.desktop.backup.preview(restorePassword.value) }
   catch (error) { backupError.value = error instanceof Error ? error.message : '读取备份失败' }
+  finally { backupBusy.value = false }
+}
+
+function webdavTarget(): { url: string; username: string; password: string } {
+  return { url: webdavUrl.value.trim(), username: webdavUsername.value.trim(), password: webdavPassword.value }
+}
+
+async function uploadWebDav(): Promise<void> {
+  if (backupBusy.value) return
+  backupError.value = ''; backupNotice.value = ''
+  if (backupPassword.value.length < 8 || backupPassword.value !== backupConfirm.value) {
+    backupError.value = '请设置至少 8 位备份密码，并确认两次输入一致。'; return
+  }
+  backupBusy.value = true
+  try {
+    await window.desktop.backup.webdavUpload(webdavTarget(), backupPassword.value)
+    backupNotice.value = '加密备份已上传到 WebDAV。'
+    backupPassword.value = ''; backupConfirm.value = ''; webdavPassword.value = ''
+  } catch (error) { backupError.value = error instanceof Error ? error.message : 'WebDAV 上传失败' }
+  finally { backupBusy.value = false }
+}
+
+async function previewWebDav(): Promise<void> {
+  if (backupBusy.value) return
+  backupError.value = ''; backupNotice.value = ''; backupPreview.value = null; restoreConfirmed.value = false
+  if (!restorePassword.value) { backupError.value = '请先输入备份密码。'; return }
+  backupBusy.value = true
+  try {
+    backupPreview.value = await window.desktop.backup.webdavPreview(webdavTarget(), restorePassword.value)
+    webdavPassword.value = ''
+  } catch (error) { backupError.value = error instanceof Error ? error.message : 'WebDAV 下载失败' }
   finally { backupBusy.value = false }
 }
 
@@ -161,7 +195,7 @@ onMounted(async () => {
     <section>
       <h2>配置备份与恢复</h2>
       <div class="surface-card backup-panel">
-        <div class="backup-intro"><strong>本地加密备份</strong><p>包含配置、订阅及 Sub-Store 用户数据，不包含日志和缓存。密码只用于本次操作；忘记密码将无法恢复。暂不上传到 WebDAV。</p></div>
+        <div class="backup-intro"><strong>加密备份</strong><p>包含配置、订阅及 Sub-Store 用户数据，不包含日志和缓存。备份密码只用于本次操作；忘记密码将无法恢复。</p></div>
         <div class="backup-grid">
           <div class="backup-action">
             <strong>创建备份</strong>
@@ -173,17 +207,24 @@ onMounted(async () => {
             <strong>从备份恢复</strong>
             <input v-model="restorePassword" type="password" autocomplete="off" placeholder="输入备份密码" aria-label="备份恢复密码" />
             <button type="button" :disabled="backupBusy" @click="previewBackup">选择文件并预览</button>
-            <div v-if="backupPreview" class="backup-preview" :class="{ incompatible: !backupPreview.compatible }">
-              <strong>恢复前预览</strong>
-              <span>备份版本 {{ backupPreview.appVersion }} · {{ new Date(backupPreview.createdAt).toLocaleString() }}</span>
-              <span>{{ backupPreview.profileCount }} 个配置 · {{ backupPreview.subscriptionSourceCount }} 个订阅地址 · {{ backupPreview.fileCount }} 个文件</span>
-              <span>将替换 {{ backupPreview.replaceCount }} 个现有文件、新增 {{ backupPreview.addCount }} 个、移除 {{ backupPreview.removeCount }} 个</span>
-              <span>覆写：{{ backupPreview.includesOverrides ? '包含' : '无' }} · Sub-Store：{{ backupPreview.includesSubStore ? '包含' : '无' }}</span>
-              <span>{{ backupPreview.compatibilityMessage }}</span>
-              <label v-if="backupPreview.compatible"><input v-model="restoreConfirmed" type="checkbox" /> 我了解恢复将替换当前配置，应用需要重启</label>
-              <button v-if="backupPreview.compatible" type="button" :disabled="backupBusy || !restoreConfirmed" @click="restoreBackup">确认恢复并重启</button>
-            </div>
           </div>
+        </div>
+        <div class="webdav-backup">
+          <strong>WebDAV 备份</strong>
+          <p>填写远端 .murge-backup 文件的完整 HTTPS 地址。只上传加密备份；WebDAV 账号和密码不会保存。上传将覆盖同名远端文件。</p>
+          <input v-model="webdavUrl" type="url" spellcheck="false" placeholder="https://dav.example.com/backups/backup.murge-backup" aria-label="WebDAV 备份文件地址" />
+          <div class="webdav-credentials"><input v-model="webdavUsername" autocomplete="username" placeholder="WebDAV 用户名" aria-label="WebDAV 用户名" /><input v-model="webdavPassword" type="password" autocomplete="off" placeholder="WebDAV 密码" aria-label="WebDAV 密码" /></div>
+          <div class="webdav-actions"><button type="button" :disabled="backupBusy || !webdavUrl.trim()" @click="uploadWebDav">上传加密备份</button><button type="button" :disabled="backupBusy || !webdavUrl.trim()" @click="previewWebDav">下载并预览恢复</button></div>
+        </div>
+        <div v-if="backupPreview" class="backup-preview" :class="{ incompatible: !backupPreview.compatible }">
+          <strong>恢复前预览</strong>
+          <span>备份版本 {{ backupPreview.appVersion }} · {{ new Date(backupPreview.createdAt).toLocaleString() }}</span>
+          <span>{{ backupPreview.profileCount }} 个配置 · {{ backupPreview.subscriptionSourceCount }} 个订阅地址 · {{ backupPreview.fileCount }} 个文件</span>
+          <span>将替换 {{ backupPreview.replaceCount }} 个现有文件、新增 {{ backupPreview.addCount }} 个、移除 {{ backupPreview.removeCount }} 个</span>
+          <span>覆写：{{ backupPreview.includesOverrides ? '包含' : '无' }} · Sub-Store：{{ backupPreview.includesSubStore ? '包含' : '无' }}</span>
+          <span>{{ backupPreview.compatibilityMessage }}</span>
+          <label v-if="backupPreview.compatible"><input v-model="restoreConfirmed" type="checkbox" /> 我了解恢复将替换当前配置，应用需要重启</label>
+          <button v-if="backupPreview.compatible" type="button" :disabled="backupBusy || !restoreConfirmed" @click="restoreBackup">确认恢复并重启</button>
         </div>
       </div>
       <p v-if="backupError" class="inline-error" role="alert">{{ backupError }}</p>
@@ -240,5 +281,14 @@ onMounted(async () => {
 .backup-preview.incompatible{background:color-mix(in srgb,#e96952 10%,var(--app-surface))}
 .backup-preview span{overflow-wrap:anywhere}
 .backup-preview label{display:flex;align-items:center;gap:7px;margin:5px 0}
+.webdav-backup{display:grid;gap:9px;margin-top:16px;padding:16px;border:1px solid var(--app-divider);border-radius:13px}
+.webdav-backup>strong{font-size:13px}
+.webdav-backup p{margin:0;color:var(--app-muted);font-size:11px;line-height:1.5}
+.webdav-backup input{min-width:0;width:100%;height:35px;padding:0 11px;border:1px solid var(--app-divider);border-radius:8px;background:var(--app-surface);color:var(--app-text)}
+.webdav-credentials{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.webdav-actions{display:flex;gap:10px;flex-wrap:wrap}
+.webdav-actions button{padding:8px 13px;border:0;border-radius:8px;background:var(--app-accent);color:white;cursor:pointer}
+.webdav-actions button:disabled{opacity:.5;cursor:not-allowed}
+.backup-panel>.backup-preview{margin-top:16px}
 @media(max-width:760px){.backup-grid{grid-template-columns:1fr}}
 </style>

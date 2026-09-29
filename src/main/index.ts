@@ -35,6 +35,7 @@ import { MihomoClient } from './services/mihomo-client'
 import { MihomoService } from './services/mihomo-service'
 import { UsageHistoryService } from './services/usage-history-service'
 import { FileSystemUsageHistoryStore, InMemoryUsageHistoryStore } from './services/usage-history-store'
+import { FileSystemProcessUsageStore, InMemoryProcessUsageStore } from './services/process-usage-store'
 import { NetworkMetadataService, fetchMetadataJsonViaProxy } from './services/network-metadata-service'
 import { RemoteIconCache } from './services/remote-icon-cache'
 import { ProfileRepository } from './profiles/profile-repository'
@@ -71,6 +72,7 @@ import { StartupTimeline } from './startup/startup-timeline'
 import { collectDiagnosticReport } from './diagnostics/report-service'
 import { WindowsDiagnosticHost } from './diagnostics/windows-host'
 import { applyPendingConfigRestore, createConfigBackup, describeConfigRestoreImpact, inspectConfigBackup, stageConfigRestore, type ConfigBackupPayload } from './backup/config-backup'
+import { uploadWebDavBackup, downloadWebDavBackup } from './backup/webdav-backup'
 import { AppSettingsService } from './app-settings/service'
 import { SubStoreService } from './substore/service'
 import { DEFAULT_APP_SETTINGS, type AppSettings } from '@shared/app-settings'
@@ -1519,6 +1521,9 @@ app.whenReady().then(async () => {
     store: app.isPackaged
       ? FileSystemUsageHistoryStore.forAppDataBase(app.getPath('appData'))
       : new InMemoryUsageHistoryStore(),
+    processStore: app.isPackaged
+      ? FileSystemProcessUsageStore.forAppDataBase(app.getPath('appData'))
+      : new InMemoryProcessUsageStore(),
     onTraffic: (listener) => gateway.onTraffic(listener),
     onConnections: (listener) => gateway.onConnections(listener),
     onError: (error) => console.error('[usage-history] background persistence failed:', error)
@@ -1642,6 +1647,26 @@ app.whenReady().then(async () => {
         const path = choice.filePaths[0]
         if ((await stat(path)).size > 48 * 1024 * 1024) throw new Error('备份文件超过上限')
         const inspected = inspectConfigBackup(await readFile(path), password, app.getVersion())
+        const impact = await describeConfigRestoreImpact(appDataBaseRoot, inspected.payload)
+        const token = randomUUID()
+        pendingBackupPreview = { token, payload: inspected.payload, compatible: inspected.preview.compatible }
+        return { ...inspected.preview, ...impact, token }
+      },
+      webdavUpload: async (target, password) => {
+        if (is.dev) throw new Error('配置备份仅在安装版中可用')
+        const archive = await createConfigBackup(appDataBaseRoot, password, app.getVersion(), {
+          isAvailable: () => safeStorage.isEncryptionAvailable(),
+          encrypt: (value) => safeStorage.encryptString(value),
+          decrypt: (value) => safeStorage.decryptString(value)
+        })
+        await uploadWebDavBackup(target, archive)
+        return { saved: true }
+      },
+      webdavPreview: async (target, password) => {
+        if (is.dev) throw new Error('配置恢复仅在安装版中可用')
+        pendingBackupPreview = null
+        const archive = await downloadWebDavBackup(target)
+        const inspected = inspectConfigBackup(archive, password, app.getVersion())
         const impact = await describeConfigRestoreImpact(appDataBaseRoot, inspected.payload)
         const token = randomUUID()
         pendingBackupPreview = { token, payload: inspected.payload, compatible: inspected.preview.compatible }

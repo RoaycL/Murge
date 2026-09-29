@@ -6,7 +6,7 @@ import type { ConfigBackupPreview } from '../../shared/config-backup'
 
 const FORMAT = 'murge-config-backup'
 const SCHEMA_VERSION = 1
-const MAX_ARCHIVE_BYTES = 48 * 1024 * 1024
+export const MAX_ARCHIVE_BYTES = 48 * 1024 * 1024
 const MAX_CONTENT_BYTES = 32 * 1024 * 1024
 const MAX_FILE_BYTES = 8 * 1024 * 1024
 const MAX_FILES = 500

@@ -12,6 +12,7 @@ import type { SnifferEnhancement, SnifferSnapshot } from './sniffer'
 import type { GeodataSettings } from './geodata'
 import type { ServiceUnlockResult, UnlockServiceName } from './unlock'
 import type { UsageWindow, UsageRanking, UsageHistorySnapshot, UsageRankingEntry, UsageCapacity } from './usage'
+import type { ProcessUsageSnapshot } from './process-usage'
 import type { NetworkMetadataProvider, NetworkMetadataSnapshot, NetworkMetadataState } from './network-metadata'
 import type {
   MihomoConfigSnapshot,
@@ -319,6 +320,8 @@ export interface UsageHistoryGateway {
   getWindow(window: UsageWindow): UsageHistorySnapshot | Promise<UsageHistorySnapshot>
   /** Rank a window's buckets by the chosen metric into a 1-based ordered list. */
   rank(window: UsageWindow, ranking: UsageRanking, limit?: number): UsageRankingEntry[] | Promise<UsageRankingEntry[]>
+  /** Observed per-process bytes from connection snapshots; may be lower than the total traffic history. */
+  processRanking(window: UsageWindow): ProcessUsageSnapshot | Promise<ProcessUsageSnapshot>
   /** Drop the whole bounded database; write-back via the underlying store. */
   clear(): Promise<void>
   /** Static capacity facts (bucket granularity, cap, retention). */

@@ -36,12 +36,14 @@ import type { TunConfigModel, TunConfigSnapshot } from './tun-config'
 import type { CoreSettings } from './core-settings'
 import type { GeodataSettings } from './geodata'
 import type { UsageWindow, UsageRanking, UsageHistorySnapshot, UsageRankingEntry, UsageCapacity } from './usage'
+import type { ProcessUsageSnapshot } from './process-usage'
 import type { NetworkMetadataProvider, NetworkMetadataSnapshot, NetworkMetadataState } from './network-metadata'
 import type { AppInfo } from './app-info'
 import type { AppSettings } from './app-settings'
 import type { UpdateState } from './updates'
 import type { DiagnosticReport } from './diagnostics'
 import type { ConfigBackupPreview, ConfigBackupResult } from './config-backup'
+import type { WebDavBackupTarget } from './webdav-backup'
 
 export const IPC = {
   appGetBrand: 'app:get-brand',
@@ -53,6 +55,8 @@ export const IPC = {
   backupCreate: 'backup:create',
   backupPreview: 'backup:preview',
   backupRestore: 'backup:restore',
+  backupWebDavUpload: 'backup:webdav-upload',
+  backupWebDavPreview: 'backup:webdav-preview',
   appNavigateEvent: 'app:navigate-event',
   kernelGetStatus: 'kernel:get-status',
   kernelStart: 'kernel:start',
@@ -162,6 +166,7 @@ export const IPC = {
   geodataSettingsPreview: 'geodata-settings:preview',
   usageHistoryGetWindow: 'usage-history:get-window',
   usageHistoryRank: 'usage-history:rank',
+  usageHistoryProcessRanking: 'usage-history:process-ranking',
   usageHistoryClear: 'usage-history:clear',
   usageHistoryGetCapacity: 'usage-history:get-capacity',
   networkMetadataGetProviders: 'network-metadata:get-providers',
@@ -191,6 +196,8 @@ export interface DesktopApi {
     create(password: string): Promise<ConfigBackupResult>
     preview(password: string): Promise<ConfigBackupPreview | null>
     restore(token: string): Promise<void>
+    webdavUpload(target: WebDavBackupTarget, password: string): Promise<ConfigBackupResult>
+    webdavPreview(target: WebDavBackupTarget, password: string): Promise<ConfigBackupPreview>
   }
   kernel: {
     getStatus(): Promise<KernelStatus>
@@ -346,6 +353,7 @@ export interface DesktopApi {
   usageHistory: {
     getWindow(window: UsageWindow): Promise<UsageHistorySnapshot>
     rank(window: UsageWindow, ranking: UsageRanking, limit?: number): Promise<UsageRankingEntry[]>
+    processRanking(window: UsageWindow): Promise<ProcessUsageSnapshot>
     clear(): Promise<void>
     getCapacity(): Promise<UsageCapacity>
   }

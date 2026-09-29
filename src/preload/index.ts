@@ -38,7 +38,9 @@ const api: DesktopApi = {
   backup: {
     create: (password) => invoke(IPC.backupCreate, password),
     preview: (password) => invoke(IPC.backupPreview, password),
-    restore: (token) => invoke(IPC.backupRestore, token)
+    restore: (token) => invoke(IPC.backupRestore, token),
+    webdavUpload: (target, password) => invoke(IPC.backupWebDavUpload, target, password),
+    webdavPreview: (target, password) => invoke(IPC.backupWebDavPreview, target, password)
   },
   kernel: {
     getStatus: () => invoke(IPC.kernelGetStatus),
@@ -184,6 +186,7 @@ const api: DesktopApi = {
   usageHistory: {
     getWindow: (window) => invoke(IPC.usageHistoryGetWindow, window),
     rank: (window, ranking, limit) => invoke(IPC.usageHistoryRank, window, ranking, limit),
+    processRanking: (window) => invoke(IPC.usageHistoryProcessRanking, window),
     clear: () => invoke(IPC.usageHistoryClear),
     getCapacity: () => invoke(IPC.usageHistoryGetCapacity)
   },

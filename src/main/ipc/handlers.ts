@@ -245,6 +245,7 @@ export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {})
     [IPC.usageHistoryGetWindow]: async (_event, window) => usageHistory.getWindow(parseUsageWindow(window)),
     [IPC.usageHistoryRank]: async (_event, window, ranking, limit) =>
       usageHistory.rank(parseUsageWindow(window), parseUsageRanking(ranking), parseUsageRankLimit(limit)),
+    [IPC.usageHistoryProcessRanking]: async (_event, window) => usageHistory.processRanking(parseUsageWindow(window)),
     [IPC.usageHistoryClear]: async () => usageHistory.clear(),
     [IPC.usageHistoryGetCapacity]: async () => usageHistory.getCapacity(),
 

@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { UsageCapacity, UsageHistorySnapshot, UsageRankingEntry, UsageRanking, UsageWindow } from '@shared/usage'
+import type { ProcessUsageSnapshot } from '@shared/process-usage'
 import { USAGE_WINDOW_CONFIG, USAGE_MAX_BUCKETS } from '@shared/usage'
 import { toProtocolError } from '@shared/protocol-errors'
 
@@ -22,6 +23,7 @@ export const useUsageHistoryStore = defineStore('usage-history', () => {
   const usageRanking = ref<UsageRanking>('total')
   const snapshot = ref<UsageHistorySnapshot | null>(null)
   const ranked = ref<UsageRankingEntry[]>([])
+  const processes = ref<ProcessUsageSnapshot | null>(null)
   const busy = ref(false)
   const lastError = ref<string | null>(null)
 
@@ -32,12 +34,14 @@ export const useUsageHistoryStore = defineStore('usage-history', () => {
       capacity.value = await window.desktop.usageHistory.getCapacity()
       // Load the window + ranking reads in parallel; a ranking is derived from
       // the same windowed slice the chart renders, so they agree.
-      const [snap, list] = await Promise.all([
+      const [snap, list, processList] = await Promise.all([
         window.desktop.usageHistory.getWindow(usageWindow.value),
-        window.desktop.usageHistory.rank(usageWindow.value, usageRanking.value)
+        window.desktop.usageHistory.rank(usageWindow.value, usageRanking.value),
+        window.desktop.usageHistory.processRanking(usageWindow.value)
       ])
       snapshot.value = snap
       ranked.value = list
+      processes.value = processList
       lastError.value = null
     } catch (error) {
       lastError.value = toProtocolError(error).message
@@ -65,6 +69,7 @@ export const useUsageHistoryStore = defineStore('usage-history', () => {
       await window.desktop.usageHistory.clear()
       snapshot.value = null
       ranked.value = []
+      processes.value = null
       lastError.value = null
       return true
     } catch (error) {
@@ -83,6 +88,7 @@ export const useUsageHistoryStore = defineStore('usage-history', () => {
     ranking: usageRanking,
     snapshot,
     ranked,
+    processes,
     busy,
     lastError,
     refresh,

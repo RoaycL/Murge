@@ -22,11 +22,31 @@ describe('ElectronStartupAdapter', () => {
     electron.getLoginItemSettings.mockReturnValue({
       openAtLogin: false,
       executableWillLaunchAtLogin: true,
-      launchItems: []
+      launchItems: [{ name: brand.appId, path: process.execPath, args: ['--old'], scope: 'user', enabled: true }]
     })
     const adapter = new ElectronStartupAdapter(() => false, { supported: true })
     expect(await adapter.readRegistered()).toBe(true)
     expect(electron.getLoginItemSettings).toHaveBeenCalledWith({ path: process.execPath })
+  })
+
+  it('ignores Electron false positives from unrelated unquoted Program Files entries', async () => {
+    electron.getLoginItemSettings.mockReturnValue({
+      executableWillLaunchAtLogin: true,
+      launchItems: [{ name: 'Microsoft.Lists', path: 'C:\\Program', args: ['Files\\Microsoft\\OneDrive.exe'], scope: 'user', enabled: true }]
+    })
+    const adapter = new ElectronStartupAdapter(() => false, { supported: true })
+    expect(await adapter.readRegistered()).toBe(false)
+    await adapter.rewriteIfEnabled()
+    expect(electron.setLoginItemSettings).not.toHaveBeenCalled()
+  })
+
+  it('does not report a disabled matching startup entry as enabled', async () => {
+    electron.getLoginItemSettings.mockReturnValue({
+      executableWillLaunchAtLogin: true,
+      launchItems: [{ name: brand.appId, path: process.execPath, args: [], scope: 'user', enabled: false }]
+    })
+    const adapter = new ElectronStartupAdapter(() => false, { supported: true })
+    expect(await adapter.readRegistered()).toBe(false)
   })
 
   it('removes both historical argument shapes when disabling the fallback', async () => {

@@ -30,7 +30,12 @@ export class ElectronStartupAdapter implements StartupAdapter {
   /** Existence check regardless of registered arguments (used by migration). */
   async readRegistered(): Promise<boolean> {
     if (!this.supported) return false
-    return app.getLoginItemSettings({ path: process.execPath }).executableWillLaunchAtLogin
+    const registered = app.getLoginItemSettings({ path: process.execPath })
+    // Electron may match an unrelated unquoted "C:\\Program Files\\..." Run
+    // entry by its truncated executable prefix. Verify the complete path.
+    return (registered.launchItems ?? []).some((item) =>
+      item.enabled && item.path.toLowerCase() === process.execPath.toLowerCase()
+    )
   }
 
   async write(enabled: boolean): Promise<void> {
@@ -74,7 +79,7 @@ export class ElectronStartupAdapter implements StartupAdapter {
     if (!this.supported) return
     // Query without argument matching so a registration created with the old
     // silent-launch value is still found, then overwrite it with current args.
-    const registered = app.getLoginItemSettings({ path: process.execPath }).executableWillLaunchAtLogin
+    const registered = await this.readRegistered()
     if (registered) await this.write(true)
   }
 

@@ -153,15 +153,22 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
   }
 
   private async disable(): Promise<void> {
-    const taskXml = await this.queryTaskXml()
+    const taskXml = await this.queryTaskXml(true)
     if (taskXml !== null && taskSettingsEnabled(taskXml)) {
       const result = await this.runner(SCHTASKS_COMMAND, ['/change', '/tn', TASK_NAME, '/disable'])
-      const updated = result.code === 0 ? await this.queryTaskXml() : null
+      if (result.code !== 0) {
+        throw new Error(`无法禁用开机启动计划任务：${result.stderr.trim() || result.stdout.trim() || `Windows 错误码 ${result.code}`}`)
+      }
+      const updated = await this.queryTaskXml(true)
       if (updated === null || taskSettingsEnabled(updated)) {
         throw new Error('无法禁用开机启动计划任务，请检查任务权限')
       }
     }
     await this.clearRunFallbacks()
+    if (await this.hasStableRunEntry() || await this.hasLegacyRunEntry() ||
+      ((await this.legacy.readRegistered?.()) ?? (await this.legacy.read()))) {
+      throw new Error('无法清除开机启动注册表项，请检查启动项权限')
+    }
   }
 
   private runValue(): string {
@@ -224,12 +231,29 @@ export class ScheduledTaskStartupAdapter implements StartupAdapter {
   }
 
   /** The registered task definition, or null when the task does not exist. */
-  private async queryTaskXml(): Promise<string | null> {
+  private async queryTaskXml(strict = false): Promise<string | null> {
     try {
       const result = await this.runner(SCHTASKS_COMMAND, ['/query', '/tn', TASK_NAME, '/xml'])
-      if (result.code !== 0) return null
-      return result.stdout.includes('<?xml') ? result.stdout : null
-    } catch {
+      if (result.code !== 0) {
+        // Only accept a failed query as absence after verifying the task list.
+        if (strict && result.code !== 1) {
+          throw new Error(result.stderr.trim() || result.stdout.trim() || `Windows 错误码 ${result.code}`)
+        }
+        if (strict && result.code === 1) {
+          // schtasks uses exit 1 for both missing tasks and access denial.
+          // Enumerate task names to prove absence without relying on localized text.
+          const listing = await this.runner(SCHTASKS_COMMAND, ['/query', '/fo', 'CSV', '/nh'])
+          if (listing.code !== 0 || listing.stdout.toLowerCase().includes(`\\${TASK_NAME.toLowerCase()}\"`)) {
+            throw new Error(result.stderr.trim() || result.stdout.trim() || '无法读取开机启动计划任务')
+          }
+        }
+        return null
+      }
+      if (result.stdout.includes('<?xml')) return result.stdout
+      if (strict) throw new Error('Windows 返回的开机启动任务数据无效')
+      return null
+    } catch (error) {
+      if (strict) throw error
       // schtasks exits non-zero with "The system cannot find the file
       // specified" when the task is absent — indistinguishable from a transport
       // failure here, and both mean "not registered via a task".

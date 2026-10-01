@@ -25,6 +25,8 @@ function makeAdapter(options: {
   denyChange?: boolean
   runEntry?: boolean
   legacyEntry?: boolean
+  queryFailure?: 'denied' | 'timeout' | 'invalid'
+  denyRunDelete?: boolean
 } = {}) {
   const state = {
     task: options.task ?? null,
@@ -48,6 +50,10 @@ function makeAdapter(options: {
       calls.push([command, ...args])
       if (command.includes('schtasks')) {
         if (args[0] === '/query') {
+          if (args.includes('/fo')) return { code: 0, stdout: state.task === null ? '' : `"\\${SCHEDULED_TASK_NAME}","N/A","Ready"`, stderr: '' }
+          if (options.queryFailure === 'timeout') throw new Error('ETIMEDOUT: schtasks')
+          if (options.queryFailure === 'denied') return { code: 1, stdout: '', stderr: 'Access is denied' }
+          if (options.queryFailure === 'invalid') return { code: 0, stdout: 'invalid data', stderr: '' }
           return state.task === null
             ? { code: 1, stdout: '', stderr: 'not found' }
             : { code: 0, stdout: taskXml(state.task), stderr: '' }
@@ -72,7 +78,8 @@ function makeAdapter(options: {
         return { code: 0, stdout: 'SUCCESS', stderr: '' }
       }
       if (args[0] === 'delete') {
-        if (args[args.length - 1]!.startsWith('electron.app.')) state.legacyEntry = false
+        if (options.denyRunDelete) return { code: 1, stdout: '', stderr: 'Access is denied' }
+        if (args[args.indexOf('/v') + 1]!.startsWith('electron.app.')) state.legacyEntry = false
         else state.runEntry = false
         return { code: 0, stdout: 'SUCCESS', stderr: '' }
       }
@@ -129,6 +136,23 @@ describe('installer-managed startup task', () => {
     const status = await new StartupService(adapter).setEnabled(false)
     expect(status).toMatchObject({ enabled: true, phase: 'error' })
     expect(state.task).toBe(true)
+    expect(status.errorMessage).toContain('Access is denied')
+  })
+
+  it.each(['denied', 'timeout', 'invalid'] as const)('does not treat a %s query as an absent task when disabling', async (queryFailure) => {
+    const { adapter, state, calls } = makeAdapter({ task: true, queryFailure, runEntry: true })
+    await expect(adapter.write(false)).rejects.toThrow()
+    expect(state.task).toBe(true)
+    expect(state.runEntry).toBe(true)
+    expect(calls.some((call) => call.includes('/disable') || call.includes('delete'))).toBe(false)
+  })
+
+  it('reports a Run entry that Windows refused to remove', async () => {
+    const { adapter, state } = makeAdapter({ task: false, runEntry: true, denyRunDelete: true })
+    const status = await new StartupService(adapter).setEnabled(false)
+    expect(status).toMatchObject({ enabled: true, phase: 'error' })
+    expect(status.errorMessage).toContain('注册表')
+    expect(state.runEntry).toBe(true)
   })
 
   it('keeps an enabled task and removes duplicate Run entries on refresh', async () => {

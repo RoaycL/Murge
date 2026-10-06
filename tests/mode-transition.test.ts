@@ -238,6 +238,31 @@ describe('P1-1 normal TUN mode switch keeps the owned system proxy', () => {
     expect(h.proxy.restoreCalls).toBe(1)
   })
 
+  it.each(['restoring', 'restore-failed'] as const)(
+    'abnormal-exit recovery also resumes the main kernel when TUN is %s',
+    async (phase) => {
+      const h = createHarness({ controllerReady: true, probeTunSession: async () => 'owned-gone' })
+      await h.ipcTun.enable()
+      await h.tun.forcePhase(phase)
+      await h.controller.recoverTunExit()
+      expect(h.tun.disableCalls).toBe(1)
+      expect(h.kernel.resumeAfterTunCalls).toBe(1)
+      expect(h.tun.status.phase).toBe('configured')
+      expect(h.proxy.restoreCalls).toBe(0)
+    }
+  )
+
+  it.each(['configured', 'failed', 'conflict'] as const)(
+    'abnormal-exit recovery leaves TUN alone when it is %s',
+    async (phase) => {
+      const h = createHarness({ probeTunSession: async () => 'owned-gone' })
+      await h.tun.forcePhase(phase)
+      await h.controller.recoverTunExit()
+      expect(h.tun.disableCalls).toBe(0)
+      expect(h.kernel.resumeAfterTunCalls).toBe(0)
+    }
+  )
+
   it('abnormal-exit recovery re-probes first: a live session is never torn down', async () => {
     let probeAnswer: 'owned-live' | 'owned-gone' | 'unreachable' = 'owned-live'
     const h = createHarness({ probeTunSession: () => Promise.resolve(probeAnswer) })

@@ -545,18 +545,14 @@ export function generateProxiedTunConfig(options: ProxiedTunConfigOptions): stri
       ? { ...(existingDns as Record<string, unknown>) }
       : {}
   if (dns.enable !== true && existingDns === undefined) {
-    // "DNS override off" means the profile is authoritative, but a profile
-    // with no dns block still needs a safe runtime fallback while TUN owns port
-    // 53. Keeping this baseline enabled also keeps both the TUN prefix and its
-    // dns-hijack config byte-identical when the override is toggled, allowing
-    // mihomo's ReCreateTun equality guard to preserve the Windows adapter.
-    data.dns = {
-      enable: true,
-      'enhanced-mode': 'fake-ip',
-      'fake-ip-range': '198.18.0.1/16',
-      'fake-ip-filter': [...TUN_DEFAULT_FAKE_IP_FILTER],
-      nameserver: ['system']
-    }
+    // clash-party parity: a profile without a dns block keeps the DNS module
+    // off and TUN does not hijack port 53, so apps keep real IPs. This must
+    // match the hot-switch enable path (which reads the same document and
+    // clears dns-hijack); a fake-ip fallback here made a later config reload
+    // flip a running TUN from real IPs to fake IPs and rebuild the adapter.
+    // Smart cores still derive the TUN prefix from dns.fake-ip-range.
+    tunBlock['dns-hijack'] = []
+    data.dns = { enable: false, 'fake-ip-range': '198.18.0.1/16' }
   } else if (dns.enable !== true) {
     // An explicit profile dns.enable=false remains authoritative. Port-53
     // hijacking must be removed, even though this uncommon transition requires
@@ -569,7 +565,10 @@ export function generateProxiedTunConfig(options: ProxiedTunConfigOptions): stri
     data.dns = dns
   } else {
     data.dns = dns
-    if (dns['enhanced-mode'] === undefined) dns['enhanced-mode'] = 'fake-ip'
+    // mihomo's own default when a profile omits the mode is redir-host (real
+    // IPs); clash-party leaves it to the core. Never silently switch it to
+    // fake-ip.
+    if (dns['enhanced-mode'] === undefined) dns['enhanced-mode'] = 'redir-host'
     if (!Array.isArray(dns.nameserver) || dns.nameserver.length === 0) {
       dns.nameserver = ['system']
     }
@@ -583,6 +582,17 @@ export function generateProxiedTunConfig(options: ProxiedTunConfigOptions): stri
       dns['fake-ip-filter'] = [...TUN_DEFAULT_FAKE_IP_FILTER]
     }
   }
+
+  // clash-party always persists fake-ip mappings. Without it, every core
+  // restart (sleep/resume, network recovery) invalidates the fake IPs that
+  // apps such as game clients have already cached. Explicit choices (the
+  // profile's or the controlled core settings) are kept.
+  const profileBlock =
+    typeof data.profile === 'object' && data.profile !== null && !Array.isArray(data.profile)
+      ? { ...(data.profile as Record<string, unknown>) }
+      : {}
+  if (profileBlock['store-fake-ip'] === undefined) profileBlock['store-fake-ip'] = true
+  data.profile = profileBlock
 
   const text = stringify(data)
   const errors = proxiedTunConfigErrors(text)

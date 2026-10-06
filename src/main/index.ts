@@ -1290,8 +1290,15 @@ app.whenReady().then(async () => {
     get: () => tunConfigService.get(),
     preview: (input) => tunConfigService.preview(input),
     set: async (input) => {
+      const previous = await tunConfigService.readConfig()
       const snapshot = await tunConfigService.set(input)
-      await modeController.runExclusive(() => tunInstance.reapplyConfig())
+      try {
+        await modeController.runExclusive(() => tunInstance.reapplyConfig())
+      } catch (error) {
+        // Keep the saved model in step with what the running TUN uses.
+        await tunConfigService.set(previous).catch(() => undefined)
+        throw error
+      }
       return snapshot
     }
   }

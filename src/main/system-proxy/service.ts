@@ -278,6 +278,7 @@ export class SystemProxyService implements SystemProxyGateway {
   async setProxyBypass(input: ProxyBypassPolicy): Promise<ProxyBypassPolicy> {
     const policy = coerceProxyBypassPolicy(input)
     return this.serialize(async () => {
+      const previousPolicy = await this.proxyBypass.read()
       await this.proxyBypass.write(policy)
       // If the system proxy is currently enabled and we still own it, re-apply the
       // new ProxyOverride live so the edit takes effect immediately; a conflict is
@@ -296,6 +297,14 @@ export class SystemProxyService implements SystemProxyGateway {
           // If even that fails, the 30s guard re-applies `backup.written` (our
           // server is still in place), so the error is logged, not rethrown.
           const revert = async (): Promise<void> => {
+            try {
+              await this.proxyBypass.write(previousPolicy)
+            } catch (policyError) {
+              console.error(
+                '[system-proxy] bypass policy revert failed:',
+                policyError instanceof Error ? policyError.message : policyError
+              )
+            }
             try {
               await this.adapter.restore(backup.written)
               await this.adapter.refresh()

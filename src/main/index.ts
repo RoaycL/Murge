@@ -71,7 +71,7 @@ import { RuntimeIntentRecoveryCoordinator } from './startup/runtime-intent-recov
 import { StartupTimeline } from './startup/startup-timeline'
 import { collectDiagnosticReport } from './diagnostics/report-service'
 import { WindowsDiagnosticHost } from './diagnostics/windows-host'
-import { applyPendingConfigRestore, createConfigBackup, describeConfigRestoreImpact, inspectConfigBackup, stageConfigRestore, type ConfigBackupPayload } from './backup/config-backup'
+import { applyPendingConfigRestore, createConfigBackup, describeConfigRestoreImpact, inspectConfigBackup, MAX_ARCHIVE_BYTES, stageConfigRestore, type ConfigBackupPayload } from './backup/config-backup'
 import { uploadWebDavBackup, downloadWebDavBackup } from './backup/webdav-backup'
 import { AppSettingsService } from './app-settings/service'
 import { SubStoreService } from './substore/service'
@@ -1661,7 +1661,7 @@ app.whenReady().then(async () => {
         const choice = await dialog.showOpenDialog({ title: `选择 ${brand.productName} 配置备份`, properties: ['openFile'], filters: [{ name: `${brand.productName} 加密备份`, extensions: ['murge-backup'] }] })
         if (choice.canceled || !choice.filePaths[0]) return null
         const path = choice.filePaths[0]
-        if ((await stat(path)).size > 48 * 1024 * 1024) throw new Error('备份文件超过上限')
+        if ((await stat(path)).size > MAX_ARCHIVE_BYTES) throw new Error('备份文件超过上限')
         const inspected = inspectConfigBackup(await readFile(path), password, app.getVersion())
         const impact = await describeConfigRestoreImpact(appDataBaseRoot, inspected.payload)
         const token = randomUUID()

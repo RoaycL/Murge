@@ -6,9 +6,13 @@ import type { ConfigBackupPreview } from '../../shared/config-backup'
 
 const FORMAT = 'murge-config-backup'
 const SCHEMA_VERSION = 1
-export const MAX_ARCHIVE_BYTES = 48 * 1024 * 1024
+// A single profile may be as large as a subscription download (16 MiB, see
+// subscription-fetcher.ts). Files travel base64-encoded inside a payload that
+// is itself base64-encoded in the archive (about 16/9 of the content), so the
+// archive cap is sized to hold a full MAX_CONTENT_BYTES backup.
+const MAX_FILE_BYTES = 16 * 1024 * 1024
 const MAX_CONTENT_BYTES = 32 * 1024 * 1024
-const MAX_FILE_BYTES = 8 * 1024 * 1024
+export const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 const MAX_FILES = 500
 const PENDING_DIR = '.config-restore-pending'
 const ROOT_FILES = new Set([

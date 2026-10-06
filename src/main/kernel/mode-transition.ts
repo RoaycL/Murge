@@ -78,6 +78,9 @@ export interface ModeTransitionDeps {
 /** Resting TUN phases from which an enable may actually proceed. */
 const ENABLE_PROCEEDS_FROM: ReadonlySet<string> = new Set(['configured', 'failed', 'restore-failed'])
 
+/** TUN phases from which an abnormal child exit must resume the main kernel. */
+const RECOVER_TUN_EXIT_FROM: ReadonlySet<TunPhase> = new Set<TunPhase>(['active', 'starting', 'restoring', 'restore-failed'])
+
 /** TUN phases in which the elevated child is (or may soon be) bound to the ports. */
 function servingPhase(phase: TunPhase): boolean {
   return phase === 'active' || phase === 'starting' || phase === 'restoring'
@@ -158,7 +161,10 @@ export class ModeTransitionController {
       // TUN; the next successful monitor cycle retries.
       if (probe !== 'owned-gone') return
       const before = await this.deps.tun.getStatus()
-      if (before.phase !== 'active' && before.phase !== 'starting') return
+      // A crash mid-restore (`restoring`) or after a failed restore
+      // (`restore-failed`) still leaves the main kernel stopped and the
+      // network unrecovered, so those phases reconcile too (BUG-REVIEW #5).
+      if (!RECOVER_TUN_EXIT_FROM.has(before.phase)) return
       try {
         await this.disableTunInner()
       } catch (error) {

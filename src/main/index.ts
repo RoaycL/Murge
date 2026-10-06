@@ -94,6 +94,7 @@ import { TunServiceClient } from './tun/service-client'
 import { NamedPipeTunServiceTransport } from './tun/named-pipe-transport'
 import { tunServiceIdentity } from './tun/service-identity'
 import { waitForTunDataPlaneReady } from './tun/data-plane-readiness'
+import { createPrivilegedExitMonitorTick } from './kernel/privileged-exit-monitor'
 import { ModeTransitionController, queuedKernelGateway, queuedTunGateway } from './kernel/mode-transition'
 import { LiveConfigReloader } from './kernel/live-config-reloader'
 import { FileLogService } from './logging/file-log-service'
@@ -1312,34 +1313,20 @@ app.whenReady().then(async () => {
     if (status.phase === 'active') startupTimeline.mark('tun-active')
   })
 
-  // The service owns the only process, so monitor it regardless of whether TUN
-  // is currently enabled. A confirmed unexpected exit first restores an owned
-  // system proxy, then wakes the durable-intent recovery loop to recreate the
-  // same service core and desired TUN state.
+  // The service owns the only process, so monitor it regardless of the TUN
+  // phase (a crash mid-restore must recover too). A confirmed unexpected exit
+  // resets TUN, restores an owned system proxy, then wakes the durable-intent
+  // recovery loop to recreate the same service core and desired TUN state.
   if (privilegedKernel) {
-    let probingPrivilegedKernel = false
-    const monitor = setInterval(() => {
-      if (probingPrivilegedKernel) return
-      const phase = privilegedKernel.getStatus().phase
-      if (phase !== 'running' && phase !== 'starting') return
-      probingPrivilegedKernel = true
-      void privilegedKernel.reconcileLiveness()
-        .then(async (live) => {
-          if (live) return
-          await tunInstance.handleHostExit()
-          await systemProxyService.restoreBeforeKernelUnavailable().catch((error) => {
-            console.error('[system-proxy] privileged core exit recovery failed:', error)
-          })
-          const settings = await appSettingsService.get()
-          if (settings.autoStartKernel && !settings.tunDesired && !settings.systemProxyDesired) {
-            await queuedKernel.start().catch((error) => console.error('[kernel] privileged core restart failed:', error))
-          } else {
-            runtimeIntentRecovery?.wake()
-          }
-        })
-        .catch((error) => console.error('[kernel] privileged service liveness probe failed:', error))
-        .finally(() => { probingPrivilegedKernel = false })
-    }, 5_000)
+    const tick = createPrivilegedExitMonitorTick({
+      kernel: privilegedKernel,
+      handleHostExit: () => tunInstance.handleHostExit(),
+      restoreSystemProxy: () => systemProxyService.restoreBeforeKernelUnavailable(),
+      readSettings: () => appSettingsService.get(),
+      startKernel: () => queuedKernel.start(),
+      wakeIntentRecovery: () => runtimeIntentRecovery?.wake()
+    })
+    const monitor = setInterval(() => void tick(), 5_000)
     tunExitMonitor = { stop: () => clearInterval(monitor) }
   }
 

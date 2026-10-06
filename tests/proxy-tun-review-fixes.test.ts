@@ -69,6 +69,17 @@ describe('TUN hot switch route lists and live re-apply', () => {
     expect(h.current()).toMatchObject({ enable: true, mtu: 1400, stack: 'gvisor' })
   })
 
+  it('refuses a device rename while active instead of bypassing the in-use guard', async () => {
+    let model: TunConfigModel = { ...EMPTY_TUN_CONFIG }
+    const h = hotSwitch({ enable: false, device: 'Mihomo' }, () => model)
+    await h.adapter.enable({ schemaVersion: 2, device: 'Mihomo', stack: 'mixed' })
+    h.patchConfig.mockClear()
+    model = { ...model, device: 'OtherTun' }
+    await expect(h.adapter.reapply()).rejects.toThrow('关闭 TUN')
+    expect(h.patchConfig).not.toHaveBeenCalled()
+    expect(h.current().device).toBe('Mihomo')
+  })
+
   it('does nothing before TUN was enabled', async () => {
     const h = hotSwitch({ enable: false, device: 'Mihomo' }, () => ({ ...EMPTY_TUN_CONFIG }))
     await h.adapter.reapply()
@@ -153,5 +164,7 @@ describe('system proxy bypass edit when the bundle cannot be saved', () => {
     const observed = await adapter.read()
     expect(observed.proxyOverride.value).toBe(before.written.proxyOverride.value)
     expect(service.getStatus().phase).toBe('enabled')
+    // The rejected policy is not left behind for a later enable to pick up.
+    expect((await service.getProxyBypass()).customEntries).not.toContain('*.corp.example')
   })
 })

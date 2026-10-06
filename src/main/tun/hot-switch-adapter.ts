@@ -96,6 +96,13 @@ export class MihomoHotSwitchTunAdapter implements TunMutationAdapter {
     const current = await this.mihomo.getConfig()
     if (current.tun?.enable !== true) return
     const model = await this.readTunConfig()
+    // A device rename while active would skip the external-adapter guard in
+    // enable() (our own adapter holds the shared address, so that guard cannot
+    // tell the two apart here). Require a disable/enable cycle instead.
+    const currentDevice = typeof current.tun.device === 'string' ? current.tun.device : null
+    if (currentDevice !== null && currentDevice !== model.device) {
+      throw new Error('修改网卡名称需要先关闭 TUN 再重新开启')
+    }
     const next = await this.buildNext(current.tun, model, model.device, model.stack)
     await this.mihomo.patchConfig({ tun: next })
     const confirmed = await this.mihomo.getConfig()

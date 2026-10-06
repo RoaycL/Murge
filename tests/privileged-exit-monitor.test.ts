@@ -202,4 +202,46 @@ describe('privileged core abnormal-exit monitor', () => {
     expect(h.deps.kernel.reconcileLiveness).not.toHaveBeenCalled()
     expect(h.deps.restoreSystemProxy).not.toHaveBeenCalled()
   })
+
+  it('cancels queued intent recovery when the restart budget is exhausted', async () => {
+    const coordinator = new TunCoordinator(adapter(), true)
+    const h = harness({ coordinator })
+    const cancelIntentRecovery = vi.fn()
+    const tick = createPrivilegedExitMonitorTick({ ...h.deps, cancelIntentRecovery }, { maxRestarts: 0 })
+    await tick()
+    expect(cancelIntentRecovery).toHaveBeenCalledTimes(1)
+    expect(h.deps.wakeIntentRecovery).not.toHaveBeenCalled()
+    expect(h.deps.restoreSystemProxy).toHaveBeenCalledTimes(1)
+  })
+
+  it('recovers an exit confirmed during a quit once the quit is cancelled', async () => {
+    const coordinator = new TunCoordinator(adapter(), true)
+    const h = harness({ coordinator })
+    let quitting = false
+    h.deps.kernel.reconcileLiveness.mockImplementationOnce(async () => {
+      quitting = true
+      h.setKernelPhase('failed')
+      return false
+    })
+    const tick = createPrivilegedExitMonitorTick({ ...h.deps, isSuspended: () => quitting })
+    await tick()
+    expect(h.deps.restoreSystemProxy).not.toHaveBeenCalled()
+
+    quitting = false
+    await tick()
+    expect(h.deps.restoreSystemProxy).toHaveBeenCalledTimes(1)
+    expect(h.deps.wakeIntentRecovery).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not start a replacement core when shutdown begins mid-recovery', async () => {
+    const coordinator = new TunCoordinator(adapter(), true)
+    const h = harness({ coordinator, settings: { autoStartKernel: true, tunDesired: false, systemProxyDesired: false } })
+    let quitting = false
+    h.deps.restoreSystemProxy.mockImplementationOnce(async () => { quitting = true })
+    const tick = createPrivilegedExitMonitorTick({ ...h.deps, isSuspended: () => quitting })
+    await tick()
+    expect(h.deps.restoreSystemProxy).toHaveBeenCalledTimes(1)
+    expect(h.deps.startKernel).not.toHaveBeenCalled()
+  })
 })
+

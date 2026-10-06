@@ -1343,8 +1343,9 @@ app.whenReady().then(async () => {
       handleHostExit: () => tunInstance.handleHostExit(),
       restoreSystemProxy: () => systemProxyService.restoreBeforeKernelUnavailable(),
       readSettings: () => appSettingsService.get(),
-      startKernel: () => queuedKernel.start(),
+      startKernel: async () => isQuitting ? undefined : queuedKernel.start(),
       wakeIntentRecovery: () => runtimeIntentRecovery?.wake(),
+      cancelIntentRecovery: () => runtimeIntentRecovery?.cancelPending(),
       // The SCM restarts a crashed service, and the restarted service reports
       // the exit. When it stays down, its job object has already killed the
       // core: without this probe the proxy kept aiming at the dead port.

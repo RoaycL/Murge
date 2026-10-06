@@ -171,6 +171,10 @@ export class PrivilegedServiceKernelGateway implements KernelGateway {
       const response = await this.client.reconcile()
       const live = response.outcome === 'running' || response.outcome === 'starting'
       if (!live && (this.status.phase === 'running' || this.status.phase === 'starting')) {
+        // A service reporting the child exited (`failed`/CHILD_EXITED) does not
+        // clear the client's session; without this the recovery start was
+        // refused locally with KERNEL_RUNNING.
+        this.client.forgetOwnedSession()
         this.setStatus({ ...STOPPED, phase: 'failed', lastError: 'Privileged mihomo exited unexpectedly' })
         return false
       }
@@ -183,6 +187,7 @@ export class PrivilegedServiceKernelGateway implements KernelGateway {
   declareLost(reason: string): Promise<boolean> {
     return this.serialize(async () => {
       if (this.status.phase !== 'running' && this.status.phase !== 'starting') return false
+      this.client.forgetOwnedSession()
       this.setStatus({ ...STOPPED, phase: 'failed', lastError: reason })
       return true
     })

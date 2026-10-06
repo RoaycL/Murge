@@ -38,6 +38,12 @@ export interface PrivilegedExitMonitorDeps {
   startKernel(): Promise<unknown>
   /** Wake the durable-intent recovery loop (TUN and/or proxy replay). */
   wakeIntentRecovery(): void
+  /**
+   * Drop recovery attempts the intent coordinator already queued (backoff timer
+   * or pending wake). Called when the crash-loop budget is exhausted, so an
+   * attempt scheduled before the latest exit cannot restart the core anyway.
+   */
+  cancelIntentRecovery?(): void
   /** Skip every probe (application shutdown in progress). */
   isSuspended?(): boolean
   onError?(error: unknown, step: string): void
@@ -70,8 +76,11 @@ export async function recoverPrivilegedCoreExit(
 ): Promise<void> {
   await deps.handleHostExit().catch((error) => report(deps, error, 'tun-reset'))
   await deps.restoreSystemProxy().catch((error) => report(deps, error, 'system-proxy-restore'))
-  if (!restart) return
+  // Shutdown may have begun while the steps above were awaiting; a restart
+  // queued now would run after the quit flow's own core stop.
+  if (!restart || deps.isSuspended?.()) return
   const settings = await deps.readSettings()
+  if (deps.isSuspended?.()) return
   if (settings.autoStartKernel && !settings.tunDesired && !settings.systemProxyDesired) {
     await deps.startKernel().catch((error) => report(deps, error, 'kernel-restart'))
   } else {
@@ -91,6 +100,9 @@ export function createPrivilegedExitMonitorTick(
   const restarts: number[] = []
   let probing = false
   let unreachableStreak = 0
+  /** An exit confirmed while suspended; recovered once the suspension lifts
+   * (a cancelled quit), because the failed kernel is never probed again. */
+  let deferredRecovery = false
 
   // A core that dies right after every restart (for example a TUN setting the
   // core cannot apply) would otherwise loop forever, re-pointing the system
@@ -106,6 +118,7 @@ export function createPrivilegedExitMonitorTick(
   const recover = async (): Promise<void> => {
     const restart = consumeRestart()
     if (!restart) {
+      deps.cancelIntentRecovery?.()
       report(
         deps,
         new Error(`privileged core exited ${maxRestarts + 1} times within ${Math.round(restartWindowMs / 1000)}s; automatic restart paused`),
@@ -117,6 +130,18 @@ export function createPrivilegedExitMonitorTick(
 
   return async () => {
     if (probing || deps.isSuspended?.()) return
+    if (deferredRecovery) {
+      deferredRecovery = false
+      probing = true
+      try {
+        await recover()
+      } catch (error) {
+        report(deps, error, 'deferred-recovery')
+      } finally {
+        probing = false
+      }
+      return
+    }
     const phase = deps.kernel.getStatus().phase
     if (phase !== 'running' && phase !== 'starting') {
       unreachableStreak = 0
@@ -136,7 +161,11 @@ export function createPrivilegedExitMonitorTick(
         live = false
       }
       unreachableStreak = 0
-      if (live || deps.isSuspended?.()) return
+      if (live) return
+      if (deps.isSuspended?.()) {
+        deferredRecovery = true
+        return
+      }
       await recover()
     } catch (error) {
       unreachableStreak = 0

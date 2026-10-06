@@ -229,5 +229,45 @@ describe('privileged persistent kernel gateway', () => {
     await expect(gateway.declareLost('gone')).resolves.toBe(true)
     expect(gateway.getStatus()).toMatchObject({ phase: 'failed', pid: null, lastError: 'gone' })
   })
+
+  it('restarts after the service reports the child exited', async () => {
+    let state: 'running' | 'exited' | 'stopped' = 'stopped'
+    const transport: TunServiceTransport = {
+      request: vi.fn(async request => {
+        if (request.operation === 'start') {
+          state = 'running'
+          return response(request, 'running')
+        }
+        if (request.operation === 'reconcile' && state === 'exited') {
+          return {
+            protocolVersion: TUN_SERVICE_PROTOCOL_VERSION,
+            requestId: request.requestId,
+            outcome: 'failed',
+            sessionId: null,
+            pid: null,
+            errorCode: 'CHILD_EXITED',
+            validationMessage: 'exit code 1'
+          }
+        }
+        return response(request, state === 'running' ? 'running' : 'stopped')
+      })
+    }
+    const gateway = new PrivilegedServiceKernelGateway(
+      new TunServiceClient(transport),
+      () => ({ mixedPort: 17890, controllerPort: 19090, secret: 'ab'.repeat(32) }),
+      {
+        readActiveDocument: async () => null,
+        readTunConfig: async () => ({ ...EMPTY_TUN_CONFIG }),
+        readCore: async () => ({ ...EMPTY_CORE_SETTINGS }),
+        readGeodata: async () => ({ ...EMPTY_GEODATA_SETTINGS })
+      },
+      { waitUntilReady: vi.fn(async () => ({ version: '1.19.30' })) },
+      'Product TUN'
+    )
+    await gateway.start()
+    state = 'exited'
+    await expect(gateway.reconcileLiveness()).resolves.toBe(false)
+    await expect(gateway.start()).resolves.toMatchObject({ phase: 'running' })
+  })
 })
 

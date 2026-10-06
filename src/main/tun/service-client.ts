@@ -26,6 +26,12 @@ export class TunServiceClient {
     return this.ownedSession ? { ...this.ownedSession } : null
   }
 
+  /** Drop a session the caller has proven dead, so the next start() is not
+   * refused locally. The service still enforces its own ownership record. */
+  forgetOwnedSession(): void {
+    this.ownedSession = null
+  }
+
   async start(profile: string, signal?: AbortSignal, version?: string): Promise<TunOwnedSession> {
     if (this.ownedSession) fail(ProtocolErrorCode.KERNEL_RUNNING, 'A TUN session is already owned')
     const requestId = this.takeRequestId()

@@ -64,6 +64,7 @@ import { runQuitFlow } from './quit-guard'
 import { TrayController } from './tray/tray-controller'
 import { createElectronTray } from './tray/electron-tray'
 import { resolveRuntimeAccent } from '@shared/runtime-accent'
+import type { KernelStatus } from '@shared/runtime'
 import { StartupService } from './startup/service'
 import { ScheduledTaskStartupAdapter } from './startup/scheduled-task-adapter'
 import { restoreRuntimeIntent } from './startup/runtime-intent'
@@ -1153,11 +1154,22 @@ app.whenReady().then(async () => {
   // is deliberately left to the durable-intent recovery coordinator below: a
   // cached crash-time boolean could otherwise turn the proxy back on after the
   // user explicitly switched it off while recovery was in flight.
+  //
+  // Only a crash of a RUNNING core wakes recovery. A failed start also reports
+  // `failed`; waking on it re-ran the recovery attempt immediately, which failed
+  // the same way and woke it again — an unbounded start loop that bypassed the
+  // coordinator's bounded backoff. The privileged service core has its own exit
+  // monitor (with a crash-loop budget) that performs the wake instead.
+  let previousKernelPhase: KernelStatus['phase'] | null = null
   orderedKernel.onStatus((status) => {
+    const crashedWhileRunning = previousKernelPhase === 'running'
+    previousKernelPhase = status.phase
     if (status.phase === 'failed') {
       void systemProxyService.restoreBeforeKernelUnavailable().catch((error) => {
         console.error('[system-proxy] kernel crash recovery failed:', error)
-      }).finally(() => runtimeIntentRecovery?.wake())
+      }).finally(() => {
+        if (crashedWhileRunning && !privilegedKernel && !isQuitting) runtimeIntentRecovery?.wake()
+      })
     }
   })
 
@@ -1325,13 +1337,28 @@ app.whenReady().then(async () => {
   // resets TUN, restores an owned system proxy, then wakes the durable-intent
   // recovery loop to recreate the same service core and desired TUN state.
   if (privilegedKernel) {
+    const controllerProbe = new MihomoClient(`http://127.0.0.1:${productionControllerPort}`, productionSecret!, { timeoutMs: 1500 })
     const tick = createPrivilegedExitMonitorTick({
       kernel: privilegedKernel,
       handleHostExit: () => tunInstance.handleHostExit(),
       restoreSystemProxy: () => systemProxyService.restoreBeforeKernelUnavailable(),
       readSettings: () => appSettingsService.get(),
-      startKernel: () => queuedKernel.start(),
-      wakeIntentRecovery: () => runtimeIntentRecovery?.wake()
+      startKernel: async () => isQuitting ? undefined : queuedKernel.start(),
+      wakeIntentRecovery: () => runtimeIntentRecovery?.wake(),
+      cancelIntentRecovery: () => runtimeIntentRecovery?.cancelPending(),
+      // The SCM restarts a crashed service, and the restarted service reports
+      // the exit. When it stays down, its job object has already killed the
+      // core: without this probe the proxy kept aiming at the dead port.
+      isControllerAlive: async () => {
+        try {
+          await controllerProbe.getVersion()
+          return true
+        } catch {
+          return false
+        }
+      },
+      isSuspended: () => isQuitting,
+      onError: (error, step) => console.error(`[kernel] privileged core exit ${step}:`, error)
     })
     const monitor = setInterval(() => void tick(), 5_000)
     tunExitMonitor = { stop: () => clearInterval(monitor) }
@@ -1352,11 +1379,16 @@ app.whenReady().then(async () => {
         const resolved = status instanceof Promise ? await status : status
         return resolved.phase === 'running' ? 'kernel' : 'stopped'
       },
-      startKernel: () => queuedKernel.start(),
-      startTun: () => queuedTun.enable(),
+      // Never bring networking back up once shutdown has started: the quit flow
+      // restores the proxy and only then stops the core, so a reconnect landing
+      // in between would re-enable the proxy (or restart TUN) just before the
+      // listener goes away. A cancelled quit clears isQuitting and resumes this.
+      startKernel: async () => isQuitting ? undefined : queuedKernel.start(),
+      startTun: async () => isQuitting ? undefined : queuedTun.enable(),
       stopKernel: () => queuedKernel.stop(),
       handleNetworkDown: () => systemProxyService.handleNetworkDown(),
       handleNetworkUp: async () => {
+        if (isQuitting) return 'failed'
         try {
           return await systemProxyService.handleNetworkUp()
         } finally {

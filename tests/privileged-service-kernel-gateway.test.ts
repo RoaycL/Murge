@@ -202,4 +202,32 @@ describe('privileged persistent kernel gateway', () => {
 
     expect(events).toEqual(['build', 'reclaim', 'start'])
   })
+
+  it('declares a running core lost only while it is believed live', async () => {
+    let running = false
+    const transport: TunServiceTransport = {
+      request: vi.fn(async request => {
+        if (request.operation === 'start') running = true
+        if (request.operation === 'stop') running = false
+        return response(request, running ? 'running' : 'stopped')
+      })
+    }
+    const gateway = new PrivilegedServiceKernelGateway(
+      new TunServiceClient(transport),
+      () => ({ mixedPort: 17890, controllerPort: 19090, secret: 'ab'.repeat(32) }),
+      {
+        readActiveDocument: async () => null,
+        readTunConfig: async () => ({ ...EMPTY_TUN_CONFIG }),
+        readCore: async () => ({ ...EMPTY_CORE_SETTINGS }),
+        readGeodata: async () => ({ ...EMPTY_GEODATA_SETTINGS })
+      },
+      { waitUntilReady: vi.fn(async () => ({ version: '1.19.30' })) },
+      'Product TUN'
+    )
+    await expect(gateway.declareLost('gone')).resolves.toBe(false)
+    await gateway.start()
+    await expect(gateway.declareLost('gone')).resolves.toBe(true)
+    expect(gateway.getStatus()).toMatchObject({ phase: 'failed', pid: null, lastError: 'gone' })
+  })
 })
+

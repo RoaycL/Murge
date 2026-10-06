@@ -178,6 +178,16 @@ export class PrivilegedServiceKernelGateway implements KernelGateway {
     })
   }
 
+  /** The exit monitor proved the core gone without the service (the service
+   * itself is down). Returns true when a running/starting core became failed. */
+  declareLost(reason: string): Promise<boolean> {
+    return this.serialize(async () => {
+      if (this.status.phase !== 'running' && this.status.phase !== 'starting') return false
+      this.setStatus({ ...STOPPED, phase: 'failed', lastError: reason })
+      return true
+    })
+  }
+
   private async buildProfile(runtime: PrivilegedKernelRuntime): Promise<string> {
     const [document, tunConfig, core, geodata] = await Promise.all([
       this.profileSources.readActiveDocument(),

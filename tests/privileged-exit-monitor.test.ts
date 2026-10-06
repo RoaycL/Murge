@@ -5,6 +5,7 @@ import {
 } from '../src/main/kernel/privileged-exit-monitor'
 import { TunCoordinator, type TunMutationAdapter } from '../src/main/tun/coordinator'
 import type { KernelStatus } from '../src/shared/runtime'
+import { ProtocolError, ProtocolErrorCode } from '../src/shared/protocol-errors'
 
 const desired = { schemaVersion: 2, device: 'Product TUN', stack: 'mixed' } as const
 
@@ -113,5 +114,92 @@ describe('privileged core abnormal-exit monitor', () => {
     h.deps.kernel.reconcileLiveness.mockResolvedValueOnce(true)
     await h.tick()
     expect(h.deps.handleHostExit).not.toHaveBeenCalled()
+  })
+
+  it('pauses automatic restarts when the core keeps dying, but still makes the network safe', async () => {
+    const coordinator = new TunCoordinator(adapter(), true)
+    let phase: KernelStatus['phase'] = 'running'
+    let clock = 0
+    const deps = {
+      kernel: {
+        getStatus: () => kernelStatus(phase),
+        reconcileLiveness: vi.fn(async () => {
+          phase = 'failed'
+          return false
+        })
+      },
+      handleHostExit: vi.fn(() => coordinator.handleHostExit()),
+      restoreSystemProxy: vi.fn(async () => undefined),
+      readSettings: vi.fn(async () => ({ autoStartKernel: true, tunDesired: true, systemProxyDesired: true })),
+      startKernel: vi.fn(async () => undefined),
+      wakeIntentRecovery: vi.fn(),
+      onError: vi.fn()
+    } satisfies PrivilegedExitMonitorDeps
+    const tick = createPrivilegedExitMonitorTick(deps, { maxRestarts: 3, restartWindowMs: 60_000, now: () => clock })
+
+    for (let crash = 0; crash < 4; crash++) {
+      phase = 'running'
+      clock += 5_000
+      await tick()
+    }
+    expect(deps.wakeIntentRecovery).toHaveBeenCalledTimes(3)
+    expect(deps.restoreSystemProxy).toHaveBeenCalledTimes(4)
+    expect(deps.handleHostExit).toHaveBeenCalledTimes(4)
+    expect(deps.onError).toHaveBeenCalledWith(expect.any(Error), 'crash-loop')
+
+    // Once the window has passed, a fresh crash is recovered again.
+    phase = 'running'
+    clock += 60_000
+    await tick()
+    expect(deps.wakeIntentRecovery).toHaveBeenCalledTimes(4)
+  })
+
+  it('declares the core lost when the service stays down and the controller is dead', async () => {
+    const coordinator = new TunCoordinator(adapter(), true)
+    let phase: KernelStatus['phase'] = 'running'
+    let controllerAlive = true
+    const deps = {
+      kernel: {
+        getStatus: () => kernelStatus(phase),
+        reconcileLiveness: vi.fn(async (): Promise<boolean> => {
+          throw new ProtocolError(ProtocolErrorCode.UPSTREAM_UNREACHABLE, 'TUN service is unavailable')
+        }),
+        declareLost: vi.fn(async () => {
+          phase = 'failed'
+          return true
+        })
+      },
+      isControllerAlive: vi.fn(async () => controllerAlive),
+      handleHostExit: vi.fn(() => coordinator.handleHostExit()),
+      restoreSystemProxy: vi.fn(async () => undefined),
+      readSettings: vi.fn(async () => ({ autoStartKernel: true, tunDesired: false, systemProxyDesired: true })),
+      startKernel: vi.fn(async () => undefined),
+      wakeIntentRecovery: vi.fn(),
+      onError: vi.fn()
+    } satisfies PrivilegedExitMonitorDeps
+    const tick = createPrivilegedExitMonitorTick(deps, { unreachableTicks: 2 })
+
+    // A hung service with a live core is never torn down.
+    await tick()
+    await tick()
+    expect(deps.kernel.declareLost).not.toHaveBeenCalled()
+    expect(deps.onError).toHaveBeenCalledWith(expect.any(ProtocolError), 'liveness-probe')
+
+    controllerAlive = false
+    await tick()
+    expect(deps.kernel.declareLost).not.toHaveBeenCalled()
+    await tick()
+    expect(deps.kernel.declareLost).toHaveBeenCalledTimes(1)
+    expect(deps.restoreSystemProxy).toHaveBeenCalledTimes(1)
+    expect(deps.wakeIntentRecovery).toHaveBeenCalledTimes(1)
+  })
+
+  it('does nothing while the application is shutting down', async () => {
+    const coordinator = new TunCoordinator(adapter(), true)
+    const h = harness({ coordinator })
+    const tick = createPrivilegedExitMonitorTick({ ...h.deps, isSuspended: () => true })
+    await tick()
+    expect(h.deps.kernel.reconcileLiveness).not.toHaveBeenCalled()
+    expect(h.deps.restoreSystemProxy).not.toHaveBeenCalled()
   })
 })

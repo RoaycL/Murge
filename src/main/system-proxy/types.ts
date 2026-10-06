@@ -76,6 +76,12 @@ export interface SystemProxyAdapter {
   restore(previous: SystemProxyRegistryState): Promise<void>
   /** Notify the OS so running apps pick up the change (WinINet refresh). */
   refresh(): Promise<void>
+  /**
+   * The PAC script URL (`AutoConfigURL`) currently configured, or null. WinINet
+   * prefers a PAC script over the manual proxy, so a non-empty value means our
+   * proxy may be ignored. Read-only and optional; never owned or restored.
+   */
+  readAutoConfigUrl?(): Promise<string | null>
 }
 
 /**

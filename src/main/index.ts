@@ -26,7 +26,7 @@ import { WindowsSystemProxyAdapter } from './system-proxy/adapters/windows-adapt
 import { DisabledSystemProxyAdapter } from './system-proxy/adapters/disabled-adapter'
 import { FileSystemProxyBackupStore } from './system-proxy/backup-store'
 import { StaticSystemProxyProbe, LiveSystemProxyKernelProbe, type LiveProbeMihomo } from './system-proxy/probe'
-import type { KernelGateway } from '../shared/gateways'
+import type { KernelGateway, TunConfigGateway } from '../shared/gateways'
 import { SYSTEM_PROXY_LOOPBACK_HOST } from '../shared/system-proxy'
 import { SystemProxyOrderedKernelGateway } from './system-proxy/ordered-kernel-gateway'
 import { NetworkDetector } from './services/network-detector'
@@ -1283,6 +1283,18 @@ app.whenReady().then(async () => {
   // in between).
   const queuedKernel = queuedKernelGateway(runtimeKernelGateway, modeController)
   const queuedTun = queuedTunGateway(rawTunGateway, modeController)
+  // Saving TUN settings while TUN is active applies them right away (on the
+  // same mode-transition queue), instead of leaving them to surface on some
+  // later, unrelated config reload.
+  const liveTunConfig: TunConfigGateway = {
+    get: () => tunConfigService.get(),
+    preview: (input) => tunConfigService.preview(input),
+    set: async (input) => {
+      const snapshot = await tunConfigService.set(input)
+      await modeController.runExclusive(() => tunInstance.reapplyConfig())
+      return snapshot
+    }
+  }
   queuedKernel.onStatus((status) => {
     if (status.phase === 'running') startupTimeline.mark('kernel-ready')
   })
@@ -1698,7 +1710,7 @@ app.whenReady().then(async () => {
     overrides: overrideService,
     dns: liveDnsEnhancement,
     sniffer: liveSnifferEnhancement,
-    tunConfig: tunConfigService,
+    tunConfig: liveTunConfig,
     core: coreSettingsService,
     geodata: liveGeodataSettings,
     updates,

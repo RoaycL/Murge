@@ -58,18 +58,7 @@ export class MihomoHotSwitchTunAdapter implements TunMutationAdapter {
     if (current.tun?.enable !== true && await this.externalTunInUse(device)) {
       return { outcome: 'conflict', conflictDetail: 'TUN_INTERFACE_IN_USE' }
     }
-    const next: Record<string, unknown> = {
-      ...previous,
-      ...buildTunBlock({ ...model, device, stack: model.stack ?? intent.stack }),
-      enable: true
-    }
-    // clash-party parity (`!controlDns && tun && !profile.dns?.enable`): port-53
-    // hijacking only makes sense when the kernel also runs a live DNS module —
-    // hijacked queries without one would blackhole every hostname. The state
-    // cannot come from the controller snapshot (mihomo's GET /configs does not
-    // expose the dns block), so the caller supplies the authoritative flag read
-    // from the same enhanced document the kernel was materialized from.
-    if ((await this.readDnsEnabled()) !== true) next['dns-hijack'] = []
+    const next = await this.buildNext(previous, model, device, model.stack ?? intent.stack)
     try {
       await this.mihomo.patchConfig({ tun: next })
       const confirmed = await this.mihomo.getConfig()
@@ -96,6 +85,47 @@ export class MihomoHotSwitchTunAdapter implements TunMutationAdapter {
       }
       return { outcome: 'rollback-required', errorMessage: machineMessage(error) }
     }
+  }
+
+  /**
+   * Push the saved TUN settings to a TUN that is already active, so an edit
+   * takes effect now instead of on some later unrelated config reload.
+   */
+  async reapply(): Promise<void> {
+    if (!this.active) return
+    const current = await this.mihomo.getConfig()
+    if (current.tun?.enable !== true) return
+    const model = await this.readTunConfig()
+    const next = await this.buildNext(current.tun, model, model.device, model.stack)
+    await this.mihomo.patchConfig({ tun: next })
+    const confirmed = await this.mihomo.getConfig()
+    if (confirmed.tun?.enable !== true) throw new Error('TUN_HOT_SWITCH_REAPPLY_NOT_CONFIRMED')
+  }
+
+  private async buildNext(
+    previous: Record<string, unknown>,
+    model: TunConfigModel,
+    device: string,
+    stack: TunConfigModel['stack']
+  ): Promise<Record<string, unknown>> {
+    const next: Record<string, unknown> = {
+      ...previous,
+      // mihomo's PATCH keeps any key that is omitted, and buildTunBlock omits
+      // empty route lists. Send them explicitly so clearing a list in settings
+      // actually clears it on the running core.
+      'route-address': [],
+      'route-exclude-address': [],
+      ...buildTunBlock({ ...model, device, stack }),
+      enable: true
+    }
+    // clash-party parity (`!controlDns && tun && !profile.dns?.enable`): port-53
+    // hijacking only makes sense when the kernel also runs a live DNS module —
+    // hijacked queries without one would blackhole every hostname. The state
+    // cannot come from the controller snapshot (mihomo's GET /configs does not
+    // expose the dns block), so the caller supplies the authoritative flag read
+    // from the same enhanced document the kernel was materialized from.
+    if ((await this.readDnsEnabled()) !== true) next['dns-hijack'] = []
+    return next
   }
 
   async restore(): Promise<TunRestoreResult> {

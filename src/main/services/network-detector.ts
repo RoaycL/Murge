@@ -30,8 +30,19 @@ export interface NetworkDetectorOptions {
   log?: (message: string) => void
 }
 
-/** Interfaces that never count as connectivity (virtual / loopback containers). */
-const IGNORED_INTERFACE_PATTERNS = ['lo', 'docker', 'utun', 'tun', 'veth', 'mihomo', 'meta', 'vmnet', 'vEthernet']
+/**
+ * Interfaces that never count as connectivity (virtual / loopback containers).
+ * Short loopback names are matched exactly: a substring match on `lo` also hid
+ * real Windows adapters such as "Local Area Connection", so the detector saw a
+ * permanent outage and kept the kernel stopped.
+ */
+const IGNORED_INTERFACE_NAMES = ['lo', 'lo0']
+const IGNORED_INTERFACE_PATTERNS = ['docker', 'utun', 'tun', 'veth', 'mihomo', 'meta', 'vmnet']
+
+export function isIgnoredInterfaceName(name: string): boolean {
+  const lower = name.toLowerCase()
+  return IGNORED_INTERFACE_NAMES.includes(lower) || IGNORED_INTERFACE_PATTERNS.some((pattern) => lower.includes(pattern))
+}
 
 /**
  * Connectivity watchdog (sparkle's `network.ts` state machine, adapted).
@@ -99,7 +110,7 @@ export class NetworkDetector {
     const fn = this.options.networkInterfacesFn ?? os.networkInterfaces
     const interfaces = fn()
     return Object.entries(interfaces).some(([name, addrs]) => {
-      if (IGNORED_INTERFACE_PATTERNS.some((pattern) => name.toLowerCase().includes(pattern))) return false
+      if (isIgnoredInterfaceName(name)) return false
       return (addrs ?? []).some((addr) => !addr.internal)
     })
   }

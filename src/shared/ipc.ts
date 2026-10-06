@@ -27,7 +27,7 @@ import type {
 } from './overrides'
 import type { DnsEnhancement, DnsSnapshot } from './dns'
 import type { SnifferEnhancement, SnifferSnapshot } from './sniffer'
-import type { KernelStatus, RuntimeSummary, TrafficSample } from './runtime'
+import type { KernelStatus, OutboundMode, RuntimeSummary, TrafficSample } from './runtime'
 import type { SystemProxyStatus } from './system-proxy'
 import type { ProxyBypassPolicy } from './proxy-bypass'
 import type { StartupStatus } from './startup'
@@ -96,6 +96,7 @@ export const IPC = {
   mihomoConnectionsEvent: 'mihomo:connections-event',
   mihomoLogEvent: 'mihomo:log-event',
   mihomoStreamErrorEvent: 'mihomo:stream-error-event',
+  mihomoModeChangedEvent: 'mihomo:mode-changed-event',
   profilesList: 'profiles:list',
   profilesGetActiveGroupOrder: 'profiles:get-active-group-order',
   profilesGetActiveProviderCatalog: 'profiles:get-active-provider-catalog',
@@ -242,6 +243,8 @@ export interface DesktopApi {
     onConnections(listener: (snapshot: MihomoConnectionsSnapshot) => void): () => void
     onLogs(listener: (message: MihomoLogMessage) => void): () => void
     onStreamError(listener: (error: MihomoStreamError) => void): () => void
+    /** The outbound mode was switched outside the window (tray menu). */
+    onModeChanged(listener: (mode: OutboundMode) => void): () => void
     /** Retained kernel-log history past `afterSeq` (0 = everything retained). */
     logsSnapshot(afterSeq?: number): Promise<MihomoLogsSnapshot>
     /** Drop retained history and return the last sequence included in the clear. */

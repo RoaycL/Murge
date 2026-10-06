@@ -76,7 +76,10 @@ export interface SubscriptionFetcherOptions {
   resolveHost?: (hostname: string) => Promise<string[]>
 }
 
-const DEFAULT_MAX_BYTES = 2 * 1024 * 1024
+// Large airport subscriptions (thousands of nodes plus inline rules) run past
+// a few MiB. The body is streamed and counted, so this only bounds memory. It
+// matches the privileged service's profile ceiling (TUN_PROFILE_MAX_BYTES).
+const DEFAULT_MAX_BYTES = 16 * 1024 * 1024
 const DEFAULT_MAX_REDIRECTS = 5
 const DEFAULT_TIMEOUT_MS = 30000
 const SUBSCRIPTION_REQUEST_HEADERS = {

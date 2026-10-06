@@ -7,7 +7,8 @@ import {
   generateMihomoTunConfig,
   generateProxiedTunConfig,
   mihomoTunConfigErrors,
-  proxiedTunConfigErrors
+  proxiedTunConfigErrors,
+  TUN_PROFILE_MAX_BYTES
 } from '../src/main/tun/mihomo-tun-config'
 import type { TunConfigModel } from '../src/shared/tun-config'
 import { EMPTY_TUN_CONFIG } from '../src/shared/tun-config'
@@ -343,7 +344,7 @@ describe('proxied TUN config (real subscription content)', () => {
   it('rejects a profile that exceeds the privileged service byte ceiling', () => {
     // An unusually large inlined ruleset is the realistic way to blow the
     // generous service cap; normal subscriptions should not hit it.
-    const huge = `${document}${Array.from({ length: 40000 }, (_, i) => `  - DOMAIN-SUFFIX,host-${i}-padding-padding.example.invalid,PROXY`).join('\n')}\n`
+    const huge = `${document}  - DOMAIN-SUFFIX,${'a'.repeat(TUN_PROFILE_MAX_BYTES)}.example.invalid,PROXY\n`
     expect(() => generateProxiedTunConfig({ ...proxied, document: huge })).toThrow(/超过特权服务/)
   })
 

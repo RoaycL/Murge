@@ -4,7 +4,7 @@ import { assertProxiedTunConfig } from './mihomo-tun-config'
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
 
 export const TUN_SERVICE_PROTOCOL_VERSION = 7 as const
-export const TUN_SERVICE_MAX_PROFILE_BYTES = 2 * 1024 * 1024
+export const TUN_SERVICE_MAX_PROFILE_BYTES = 16 * 1024 * 1024
 export const TUN_SERVICE_MAX_PROVIDER_CONTENT_BYTES = 4 * 1024 * 1024
 
 const uint64Decimal = z.string().regex(/^(?:0|[1-9]\d{0,19})$/).refine(value => BigInt(value) <= 0xffffffffffffffffn)

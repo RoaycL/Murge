@@ -56,6 +56,8 @@ export interface TrayControllerOptions {
   openDirectory?(directory: TrayDirectory): void | Promise<void>
   copyText?(value: string): void
   onCheckUpdate?(): void
+  /** Called after the tray switched the outbound mode, so open windows can follow. */
+  onModeChanged?(mode: OutboundMode): void
   onError?(error: unknown): void
 }
 
@@ -312,7 +314,13 @@ export class TrayController {
         type: 'radio',
         checked: this.mode === mode,
         enabled: !transition,
-        click: () => { void this.act(async () => { await this.options.mihomo?.patchConfig({ mode }) }) }
+        click: () => {
+          void this.act(async () => {
+            if (!this.options.mihomo) return
+            await this.options.mihomo.patchConfig({ mode })
+            this.options.onModeChanged?.(mode)
+          })
+        }
       }))
     }
   }

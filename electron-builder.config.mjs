@@ -18,6 +18,18 @@ export default {
   // immutable source/tag evidence remain mandatory; Windows will show Unknown
   // publisher until this policy changes and a trusted certificate is supplied.
   forceCodeSigning: false,
+  // The privileged TUN service trusts a pipe client by its executable path and
+  // hash. With the default fuses any process could run the installed exe as
+  // plain Node (ELECTRON_RUN_AS_NODE, NODE_OPTIONS, --inspect) or point it at a
+  // loose app folder and still pass that check, so those entry points are
+  // burned off and the bundled app.asar must match its embedded hash.
+  electronFuses: {
+    runAsNode: false,
+    enableNodeOptionsEnvironmentVariable: false,
+    enableNodeCliInspectArguments: false,
+    onlyLoadAppFromAsar: true,
+    enableEmbeddedAsarIntegrityValidation: true
+  },
   appId: brand.appId,
   productName: brand.productName,
   executableName: brand.executableName,

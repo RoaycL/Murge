@@ -459,9 +459,7 @@ jobs:
           if ($startupTask.Actions.Count -ne 1 -or $startupTask.Actions[0].Execute -ne $exe -or $startupTask.Actions[0].Arguments -ne '--hidden') { throw 'startup task action is not the installed hidden GUI' }
           Write-Host "installer-managed startup task registered for $installerSid (disabled by default): PASS"
 
-          # Validate the actual installed application archive. ELECTRON_RUN_AS_NODE
-          # below proves only that the executable can host Node; it deliberately
-          # bypasses app.asar and therefore is not an application-entry check.
+          # Validate the actual installed application archive.
           $asar = Join-Path $installDir 'resources\app.asar'
           if (-not (Test-Path $asar)) { throw "installed app.asar missing: $asar" }
           $asarEntries = @(& node node_modules/@electron/asar/bin/asar.js list $asar)
@@ -478,34 +476,35 @@ jobs:
           }
           Write-Host "installed app.asar readable with required entries: PASS"
 
-          # Ground truth: can the installed binary execute our JS at all? Run it as
-          # plain Node via ELECTRON_RUN_AS_NODE=1, which bypasses Chromium, GPU,
-          # the display and app.asar entirely and just evaluates a tiny script. If
-          # it prints + writes a sentinel + exits, the executable can host Node.
-          # This does NOT load app.asar or prove the Electron application entry.
-          $nodeScript = Join-Path $env:RUNNER_TEMP 'electron-node-probe.js'
-          $nodeSentinel = Join-Path $env:RUNNER_TEMP 'electron-node-sentinel.txt'
-          Set-Content -Path $nodeScript -Value 'const fs=require("fs");fs.writeFileSync(process.env.RUNNER_TEMP+"/electron-node-sentinel.txt","ok");console.log("ELECTRON_RUN_AS_NODE_OK");process.exit(0)' -Encoding utf8
-          $nodeOut = Join-Path $env:RUNNER_TEMP 'electron-node.out.txt'
-          $nodeErr = Join-Path $env:RUNNER_TEMP 'electron-node.err.txt'
-          $env:ELECTRON_RUN_AS_NODE = '1'
-          try {
-            $nodeProc = Start-Process -FilePath $exe -ArgumentList $nodeScript -PassThru `
-              -RedirectStandardOutput $nodeOut -RedirectStandardError $nodeErr
-            if (-not $nodeProc.WaitForExit(30000)) {
-              Write-Host '=== ELECTRON_RUN_AS_NODE TIMED OUT (30s): binary cannot run even as Node ==='
-              Write-Host '--- node stdout ---'; if (Test-Path $nodeOut) { Get-Content $nodeOut -Tail 20 }
-              Write-Host '--- node stderr ---'; if (Test-Path $nodeErr) { Get-Content $nodeErr -Tail 60 }
-              & taskkill.exe /PID $nodeProc.Id /T /F 2>$null | Out-Null
-              throw 'ELECTRON_RUN_AS_NODE timed out: binary cannot run as Node on this runner'
-            }
-            Write-Host "ELECTRON_RUN_AS_NODE exit code: $($nodeProc.ExitCode)"
-            Write-Host "node sentinel written: $(Test-Path $nodeSentinel)"
-            Write-Host '--- node stdout ---'; if (Test-Path $nodeOut) { Get-Content $nodeOut -Tail 20 }
-            Write-Host '--- node stderr ---'; if (Test-Path $nodeErr) { Get-Content $nodeErr -Tail 60 }
-          } finally {
-            Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+          # The TUN service trusts this exe by path + hash, so the installed binary
+          # must not be usable as a plain Node host (ELECTRON_RUN_AS_NODE,
+          # NODE_OPTIONS, --inspect) or load an app outside the checked asar.
+          # Read the fuse wire straight from the installed exe.
+          $fuseScript = Join-Path $env:RUNNER_TEMP 'read-fuses.cjs'
+          Set-Content -Path $fuseScript -Encoding utf8 -Value @'
+          const { getCurrentFuseWire, FuseV1Options } = require(process.cwd() + '/node_modules/@electron/fuses')
+          const { FuseState } = require(process.cwd() + '/node_modules/@electron/fuses/dist/constants')
+          const expected = {
+            RunAsNode: FuseState.DISABLE,
+            EnableNodeOptionsEnvironmentVariable: FuseState.DISABLE,
+            EnableNodeCliInspectArguments: FuseState.DISABLE,
+            OnlyLoadAppFromAsar: FuseState.ENABLE,
+            EnableEmbeddedAsarIntegrityValidation: FuseState.ENABLE
           }
+          getCurrentFuseWire(process.argv[2]).then((wire) => {
+            let failed = false
+            for (const [name, state] of Object.entries(expected)) {
+              const actual = wire[FuseV1Options[name]]
+              const ok = actual === state
+              console.log(`${name}: ${ok ? 'PASS' : `FAIL (fuse state ${actual})`}`)
+              if (!ok) failed = true
+            }
+            process.exit(failed ? 1 : 0)
+          }, (error) => { console.error(error); process.exit(1) })
+          '@
+          & node $fuseScript $exe
+          if ($LASTEXITCODE -ne 0) { throw 'installed executable fuses are not locked down' }
+          Write-Host 'installed executable fuses locked down: PASS'
 
           $serviceTemplate = Get-Content (Join-Path $installDir 'resources\tun-service\service-template.json') -Raw | ConvertFrom-Json
           $tunService = Get-Service -Name $serviceTemplate.serviceName -ErrorAction Stop

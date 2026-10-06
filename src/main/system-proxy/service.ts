@@ -40,6 +40,7 @@ export interface SystemProxyServiceOptions {
 
 const NOT_SUPPORTED_MSG = '当前平台不支持系统代理'
 const CONFLICT_MSG = '系统代理已被外部修改，未执行还原'
+const PAC_WARNING_MSG = '检测到系统已设置 PAC 自动配置脚本，Windows 会优先使用它，部分流量可能不经过本应用'
 
 /** Shared recovery decision for enable, disable, startup and kernel shutdown. */
 function canRestoreBackup(observed: SystemProxyRegistryState, backup: SystemProxyBackup): boolean {
@@ -70,6 +71,8 @@ export class SystemProxyService implements SystemProxyGateway {
   private queue: Promise<unknown> = Promise.resolve()
   /** Set when the network detector disabled an owned proxy; the next `handleNetworkUp` re-enables. */
   private networkResumePending = false
+  /** Shown with every `enabled` status while a PAC script may override our proxy. */
+  private pacWarning: string | null = null
 
   constructor(options: SystemProxyServiceOptions) {
     this.adapter = options.adapter
@@ -167,6 +170,7 @@ export class SystemProxyService implements SystemProxyGateway {
           existingBackup.target.host === target.host && existingBackup.target.port === target.port
         if (isOwned(observed, existingBackup.written) && sameTarget) {
           // Idempotent: the proxy already points at the live target.
+          await this.refreshPacWarning()
           return this.transition('enabled', {
             address: formatAddress(existingBackup.target),
             port: existingBackup.target.port,
@@ -242,6 +246,7 @@ export class SystemProxyService implements SystemProxyGateway {
         return this.fail('disabled', ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED, '系统代理启用失败，已还原', null, error)
       }
 
+      await this.refreshPacWarning()
       return this.transition('enabled', {
         address: formatAddress(target),
         port: target.port,
@@ -287,6 +292,25 @@ export class SystemProxyService implements SystemProxyGateway {
             return policy
           }
           const written = buildWrittenState(backup.target, observed, policy)
+          // Put the previously written values back so ownership stays provable.
+          // If even that fails, the 30s guard re-applies `backup.written` (our
+          // server is still in place), so the error is logged, not rethrown.
+          const revert = async (): Promise<void> => {
+            try {
+              await this.adapter.restore(backup.written)
+              await this.adapter.refresh()
+            } catch (revertError) {
+              console.error(
+                '[system-proxy] bypass revert failed:',
+                revertError instanceof Error ? revertError.message : revertError
+              )
+            }
+            this.transition('enabled', {
+              address: formatAddress(backup.target),
+              port: backup.target.port,
+              proxyOverride: backup.written.proxyOverride.value as string
+            })
+          }
           try {
             await this.adapter.apply(written)
             await this.adapter.refresh()
@@ -295,22 +319,24 @@ export class SystemProxyService implements SystemProxyGateway {
               throw new Error('read-back mismatch after bypass re-apply')
             }
           } catch (error) {
-            // The re-apply could not be confirmed; fall back to the previous
-            // written state so ownership is still provable, and surface the
-            // failure through a status transition + error.
-            await this.adapter.restore(backup.written)
-            await this.adapter.refresh()
-            this.transition('enabled', {
-              address: formatAddress(backup.target),
-              port: backup.target.port,
-              proxyOverride: backup.written.proxyOverride.value as string
-            })
+            await revert()
             throw new ProtocolError(
               ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED,
               `应用系统代理绕过策略失败：${error instanceof Error ? error.message : String(error)}`
             )
           }
-          await this.backup.write({ ...backup, written })
+          try {
+            await this.backup.write({ ...backup, written })
+          } catch (error) {
+            // The registry now holds the new list but the bundle still records
+            // the old one; the guard would silently revert it later. Revert now
+            // and report it instead.
+            await revert()
+            throw new ProtocolError(
+              ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED,
+              `保存系统代理绕过策略失败：${error instanceof Error ? error.message : String(error)}`
+            )
+          }
           this.transition('enabled', {
             address: formatAddress(backup.target),
             port: backup.target.port,
@@ -561,6 +587,16 @@ export class SystemProxyService implements SystemProxyGateway {
     await this.restoreBackupStrict(backup)
   }
 
+  private async refreshPacWarning(): Promise<void> {
+    if (!this.adapter.readAutoConfigUrl) return
+    try {
+      this.pacWarning = (await this.adapter.readAutoConfigUrl()) ? PAC_WARNING_MSG : null
+    } catch {
+      // Diagnostic only: an unreadable PAC value never blocks the proxy.
+      this.pacWarning = null
+    }
+  }
+
   private buildStatus(phase: SystemProxyPhase, extra: Partial<SystemProxyStatus> = {}): SystemProxyStatus {
     const base: SystemProxyStatus = {
       supported: this.adapter.supported,
@@ -576,6 +612,9 @@ export class SystemProxyService implements SystemProxyGateway {
   }
 
   private transition(phase: SystemProxyPhase, extra: Partial<SystemProxyStatus> = {}): SystemProxyStatus {
+    if (phase === 'enabled' && extra.errorMessage === undefined && this.pacWarning) {
+      extra = { ...extra, errorMessage: this.pacWarning }
+    }
     const status = this.buildStatus(phase, extra)
     this.current = status
     this.emit(status)

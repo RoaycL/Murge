@@ -143,6 +143,7 @@ function openSettings(key: SettingKey): void {
             <button type="button" class="setting-nav" aria-label="打开系统代理设置" @click="openSettings('system-proxy')"><AppIcon name="next" :size="14" /></button>
           </div>
           <p v-if="actionError" class="inline-error" role="alert">{{ actionError }}</p>
+          <p v-else-if="spEnabled && sp.errorMessage" class="inline-error">{{ sp.errorMessage }}</p>
         </SurfaceCard>
         <SurfaceCard class="setting-card">
           <div class="setting-head">

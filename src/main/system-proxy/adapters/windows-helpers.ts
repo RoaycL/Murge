@@ -162,6 +162,18 @@ export function parseRegQueryValue(raw: string, valueName = ''): RegistryValue {
 }
 
 /**
+ * Read-only lookup of the per-user PAC script URL. Prints the value (or nothing
+ * when absent); it is only used to warn, so it never fails the caller.
+ */
+export const AUTO_CONFIG_URL_READ_SCRIPT = `$ErrorActionPreference = 'Stop'
+$subKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings')
+if ($null -eq $subKey) { exit 0 }
+$value = $subKey.GetValue('AutoConfigURL', $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+if ($null -ne $value) { [Console]::Out.Write([string]$value) }
+exit 0
+`
+
+/**
  * The canonical WinINet refresh script, shared byte-for-byte with the standalone
  * recovery helper (`scripts/recover-system-proxy.mjs`). It intentionally does NOT
  * cache the Win32 last-error after a *successful* call — a stale non-zero

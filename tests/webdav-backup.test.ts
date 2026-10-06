@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { downloadWebDavBackup, uploadWebDavBackup, validateWebDavTarget } from '../src/main/backup/webdav-backup'
+import { MAX_ARCHIVE_BYTES } from '../src/main/backup/config-backup'
 
 const target = { url: 'https://dav.example.com/backups/backup.murge-backup', username: 'alice', password: 'secret' }
 
@@ -35,7 +36,7 @@ describe('encrypted WebDAV backup transport', () => {
       return new Response('encrypted archive', { status: 200 })
     }) as unknown as typeof fetch
     expect(await downloadWebDavBackup(target, fetchFn)).toEqual(Buffer.from('encrypted archive'))
-    const oversized = vi.fn(async () => new Response('x', { status: 200, headers: { 'content-length': String(49 * 1024 * 1024) } })) as unknown as typeof fetch
+    const oversized = vi.fn(async () => new Response('x', { status: 200, headers: { 'content-length': String(MAX_ARCHIVE_BYTES + 1) } })) as unknown as typeof fetch
     await expect(downloadWebDavBackup(target, oversized)).rejects.toThrow('超过上限')
   })
 })

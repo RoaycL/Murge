@@ -62,6 +62,16 @@ describe('local configuration backup', () => {
     expect(await applyPendingConfigRestore(target)).toBe('none')
   })
 
+  it('backs up a profile as large as the subscription download limit', async () => {
+    const source = await workspace()
+    await mkdir(join(source, 'profiles'), { recursive: true })
+    const profile = `rules:\n${'  - "x"\n'.repeat(Math.floor((16 * 1024 * 1024 - 7) / 8))}`
+    await writeFile(join(source, 'profiles', 'big.yaml'), profile)
+    const archive = await createConfigBackup(source, 'correct-password', '0.9.20', codec)
+    const { payload } = inspectConfigBackup(archive, 'correct-password', '0.9.20')
+    expect(Buffer.from(payload.files['profiles/big.yaml']!, 'base64').equals(Buffer.from(profile))).toBe(true)
+  })
+
   it('blocks a backup from a newer application and rolls back an interrupted file apply', async () => {
     const source = await workspace()
     await writeFile(join(source, 'app-settings.json'), '{"new":true}')

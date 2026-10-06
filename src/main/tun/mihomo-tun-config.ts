@@ -311,13 +311,13 @@ function validateRouteList(node: Node | undefined, label: string, errors: string
 /* -------------------------------------------------------------------------- */
 
 /**
- * The service enforces a hard 2 MiB ceiling on the submitted profile
- * (`maxProfileBytes` in native/tun-service/protocol.go). Real subscriptions sit
- * below it when `rule-providers` / `proxy-providers` remain remote URLs, while
- * still leaving room for sizeable inline rules. Fail with a legible message
- * instead of letting the service close the pipe without a response.
+ * The service enforces a hard 16 MiB ceiling on the submitted profile
+ * (`maxProfileBytes` in native/tun-service/protocol.go), the same as the
+ * subscription download limit, so any profile that imports can also run.
+ * Fail with a legible message instead of letting the service close the pipe
+ * without a response.
  */
-export const TUN_PROFILE_MAX_BYTES = 2 * 1024 * 1024
+export const TUN_PROFILE_MAX_BYTES = 16 * 1024 * 1024
 
 /**
  * Hosts kept on real IPs under fake-ip mode, clash-party's shipped default

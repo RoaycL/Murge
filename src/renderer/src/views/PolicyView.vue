@@ -115,15 +115,7 @@ async function onCardClick(name: string): Promise<void> {
 async function init(): Promise<void> {
   await kernel.refresh()
   if (kernel.status.phase !== 'running') return
-  await policies.load()
-  try {
-    const config = await window.desktop.mihomo.getConfig()
-    if (config.mode && POLICY_MODE_OPTIONS.includes(config.mode as PolicyMode)) {
-      policies.mode = config.mode as PolicyMode
-    }
-  } catch {
-    /* the mode selector falls back to the store default */
-  }
+  await Promise.all([policies.load(), policies.syncMode()])
 }
 
 onMounted(() => {

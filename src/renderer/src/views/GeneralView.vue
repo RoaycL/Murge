@@ -177,7 +177,7 @@ onMounted(async () => {
       <div class="surface-card preference-list">
         <label>
           <span>
-            <strong>启动时自动检查更新</strong>
+            <strong>自动检查更新</strong>
           </span>
           <button
             type="button"
@@ -185,7 +185,7 @@ onMounted(async () => {
             :class="{ on: appSettings.settings.autoCheckUpdate }"
             :aria-checked="appSettings.settings.autoCheckUpdate"
             :disabled="appSettings.busy"
-            aria-label="启动时自动检查更新"
+            aria-label="自动检查更新"
             @click="appSettings.set({ autoCheckUpdate: !appSettings.settings.autoCheckUpdate })"
           />
         </label>

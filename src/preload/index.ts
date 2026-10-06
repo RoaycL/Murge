@@ -85,7 +85,8 @@ const api: DesktopApi = {
     onTraffic: (listener) => listen(IPC.mihomoTrafficEvent, listener),
     onConnections: (listener) => listen(IPC.mihomoConnectionsEvent, listener),
     onLogs: (listener) => listen(IPC.mihomoLogEvent, listener),
-    onStreamError: (listener) => listen(IPC.mihomoStreamErrorEvent, listener)
+    onStreamError: (listener) => listen(IPC.mihomoStreamErrorEvent, listener),
+    onModeChanged: (listener) => listen(IPC.mihomoModeChangedEvent, listener)
   },
   profiles: {
     getActiveGroupOrder: () => invoke(IPC.profilesGetActiveGroupOrder),

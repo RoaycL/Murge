@@ -267,6 +267,12 @@ let networkDetector: NetworkDetector | null = null
 let profileAutoUpdater: ProfileAutoUpdateService | null = null
 let runtimeIntentRecovery: RuntimeIntentRecoveryCoordinator | null = null
 let updateService: UpdateService | null = null
+
+function applyUpdatePolling(enabled: boolean): void {
+  if (!updateService) return
+  if (enabled) updateService.startPolling()
+  else updateService.stopPolling()
+}
 let usageHistoryServiceRef: UsageHistoryService | null = null
 let waitForProfileOperations: (() => Promise<void>) | null = null
 let pendingRendererRoute: string | null = null
@@ -810,6 +816,7 @@ app.whenReady().then(async () => {
     if (silentLaunchChanged) {
       refreshStartupRegistration('failed to refresh login-item arguments')
     }
+    applyUpdatePolling(settings.autoCheckUpdate)
     void subStoreServiceRef?.onSettings({
       subStoreEnabled: settings.subStoreEnabled,
       subStoreUseProxy: settings.subStoreUseProxy
@@ -1521,8 +1528,11 @@ app.whenReady().then(async () => {
   updates.start()
   // Poll the feed while the app runs so a Release published mid-session is
   // picked up without waiting for the next launch (10-minute cadence, same as
-  // mihomo-party/sparkle). The service no-ops this on non-packaged builds.
-  updates.startPolling()
+  // mihomo-party/sparkle). Gated on the same "自动检查更新" setting as the launch
+  // check, and toggled live from the settings listener; with it off only a
+  // manual "检查更新" reaches the feed. The service no-ops this on non-packaged
+  // builds.
+  applyUpdatePolling(cachedAppSettings.autoCheckUpdate)
   const usageHistoryService = new UsageHistoryService({
     store: app.isPackaged
       ? FileSystemUsageHistoryStore.forAppDataBase(app.getPath('appData'))
@@ -1806,6 +1816,9 @@ app.whenReady().then(async () => {
     mihomo: selectionGateway,
     profiles: profileGateway,
     internetLatency: internetLatencyService,
+    onModeChanged: (mode) => {
+      for (const win of BrowserWindow.getAllWindows()) win.webContents.send(IPC.mihomoModeChangedEvent, mode)
+    },
     resolveGroupOrder: async () => parseProxyGroupOrder((await resolveEnhancedActiveDocument()) ?? ''),
     resolveGroupIcon: (cacheKey, url, refresh) => remoteIconCache.get(cacheKey, url, refresh),
     reloadConfig: () => modeController.updateRuntimeConfig(async () => {
@@ -1880,7 +1893,7 @@ app.whenReady().then(async () => {
   if (!is.dev && !hasArg('--ui-smoke')) profileAutoUpdater.start()
 
   // Auto-check for a newer release on launch, gated on the persisted
-  // "启动时自动检查更新" setting. `check()` kicks off the feed request and returns
+  // "自动检查更新" setting. `check()` kicks off the feed request and returns
   // immediately, so this never blocks the window; a found update downloads in
   // the background and installs on the next quit, while a manual "检查更新"
   // from "关于" or the tray always works regardless of this flag. Wrapped so a

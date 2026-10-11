@@ -62,12 +62,12 @@ function defaultRunner(command: string, args: string[]): Promise<ScheduledTaskRu
   })
 }
 
-/** True when the task-level `<Settings><Enabled>` element is `true`. */
+/** Windows omits the task-level Enabled element when its default is true. */
 export function taskSettingsEnabled(taskXml: string): boolean {
-  const settingsIndex = taskXml.indexOf('<Settings>')
-  if (settingsIndex === -1) return false
-  const match = /<Enabled>(true|false)<\/Enabled>/.exec(taskXml.slice(settingsIndex))
-  return match?.[1] === 'true'
+  if (!/<Task(?:\s|>)/.test(taskXml)) return false
+  const settings = /<Settings(?:\s[^>]*)?>([\s\S]*?)<\/Settings>/.exec(taskXml)
+  const match = /<Enabled>\s*(true|false|1|0)\s*<\/Enabled>/.exec(settings?.[1] ?? '')
+  return match === null || match[1] === 'true' || match[1] === '1'
 }
 
 /**

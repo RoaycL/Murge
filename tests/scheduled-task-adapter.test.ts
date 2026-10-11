@@ -27,6 +27,7 @@ function makeAdapter(options: {
   legacyEntry?: boolean
   queryFailure?: 'denied' | 'timeout' | 'invalid'
   denyRunDelete?: boolean
+  omitTaskEnabled?: boolean
 } = {}) {
   const state = {
     task: options.task ?? null,
@@ -56,7 +57,7 @@ function makeAdapter(options: {
           if (options.queryFailure === 'invalid') return { code: 0, stdout: 'invalid data', stderr: '' }
           return state.task === null
             ? { code: 1, stdout: '', stderr: 'not found' }
-            : { code: 0, stdout: taskXml(state.task), stderr: '' }
+            : { code: 0, stdout: options.omitTaskEnabled && state.task ? taskXml(true).replace('<Enabled>true</Enabled>', '') : taskXml(state.task), stderr: '' }
         }
         if (args[0] === '/change') {
           if (options.denyChange) return { code: 1, stdout: '', stderr: 'Access is denied' }
@@ -137,6 +138,22 @@ describe('installer-managed startup task', () => {
     expect(status).toMatchObject({ enabled: true, phase: 'error' })
     expect(state.task).toBe(true)
     expect(status.errorMessage).toContain('Access is denied')
+  })
+
+  it('uses Windows default enabled state without reading the trigger flag', () => {
+    expect(taskSettingsEnabled('<?xml version="1.0"?><Task><Settings></Settings><Triggers><LogonTrigger><Enabled>false</Enabled></LogonTrigger></Triggers></Task>')).toBe(true)
+    expect(taskSettingsEnabled('<Task><Triggers><LogonTrigger><Enabled>false</Enabled></LogonTrigger></Triggers></Task>')).toBe(true)
+    expect(taskSettingsEnabled('<Task><Settings><Enabled> 0 </Enabled></Settings></Task>')).toBe(false)
+    expect(taskSettingsEnabled('')).toBe(false)
+  })
+
+  it('disables a real Windows-style task with the Enabled default omitted', async () => {
+    const { adapter, state, calls } = makeAdapter({ task: true, omitTaskEnabled: true })
+    expect(await adapter.read()).toBe(true)
+    const status = await new StartupService(adapter).setEnabled(false)
+    expect(status).toMatchObject({ enabled: false, phase: 'idle' })
+    expect(state.task).toBe(false)
+    expect(calls.some((call) => call.includes('/disable'))).toBe(true)
   })
 
   it.each(['denied', 'timeout', 'invalid'] as const)('does not treat a %s query as an absent task when disabling', async (queryFailure) => {

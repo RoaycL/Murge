@@ -22,9 +22,9 @@ export interface ShellDetection {
 
 export function detectShell(target: { desktop?: unknown; __TAURI_INTERNALS__?: unknown } = window): ShellDetection {
   const hasDesktopBridge = typeof target.desktop === 'object' && target.desktop !== null
-  const isTauri = hasDesktopBridge && typeof target.__TAURI_INTERNALS__ !== 'undefined'
+  const isTauri = typeof target.__TAURI_INTERNALS__ !== 'undefined'
   return {
-    kind: hasDesktopBridge ? (isTauri ? 'tauri' : 'electron') : 'browser',
+    kind: isTauri ? 'tauri' : hasDesktopBridge ? 'electron' : 'browser',
     hasDesktopBridge
   }
 }

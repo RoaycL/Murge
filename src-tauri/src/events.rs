@@ -495,7 +495,7 @@ pub fn start_forwarding(
         emitter("mihomo:stream-error-event", value.clone())
     }));
     let emitter = emit.clone();
-    kernel.supervisor.status_listeners.subscribe(Arc::new(move |value| {
+    kernel.status_listeners().subscribe(Arc::new(move |value| {
         emitter("kernel:status-event", value.clone())
     }));
     let emitter = emit.clone();

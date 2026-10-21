@@ -163,7 +163,7 @@ pub async fn dispatch(
         "system-proxy:get-status" => Ok(system_proxy.get_status_value()),
         "system-proxy:enable" => {
             settings.set(&crate::settings::AppSettingsPatch(serde_json::json!({"systemProxyDesired": true})));
-            if kernel.supervisor.get_status()["phase"].as_str() != Some("running") {
+            if kernel.get_status_value()["phase"].as_str() != Some("running") {
                 kernel.start().await?;
             }
             Ok(serde_json::to_value(system_proxy.enable().await?).expect("status serializes"))
@@ -195,7 +195,7 @@ pub async fn dispatch(
             // runtime and the main kernel cannot share the unified ports, and
             // the TS controller starts it explicitly on this path.
             {
-                let phase = kernel.supervisor.get_status()["phase"]
+                let phase = kernel.get_status_value()["phase"]
                     .as_str()
                     .unwrap_or_default()
                     .to_string();
@@ -424,15 +424,17 @@ pub async fn dispatch(
         "profiles:get-provider-content" => {
             // Exact handler shape (handlers.ts): kind validation first, then
             // the mihomo-name parse, then the reader gate. The reader routes
-            // through the privileged Go service (named pipe), which this
-            // build does not transport yet — the same INTERNAL copy the
-            // Electron build surfaces when no service client is composed.
+            // through the privileged Go service (named pipe) when composed —
+            // otherwise the same INTERNAL copy the Electron build surfaces.
             let raw_kind = arg(payload, 0).and_then(Value::as_str).unwrap_or_default();
             if raw_kind != "proxy" && raw_kind != "rule" {
                 return Err(IpcError::code(crate::error::code::INVALID_ARGUMENT, "外部资源类型无效"));
             }
-            let _name = mihomo::parse_mihomo_name(arg(payload, 1).unwrap_or(&Value::Null))?;
-            Err(IpcError::code(crate::error::code::INTERNAL, "当前运行方式不支持读取外部资源内容"))
+            let name = mihomo::parse_mihomo_name(arg(payload, 1).unwrap_or(&Value::Null))?;
+            match &kernel.privileged {
+                Some(privileged) => privileged.client().get_provider_content(raw_kind, &name).await,
+                None => Err(IpcError::code(crate::error::code::INTERNAL, "当前运行方式不支持读取外部资源内容")),
+            }
         }
         "profiles:inspect-active-config" => {
             // The Electron composition: overrides -> DNS enhancement ->
@@ -555,7 +557,7 @@ pub async fn dispatch(
                 .ok_or_else(|| IpcError::invalid_argument("geodata-settings:set requires a settings object"))?;
             let previous = models.geodata.get();
             let next = models.geodata.set(input, enhancements::coerce_geodata_settings)?;
-            match live_config::LiveConfigReloader::from_ipc(&kernel.supervisor, models, profiles, overrides)?
+            match live_config::LiveConfigReloader::from_ipc(kernel, models, profiles, overrides)?
                 .apply_sections(&["geodata"])
                 .await
             {
@@ -563,7 +565,7 @@ pub async fn dispatch(
                 Err(apply_error) => {
                     let _ = models.geodata.set(&previous, enhancements::coerce_geodata_settings);
                     let reloader =
-                        live_config::LiveConfigReloader::from_ipc(&kernel.supervisor, models, profiles, overrides)?;
+                        live_config::LiveConfigReloader::from_ipc(kernel, models, profiles, overrides)?;
                     let _ = reloader.apply_sections(&["geodata"]).await;
                     Err(apply_error)
                 }
@@ -586,7 +588,7 @@ pub async fn dispatch(
             // EnhancementApplyCoordinator.update: on a live-application
             // failure roll the persistence back and re-apply the restored
             // model, then propagate the original error.
-            match live_config::LiveConfigReloader::from_ipc(&kernel.supervisor, models, profiles, overrides)?
+            match live_config::LiveConfigReloader::from_ipc(kernel, models, profiles, overrides)?
                 .apply_sections(&["dns"])
                 .await
             {
@@ -594,7 +596,7 @@ pub async fn dispatch(
                 Err(apply_error) => {
                     let _ = models.dns.set(&previous, enhancements::coerce_dns_enhancement);
                     let reloader =
-                        live_config::LiveConfigReloader::from_ipc(&kernel.supervisor, models, profiles, overrides)?;
+                        live_config::LiveConfigReloader::from_ipc(kernel, models, profiles, overrides)?;
                     let _ = reloader.apply_sections(&["dns"]).await;
                     Err(apply_error)
                 }
@@ -615,7 +617,7 @@ pub async fn dispatch(
             // apply: the runtime `sniffing` gate fast path, payload-reload
             // fallback. Rollback transitions FROM the failed model TO the
             // restored one.
-            match live_config::LiveConfigReloader::from_ipc(&kernel.supervisor, models, profiles, overrides)?
+            match live_config::LiveConfigReloader::from_ipc(kernel, models, profiles, overrides)?
                 .apply_sniffer_transition_if_running(&previous, &next_model)
                 .await
             {
@@ -623,7 +625,7 @@ pub async fn dispatch(
                 Err(apply_error) => {
                     let restored = models.sniffer.set(&previous, enhancements::coerce_sniffer_enhancement);
                     let reloader =
-                        live_config::LiveConfigReloader::from_ipc(&kernel.supervisor, models, profiles, overrides)?;
+                        live_config::LiveConfigReloader::from_ipc(kernel, models, profiles, overrides)?;
                     let _ = match &restored {
                         Ok(restored_model) => {
                             reloader
@@ -672,7 +674,7 @@ pub async fn dispatch(
         // The supervisor runs with the DisabledKernelResolver port until the
         // artifact pipeline lands: start fails with the exact Electron copy
         // and the status records `failed` + lastError.
-        "kernel:get-status" => Ok(kernel.supervisor.get_status()),
+        "kernel:get-status" => Ok(kernel.get_status_value()),
         "kernel:start" => {
             let _gate = RUNTIME_UPDATE.lock().await;
             kernel.start().await
@@ -709,7 +711,7 @@ pub async fn dispatch(
             };
             Ok(kernel::build_runtime_summary(profile_name.as_deref()))
         }
-        "runtime:get-external-ip" => Ok(live_config::resolve_external_ip(&kernel.supervisor, models).await),
+        "runtime:get-external-ip" => Ok(live_config::resolve_external_ip(kernel, models).await),
 
         // --- mihomo controller REST (Phase 3B) ------------------------------
         // The endpoint/secret come from the core-settings model; with no
@@ -1551,6 +1553,7 @@ mod tests {
             supervisor: harness.supervisor.clone(),
             manager: std::sync::Arc::new(kernel::KernelManagerService::new()),
             ready: None,
+            privileged: None,
         };
         let before = f.models.dns.get();
         let result = dispatch("dns:set", &serde_json::json!([{ "enabled": true }]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await;

@@ -49,7 +49,7 @@ once_cell = "1"
 arboard = "3"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std", "io"] }
 # The controller client awaits HTTP; `#[tokio::test]` covers the async paths.
-tokio = { version = "1", features = ["process", "macros", "rt-multi-thread", "sync"] }
+tokio = { version = "1", features = ["process", "macros", "rt-multi-thread", "sync", "net", "io-util", "time"] }
 boa_engine = "0.20"
 
 [target.'cfg(unix)'.dependencies]

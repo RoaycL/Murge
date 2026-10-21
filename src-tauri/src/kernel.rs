@@ -113,7 +113,14 @@ pub struct KernelManagerService {
     /// The live-kernel apply/verify handler; None until the composition
     /// root wires it (the TS applies `applyInstalledKernelVersionFinal`).
     pub apply_installed_version: Option<ApplyInstalledFn>,
+    /// The privileged production installer (`KernelManagerServiceDeps.installVersion`):
+    /// the service independently fetches and verifies the official release.
+    /// Set once by the Windows composition after the service client exists.
+    pub install_version: std::sync::OnceLock<InstallVersionFn>,
 }
+
+pub type InstallVersionFn =
+    Arc<dyn Fn(String) -> futures_util::future::BoxFuture<'static, Result<(), crate::error::IpcError>> + Send + Sync>;
 
 impl KernelManagerService {
     pub fn new() -> Self {
@@ -125,6 +132,7 @@ impl KernelManagerService {
             fetch_release_assets: None,
             resolve_asset: None,
             apply_installed_version: None,
+            install_version: std::sync::OnceLock::new(),
         }
     }
 
@@ -221,8 +229,27 @@ impl KernelManagerService {
             if raw.is_empty() { None } else { Some(raw.to_string()) }
         });
         // TS: preview/smart attempt the (service) install first — only when
-        // the service client dep exists. This build has none, so the channel
-        // persists straight away and the apply/verify step proves it.
+        // the service client dep exists; otherwise the channel persists
+        // straight away and the apply/verify step proves it.
+        if matches!(channel, "preview" | "smart") {
+            if let Some(install) = self.install_version.get() {
+                {
+                    let mut transient = self.transient_guard();
+                    transient["installing"] = json!(channel);
+                }
+                self.emit(settings);
+                let result = install(channel.to_string()).await;
+                let mut transient = self.transient_guard();
+                transient["installing"] = Value::Null;
+                if let Err(error) = result {
+                    let label = if channel == "smart" { " Smart" } else { "预览" };
+                    let message = error.extract_message();
+                    transient["error"] = json!(if message.is_empty() { format!("安装{label}内核失败") } else { message });
+                    drop(transient);
+                    return self.commit(settings);
+                }
+            }
+        }
         settings
             .set(&crate::settings::AppSettingsPatch(serde_json::json!({
                 "kernelChannel": channel, "kernelEnabled": true
@@ -324,8 +351,13 @@ impl KernelManagerService {
         // Resolve + verify the asset into its per-version workspace (the
         // byte-level verification is unconditional); the channel is only
         // persisted when the install succeeded.
-        let workspace = self.version_workspace_dir(version);
-        self.resolve_version_asset(version, &workspace).await?;
+        match self.install_version.get() {
+            Some(install) => install(version.to_string()).await?,
+            None => {
+                let workspace = self.version_workspace_dir(version);
+                self.resolve_version_asset(version, &workspace).await?;
+            }
+        }
         settings.set(&crate::settings::AppSettingsPatch(serde_json::json!({
             "kernelChannel": "specific", "kernelSpecificVersion": version
         })));
@@ -453,12 +485,43 @@ pub struct KernelServices {
     /// controller's authenticated /version. Dev keeps the raw supervisor
     /// (the TS `kernelInstance`, its fixture reports readiness by stdout).
     pub ready: Option<Arc<crate::kernel_process::ControllerReadyKernelGateway>>,
+    /// The privileged-service gateway (`PrivilegedServiceKernelGateway`,
+    /// packaged Windows): the LocalSystem TUN service owns the only mihomo
+    /// process, so start/stop/status route to it instead of the supervisor.
+    pub privileged: Option<Arc<crate::privileged_kernel::PrivilegedKernelGateway>>,
+}
+
+/// Anything that reports the kernel status snapshot (the TS
+/// `KernelGateway.getStatus` seam the live-config reloader reads).
+pub trait KernelStatusSource: Send + Sync {
+    fn kernel_status(&self) -> Value;
+}
+
+impl KernelStatusSource for crate::kernel_process::KernelSupervisor {
+    fn kernel_status(&self) -> Value {
+        self.get_status()
+    }
+}
+
+impl<T: KernelStatusSource + ?Sized> KernelStatusSource for Arc<T> {
+    fn kernel_status(&self) -> Value {
+        (**self).kernel_status()
+    }
+}
+
+impl KernelStatusSource for KernelServices {
+    fn kernel_status(&self) -> Value {
+        self.get_status_value()
+    }
 }
 
 impl KernelServices {
     /// Start through the ready gate when composed with one, the raw
     /// supervisor otherwise (dev).
     pub async fn start(&self) -> Result<Value, crate::error::IpcError> {
+        if let Some(privileged) = &self.privileged {
+            return privileged.start().await;
+        }
         match &self.ready {
             Some(gateway) => gateway.start().await,
             None => self.supervisor.start().await,
@@ -467,12 +530,26 @@ impl KernelServices {
 
     /// Status passes straight through (the TS gateway forwards getStatus).
     pub fn get_status_value(&self) -> Value {
-        self.supervisor.get_status()
+        match &self.privileged {
+            Some(privileged) => privileged.get_status(),
+            None => self.supervisor.get_status(),
+        }
+    }
+
+    /// The status hub of whichever gateway owns the kernel.
+    pub fn status_listeners(&self) -> &crate::events::EventHub {
+        match &self.privileged {
+            Some(privileged) => &privileged.status_listeners,
+            None => &self.supervisor.status_listeners,
+        }
     }
 
     /// Stop always passes straight through (the ready gate is a start
     /// wrapper — the TS `ControllerReadyKernelGateway.stop`).
     pub async fn stop(&self) -> Result<Value, crate::error::IpcError> {
+        if let Some(privileged) = &self.privileged {
+            return privileged.stop().await;
+        }
         self.supervisor.stop().await
     }
 }
@@ -495,6 +572,7 @@ impl KernelServices {
             ),
             manager: Arc::new(KernelManagerService::new()),
             ready: None,
+            privileged: None,
         }
     }
 
@@ -518,6 +596,7 @@ impl KernelServices {
             ),
             manager,
             ready: None,
+            privileged: None,
         }
     }
 
@@ -537,6 +616,7 @@ impl KernelServices {
             ),
             manager,
             ready: None,
+            privileged: None,
         }
     }
 
@@ -608,7 +688,7 @@ impl KernelServices {
                 100,
             ))
         });
-        KernelServices { supervisor, manager, ready }
+        KernelServices { supervisor, manager, ready, privileged: None }
     }
 }
 

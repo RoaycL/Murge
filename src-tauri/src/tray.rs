@@ -266,7 +266,7 @@ impl TrayController {
     /// every step: a failing source keeps the previous snapshot (the TS
     /// `.catch(() => this.…)` guards).
     pub async fn refresh(&self) {
-        let kernel = self.deps.kernel.supervisor.get_status();
+        let kernel = self.deps.kernel.get_status_value();
         let system_proxy = self.deps.system_proxy.get_status();
         let tun = self.deps.tun.get_status_value();
         let profiles: Vec<Value> = self
@@ -1224,7 +1224,7 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
     // Status listeners re-render immediately (the TS onStatus subscribers).
     {
         let controller = controller.clone();
-        kernel.supervisor.status_listeners.subscribe(Arc::new(move |status| {
+        kernel.status_listeners().subscribe(Arc::new(move |status| {
             let controller = controller.clone();
             let status = status.clone();
             tauri::async_runtime::spawn(async move {

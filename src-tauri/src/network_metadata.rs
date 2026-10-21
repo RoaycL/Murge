@@ -374,7 +374,7 @@ impl NetworkMetadataService {
                 let app = app.clone();
                 Box::pin(async move {
                     let kernel = app.state::<std::sync::Arc<crate::kernel::KernelServices>>();
-                    if kernel.supervisor.get_status()["phase"].as_str() != Some("running") {
+                    if kernel.get_status_value()["phase"].as_str() != Some("running") {
                         return None;
                     }
                     let models = app.state::<std::sync::Arc<crate::enhancements::ModelStores>>();

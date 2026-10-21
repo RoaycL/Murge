@@ -43,6 +43,8 @@ mod substore;
 mod substore_zip;
 mod system_proxy;
 mod tun;
+mod tun_service;
+mod privileged_kernel;
 mod tun_profile;
 mod tun_hot_switch;
 mod updates;
@@ -226,6 +228,7 @@ pub fn run() {
                     core_model["controllerSecret"].as_str().unwrap_or_default().to_string()
                 };
                 let ports = enhancements::coerce_core_settings(&models.core.get());
+                let secret_for_service = secret.clone();
                 // The controller-ready probe: one authenticated /version
                 // through the SAME loopback URL the streams endpoint binds.
                 let probe = crate::mihomo::MihomoClient::new(
@@ -271,19 +274,39 @@ pub fn run() {
                         };
                         (current.kernel_channel.clone(), specific)
                     });
-                kernel::KernelServices::for_real_kernel(
+                let mut services = kernel::KernelServices::for_real_kernel(
                     paths.kernel_root().unwrap_or_default(),
                     None, // staged: bundled archive dir with the installer slice
                     secret,
-                    ports,
+                    ports.clone(),
                     Some(resolve_active_document),
                     Some(resolve_core),
                     Some(resolve_geodata),
                     std::sync::Arc::new(|| true), // isEnabled: always true
                     manager,
-                    Some(version_selection),
+                    Some(version_selection.clone()),
                     probe,
-                )
+                );
+                // Packaged Windows: the installed LocalSystem service owns the
+                // only mihomo process (ordinary and TUN modes alike). The
+                // `--kernel-smoke` probe keeps the direct supervisor.
+                if !std::env::args().any(|arg| arg == "--kernel-smoke") {
+                    services.privileged = compose_privileged_kernel(
+                        app.handle().clone(),
+                        &ports,
+                        &secret_for_service,
+                        version_selection,
+                    );
+                    if let Some(privileged) = &services.privileged {
+                        let client = privileged.client().clone();
+                        let mixed_port = u16::try_from(ports["mixedPort"].as_i64().unwrap_or(0)).ok();
+                        let _ = services.manager.install_version.set(std::sync::Arc::new(move |version| {
+                            let client = client.clone();
+                            Box::pin(async move { client.install_version(&version, mixed_port).await })
+                        }));
+                    }
+                }
+                services
             } else {
                 // Non-Windows production: fail-closed (the disabled resolver).
                 kernel::KernelServices::with_manager(manager)
@@ -490,7 +513,7 @@ pub fn run() {
                         use tauri::Manager;
                         probe_app_phase
                             .try_state::<std::sync::Arc<crate::kernel::KernelServices>>()
-                            .map(|services| services.supervisor.get_status()["phase"].as_str().unwrap_or("stopped").to_string())
+                            .map(|services| services.get_status_value()["phase"].as_str().unwrap_or("stopped").to_string())
                             .unwrap_or_else(|| "stopped".to_string())
                     },
                     move || {
@@ -661,7 +684,7 @@ pub fn run() {
             // immediately (the proxy must never outlive a dead listener).
             let recovery_app = app.handle().clone();
             let kernel_services = app.state::<std::sync::Arc<crate::kernel::KernelServices>>();
-            kernel_services.supervisor.status_listeners.subscribe(std::sync::Arc::new(move |value| {
+            kernel_services.status_listeners().subscribe(std::sync::Arc::new(move |value| {
                 if value["phase"].as_str() == Some("failed") {
                     use tauri::Manager;
                     let recovery_app = recovery_app.clone();
@@ -672,6 +695,9 @@ pub fn run() {
                     });
                 }
             }));
+            if let Some(privileged) = kernel_services.privileged.clone() {
+                start_privileged_monitor(app.handle().clone(), privileged);
+            }
             app.manage(paths);
 
             // The tray slice: construct the native tray + controller with the
@@ -724,4 +750,145 @@ pub fn run() {
                 _ => {}
             }
         });
+}
+
+/// The privileged-service kernel gateway (when-ready.ts `privilegedKernel`):
+/// one named-pipe client shared by start/stop, liveness and the exit monitor,
+/// so ownership never splits across handles.
+fn compose_privileged_kernel(
+    handle: tauri::AppHandle,
+    ports: &serde_json::Value,
+    secret: &str,
+    version_selection: kernel_process::VersionSelectionFn,
+) -> Option<std::sync::Arc<privileged_kernel::PrivilegedKernelGateway>> {
+    use tauri::Manager;
+    let app_id = brand::load_brand().map(|brand| brand.app_id).unwrap_or_else(|_| "io.murge.desktop".to_string());
+    let pipe_name = tun_service::tun_service_identity(&app_id).pipe_name;
+    let transport = tun_service::NamedPipeTunServiceTransport::new(&pipe_name).ok()?;
+    let client = std::sync::Arc::new(tun_service::TunServiceClient::new(Box::new(transport)));
+    let controller_port = ports["controllerPort"].as_i64().unwrap_or(9090);
+    let profile_handle = handle.clone();
+    let build_profile: privileged_kernel::ProfileBuilder = std::sync::Arc::new(move || {
+        let profiles = profile_handle.state::<std::sync::Arc<profile_service::ProfilesService>>();
+        let overrides = profile_handle.state::<std::sync::Arc<override_service::OverrideService>>();
+        let models = profile_handle.state::<std::sync::Arc<enhancements::ModelStores>>();
+        live_config::build_service_profile(&profiles, &overrides, &models)
+    });
+    let secret = secret.to_string();
+    let readiness: privileged_kernel::ReadinessProbe = std::sync::Arc::new(move || {
+        let secret = secret.clone();
+        Box::pin(async move {
+            let client = mihomo::MihomoClient::new(controller_port, &secret)?;
+            let version = client.get_version().await?;
+            Ok(version["version"].as_str().map(str::to_string))
+        })
+    });
+    Some(std::sync::Arc::new(privileged_kernel::PrivilegedKernelGateway::new(
+        client,
+        build_profile,
+        readiness,
+        std::sync::Arc::new(|| true),
+        std::sync::Arc::new(move || version_selection()),
+        privileged_kernel::PrivilegedKernelOptions { controller_port, ..Default::default() },
+    )))
+}
+
+/// Reconcile the service-owned core once, then run the five-second exit
+/// monitor (when-ready.ts `createPrivilegedExitMonitorTick` + setInterval).
+fn start_privileged_monitor(
+    handle: tauri::AppHandle,
+    kernel: std::sync::Arc<privileged_kernel::PrivilegedKernelGateway>,
+) {
+    use tauri::Manager;
+    let core = handle
+        .try_state::<std::sync::Arc<enhancements::ModelStores>>()
+        .map(|models| enhancements::coerce_core_settings(&models.core.get()))
+        .unwrap_or_default();
+    let controller_port = core["controllerPort"].as_i64().unwrap_or(9090);
+    let secret = core["controllerSecret"].as_str().unwrap_or_default().to_string();
+    let start_handle = handle.clone();
+    let start_kernel: std::sync::Arc<dyn Fn() -> futures_util::future::BoxFuture<'static, Result<(), error::IpcError>> + Send + Sync> =
+        std::sync::Arc::new(move || {
+            let handle = start_handle.clone();
+            Box::pin(async move {
+                if lifecycle::is_quitting() {
+                    return Ok(());
+                }
+                let services = handle.state::<std::sync::Arc<kernel::KernelServices>>().inner().clone();
+                services.start().await.map(|_| ())
+            })
+        });
+    let wake_start = start_kernel.clone();
+    let tun_handle = handle.clone();
+    let proxy_handle = handle.clone();
+    let settings_handle = handle.clone();
+    let deps = privileged_kernel::ExitMonitorDeps {
+        kernel: kernel.clone(),
+        handle_host_exit: std::sync::Arc::new(move || {
+            let handle = tun_handle.clone();
+            Box::pin(async move {
+                if let Some(tun) = handle.try_state::<std::sync::Arc<tun::TunCoordinator>>() {
+                    let tun = tun.inner().clone();
+                    tun.handle_host_exit().await;
+                }
+            })
+        }),
+        restore_system_proxy: std::sync::Arc::new(move || {
+            let handle = proxy_handle.clone();
+            Box::pin(async move {
+                match handle.try_state::<std::sync::Arc<system_proxy::SystemProxyService>>() {
+                    Some(proxy) => {
+                        let proxy = proxy.inner().clone();
+                        proxy.restore_before_kernel_unavailable().await
+                    }
+                    None => Ok(()),
+                }
+            })
+        }),
+        read_settings: std::sync::Arc::new(move || {
+            settings_handle
+                .try_state::<std::sync::Arc<settings::SettingsStore>>()
+                .map(|store| {
+                    let current = store.get();
+                    (current.auto_start_kernel, current.tun_desired, current.system_proxy_desired)
+                })
+                .unwrap_or((false, false, false))
+        }),
+        start_kernel,
+        // No durable intent-recovery loop exists in this shell yet: recreate
+        // the core and let the user re-enable TUN / proxy.
+        wake_intent_recovery: std::sync::Arc::new(move || {
+            let start = wake_start.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = start().await {
+                    eprintln!("[kernel] privileged core recovery start: {}", error.extract_message());
+                }
+            });
+        }),
+        cancel_intent_recovery: std::sync::Arc::new(|| {}),
+        is_controller_alive: std::sync::Arc::new(move || {
+            let secret = secret.clone();
+            Box::pin(async move {
+                match mihomo::MihomoClient::new(controller_port, &secret) {
+                    Ok(client) => client.get_version().await.is_ok(),
+                    Err(_) => false,
+                }
+            })
+        }),
+        is_suspended: std::sync::Arc::new(lifecycle::is_quitting),
+        on_error: std::sync::Arc::new(|message, step| eprintln!("[kernel] privileged core exit {step}: {message}")),
+        now_ms: std::sync::Arc::new(|| usage::epoch_millis_now().max(0) as u64),
+    };
+    let monitor = privileged_kernel::PrivilegedExitMonitor::new(deps);
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = kernel.initialize().await {
+            eprintln!("[kernel] privileged service reconcile failed: {}", error.extract_message());
+        }
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            monitor.tick().await;
+        }
+    });
 }

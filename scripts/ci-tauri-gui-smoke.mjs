@@ -198,6 +198,7 @@ async function smoke(kind, executable, args = []) {
       return result.result?.value
     }
     await waitFor(() => evaluate(`Boolean(document.querySelector('#app .app-frame') && document.querySelector('.sidebar-nav') && window.desktop?.app?.getBrand)`), alive)
+    const viewport = await evaluate(`({width: innerWidth, height: innerHeight, devicePixelRatio})`)
     const identity = await evaluate(`window.desktop.app.getBrand().then(({appId}) => appId)`)
     assert.equal(identity, brand.appId, 'Real renderer-to-backend IPC must work')
     await evaluate(`window.desktop.appSettings.set({closeToTray:false})`)
@@ -240,7 +241,7 @@ async function smoke(kind, executable, args = []) {
     await waitFor(async () => exit, () => true, 30_000)
     assert.equal(exit.code, 0, 'Native close must exit normally; forced termination never counts as success')
     assert.equal(exit.signal, null)
-    const result = { kind, windowVisible: true, rendererLoaded: true, backendIpc: true, stable: true, normalExit: true, controls }
+    const result = { kind, windowVisible: true, rendererLoaded: true, backendIpc: true, stable: true, normalExit: true, viewport, controls }
     await writeFile(resolve(output, `${kind}-result.json`), JSON.stringify({ sourceCommit, ...result }, null, 2) + '\n')
     console.log(`${kind}: renderer, IPC, native controls and normal exit passed`)
     return result

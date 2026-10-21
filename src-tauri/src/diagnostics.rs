@@ -354,6 +354,7 @@ mod tests {
 
     #[tokio::test]
     async fn collect_returns_contract_fields_without_runtime_secrets() {
+        crate::startup_timeline::mark("settings-ready");
         use crate::system_proxy::*;
         use std::sync::Arc;
         let paths = AppPaths {
@@ -383,7 +384,15 @@ mod tests {
         )
         .await;
         assert_eq!(report["schemaVersion"], 1);
-        assert!(report["startup"]["marks"].is_array());
+        assert!(report["startup"]["marks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|mark| mark["stage"] == "settings-ready" && mark["elapsedMs"].is_u64()));
+        assert!(chrono::DateTime::parse_from_rfc3339(
+            report["startup"]["processStartedAt"].as_str().unwrap()
+        )
+        .is_ok());
         assert!(report["runtime"]["kernel"].get("controllerUrl").is_none());
         assert!(report["runtime"]["tun"].get("errorMessage").is_none());
         assert!(report["host"]["ports"].is_array());

@@ -1052,7 +1052,7 @@ impl SubStoreService {
                 .arg(url)
                 .spawn()
                 .map_err(|error| error.to_string())?;
-            return Ok(());
+            Ok(())
         }
         #[cfg(target_os = "macos")]
         {
@@ -1070,7 +1070,7 @@ impl SubStoreService {
                 .arg(url)
                 .spawn()
                 .map_err(|error| error.to_string())?;
-            return Ok(());
+            Ok(())
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
         {

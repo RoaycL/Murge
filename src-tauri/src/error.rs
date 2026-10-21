@@ -57,8 +57,8 @@ impl IpcError {
     /// The human message segment of the wire string (after the `::`).
     pub fn extract_message(&self) -> String {
         self.0
-            .splitn(2, "::")
-            .nth(1)
+            .split_once("::")
+            .map(|x| x.1)
             .map(str::to_string)
             .unwrap_or_else(|| self.0.clone())
     }

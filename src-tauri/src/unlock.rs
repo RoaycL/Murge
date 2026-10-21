@@ -112,7 +112,7 @@ pub fn classify_blocked_status(status: Option<u16>) -> Option<&'static str> {
     match status {
         Some(403 | 451) => Some("unsupported"),
         None => Some("error"),
-        Some(status) if status < 200 || status >= 300 => Some("error"),
+        Some(status) if !(200..300).contains(&status) => Some("error"),
         Some(_) => None,
     }
 }
@@ -374,7 +374,7 @@ pub async fn disney_plus(probe: &Probe) -> ServiceUnlockResult {
     if graph.status.is_none()
         || graph
             .status
-            .is_some_and(|status| status < 200 || status >= 300)
+            .is_some_and(|status| !(200..300).contains(&status))
     {
         return verdict("Disney+", "error", None);
     }
@@ -532,7 +532,7 @@ pub async fn spotify(probe: &Probe) -> ServiceUnlockResult {
     }
     match selector.status {
         None => return verdict("Spotify", "error", None),
-        Some(status) if status < 200 || status >= 300 => return verdict("Spotify", "error", None),
+        Some(status) if !(200..300).contains(&status) => return verdict("Spotify", "error", None),
         _ => {}
     }
     if selector

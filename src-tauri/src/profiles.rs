@@ -329,10 +329,7 @@ impl ProfileRepository {
         meta.insert("id".into(), Value::String(id.clone()));
         meta.insert("name".into(), Value::String(name.trim().to_string()));
         meta.insert("source".into(), source);
-        meta.insert(
-            "size".into(),
-            Value::Number(document.as_bytes().len().into()),
-        );
+        meta.insert("size".into(), Value::Number(document.len().into()));
         meta.insert("createdAt".into(), Value::Number(timestamp.into()));
         meta.insert("updatedAt".into(), Value::Number(timestamp.into()));
         meta.insert("active".into(), Value::Bool(false));
@@ -415,10 +412,7 @@ impl ProfileRepository {
         let mut meta = profile["meta"].clone();
         if let Some(object) = meta.as_object_mut() {
             object.insert("updatedAt".into(), Value::Number((self.now)().into()));
-            object.insert(
-                "size".into(),
-                Value::Number(updated_document.as_bytes().len().into()),
-            );
+            object.insert("size".into(), Value::Number(updated_document.len().into()));
         }
         self.write_bytes(
             &self.meta_path(id)?,
@@ -436,10 +430,7 @@ impl ProfileRepository {
         let mut meta = profile["meta"].clone();
         if let Some(object) = meta.as_object_mut() {
             object.insert("updatedAt".into(), Value::Number((self.now)().into()));
-            object.insert(
-                "size".into(),
-                Value::Number(document.as_bytes().len().into()),
-            );
+            object.insert("size".into(), Value::Number(document.len().into()));
         }
         self.write_bytes(
             &self.meta_path(id)?,
@@ -454,10 +445,7 @@ impl ProfileRepository {
         let mut meta = profile["meta"].clone();
         if let Some(object) = meta.as_object_mut() {
             object.insert("updatedAt".into(), Value::Number((self.now)().into()));
-            object.insert(
-                "size".into(),
-                Value::Number(document.as_bytes().len().into()),
-            );
+            object.insert("size".into(), Value::Number(document.len().into()));
         }
         self.write_bytes(
             &self.meta_path(id)?,
@@ -495,10 +483,7 @@ impl ProfileRepository {
         if let Some(object) = meta.as_object_mut() {
             object.insert("source".into(), source.clone());
             object.insert("updatedAt".into(), Value::Number((self.now)().into()));
-            object.insert(
-                "size".into(),
-                Value::Number(document.as_bytes().len().into()),
-            );
+            object.insert("size".into(), Value::Number(document.len().into()));
         }
         self.write_bytes(
             &self.meta_path(id)?,

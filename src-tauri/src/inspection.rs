@@ -345,16 +345,7 @@ pub fn build_profile_kernel_config(document: &str, options: &Value) -> Result<St
             json!("https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip"),
         );
     }
-    config.insert(
-        "mode".into(),
-        json!(
-            if config.get("mode").and_then(Value::as_str) == Some("rule") {
-                "rule"
-            } else {
-                "rule"
-            }
-        ),
-    );
+    config.insert("mode".into(), json!("rule"));
 
     // --- Controlled core settings (read-back + conflict handling) ---
     if options["core"]["enabled"].as_bool() == Some(true) {

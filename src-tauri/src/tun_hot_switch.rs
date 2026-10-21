@@ -76,7 +76,7 @@ pub async fn wait_for_tun_data_plane_ready(
         if client.get_version().await.is_ok() {
             // Promise.any parity: first success wins; every failure is retried
             // together until the owner aborts the window.
-            let attempts = urls.iter().cloned().map(|url| {
+            let attempts = urls.iter().map(|url| {
                 let client = client.clone();
                 let url = url.clone();
                 async move {
@@ -127,7 +127,7 @@ where
     /// another client still owns that adapter/address, applying tun.enable
     /// would make the shared core exit and leave an enabled system proxy with
     /// no listener.
-    external_tun_in_use: Box<dyn for<'a> Fn(&'a str) -> BoxFut<'a, bool> + Send + Sync>,
+    external_tun_in_use: ExternalTunProbe,
 }
 
 impl<T, D> MihomoHotSwitchTunAdapter<T, D>
@@ -242,7 +242,7 @@ where
             next.insert("enable".into(), json!(true));
             // clash-party parity: port-53 hijacking only exists when a live
             // DNS module can answer the hijacked queries.
-            if document_dns_enabled((self.read_dns_enabled)().await.as_deref()) != true {
+            if !document_dns_enabled((self.read_dns_enabled)().await.as_deref()) {
                 next.insert("dns-hijack".into(), json!([]));
             }
             if let Err(error) = client
@@ -364,6 +364,8 @@ fn machine_message(error: &IpcError) -> String {
 /* -------------------------------------------------------------------------- */
 /* Tests                                                                       */
 /* -------------------------------------------------------------------------- */
+
+type ExternalTunProbe = Box<dyn for<'a> Fn(&'a str) -> BoxFut<'a, bool> + Send + Sync>;
 
 #[cfg(test)]
 mod tests {

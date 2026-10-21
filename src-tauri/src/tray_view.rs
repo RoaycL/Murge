@@ -137,13 +137,9 @@ impl TrayView for NativeTrayView {
         let Some(tray) = guard.as_ref() else {
             return;
         };
-        match build_menu(&self.app, &items) {
-            Ok(menu) => {
-                let _ = tray.set_menu(Some(menu));
-            }
-            // A menu rebuild failure keeps the previous menu visible instead
-            // of dropping the tray entirely.
-            Err(_) => {}
+        // A failed rebuild preserves the previous menu.
+        if let Ok(menu) = build_menu(&self.app, &items) {
+            let _ = tray.set_menu(Some(menu));
         }
     }
 

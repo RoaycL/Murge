@@ -44,6 +44,7 @@ use crate::kernel::RUNTIME_UPDATE;
 /// The one command the webview is allowed to call. Everything else —
 /// filesystem, registry, the privileged named pipe — stays in Rust.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri injects each managed state independently.
 pub async fn desktop_ipc(
     channel: String,
     payload: Value,
@@ -120,6 +121,7 @@ fn string_arg(payload: &Value, index: usize) -> Option<String> {
 /// no-op), so the renderer sees an honest error during the migration. The
 /// `paths` parameter is part of the stable dispatch signature from day one —
 /// the log/usage slices (3A) consume it.
+#[allow(clippy::too_many_arguments)] // Stable vertical-slice dispatch boundary.
 pub async fn dispatch(
     channel: &str,
     payload: &Value,
@@ -1197,7 +1199,7 @@ mod tests {
             profile_root: None,
         };
         let settings = SettingsStore::new(None);
-        let profiles = Arc::new(ProfilesService::for_development(&temp.path().to_path_buf()));
+        let profiles = Arc::new(ProfilesService::for_development(temp.path()));
         let overrides = OverrideService::new(None);
         let models = enhancements::ModelStores::new(None);
         let usage = usage::UsageHistoryService::new(usage::UsageHistoryStore::in_memory());
@@ -1439,7 +1441,7 @@ mod tests {
         );
         let temp = TempDir::new().unwrap();
         let icon_root = temp.path().to_path_buf().join("icon-cache");
-        let profiles = ProfilesService::for_development(&temp.path().to_path_buf()).with_fetcher(
+        let profiles = ProfilesService::for_development(temp.path()).with_fetcher(
             SubscriptionFetcher::for_testing(
                 std::sync::Arc::new(|_| Vec::new()),
                 5000,
@@ -1598,7 +1600,7 @@ mod tests {
         }
         });
         let temp = TempDir::new().unwrap();
-        let profiles = ProfilesService::for_development(&temp.path().to_path_buf());
+        let profiles = ProfilesService::for_development(temp.path());
         profiles
             .import(&serde_json::json!({
                 "name": "Home",
@@ -2088,7 +2090,7 @@ mod tests {
     async fn inspect_active_config_composes_overrides_and_models() {
         let temp = TempDir::new().unwrap();
         let icon_root = temp.path().to_path_buf().join("icon-cache");
-        let profiles = Arc::new(ProfilesService::for_development(&temp.path().to_path_buf()));
+        let profiles = Arc::new(ProfilesService::for_development(temp.path()));
         let profiles_for_import = profiles.clone();
         let imported = profiles_for_import
             .import(&serde_json::json!({
@@ -2199,13 +2201,10 @@ mod tests {
             "{}",
             inspection["sections"]["dns"]["effectiveYaml"]
         );
-        assert_eq!(
-            core["effectiveYaml"]
-                .as_str()
-                .unwrap()
-                .contains("（未配置）"),
-            false
-        );
+        assert!(!core["effectiveYaml"]
+            .as_str()
+            .unwrap()
+            .contains("（未配置）"));
         assert_eq!(
             inspection["sections"]["dns"]["notes"][0],
             "DNS 覆写已启用，应用字段优先，未知字段保留。"

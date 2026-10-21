@@ -309,7 +309,7 @@ impl SettingsStore {
     }
 }
 
-/// Tiny helpers above keep the patch merge readable; nothing else.
+// Tiny helpers above keep the patch merge readable; nothing else.
 
 #[cfg(test)]
 mod tests {
@@ -396,7 +396,7 @@ mod tests {
             serde_json::json!({ "closeToTray": false }),
         ));
         assert!(!next.close_to_tray);
-        assert_eq!(store.get().close_to_tray, false);
+        assert!(!store.get().close_to_tray);
     }
 
     #[test]

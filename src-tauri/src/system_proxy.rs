@@ -543,8 +543,8 @@ fn is_iso_offset_datetime(raw: &str) -> bool {
     }
     let rest = &raw[11..];
     // The zone designator anchors the END: `Z`, or ±HH:MM.
-    let (clock, zone) = if rest.ends_with('Z') {
-        (&rest[..rest.len() - 1], "Z")
+    let (clock, zone) = if let Some(clock) = rest.strip_suffix('Z') {
+        (clock, "Z")
     } else if rest.len() > 6 {
         let (middle, zone) = rest.split_at(rest.len() - 6);
         (middle, zone)
@@ -2348,7 +2348,7 @@ impl SystemProxyAdapter for WindowsSystemProxyAdapter {
             )
             .await
             .and_then(verify_exit);
-            let enable = match enable {
+            match enable {
                 Ok(()) => (),
                 Err(message) => {
                     return Err(IpcError::code(
@@ -2357,7 +2357,6 @@ impl SystemProxyAdapter for WindowsSystemProxyAdapter {
                     ))
                 }
             };
-            let _ = enable;
             let server_result = run("reg.exe", reg_add(PROXY_SERVER_VALUE, "REG_SZ", server))
                 .await
                 .and_then(verify_exit);
@@ -2434,6 +2433,9 @@ fn verify_exit(result: RunResult) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+type CommandRecords = Arc<Mutex<Vec<(String, Vec<String>)>>>;
 
 #[cfg(test)]
 mod tests {
@@ -2833,7 +2835,7 @@ mod tests {
         assert!(coerce_registry_snapshot("not json").is_err());
         assert!(coerce_registry_snapshot("{}")
             .is_err()
-            .then(|| ())
+            .then_some(())
             .is_some());
         let missing_exists = r#"{"ProxyEnable":{"type":"none","value":null},"ProxyServer":{"exists":false,"type":"none","value":null},"ProxyOverride":{"exists":false,"type":"none","value":null}}"#;
         assert!(coerce_registry_snapshot(missing_exists).is_err());
@@ -3559,7 +3561,7 @@ mod tests {
     #[tokio::test]
     async fn windows_adapter_applies_restores_and_parses_via_injected_runner() {
         use std::sync::atomic::AtomicUsize;
-        let commands: Arc<Mutex<Vec<(String, Vec<String>)>>> = Arc::new(Mutex::new(Vec::new()));
+        let commands: CommandRecords = Arc::new(Mutex::new(Vec::new()));
         let sink = commands.clone();
         let snapshot = r#"{"ProxyEnable":{"exists":true,"type":"REG_DWORD","value":1},"ProxyServer":{"exists":true,"type":"REG_SZ","value":"127.0.0.1:7890"},"ProxyOverride":{"exists":false,"type":"none","value":null}}"#;
         let reads = Arc::new(AtomicUsize::new(0));
@@ -3601,19 +3603,20 @@ mod tests {
         assert_eq!(observed.proxy_enable.value, json!(1));
         assert_eq!(observed.proxy_server.value, json!("127.0.0.1:7890"));
         // Apply order: enable → server → override, then the WinINet refresh.
-        let commands_log = commands.lock().unwrap();
-        assert_eq!(commands_log[0].0, "reg.exe");
-        let value_names: Vec<&str> = commands_log
-            .iter()
-            .filter(|(command, _)| command == "reg.exe")
-            .map(|(_, args)| args[3].as_str())
-            .collect();
-        assert_eq!(
-            value_names,
-            vec!["ProxyEnable", "ProxyServer", "ProxyOverride"]
-        );
-        assert_eq!(commands_log[3].0, "powershell");
-        drop(commands_log);
+        {
+            let commands_log = commands.lock().unwrap();
+            assert_eq!(commands_log[0].0, "reg.exe");
+            let value_names: Vec<&str> = commands_log
+                .iter()
+                .filter(|(command, _)| command == "reg.exe")
+                .map(|(_, args)| args[3].as_str())
+                .collect();
+            assert_eq!(
+                value_names,
+                vec!["ProxyEnable", "ProxyServer", "ProxyOverride"]
+            );
+            assert_eq!(commands_log[3].0, "powershell");
+        }
         // Restore: the exact original types go back (delete for absent).
         adapter
             .restore(&RegistryState {
@@ -3623,22 +3626,24 @@ mod tests {
             })
             .await
             .unwrap();
-        let all = commands.lock().unwrap();
-        // The log: 3 apply reg adds, refresh powershell, read powershell, then
-        // the 3 restore reg ops. Filter to the reg.exe ops after the apply.
-        let restore_kinds: Vec<&str> = all
-            .iter()
-            .filter(|(command, _)| command == "reg.exe")
-            .skip(3)
-            .map(|(_, args)| {
-                if args[0] == "delete" {
-                    "delete"
-                } else {
-                    args[5].as_str()
-                }
-            })
-            .collect();
-        assert_eq!(restore_kinds, vec!["delete", "REG_SZ", "delete"]);
+        {
+            let all = commands.lock().unwrap();
+            // The log: 3 apply reg adds, refresh powershell, read powershell, then
+            // the 3 restore reg ops. Filter to the reg.exe ops after the apply.
+            let restore_kinds: Vec<&str> = all
+                .iter()
+                .filter(|(command, _)| command == "reg.exe")
+                .skip(3)
+                .map(|(_, args)| {
+                    if args[0] == "delete" {
+                        "delete"
+                    } else {
+                        args[5].as_str()
+                    }
+                })
+                .collect();
+            assert_eq!(restore_kinds, vec!["delete", "REG_SZ", "delete"]);
+        }
         // A non-zero reg.exe exit carries the typed failure copy.
         let failing: WindowsRunner = Arc::new(|_command: &'static str, _args: Vec<String>| {
             Box::pin(async move {

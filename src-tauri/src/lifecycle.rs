@@ -107,14 +107,14 @@ where
 pub async fn restore_network_before_quit(app: &tauri::AppHandle) -> bool {
     let _gate = crate::kernel::RUNTIME_UPDATE.lock().await;
     use tauri::Manager;
-    let restored = match app.try_state::<crate::system_proxy::SystemProxyService>() {
+    let restored = match app.try_state::<std::sync::Arc<crate::system_proxy::SystemProxyService>>() {
         Some(proxy) => {
             let proxy = proxy.inner();
             restore_with_retry(|| Box::pin(proxy.restore_before_kernel_unavailable())).await
         }
         None => true,
     };
-    if let Some(tun) = app.try_state::<crate::tun::TunCoordinator>() {
+    if let Some(tun) = app.try_state::<std::sync::Arc<crate::tun::TunCoordinator>>() {
         let status = tun.emergency_disable().await;
         // Unconfirmed TUN teardown is logged, never blocking (the TS console).
         if !matches!(status.phase.as_str(), "configured" | "unsupported") {
@@ -142,13 +142,13 @@ async fn flush_logs(app: &tauri::AppHandle) {
 /// build has not ported yet: tray, IPC dispose, exit monitor, intent recovery).
 async fn dispose_services(app: &tauri::AppHandle) {
     use tauri::Manager;
-    if let Some(updates) = app.try_state::<crate::updates::UpdateService>() {
+    if let Some(updates) = app.try_state::<std::sync::Arc<crate::updates::UpdateService>>() {
         updates.dispose();
     }
-    if let Some(substore) = app.try_state::<crate::substore::SubStoreService>() {
+    if let Some(substore) = app.try_state::<std::sync::Arc<crate::substore::SubStoreService>>() {
         substore.dispose();
     }
-    if let Some(usage) = app.try_state::<crate::usage::UsageHistoryService>() {
+    if let Some(usage) = app.try_state::<std::sync::Arc<crate::usage::UsageHistoryService>>() {
         if let Err(error) = usage.flush() {
             eprintln!("[usage-history] final flush failed: {error:?}");
         }
@@ -186,7 +186,7 @@ pub async fn begin_application_shutdown(app: tauri::AppHandle, session_ending: b
                     // Inside the same mode queue as the restore step, so a
                     // queued renderer transition cannot interleave.
                     let _gate = crate::kernel::RUNTIME_UPDATE.lock().await;
-                    if let Some(kernel) = app.try_state::<crate::kernel::KernelServices>() {
+                    if let Some(kernel) = app.try_state::<std::sync::Arc<crate::kernel::KernelServices>>() {
                         return kernel.stop().await;
                     }
                     Ok(serde_json::Value::Null)

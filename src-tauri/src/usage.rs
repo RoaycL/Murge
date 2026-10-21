@@ -568,6 +568,7 @@ pub struct UsageHistoryService {
 }
 
 impl UsageHistoryService {
+    #[allow(dead_code)] // single-store seam used by tests
     pub fn new(store: UsageHistoryStore) -> Self {
         Self::with_stores(store, ProcessUsageStore::in_memory())
     }

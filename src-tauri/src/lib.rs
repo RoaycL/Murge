@@ -141,7 +141,7 @@ pub fn run() {
                         let handle = handle.clone();
                         Box::pin(async move {
                             let _gate = kernel::RUNTIME_UPDATE.lock().await;
-                            let kernel_state = handle.state::<kernel::KernelServices>();
+                            let kernel_state = handle.state::<std::sync::Arc<crate::kernel::KernelServices>>();
                             let status = kernel_state.get_status_value();
                             if status["phase"].as_str() != Some("running")
                                 && status["phase"].as_str() != Some("starting")
@@ -157,7 +157,7 @@ pub fn run() {
                                     let previous_channel = previous_channel.clone();
                                     let previous_specific = previous_specific.clone();
                                     Box::pin(async move {
-                                        let settings = handle.state::<settings::SettingsStore>();
+                                        let settings = handle.state::<std::sync::Arc<crate::settings::SettingsStore>>();
                                         settings.set(&crate::settings::AppSettingsPatch(
                                             serde_json::json!({
                                                 "kernelChannel": previous_channel,
@@ -168,11 +168,11 @@ pub fn run() {
                                     })
                                 })
                             };
-                            let system_proxy = handle.state::<system_proxy::SystemProxyService>();
+                            let system_proxy = handle.state::<std::sync::Arc<crate::system_proxy::SystemProxyService>>();
                             let profiles =
                                 handle.state::<std::sync::Arc<profile_service::ProfilesService>>();
-                            let overrides = handle.state::<override_service::OverrideService>();
-                            let models = handle.state::<enhancements::ModelStores>();
+                            let overrides = handle.state::<std::sync::Arc<crate::override_service::OverrideService>>();
+                            let models = handle.state::<std::sync::Arc<crate::enhancements::ModelStores>>();
                             crate::live_config::reload_active_profile_with_rollback(
                                 &profiles, &overrides, &models, &kernel_state, &system_proxy,
                                 Some(rollback.clone()),
@@ -244,8 +244,8 @@ pub fn run() {
                     std::sync::Arc::new(move || {
                         let profiles = handle_for_doc
                             .state::<std::sync::Arc<crate::profile_service::ProfilesService>>();
-                        let overrides = handle_for_doc.state::<crate::override_service::OverrideService>();
-                        let models = handle_for_doc.state::<enhancements::ModelStores>();
+                        let overrides = handle_for_doc.state::<std::sync::Arc<crate::override_service::OverrideService>>();
+                        let models = handle_for_doc.state::<std::sync::Arc<crate::enhancements::ModelStores>>();
                         crate::live_config::resolve_enhanced_document(&profiles, &overrides, &models)
                             .ok()
                             .flatten()
@@ -253,17 +253,17 @@ pub fn run() {
                 let handle_for_core = app.handle().clone();
                 let resolve_core: std::sync::Arc<dyn Fn() -> serde_json::Value + Send + Sync> =
                     std::sync::Arc::new(move || {
-                        handle_for_core.state::<enhancements::ModelStores>().core.get()
+                        handle_for_core.state::<std::sync::Arc<crate::enhancements::ModelStores>>().core.get()
                     });
                 let handle_for_geodata = app.handle().clone();
                 let resolve_geodata: std::sync::Arc<dyn Fn() -> serde_json::Value + Send + Sync> =
                     std::sync::Arc::new(move || {
-                        handle_for_geodata.state::<enhancements::ModelStores>().geodata.get()
+                        handle_for_geodata.state::<std::sync::Arc<crate::enhancements::ModelStores>>().geodata.get()
                     });
                 let handle_for_selection = app.handle().clone();
                 let version_selection: kernel_process::VersionSelectionFn =
                     std::sync::Arc::new(move || {
-                        let settings = handle_for_selection.state::<settings::SettingsStore>();
+                        let settings = handle_for_selection.state::<std::sync::Arc<crate::settings::SettingsStore>>();
                         let current = settings.get();
                         let specific = {
                             let raw = current.kernel_specific_version.trim();
@@ -326,7 +326,7 @@ pub fn run() {
                             up: value["up"].as_f64().unwrap_or(0.0),
                             down: value["down"].as_f64().unwrap_or(0.0),
                         };
-                        if let Some(usage) = traffic_handle.try_state::<usage::UsageHistoryService>() {
+                        if let Some(usage) = traffic_handle.try_state::<std::sync::Arc<crate::usage::UsageHistoryService>>() {
                             if let Err(error) = usage.record(&sample, None) {
                                 eprintln!("[usage-history] background persistence failed: {error:?}");
                             }
@@ -337,7 +337,7 @@ pub fn run() {
                 streams.subscribe(
                     events::StreamKind::Connections,
                     std::sync::Arc::new(move |value| {
-                        if let Some(usage) = connections_handle.try_state::<usage::UsageHistoryService>() {
+                        if let Some(usage) = connections_handle.try_state::<std::sync::Arc<crate::usage::UsageHistoryService>>() {
                             if let Err(error) = usage.record_connection_snapshot(value, usage::epoch_millis_now()) {
                                 eprintln!("[usage-history] background persistence failed: {error:?}");
                             }
@@ -350,24 +350,24 @@ pub fn run() {
                 port: core["controllerPort"].as_i64().unwrap_or(9090),
                 secret: core["controllerSecret"].as_str().unwrap_or_default().to_string(),
             });
-            app.manage(store);
+            app.manage(std::sync::Arc::new(store));
             app.manage(profiles);
-            app.manage(overrides);
-            app.manage(models);
-            app.manage(usage);
-            app.manage(kernel);
-            app.manage(mihomo);
+            app.manage(std::sync::Arc::new(overrides));
+            app.manage(std::sync::Arc::new(models));
+            app.manage(std::sync::Arc::new(usage));
+            app.manage(std::sync::Arc::new(kernel));
+            app.manage(std::sync::Arc::new(mihomo));
             app.manage(streams);
             // Desktop integration channels (icons + network interfaces).
             let icon_cache_root = match &paths.app_data_root {
                 Some(root) => root.clone().join("icon-cache"),
                 None => std::env::temp_dir().join(format!("murge-dev-icon-cache-{}", std::process::id())),
             };
-            app.manage(icons::DesktopServices::new(icon_cache_root));
+            app.manage(std::sync::Arc::new(icons::DesktopServices::new(icon_cache_root)));
             // Egress metadata: resolved through the LIVE mixed port (kernel
             // down fails closed with the kernel-not-running copy), cached in
             // memory only.
-            app.manage(NetworkMetadataService::for_app(app.handle().clone()));
+            app.manage(std::sync::Arc::new(NetworkMetadataService::for_app(app.handle().clone())));
             // OS login-item state (开机自启): serialized read-after-write
             // ownership over the Scheduled Task + Run-key ladder.
             let startup_service = startup::StartupService::new(startup::ScheduledTaskStartupAdapter::for_app(app.handle().clone()));
@@ -385,7 +385,7 @@ pub fn run() {
                     );
                 }
             });
-            app.manage(startup_service);
+            app.manage(std::sync::Arc::new(startup_service));
             // Sub-Store lifecycle owner: base dir + brand + live core-settings
             // mixed port. New installs default it on; the verified assets
             // are prepared in the background (the TS when-ready hydration).
@@ -409,7 +409,7 @@ pub fn run() {
                     let app = app.handle().clone();
                     Box::new(move || {
                         use tauri::Manager;
-                        app.try_state::<enhancements::ModelStores>().and_then(|models| {
+                        app.try_state::<std::sync::Arc<crate::enhancements::ModelStores>>().and_then(|models| {
                             let core = enhancements::coerce_core_settings(&models.core.get());
                             core["mixedPort"].as_i64().filter(|port| *port > 0).map(|port| port as u16)
                         })
@@ -426,7 +426,7 @@ pub fn run() {
                         let app = app.clone();
                         Box::pin(async move {
                             use tauri::Manager;
-                            app.try_state::<settings::SettingsStore>()
+                            app.try_state::<std::sync::Arc<crate::settings::SettingsStore>>()
                                 .map(|store| store.get())
                                 .unwrap_or_else(|| settings::AppSettings::default())
                         }) as futures_util::future::BoxFuture<'static, settings::AppSettings>
@@ -445,7 +445,7 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 use tauri::Manager;
                 let (enabled, use_proxy) = {
-                    match hydration_app.try_state::<settings::SettingsStore>() {
+                    match hydration_app.try_state::<std::sync::Arc<crate::settings::SettingsStore>>() {
                         Some(store) => {
                             let snapshot = store.get();
                             (snapshot.sub_store_enabled, snapshot.sub_store_use_proxy)
@@ -461,7 +461,7 @@ pub fn run() {
                     }
                 }
             });
-            app.manage(substore_service);
+            app.manage(std::sync::Arc::new(substore_service));
             // System proxy: compose the controller for the current runtime —
             // the TS factory decision (dev → fake adapter + static probe +
             // memory stores; production → real registry adapter on Windows +
@@ -489,14 +489,14 @@ pub fn run() {
                     move || {
                         use tauri::Manager;
                         probe_app_phase
-                            .try_state::<kernel::KernelServices>()
+                            .try_state::<std::sync::Arc<crate::kernel::KernelServices>>()
                             .map(|services| services.supervisor.get_status()["phase"].as_str().unwrap_or("stopped").to_string())
                             .unwrap_or_else(|| "stopped".to_string())
                     },
                     move || {
                         use tauri::Manager;
                         probe_app_client
-                            .try_state::<enhancements::ModelStores>()
+                            .try_state::<std::sync::Arc<crate::enhancements::ModelStores>>()
                             .ok_or_else(|| crate::error::IpcError::code(crate::error::code::SYSTEM_PROXY_KERNEL_REQUIRED, "内核控制器未就绪，无法启用系统代理"))
                             .and_then(|models| {
                                 let core = enhancements::coerce_core_settings(&models.core.get());
@@ -534,7 +534,7 @@ pub fn run() {
             system_proxy_service.listeners.subscribe(std::sync::Arc::new(move |value| {
                 let _ = tauri::Emitter::emit(&status_app, "system-proxy:status-event", value.clone());
             }));
-            app.manage(system_proxy_service);
+            app.manage(std::sync::Arc::new(system_proxy_service));
             // TUN: the coordinator is fully ported. The mutation adapter is
             // the controller hot-switch (controller REST only, platform
             // independent) when the build can run a kernel at all; dev and
@@ -554,7 +554,7 @@ pub fn run() {
                         let handle = handle.clone();
                         Box::pin(async move {
                             let core = enhancements::coerce_core_settings(
-                                &handle.state::<enhancements::ModelStores>().core.get(),
+                                &handle.state::<std::sync::Arc<crate::enhancements::ModelStores>>().core.get(),
                             );
                             let port = core["controllerPort"].as_i64().unwrap_or(9090);
                             let secret = core["controllerSecret"].as_str().unwrap_or_default().to_string();
@@ -568,7 +568,7 @@ pub fn run() {
                         let handle = handle.clone();
                         Box::pin(async move {
                             enhancements::coerce_tun_config(
-                                &handle.state::<enhancements::ModelStores>().tun_config.get(),
+                                &handle.state::<std::sync::Arc<crate::enhancements::ModelStores>>().tun_config.get(),
                             )
                         }) as tun_hot_switch::BoxFutValue
                     }
@@ -581,8 +581,8 @@ pub fn run() {
                     Box::pin(async move {
                         let profiles =
                             handle.state::<std::sync::Arc<crate::profile_service::ProfilesService>>();
-                        let overrides = handle.state::<crate::override_service::OverrideService>();
-                        let models = handle.state::<enhancements::ModelStores>();
+                        let overrides = handle.state::<std::sync::Arc<crate::override_service::OverrideService>>();
+                        let models = handle.state::<std::sync::Arc<crate::enhancements::ModelStores>>();
                         crate::live_config::resolve_enhanced_document(&profiles, &overrides, &models)
                             .ok()
                             .flatten()
@@ -642,7 +642,7 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 reconcile_coordinator.initialize().await;
             });
-            app.manage(tun_coordinator);
+            app.manage(std::sync::Arc::new(tun_coordinator));
             // Updates: the gated driver honestly reports "not supported" in
             // this build; state transitions forward to every renderer window.
             let updates_service =
@@ -655,18 +655,18 @@ pub fn run() {
             // Mid-session feed polling (the mihomo-party / sparkle model); a
             // no-op on the gated driver.
             updates_service.start_polling(10 * 60 * 1000);
-            app.manage(updates_service);
+            app.manage(std::sync::Arc::new(updates_service));
             // The ordered-kernel-gateway crash hook: when the supervisor
             // reports `failed` while the system proxy is owned, restore it
             // immediately (the proxy must never outlive a dead listener).
             let recovery_app = app.handle().clone();
-            let kernel_services = app.state::<kernel::KernelServices>();
+            let kernel_services = app.state::<std::sync::Arc<crate::kernel::KernelServices>>();
             kernel_services.supervisor.status_listeners.subscribe(std::sync::Arc::new(move |value| {
                 if value["phase"].as_str() == Some("failed") {
                     use tauri::Manager;
                     let recovery_app = recovery_app.clone();
                     tauri::async_runtime::spawn(async move {
-                        if let Some(system_proxy) = recovery_app.try_state::<system_proxy::SystemProxyService>() {
+                        if let Some(system_proxy) = recovery_app.try_state::<std::sync::Arc<crate::system_proxy::SystemProxyService>>() {
                             let _ = system_proxy.restore_before_kernel_unavailable().await;
                         }
                     });
@@ -717,7 +717,7 @@ pub fn run() {
                 // async task could be dropped before the process exits, so
                 // this stays synchronous.
                 tauri::RunEvent::Exit => {
-                    if let Some(substore) = app_handle.try_state::<substore::SubStoreService>() {
+                    if let Some(substore) = app_handle.try_state::<std::sync::Arc<crate::substore::SubStoreService>>() {
                         substore.dispose();
                     }
                 }

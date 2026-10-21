@@ -239,7 +239,7 @@ impl ScheduledTaskStartupAdapter {
                 Box::pin(async move { run_child(&command, &args).await })
             }),
             std::sync::Arc::new(move || {
-                app.try_state::<crate::settings::SettingsStore>()
+                app.try_state::<std::sync::Arc<crate::settings::SettingsStore>>()
                     .map(|settings| settings.get().silent_launch)
                     .unwrap_or(false)
             }),

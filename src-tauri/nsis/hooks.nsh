@@ -55,6 +55,9 @@ Var MurgeElectronDir
   StrCpy $MurgeStartupWasEnabled "0"
   ReadRegStr $R8 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${RUN_NAME}"
   StrCmp $R8 "" 0 murge_startup_on_${MURGE_ID}
+  ; Older Electron builds registered auto-start under this legacy Run name.
+  ReadRegStr $R8 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "electron.app.${PRODUCTNAME}"
+  StrCmp $R8 "" 0 murge_startup_on_${MURGE_ID}
   ReadRegStr $R8 HKCU "${MANUPRODUCTKEY}" "${MURGE_STARTUP_MARKER_VALUE}"
   StrCmp $R8 "1" murge_startup_on_${MURGE_ID}
   nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "if ((Get-ScheduledTask -TaskName ${TASK_NAME} -ErrorAction Stop).Settings.Enabled) { exit 0 } else { exit 1 }"'
@@ -186,6 +189,12 @@ Var MurgeElectronDir
   ; Proxy ownership is per user under Roaming AppData; a perMachine uninstaller
   ; starts in the all-users context where $APPDATA is ProgramData.
   SetShellVarContext current
+  ; An update keeps the app's proxy ownership: the relaunched app adopts it.
+  ; (Tauri's own update path never runs this uninstaller; this guards a
+  ; template that does.)
+  ${If} $UpdateMode = 1
+    Goto MurgeProxyDone
+  ${EndIf}
   IfFileExists "$APPDATA\${BUNDLEID}\system-proxy\owned-backup.json" 0 MurgeProxyDone
     IfFileExists "$INSTDIR\${MAINBINARYNAME}.exe" 0 MurgeProxyWarn
       DetailPrint "Restoring owned system proxy before uninstall..."

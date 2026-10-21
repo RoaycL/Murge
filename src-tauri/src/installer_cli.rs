@@ -31,6 +31,13 @@ async fn restore_system_proxy(paths: AppPaths) -> i32 {
     let Some(root) = paths.app_data_root else {
         return 0;
     };
+    // The file store reads any I/O failure as "no backup". Here that would
+    // let the uninstaller remove the app while it still owns the proxy, so a
+    // backup that exists but cannot be read fails the restore.
+    if let Err(error) = backup_readable(&root) {
+        println!("[restore-system-proxy] {}", serde_json::json!({ "phase": "error", "ok": false, "errorMessage": error }));
+        return 1;
+    }
     let adapter: Arc<dyn SystemProxyAdapter> = if cfg!(windows) {
         Arc::new(system_proxy::WindowsSystemProxyAdapter::with_runner(system_proxy::real_command_runner()))
     } else {
@@ -45,6 +52,18 @@ async fn restore_system_proxy(paths: AppPaths) -> i32 {
     // Release builds have no console; the line is for CI runs and logs.
     println!("[restore-system-proxy] {}", outcome.report);
     if outcome.ok { 0 } else { 1 }
+}
+
+/// Ok when the owned backup is absent or readable.
+fn backup_readable(app_data_root: &std::path::Path) -> Result<(), String> {
+    let path = app_data_root
+        .join(system_proxy::SYSTEM_PROXY_BACKUP_SUBDIR)
+        .join(system_proxy::SYSTEM_PROXY_BACKUP_FILE);
+    match std::fs::read(&path) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("cannot read {}: {error}", path.display())),
+    }
 }
 
 pub struct RestoreOutcome {
@@ -140,6 +159,18 @@ mod tests {
         assert!(run_from_args(arg_list(&["murge.exe", "--hidden"])).is_none());
         // argv[0] is never treated as a flag.
         assert!(run_from_args(arg_list(&["--restore-system-proxy"])).is_none());
+    }
+
+    #[test]
+    fn an_unreadable_backup_is_not_mistaken_for_no_backup() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(backup_readable(root.path()).is_ok());
+        let backup = root.path().join("system-proxy").join("owned-backup.json");
+        std::fs::create_dir_all(&backup).unwrap(); // a directory cannot be read as a file
+        assert!(backup_readable(root.path()).is_err());
+        std::fs::remove_dir(&backup).unwrap();
+        std::fs::write(&backup, b"{}").unwrap();
+        assert!(backup_readable(root.path()).is_ok());
     }
 
     #[tokio::test]

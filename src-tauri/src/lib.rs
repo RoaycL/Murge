@@ -48,6 +48,7 @@ mod redact;
 mod route_latency;
 mod settings;
 mod startup;
+mod startup_timeline;
 mod subscription;
 mod substore;
 mod substore_zip;
@@ -64,6 +65,7 @@ mod validate;
 use tauri::Manager;
 
 pub fn run() {
+    startup_timeline::initialize();
     // Startup gate: the brand document is a behavioral specification (the
     // Electron shell exits on an invalid brand). Parse it before anything else.
     // (The parsed document is also embedded into the binary via include_str!.)
@@ -82,11 +84,14 @@ pub fn run() {
             // (Electron queues links; Phase 7 decides the UI reaction).
         }))
         .setup(|app| {
+            // Keep the shared diagnostic stage name: this is Tauri runtime readiness.
+            startup_timeline::mark("electron-ready");
             // Dev builds never persist real user data: an ephemeral workspace
             // backs the profile store and secrets stay in memory. Production
             // uses the brand-stable app-data namespace + OS credential store.
             let paths = paths::AppPaths::probe();
             let store = settings::SettingsStore::for_environment(&paths);
+            startup_timeline::mark("settings-ready");
             let profiles = std::sync::Arc::new(match &paths.profile_root {
                 Some(root) => profile_service::ProfilesService::for_paths(
                     root,
@@ -553,6 +558,9 @@ pub fn run() {
             // (the register-ipc.ts `forward` for the status event).
             let status_app = app.handle().clone();
             system_proxy_service.listeners.subscribe(std::sync::Arc::new(move |value| {
+                if value["phase"].as_str() == Some("enabled") {
+                    startup_timeline::mark("system-proxy-enabled");
+                }
                 let _ = tauri::Emitter::emit(&status_app, "system-proxy:status-event", value.clone());
             }));
             app.manage(std::sync::Arc::new(system_proxy_service));
@@ -655,6 +663,9 @@ pub fn run() {
             // Forward TUN status transitions to every renderer window.
             let tun_app = app.handle().clone();
             tun_coordinator.subscribe(std::sync::Arc::new(move |value| {
+                if value["phase"].as_str() == Some("active") {
+                    startup_timeline::mark("tun-active");
+                }
                 let _ = tauri::Emitter::emit(&tun_app, "tun:status-event", value.clone());
             }));
             // Startup reconciliation of an interrupted TUN transaction (the
@@ -662,6 +673,7 @@ pub fn run() {
             let reconcile_coordinator = tun_coordinator.clone();
             tauri::async_runtime::spawn(async move {
                 reconcile_coordinator.initialize().await;
+                startup_timeline::reconciliation_complete();
             });
             app.manage(std::sync::Arc::new(tun_coordinator));
             // Updates: the gated driver honestly reports "not supported" in
@@ -683,6 +695,9 @@ pub fn run() {
             let recovery_app = app.handle().clone();
             let kernel_services = app.state::<std::sync::Arc<crate::kernel::KernelServices>>();
             kernel_services.status_listeners().subscribe(std::sync::Arc::new(move |value| {
+                if value["phase"].as_str() == Some("running") {
+                    startup_timeline::mark("kernel-ready");
+                }
                 if value["phase"].as_str() == Some("failed") {
                     use tauri::Manager;
                     let recovery_app = recovery_app.clone();
@@ -706,6 +721,11 @@ pub fn run() {
                 Ok(()) => {}
                 Err(error) => eprintln!("[tray] initialization failed (continuing tray-less): {error}"),
             }
+            startup_timeline::mark("ipc-ready");
+            if app.get_webview_window("main").is_some() {
+                startup_timeline::mark("window-created");
+            }
+            startup_timeline::setup_complete();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![ipc::desktop_ipc])

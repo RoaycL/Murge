@@ -255,7 +255,7 @@ Update this table in every migration pull request.
 | 3A. Local state | Complete | ①–⑥ 全部落地（brand/app-settings、profiles、overrides、类型化单模型存储、usage history、inspect 合成）；㉛ 解除 js 覆写 staged（JS 覆写沙箱切片，Phase 3 最后一个 staged IPC 面） | — |
 | 3C. Downloads/resources | Not started | — | — |
 | 3D. Privileged/network | In progress（Windows CI 余量） | 全部 3D 切片已落地（⑰–㉜ 见 `docs/tauri/phase3/README.md`）：系统代理所有权状态机、TUN 状态机、Sub-Store、startup、unlock-test、network-metadata、延迟采样、icons、订阅抓取、事件流、updates、TUN 配置/热切换、真实内核组合根、版本安装、文件日志、退出生命周期、JS 覆写沙箱、托盘。特权内核命名管道客户端、Windows 适配器 compose-over、G1 探针与 Job-Object 看门狗随 Windows CI（本构建与 Electron 同边界 fail-closed）。 | Windows CI 环境（命名管道 TunServiceClient、MihomoOwnedTunAdapter、G1 探针、session-end 映射） |
-| 4. Desktop integration | Not started | — | — |
+| 4. Desktop integration | In progress（待 Windows 真机验收） | W3 PR：`runtime_intent.rs`（启动恢复顺序 系统代理孤儿备份→特权内核 reconcile→TUN 日志，然后 restoreRuntimeIntent + 2 分钟有界后台恢复，接入特权退出监视器 wake/cancel）；`network_detector.rs`（15s 连通性看门狗）；`session_events.rs`（Windows 隐藏顶层窗口处理 WM_QUERYENDSESSION/WM_ENDSESSION/恢复唤醒，注销关机时有界阻塞直到已拥有的系统代理恢复）；`system_proxy.rs` 原生 Win32 注册表 + WinINet 适配器（不再起 reg.exe/PowerShell 子进程，快照格式与 Electron 相同）；`lifecycle.rs` 关闭到托盘、`--hidden` 静默启动、`--hidden` 第二实例不弹窗、30s 代理守护；托盘 PNG 解码、左键打开、跟随系统主题、悬停刷新。`cargo test` 498 通过（3 个既有主机环境失败）；Linux Xvfb 启动冒烟（普通启动窗口可见、`--hidden` 不映射）；`cargo check --target x86_64-pc-windows-gnu` 通过 | 登录启动/静默启动/关闭到托盘/重启/注销/关机必须在 Windows 交互桌面上实测；通知只剩更新器使用（归 W2）；深链未注册 |
 | 5. Updater/installer | Not started | — | — |
 | 6. CI/parity | Not started | — | — |
 | 7. Cutover | Not started | — | — |

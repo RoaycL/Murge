@@ -77,7 +77,10 @@ fn find_eocd(buf: &[u8]) -> Result<usize, ZipFormatError> {
     }
 }
 
-fn parse_central_directory(buf: &[u8]) -> Result<Vec<ZipEntry>, ZipFormatError> {
+fn parse_central_directory(
+    buf: &[u8],
+    max_entry_bytes: usize,
+) -> Result<Vec<ZipEntry>, ZipFormatError> {
     let eocd = find_eocd(buf)?;
     let entry_count = read_u16(buf, eocd + 10) as usize;
     let cd_size = read_u32(buf, eocd + 12) as usize;
@@ -120,7 +123,7 @@ fn parse_central_directory(buf: &[u8]) -> Result<Vec<ZipEntry>, ZipFormatError> 
         if flags & 0x1 != 0 {
             return Err(ZipFormatError(format!("不支持加密条目（{name}）")));
         }
-        if uncompressed_size as usize > MAX_ENTRY_BYTES {
+        if uncompressed_size as usize > max_entry_bytes {
             return Err(ZipFormatError(format!("条目解压后过大（{name}）")));
         }
         entries.push(ZipEntry {
@@ -144,7 +147,11 @@ fn parse_central_directory(buf: &[u8]) -> Result<Vec<ZipEntry>, ZipFormatError> 
     Ok(entries)
 }
 
-fn entry_data(buf: &[u8], entry: &ZipEntry) -> Result<Vec<u8>, ZipFormatError> {
+fn entry_data(
+    buf: &[u8],
+    entry: &ZipEntry,
+    max_entry_bytes: usize,
+) -> Result<Vec<u8>, ZipFormatError> {
     let local = entry.local_header_offset as usize;
     if local + LOCAL_FIXED_LEN > buf.len() || read_u32(buf, local) != LOCAL_SIGNATURE {
         return Err(ZipFormatError(format!("本地头损坏（{}）", entry.name)));
@@ -163,7 +170,7 @@ fn entry_data(buf: &[u8], entry: &ZipEntry) -> Result<Vec<u8>, ZipFormatError> {
             let decoder = flate2::read::DeflateDecoder::new(raw);
             let mut output = Vec::with_capacity(entry.uncompressed_size as usize);
             decoder
-                .take(MAX_ENTRY_BYTES as u64)
+                .take(max_entry_bytes as u64)
                 .read_to_end(&mut output)
                 .map_err(|_| ZipFormatError(format!("解压失败（{}）", entry.name)))?;
             output
@@ -213,7 +220,24 @@ fn resolved_dest(dest_dir: &Path) -> PathBuf {
 ///
 /// Returns the written file paths relative to `destDir`.
 pub fn extract_zip_bytes(buf: &[u8], dest_dir: &Path) -> Result<Vec<String>, ZipFormatError> {
-    let entries = parse_central_directory(buf)?;
+    extract_zip_with_entry_limit(buf, dest_dir, MAX_ENTRY_BYTES)
+}
+
+/// Verified kernel executables can exceed the Sub-Store per-file budget.
+/// Keep the shared 128 MiB total cap and every path/format/CRC check intact.
+pub(crate) fn extract_kernel_zip_bytes(
+    buf: &[u8],
+    dest_dir: &Path,
+) -> Result<Vec<String>, ZipFormatError> {
+    extract_zip_with_entry_limit(buf, dest_dir, MAX_TOTAL_BYTES)
+}
+
+fn extract_zip_with_entry_limit(
+    buf: &[u8],
+    dest_dir: &Path,
+    max_entry_bytes: usize,
+) -> Result<Vec<String>, ZipFormatError> {
+    let entries = parse_central_directory(buf, max_entry_bytes)?;
     if entries.is_empty() {
         return Err(ZipFormatError("归档为空".into()));
     }
@@ -258,7 +282,7 @@ pub fn extract_zip_bytes(buf: &[u8], dest_dir: &Path) -> Result<Vec<String>, Zip
             std::fs::create_dir_all(parent)
                 .map_err(|_| ZipFormatError(format!("目录创建失败（{}）", entry.name)))?;
         }
-        std::fs::write(&target, entry_data(buf, entry)?)
+        std::fs::write(&target, entry_data(buf, entry, max_entry_bytes)?)
             .map_err(|_| ZipFormatError(format!("写入失败（{}）", entry.name)))?;
         written.push(stripped);
     }
@@ -420,6 +444,23 @@ mod tests {
             std::fs::read(dest.join("assets/app.js")).unwrap(),
             b"console.log(1)"
         );
+        let _ = std::fs::remove_dir_all(&dest);
+    }
+
+    #[test]
+    fn kernel_budget_accepts_large_executables_without_relaxing_substore() {
+        let mut archive = zip_bytes(vec![("mihomo.exe", vec![0; MAX_ENTRY_BYTES + 1], 8)]);
+        let dest = staging_dir();
+        assert!(extract_zip_bytes(&archive, &dest).is_err());
+        extract_kernel_zip_bytes(&archive, &dest).unwrap();
+        assert_eq!(
+            std::fs::metadata(dest.join("mihomo.exe")).unwrap().len(),
+            (MAX_ENTRY_BYTES + 1) as u64
+        );
+        let central = read_u32(&archive, find_eocd(&archive).unwrap() + 16) as usize;
+        archive[central + 24..central + 28]
+            .copy_from_slice(&((MAX_TOTAL_BYTES + 1) as u32).to_le_bytes());
+        assert!(extract_kernel_zip_bytes(&archive, &dest).is_err());
         let _ = std::fs::remove_dir_all(&dest);
     }
 

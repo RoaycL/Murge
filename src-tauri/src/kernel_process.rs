@@ -916,6 +916,19 @@ impl KernelBinaryResolver for FixtureKernelBinaryResolver {
         );
         let command = self.command.clone();
         let version = self.version.clone();
+        // Node's Windows crypto initialization requires these OS variables.
+        // Keep the fixture allowlist narrow; never inherit PATH or secrets.
+        #[cfg(windows)]
+        let environment = ["SystemRoot", "WINDIR"]
+            .into_iter()
+            .filter_map(|key| {
+                std::env::var(key)
+                    .ok()
+                    .map(|value| (key.to_string(), value))
+            })
+            .collect();
+        #[cfg(not(windows))]
+        let environment = BTreeMap::new();
         Box::pin(async move {
             Ok(KernelBinary {
                 command: std::path::PathBuf::from(command),
@@ -924,7 +937,7 @@ impl KernelBinaryResolver for FixtureKernelBinaryResolver {
                     .map(|path| path.to_string_lossy().into_owned())
                     .collect(),
                 version,
-                env: BTreeMap::new(),
+                env: environment,
             })
         })
     }
@@ -1858,6 +1871,25 @@ type ExitRecords = Arc<std::sync::Mutex<Vec<(Option<i32>, Option<String>)>>>;
 pub(crate) mod tests {
     use super::*;
     use std::sync::atomic::AtomicBool;
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn fixture_resolver_inherits_only_required_windows_os_environment() {
+        let binary = FixtureKernelBinaryResolver::default()
+            .resolve()
+            .await
+            .unwrap();
+        for key in ["SystemRoot", "WINDIR"] {
+            assert_eq!(
+                binary.env.get(key).map(String::as_str),
+                std::env::var(key).ok().as_deref()
+            );
+        }
+        assert!(binary
+            .env
+            .keys()
+            .all(|key| ["SystemRoot", "WINDIR"].contains(&key.as_str())));
+    }
 
     #[tokio::test]
     async fn version_selection_routes_through_the_ensure_hook() {

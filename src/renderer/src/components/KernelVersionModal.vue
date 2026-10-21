@@ -127,38 +127,38 @@ async function confirmInstall(): Promise<void> {
   max-height: min(82vh, 720px);
   background: var(--app-surface-solid);
   border: 1px solid var(--app-divider);
-  border-radius: 14px;
+  border-radius: var(--radius-card);
   box-shadow: var(--app-shadow);
   padding: 18px;
 }
-.km-head h2 { margin: 0 0 5px; font-size: 15px; }
-.km-head p { margin: 0; color: var(--app-muted); font-size: 11px; line-height: 1.5; }
-.km-toolbar { display: flex; gap: 8px; margin-top: 14px; }
+.km-head h2 { margin: 0 0 5px; font-size: var(--font-size-lg); }
+.km-head p { margin: 0; color: var(--app-muted); font-size: var(--font-size-xs); line-height: 1.5; }
+.km-toolbar { display: flex; gap: var(--space-3); margin-top: 14px; }
 .km-search {
   flex: 1;
   min-height: 32px;
   padding: 0 10px;
   border: 1px solid var(--app-divider);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   background: var(--app-panel);
   color: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 .km-refresh {
   min-height: 32px;
   padding: 0 12px;
   border: 1px solid var(--app-divider);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   background: var(--app-panel);
   color: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 .km-refresh:disabled { opacity: 0.6; }
-.km-hint { margin: 12px 0 0; color: var(--app-muted); font-size: 11px; }
+.km-hint { margin: 12px 0 0; color: var(--app-muted); font-size: var(--font-size-xs); }
 .km-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
-  gap: 8px;
+  gap: var(--space-3);
   margin: 12px 0 0;
   padding: 0;
   list-style: none;
@@ -171,26 +171,26 @@ async function confirmInstall(): Promise<void> {
   justify-content: space-between;
   padding: 4px 10px;
   border: 1px solid var(--app-divider);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   text-align: left;
 }
 .km-list button.selected { border-color: var(--app-blue); background: rgba(21, 135, 248, 0.08); }
 .km-list button:disabled { opacity: 0.6; }
-.km-list em { color: var(--app-muted); font-size: 10px; font-style: normal; }
-.km-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.km-list em { color: var(--app-muted); font-size: var(--font-size-2xs); font-style: normal; }
+.km-actions { display: flex; justify-content: flex-end; gap: var(--space-3); margin-top: 16px; }
 .km-cancel,
 .km-install {
   min-height: 32px;
   padding: 0 16px;
   border: 0;
-  border-radius: 7px;
-  font-size: 12px;
+  border-radius: var(--radius-control);
+  font-size: var(--font-size-sm);
 }
-.km-cancel { background: rgba(127, 127, 127, 0.14); color: inherit; }
-.km-install { background: var(--app-blue); color: white; }
+.km-cancel { background: var(--app-fill); color: inherit; }
+.km-install { background: var(--app-blue); color: var(--app-on-accent); }
 .km-cancel:disabled,
 .km-install:disabled { opacity: 0.6; }
 @media (max-width: 560px) {

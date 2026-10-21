@@ -386,17 +386,17 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
   justify-content: space-between;
   margin-bottom: 18px;
 }
-.add-profile-button { display: inline-flex; align-items: center; gap: 6px; }
+.add-profile-button { display: inline-flex; align-items: center; gap: var(--space-2); }
 .config-subtitle {
   margin: 0;
   color: var(--app-muted);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .import-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
   background: var(--app-surface);
   border-radius: var(--radius-large);
   border: 1px solid var(--app-surface-border);
@@ -423,7 +423,7 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--app-muted);
-  font-size: 16px;
+  font-size: var(--font-size-xl);
   line-height: 1;
   flex: 0 0 auto;
 }
@@ -438,7 +438,7 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
 .icon-button.small {
   width: 26px;
   height: 26px;
-  font-size: 14px;
+  font-size: var(--font-size-body);
 }
 .proxy-select {
   height: 36px;
@@ -455,7 +455,7 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
   border-radius: var(--radius-control);
   background: var(--app-purple);
   color: #fff;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   flex: 0 0 auto;
 }
 .import-button:disabled {
@@ -464,7 +464,7 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
 .import-note {
   margin: 6px 0 0;
   color: var(--app-muted);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 .import-panel {
@@ -475,26 +475,26 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
   padding: 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-4);
   margin: 12px 0;
 }
-.profile-import-modal { width: min(470px, calc(100vw - 48px)); padding: 20px; border: 1px solid var(--app-divider); border-radius: 16px; color: var(--app-text); background: var(--app-surface-solid); box-shadow: 0 22px 70px rgba(0,0,0,.28); }
+.profile-import-modal { width: min(470px, calc(100vw - 48px)); padding: 20px; border: 1px solid var(--app-divider); border-radius: var(--radius-panel); color: var(--app-text); background: var(--app-surface-solid); box-shadow: 0 22px 70px rgba(0,0,0,.28); }
 .profile-import-modal header { display:flex; align-items:flex-start; justify-content:space-between; }
-.profile-import-modal h2 { margin:0; font-size:19px; }.profile-import-modal header p{margin:4px 0 0;color:var(--app-muted);font-size:10px}
-.profile-source-tabs { display:grid; grid-template-columns:repeat(3,1fr); gap:7px; margin:18px 0; }
-.profile-source-tabs button { display:flex; align-items:center; justify-content:center; gap:6px; height:34px; border:1px solid var(--app-divider); border-radius:8px; color:inherit; background:transparent; }
+.profile-import-modal h2 { margin:0; font-size:var(--font-size-title); }.profile-import-modal header p{margin:4px 0 0;color:var(--app-muted);font-size:var(--font-size-2xs)}
+.profile-source-tabs { display:grid; grid-template-columns:repeat(3,1fr); gap:var(--space-3); margin:18px 0; }
+.profile-source-tabs button { display:flex; align-items:center; justify-content:center; gap:var(--space-2); height:34px; border:1px solid var(--app-divider); border-radius:var(--radius-control); color:inherit; background:transparent; }
 .profile-source-tabs button.selected { border-color:var(--app-purple); color:white; background:var(--app-purple); }
-.modal-field { display:block; margin-top:12px; }.modal-field>span{display:block;margin-bottom:6px;color:var(--app-muted);font-size:10px}.modal-field .field{min-height:34px}
-.field-with-action{display:grid;grid-template-columns:1fr 34px;gap:7px}.field-with-action .icon-control{width:34px;height:34px}
-.profile-import-modal footer{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
-.rename-modal{width:min(380px,calc(100vw - 48px));padding:20px;border:1px solid var(--app-divider);border-radius:16px;color:var(--app-text);background:var(--app-surface-solid);box-shadow:0 22px 70px rgba(0,0,0,.28)}.rename-modal header,.rename-modal footer{display:flex;align-items:center;justify-content:space-between}.rename-modal h2{margin:0;font-size:19px}.rename-modal>.field{min-height:36px;margin-top:18px}.rename-modal footer{justify-content:flex-end;gap:8px;margin-top:18px}
+.modal-field { display:block; margin-top:12px; }.modal-field>span{display:block;margin-bottom:6px;color:var(--app-muted);font-size:var(--font-size-2xs)}.modal-field .field{min-height:34px}
+.field-with-action{display:grid;grid-template-columns:1fr 34px;gap:var(--space-3)}.field-with-action .icon-control{width:34px;height:34px}
+.profile-import-modal footer{display:flex;justify-content:flex-end;gap:var(--space-3);margin-top:18px}
+.rename-modal{width:min(380px,calc(100vw - 48px));padding:20px;border:1px solid var(--app-divider);border-radius:var(--radius-panel);color:var(--app-text);background:var(--app-surface-solid);box-shadow:0 22px 70px rgba(0,0,0,.28)}.rename-modal header,.rename-modal footer{display:flex;align-items:center;justify-content:space-between}.rename-modal h2{margin:0;font-size:var(--font-size-title)}.rename-modal>.field{min-height:36px;margin-top:18px}.rename-modal footer{justify-content:flex-end;gap:var(--space-3);margin-top:18px}
 .file-input {
   color: var(--app-muted);
 }
 .import-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-4);
   justify-content: flex-end;
 }
 .local-file-name {
@@ -532,7 +532,7 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
 .field.document {
   min-height: 120px;
   font-family: ui-monospace, "Cascadia Code", monospace;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   resize: vertical;
 }
 
@@ -551,7 +551,7 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
 .profiles-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 14px;
+  gap: var(--space-6);
   margin-top: 16px;
 }
 .profile-card {
@@ -562,7 +562,7 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
   padding: 14px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--space-6);
   cursor: pointer;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
@@ -577,26 +577,26 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-3);
 }
 .card-name {
   flex: 1 1 auto;
   min-width: 0;
-  font-weight: 650;
-  font-size: 14px;
+  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-body);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .card-actions {
   display: flex;
-  gap: 4px;
+  gap: var(--space-1);
   flex-direction: row;
 }
 .card-bottom {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
 }
 .pill-badge {
   display: inline-flex;
@@ -604,9 +604,9 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
   height: 20px;
   padding: 0 9px;
   border: 1px solid var(--app-divider);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   color: var(--app-muted);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 .pill-badge.active-badge {
   color: var(--app-purple);
@@ -615,7 +615,7 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
 .card-time {
   margin-left: auto;
   color: var(--app-muted);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 .menu-backdrop {
@@ -631,39 +631,39 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
   min-width: 120px;
   background: var(--app-surface-solid);
   border: 1px solid var(--app-divider);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   box-shadow: var(--app-shadow);
   padding: 6px;
 }
 .card-menu button {
   border: 0;
   background: transparent;
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   padding: 8px 10px;
   text-align: left;
   color: var(--app-text);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 .card-menu button:hover {
-  background: rgba(127, 127, 127, 0.1);
+  background: var(--app-fill);
 }
 .card-menu button.danger {
-  color: #e05b5b;
+  color: var(--app-danger);
 }
 
 .inline-error {
-  color: #e05b5b;
-  font-size: 12px;
+  color: var(--app-danger);
+  font-size: var(--font-size-sm);
 }
 .inline-ok {
   color: var(--app-green);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 .validation-warnings {
   margin: 6px 0 0;
   padding-left: 18px;
   color: #b97800;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1.5;
 }
 </style>

@@ -143,23 +143,23 @@ watch(() => kernel.status.phase, (phase, previous) => {
 </template>
 
 <style scoped>
-.rules-counters { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; color: var(--app-muted); font-size: 11px; }
+.rules-counters { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-5); margin-bottom: 10px; color: var(--app-muted); font-size: var(--font-size-xs); }
 .rules-hint { text-align: right; }
 .rules-provider-caption { display: flex; align-items: center; justify-content: space-between; }
-.rules-refresh-all { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: 7px; background: transparent; color: var(--app-muted); font-size: 11px; white-space: nowrap; }
+.rules-refresh-all { display: inline-flex; align-items: center; gap: var(--space-2); height: 26px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: var(--radius-control); background: transparent; color: var(--app-muted); font-size: var(--font-size-xs); white-space: nowrap; }
 .rules-refresh-all:disabled { opacity: 0.5; }
-.sort-arrow { margin-left: 3px; font-size: 10px; }
-.empty-state { padding: 26px; border: 1px dashed var(--app-divider); border-radius: 8px; }
+.sort-arrow { margin-left: 3px; font-size: var(--font-size-2xs); }
+.empty-state { padding: 26px; border: 1px dashed var(--app-divider); border-radius: var(--radius-control); }
 .empty-state p { margin: 0 0 8px; }
-.empty-state span { color: var(--app-muted); font-size: 12px; }
-.empty-state button { margin-top: 12px; height: 28px; padding: 0 12px; border: 0; border-radius: 6px; background: rgba(127,127,127,.13); }
+.empty-state span { color: var(--app-muted); font-size: var(--font-size-sm); }
+.empty-state button { margin-top: 12px; height: 28px; padding: 0 12px; border: 0; border-radius: var(--radius-sm); background: var(--app-fill); }
 .provider-section { margin-top: 42px; }
 .provider-list { width: 100%; }
 .provider-row { display: grid; grid-template-columns: 1fr auto; column-gap: 14px; align-items: center; padding: 13px 16px; border-top: 1px solid var(--app-divider); }
 .provider-row:first-child { border-top: 0; }
-.provider-info strong { display: block; font-size: 14px; }
-.provider-info small { display: block; margin-top: 3px; color: var(--app-muted); font-size: 11px; }
-.provider-actions { display: flex; gap: 8px; }
+.provider-info strong { display: block; font-size: var(--font-size-body); }
+.provider-info small { display: block; margin-top: 3px; color: var(--app-muted); font-size: var(--font-size-xs); }
+.provider-actions { display: flex; gap: var(--space-3); }
 /* 逐项更新改为图标按钮后移除旧的文本按钮底色规则。 */
-.provider-error { grid-column: 1 / -1; color: #e05b5b; font-size: 11px; }
+.provider-error { grid-column: 1 / -1; color: var(--app-danger); font-size: var(--font-size-xs); }
 </style>

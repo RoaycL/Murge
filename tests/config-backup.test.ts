@@ -62,6 +62,21 @@ describe('local configuration backup', () => {
     expect(await applyPendingConfigRestore(target)).toBe('none')
   })
 
+  it('backs up and restores the root-level Sub-Store state files', async () => {
+    const source = await workspace()
+    await mkdir(join(source, 'substore'), { recursive: true })
+    await writeFile(join(source, 'substore', 'root.json'), '{"root":true}')
+    await writeFile(join(source, 'substore', 'sub-store.json'), '{"subscriptions":[]}')
+    const archive = await createConfigBackup(source, 'correct-password', '0.9.20', codec)
+    const { payload } = inspectConfigBackup(archive, 'correct-password', '0.9.20')
+    expect(payload.files['substore/root.json']).toBeDefined()
+    expect(payload.files['substore/sub-store.json']).toBeDefined()
+    const target = await workspace()
+    await stageConfigRestore(target, payload, '0.9.20', codec)
+    expect(await applyPendingConfigRestore(target)).toBe('restored')
+    expect(await readFile(join(target, 'substore', 'root.json'), 'utf8')).toBe('{"root":true}')
+  })
+
   it('backs up a profile as large as the subscription download limit', async () => {
     const source = await workspace()
     await mkdir(join(source, 'profiles'), { recursive: true })

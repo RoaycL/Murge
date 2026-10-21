@@ -98,7 +98,7 @@ onMounted(() => {
   box-shadow: var(--app-shadow);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-4);
   margin-bottom: 18px;
 }
 .mode-selector {
@@ -139,10 +139,10 @@ onMounted(() => {
 }
 .inline-note {
   color: var(--app-muted);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 .inline-error {
-  color: #e05b5b;
-  font-size: 12px;
+  color: var(--app-danger);
+  font-size: var(--font-size-sm);
 }
 </style>

@@ -79,14 +79,14 @@ async function inspect(): Promise<void> {
 </template>
 
 <style scoped>
-.connection-diagnosis{display:grid;gap:10px;margin-top:20px;padding:15px;border:1px solid var(--app-divider);border-radius:12px}
+.connection-diagnosis{display:grid;gap:var(--space-4);margin-top:20px;padding:15px;border:1px solid var(--app-divider);border-radius:var(--radius-card)}
 .connection-diagnosis h3,.connection-diagnosis p{margin:0}
-.connection-diagnosis p{color:var(--app-muted);font-size:11px;line-height:1.5}
-.connection-diagnosis ol{display:grid;gap:8px;margin:0;padding:0;list-style:none}
-.connection-diagnosis li{display:grid;gap:3px;font-size:11px}
+.connection-diagnosis p{color:var(--app-muted);font-size:var(--font-size-xs);line-height:1.5}
+.connection-diagnosis ol{display:grid;gap:var(--space-3);margin:0;padding:0;list-style:none}
+.connection-diagnosis li{display:grid;gap:var(--space-1);font-size:var(--font-size-xs)}
 .connection-diagnosis li span{color:var(--app-muted)}
-.connection-diagnosis li strong{overflow-wrap:anywhere;font-size:12px;font-weight:500}
-.connection-diagnosis button{justify-self:start;padding:7px 11px;border:0;border-radius:8px;background:var(--app-accent);color:white;cursor:pointer}
+.connection-diagnosis li strong{overflow-wrap:anywhere;font-size:var(--font-size-sm);font-weight:var(--font-weight-medium)}
+.connection-diagnosis button{justify-self:start;padding:7px 11px;border:0;border-radius:var(--radius-control);background:var(--app-accent);color:var(--app-on-accent);cursor:pointer}
 .connection-diagnosis button:disabled{opacity:.5;cursor:not-allowed}
-.connection-diagnosis-result{display:grid;gap:4px;overflow-wrap:anywhere;font-size:11px}
+.connection-diagnosis-result{display:grid;gap:var(--space-1);overflow-wrap:anywhere;font-size:var(--font-size-xs)}
 </style>

@@ -72,27 +72,27 @@ const activeProfileName = computed(() => profiles.active?.name ?? null)
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-5);
 }
-.tunlife-title { margin: 0 0 4px; font-size: 15px; }
-.tunlife-subtitle { margin: 0; color: var(--app-muted); font-size: 11px; line-height: 1.5; max-width: 560px; }
+.tunlife-title { margin: 0 0 4px; font-size: var(--font-size-lg); }
+.tunlife-subtitle { margin: 0; color: var(--app-muted); font-size: var(--font-size-xs); line-height: 1.5; max-width: 560px; }
 .tunlife-subtitle code {
   padding: 1px 4px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--app-surface-solid);
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 .tunlife-status {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--space-3);
   padding: 5px 10px;
   border: 1px solid var(--app-divider);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--app-panel);
   color: var(--app-muted);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   white-space: nowrap;
 }
 .tunlife-dot {
@@ -103,19 +103,19 @@ const activeProfileName = computed(() => profiles.active?.name ?? null)
 }
 .tunlife-status.active { color: inherit; }
 .tunlife-status.active .tunlife-dot { background: var(--app-blue); }
-.tunlife-note { margin: 10px 0 0; color: var(--app-muted); font-size: 11px; }
-.tunlife-warn { color: var(--app-warning, #b8860b); }
-.tunlife-actions { margin-top: 14px; display: flex; gap: 8px; }
+.tunlife-note { margin: 10px 0 0; color: var(--app-muted); font-size: var(--font-size-xs); }
+.tunlife-warn { color: var(--app-warning); }
+.tunlife-actions { margin-top: 14px; display: flex; gap: var(--space-3); }
 .tunlife-enable,
 .tunlife-disable {
   min-height: 34px;
   padding: 0 18px;
   border: 0;
-  border-radius: 8px;
-  font-size: 12px;
+  border-radius: var(--radius-control);
+  font-size: var(--font-size-sm);
 }
-.tunlife-enable { background: var(--app-blue); color: white; }
-.tunlife-disable { background: rgba(127, 127, 127, 0.14); color: inherit; }
+.tunlife-enable { background: var(--app-blue); color: var(--app-on-accent); }
+.tunlife-disable { background: var(--app-fill); color: inherit; }
 .tunlife-enable:disabled,
 .tunlife-disable:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

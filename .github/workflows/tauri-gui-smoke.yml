@@ -43,14 +43,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri -> target
-          shared-key: windows-x64
       - run: npm ci --include=dev
       - run: npm run tauri:bridge
       - name: Check generated bridge is unchanged
         run: git diff --exit-code -- src/renderer/src/platform/generated/desktop-api.ts
+      # Run source branding checks before restoring Rust-generated JSON files.
+      - name: Prepare Electron comparison executable and renderer
+        run: npx install-electron --no
+      - run: npm run build
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: windows-x64
       # TODO: installed-package/upgrade smoke follows the installer workstream.
       # WebView2 release settings disable DevTools. A test-only window override
       # enables the live CDP assertions; tauri-build.yml produces normal release
@@ -58,9 +62,6 @@ jobs:
       - name: Prepare test-only WebView2 inspection settings
         run: node "${{ inputs.source_ref != '' && 'ci-harness/' || '' }}scripts/ci-tauri-gui-config.mjs"
       - run: npm run tauri:build -- --no-bundle --target x86_64-pc-windows-msvc --features tauri/devtools --config "$env:RUNNER_TEMP/tauri-gui-config.json"
-      - name: Prepare Electron comparison executable and renderer
-        run: npx install-electron --no
-      - run: npm run build
       - name: Verify native window, live renderer IPC, stability and normal exit
         run: node "${{ inputs.source_ref != '' && 'ci-harness/' || '' }}scripts/ci-tauri-gui-smoke.mjs" --compare-electron
       - uses: actions/upload-artifact@v4

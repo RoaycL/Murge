@@ -62,8 +62,20 @@ jobs:
       - name: Prepare test-only WebView2 inspection settings
         run: node "${{ inputs.source_ref != '' && 'ci-harness/' || '' }}scripts/ci-tauri-gui-config.mjs"
       - run: npm run tauri:build -- --no-bundle --target x86_64-pc-windows-msvc --features tauri/devtools --config "$env:RUNNER_TEMP/tauri-gui-config.json"
+      - name: Prepare a normal user integrity session for WebView2 inspection
+        # Hosted Windows runs elevated. WebView2 ignores the CDP environment
+        # switch in elevated apps; Tauri's own Windows e2e workflow uses gsudo
+        # at Medium integrity for the same reason. Grant only the runner user.
+        run: |
+          winget install gerardog.gsudo --accept-source-agreements --accept-package-agreements --disable-interactivity
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + $env:Path
+          $gsudo = (Get-Command gsudo.exe -ErrorAction Stop).Source
+          Split-Path $gsudo | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          $account = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+          icacls "$env:GITHUB_WORKSPACE" /grant "${account}:(OI)(CI)M"
       - name: Verify native window, live renderer IPC, stability and normal exit
-        run: node "${{ inputs.source_ref != '' && 'ci-harness/' || '' }}scripts/ci-tauri-gui-smoke.mjs" --compare-electron
+        run: gsudo.exe --integrity Medium node "${{ inputs.source_ref != '' && 'ci-harness/' || '' }}scripts/ci-tauri-gui-smoke.mjs" --compare-electron
       - uses: actions/upload-artifact@v4
         if: always()
         with:

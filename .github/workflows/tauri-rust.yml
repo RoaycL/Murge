@@ -71,8 +71,18 @@ jobs:
         working-directory: src-tauri
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: All Rust tests
+        id: rust-tests
         working-directory: src-tauri
         run: cargo test --locked -- --include-ignored
+      - name: Diagnose a Windows test executable loader failure
+        if: failure() && runner.os == 'Windows' && steps.rust-tests.outcome == 'failure'
+        run: node "${{ inputs.source_ref != '' && 'ci-harness/' || '' }}scripts/ci-tauri-loader-diagnostics.mjs"
+      - uses: actions/upload-artifact@v4
+        if: failure() && runner.os == 'Windows' && steps.rust-tests.outcome == 'failure'
+        with:
+          name: tauri-windows-loader-diagnostics
+          path: ${{ runner.temp }}/tauri-loader-diagnostics/
+          if-no-files-found: error
 
   audit:
     name: Rust dependency audit

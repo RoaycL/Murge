@@ -1949,6 +1949,7 @@ pub type WindowsRunner = Arc<dyn Fn(&'static str, Vec<String>) -> BoxFuture<'sta
 /// Unreachable off-windows: the factory never composes the Windows adapter on
 /// a non-win32 host (the disabled adapter owns those platforms).
 #[cfg(not(windows))]
+#[allow(dead_code)]
 pub fn real_command_runner() -> WindowsRunner {
     Arc::new(move |_command: &'static str, _args: Vec<String>| {
         Box::pin(async move { Err("reg.exe is only available on Windows".to_string()) })

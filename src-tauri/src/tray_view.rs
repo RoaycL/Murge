@@ -72,8 +72,10 @@ impl NativeTrayView {
         let icon = match self.icon_root.lock().expect("icon root mutex").as_ref() {
             Some(root) => {
                 let path = root.join(icon_file(&accent, dark));
-                match std::fs::read(&path) {
-                    Ok(bytes) => tauri::image::Image::new_owned(bytes, 32, 32),
+                // The assets are PNG files: decode them (passing the file
+                // bytes as raw RGBA painted garbage or nothing at all).
+                match tauri::image::Image::from_path(&path) {
+                    Ok(image) => tauri::image::Image::new_owned(image.rgba().to_vec(), image.width(), image.height()),
                     Err(_) => default_icon(&self.app),
                 }
             }
@@ -92,11 +94,17 @@ impl NativeTrayView {
         }
     }
 
+    /// Repaint only when the accent or theme actually moved (the cadence
+    /// would otherwise re-upload the HICON every tick).
+    fn appearance_changed(&self, accent: &str, dark: bool) -> bool {
+        *self.accent.lock().expect("accent mutex") != accent || *self.dark.lock().expect("dark mutex") != dark
+    }
+
 }
 
-fn dark_theme(app: &AppHandle) -> bool {
-    // Tauri exposes the OS theme through the window; the tray has no direct
-    // query. Dark is the safer default for notification-area rendering.
+/// The TS `nativeTheme.shouldUseDarkColors`: the OS app theme, read through
+/// the main window (the tray has no direct query). Dark when unknown.
+pub(crate) fn dark_theme(app: &AppHandle) -> bool {
     app.webview_windows()
         .values()
         .next()
@@ -143,7 +151,9 @@ impl TrayView for NativeTrayView {
     }
 
     fn set_runtime_appearance(&self, accent: &str, dark: bool) {
-        NativeTrayView::set_runtime_appearance(self, accent, dark);
+        if self.appearance_changed(accent, dark) {
+            NativeTrayView::set_runtime_appearance(self, accent, dark);
+        }
     }
 }
 

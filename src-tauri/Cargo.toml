@@ -63,6 +63,11 @@ windows = { version = "0.58", features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Graphics_Gdi",
+    # Native system-proxy registry/WinINet access + the session-end window.
+    "Win32_System_Registry",
+    "Win32_Networking_WinInet",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Shutdown",
 ] }
 png = "0.17"
 

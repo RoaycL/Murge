@@ -162,6 +162,7 @@ pub type SettingsGateway = std::sync::Arc<dyn Fn() -> futures_util::future::BoxF
 pub struct SettingsStore {
     app_data_root: Option<PathBuf>,
     state: Mutex<MemoryState>,
+    listeners: crate::events::EventHub,
 }
 
 #[derive(Default)]
@@ -171,7 +172,11 @@ struct MemoryState {
 
 impl SettingsStore {
     pub fn new(app_data_root: Option<PathBuf>) -> Self {
-        SettingsStore { app_data_root, state: Mutex::new(MemoryState { cached: None }) }
+        SettingsStore {
+            app_data_root,
+            state: Mutex::new(MemoryState { cached: None }),
+            listeners: crate::events::EventHub::new(),
+        }
     }
 
     /// Store for the current runtime mode: real paths in production, an
@@ -269,7 +274,18 @@ impl SettingsStore {
         };
         self.write_to_disk(&next);
         state.cached = Some(next.clone());
+        drop(state);
+        // The TS appSettings.onChange fan-out (outside the store lock so a
+        // listener may read the store again).
+        if let Ok(value) = serde_json::to_value(&next) {
+            self.listeners.emit(&value);
+        }
         next
+    }
+
+    /// Subscribe to every applied `set` (the TS `onChange`).
+    pub fn subscribe(&self, listener: crate::events::EventListener) -> i64 {
+        self.listeners.subscribe(listener)
     }
 
     fn write_to_disk(&self, settings: &AppSettings) {

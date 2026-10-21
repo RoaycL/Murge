@@ -1,5 +1,5 @@
 /**
- * Murge — Electron main-process entry (Phase 1 migration boundary).
+ * Electron main-process entry (Phase 1 migration boundary).
  *
  * The former monolith (≈1900 lines of startup orchestration) is split behind a
  * composition seam:

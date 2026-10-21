@@ -93,7 +93,9 @@ if (violations.length) {
 }
 
 const forbidden = [brand.productName, brand.shortName]
-const allowed = new Set(['brand.config.json', 'README.md', 'BRANDING.md'])
+// tauri.conf.json is static JSON the Tauri bundler reads directly, so it must
+// spell the product name and window title out; keep it in step with brand.config.json.
+const allowed = new Set(['brand.config.json', 'README.md', 'BRANDING.md', 'tauri.conf.json'])
 const scanViolations = []
 
 async function walk(directory) {

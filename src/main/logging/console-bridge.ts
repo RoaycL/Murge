@@ -1,10 +1,11 @@
 import type { FileLogLevel, FileLogService } from './file-log-service'
 
-type ConsoleMethod = 'debug' | 'log' | 'warn' | 'error'
+type ConsoleMethod = 'debug' | 'log' | 'info' | 'warn' | 'error'
 
 const LEVEL_BY_METHOD: Record<ConsoleMethod, FileLogLevel> = {
   debug: 'debug',
   log: 'info',
+  info: 'info',
   warn: 'warn',
   error: 'error'
 }
@@ -14,6 +15,7 @@ export function installConsoleFileLogging(logs: FileLogService): () => void {
   const original: Record<ConsoleMethod, (...values: unknown[]) => void> = {
     debug: console.debug.bind(console),
     log: console.log.bind(console),
+    info: console.info.bind(console),
     warn: console.warn.bind(console),
     error: console.error.bind(console)
   }

@@ -197,7 +197,7 @@ func privilegedServiceConfig(template serviceTemplate) mgr.Config {
 		StartType:   mgr.StartAutomatic, ErrorControl: mgr.ErrorNormal,
 		ServiceStartName: "LocalSystem", DisplayName: template.ServiceName,
 		Description: "Privileged mihomo core lifecycle service",
-		SidType:     windows.SERVICE_SID_TYPE_UNRESTRICTED, DelayedAutoStart: true,
+		SidType:     windows.SERVICE_SID_TYPE_UNRESTRICTED, DelayedAutoStart: false,
 	}
 }
 

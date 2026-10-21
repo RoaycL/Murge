@@ -174,7 +174,7 @@ pub fn resolve_overridden_document(
 /// `LiveConfigReloader` — one instance per dispatch call; everything it
 /// reads is either owned-cheap or a borrow of the managed states.
 pub struct LiveConfigReloader<'a> {
-    kernel: &'a crate::kernel_process::KernelSupervisor,
+    kernel: &'a dyn crate::kernel::KernelStatusSource,
     client: crate::mihomo::MihomoClient,
     runtime: LiveConfigRuntime,
     profiles: &'a Arc<ProfilesService>,
@@ -186,7 +186,7 @@ impl<'a> LiveConfigReloader<'a> {
     /// The dispatch composition: controller + runtime from the core model
     /// (the same identity `controller_client` uses for every REST arm).
     pub fn from_ipc(
-        kernel: &'a crate::kernel_process::KernelSupervisor,
+        kernel: &'a dyn crate::kernel::KernelStatusSource,
         models: &'a enhancements::ModelStores,
         profiles: &'a Arc<ProfilesService>,
         overrides: &'a OverrideService,
@@ -209,7 +209,7 @@ impl<'a> LiveConfigReloader<'a> {
     /// Test seam: explicit controller + runtime.
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn with_client(
-        kernel: &'a crate::kernel_process::KernelSupervisor,
+        kernel: &'a dyn crate::kernel::KernelStatusSource,
         client: crate::mihomo::MihomoClient,
         runtime: LiveConfigRuntime,
         profiles: &'a Arc<ProfilesService>,
@@ -220,7 +220,7 @@ impl<'a> LiveConfigReloader<'a> {
     }
 
     fn kernel_running(&self) -> bool {
-        live_phase(&self.kernel.get_status())
+        live_phase(&self.kernel.kernel_status())
     }
 
     fn resolve_sources(&self) -> Result<(Option<String>, Value, Value, Value), IpcError> {
@@ -471,7 +471,7 @@ pub async fn reload_active_profile_with_rollback(
     system_proxy: &crate::system_proxy::SystemProxyService,
     rollback_active: Option<RollbackActiveFn>,
 ) -> Result<bool, IpcError> {
-    let reloader = LiveConfigReloader::from_ipc(&kernel.supervisor, models, profiles, overrides)?;
+    let reloader = LiveConfigReloader::from_ipc(kernel, models, profiles, overrides)?;
     if let Ok(applied) = reloader.reload_if_running().await {
         return Ok(applied);
     }
@@ -625,11 +625,39 @@ pub fn fetch_external_ip_via_proxy(
 /// `register-ipc.ts:resolveExternalIp` — null unless the kernel is running;
 /// the port comes from the live controller config (`mixed-port` ?? `port`).
 /// Every failure degrades to `null`.
+/// The privileged service profile (`PrivilegedServiceKernelGateway.buildProfile`):
+/// the same safety transform the live reload uses, with the TUN block present
+/// but disabled, so later TUN toggles are a controller hot-switch.
+pub fn build_service_profile(
+    profiles: &Arc<ProfilesService>,
+    overrides: &OverrideService,
+    models: &enhancements::ModelStores,
+) -> Result<String, IpcError> {
+    let document = resolve_enhanced_document(profiles, overrides, models)?;
+    let core = enhancements::coerce_core_settings(&models.core.get());
+    let mut options = LiveConfigRuntime::from_core(&core).builder_options();
+    if let Some(map) = options.as_object_mut() {
+        map.insert("tunConfig".into(), enhancements::coerce_tun_config(&models.tun_config.get()));
+        map.insert("tunEnabled".into(), json!(false));
+    }
+    match document {
+        Some(document) => {
+            if let Some(map) = options.as_object_mut() {
+                map.insert("document".into(), json!(document));
+                map.insert("core".into(), core);
+                map.insert("geodata".into(), enhancements::coerce_geodata_settings(&models.geodata.get()));
+            }
+            crate::tun_profile::generate_proxied_tun_config(&options)
+        }
+        None => crate::tun_profile::generate_mihomo_tun_config(&options),
+    }
+}
+
 pub async fn resolve_external_ip(
-    kernel: &crate::kernel_process::KernelSupervisor,
+    kernel: &dyn crate::kernel::KernelStatusSource,
     models: &enhancements::ModelStores,
 ) -> Value {
-    let status = kernel.get_status();
+    let status = kernel.kernel_status();
     if status["phase"].as_str() != Some("running") {
         return Value::Null;
     }

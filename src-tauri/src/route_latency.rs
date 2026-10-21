@@ -24,6 +24,7 @@ pub fn parse_darwin_default_gateway(stdout: &str) -> Option<String> {
 }
 
 /// /proc/net/route → the destination-00000000 row's little-endian hex gateway.
+#[cfg_attr(windows, allow(dead_code))] // the Linux route source; Windows reads `route print`
 pub fn parse_linux_proc_route(text: &str) -> Option<String> {
     for line in text.lines() {
         let columns: Vec<&str> = line.trim().split_whitespace().collect();
@@ -89,6 +90,7 @@ fn detect_gateway() -> Option<String> {
     }
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
         let output = std::process::Command::new("route")
             .args(["print", "0.0.0.0"])
             .creation_flags(0x0800_0000) // CREATE_NO_WINDOW

@@ -89,7 +89,9 @@ export class ProfileAutoReloadGateway implements ProfileGateway {
       const previousActiveId = await this.currentActiveId()
       const previousDocument = (await this.inner.getProfile(id)).document
       const meta = await this.inner.updateFromSource(id)
-      if (previousActiveId === id) {
+      // A periodic subscription check with unchanged YAML must not bounce the
+      // live kernel (or briefly interrupt an owned system proxy/TUN route).
+      if (previousActiveId === id && (await this.inner.getProfile(id)).document !== previousDocument) {
         await this.reloader.reload(() =>
           this.restoreEdit(previousActiveId, id, previousDocument)
         )

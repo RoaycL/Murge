@@ -340,6 +340,32 @@ describe('policies store', () => {
     expect(store.panelError).toBeNull()
   })
 
+  it('syncs the mode from the controller instead of assuming rule', async () => {
+    controllerMode = 'global'
+    getConfig.mockImplementation(async () => ({ mode: controllerMode }))
+    const store = usePoliciesStore()
+    expect(store.mode).toBe('rule')
+    await store.syncMode()
+    expect(store.mode).toBe('global')
+    getConfig.mockRejectedValueOnce(error(ProtocolErrorCode.UPSTREAM_UNREACHABLE))
+    await store.syncMode()
+    expect(store.mode).toBe('global')
+  })
+
+  it('follows a mode switched from the tray', () => {
+    let listener: ((mode: string) => void) | null = null
+    const desktop = (globalThis as unknown as { window: { desktop: { mihomo: Record<string, unknown> } } }).window.desktop
+    desktop.mihomo.onModeChanged = vi.fn((next: (mode: string) => void) => {
+      listener = next
+      return () => undefined
+    })
+    const store = usePoliciesStore()
+    listener!('direct')
+    expect(store.mode).toBe('direct')
+    listener!('bogus')
+    expect(store.mode).toBe('direct')
+  })
+
   it('marks the store as error when loading proxies fails', async () => {
     getProxies.mockRejectedValue(error(ProtocolErrorCode.UPSTREAM_UNREACHABLE))
     const store = usePoliciesStore()

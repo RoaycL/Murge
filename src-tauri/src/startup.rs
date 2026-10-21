@@ -239,7 +239,7 @@ impl ScheduledTaskStartupAdapter {
                 Box::pin(async move { run_child(&command, &args).await })
             }),
             std::sync::Arc::new(move || {
-                app.try_state::<crate::settings::SettingsStore>()
+                app.try_state::<std::sync::Arc<crate::settings::SettingsStore>>()
                     .map(|settings| settings.get().silent_launch)
                     .unwrap_or(false)
             }),
@@ -499,7 +499,6 @@ async fn run_child(command: &str, args: &[String]) -> Result<RunResult, String> 
     cmd.args(args);
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
     cmd.stdout(std::process::Stdio::piped());

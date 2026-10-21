@@ -373,11 +373,11 @@ impl NetworkMetadataService {
             Box::new(move || {
                 let app = app.clone();
                 Box::pin(async move {
-                    let kernel = app.state::<crate::kernel::KernelServices>();
-                    if kernel.supervisor.get_status()["phase"].as_str() != Some("running") {
+                    let kernel = app.state::<std::sync::Arc<crate::kernel::KernelServices>>();
+                    if kernel.get_status_value()["phase"].as_str() != Some("running") {
                         return None;
                     }
-                    let models = app.state::<crate::enhancements::ModelStores>();
+                    let models = app.state::<std::sync::Arc<crate::enhancements::ModelStores>>();
                     let core = crate::enhancements::coerce_core_settings(&models.core.get());
                     let client = match crate::mihomo::MihomoClient::new(
                         core["controllerPort"].as_i64().unwrap_or(9090),

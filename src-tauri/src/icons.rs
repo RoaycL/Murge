@@ -384,7 +384,7 @@ fn extract_process_icon(path: &str) -> Option<String> {
         let icon: HICON = info.hIcon;
         let outcome = icon_to_png(icon);
         let _ = DestroyIcon(icon);
-        outcome
+        return outcome;
     }
 
     fn icon_to_png(icon: HICON) -> Option<String> {

@@ -18,6 +18,18 @@ export default {
   // immutable source/tag evidence remain mandatory; Windows will show Unknown
   // publisher until this policy changes and a trusted certificate is supplied.
   forceCodeSigning: false,
+  // The privileged TUN service trusts a pipe client by its executable path and
+  // hash. With the default fuses any process could run the installed exe as
+  // plain Node (ELECTRON_RUN_AS_NODE, NODE_OPTIONS, --inspect) or point it at a
+  // loose app folder and still pass that check, so those entry points are
+  // burned off and the bundled app.asar must match its embedded hash.
+  electronFuses: {
+    runAsNode: false,
+    enableNodeOptionsEnvironmentVariable: false,
+    enableNodeCliInspectArguments: false,
+    onlyLoadAppFromAsar: true,
+    enableEmbeddedAsarIntegrityValidation: true
+  },
   appId: brand.appId,
   productName: brand.productName,
   executableName: brand.executableName,
@@ -42,6 +54,7 @@ export default {
     // extraction, so first launch never depends on GitHub availability.
     { from: `resources/bin/${'${arch}'}`, to: 'bin', filter: kernelManifest.assets.filter((asset) => asset.platform === 'win32').map((asset) => asset.filename) },
     { from: `resources/tun-service/${'${arch}'}`, to: 'tun-service', filter: ['tun-service.exe', 'service-template.json'] },
+    { from: 'resources/startup', to: 'startup', filter: ['register-task.ps1'] },
     { from: 'resources/defaults', to: 'defaults', filter: ['**/*'] },
     // Geodata databases shipped with the installer and seeded into the kernel's
     // persistent home at startup, so a profile with GEOSITE/GEOIP rules starts

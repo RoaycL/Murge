@@ -27,7 +27,7 @@ import type {
 } from './overrides'
 import type { DnsEnhancement, DnsSnapshot } from './dns'
 import type { SnifferEnhancement, SnifferSnapshot } from './sniffer'
-import type { KernelStatus, RuntimeSummary, TrafficSample } from './runtime'
+import type { KernelStatus, OutboundMode, RuntimeSummary, TrafficSample } from './runtime'
 import type { SystemProxyStatus } from './system-proxy'
 import type { ProxyBypassPolicy } from './proxy-bypass'
 import type { StartupStatus } from './startup'
@@ -36,10 +36,14 @@ import type { TunConfigModel, TunConfigSnapshot } from './tun-config'
 import type { CoreSettings } from './core-settings'
 import type { GeodataSettings } from './geodata'
 import type { UsageWindow, UsageRanking, UsageHistorySnapshot, UsageRankingEntry, UsageCapacity } from './usage'
+import type { ProcessUsageSnapshot } from './process-usage'
 import type { NetworkMetadataProvider, NetworkMetadataSnapshot, NetworkMetadataState } from './network-metadata'
 import type { AppInfo } from './app-info'
 import type { AppSettings } from './app-settings'
 import type { UpdateState } from './updates'
+import type { DiagnosticReport } from './diagnostics'
+import type { ConfigBackupPreview, ConfigBackupResult } from './config-backup'
+import type { WebDavBackupTarget } from './webdav-backup'
 
 export const IPC = {
   appGetBrand: 'app:get-brand',
@@ -47,6 +51,12 @@ export const IPC = {
   appGetProcessIcon: 'app:get-process-icon',
   appGetCachedIcon: 'app:get-cached-icon',
   appListNetworkInterfaces: 'app:list-network-interfaces',
+  diagnosticsCollect: 'diagnostics:collect',
+  backupCreate: 'backup:create',
+  backupPreview: 'backup:preview',
+  backupRestore: 'backup:restore',
+  backupWebDavUpload: 'backup:webdav-upload',
+  backupWebDavPreview: 'backup:webdav-preview',
   appNavigateEvent: 'app:navigate-event',
   kernelGetStatus: 'kernel:get-status',
   kernelStart: 'kernel:start',
@@ -86,6 +96,7 @@ export const IPC = {
   mihomoConnectionsEvent: 'mihomo:connections-event',
   mihomoLogEvent: 'mihomo:log-event',
   mihomoStreamErrorEvent: 'mihomo:stream-error-event',
+  mihomoModeChangedEvent: 'mihomo:mode-changed-event',
   profilesList: 'profiles:list',
   profilesGetActiveGroupOrder: 'profiles:get-active-group-order',
   profilesGetActiveProviderCatalog: 'profiles:get-active-provider-catalog',
@@ -156,6 +167,7 @@ export const IPC = {
   geodataSettingsPreview: 'geodata-settings:preview',
   usageHistoryGetWindow: 'usage-history:get-window',
   usageHistoryRank: 'usage-history:rank',
+  usageHistoryProcessRanking: 'usage-history:process-ranking',
   usageHistoryClear: 'usage-history:clear',
   usageHistoryGetCapacity: 'usage-history:get-capacity',
   networkMetadataGetProviders: 'network-metadata:get-providers',
@@ -176,6 +188,17 @@ export interface DesktopApi {
     listNetworkInterfaces(): Promise<string[]>
     /** Main-process requests such as notification clicks navigate an existing window. */
     onNavigate(listener: (path: string) => void): () => void
+  }
+  diagnostics: {
+    /** User-triggered, local-only report with no raw logs or configuration. */
+    collect(): Promise<DiagnosticReport>
+  }
+  backup: {
+    create(password: string): Promise<ConfigBackupResult>
+    preview(password: string): Promise<ConfigBackupPreview | null>
+    restore(token: string): Promise<void>
+    webdavUpload(target: WebDavBackupTarget, password: string): Promise<ConfigBackupResult>
+    webdavPreview(target: WebDavBackupTarget, password: string): Promise<ConfigBackupPreview>
   }
   kernel: {
     getStatus(): Promise<KernelStatus>
@@ -220,6 +243,8 @@ export interface DesktopApi {
     onConnections(listener: (snapshot: MihomoConnectionsSnapshot) => void): () => void
     onLogs(listener: (message: MihomoLogMessage) => void): () => void
     onStreamError(listener: (error: MihomoStreamError) => void): () => void
+    /** The outbound mode was switched outside the window (tray menu). */
+    onModeChanged(listener: (mode: OutboundMode) => void): () => void
     /** Retained kernel-log history past `afterSeq` (0 = everything retained). */
     logsSnapshot(afterSeq?: number): Promise<MihomoLogsSnapshot>
     /** Drop retained history and return the last sequence included in the clear. */
@@ -331,6 +356,7 @@ export interface DesktopApi {
   usageHistory: {
     getWindow(window: UsageWindow): Promise<UsageHistorySnapshot>
     rank(window: UsageWindow, ranking: UsageRanking, limit?: number): Promise<UsageRankingEntry[]>
+    processRanking(window: UsageWindow): Promise<ProcessUsageSnapshot>
     clear(): Promise<void>
     getCapacity(): Promise<UsageCapacity>
   }

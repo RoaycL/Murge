@@ -70,6 +70,20 @@ export class RuntimeIntentRecoveryCoordinator {
     this.schedule(0)
   }
 
+  /**
+   * Abandon queued attempts (backoff timer, pending wake, the rest of the
+   * current window) without unsubscribing: a later wake() or settings change
+   * starts a fresh episode as usual. An attempt already running is fenced by
+   * the generation bump before its next state-changing call.
+   */
+  cancelPending(): void {
+    if (!this.started) return
+    this.generation += 1
+    this.wakePending = false
+    this.clearTimer()
+    this.nextDelay = this.backoff.length
+  }
+
   stop(): void {
     if (!this.started) return
     this.started = false

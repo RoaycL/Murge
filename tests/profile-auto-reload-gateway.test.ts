@@ -196,6 +196,21 @@ describe('ProfileAutoReloadGateway', () => {
   })
 
   describe('updateFromSource (subscription update)', () => {
+    it('does not reload the active kernel when the fetched document is unchanged', async () => {
+      const inner = new FakeProfileGateway()
+      inner.profiles.push({
+        meta: { ...meta('p1', 'Sub', true, 0), source: { type: 'url' as const, url: 'https://example.invalid/sub' } },
+        document: 'proxies:\n  - name: node-updated\n    server: 127.0.0.1\n'
+      })
+      inner.activeIndex = 0
+      const { gw, reload } = gatewayWith(inner)
+
+      await gw.updateFromSource('p1')
+
+      expect(reload).not.toHaveBeenCalled()
+      expect(inner.activeIndex).toBe(0)
+    })
+
     it('reloads when updating the ACTIVE profile and preserves the pointer', async () => {
       const inner = new FakeProfileGateway()
       inner.profiles.push({

@@ -207,6 +207,26 @@ describe('connections store', () => {
     ]
   }
 
+  it('defaults to newest connections first even when an older connection has more traffic', () => {
+    const store = useConnectionsStore()
+    const dated = {
+      ...snapshot,
+      connections: [
+        { ...snapshot.connections[0], start: '2026-09-29T10:00:00.000Z', upload: 1000 },
+        { ...snapshot.connections[1], start: '2026-09-29T10:02:00.000Z', upload: 1 },
+        { ...snapshot.connections[2], start: '2026-09-29T10:01:00.000Z', upload: 2 }
+      ]
+    }
+    mihomo.getConnections.mockResolvedValue(dated)
+    store.connect()
+    emitConnections(store, dated)
+    expect(store.sort).toBe('started')
+    expect(store.visibleConnections.map((connection) => connection.id)).toEqual(['c2', 'c3', 'c1'])
+    store.sort = 'traffic'
+    expect(store.visibleConnections.map((connection) => connection.id)).toEqual(['c1', 'c2', 'c3'])
+    store.disconnect()
+  })
+
   it('aggregates connections into a bounded summary and ranks processes', () => {
     const store = useConnectionsStore()
     mihomo.getConnections.mockResolvedValue(snapshot)

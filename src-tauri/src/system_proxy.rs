@@ -1961,13 +1961,12 @@ pub fn real_command_runner() -> WindowsRunner {
 /// phantom "value absent"; non-zero exits return Ok with the exit code.
 #[cfg(windows)]
 pub fn real_command_runner() -> WindowsRunner {
-    use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     const DEFAULT_TIMEOUT_MS: u64 = 5000;
     Arc::new(move |command: &'static str, args: Vec<String>| {
         Box::pin(async move {
-            let mut cmd = std::process::Command::new(command);
-            cmd.args(&args).creation_flags(CREATE_NO_WINDOW);
+            let mut cmd = tokio::process::Command::new(command);
+            cmd.args(&args).creation_flags(CREATE_NO_WINDOW).kill_on_drop(true);
             let output = tokio::time::timeout(
                 std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS),
                 cmd.output(),

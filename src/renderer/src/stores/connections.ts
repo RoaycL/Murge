@@ -43,7 +43,7 @@ export const useConnectionsStore = defineStore('connections', () => {
   const closingIds = ref<string[]>([])
   const actionError = ref<string | null>(null)
   const rankScope = ref<RankScope>('all')
-  const sort = ref<ConnectionSort>('traffic')
+  const sort = ref<ConnectionSort>('started')
   const closingMany = ref(false)
   let connectionsUnsub: (() => void) | null = null
   let errorUnsub: (() => void) | null = null

@@ -213,6 +213,8 @@ pub struct TrayDeps {
     /// cannot drift from the renderer's gateway semantics.
     pub tun_desired: Box<dyn Fn(bool) -> BoxFuture<'static, Result<Value, IpcError>> + Send + Sync>,
     pub on_check_update: Box<dyn Fn() + Send + Sync>,
+    /// Called after the tray switched the outbound mode, so open windows can follow.
+    pub on_mode_changed: Box<dyn Fn(&str) + Send + Sync>,
     pub show_window: Box<dyn Fn() + Send + Sync>,
     pub quit: Box<dyn Fn() + Send + Sync>,
     pub open_directory: Box<dyn Fn(&str) -> Result<(), String> + Send + Sync>,
@@ -264,7 +266,7 @@ impl TrayController {
     /// every step: a failing source keeps the previous snapshot (the TS
     /// `.catch(() => this.…)` guards).
     pub async fn refresh(&self) {
-        let kernel = self.deps.kernel.supervisor.get_status();
+        let kernel = self.deps.kernel.get_status_value();
         let system_proxy = self.deps.system_proxy.get_status();
         let tun = self.deps.tun.get_status_value();
         let profiles: Vec<Value> = self
@@ -472,9 +474,9 @@ impl TrayController {
         // The tray mode patch is the same direct controller PATCH the renderer
         // uses (no queue in the TS gateway chain either).
         if let Ok(client) = client_for(&self.deps.models) {
-            let _ = client
-                .patch_config(&serde_json::json!({ "mode": mode }))
-                .await;
+            if client.patch_config(&serde_json::json!({ "mode": mode })).await.is_ok() {
+                (self.deps.on_mode_changed)(mode);
+            }
         }
     }
 
@@ -1141,6 +1143,12 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
                 })
             })
         },
+        on_mode_changed: {
+            let app = app.clone();
+            Box::new(move |mode: &str| {
+                let _ = tauri::Emitter::emit(&app, "mihomo:mode-changed-event", mode);
+            })
+        },
         on_check_update: {
             let updates = updates.clone();
             Box::new(move || {
@@ -1216,7 +1224,7 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
     // Status listeners re-render immediately (the TS onStatus subscribers).
     {
         let controller = controller.clone();
-        kernel.supervisor.status_listeners.subscribe(Arc::new(move |status| {
+        kernel.status_listeners().subscribe(Arc::new(move |status| {
             let controller = controller.clone();
             let status = status.clone();
             tauri::async_runtime::spawn(async move {

@@ -11,6 +11,7 @@ const groups: Array<{ label: string; items: Array<{ to: string; label: string; i
       { to: '/activity', label: '活动', icon: 'activity' },
       { to: '/overview', label: '概览', icon: 'overview' },
       { to: '/connections', label: '连接', icon: 'connections' },
+      { to: '/processes', label: '进程', icon: 'processes' },
       { to: '/devices', label: '设备', icon: 'devices' }
     ]
   },

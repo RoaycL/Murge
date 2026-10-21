@@ -23,13 +23,13 @@ func TestProtectedServiceDirectoriesCoverProductOwnedAncestors(t *testing.T) {
 	}
 }
 
-func TestPrivilegedServiceConfigSetsTypeForUpgrade(t *testing.T) {
+func TestPrivilegedServiceConfigStartsAtBootAndSetsTypeForUpgrade(t *testing.T) {
 	template := serviceTemplate{ServiceName: "ProxyDesktopTun_test"}
 	config := privilegedServiceConfig(template)
 	if config.ServiceType != windows.SERVICE_WIN32_OWN_PROCESS {
 		t.Fatalf("upgrade service type must be explicit, got %d", config.ServiceType)
 	}
-	if config.StartType != mgr.StartAutomatic || !config.DelayedAutoStart {
+	if config.StartType != mgr.StartAutomatic || config.DelayedAutoStart {
 		t.Fatalf("unexpected startup configuration: %+v", config)
 	}
 }

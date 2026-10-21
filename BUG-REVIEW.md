@@ -50,12 +50,20 @@ landed.
   (`tests/kernel-watchdog.test.ts`) assert the release-byte vs EOF distinction.
   No change.
 
-## 5. Abnormal-exit monitor skips `restoring` / `restore-failed` TUN phases — WONTFIX (accepted)
-- **File:** `src/main/index.ts` monitor, `src/main/kernel/mode-transition.ts`
-- **Assessment:** confirmed the monitor and `recoverTunExit` both only reconcile
-  `active`/`starting`. This is a bounded gap in the degraded-phase recovery
-  guarantee, not a crash; the next user enable from `restore-failed` is allowed
-  and surfaces any lingering conflict. Left as a documented limitation.
+## 5. Abnormal-exit monitor skips `restoring` / `restore-failed` TUN phases — FIXED
+- **File:** `src/main/kernel/privileged-exit-monitor.ts` (extracted from the
+  `index.ts` monitor), `src/main/kernel/mode-transition.ts`
+- **Assessment:** the production (in-place) monitor is keyed on the privileged
+  kernel phase and resets TUN via `TunCoordinator.handleHostExit()` in any TUN
+  phase, but that path was untested and a failing TUN reset aborted the proxy
+  restore and intent replay. The legacy host-handoff `recoverTunExit` still
+  only reconciled `active`/`starting`.
+- **Fix:** the monitor tick now lives in `createPrivilegedExitMonitorTick` with
+  each recovery step fail-isolated; `recoverTunExit` also reconciles
+  `restoring`/`restore-failed`. Regression tests:
+  `tests/privileged-exit-monitor.test.ts` (crash after a failed restore and
+  mid-restore) and the new `recoverTunExit` cases in
+  `tests/mode-transition.test.ts`.
 
 ## Notes (verified non-bugs, to save re-review)
 - `KernelSupervisor` lifecycle chain, `exitWork`, `waitForExit`/`exitWait` and

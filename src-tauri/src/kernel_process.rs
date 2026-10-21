@@ -480,6 +480,37 @@ fn unix_alive(pid: u32) -> bool {
     unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
 }
 
+/// Windows liveness: the process handle opens and has not reported an exit
+/// code yet.
+#[cfg(windows)]
+fn windows_alive(pid: u32) -> bool {
+    use windows::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    use windows::Win32::System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    // SAFETY: plain Win32 calls on a handle this function opens and closes.
+    unsafe {
+        let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return false };
+        let mut code = 0u32;
+        let alive = GetExitCodeProcess(handle, &mut code).is_ok() && code == STILL_ACTIVE.0 as u32;
+        let _ = CloseHandle(handle);
+        alive
+    }
+}
+
+/// Windows has no graceful signal for a console-less child: like Node's
+/// `process.kill`, both SIGTERM and SIGKILL map to TerminateProcess.
+#[cfg(windows)]
+fn windows_terminate(pid: u32) -> bool {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+    // SAFETY: plain Win32 calls on a handle this function opens and closes.
+    unsafe {
+        let Ok(handle) = OpenProcess(PROCESS_TERMINATE, false, pid) else { return false };
+        let terminated = TerminateProcess(handle, 1).is_ok();
+        let _ = CloseHandle(handle);
+        terminated
+    }
+}
+
 /// The real Unix adapter (tokio process). Windows production swaps in the
 /// Job-Object equivalent with the same trait shape — on Windows Node also
 /// maps SIGTERM to TerminateProcess, so both signals force-terminate there.
@@ -503,6 +534,10 @@ impl KernelProcessAdapter for NodeKernelProcessAdapter {
             .current_dir(config_root.unwrap_or_else(|| PathBuf::from(".")))
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
+        // mihomo is a console program: without this a console window flashes
+        // up next to the GUI on every kernel start.
+        #[cfg(windows)]
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         for (key, value) in &binary.env {
             command.env(key, value);
         }
@@ -558,14 +593,21 @@ impl KernelProcessAdapter for NodeKernelProcessAdapter {
     fn is_process_alive(&self, pid: u32) -> bool {
         #[cfg(unix)]
         return unix_alive(pid);
-        #[cfg(not(unix))]
-        return false;
+        #[cfg(windows)]
+        return windows_alive(pid);
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = pid;
+            false
+        }
     }
 
     fn terminate(&self, pid: u32) -> bool {
         #[cfg(unix)]
         return unix_signal(pid, libc::SIGTERM);
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        return windows_terminate(pid);
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = pid;
             false
@@ -575,7 +617,9 @@ impl KernelProcessAdapter for NodeKernelProcessAdapter {
     fn kill(&self, pid: u32) -> bool {
         #[cfg(unix)]
         return unix_signal(pid, libc::SIGKILL);
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        return windows_terminate(pid);
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = pid;
             false

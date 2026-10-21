@@ -70,8 +70,8 @@ export class PrivilegedServiceKernelGateway implements KernelGateway {
   initialize(): Promise<void> {
     return this.serialize(async () => {
       // One immediate probe keeps application startup responsive. If the SCM
-      // delayed-auto-start service is not listening yet, start() performs the
-      // bounded retry and repeats this stale-session reconciliation.
+      // auto-start service is still coming online, start() performs the bounded
+      // retry and repeats this stale-session reconciliation.
       const response = await this.client.reconcile()
       if (response.outcome === 'running' || response.outcome === 'starting' || response.outcome === 'stopping') {
         await this.client.stop()
@@ -171,10 +171,25 @@ export class PrivilegedServiceKernelGateway implements KernelGateway {
       const response = await this.client.reconcile()
       const live = response.outcome === 'running' || response.outcome === 'starting'
       if (!live && (this.status.phase === 'running' || this.status.phase === 'starting')) {
+        // A service reporting the child exited (`failed`/CHILD_EXITED) does not
+        // clear the client's session; without this the recovery start was
+        // refused locally with KERNEL_RUNNING.
+        this.client.forgetOwnedSession()
         this.setStatus({ ...STOPPED, phase: 'failed', lastError: 'Privileged mihomo exited unexpectedly' })
         return false
       }
       return live
+    })
+  }
+
+  /** The exit monitor proved the core gone without the service (the service
+   * itself is down). Returns true when a running/starting core became failed. */
+  declareLost(reason: string): Promise<boolean> {
+    return this.serialize(async () => {
+      if (this.status.phase !== 'running' && this.status.phase !== 'starting') return false
+      this.client.forgetOwnedSession()
+      this.setStatus({ ...STOPPED, phase: 'failed', lastError: reason })
+      return true
     })
   }
 
@@ -227,8 +242,8 @@ export class PrivilegedServiceKernelGateway implements KernelGateway {
     return run
   }
 
-  /** The SCM service is delayed-auto-start. Absorb that bounded boot window so
-   * login startup does not show two spurious failures before the pipe appears. */
+  /** Absorb the bounded SCM startup window so login startup or an in-progress
+   * upgrade does not show spurious failures before the pipe appears. */
   private async retryService<T>(operation: () => Promise<T>): Promise<T> {
     const deadline = Date.now() + this.readyTimeoutMs
     let lastError: unknown

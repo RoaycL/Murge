@@ -365,6 +365,10 @@ struct StreamSlot {
 /// stream-error hub. `ensure` (re)binds the streams when the endpoint changes.
 pub struct MihomoStreams {
     slots: Mutex<[StreamSlot; 3]>,
+    /// Parsed-value hubs per stream kind. They outlive the transports, so a
+    /// subscription taken before the first `ensure` (the startup forwarder) or
+    /// across an endpoint rebind keeps receiving values.
+    hubs: [EventHub; 3],
     pub errors: EventHub,
     endpoint: Mutex<Option<ControllerEndpoint>>,
     logs: Arc<MihomoLogBuffer>,
@@ -374,6 +378,7 @@ impl MihomoStreams {
     pub fn new(logs: Arc<MihomoLogBuffer>) -> Self {
         MihomoStreams {
             slots: Mutex::new([StreamSlot { shared: None, task: None }, StreamSlot { shared: None, task: None }, StreamSlot { shared: None, task: None }]),
+            hubs: [EventHub::new(), EventHub::new(), EventHub::new()],
             errors: EventHub::new(),
             endpoint: Mutex::new(None),
             logs,
@@ -390,13 +395,21 @@ impl MihomoStreams {
         }
         let mut slots = self.slots.lock().expect("streams slot mutex poisoned");
         for index in 0..3 {
+            // Retire the previous endpoint's transport first: it would otherwise
+            // keep reconnecting and fan duplicate values into the shared hub.
+            if let Some(previous) = slots[index].shared.take() {
+                previous.closed.store(true, Ordering::SeqCst);
+            }
+            if let Some(task) = slots[index].task.take() {
+                task.abort();
+            }
             let kind = [StreamKind::Traffic, StreamKind::Connections, StreamKind::Logs][index];
             let shared = Arc::new(StreamShared {
                 kind,
                 url: format!("ws://127.0.0.1:{}/{}/", endpoint.port, path_of(kind)),
                 secret: endpoint.secret.clone(),
                 options: StreamOptions::default(),
-                listeners: EventHub::new(),
+                listeners: self.hubs[index].clone(),
                 errors: self.errors.clone(),
                 logs: if kind == StreamKind::Logs { Some(self.logs.clone()) } else { None },
                 closed: AtomicBool::new(false),
@@ -411,14 +424,7 @@ impl MihomoStreams {
     /// Subscribe to one stream's parsed values (the forwarder holds this for
     /// the app lifetime, like the TS startup subscription).
     pub fn subscribe(&self, kind: StreamKind, listener: EventListener) -> i64 {
-        let slots = self.slots.lock().expect("streams slot mutex poisoned");
-        match &slots[index_of(kind)].shared {
-            Some(shared) => shared.listeners.subscribe(listener),
-            None => {
-                let _ = listener;
-                -1
-            }
-        }
+        self.hubs[index_of(kind)].subscribe(listener)
     }
 
     #[allow(dead_code)] // lifecycle API exercised by tests; the app process teardown owns shutdown
@@ -489,7 +495,7 @@ pub fn start_forwarding(
         emitter("mihomo:stream-error-event", value.clone())
     }));
     let emitter = emit.clone();
-    kernel.supervisor.status_listeners.subscribe(Arc::new(move |value| {
+    kernel.status_listeners().subscribe(Arc::new(move |value| {
         emitter("kernel:status-event", value.clone())
     }));
     let emitter = emit.clone();
@@ -612,9 +618,11 @@ mod tests {
         let (traffic_events, traffic_listener) = collector();
         let (log_events, log_listener) = collector();
         let (errors, error_listener) = collector();
-        streams.ensure(&ControllerEndpoint { port: port as i64, secret: String::new() });
+        // The startup forwarder subscribes before the first `ensure`; the
+        // persistent hub must still deliver to it.
         streams.subscribe(StreamKind::Traffic, traffic_listener);
         streams.subscribe(StreamKind::Logs, log_listener);
+        streams.ensure(&ControllerEndpoint { port: port as i64, secret: String::new() });
         streams.errors.subscribe(error_listener);
         // Wait for the fan-out (both messages) + the parse error.
         for _ in 0..150 {

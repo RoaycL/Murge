@@ -676,7 +676,7 @@ pub fn run() {
             let reconcile_coordinator = tun_coordinator.clone();
             tauri::async_runtime::spawn(async move {
                 reconcile_coordinator.initialize().await;
-                startup_timeline::reconciliation_complete();
+                startup_timeline::reconciliation_complete(startup_timeline::Reconciliation::Tun);
             });
             app.manage(std::sync::Arc::new(tun_coordinator));
             // Updates: the gated driver honestly reports "not supported" in
@@ -713,6 +713,8 @@ pub fn run() {
             }));
             if let Some(privileged) = kernel_services.privileged.clone() {
                 start_privileged_monitor(app.handle().clone(), privileged);
+            } else {
+                startup_timeline::reconciliation_complete(startup_timeline::Reconciliation::Kernel);
             }
             app.manage(paths);
 
@@ -939,6 +941,7 @@ fn start_privileged_monitor(
                 error.extract_message()
             );
         }
+        startup_timeline::reconciliation_complete(startup_timeline::Reconciliation::Kernel);
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
         interval.tick().await;
         loop {

@@ -13,9 +13,11 @@
 
 mod app_info;
 mod brand;
+mod client_hardening;
 mod enhancements;
 mod error;
 mod inspection;
+mod installer_cli;
 mod net_validators;
 mod events;
 mod file_log;
@@ -68,6 +70,12 @@ pub fn run() {
     // Electron shell exits on an invalid brand). Parse it before anything else.
     // (The parsed document is also embedded into the binary via include_str!.)
     brand::load_brand().expect("invalid brand.config.json");
+    // Headless installer commands (uninstall proxy restore) exit here, before
+    // the single-instance lock could forward them to a running window.
+    if let Some(code) = installer_cli::run_from_args(std::env::args()) {
+        std::process::exit(code);
+    }
+    client_hardening::scrub_webview_environment();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {

@@ -24,7 +24,8 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "tauri:bridge": "node scripts/generate-tauri-bridge.mjs"
+    "tauri:bridge": "node scripts/generate-tauri-bridge.mjs",
+    "package:tauri": "npm run kernel:prepare && npm run tun-service:build && node scripts/tauri-package.mjs --all"
   },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"

@@ -6,13 +6,18 @@ on:
   pull_request:
     branches: [tauri]
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Optional same-repository branch/commit to validate with this CI harness
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
   group: tauri-gui-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   gui-smoke:
@@ -23,6 +28,14 @@ jobs:
         if: runner.os == 'Windows'
         run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+      - name: Keep the reviewed CI harness when testing another source branch
+        if: github.event_name == 'workflow_dispatch' && inputs.source_ref != ''
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: ci-harness
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -44,7 +57,7 @@ jobs:
         run: npx install-electron --no
       - run: npm run build
       - name: Verify native window, live renderer IPC, stability and normal exit
-        run: node scripts/ci-tauri-gui-smoke.mjs --compare-electron
+        run: node "${{ inputs.source_ref != '' && 'ci-harness/' || '' }}scripts/ci-tauri-gui-smoke.mjs" --compare-electron
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -12,7 +12,8 @@ permissions:
 
 concurrency:
   group: tauri-build-${{ github.ref }}
-  cancel-in-progress: true
+  # Let a heavy compile finish and populate its dependency cache.
+  cancel-in-progress: false
 
 jobs:
   build:

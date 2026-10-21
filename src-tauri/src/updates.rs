@@ -1139,6 +1139,14 @@ mod tests {
         let config: Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
         let updater = &config["plugins"]["updater"];
         assert_eq!(updater["requireSignedVersion"], json!(true));
+        // The pinned release key: a base64-wrapped minisign Ed25519 public key.
+        use base64::Engine;
+        let pubkey = updater["pubkey"].as_str().expect("pubkey is pinned");
+        let text = String::from_utf8(base64::engine::general_purpose::STANDARD.decode(pubkey).unwrap()).unwrap();
+        let key_line = text.lines().nth(1).expect("key line");
+        let raw = base64::engine::general_purpose::STANDARD.decode(key_line).unwrap();
+        assert_eq!(raw.len(), 42);
+        assert_eq!(&raw[..2], b"Ed");
         assert_eq!(updater["windows"]["installMode"], json!("passive"));
         // Downgrades stay forbidden and no insecure transport is allowed.
         assert!(updater.get("allowDowngrades").is_none());

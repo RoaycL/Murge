@@ -148,6 +148,11 @@ async fn dispose_services(app: &tauri::AppHandle) {
     if let Some(substore) = app.try_state::<crate::substore::SubStoreService>() {
         substore.dispose();
     }
+    if let Some(usage) = app.try_state::<crate::usage::UsageHistoryService>() {
+        if let Err(error) = usage.flush() {
+            eprintln!("[usage-history] final flush failed: {error:?}");
+        }
+    }
     flush_logs(app).await;
 }
 

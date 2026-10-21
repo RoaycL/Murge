@@ -662,6 +662,9 @@ pub async fn dispatch(
             let limit = arg(payload, 2).and_then(Value::as_u64).map(|value| value as usize);
             usage.rank(&window, &ranking, limit)
         }
+        "usage-history:process-ranking" => {
+            usage.process_ranking(&required_string(payload, 0, "usage-history:process-ranking window")?)
+        }
         "usage-history:clear" => usage.clear().map(|()| Value::Null),
         "usage-history:get-capacity" => Ok(usage.get_capacity()),
 

@@ -116,9 +116,10 @@ pub fn run() {
             let models = enhancements::ModelStores::new(paths.app_data_root.clone());
             // Bounded usage history: file-backed in production, memory-only in
             // dev (the Electron app.isPackaged split).
-            let usage = usage::UsageHistoryService::new(usage::UsageHistoryStore::for_app_data_base(
-                paths.app_data_root.clone(),
-            ));
+            let usage = usage::UsageHistoryService::with_stores(
+                usage::UsageHistoryStore::for_app_data_base(paths.app_data_root.clone()),
+                usage::ProcessUsageStore::for_app_data_base(paths.app_data_root.clone()),
+            );
             // Kernel supervisor + version manager. The composition follows
             // the TS three-way split: dev resolves the harmless fixture,
             // packaged Windows resolves the verified real mihomo artifact,
@@ -313,6 +314,37 @@ pub fn run() {
             // transitions by the Phase 3D slice), exactly like the REST client.
             let streams = events::MihomoStreams::new(mihomo.logs.clone());
             events::start_forwarding(app.handle().clone(), &streams, &kernel, file_logs.clone());
+            // Usage history collects from the push streams for the whole app
+            // lifetime, independent of which page is mounted.
+            {
+                use tauri::Manager;
+                let traffic_handle = app.handle().clone();
+                streams.subscribe(
+                    events::StreamKind::Traffic,
+                    std::sync::Arc::new(move |value| {
+                        let sample = usage::UsageSample {
+                            up: value["up"].as_f64().unwrap_or(0.0),
+                            down: value["down"].as_f64().unwrap_or(0.0),
+                        };
+                        if let Some(usage) = traffic_handle.try_state::<usage::UsageHistoryService>() {
+                            if let Err(error) = usage.record(&sample, None) {
+                                eprintln!("[usage-history] background persistence failed: {error:?}");
+                            }
+                        }
+                    }),
+                );
+                let connections_handle = app.handle().clone();
+                streams.subscribe(
+                    events::StreamKind::Connections,
+                    std::sync::Arc::new(move |value| {
+                        if let Some(usage) = connections_handle.try_state::<usage::UsageHistoryService>() {
+                            if let Err(error) = usage.record_connection_snapshot(value, usage::epoch_millis_now()) {
+                                eprintln!("[usage-history] background persistence failed: {error:?}");
+                            }
+                        }
+                    }),
+                );
+            }
             let core = enhancements::coerce_core_settings(&models.core.get());
             streams.ensure(&events::ControllerEndpoint {
                 port: core["controllerPort"].as_i64().unwrap_or(9090),

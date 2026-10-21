@@ -72,7 +72,10 @@ pub struct ProfileProviderCatalog {
 /// document. Both sections are mihomo MAPS (provider name → config), so the
 /// YAML key IS the provider name — there is no `name:` field to read.
 pub fn parse_provider_catalog(document: &str) -> ProfileProviderCatalog {
-    let empty = || ProfileProviderCatalog { proxy: Vec::new(), rule: Vec::new() };
+    let empty = || ProfileProviderCatalog {
+        proxy: Vec::new(),
+        rule: Vec::new(),
+    };
     if document.trim().is_empty() {
         return empty();
     }
@@ -88,7 +91,11 @@ pub fn parse_provider_catalog(document: &str) -> ProfileProviderCatalog {
     }
 }
 
-fn parse_provider_section(root: &yaml_rust2::yaml::Hash, key: &str, kind: &'static str) -> Vec<ProfileProviderConfig> {
+fn parse_provider_section(
+    root: &yaml_rust2::yaml::Hash,
+    key: &str,
+    kind: &'static str,
+) -> Vec<ProfileProviderConfig> {
     let Some(Yaml::Hash(section)) = root.get(&Yaml::String(key.into())) else {
         return Vec::new();
     };
@@ -148,7 +155,10 @@ mod tests {
     #[test]
     fn group_order_follows_document_order() {
         let document = "proxy-groups:\n  - name: 节点选择\n    type: select\n  - name: 自动选择\n    type: url-test\n  - name: fallback\n";
-        assert_eq!(parse_proxy_group_order(document), vec!["节点选择", "自动选择", "fallback"]);
+        assert_eq!(
+            parse_proxy_group_order(document),
+            vec!["节点选择", "自动选择", "fallback"]
+        );
     }
 
     #[test]
@@ -182,10 +192,16 @@ rule-providers:
         assert_eq!(catalog.proxy.len(), 1);
         assert_eq!(catalog.proxy[0].name, "provider-a");
         assert_eq!(catalog.proxy[0].kind, "proxy");
-        assert_eq!(catalog.proxy[0].url.as_deref(), Some("https://example.com/a"));
+        assert_eq!(
+            catalog.proxy[0].url.as_deref(),
+            Some("https://example.com/a")
+        );
         assert_eq!(catalog.proxy[0].interval, Some(86400.0));
         assert_eq!(catalog.proxy[0].behavior.as_deref(), Some("classical"));
-        assert_eq!(catalog.proxy[0].test_url.as_deref(), Some("https://example.com/health"));
+        assert_eq!(
+            catalog.proxy[0].test_url.as_deref(),
+            Some("https://example.com/health")
+        );
         assert_eq!(catalog.rule.len(), 1);
         assert_eq!(catalog.rule[0].name, "rules-b");
         assert_eq!(catalog.rule[0].kind, "rule");
@@ -199,7 +215,10 @@ rule-providers:
         let catalog = parse_provider_catalog(document);
         let json = serde_json::to_value(&catalog).unwrap();
         assert_eq!(json["proxy"][0]["testUrl"], "https://h");
-        assert!(json["proxy"][0].get("path").is_none(), "absent fields are omitted");
+        assert!(
+            json["proxy"][0].get("path").is_none(),
+            "absent fields are omitted"
+        );
     }
 
     #[test]

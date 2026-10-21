@@ -78,7 +78,11 @@ impl TrayMenuItem {
             label: label.to_string(),
             enabled,
             checked,
-            kind: if radio { MenuKind::Radio } else { MenuKind::Checkbox },
+            kind: if radio {
+                MenuKind::Radio
+            } else {
+                MenuKind::Checkbox
+            },
             children: Vec::new(),
         }
     }
@@ -174,7 +178,9 @@ pub fn process_rows(connections: &Value) -> Vec<(String, u64)> {
     rows
 }
 
-fn client_for(models: &crate::enhancements::ModelStores) -> Result<crate::mihomo::MihomoClient, IpcError> {
+fn client_for(
+    models: &crate::enhancements::ModelStores,
+) -> Result<crate::mihomo::MihomoClient, IpcError> {
     let core = crate::enhancements::coerce_core_settings(&models.core.get());
     crate::mihomo::MihomoClient::new(
         core["controllerPort"].as_i64().unwrap_or(9090),
@@ -371,14 +377,20 @@ impl TrayController {
 
     pub async fn on_system_proxy_status(&self, status: &Value) {
         let mut state = self.state.lock().await;
-        state.system_proxy_phase = status["phase"].as_str().unwrap_or("unsupported").to_string();
+        state.system_proxy_phase = status["phase"]
+            .as_str()
+            .unwrap_or("unsupported")
+            .to_string();
         state.system_proxy_supported = status["supported"].as_bool().unwrap_or(false);
         self.render_locked(&mut state);
     }
 
     pub async fn on_tun_status(&self, status: &Value) {
         let mut state = self.state.lock().await;
-        state.tun_phase = status["phase"].as_str().unwrap_or("unsupported").to_string();
+        state.tun_phase = status["phase"]
+            .as_str()
+            .unwrap_or("unsupported")
+            .to_string();
         state.tun_supported = status["supported"].as_bool().unwrap_or(false);
         self.render_locked(&mut state);
     }
@@ -392,10 +404,8 @@ impl TrayController {
             _ => {
                 if let Some(mode) = id.strip_prefix("outbound-mode:") {
                     let mode = mode.to_string();
-                    self.act(move |this| {
-                        Box::pin(async move { this.patch_mode(&mode).await })
-                    })
-                    .await;
+                    self.act(move |this| Box::pin(async move { this.patch_mode(&mode).await }))
+                        .await;
                 } else if let Some(rest) = id.strip_prefix("group:") {
                     if let Some((group, member)) = rest.split_once('\u{0}') {
                         let group = group.to_string();
@@ -474,7 +484,11 @@ impl TrayController {
         // The tray mode patch is the same direct controller PATCH the renderer
         // uses (no queue in the TS gateway chain either).
         if let Ok(client) = client_for(&self.deps.models) {
-            if client.patch_config(&serde_json::json!({ "mode": mode })).await.is_ok() {
+            if client
+                .patch_config(&serde_json::json!({ "mode": mode }))
+                .await
+                .is_ok()
+            {
                 (self.deps.on_mode_changed)(mode);
             }
         }
@@ -603,7 +617,8 @@ impl TrayController {
         }
         self.view
             .set_tooltip(&tooltip_text(&self.deps.product_name, &state.status_phase));
-        self.view.set_menu(render_menu(&self.deps.product_name, state));
+        self.view
+            .set_menu(render_menu(&self.deps.product_name, state));
     }
 }
 
@@ -639,7 +654,10 @@ fn selectable_groups(state: &TrayState) -> Vec<(String, Value)> {
             map.iter()
                 .filter(|(_, proxy)| {
                     SELECTABLE_GROUP_TYPES.contains(&proxy["type"].as_str().unwrap_or_default())
-                        && proxy["all"].as_array().map(|all| !all.is_empty()).unwrap_or(false)
+                        && proxy["all"]
+                            .as_array()
+                            .map(|all| !all.is_empty())
+                            .unwrap_or(false)
                 })
                 .map(|(name, proxy)| (name.clone(), proxy.clone()))
                 .collect()
@@ -682,8 +700,7 @@ fn group_menus(state: &TrayState, transition: bool) -> Vec<TrayMenuItem> {
 
 fn process_menu(state: &TrayState) -> TrayMenuItem {
     let rows = process_rows(&state.connections);
-    let count = state
-        .connections["connections"]
+    let count = state.connections["connections"]
         .as_array()
         .map(|items| items.len())
         .unwrap_or(0);
@@ -726,8 +743,16 @@ fn configuration_menu(state: &TrayState, transition: bool) -> TrayMenuItem {
             active.is_some() && state.status_phase == "running" && !transition,
         ),
         TrayMenuItem::normal(
-            if state.status_phase == "running" { "restart-kernel" } else { "start-kernel" },
-            if state.status_phase == "running" { "重启内核" } else { "启动内核" },
+            if state.status_phase == "running" {
+                "restart-kernel"
+            } else {
+                "start-kernel"
+            },
+            if state.status_phase == "running" {
+                "重启内核"
+            } else {
+                "启动内核"
+            },
             !transition,
         ),
     ];
@@ -836,7 +861,11 @@ pub(crate) fn render_menu(product: &str, state: &TrayState) -> Vec<TrayMenuItem>
     menu.push(directory_menu());
     menu.push(TrayMenuItem::normal("check-update", "检查更新", true));
     menu.push(TrayMenuItem::separator());
-    menu.push(TrayMenuItem::normal("quit", &format!("退出 {product}"), true));
+    menu.push(TrayMenuItem::normal(
+        "quit",
+        &format!("退出 {product}"),
+        true,
+    ));
     menu
 }
 
@@ -902,25 +931,68 @@ fn open_file_manager(target: &std::path::Path) -> Result<(), String> {
 /// start the bounded refresh cadence. Returns the error of a failed native
 /// tray (the caller logs it and continues tray-less).
 pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
-    let kernel: Arc<crate::kernel::KernelServices> = app.state::<Arc<crate::kernel::KernelServices>>().inner().clone();
-    let system_proxy: Arc<crate::system_proxy::SystemProxyService> = app.state::<Arc<crate::system_proxy::SystemProxyService>>().inner().clone();
-    let tun: Arc<crate::tun::TunCoordinator> = app.state::<Arc<crate::tun::TunCoordinator>>().inner().clone();
-    let profiles: Arc<crate::profile_service::ProfilesService> = app.state::<Arc<crate::profile_service::ProfilesService>>().inner().clone();
-    let overrides: Arc<crate::override_service::OverrideService> = app.state::<Arc<crate::override_service::OverrideService>>().inner().clone();
-    let models: Arc<crate::enhancements::ModelStores> = app.state::<Arc<crate::enhancements::ModelStores>>().inner().clone();
-    let mihomo: Arc<crate::mihomo::MihomoServices> = app.state::<Arc<crate::mihomo::MihomoServices>>().inner().clone();
-    let updates: Arc<crate::updates::UpdateService> = app.state::<Arc<crate::updates::UpdateService>>().inner().clone();
-    let usage: Arc<crate::usage::UsageHistoryService> = app.state::<Arc<crate::usage::UsageHistoryService>>().inner().clone();
-    let desktop: Arc<crate::icons::DesktopServices> = app.state::<Arc<crate::icons::DesktopServices>>().inner().clone();
-    let metadata: Arc<crate::network_metadata::NetworkMetadataService> = app.state::<Arc<crate::network_metadata::NetworkMetadataService>>().inner().clone();
-    let startup: Arc<crate::startup::StartupService> = app.state::<Arc<crate::startup::StartupService>>().inner().clone();
-    let substore: Arc<crate::substore::SubStoreService> = app.state::<Arc<crate::substore::SubStoreService>>().inner().clone();
-    let settings: Arc<crate::settings::SettingsStore> = app.state::<Arc<crate::settings::SettingsStore>>().inner().clone();
+    let kernel: Arc<crate::kernel::KernelServices> = app
+        .state::<Arc<crate::kernel::KernelServices>>()
+        .inner()
+        .clone();
+    let system_proxy: Arc<crate::system_proxy::SystemProxyService> = app
+        .state::<Arc<crate::system_proxy::SystemProxyService>>()
+        .inner()
+        .clone();
+    let tun: Arc<crate::tun::TunCoordinator> = app
+        .state::<Arc<crate::tun::TunCoordinator>>()
+        .inner()
+        .clone();
+    let profiles: Arc<crate::profile_service::ProfilesService> = app
+        .state::<Arc<crate::profile_service::ProfilesService>>()
+        .inner()
+        .clone();
+    let overrides: Arc<crate::override_service::OverrideService> = app
+        .state::<Arc<crate::override_service::OverrideService>>()
+        .inner()
+        .clone();
+    let models: Arc<crate::enhancements::ModelStores> = app
+        .state::<Arc<crate::enhancements::ModelStores>>()
+        .inner()
+        .clone();
+    let mihomo: Arc<crate::mihomo::MihomoServices> = app
+        .state::<Arc<crate::mihomo::MihomoServices>>()
+        .inner()
+        .clone();
+    let updates: Arc<crate::updates::UpdateService> = app
+        .state::<Arc<crate::updates::UpdateService>>()
+        .inner()
+        .clone();
+    let usage: Arc<crate::usage::UsageHistoryService> = app
+        .state::<Arc<crate::usage::UsageHistoryService>>()
+        .inner()
+        .clone();
+    let desktop: Arc<crate::icons::DesktopServices> = app
+        .state::<Arc<crate::icons::DesktopServices>>()
+        .inner()
+        .clone();
+    let metadata: Arc<crate::network_metadata::NetworkMetadataService> = app
+        .state::<Arc<crate::network_metadata::NetworkMetadataService>>()
+        .inner()
+        .clone();
+    let startup: Arc<crate::startup::StartupService> = app
+        .state::<Arc<crate::startup::StartupService>>()
+        .inner()
+        .clone();
+    let substore: Arc<crate::substore::SubStoreService> = app
+        .state::<Arc<crate::substore::SubStoreService>>()
+        .inner()
+        .clone();
+    let settings: Arc<crate::settings::SettingsStore> = app
+        .state::<Arc<crate::settings::SettingsStore>>()
+        .inner()
+        .clone();
     let paths: crate::paths::AppPaths = app.state::<crate::paths::AppPaths>().inner().clone();
 
-    let view: Arc<dyn TrayView> = Arc::new(
-        crate::tray_view::NativeTrayView::create(app.clone(), Some(tray_icon_root(&app)))?,
-    );
+    let view: Arc<dyn TrayView> = Arc::new(crate::tray_view::NativeTrayView::create(
+        app.clone(),
+        Some(tray_icon_root(&app)),
+    )?);
 
     let deps = TrayDeps {
         product_name: crate::brand::load_brand()
@@ -942,13 +1014,18 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
                     _ => return Vec::new(),
                 };
                 let document = profile["document"].as_str().unwrap_or_default().to_string();
-                let profile_id = profile["meta"]["id"].as_str().unwrap_or_default().to_string();
-                let Ok(overridden) = overrides.apply_for_profile(&document, Some(&profile_id)) else {
+                let profile_id = profile["meta"]["id"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                let Ok(overridden) = overrides.apply_for_profile(&document, Some(&profile_id))
+                else {
                     return Vec::new();
                 };
                 let dns = crate::enhancements::coerce_dns_enhancement(&models.dns.get());
                 let (dns_text, _) = crate::inspection::apply_dns_to_document(&overridden, &dns);
-                let sniffer = crate::enhancements::coerce_sniffer_enhancement(&models.sniffer.get());
+                let sniffer =
+                    crate::enhancements::coerce_sniffer_enhancement(&models.sniffer.get());
                 let (text, _) = crate::inspection::apply_sniffer_to_document(&dns_text, &sniffer);
                 crate::profile_parse::parse_proxy_group_order(&text)
             })
@@ -978,9 +1055,10 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
                     let applied = reloader.reload_if_running().await?;
                     if applied {
                         let client = client_for(&models)?;
-                        let active = profiles.get_active().ok().and_then(|profile| {
-                            profile["meta"]["id"].as_str().map(str::to_string)
-                        });
+                        let active = profiles
+                            .get_active()
+                            .ok()
+                            .and_then(|profile| profile["meta"]["id"].as_str().map(str::to_string));
                         if let Some(active) = active {
                             let _ = mihomo.restore_selections(&client, Some(active)).await;
                         }
@@ -1348,8 +1426,14 @@ mod tests {
 
     #[test]
     fn fixed_selection_wins_over_now() {
-        assert_eq!(selected_member(&json!({"fixed": "A", "now": "B"})), Some("A".to_string()));
-        assert_eq!(selected_member(&json!({"fixed": "", "now": "B"})), Some("B".to_string()));
+        assert_eq!(
+            selected_member(&json!({"fixed": "A", "now": "B"})),
+            Some("A".to_string())
+        );
+        assert_eq!(
+            selected_member(&json!({"fixed": "", "now": "B"})),
+            Some("B".to_string())
+        );
         assert_eq!(selected_member(&json!({"now": "B"})), Some("B".to_string()));
         assert_eq!(selected_member(&json!({})), None);
     }
@@ -1399,13 +1483,25 @@ mod tests {
         let labels = labels_of(&state);
         // Order follows the enhanced document (URLTest 组 first), Direct and
         // the empty group never render.
-        let url_index = labels.iter().position(|(label, _, _)| label == "URLTest 组 · 美国 03").unwrap();
-        let selector_index = labels.iter().position(|(label, _, _)| label == "Selector 组 · 香港 01").unwrap();
+        let url_index = labels
+            .iter()
+            .position(|(label, _, _)| label == "URLTest 组 · 美国 03")
+            .unwrap();
+        let selector_index = labels
+            .iter()
+            .position(|(label, _, _)| label == "Selector 组 · 香港 01")
+            .unwrap();
         assert!(url_index < selector_index);
-        assert!(!labels.iter().any(|(label, _, _)| label == "Direct · DIRECT"));
-        assert!(!labels.iter().any(|(label, _, _)| label.starts_with("Empty 组")));
+        assert!(!labels
+            .iter()
+            .any(|(label, _, _)| label == "Direct · DIRECT"));
+        assert!(!labels
+            .iter()
+            .any(|(label, _, _)| label.starts_with("Empty 组")));
         // The fixed selection drives the checked member.
-        let checked_us = labels.iter().any(|(label, checked, _)| label == "美国 03" && *checked);
+        let checked_us = labels
+            .iter()
+            .any(|(label, checked, _)| label == "美国 03" && *checked);
         assert!(checked_us);
     }
 
@@ -1434,19 +1530,41 @@ mod tests {
 
         let labels = labels_of(&state);
         assert_eq!(labels[0], ("显示主窗口".to_string(), false, true));
-        assert!(labels.iter().any(|(label, _, _)| label == "出站模式 · 全局"));
-        assert!(labels.iter().any(|(label, checked, _)| label == "全局" && *checked));
-        assert!(labels.iter().any(|(label, _, _)| label == "🚀 节点选择 · 香港 01"));
-        assert!(labels.iter().any(|(label, _, _)| label == "网络质量 · 42 ms"));
+        assert!(labels
+            .iter()
+            .any(|(label, _, _)| label == "出站模式 · 全局"));
+        assert!(labels
+            .iter()
+            .any(|(label, checked, _)| label == "全局" && *checked));
+        assert!(labels
+            .iter()
+            .any(|(label, _, _)| label == "🚀 节点选择 · 香港 01"));
+        assert!(labels
+            .iter()
+            .any(|(label, _, _)| label == "网络质量 · 42 ms"));
         assert!(labels.iter().any(|(label, _, _)| label == "chrome · 400 B"));
-        assert!(labels.iter().any(|(label, _, _)| label == "进程与客户端 · 1 个连接"));
-        assert!(labels.iter().any(|(label, checked, _)| label == "系统代理" && *checked));
-        assert!(labels.iter().any(|(label, checked, _)| label == "TUN 模式" && !checked));
-        assert!(labels.iter().any(|(label, _, _)| label == "复制终端代理命令"));
-        assert!(labels.iter().any(|(label, _, _)| label == "重新载入当前配置"));
+        assert!(labels
+            .iter()
+            .any(|(label, _, _)| label == "进程与客户端 · 1 个连接"));
+        assert!(labels
+            .iter()
+            .any(|(label, checked, _)| label == "系统代理" && *checked));
+        assert!(labels
+            .iter()
+            .any(|(label, checked, _)| label == "TUN 模式" && !checked));
+        assert!(labels
+            .iter()
+            .any(|(label, _, _)| label == "复制终端代理命令"));
+        assert!(labels
+            .iter()
+            .any(|(label, _, _)| label == "重新载入当前配置"));
         assert!(labels.iter().any(|(label, _, _)| label == "重启内核"));
-        assert!(labels.iter().any(|(label, checked, _)| label == "Home" && *checked));
-        assert!(labels.iter().any(|(label, checked, _)| label == "Work" && !checked));
+        assert!(labels
+            .iter()
+            .any(|(label, checked, _)| label == "Home" && *checked));
+        assert!(labels
+            .iter()
+            .any(|(label, checked, _)| label == "Work" && !checked));
         assert!(labels.iter().any(|(label, _, _)| label == "更新当前订阅"));
         assert!(labels.iter().any(|(label, _, _)| label == "更新全部订阅"));
         assert!(labels.iter().any(|(label, _, _)| label == "应用目录"));
@@ -1461,9 +1579,15 @@ mod tests {
         starting.status_phase = "starting".to_string();
         starting.mode = "rule".to_string();
         let labels = labels_of(&starting);
-        let mode_item = labels.iter().find(|(label, _, _)| label == "出站模式 · 规则").unwrap();
+        let mode_item = labels
+            .iter()
+            .find(|(label, _, _)| label == "出站模式 · 规则")
+            .unwrap();
         assert!(!mode_item.2, "outbound-mode disabled while starting");
-        let kernel_item = labels.iter().find(|(label, _, _)| label == "启动内核").unwrap();
+        let kernel_item = labels
+            .iter()
+            .find(|(label, _, _)| label == "启动内核")
+            .unwrap();
         assert!(!kernel_item.2);
         fn has_id(items: &[TrayMenuItem], id: &str) -> bool {
             items
@@ -1476,7 +1600,10 @@ mod tests {
         busy.status_phase = "running".to_string();
         busy.busy = true;
         let labels = labels_of(&busy);
-        let mode_item = labels.iter().find(|(label, _, _)| label == "出站模式 · 规则").unwrap();
+        let mode_item = labels
+            .iter()
+            .find(|(label, _, _)| label == "出站模式 · 规则")
+            .unwrap();
         assert!(!mode_item.2, "outbound-mode disabled while busy");
 
         let mut stopping = state();
@@ -1501,10 +1628,17 @@ mod tests {
         state.mode = "global".to_string();
         let labels = labels_of(&state);
         assert!(labels.iter().any(|(label, _, _)| label == "网络质量 · —"));
-        assert!(labels.iter().any(|(label, _, _)| label == "进程与客户端 · 0 个连接"));
-        let mode_item = labels.iter().find(|(label, _, _)| label.starts_with("出站模式")).unwrap();
+        assert!(labels
+            .iter()
+            .any(|(label, _, _)| label == "进程与客户端 · 0 个连接"));
+        let mode_item = labels
+            .iter()
+            .find(|(label, _, _)| label.starts_with("出站模式"))
+            .unwrap();
         assert!(!mode_item.2, "outbound-mode disabled while stopped");
-        assert!(labels.iter().any(|(label, _, enabled)| label == "复制终端代理命令" && !enabled));
+        assert!(labels
+            .iter()
+            .any(|(label, _, enabled)| label == "复制终端代理命令" && !enabled));
         assert!(labels.iter().any(|(label, _, _)| label == "启动内核"));
     }
 
@@ -1517,21 +1651,33 @@ mod tests {
         state.tun_phase = "unsupported".to_string();
         state.tun_supported = false;
         let labels = labels_of(&state);
-        assert!(labels.iter().any(|(label, _, enabled)| label == "系统代理" && !enabled));
-        assert!(labels.iter().any(|(label, _, enabled)| label == "TUN 模式" && !enabled));
+        assert!(labels
+            .iter()
+            .any(|(label, _, enabled)| label == "系统代理" && !enabled));
+        assert!(labels
+            .iter()
+            .any(|(label, _, enabled)| label == "TUN 模式" && !enabled));
     }
 
     #[test]
     fn active_url_profile_enables_the_update_entries() {
         let mut state = state();
         state.status_phase = "running".to_string();
-        state.profiles = vec![json!({"id": "p1", "name": "Home", "active": true, "source": {"type": "url"}, "createdAt": 1, "updatedAt": 5})];
+        state.profiles = vec![
+            json!({"id": "p1", "name": "Home", "active": true, "source": {"type": "url"}, "createdAt": 1, "updatedAt": 5}),
+        ];
         let labels = labels_of(&state);
-        assert!(labels.iter().any(|(label, _, enabled)| label == "更新当前订阅" && *enabled));
-        assert!(labels.iter().any(|(label, _, enabled)| label == "更新全部订阅" && *enabled));
+        assert!(labels
+            .iter()
+            .any(|(label, _, enabled)| label == "更新当前订阅" && *enabled));
+        assert!(labels
+            .iter()
+            .any(|(label, _, enabled)| label == "更新全部订阅" && *enabled));
 
         let mut local = state;
-        local.profiles = vec![json!({"id": "p2", "name": "Local", "active": true, "source": {"type": "local"}, "createdAt": 1, "updatedAt": 5})];
+        local.profiles = vec![
+            json!({"id": "p2", "name": "Local", "active": true, "source": {"type": "local"}, "createdAt": 1, "updatedAt": 5}),
+        ];
         let labels = labels_of(&local);
         assert!(!labels.iter().any(|(label, _, _)| label == "更新当前订阅"));
         assert!(!labels.iter().any(|(label, _, _)| label == "更新全部订阅"));

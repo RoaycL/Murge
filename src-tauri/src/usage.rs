@@ -166,7 +166,11 @@ fn usage_ranking_value(bucket: &Value, ranking: &str) -> f64 {
 
 /// Rank a window's buckets by the chosen metric into a 1-based ordered list.
 /// Zero-value buckets are omitted; the result is capped at `limit` when given.
-pub fn rank_usage_buckets(buckets: &[Value], ranking: &str, limit: Option<usize>) -> Result<Vec<Value>, IpcError> {
+pub fn rank_usage_buckets(
+    buckets: &[Value],
+    ranking: &str,
+    limit: Option<usize>,
+) -> Result<Vec<Value>, IpcError> {
     if !matches!(ranking, "down" | "up" | "total" | "count") {
         return Err(IpcError::invalid_argument(format!(
             "usage ranking must be one of down, up, total, count (got {ranking:?})"
@@ -181,7 +185,10 @@ pub fn rank_usage_buckets(buckets: &[Value], ranking: &str, limit: Option<usize>
         if delta != 0.0 {
             delta.partial_cmp(&0.0).unwrap_or(std::cmp::Ordering::Equal)
         } else {
-            a["bucketStart"].as_i64().unwrap_or(0).cmp(&b["bucketStart"].as_i64().unwrap_or(0))
+            a["bucketStart"]
+                .as_i64()
+                .unwrap_or(0)
+                .cmp(&b["bucketStart"].as_i64().unwrap_or(0))
         }
     });
     if let Some(limit) = limit.filter(|limit| *limit > 0) {
@@ -233,23 +240,28 @@ impl UsageHistoryStore {
     /// Resolve the database file under `<app-data>/usage-history/`.
     pub fn for_app_data_base(app_data_base: Option<PathBuf>) -> Self {
         UsageHistoryStore {
-            file_path: app_data_base.map(|base| base.join("usage-history").join(USAGE_HISTORY_FILE)),
+            file_path: app_data_base
+                .map(|base| base.join("usage-history").join(USAGE_HISTORY_FILE)),
             memory: Mutex::new(Vec::new()),
             queue: Mutex::new(()),
         }
     }
 
-#[allow(dead_code)] // the record/flush surface attaches to the kernel traffic streams (3B/3D controller slice)
+    #[allow(dead_code)] // the record/flush surface attaches to the kernel traffic streams (3B/3D controller slice)
     /// In-memory store for the dev build and unit tests.
     pub fn in_memory() -> Self {
-        UsageHistoryStore { file_path: None, memory: Mutex::new(Vec::new()), queue: Mutex::new(()) }
+        UsageHistoryStore {
+            file_path: None,
+            memory: Mutex::new(Vec::new()),
+            queue: Mutex::new(()),
+        }
     }
 
     fn memory_guard(&self) -> std::sync::MutexGuard<'_, Vec<Value>> {
         self.memory.lock().expect("usage memory store poisoned")
     }
 
-#[allow(dead_code)] // the record/flush surface attaches to the kernel traffic streams (3B/3D controller slice)
+    #[allow(dead_code)] // the record/flush surface attaches to the kernel traffic streams (3B/3D controller slice)
     /// Read always returns a valid, sorted, bounded list. Before 0.8.5 `count`
     /// meant one traffic sample (saturating around 3600/hour); keep the byte
     /// history but reset that legacy counter once — newly persisted buckets
@@ -323,11 +335,15 @@ impl UsageHistoryStore {
         }
     }
 
-#[allow(dead_code)] // the record/flush surface attaches to the kernel traffic streams (3B/3D controller slice)
+    #[allow(dead_code)] // the record/flush surface attaches to the kernel traffic streams (3B/3D controller slice)
     /// Remove temp files left behind by an interrupted write.
     fn prune_stale_temps(&self, path: &PathBuf) {
-        let Some(directory) = path.parent() else { return };
-        let Ok(entries) = fs::read_dir(directory) else { return };
+        let Some(directory) = path.parent() else {
+            return;
+        };
+        let Ok(entries) = fs::read_dir(directory) else {
+            return;
+        };
         let prefix = format!(".{USAGE_HISTORY_FILE}.");
         for entry in entries.flatten() {
             let name = entry.file_name();
@@ -375,26 +391,47 @@ pub fn process_usage_name(value: Option<&str>) -> String {
 }
 
 pub fn coerce_process_usage_buckets(input: &Value, max_buckets: usize) -> Vec<ProcessUsageBucket> {
-    let Some(items) = input.as_array() else { return Vec::new() };
+    let Some(items) = input.as_array() else {
+        return Vec::new();
+    };
     let skip = items.len().saturating_sub(max_buckets);
     let mut unique: std::collections::BTreeMap<i64, ProcessUsageBucket> = Default::default();
     for item in &items[skip..] {
-        let Some(bucket_start) = item.get("bucketStart").and_then(Value::as_i64) else { continue };
+        let Some(bucket_start) = item.get("bucketStart").and_then(Value::as_i64) else {
+            continue;
+        };
         if bucket_start < 0 || bucket_start > 9_007_199_254_740_991 {
             continue;
         }
-        if item.get("bucketStart").and_then(Value::as_f64).map(|v| v.fract() != 0.0).unwrap_or(true) {
+        if item
+            .get("bucketStart")
+            .and_then(Value::as_f64)
+            .map(|v| v.fract() != 0.0)
+            .unwrap_or(true)
+        {
             continue;
         }
-        let Some(rows_in) = item.get("rows").and_then(Value::as_array) else { continue };
+        let Some(rows_in) = item.get("rows").and_then(Value::as_array) else {
+            continue;
+        };
         let mut rows = Vec::new();
         for row in rows_in.iter().take(PROCESS_USAGE_MAX_NAMES) {
-            let Some(name) = row.get("name").and_then(Value::as_str) else { continue };
+            let Some(name) = row.get("name").and_then(Value::as_str) else {
+                continue;
+            };
             if process_usage_name(Some(name)) != name {
                 continue;
             }
-            let (Some(up), Some(down)) = (is_non_negative(&row["up"]), is_non_negative(&row["down"])) else { continue };
-            rows.push(ProcessUsageRow { name: name.to_string(), up: up.round(), down: down.round() });
+            let (Some(up), Some(down)) =
+                (is_non_negative(&row["up"]), is_non_negative(&row["down"]))
+            else {
+                continue;
+            };
+            rows.push(ProcessUsageRow {
+                name: name.to_string(),
+                up: up.round(),
+                down: down.round(),
+            });
         }
         unique.insert(bucket_start, ProcessUsageBucket { bucket_start, rows });
     }
@@ -420,9 +457,16 @@ fn process_buckets_to_json(buckets: &[ProcessUsageBucket]) -> Value {
 }
 
 /// Aggregate per-process bytes over a window, largest total first.
-pub fn process_usage_window(buckets: &[ProcessUsageBucket], window: &str, now: i64) -> Result<Value, IpcError> {
-    let (bucket_ms, span) = window_config(window)
-        .ok_or_else(|| IpcError::invalid_argument(format!("usage window must be one of 1h, 24h, 7d, 30d (got {window:?})")))?;
+pub fn process_usage_window(
+    buckets: &[ProcessUsageBucket],
+    window: &str,
+    now: i64,
+) -> Result<Value, IpcError> {
+    let (bucket_ms, span) = window_config(window).ok_or_else(|| {
+        IpcError::invalid_argument(format!(
+            "usage window must be one of 1h, 24h, 7d, 30d (got {window:?})"
+        ))
+    })?;
     let hours = bucket_ms * span / USAGE_BUCKET_MS;
     let start = usage_hour_start(now) - (hours - 1) * USAGE_BUCKET_MS;
     let mut order: Vec<String> = Vec::new();
@@ -474,7 +518,8 @@ pub struct ProcessUsageStore {
 impl ProcessUsageStore {
     pub fn for_app_data_base(app_data_base: Option<PathBuf>) -> Self {
         ProcessUsageStore {
-            file_path: app_data_base.map(|base| base.join("usage-history").join(PROCESS_USAGE_FILE)),
+            file_path: app_data_base
+                .map(|base| base.join("usage-history").join(PROCESS_USAGE_FILE)),
             memory: Mutex::new(Vec::new()),
             queue: Mutex::new(()),
         }
@@ -482,13 +527,21 @@ impl ProcessUsageStore {
 
     #[allow(dead_code)] // dev/test seam
     pub fn in_memory() -> Self {
-        ProcessUsageStore { file_path: None, memory: Mutex::new(Vec::new()), queue: Mutex::new(()) }
+        ProcessUsageStore {
+            file_path: None,
+            memory: Mutex::new(Vec::new()),
+            queue: Mutex::new(()),
+        }
     }
 
     pub fn read(&self) -> Vec<ProcessUsageBucket> {
         let _serial = self.queue.lock().expect("process usage queue poisoned");
         let Some(path) = self.file_path.as_ref() else {
-            return self.memory.lock().expect("process usage memory poisoned").clone();
+            return self
+                .memory
+                .lock()
+                .expect("process usage memory poisoned")
+                .clone();
         };
         fs::read_to_string(path)
             .ok()
@@ -504,10 +557,12 @@ impl ProcessUsageStore {
             return Ok(());
         };
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| IpcError::internal(format!("unable to create usage-history directory: {error}")))?;
+            fs::create_dir_all(parent).map_err(|error| {
+                IpcError::internal(format!("unable to create usage-history directory: {error}"))
+            })?;
         }
-        let mut body = serde_json::to_string(&process_buckets_to_json(buckets)).expect("process buckets serialize");
+        let mut body = serde_json::to_string(&process_buckets_to_json(buckets))
+            .expect("process buckets serialize");
         body.push('\n');
         let tmp = path.with_file_name(format!(".process-usage.{}.tmp", uuid::Uuid::new_v4()));
         let mut attempt = 0;
@@ -515,11 +570,16 @@ impl ProcessUsageStore {
             match fs::write(&tmp, &body).and_then(|()| fs::rename(&tmp, path)) {
                 Ok(()) => return Ok(()),
                 Err(error) => {
-                    let retriable = matches!(error.kind(), std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Other);
+                    let retriable = matches!(
+                        error.kind(),
+                        std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Other
+                    );
                     attempt += 1;
                     if !retriable || attempt > 4 {
                         let _ = fs::remove_file(&tmp);
-                        return Err(IpcError::internal(format!("unable to persist {PROCESS_USAGE_FILE}: {error}")));
+                        return Err(IpcError::internal(format!(
+                            "unable to persist {PROCESS_USAGE_FILE}: {error}"
+                        )));
                     }
                     std::thread::sleep(std::time::Duration::from_millis(25 * (1 << attempt)));
                 }
@@ -631,7 +691,7 @@ impl UsageHistoryService {
     /// Record one traffic sample. Bytes integrate from the rate over the
     /// interval since the previous sample; a non-monotonic clock contributes
     /// zero bytes and never regresses the cursor.
-#[allow(dead_code)] // the record/flush surface attaches to the kernel traffic streams (3B/3D controller slice)
+    #[allow(dead_code)] // the record/flush surface attaches to the kernel traffic streams (3B/3D controller slice)
     pub fn record(&self, sample: &UsageSample, at: Option<i64>) -> Result<(), IpcError> {
         self.init();
         let mut state = self.guard();
@@ -646,8 +706,10 @@ impl UsageHistoryService {
 
         let current = self.ensure_bucket(&mut state, time);
         let object = current.as_object_mut().expect("bucket is an object");
-        *object.get_mut("up").expect("up") = json_number(object["up"].as_f64().unwrap_or(0.0) + up_bytes);
-        *object.get_mut("down").expect("down") = json_number(object["down"].as_f64().unwrap_or(0.0) + down_bytes);
+        *object.get_mut("up").expect("up") =
+            json_number(object["up"].as_f64().unwrap_or(0.0) + up_bytes);
+        *object.get_mut("down").expect("down") =
+            json_number(object["down"].as_f64().unwrap_or(0.0) + down_bytes);
         if state.last_at.is_none() || time > state.last_at.expect("checked") {
             state.last_at = Some(time);
         }
@@ -656,7 +718,7 @@ impl UsageHistoryService {
     }
 
     /// Count actual newly observed connections instead of 1 Hz traffic ticks.
-#[allow(dead_code)] // the record/flush surface attaches to the kernel traffic streams (3B/3D controller slice)
+    #[allow(dead_code)] // the record/flush surface attaches to the kernel traffic streams (3B/3D controller slice)
     pub fn record_connections(&self, connection_ids: &[String], at: i64) -> Result<(), IpcError> {
         self.init();
         let mut state = self.guard();
@@ -671,7 +733,8 @@ impl UsageHistoryService {
         }
         let current = self.ensure_bucket(&mut state, at);
         let object = current.as_object_mut().expect("bucket is an object");
-        *object.get_mut("count").expect("count") = json!(object["count"].as_i64().unwrap_or(0) + added as i64);
+        *object.get_mut("count").expect("count") =
+            json!(object["count"].as_i64().unwrap_or(0) + added as i64);
         object.insert("countType".into(), json!("connections"));
         self.trim_to_bound(&mut state);
         self.maybe_persist(&mut state, at)
@@ -680,16 +743,27 @@ impl UsageHistoryService {
     /// Record one `/connections` snapshot: count newly observed connections and
     /// attribute each connection's byte delta to its process name.
     pub fn record_connection_snapshot(&self, snapshot: &Value, at: i64) -> Result<(), IpcError> {
-        let connections = snapshot.get("connections").and_then(Value::as_array).cloned().unwrap_or_default();
+        let connections = snapshot
+            .get("connections")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         let ids: Vec<String> = connections
             .iter()
-            .filter_map(|connection| connection.get("id").and_then(Value::as_str).map(str::to_string))
+            .filter_map(|connection| {
+                connection
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
             .collect();
         self.record_connections(&ids, at)?;
         let mut state = self.guard();
         let mut next_bytes: std::collections::HashMap<String, (f64, f64)> = Default::default();
         for connection in &connections {
-            let Some(id) = connection.get("id").and_then(Value::as_str) else { continue };
+            let Some(id) = connection.get("id").and_then(Value::as_str) else {
+                continue;
+            };
             let (Some(upload), Some(download)) = (
                 connection.get("upload").and_then(is_non_negative),
                 connection.get("download").and_then(is_non_negative),
@@ -701,18 +775,26 @@ impl UsageHistoryService {
                 continue;
             }
             let (up, down) = match state.active_connection_bytes.get(id) {
-                Some((previous_up, previous_down)) => ((upload - previous_up).max(0.0), (download - previous_down).max(0.0)),
+                Some((previous_up, previous_down)) => (
+                    (upload - previous_up).max(0.0),
+                    (download - previous_down).max(0.0),
+                ),
                 None => (upload, download),
             };
             if up > 0.0 || down > 0.0 {
-                let name = process_usage_name(connection.pointer("/metadata/process").and_then(Value::as_str));
+                let name = process_usage_name(
+                    connection
+                        .pointer("/metadata/process")
+                        .and_then(Value::as_str),
+                );
                 self.add_process_bytes(&mut state, name, up, down, at);
             }
         }
         state.active_connection_bytes = next_bytes;
         state.seen_process_snapshot = true;
         if state.process_dirty
-            && !(self.persist_interval_ms > 0 && at - state.last_process_persist_at < self.persist_interval_ms)
+            && !(self.persist_interval_ms > 0
+                && at - state.last_process_persist_at < self.persist_interval_ms)
         {
             self.process_store.write(&state.process_buckets)?;
             state.last_process_persist_at = at;
@@ -727,22 +809,44 @@ impl UsageHistoryService {
         process_usage_window(&state.process_buckets, window, (self.clock)())
     }
 
-    fn add_process_bytes(&self, state: &mut UsageState, mut name: String, up: f64, down: f64, time: i64) {
+    fn add_process_bytes(
+        &self,
+        state: &mut UsageState,
+        mut name: String,
+        up: f64,
+        down: f64,
+        time: i64,
+    ) {
         let start = usage_hour_start(time);
-        if state.process_buckets.last().map(|bucket| bucket.bucket_start) != Some(start) {
-            state.process_buckets.push(ProcessUsageBucket { bucket_start: start, rows: Vec::new() });
+        if state
+            .process_buckets
+            .last()
+            .map(|bucket| bucket.bucket_start)
+            != Some(start)
+        {
+            state.process_buckets.push(ProcessUsageBucket {
+                bucket_start: start,
+                rows: Vec::new(),
+            });
             while state.process_buckets.len() > self.max_buckets {
                 state.process_buckets.remove(0);
             }
         }
-        let bucket = state.process_buckets.last_mut().expect("bucket was just ensured");
+        let bucket = state
+            .process_buckets
+            .last_mut()
+            .expect("bucket was just ensured");
         let mut index = bucket.rows.iter().position(|row| row.name == name);
         if index.is_none() && bucket.rows.len() >= PROCESS_USAGE_MAX_NAMES - 1 {
             name = PROCESS_USAGE_OTHER.to_string();
             index = bucket.rows.iter().position(|row| row.name == name);
         }
         let index = index.unwrap_or_else(|| {
-            bucket.rows.push(ProcessUsageRow { name, up: 0.0, down: 0.0 });
+            bucket.rows.push(ProcessUsageRow {
+                name,
+                up: 0.0,
+                down: 0.0,
+            });
             bucket.rows.len() - 1
         });
         bucket.rows[index].up += up;
@@ -757,9 +861,15 @@ impl UsageHistoryService {
     }
 
     /// Rank a window's buckets by the chosen metric (1-based ordered list).
-    pub fn rank(&self, window: &str, ranking: &str, limit: Option<usize>) -> Result<Value, IpcError> {
+    pub fn rank(
+        &self,
+        window: &str,
+        ranking: &str,
+        limit: Option<usize>,
+    ) -> Result<Value, IpcError> {
         let state = self.guard();
-        let snapshot = aggregate_usage_window(&state.buckets, window, (self.clock)(), self.max_buckets)?;
+        let snapshot =
+            aggregate_usage_window(&state.buckets, window, (self.clock)(), self.max_buckets)?;
         let buckets = snapshot["buckets"].as_array().cloned().unwrap_or_default();
         Ok(Value::Array(rank_usage_buckets(&buckets, ranking, limit)?))
     }
@@ -788,7 +898,7 @@ impl UsageHistoryService {
     }
 
     /// Persist the current bounded database immediately (e.g. on quit).
-#[allow(dead_code)] // the record/flush surface attaches to the kernel traffic streams (3B/3D controller slice)
+    #[allow(dead_code)] // the record/flush surface attaches to the kernel traffic streams (3B/3D controller slice)
     pub fn flush(&self) -> Result<(), IpcError> {
         self.init();
         let mut state = self.guard();
@@ -850,28 +960,46 @@ mod tests {
     fn coerce_bucket_drops_invalid_entries_and_bounds() {
         assert!(coerce_usage_bucket(&json!({ "bucketStart": -1, "up": 0, "down": 0 })).is_none());
         assert!(coerce_usage_bucket(&json!({ "bucketStart": 1, "up": "x", "down": 0 })).is_none());
-        let coerced = coerce_usage_bucket(&json!({ "bucketStart": 100.4, "up": 10.6, "down": 2, "count": 3.2 })).unwrap();
+        let coerced = coerce_usage_bucket(
+            &json!({ "bucketStart": 100.4, "up": 10.6, "down": 2, "count": 3.2 }),
+        )
+        .unwrap();
         assert_eq!(coerced["bucketStart"], 100);
         assert_eq!(coerced["up"], 11);
         assert_eq!(coerced["count"], 3);
         assert!(coerced.get("countType").is_none());
-        let raw = json!([bucket(2, 1, 1, 1), bucket(1, 1, 1, 1), "junk", bucket(3, 1, 1, 1)]);
+        let raw = json!([
+            bucket(2, 1, 1, 1),
+            bucket(1, 1, 1, 1),
+            "junk",
+            bucket(3, 1, 1, 1)
+        ]);
         let coerced = coerce_usage_buckets(&raw, 2);
         assert_eq!(coerced.len(), 2, "newest retained");
-        assert_eq!(coerced[0]["bucketStart"], 2, "sorted oldest-first within the bound");
+        assert_eq!(
+            coerced[0]["bucketStart"], 2,
+            "sorted oldest-first within the bound"
+        );
     }
 
     #[test]
     fn window_aggregation_fills_slots_and_totals() {
         let hour = USAGE_BUCKET_MS;
         let now = hour * 10;
-        let buckets = vec![bucket(now, 5, 7, 2), bucket(now - hour, 1, 1, 1), bucket(now - hour * 30, 100, 100, 1)];
+        let buckets = vec![
+            bucket(now, 5, 7, 2),
+            bucket(now - hour, 1, 1, 1),
+            bucket(now - hour * 30, 100, 100, 1),
+        ];
         let snapshot = aggregate_usage_window(&buckets, "24h", now, 720).unwrap();
         assert_eq!(snapshot["bucketCount"], 24);
         assert_eq!(snapshot["buckets"][23]["up"], 5, "current slot is last");
         assert_eq!(snapshot["buckets"][22]["up"], 1);
         assert_eq!(snapshot["buckets"][0]["up"], 0, "gap slots are zero-filled");
-        assert_eq!(snapshot["totals"]["up"], 6, "buckets outside the 24 slots are excluded");
+        assert_eq!(
+            snapshot["totals"]["up"], 6,
+            "buckets outside the 24 slots are excluded"
+        );
         assert_eq!(snapshot["totals"]["total"], 14);
         assert_eq!(snapshot["retentionHours"], 720);
         assert_eq!(snapshot["maxBuckets"], 720);
@@ -879,7 +1007,10 @@ mod tests {
         let day_grid = aggregate_usage_window(&buckets, "7d", now, 720).unwrap();
         assert_eq!(day_grid["bucketMs"], 24 * hour);
         assert_eq!(day_grid["bucketCount"], 7);
-        assert_eq!(day_grid["totals"]["up"], 106, "30h-old bucket folds into yesterday's day slot");
+        assert_eq!(
+            day_grid["totals"]["up"], 106,
+            "30h-old bucket folds into yesterday's day slot"
+        );
         assert!(aggregate_usage_window(&buckets, "2h", now, 720).is_err());
     }
 
@@ -887,24 +1018,41 @@ mod tests {
     fn ranking_orders_and_caps() {
         let hour = USAGE_BUCKET_MS;
         let now = hour * 3;
-        let buckets = vec![bucket(now, 10, 1, 1), bucket(now - hour, 1, 9, 1), bucket(now - 2 * hour, 0, 0, 0)];
+        let buckets = vec![
+            bucket(now, 10, 1, 1),
+            bucket(now - hour, 1, 9, 1),
+            bucket(now - 2 * hour, 0, 0, 0),
+        ];
         let snapshot = aggregate_usage_window(&buckets, "24h", now, 720).unwrap();
-        let ranked = rank_usage_buckets(snapshot["buckets"].as_array().unwrap(), "total", None).unwrap();
+        let ranked =
+            rank_usage_buckets(snapshot["buckets"].as_array().unwrap(), "total", None).unwrap();
         assert_eq!(ranked.len(), 2, "zero buckets omitted");
         assert_eq!(ranked[0]["rank"], 1);
-        assert_eq!(ranked[0]["bucketStart"], now, "11 (up 10 + down 1) outranks 10");
+        assert_eq!(
+            ranked[0]["bucketStart"], now,
+            "11 (up 10 + down 1) outranks 10"
+        );
         assert_eq!(ranked[1]["bucketStart"], now - hour);
         assert_eq!(ranked[1]["rank"], 2);
         // A genuine tie ranks the EARLIER bucket first.
         let tied = vec![bucket(now, 10, 1, 0), bucket(now - hour, 10, 1, 0)];
         let tied_snapshot = aggregate_usage_window(&tied, "24h", now, 720).unwrap();
-        let ranked = rank_usage_buckets(tied_snapshot["buckets"].as_array().unwrap(), "total", None).unwrap();
-        assert_eq!(ranked[0]["bucketStart"], now - hour, "tie 11 vs 11 -> earlier first");
+        let ranked =
+            rank_usage_buckets(tied_snapshot["buckets"].as_array().unwrap(), "total", None)
+                .unwrap();
+        assert_eq!(
+            ranked[0]["bucketStart"],
+            now - hour,
+            "tie 11 vs 11 -> earlier first"
+        );
         assert_eq!(ranked[1]["bucketStart"], now);
-        let ranked = rank_usage_buckets(snapshot["buckets"].as_array().unwrap(), "down", Some(1)).unwrap();
+        let ranked =
+            rank_usage_buckets(snapshot["buckets"].as_array().unwrap(), "down", Some(1)).unwrap();
         assert_eq!(ranked.len(), 1);
         assert_eq!(ranked[0]["value"], 9);
-        assert!(rank_usage_buckets(snapshot["buckets"].as_array().unwrap(), "bytes", None).is_err());
+        assert!(
+            rank_usage_buckets(snapshot["buckets"].as_array().unwrap(), "bytes", None).is_err()
+        );
     }
 
     #[test]
@@ -919,7 +1067,10 @@ mod tests {
         let store = UsageHistoryStore::for_app_data_base(Some(temp.path().to_path_buf()));
         store.write(&[bucket(1, 5, 6, 2)]).unwrap();
         let raw = fs::read_to_string(temp.path().join("usage-history/usage-history.json")).unwrap();
-        assert!(raw.starts_with("[{\"bucketStart\":1,"), "compact JSON: {raw}");
+        assert!(
+            raw.starts_with("[{\"bucketStart\":1,"),
+            "compact JSON: {raw}"
+        );
         assert!(raw.ends_with("\n"));
         assert_eq!(store.read()[0]["count"], 2);
         // A legacy bucket without the marker resets its count.
@@ -932,7 +1083,11 @@ mod tests {
         assert_eq!(read[0]["count"], 0);
         assert_eq!(read[0]["countType"], "connections");
         // A corrupt file is an empty database, never an error.
-        fs::write(temp.path().join("usage-history/usage-history.json"), "{oops").unwrap();
+        fs::write(
+            temp.path().join("usage-history/usage-history.json"),
+            "{oops",
+        )
+        .unwrap();
         assert!(store.read().is_empty());
     }
 
@@ -941,7 +1096,9 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let store = UsageHistoryStore::for_app_data_base(Some(temp.path().to_path_buf()));
         fs::create_dir_all(temp.path().join("usage-history")).unwrap();
-        let stale = temp.path().join("usage-history/.usage-history.json.stale.tmp");
+        let stale = temp
+            .path()
+            .join("usage-history/.usage-history.json.stale.tmp");
         fs::write(&stale, "garbage").unwrap();
         store.write(&[bucket(1, 1, 1, 1)]).unwrap();
         assert!(store.read().len() == 1);
@@ -956,13 +1113,45 @@ mod tests {
         let service = UsageHistoryService::new(store)
             .with_clock(Box::new(move || hour * 5))
             .with_persist_interval_ms(0);
-        service.record(&UsageSample { up: 1000.0, down: 500.0 }, Some(t)).unwrap();
+        service
+            .record(
+                &UsageSample {
+                    up: 1000.0,
+                    down: 500.0,
+                },
+                Some(t),
+            )
+            .unwrap();
         t += 2000; // 2 s at (1000, 500) B/s -> 2000 up / 1000 down
-        service.record(&UsageSample { up: 1000.0, down: 500.0 }, Some(t)).unwrap();
+        service
+            .record(
+                &UsageSample {
+                    up: 1000.0,
+                    down: 500.0,
+                },
+                Some(t),
+            )
+            .unwrap();
         // A back-dated sample contributes zero and does not regress the cursor.
-        service.record(&UsageSample { up: 9999.0, down: 9999.0 }, Some(t - 5000)).unwrap();
+        service
+            .record(
+                &UsageSample {
+                    up: 9999.0,
+                    down: 9999.0,
+                },
+                Some(t - 5000),
+            )
+            .unwrap();
         t += 1000;
-        service.record(&UsageSample { up: 1000.0, down: 500.0 }, Some(t)).unwrap();
+        service
+            .record(
+                &UsageSample {
+                    up: 1000.0,
+                    down: 500.0,
+                },
+                Some(t),
+            )
+            .unwrap();
         let window = service.get_window("1h").unwrap();
         assert_eq!(window["totals"]["up"], 3000);
         assert_eq!(window["totals"]["down"], 1500);
@@ -977,11 +1166,29 @@ mod tests {
         let tick = clock.clone();
         let t = |value: i64| clock.store(value, std::sync::atomic::Ordering::SeqCst);
         let service = UsageHistoryService::new(store)
-            .with_clock(Box::new(move || tick.load(std::sync::atomic::Ordering::SeqCst)))
+            .with_clock(Box::new(move || {
+                tick.load(std::sync::atomic::Ordering::SeqCst)
+            }))
             .with_persist_interval_ms(0);
-        service.record(&UsageSample { up: 10.0, down: 0.0 }, Some(hour * 5)).unwrap();
+        service
+            .record(
+                &UsageSample {
+                    up: 10.0,
+                    down: 0.0,
+                },
+                Some(hour * 5),
+            )
+            .unwrap();
         t(hour * 6); // next bucket
-        service.record(&UsageSample { up: 20.0, down: 0.0 }, Some(hour * 6)).unwrap();
+        service
+            .record(
+                &UsageSample {
+                    up: 20.0,
+                    down: 0.0,
+                },
+                Some(hour * 6),
+            )
+            .unwrap();
         let window = service.get_window("24h").unwrap();
         assert_eq!(window["buckets"].as_array().unwrap().len(), 24);
         // The second sample integrates 20 B/s over the full 3600 s hour.
@@ -991,12 +1198,17 @@ mod tests {
         for i in 0..(USAGE_MAX_BUCKETS + 5) {
             let time = hour * (6 + i as i64 + 1);
             t(time);
-            service.record(&UsageSample { up: 1.0, down: 0.0 }, Some(time)).unwrap();
+            service
+                .record(&UsageSample { up: 1.0, down: 0.0 }, Some(time))
+                .unwrap();
             let _ = i;
         }
         // The oldest buckets were dropped by the bound; each of the newest 24
         // slots holds 1 B/s integrated over its full hour.
-        assert_eq!(service.get_window("24h").unwrap()["totals"]["up"], 24 * 3600);
+        assert_eq!(
+            service.get_window("24h").unwrap()["totals"]["up"],
+            24 * 3600
+        );
         assert_eq!(service.get_window("1h").unwrap()["totals"]["up"], 3600);
     }
 
@@ -1006,11 +1218,20 @@ mod tests {
             .with_clock(Box::new(|| USAGE_BUCKET_MS * 7))
             .with_persist_interval_ms(0);
         let at = USAGE_BUCKET_MS * 7;
-        service.record_connections(&["a".into(), "b".into()], at).unwrap();
-        service.record_connections(&["a".into(), "b".into(), "c".into()], at + 1000).unwrap();
-        service.record_connections(&["c".into()], at + 2000).unwrap();
+        service
+            .record_connections(&["a".into(), "b".into()], at)
+            .unwrap();
+        service
+            .record_connections(&["a".into(), "b".into(), "c".into()], at + 1000)
+            .unwrap();
+        service
+            .record_connections(&["c".into()], at + 2000)
+            .unwrap();
         let window = service.get_window("1h").unwrap();
-        assert_eq!(window["totals"]["count"], 3, "only newly observed ids count");
+        assert_eq!(
+            window["totals"]["count"], 3,
+            "only newly observed ids count"
+        );
         service.clear().unwrap();
         assert_eq!(service.get_window("1h").unwrap()["totals"]["count"], 0);
         assert_eq!(service.get_capacity()["maxBuckets"], USAGE_MAX_BUCKETS);
@@ -1022,17 +1243,37 @@ mod tests {
         let hour = USAGE_BUCKET_MS;
         let t = hour * 9;
         {
-            let service = UsageHistoryService::new(UsageHistoryStore::for_app_data_base(Some(temp.path().to_path_buf())))
-                .with_clock(Box::new(move || t))
-                .with_persist_interval_ms(0);
-            service.record(&UsageSample { up: 100.0, down: 0.0 }, Some(t)).unwrap();
+            let service = UsageHistoryService::new(UsageHistoryStore::for_app_data_base(Some(
+                temp.path().to_path_buf(),
+            )))
+            .with_clock(Box::new(move || t))
+            .with_persist_interval_ms(0);
+            service
+                .record(
+                    &UsageSample {
+                        up: 100.0,
+                        down: 0.0,
+                    },
+                    Some(t),
+                )
+                .unwrap();
             // The first sample integrates zero bytes (no prior interval); the
             // second one accumulates the rate over the 1 s step.
-            service.record(&UsageSample { up: 100.0, down: 0.0 }, Some(t + 1000)).unwrap();
+            service
+                .record(
+                    &UsageSample {
+                        up: 100.0,
+                        down: 0.0,
+                    },
+                    Some(t + 1000),
+                )
+                .unwrap();
             service.flush().unwrap();
         }
-        let reloaded = UsageHistoryService::new(UsageHistoryStore::for_app_data_base(Some(temp.path().to_path_buf())))
-            .with_clock(Box::new(move || t + 1000));
+        let reloaded = UsageHistoryService::new(UsageHistoryStore::for_app_data_base(Some(
+            temp.path().to_path_buf(),
+        )))
+        .with_clock(Box::new(move || t + 1000));
         reloaded.init();
         let window = reloaded.get_window("1h").unwrap();
         assert_eq!(window["totals"]["up"], 100, "persisted buckets reload");
@@ -1045,18 +1286,27 @@ mod tests {
             .with_clock(Box::new(move || at + 5000))
             .with_persist_interval_ms(0);
         let snapshot = |up: i64, down: i64, other: Option<i64>| {
-            let mut connections = vec![json!({"id": "a", "upload": up, "download": down, "metadata": {"process": "C:\\Apps\\game.exe"}})];
+            let mut connections = vec![
+                json!({"id": "a", "upload": up, "download": down, "metadata": {"process": "C:\\Apps\\game.exe"}}),
+            ];
             if let Some(bytes) = other {
-                connections.push(json!({"id": "b", "upload": bytes, "download": 0, "metadata": {}}));
+                connections
+                    .push(json!({"id": "b", "upload": bytes, "download": 0, "metadata": {}}));
             }
             json!({"connections": connections})
         };
         // The first snapshot only sets the baseline (persisted active bytes
         // from before a restart must not count twice).
-        service.record_connection_snapshot(&snapshot(100, 1000, None), at).unwrap();
-        service.record_connection_snapshot(&snapshot(150, 1600, Some(40)), at + 1000).unwrap();
+        service
+            .record_connection_snapshot(&snapshot(100, 1000, None), at)
+            .unwrap();
+        service
+            .record_connection_snapshot(&snapshot(150, 1600, Some(40)), at + 1000)
+            .unwrap();
         // A counter that goes backwards contributes nothing.
-        service.record_connection_snapshot(&snapshot(120, 1600, Some(40)), at + 2000).unwrap();
+        service
+            .record_connection_snapshot(&snapshot(120, 1600, Some(40)), at + 2000)
+            .unwrap();
         let ranking = service.process_ranking("1h").unwrap();
         assert_eq!(ranking["observedBytes"], 50 + 600 + 40);
         assert_eq!(ranking["entries"][0]["name"], "game.exe");
@@ -1081,7 +1331,9 @@ mod tests {
             )
             .with_clock(Box::new(move || at))
             .with_persist_interval_ms(0);
-            service.record_connection_snapshot(&json!({"connections": []}), at).unwrap();
+            service
+                .record_connection_snapshot(&json!({"connections": []}), at)
+                .unwrap();
             service
                 .record_connection_snapshot(&json!({"connections": [{"id": "x", "upload": 7, "download": 3, "metadata": {"process": "a.exe"}}]}), at)
                 .unwrap();
@@ -1093,13 +1345,23 @@ mod tests {
         )
         .with_clock(Box::new(move || at));
         reloaded.init();
-        assert_eq!(reloaded.process_ranking("24h").unwrap()["entries"][0]["total"], 10);
+        assert_eq!(
+            reloaded.process_ranking("24h").unwrap()["entries"][0]["total"],
+            10
+        );
         let coerced = coerce_process_usage_buckets(
             &json!([{"bucketStart": 1, "rows": [{"name": "C:/x/y.exe", "up": 1, "down": 1}, {"name": "ok.exe", "up": -1, "down": 0}, {"name": "z.exe", "up": 1.4, "down": 0}]}, {"bucketStart": -5, "rows": []}]),
             10,
         );
         assert_eq!(coerced.len(), 1);
-        assert_eq!(coerced[0].rows, vec![ProcessUsageRow { name: "z.exe".into(), up: 1.0, down: 0.0 }]);
+        assert_eq!(
+            coerced[0].rows,
+            vec![ProcessUsageRow {
+                name: "z.exe".into(),
+                up: 1.0,
+                down: 0.0
+            }]
+        );
         assert_eq!(process_usage_name(Some("  /usr/bin/curl ")), "curl");
         assert_eq!(process_usage_name(None), PROCESS_USAGE_UNKNOWN);
         assert!(process_usage_window(&[], "nope", 0).is_err());
@@ -1111,7 +1373,9 @@ mod tests {
             .with_clock(Box::new(|| USAGE_BUCKET_MS * 2))
             .with_persist_interval_ms(0);
         let at = USAGE_BUCKET_MS * 2;
-        service.record_connections(&["a".into(), "b".into(), "c".into()], at).unwrap();
+        service
+            .record_connections(&["a".into(), "b".into(), "c".into()], at)
+            .unwrap();
         let ranked = service.rank("1h", "count", None).unwrap();
         assert_eq!(ranked.as_array().unwrap().len(), 1);
         assert_eq!(ranked[0]["value"], 3);

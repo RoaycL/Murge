@@ -39,8 +39,13 @@ const CORE_KEYS: [&str; 20] = [
     "external-ui-name",
     "external-ui-url",
 ];
-const GEODATA_KEYS: [&str; 5] =
-    ["geodata-mode", "geodata-loader", "geo-auto-update", "geo-update-interval", "geox-url"];
+const GEODATA_KEYS: [&str; 5] = [
+    "geodata-mode",
+    "geodata-loader",
+    "geo-auto-update",
+    "geo-update-interval",
+    "geox-url",
+];
 
 fn managed_keys() -> Value {
     json!({
@@ -74,7 +79,9 @@ fn excerpt(data: &Map<String, Value>) -> String {
     if safe.is_empty() {
         "（未配置）".to_string()
     } else {
-        override_apply::stringify_yaml(Value::Object(safe)).trim().to_string()
+        override_apply::stringify_yaml(Value::Object(safe))
+            .trim()
+            .to_string()
     }
 }
 
@@ -172,7 +179,10 @@ pub fn apply_dns_to_document(base: &str, enhancement: &Value) -> (String, Vec<&'
         return (base.to_string(), Vec::new());
     }
     let Some(mut config) = override_apply::parse_yaml_to_object(base) else {
-        return (base.to_string(), vec!["基础配置文件无法解析，已跳过 DNS 增强"]);
+        return (
+            base.to_string(),
+            vec!["基础配置文件无法解析，已跳过 DNS 增强"],
+        );
     };
     let block = enhancements::build_dns_block(enhancement);
     let block = block.as_object().cloned().unwrap_or_default();
@@ -185,7 +195,10 @@ pub fn apply_dns_to_document(base: &str, enhancement: &Value) -> (String, Vec<&'
         merged.insert(key, value);
     }
     config.insert("dns".into(), Value::Object(merged));
-    (override_apply::stringify_yaml(Value::Object(config)), Vec::new())
+    (
+        override_apply::stringify_yaml(Value::Object(config)),
+        Vec::new(),
+    )
 }
 
 /// Apply the typed sniffer enhancement (`apply-sniffer.ts`), same contract.
@@ -194,7 +207,10 @@ pub fn apply_sniffer_to_document(base: &str, enhancement: &Value) -> (String, Ve
         return (base.to_string(), Vec::new());
     }
     let Some(mut config) = override_apply::parse_yaml_to_object(base) else {
-        return (base.to_string(), vec!["基础配置文件无法解析，已跳过 Sniffer 增强"]);
+        return (
+            base.to_string(),
+            vec!["基础配置文件无法解析，已跳过 Sniffer 增强"],
+        );
     };
     let block = enhancements::build_sniffer_block(enhancement);
     let block = block.as_object().cloned().unwrap_or_default();
@@ -207,7 +223,10 @@ pub fn apply_sniffer_to_document(base: &str, enhancement: &Value) -> (String, Ve
         merged.insert(key, value);
     }
     config.insert("sniffer".into(), Value::Object(merged));
-    (override_apply::stringify_yaml(Value::Object(config)), Vec::new())
+    (
+        override_apply::stringify_yaml(Value::Object(config)),
+        Vec::new(),
+    )
 }
 
 /// Turn the ACTIVE profile document into the app-owned runtime config
@@ -222,10 +241,14 @@ pub fn build_profile_kernel_config(document: &str, options: &Value) -> Result<St
         return Err(invalid(format!("invalid mixed-port: {mixed_port}")));
     }
     if !(1024..=65535).contains(&controller_port) {
-        return Err(invalid(format!("invalid controller-port: {controller_port}")));
+        return Err(invalid(format!(
+            "invalid controller-port: {controller_port}"
+        )));
     }
     if mixed_port == controller_port {
-        return Err(invalid("mixed-port and external-controller port must differ".to_string()));
+        return Err(invalid(
+            "mixed-port and external-controller port must differ".to_string(),
+        ));
     }
     let optional_ports = [
         ("http", options["httpPort"].as_i64().unwrap_or(0)),
@@ -238,13 +261,11 @@ pub fn build_profile_kernel_config(document: &str, options: &Value) -> Result<St
     }
     let active_ports: Vec<i64> = [Some(mixed_port), Some(controller_port)]
         .into_iter()
-        .chain(optional_ports.iter().map(|(_, port)| {
-            if *port != 0 {
-                Some(*port)
-            } else {
-                None
-            }
-        }))
+        .chain(
+            optional_ports
+                .iter()
+                .map(|(_, port)| if *port != 0 { Some(*port) } else { None }),
+        )
         .flatten()
         .collect();
     let unique: std::collections::HashSet<i64> = active_ports.iter().copied().collect();
@@ -252,13 +273,17 @@ pub fn build_profile_kernel_config(document: &str, options: &Value) -> Result<St
         return Err(invalid("listener ports must differ".to_string()));
     }
     let secret = options["secret"].as_str().unwrap_or("");
-    if !regex::Regex::new(SECRET_PATTERN).expect("secret pattern").is_match(secret) {
-        return Err(invalid("secret must be a 64-character lowercase hex string".to_string()));
+    if !regex::Regex::new(SECRET_PATTERN)
+        .expect("secret pattern")
+        .is_match(secret)
+    {
+        return Err(invalid(
+            "secret must be a 64-character lowercase hex string".to_string(),
+        ));
     }
 
-    let mut config = override_apply::parse_yaml_to_object(document).ok_or_else(|| {
-        invalid("配置解析失败：文档无法解析为 YAML 映射".to_string())
-    })?;
+    let mut config = override_apply::parse_yaml_to_object(document)
+        .ok_or_else(|| invalid("配置解析失败：文档无法解析为 YAML 映射".to_string()))?;
 
     // --- Neutralize host-network mutation (loopback-only main kernel) ---
     for key in [
@@ -302,9 +327,15 @@ pub fn build_profile_kernel_config(document: &str, options: &Value) -> Result<St
     if socks_port != 0 {
         config.insert("socks-port".into(), json!(socks_port));
     }
-    config.insert("external-controller".into(), json!(format!("{controller_host}:{controller_port}")));
+    config.insert(
+        "external-controller".into(),
+        json!(format!("{controller_host}:{controller_port}")),
+    );
     config.insert("allow-lan".into(), json!(allow_lan));
-    config.insert("bind-address".into(), json!(if allow_lan { "*" } else { "127.0.0.1" }));
+    config.insert(
+        "bind-address".into(),
+        json!(if allow_lan { "*" } else { "127.0.0.1" }),
+    );
     config.insert("secret".into(), json!(secret));
     if options["controllerPanel"].as_bool() == Some(true) {
         config.insert("external-ui".into(), json!("ui"));
@@ -316,7 +347,13 @@ pub fn build_profile_kernel_config(document: &str, options: &Value) -> Result<St
     }
     config.insert(
         "mode".into(),
-        json!(if config.get("mode").and_then(Value::as_str) == Some("rule") { "rule" } else { "rule" }),
+        json!(
+            if config.get("mode").and_then(Value::as_str) == Some("rule") {
+                "rule"
+            } else {
+                "rule"
+            }
+        ),
     );
 
     // --- Controlled core settings (read-back + conflict handling) ---
@@ -344,7 +381,11 @@ pub fn build_profile_kernel_config(document: &str, options: &Value) -> Result<St
             profile_map.insert(key, value);
         }
         config.insert("profile".into(), Value::Object(profile_map));
-        if core["interfaceName"].as_str().map(str::is_empty).unwrap_or(true) {
+        if core["interfaceName"]
+            .as_str()
+            .map(str::is_empty)
+            .unwrap_or(true)
+        {
             config.remove("interface-name");
         }
         // DNS AAAA behavior must agree with the top-level ipv6 switch.
@@ -384,8 +425,16 @@ mod tests {
         let document = "port: 80\nsocks-port: 1080\ntun:\n  enable: true\nlisteners:\n  - name: x\nmixed-port: 9999\nexternal-controller: 0.0.0.0:9091\nsecret: deadbeef\nallow-lan: true\nmode: rule\nproxies: []\nrules:\n  - MATCH,A\n";
         let effective = build_profile_kernel_config(document, &runtime()).unwrap();
         assert!(effective.contains("mixed-port: 7890"), "{effective}");
-        assert!(effective.contains("external-controller: \"127.0.0.1:9090\""), "{effective}");
-        assert!(effective.contains("secret: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), "{effective}");
+        assert!(
+            effective.contains("external-controller: \"127.0.0.1:9090\""),
+            "{effective}"
+        );
+        assert!(
+            effective.contains(
+                "secret: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ),
+            "{effective}"
+        );
         assert!(effective.contains("bind-address: 127.0.0.1"), "{effective}");
         assert!(effective.contains("mode: rule"), "{effective}");
         assert!(effective.contains("MATCH,A"), "content sections preserved");
@@ -399,8 +448,14 @@ mod tests {
     fn kernel_config_keeps_content_and_dns_listen_removal() {
         let document = "dns:\n  listen: 0.0.0.0:53\n  enable: true\nproxies:\n  - name: a\nrules:\n  - MATCH,A\n";
         let effective = build_profile_kernel_config(document, &runtime()).unwrap();
-        assert!(!effective.contains("0.0.0.0:53"), "public DNS listener removed: {effective}");
-        assert!(effective.contains("enable: true"), "profile dns keys preserved");
+        assert!(
+            !effective.contains("0.0.0.0:53"),
+            "public DNS listener removed: {effective}"
+        );
+        assert!(
+            effective.contains("enable: true"),
+            "profile dns keys preserved"
+        );
     }
 
     #[test]
@@ -415,20 +470,31 @@ mod tests {
         assert!(effective.contains("log-level: debug"), "{effective}");
         assert!(effective.contains("tcp-concurrent: false"), "{effective}");
         assert!(effective.contains("store-selected: false"), "{effective}");
-        assert!(effective.contains("store-fake-ip: true"), "controlled block wins the profile spread (TS spread order)");
-        assert!(effective.contains("ipv6: true"), "dns ipv6 follows the core model");
+        assert!(
+            effective.contains("store-fake-ip: true"),
+            "controlled block wins the profile spread (TS spread order)"
+        );
+        assert!(
+            effective.contains("ipv6: true"),
+            "dns ipv6 follows the core model"
+        );
     }
 
     #[test]
     fn kernel_config_geodata_model_readback_and_panel() {
-        let geodata = enhancements::coerce_geodata_settings(&json!({ "enabled": true, "updateIntervalHours": 48 }));
+        let geodata = enhancements::coerce_geodata_settings(
+            &json!({ "enabled": true, "updateIntervalHours": 48 }),
+        );
         let mut options = runtime();
         options["geodata"] = geodata;
         options["controllerPanel"] = json!(true);
         let document = "proxies: []\nrules:\n  - MATCH,A\n";
         let effective = build_profile_kernel_config(document, &options).unwrap();
         assert!(effective.contains("geo-update-interval: 48"), "{effective}");
-        assert!(effective.contains("external-ui-url: \"https://github.com/MetaCubeX"), "{effective}");
+        assert!(
+            effective.contains("external-ui-url: \"https://github.com/MetaCubeX"),
+            "{effective}"
+        );
     }
 
     #[test]
@@ -458,17 +524,31 @@ mod tests {
         );
         assert!(warnings.is_empty());
         assert!(text.contains("tls://223.5.5.5"), "{text}");
-        assert!(text.contains("fallback-filter"), "unknown dns keys preserved");
+        assert!(
+            text.contains("fallback-filter"),
+            "unknown dns keys preserved"
+        );
         assert!(text.contains("enable: true"), "model wins for owned keys");
         let (_, warnings) = apply_dns_to_document("a: [1, 2", &dns);
         assert_eq!(warnings, vec!["基础配置文件无法解析，已跳过 DNS 增强"]);
         let (text, warnings) = apply_dns_to_document("proxies: []\n", &dns);
-        assert!(warnings.is_empty() && text.contains("dns:"), "disabled enhancement inserts the block");
+        assert!(
+            warnings.is_empty() && text.contains("dns:"),
+            "disabled enhancement inserts the block"
+        );
 
-        let sniffer = enhancements::coerce_sniffer_enhancement(&json!({ "enabled": true, "parsePureIp": false }));
-        let (text, warnings) = apply_sniffer_to_document("sniffer:\n  port-black-list:\n    - 9000\nproxies: []\n", &sniffer);
+        let sniffer = enhancements::coerce_sniffer_enhancement(
+            &json!({ "enabled": true, "parsePureIp": false }),
+        );
+        let (text, warnings) = apply_sniffer_to_document(
+            "sniffer:\n  port-black-list:\n    - 9000\nproxies: []\n",
+            &sniffer,
+        );
         assert!(warnings.is_empty());
-        assert!(text.contains("port-black-list"), "unknown sniffer keys preserved: {text}");
+        assert!(
+            text.contains("port-black-list"),
+            "unknown sniffer keys preserved: {text}"
+        );
         assert!(text.contains("parse-pure-ip: false"), "{text}");
         let (_, warnings) = apply_sniffer_to_document("[[[", &sniffer);
         assert_eq!(warnings, vec!["基础配置文件无法解析，已跳过 Sniffer 增强"]);
@@ -495,13 +575,31 @@ mod tests {
             &options,
         );
         assert_eq!(inspection["profileName"], "Home");
-        assert_eq!(inspection["sections"]["core"]["profileYaml"], "mixed-port: 1234\nsecret: \"********\"");
-        assert_eq!(inspection["sections"]["core"]["effectiveYaml"], "mixed-port: 7890\nsecret: \"********\"");
+        assert_eq!(
+            inspection["sections"]["core"]["profileYaml"],
+            "mixed-port: 1234\nsecret: \"********\""
+        );
+        assert_eq!(
+            inspection["sections"]["core"]["effectiveYaml"],
+            "mixed-port: 7890\nsecret: \"********\""
+        );
         let notes = inspection["sections"]["core"]["notes"].as_array().unwrap();
-        assert!(notes[0].as_str().unwrap().contains("监听端口、控制器"), "{notes:?}");
-        assert!(notes[1].as_str().unwrap().contains("内核运行覆写已启用"), "{notes:?}");
-        assert!(inspection["sections"]["tun"]["notes"][0].as_str().unwrap().contains("未启用"));
-        assert!(inspection["sections"]["sniffer"]["managedKeys"].as_array().unwrap().is_empty());
+        assert!(
+            notes[0].as_str().unwrap().contains("监听端口、控制器"),
+            "{notes:?}"
+        );
+        assert!(
+            notes[1].as_str().unwrap().contains("内核运行覆写已启用"),
+            "{notes:?}"
+        );
+        assert!(inspection["sections"]["tun"]["notes"][0]
+            .as_str()
+            .unwrap()
+            .contains("未启用"));
+        assert!(inspection["sections"]["sniffer"]["managedKeys"]
+            .as_array()
+            .unwrap()
+            .is_empty());
         assert_eq!(inspection["sections"]["dns"]["profileYaml"], "（未配置）");
     }
 

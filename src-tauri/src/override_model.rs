@@ -45,7 +45,11 @@ pub struct OverrideItem {
 /// fields fall back to safe defaults so the renderer never crashes on a stale
 /// or hand-edited snapshot.
 pub fn coerce_override_item(input: &Value) -> OverrideItem {
-    let source = if is_record(input) { input } else { &Value::Null };
+    let source = if is_record(input) {
+        input
+    } else {
+        &Value::Null
+    };
     let object = source.as_object();
     let get = |key: &str| object.and_then(|o| o.get(key));
     let kind = match get("kind").and_then(Value::as_str) {
@@ -53,7 +57,9 @@ pub fn coerce_override_item(input: &Value) -> OverrideItem {
         _ => KIND_YAML.to_string(),
     };
     let scope = match get("scope").and_then(Value::as_str) {
-        Some(SCOPE_GLOBAL) | Some(SCOPE_PROFILE) => get("scope").and_then(Value::as_str).unwrap().to_string(),
+        Some(SCOPE_GLOBAL) | Some(SCOPE_PROFILE) => {
+            get("scope").and_then(Value::as_str).unwrap().to_string()
+        }
         _ => SCOPE_GLOBAL.to_string(),
     };
     let mut profile_id: Option<String> = None;
@@ -66,13 +72,19 @@ pub fn coerce_override_item(input: &Value) -> OverrideItem {
     }
     OverrideItem {
         id: get("id").and_then(Value::as_str).unwrap_or("").to_string(),
-        name: get("name").and_then(Value::as_str).unwrap_or("未命名覆写").to_string(),
+        name: get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("未命名覆写")
+            .to_string(),
         kind,
         enabled: get("enabled").and_then(Value::as_bool).unwrap_or(true),
         scope,
         profile_id,
         order: get("order").and_then(Value::as_i64).unwrap_or(0),
-        content: get("content").and_then(Value::as_str).unwrap_or("").to_string(),
+        content: get("content")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
         updated_at: get("updatedAt").and_then(Value::as_u64).unwrap_or(0),
     }
 }

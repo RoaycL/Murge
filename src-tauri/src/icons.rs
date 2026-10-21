@@ -136,9 +136,11 @@ impl RemoteIconCache {
     /// authenticates the hostname; note the icon policy has NO scheme carve-
     /// out here because the scheme check is unconditional).
     fn validate(&self, url: &str) -> Result<url::Url, String> {
-        let parsed =
-            url::Url::parse(url).map_err(|_| "unsafe icon URL".to_string())?;
-        if parsed.scheme() != "https" || !parsed.username().is_empty() || parsed.password().is_some() {
+        let parsed = url::Url::parse(url).map_err(|_| "unsafe icon URL".to_string())?;
+        if parsed.scheme() != "https"
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+        {
             return Err("unsafe icon URL".to_string());
         }
         let bare_host = parsed
@@ -147,22 +149,31 @@ impl RemoteIconCache {
             .trim_start_matches('[')
             .trim_end_matches(']')
             .to_string();
-        let addresses = if crate::subscription::is_public_address(&bare_host) || is_ip_like(&bare_host) {
-            vec![bare_host]
-        } else {
-            resolve_host_system(&bare_host)
-        };
+        let addresses =
+            if crate::subscription::is_public_address(&bare_host) || is_ip_like(&bare_host) {
+                vec![bare_host]
+            } else {
+                resolve_host_system(&bare_host)
+            };
         let fake_ip_only = !addresses.is_empty()
-            && addresses
-                .iter()
-                .all(|address| regex::Regex::new(r"^198\.(?:18|19)\.").expect("fake-ip regex compiles").is_match(address));
-        if addresses.is_empty() || (addresses.iter().any(|address| !is_public_address(address)) && !fake_ip_only) {
+            && addresses.iter().all(|address| {
+                regex::Regex::new(r"^198\.(?:18|19)\.")
+                    .expect("fake-ip regex compiles")
+                    .is_match(address)
+            });
+        if addresses.is_empty()
+            || (addresses.iter().any(|address| !is_public_address(address)) && !fake_ip_only)
+        {
             return Err("icon host is not public".to_string());
         }
         Ok(parsed)
     }
 
-    async fn fetch_with(&self, transport: &reqwest::Client, initial_url: &str) -> Result<String, String> {
+    async fn fetch_with(
+        &self,
+        transport: &reqwest::Client,
+        initial_url: &str,
+    ) -> Result<String, String> {
         let sweep = self.fetch_sweep(transport, initial_url);
         match tokio::time::timeout(Duration::from_millis(FETCH_TIMEOUT_MS), sweep).await {
             Ok(result) => result,
@@ -170,7 +181,11 @@ impl RemoteIconCache {
         }
     }
 
-    async fn fetch_sweep(&self, transport: &reqwest::Client, initial_url: &str) -> Result<String, String> {
+    async fn fetch_sweep(
+        &self,
+        transport: &reqwest::Client,
+        initial_url: &str,
+    ) -> Result<String, String> {
         let mut current_url = initial_url.to_string();
         for redirects in 0..=MAX_REDIRECTS {
             let parsed = self.validate(&current_url)?;
@@ -189,8 +204,12 @@ impl RemoteIconCache {
                 let Some(location) = location.filter(|_| redirects != MAX_REDIRECTS) else {
                     return Err("invalid icon redirect".to_string());
                 };
-                let base = url::Url::parse(&current_url).map_err(|_| "unsafe icon URL".to_string())?;
-                current_url = base.join(&location).map_err(|_| "invalid icon redirect".to_string())?.to_string();
+                let base =
+                    url::Url::parse(&current_url).map_err(|_| "unsafe icon URL".to_string())?;
+                current_url = base
+                    .join(&location)
+                    .map_err(|_| "invalid icon redirect".to_string())?
+                    .to_string();
                 continue;
             }
             if !(200..300).contains(&status) {
@@ -227,18 +246,24 @@ impl RemoteIconCache {
             }
             chunks.extend_from_slice(&chunk);
         }
-        Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(&chunks)))
+        Ok(format!(
+            "data:{mime};base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&chunks)
+        ))
     }
 
     async fn download(&self, url: &str) -> Result<String, String> {
         let mut last_error = String::from("no icon transport");
-        let transports: [&reqwest::Client; 2] = [&self.direct, match &self.proxy {
-            Some(proxy) => proxy,
-            // The proxy slot is filled by the 3D system-proxy slice; until
-            // then the second transport IS the direct client (a harmless
-            // repeat: the disk cache dedupes the bytes).
-            None => &self.direct,
-        }];
+        let transports: [&reqwest::Client; 2] = [
+            &self.direct,
+            match &self.proxy {
+                Some(proxy) => proxy,
+                // The proxy slot is filled by the 3D system-proxy slice; until
+                // then the second transport IS the direct client (a harmless
+                // repeat: the disk cache dedupes the bytes).
+                None => &self.direct,
+            },
+        ];
         for transport in transports {
             match self.fetch_with(transport, url).await {
                 Ok(data_url) => return Ok(data_url),
@@ -277,16 +302,26 @@ fn resolve_host_system(hostname: &str) -> Vec<String> {
 
 /// LRU prune: oldest-mtime-first until both caps hold (256 files / 96 MiB).
 fn prune_cache(root: &Path) {
-    let Ok(names) = std::fs::read_dir(root) else { return };
+    let Ok(names) = std::fs::read_dir(root) else {
+        return;
+    };
     let mut entries: Vec<(PathBuf, u64, std::time::SystemTime)> = Vec::new();
     for entry in names.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
         let hex = name.strip_suffix(".json").unwrap_or("");
-        if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()) {
+        if hex.len() != 64
+            || !hex
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
             continue;
         }
         if let Ok(info) = entry.metadata() {
-            entries.push((entry.path(), info.len(), info.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH)));
+            entries.push((
+                entry.path(),
+                info.len(),
+                info.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+            ));
         }
     }
     entries.sort_by_key(|(_, _, modified)| *modified);
@@ -307,15 +342,21 @@ fn prune_cache(root: &Path) {
 /// Non-Windows platforms return null (the TS handler does the same), and so
 /// does every failure.
 pub fn get_process_icon(raw_path: Option<&str>) -> Value {
-    let Some(raw_path) = raw_path else { return Value::Null };
+    let Some(raw_path) = raw_path else {
+        return Value::Null;
+    };
     if !cfg!(windows) {
         return Value::Null;
     }
     // Local drive paths only: never let renderer input make Explorer resolve
     // a UNC/SMB path (which could cause unintended network access).
     let valid = raw_path.len() <= 1024
-        && regex::Regex::new(r"^[a-zA-Z]:\\").expect("drive regex compiles").is_match(raw_path)
-        && regex::Regex::new(r"(?i)\.exe$").expect("exe regex compiles").is_match(raw_path);
+        && regex::Regex::new(r"^[a-zA-Z]:\\")
+            .expect("drive regex compiles")
+            .is_match(raw_path)
+        && regex::Regex::new(r"(?i)\.exe$")
+            .expect("exe regex compiles")
+            .is_match(raw_path);
     if !valid {
         return Value::Null;
     }
@@ -361,12 +402,12 @@ fn process_icon_store(path: &str, value: String) {
 #[cfg(windows)]
 fn extract_process_icon(path: &str) -> Option<String> {
     use windows::core::PCWSTR;
-    use windows::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON};
-    use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, ICONINFO};
     use windows::Win32::Graphics::Gdi::{
-        GetDIBits, GetDC, ReleaseDC, DeleteObject, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS,
+        DeleteObject, GetDC, GetDIBits, ReleaseDC, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS,
         HDC,
     };
+    use windows::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON};
+    use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, ICONINFO};
 
     let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
@@ -440,7 +481,8 @@ fn extract_process_icon(path: &str) -> Option<String> {
             }
             let mut png_buffer = std::io::Cursor::new(Vec::new());
             {
-                let mut encoder = png::Encoder::new(&mut png_buffer, width as u32, positive_height as u32);
+                let mut encoder =
+                    png::Encoder::new(&mut png_buffer, width as u32, positive_height as u32);
                 encoder.set_color(png::ColorType::Rgba);
                 encoder.set_depth(png::BitDepth::Eight);
                 let mut writer = encoder.write_header().ok()?;
@@ -475,7 +517,9 @@ pub fn list_network_interfaces() -> Value {
     names.dedup();
     let names: Vec<String> = names
         .into_iter()
-        .filter(|name| !name.is_empty() && name.len() <= 255 && !name.chars().any(|c| c.is_control()))
+        .filter(|name| {
+            !name.is_empty() && name.len() <= 255 && !name.chars().any(|c| c.is_control())
+        })
         .collect();
     serde_json::to_value(names).unwrap_or(Value::Array(Vec::new()))
 }
@@ -542,19 +586,32 @@ mod tests {
         // The stub only speaks http; the cache validate() requires https, so
         // exercise the FILE layer directly (the wire layer is covered by the
         // subscription sweep tests).
-        let data_url = format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(png));
+        let data_url = format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(png)
+        );
         cache.write("key-1", &data_url).await.unwrap();
         assert_eq!(cache.read("key-1").as_deref(), Some(data_url.as_str()));
         // get() without refresh returns the cached value.
         let value = cache.get(Some("key-1"), None, false).await;
         assert_eq!(value, Value::String(data_url.clone()));
         // Unknown keys read as null.
-        let value = cache.get(Some("missing"), Some("https://example.com/i.png"), false).await;
+        let value = cache
+            .get(Some("missing"), Some("https://example.com/i.png"), false)
+            .await;
         assert_eq!(value, Value::Null);
         // Invalid keys return null without touching the disk.
-        let value = cache.get(Some(""), Some("https://example.com/i.png"), true).await;
+        let value = cache
+            .get(Some(""), Some("https://example.com/i.png"), true)
+            .await;
         assert_eq!(value, Value::Null);
-        let value = cache.get(Some(&"a".repeat(513)), Some("https://example.com/i.png"), true).await;
+        let value = cache
+            .get(
+                Some(&"a".repeat(513)),
+                Some("https://example.com/i.png"),
+                true,
+            )
+            .await;
         assert_eq!(value, Value::Null);
     }
 
@@ -564,9 +621,18 @@ mod tests {
         assert_eq!(get_process_icon(None), Value::Null);
         assert_eq!(get_process_icon(Some("")), Value::Null);
         assert_eq!(get_process_icon(Some("relative\\path.exe")), Value::Null);
-        assert_eq!(get_process_icon(Some(r"\\\\server\\share\\x.exe")), Value::Null);
-        assert_eq!(get_process_icon(Some(r"C:\Program Files\app.dll")), Value::Null);
-        assert_eq!(get_process_icon(Some(&format!("C:\\{}", "a".repeat(1100)))), Value::Null);
+        assert_eq!(
+            get_process_icon(Some(r"\\\\server\\share\\x.exe")),
+            Value::Null
+        );
+        assert_eq!(
+            get_process_icon(Some(r"C:\Program Files\app.dll")),
+            Value::Null
+        );
+        assert_eq!(
+            get_process_icon(Some(&format!("C:\\{}", "a".repeat(1100)))),
+            Value::Null
+        );
     }
 
     #[tokio::test]
@@ -574,7 +640,10 @@ mod tests {
         let temp = tempfile::TempDir::new().unwrap();
         let cache = RemoteIconCache::new(temp.path().to_path_buf(), None);
         for index in 0..(MAX_CACHE_FILES + 10) {
-            cache.write(&format!("key-{index}"), "data:image/png;base64,AAAA").await.unwrap();
+            cache
+                .write(&format!("key-{index}"), "data:image/png;base64,AAAA")
+                .await
+                .unwrap();
         }
         let remaining = std::fs::read_dir(temp.path()).unwrap().flatten().count();
         assert!(

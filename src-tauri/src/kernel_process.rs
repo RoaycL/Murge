@@ -61,7 +61,11 @@ pub trait KernelBinaryResolver: Send + Sync {
 
 /// Materializes the runtime config and cleans its workspace afterwards.
 pub trait KernelConfigStore: Send + Sync {
-    fn materialize<'a>(&'a self, binary: &'a KernelBinary, secret: &'a str) -> BoxFuture<'a, Result<KernelConfig, IpcError>>;
+    fn materialize<'a>(
+        &'a self,
+        binary: &'a KernelBinary,
+        secret: &'a str,
+    ) -> BoxFuture<'a, Result<KernelConfig, IpcError>>;
     fn cleanup<'a>(&'a self, config: &'a KernelConfig) -> BoxFuture<'a, Result<(), IpcError>>;
 }
 
@@ -71,7 +75,10 @@ pub trait KernelConfigStore: Send + Sync {
 
 /// The strict controller-secret contract: 64 lowercase hex characters.
 pub fn is_valid_secret(secret: &str) -> bool {
-    secret.len() == 64 && secret.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    secret.len() == 64
+        && secret
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 /// The shared auth secret is generated exactly once at the composition root
@@ -116,11 +123,20 @@ pub fn generate_mihomo_config(options: &Value) -> Result<String, IpcError> {
     assert_port(mixed_port, "mixed-port")?;
     assert_port(controller_port, "external-controller port")?;
     if mixed_port == controller_port {
-        return Err(IpcError::invalid_argument("mixed-port and external-controller port must differ"));
+        return Err(IpcError::invalid_argument(
+            "mixed-port and external-controller port must differ",
+        ));
     }
     for (index, port) in [http_port, socks_port].into_iter().enumerate() {
         if port != 0 {
-            assert_port(port, if index == 0 { "HTTP port" } else { "SOCKS port" })?;
+            assert_port(
+                port,
+                if index == 0 {
+                    "HTTP port"
+                } else {
+                    "SOCKS port"
+                },
+            )?;
         }
     }
     let mut active_ports = vec![mixed_port, controller_port];
@@ -135,16 +151,22 @@ pub fn generate_mihomo_config(options: &Value) -> Result<String, IpcError> {
         return Err(IpcError::invalid_argument("listener ports must differ"));
     }
     if !is_valid_secret(secret) {
-        return Err(IpcError::invalid_argument("secret must be a 64-character lowercase hex string"));
+        return Err(IpcError::invalid_argument(
+            "secret must be a 64-character lowercase hex string",
+        ));
     }
     // Phase 7 pins DIRECT; other modes are rejected before any directory is
     // created (the TS generateMihomoConfig order).
     let mode = options["mode"].as_str().unwrap_or("direct");
     if mode != "direct" {
-        return Err(IpcError::invalid_argument(format!("Unsupported mihomo mode: {mode}; Phase 7 requires 'direct'")));
+        return Err(IpcError::invalid_argument(format!(
+            "Unsupported mihomo mode: {mode}; Phase 7 requires 'direct'"
+        )));
     }
     if !matches!(log_level, "silent" | "error" | "warn" | "info" | "debug") {
-        return Err(IpcError::invalid_argument(format!("Unsupported log level: {log_level}")));
+        return Err(IpcError::invalid_argument(format!(
+            "Unsupported log level: {log_level}"
+        )));
     }
     Ok(
         [
@@ -182,24 +204,49 @@ pub fn generate_mihomo_config(options: &Value) -> Result<String, IpcError> {
 pub struct TempKernelConfigStore;
 
 impl KernelConfigStore for TempKernelConfigStore {
-    fn materialize<'a>(&'a self, _binary: &'a KernelBinary, secret: &'a str) -> BoxFuture<'a, Result<KernelConfig, IpcError>> {
+    fn materialize<'a>(
+        &'a self,
+        _binary: &'a KernelBinary,
+        secret: &'a str,
+    ) -> BoxFuture<'a, Result<KernelConfig, IpcError>> {
         let secret = secret.to_string();
         Box::pin(async move {
-            let root_dir =
-                std::env::temp_dir().join(format!("kernel-workspace-{}", crate::system_proxy::new_uuid()));
+            let root_dir = std::env::temp_dir().join(format!(
+                "kernel-workspace-{}",
+                crate::system_proxy::new_uuid()
+            ));
             std::fs::create_dir_all(&root_dir).map_err(|error| {
-                IpcError::code(code::KERNEL_SPAWN_FAILED, format!("Failed to create the kernel workspace: {error}"))
+                IpcError::code(
+                    code::KERNEL_SPAWN_FAILED,
+                    format!("Failed to create the kernel workspace: {error}"),
+                )
             })?;
             let config_path = root_dir.join("config.yaml");
             // Harmless placeholder: no listener, no proxy, no TUN/DNS.
-            std::fs::write(&config_path, format!("# Fixture kernel config (no listener configured)\nkernelSecret: {secret}\n"))
-                .map_err(|error| {
-                    IpcError::code(code::KERNEL_SPAWN_FAILED, format!("Failed to write the kernel config: {error}"))
-                })?;
+            std::fs::write(
+                &config_path,
+                format!(
+                    "# Fixture kernel config (no listener configured)\nkernelSecret: {secret}\n"
+                ),
+            )
+            .map_err(|error| {
+                IpcError::code(
+                    code::KERNEL_SPAWN_FAILED,
+                    format!("Failed to write the kernel config: {error}"),
+                )
+            })?;
             let mut env = BTreeMap::new();
             env.insert("MURGE_KERNEL_SECRET".to_string(), secret.to_string());
-            env.insert("MURGE_KERNEL_CONFIG".to_string(), config_path.to_string_lossy().to_string());
-            Ok(KernelConfig { config_path, root_dir, args: Vec::new(), env })
+            env.insert(
+                "MURGE_KERNEL_CONFIG".to_string(),
+                config_path.to_string_lossy().to_string(),
+            );
+            Ok(KernelConfig {
+                config_path,
+                root_dir,
+                args: Vec::new(),
+                env,
+            })
         })
     }
 
@@ -207,8 +254,14 @@ impl KernelConfigStore for TempKernelConfigStore {
         let config = config.clone();
         Box::pin(async move {
             // Never delete outside the workspace this store created.
-            let root = config.root_dir.canonicalize().unwrap_or_else(|_| config.root_dir.clone());
-            let child = config.config_path.canonicalize().unwrap_or_else(|_| config.config_path.clone());
+            let root = config
+                .root_dir
+                .canonicalize()
+                .unwrap_or_else(|_| config.root_dir.clone());
+            let child = config
+                .config_path
+                .canonicalize()
+                .unwrap_or_else(|_| config.config_path.clone());
             if child != root && !child.starts_with(&root) {
                 return Ok(());
             }
@@ -259,7 +312,11 @@ struct BuiltConfig {
 }
 
 impl KernelConfigStore for StrictMihomoConfigStore {
-    fn materialize<'a>(&'a self, _binary: &'a KernelBinary, secret: &'a str) -> BoxFuture<'a, Result<KernelConfig, IpcError>> {
+    fn materialize<'a>(
+        &'a self,
+        _binary: &'a KernelBinary,
+        secret: &'a str,
+    ) -> BoxFuture<'a, Result<KernelConfig, IpcError>> {
         let secret = secret.to_string();
         Box::pin(async move {
             // (1) Run EVERY filesystem-independent validation FIRST. The
@@ -301,7 +358,10 @@ impl KernelConfigStore for StrictMihomoConfigStore {
             } else {
                 std::env::temp_dir()
             };
-            let root_dir = parent.join(format!("mihomo-workspace-{}", crate::system_proxy::new_uuid()));
+            let root_dir = parent.join(format!(
+                "mihomo-workspace-{}",
+                crate::system_proxy::new_uuid()
+            ));
             std::fs::create_dir_all(&root_dir).map_err(|error| {
                 IpcError::code(
                     code::KERNEL_SPAWN_FAILED,
@@ -344,8 +404,14 @@ impl KernelConfigStore for StrictMihomoConfigStore {
                 ));
             }
             let mut env = BTreeMap::new();
-            env.insert("MIHOMO_PLATFORM".to_string(), std::env::consts::OS.to_string());
-            env.insert("MIHOMO_ARCH".to_string(), std::env::consts::ARCH.to_string());
+            env.insert(
+                "MIHOMO_PLATFORM".to_string(),
+                std::env::consts::OS.to_string(),
+            );
+            env.insert(
+                "MIHOMO_ARCH".to_string(),
+                std::env::consts::ARCH.to_string(),
+            );
             env.insert("MIHOMO_GEODATA_SEEDED".to_string(), seeded.join(","));
             let args = vec![
                 "-f".to_string(),
@@ -353,7 +419,12 @@ impl KernelConfigStore for StrictMihomoConfigStore {
                 "-d".to_string(),
                 home_dir.to_string_lossy().to_string(),
             ];
-            Ok(KernelConfig { config_path, root_dir, args, env })
+            Ok(KernelConfig {
+                config_path,
+                root_dir,
+                args,
+                env,
+            })
         })
     }
 
@@ -375,7 +446,10 @@ impl KernelConfigStore for StrictMihomoConfigStore {
             if config.root_dir != owned {
                 return Ok(());
             }
-            let child = config.config_path.canonicalize().unwrap_or_else(|_| config.config_path.clone());
+            let child = config
+                .config_path
+                .canonicalize()
+                .unwrap_or_else(|_| config.config_path.clone());
             let owned_canonical = owned.canonicalize().unwrap_or_else(|_| owned.clone());
             if child != owned_canonical && !child.starts_with(&owned_canonical) {
                 return Ok(());
@@ -408,7 +482,10 @@ impl StrictMihomoConfigStore {
                         options["geodata"] = resolve_geodata();
                     }
                     let text = crate::inspection::build_profile_kernel_config(&document, &options)?;
-                    return Ok(BuiltConfig { text, from_profile: true });
+                    return Ok(BuiltConfig {
+                        text,
+                        from_profile: true,
+                    });
                 }
             }
         }
@@ -437,7 +514,6 @@ impl StrictMihomoConfigStore {
             let _ = std::fs::remove_dir_all(&dir);
         }
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -459,7 +535,11 @@ pub trait KernelProcessSink: Send + Sync {
 pub trait KernelProcessAdapter: Send + Sync {
     /// Spawn the binary; events flow into `sink`. Returns the PID, or None
     /// when the OS did not report one (the supervisor then fails the start).
-    fn spawn(&self, binary: &KernelBinary, sink: Arc<dyn KernelProcessSink>) -> Result<Option<u32>, String>;
+    fn spawn(
+        &self,
+        binary: &KernelBinary,
+        sink: Arc<dyn KernelProcessSink>,
+    ) -> Result<Option<u32>, String>;
     /// Whether a previously recorded PID still refers to a live process.
     fn is_process_alive(&self, pid: u32) -> bool;
     /// The graceful termination signal (SIGTERM). True when delivered.
@@ -485,10 +565,14 @@ fn unix_alive(pid: u32) -> bool {
 #[cfg(windows)]
 fn windows_alive(pid: u32) -> bool {
     use windows::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
-    use windows::Win32::System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    use windows::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
     // SAFETY: plain Win32 calls on a handle this function opens and closes.
     unsafe {
-        let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return false };
+        let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+            return false;
+        };
         let mut code = 0u32;
         let alive = GetExitCodeProcess(handle, &mut code).is_ok() && code == STILL_ACTIVE.0 as u32;
         let _ = CloseHandle(handle);
@@ -504,7 +588,9 @@ fn windows_terminate(pid: u32) -> bool {
     use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
     // SAFETY: plain Win32 calls on a handle this function opens and closes.
     unsafe {
-        let Ok(handle) = OpenProcess(PROCESS_TERMINATE, false, pid) else { return false };
+        let Ok(handle) = OpenProcess(PROCESS_TERMINATE, false, pid) else {
+            return false;
+        };
         let terminated = TerminateProcess(handle, 1).is_ok();
         let _ = CloseHandle(handle);
         terminated
@@ -517,7 +603,11 @@ fn windows_terminate(pid: u32) -> bool {
 pub struct NodeKernelProcessAdapter;
 
 impl KernelProcessAdapter for NodeKernelProcessAdapter {
-    fn spawn(&self, binary: &KernelBinary, sink: Arc<dyn KernelProcessSink>) -> Result<Option<u32>, String> {
+    fn spawn(
+        &self,
+        binary: &KernelBinary,
+        sink: Arc<dyn KernelProcessSink>,
+    ) -> Result<Option<u32>, String> {
         use tokio::io::AsyncReadExt;
         // The cwd comes from the MURGE_KERNEL_CONFIG sibling contract: the
         // temp store writes config.yaml inside its workspace root.
@@ -627,7 +717,6 @@ impl KernelProcessAdapter for NodeKernelProcessAdapter {
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Binary resolvers (resolvers.ts)
 // ---------------------------------------------------------------------------
@@ -651,7 +740,9 @@ pub type VersionSelectionFn = Arc<dyn Fn() -> (String, Option<String>) + Send + 
 /// Resolve (download + verify + reuse) a specific mihomo version into its
 /// own per-version workspace (`resolvers.ts` ensureSpecificBinary).
 pub type EnsureSpecificBinaryFn = Arc<
-    dyn Fn(String) -> futures_util::future::BoxFuture<
+    dyn Fn(
+            String,
+        ) -> futures_util::future::BoxFuture<
             'static,
             Result<crate::mihomo_artifact::ResolvedMihomoBinary, IpcError>,
         > + Send
@@ -728,7 +819,13 @@ impl KernelBinaryResolver for MihomoKernelBinaryResolver {
                     .map(|dir| bundled_archive_transport(dir, &platform, &arch))
                     .transpose()?
                     .unwrap_or_else(|| self.transport.clone());
-                crate::mihomo_artifact::resolve_mihomo(&platform, arch, &self.workspace_dir, &transport).await?
+                crate::mihomo_artifact::resolve_mihomo(
+                    &platform,
+                    arch,
+                    &self.workspace_dir,
+                    &transport,
+                )
+                .await?
             };
             let mut env = BTreeMap::new();
             env.insert("MIHOMO_PLATFORM".to_string(), platform);
@@ -799,7 +896,8 @@ impl Default for FixtureKernelBinaryResolver {
     fn default() -> Self {
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         FixtureKernelBinaryResolver {
-            command: std::env::var("MURGE_KERNEL_FIXTURE_COMMAND").unwrap_or_else(|_| "node".to_string()),
+            command: std::env::var("MURGE_KERNEL_FIXTURE_COMMAND")
+                .unwrap_or_else(|_| "node".to_string()),
             fixture_path: manifest.join("../src/main/testing/kernel-fixture.mjs"),
             extra_args: Vec::new(),
             version: None,
@@ -810,13 +908,21 @@ impl Default for FixtureKernelBinaryResolver {
 impl KernelBinaryResolver for FixtureKernelBinaryResolver {
     fn resolve(&self) -> BoxFuture<'_, Result<KernelBinary, IpcError>> {
         let mut args = vec![self.fixture_path.clone()];
-        args.extend(self.extra_args.iter().cloned().map(std::path::PathBuf::from));
+        args.extend(
+            self.extra_args
+                .iter()
+                .cloned()
+                .map(std::path::PathBuf::from),
+        );
         let command = self.command.clone();
         let version = self.version.clone();
         Box::pin(async move {
             Ok(KernelBinary {
                 command: std::path::PathBuf::from(command),
-                args: args.into_iter().map(|path| path.to_string_lossy().into_owned()).collect(),
+                args: args
+                    .into_iter()
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .collect(),
                 version,
                 env: BTreeMap::new(),
             })
@@ -969,7 +1075,11 @@ impl KernelSupervisor {
     }
 
     pub fn get_status(&self) -> Value {
-        self.state.lock().expect("kernel status mutex poisoned").status.clone()
+        self.state
+            .lock()
+            .expect("kernel status mutex poisoned")
+            .status
+            .clone()
     }
 
     fn set_status(&self, patch: Value) {
@@ -991,7 +1101,9 @@ impl KernelSupervisor {
         // Rotate the oldest out under BOTH caps (the TS BoundedLogBuffer).
         let mut size: usize = state.log.iter().map(|(_, text)| text.len()).sum();
         while state.log.len() > self.options.max_log_entries || size > self.options.max_log_bytes {
-            let Some((_, oldest)) = state.log.first() else { break };
+            let Some((_, oldest)) = state.log.first() else {
+                break;
+            };
             let dropped = oldest.len();
             size = size.saturating_sub(dropped);
             state.log.remove(0);
@@ -1001,16 +1113,30 @@ impl KernelSupervisor {
     /// The materialized runtime config while a process exists (null once its
     /// exit work has cleaned the workspace).
     pub fn get_active_config(&self) -> Option<KernelConfig> {
-        self.state.lock().expect("kernel status mutex poisoned").config.clone()
+        self.state
+            .lock()
+            .expect("kernel status mutex poisoned")
+            .config
+            .clone()
     }
 
     /// Diagnostics snapshot (the TS getRecentLogs; no IPC channel exposes it).
     pub fn recent_logs(&self) -> Vec<(String, String)> {
-        self.state.lock().expect("kernel status mutex poisoned").log.clone()
+        self.state
+            .lock()
+            .expect("kernel status mutex poisoned")
+            .log
+            .clone()
     }
 
     async fn await_exit_work(&self) {
-        let task = { self.state.lock().expect("kernel status mutex poisoned").exit_work.take() };
+        let task = {
+            self.state
+                .lock()
+                .expect("kernel status mutex poisoned")
+                .exit_work
+                .take()
+        };
         if let Some(task) = task {
             let _ = task.await;
         }
@@ -1021,7 +1147,10 @@ impl KernelSupervisor {
         let _serial = self.lifecycle.lock().await;
         {
             let state = self.state.lock().expect("kernel status mutex poisoned");
-            if matches!(state.status["phase"].as_str(), Some("running") | Some("starting") | Some("stopping")) {
+            if matches!(
+                state.status["phase"].as_str(),
+                Some("running") | Some("starting") | Some("stopping")
+            ) {
                 return Ok(state.status.clone());
             }
             // A still-alive process (e.g. one that survived SIGKILL) must be
@@ -1060,11 +1189,19 @@ impl KernelSupervisor {
 
         self.handle_stale_pid();
 
-        let config = match self.deps.config_store.materialize(&binary, &self.deps.secret).await {
+        let config = match self
+            .deps
+            .config_store
+            .materialize(&binary, &self.deps.secret)
+            .await
+        {
             Ok(config) => config,
             Err(error) => return Err(self.raise_failed(error)),
         };
-        self.state.lock().expect("kernel status mutex poisoned").config = Some(config.clone());
+        self.state
+            .lock()
+            .expect("kernel status mutex poisoned")
+            .config = Some(config.clone());
 
         // Spawn with the merged args/env; events flow into the sink. The
         // bridge holds a Weak reference so the sink can never outlive (nor
@@ -1073,7 +1210,12 @@ impl KernelSupervisor {
         let supervisor: Arc<dyn KernelProcessSink> = Arc::new(SinkBridge { supervisor: weak });
         let merged = KernelBinary {
             command: binary.command.clone(),
-            args: binary.args.iter().chain(config.args.iter()).cloned().collect(),
+            args: binary
+                .args
+                .iter()
+                .chain(config.args.iter())
+                .cloned()
+                .collect(),
             version: binary.version.clone(),
             env: {
                 let mut env = binary.env.clone();
@@ -1100,13 +1242,22 @@ impl KernelSupervisor {
         };
         {
             let mut state = self.state.lock().expect("kernel status mutex poisoned");
-            state.handle = Some(SpawnedProcess { pid, watchdog: None });
+            state.handle = Some(SpawnedProcess {
+                pid,
+                watchdog: None,
+            });
         }
         self.append_log(
             "stdout",
-            &format!("[supervisor] spawned pid={pid} cmd={} {}\n", binary.command.display(), binary.args.join(" ")),
+            &format!(
+                "[supervisor] spawned pid={pid} cmd={} {}\n",
+                binary.command.display(),
+                binary.args.join(" ")
+            ),
         );
-        self.set_status(json!({ "pid": pid, "version": binary.version, "startedAt": null, "lastError": null }));
+        self.set_status(
+            json!({ "pid": pid, "version": binary.version, "startedAt": null, "lastError": null }),
+        );
         // The watchdog attaches as soon as the kernel EXISTS: the spawn→ready
         // window has a live process a killed app must not orphan.
         if let Some(attach) = self.watchdog_factory() {
@@ -1163,14 +1314,19 @@ impl KernelSupervisor {
                 let mut state = this.state.lock().expect("kernel status mutex poisoned");
                 if state.status["phase"] == "running" && state.restart_count > 0 {
                     state.restart_count = 0;
-                    state.log.push(("stdout".to_string(), "[supervisor] sustained run; crash-restart budget reset\n".to_string()));
+                    state.log.push((
+                        "stdout".to_string(),
+                        "[supervisor] sustained run; crash-restart budget reset\n".to_string(),
+                    ));
                 }
             });
         }
         Ok(())
     }
 
-    fn watchdog_factory(&self) -> Option<Arc<dyn Fn(u32) -> Arc<dyn KernelWatchdog> + Send + Sync>> {
+    fn watchdog_factory(
+        &self,
+    ) -> Option<Arc<dyn Fn(u32) -> Arc<dyn KernelWatchdog> + Send + Sync>> {
         self.deps.attach_watchdog.clone()
     }
 
@@ -1182,7 +1338,10 @@ impl KernelSupervisor {
             self.append_log("stdout", &format!("[supervisor] recorded pid={recorded} is still alive; proceeding with a fresh spawn.\n"));
         } else {
             self.set_status(json!({ "pid": null }));
-            self.append_log("stdout", &format!("[supervisor] cleared stale pid={recorded}.\n"));
+            self.append_log(
+                "stdout",
+                &format!("[supervisor] cleared stale pid={recorded}.\n"),
+            );
         }
     }
 
@@ -1195,9 +1354,16 @@ impl KernelSupervisor {
             let mut state = self.state.lock().expect("kernel status mutex poisoned");
             state.readiness = Some(sender);
         }
-        let timeout = tokio::time::timeout(Duration::from_millis(self.options.start_timeout_ms), receiver).await;
+        let timeout = tokio::time::timeout(
+            Duration::from_millis(self.options.start_timeout_ms),
+            receiver,
+        )
+        .await;
         // Detach any leftover sender so a late stdout cannot send into it.
-        self.state.lock().expect("kernel status mutex poisoned").readiness = None;
+        self.state
+            .lock()
+            .expect("kernel status mutex poisoned")
+            .readiness = None;
         match timeout {
             Ok(Ok(Ok(()))) => Ok(()),
             Ok(Ok(Err(error))) => Err(error),
@@ -1222,7 +1388,8 @@ impl KernelSupervisor {
             return true;
         }
         self.deps.adapter.kill(pid);
-        self.wait_for_exit(pid, self.options.force_kill_timeout_ms).await
+        self.wait_for_exit(pid, self.options.force_kill_timeout_ms)
+            .await
     }
 
     async fn wait_for_exit(&self, pid: u32, timeout_ms: u64) -> bool {
@@ -1244,7 +1411,10 @@ impl KernelSupervisor {
         match tokio::time::timeout(Duration::from_millis(timeout_ms), receiver).await {
             Ok(Ok(exited)) => exited,
             _ => {
-                self.state.lock().expect("kernel status mutex poisoned").exit_wait = None;
+                self.state
+                    .lock()
+                    .expect("kernel status mutex poisoned")
+                    .exit_wait = None;
                 false
             }
         }
@@ -1261,7 +1431,12 @@ impl KernelSupervisor {
         if self.get_status()["phase"] == "stopped" {
             return Ok(self.get_status());
         }
-        let has_handle = self.state.lock().expect("kernel status mutex poisoned").handle.is_some();
+        let has_handle = self
+            .state
+            .lock()
+            .expect("kernel status mutex poisoned")
+            .handle
+            .is_some();
         if !has_handle {
             // Either never started, or the process already exited. Its exit
             // work may still be removing the temp config; stop()/before-quit
@@ -1299,7 +1474,10 @@ impl KernelSupervisor {
             "phase": "failed",
             "lastError": "Kernel survived SIGKILL and may still be running."
         }));
-        Err(IpcError::code(code::KERNEL_STOP_TIMEOUT, "Kernel did not exit after SIGKILL."))
+        Err(IpcError::code(
+            code::KERNEL_STOP_TIMEOUT,
+            "Kernel did not exit after SIGKILL.",
+        ))
     }
 
     fn raise_failed(&self, error: IpcError) -> IpcError {
@@ -1309,7 +1487,12 @@ impl KernelSupervisor {
     }
 
     async fn cleanup_config(&self) {
-        let config = self.state.lock().expect("kernel status mutex poisoned").config.take();
+        let config = self
+            .state
+            .lock()
+            .expect("kernel status mutex poisoned")
+            .config
+            .take();
         if let Some(config) = config {
             let _ = self.deps.config_store.cleanup(&config).await;
         }
@@ -1352,12 +1535,20 @@ impl KernelSupervisor {
             supervisor.cleanup_config().await;
             // Resolve any pending exit wait BEFORE the status transitions so
             // stop() observes the cleaned workspace.
-            let waiter = supervisor.state.lock().expect("kernel status mutex poisoned").exit_wait.take();
+            let waiter = supervisor
+                .state
+                .lock()
+                .expect("kernel status mutex poisoned")
+                .exit_wait
+                .take();
             if let Some(sender) = waiter {
                 let _ = sender.send(true);
             }
             let is_stopping = {
-                let mut state = supervisor.state.lock().expect("kernel status mutex poisoned");
+                let mut state = supervisor
+                    .state
+                    .lock()
+                    .expect("kernel status mutex poisoned");
                 let stopping = state.is_stopping;
                 state.is_stopping = false;
                 stopping
@@ -1367,12 +1558,16 @@ impl KernelSupervisor {
                 return;
             }
             let desc = format!("Kernel {}", describe_exit(code, signal));
-            supervisor.set_status(json!({ "phase": "failed", "pid": null, "lastError": desc.clone() }));
+            supervisor
+                .set_status(json!({ "phase": "failed", "pid": null, "lastError": desc.clone() }));
             if was_running {
                 supervisor.schedule_restart(&desc);
             }
         });
-        self.state.lock().expect("kernel status mutex poisoned").exit_work = Some(task);
+        self.state
+            .lock()
+            .expect("kernel status mutex poisoned")
+            .exit_work = Some(task);
     }
 
     /// An operational error on a live child (the TS `error` event). Never
@@ -1382,10 +1577,19 @@ impl KernelSupervisor {
         {
             let mut state = self.state.lock().expect("kernel status mutex poisoned");
             if let Some(sender) = state.readiness.take() {
-                let _ = sender.send(Err(IpcError::code(code::KERNEL_SPAWN_FAILED, message.to_string())));
+                let _ = sender.send(Err(IpcError::code(
+                    code::KERNEL_SPAWN_FAILED,
+                    message.to_string(),
+                )));
             }
         }
-        let pid = self.state.lock().expect("kernel status mutex poisoned").handle.as_ref().map(|handle| handle.pid);
+        let pid = self
+            .state
+            .lock()
+            .expect("kernel status mutex poisoned")
+            .handle
+            .as_ref()
+            .map(|handle| handle.pid);
         if let Some(pid) = pid {
             if self.deps.adapter.is_process_alive(pid) {
                 self.set_status(json!({ "phase": "failed", "pid": pid, "lastError": format!("Kernel process error: {message}") }));
@@ -1402,17 +1606,31 @@ impl KernelSupervisor {
         let message = message.to_string();
         let task = tokio::spawn(async move {
             supervisor.cleanup_config().await;
-            let waiter = supervisor.state.lock().expect("kernel status mutex poisoned").exit_wait.take();
+            let waiter = supervisor
+                .state
+                .lock()
+                .expect("kernel status mutex poisoned")
+                .exit_wait
+                .take();
             if let Some(sender) = waiter {
                 let _ = sender.send(true);
             }
             supervisor.set_status(json!({ "phase": "failed", "pid": null, "lastError": format!("Kernel spawn failed: {message}") }));
         });
-        self.state.lock().expect("kernel status mutex poisoned").exit_work = Some(task);
+        self.state
+            .lock()
+            .expect("kernel status mutex poisoned")
+            .exit_work = Some(task);
     }
 
     fn schedule_restart(self: &Arc<Self>, reason: &str) {
-        if self.state.lock().expect("kernel status mutex poisoned").restart_count >= self.options.max_restarts {
+        if self
+            .state
+            .lock()
+            .expect("kernel status mutex poisoned")
+            .restart_count
+            >= self.options.max_restarts
+        {
             return;
         }
         let count = {
@@ -1421,10 +1639,18 @@ impl KernelSupervisor {
             state.restart_count
         };
         let delay = std::cmp::min(
-            self.options.backoff_ms.saturating_mul(1u64 << (count - 1).min(16)),
+            self.options
+                .backoff_ms
+                .saturating_mul(1u64 << (count - 1).min(16)),
             self.options.max_backoff_ms,
         );
-        self.append_log("stdout", &format!("[supervisor] crash detected; restart {count}/{} in {delay}ms ({reason})\n", self.options.max_restarts));
+        self.append_log(
+            "stdout",
+            &format!(
+                "[supervisor] crash detected; restart {count}/{} in {delay}ms ({reason})\n",
+                self.options.max_restarts
+            ),
+        );
         let supervisor = self.clone();
         let epoch = self.restart_epoch.load(Ordering::SeqCst);
         tokio::spawn(async move {
@@ -1433,7 +1659,12 @@ impl KernelSupervisor {
                 return; // stop()/start() invalidated the pending restart
             }
             let _serial = supervisor.lifecycle.lock().await;
-            if supervisor.state.lock().expect("kernel status mutex poisoned").handle.is_some()
+            if supervisor
+                .state
+                .lock()
+                .expect("kernel status mutex poisoned")
+                .handle
+                .is_some()
                 || supervisor.get_status()["phase"] != "failed"
             {
                 return;
@@ -1443,7 +1674,11 @@ impl KernelSupervisor {
     }
 
     fn self_weak(&self) -> std::sync::Weak<KernelSupervisor> {
-        self.self_ref.lock().expect("self ref poisoned").clone().expect("supervisor self reference set at creation")
+        self.self_ref
+            .lock()
+            .expect("self ref poisoned")
+            .clone()
+            .expect("supervisor self reference set at creation")
     }
 }
 
@@ -1478,8 +1713,18 @@ pub struct ControllerReadyKernelGateway {
 }
 
 impl ControllerReadyKernelGateway {
-    pub fn new(kernel: Arc<KernelSupervisor>, probe: Arc<dyn VersionProbe>, timeout_ms: u64, retry_ms: u64) -> Self {
-        ControllerReadyKernelGateway { kernel, probe, timeout_ms, retry_ms }
+    pub fn new(
+        kernel: Arc<KernelSupervisor>,
+        probe: Arc<dyn VersionProbe>,
+        timeout_ms: u64,
+        retry_ms: u64,
+    ) -> Self {
+        ControllerReadyKernelGateway {
+            kernel,
+            probe,
+            timeout_ms,
+            retry_ms,
+        }
     }
 
     /// Part of the KernelGateway seam (the TS shape): the dispatch reads
@@ -1528,22 +1773,39 @@ struct SinkBridge {
 
 impl KernelProcessSink for SinkBridge {
     fn stdout(&self, text: &str) {
-        let Some(supervisor) = self.supervisor.upgrade() else { return };
+        let Some(supervisor) = self.supervisor.upgrade() else {
+            return;
+        };
         supervisor.append_log("stdout", text);
         // Readiness marker test against the accumulated stdout. The buffer is
         // only fed while a readiness waiter exists (the TS contract), so the
         // rolling log never accumulates a second copy of steady-state output.
         let pattern = supervisor.options.readiness_pattern.clone();
         if let Some(pattern) = pattern {
-            let pending = { supervisor.state.lock().expect("kernel status mutex poisoned").readiness.is_some() };
+            let pending = {
+                supervisor
+                    .state
+                    .lock()
+                    .expect("kernel status mutex poisoned")
+                    .readiness
+                    .is_some()
+            };
             if pending {
                 let matched = {
-                    let mut state = supervisor.state.lock().expect("kernel status mutex poisoned");
+                    let mut state = supervisor
+                        .state
+                        .lock()
+                        .expect("kernel status mutex poisoned");
                     state.stdout_buf.push_str(text);
                     state.stdout_buf.contains(&pattern)
                 };
                 if matched {
-                    let sender = supervisor.state.lock().expect("kernel status mutex poisoned").readiness.take();
+                    let sender = supervisor
+                        .state
+                        .lock()
+                        .expect("kernel status mutex poisoned")
+                        .readiness
+                        .take();
                     if let Some(sender) = sender {
                         let _ = sender.send(Ok(()));
                     }
@@ -1559,12 +1821,16 @@ impl KernelProcessSink for SinkBridge {
     }
 
     fn exit(&self, code: Option<i32>, signal: Option<String>) {
-        let Some(supervisor) = self.supervisor.upgrade() else { return };
+        let Some(supervisor) = self.supervisor.upgrade() else {
+            return;
+        };
         supervisor.handle_exit(code, signal);
     }
 
     fn error(&self, message: &str) {
-        let Some(supervisor) = self.supervisor.upgrade() else { return };
+        let Some(supervisor) = self.supervisor.upgrade() else {
+            return;
+        };
         supervisor.handle_error(message);
     }
 }
@@ -1574,7 +1840,11 @@ fn describe_exit(code: Option<i32>, signal: Option<String>) -> String {
     if let Some(signal) = signal {
         return format!("terminated by {signal}");
     }
-    format!("exited with code {}", code.map(|c| c.to_string()).unwrap_or_else(|| "unknown".to_string()))
+    format!(
+        "exited with code {}",
+        code.map(|c| c.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1596,12 +1866,17 @@ pub(crate) mod tests {
             transport: crate::mihomo_artifact::real_download_transport(),
             kernel_enabled: Arc::new(|| true),
             bundled_archive_dir: None,
-            version_selection: Some(Arc::new(|| ("specific".to_string(), Some("v1.19.31".to_string())))),
+            version_selection: Some(Arc::new(|| {
+                ("specific".to_string(), Some("v1.19.31".to_string()))
+            })),
             ensure_specific_binary: Some(Arc::new(|version| {
                 Box::pin(async move {
                     assert_eq!(version, "v1.19.31");
                     Ok(crate::mihomo_artifact::ResolvedMihomoBinary {
-                        path: std::env::temp_dir().join("murge-versions").join("1.19.31").join("mihomo"),
+                        path: std::env::temp_dir()
+                            .join("murge-versions")
+                            .join("1.19.31")
+                            .join("mihomo"),
                         version: "1.19.31".to_string(),
                         asset: crate::mihomo_artifact::MihomoAsset {
                             platform: "linux".to_string(),
@@ -1625,7 +1900,15 @@ pub(crate) mod tests {
         assert_eq!(binary.version.as_deref(), Some("1.19.31"));
         assert!(binary.command.ends_with("mihomo"));
         // The env still carries the platform identity (the TS parity).
-        assert_eq!(binary.env.get("MIHOMO_PLATFORM").map(String::as_str), Some(std::env::consts::OS.replace("macos", "darwin").replace("windows", "win32").as_str()));
+        assert_eq!(
+            binary.env.get("MIHOMO_PLATFORM").map(String::as_str),
+            Some(
+                std::env::consts::OS
+                    .replace("macos", "darwin")
+                    .replace("windows", "win32")
+                    .as_str()
+            )
+        );
     }
 
     #[tokio::test]
@@ -1722,14 +2005,23 @@ pub(crate) mod tests {
         }
 
         fn resolve_cleanup(&self) {
-            if let Some(sender) = self.cleanup_resolvers.lock().expect("resolvers poisoned").pop() {
+            if let Some(sender) = self
+                .cleanup_resolvers
+                .lock()
+                .expect("resolvers poisoned")
+                .pop()
+            {
                 let _ = sender.send(());
             }
         }
     }
 
     impl KernelConfigStore for StubStore {
-        fn materialize<'a>(&'a self, _binary: &'a KernelBinary, secret: &'a str) -> BoxFuture<'a, Result<KernelConfig, IpcError>> {
+        fn materialize<'a>(
+            &'a self,
+            _binary: &'a KernelBinary,
+            secret: &'a str,
+        ) -> BoxFuture<'a, Result<KernelConfig, IpcError>> {
             let secret = secret.to_string();
             Box::pin(async move {
                 self.materialize_calls.fetch_add(1, Ordering::SeqCst);
@@ -1749,13 +2041,19 @@ pub(crate) mod tests {
         fn cleanup<'a>(&'a self, config: &'a KernelConfig) -> BoxFuture<'a, Result<(), IpcError>> {
             let config = config.clone();
             Box::pin(async move {
-                self.cleanup_calls.lock().expect("cleanup poisoned").push(config);
+                self.cleanup_calls
+                    .lock()
+                    .expect("cleanup poisoned")
+                    .push(config);
                 self.cleanup_started.fetch_add(1, Ordering::SeqCst);
                 if !self.hold_cleanup.load(Ordering::SeqCst) {
                     return Ok(());
                 }
                 let (sender, receiver) = tokio::sync::oneshot::channel();
-                self.cleanup_resolvers.lock().expect("resolvers poisoned").push(sender);
+                self.cleanup_resolvers
+                    .lock()
+                    .expect("resolvers poisoned")
+                    .push(sender);
                 let _ = receiver.await;
                 Ok(())
             })
@@ -1799,7 +2097,11 @@ pub(crate) mod tests {
         }
 
         fn last_handle(&self) -> Option<Arc<FakeHandleState>> {
-            self.handles.lock().expect("handles poisoned").last().cloned()
+            self.handles
+                .lock()
+                .expect("handles poisoned")
+                .last()
+                .cloned()
         }
 
         fn emit_stdout(&self, text: &str) {
@@ -1822,8 +2124,15 @@ pub(crate) mod tests {
     }
 
     impl KernelProcessAdapter for FakeAdapter {
-        fn spawn(&self, binary: &KernelBinary, sink: Arc<dyn KernelProcessSink>) -> Result<Option<u32>, String> {
-            self.spawn_calls.lock().expect("spawn poisoned").push(binary.clone());
+        fn spawn(
+            &self,
+            binary: &KernelBinary,
+            sink: Arc<dyn KernelProcessSink>,
+        ) -> Result<Option<u32>, String> {
+            self.spawn_calls
+                .lock()
+                .expect("spawn poisoned")
+                .push(binary.clone());
             *self.last_sink.lock().expect("sink poisoned") = Some(sink);
             let pid = self
                 .spawn_pid
@@ -1837,7 +2146,10 @@ pub(crate) mod tests {
                 on_sigkill_exits: AtomicBool::new(true),
                 exited: AtomicBool::new(false),
             });
-            self.handles.lock().expect("handles poisoned").push(state.clone());
+            self.handles
+                .lock()
+                .expect("handles poisoned")
+                .push(state.clone());
             if let Some(pid) = pid {
                 self.alive_pids.lock().expect("alive poisoned").insert(pid);
             }
@@ -1845,7 +2157,10 @@ pub(crate) mod tests {
         }
 
         fn is_process_alive(&self, pid: u32) -> bool {
-            self.alive_pids.lock().expect("alive poisoned").contains(&pid)
+            self.alive_pids
+                .lock()
+                .expect("alive poisoned")
+                .contains(&pid)
         }
 
         fn terminate(&self, pid: u32) -> bool {
@@ -1857,7 +2172,11 @@ pub(crate) mod tests {
                 .find(|handle| handle.pid == Some(pid))
                 .cloned();
             let Some(handle) = handle else { return false };
-            handle.signals.lock().expect("signals poisoned").push("SIGTERM".to_string());
+            handle
+                .signals
+                .lock()
+                .expect("signals poisoned")
+                .push("SIGTERM".to_string());
             if handle.on_sigterm_exits.load(Ordering::SeqCst) {
                 self.emit_exit(Some(0), None);
             }
@@ -1873,7 +2192,11 @@ pub(crate) mod tests {
                 .find(|handle| handle.pid == Some(pid))
                 .cloned();
             let Some(handle) = handle else { return false };
-            handle.signals.lock().expect("signals poisoned").push("SIGKILL".to_string());
+            handle
+                .signals
+                .lock()
+                .expect("signals poisoned")
+                .push("SIGKILL".to_string());
             if handle.on_sigkill_exits.load(Ordering::SeqCst) {
                 self.emit_exit(None, Some("SIGKILL".to_string()));
             }
@@ -1915,7 +2238,12 @@ pub(crate) mod tests {
             },
             options,
         );
-        Harness { supervisor, adapter, resolver, store }
+        Harness {
+            supervisor,
+            adapter,
+            resolver,
+            store,
+        }
     }
 
     async fn wait_for(condition: impl Fn() -> bool) {
@@ -1929,7 +2257,12 @@ pub(crate) mod tests {
     }
 
     fn readiness_pending(supervisor: &KernelSupervisor) -> bool {
-        supervisor.state.lock().expect("state poisoned").readiness.is_some()
+        supervisor
+            .state
+            .lock()
+            .expect("state poisoned")
+            .readiness
+            .is_some()
     }
 
     /// Start on a task and drive to readiness by emitting the fixture marker
@@ -1945,7 +2278,13 @@ pub(crate) mod tests {
     }
 
     fn error_code(error: &IpcError) -> String {
-        error.0.splitn(2, "::").next().unwrap_or("").trim_start_matches("PROTOCOL_ERROR:").to_string()
+        error
+            .0
+            .splitn(2, "::")
+            .next()
+            .unwrap_or("")
+            .trim_start_matches("PROTOCOL_ERROR:")
+            .to_string()
     }
 
     fn signals(handle: &Arc<FakeHandleState>) -> Vec<String> {
@@ -1962,7 +2301,11 @@ pub(crate) mod tests {
         assert_eq!(h.resolver.resolve_calls.load(Ordering::SeqCst), 1);
         assert_eq!(h.store.materialize_calls.load(Ordering::SeqCst), 1);
         // The fixture-ready line is captured into the rolling log.
-        assert!(h.supervisor.recent_logs().iter().any(|(_, text)| text.contains("fixture-ready")));
+        assert!(h
+            .supervisor
+            .recent_logs()
+            .iter()
+            .any(|(_, text)| text.contains("fixture-ready")));
     }
 
     #[tokio::test]
@@ -2000,7 +2343,10 @@ pub(crate) mod tests {
         start_to_running(&h).await;
         let status = h.supervisor.stop().await.unwrap();
         assert_eq!(status["phase"], "stopped");
-        assert_eq!(signals(&h.adapter.last_handle().unwrap()), vec!["SIGTERM".to_string()]);
+        assert_eq!(
+            signals(&h.adapter.last_handle().unwrap()),
+            vec!["SIGTERM".to_string()]
+        );
         assert_eq!(h.supervisor.get_status()["phase"], "stopped");
     }
 
@@ -2013,10 +2359,17 @@ pub(crate) mod tests {
             ..SupervisorOptions::default()
         });
         start_to_running(&h).await;
-        h.adapter.last_handle().unwrap().on_sigterm_exits.store(false, Ordering::SeqCst);
+        h.adapter
+            .last_handle()
+            .unwrap()
+            .on_sigterm_exits
+            .store(false, Ordering::SeqCst);
         let status = h.supervisor.stop().await.unwrap();
         assert_eq!(status["phase"], "stopped");
-        assert_eq!(signals(&h.adapter.last_handle().unwrap()), vec!["SIGTERM".to_string(), "SIGKILL".to_string()]);
+        assert_eq!(
+            signals(&h.adapter.last_handle().unwrap()),
+            vec!["SIGTERM".to_string(), "SIGKILL".to_string()]
+        );
     }
 
     #[tokio::test]
@@ -2073,7 +2426,11 @@ pub(crate) mod tests {
         wait_for(|| readiness_pending(&h.supervisor)).await;
         let handle = h.adapter.last_handle().unwrap();
         let pid = handle.pid.unwrap();
-        h.adapter.alive_pids.lock().expect("alive poisoned").remove(&pid);
+        h.adapter
+            .alive_pids
+            .lock()
+            .expect("alive poisoned")
+            .remove(&pid);
         h.adapter.emit_error("async ENOENT");
 
         let error = start_task.await.unwrap().unwrap_err();
@@ -2189,7 +2546,13 @@ pub(crate) mod tests {
         let status = h.supervisor.stop().await.unwrap();
         assert_eq!(status["phase"], "stopped");
         assert_eq!(h.store.cleanup_count(), 1);
-        assert!(h.supervisor.state.lock().expect("state poisoned").handle.is_none());
+        assert!(h
+            .supervisor
+            .state
+            .lock()
+            .expect("state poisoned")
+            .handle
+            .is_none());
     }
 
     #[tokio::test]
@@ -2223,7 +2586,11 @@ pub(crate) mod tests {
     async fn clears_a_stale_recorded_pid_before_spawning() {
         let h = create_harness();
         // A live, unrelated pid and a recorded pid that is no longer alive.
-        h.adapter.alive_pids.lock().expect("alive poisoned").insert(50);
+        h.adapter
+            .alive_pids
+            .lock()
+            .expect("alive poisoned")
+            .insert(50);
         h.supervisor.state.lock().expect("state poisoned").status["pid"] = json!(99999);
         let status = start_to_running(&h).await;
         assert_ne!(status["pid"], 99999);
@@ -2270,23 +2637,31 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn resolver_failure_lands_as_failed_with_the_unsupported_copy() {
         let h = create_harness();
-        *h.resolver.error.lock().expect("err poisoned") =
-            Some(IpcError::unsupported(crate::kernel_process::DISABLED_RESOLVER_MESSAGE));
+        *h.resolver.error.lock().expect("err poisoned") = Some(IpcError::unsupported(
+            crate::kernel_process::DISABLED_RESOLVER_MESSAGE,
+        ));
         let error = h.supervisor.start().await.unwrap_err();
         assert_eq!(
             error.0,
-            format!("PROTOCOL_ERROR:UNSUPPORTED::{}", crate::kernel_process::DISABLED_RESOLVER_MESSAGE)
+            format!(
+                "PROTOCOL_ERROR:UNSUPPORTED::{}",
+                crate::kernel_process::DISABLED_RESOLVER_MESSAGE
+            )
         );
         let status = h.supervisor.get_status();
         assert_eq!(status["phase"], "failed");
-        assert_eq!(status["lastError"], crate::kernel_process::DISABLED_RESOLVER_MESSAGE);
+        assert_eq!(
+            status["lastError"],
+            crate::kernel_process::DISABLED_RESOLVER_MESSAGE
+        );
         assert_eq!(h.adapter.spawn_count(), 0);
     }
 
     #[tokio::test]
     async fn config_store_failure_raises_failed() {
         let h = create_harness();
-        *h.store.materialize_error.lock().expect("err poisoned") = Some("disk exploded".to_string());
+        *h.store.materialize_error.lock().expect("err poisoned") =
+            Some("disk exploded".to_string());
         let error = h.supervisor.start().await.unwrap_err();
         assert_eq!(error_code(&error), "KERNEL_SPAWN_FAILED");
         assert_eq!(h.supervisor.get_status()["lastError"], "disk exploded");
@@ -2303,8 +2678,12 @@ pub(crate) mod tests {
         h.supervisor.append_log("stdout", "aaa");
         h.supervisor.append_log("stdout", "bbbb");
         h.supervisor.append_log("stderr", "cccc"); // rotates "aaa" out
-        let texts: Vec<String> =
-            h.supervisor.recent_logs().into_iter().map(|(_, text)| text).collect();
+        let texts: Vec<String> = h
+            .supervisor
+            .recent_logs()
+            .into_iter()
+            .map(|(_, text)| text)
+            .collect();
         assert_eq!(texts, vec!["bbbb".to_string(), "cccc".to_string()]);
 
         let h = create_harness_with(SupervisorOptions {
@@ -2315,8 +2694,12 @@ pub(crate) mod tests {
         h.supervisor.append_log("stdout", "a");
         h.supervisor.append_log("stdout", "b");
         h.supervisor.append_log("stdout", "c");
-        let texts: Vec<String> =
-            h.supervisor.recent_logs().into_iter().map(|(_, text)| text).collect();
+        let texts: Vec<String> = h
+            .supervisor
+            .recent_logs()
+            .into_iter()
+            .map(|(_, text)| text)
+            .collect();
         assert_eq!(texts, vec!["b".to_string(), "c".to_string()]);
     }
 
@@ -2325,8 +2708,10 @@ pub(crate) mod tests {
     #[test]
     fn strict_config_generation_is_byte_shaped_like_the_ts_output() {
         let secret = "a".repeat(64);
-        let text =
-            generate_mihomo_config(&json!({ "mixedPort": 7890, "controllerPort": 9090, "secret": secret })).unwrap();
+        let text = generate_mihomo_config(
+            &json!({ "mixedPort": 7890, "controllerPort": 9090, "secret": secret }),
+        )
+        .unwrap();
         assert!(text.contains("mixed-port: 7890"));
         assert!(text.contains("allow-lan: false"));
         assert!(text.contains("bind-address: 127.0.0.1"));
@@ -2353,24 +2738,44 @@ pub(crate) mod tests {
     fn strict_config_rejects_invalid_inputs() {
         let secret = "a".repeat(64);
         // Privileged + out-of-range + missing ports are all rejected (TS copies).
-        assert!(generate_mihomo_config(&json!({ "mixedPort": 0, "controllerPort": 9090, "secret": secret })).is_err());
-        assert!(generate_mihomo_config(&json!({ "mixedPort": 80, "controllerPort": 9090, "secret": secret })).is_err());
-        assert!(generate_mihomo_config(&json!({ "mixedPort": 65536, "controllerPort": 9090, "secret": secret })).is_err());
+        assert!(generate_mihomo_config(
+            &json!({ "mixedPort": 0, "controllerPort": 9090, "secret": secret })
+        )
+        .is_err());
+        assert!(generate_mihomo_config(
+            &json!({ "mixedPort": 80, "controllerPort": 9090, "secret": secret })
+        )
+        .is_err());
+        assert!(generate_mihomo_config(
+            &json!({ "mixedPort": 65536, "controllerPort": 9090, "secret": secret })
+        )
+        .is_err());
         // mixed-port/controller collision.
-        assert!(generate_mihomo_config(&json!({ "mixedPort": 9090, "controllerPort": 9090, "secret": secret })).is_err());
+        assert!(generate_mihomo_config(
+            &json!({ "mixedPort": 9090, "controllerPort": 9090, "secret": secret })
+        )
+        .is_err());
         // HTTP-port collision with the mixed port.
         assert!(generate_mihomo_config(&json!({ "mixedPort": 7890, "controllerPort": 9090, "httpPort": 7890, "secret": secret })).is_err());
-        assert!(generate_mihomo_config(&json!({ "mixedPort": 7890, "controllerPort": 9090, "secret": "nothex" })).is_err());
+        assert!(generate_mihomo_config(
+            &json!({ "mixedPort": 7890, "controllerPort": 9090, "secret": "nothex" })
+        )
+        .is_err());
         assert!(generate_mihomo_config(&json!({ "mixedPort": 7890, "controllerPort": 9090, "logLevel": "verbose", "secret": secret })).is_err());
-        let error = generate_mihomo_config(&json!({ "mixedPort": 80, "controllerPort": 9090, "secret": secret }))
-            .unwrap_err()
-            .0;
+        let error = generate_mihomo_config(
+            &json!({ "mixedPort": 80, "controllerPort": 9090, "secret": secret }),
+        )
+        .unwrap_err()
+        .0;
         assert!(error.contains("Invalid mixed-port: must be an unprivileged integer port between 1024 and 65535, got 80"), "{error}");
         // Non-direct mode is rejected with the Phase-7 copy.
         let error = generate_mihomo_config(&json!({ "mixedPort": 7890, "controllerPort": 9090, "mode": "global", "secret": secret }))
             .unwrap_err()
             .0;
-        assert!(error.contains("Unsupported mihomo mode: global; Phase 7 requires 'direct'"), "{error}");
+        assert!(
+            error.contains("Unsupported mihomo mode: global; Phase 7 requires 'direct'"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -2380,7 +2785,10 @@ pub(crate) mod tests {
         assert!(!is_valid_secret(&"A".repeat(64)));
         assert!(!is_valid_secret(&"g".repeat(64)));
         let secret = random_secret();
-        assert!(is_valid_secret(&secret), "generated secrets must satisfy the contract");
+        assert!(
+            is_valid_secret(&secret),
+            "generated secrets must satisfy the contract"
+        );
         assert_ne!(random_secret(), random_secret());
     }
 
@@ -2430,16 +2838,22 @@ pub(crate) mod tests {
             env: BTreeMap::new(),
         };
         let config = store.materialize(&binary, &random_secret()).await.unwrap();
-        assert!(config.root_dir.to_string_lossy().contains("mihomo-workspace-"));
+        assert!(config
+            .root_dir
+            .to_string_lossy()
+            .contains("mihomo-workspace-"));
         let text = std::fs::read_to_string(&config.config_path).unwrap();
         assert!(text.contains("mixed-port: 7897"));
         assert!(text.contains("external-controller: 127.0.0.1:9097"));
-        assert_eq!(config.args, vec![
-            "-f".to_string(),
-            config.config_path.to_string_lossy().to_string(),
-            "-d".to_string(),
-            home.to_string_lossy().to_string()
-        ]);
+        assert_eq!(
+            config.args,
+            vec![
+                "-f".to_string(),
+                config.config_path.to_string_lossy().to_string(),
+                "-d".to_string(),
+                home.to_string_lossy().to_string()
+            ]
+        );
         assert!(config.env.contains_key("MIHOMO_PLATFORM"));
         store.cleanup(&config).await.unwrap();
         assert!(!config.root_dir.exists());
@@ -2474,7 +2888,10 @@ pub(crate) mod tests {
         };
         let config = store.materialize(&binary, &random_secret()).await.unwrap();
         let text = std::fs::read_to_string(&config.config_path).unwrap();
-        assert!(crate::kernel_config_validation::mihomo_config_errors(&text).is_empty(), "{text}");
+        assert!(
+            crate::kernel_config_validation::mihomo_config_errors(&text).is_empty(),
+            "{text}"
+        );
         store.cleanup(&config).await.unwrap();
     }
 
@@ -2506,18 +2923,32 @@ pub(crate) mod tests {
         };
         let error = store.materialize(&binary, "").await.unwrap_err();
         assert!(
-            error.0.contains("Mihomo controller secret must be a 64-character lowercase hex string"),
+            error
+                .0
+                .contains("Mihomo controller secret must be a 64-character lowercase hex string"),
             "{}",
             error.0
         );
         let error = store.materialize(&binary, "short").await.unwrap_err();
-        assert!(error.0.starts_with("PROTOCOL_ERROR:INVALID_ARGUMENT::"), "{}", error.0);
+        assert!(
+            error.0.starts_with("PROTOCOL_ERROR:INVALID_ARGUMENT::"),
+            "{}",
+            error.0
+        );
         let children: Vec<_> = std::fs::read_dir(base.path())
             .unwrap()
             .filter_map(|entry| entry.ok())
-            .filter(|entry| entry.file_name().to_string_lossy().starts_with("mihomo-workspace-"))
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("mihomo-workspace-")
+            })
             .collect();
-        assert!(children.is_empty(), "leaked workspace children: {children:?}");
+        assert!(
+            children.is_empty(),
+            "leaked workspace children: {children:?}"
+        );
     }
 
     #[tokio::test]
@@ -2566,16 +2997,26 @@ pub(crate) mod tests {
         };
         let error = store.materialize(&binary, &secret).await.unwrap_err();
         assert!(
-            error.0.starts_with("PROTOCOL_ERROR:INVALID_ARGUMENT::配置文件构建失败："),
+            error
+                .0
+                .starts_with("PROTOCOL_ERROR:INVALID_ARGUMENT::配置文件构建失败："),
             "{}",
             error.0
         );
         let children: Vec<_> = std::fs::read_dir(base.path())
             .unwrap()
             .filter_map(|entry| entry.ok())
-            .filter(|entry| entry.file_name().to_string_lossy().starts_with("mihomo-workspace-"))
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("mihomo-workspace-")
+            })
             .collect();
-        assert!(children.is_empty(), "leaked workspace children: {children:?}");
+        assert!(
+            children.is_empty(),
+            "leaked workspace children: {children:?}"
+        );
     }
 
     #[tokio::test]
@@ -2626,7 +3067,10 @@ pub(crate) mod tests {
             }
             fn stderr(&self, _text: &str) {}
             fn exit(&self, code: Option<i32>, signal: Option<String>) {
-                self.exits.lock().expect("exits poisoned").push((code, signal));
+                self.exits
+                    .lock()
+                    .expect("exits poisoned")
+                    .push((code, signal));
             }
             fn error(&self, _message: &str) {}
         }
@@ -2640,7 +3084,13 @@ pub(crate) mod tests {
             env: BTreeMap::new(),
         };
         let pid = adapter
-            .spawn(&binary, Arc::new(CollectSink { exits: exits.clone(), lines: lines.clone() }))
+            .spawn(
+                &binary,
+                Arc::new(CollectSink {
+                    exits: exits.clone(),
+                    lines: lines.clone(),
+                }),
+            )
             .unwrap()
             .unwrap();
         assert!(pid > 0);
@@ -2655,7 +3105,11 @@ pub(crate) mod tests {
         let exits = exits.lock().expect("exits poisoned");
         assert_eq!(exits.len(), 1);
         // Terminated by SIGTERM (signal 15) — not a clean code-0 exit.
-        assert!(exits[0].1.is_some(), "expected a signal exit, got {:?}", exits[0]);
+        assert!(
+            exits[0].1.is_some(),
+            "expected a signal exit, got {:?}",
+            exits[0]
+        );
     }
 
     // -- controller-ready gateway -------------------------------------------
@@ -2680,7 +3134,9 @@ pub(crate) mod tests {
         let h = create_harness();
         let status = start_to_running(&h).await;
         let _ = status;
-        let probe = Arc::new(ScriptedProbe { failures: std::sync::atomic::AtomicU32::new(2) });
+        let probe = Arc::new(ScriptedProbe {
+            failures: std::sync::atomic::AtomicU32::new(2),
+        });
         let gateway = ControllerReadyKernelGateway::new(h.supervisor.clone(), probe, 100, 1);
         let status = gateway.start().await.unwrap();
         assert_eq!(status["phase"], "running");
@@ -2691,7 +3147,9 @@ pub(crate) mod tests {
         let h = create_harness();
         start_to_running(&h).await;
         // Always-failing probe (u32::MAX failures).
-        let probe = Arc::new(ScriptedProbe { failures: std::sync::atomic::AtomicU32::new(u32::MAX) });
+        let probe = Arc::new(ScriptedProbe {
+            failures: std::sync::atomic::AtomicU32::new(u32::MAX),
+        });
         let gateway = ControllerReadyKernelGateway::new(h.supervisor.clone(), probe, 20, 1);
         let error = gateway.start().await.unwrap_err();
         assert_eq!(error_code(&error), "KERNEL_START_TIMEOUT");
@@ -2705,9 +3163,12 @@ pub(crate) mod tests {
     async fn gateway_passes_through_a_non_running_start() {
         let h = create_harness();
         // A failing resolver → start fails before any probe would matter.
-        *h.resolver.error.lock().expect("err poisoned") =
-            Some(IpcError::unsupported(crate::kernel_process::DISABLED_RESOLVER_MESSAGE));
-        let probe = Arc::new(ScriptedProbe { failures: std::sync::atomic::AtomicU32::new(1) });
+        *h.resolver.error.lock().expect("err poisoned") = Some(IpcError::unsupported(
+            crate::kernel_process::DISABLED_RESOLVER_MESSAGE,
+        ));
+        let probe = Arc::new(ScriptedProbe {
+            failures: std::sync::atomic::AtomicU32::new(1),
+        });
         let gateway = ControllerReadyKernelGateway::new(h.supervisor.clone(), probe, 100, 1);
         assert!(gateway.start().await.is_err());
         // No probe side effects leaked into a running kernel.

@@ -18,7 +18,7 @@
 //! engine message after the prefix is engine-specific text (boa vs V8),
 //! matching the TS `error.message.split('\n')[0]` shape.
 
-use boa_engine::{Context, JsValue, Source, js_string};
+use boa_engine::{js_string, Context, JsValue, Source};
 
 /// The TS `timeout: 2000` is wall-clock; the loop trap is the engine-native
 /// bound with equivalent effect (a runaway script aborts with an error).
@@ -53,7 +53,12 @@ fn fresh_context() -> Context {
 /// First line of the engine error text, matching the TS
 /// `error.message.split('\n')[0]` shape.
 fn first_line(error: &boa_engine::JsError) -> String {
-    error.to_string().lines().next().unwrap_or_default().to_string()
+    error
+        .to_string()
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// Drain the sandbox `__messages` array into the warnings order. The array
@@ -61,7 +66,10 @@ fn first_line(error: &boa_engine::JsError) -> String {
 /// JS `String` form via `display`.
 fn drain_messages(context: &mut Context) -> Vec<String> {
     let mut messages = Vec::new();
-    let Ok(array_value) = context.global_object().get(js_string!("__messages"), context) else {
+    let Ok(array_value) = context
+        .global_object()
+        .get(js_string!("__messages"), context)
+    else {
         return messages;
     };
     let Ok(array) = array_value.to_object(context) else {
@@ -131,14 +139,25 @@ pub fn run_js_override(content: &str, config: &serde_json::Value) -> RunJsOverri
     let config_value = JsValue::from_json(config, &mut context).unwrap_or(JsValue::undefined());
     let global = context.global_object();
     if global
-        .set(js_string!("config"), config_value.clone(), false, &mut context)
+        .set(
+            js_string!("config"),
+            config_value.clone(),
+            false,
+            &mut context,
+        )
         .is_err()
     {
         warnings.push("JS 覆写 main(config) 执行失败：config 不可写".to_string());
-        return RunJsOverride { next: config.clone(), warnings };
+        return RunJsOverride {
+            next: config.clone(),
+            warnings,
+        };
     }
     if let Err(error) = context.eval(Source::from_bytes(INVOKE_MAIN.as_bytes())) {
-        warnings.push(format!("JS 覆写 main(config) 执行失败：{}", first_line(&error)));
+        warnings.push(format!(
+            "JS 覆写 main(config) 执行失败：{}",
+            first_line(&error)
+        ));
     }
 
     let returned = context
@@ -182,7 +201,6 @@ pub fn validate_js_override(content: &str) -> Option<String> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,7 +233,11 @@ mod tests {
         );
         assert_eq!(
             result.warnings,
-            vec!["a 1".to_string(), "warn: careful".to_string(), "error: bad".to_string()]
+            vec![
+                "a 1".to_string(),
+                "warn: careful".to_string(),
+                "error: bad".to_string()
+            ]
         );
     }
 
@@ -227,7 +249,11 @@ mod tests {
         );
         assert_eq!(result.next, json!({"mode": "rule"}));
         assert_eq!(result.warnings.len(), 1);
-        assert!(result.warnings[0].starts_with("JS 覆写 main(config) 执行失败："), "{}", result.warnings[0]);
+        assert!(
+            result.warnings[0].starts_with("JS 覆写 main(config) 执行失败："),
+            "{}",
+            result.warnings[0]
+        );
     }
 
     #[test]
@@ -235,12 +261,19 @@ mod tests {
         let result = run_js_override("function main( {{{", &json!({}));
         assert_eq!(result.next, json!({}));
         assert_eq!(result.warnings.len(), 1);
-        assert!(result.warnings[0].starts_with("JS 覆写脚本执行失败："), "{}", result.warnings[0]);
+        assert!(
+            result.warnings[0].starts_with("JS 覆写脚本执行失败："),
+            "{}",
+            result.warnings[0]
+        );
     }
 
     #[test]
     fn validate_accepts_a_main_definition() {
-        assert_eq!(validate_js_override("function main(c) { c.mode = 'global' }"), None);
+        assert_eq!(
+            validate_js_override("function main(c) { c.mode = 'global' }"),
+            None
+        );
     }
 
     #[test]
@@ -267,7 +300,11 @@ mod tests {
         );
         assert_eq!(result.next, json!({}));
         assert_eq!(result.warnings.len(), 1);
-        assert!(result.warnings[0].starts_with("JS 覆写 main(config) 执行失败："), "{}", result.warnings[0]);
+        assert!(
+            result.warnings[0].starts_with("JS 覆写 main(config) 执行失败："),
+            "{}",
+            result.warnings[0]
+        );
     }
 
     #[test]
@@ -278,6 +315,9 @@ mod tests {
         );
         // Node-isms are all unreachable: the sandbox exposes only the standard
         // `globalThis` (ES2020), which carries no Node surface.
-        assert_eq!(result.next, json!({"leaked": "undefined|undefined|undefined"}));
+        assert_eq!(
+            result.next,
+            json!({"leaked": "undefined|undefined|undefined"})
+        );
     }
 }

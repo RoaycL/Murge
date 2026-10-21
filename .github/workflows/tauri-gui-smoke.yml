@@ -1,0 +1,51 @@
+name: Tauri Windows GUI smoke
+
+on:
+  push:
+    branches: [tauri]
+  pull_request:
+    branches: [tauri]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tauri-gui-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gui-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: windows-x64
+      - run: npm ci --include=dev
+      - run: npm run tauri:bridge
+      - name: Check generated bridge is unchanged
+        run: git diff --exit-code -- src/renderer/src/platform/generated/desktop-api.ts
+      # TODO: installed-package/upgrade smoke follows the installer workstream.
+      - run: npm run tauri:build -- --no-bundle --target x86_64-pc-windows-msvc
+      - name: Prepare Electron comparison executable and renderer
+        run: npx install-electron --no
+      - run: npm run build
+      - name: Verify native window, live renderer IPC, stability and normal exit
+        run: node scripts/ci-tauri-gui-smoke.mjs --compare-electron
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tauri-gui-evidence
+          path: ${{ runner.temp }}/tauri-gui-evidence/
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,74 @@
+name: Tauri Rust
+
+on:
+  push:
+    branches: [tauri]
+  pull_request:
+    branches: [tauri]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tauri-rust-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # The pinned Linux catalog contains arm64, not linux/x64. Run the
+        # actual matching platform rather than skipping host-dependent tests.
+        os: [ubuntu-24.04-arm, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Linux WebKit and GUI development libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - run: npm ci --include=dev
+      - run: npm run tauri:bridge
+      - name: Check generated bridge is unchanged
+        run: git diff --exit-code -- src/renderer/src/platform/generated/desktop-api.ts
+      - run: npm run kernel:prepare
+      - name: Prepare pinned native assets and absolute Node fixture path
+        run: node scripts/ci-tauri-prepare.mjs
+      - name: Rust formatting
+        working-directory: src-tauri
+        run: cargo fmt --check
+      - name: Rust clippy (including tests)
+        working-directory: src-tauri
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: All Rust tests
+        working-directory: src-tauri
+        run: cargo test --locked
+
+  audit:
+    name: Rust dependency audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: audit
+      - name: Install RustSec audit tool
+        run: cargo install cargo-audit --locked
+      - name: Audit the committed lockfile (no ignored advisories)
+        run: cargo audit --file src-tauri/Cargo.lock

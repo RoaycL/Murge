@@ -1,0 +1,60 @@
+name: Tauri Windows build
+
+on:
+  push:
+    branches: [tauri]
+  pull_request:
+    branches: [tauri]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tauri-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Windows ${{ matrix.arch }} executable
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            target: x86_64-pc-windows-msvc
+          - arch: arm64
+            target: aarch64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: windows-${{ matrix.arch }}
+      - run: npm ci --include=dev
+      - run: npm run tauri:bridge
+      - name: Check generated bridge is unchanged
+        run: git diff --exit-code -- src/renderer/src/platform/generated/desktop-api.ts
+      - run: npm run typecheck
+      - run: npm run brand:check
+      # TODO: enable bundle only after the separate installer/resource scripts
+      # merge. This builds unsigned executables; no signing secrets are needed.
+      - name: Build the Tauri executable without bundling
+        run: npm run tauri:build -- --no-bundle --target ${{ matrix.target }}
+      - name: Inspect executable architecture and stage artifact
+        run: node scripts/ci-tauri-artifact.mjs ${{ matrix.target }} ${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tauri-windows-${{ matrix.arch }}
+          path: ${{ runner.temp }}/tauri-${{ matrix.arch }}/
+          if-no-files-found: error
+          retention-days: 14

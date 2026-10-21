@@ -48,19 +48,35 @@ pub struct RunResult {
 
 /// A command runner (defaults to `schtasks`/`reg` children); injectable so
 /// the win32 ladder is testable off-Windows.
-pub type CommandRunner =
-    std::sync::Arc<dyn Fn(String, Vec<String>) -> futures_util::future::BoxFuture<'static, Result<RunResult, String>> + Send + Sync>;
+pub type CommandRunner = std::sync::Arc<
+    dyn Fn(
+            String,
+            Vec<String>,
+        ) -> futures_util::future::BoxFuture<'static, Result<RunResult, String>>
+        + Send
+        + Sync,
+>;
 
 // ---------------------------------------------------------------------------
 // Task XML (pure, byte-verbatim to the TS template)
 // ---------------------------------------------------------------------------
 
 fn escape_xml(value: &str) -> String {
-    value.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&apos;")
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 fn unescape_xml(value: &str) -> String {
-    value.replace("&apos;", "'").replace("&quot;", "\"").replace("&gt;", ">").replace("&lt;", "<").replace("&amp;", "&")
+    value
+        .replace("&apos;", "'")
+        .replace("&quot;", "\"")
+        .replace("&gt;", ">")
+        .replace("&lt;", "<")
+        .replace("&amp;", "&")
 }
 
 /// Logon-trigger task XML. Deliberately different from an HKCU Run entry:
@@ -124,26 +140,38 @@ pub fn build_task_xml(executable_path: &str, args: &[String]) -> String {
 
 /// True when the task-level `<Settings><Enabled>` element is `true`.
 pub fn task_settings_enabled(task_xml: &str) -> bool {
-    let Some(settings_index) = task_xml.find("<Settings>") else { return false };
+    let Some(settings_index) = task_xml.find("<Settings>") else {
+        return false;
+    };
     let tail = &task_xml[settings_index..];
     // The first <Enabled> after <Settings> is the task-level flag.
-    let Some(match_start) = tail.find("<Enabled>") else { return false };
+    let Some(match_start) = tail.find("<Enabled>") else {
+        return false;
+    };
     let value = &tail[match_start + "<Enabled>".len()..];
     value.starts_with("true</Enabled>")
 }
 
 /// Task arguments as registered (`--hidden` for silent launches, none else).
 pub fn task_arguments(task_xml: &str) -> Vec<String> {
-    let Some(start) = task_xml.find("<Arguments>") else { return Vec::new() };
+    let Some(start) = task_xml.find("<Arguments>") else {
+        return Vec::new();
+    };
     let tail = &task_xml[start + "<Arguments>".len()..];
-    let Some(end) = tail.find("</Arguments>") else { return Vec::new() };
+    let Some(end) = tail.find("</Arguments>") else {
+        return Vec::new();
+    };
     let raw = &tail[..end];
     if raw.trim().is_empty() {
         return Vec::new();
     }
     // Compare against the unescaped form: a compare against raw XML entities
     // would never match and re-create the task on every startup.
-    unescape_xml(raw).trim().split_whitespace().map(str::to_string).collect()
+    unescape_xml(raw)
+        .trim()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -172,7 +200,16 @@ impl LegacyRunKeyAdapter {
         if !self.supported {
             return false;
         }
-        let Ok(result) = (self.runner)(reg_command(), vec!["query".into(), SCHEDULED_TASK_RUN_KEY.into(), "/v".into(), SCHEDULED_TASK_NAME.into()]).await
+        let Ok(result) = (self.runner)(
+            reg_command(),
+            vec![
+                "query".into(),
+                SCHEDULED_TASK_RUN_KEY.into(),
+                "/v".into(),
+                SCHEDULED_TASK_NAME.into(),
+            ],
+        )
+        .await
         else {
             return false;
         };
@@ -180,7 +217,8 @@ impl LegacyRunKeyAdapter {
             return false;
         }
         let output = format!("{}\n{}", result.stdout, result.stderr).to_lowercase();
-        output.contains(&SCHEDULED_TASK_NAME.to_lowercase()) && output.contains(&executable.to_lowercase())
+        output.contains(&SCHEDULED_TASK_NAME.to_lowercase())
+            && output.contains(&executable.to_lowercase())
     }
 
     pub async fn write(&self, enabled: bool, executable: &str) -> Result<(), String> {
@@ -210,7 +248,13 @@ impl LegacyRunKeyAdapter {
         // adapter only ever owns that one value name).
         (self.runner)(
             reg_command(),
-            vec!["delete".into(), SCHEDULED_TASK_RUN_KEY.into(), "/v".into(), SCHEDULED_TASK_NAME.into(), "/f".into()],
+            vec![
+                "delete".into(),
+                SCHEDULED_TASK_RUN_KEY.into(),
+                "/v".into(),
+                SCHEDULED_TASK_NAME.into(),
+                "/f".into(),
+            ],
         )
         .await
         .map_err(|error| error)?;
@@ -263,7 +307,11 @@ impl ScheduledTaskStartupAdapter {
     ) -> Self {
         ScheduledTaskStartupAdapter {
             supported,
-            legacy: LegacyRunKeyAdapter { supported, runner: runner.clone(), get_silent_launch: get_silent_launch.clone() },
+            legacy: LegacyRunKeyAdapter {
+                supported,
+                runner: runner.clone(),
+                get_silent_launch: get_silent_launch.clone(),
+            },
             runner,
             get_silent_launch,
         }
@@ -353,7 +401,8 @@ impl ScheduledTaskStartupAdapter {
         // existence check MUST be argument-insensitive. A failed create keeps
         // the Run key untouched — degrades to today's behaviour.
         let stable_registered = self.has_stable_run_entry().await;
-        let legacy_registered = stable_registered || self.legacy.read_registered(&self.executable()).await;
+        let legacy_registered =
+            stable_registered || self.legacy.read_registered(&self.executable()).await;
         if !legacy_registered {
             return Ok(());
         }
@@ -368,7 +417,12 @@ impl ScheduledTaskStartupAdapter {
     async fn disable(&self) -> Result<(), String> {
         let _ = (self.runner)(
             schtasks_command(),
-            vec!["/delete".into(), "/tn".into(), SCHEDULED_TASK_NAME.into(), "/f".into()],
+            vec![
+                "/delete".into(),
+                "/tn".into(),
+                SCHEDULED_TASK_NAME.into(),
+                "/f".into(),
+            ],
         )
         .await;
         self.clear_run_fallbacks().await;
@@ -378,7 +432,12 @@ impl ScheduledTaskStartupAdapter {
     async fn has_stable_run_entry(&self) -> bool {
         let Ok(result) = (self.runner)(
             reg_command(),
-            vec!["query".into(), SCHEDULED_TASK_RUN_KEY.into(), "/v".into(), SCHEDULED_TASK_NAME.into()],
+            vec![
+                "query".into(),
+                SCHEDULED_TASK_RUN_KEY.into(),
+                "/v".into(),
+                SCHEDULED_TASK_NAME.into(),
+            ],
         )
         .await
         else {
@@ -388,7 +447,8 @@ impl ScheduledTaskStartupAdapter {
             return false;
         }
         let output = format!("{}\n{}", result.stdout, result.stderr).to_lowercase();
-        output.contains(&SCHEDULED_TASK_NAME.to_lowercase()) && output.contains(&self.executable().to_lowercase())
+        output.contains(&SCHEDULED_TASK_NAME.to_lowercase())
+            && output.contains(&self.executable().to_lowercase())
     }
 
     async fn write_stable_run_entry(&self) -> bool {
@@ -406,12 +466,16 @@ impl ScheduledTaskStartupAdapter {
         // Prove direct registry writes work before touching a working legacy
         // entry. Then retire every historical name and write the one
         // canonical value again.
-        let Ok(probe) = (self.runner)(reg_command(), args.clone()).await else { return false };
+        let Ok(probe) = (self.runner)(reg_command(), args.clone()).await else {
+            return false;
+        };
         if probe.code != 0 {
             return false;
         }
         let _ = self.legacy.write(false, &self.executable()).await;
-        let Ok(result) = (self.runner)(reg_command(), args).await else { return false };
+        let Ok(result) = (self.runner)(reg_command(), args).await else {
+            return false;
+        };
         if result.code == 0 && self.has_stable_run_entry().await {
             return true;
         }
@@ -422,7 +486,13 @@ impl ScheduledTaskStartupAdapter {
     async fn clear_run_fallbacks(&self) {
         let _ = (self.runner)(
             reg_command(),
-            vec!["delete".into(), SCHEDULED_TASK_RUN_KEY.into(), "/v".into(), SCHEDULED_TASK_NAME.into(), "/f".into()],
+            vec![
+                "delete".into(),
+                SCHEDULED_TASK_RUN_KEY.into(),
+                "/v".into(),
+                SCHEDULED_TASK_NAME.into(),
+                "/f".into(),
+            ],
         )
         .await;
         let _ = self.legacy.write(false, &self.executable()).await;
@@ -430,7 +500,11 @@ impl ScheduledTaskStartupAdapter {
 
     /// Create (or replace) the task. Returns false when creation was denied.
     async fn try_create_task(&self) -> bool {
-        let staging = std::env::temp_dir().join(format!("murge-startup-{}-{}", std::process::id(), now_unique()));
+        let staging = std::env::temp_dir().join(format!(
+            "murge-startup-{}-{}",
+            std::process::id(),
+            now_unique()
+        ));
         if tokio::fs::create_dir_all(&staging).await.is_err() {
             return false;
         }
@@ -439,7 +513,12 @@ impl ScheduledTaskStartupAdapter {
         // BOM: without it schtasks parses the file as ANSI and rejects the
         // task definition.
         let mut bytes = vec![0xFE, 0xFF];
-        for unit in format!("\u{feff}{}", build_task_xml(&self.executable(), &self.login_args())).encode_utf16() {
+        for unit in format!(
+            "\u{feff}{}",
+            build_task_xml(&self.executable(), &self.login_args())
+        )
+        .encode_utf16()
+        {
             bytes.extend_from_slice(&unit.to_le_bytes());
         }
         if tokio::fs::write(&task_file, &bytes).await.is_err() {
@@ -447,7 +526,14 @@ impl ScheduledTaskStartupAdapter {
         }
         let Ok(result) = (self.runner)(
             schtasks_command(),
-            vec!["/create".into(), "/tn".into(), SCHEDULED_TASK_NAME.into(), "/xml".into(), task_file.to_string_lossy().to_string(), "/f".into()],
+            vec![
+                "/create".into(),
+                "/tn".into(),
+                SCHEDULED_TASK_NAME.into(),
+                "/xml".into(),
+                task_file.to_string_lossy().to_string(),
+                "/f".into(),
+            ],
         )
         .await
         else {
@@ -464,7 +550,12 @@ impl ScheduledTaskStartupAdapter {
     async fn query_task_xml(&self) -> Option<String> {
         let Ok(result) = (self.runner)(
             schtasks_command(),
-            vec!["/query".into(), "/tn".into(), SCHEDULED_TASK_NAME.into(), "/xml".into()],
+            vec![
+                "/query".into(),
+                "/tn".into(),
+                SCHEDULED_TASK_NAME.into(),
+                "/xml".into(),
+            ],
         )
         .await
         else {
@@ -480,15 +571,26 @@ impl ScheduledTaskStartupAdapter {
 /// A collision-resistant staging-dir suffix (process id + nanos).
 fn now_unique() -> u128 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
 }
 
 fn schtasks_command() -> String {
-    if cfg!(windows) { "schtasks.exe".to_string() } else { "schtasks".to_string() }
+    if cfg!(windows) {
+        "schtasks.exe".to_string()
+    } else {
+        "schtasks".to_string()
+    }
 }
 
 fn reg_command() -> String {
-    if cfg!(windows) { "reg.exe".to_string() } else { "reg".to_string() }
+    if cfg!(windows) {
+        "reg.exe".to_string()
+    } else {
+        "reg".to_string()
+    }
 }
 
 /// The real child runner: 8s timeout, windows-hidden, 1 MiB output cap.
@@ -506,10 +608,13 @@ async fn run_child(command: &str, args: &[String]) -> Result<RunResult, String> 
     let child = cmd
         .spawn()
         .map_err(|error| format!("EXEC_FAILED: {error}"))?;
-    let output = tokio::time::timeout(Duration::from_millis(DEFAULT_TIMEOUT_MS), child.wait_with_output())
-        .await
-        .map_err(|_| "ETIMEDOUT: child process timed out".to_string())?
-        .map_err(|error| format!("EXEC_FAILED: {error}"))?;
+    let output = tokio::time::timeout(
+        Duration::from_millis(DEFAULT_TIMEOUT_MS),
+        child.wait_with_output(),
+    )
+    .await
+    .map_err(|_| "ETIMEDOUT: child process timed out".to_string())?
+    .map_err(|error| format!("EXEC_FAILED: {error}"))?;
     Ok(RunResult {
         stdout: String::from_utf8_lossy(&output.stdout).to_string(),
         stderr: String::from_utf8_lossy(&output.stderr).to_string(),
@@ -534,7 +639,10 @@ pub struct StartupService {
 
 impl StartupService {
     pub fn new(adapter: ScheduledTaskStartupAdapter) -> Self {
-        StartupService { adapter: std::sync::Arc::new(adapter), queue: std::sync::Arc::new(Mutex::new(())) }
+        StartupService {
+            adapter: std::sync::Arc::new(adapter),
+            queue: std::sync::Arc::new(Mutex::new(())),
+        }
     }
 
     pub async fn get_status(&self) -> Value {
@@ -565,7 +673,12 @@ impl StartupService {
                 error_message: Some("系统未确认开机启动设置".to_string()),
             });
         }
-        status_value(&StartupStatus { supported: true, enabled: confirmed, phase: "idle", error_message: None })
+        status_value(&StartupStatus {
+            supported: true,
+            enabled: confirmed,
+            phase: "idle",
+            error_message: None,
+        })
     }
 
     /// Keep an existing login item enabled while replacing its launch
@@ -600,7 +713,12 @@ impl StartupService {
     }
 
     fn unsupported(&self) -> StartupStatus {
-        StartupStatus { supported: false, enabled: false, phase: "unsupported", error_message: None }
+        StartupStatus {
+            supported: false,
+            enabled: false,
+            phase: "unsupported",
+            error_message: None,
+        }
     }
 }
 
@@ -608,12 +726,17 @@ impl StartupService {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
-    use std::sync::Mutex as StdMutex;
     use std::sync::Arc;
+    use std::sync::Mutex as StdMutex;
 
     type Log = Arc<StdMutex<Vec<String>>>;
 
-    fn recording_runner(log: Log, exit_code: Arc<AtomicI32>, task_xml: Arc<StdMutex<Option<String>>>, run_value: Arc<StdMutex<Option<String>>>) -> CommandRunner {
+    fn recording_runner(
+        log: Log,
+        exit_code: Arc<AtomicI32>,
+        task_xml: Arc<StdMutex<Option<String>>>,
+        run_value: Arc<StdMutex<Option<String>>>,
+    ) -> CommandRunner {
         std::sync::Arc::new(move |command: String, args: Vec<String>| {
             let log = log.clone();
             let exit_code = exit_code.clone();
@@ -624,9 +747,17 @@ mod tests {
                 log.lock().unwrap().push(key.clone());
                 if key.contains("/query /tn") && key.contains("/xml") {
                     if let Some(xml) = task_xml.lock().unwrap().clone() {
-                        return Ok(RunResult { stdout: xml, stderr: String::new(), code: 0 });
+                        return Ok(RunResult {
+                            stdout: xml,
+                            stderr: String::new(),
+                            code: 0,
+                        });
                     }
-                    return Ok(RunResult { stdout: String::new(), stderr: "INFO: No task".into(), code: 1 });
+                    return Ok(RunResult {
+                        stdout: String::new(),
+                        stderr: "INFO: No task".into(),
+                        code: 1,
+                    });
                 }
                 if key.contains("/create /tn") {
                     // Capture the task arguments the task registers with.
@@ -635,34 +766,63 @@ mod tests {
                         let bytes = tokio::fs::read(file).await.unwrap();
                         let units: Vec<u16> = bytes
                             .chunks(2)
-                            .map(|chunk| u16::from_le_bytes([chunk[0], chunk.get(1).copied().unwrap_or(0)]))
+                            .map(|chunk| {
+                                u16::from_le_bytes([chunk[0], chunk.get(1).copied().unwrap_or(0)])
+                            })
                             .collect();
                         let content = String::from_utf16_lossy(&units);
-                        task_xml.lock().unwrap().replace(content.trim_start_matches('\u{feff}').to_string());
+                        task_xml
+                            .lock()
+                            .unwrap()
+                            .replace(content.trim_start_matches('\u{feff}').to_string());
                     }
-                    return Ok(RunResult { stdout: "SUCCESS".into(), stderr: String::new(), code: exit_code.load(Ordering::SeqCst) });
+                    return Ok(RunResult {
+                        stdout: "SUCCESS".into(),
+                        stderr: String::new(),
+                        code: exit_code.load(Ordering::SeqCst),
+                    });
                 }
                 if key.contains("/delete /tn") {
                     *task_xml.lock().unwrap() = None;
-                    return Ok(RunResult { stdout: "SUCCESS".into(), stderr: String::new(), code: 0 });
+                    return Ok(RunResult {
+                        stdout: "SUCCESS".into(),
+                        stderr: String::new(),
+                        code: 0,
+                    });
                 }
                 if key.contains("query HKCU") {
                     if let Some(value) = run_value.lock().unwrap().clone() {
                         if value.contains(&SCHEDULED_TASK_NAME.to_lowercase()) {
-                            return Ok(RunResult { stdout: format!("{} REG_SZ {}", SCHEDULED_TASK_NAME, value), stderr: String::new(), code: 0 });
+                            return Ok(RunResult {
+                                stdout: format!("{} REG_SZ {}", SCHEDULED_TASK_NAME, value),
+                                stderr: String::new(),
+                                code: 0,
+                            });
                         }
                     }
-                    return Ok(RunResult { stdout: "not found".into(), stderr: String::new(), code: 1 });
+                    return Ok(RunResult {
+                        stdout: "not found".into(),
+                        stderr: String::new(),
+                        code: 1,
+                    });
                 }
                 if key.contains("add HKCU") {
                     if let Some(index) = args.iter().position(|a| a == "/d") {
                         *run_value.lock().unwrap() = Some(args[index + 1].clone());
                     }
-                    return Ok(RunResult { stdout: "SUCCESS".into(), stderr: String::new(), code: 0 });
+                    return Ok(RunResult {
+                        stdout: "SUCCESS".into(),
+                        stderr: String::new(),
+                        code: 0,
+                    });
                 }
                 if key.contains("delete HKCU") {
                     *run_value.lock().unwrap() = None;
-                    return Ok(RunResult { stdout: "SUCCESS".into(), stderr: String::new(), code: 0 });
+                    return Ok(RunResult {
+                        stdout: "SUCCESS".into(),
+                        stderr: String::new(),
+                        code: 0,
+                    });
                 }
                 Ok(RunResult::default())
             })
@@ -671,7 +831,10 @@ mod tests {
 
     #[test]
     fn task_xml_helpers_match_the_ts_semantics() {
-        let xml = build_task_xml(r"C:\Program Files\Murge\murge.exe", &["--hidden".to_string()]);
+        let xml = build_task_xml(
+            r"C:\Program Files\Murge\murge.exe",
+            &["--hidden".to_string()],
+        );
         assert!(xml.contains("<Delay>PT3S</Delay>"));
         assert!(xml.contains("<Priority>3</Priority>"));
         assert!(xml.contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"));
@@ -697,7 +860,13 @@ mod tests {
         let adapter = ScheduledTaskStartupAdapter::with_runner(
             true,
             std::sync::Arc::new(|_command: String, _args: Vec<String>| {
-                Box::pin(async { Ok(RunResult { stdout: String::new(), stderr: String::new(), code: 1 }) })
+                Box::pin(async {
+                    Ok(RunResult {
+                        stdout: String::new(),
+                        stderr: String::new(),
+                        code: 1,
+                    })
+                })
             }),
             std::sync::Arc::new(|| false),
         );
@@ -728,7 +897,10 @@ mod tests {
         );
         let service = StartupService::new(adapter);
         let status = service.set_enabled(true).await;
-        assert_eq!(status, json!({ "supported": false, "enabled": false, "phase": "unsupported", "errorMessage": Value::Null }));
+        assert_eq!(
+            status,
+            json!({ "supported": false, "enabled": false, "phase": "unsupported", "errorMessage": Value::Null })
+        );
     }
 
     #[tokio::test]
@@ -737,20 +909,34 @@ mod tests {
         let exit_code = Arc::new(AtomicI32::new(0));
         let task_xml: Arc<StdMutex<Option<String>>> = Arc::new(StdMutex::new(None));
         let run_value: Arc<StdMutex<Option<String>>> = Arc::new(StdMutex::new(None));
-        let runner = recording_runner(log.clone(), exit_code.clone(), task_xml.clone(), run_value.clone());
-        let adapter = ScheduledTaskStartupAdapter::with_runner(true, runner, std::sync::Arc::new(|| false));
+        let runner = recording_runner(
+            log.clone(),
+            exit_code.clone(),
+            task_xml.clone(),
+            run_value.clone(),
+        );
+        let adapter =
+            ScheduledTaskStartupAdapter::with_runner(true, runner, std::sync::Arc::new(|| false));
         // Nothing registered -> off.
         assert!(!adapter.read().await);
         // Enable: the task is created and owns the registration; legacy
         // fallbacks are cleared.
         adapter.write(true).await.unwrap();
         assert!(task_xml.lock().unwrap().is_some());
-        assert!(!log.lock().unwrap().iter().any(|entry| entry.contains("add HKCU")));
+        assert!(!log
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|entry| entry.contains("add HKCU")));
         // Read-back reports the task's enabled flag.
         assert!(adapter.read().await);
         // Disable: task deleted, fallbacks cleared.
         adapter.write(false).await.unwrap();
-        assert!(log.lock().unwrap().iter().any(|entry| entry.contains("/delete /tn")));
+        assert!(log
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|entry| entry.contains("/delete /tn")));
         assert!(!adapter.read().await);
         // Task creation denied (non-zero exit): the stable Run value is used.
         exit_code.store(1, Ordering::SeqCst);

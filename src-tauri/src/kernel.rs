@@ -30,27 +30,40 @@ pub(crate) fn version_no_v(version: &str) -> String {
 /// Scripted GitHub seams (the TS `fetchVersions` / `fetchReleaseAssets`
 /// dep overrides — tests never hit the network).
 pub type FetchVersionsFn = Arc<
-    dyn Fn() -> futures_util::future::BoxFuture<'static, Result<Vec<String>, crate::error::IpcError>> + Send + Sync,
+    dyn Fn()
+            -> futures_util::future::BoxFuture<'static, Result<Vec<String>, crate::error::IpcError>>
+        + Send
+        + Sync,
 >;
 pub type FetchReleaseAssetsFn = Arc<
-    dyn Fn(String) -> futures_util::future::BoxFuture<'static, Result<Vec<crate::mihomo_artifact::MihomoReleaseAsset>, crate::error::IpcError>>
-        + Send
+    dyn Fn(
+            String,
+        ) -> futures_util::future::BoxFuture<
+            'static,
+            Result<Vec<crate::mihomo_artifact::MihomoReleaseAsset>, crate::error::IpcError>,
+        > + Send
         + Sync,
 >;
 pub type ResolveAssetFn = Arc<
     dyn Fn(
-        crate::mihomo_artifact::MihomoAsset,
-        std::path::PathBuf,
-    ) -> futures_util::future::BoxFuture<
-        'static,
-        Result<crate::mihomo_artifact::ResolvedMihomoBinary, crate::error::IpcError>,
-    > + Send
+            crate::mihomo_artifact::MihomoAsset,
+            std::path::PathBuf,
+        ) -> futures_util::future::BoxFuture<
+            'static,
+            Result<crate::mihomo_artifact::ResolvedMihomoBinary, crate::error::IpcError>,
+        > + Send
         + Sync,
 >;
 /// The `applyInstalledVersion` seam: restart a live kernel and prove the
 /// selected version took effect (`applyInstalledKernelVersionFinal`).
 pub type ApplyInstalledFn = Arc<
-    dyn Fn(String, String, Option<String>) -> futures_util::future::BoxFuture<'static, Result<(), crate::error::IpcError>> + Send + Sync,
+    dyn Fn(
+            String,
+            String,
+            Option<String>,
+        ) -> futures_util::future::BoxFuture<'static, Result<(), crate::error::IpcError>>
+        + Send
+        + Sync,
 >;
 
 fn is_valid_channel(value: &str) -> bool {
@@ -78,9 +91,7 @@ fn stopped_status() -> Value {
 /// fail-closed behavior until the artifact pipeline is wired into setup.
 pub type KernelSupervisor = crate::kernel_process::KernelSupervisor;
 
-pub use crate::kernel_process::{
-    DISABLED_RESOLVER_MESSAGE, KernelDependencies, SupervisorOptions,
-};
+pub use crate::kernel_process::{KernelDependencies, SupervisorOptions, DISABLED_RESOLVER_MESSAGE};
 #[allow(unused_imports)]
 use DISABLED_RESOLVER_MESSAGE as _DISABLED_REEXPORT;
 
@@ -119,8 +130,11 @@ pub struct KernelManagerService {
     pub install_version: std::sync::OnceLock<InstallVersionFn>,
 }
 
-pub type InstallVersionFn =
-    Arc<dyn Fn(String) -> futures_util::future::BoxFuture<'static, Result<(), crate::error::IpcError>> + Send + Sync>;
+pub type InstallVersionFn = Arc<
+    dyn Fn(String) -> futures_util::future::BoxFuture<'static, Result<(), crate::error::IpcError>>
+        + Send
+        + Sync,
+>;
 
 impl KernelManagerService {
     pub fn new() -> Self {
@@ -144,7 +158,9 @@ impl KernelManagerService {
     }
 
     fn transient_guard(&self) -> std::sync::MutexGuard<'_, Value> {
-        self.transient.lock().expect("kernel manager mutex poisoned")
+        self.transient
+            .lock()
+            .expect("kernel manager mutex poisoned")
     }
 
     /// The buildState port: persisted settings + pinned stable version +
@@ -164,7 +180,11 @@ impl KernelManagerService {
         };
         let specific_version = {
             let raw = app_settings.kernel_specific_version.trim();
-            if raw.is_empty() { None } else { Some(raw.to_string()) }
+            if raw.is_empty() {
+                None
+            } else {
+                Some(raw.to_string())
+            }
         };
         let effective_version = match (channel.as_str(), &specific_version) {
             ("specific", Some(version)) => version.clone(),
@@ -202,7 +222,8 @@ impl KernelManagerService {
     /// setEnabled(true) selects Smart, setEnabled(false) back to stable — the
     /// exact TS delegation.
     pub async fn set_enabled(&self, settings: &SettingsStore, enabled: bool) -> Value {
-        self.set_channel(settings, if enabled { "smart" } else { "stable" }).await
+        self.set_channel(settings, if enabled { "smart" } else { "stable" })
+            .await
     }
 
     /// Switch the version channel. `specific` is rejected with the
@@ -226,7 +247,11 @@ impl KernelManagerService {
         }
         let previous = (current.kernel_channel.clone(), {
             let raw = current.kernel_specific_version.trim();
-            if raw.is_empty() { None } else { Some(raw.to_string()) }
+            if raw.is_empty() {
+                None
+            } else {
+                Some(raw.to_string())
+            }
         });
         // TS: preview/smart attempt the (service) install first — only when
         // the service client dep exists; otherwise the channel persists
@@ -242,9 +267,17 @@ impl KernelManagerService {
                 let mut transient = self.transient_guard();
                 transient["installing"] = Value::Null;
                 if let Err(error) = result {
-                    let label = if channel == "smart" { " Smart" } else { "预览" };
+                    let label = if channel == "smart" {
+                        " Smart"
+                    } else {
+                        "预览"
+                    };
                     let message = error.extract_message();
-                    transient["error"] = json!(if message.is_empty() { format!("安装{label}内核失败") } else { message });
+                    transient["error"] = json!(if message.is_empty() {
+                        format!("安装{label}内核失败")
+                    } else {
+                        message
+                    });
                     drop(transient);
                     return self.commit(settings);
                 }
@@ -342,11 +375,19 @@ impl KernelManagerService {
         self.commit(settings)
     }
 
-    async fn install_inner(&self, settings: &SettingsStore, version: &str) -> Result<(), crate::error::IpcError> {
+    async fn install_inner(
+        &self,
+        settings: &SettingsStore,
+        version: &str,
+    ) -> Result<(), crate::error::IpcError> {
         let current = settings.get();
         let previous = (current.kernel_channel.clone(), {
             let raw = current.kernel_specific_version.trim();
-            if raw.is_empty() { None } else { Some(raw.to_string()) }
+            if raw.is_empty() {
+                None
+            } else {
+                Some(raw.to_string())
+            }
         });
         // Resolve + verify the asset into its per-version workspace (the
         // byte-level verification is unconditional); the channel is only
@@ -362,7 +403,9 @@ impl KernelManagerService {
             "kernelChannel": "specific", "kernelSpecificVersion": version
         })));
         if let Some(apply) = &self.apply_installed_version {
-            if let Err(error) = apply(version.to_string(), previous.0.clone(), previous.1.clone()).await {
+            if let Err(error) =
+                apply(version.to_string(), previous.0.clone(), previous.1.clone()).await
+            {
                 settings.set(&crate::settings::AppSettingsPatch(serde_json::json!({
                     "kernelChannel": previous.0,
                     "kernelSpecificVersion": previous.1.unwrap_or_default()
@@ -384,12 +427,21 @@ impl KernelManagerService {
         let asset = self.resolve_version_asset(version, &workspace).await?;
         match &self.resolve_asset {
             Some(resolve) => resolve(asset, workspace).await,
-            None => crate::mihomo_artifact::resolve_mihomo_asset(&asset, &workspace, &crate::mihomo_artifact::real_download_transport()).await,
+            None => {
+                crate::mihomo_artifact::resolve_mihomo_asset(
+                    &asset,
+                    &workspace,
+                    &crate::mihomo_artifact::real_download_transport(),
+                )
+                .await
+            }
         }
     }
 
     fn version_workspace_dir(&self, version: &str) -> std::path::PathBuf {
-        self.workspace_root.join("versions").join(version.trim_start_matches('v'))
+        self.workspace_root
+            .join("versions")
+            .join(version.trim_start_matches('v'))
     }
 
     /// `resolveVersionAsset`: the sidecar-cached asset spec (`.mihomo-asset.json`
@@ -419,8 +471,9 @@ impl KernelManagerService {
                 }
             }
         }
-        let platform: String =
-            std::env::consts::OS.replace("macos", "darwin").replace("windows", "win32");
+        let platform: String = std::env::consts::OS
+            .replace("macos", "darwin")
+            .replace("windows", "win32");
         let arch: String = match std::env::consts::ARCH {
             "x86_64" => "x64".to_string(),
             "aarch64" => "arm64".to_string(),
@@ -455,7 +508,11 @@ impl KernelManagerService {
                 format!("Failed to create {}: {error}", workspace.display()),
             )
         })?;
-        std::fs::write(&sidecar, serde_json::to_string(&asset).expect("asset serializes")).map_err(|error| {
+        std::fs::write(
+            &sidecar,
+            serde_json::to_string(&asset).expect("asset serializes"),
+        )
+        .map_err(|error| {
             crate::error::IpcError::code(
                 crate::error::code::ARTIFACT_EXTRACT_FAILED,
                 format!("Failed to write {}: {error}", sidecar.display()),
@@ -583,7 +640,9 @@ impl KernelServices {
         KernelServices {
             supervisor: KernelSupervisor::create(
                 KernelDependencies {
-                    resolver: Arc::new(crate::kernel_process::FixtureKernelBinaryResolver::default()),
+                    resolver: Arc::new(
+                        crate::kernel_process::FixtureKernelBinaryResolver::default(),
+                    ),
                     config_store: Arc::new(crate::kernel_process::TempKernelConfigStore),
                     adapter: Arc::new(crate::kernel_process::NodeKernelProcessAdapter),
                     secret: crate::kernel_process::random_secret(),
@@ -663,7 +722,10 @@ impl KernelServices {
                     http_port: ports["httpPort"].as_i64().unwrap_or(0),
                     socks_port: ports["socksPort"].as_i64().unwrap_or(0),
                     controller_port: ports["controllerPort"].as_i64().unwrap_or(9090),
-                    controller_host: ports["controllerHost"].as_str().unwrap_or("127.0.0.1").to_string(),
+                    controller_host: ports["controllerHost"]
+                        .as_str()
+                        .unwrap_or("127.0.0.1")
+                        .to_string(),
                     allow_lan: ports["allowLan"].as_bool().unwrap_or(false),
                     controller_panel: ports["controllerPanel"].as_bool().unwrap_or(true),
                     workspace_dir: workspace_dir.join("runtime"),
@@ -688,7 +750,12 @@ impl KernelServices {
                 100,
             ))
         });
-        KernelServices { supervisor, manager, ready, privileged: None }
+        KernelServices {
+            supervisor,
+            manager,
+            ready,
+            privileged: None,
+        }
     }
 }
 
@@ -718,7 +785,6 @@ pub fn build_runtime_summary(active_profile_name: Option<&str>) -> Value {
         "tunEnabled": false
     })
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -809,10 +875,7 @@ mod tests {
             None,
         );
         let error = services.start().await.unwrap_err();
-        assert!(
-            error.0.contains("64-character lowercase hex"),
-            "{error:?}"
-        );
+        assert!(error.0.contains("64-character lowercase hex"), "{error:?}");
     }
 
     /// The disabled composition mirrors KernelServices::new for unit tests.
@@ -834,7 +897,10 @@ mod tests {
         let supervisor = test_supervisor();
         assert_eq!(supervisor.get_status(), stopped_status());
         let error = supervisor.start().await.unwrap_err();
-        assert_eq!(error.0, format!("PROTOCOL_ERROR:UNSUPPORTED::{DISABLED_RESOLVER_MESSAGE}"));
+        assert_eq!(
+            error.0,
+            format!("PROTOCOL_ERROR:UNSUPPORTED::{DISABLED_RESOLVER_MESSAGE}")
+        );
         let status = supervisor.get_status();
         assert_eq!(status["phase"], "failed");
         assert_eq!(status["lastError"], DISABLED_RESOLVER_MESSAGE);
@@ -865,7 +931,10 @@ mod tests {
         assert_eq!(state["stableVersion"], "v1.19.30");
         assert_eq!(state["effectiveVersion"], "v1.19.30");
         assert_eq!(state["specificVersion"], Value::Null);
-        assert_eq!(state["specificVersionsSupported"], true, "no privileged service gate");
+        assert_eq!(
+            state["specificVersionsSupported"], true,
+            "no privileged service gate"
+        );
         assert_eq!(state["versions"], json!([]));
         assert_eq!(state["error"], Value::Null);
     }
@@ -910,16 +979,18 @@ mod tests {
         let mut manager = KernelManagerService::new();
         let applied = std::sync::Arc::new(Mutex::new(Vec::<String>::new()));
         let sink = applied.clone();
-        manager.apply_installed_version = Some(Arc::new(move |target, _previous_channel, _previous_specific| {
-            let sink = sink.clone();
-            Box::pin(async move {
-                sink.lock().expect("applied poisoned").push(target);
-                Err(crate::error::IpcError::code(
-                    crate::error::code::ARTIFACT_HASH_MISMATCH,
-                    "内核版本未生效：请求 v1.19.31，实际 v1.19.30".to_string(),
-                ))
-            })
-        }));
+        manager.apply_installed_version = Some(Arc::new(
+            move |target, _previous_channel, _previous_specific| {
+                let sink = sink.clone();
+                Box::pin(async move {
+                    sink.lock().expect("applied poisoned").push(target);
+                    Err(crate::error::IpcError::code(
+                        crate::error::code::ARTIFACT_HASH_MISMATCH,
+                        "内核版本未生效：请求 v1.19.31，实际 v1.19.30".to_string(),
+                    ))
+                })
+            },
+        ));
         // A selected specific version is what routes the apply step
         // (the TS: `targetVersion = channel === 'specific' ? specificVersion : ...`).
         settings.set(&crate::settings::AppSettingsPatch(
@@ -929,7 +1000,10 @@ mod tests {
         // The apply failure rolled the channel AND version back and surfaced
         // the typed error.
         assert_eq!(state["channel"], "stable");
-        assert_eq!(state["error"], "PROTOCOL_ERROR:ARTIFACT_HASH_MISMATCH::内核版本未生效：请求 v1.19.31，实际 v1.19.30");
+        assert_eq!(
+            state["error"],
+            "PROTOCOL_ERROR:ARTIFACT_HASH_MISMATCH::内核版本未生效：请求 v1.19.31，实际 v1.19.30"
+        );
         assert_eq!(settings.get().kernel_channel, "stable");
         // The rollback restores the PREVIOUS state — which here already held
         // that specific version (the TS rolls back channel + version pair).
@@ -971,7 +1045,10 @@ mod tests {
             })
         }));
         let state = manager.list_versions(&settings).await;
-        assert_eq!(state["error"], "PROTOCOL_ERROR:ARTIFACT_DOWNLOAD_FAILED::GitHub 请求失败：503");
+        assert_eq!(
+            state["error"],
+            "PROTOCOL_ERROR:ARTIFACT_DOWNLOAD_FAILED::GitHub 请求失败：503"
+        );
         assert_eq!(state["versionsLoading"], false);
     }
 
@@ -982,8 +1059,9 @@ mod tests {
         let workspace_base = temp.path().to_path_buf();
         let mut manager = KernelManagerService::for_workspace(workspace_base.clone());
         manager.fetch_release_assets = Some(Arc::new(move |version| {
-            let platform: String =
-                std::env::consts::OS.replace("macos", "darwin").replace("windows", "win32");
+            let platform: String = std::env::consts::OS
+                .replace("macos", "darwin")
+                .replace("windows", "win32");
             let arch: String = match std::env::consts::ARCH {
                 "x86_64" => "x64".to_string(),
                 "aarch64" => "arm64".to_string(),
@@ -1020,12 +1098,16 @@ mod tests {
                 })
             })
         }));
-        manager.apply_installed_version = Some(Arc::new(|_target, _previous_channel, _previous_specific| {
-            Box::pin(async { Err(crate::error::IpcError::code(
-                crate::error::code::ARTIFACT_HASH_MISMATCH,
-                "内核版本未生效：请求 v1.19.31，实际 v1.19.30".to_string(),
-            )) })
-        }));
+        manager.apply_installed_version = Some(Arc::new(
+            |_target, _previous_channel, _previous_specific| {
+                Box::pin(async {
+                    Err(crate::error::IpcError::code(
+                        crate::error::code::ARTIFACT_HASH_MISMATCH,
+                        "内核版本未生效：请求 v1.19.31，实际 v1.19.30".to_string(),
+                    ))
+                })
+            },
+        ));
         let state = manager.install(&settings, "v1.19.31").await;
         assert_eq!(
             state["error"],
@@ -1054,7 +1136,9 @@ mod tests {
         let mut manager = KernelManagerService::for_workspace(temp.path().to_path_buf());
         manager.fetch_release_assets = Some(Arc::new(|_version| Box::pin(async { Ok(vec![]) })));
         let state = manager.install(&settings, "v1.19.31").await;
-        let platform = std::env::consts::OS.replace("macos", "darwin").replace("windows", "win32");
+        let platform = std::env::consts::OS
+            .replace("macos", "darwin")
+            .replace("windows", "win32");
         let arch = match std::env::consts::ARCH {
             "x86_64" => "x64",
             "aarch64" => "arm64",
@@ -1079,7 +1163,9 @@ mod tests {
         assert_eq!(summary["tunEnabled"], false);
         assert_eq!(summary["externalIp"], Value::Null);
         let summary = build_runtime_summary(None);
-        assert_eq!(summary["profileName"], "Murge Default", "brand defaultProfileName");
+        assert_eq!(
+            summary["profileName"], "Murge Default",
+            "brand defaultProfileName"
+        );
     }
-
 }

@@ -29,7 +29,13 @@ fn icon_file(accent: &str, dark: bool) -> &'static str {
         (true, "tun") => "tray-dark-tun.png",
         (false, "proxy") => "tray-light-proxy.png",
         (false, "tun") => "tray-light-tun.png",
-        (_, _) => if dark { "tray-dark-idle.png" } else { "tray-light-idle.png" },
+        (_, _) => {
+            if dark {
+                "tray-dark-idle.png"
+            } else {
+                "tray-light-idle.png"
+            }
+        }
     }
 }
 
@@ -91,7 +97,6 @@ impl NativeTrayView {
             let _ = tray.set_icon(Some(icon));
         }
     }
-
 }
 
 fn dark_theme(app: &AppHandle) -> bool {
@@ -162,11 +167,18 @@ fn build_menu_inner(app: &AppHandle, items: &[TrayMenuItem]) -> tauri::Result<Me
             }
             MenuKind::Normal => {
                 if !item.children.is_empty() {
-                    let submenu = Submenu::with_id_and_items(app, &item.id, &item.label, item.enabled, &[])?;
+                    let submenu =
+                        Submenu::with_id_and_items(app, &item.id, &item.label, item.enabled, &[])?;
                     append_children(app, &submenu, &item.children)?;
                     menu.append(&submenu)?;
                 } else {
-                    menu.append(&MenuItem::with_id(app, &item.id, &item.label, item.enabled, None::<&str>)?)?;
+                    menu.append(&MenuItem::with_id(
+                        app,
+                        &item.id,
+                        &item.label,
+                        item.enabled,
+                        None::<&str>,
+                    )?)?;
                 }
             }
             MenuKind::Checkbox | MenuKind::Radio => {
@@ -196,11 +208,18 @@ fn append_children(
             }
             MenuKind::Normal => {
                 if !item.children.is_empty() {
-                    let submenu = Submenu::with_id_and_items(app, &item.id, &item.label, item.enabled, &[])?;
+                    let submenu =
+                        Submenu::with_id_and_items(app, &item.id, &item.label, item.enabled, &[])?;
                     append_children(app, &submenu, &item.children)?;
                     parent.append(&submenu)?;
                 } else {
-                    parent.append(&MenuItem::with_id(app, &item.id, &item.label, item.enabled, None::<&str>)?)?;
+                    parent.append(&MenuItem::with_id(
+                        app,
+                        &item.id,
+                        &item.label,
+                        item.enabled,
+                        None::<&str>,
+                    )?)?;
                 }
             }
             MenuKind::Checkbox | MenuKind::Radio => {

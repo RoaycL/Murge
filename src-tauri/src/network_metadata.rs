@@ -76,7 +76,10 @@ fn normalize_asn(value: &Value) -> Option<String> {
     }?;
     let token = raw.split_whitespace().next().unwrap_or_default();
     let upper = token.to_uppercase();
-    if upper.len() > 2 && upper.starts_with("AS") && upper[2..].bytes().all(|byte| byte.is_ascii_digit()) {
+    if upper.len() > 2
+        && upper.starts_with("AS")
+        && upper[2..].bytes().all(|byte| byte.is_ascii_digit())
+    {
         return Some(upper);
     }
     if !token.is_empty() && token.bytes().all(|byte| byte.is_ascii_digit()) {
@@ -95,8 +98,10 @@ fn parse_ipwhois(body: &Value) -> ParsedFields {
     out.ip = text(obj.get("ip").unwrap_or(&Value::Null));
     out.country = text(obj.get("country").unwrap_or(&Value::Null));
     out.city = text(obj.get("city").unwrap_or(&Value::Null));
-    out.asn = connection
-        .and_then(|connection| normalize_asn(connection.get("asn").unwrap_or(&Value::Null)).or_else(|| normalize_asn(connection.get("isp").unwrap_or(&Value::Null))));
+    out.asn = connection.and_then(|connection| {
+        normalize_asn(connection.get("asn").unwrap_or(&Value::Null))
+            .or_else(|| normalize_asn(connection.get("isp").unwrap_or(&Value::Null)))
+    });
     out
 }
 
@@ -194,7 +199,10 @@ pub fn parse_provider_id(input: &Value) -> Result<String, crate::error::IpcError
 
 /// Resolve a provider by id, or null when unknown.
 pub fn get_provider(id: &str) -> Option<&'static NetworkMetadataProvider> {
-    PROVIDER_DEFS.iter().map(|def| &def.provider).find(|provider| provider.id == id)
+    PROVIDER_DEFS
+        .iter()
+        .map(|def| &def.provider)
+        .find(|provider| provider.id == id)
 }
 
 /// The human-facing label for a provider id, falling back to the raw id.
@@ -202,14 +210,18 @@ pub fn get_provider(id: &str) -> Option<&'static NetworkMetadataProvider> {
 /// shared-model parity with the renderer helper.)
 #[allow(dead_code)]
 pub fn provider_display_name(provider_id: &str) -> String {
-    get_provider(provider_id).map(|provider| provider.label.to_string()).unwrap_or_else(|| provider_id.to_string())
+    get_provider(provider_id)
+        .map(|provider| provider.label.to_string())
+        .unwrap_or_else(|| provider_id.to_string())
 }
 
 /// Parse a provider JSON body into a normalized record, or null when the body
 /// is unusable (an error payload or an unexpected shape). Every field is
 /// defensively optional so a provider change can never crash the app.
 pub fn parse_metadata_json(body: &Value, provider_id: &str, now: u64) -> Option<Value> {
-    let def = PROVIDER_DEFS.iter().find(|def| def.provider.id == provider_id)?;
+    let def = PROVIDER_DEFS
+        .iter()
+        .find(|def| def.provider.id == provider_id)?;
     let parsed = (def.parse)(body);
     let ip = parsed.ip?;
     Some(json!({
@@ -230,13 +242,22 @@ pub fn mask_ip(ip: &str) -> String {
         let _ = parts;
     }
     let segments: Vec<&str> = ip.split('.').collect();
-    if segments.len() == 4 && segments.iter().all(|segment| !segment.is_empty() && segment.len() <= 3 && segment.bytes().all(|byte| byte.is_ascii_digit())) {
+    if segments.len() == 4
+        && segments.iter().all(|segment| {
+            !segment.is_empty()
+                && segment.len() <= 3
+                && segment.bytes().all(|byte| byte.is_ascii_digit())
+        })
+    {
         return format!("{}.{}.{}.•••", segments[0], segments[1], segments[2]);
     }
     // IPv6 or unexpected: mask the trailing hextet.
     let parts: Vec<&str> = ip.split(':').collect();
     if parts.len() > 1 {
-        let mut kept: Vec<String> = parts[..parts.len() - 1].iter().map(|segment| segment.to_string()).collect();
+        let mut kept: Vec<String> = parts[..parts.len() - 1]
+            .iter()
+            .map(|segment| segment.to_string())
+            .collect();
         kept.push("•••".to_string());
         return kept.join(":");
     }
@@ -296,7 +317,11 @@ pub fn copy_text(metadata: &Value) -> String {
 /// absolute-form request line, exactly like the egress-IP echo path. Returns
 /// the parsed JSON on success (2xx + valid JSON) or null on ANY failure
 /// (transport, status, body, parse) — the TS promise always resolves null.
-pub async fn fetch_metadata_json_via_proxy(endpoint: &str, port: u16, timeout_ms: u64) -> Option<Value> {
+pub async fn fetch_metadata_json_via_proxy(
+    endpoint: &str,
+    port: u16,
+    timeout_ms: u64,
+) -> Option<Value> {
     let target = url::Url::parse(endpoint).ok()?;
     // Only plain-http targets can be reached with an absolute-form GET
     // through a forward proxy; https requires a CONNECT tunnel out of scope.
@@ -313,7 +338,9 @@ pub async fn fetch_metadata_json_via_proxy(endpoint: &str, port: u16, timeout_ms
         host_header
     );
     let sweep = async {
-        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.ok()?;
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .ok()?;
         stream.write_all(request.as_bytes()).await.ok()?;
         let mut raw = Vec::new();
         stream.read_to_end(&mut raw).await.ok()?;
@@ -323,7 +350,10 @@ pub async fn fetch_metadata_json_via_proxy(endpoint: &str, port: u16, timeout_ms
         // (connection-close) body: every known provider serves one through
         // the proxy path, and a chunked body fails the JSON parse into null
         // exactly like the TS catch-all.
-        let body = text.split_once("\r\n\r\n").map(|(_, body)| body).unwrap_or("");
+        let body = text
+            .split_once("\r\n\r\n")
+            .map(|(_, body)| body)
+            .unwrap_or("");
         if !json_like(body) {
             return None;
         }
@@ -344,8 +374,13 @@ fn json_like(body: &str) -> bool {
 // Service (state machine + bounded cache + single-flight)
 // ---------------------------------------------------------------------------
 
-type ResolveProxyPort = Box<dyn Fn() -> futures_util::future::BoxFuture<'static, Option<u16>> + Send + Sync>;
-type FetchViaProxy = Arc<dyn Fn(String, u16, u64) -> futures_util::future::BoxFuture<'static, Option<Value>> + Send + Sync>;
+type ResolveProxyPort =
+    Box<dyn Fn() -> futures_util::future::BoxFuture<'static, Option<u16>> + Send + Sync>;
+type FetchViaProxy = Arc<
+    dyn Fn(String, u16, u64) -> futures_util::future::BoxFuture<'static, Option<Value>>
+        + Send
+        + Sync,
+>;
 
 /// The renderer-facing network-metadata state snapshot.
 pub struct NetworkMetadataService {
@@ -386,14 +421,19 @@ impl NetworkMetadataService {
                         Ok(client) => client,
                         Err(_) => return None,
                     };
-                    let Ok(config) = client.get_config().await else { return None };
-                    let port = config["mixed-port"].as_i64().or_else(|| config["port"].as_i64());
+                    let Ok(config) = client.get_config().await else {
+                        return None;
+                    };
+                    let port = config["mixed-port"]
+                        .as_i64()
+                        .or_else(|| config["port"].as_i64());
                     port.filter(|port| *port > 0).map(|port| port as u16)
                 })
             }),
             Arc::new(|endpoint: String, port: u16, timeout: u64| {
-                Box::pin(async move { fetch_metadata_json_via_proxy(&endpoint, port, timeout).await })
-                    as futures_util::future::BoxFuture<'static, Option<Value>>
+                Box::pin(
+                    async move { fetch_metadata_json_via_proxy(&endpoint, port, timeout).await },
+                ) as futures_util::future::BoxFuture<'static, Option<Value>>
             }),
         )
     }
@@ -405,8 +445,9 @@ impl NetworkMetadataService {
         Self::build(
             Box::new(|| Box::pin(async { None })),
             Arc::new(|endpoint: String, port: u16, timeout: u64| {
-                Box::pin(async move { fetch_metadata_json_via_proxy(&endpoint, port, timeout).await })
-                    as futures_util::future::BoxFuture<'static, Option<Value>>
+                Box::pin(
+                    async move { fetch_metadata_json_via_proxy(&endpoint, port, timeout).await },
+                ) as futures_util::future::BoxFuture<'static, Option<Value>>
             }),
         )
     }
@@ -414,13 +455,17 @@ impl NetworkMetadataService {
     /// Test constructor: inject the proxy-port resolver.
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn with_port_resolver(
-        resolve_proxy_port: impl Fn() -> futures_util::future::BoxFuture<'static, Option<u16>> + Send + Sync + 'static,
+        resolve_proxy_port: impl Fn() -> futures_util::future::BoxFuture<'static, Option<u16>>
+            + Send
+            + Sync
+            + 'static,
     ) -> Self {
         Self::build(
             Box::new(resolve_proxy_port),
             Arc::new(|endpoint: String, port: u16, timeout: u64| {
-                Box::pin(async move { fetch_metadata_json_via_proxy(&endpoint, port, timeout).await })
-                    as futures_util::future::BoxFuture<'static, Option<Value>>
+                Box::pin(
+                    async move { fetch_metadata_json_via_proxy(&endpoint, port, timeout).await },
+                ) as futures_util::future::BoxFuture<'static, Option<Value>>
             }),
         )
     }
@@ -430,7 +475,12 @@ impl NetworkMetadataService {
             provider_id: Mutex::new(DEFAULT_PROVIDER.to_string()),
             fetch_json_via_proxy,
             resolve_proxy_port,
-            now: || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0),
+            now: || {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0)
+            },
             cache_max_entries: DEFAULT_CACHE_MAX_ENTRIES,
             cache_ttl_ms: DEFAULT_CACHE_TTL_MS,
             timeout_ms: DEFAULT_TIMEOUT_MS,
@@ -457,7 +507,9 @@ impl NetworkMetadataService {
     /// without fetching; an uncached one resets to idle.
     pub async fn select_provider(&self, id: &str) -> Result<Value, crate::error::IpcError> {
         if get_provider(id).is_none() {
-            return Err(crate::error::IpcError::internal(format!("unknown network metadata provider: {id}")));
+            return Err(crate::error::IpcError::internal(format!(
+                "unknown network metadata provider: {id}"
+            )));
         }
         {
             let mut current = self.provider_id.lock().await;
@@ -482,7 +534,9 @@ impl NetworkMetadataService {
         // sweep is idempotent.)
         let flight = {
             let mut guard = self.fetching.lock().await;
-            guard.get_or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(()))).clone()
+            guard
+                .get_or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
+                .clone()
         };
         let _held = flight.lock().await;
         self.do_resolve(force).await
@@ -523,14 +577,22 @@ impl NetworkMetadataService {
         }
         let port = (self.resolve_proxy_port)().await;
         let Some(port) = port else {
-            return self.state_for(provider_id, "error", Some(KERNEL_NOT_RUNNING.to_string())).await;
+            return self
+                .state_for(provider_id, "error", Some(KERNEL_NOT_RUNNING.to_string()))
+                .await;
         };
-        let endpoint = provider_endpoint(provider_id).unwrap_or_default().to_string();
+        let endpoint = provider_endpoint(provider_id)
+            .unwrap_or_default()
+            .to_string();
         let body = (self.fetch_json_via_proxy)(endpoint, port, self.timeout_ms).await;
         let now = self.now_ms().await;
-        let metadata = body.as_ref().and_then(|body| parse_metadata_json(body, provider_id, now));
+        let metadata = body
+            .as_ref()
+            .and_then(|body| parse_metadata_json(body, provider_id, now));
         let Some(metadata) = metadata else {
-            return self.state_for(provider_id, "error", Some(PARSE_FAILURE.to_string())).await;
+            return self
+                .state_for(provider_id, "error", Some(PARSE_FAILURE.to_string()))
+                .await;
         };
         self.store_cache(provider_id, metadata).await;
         self.state_for(provider_id, "ready", None).await
@@ -570,7 +632,12 @@ impl NetworkMetadataService {
         self.state().await
     }
 
-    async fn state_for(&self, provider_id: &str, phase: &'static str, error: Option<String>) -> Value {
+    async fn state_for(
+        &self,
+        provider_id: &str,
+        phase: &'static str,
+        error: Option<String>,
+    ) -> Value {
         let metadata = self.fresh_cache(provider_id).await;
         json!({
             "phase": phase,
@@ -605,7 +672,8 @@ impl NetworkMetadataService {
         let cache = self.cache.lock().await;
         let cached = cache.get(provider_id)?;
         let now = self.now_ms().await;
-        (now.saturating_sub(cached["fetchedAt"].as_u64()?) <= self.cache_ttl_ms).then(|| cached.clone())
+        (now.saturating_sub(cached["fetchedAt"].as_u64()?) <= self.cache_ttl_ms)
+            .then(|| cached.clone())
     }
 
     async fn state(&self) -> Value {
@@ -613,14 +681,18 @@ impl NetworkMetadataService {
         let cached = self.fresh_cache(&provider_id).await;
         let (phase, error) = self.phase.lock().await.clone();
         match phase {
-            "fetching" => json!({ "phase": "fetching", "provider": provider_id, "metadata": cached, "error": Value::Null }),
+            "fetching" => {
+                json!({ "phase": "fetching", "provider": provider_id, "metadata": cached, "error": Value::Null })
+            }
             "ready" => json!({
                 "phase": if cached.is_some() { "ready" } else { "idle" },
                 "provider": provider_id,
                 "metadata": cached,
                 "error": Value::Null,
             }),
-            other => json!({ "phase": other, "provider": provider_id, "metadata": cached, "error": error }),
+            other => {
+                json!({ "phase": other, "provider": provider_id, "metadata": cached, "error": error })
+            }
         }
     }
 }
@@ -642,8 +714,16 @@ mod tests {
         assert_eq!(ids, vec!["ipwhois", "ipapi", "ipinfo"]);
         for provider in &providers {
             assert_eq!(provider["kind"], "ip-geo");
-            assert!(provider["endpoint"].as_str().unwrap().starts_with("http://"));
-            let mut keys: Vec<&str> = provider.as_object().unwrap().keys().map(String::as_str).collect();
+            assert!(provider["endpoint"]
+                .as_str()
+                .unwrap()
+                .starts_with("http://"));
+            let mut keys: Vec<&str> = provider
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect();
             keys.sort_unstable();
             assert_eq!(keys, vec!["description", "endpoint", "id", "kind", "label"]);
         }
@@ -681,11 +761,26 @@ mod tests {
         .unwrap();
         assert_eq!(ipinfo["asn"], "AS24940");
         // Error or unusable bodies.
-        assert!(parse_metadata_json(&json!({ "success": false, "message": "rate limited" }), "ipwhois", NOW).is_none());
-        assert!(parse_metadata_json(&json!({ "status": "fail", "message": "reserved range" }), "ipapi", NOW).is_none());
-        assert!(parse_metadata_json(&Value::String("not-an-object".into()), "ipinfo", NOW).is_none());
+        assert!(parse_metadata_json(
+            &json!({ "success": false, "message": "rate limited" }),
+            "ipwhois",
+            NOW
+        )
+        .is_none());
+        assert!(parse_metadata_json(
+            &json!({ "status": "fail", "message": "reserved range" }),
+            "ipapi",
+            NOW
+        )
+        .is_none());
+        assert!(
+            parse_metadata_json(&Value::String("not-an-object".into()), "ipinfo", NOW).is_none()
+        );
         // Requires a resolvable IP.
-        assert!(parse_metadata_json(&json!({ "success": true, "country": "US" }), "ipwhois", NOW).is_none());
+        assert!(
+            parse_metadata_json(&json!({ "success": true, "country": "US" }), "ipwhois", NOW)
+                .is_none()
+        );
         // Unknown provider.
         assert!(parse_metadata_json(&json!({ "ip": "1.2.3.4" }), "nope", NOW).is_none());
     }
@@ -698,8 +793,14 @@ mod tests {
             NOW,
         )
         .unwrap();
-        assert_eq!(display_text(&metadata), "203.0.113.5 · United States · New York · AS7922");
-        assert_eq!(copy_text(&metadata), "203.0.113.5 (United States, New York) AS7922");
+        assert_eq!(
+            display_text(&metadata),
+            "203.0.113.5 · United States · New York · AS7922"
+        );
+        assert_eq!(
+            copy_text(&metadata),
+            "203.0.113.5 (United States, New York) AS7922"
+        );
         assert_eq!(mask_ip("203.0.113.5"), "203.0.113.•••");
         let masked = mask_ip("2001:db8::1");
         assert!(masked.ends_with("•••"), "{masked}");
@@ -709,7 +810,9 @@ mod tests {
 
     #[tokio::test]
     async fn state_machine_degrades_without_a_kernel() {
-        fn always_none() -> impl Fn() -> futures_util::future::BoxFuture<'static, Option<u16>> + Send + Sync {
+        fn always_none(
+        ) -> impl Fn() -> futures_util::future::BoxFuture<'static, Option<u16>> + Send + Sync
+        {
             || Box::pin(async { None })
         }
         let service = NetworkMetadataService::with_port_resolver(always_none());
@@ -735,7 +838,9 @@ mod tests {
             fetch_json_via_proxy: Arc::new(move |_endpoint: String, _port: u16, _timeout: u64| {
                 counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 Box::pin(async {
-                    Some(json!({ "ip": "203.0.113.5", "success": true, "country": "United States" }))
+                    Some(
+                        json!({ "ip": "203.0.113.5", "success": true, "country": "United States" }),
+                    )
                 }) as futures_util::future::BoxFuture<'static, Option<Value>>
             }),
             resolve_proxy_port: Box::new(|| Box::pin(async { Some(7890) })),
@@ -775,10 +880,16 @@ mod tests {
     #[tokio::test]
     async fn proxy_fetch_resolves_null_for_unreachable_and_https() {
         // https is out of scope for the absolute-form transport.
-        assert!(fetch_metadata_json_via_proxy("https://ipwho.is/", 1, 200).await.is_none());
+        assert!(fetch_metadata_json_via_proxy("https://ipwho.is/", 1, 200)
+            .await
+            .is_none());
         // Unparseable endpoint.
-        assert!(fetch_metadata_json_via_proxy("not a url", 7890, 200).await.is_none());
+        assert!(fetch_metadata_json_via_proxy("not a url", 7890, 200)
+            .await
+            .is_none());
         // Nothing listening on the port: null, never a throw.
-        assert!(fetch_metadata_json_via_proxy("http://ipwho.is/", 1, 200).await.is_none());
+        assert!(fetch_metadata_json_via_proxy("http://ipwho.is/", 1, 200)
+            .await
+            .is_none());
     }
 }

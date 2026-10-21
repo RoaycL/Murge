@@ -37,7 +37,9 @@ pub struct InternetLatencySample {
 fn resolve_proxy_node(proxies: &Value, group_order: &[String]) -> Option<String> {
     let entries = proxies["proxies"].as_object()?;
     for group_name in group_order {
-        let Some(proxy) = entries.get(group_name) else { continue };
+        let Some(proxy) = entries.get(group_name) else {
+            continue;
+        };
         let proxy_type = proxy["type"].as_str().unwrap_or_default();
         if !SELECTABLE_GROUP_TYPES.contains(&proxy_type) {
             continue;
@@ -110,7 +112,11 @@ async fn sample_proxy(
         return (None, None);
     };
     let proxy_ms = client
-        .delay_test(&proxy_node, None, crate::mihomo::DEFAULT_DELAY_TIMEOUT_MS as i64)
+        .delay_test(
+            &proxy_node,
+            None,
+            crate::mihomo::DEFAULT_DELAY_TIMEOUT_MS as i64,
+        )
         .await
         .ok()
         .and_then(|result| result["delay"].as_u64());
@@ -142,10 +148,16 @@ mod tests {
         });
         // Declared order wins: 节点选择 first in the list -> its `now`.
         let order = vec!["节点选择".to_string(), "自动选择".to_string()];
-        assert_eq!(resolve_proxy_node(&proxies, &order), Some("自动选择".to_string()));
+        assert_eq!(
+            resolve_proxy_node(&proxies, &order),
+            Some("自动选择".to_string())
+        );
         // DIRECT/REJECT placeholders are skipped.
         let order = vec!["直连".to_string(), "节点选择".to_string()];
-        assert_eq!(resolve_proxy_node(&proxies, &order), Some("自动选择".to_string()));
+        assert_eq!(
+            resolve_proxy_node(&proxies, &order),
+            Some("自动选择".to_string())
+        );
         // GLOBAL is skipped.
         let global = json!({ "proxies": { "GLOBAL": { "type": "Selector", "name": "GLOBAL", "now": "x" } } });
         assert_eq!(resolve_proxy_node(&global, &["GLOBAL".to_string()]), None);

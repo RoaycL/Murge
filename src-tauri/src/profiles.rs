@@ -964,8 +964,7 @@ mod tests {
     }
 
     #[test]
-    fn meta_files_use_0600_on_unix() {
-        use std::os::unix::fs::PermissionsExt;
+    fn profile_write_preserves_content_and_native_file_properties() {
         let temp = TempDir::new().unwrap();
         let repo = repo_in(&temp);
         let a = repo
@@ -974,7 +973,24 @@ mod tests {
         let doc = temp
             .path()
             .join(format!("{}{DOC_EXTENSION}", a["id"].as_str().unwrap()));
-        let mode = fs::metadata(doc).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o600);
+        assert_eq!(fs::read_to_string(&doc).unwrap(), "mode: rule\n");
+        let metadata = fs::metadata(&doc).unwrap();
+        assert!(metadata.is_file());
+        // POSIX mode bits have no Windows equivalent. Keep this test running
+        // on both platforms and assert each platform's native file property.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            assert_eq!(
+                metadata.file_attributes() & 0x400,
+                0,
+                "profile is not a reparse point"
+            );
+        }
     }
 }

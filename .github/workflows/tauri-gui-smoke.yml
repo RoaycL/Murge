@@ -63,6 +63,11 @@ jobs:
       - name: Prepare test-only WebView2 inspection settings
         run: node "${{ inputs.source_ref != '' && 'ci-harness/' || '' }}scripts/ci-tauri-gui-config.mjs"
       - run: npm run tauri:build -- --no-bundle --target x86_64-pc-windows-msvc --features tauri/devtools --config "$env:RUNNER_TEMP/tauri-gui-config.json"
+      # Both shells emit out/renderer. Tauri has now embedded its assets;
+      # restore Electron's file://-relative renderer for the comparison app.
+      # Source branding/type checks already passed before Rust cache restore.
+      - name: Restore Electron comparison assets after the Tauri renderer build
+        run: npx electron-vite build
       - name: Prepare a normal user integrity session for WebView2 inspection
         # Hosted Windows runs elevated. WebView2 ignores the CDP environment
         # switch in elevated apps; Tauri's own Windows e2e workflow uses gsudo

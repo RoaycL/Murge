@@ -46,7 +46,8 @@ impl Timeline {
         }
         self.snapshot.marks.push(Mark {
             stage,
-            elapsed_ms: elapsed.as_millis().min(u64::MAX as u128) as u64,
+            elapsed_ms: (elapsed.as_nanos().saturating_add(500_000) / 1_000_000)
+                .min(u64::MAX as u128) as u64,
         });
     }
 
@@ -103,6 +104,28 @@ mod tests {
         assert!(chrono::DateTime::parse_from_rfc3339(&snapshot.process_started_at).is_ok());
         snapshot.marks.clear();
         assert_eq!(timeline.snapshot.marks.len(), 2);
+    }
+
+    #[test]
+    fn public_snapshot_has_the_shared_diagnostic_shape_and_real_marks() {
+        initialize();
+        let before = snapshot();
+        mark("settings-ready");
+        let value = serde_json::to_value(snapshot()).unwrap();
+        assert_eq!(value["processStartedAt"], before.process_started_at);
+        let marks = value["marks"].as_array().unwrap();
+        assert!(marks.iter().any(|mark| mark["stage"] == "settings-ready"));
+        assert!(marks.iter().all(|mark| mark["elapsedMs"].is_u64()));
+        assert_eq!(value.as_object().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn elapsed_milliseconds_round_like_the_electron_timeline() {
+        let mut timeline = Timeline::new();
+        timeline.mark_at("settings-ready", Duration::from_micros(1_499));
+        timeline.mark_at("ipc-ready", Duration::from_micros(1_500));
+        assert_eq!(timeline.snapshot.marks[0].elapsed_ms, 1);
+        assert_eq!(timeline.snapshot.marks[1].elapsed_ms, 2);
     }
 
     #[test]

@@ -125,6 +125,73 @@ fn unavailable_host(ports: &Value) -> Value {
         "tunAdapterPresent":null,"systemProxyRegistry":{"enabled":null,"target":"unavailable","port":null},"ports":ports})
 }
 
+#[cfg(any(windows, test))]
+fn normalize_host(raw: &Value, ports: &Value) -> Value {
+    let mut host = unavailable_host(ports);
+    let task = raw["startupTask"]["state"].as_str().unwrap_or_default();
+    if ["enabled", "disabled", "missing"].contains(&task) {
+        host["startupTask"]["state"] = json!(task);
+    }
+    host["startupTask"]["lastRunAt"] = raw["startupTask"]["lastRunAt"]
+        .as_str()
+        .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+        .map(|at| {
+            json!(at
+                .to_utc()
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+        })
+        .unwrap_or(Value::Null);
+    host["startupTask"]["lastResult"] = raw["startupTask"]["lastResult"]
+        .as_i64()
+        .map_or(Value::Null, |n| json!(n));
+    let service = raw["coreService"].as_str().unwrap_or_default();
+    if ["running", "stopped", "starting", "missing"].contains(&service) {
+        host["coreService"] = json!(service);
+    }
+    host["tunAdapterPresent"] = raw["tunAdapterPresent"]
+        .as_bool()
+        .map_or(Value::Null, |b| json!(b));
+    let registry = &raw["systemProxyRegistry"];
+    host["systemProxyRegistry"]["enabled"] = registry["enabled"]
+        .as_bool()
+        .map_or(Value::Null, |b| json!(b));
+    let target = registry["target"].as_str().unwrap_or_default();
+    if ["loopback", "external", "none"].contains(&target) {
+        host["systemProxyRegistry"]["target"] = json!(target);
+    }
+    host["systemProxyRegistry"]["port"] = registry["port"]
+        .as_u64()
+        .filter(|p| (1..=65535).contains(p))
+        .map_or(Value::Null, |n| json!(n));
+    if let Some(items) = host["ports"].as_array_mut() {
+        for port in items {
+            if let Some(source) = raw["ports"].as_array().and_then(|rows| {
+                rows.iter()
+                    .find(|r| r["label"] == port["label"] && r["port"] == port["port"])
+            }) {
+                port["ownerPids"] = Value::Array(
+                    source["ownerPids"]
+                        .as_array()
+                        .map(|ids| {
+                            ids.iter()
+                                .filter_map(|id| {
+                                    id.as_u64()
+                                        .filter(|n| *n <= u32::MAX as u64)
+                                        .map(|n| json!(n))
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                );
+                port["ownedByKernel"] = source["ownedByKernel"]
+                    .as_bool()
+                    .map_or(Value::Null, |b| json!(b));
+            }
+        }
+    }
+    host
+}
+
 #[cfg(windows)]
 async fn host(device: &str, ports: &Value, pid: &Value) -> Value {
     use tokio::io::AsyncReadExt;
@@ -174,11 +241,12 @@ $result=@();foreach($item in $ports){$pids=@();if($null -ne $owners){$pids=@($ow
         }
         serde_json::from_slice::<Value>(&bytes).ok()
     };
-    tokio::time::timeout(std::time::Duration::from_secs(7), operation)
+    let raw = tokio::time::timeout(std::time::Duration::from_secs(7), operation)
         .await
         .ok()
         .flatten()
-        .unwrap_or_else(|| unavailable_host(ports))
+        .unwrap_or_else(|| unavailable_host(ports));
+    normalize_host(&raw, ports)
 }
 
 #[cfg(not(windows))]
@@ -272,6 +340,18 @@ mod tests {
         assert_eq!(classify("[kernel] TUN_"), "kernel-start");
         assert_eq!(classify("provider failed"), "subscription");
         assert_eq!(classify("Cannot download"), "update");
+    }
+
+    #[test]
+    fn native_host_values_are_allowlisted_before_export() {
+        let host = normalize_host(
+            &json!({"coreService":"startpending", "password":"private", "startupTask":{"state":"private","lastRunAt":"not a date","lastResult":"secret"}}),
+            &json!([]),
+        );
+        assert_eq!(host["coreService"], "unavailable");
+        assert_eq!(host["startupTask"]["state"], "unavailable");
+        assert!(host["startupTask"]["lastRunAt"].is_null());
+        assert!(!host.to_string().contains("private"));
     }
 
     #[tokio::test]

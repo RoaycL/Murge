@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
@@ -10,6 +10,7 @@ import { setTimeout as pause } from 'node:timers/promises'
 
 if (process.platform !== 'win32') throw new Error('This smoke test requires Windows; refusing to silently skip')
 const root = process.cwd()
+const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
 const require = createRequire(resolve(root, 'package.json'))
 const WebSocket = require('ws')
 const brand = JSON.parse(await readFile(resolve(root, 'brand.config.json'), 'utf8'))
@@ -190,9 +191,9 @@ try {
   const executable = resolve(root, 'src-tauri/target/x86_64-pc-windows-msvc/release', `${brand.executableName}.exe`)
   const evidence = [await smoke('tauri', executable)]
   if (process.argv.includes('--compare-electron')) evidence.push(await smoke('electron', require('electron'), [root]))
-  await writeFile(resolve(output, 'result.json'), JSON.stringify({ commit: process.env.GITHUB_SHA, evidence }, null, 2) + '\n')
+  await writeFile(resolve(output, 'result.json'), JSON.stringify({ sourceCommit, workflowCommit: process.env.GITHUB_SHA, evidence }, null, 2) + '\n')
   console.log('TAURI_GUI_SMOKE=PASS')
 } catch (error) {
-  await writeFile(resolve(output, 'failure.json'), JSON.stringify({ error: error.message }, null, 2) + '\n')
+  await writeFile(resolve(output, 'failure.json'), JSON.stringify({ sourceCommit, workflowCommit: process.env.GITHUB_SHA, error: error.message }, null, 2) + '\n')
   throw error
 }

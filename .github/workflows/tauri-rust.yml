@@ -56,6 +56,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
+          cache-on-failure: true
       - run: npm ci --include=dev
       - run: npm run tauri:bridge
       - name: Check generated bridge is unchanged
@@ -89,6 +90,7 @@ jobs:
         with:
           workspaces: src-tauri -> target
           shared-key: audit
+          cache-on-failure: true
       - name: Install RustSec audit tool
         run: cargo install cargo-audit --locked
       - name: Audit the committed lockfile (no ignored advisories)

@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: tauri-rust-${{ github.ref }}
+  group: tauri-rust-${{ github.event_name }}-${{ github.ref }}-${{ inputs.source_ref || 'default' }}
   cancel-in-progress: true
 
 jobs:

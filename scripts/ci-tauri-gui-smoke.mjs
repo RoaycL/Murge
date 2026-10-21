@@ -33,12 +33,25 @@ using System.Runtime.InteropServices;
 public class TauriWindowProbe {
  [StructLayout(LayoutKind.Sequential)] public struct Rect {public int Left, Top, Right, Bottom;}
  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+ [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+ [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
+ [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int command);
  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out Rect r);
  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
 }
 '@
 $p=Get-Process -Id ([int]$env:CI_TAURI_PID) -ErrorAction Stop
 $p.Refresh();$h=$p.MainWindowHandle
+if($env:CI_TAURI_HANDLE){$h=[IntPtr]([long]$env:CI_TAURI_HANDLE)}
+if($env:CI_TAURI_ACTION -eq 'state') {
+ @{visible=[TauriWindowProbe]::IsWindowVisible($h);minimized=[TauriWindowProbe]::IsIconic($h);maximized=[TauriWindowProbe]::IsZoomed($h)}|ConvertTo-Json -Compress
+ exit
+}
+if($env:CI_TAURI_ACTION -eq 'restore') {
+ $null=[TauriWindowProbe]::ShowWindow($h,9);$null=[TauriWindowProbe]::SetForegroundWindow($h)
+ Write-Output '{"restored":true}'
+ exit
+}
 if($h -eq 0 -or -not [TauriWindowProbe]::IsWindowVisible($h)){throw 'Native window is not visible'}
 if($env:CI_TAURI_ACTION -eq 'debug') {
  $rows=@(Get-CimInstance Win32_Process);$ids=@($p.Id)
@@ -60,12 +73,12 @@ if($env:CI_TAURI_ACTION -eq 'debug') {
  $graphics=[System.Drawing.Graphics]::FromImage($bitmap)
  try {$graphics.CopyFromScreen($r.Left,$r.Top,0,0,$bitmap.Size);$bitmap.Save($env:CI_TAURI_SCREENSHOT,[System.Drawing.Imaging.ImageFormat]::Png)}finally{$graphics.Dispose();$bitmap.Dispose()}
  Write-Output '{"captured":true}'
-}else{Write-Output ('{"pid":'+$p.Id+',"visible":true}')}
+}else{@{pid=$p.Id;handle=$h.ToInt64().ToString();visible=$true}|ConvertTo-Json -Compress}
 `)
 
-async function native(pid, action = 'inspect', screenshot = '') {
+async function native(pid, action = 'inspect', screenshot = '', handle = '') {
   const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', nativeScript], {
-    windowsHide: true, env: { ...process.env, CI_TAURI_PID: String(pid), CI_TAURI_ACTION: action, CI_TAURI_SCREENSHOT: screenshot }, stdio: ['ignore', 'pipe', 'pipe']
+    windowsHide: true, env: { ...process.env, CI_TAURI_PID: String(pid), CI_TAURI_ACTION: action, CI_TAURI_SCREENSHOT: screenshot, CI_TAURI_HANDLE: handle }, stdio: ['ignore', 'pipe', 'pipe']
   })
   let stdout = '', stderr = ''
   child.stdout.on('data', (chunk) => { stdout = (stdout + chunk).slice(-16384) })
@@ -169,6 +182,28 @@ async function smoke(kind, executable, args = []) {
       await pause(500)
       await native(child.pid, 'capture', resolve(output, `${kind}-${theme}.png`))
     }
+    const controls = {}
+    if (kind === 'tauri' && await evaluate(`Boolean(document.querySelector('.tauri-window-controls'))`)) {
+      const state = () => native(child.pid, 'state', '', window.handle)
+      const click = (label) => evaluate(`document.querySelector('.tauri-window-controls button[aria-label="${label}"]').click()`)
+      await click('最大化')
+      await waitFor(async () => (await state()).maximized, alive)
+      await waitFor(() => evaluate(`Boolean(document.querySelector('.tauri-window-controls button[aria-label="还原"]'))`), alive)
+      await click('还原')
+      await waitFor(async () => !(await state()).maximized, alive)
+      await click('最小化')
+      await waitFor(async () => (await state()).minimized, alive)
+      await native(child.pid, 'restore', '', window.handle)
+      await waitFor(async () => !(await state()).minimized, alive)
+      await evaluate(`window.desktop.appSettings.set({closeToTray:true})`)
+      await click('关闭')
+      await waitFor(async () => !(await state()).visible, alive)
+      assert.ok(alive(), 'Close-to-tray must preserve the application process')
+      await native(child.pid, 'restore', '', window.handle)
+      await waitFor(async () => (await state()).visible, alive)
+      await evaluate(`window.desktop.appSettings.set({closeToTray:false})`)
+      Object.assign(controls, { maximizeRestore: true, minimize: true, closeToTray: true })
+    }
     await pause(3000)
     assert.ok(alive(), 'Application must remain alive after rendering')
     assert.deepEqual(cdp.failures, [], 'Renderer must not emit uncaught exceptions or crashes')
@@ -176,7 +211,7 @@ async function smoke(kind, executable, args = []) {
     await waitFor(async () => exit, () => true, 30_000)
     assert.equal(exit.code, 0, 'Native close must exit normally; forced termination never counts as success')
     assert.equal(exit.signal, null)
-    return { kind, windowVisible: true, rendererLoaded: true, backendIpc: true, stable: true, normalExit: true }
+    return { kind, windowVisible: true, rendererLoaded: true, backendIpc: true, stable: true, normalExit: true, controls }
   } finally {
     cdp?.close()
     // Failure cleanup is scoped to the recorded child PID and never reports a

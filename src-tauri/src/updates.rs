@@ -181,6 +181,9 @@ impl UpdaterDriver for GatedUpdaterDriver {
 /// carry bytes: the signature check below is what decides trust.
 const GITHUB_PROXIES: [&str; 2] = ["https://gh-proxy.org", "https://ghfast.top"];
 
+/// Mid-session feed polling cadence (the mihomo-party / sparkle model).
+pub const POLL_INTERVAL_MS: u64 = 10 * 60 * 1000;
+
 /// Timeout for a single manifest probe before the source is dropped.
 const FEED_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 
@@ -222,6 +225,59 @@ pub fn route_download_url(download_url: &str, feed_base: &str, direct: &str) -> 
             format!("{}/{download_url}", prefix.trim_end_matches('/'))
         }
         _ => download_url.to_string(),
+    }
+}
+
+/// True when `download_url` is one of this repository's release assets
+/// (`https://github.com/<owner>/<repo>/releases/download/...`).
+pub fn is_release_asset(download_url: &str, direct: &str) -> bool {
+    let Some(repository) = direct.strip_suffix("/releases/latest/download") else {
+        return false;
+    };
+    let Ok(url) = url::Url::parse(download_url) else {
+        return false;
+    };
+    url.scheme() == "https"
+        && url.host_str() == Some("github.com")
+        && url.port().is_none()
+        && url.query().is_none()
+        && url.as_str().starts_with(&format!("{repository}/releases/download/"))
+        && !url.path().contains("/../")
+}
+
+/// Result of racing the manifest probes.
+pub enum ProbeOutcome<T> {
+    /// A source announced an update (the first one to do so).
+    Update(String, T),
+    /// Every answering source said there is nothing newer; the first of them.
+    NoUpdate(String),
+    /// No source answered.
+    Failed(String),
+}
+
+/// Run every probe concurrently: return as soon as one announces an update,
+/// otherwise wait for all and report "no update" only if at least one source
+/// answered.
+pub async fn race_probes<T, F>(probes: impl IntoIterator<Item = F>) -> ProbeOutcome<T>
+where
+    F: std::future::Future<Output = Result<(String, Option<T>), String>>,
+{
+    use futures_util::stream::{FuturesUnordered, StreamExt};
+    let mut pending: FuturesUnordered<F> = probes.into_iter().collect();
+    let mut no_update: Option<String> = None;
+    let mut errors: Vec<String> = Vec::new();
+    while let Some(result) = pending.next().await {
+        match result {
+            Ok((base, Some(update))) => return ProbeOutcome::Update(base, update),
+            Ok((base, None)) => {
+                no_update.get_or_insert(base);
+            }
+            Err(error) => errors.push(error),
+        }
+    }
+    match no_update {
+        Some(base) => ProbeOutcome::NoUpdate(base),
+        None => ProbeOutcome::Failed(if errors.is_empty() { "no update source".to_string() } else { errors.join("; ") }),
     }
 }
 
@@ -275,7 +331,6 @@ static INSTALL_ON_EXIT: std::sync::atomic::AtomicBool = std::sync::atomic::Atomi
 
 /// Skip the pending install for this exit (session ending). The update stays
 /// in the release feed and is picked up again on the next launch.
-#[allow(dead_code)] // called from the session-ending shutdown path (W3)
 pub fn cancel_install_on_exit() {
     INSTALL_ON_EXIT.store(false, std::sync::atomic::Ordering::SeqCst);
 }
@@ -358,8 +413,10 @@ impl TauriUpdaterInner {
             .map_err(|error| error.to_string())
     }
 
-    /// Race every source for the manifest; the first one that answers (with
-    /// or without an update) wins, like the Electron driver's `Promise.any`.
+    /// Race every source for the manifest. The first source that announces an
+    /// update wins at once; "no update" is only concluded after every source
+    /// has answered, so a stale mirror cannot hide a release the direct feed
+    /// already lists.
     async fn check(self: Arc<Self>) {
         self.emit(UpdaterDriverEvent::Checking);
         let last_good = self.last_good.lock().expect("updater last_good poisoned").clone();
@@ -367,31 +424,35 @@ impl TauriUpdaterInner {
         let probes = bases.iter().map(|base| {
             let inner = self.clone();
             let base = base.clone();
-            Box::pin(async move {
+            async move {
                 let updater = inner.updater_for(&base)?;
                 let found = updater.check().await.map_err(|error| error.to_string())?;
-                Ok::<_, String>((base, found))
-            })
-        });
-        match futures_util::future::select_ok(probes).await {
-            Ok(((base, found), _rest)) => {
-                *self.last_good.lock().expect("updater last_good poisoned") = Some(base.clone());
-                match found {
-                    None => {
-                        *self.available.lock().expect("updater available poisoned") = None;
-                        self.emit(UpdaterDriverEvent::NotAvailable);
-                    }
-                    Some(update) => {
-                        let version = update.version.clone();
-                        let release_notes = update.body.clone();
-                        *self.available.lock().expect("updater available poisoned") = Some((update, base));
-                        self.emit(UpdaterDriverEvent::Available { version, release_notes });
-                        // electron-updater autoDownload parity.
-                        self.download().await;
+                if let Some(update) = &found {
+                    // The manifest is unsigned: never let it point the client
+                    // at anything but this repository's release assets.
+                    if !is_release_asset(update.download_url.as_str(), &inner.direct) {
+                        return Err(format!("update manifest points outside the release: {}", update.download_url));
                     }
                 }
+                Ok::<_, String>((base, found))
             }
-            Err(error) => {
+        });
+        match race_probes(probes).await {
+            ProbeOutcome::Update(base, update) => {
+                *self.last_good.lock().expect("updater last_good poisoned") = Some(base.clone());
+                let version = update.version.clone();
+                let release_notes = update.body.clone();
+                *self.available.lock().expect("updater available poisoned") = Some((update, base));
+                self.emit(UpdaterDriverEvent::Available { version, release_notes });
+                // electron-updater autoDownload parity.
+                self.download().await;
+            }
+            ProbeOutcome::NoUpdate(base) => {
+                *self.last_good.lock().expect("updater last_good poisoned") = Some(base);
+                *self.available.lock().expect("updater available poisoned") = None;
+                self.emit(UpdaterDriverEvent::NotAvailable);
+            }
+            ProbeOutcome::Failed(error) => {
                 *self.last_good.lock().expect("updater last_good poisoned") = None;
                 self.emit(UpdaterDriverEvent::Error { message: format!("无法连接更新源，请检查网络或稍后重试（{error}）") });
             }
@@ -608,10 +669,18 @@ impl UpdateService {
         });
     }
 
-    // Wired into before-quit cleanup (before-quit slice).
-    #[allow(dead_code)]
     pub fn stop_polling(&self) {
         self.inner.poll_generation.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// The "自动检查更新" preference: poll while it is on, stop when it is
+    /// turned off (Electron's `applyUpdatePolling`).
+    pub fn apply_polling(&self, enabled: bool) {
+        if enabled {
+            self.start_polling(POLL_INTERVAL_MS);
+        } else {
+            self.stop_polling();
+        }
     }
 
     pub fn get_state(&self) -> UpdateState {
@@ -1117,6 +1186,66 @@ mod tests {
         // Only GitHub assets are re-routed through a mirror.
         let elsewhere = "https://example.com/Murge.exe";
         assert_eq!(route_download_url(elsewhere, &format!("https://ghfast.top/{direct}"), direct), elsewhere);
+    }
+
+    #[test]
+    fn only_this_repositorys_release_assets_are_downloadable() {
+        let direct = "https://github.com/o/r/releases/latest/download";
+        assert!(is_release_asset("https://github.com/o/r/releases/download/v1.0.0/App_1.0.0_x64-setup.exe", direct));
+        for url in [
+            "http://github.com/o/r/releases/download/v1.0.0/a.exe",
+            "https://github.com:8443/o/r/releases/download/v1.0.0/a.exe",
+            "https://github.com/other/r/releases/download/v1.0.0/a.exe",
+            "https://github.com/o/r-evil/releases/download/v1.0.0/a.exe",
+            "https://github.com/o/r/releases/download/v1.0.0/a.exe?x=1",
+            "https://127.0.0.1:9090/o/r/releases/download/v1.0.0/a.exe",
+            "https://ghfast.top/https://github.com/o/r/releases/download/v1.0.0/a.exe",
+            "not a url",
+        ] {
+            assert!(!is_release_asset(url, direct), "{url}");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_update_from_any_source_beats_an_earlier_no_update() {
+        use std::time::Duration;
+        type Probe = std::pin::Pin<Box<dyn std::future::Future<Output = Result<(String, Option<u32>), String>> + Send>>;
+        let probes: Vec<Probe> = vec![
+            Box::pin(async { Ok(("stale-mirror".to_string(), None)) }),
+            Box::pin(async {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                Ok(("direct".to_string(), Some(7)))
+            }),
+            Box::pin(async { Err("timed out".to_string()) }),
+        ];
+        match race_probes(probes).await {
+            ProbeOutcome::Update(base, update) => {
+                assert_eq!(base, "direct");
+                assert_eq!(update, 7);
+            }
+            _ => panic!("expected the update"),
+        }
+        let none: Vec<Probe> = vec![
+            Box::pin(async { Err("refused".to_string()) }),
+            Box::pin(async { Ok(("direct".to_string(), None)) }),
+        ];
+        assert!(matches!(race_probes(none).await, ProbeOutcome::NoUpdate(base) if base == "direct"));
+        let failed: Vec<Probe> = vec![Box::pin(async { Err("a".to_string()) }), Box::pin(async { Err("b".to_string()) })];
+        assert!(matches!(race_probes(failed).await, ProbeOutcome::Failed(error) if error == "a; b"));
+    }
+
+    #[tokio::test]
+    async fn polling_follows_the_auto_check_preference() {
+        let driver = FakeDriver::new(true);
+        let service = UpdateService::new(driver.clone());
+        service.start();
+        service.apply_polling(false);
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        assert_eq!(counters(&driver).1, 0);
+        service.start_polling(5);
+        service.apply_polling(false);
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        assert_eq!(counters(&driver).1, 0);
     }
 
     #[test]

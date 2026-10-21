@@ -676,9 +676,17 @@ pub fn run() {
             updates_service.subscribe(std::sync::Arc::new(move |value| {
                 let _ = tauri::Emitter::emit(&updates_app, "updates:state-event", value.clone());
             }));
-            // Mid-session feed polling (the mihomo-party / sparkle model); a
-            // no-op when the driver is unsupported.
-            updates_service.start_polling(10 * 60 * 1000);
+            // "自动检查更新": a launch check plus mid-session polling, both
+            // only while the preference is on (toggled live from
+            // app-settings:set); no-ops when the driver is unsupported.
+            let auto_check_update = app.state::<std::sync::Arc<settings::SettingsStore>>().get().auto_check_update;
+            updates_service.apply_polling(auto_check_update);
+            if auto_check_update {
+                let launch_check = updates_service.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = launch_check.poll_tick().await;
+                });
+            }
             app.manage(std::sync::Arc::new(updates_service));
             // The ordered-kernel-gateway crash hook: when the supervisor
             // reports `failed` while the system proxy is owned, restore it

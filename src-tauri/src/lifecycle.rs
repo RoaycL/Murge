@@ -160,6 +160,10 @@ async fn dispose_services(app: &tauri::AppHandle) {
 /// quit signal funnels here; the first call runs the ordered sequence, later
 /// calls join it (no-op).
 pub async fn begin_application_shutdown(app: tauri::AppHandle, session_ending: bool) {
+    if session_ending {
+        // Never launch a downloaded update's installer while Windows ends the session.
+        crate::updates::cancel_install_on_exit();
+    }
     if SHUTDOWN_IN_FLIGHT.swap(true, Ordering::SeqCst) {
         return;
     }

@@ -82,7 +82,13 @@ fn dpapi(input: &[u8], protect: bool) -> Result<Vec<u8>> {
         if ok == 0 {
             return Err("系统安全存储不可用".into());
         }
-        let bytes = std::slice::from_raw_parts(output.data, output.size as usize).to_vec();
+        let bytes = if output.size == 0 {
+            Vec::new()
+        } else if output.data.is_null() {
+            return Err("系统安全存储不可用".into());
+        } else {
+            std::slice::from_raw_parts(output.data, output.size as usize).to_vec()
+        };
         LocalFree(output.data.cast());
         Ok(bytes)
     }
@@ -177,6 +183,12 @@ mod tests {
         };
         let error = codec.decrypt(b"v20private-token").unwrap_err();
         assert!(!error.contains("private-token"));
+    }
+    #[cfg(windows)]
+    #[test]
+    fn windows_dpapi_empty_payload_roundtrip() {
+        let encrypted = dpapi(&[], true).unwrap();
+        assert!(dpapi(&encrypted, false).unwrap().is_empty());
     }
     #[cfg(windows)]
     #[test]

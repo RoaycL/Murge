@@ -15,8 +15,8 @@
 //! in docs/tauri/phase3/README.md.
 
 use serde_json::{Map, Value};
-use yaml_rust2::Yaml;
 use yaml_rust2::yaml::Hash;
+use yaml_rust2::Yaml;
 
 use crate::error::IpcError;
 use crate::override_model::{OverrideItem, KIND_JS, KIND_YAML};
@@ -88,7 +88,9 @@ pub fn merge_override_object(base: &mut Map<String, Value>, r#override: &Map<Str
 
         let base_value = base.get(&key).cloned().unwrap_or(Value::Null);
         if is_plain_object(&base_value) && is_plain_object(value) {
-            if let (Some(base_object), Some(override_object)) = (base_value.as_object(), value.as_object()) {
+            if let (Some(base_object), Some(override_object)) =
+                (base_value.as_object(), value.as_object())
+            {
                 let mut merged = base_object.clone();
                 merge_override_object(&mut merged, override_object);
                 base.insert(key, Value::Object(merged));
@@ -124,7 +126,12 @@ fn yaml_to_json(yaml: Yaml) -> Value {
         Yaml::Integer(v) => Value::Number(v.into()),
         Yaml::String(s) => Value::String(s),
         Yaml::Boolean(b) => Value::Bool(b),
-        Yaml::Array(items) => Value::Array(items.iter().map(|item| yaml_to_json(item.clone())).collect()),
+        Yaml::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|item| yaml_to_json(item.clone()))
+                .collect(),
+        ),
         Yaml::Hash(map) => {
             let mut object = Map::new();
             for (key, value) in map.iter() {
@@ -211,7 +218,10 @@ pub fn validate_override_content(item: &OverrideItem) -> Option<String> {
 pub fn apply_overrides_to_document(base: &str, items: &[OverrideItem]) -> ApplyOverridesResult {
     let runnable: Vec<&OverrideItem> = items.iter().filter(|item| is_runnable(item)).collect();
     if runnable.is_empty() {
-        return ApplyOverridesResult { text: base.to_string(), warnings: Vec::new() };
+        return ApplyOverridesResult {
+            text: base.to_string(),
+            warnings: Vec::new(),
+        };
     }
 
     let Some(config) = parse_yaml_to_object(base) else {
@@ -235,18 +245,27 @@ pub fn apply_overrides_to_document(base: &str, items: &[OverrideItem]) -> ApplyO
             merge_override_object(&mut config, &r#override);
         } else {
             // JS kind: the sealed sandbox (see module doc).
-            let result = crate::js_sandbox::run_js_override(&item.content, &Value::Object(config.clone()));
+            let result =
+                crate::js_sandbox::run_js_override(&item.content, &Value::Object(config.clone()));
             config = match result.next {
                 Value::Object(map) => map,
                 // run_js_override always returns an object here; the guard
                 // keeps the merge chain object-typed regardless.
                 _ => continue,
             };
-            warnings.extend(result.warnings.into_iter().map(|message| format!("覆写「{}」：{}", item.name, message)));
+            warnings.extend(
+                result
+                    .warnings
+                    .into_iter()
+                    .map(|message| format!("覆写「{}」：{}", item.name, message)),
+            );
         }
     }
 
-    ApplyOverridesResult { text: stringify_yaml(Value::Object(config)), warnings }
+    ApplyOverridesResult {
+        text: stringify_yaml(Value::Object(config)),
+        warnings,
+    }
 }
 
 /// Structural gate for a runtime profile config — Rust port of
@@ -304,7 +323,9 @@ pub fn chain_semantic_issues(base_text: &str, applied_text: &str) -> Vec<String>
 }
 
 /// Arg-coercion helper shared by dispatch handlers.
-pub fn override_input(input: &Value) -> Result<(String, String, String, Option<String>, String), IpcError> {
+pub fn override_input(
+    input: &Value,
+) -> Result<(String, String, String, Option<String>, String), IpcError> {
     let object = input
         .as_object()
         .ok_or_else(|| IpcError::invalid_argument("override input must be an object"))?;
@@ -317,14 +338,18 @@ pub fn override_input(input: &Value) -> Result<(String, String, String, Option<S
         .and_then(Value::as_str)
         .ok_or_else(|| IpcError::invalid_argument("override input.kind must be a string"))?;
     if kind != KIND_YAML && kind != KIND_JS {
-        return Err(IpcError::invalid_argument("override input.kind must be 'yaml' or 'js'"));
+        return Err(IpcError::invalid_argument(
+            "override input.kind must be 'yaml' or 'js'",
+        ));
     }
     let scope = object
         .get("scope")
         .and_then(Value::as_str)
         .ok_or_else(|| IpcError::invalid_argument("override input.scope must be a string"))?;
     if scope != SCOPE_CHECK.0 && scope != SCOPE_CHECK.1 {
-        return Err(IpcError::invalid_argument("override input.scope must be 'global' or 'profile'"));
+        return Err(IpcError::invalid_argument(
+            "override input.scope must be 'global' or 'profile'",
+        ));
     }
     let profile_id = match object.get("profileId") {
         Some(Value::String(id)) if !id.trim().is_empty() => Some(id.clone()),
@@ -334,7 +359,13 @@ pub fn override_input(input: &Value) -> Result<(String, String, String, Option<S
         .get("content")
         .and_then(Value::as_str)
         .ok_or_else(|| IpcError::invalid_argument("override input.content must be a string"))?;
-    Ok((name.to_string(), kind.to_string(), scope.to_string(), profile_id, content.to_string()))
+    Ok((
+        name.to_string(),
+        kind.to_string(),
+        scope.to_string(),
+        profile_id,
+        content.to_string(),
+    ))
 }
 
 const SCOPE_CHECK: (&str, &str) = ("global", "profile");
@@ -363,7 +394,11 @@ mod tests {
         let base = "port: 7890\nmode: rule\ndns:\n  enable: false\n";
         let result = apply_overrides_to_document(
             base,
-            &[item("yaml", "mode: global\ndns:\n  enable: true\n  ipv6: false\n", 0)],
+            &[item(
+                "yaml",
+                "mode: global\ndns:\n  enable: true\n  ipv6: false\n",
+                0,
+            )],
         );
         assert!(result.warnings.is_empty(), "{:?}", result.warnings);
         let merged = parse_yaml_to_object(&result.text).unwrap();
@@ -376,15 +411,20 @@ mod tests {
     #[test]
     fn append_and_prepend_modifiers_dedupe() {
         let base = "rules:\n  - MATCH,A\n";
-        let append = apply_overrides_to_document(base, &[item("yaml", "rules+:\n  - MATCH,B\n", 0)]);
+        let append =
+            apply_overrides_to_document(base, &[item("yaml", "rules+:\n  - MATCH,B\n", 0)]);
         let rules = parse_yaml_to_object(&append.text).unwrap()["rules"].clone();
         assert_eq!(rules, json!(["MATCH,A", "MATCH,B"]));
-        let prepend = apply_overrides_to_document(base, &[item("yaml", "+rules:\n  - MATCH,B\n", 0)]);
+        let prepend =
+            apply_overrides_to_document(base, &[item("yaml", "+rules:\n  - MATCH,B\n", 0)]);
         let rules = parse_yaml_to_object(&prepend.text).unwrap()["rules"].clone();
         assert_eq!(rules, json!(["MATCH,B", "MATCH,A"]));
         // Exact duplicates are dropped.
         let dup = apply_overrides_to_document(base, &[item("yaml", "rules+:\n  - MATCH,A\n", 0)]);
-        assert_eq!(parse_yaml_to_object(&dup.text).unwrap()["rules"], json!(["MATCH,A"]));
+        assert_eq!(
+            parse_yaml_to_object(&dup.text).unwrap()["rules"],
+            json!(["MATCH,A"])
+        );
     }
 
     #[test]
@@ -393,32 +433,64 @@ mod tests {
         let result = apply_overrides_to_document(base, &[item("yaml", "rules: [broken\n", 0)]);
         // The base IS parsed (so the text re-serializes), the bad item is
         // skipped with a warning, and the good keys survive.
-        assert!(result.warnings.iter().any(|w| w.contains("YAML 解析失败")), "{:?}", result.warnings);
-        assert_eq!(parse_yaml_to_object(&result.text).unwrap()["mode"], json!("rule"));
+        assert!(
+            result.warnings.iter().any(|w| w.contains("YAML 解析失败")),
+            "{:?}",
+            result.warnings
+        );
+        assert_eq!(
+            parse_yaml_to_object(&result.text).unwrap()["mode"],
+            json!("rule")
+        );
     }
 
     #[test]
     fn unparseable_base_skips_everything() {
-        let result = apply_overrides_to_document("\t- not a map", &[item("yaml", "mode: global\n", 0)]);
+        let result =
+            apply_overrides_to_document("\t- not a map", &[item("yaml", "mode: global\n", 0)]);
         assert_eq!(result.text, "\t- not a map");
-        assert!(result.warnings.iter().any(|w| w.contains("基础配置文件无法解析")));
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.contains("基础配置文件无法解析")));
     }
 
     #[test]
     fn js_overrides_run_through_the_sealed_sandbox() {
         let base = "mode: rule\n";
-        let result = apply_overrides_to_document(base, &[item("js", "function main(c) { c.mode = 'global' }", 0)]);
+        let result = apply_overrides_to_document(
+            base,
+            &[item("js", "function main(c) { c.mode = 'global' }", 0)],
+        );
         assert!(result.warnings.is_empty(), "{:?}", result.warnings);
-        assert_eq!(parse_yaml_to_object(&result.text).unwrap()["mode"], json!("global"));
+        assert_eq!(
+            parse_yaml_to_object(&result.text).unwrap()["mode"],
+            json!("global")
+        );
     }
 
     #[test]
     fn a_failing_js_override_is_fail_open_with_the_wrapped_warning() {
         let base = "mode: rule\n";
-        let result = apply_overrides_to_document(base, &[item("js", "function main(c) { throw new Error('boom') }", 0)]);
-        assert_eq!(parse_yaml_to_object(&result.text).unwrap()["mode"], json!("rule"), "config untouched");
+        let result = apply_overrides_to_document(
+            base,
+            &[item(
+                "js",
+                "function main(c) { throw new Error('boom') }",
+                0,
+            )],
+        );
+        assert_eq!(
+            parse_yaml_to_object(&result.text).unwrap()["mode"],
+            json!("rule"),
+            "config untouched"
+        );
         assert_eq!(result.warnings.len(), 1, "{:?}", result.warnings);
-        assert!(result.warnings[0].starts_with("覆写「override-0」：JS 覆写 main(config) 执行失败："), "{}", result.warnings[0]);
+        assert!(
+            result.warnings[0].starts_with("覆写「override-0」：JS 覆写 main(config) 执行失败："),
+            "{}",
+            result.warnings[0]
+        );
     }
 
     #[test]
@@ -453,18 +525,30 @@ mod tests {
             ],
         );
         // Ascending order; the LAST applied item wins.
-        assert_eq!(parse_yaml_to_object(&result.text).unwrap()["port"], json!(1));
+        assert_eq!(
+            parse_yaml_to_object(&result.text).unwrap()["port"],
+            json!(1)
+        );
     }
 
     #[test]
     fn validate_override_content_checks_yaml_mapping() {
-        assert_eq!(validate_override_content(&item("yaml", "mode: rule\n", 0)), None);
+        assert_eq!(
+            validate_override_content(&item("yaml", "mode: rule\n", 0)),
+            None
+        );
         assert_eq!(
             validate_override_content(&item("yaml", "rules: [broken\n", 0)).as_deref(),
             Some("YAML 覆写解析失败，需要是一个映射对象")
         );
-        assert_eq!(validate_override_content(&item("yaml", "  \n", 0)).as_deref(), Some("覆写内容为空"));
-        assert_eq!(validate_override_content(&item("js", "function main() {}", 0)), None);
+        assert_eq!(
+            validate_override_content(&item("yaml", "  \n", 0)).as_deref(),
+            Some("覆写内容为空")
+        );
+        assert_eq!(
+            validate_override_content(&item("js", "function main() {}", 0)),
+            None
+        );
         assert_eq!(
             validate_override_content(&item("js", "const x = 1", 0)).as_deref(),
             Some("JS 覆写未定义 main(config) 函数")
@@ -491,7 +575,13 @@ mod tests {
         let base = "proxies: []\nrules: []\n";
         let applied_broken = "proxies: []\nrules: []\nmode: rule\nmode: global\n";
         let introduced = chain_semantic_issues(base, applied_broken);
-        assert!(introduced.iter().any(|e| e.contains("重复") || e.contains("duplicate") || e.contains("解析")), "{:?}", introduced);
+        assert!(
+            introduced
+                .iter()
+                .any(|e| e.contains("重复") || e.contains("duplicate") || e.contains("解析")),
+            "{:?}",
+            introduced
+        );
         // A base with pre-existing problems does not blame the overrides.
         let bad_base = "mode: rule\n";
         let applied_same_shape = "mode: rule\n";
@@ -500,22 +590,41 @@ mod tests {
 
     #[test]
     fn stringify_round_trips_through_the_object_model() {
-        let object = parse_yaml_to_object("port: 7890\ndns:\n  nameserver:\n    - 223.5.5.5\n    - 8.8.8.8\n").unwrap();
+        let object = parse_yaml_to_object(
+            "port: 7890\ndns:\n  nameserver:\n    - 223.5.5.5\n    - 8.8.8.8\n",
+        )
+        .unwrap();
         let text = stringify_yaml(Value::Object(object));
         let reparsed = parse_yaml_to_object(&text).unwrap();
         assert_eq!(reparsed["port"], json!(7890));
-        assert_eq!(reparsed["dns"]["nameserver"], json!(["223.5.5.5", "8.8.8.8"]));
+        assert_eq!(
+            reparsed["dns"]["nameserver"],
+            json!(["223.5.5.5", "8.8.8.8"])
+        );
         assert!(!text.starts_with("---"), "no document header");
     }
 
     #[test]
     fn override_input_is_validated() {
-        assert!(override_input(&json!({ "name": "n", "kind": "yaml", "scope": "global", "content": "x" })).is_ok());
-        assert!(override_input(&json!({ "kind": "yaml", "scope": "global", "content": "x" })).is_err());
-        assert!(override_input(&json!({ "name": "n", "kind": "lua", "scope": "global", "content": "x" })).is_err());
-        assert!(override_input(&json!({ "name": "n", "kind": "yaml", "scope": "zone", "content": "x" })).is_err());
-        assert!(override_input(&json!({ "name": "n", "kind": "yaml", "scope": "profile", "content": "x" }))
-            .map(|(_, _, _, profile_id, _)| profile_id.is_none())
-            .unwrap_or(false));
+        assert!(override_input(
+            &json!({ "name": "n", "kind": "yaml", "scope": "global", "content": "x" })
+        )
+        .is_ok());
+        assert!(
+            override_input(&json!({ "kind": "yaml", "scope": "global", "content": "x" })).is_err()
+        );
+        assert!(override_input(
+            &json!({ "name": "n", "kind": "lua", "scope": "global", "content": "x" })
+        )
+        .is_err());
+        assert!(override_input(
+            &json!({ "name": "n", "kind": "yaml", "scope": "zone", "content": "x" })
+        )
+        .is_err());
+        assert!(override_input(
+            &json!({ "name": "n", "kind": "yaml", "scope": "profile", "content": "x" })
+        )
+        .map(|(_, _, _, profile_id, _)| profile_id.is_none())
+        .unwrap_or(false));
     }
 }

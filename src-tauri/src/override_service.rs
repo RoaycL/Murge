@@ -58,7 +58,10 @@ impl OverrideService {
             app_data_base,
             now: Box::new(crate::profiles::epoch_millis_now),
             resolve_base_document: None,
-            state: Mutex::new(State { items: None, last_good: None }),
+            state: Mutex::new(State {
+                items: None,
+                last_good: None,
+            }),
         }
     }
 
@@ -69,7 +72,9 @@ impl OverrideService {
     }
 
     fn file_path(&self) -> Option<PathBuf> {
-        self.app_data_base.as_ref().map(|base| base.join(OVERRIDES_FILE))
+        self.app_data_base
+            .as_ref()
+            .map(|base| base.join(OVERRIDES_FILE))
     }
 
     fn guard(&self) -> std::sync::MutexGuard<'_, State> {
@@ -80,7 +85,16 @@ impl OverrideService {
         items
             .into_iter()
             .enumerate()
-            .map(|(index, item)| if item.order == index as i64 { item } else { OverrideItem { order: index as i64, ..item } })
+            .map(|(index, item)| {
+                if item.order == index as i64 {
+                    item
+                } else {
+                    OverrideItem {
+                        order: index as i64,
+                        ..item
+                    }
+                }
+            })
             .collect()
     }
 
@@ -92,16 +106,19 @@ impl OverrideService {
         if state.items.is_some() {
             return;
         }
-        let loaded = self.file_path().and_then(|path| fs::read_to_string(path).ok()).and_then(|raw| {
-            let parsed: Value = serde_json::from_str(&raw).ok()?;
-            let source = parsed.get("items")?;
-            let items: Vec<OverrideItem> = source
-                .as_array()?
-                .iter()
-                .map(coerce_override_item)
-                .collect();
-            Some(items)
-        });
+        let loaded = self
+            .file_path()
+            .and_then(|path| fs::read_to_string(path).ok())
+            .and_then(|raw| {
+                let parsed: Value = serde_json::from_str(&raw).ok()?;
+                let source = parsed.get("items")?;
+                let items: Vec<OverrideItem> = source
+                    .as_array()?
+                    .iter()
+                    .map(coerce_override_item)
+                    .collect();
+                Some(items)
+            });
         state.items = Some(Self::reindex(loaded.unwrap_or_default()));
     }
 
@@ -110,24 +127,24 @@ impl OverrideService {
             return Ok(());
         };
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| IpcError::internal(format!("unable to create app-data directory: {error}")))?;
+            fs::create_dir_all(parent).map_err(|error| {
+                IpcError::internal(format!("unable to create app-data directory: {error}"))
+            })?;
         }
         let mut snapshot = Map::new();
         snapshot.insert("items".into(), json!(items));
-        let mut body = serde_json::to_string_pretty(&Value::Object(snapshot)).expect("snapshot serializes");
+        let mut body =
+            serde_json::to_string_pretty(&Value::Object(snapshot)).expect("snapshot serializes");
         body.push('\n');
-        let tmp = path.with_file_name(format!(
-            ".{OVERRIDES_FILE}.{}.tmp",
-            uuid::Uuid::new_v4()
-        ));
-        let write = fs::write(&tmp, body)
-            .and_then(|()| fs::rename(&tmp, &path));
+        let tmp = path.with_file_name(format!(".{OVERRIDES_FILE}.{}.tmp", uuid::Uuid::new_v4()));
+        let write = fs::write(&tmp, body).and_then(|()| fs::rename(&tmp, &path));
         match write {
             Ok(()) => Ok(()),
             Err(error) => {
                 let _ = fs::remove_file(&tmp);
-                Err(IpcError::internal(format!("unable to persist overrides: {error}")))
+                Err(IpcError::internal(format!(
+                    "unable to persist overrides: {error}"
+                )))
             }
         }
     }
@@ -139,7 +156,8 @@ impl OverrideService {
     }
 
     pub fn create(&self, input: &Value) -> Result<Value, IpcError> {
-        let (name, kind, scope, profile_id, content) = crate::override_apply::override_input(input)?;
+        let (name, kind, scope, profile_id, content) =
+            crate::override_apply::override_input(input)?;
         let mut state = self.guard();
         self.ensure_loaded(&mut state);
         let items = state.items.as_mut().expect("loaded");
@@ -160,7 +178,8 @@ impl OverrideService {
     }
 
     pub fn update(&self, id: &str, input: &Value) -> Result<Value, IpcError> {
-        let (name, kind, scope, profile_id, content) = crate::override_apply::override_input(input)?;
+        let (name, kind, scope, profile_id, content) =
+            crate::override_apply::override_input(input)?;
         let mut state = self.guard();
         self.ensure_loaded(&mut state);
         let items = state.items.as_mut().expect("loaded");
@@ -210,7 +229,11 @@ impl OverrideService {
             .iter()
             .position(|item| item.id == id)
             .ok_or_else(|| IpcError::invalid_argument("覆写不存在"))?;
-        let target = if direction == "up" { index - 1 } else { index + 1 };
+        let target = if direction == "up" {
+            index - 1
+        } else {
+            index + 1
+        };
         if target < items.len() {
             items.swap(index, target);
             *items = Self::reindex(items.clone());
@@ -231,7 +254,8 @@ impl OverrideService {
                     .filter(|item| {
                         item.enabled
                             && (item.scope == "global"
-                                || (item.scope == "profile" && item.profile_id.as_deref() == profile_id))
+                                || (item.scope == "profile"
+                                    && item.profile_id.as_deref() == profile_id))
                     })
                     .cloned()
                     .collect()
@@ -244,7 +268,11 @@ impl OverrideService {
     /// Apply the effective overrides for a profile onto its base document.
     /// Used by the kernel config pipeline (Phase 3B composition wiring).
     #[allow(dead_code)]
-    pub fn apply_for_profile(&self, base_document: &str, profile_id: Option<&str>) -> Result<String, IpcError> {
+    pub fn apply_for_profile(
+        &self,
+        base_document: &str,
+        profile_id: Option<&str>,
+    ) -> Result<String, IpcError> {
         let mut state = self.guard();
         self.ensure_loaded(&mut state);
         let effective = self.effective_overrides(&state, profile_id);
@@ -258,7 +286,10 @@ impl OverrideService {
     pub fn preview(&self) -> Result<Value, IpcError> {
         let mut state = self.guard();
         self.ensure_loaded(&mut state);
-        let base = self.resolve_base_document.as_ref().and_then(|resolve| resolve());
+        let base = self
+            .resolve_base_document
+            .as_ref()
+            .and_then(|resolve| resolve());
         let Some((document, profile_id)) = base else {
             return Ok(json!({
                 "baseText": "",
@@ -282,7 +313,10 @@ impl OverrideService {
     pub fn validate(&self) -> Result<Value, IpcError> {
         let mut state = self.guard();
         self.ensure_loaded(&mut state);
-        let base = self.resolve_base_document.as_ref().and_then(|resolve| resolve());
+        let base = self
+            .resolve_base_document
+            .as_ref()
+            .and_then(|resolve| resolve());
         let mut issues: Vec<Value> = Vec::new();
         let Some((document, profile_id)) = base else {
             issues.push(json!({ "itemName": null, "level": "error", "message": "当前没有活动的订阅，无法校验覆写" }));
@@ -386,13 +420,17 @@ mod tests {
     #[test]
     fn create_list_update_round_trip_persists_two_space_json() {
         let (temp, service) = service();
-        let snapshot = service.create(&input("First", "yaml", "mode: global\n")).unwrap();
+        let snapshot = service
+            .create(&input("First", "yaml", "mode: global\n"))
+            .unwrap();
         assert_eq!(snapshot["items"].as_array().unwrap().len(), 1);
         assert_eq!(snapshot["items"][0]["enabled"], true);
         assert_eq!(snapshot["items"][0]["order"], 0);
 
         let id = snapshot["items"][0]["id"].as_str().unwrap().to_string();
-        service.update(&id, &input("Renamed", "yaml", "mode: rule\n")).unwrap();
+        service
+            .update(&id, &input("Renamed", "yaml", "mode: rule\n"))
+            .unwrap();
         let snapshot = service.list().unwrap();
         assert_eq!(snapshot["items"][0]["name"], "Renamed");
         assert_eq!(snapshot["items"][0]["content"], "mode: rule\n");
@@ -472,7 +510,9 @@ mod tests {
         service.create(&input("A", "yaml", "port: 1\n")).unwrap();
         let error = service.set_enabled("nope", true).unwrap_err();
         assert!(error.0.contains("覆写不存在"), "{}", error.0);
-        let error = service.update("nope", &input("x", "yaml", "y")).unwrap_err();
+        let error = service
+            .update("nope", &input("x", "yaml", "y"))
+            .unwrap_err();
         assert!(error.0.contains("覆写不存在"), "{}", error.0);
         let error = service.move_item("nope", "up").unwrap_err();
         assert!(error.0.contains("覆写不存在"), "{}", error.0);
@@ -492,15 +532,28 @@ mod tests {
         let (temp, service) = service();
         let document = "proxies:\n  - name: a\n    password: hunter2\nrules:\n  - MATCH,A\n";
         fs::write(temp.path().join("base.yaml"), document.as_bytes()).unwrap();
-        service.create(&input("Port", "yaml", "port: 7891\n")).unwrap();
+        service
+            .create(&input("Port", "yaml", "port: 7891\n"))
+            .unwrap();
         let service = service.with_base_resolver(Box::new(move || {
             let document = fs::read_to_string(temp.path().join("base.yaml")).ok()?;
             Some((document, Some("profile-1".to_string())))
         }));
         let preview = service.preview().unwrap();
         assert_eq!(preview["unavailable"], false);
-        assert!(!preview["baseText"].as_str().unwrap().contains("hunter2"), "{}", preview["baseText"]);
-        assert!(preview["baseText"].as_str().unwrap().contains("password: ***"), "{}", preview["baseText"]);
+        assert!(
+            !preview["baseText"].as_str().unwrap().contains("hunter2"),
+            "{}",
+            preview["baseText"]
+        );
+        assert!(
+            preview["baseText"]
+                .as_str()
+                .unwrap()
+                .contains("password: ***"),
+            "{}",
+            preview["baseText"]
+        );
         // Redacted texts are DISPLAY-only (never re-parsed — `***` is not
         // valid YAML); assert their content directly.
         let applied = preview["appliedText"].as_str().unwrap();
@@ -514,13 +567,22 @@ mod tests {
         let (temp, service) = service();
         fs::write(temp.path().join("base.yaml"), "proxies: []\nrules: []\n").unwrap();
         let service = service.with_base_resolver(Box::new(move || {
-            Some((fs::read_to_string(temp.path().join("base.yaml")).ok()?, Some("p".to_string())))
+            Some((
+                fs::read_to_string(temp.path().join("base.yaml")).ok()?,
+                Some("p".to_string()),
+            ))
         }));
         // A structurally-broken YAML override surfaces a per-item error.
-        service.create(&input("Broken", "yaml", "rules: [broken\n")).unwrap();
+        service
+            .create(&input("Broken", "yaml", "rules: [broken\n"))
+            .unwrap();
         let validation = service.validate().unwrap();
         assert_eq!(validation["valid"], false);
-        assert!(validation["issues"].as_array().unwrap().iter().any(|i| i["message"] == "YAML 覆写解析失败，需要是一个映射对象"));
+        assert!(validation["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["message"] == "YAML 覆写解析失败，需要是一个映射对象"));
     }
 
     #[test]
@@ -528,14 +590,21 @@ mod tests {
         let (temp, service) = service();
         fs::write(temp.path().join("base.yaml"), "proxies: []\nrules: []\n").unwrap();
         let service = service.with_base_resolver(Box::new(move || {
-            Some((fs::read_to_string(temp.path().join("base.yaml")).ok()?, Some("p".to_string())))
+            Some((
+                fs::read_to_string(temp.path().join("base.yaml")).ok()?,
+                Some("p".to_string()),
+            ))
         }));
         let snapshot = service.create(&input("A", "yaml", "port: 1\n")).unwrap();
         let id = snapshot["items"][0]["id"].as_str().unwrap().to_string();
         service.set_enabled(&id, false).unwrap();
         let validation = service.validate().unwrap();
         assert_eq!(validation["valid"], true, "{}", validation);
-        assert!(validation["issues"].as_array().unwrap().iter().any(|i| i["level"] == "warning"));
+        assert!(validation["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["level"] == "warning"));
     }
 
     #[test]
@@ -543,7 +612,10 @@ mod tests {
         let (temp, service) = service();
         fs::write(temp.path().join("base.yaml"), "proxies: []\nrules: []\n").unwrap();
         let service = service.with_base_resolver(Box::new(move || {
-            Some((fs::read_to_string(temp.path().join("base.yaml")).ok()?, Some("p".to_string())))
+            Some((
+                fs::read_to_string(temp.path().join("base.yaml")).ok()?,
+                Some("p".to_string()),
+            ))
         }));
         // A valid set is captured as last-known-good by validate().
         service.create(&input("A", "yaml", "port: 7891\n")).unwrap();
@@ -553,7 +625,9 @@ mod tests {
         // A subsequent bad edit is rolled back to the captured snapshot.
         let snapshot = service.list().unwrap();
         let id = snapshot["items"][0]["id"].as_str().unwrap().to_string();
-        service.update(&id, &input("A", "yaml", "rules: [broken\n")).unwrap();
+        service
+            .update(&id, &input("A", "yaml", "rules: [broken\n"))
+            .unwrap();
         let restored = service.reset_to_last_good().unwrap();
         assert_eq!(restored["items"][0]["content"], "port: 7891\n");
     }
@@ -563,15 +637,26 @@ mod tests {
         // Scoping is exercised through preview(), whose resolver decides the
         // profile (keeps State private).
         let (temp, service) = service();
-        fs::write(temp.path().join("base.yaml"), "proxies: []\nrules: []\nport: 0\n").unwrap();
+        fs::write(
+            temp.path().join("base.yaml"),
+            "proxies: []\nrules: []\nport: 0\n",
+        )
+        .unwrap();
         // Global override + a profile override for p1 + one for p2.
         service.create(&json!({ "name": "G", "kind": "yaml", "scope": "global", "profileId": null, "content": "port: 1\n" })).unwrap();
         service.create(&json!({ "name": "P", "kind": "yaml", "scope": "profile", "profileId": "p1", "content": "keep-alive: 30\n" })).unwrap();
         service.create(&json!({ "name": "Q", "kind": "yaml", "scope": "profile", "profileId": "p2", "content": "mode: global\n" })).unwrap();
         let service = service.with_base_resolver(Box::new(move || {
-            Some((fs::read_to_string(temp.path().join("base.yaml")).ok()?, Some("p1".to_string())))
+            Some((
+                fs::read_to_string(temp.path().join("base.yaml")).ok()?,
+                Some("p1".to_string()),
+            ))
         }));
-        let applied_text = service.preview().unwrap()["appliedText"].take().as_str().map(str::to_string).unwrap_or_default();
+        let applied_text = service.preview().unwrap()["appliedText"]
+            .take()
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_default();
         // appliedText is redacted display text; assert on the unredacted apply
         // path instead by re-running the engine through the public pipeline:
         // (keep-alive only enters via the p1 override, so its presence proves

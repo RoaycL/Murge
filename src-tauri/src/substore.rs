@@ -138,7 +138,11 @@ impl SubStoreWorkerHandle {
 }
 
 /// The injectable transport for GitHub HTTP calls (API + asset downloads).
-pub type Fetch = Arc<dyn Fn(FetchRequest) -> futures_util::future::BoxFuture<'static, Result<FetchResponse, String>> + Send + Sync>;
+pub type Fetch = Arc<
+    dyn Fn(FetchRequest) -> futures_util::future::BoxFuture<'static, Result<FetchResponse, String>>
+        + Send
+        + Sync,
+>;
 
 pub struct FetchRequest {
     pub url: String,
@@ -164,11 +168,18 @@ pub struct SubStoreDeps {
     /// `subStoreUseProxy` is on. None means direct egress.
     pub get_mixed_port: Box<dyn Fn() -> Option<u16> + Send + Sync>,
     /// Injectable for tests; defaults to a real node child process.
-    pub create_worker: Option<Arc<dyn Fn(String, HashMap<String, String>) -> SubStoreWorkerHandle + Send + Sync>>,
+    pub create_worker:
+        Option<Arc<dyn Fn(String, HashMap<String, String>) -> SubStoreWorkerHandle + Send + Sync>>,
     /// Injectable for tests; defaults to the real reqwest transport.
     pub fetch_fn: Option<Fetch>,
     /// Injectable port probe for tests.
-    pub find_free_port: Option<Arc<dyn Fn(u16) -> futures_util::future::BoxFuture<'static, Result<u16, String>> + Send + Sync>>,
+    pub find_free_port: Option<
+        Arc<
+            dyn Fn(u16) -> futures_util::future::BoxFuture<'static, Result<u16, String>>
+                + Send
+                + Sync,
+        >,
+    >,
     /// The worker output sink (the TS `onLog`): None = discard (the old
     /// `Stdio::null()`), Some = line chunks land in the bounded log files.
     pub on_log: Option<Arc<dyn Fn(&str, &str) + Send + Sync>>,
@@ -238,7 +249,9 @@ struct SubStoreHttp {
 
 impl SubStoreHttp {
     fn new() -> Self {
-        SubStoreHttp { client: OnceLock::new() }
+        SubStoreHttp {
+            client: OnceLock::new(),
+        }
     }
 
     fn client(&self) -> &reqwest::Client {
@@ -262,9 +275,15 @@ impl SubStoreHttp {
             .await
             .map_err(|error| format!("GitHub 请求失败：{error}"))?;
         if !response.status().is_success() {
-            return Err(format!("GitHub 请求失败：HTTP {}", response.status().as_u16()));
+            return Err(format!(
+                "GitHub 请求失败：HTTP {}",
+                response.status().as_u16()
+            ));
         }
-        response.json::<Value>().await.map_err(|error| format!("GitHub 请求失败：{error}"))
+        response
+            .json::<Value>()
+            .await
+            .map_err(|error| format!("GitHub 请求失败：{error}"))
     }
 
     async fn download(&self, url: &str) -> Result<FetchResponse, String> {
@@ -280,10 +299,23 @@ impl SubStoreHttp {
         let headers = response
             .headers()
             .iter()
-            .filter_map(|(name, value)| value.to_str().ok().map(|text| (name.as_str().to_string(), text.to_string())))
+            .filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|text| (name.as_str().to_string(), text.to_string()))
+            })
             .collect();
-        let body = response.bytes().await.map_err(|error| format!("下载失败：{error}"))?.to_vec();
-        Ok(FetchResponse { status, headers, body })
+        let body = response
+            .bytes()
+            .await
+            .map_err(|error| format!("下载失败：{error}"))?
+            .to_vec();
+        Ok(FetchResponse {
+            status,
+            headers,
+            body,
+        })
     }
 }
 
@@ -293,11 +325,14 @@ fn default_fetch() -> Fetch {
         let client = client.clone();
         Box::pin(async move {
             if request.accept.is_some() {
-                client.fetch_json(&request.url).await.map(|value| FetchResponse {
-                    status: 200,
-                    headers: Vec::new(),
-                    body: value.to_string().into_bytes(),
-                })
+                client
+                    .fetch_json(&request.url)
+                    .await
+                    .map(|value| FetchResponse {
+                        status: 200,
+                        headers: Vec::new(),
+                        body: value.to_string().into_bytes(),
+                    })
             } else {
                 client.download(&request.url).await
             }
@@ -332,11 +367,15 @@ impl SubStoreService {
     }
 
     fn generation(&self) -> u64 {
-        self.inner.operation_generation.fetch_add(1, Ordering::SeqCst) + 1
+        self.inner
+            .operation_generation
+            .fetch_add(1, Ordering::SeqCst)
+            + 1
     }
 
     fn is_current(&self, generation: u64) -> bool {
-        !*self.inner.disposed.lock().unwrap() && generation == self.inner.operation_generation.load(Ordering::SeqCst)
+        !*self.inner.disposed.lock().unwrap()
+            && generation == self.inner.operation_generation.load(Ordering::SeqCst)
     }
 
     fn assets_dir(&self) -> PathBuf {
@@ -358,7 +397,8 @@ impl SubStoreService {
     async fn read_versions(&self) -> Option<Versions> {
         let raw = tokio::fs::read_to_string(self.versions_path()).await.ok()?;
         let parsed: Value = serde_json::from_str(&raw).ok()?;
-        if is_valid_sub_store_tag(&parsed["backend"]) && is_valid_sub_store_tag(&parsed["frontend"]) {
+        if is_valid_sub_store_tag(&parsed["backend"]) && is_valid_sub_store_tag(&parsed["frontend"])
+        {
             return Some(Versions {
                 backend: parsed["backend"].as_str().unwrap_or_default().to_string(),
                 frontend: parsed["frontend"].as_str().unwrap_or_default().to_string(),
@@ -369,12 +409,22 @@ impl SubStoreService {
     }
 
     async fn write_versions(&self, versions: &Versions, root: &Path) -> Result<(), String> {
-        tokio::fs::create_dir_all(root).await.map_err(|error| error.to_string())?;
-        let tmp = root.join(format!(".{VERSIONS_FILE}.{}.tmp", uuid()));
-        tokio::fs::write(&tmp, format!("{}\n", serde_json::to_string_pretty(&versions_value(versions)).unwrap()))
+        tokio::fs::create_dir_all(root)
             .await
             .map_err(|error| error.to_string())?;
-        tokio::fs::rename(&tmp, root.join(VERSIONS_FILE)).await.map_err(|error| error.to_string())
+        let tmp = root.join(format!(".{VERSIONS_FILE}.{}.tmp", uuid()));
+        tokio::fs::write(
+            &tmp,
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&versions_value(versions)).unwrap()
+            ),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        tokio::fs::rename(&tmp, root.join(VERSIONS_FILE))
+            .await
+            .map_err(|error| error.to_string())
     }
 
     async fn resolve_release_asset(
@@ -384,10 +434,14 @@ impl SubStoreService {
         expected_download_url: impl Fn(&str) -> String,
         max_bytes: u64,
     ) -> Result<ResolvedAsset, String> {
-        let body = (self.fetch())(FetchRequest { url: api_url.to_string(), accept: Some("application/vnd.github+json".into()) })
-            .await
+        let body = (self.fetch())(FetchRequest {
+            url: api_url.to_string(),
+            accept: Some("application/vnd.github+json".into()),
+        })
+        .await
+        .map_err(|error| format!("GitHub 请求失败：{error}"))?;
+        let parsed: Value = serde_json::from_slice(&body.body)
             .map_err(|error| format!("GitHub 请求失败：{error}"))?;
-        let parsed: Value = serde_json::from_slice(&body.body).map_err(|error| format!("GitHub 请求失败：{error}"))?;
         if body.status != 200 && !(200..300).contains(&body.status) {
             return Err(format!("GitHub 请求失败：HTTP {}", body.status));
         }
@@ -401,26 +455,47 @@ impl SubStoreService {
             .filter(|asset| asset["name"] == json!(expected_asset_name))
             .collect();
         if matches.len() != 1 {
-            return Err(format!("GitHub Release 缺少唯一资源：{expected_asset_name}"));
+            return Err(format!(
+                "GitHub Release 缺少唯一资源：{expected_asset_name}"
+            ));
         }
         let asset = matches[0];
         let tag = parsed["tag_name"].as_str().unwrap_or_default().to_string();
         let expected_url = expected_download_url(&tag);
         let digest = asset["digest"].as_str().unwrap_or_default().to_string();
-        let valid_digest = digest.len() == 71 && digest.starts_with("sha256:") && digest[7..].bytes().all(|byte| byte.is_ascii_hexdigit());
+        let valid_digest = digest.len() == 71
+            && digest.starts_with("sha256:")
+            && digest[7..].bytes().all(|byte| byte.is_ascii_hexdigit());
         if asset["browser_download_url"] != json!(expected_url)
-            || asset["size"].as_u64().is_none_or(|size| size == 0 || size > max_bytes)
+            || asset["size"]
+                .as_u64()
+                .is_none_or(|size| size == 0 || size > max_bytes)
             || !valid_digest
         {
-            return Err(format!("GitHub Release 资源元数据无效：{expected_asset_name}"));
+            return Err(format!(
+                "GitHub Release 资源元数据无效：{expected_asset_name}"
+            ));
         }
-        Ok(ResolvedAsset { tag, url: expected_url, size: asset["size"].as_u64().unwrap_or(0), digest: digest.to_lowercase() })
+        Ok(ResolvedAsset {
+            tag,
+            url: expected_url,
+            size: asset["size"].as_u64().unwrap_or(0),
+            digest: digest.to_lowercase(),
+        })
     }
 
-    async fn download_to(&self, asset: &ResolvedAsset, dest: &Path, max_bytes: u64) -> Result<(), String> {
-        let response = (self.fetch())(FetchRequest { url: asset.url.clone(), accept: None })
-            .await
-            .map_err(|error| format!("下载失败：{error}"))?;
+    async fn download_to(
+        &self,
+        asset: &ResolvedAsset,
+        dest: &Path,
+        max_bytes: u64,
+    ) -> Result<(), String> {
+        let response = (self.fetch())(FetchRequest {
+            url: asset.url.clone(),
+            accept: None,
+        })
+        .await
+        .map_err(|error| format!("下载失败：{error}"))?;
         if response.status < 200 || response.status >= 300 {
             return Err(format!("下载失败：HTTP {}", response.status));
         }
@@ -429,19 +504,28 @@ impl SubStoreService {
             return Err("下载失败：资源超过声明大小或安全上限".into());
         }
         if received != asset.size {
-            return Err(format!("下载失败：资源大小不匹配（预期 {}，实际 {}）", asset.size, received));
+            return Err(format!(
+                "下载失败：资源大小不匹配（预期 {}，实际 {}）",
+                asset.size, received
+            ));
         }
         let digest = format!("sha256:{}", hex(&Sha256::digest(&response.body)));
         if digest != asset.digest {
             return Err("下载失败：SHA-256 校验不匹配".into());
         }
         if let Some(parent) = dest.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(|error| error.to_string())?;
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|error| error.to_string())?;
         }
         let tmp = dest.with_extension(format!("{}.tmp", uuid()));
-        let result = tokio::fs::write(&tmp, &response.body).await.map_err(|error| error.to_string());
+        let result = tokio::fs::write(&tmp, &response.body)
+            .await
+            .map_err(|error| error.to_string());
         match result {
-            Ok(()) => tokio::fs::rename(&tmp, dest).await.map_err(|error| error.to_string()),
+            Ok(()) => tokio::fs::rename(&tmp, dest)
+                .await
+                .map_err(|error| error.to_string()),
             Err(error) => Err(error),
         }
     }
@@ -454,7 +538,13 @@ impl SubStoreService {
             use_proxy,
             phase: *self.inner.phase.lock().unwrap(),
             port: *self.inner.port.lock().unwrap(),
-            version: self.inner.versions_cache.lock().unwrap().as_ref().map(versions_value),
+            version: self
+                .inner
+                .versions_cache
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(versions_value),
             assets_ready: *self.inner.assets_cache.lock().unwrap(),
             error: self.inner.error.lock().unwrap().clone(),
         })
@@ -463,10 +553,15 @@ impl SubStoreService {
     /// Refresh the synchronous-mirror caches from the persisted facts.
     async fn refresh_caches(&self) {
         let settings = (self.deps.settings)().await;
-        *self.inner.settings_cache.lock().unwrap() = (settings.sub_store_enabled, settings.sub_store_use_proxy);
+        *self.inner.settings_cache.lock().unwrap() =
+            (settings.sub_store_enabled, settings.sub_store_use_proxy);
         *self.inner.versions_cache.lock().unwrap() = self.read_versions().await;
-        let backend_ok = tokio::fs::metadata(self.backend_bundle_path()).await.is_ok();
-        let frontend_ok = tokio::fs::metadata(self.frontend_index_path()).await.is_ok();
+        let backend_ok = tokio::fs::metadata(self.backend_bundle_path())
+            .await
+            .is_ok();
+        let frontend_ok = tokio::fs::metadata(self.frontend_index_path())
+            .await
+            .is_ok();
         *self.inner.assets_cache.lock().unwrap() = backend_ok && frontend_ok;
     }
 
@@ -486,14 +581,20 @@ impl SubStoreService {
         let proxy_changed = sub_store_use_proxy != previous.1;
         *self.inner.settings_cache.lock().unwrap() = (sub_store_enabled, sub_store_use_proxy);
         if !sub_store_enabled {
-            if enabled_changed || *self.inner.phase.lock().unwrap() != "idle" || self.inner.starting.lock().unwrap().is_some() {
+            if enabled_changed
+                || *self.inner.phase.lock().unwrap() != "idle"
+                || self.inner.starting.lock().unwrap().is_some()
+            {
                 self.stop().await;
             }
             return;
         }
         // Only an actual proxy-mode change requires a live worker restart;
         // unrelated app settings are ignored.
-        if proxy_changed && *self.inner.phase.lock().unwrap() == "running" && self.inner.port.lock().unwrap().is_some() {
+        if proxy_changed
+            && *self.inner.phase.lock().unwrap() == "running"
+            && self.inner.port.lock().unwrap().is_some()
+        {
             self.stop().await;
             let _ = self.ensure_running().await;
         }
@@ -531,8 +632,12 @@ impl SubStoreService {
 
     async fn ensure_running_inner(&self, generation: u64) -> Result<(), String> {
         let mut versions = self.read_versions().await;
-        let backend_ok = tokio::fs::metadata(self.backend_bundle_path()).await.is_ok();
-        let frontend_ok = tokio::fs::metadata(self.frontend_index_path()).await.is_ok();
+        let backend_ok = tokio::fs::metadata(self.backend_bundle_path())
+            .await
+            .is_ok();
+        let frontend_ok = tokio::fs::metadata(self.frontend_index_path())
+            .await
+            .is_ok();
         if !backend_ok || !frontend_ok || versions.is_none() {
             *self.inner.phase.lock().unwrap() = "downloading";
             *self.inner.error.lock().unwrap() = None;
@@ -568,7 +673,9 @@ impl SubStoreService {
         replace_frontend: bool,
         force: bool,
     ) -> Result<PathBuf, String> {
-        tokio::fs::create_dir_all(&self.deps.base_dir).await.map_err(|error| error.to_string())?;
+        tokio::fs::create_dir_all(&self.deps.base_dir)
+            .await
+            .map_err(|error| error.to_string())?;
         let staging = self.deps.base_dir.join(format!(".assets-stage-{}", uuid()));
         let replace_backend = force || replace_backend;
         let replace_frontend = force || replace_frontend;
@@ -576,7 +683,9 @@ impl SubStoreService {
             if !force && self.assets_dir().exists() {
                 copy_dir_recursive(&self.assets_dir(), &staging).await?;
             } else {
-                tokio::fs::create_dir_all(&staging).await.map_err(|error| error.to_string())?;
+                tokio::fs::create_dir_all(&staging)
+                    .await
+                    .map_err(|error| error.to_string())?;
             }
             if replace_backend {
                 let asset = self
@@ -590,10 +699,17 @@ impl SubStoreService {
                 if asset.tag != versions.backend {
                     return Err("Sub-Store 后端版本响应不匹配".into());
                 }
-                if versions.backend == SUB_STORE_BACKEND_DEFAULT_TAG && asset.digest != self.deps.pinned_digests.0 {
+                if versions.backend == SUB_STORE_BACKEND_DEFAULT_TAG
+                    && asset.digest != self.deps.pinned_digests.0
+                {
                     return Err("Sub-Store 后端默认版本摘要与应用内置值不匹配".into());
                 }
-                self.download_to(&asset, &staging.join(BACKEND_BUNDLE_FILE), BACKEND_MAX_BYTES).await?;
+                self.download_to(
+                    &asset,
+                    &staging.join(BACKEND_BUNDLE_FILE),
+                    BACKEND_MAX_BYTES,
+                )
+                .await?;
             }
             if replace_frontend {
                 let asset = self
@@ -607,13 +723,18 @@ impl SubStoreService {
                 if asset.tag != versions.frontend {
                     return Err("Sub-Store 前端版本响应不匹配".into());
                 }
-                if versions.frontend == SUB_STORE_FRONTEND_DEFAULT_TAG && asset.digest != self.deps.pinned_digests.1 {
+                if versions.frontend == SUB_STORE_FRONTEND_DEFAULT_TAG
+                    && asset.digest != self.deps.pinned_digests.1
+                {
                     return Err("Sub-Store 前端默认版本摘要与应用内置值不匹配".into());
                 }
                 let zip_path = staging.join("frontend-dist.zip");
-                self.download_to(&asset, &zip_path, FRONTEND_ZIP_MAX_BYTES).await?;
+                self.download_to(&asset, &zip_path, FRONTEND_ZIP_MAX_BYTES)
+                    .await?;
                 let frontend_staging = staging.join(format!("frontend-staging-{}", uuid()));
-                let zip_bytes = tokio::fs::read(&zip_path).await.map_err(|error| error.to_string())?;
+                let zip_bytes = tokio::fs::read(&zip_path)
+                    .await
+                    .map_err(|error| error.to_string())?;
                 let written = crate::substore_zip::extract_zip_bytes(&zip_bytes, &frontend_staging)
                     .map_err(|error| error.to_string())?;
                 if !frontend_staging.join("index.html").exists() {
@@ -626,7 +747,9 @@ impl SubStoreService {
                     .map_err(|error| error.to_string())?;
                 let _ = tokio::fs::remove_file(&zip_path).await;
             }
-            if !staging.join(BACKEND_BUNDLE_FILE).exists() || !staging.join(FRONTEND_INDEX_REL).exists() {
+            if !staging.join(BACKEND_BUNDLE_FILE).exists()
+                || !staging.join(FRONTEND_INDEX_REL).exists()
+            {
                 return Err("Sub-Store 暂存资源不完整".into());
             }
             self.write_versions(&versions, &staging).await?;
@@ -646,13 +769,20 @@ impl SubStoreService {
     /// rollback-safe set.
     async fn commit_staged_assets(&self, staging: &Path) -> Result<(), String> {
         let current = self.assets_dir();
-        let backup = self.deps.base_dir.join(format!(".assets-backup-{}", uuid()));
+        let backup = self
+            .deps
+            .base_dir
+            .join(format!(".assets-backup-{}", uuid()));
         let had_current = current.exists();
         match async {
             if had_current {
-                tokio::fs::rename(&current, &backup).await.map_err(|error| error.to_string())?;
+                tokio::fs::rename(&current, &backup)
+                    .await
+                    .map_err(|error| error.to_string())?;
             }
-            tokio::fs::rename(staging, &current).await.map_err(|error| error.to_string())?;
+            tokio::fs::rename(staging, &current)
+                .await
+                .map_err(|error| error.to_string())?;
             let _ = tokio::fs::remove_dir_all(&backup).await;
             // v0.8.0 stored executable assets directly under baseDir. Once
             // the new atomic asset set is committed, remove only those exact
@@ -679,26 +809,42 @@ impl SubStoreService {
     fn worker_env(&self, port: u16, use_proxy: bool) -> HashMap<String, String> {
         let mut env = HashMap::new();
         env.insert("SUB_STORE_BACKEND_API_PORT".to_string(), port.to_string());
-        env.insert("SUB_STORE_BACKEND_API_HOST".to_string(), "127.0.0.1".to_string());
+        env.insert(
+            "SUB_STORE_BACKEND_API_HOST".to_string(),
+            "127.0.0.1".to_string(),
+        );
         // MERGE mode: the same express app serves the static frontend on
         // every non-API route of this port, so the embedded UI is
         // same-origin. The backend path MUST be '/' — a deeper prefix strips
         // the first segment off API routes and 404s them (verified against
         // the real release): `/api/subs` would become `/subs`.
         env.insert("SUB_STORE_BACKEND_MERGE".to_string(), "1".to_string());
-        env.insert("SUB_STORE_FRONTEND_BACKEND_PATH".to_string(), "/".to_string());
+        env.insert(
+            "SUB_STORE_FRONTEND_BACKEND_PATH".to_string(),
+            "/".to_string(),
+        );
         env.insert(
             "SUB_STORE_FRONTEND_PATH".to_string(),
-            self.assets_dir().join(FRONTEND_DIR_NAME).to_string_lossy().to_string(),
+            self.assets_dir()
+                .join(FRONTEND_DIR_NAME)
+                .to_string_lossy()
+                .to_string(),
         );
         env.insert(
             "SUB_STORE_DATA_BASE_PATH".to_string(),
-            self.deps.base_dir.join("data").to_string_lossy().to_string(),
+            self.deps
+                .base_dir
+                .join("data")
+                .to_string_lossy()
+                .to_string(),
         );
         // Setting a custom backend name flips the backend's default Node CORS
         // policy to allow local origins (upstream behavior; merge mode makes
         // it moot, but it also names the backend after the app in the UI).
-        env.insert("SUB_STORE_BACKEND_CUSTOM_NAME".to_string(), self.deps.brand_name.clone());
+        env.insert(
+            "SUB_STORE_BACKEND_CUSTOM_NAME".to_string(),
+            self.deps.brand_name.clone(),
+        );
         if use_proxy {
             if let Some(mixed_port) = (self.deps.get_mixed_port)() {
                 if mixed_port > 0 {
@@ -756,7 +902,8 @@ impl SubStoreService {
     }
 
     async fn wait_until_healthy(&self, port: u16, generation: u64) -> Result<(), String> {
-        let deadline = std::time::Instant::now() + Duration::from_millis(SUB_STORE_START_TIMEOUT_MS);
+        let deadline =
+            std::time::Instant::now() + Duration::from_millis(SUB_STORE_START_TIMEOUT_MS);
         let url = format!("http://127.0.0.1:{port}/");
         loop {
             if !self.is_current(generation) {
@@ -792,7 +939,9 @@ impl SubStoreService {
 
     /// Stop the worker; keeps downloaded assets and the enabled setting.
     pub async fn stop(&self) -> Value {
-        self.inner.operation_generation.fetch_add(1, Ordering::SeqCst);
+        self.inner
+            .operation_generation
+            .fetch_add(1, Ordering::SeqCst);
         *self.inner.disposed.lock().unwrap() = false;
         self.stop_worker().await;
         *self.inner.phase.lock().unwrap() = "idle";
@@ -809,7 +958,9 @@ impl SubStoreService {
         if *self.inner.disposed.lock().unwrap() {
             return self.snapshot().await;
         }
-        if self.inner.updating.lock().unwrap().is_some() || self.inner.starting.lock().unwrap().is_some() {
+        if self.inner.updating.lock().unwrap().is_some()
+            || self.inner.starting.lock().unwrap().is_some()
+        {
             return self.snapshot().await;
         }
         let was_running = *self.inner.phase.lock().unwrap() == "running";
@@ -820,11 +971,12 @@ impl SubStoreService {
         if let Err(error) = result {
             if self.is_current(generation) {
                 *self.inner.error.lock().unwrap() = Some(error);
-                *self.inner.phase.lock().unwrap() = if was_running && self.inner.worker.lock().unwrap().is_some() {
-                    "running"
-                } else {
-                    "idle"
-                };
+                *self.inner.phase.lock().unwrap() =
+                    if was_running && self.inner.worker.lock().unwrap().is_some() {
+                        "running"
+                    } else {
+                        "idle"
+                    };
             }
         }
         self.snapshot().await
@@ -832,10 +984,20 @@ impl SubStoreService {
 
     async fn check_update_inner(&self, generation: u64, was_running: bool) -> Result<(), String> {
         let backend_asset = self
-            .resolve_release_asset(SUB_STORE_BACKEND_LATEST_API, SUB_STORE_BACKEND_ASSET, sub_store_backend_download_url, BACKEND_MAX_BYTES)
+            .resolve_release_asset(
+                SUB_STORE_BACKEND_LATEST_API,
+                SUB_STORE_BACKEND_ASSET,
+                sub_store_backend_download_url,
+                BACKEND_MAX_BYTES,
+            )
             .await?;
         let frontend_asset = self
-            .resolve_release_asset(SUB_STORE_FRONTEND_LATEST_API, SUB_STORE_FRONTEND_ASSET, sub_store_frontend_download_url, FRONTEND_ZIP_MAX_BYTES)
+            .resolve_release_asset(
+                SUB_STORE_FRONTEND_LATEST_API,
+                SUB_STORE_FRONTEND_ASSET,
+                sub_store_frontend_download_url,
+                FRONTEND_ZIP_MAX_BYTES,
+            )
             .await?;
         if !self.is_current(generation) {
             return Err("Sub-Store 操作已取消".to_string());
@@ -851,7 +1013,10 @@ impl SubStoreService {
             *self.inner.phase.lock().unwrap() = "downloading";
             let staging = self
                 .stage_assets(
-                    Versions { backend: backend_asset.tag, frontend: frontend_asset.tag },
+                    Versions {
+                        backend: backend_asset.tag,
+                        frontend: frontend_asset.tag,
+                    },
                     plan_backend,
                     plan_frontend,
                     force,
@@ -874,7 +1039,12 @@ impl SubStoreService {
                 *self.inner.phase.lock().unwrap() = "idle";
             }
         } else {
-            *self.inner.phase.lock().unwrap() = if was_running && self.inner.worker.lock().unwrap().is_some() { "running" } else { "idle" };
+            *self.inner.phase.lock().unwrap() =
+                if was_running && self.inner.worker.lock().unwrap().is_some() {
+                    "running"
+                } else {
+                    "idle"
+                };
         }
         *self.inner.error.lock().unwrap() = None;
         Ok(())
@@ -894,14 +1064,20 @@ impl SubStoreService {
         }
         #[cfg(target_os = "macos")]
         {
-            tokio::process::Command::new("open").arg(url).spawn().map_err(|error| error.to_string())?;
+            tokio::process::Command::new("open")
+                .arg(url)
+                .spawn()
+                .map_err(|error| error.to_string())?;
             return Ok(());
         }
         #[cfg(windows)]
         {
             // `cmd /c start` requires an empty title argument; `explorer`
             // accepts the URL directly and never spawns a console window.
-            tokio::process::Command::new("explorer").arg(url).spawn().map_err(|error| error.to_string())?;
+            tokio::process::Command::new("explorer")
+                .arg(url)
+                .spawn()
+                .map_err(|error| error.to_string())?;
             return Ok(());
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
@@ -918,7 +1094,9 @@ impl SubStoreService {
     /// exit hook cannot.
     pub fn dispose(&self) {
         *self.inner.disposed.lock().unwrap() = true;
-        self.inner.operation_generation.fetch_add(1, Ordering::SeqCst);
+        self.inner
+            .operation_generation
+            .fetch_add(1, Ordering::SeqCst);
         *self.inner.starting.lock().unwrap() = None;
         *self.inner.updating.lock().unwrap() = None;
         if let Some(worker) = self.inner.worker.lock().unwrap().take() {
@@ -933,7 +1111,10 @@ impl SubStoreService {
             return custom(SUB_STORE_PORT_BASE).await;
         }
         for candidate in SUB_STORE_PORT_BASE..SUB_STORE_PORT_BASE + 50 {
-            if tokio::net::TcpListener::bind(("127.0.0.1", candidate)).await.is_ok() {
+            if tokio::net::TcpListener::bind(("127.0.0.1", candidate))
+                .await
+                .is_ok()
+            {
                 return Ok(candidate);
             }
         }
@@ -997,7 +1178,10 @@ fn default_create_worker(
             });
         }
     }
-    SubStoreWorkerHandle { child: StdMutex::new(child), on_log }
+    SubStoreWorkerHandle {
+        child: StdMutex::new(child),
+        on_log,
+    }
 }
 
 fn uuid() -> String {
@@ -1006,7 +1190,10 @@ fn uuid() -> String {
     format!(
         "{}-{}",
         std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
     )
 }
 
@@ -1015,18 +1202,30 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 async fn copy_dir_recursive(from: &Path, to: &Path) -> Result<(), String> {
-    tokio::fs::create_dir_all(to).await.map_err(|error| error.to_string())?;
+    tokio::fs::create_dir_all(to)
+        .await
+        .map_err(|error| error.to_string())?;
     let mut stack = vec![(from.to_path_buf(), to.to_path_buf())];
     while let Some((src, dst)) = stack.pop() {
-        let mut entries = tokio::fs::read_dir(&src).await.map_err(|error| error.to_string())?;
-        while let Some(entry) = entries.next_entry().await.map_err(|error| error.to_string())? {
+        let mut entries = tokio::fs::read_dir(&src)
+            .await
+            .map_err(|error| error.to_string())?;
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|error| error.to_string())?
+        {
             let entry_path = entry.path();
             let entry_dst = dst.join(entry.file_name());
             if entry_path.is_dir() {
-                tokio::fs::create_dir_all(&entry_dst).await.map_err(|error| error.to_string())?;
+                tokio::fs::create_dir_all(&entry_dst)
+                    .await
+                    .map_err(|error| error.to_string())?;
                 stack.push((entry_path, entry_dst));
             } else {
-                tokio::fs::copy(&entry_path, &entry_dst).await.map_err(|error| error.to_string())?;
+                tokio::fs::copy(&entry_path, &entry_dst)
+                    .await
+                    .map_err(|error| error.to_string())?;
             }
         }
     }
@@ -1037,7 +1236,9 @@ async fn copy_dir_recursive(from: &Path, to: &Path) -> Result<(), String> {
 /// `parseSubStoreExternalUrl` copy, byte-verbatim.
 pub fn parse_sub_store_external_url(value: &Value) -> Result<String, crate::error::IpcError> {
     let invalid = |message: &str| crate::error::IpcError::invalid_argument(message);
-    let raw = value.as_str().ok_or_else(|| invalid("external url must be a string"))?;
+    let raw = value
+        .as_str()
+        .ok_or_else(|| invalid("external url must be a string"))?;
     if raw.len() > 2048 {
         return Err(invalid("external url is too long"));
     }
@@ -1060,14 +1261,15 @@ mod tests {
             on_log: None,
             create_worker: None,
             fetch_fn: Some(fetch),
-            find_free_port: Some(Arc::new(|base: u16| {
-                Box::pin(async move { Ok(base) })
-            })),
+            find_free_port: Some(Arc::new(|base: u16| Box::pin(async move { Ok(base) }))),
             settings: std::sync::Arc::new(|| {
                 Box::pin(async { crate::settings::AppSettings::default() })
                     as futures_util::future::BoxFuture<'static, crate::settings::AppSettings>
             }),
-            pinned_digests: (SUB_STORE_BACKEND_DEFAULT_DIGEST.to_string(), SUB_STORE_FRONTEND_DEFAULT_DIGEST.to_string()),
+            pinned_digests: (
+                SUB_STORE_BACKEND_DEFAULT_DIGEST.to_string(),
+                SUB_STORE_FRONTEND_DEFAULT_DIGEST.to_string(),
+            ),
         })
     }
 
@@ -1077,15 +1279,23 @@ mod tests {
         assert!(!is_valid_sub_store_tag(&json!("v2.38.2")));
         assert!(!is_valid_sub_store_tag(&json!("2.38")));
         assert!(!is_valid_sub_store_tag(&json!(2)));
-        assert_eq!(sub_store_backend_release_api("2.38.2"), "https://api.github.com/repos/sub-store-org/Sub-Store/releases/tags/2.38.2");
+        assert_eq!(
+            sub_store_backend_release_api("2.38.2"),
+            "https://api.github.com/repos/sub-store-org/Sub-Store/releases/tags/2.38.2"
+        );
         assert_eq!(sub_store_backend_download_url("2.38.2"), "https://github.com/sub-store-org/Sub-Store/releases/download/2.38.2/sub-store.bundle.js");
         assert_eq!(sub_store_merged_origin(38324), "http://127.0.0.1:38324");
         // parseSubStoreExternalUrl copy.
-        assert_eq!(parse_sub_store_external_url(&json!("https://a.b/c")).unwrap(), "https://a.b/c");
+        assert_eq!(
+            parse_sub_store_external_url(&json!("https://a.b/c")).unwrap(),
+            "https://a.b/c"
+        );
         assert!(parse_sub_store_external_url(&json!("ftp://a.b")).is_err());
         assert!(parse_sub_store_external_url(&json!("not a url")).is_err());
         assert!(parse_sub_store_external_url(&json!(2)).is_err());
-        assert!(parse_sub_store_external_url(&json!(format!("https://{}", "a".repeat(2100)))).is_err());
+        assert!(
+            parse_sub_store_external_url(&json!(format!("https://{}", "a".repeat(2100)))).is_err()
+        );
     }
 
     #[test]
@@ -1111,14 +1321,15 @@ mod tests {
             fetch_fn: Some(Arc::new(|_request: FetchRequest| {
                 Box::pin(async { Err("unused".to_string()) })
             })),
-            find_free_port: Some(Arc::new(|base: u16| {
-                Box::pin(async move { Ok(base) })
-            })),
+            find_free_port: Some(Arc::new(|base: u16| Box::pin(async move { Ok(base) }))),
             settings: std::sync::Arc::new(|| {
                 Box::pin(async { crate::settings::AppSettings::default() })
                     as futures_util::future::BoxFuture<'static, crate::settings::AppSettings>
             }),
-            pinned_digests: (SUB_STORE_BACKEND_DEFAULT_DIGEST.to_string(), SUB_STORE_FRONTEND_DEFAULT_DIGEST.to_string()),
+            pinned_digests: (
+                SUB_STORE_BACKEND_DEFAULT_DIGEST.to_string(),
+                SUB_STORE_FRONTEND_DEFAULT_DIGEST.to_string(),
+            ),
         });
         let env = service.worker_env(38324, true);
         assert_eq!(env["HTTP_PROXY"], "http://127.0.0.1:7897");
@@ -1149,7 +1360,11 @@ mod tests {
         }));
         let state = service.ensure_running().await;
         assert_eq!(state["phase"], "error");
-        assert!(state["error"].as_str().unwrap().contains("GitHub 请求失败"), "{}", state);
+        assert!(
+            state["error"].as_str().unwrap().contains("GitHub 请求失败"),
+            "{}",
+            state
+        );
         // stop() clears the error but keeps assets facts.
         let state = service.stop().await;
         assert_eq!(state["phase"], "idle");
@@ -1174,7 +1389,13 @@ mod tests {
         .into_bytes();
         let service = service_with(Arc::new(move |_request: FetchRequest| {
             let body = api_body.clone();
-            Box::pin(async move { Ok(FetchResponse { status: 200, headers: Vec::new(), body }) })
+            Box::pin(async move {
+                Ok(FetchResponse {
+                    status: 200,
+                    headers: Vec::new(),
+                    body,
+                })
+            })
         }));
         let error = service
             .resolve_release_asset(

@@ -76,7 +76,11 @@ type NowFn = Box<dyn Fn() -> i64 + Send + Sync>;
 /// performs ordered disk IO only. `seq` lets `flush()` await the write
 /// COMPLETION (the TS promise-queue contract), not merely dequeue order.
 enum Request {
-    Write { seq: u64, path: PathBuf, data: Vec<u8> },
+    Write {
+        seq: u64,
+        path: PathBuf,
+        data: Vec<u8>,
+    },
 }
 
 struct FileLogState {
@@ -106,7 +110,12 @@ impl FileLogService {
         )
     }
 
-    pub fn with_options(directory: PathBuf, max_file_bytes: u64, retention_days: i64, now: NowFn) -> Arc<Self> {
+    pub fn with_options(
+        directory: PathBuf,
+        max_file_bytes: u64,
+        retention_days: i64,
+        now: NowFn,
+    ) -> Arc<Self> {
         let (tx, rx) = mpsc::unbounded_channel();
         let (progress_tx, progress_rx) = watch::channel(0u64);
         let service = Arc::new(FileLogService {
@@ -127,7 +136,13 @@ impl FileLogService {
 
     /// `[ISO] [LEVEL] [module] message` — the console-bridge + bootstrap line.
     pub fn write_app(&self, level: FileLogLevel, message: &str, module: &str) {
-        let line = format!("[{}] [{}] [{}] {}\n", self.iso_now(), level.label(), module, message);
+        let line = format!(
+            "[{}] [{}] [{}] {}\n",
+            self.iso_now(),
+            level.label(),
+            module,
+            message
+        );
         self.enqueue(FileLogKind::App, line);
     }
 
@@ -135,7 +150,10 @@ impl FileLogService {
     /// stamp (invalid falls back to now), level from `type` ?? `level` ??
     /// `info` uppercased, body from `payload` ?? `message` trimmed end.
     pub fn write_core(&self, message: &Value) {
-        let time = message.get("time").and_then(Value::as_str).and_then(parse_iso_millis);
+        let time = message
+            .get("time")
+            .and_then(Value::as_str)
+            .and_then(parse_iso_millis);
         let timestamp = self.iso(time.unwrap_or_else(|| (self.now)()));
         let level = message
             .get("type")
@@ -149,7 +167,10 @@ impl FileLogService {
             .and_then(Value::as_str)
             .unwrap_or("")
             .trim_end();
-        self.enqueue(FileLogKind::Core, format!("[{timestamp}] [{level}] {body}\n"));
+        self.enqueue(
+            FileLogKind::Core,
+            format!("[{timestamp}] [{level}] {body}\n"),
+        );
     }
 
     /// The Sub-Store worker sink (`fileLogs.writeSubStore`): stderr maps to
@@ -188,8 +209,11 @@ impl FileLogService {
 
     /// The daily path for a LOCAL calendar date (the TS `dateStamp`).
     fn path_for_at(&self, kind: FileLogKind, millis: i64) -> PathBuf {
-        self.directory
-            .join(format!("{}-{}.log", kind.prefix(), local_date_stamp(millis)))
+        self.directory.join(format!(
+            "{}-{}.log",
+            kind.prefix(),
+            local_date_stamp(millis)
+        ))
     }
 
     fn iso_now(&self) -> String {
@@ -289,14 +313,21 @@ async fn consumer_loop(
                         if tokio::fs::create_dir_all(&service.directory).await.is_err() {
                             return false;
                         }
-                        cleanup_expired(&service.directory, service.retention_days, (service.now)()).await;
+                        cleanup_expired(
+                            &service.directory,
+                            service.retention_days,
+                            (service.now)(),
+                        )
+                        .await;
                         true
                     })
                     .await;
                 if !*ok {
                     continue;
                 }
-                let state = states.entry(path.clone()).or_insert(FileLogState { size: None });
+                let state = states
+                    .entry(path.clone())
+                    .or_insert(FileLogState { size: None });
                 append_limited(&path, &data, service.max_file_bytes, state).await;
                 // Acknowledge the COMPLETED write (the flush watermark).
                 let _ = progress.send(seq + 1);
@@ -349,7 +380,12 @@ async fn append_limited(path: &Path, data: &[u8], max_file_bytes: u64, state: &m
         return;
     }
     if state.size.is_none() {
-        state.size = Some(tokio::fs::metadata(path).await.map(|meta| meta.len()).unwrap_or(0));
+        state.size = Some(
+            tokio::fs::metadata(path)
+                .await
+                .map(|meta| meta.len())
+                .unwrap_or(0),
+        );
     }
     let size = state.size.unwrap_or(0);
     if size + data.len() as u64 <= max_file_bytes {
@@ -363,7 +399,12 @@ async fn append_limited(path: &Path, data: &[u8], max_file_bytes: u64, state: &m
         // `await appendFile(...)`), never while they sit in a buffer.
         let mut attempt = 0;
         loop {
-            match tokio::fs::OpenOptions::new().create(true).append(true).open(path).await {
+            match tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .await
+            {
                 Ok(mut file) => match file.write_all(data).await {
                     Ok(()) => match file.shutdown().await {
                         Ok(()) => {
@@ -425,7 +466,11 @@ async fn read_tail(path: &Path, bytes: u64) -> Vec<u8> {
         return Vec::new();
     };
     let read_size = size.min(bytes);
-    if file.seek(std::io::SeekFrom::Start(size - read_size)).await.is_err() {
+    if file
+        .seek(std::io::SeekFrom::Start(size - read_size))
+        .await
+        .is_err()
+    {
         return Vec::new();
     }
     let mut buffer = vec![0u8; read_size as usize];
@@ -478,7 +523,11 @@ mod tests {
     #[tokio::test]
     async fn app_core_substore_lines_follow_the_ts_format() {
         let (_temp, service) = service_in("format");
-        service.write_app(FileLogLevel::Info, "version=1.2.3 platform=linux arch=x64", "startup");
+        service.write_app(
+            FileLogLevel::Info,
+            "version=1.2.3 platform=linux arch=x64",
+            "startup",
+        );
         service.write_core(&json!({ "type": "info", "payload": "  message body  \n" }));
         service.write_core(&json!({
             "type": "warning",
@@ -492,12 +541,11 @@ mod tests {
 
         let app_path = service.path_for(FileLogKind::App);
         let app = read_eventually(&app_path, "version=1.2.3").await;
-        assert_eq!(app, "[2024-01-01T00:00:00.000Z] [INFO] [startup] version=1.2.3 platform=linux arch=x64\n");
-        let core = read_eventually(
-            &service.path_for(FileLogKind::Core),
-            "no type",
-        )
-        .await;
+        assert_eq!(
+            app,
+            "[2024-01-01T00:00:00.000Z] [INFO] [startup] version=1.2.3 platform=linux arch=x64\n"
+        );
+        let core = read_eventually(&service.path_for(FileLogKind::Core), "no type").await;
         // The TS `trimEnd()` keeps LEADING whitespace — parity holds.
         assert_eq!(
             core,
@@ -506,14 +554,21 @@ mod tests {
              [2024-01-01T00:00:00.000Z] [ERROR] no type\n"
         );
         let substore = read_eventually(&service.path_for(FileLogKind::Substore), "ready").await;
-        assert_eq!(substore, "[2024-01-01T00:00:00.000Z] [ERROR] boom\n[2024-01-01T00:00:00.000Z] [INFO] ready\n");
+        assert_eq!(
+            substore,
+            "[2024-01-01T00:00:00.000Z] [ERROR] boom\n[2024-01-01T00:00:00.000Z] [INFO] ready\n"
+        );
     }
 
     #[tokio::test]
     async fn lines_are_redacted_before_they_land() {
         let (_temp, service) = service_in("redact");
         let secret = "a".repeat(64);
-        service.write_app(FileLogLevel::Info, &format!("dial Bearer abc123 secret={secret}"), "app");
+        service.write_app(
+            FileLogLevel::Info,
+            &format!("dial Bearer abc123 secret={secret}"),
+            "app",
+        );
         service.flush().await;
         let contents =
             read_eventually(&service.path_for(FileLogKind::App), "Bearer [REDACTED]").await;
@@ -549,14 +604,23 @@ mod tests {
             fixed_clock(),
         );
         for index in 0..8 {
-            service.write_app(FileLogLevel::Info, &format!("line-{index:0>10}-padding"), "app");
+            service.write_app(
+                FileLogLevel::Info,
+                &format!("line-{index:0>10}-padding"),
+                "app",
+            );
         }
         service.flush().await;
         let path = service.path_for(FileLogKind::App);
         let contents = tokio::fs::read(&path).await.unwrap();
         assert!(contents.len() as u64 <= 200, "{}", contents.len());
         let text = String::from_utf8(contents).unwrap();
-        assert!(text.contains("[LOG] Earlier entries were removed because the file size limit was reached."), "{text}");
+        assert!(
+            text.contains(
+                "[LOG] Earlier entries were removed because the file size limit was reached."
+            ),
+            "{text}"
+        );
         // The newest line survived the rotation.
         assert!(text.contains("line-0000000007"), "{text}");
         // A following append updates the cached size instead of re-reading.
@@ -603,8 +667,7 @@ mod tests {
             service.write_app(FileLogLevel::Info, &format!("entry-{index}"), "app");
         }
         service.flush().await;
-        let contents =
-            read_eventually(&service.path_for(FileLogKind::App), "entry-49").await;
+        let contents = read_eventually(&service.path_for(FileLogKind::App), "entry-49").await;
         let lines: Vec<&str> = contents.lines().collect();
         assert_eq!(lines.len(), 50);
         for (index, line) in lines.iter().enumerate() {
@@ -645,7 +708,10 @@ mod tests {
 
     #[test]
     fn log_file_stamp_parses_only_daily_files() {
-        assert_eq!(parse_log_file_stamp("app-2024-01-01.log"), Some(1704067200000));
+        assert_eq!(
+            parse_log_file_stamp("app-2024-01-01.log"),
+            Some(1704067200000)
+        );
         assert_eq!(parse_log_file_stamp("core-2024-12-31.log").is_some(), true);
         assert_eq!(parse_log_file_stamp("app-2024-13-01.log"), None);
         assert_eq!(parse_log_file_stamp("app-2024-01-01.log.bak"), None);
@@ -674,12 +740,16 @@ mod stress {
                 Box::new(|| 1_704_067_200_000),
             );
             for index in 0..200 {
-                service.write_app(FileLogLevel::Info, &format!("stress-{round}-{index}"), "app");
+                service.write_app(
+                    FileLogLevel::Info,
+                    &format!("stress-{round}-{index}"),
+                    "app",
+                );
             }
             service.flush().await;
             let path = service.path_for(FileLogKind::App);
-            let mut contents =
-                String::from_utf8(tokio::fs::read(&path).await.unwrap_or_default()).unwrap_or_default();
+            let mut contents = String::from_utf8(tokio::fs::read(&path).await.unwrap_or_default())
+                .unwrap_or_default();
             // Bounded retry: a still-in-flight append is legitimate; a
             // PERMANENTLY missing line after 2s is the bug.
             for _ in 0..40 {
@@ -687,17 +757,26 @@ mod stress {
                     break;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                contents =
-                    String::from_utf8(tokio::fs::read(&path).await.unwrap_or_default()).unwrap_or_default();
+                contents = String::from_utf8(tokio::fs::read(&path).await.unwrap_or_default())
+                    .unwrap_or_default();
             }
             let lines = contents.lines().count();
-            assert_eq!(lines, 200, "round {round} saw {lines} lines: missing {:?}", {
-                let present: Vec<&str> = contents.lines().collect();
-                (0..200)
-                    .filter(|index| !present.iter().any(|line| line.contains(&format!("stress-{round}-{index}"))))
-                    .take(5)
-                    .collect::<Vec<_>>()
-            });
+            assert_eq!(
+                lines,
+                200,
+                "round {round} saw {lines} lines: missing {:?}",
+                {
+                    let present: Vec<&str> = contents.lines().collect();
+                    (0..200)
+                        .filter(|index| {
+                            !present
+                                .iter()
+                                .any(|line| line.contains(&format!("stress-{round}-{index}")))
+                        })
+                        .take(5)
+                        .collect::<Vec<_>>()
+                }
+            );
         }
     }
 }

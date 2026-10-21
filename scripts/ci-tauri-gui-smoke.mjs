@@ -32,12 +32,16 @@ using System;
 using System.Runtime.InteropServices;
 public class TauriWindowProbe {
  [StructLayout(LayoutKind.Sequential)] public struct Rect {public int Left, Top, Right, Bottom;}
+ [StructLayout(LayoutKind.Sequential)] public struct Point {public int X, Y;}
  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
  [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int command);
  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out Rect r);
  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+ [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref Point point);
+ [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+ [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
 }
 '@
 $p=Get-Process -Id ([int]$env:CI_TAURI_PID) -ErrorAction Stop
@@ -53,7 +57,27 @@ if($env:CI_TAURI_ACTION -eq 'restore') {
  exit
 }
 if($h -eq 0 -or -not [TauriWindowProbe]::IsWindowVisible($h)){throw 'Native window is not visible'}
-if($env:CI_TAURI_ACTION -eq 'debug') {
+if($env:CI_TAURI_ACTION -eq 'drag' -or $env:CI_TAURI_ACTION -eq 'double-click') {
+ $null=[TauriWindowProbe]::SetForegroundWindow($h)
+ $point=New-Object TauriWindowProbe+Point;$point.X=300;$point.Y=17
+ if(-not [TauriWindowProbe]::ClientToScreen($h,[ref]$point)){throw 'Cannot locate the titlebar drag region'}
+ $before=New-Object TauriWindowProbe+Rect
+ $null=[TauriWindowProbe]::GetWindowRect($h,[ref]$before)
+ $null=[TauriWindowProbe]::SetCursorPos($point.X,$point.Y)
+ Start-Sleep -Milliseconds 150
+ try {
+  if($env:CI_TAURI_ACTION -eq 'drag') {
+   [TauriWindowProbe]::mouse_event(2,0,0,0,[UIntPtr]::Zero)
+   for($i=1;$i -le 5;$i++){Start-Sleep -Milliseconds 70;$null=[TauriWindowProbe]::SetCursorPos($point.X+10*$i,$point.Y+5*$i)}
+  } else {
+   for($i=0;$i -lt 2;$i++){[TauriWindowProbe]::mouse_event(2,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 40;[TauriWindowProbe]::mouse_event(4,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 70}
+  }
+ } finally {[TauriWindowProbe]::mouse_event(4,0,0,0,[UIntPtr]::Zero)}
+ Start-Sleep -Milliseconds 300
+ $after=New-Object TauriWindowProbe+Rect
+ $null=[TauriWindowProbe]::GetWindowRect($h,[ref]$after)
+ @{moved=($before.Left -ne $after.Left -or $before.Top -ne $after.Top);maximized=[TauriWindowProbe]::IsZoomed($h)}|ConvertTo-Json -Compress
+} elseif($env:CI_TAURI_ACTION -eq 'debug') {
  $rows=@(Get-CimInstance Win32_Process);$ids=@($p.Id)
  for($i=0;$i -lt 5;$i++){$next=@($rows|Where-Object {$ids -contains [int]$_.ParentProcessId}|ForEach-Object {[int]$_.ProcessId});$ids=@($ids+$next|Select-Object -Unique)}
  $debug=@($rows|Where-Object {$ids -contains [int]$_.ProcessId}|ForEach-Object { $port=$null;if($_.CommandLine -match '--remote-debugging-port=(\d+)'){$port=[int]$Matches[1]};@{pid=$_.ProcessId;name=$_.Name;debugPort=$port}})
@@ -195,6 +219,11 @@ async function smoke(kind, executable, args = []) {
       await waitFor(async () => (await state()).minimized, alive)
       await native(child.pid, 'restore', '', window.handle)
       await waitFor(async () => !(await state()).minimized, alive)
+      assert.equal((await native(child.pid, 'drag', '', window.handle)).moved, true, 'Native mouse dragging must move the window')
+      await native(child.pid, 'double-click', '', window.handle)
+      await waitFor(async () => (await state()).maximized, alive)
+      await native(child.pid, 'double-click', '', window.handle)
+      await waitFor(async () => !(await state()).maximized, alive)
       await evaluate(`window.desktop.appSettings.set({closeToTray:true})`)
       await click('关闭')
       await waitFor(async () => !(await state()).visible, alive)
@@ -202,7 +231,7 @@ async function smoke(kind, executable, args = []) {
       await native(child.pid, 'restore', '', window.handle)
       await waitFor(async () => (await state()).visible, alive)
       await evaluate(`window.desktop.appSettings.set({closeToTray:false})`)
-      Object.assign(controls, { maximizeRestore: true, minimize: true, closeToTray: true })
+      Object.assign(controls, { maximizeRestore: true, minimize: true, nativeDrag: true, doubleClickMaximizeRestore: true, closeToTray: true })
     }
     await pause(3000)
     assert.ok(alive(), 'Application must remain alive after rendering')

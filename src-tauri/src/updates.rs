@@ -655,7 +655,9 @@ impl UpdateService {
         }
         let generation = self.inner.poll_generation.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         let service = self.clone();
-        tokio::spawn(async move {
+        // Tauri's runtime, not tokio::spawn: setup() runs on the event-loop
+        // thread, which has not entered a Tokio runtime.
+        tauri::async_runtime::spawn(async move {
             let mut ticker = tokio::time::interval(std::time::Duration::from_millis(poll_interval_ms));
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             ticker.tick().await; // polling never fires the first check eagerly

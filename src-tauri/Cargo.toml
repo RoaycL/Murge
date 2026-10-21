@@ -51,7 +51,9 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 # The controller client awaits HTTP; `#[tokio::test]` covers the async paths.
 tokio = { version = "1", features = ["process", "macros", "rt-multi-thread", "sync", "net", "io-util", "time"] }
 boa_engine = "0.20"
-tauri-plugin-updater = "2.12"
+# Signed self-update. 2.12 is the newest line that keeps rust-version 1.82
+# (2.14 needs 1.90) and already has requireSignedVersion.
+tauri-plugin-updater = "~2.12"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -688,8 +688,13 @@ impl BackupStore for FileSystemBackupStore {
     fn read(&self) -> BoxResult<'_, Option<Value>> {
         let path = self.path.clone();
         Box::pin(async move {
-            let Ok(raw) = std::fs::read(&path) else {
-                return Ok(None);
+            // Only a missing file means "nothing owned" (backup-store.ts
+            // ENOENT): an existing backup we cannot read must surface, or
+            // startup would report a clean state while the proxy is ours.
+            let raw = match std::fs::read(&path) {
+                Ok(raw) => raw,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(error) => return Err(format!("备份文件读取失败：{error}")),
             };
             serde_json::from_slice::<Value>(&raw).map(Some).map_err(|error| format!("备份文件无效：{error}"))
         })
@@ -2890,6 +2895,11 @@ mod tests {
             // A corrupt file is an Err, never a phantom None.
             std::fs::create_dir_all(dir.join("system-proxy")).unwrap();
             std::fs::write(dir.join("system-proxy").join("owned-backup.json"), b"{nope").unwrap();
+            assert!(store.read().await.is_err());
+            // So is a backup that exists but cannot be read (here: a
+            // directory in its place); only a missing file means None.
+            std::fs::remove_file(dir.join("system-proxy").join("owned-backup.json")).unwrap();
+            std::fs::create_dir_all(dir.join("system-proxy").join("owned-backup.json")).unwrap();
             assert!(store.read().await.is_err());
         });
         let _ = std::fs::remove_dir_all(&dir);

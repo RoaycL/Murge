@@ -70,6 +70,8 @@ windows = { version = "0.58", features = [
     "Win32_System_Shutdown",
 ] }
 png = "0.17"
+# Updater toasts with a click handler (notify-rust has none on Windows).
+tauri-winrt-notification = "0.7"
 
 [dev-dependencies]
 tempfile = "3"

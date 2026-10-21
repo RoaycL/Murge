@@ -22,6 +22,7 @@ mod file_log;
 mod js_sandbox;
 mod lifecycle;
 mod network_detector;
+mod notifications;
 mod runtime_intent;
 mod session_events;
 mod tray;

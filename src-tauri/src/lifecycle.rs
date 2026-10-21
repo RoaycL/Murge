@@ -386,6 +386,7 @@ pub fn start_desktop_integration(app: &tauri::AppHandle) {
     crate::network_detector::start(app.clone());
     start_proxy_guard(app.clone());
     crate::session_events::install(app.clone());
+    crate::notifications::start(app);
 }
 
 #[cfg(test)]

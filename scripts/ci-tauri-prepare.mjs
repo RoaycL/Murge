@@ -3,7 +3,7 @@ import { appendFile, mkdir, readFile, realpath, rename, rm, writeFile } from 'no
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 
-const root = resolve(import.meta.dirname, '..')
+const root = process.cwd()
 const manifest = JSON.parse(await readFile(resolve(root, 'resources/mihomo-assets.json'), 'utf8'))
 const platform = process.platform
 const assets = manifest.assets.filter((asset) => asset.platform === platform && asset.arch === process.arch)

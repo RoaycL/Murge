@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [tauri]
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Optional same-repository branch/commit to validate with this CI harness
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -30,6 +35,14 @@ jobs:
         if: runner.os == 'Windows'
         run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+      - name: Keep the CI preparation script when testing another source branch
+        if: github.event_name == 'workflow_dispatch' && inputs.source_ref != ''
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: ci-harness
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -49,7 +62,7 @@ jobs:
         run: git diff --exit-code -- src/renderer/src/platform/generated/desktop-api.ts
       - run: npm run kernel:prepare
       - name: Prepare pinned native assets and absolute Node fixture path
-        run: node scripts/ci-tauri-prepare.mjs
+        run: node "${{ inputs.source_ref != '' && 'ci-harness/' || '' }}scripts/ci-tauri-prepare.mjs"
       - name: Rust formatting
         working-directory: src-tauri
         run: cargo fmt --check
@@ -69,6 +82,8 @@ jobs:
         if: runner.os == 'Windows'
         run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:

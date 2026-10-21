@@ -12,7 +12,9 @@
 //! directly, see docs/TAURI_MIGRATION_PLAN.md Phase 3D).
 
 mod app_info;
+mod backup;
 mod brand;
+mod diagnostics;
 mod enhancements;
 mod error;
 mod events;
@@ -86,6 +88,7 @@ pub fn run() {
             // backs the profile store and secrets stay in memory. Production
             // uses the brand-stable app-data namespace + OS credential store.
             let paths = paths::AppPaths::probe();
+            backup::initialize(app.handle().clone(), &paths)?;
             let store = settings::SettingsStore::for_environment(&paths);
             let profiles = std::sync::Arc::new(match &paths.profile_root {
                 Some(root) => profile_service::ProfilesService::for_paths(

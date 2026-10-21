@@ -51,6 +51,9 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 # The controller client awaits HTTP; `#[tokio::test]` covers the async paths.
 tokio = { version = "1", features = ["process", "macros", "rt-multi-thread", "sync", "net", "io-util", "time"] }
 boa_engine = "0.20"
+aes-gcm = "0.10"
+scrypt = "0.11"
+rfd = "0.15"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

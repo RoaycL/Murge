@@ -52,7 +52,12 @@ jobs:
       - name: Check generated bridge is unchanged
         run: git diff --exit-code -- src/renderer/src/platform/generated/desktop-api.ts
       # TODO: installed-package/upgrade smoke follows the installer workstream.
-      - run: npm run tauri:build -- --no-bundle --target x86_64-pc-windows-msvc
+      # WebView2 release settings disable DevTools. A test-only window override
+      # enables the live CDP assertions; tauri-build.yml produces normal release
+      # artifacts without this feature/override. Window geometry is unchanged.
+      - name: Prepare test-only WebView2 inspection settings
+        run: node "${{ inputs.source_ref != '' && 'ci-harness/' || '' }}scripts/ci-tauri-gui-config.mjs"
+      - run: npm run tauri:build -- --no-bundle --target x86_64-pc-windows-msvc --features tauri/devtools --config "$env:RUNNER_TEMP/tauri-gui-config.json"
       - name: Prepare Electron comparison executable and renderer
         run: npx install-electron --no
       - run: npm run build

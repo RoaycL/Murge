@@ -40,7 +40,13 @@ public class TauriWindowProbe {
 $p=Get-Process -Id ([int]$env:CI_TAURI_PID) -ErrorAction Stop
 $p.Refresh();$h=$p.MainWindowHandle
 if($h -eq 0 -or -not [TauriWindowProbe]::IsWindowVisible($h)){throw 'Native window is not visible'}
-if($env:CI_TAURI_ACTION -eq 'close') {
+if($env:CI_TAURI_ACTION -eq 'debug') {
+ $rows=@(Get-CimInstance Win32_Process);$ids=@($p.Id)
+ for($i=0;$i -lt 5;$i++){$next=@($rows|Where-Object {$ids -contains [int]$_.ParentProcessId}|ForEach-Object {[int]$_.ProcessId});$ids=@($ids+$next|Select-Object -Unique)}
+ $debug=@($rows|Where-Object {$ids -contains [int]$_.ProcessId}|ForEach-Object { $port=$null;if($_.CommandLine -match '--remote-debugging-port=(\d+)'){$port=[int]$Matches[1]};@{pid=$_.ProcessId;name=$_.Name;debugPort=$port}})
+ $listeners=@(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue|Where-Object {$ids -contains [int]$_.OwningProcess}|ForEach-Object {@{pid=$_.OwningProcess;port=$_.LocalPort;address=$_.LocalAddress}})
+ @{processes=$debug;listeners=$listeners}|ConvertTo-Json -Depth 5 -Compress
+} elseif($env:CI_TAURI_ACTION -eq 'close') {
  if(-not $p.CloseMainWindow()){throw 'Native close request failed'}
  Write-Output '{"closeRequested":true}'
 } elseif($env:CI_TAURI_ACTION -eq 'capture') {
@@ -141,6 +147,7 @@ async function smoke(kind, executable, args = []) {
   try {
     const window = await waitFor(() => native(child.pid), alive)
     assert.equal(window.visible, true)
+    await writeFile(resolve(output, `${kind}-processes.json`), JSON.stringify(await native(child.pid, 'debug'), null, 2) + '\n')
     const target = await waitFor(async () => {
       const response = await fetch(`http://127.0.0.1:${debugPort}/json/list`, { signal: AbortSignal.timeout(2000) })
       const targets = await response.json()

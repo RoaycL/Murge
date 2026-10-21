@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import type { BrandConfig } from '@shared/brand'
 import AppIcon, { type AppIconName } from './AppIcon.vue'
+import AppTitlebar from './AppTitlebar.vue'
+import { detectShell } from '../platform/desktop-contract'
+
+const isTauri = detectShell().kind === 'tauri'
 
 defineProps<{ brand: BrandConfig }>()
 
@@ -36,7 +40,8 @@ const groups: Array<{ label: string; items: Array<{ to: string; label: string; i
 
 <template>
   <aside class="app-sidebar">
-    <div class="window-drag-region" />
+    <div class="window-drag-region" :data-tauri-drag-region="isTauri ? '' : undefined" />
+    <AppTitlebar v-if="isTauri" />
     <nav class="sidebar-nav" aria-label="主导航">
       <section v-for="group in groups" :key="group.label || 'primary'" class="nav-section">
         <h2 v-if="group.label" class="nav-section-title">{{ group.label }}</h2>

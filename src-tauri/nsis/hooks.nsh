@@ -51,18 +51,20 @@ Var MurgeElectronDir
 ; Sets $MurgeStartupWasEnabled to 1 when this user currently starts the app at
 ; logon through the scheduled task or a Run value.
 !macro MURGE_CAPTURE_STARTUP_INTENT TASK_NAME RUN_NAME
+  !define MURGE_ID ${__LINE__}
   StrCpy $MurgeStartupWasEnabled "0"
   ReadRegStr $R8 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${RUN_NAME}"
-  StrCmp $R8 "" 0 murge_startup_on_${__LINE__}
+  StrCmp $R8 "" 0 murge_startup_on_${MURGE_ID}
   ReadRegStr $R8 HKCU "${MANUPRODUCTKEY}" "${MURGE_STARTUP_MARKER_VALUE}"
-  StrCmp $R8 "1" murge_startup_on_${__LINE__}
+  StrCmp $R8 "1" murge_startup_on_${MURGE_ID}
   nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "if ((Get-ScheduledTask -TaskName ${TASK_NAME} -ErrorAction Stop).Settings.Enabled) { exit 0 } else { exit 1 }"'
   Pop $R8
   Pop $R9
-  StrCmp $R8 0 0 murge_startup_done_${__LINE__}
-  murge_startup_on_${__LINE__}:
+  StrCmp $R8 0 0 murge_startup_done_${MURGE_ID}
+  murge_startup_on_${MURGE_ID}:
     StrCpy $MurgeStartupWasEnabled "1"
-  murge_startup_done_${__LINE__}:
+  murge_startup_done_${MURGE_ID}:
+  !undef MURGE_ID
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL

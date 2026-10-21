@@ -158,24 +158,24 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
 </div></template>
 
 <style scoped>
-.resource-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 30px; padding-bottom: 10px; }
+.resource-card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); min-height: 30px; padding-bottom: 10px; }
 .resource-card-head h2 { margin: 0; }
 .resource-row-main { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; flex: 1; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .resource-row-main strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.resource-row-main small { color: var(--app-muted); font-size: 11px; }
-.row-actions { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
-.row-error { color: var(--app-danger, #d64f4f); }
-.row-failed .resource-row-main strong { color: var(--app-danger, #d64f4f); }
+.resource-row-main small { color: var(--app-muted); font-size: var(--font-size-xs); }
+.row-actions { display: inline-flex; align-items: center; gap: var(--space-2); flex-shrink: 0; }
+.row-error { color: var(--app-danger); }
+.row-failed .resource-row-main strong { color: var(--app-danger); }
 /* 批量更新时当前正在拉取的那一行轻微高亮，配合旋转图标指示进度。 */
 .row-updating .resource-row-main strong { color: var(--app-purple); }
 .detail-list { display: grid; gap: 0; margin: 0; }
-.detail-item { display: flex; justify-content: space-between; gap: 14px; padding: 8px 0; border-top: 1px solid var(--app-divider); font-size: 12px; }
+.detail-item { display: flex; justify-content: space-between; gap: var(--space-6); padding: 8px 0; border-top: 1px solid var(--app-divider); font-size: var(--font-size-sm); }
 .detail-item:first-child { border-top: 0; }
 .detail-item dt { color: var(--app-muted); flex-shrink: 0; }
-.detail-item dd { margin: 0; text-align: right; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.detail-item dd { margin: 0; text-align: right; font-weight: var(--font-weight-semibold); min-width: 0; overflow-wrap: anywhere; }
 .break-all { word-break: break-all; }
-.detail-note { margin: 14px 0 0; color: var(--app-muted); font-size: 11px; }
-.inline-error { margin-top: 8px; color: var(--app-danger, #d64f4f); font-size: 12px; }
-.quiet-button { width: 102px; min-height: 30px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: 7px; background: transparent; color: var(--app-muted); font-size: 11px; white-space: nowrap; flex-shrink: 0; }
+.detail-note { margin: 14px 0 0; color: var(--app-muted); font-size: var(--font-size-xs); }
+.inline-error { margin-top: 8px; color: var(--app-danger); font-size: var(--font-size-sm); }
+.quiet-button { width: 102px; min-height: 30px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: var(--radius-control); background: transparent; color: var(--app-muted); font-size: var(--font-size-xs); white-space: nowrap; flex-shrink: 0; }
 .quiet-button:disabled { opacity: 0.5; }
 </style>

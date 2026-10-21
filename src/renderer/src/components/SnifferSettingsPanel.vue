@@ -247,67 +247,67 @@ onMounted(async () => {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-5);
 }
-.sniffer-title { margin: 0 0 4px; font-size: 15px; }
-.sniffer-subtitle { margin: 0; color: var(--app-muted); font-size: 11px; line-height: 1.5; max-width: 560px; }
+.sniffer-title { margin: 0 0 4px; font-size: var(--font-size-lg); }
+.sniffer-subtitle { margin: 0; color: var(--app-muted); font-size: var(--font-size-xs); line-height: 1.5; max-width: 560px; }
 .sniffer-reset {
   min-height: 32px;
   padding: 0 12px;
   border: 1px solid var(--app-divider);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   background: var(--app-panel);
   color: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   white-space: nowrap;
 }
-.sniffer-head-actions { display: flex; align-items: center; gap: 8px; flex: none; }
-.sniffer-body { margin-top: 14px; display: grid; gap: 14px; }
-.sniffer-row { display: flex; align-items: center; gap: 10px; }
+.sniffer-head-actions { display: flex; align-items: center; gap: var(--space-3); flex: none; }
+.sniffer-body { margin-top: 14px; display: grid; gap: var(--space-6); }
+.sniffer-row { display: flex; align-items: center; gap: var(--space-4); }
 .sniffer-group {
   margin: 0;
   padding: 12px;
   border: 1px solid var(--app-divider);
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   background: var(--app-panel);
 }
-.sniffer-group legend { padding: 0 6px; color: var(--app-muted); font-size: 11px; }
-.sniffer-group-hint { margin: 0 0 10px; color: var(--app-muted); font-size: 11px; line-height: 1.45; }
-.sniffer-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
-.sniffer-field { display: grid; gap: 5px; }
-.sniffer-label { color: var(--app-muted); font-size: 11px; }
+.sniffer-group legend { padding: 0 6px; color: var(--app-muted); font-size: var(--font-size-xs); }
+.sniffer-group-hint { margin: 0 0 10px; color: var(--app-muted); font-size: var(--font-size-xs); line-height: 1.45; }
+.sniffer-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-4); }
+.sniffer-field { display: grid; gap: var(--space-2); }
+.sniffer-label { color: var(--app-muted); font-size: var(--font-size-xs); }
 .sniffer-textarea {
   width: 100%;
   min-height: 72px;
   padding: 8px 10px;
   border: 1px solid var(--app-divider);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   background: var(--app-surface-solid);
   color: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   resize: vertical;
 }
-.sniffer-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.sniffer-actions { display: flex; justify-content: flex-end; gap: var(--space-3); }
 .sniffer-preview,
 .sniffer-save {
   min-height: 32px;
   padding: 0 16px;
   border: 0;
-  border-radius: 7px;
-  font-size: 12px;
+  border-radius: var(--radius-control);
+  font-size: var(--font-size-sm);
 }
-.sniffer-preview { background: rgba(127, 127, 127, 0.14); color: inherit; }
-.sniffer-save { background: var(--app-blue); color: white; }
+.sniffer-preview { background: var(--app-fill); color: inherit; }
+.sniffer-save { background: var(--app-blue); color: var(--app-on-accent); }
 .sniffer-save:disabled { opacity: 0.6; }
-.sniffer-switch { position: relative; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.sniffer-switch { position: relative; display: inline-flex; align-items: center; gap: var(--space-3); cursor: pointer; }
 .sniffer-switch.small { min-height: 34px; }
 .sniffer-switch input { position: absolute; opacity: 0; width: 0; height: 0; }
 .sniffer-switch-track {
   width: 34px;
   height: 20px;
-  border-radius: 10px;
-  background: rgba(127, 127, 127, 0.28);
+  border-radius: var(--radius-md);
+  background: var(--app-fill-strong);
   position: relative;
   transition: background 0.15s ease;
   flex: none;
@@ -327,10 +327,10 @@ onMounted(async () => {
 .sniffer-switch input:checked + .sniffer-switch-track::after { transform: translateX(14px); }
 .sniffer-preview {
   display: grid;
-  gap: 8px;
+  gap: var(--space-3);
   padding: 12px;
   border: 1px solid var(--app-divider);
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   background: var(--app-panel);
 }
 .sniffer-preview-head {
@@ -338,7 +338,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   color: var(--app-muted);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 .sniffer-icon {
   width: 26px;
@@ -347,10 +347,10 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: inherit;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
 }
 .sniffer-preview-body {
@@ -359,9 +359,9 @@ onMounted(async () => {
   overflow: auto;
   padding: 10px;
   border: 1px solid var(--app-divider);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   background: var(--app-surface-solid);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   white-space: pre-wrap;
 }

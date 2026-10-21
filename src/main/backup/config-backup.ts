@@ -38,6 +38,8 @@ export interface ConfigBackupPayload {
 function isBackupPath(path: string): boolean {
   if (ROOT_FILES.has(path)) return true
   if (/^profiles\/(?:active\.json|[A-Za-z0-9_-]+\.(?:yaml|meta\.json))$/.test(path)) return true
+  // The two root-level Sub-Store state files createConfigBackup collects.
+  if (path === 'substore/root.json' || path === 'substore/sub-store.json') return true
   if (!path.startsWith('substore/data/')) return false
   const parts = path.split('/').slice(2)
   return parts.length >= 1 && parts.length <= 6 && parts.every((part) => part.length > 0 && part.length <= 128 && part !== '.' && part !== '..' && !/[\\/:\0-\x1f]/.test(part))

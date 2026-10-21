@@ -112,7 +112,7 @@ describe('Activity fluid-layout UI contract', () => {
     expect(css).toMatch(/\.runtime-context\s*\{[^}]*align-items:\s*start/)
     expect(css).toMatch(/\.runtime-context\s*>\s*div,\s*\.runtime-context\s*>\s*button\s*\{[^}]*flex-direction:\s*column/)
     expect(css).toMatch(/\.runtime-mode-picker \.app-select\s*\{[^}]*margin-top:\s*3px/)
-    expect(select).toMatch(/\.app-select\.plain \.app-select-trigger\s*\{[^}]*font-size:\s*16px[^}]*font-weight:\s*650/)
+    expect(select).toMatch(/\.app-select\.plain \.app-select-trigger\s*\{[^}]*font-size:\s*var\(--font-size-xl\)[^}]*font-weight:\s*var\(--font-weight-bold\)/)
     expect(select).toMatch(/\.app-select\.plain \.trigger-chevron\s*\{[^}]*opacity:\s*0/)
     expect(select).toContain('<Teleport to="body">')
     expect(select).toContain('<div v-if="open" ref="menu" class="app-select-menu"')

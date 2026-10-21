@@ -20,8 +20,58 @@
   --runtime-idle: #8e8e93;
   --runtime-proxy: #34c759;
   --runtime-tun: #0a84ff;
-  --radius-large: 19px;
+
+  /* 语义色：组件只引用这些名字，不再写 #d64f4f 之类的裸值或各自的回退值。 */
+  --app-accent: var(--app-blue);
+  --app-danger: #d64f4f;
+  --app-warning: #d8881e;
+  --app-latency-good: #68d21d;
+  --app-on-accent: #ffffff;
+  --app-bg: var(--app-background-start);
+  /* 卡片内嵌分组（fieldset、预览块）的底色，比外层 surface 略深一档。 */
+  --app-panel: rgba(127, 127, 127, 0.05);
+  /* 中性填充三档：悬停/次级按钮底色/强调轨道。 */
+  --app-fill-subtle: rgba(127, 127, 127, 0.08);
+  --app-fill: rgba(127, 127, 127, 0.13);
+  --app-fill-strong: rgba(127, 127, 127, 0.28);
+  --app-control-selected: #8e8e94;
+
+  /* 圆角：从 4px 到胶囊共 8 档，替换原先散落的 16 种取值。 */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
   --radius-control: 7px;
+  --radius-md: 10px;
+  --radius-card: 12px;
+  --radius-panel: 16px;
+  --radius-large: 19px;
+  --radius-pill: 999px;
+
+  /* 字号：Surge 式紧凑层级，14px 为正文基准。 */
+  --font-size-2xs: 10px;
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 13px;
+  --font-size-body: 14px;
+  --font-size-lg: 15px;
+  --font-size-xl: 16px;
+  --font-size-title: 20px;
+  --font-size-2xl: 24px;
+  --font-size-display: 28px;
+  --font-size-hero: 34px;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 650;
+
+  /* 间距：flex/grid 间隙统一到 2px 步进；15px 是活动页仪表盘的几何间距，单独保留。 */
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 10px;
+  --space-5: 12px;
+  --space-6: 14px;
+  --space-7: 16px;
+  --space-gutter: 15px;
   --sidebar-width: 205px;
   /* 页面内容基准列宽：完全流式布局中的最大内容宽度。低于此宽度时页面
      收缩为单列/流体网格；高于时内容居中并保留规范留白。 */
@@ -49,6 +99,9 @@
     --app-surface-solid: #292c34;
     --app-divider: rgba(190, 196, 206, 0.16);
     --app-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    --app-danger: #e05b5b;
+    --app-warning: #e79a35;
+    --app-panel: rgba(255, 255, 255, 0.03);
     --frame-border: rgba(52, 56, 66, 0.85);
     --frame-shadow: 0 18px 55px rgba(0, 0, 0, 0.35);
 }

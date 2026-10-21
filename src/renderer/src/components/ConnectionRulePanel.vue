@@ -74,15 +74,15 @@ onMounted(() => { void policies.load() })
 </template>
 
 <style scoped>
-.connection-rule-panel{display:grid;gap:10px;margin-top:20px;padding:15px;border:1px solid var(--app-divider);border-radius:12px}
+.connection-rule-panel{display:grid;gap:var(--space-4);margin-top:20px;padding:15px;border:1px solid var(--app-divider);border-radius:var(--radius-card)}
 .connection-rule-panel h3,.connection-rule-panel p{margin:0}
-.connection-rule-panel p{color:var(--app-muted);font-size:11px;line-height:1.5}
-.connection-rule-panel label{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px}
-.connection-rule-preview{display:grid;gap:4px;padding:9px;border-radius:8px;background:var(--app-surface)}
-.connection-rule-preview span{font-size:10px;color:var(--app-muted)}
-.connection-rule-preview code{overflow-wrap:anywhere;font-size:11px}
-.connection-rule-actions{display:flex;gap:8px;flex-wrap:wrap}
-.connection-rule-actions button{padding:7px 11px;border:1px solid var(--app-divider);border-radius:8px;background:var(--app-accent);color:white;cursor:pointer}
+.connection-rule-panel p{color:var(--app-muted);font-size:var(--font-size-xs);line-height:1.5}
+.connection-rule-panel label{display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);font-size:var(--font-size-sm)}
+.connection-rule-preview{display:grid;gap:var(--space-1);padding:9px;border-radius:var(--radius-control);background:var(--app-surface)}
+.connection-rule-preview span{font-size:var(--font-size-2xs);color:var(--app-muted)}
+.connection-rule-preview code{overflow-wrap:anywhere;font-size:var(--font-size-xs)}
+.connection-rule-actions{display:flex;gap:var(--space-3);flex-wrap:wrap}
+.connection-rule-actions button{padding:7px 11px;border:1px solid var(--app-divider);border-radius:var(--radius-control);background:var(--app-accent);color:var(--app-on-accent);cursor:pointer}
 .connection-rule-actions button+button{background:transparent;color:var(--app-text)}
 .connection-rule-actions button:disabled{opacity:.5;cursor:not-allowed}
 </style>

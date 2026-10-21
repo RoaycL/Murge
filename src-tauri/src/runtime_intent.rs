@@ -368,10 +368,13 @@ impl RecoveryCoordinator {
         }
         let delay = self.backoff[state.next_delay];
         state.next_delay += 1;
-        if now_ms() + delay > state.deadline {
+        // Attempts take time, so the last configured retry would always land
+        // past the window: clamp it to what is left instead of dropping it.
+        let remaining = state.deadline.saturating_sub(now_ms());
+        if remaining == 0 {
             return;
         }
-        self.schedule(state, delay);
+        self.schedule(state, delay.min(remaining));
     }
 
     fn schedule(self: &Arc<Self>, state: &mut CoordinatorState, delay: u64) {
@@ -594,7 +597,12 @@ pub fn spawn_startup_recovery(app: tauri::AppHandle) {
             return;
         }
         let flags = read_flags();
-        let fence = || !crate::lifecycle::is_quitting();
+        // A user toggle during the replay wins: stop as soon as the persisted
+        // intent no longer matches the snapshot being replayed.
+        let fence = {
+            let read_flags = read_flags.clone();
+            move || !crate::lifecycle::is_quitting() && read_flags() == flags
+        };
         let restored = restore_runtime_intent(flags, gateways.as_ref(), &RETRY_DELAYS_MS, &fence).await;
         eprintln!(
             "[startup-timing] runtime restored in {}ms (kernel={}, proxy={}, TUN={})",
@@ -620,7 +628,17 @@ pub fn spawn_startup_recovery(app: tauri::AppHandle) {
 async fn recover_managed_state(app: &tauri::AppHandle) {
     use tauri::Manager;
     if let Some(proxy) = app.try_state::<Arc<crate::system_proxy::SystemProxyService>>() {
-        let status = proxy.init().await;
+        let mut status = proxy.init().await;
+        // An owned backup whose restore failed transiently is retried
+        // regardless of the enable intent: the proxy must not keep aiming
+        // at us for the whole session after the user turned it off.
+        for delay in RETRY_DELAYS_MS {
+            if status.phase != "restore-failed" || crate::lifecycle::is_quitting() {
+                break;
+            }
+            sleep_ms(delay).await;
+            status = proxy.init().await;
+        }
         if status.error_message.is_some() || status.phase == "conflict" || status.phase == "restore-failed" {
             eprintln!(
                 "[system-proxy] orphan recovery: {} {}",

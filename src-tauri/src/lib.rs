@@ -700,7 +700,7 @@ pub fn run() {
             // never gates startup (the TS `trayReady` contract): a headless
             // session (or a failed tray) logs and continues tray-less.
             match tray::wire_tray(app.handle().clone()) {
-                Ok(()) => {}
+                Ok(()) => lifecycle::set_tray_ready(true),
                 Err(error) => eprintln!("[tray] initialization failed (continuing tray-less): {error}"),
             }
             // Phase 4: window rules, startup recovery + intent replay,

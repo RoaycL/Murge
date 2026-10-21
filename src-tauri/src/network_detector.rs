@@ -263,11 +263,24 @@ impl NetworkGateway for AppNetworkGateway {
     }
 
     fn start_tun(&self) -> BoxFuture<'_, Result<(), IpcError>> {
+        use tauri::Manager;
         let kernel = self.kernel();
         let tun = self.tun();
+        // The outage may have caught an explicit TUN disable mid-flight
+        // (`restoring` maps to Tun): the durable intent decides, and a host
+        // without TUN intent comes back as the plain kernel.
+        let tun_desired = self
+            .app
+            .try_state::<Arc<crate::settings::SettingsStore>>()
+            .map(|settings| settings.get().tun_desired)
+            .unwrap_or(false);
         Box::pin(async move {
             if crate::lifecycle::is_quitting() {
                 return Ok(());
+            }
+            if !tun_desired {
+                let _gate = crate::kernel::RUNTIME_UPDATE.lock().await;
+                return kernel.start().await.map(|_| ());
             }
             crate::runtime_intent::enable_tun_queued(&kernel, &tun).await
         })

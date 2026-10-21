@@ -41,6 +41,14 @@ pub fn mark_quitting() {
     IS_QUITTING.store(true, Ordering::SeqCst);
 }
 
+/// Whether a live native tray exists. Without one, close-to-tray would strand
+/// a windowless process the user cannot reach, so the close button quits.
+static TRAY_READY: AtomicBool = AtomicBool::new(false);
+
+pub fn set_tray_ready(ready: bool) {
+    TRAY_READY.store(ready, Ordering::SeqCst);
+}
+
 // ---------------------------------------------------------------------------
 // quit-guard.ts — the before-quit decision, unit-testable without a runtime
 // ---------------------------------------------------------------------------
@@ -289,10 +297,10 @@ pub enum CloseAction {
     Quit,
 }
 
-pub fn close_action(quitting: bool, close_to_tray: bool) -> CloseAction {
+pub fn close_action(quitting: bool, close_to_tray: bool, tray_ready: bool) -> CloseAction {
     if quitting {
         CloseAction::Allow
-    } else if close_to_tray {
+    } else if close_to_tray && tray_ready {
         CloseAction::Hide
     } else {
         CloseAction::Quit
@@ -315,7 +323,7 @@ pub fn wire_main_window(app: &tauri::AppHandle) {
                 .try_state::<std::sync::Arc<crate::settings::SettingsStore>>()
                 .map(|settings| settings.get().close_to_tray)
                 .unwrap_or(true);
-            match close_action(is_quitting(), close_to_tray) {
+            match close_action(is_quitting(), close_to_tray, TRAY_READY.load(Ordering::SeqCst)) {
                 CloseAction::Allow => {}
                 CloseAction::Hide => {
                     api.prevent_close();
@@ -406,10 +414,12 @@ mod tests {
 
     #[test]
     fn close_button_follows_the_close_to_tray_preference() {
-        assert_eq!(close_action(false, true), CloseAction::Hide);
-        assert_eq!(close_action(false, false), CloseAction::Quit);
-        assert_eq!(close_action(true, false), CloseAction::Allow);
-        assert_eq!(close_action(true, true), CloseAction::Allow);
+        assert_eq!(close_action(false, true, true), CloseAction::Hide);
+        assert_eq!(close_action(false, false, true), CloseAction::Quit);
+        assert_eq!(close_action(true, false, true), CloseAction::Allow);
+        assert_eq!(close_action(true, true, true), CloseAction::Allow);
+        // No live tray: closing must not strand an unreachable process.
+        assert_eq!(close_action(false, true, false), CloseAction::Quit);
     }
 
     #[tokio::test]

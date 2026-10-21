@@ -1213,6 +1213,9 @@ pub struct SystemProxyService {
     /// Latched by the network detector (3D slice); read by handle_network_up.
     #[allow(dead_code)]
     network_resume_pending: AtomicBool,
+    /// Set once the session is ending: no path may write the proxy again
+    /// (an enable that is mid-probe aborts before its first write).
+    mutations_fenced: AtomicBool,
 }
 
 // init/verify_integrity/network handlers/restore_before_kernel_unavailable
@@ -1243,7 +1246,18 @@ impl SystemProxyService {
             listeners: EventHub::new(),
             queue: tokio::sync::Mutex::new(()),
             network_resume_pending: AtomicBool::new(false),
+            mutations_fenced: AtomicBool::new(false),
         }
+    }
+
+    /// Fence every proxy-writing path for the rest of the process (Windows
+    /// session end). Restores stay allowed.
+    pub fn fence_mutations(&self) {
+        self.mutations_fenced.store(true, Ordering::SeqCst);
+    }
+
+    fn fenced_error(&self) -> IpcError {
+        IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, "会话正在结束，已取消启用系统代理")
     }
 
     pub fn get_status(&self) -> SystemProxyStatus {
@@ -1346,6 +1360,9 @@ impl SystemProxyService {
             }
         };
         validate_target(&target)?;
+        if self.mutations_fenced.load(Ordering::SeqCst) {
+            return Err(self.fenced_error());
+        }
 
         // An existing owned bundle: either we are already enabled (idempotent),
         // we own a stale bundle from a previous session, or the OS values were
@@ -1386,6 +1403,9 @@ impl SystemProxyService {
         validate_restorable(&observed)?;
         let policy = self.bypass.read().await;
         let written = build_written_state(&target, &observed, &policy);
+        if self.mutations_fenced.load(Ordering::SeqCst) {
+            return Err(self.fenced_error());
+        }
         let bundle = SystemProxyBackup {
             instance_id: self.instance_id.clone(),
             created_at: now_iso(),
@@ -1542,6 +1562,9 @@ impl SystemProxyService {
                 status_extra(CONFLICT_MSG, Some(conflict_detail(&observed, written))),
             );
             return "conflict";
+        }
+        if self.mutations_fenced.load(Ordering::SeqCst) {
+            return "repair-failed";
         }
         match self.apply_and_verify(written).await {
             Ok(()) => "repaired",
@@ -3542,6 +3565,16 @@ mod tests {
         registry.set(PROXY_SERVER_VALUE, REG_TYPE_SZ, &utf16z("10.0.0.1:8080")).unwrap();
         assert_eq!(restore_owned_proxy_blocking(&adapter, &path).unwrap(), "conflict");
         assert!(path.exists());
+    }
+
+
+    #[tokio::test]
+    async fn fenced_service_never_writes_the_proxy_again() {
+        let registry = Arc::new(MapRegistry::default());
+        let service = native_service(registry.clone(), Arc::new(InMemoryBackupStore::new()));
+        service.fence_mutations();
+        assert!(service.enable().await.is_err());
+        assert!(registry.values.lock().unwrap().is_empty());
     }
 
 }

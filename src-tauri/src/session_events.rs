@@ -45,6 +45,12 @@ pub fn on_session_end(app: &tauri::AppHandle) {
     use tauri::Manager;
     let started = Instant::now();
     crate::lifecycle::mark_quitting();
+    // No path may write the proxy from here on: an enable that holds the
+    // queue (mid-probe) aborts before its first write instead of applying
+    // after our restore.
+    if let Some(proxy) = app.try_state::<std::sync::Arc<crate::system_proxy::SystemProxyService>>() {
+        proxy.fence_mutations();
+    }
     let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
     {
         let app = app.clone();

@@ -686,6 +686,8 @@ mod tests {
                 let capture = path.clone();
                 let ws = tokio_tungstenite::accept_hdr_async(
                     socket,
+                    #[allow(clippy::result_large_err)]
+                    // Upstream WebSocket handshake callback signature.
                     move |req: &Request, resp: Response| {
                         if let Ok(mut held) = capture.lock() {
                             *held = req.uri().path().to_string();
@@ -733,9 +735,9 @@ mod tests {
         streams.errors.subscribe(error_listener);
         // Wait for the fan-out (both messages) + the parse error.
         for _ in 0..150 {
-            if traffic_events.lock().unwrap().len() >= 1
-                && log_events.lock().unwrap().len() >= 1
-                && errors.lock().unwrap().len() >= 1
+            if !traffic_events.lock().unwrap().is_empty()
+                && !log_events.lock().unwrap().is_empty()
+                && !errors.lock().unwrap().is_empty()
             {
                 break;
             }

@@ -22,7 +22,7 @@ use std::time::Duration;
 #[allow(dead_code)] // re-exported for diagnostics/tests
 pub const MIHOMO_ASSETS_JSON: &str = include_str!("../../resources/mihomo-assets.json");
 
-const MANIFEST: once_cell::sync::Lazy<Value> = once_cell::sync::Lazy::new(|| {
+static MANIFEST: once_cell::sync::Lazy<Value> = once_cell::sync::Lazy::new(|| {
     serde_json::from_str(MIHOMO_ASSETS_JSON).expect("mihomo-assets.json parses")
 });
 
@@ -561,12 +561,10 @@ pub async fn resolve_mihomo_asset(
             && marker.platform == asset.platform
             && marker.arch == asset.arch
             && marker.binary == target_name
+            && assert_regular_file(&binary_path, "binary").is_ok()
+            && sha256_file(&binary_path).is_ok_and(|digest| digest == marker.binary_sha256)
         {
-            if assert_regular_file(&binary_path, "binary").is_ok()
-                && sha256_file(&binary_path).is_ok_and(|digest| digest == marker.binary_sha256)
-            {
-                reusable = true;
-            }
+            reusable = true;
         }
     }
 
@@ -1252,7 +1250,7 @@ mod tests {
         let resolved = resolve_mihomo_asset(&asset, temp.path(), &transport)
             .await
             .unwrap();
-        assert_eq!(resolved.reused, true);
+        assert!(resolved.reused);
         assert_eq!(resolved.path, binary);
         assert_eq!(std::fs::read(&resolved.path).unwrap(), payload);
         assert_eq!(downloads.load(std::sync::atomic::Ordering::SeqCst), 0);

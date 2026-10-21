@@ -816,7 +816,7 @@ impl KernelBinaryResolver for MihomoKernelBinaryResolver {
                 let transport = self
                     .bundled_archive_dir
                     .as_ref()
-                    .map(|dir| bundled_archive_transport(dir, &platform, &arch))
+                    .map(|dir| bundled_archive_transport(dir, &platform, arch))
                     .transpose()?
                     .unwrap_or_else(|| self.transport.clone());
                 crate::mihomo_artifact::resolve_mihomo(
@@ -988,7 +988,7 @@ pub struct KernelDependencies {
     /// The crash-watchdog attach (`crash-watchdog.ts`): force-kills the kernel
     /// when the APP dies while the kernel lives. The Windows Job-Object attach
     /// lands with the Windows production slice; None = no watchdog.
-    pub attach_watchdog: Option<Arc<dyn Fn(u32) -> Arc<dyn KernelWatchdog> + Send + Sync>>,
+    pub attach_watchdog: AttachWatchdogCallback,
 }
 
 /// The crash-watchdog seam (`crash-watchdog.ts`): when the APP dies while the
@@ -1324,9 +1324,7 @@ impl KernelSupervisor {
         Ok(())
     }
 
-    fn watchdog_factory(
-        &self,
-    ) -> Option<Arc<dyn Fn(u32) -> Arc<dyn KernelWatchdog> + Send + Sync>> {
+    fn watchdog_factory(&self) -> AttachWatchdogCallback {
         self.deps.attach_watchdog.clone()
     }
 
@@ -1851,6 +1849,11 @@ fn describe_exit(code: Option<i32>, signal: Option<String>) -> String {
 // Tests — the ported tests/kernel-supervisor.test.ts harness
 // ---------------------------------------------------------------------------
 
+type AttachWatchdogCallback = Option<Arc<dyn Fn(u32) -> Arc<dyn KernelWatchdog> + Send + Sync>>;
+
+#[cfg(test)]
+type ExitRecords = Arc<std::sync::Mutex<Vec<(Option<i32>, Option<String>)>>>;
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -2280,7 +2283,7 @@ pub(crate) mod tests {
     fn error_code(error: &IpcError) -> String {
         error
             .0
-            .splitn(2, "::")
+            .split("::")
             .next()
             .unwrap_or("")
             .trim_start_matches("PROTOCOL_ERROR:")
@@ -3058,7 +3061,7 @@ pub(crate) mod tests {
     async fn real_adapter_spawns_reports_exit_and_terminates() {
         use std::sync::atomic::AtomicUsize;
         struct CollectSink {
-            exits: Arc<std::sync::Mutex<Vec<(Option<i32>, Option<String>)>>>,
+            exits: ExitRecords,
             lines: Arc<AtomicUsize>,
         }
         impl KernelProcessSink for CollectSink {

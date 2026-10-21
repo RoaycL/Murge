@@ -49,8 +49,7 @@ pub struct QuitFlowDeps {
     /// restored (or nothing owned — conflict is safe); `false` = could not.
     pub restore: Box<dyn FnOnce() -> BoxFuture<'static, bool> + Send>,
     /// Stop the kernel / controller (only called after a confirmed restore).
-    pub stop_kernel:
-        Option<Box<dyn FnOnce() -> BoxFuture<'static, Result<serde_json::Value, IpcError>> + Send>>,
+    pub stop_kernel: StopKernelCallback,
     /// Dispose IPC / services (only called after a confirmed restore).
     pub dispose: Option<Box<dyn FnOnce() -> BoxFuture<'static, ()> + Send>>,
 }
@@ -236,6 +235,9 @@ pub async fn begin_application_shutdown(app: tauri::AppHandle, session_ending: b
         }
     }
 }
+
+type StopKernelCallback =
+    Option<Box<dyn FnOnce() -> BoxFuture<'static, Result<serde_json::Value, IpcError>> + Send>>;
 
 #[cfg(test)]
 mod tests {

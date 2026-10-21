@@ -197,7 +197,7 @@ fn assert_safe_rel_path(name: &str) -> Result<String, ZipFormatError> {
         .split('/')
         .filter(|part| !part.is_empty())
         .collect();
-    if parts.iter().any(|part| *part == "..") {
+    if parts.contains(&"..") {
         return Err(ZipFormatError(format!("条目路径越界（{name}）")));
     }
     Ok(parts.join("/"))
@@ -233,7 +233,7 @@ pub fn extract_zip_bytes(buf: &[u8], dest_dir: &Path) -> Result<Vec<String>, Zip
     for entry in &entries {
         let rel = assert_safe_rel_path(&entry.name)?;
         let stripped = if strip_one {
-            rel.splitn(2, '/').nth(1).unwrap_or("").to_string()
+            rel.split_once('/').map(|x| x.1).unwrap_or("").to_string()
         } else {
             rel
         };
@@ -242,7 +242,7 @@ pub fn extract_zip_bytes(buf: &[u8], dest_dir: &Path) -> Result<Vec<String>, Zip
         }
         let target = resolved_dest.join(&stripped);
         let target = std::fs::canonicalize(&target).unwrap_or(target);
-        if target != resolved_dest && !target.starts_with(&resolved_dest.join("")) {
+        if target != resolved_dest && !target.starts_with(resolved_dest.join("")) {
             // The join above already normalizes; the explicit starts_with
             // check keeps a canonicalized symlink escape from writing.
             if !target.starts_with(&resolved_dest) {

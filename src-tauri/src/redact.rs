@@ -109,7 +109,7 @@ pub fn redact_credentials(url: &str) -> String {
             // than the authority, so username/password stay empty while the
             // credentials survive inside the string. Strip leftover
             // `user:pass@` sequences wherever they sit.
-            strip_inline_userinfo(&parsed.to_string())
+            strip_inline_userinfo(parsed.as_ref())
         }
         Err(_) => {
             // Not a parseable URL; fall back to regex-based redaction.

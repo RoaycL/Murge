@@ -73,7 +73,9 @@ foreach($library in $report.imports) {
 }
 @{executable=$report.executable;missing=$missing;os=[Environment]::OSVersion.VersionString}|ConvertTo-Json -Depth 6
 `)
-  const result = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', script], { encoding: 'utf8', timeout: 60_000, env: { ...process.env, CI_TAURI_IMPORTS: input } })
+  // Windows PowerShell's .NET Framework compiler cannot use verbatim temp
+  // paths. Keep Rust's canonical path environment scoped to the Rust process.
+  const result = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', script], { encoding: 'utf8', timeout: 60_000, env: { ...process.env, TEMP: process.env.RUNNER_TEMP, TMP: process.env.RUNNER_TEMP, CI_TAURI_IMPORTS: input } })
   await writeFile(resolve(output, 'result.json'), result)
   console.log(result)
 }

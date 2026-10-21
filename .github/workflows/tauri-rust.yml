@@ -53,10 +53,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri -> target
-          cache-on-failure: true
       - run: npm ci --include=dev
       - run: npm run tauri:bridge
       - name: Check generated bridge is unchanged
@@ -64,6 +60,10 @@ jobs:
       - run: npm run kernel:prepare
       - name: Prepare pinned native assets and absolute Node fixture path
         run: node "${{ inputs.source_ref != '' && 'ci-harness/' || '' }}scripts/ci-tauri-prepare.mjs"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          cache-on-failure: true
       - name: Rust formatting
         working-directory: src-tauri
         run: cargo fmt --check

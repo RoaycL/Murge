@@ -50,21 +50,21 @@ onMounted(() => void refresh())
 
 <style scoped>
 .inspection-card { margin-top: 18px; padding: 14px 16px; }
-.inspection-card header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.inspection-card h3 { margin: 0; font-size: 13px; }
-.inspection-card header p { margin: 3px 0 0; color: var(--app-muted); font-size: 10px; }
-.inspection-refresh { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--app-divider); border-radius: 7px; background: transparent; color: var(--app-muted); }
-.inspection-warnings { display: grid; gap: 6px; margin: 11px 0 0; padding: 0; list-style: none; }
-.inspection-warnings li { display: flex; align-items: flex-start; gap: 7px; padding: 8px 10px; border: 1px solid color-mix(in srgb, #d99b2b 38%, var(--app-divider)); border-radius: 8px; background: color-mix(in srgb, #d99b2b 8%, transparent); color: var(--app-muted); font-size: 10px; line-height: 1.45; }
-.inspection-warnings b { flex: 0 0 auto; color: #b87709; }
-.managed-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 11px; font-size: 10px; }
+.inspection-card header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); }
+.inspection-card h3 { margin: 0; font-size: var(--font-size-md); }
+.inspection-card header p { margin: 3px 0 0; color: var(--app-muted); font-size: var(--font-size-2xs); }
+.inspection-refresh { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--app-divider); border-radius: var(--radius-control); background: transparent; color: var(--app-muted); }
+.inspection-warnings { display: grid; gap: var(--space-2); margin: 11px 0 0; padding: 0; list-style: none; }
+.inspection-warnings li { display: flex; align-items: flex-start; gap: var(--space-3); padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--app-warning) 38%, var(--app-divider)); border-radius: var(--radius-control); background: color-mix(in srgb, var(--app-warning) 8%, transparent); color: var(--app-muted); font-size: var(--font-size-2xs); line-height: 1.45; }
+.inspection-warnings b { flex: 0 0 auto; color: var(--app-warning); }
+.managed-row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin-top: 11px; font-size: var(--font-size-2xs); }
 .managed-row b { color: var(--app-purple); }
-.managed-row span { padding: 3px 7px; border: 1px solid var(--app-divider); border-radius: 999px; background: rgba(127,127,127,.08); }
-.inspection-note { margin: 8px 0 0; color: var(--app-muted); font-size: 10px; line-height: 1.45; }
-.inspection-columns { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin-top: 10px; }
-.inspection-columns details { min-width: 0; border: 1px solid var(--app-divider); border-radius: 8px; overflow: hidden; }
-.inspection-columns summary { padding: 8px 10px; cursor: pointer; color: var(--app-muted); font-size: 11px; }
-.inspection-columns pre { max-height: 220px; margin: 0; padding: 10px; overflow: auto; border-top: 1px solid var(--app-divider); background: rgba(127,127,127,.06); font: 10px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
-.inspection-error { color: var(--app-danger,#d64f4f); font-size: 11px; }
+.managed-row span { padding: 3px 7px; border: 1px solid var(--app-divider); border-radius: var(--radius-pill); background: var(--app-fill-subtle); }
+.inspection-note { margin: 8px 0 0; color: var(--app-muted); font-size: var(--font-size-2xs); line-height: 1.45; }
+.inspection-columns { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--space-4); margin-top: 10px; }
+.inspection-columns details { min-width: 0; border: 1px solid var(--app-divider); border-radius: var(--radius-control); overflow: hidden; }
+.inspection-columns summary { padding: 8px 10px; cursor: pointer; color: var(--app-muted); font-size: var(--font-size-xs); }
+.inspection-columns pre { max-height: 220px; margin: 0; padding: 10px; overflow: auto; border-top: 1px solid var(--app-divider); background: var(--app-fill-subtle); font: 10px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.inspection-error { color: var(--app-danger); font-size: var(--font-size-xs); }
 @media (max-width: 720px) { .inspection-columns { grid-template-columns: 1fr; } }
 </style>

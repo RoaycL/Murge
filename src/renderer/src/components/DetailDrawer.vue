@@ -30,10 +30,10 @@ useDialogFocus(toRef(props, 'open'), drawer, () => emit('close'))
 </template>
 
 <style scoped>
-.detail-drawer-heading { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.detail-drawer-heading { display: flex; align-items: flex-start; gap: var(--space-4); min-width: 0; }
 .detail-drawer-heading.with-icon > div { display: flex; flex-direction: column; justify-content: space-between; min-width: 0; height: 40px; }
 .detail-drawer-heading.with-icon h2 { line-height: 24px; }
 .detail-drawer-heading.with-icon p { margin: 0; line-height: 12px; }
-.detail-drawer-icon { flex: none; width: 40px; height: 40px; margin: 0; border-radius: 8px; object-fit: contain; }
-.detail-drawer-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.detail-drawer-icon { flex: none; width: 40px; height: 40px; margin: 0; border-radius: var(--radius-control); object-fit: contain; }
+.detail-drawer-actions { display: flex; align-items: center; gap: var(--space-3); flex: none; }
 </style>

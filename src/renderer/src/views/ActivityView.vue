@@ -230,7 +230,7 @@ const chartBars = computed<number[]>(() => {
 .latency-label {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
 }
 .latency-refresh {
   display: inline-flex;
@@ -244,7 +244,7 @@ const chartBars = computed<number[]>(() => {
   cursor: pointer;
 }
 .latency-refresh:hover:not(:disabled) {
-  color: var(--app-fg, inherit);
+  color: var(--app-text);
 }
 .latency-refresh:disabled {
   opacity: 0.5;
@@ -253,8 +253,8 @@ const chartBars = computed<number[]>(() => {
 .delay-unit {
   margin-left: 3px;
   font-style: normal;
-  font-size: 11px;
-  font-weight: 500;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
   color: var(--app-muted);
 }
 .metric-dimmed {
@@ -264,10 +264,10 @@ const chartBars = computed<number[]>(() => {
   min-height: 30px;
   padding: 0 12px;
   border: 1px solid var(--app-divider);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--app-muted);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   cursor: pointer;
 }
 .drawer-probe-button:disabled { opacity: 0.5; cursor: default; }

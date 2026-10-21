@@ -94,13 +94,13 @@ async function exportDiagnostics(): Promise<void> {
 </div></template>
 
 <style scoped>
-.about-product-title { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
-.about-product-title strong { font-size: 20px; }
-.update-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.about-product-title { display: flex; align-items: center; gap: var(--space-4); margin-bottom: 4px; }
+.about-product-title strong { font-size: var(--font-size-title); }
+.update-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-7); }
 .update-row span { display: flex; flex-direction: column; gap: 0.25rem; }
-.update-status { margin: 0.5rem 0 0; color: var(--fg-secondary, #889); }
-.update-status.muted { color: var(--fg-muted, #99a); }
-.progress { position: relative; height: 12px; margin-top: 0.75rem; border-radius: 6px; background: var(--bg-muted, #e6e6ee); overflow: hidden; }
-.progress-fill { height: 100%; background: var(--accent, #4a7) ; transition: width 0.2s ease; }
-.progress-label { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 10px; }
+.update-status { margin: 0.5rem 0 0; color: var(--app-muted); }
+.update-status.muted { color: var(--app-muted); }
+.progress { position: relative; height: 12px; margin-top: 0.75rem; border-radius: var(--radius-sm); background: var(--app-fill); overflow: hidden; }
+.progress-fill { height: 100%; background: var(--app-accent) ; transition: width 0.2s ease; }
+.progress-label { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: var(--font-size-2xs); }
 </style>

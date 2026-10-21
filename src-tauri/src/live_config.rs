@@ -637,7 +637,7 @@ pub fn fetch_external_ip_via_proxy(
             Ok(parsed) if parsed.scheme() == "http" => parsed,
             _ => return None,
         };
-        let proxy = match reqwest::Proxy::http(&format!("http://127.0.0.1:{proxy_port}")) {
+        let proxy = match reqwest::Proxy::http(format!("http://127.0.0.1:{proxy_port}")) {
             Ok(proxy) => proxy,
             Err(_) => return None,
         };
@@ -762,7 +762,7 @@ mod tests {
         enhancements::ModelStores,
     ) {
         let temp = tempfile::TempDir::new().unwrap();
-        let profiles = Arc::new(ProfilesService::for_development(&temp.path().to_path_buf()));
+        let profiles = Arc::new(ProfilesService::for_development(temp.path()));
         let overrides = OverrideService::new(None);
         let models = enhancements::ModelStores::new(None);
         (temp, profiles, overrides, models)
@@ -1087,7 +1087,7 @@ mod tests {
                             .to_string(),
                     ),
                     ("PATCH", "/configs") => {
-                        let patch: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+                        let patch: Value = serde_json::from_str(body).unwrap_or(Value::Null);
                         if let Some(value) = patch.get("sniffing").and_then(Value::as_bool) {
                             *sniffing_state.lock().unwrap() = value;
                         }
@@ -1197,8 +1197,8 @@ mod tests {
             &overrides,
             &models,
         );
-        assert_eq!(reloader.apply_sections(&["dns"]).await.unwrap(), false);
-        assert_eq!(reloader.reload_if_running().await.unwrap(), false);
+        assert!(!reloader.apply_sections(&["dns"]).await.unwrap());
+        assert!(!reloader.reload_if_running().await.unwrap());
     }
 
     // -- full reload ------------------------------------------------------------

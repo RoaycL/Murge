@@ -213,8 +213,7 @@ pub struct TrayDeps {
     /// The `profiles:*` ipc arms (activate / update-from-source), reused
     /// verbatim so the tray cannot drift from the renderer's gateway
     /// semantics (gates + rollback live in ONE place).
-    pub profiles_arm:
-        Box<dyn Fn(&str, &str) -> BoxFuture<'static, Result<Value, IpcError>> + Send + Sync>,
+    pub profiles_arm: SelectProxyCallback,
     /// The `tun:enable`/`tun:disable` ipc arms, reused verbatim so the tray
     /// cannot drift from the renderer's gateway semantics.
     pub tun_desired: Box<dyn Fn(bool) -> BoxFuture<'static, Result<Value, IpcError>> + Send + Sync>,
@@ -223,7 +222,7 @@ pub struct TrayDeps {
     pub on_mode_changed: Box<dyn Fn(&str) + Send + Sync>,
     pub show_window: Box<dyn Fn() + Send + Sync>,
     pub quit: Box<dyn Fn() + Send + Sync>,
-    pub open_directory: Box<dyn Fn(&str) -> Result<(), String> + Send + Sync>,
+    pub open_directory: OpenDirectoryCallback,
     pub copy_text: Box<dyn Fn(&str) + Send + Sync>,
     pub on_error: Box<dyn Fn(&str) + Send + Sync>,
 }
@@ -610,7 +609,7 @@ impl TrayController {
         }
     }
 
-    /// Compose the menu tree (the TS `render()`), then hand it to the view.
+    // Compose the menu tree (the TS `render()`), then hand it to the view.
     pub(crate) fn render_locked(&self, state: &mut TrayState) {
         if state.disposed {
             return;
@@ -801,8 +800,8 @@ fn directory_menu() -> TrayMenuItem {
     )
 }
 
-/// Compose the menu tree (the TS `render()`), then hand it to the view.
-/// Callers hold the state lock (internal + test seams only).
+// Compose the menu tree (the TS `render()`), then hand it to the view.
+// Callers hold the state lock (internal + test seams only).
 
 /// The tooltip line (`{product} · {phase label}`).
 pub(crate) fn tooltip_text(product: &str, phase: &str) -> String {
@@ -1355,6 +1354,11 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
 
     Ok(())
 }
+
+type SelectProxyCallback =
+    Box<dyn Fn(&str, &str) -> BoxFuture<'static, Result<Value, IpcError>> + Send + Sync>;
+
+type OpenDirectoryCallback = Box<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
 
 #[cfg(test)]
 mod tests {

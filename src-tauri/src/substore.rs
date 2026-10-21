@@ -80,7 +80,6 @@ pub fn is_valid_sub_store_tag(value: &Value) -> bool {
         let mut parts = raw.split('.');
         let valid = parts.clone().count() == 3
             && parts.all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()));
-        std::mem::forget(parts);
         !bytes.is_empty() && valid
     })
 }
@@ -117,7 +116,7 @@ pub struct SubStoreWorkerHandle {
     /// The `onLog` sink; None = `Stdio::null()` (no pipes at all). Held for
     /// the handle lifetime so the forwarded readers own a stable sink.
     #[allow(dead_code)]
-    on_log: Option<Arc<dyn Fn(&str, &str) + Send + Sync>>,
+    on_log: LogCallback,
 }
 
 impl SubStoreWorkerHandle {
@@ -168,21 +167,14 @@ pub struct SubStoreDeps {
     /// `subStoreUseProxy` is on. None means direct egress.
     pub get_mixed_port: Box<dyn Fn() -> Option<u16> + Send + Sync>,
     /// Injectable for tests; defaults to a real node child process.
-    pub create_worker:
-        Option<Arc<dyn Fn(String, HashMap<String, String>) -> SubStoreWorkerHandle + Send + Sync>>,
+    pub create_worker: WorkerFactory,
     /// Injectable for tests; defaults to the real reqwest transport.
     pub fetch_fn: Option<Fetch>,
     /// Injectable port probe for tests.
-    pub find_free_port: Option<
-        Arc<
-            dyn Fn(u16) -> futures_util::future::BoxFuture<'static, Result<u16, String>>
-                + Send
-                + Sync,
-        >,
-    >,
+    pub find_free_port: FindPortCallback,
     /// The worker output sink (the TS `onLog`): None = discard (the old
     /// `Stdio::null()`), Some = line chunks land in the bounded log files.
-    pub on_log: Option<Arc<dyn Fn(&str, &str) + Send + Sync>>,
+    pub on_log: LogCallback,
     /// Persisted preference mirrors, resolved at call time (the TS
     /// AppSettingsGateway shape: `get()` reads the live store).
     pub settings: crate::settings::SettingsGateway,
@@ -1068,7 +1060,7 @@ impl SubStoreService {
                 .arg(url)
                 .spawn()
                 .map_err(|error| error.to_string())?;
-            return Ok(());
+            Ok(())
         }
         #[cfg(windows)]
         {
@@ -1125,7 +1117,7 @@ impl SubStoreService {
 fn default_create_worker(
     bundle_path: &str,
     env: HashMap<String, String>,
-    on_log: Option<Arc<dyn Fn(&str, &str) + Send + Sync>>,
+    on_log: LogCallback,
 ) -> SubStoreWorkerHandle {
     let mut command = tokio::process::Command::new(bundle_path);
     command.env_clear();
@@ -1248,6 +1240,15 @@ pub fn parse_sub_store_external_url(value: &Value) -> Result<String, crate::erro
     }
     Ok(parsed.to_string())
 }
+
+type LogCallback = Option<Arc<dyn Fn(&str, &str) + Send + Sync>>;
+
+type WorkerFactory =
+    Option<Arc<dyn Fn(String, HashMap<String, String>) -> SubStoreWorkerHandle + Send + Sync>>;
+
+type FindPortCallback = Option<
+    Arc<dyn Fn(u16) -> futures_util::future::BoxFuture<'static, Result<u16, String>> + Send + Sync>,
+>;
 
 #[cfg(test)]
 mod tests {

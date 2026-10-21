@@ -21,6 +21,7 @@ pub const TUN_SERVICE_PROTOCOL_VERSION: u64 = 7;
 pub const TUN_SERVICE_MAX_PROFILE_BYTES: usize = 16 * 1024 * 1024;
 pub const TUN_SERVICE_MAX_PROVIDER_CONTENT_BYTES: usize = 4 * 1024 * 1024;
 /// Provider YAML can legitimately be several MiB; JSON escaping needs headroom.
+#[cfg(any(windows, test))]
 pub const MAX_RESPONSE_BYTES: usize = 12 * 1024 * 1024;
 pub const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 /// A rolling/specific selection may make the service fetch and verify the
@@ -274,6 +275,7 @@ pub fn parse_tun_service_response(
 
 /// Parse the single response frame: exactly one JSON line, optionally
 /// followed by line terminators only.
+#[cfg(any(windows, test))]
 pub fn parse_response_frame(buffered: &[u8]) -> Result<Option<Value>, IpcError> {
     if buffered.len() > MAX_RESPONSE_BYTES {
         return Err(protocol_invalid(

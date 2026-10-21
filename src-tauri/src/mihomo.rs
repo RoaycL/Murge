@@ -456,9 +456,10 @@ pub fn parse_delay_options(input: Option<&Value>) -> Result<Option<i64>, IpcErro
                 invalid("invalid delay options at timeout: Expected number to be an integer")
             })?;
             if !(1000..=30000).contains(&timeout) {
-                return Err(invalid(format!(
+                return Err(invalid(
                     "invalid delay options at timeout: Number must be between 1000 and 30000"
-                )));
+                        .to_string(),
+                ));
             }
             Ok(Some(timeout))
         }
@@ -1351,6 +1352,7 @@ impl MihomoServices {
     /// then the owner group's testUrl, then the default probe. Leaf nodes are
     /// first probed through every provider that lists them (404 -> next
     /// candidate), nested groups through the plain proxy endpoint.
+    #[allow(clippy::too_many_arguments)] // Mirrors the existing delay-test contract.
     pub async fn group_member_delay_test(
         &self,
         client: &MihomoClient,

@@ -685,7 +685,7 @@ mod tests {
             state.error.as_deref(),
             Some("当前构建不支持自动更新（仅安装版可用）")
         );
-        assert_eq!(state.can_install, false);
+        assert!(!state.can_install);
         assert_eq!(counters(&driver).1, 0);
         // Polling is a no-op on unsupported builds.
         service.start_polling(10);
@@ -763,7 +763,7 @@ mod tests {
         // The downloaded package stays installable while re-checking.
         assert_eq!(state.phase, "checking");
         assert_eq!(state.available_version.as_deref(), Some("1.0.1"));
-        assert_eq!(state.can_install, true);
+        assert!(state.can_install);
         // A newer release replaces it.
         driver.emit(&UpdaterDriverEvent::Available {
             version: "1.0.2".to_string(),
@@ -772,7 +772,7 @@ mod tests {
         let state = service.get_state();
         assert_eq!(state.phase, "available");
         assert_eq!(state.available_version.as_deref(), Some("1.0.2"));
-        assert_eq!(state.can_install, false);
+        assert!(!state.can_install);
         driver.emit(&UpdaterDriverEvent::DownloadProgress {
             percent: 10.0,
             bytes_per_second: 1,
@@ -801,7 +801,7 @@ mod tests {
         let state = service.get_state();
         assert_eq!(state.phase, "downloaded");
         assert_eq!(state.available_version.as_deref(), Some("1.0.1"));
-        assert_eq!(state.can_install, true);
+        assert!(state.can_install);
         assert_eq!(state.error.as_deref(), Some("feed unavailable"));
     }
 
@@ -819,7 +819,7 @@ mod tests {
         let state = service.get_state();
         assert_eq!(state.phase, "available");
         assert_eq!(state.available_version.as_deref(), Some("1.2.3"));
-        assert_eq!(state.can_install, false);
+        assert!(!state.can_install);
         driver.emit(&UpdaterDriverEvent::DownloadProgress {
             percent: 42.0,
             bytes_per_second: 2048,
@@ -838,13 +838,13 @@ mod tests {
         driver.emit(&UpdaterDriverEvent::Downloaded);
         let state = service.get_state();
         assert_eq!(state.phase, "downloaded");
-        assert_eq!(state.can_install, true);
+        assert!(state.can_install);
         assert_eq!(state.progress, None);
         driver.emit(&UpdaterDriverEvent::NotAvailable);
         let state = service.get_state();
         assert_eq!(state.phase, "not-available");
         assert_eq!(state.available_version, None);
-        assert_eq!(state.can_install, false);
+        assert!(!state.can_install);
     }
 
     #[tokio::test]
@@ -913,7 +913,7 @@ mod tests {
         assert_eq!(state.current_version.as_deref(), Some("1.0.0"));
         assert_eq!(state.progress.as_ref().map(|p| p.percent), Some(12.5));
         assert_eq!(state.progress.as_ref().and_then(|p| p.total), None);
-        assert_eq!(state.can_install, true);
+        assert!(state.can_install);
     }
 
     #[tokio::test]

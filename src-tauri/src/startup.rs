@@ -168,7 +168,6 @@ pub fn task_arguments(task_xml: &str) -> Vec<String> {
     // Compare against the unescaped form: a compare against raw XML entities
     // would never match and re-create the task on every startup.
     unescape_xml(raw)
-        .trim()
         .split_whitespace()
         .map(str::to_string)
         .collect()
@@ -240,8 +239,7 @@ impl LegacyRunKeyAdapter {
                     "/f".into(),
                 ],
             )
-            .await
-            .map_err(|error| error)?;
+            .await?;
             return Ok(());
         }
         // Disabling retires the stable appId value under this executable (the
@@ -256,8 +254,7 @@ impl LegacyRunKeyAdapter {
                 "/f".into(),
             ],
         )
-        .await
-        .map_err(|error| error)?;
+        .await?;
         Ok(())
     }
 }
@@ -564,7 +561,7 @@ impl ScheduledTaskStartupAdapter {
         if result.code != 0 {
             return None;
         }
-        result.stdout.contains("<?xml").then(|| result.stdout)
+        result.stdout.contains("<?xml").then_some(result.stdout)
     }
 }
 

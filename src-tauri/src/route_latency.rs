@@ -27,10 +27,10 @@ pub fn parse_darwin_default_gateway(stdout: &str) -> Option<String> {
 }
 
 /// /proc/net/route → the destination-00000000 row's little-endian hex gateway.
-#[cfg_attr(windows, allow(dead_code))] // the Linux route source; Windows reads `route print`
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // the Linux route source; Windows reads `route print`
 pub fn parse_linux_proc_route(text: &str) -> Option<String> {
     for line in text.lines() {
-        let columns: Vec<&str> = line.trim().split_whitespace().collect();
+        let columns: Vec<&str> = line.split_whitespace().collect();
         if columns.get(1) != Some(&"00000000") {
             continue;
         }
@@ -62,16 +62,14 @@ pub fn parse_linux_proc_route(text: &str) -> Option<String> {
 /// routes are listed by metric order, so the first match is the active one.
 #[cfg_attr(not(windows), allow(dead_code))] // platform-gated caller
 pub fn parse_windows_route_print(stdout: &str) -> Option<String> {
+    let pattern = regex::Regex::new(r"^\d{1,3}(?:\.\d{1,3}){3}$").expect("ipv4 regex compiles");
     for line in stdout.lines() {
-        let columns: Vec<&str> = line.trim().split_whitespace().collect();
+        let columns: Vec<&str> = line.split_whitespace().collect();
         if columns.first() != Some(&"0.0.0.0") || columns.get(1) != Some(&"0.0.0.0") {
             continue;
         }
         let gateway = columns.get(2)?;
-        if regex::Regex::new(r"^\d{1,3}(?:\.\d{1,3}){3}$")
-            .expect("ipv4 regex compiles")
-            .is_match(gateway)
-        {
+        if pattern.is_match(gateway) {
             return Some(gateway.to_string());
         }
     }

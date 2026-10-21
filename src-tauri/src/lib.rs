@@ -449,7 +449,7 @@ pub fn run() {
                             use tauri::Manager;
                             app.try_state::<std::sync::Arc<crate::settings::SettingsStore>>()
                                 .map(|store| store.get())
-                                .unwrap_or_else(|| settings::AppSettings::default())
+                                .unwrap_or_else(settings::AppSettings::default)
                         }) as futures_util::future::BoxFuture<'static, settings::AppSettings>
                     })
                 },
@@ -638,8 +638,8 @@ pub fn run() {
                                             == std::net::IpAddr::V6(
                                                 "fdfe:dcba:9876::1"
                                                     .parse()
-                                                    .unwrap_or_else(|_| {
-                                                        std::net::Ipv6Addr::UNSPECIFIED.into()
+                                                    .unwrap_or({
+                                                        std::net::Ipv6Addr::UNSPECIFIED
                                                     }),
                                             );
                                     name_match || addr_match

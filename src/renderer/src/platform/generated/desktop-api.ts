@@ -55,6 +55,16 @@ export function createDesktopApi(): DesktopApi {
       listNetworkInterfaces: () => bridgeInvoke("app:list-network-interfaces", []),
       onNavigate: (listener) => bridgeListen("app:navigate-event", listener),
     },
+    diagnostics: {
+      collect: () => bridgeInvoke("diagnostics:collect", []),
+    },
+    backup: {
+      create: (password) => bridgeInvoke("backup:create", ["password"]),
+      preview: (password) => bridgeInvoke("backup:preview", ["password"]),
+      restore: (token) => bridgeInvoke("backup:restore", ["token"]),
+      webdavUpload: (target, password) => bridgeInvoke("backup:webdav-upload", ["target","password"]),
+      webdavPreview: (target, password) => bridgeInvoke("backup:webdav-preview", ["target","password"]),
+    },
     kernel: {
       getStatus: () => bridgeInvoke("kernel:get-status", []),
       start: () => bridgeInvoke("kernel:start", []),
@@ -99,6 +109,7 @@ export function createDesktopApi(): DesktopApi {
       onConnections: (listener) => bridgeListen("mihomo:connections-event", listener),
       onLogs: (listener) => bridgeListen("mihomo:log-event", listener),
       onStreamError: (listener) => bridgeListen("mihomo:stream-error-event", listener),
+      onModeChanged: (listener) => bridgeListen("mihomo:mode-changed-event", listener),
     },
     profiles: {
       getActiveGroupOrder: () => bridgeInvoke("profiles:get-active-group-order", []),
@@ -200,6 +211,7 @@ export function createDesktopApi(): DesktopApi {
     usageHistory: {
       getWindow: (window) => bridgeInvoke("usage-history:get-window", ["window"]),
       rank: (window, ranking, limit) => bridgeInvoke("usage-history:rank", ["window","ranking","limit"]),
+      processRanking: (window) => bridgeInvoke("usage-history:process-ranking", ["window"]),
       clear: () => bridgeInvoke("usage-history:clear", []),
       getCapacity: () => bridgeInvoke("usage-history:get-capacity", []),
     },

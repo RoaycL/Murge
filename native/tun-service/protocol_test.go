@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -106,6 +107,28 @@ func encodedStart(profile string) []byte {
 func TestDecodeSafeStart(t *testing.T) {
 	if _, err := decodeRequest(encodedStart(safeProfile)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A profile right at the byte limit is JSON-escaped on the wire (every newline
+// becomes two bytes), so the request line is much longer than the profile.
+// The request cap must leave room for that and leave the exact limit to the
+// decoded profile check.
+func TestDecodeProfileAtLimitDespiteJSONEscaping(t *testing.T) {
+	padding := maxProfileBytes - len(safeProfile)
+	profile := safeProfile + strings.Repeat("#\n", padding/2)
+	if len(profile) > maxProfileBytes {
+		t.Fatalf("test profile is %d bytes, over the limit", len(profile))
+	}
+	data := encodedStart(profile)
+	if len(data) <= maxProfileBytes+4096 {
+		t.Fatalf("request is only %d bytes; the test no longer exercises escaping", len(data))
+	}
+	if _, err := decodeRequest(data); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeRequest(encodedStart(profile + strings.Repeat("#", maxProfileBytes))); err == nil {
+		t.Fatal("expected a profile over the byte limit to be rejected")
 	}
 }
 

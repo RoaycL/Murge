@@ -450,6 +450,33 @@ export const usePoliciesStore = defineStore('policies', () => {
     }
   }
 
+  function isPolicyMode(value: unknown): value is PolicyMode {
+    return typeof value === 'string' && (POLICY_MODE_OPTIONS as readonly string[]).includes(value)
+  }
+
+  /**
+   * Re-read the outbound mode from the controller. The store starts at 'rule'
+   * and only a local switch updates it, so every view that shows the mode calls
+   * this on mount and after a kernel restart. A switch that is still draining
+   * owns the value and is left alone.
+   */
+  async function syncMode(): Promise<void> {
+    if (modeDrainPromise) return
+    try {
+      const config = await window.desktop.mihomo.getConfig()
+      if (!modeDrainPromise && isPolicyMode(config.mode)) mode.value = config.mode
+    } catch {
+      /* keep the last known mode; the controller may be restarting */
+    }
+  }
+
+  // The tray switches the mode in the main process; follow it here.
+  if (typeof window !== 'undefined') {
+    window.desktop?.mihomo?.onModeChanged?.((next) => {
+      if (!modeDrainPromise && isPolicyMode(next)) mode.value = next
+    })
+  }
+
   function reset(): void {
     status.value = 'idle'
     lastError.value = null
@@ -483,6 +510,7 @@ export const usePoliciesStore = defineStore('policies', () => {
     load,
     selectGroup,
     setMode,
+    syncMode,
     selectNode,
     testNode,
     testAll,

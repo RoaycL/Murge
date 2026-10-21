@@ -213,7 +213,10 @@ export function createWindowAdapter(options: WindowAdapterOptions): WindowAdapte
   }
 
   function onSecondInstance(argv: readonly string[]): void {
-    deepLinks.pushFromArgv(argv)
+    const link = deepLinks.pushFromArgv(argv)
+    // A duplicate login registration must never turn a tray-only startup into
+    // a visible launch. Deep links and normal manual launches still reveal it.
+    if (argv.includes('--hidden') && !link) return
     const window = state.mainWindow ?? BrowserWindow.getAllWindows()[0]
     if (window) {
       if (window.isMinimized()) window.restore()
@@ -245,6 +248,7 @@ export function createWindowAdapter(options: WindowAdapterOptions): WindowAdapte
   }
 
   function showMainWindow(): void {
+    if (state.isQuitting) return
     const window = state.mainWindow ?? BrowserWindow.getAllWindows()[0] ?? createWindow()
     if (window.isMinimized()) window.restore()
     window.show()

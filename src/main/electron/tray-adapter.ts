@@ -35,6 +35,8 @@ export interface TrayAdapterDeps {
   /** Reveal/focus the main window (tray show entry). */
   showWindow: () => void
   quit: () => void
+  /** Broadcast a tray-initiated outbound-mode change to the renderer. */
+  onModeChanged?: TrayControllerOptions['onModeChanged']
   /** Live TUN phase reader for the tray accent (active/starting/restoring…). */
   tunStatusPhase: () => import('@shared/tun').TunStatus['phase']
   /** Persistent kernel workspace (kernel directory tray shortcut). */
@@ -92,6 +94,7 @@ export function createTrayAdapter(
     view: trayView,
     showWindow: deps.showWindow,
     quit: deps.quit,
+    onModeChanged: deps.onModeChanged,
     systemProxy: deps.systemProxy,
     tun: deps.tun,
     mihomo: deps.mihomo,

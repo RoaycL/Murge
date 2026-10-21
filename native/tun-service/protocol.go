@@ -17,7 +17,13 @@ import (
 )
 
 const protocolVersion = 7
-const maxProfileBytes = 2 * 1024 * 1024
+const maxProfileBytes = 16 * 1024 * 1024
+
+// maxRequestBytes bounds one JSON request line. The profile travels as a JSON
+// string, where every newline, quote and backslash is escaped to two bytes, so
+// a profile right at maxProfileBytes can encode to nearly twice that. The exact
+// profile limit is enforced again after decoding.
+const maxRequestBytes = 2*maxProfileBytes + 64*1024
 const maxProviderContentBytes = 4 * 1024 * 1024
 
 var (
@@ -55,7 +61,7 @@ type serviceResponse struct {
 }
 
 func decodeRequest(data []byte) (serviceRequest, error) {
-	if len(data) == 0 || len(data) > maxProfileBytes+4096 {
+	if len(data) == 0 || len(data) > maxRequestBytes {
 		return serviceRequest{}, errors.New("request size is invalid")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))

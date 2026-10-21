@@ -32,6 +32,16 @@ const api: DesktopApi = {
     listNetworkInterfaces: () => invoke(IPC.appListNetworkInterfaces),
     onNavigate: (listener) => listen(IPC.appNavigateEvent, listener)
   },
+  diagnostics: {
+    collect: () => invoke(IPC.diagnosticsCollect)
+  },
+  backup: {
+    create: (password) => invoke(IPC.backupCreate, password),
+    preview: (password) => invoke(IPC.backupPreview, password),
+    restore: (token) => invoke(IPC.backupRestore, token),
+    webdavUpload: (target, password) => invoke(IPC.backupWebDavUpload, target, password),
+    webdavPreview: (target, password) => invoke(IPC.backupWebDavPreview, target, password)
+  },
   kernel: {
     getStatus: () => invoke(IPC.kernelGetStatus),
     start: () => invoke(IPC.kernelStart),
@@ -75,7 +85,8 @@ const api: DesktopApi = {
     onTraffic: (listener) => listen(IPC.mihomoTrafficEvent, listener),
     onConnections: (listener) => listen(IPC.mihomoConnectionsEvent, listener),
     onLogs: (listener) => listen(IPC.mihomoLogEvent, listener),
-    onStreamError: (listener) => listen(IPC.mihomoStreamErrorEvent, listener)
+    onStreamError: (listener) => listen(IPC.mihomoStreamErrorEvent, listener),
+    onModeChanged: (listener) => listen(IPC.mihomoModeChangedEvent, listener)
   },
   profiles: {
     getActiveGroupOrder: () => invoke(IPC.profilesGetActiveGroupOrder),
@@ -176,6 +187,7 @@ const api: DesktopApi = {
   usageHistory: {
     getWindow: (window) => invoke(IPC.usageHistoryGetWindow, window),
     rank: (window, ranking, limit) => invoke(IPC.usageHistoryRank, window, ranking, limit),
+    processRanking: (window) => invoke(IPC.usageHistoryProcessRanking, window),
     clear: () => invoke(IPC.usageHistoryClear),
     getCapacity: () => invoke(IPC.usageHistoryGetCapacity)
   },

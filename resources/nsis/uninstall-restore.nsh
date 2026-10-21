@@ -27,6 +27,32 @@
 ; retry, covering transient SCM/antivirus locks without making removal impossible.
 ; A persistent failure is surfaced accurately and the installer remains usable
 ; for a repair run instead of trapping the user on a broken release.
+; Capture the old per-user Run preference BEFORE electron-builder runs the old
+; uninstaller. Releases before this hook removed that value even on an upgrade.
+!ifndef BUILD_UNINSTALLER
+Var /GLOBAL MurgeStartupWasEnabled
+!macro customInit
+  StrCpy $MurgeStartupWasEnabled "0"
+  ReadRegStr $R8 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APP_ID}"
+  StrCmp $R8 "" StartupCaptureLegacy
+    StrCpy $MurgeStartupWasEnabled "1"
+    Goto StartupCaptureDone
+  StartupCaptureLegacy:
+    ReadRegStr $R8 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "electron.app.${PRODUCT_NAME}"
+    StrCmp $R8 "" StartupCaptureTask
+      StrCpy $MurgeStartupWasEnabled "1"
+      Goto StartupCaptureDone
+  StartupCaptureTask:
+    ; A previously elevated installation may own the task without a Run value.
+    ; Capture that state before an older uninstaller deletes its task on upgrade.
+    nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "if ((Get-ScheduledTask -TaskName ${APP_ID} -ErrorAction Stop).Settings.Enabled) { exit 0 } else { exit 1 }"'
+    Pop $R8
+    Pop $R9
+    StrCmp $R8 0 0 StartupCaptureDone
+      StrCpy $MurgeStartupWasEnabled "1"
+  StartupCaptureDone:
+!macroend
+
 !macro customInstall
   IfFileExists "$INSTDIR\resources\tun-service\tun-service.exe" 0 TunServiceInstallMissing
     DetailPrint "Installing privileged core lifecycle service..."
@@ -50,6 +76,33 @@
     DetailPrint "Privileged core service executable is missing; system proxy and TUN cannot start"
     MessageBox MB_ICONEXCLAMATION|MB_OK "安装包缺少核心服务组件，系统代理和 TUN 模式均不可用。请重新下载完整安装包后安装。"
   TunServiceInstallDone:
+  ; This installer already holds the one-time administrator authorization.
+  ; Register a disabled task for users who have not opted into auto-start yet;
+  ; the normal GUI can then enable it without trying to create a task itself.
+  ; On upgrade, retain the pre-uninstall Run intent captured in customInit.
+  IfFileExists "$INSTDIR\resources\startup\register-task.ps1" 0 StartupTaskInstallMissing
+    DetailPrint "Registering per-user startup task..."
+    nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\startup\register-task.ps1" -TaskName "${APP_ID}" -ExecutablePath "$appExe" -PreviouslyEnabled "$MurgeStartupWasEnabled"'
+    Pop $R0
+    Pop $R1
+    StrCmp $R0 0 StartupTaskInstallDone StartupTaskInstallFailed
+  StartupTaskInstallMissing:
+    StrCpy $R0 "missing script"
+    StrCpy $R1 "startup task registration script is missing"
+  StartupTaskInstallFailed:
+    DetailPrint "Startup task registration failed ($R0): $R1"
+    StrCmp $MurgeStartupWasEnabled "1" 0 StartupTaskInstallEnd
+      ; An older uninstaller may already have removed the old Run value during
+      ; this upgrade. Recreate it before reporting the best-effort failure.
+      WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APP_ID}" '"$appExe" --hidden'
+      MessageBox MB_ICONEXCLAMATION|MB_OK "未能注册高优先级开机启动任务，原有开机启动设置将保留为兼容模式。请以管理员身份重新运行安装包修复。"
+    Goto StartupTaskInstallEnd
+  StartupTaskInstallDone:
+    ; Only retire fallback entries after the elevated task is verified. This
+    ; prevents a double launch while preserving startup on registration failure.
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APP_ID}"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "electron.app.${PRODUCT_NAME}"
+  StartupTaskInstallEnd:
   ; electron-builder preserves an existing desktop shortcut during an upgrade.
   ; Its target still points at the replaced executable, but Explorer can retain
   ; the old icon for that unchanged .lnk path. Recreate only an existing link
@@ -64,6 +117,7 @@
     System::Call 'Shell32::SHChangeNotify(i 0x08000000, i 0, i 0, i 0)'
   DesktopIconRefreshDone:
 !macroend
+!endif
 
 !macro customUnInstall
   ; perMachine installers enter this hook with the all-users shell context,
@@ -103,6 +157,10 @@
         MessageBox MB_ICONEXCLAMATION|MB_OK "未能确认 TUN 服务已移除。为避免阻塞卸载，本程序将继续执行。若残留的 TUN 服务需清理，请以管理员身份在「Windows 服务」中找到并停止、删除对应服务。"
     TunServiceUninstallDone:
   ${endif}
+  ; Upgrades must preserve startup intent. The NEW installer re-registers the
+  ; task after installing its files; the old uninstaller may predate this rule,
+  ; so customInit also captures the old Run preference before removal.
+  ${ifNot} ${isUpdated}
   ; The scheduled-task auto-start registration (see
   ; src/main/startup/scheduled-task-adapter.ts) must not outlive the app: a
   ; leftover task fires a failing launch at every future logon. The task name is
@@ -117,4 +175,5 @@
   ; that stable appId-named value too so uninstall never leaves a dead launch.
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APP_ID}"
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "${APP_ID}"
+  ${endif}
 !macroend

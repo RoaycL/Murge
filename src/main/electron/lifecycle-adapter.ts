@@ -134,6 +134,8 @@ export function createLifecycleAdapter(deps: LifecycleDeps): LifecycleAdapter {
             }
             state.networkDetector?.stop()
             state.networkDetector = null
+            state.profileAutoUpdater?.stop()
+            state.profileAutoUpdater = null
             state.runtimeIntentRecovery?.stop()
             state.runtimeIntentRecovery = null
             state.subStoreServiceRef?.dispose()
@@ -151,9 +153,10 @@ export function createLifecycleAdapter(deps: LifecycleDeps): LifecycleAdapter {
             await deps.flushLogs()
           }
         },
-        // Session-end is already inside the Windows logoff/shutdown path; app.exit
-        // avoids re-entering before-quit after the bounded cleanup completes.
-        quit: () => sessionEnding ? app.exit(0) : app.quit(),
+        // Cleanup is complete, so terminate directly. Re-entering app.quit() from
+        // an asynchronous before-quit/tray callback is the Windows stall fixed by
+        // this flow; app.exit() intentionally emits no second quit lifecycle.
+        quit: () => app.exit(0),
         onCleanupError: (error, step) => console.error(`[quit-guard] ${step} failed during quit:`, error)
       })
       if (result === 'restore-failed') {

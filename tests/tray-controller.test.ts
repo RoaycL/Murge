@@ -101,6 +101,20 @@ describe('TrayController', () => {
     controller.dispose()
   })
 
+  it('tells open windows about a mode switched from the tray, only after the controller accepted it', async () => {
+    kernel.status = { ...kernel.status, phase: 'running', pid: 42 }
+    mihomo.config = { mode: 'rule', 'mixed-port': 7890 }
+    const onModeChanged = vi.fn()
+    const controller = create({ onModeChanged })
+    await controller.initialize()
+    await view.menuOpen?.()
+
+    view.item('outbound-mode:direct')?.click?.()
+    await vi.waitFor(() => expect(onModeChanged).toHaveBeenCalledWith('direct'))
+    expect(mihomo.patchConfigCalls).toContainEqual({ mode: 'direct' })
+    controller.dispose()
+  })
+
   it('shows a cached policy icon and refreshes it without blocking the native menu', async () => {
     kernel.status = { ...kernel.status, phase: 'running', pid: 42 }
     mihomo.proxies = {

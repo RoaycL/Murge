@@ -7,6 +7,8 @@ import type { SystemProxyService } from '../system-proxy/service'
 import type { SubStoreService } from '../substore/service'
 import type { NetworkDetector } from '../services/network-detector'
 import type { RuntimeIntentRecoveryCoordinator } from '../startup/runtime-intent-recovery'
+import type { ProfileAutoUpdateService } from '../profiles/profile-auto-update-service'
+import type { ConfigBackupPayload } from '../backup/config-backup'
 
 /**
  * Mutable application state container for the Electron shell.
@@ -56,6 +58,12 @@ export interface ApplicationState {
   proxyGuardTimer: ReturnType<typeof setInterval> | null
   /** Connectivity watchdog. */
   networkDetector: NetworkDetector | null
+  /** Background subscription auto-update scheduler. */
+  profileAutoUpdater: ProfileAutoUpdateService | null
+  /** Outcome of a staged config-backup restore applied during storage warmup. */
+  startupConfigRestoreOutcome: 'none' | 'restored' | 'rolled-back'
+  /** The last decrypted backup preview awaiting the user's restore confirmation. */
+  pendingBackupPreview: { token: string; payload: ConfigBackupPayload; compatible: boolean } | null
   /** Durable-intent recovery loop. */
   runtimeIntentRecovery: RuntimeIntentRecoveryCoordinator | null
   /** Usage-history persistence, disposed at shutdown. */
@@ -89,6 +97,9 @@ export function createApplicationState(defaultSettings: AppSettings): Applicatio
     tunExitMonitor: null,
     proxyGuardTimer: null,
     networkDetector: null,
+    profileAutoUpdater: null,
+    startupConfigRestoreOutcome: 'none',
+    pendingBackupPreview: null,
     runtimeIntentRecovery: null,
     usageHistoryServiceRef: null,
     updateService: null,

@@ -8,14 +8,23 @@ const read = (path: string): string => readFileSync(resolve(root, path), 'utf8')
 describe('Surge-inspired UI navigation contract', () => {
   it('keeps feature areas separate and gives every sidebar destination a semantic icon', () => {
     const sidebar = read('src/renderer/src/components/AppSidebar.vue')
-    for (const route of ['/activity', '/overview', '/connections', '/policies', '/rules', '/profiles', '/substore', '/overrides', '/resources']) {
+    for (const route of ['/activity', '/overview', '/connections', '/processes', '/policies', '/rules', '/profiles', '/substore', '/overrides', '/resources']) {
       expect(sidebar).toContain(`to: '${route}'`)
     }
     expect(sidebar).toContain('<AppIcon :name="item.icon"')
     expect(sidebar).not.toContain("label: '客户端'")
-    expect(sidebar).not.toContain("to: '/processes'")
     expect(sidebar).toContain("to: '/devices'")
     expect(sidebar).not.toMatch(/icon:\s*'[⌁⌘▣▤⑂☷]'/)
+  })
+
+  it('opens the process routing editor instead of redirecting it to connections', () => {
+    const router = read('src/renderer/src/router.ts')
+    const processes = read('src/renderer/src/views/ProcessListView.vue')
+    expect(router).toContain("import ProcessListView from './views/ProcessListView.vue'")
+    expect(router).toContain("{ path: '/processes', component: ProcessListView }")
+    expect(router).not.toContain("{ path: '/processes', redirect: '/connections' }")
+    expect(processes).toContain('创建分流规则')
+    expect(processes).toContain('@click="saveRule"')
   })
 
   it('uses overlay drawers instead of permanent master-detail columns', () => {

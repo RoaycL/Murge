@@ -39,6 +39,10 @@ describe('Windows packaging and interactive GUI CI contracts', () => {
     expect(hostedWorkflow).toContain("'out/renderer/index.html'")
     expect(hostedWorkflow).not.toContain('MURGE_CI_SKIP_ELECTRON_RESTORE')
     expect(hostedWorkflow).toContain("-ArgumentList '--uninstall' -Label 'installed TUN service removal'")
+    expect(hostedWorkflow).toContain('Get-ScheduledTask -TaskName $env:APP_ID -ErrorAction SilentlyContinue')
+    expect(hostedWorkflow).toContain('installer did not register its per-user startup task')
+    expect(hostedWorkflow).toContain("if ($startupTask.Settings.Enabled) { throw 'fresh install unexpectedly enabled auto-start' }")
+    expect(hostedWorkflow).toContain("if (Get-ScheduledTask -TaskName $env:APP_ID -ErrorAction SilentlyContinue) { throw 'startup task remained after uninstall' }")
   })
 
   it('runs packaged Electron probes only on an explicitly interactive self-hosted runner', () => {
@@ -62,7 +66,7 @@ describe('Windows packaging and interactive GUI CI contracts', () => {
     // Phase 1: the Actions gate lives in boot-flags.ts; the intent-restore
     // guard keeps its exact source form inside when-ready.
     expect(mainEntry).toContain("env.GITHUB_ACTIONS === 'true' && hasArg('--no-kernel-autostart')")
-    expect(mainEntry).toContain('!is.dev && !skipKernelAutostart')
+    expect(mainEntry).toContain("if (is.dev || skipKernelAutostart || hasArg('--hidden-smoke')) return")
     expect(mainEntry).not.toContain('!launchHidden && !skipKernelAutostart')
     expect(interactiveScript).toContain("@('--no-kernel-autostart')")
   })
@@ -71,5 +75,11 @@ describe('Windows packaging and interactive GUI CI contracts', () => {
     expect(mainEntry).toContain("window.on('session-end'")
     expect(mainEntry).toContain('beginApplicationShutdown(true)')
     expect(mainEntry).toContain("powerMonitor.on('shutdown'")
+  })
+
+  it('routes tray exit directly through cleanup and terminates without re-entering quit events', () => {
+    expect(mainEntry).toContain('quit: () => { void lifecycle.beginApplicationShutdown(false) }')
+    expect(mainEntry).toContain('quit: () => app.exit(0)')
+    expect(mainEntry).not.toContain('quit: () => sessionEnding ? app.exit(0) : app.quit()')
   })
 })

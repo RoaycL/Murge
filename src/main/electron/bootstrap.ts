@@ -17,6 +17,8 @@ import { FileLogService } from '../logging/file-log-service'
 import { installConsoleFileLogging } from '../logging/console-bridge'
 import { AppSettingsService } from '../app-settings/service'
 import { CoreSettingsService } from '../kernel/core-settings-service'
+import { StartupTimeline } from '../startup/startup-timeline'
+import { applyPendingConfigRestore } from '../backup/config-backup'
 
 /**
  * Electron shell bootstrap (Phase 1).
@@ -49,6 +51,8 @@ export interface ShellBootstrap {
   readonly logDirectory: string
   /** Stable app-data namespace root. */
   readonly appDataBaseRoot: string
+  /** Startup stage timings (diagnostics report + `[startup-timing]` logs). */
+  readonly startupTimeline: StartupTimeline
 }
 
 export function bootstrapShell(): ShellBootstrap {
@@ -112,6 +116,11 @@ export function bootstrapShell(): ShellBootstrap {
   const fileLogs = new FileLogService(logDirectory)
   state.fileLogsRef = fileLogs
   installConsoleFileLogging(fileLogs)
+  const startupTimeline = new StartupTimeline(
+    () => performance.now(),
+    () => new Date(),
+    ({ stage, elapsedMs }) => console.info(`[startup-timing] ${stage} in ${elapsedMs}ms`)
+  )
   void fileLogs.initialize()
     .then(() => fileLogs.writeApp('info', [
       `version=${app.getVersion()}`,
@@ -136,6 +145,10 @@ export function bootstrapShell(): ShellBootstrap {
     // the stable namespace. Only runs in production (dev never writes real user
     // data) and is naturally idempotent.
     if (!is.dev) await migrateLegacyAppData(app.getPath('appData'))
+    if (!is.dev) {
+      state.startupConfigRestoreOutcome = await applyPendingConfigRestore(appDataBaseRoot)
+      if (state.startupConfigRestoreOutcome !== 'none') console.info(`[config-backup] startup restore: ${state.startupConfigRestoreOutcome}`)
+    }
     return resolveRuntimeProfileRoot(app.getPath('appData'), { dev: is.dev })
   })()
   const coreSettingsWarm = storageWarmup.then(() => coreSettingsService.getRaw())
@@ -153,6 +166,7 @@ export function bootstrapShell(): ShellBootstrap {
     coreSettingsWarm,
     appSettingsWarm,
     logDirectory,
-    appDataBaseRoot
+    appDataBaseRoot,
+    startupTimeline
   }
 }

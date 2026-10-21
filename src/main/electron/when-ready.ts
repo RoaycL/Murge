@@ -1,5 +1,7 @@
-import { app, powerMonitor, safeStorage } from 'electron'
-import { join } from 'node:path'
+import { app, BrowserWindow, dialog, powerMonitor, safeStorage } from 'electron'
+import { dirname, join } from 'node:path'
+import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { is } from '@electron-toolkit/utils'
 import { networkInterfaces } from 'node:os'
 import { brand } from '@shared/brand'
@@ -7,7 +9,8 @@ import { EMPTY_TUN_CONFIG } from '@shared/tun-config'
 import type { DnsEnhancement } from '@shared/dns'
 import type { SnifferEnhancement } from '@shared/sniffer'
 import type { GeodataSettings } from '@shared/geodata'
-import type { KernelGateway } from '@shared/gateways'
+import type { KernelGateway, TunConfigGateway } from '@shared/gateways'
+import type { KernelStatus } from '@shared/runtime'
 import { parseBrandConfig } from '@shared/schemas/brand'
 import { registerIpc } from '../ipc/register-ipc'
 import { KernelSupervisor } from '../kernel/supervisor'
@@ -28,12 +31,14 @@ import { MihomoClient } from '../services/mihomo-client'
 import { MihomoService } from '../services/mihomo-service'
 import { UsageHistoryService } from '../services/usage-history-service'
 import { FileSystemUsageHistoryStore, InMemoryUsageHistoryStore } from '../services/usage-history-store'
+import { FileSystemProcessUsageStore, InMemoryProcessUsageStore } from '../services/process-usage-store'
 import { NetworkMetadataService, fetchMetadataJsonViaProxy } from '../services/network-metadata-service'
 import { RemoteIconCache } from '../services/remote-icon-cache'
 import { ProfileRepository } from '../profiles/profile-repository'
 import { EncryptedProfileSourceStore } from '../profiles/profile-source-store'
 import { ProfileService } from '../profiles/profile-service'
 import { ProfileAutoReloadGateway } from '../profiles/profile-auto-reload-gateway'
+import { ProfileAutoUpdateService } from '../profiles/profile-auto-update-service'
 import { parseProxyGroupOrder, parseProxyGroupTestUrls } from '../profiles/proxy-group-order'
 import { parseProviderCatalog } from '../profiles/provider-configs'
 import { inspectActiveProfileConfig } from '../profiles/profile-config-inspection'
@@ -54,6 +59,10 @@ import { ScheduledTaskStartupAdapter } from '../startup/scheduled-task-adapter'
 import { StartupService } from '../startup/service'
 import { restoreRuntimeIntent } from '../startup/runtime-intent'
 import { RuntimeIntentRecoveryCoordinator } from '../startup/runtime-intent-recovery'
+import { collectDiagnosticReport } from '../diagnostics/report-service'
+import { WindowsDiagnosticHost } from '../diagnostics/windows-host'
+import { createConfigBackup, describeConfigRestoreImpact, inspectConfigBackup, MAX_ARCHIVE_BYTES, stageConfigRestore } from '../backup/config-backup'
+import { uploadWebDavBackup, downloadWebDavBackup } from '../backup/webdav-backup'
 import { SubStoreService } from '../substore/service'
 import { OverrideService } from '../kernel/overrides/override-service'
 import { DnsEnhancementService } from '../kernel/dns/dns-enhancement-service'
@@ -67,6 +76,7 @@ import { TunServiceClient } from '../tun/service-client'
 import { NamedPipeTunServiceTransport } from '../tun/named-pipe-transport'
 import { tunServiceIdentity } from '../tun/service-identity'
 import { waitForTunDataPlaneReady } from '../tun/data-plane-readiness'
+import { createPrivilegedExitMonitorTick } from '../kernel/privileged-exit-monitor'
 import { ModeTransitionController, queuedKernelGateway, queuedTunGateway } from '../kernel/mode-transition'
 import { LiveConfigReloader } from '../kernel/live-config-reloader'
 import {
@@ -103,7 +113,14 @@ import type { ShellBootstrap } from './bootstrap'
  * behavioral specification (see docs/tauri/phase0/PARITY_CHECKLIST.md §7).
  */
 export async function runWhenReady(shell: ShellBootstrap): Promise<void> {
-  const { boot, state, windowAdapter, lifecycle, fileLogs, appSettingsService, coreSettingsService } = shell
+  const { boot, state, windowAdapter, lifecycle, fileLogs, appSettingsService, coreSettingsService, startupTimeline } = shell
+  const appDataBaseRoot = shell.appDataBaseRoot
+  let updateServiceRef: UpdateService | null = null
+  const applyUpdatePolling = (enabled: boolean): void => {
+    if (!updateServiceRef) return
+    if (enabled) updateServiceRef.startPolling()
+    else updateServiceRef.stopPolling()
+  }
   const isDev = is.dev
   const launchHidden = boot.launchHidden
   const skipKernelAutostart = boot.skipKernelAutostart
@@ -115,6 +132,7 @@ export async function runWhenReady(shell: ShellBootstrap): Promise<void> {
   }
 
   async function whenReadyBody(): Promise<void> {
+    startupTimeline.mark('electron-ready')
     try {
       parseBrandConfig(brand)
     } catch (error) {
@@ -241,6 +259,7 @@ export async function runWhenReady(shell: ShellBootstrap): Promise<void> {
     // Hydrate before login-item and window behavior consume the synchronous mirror.
     // Warmed at module level; this resolves from the store's lazy queue.
     state.cachedAppSettings = await shell.appSettingsWarm
+    startupTimeline.mark('settings-ready')
     const startupService = new StartupService(new ScheduledTaskStartupAdapter(() => state.cachedAppSettings.silentLaunch))
     const refreshStartupRegistration = (context: string): void => {
       void startupService.refreshRegistration()
@@ -253,9 +272,9 @@ export async function runWhenReady(shell: ShellBootstrap): Promise<void> {
           console.warn(`[startup] ${context}:`, error)
         })
     }
-    // One-shot registration maintenance at startup: migrates v0.9.x Run-key
-    // login-item users to the scheduled task and rewrites stale `--hidden`
-    // arguments. Best-effort and non-blocking; the toggle still works either way.
+    // One-shot registration maintenance at startup: normalizes legacy Run-key
+    // entries. The elevated installer owns scheduled-task creation and upgrades;
+    // this best-effort check never gates app startup.
     refreshStartupRegistration('registration maintenance skipped')
     appSettingsService.onChange((settings) => {
       const silentLaunchChanged = settings.silentLaunch !== state.cachedAppSettings.silentLaunch
@@ -263,6 +282,7 @@ export async function runWhenReady(shell: ShellBootstrap): Promise<void> {
       if (silentLaunchChanged) {
         refreshStartupRegistration('failed to refresh login-item arguments')
       }
+      applyUpdatePolling(settings.autoCheckUpdate)
       void state.subStoreServiceRef?.onSettings({
         subStoreEnabled: settings.subStoreEnabled,
         subStoreUseProxy: settings.subStoreUseProxy
@@ -477,7 +497,7 @@ export async function runWhenReady(shell: ShellBootstrap): Promise<void> {
     // it does NOT gate window creation: the reconciliation runs after the window
     // exists, and the serialized mode queue keeps it ordered ahead of any
     // renderer-triggered kernel start (the renderer reads a stopped kernel until
-    // it settles). A delayed Windows service start is handled by the gateway's
+    // it settles). A Windows service still starting at boot is handled by the gateway's
     // bounded start retry and runtime-intent recovery.
     const privilegedReconcile = (async (): Promise<void> => {
       if (!privilegedKernel) return
@@ -566,11 +586,22 @@ export async function runWhenReady(shell: ShellBootstrap): Promise<void> {
     // Crash the controller while the proxy was owned: restore immediately, then
     // wake the durable-intent recovery coordinator (never a cached crash-time
     // boolean — the user may have switched the proxy off during recovery).
+    //
+    // Only a crash of a RUNNING core wakes recovery. A failed start also reports
+    // `failed`; waking on it re-ran the recovery attempt immediately, which failed
+    // the same way and woke it again — an unbounded start loop that bypassed the
+    // coordinator's bounded backoff. The privileged service core has its own exit
+    // monitor (with a crash-loop budget) that performs the wake instead.
+    let previousKernelPhase: KernelStatus['phase'] | null = null
     orderedKernel.onStatus((status) => {
+      const crashedWhileRunning = previousKernelPhase === 'running'
+      previousKernelPhase = status.phase
       if (status.phase === 'failed') {
         void systemProxyService.restoreBeforeKernelUnavailable().catch((error) => {
           console.error('[system-proxy] kernel crash recovery failed:', error)
-        }).finally(() => state.runtimeIntentRecovery?.wake())
+        }).finally(() => {
+          if (crashedWhileRunning && !privilegedKernel && !state.isQuitting) state.runtimeIntentRecovery?.wake()
+        })
       }
     })
 
@@ -691,31 +722,64 @@ export async function runWhenReady(shell: ShellBootstrap): Promise<void> {
     const queuedKernel = queuedKernelGateway(runtimeKernelGateway, modeController)
     const queuedTun = queuedTunGateway(rawTunGateway, modeController)
 
-    // The service owns the only process, so monitor it regardless of TUN state.
+    // Saving TUN settings while TUN is active applies them right away (on the
+    // same mode-transition queue), instead of leaving them to surface on some
+    // later, unrelated config reload.
+    const liveTunConfig: TunConfigGateway = {
+      get: () => tunConfigService.get(),
+      preview: (input) => tunConfigService.preview(input),
+      set: async (input) => {
+        const previous = await tunConfigService.readConfig()
+        const snapshot = await tunConfigService.set(input)
+        try {
+          await modeController.runExclusive(() => tunInstance.reapplyConfig())
+        } catch (error) {
+          // Keep the saved model in step with what the running TUN uses.
+          await tunConfigService.set(previous).catch(() => undefined)
+          throw error
+        }
+        return snapshot
+      }
+    }
+    queuedKernel.onStatus((status) => {
+      if (status.phase === 'running') startupTimeline.mark('kernel-ready')
+    })
+    systemProxyService.onStatus((status) => {
+      if (status.phase === 'enabled') startupTimeline.mark('system-proxy-enabled')
+    })
+    queuedTun.onStatus((status) => {
+      if (status.phase === 'active') startupTimeline.mark('tun-active')
+    })
+
+    // The service owns the only process, so monitor it regardless of the TUN
+    // phase (a crash mid-restore must recover too). A confirmed unexpected exit
+    // resets TUN, restores an owned system proxy, then wakes the durable-intent
+    // recovery loop to recreate the same service core and desired TUN state.
     if (privilegedKernel) {
-      let probingPrivilegedKernel = false
-      const monitor = setInterval(() => {
-        if (probingPrivilegedKernel) return
-        const phase = privilegedKernel.getStatus().phase
-        if (phase !== 'running' && phase !== 'starting') return
-        probingPrivilegedKernel = true
-        void privilegedKernel.reconcileLiveness()
-          .then(async (live) => {
-            if (live) return
-            await tunInstance.handleHostExit()
-            await systemProxyService.restoreBeforeKernelUnavailable().catch((error) => {
-              console.error('[system-proxy] privileged core exit recovery failed:', error)
-            })
-            const settings = await appSettingsService.get()
-            if (settings.autoStartKernel && !settings.tunDesired && !settings.systemProxyDesired) {
-              await queuedKernel.start().catch((error) => console.error('[kernel] privileged core restart failed:', error))
-            } else {
-              state.runtimeIntentRecovery?.wake()
-            }
-          })
-          .catch((error) => console.error('[kernel] privileged service liveness probe failed:', error))
-          .finally(() => { probingPrivilegedKernel = false })
-      }, 5_000)
+      const controllerProbe = new MihomoClient(`http://127.0.0.1:${productionControllerPort}`, productionSecret!, { timeoutMs: 1500 })
+      const tick = createPrivilegedExitMonitorTick({
+        kernel: privilegedKernel,
+        handleHostExit: () => tunInstance.handleHostExit(),
+        restoreSystemProxy: () => systemProxyService.restoreBeforeKernelUnavailable(),
+        readSettings: () => appSettingsService.get(),
+        startKernel: async () => state.isQuitting ? undefined : queuedKernel.start(),
+        wakeIntentRecovery: () => state.runtimeIntentRecovery?.wake(),
+        cancelIntentRecovery: () => state.runtimeIntentRecovery?.cancelPending(),
+        // The SCM restarts a crashed service, and the restarted service reports
+        // the exit. When it stays down, its job object has already killed the
+        // core: without this probe the proxy kept aiming at the dead port.
+        isControllerAlive: async () => {
+          try {
+            await controllerProbe.getVersion()
+            return true
+          } catch {
+            return false
+          }
+        },
+        isSuspended: () => state.isQuitting,
+        onError: (error, step) => console.error(`[kernel] privileged core exit ${step}:`, error)
+      })
+      const monitor = setInterval(() => void tick(), 5_000)
       state.tunExitMonitor = { stop: () => clearInterval(monitor) }
     }
 
@@ -732,15 +796,21 @@ export async function runWhenReady(shell: ShellBootstrap): Promise<void> {
           const resolved = status instanceof Promise ? await status : status
           return resolved.phase === 'running' ? 'kernel' : 'stopped'
         },
-        startKernel: () => queuedKernel.start(),
-        startTun: () => queuedTun.enable(),
+        // Never bring networking back up once shutdown has started: the quit flow
+        // restores the proxy and only then stops the core, so a reconnect landing
+        // in between would re-enable the proxy (or restart TUN) just before the
+        // listener goes away. A cancelled quit clears isQuitting and resumes this.
+        startKernel: async () => state.isQuitting ? undefined : queuedKernel.start(),
+        startTun: async () => state.isQuitting ? undefined : queuedTun.enable(),
         stopKernel: () => queuedKernel.stop(),
         handleNetworkDown: () => systemProxyService.handleNetworkDown(),
         handleNetworkUp: async () => {
+          if (state.isQuitting) return 'failed'
           try {
             return await systemProxyService.handleNetworkUp()
           } finally {
             state.runtimeIntentRecovery?.wake()
+            state.profileAutoUpdater?.retryFailed()
           }
         }
       }
@@ -794,13 +864,67 @@ export async function runWhenReady(shell: ShellBootstrap): Promise<void> {
         }
       }
     })
-    state.waitForProfileOperations = () => profileGateway.waitForIdle()
+    const profileAutoUpdater = new ProfileAutoUpdateService(
+      profileGateway,
+      () => !state.isQuitting,
+      (message) => console.info(message)
+    )
+    state.profileAutoUpdater = profileAutoUpdater
+    state.waitForProfileOperations = async () => {
+      await state.profileAutoUpdater?.waitForIdle()
+      await profileGateway.waitForIdle()
+    }
     // Per-profile node-pick cache (sparkle/clash-party model).
     const proxySelectionService = new ProxySelectionService(
       gateway,
       profileGateway,
       proxySelectionStore
     )
+    // Start the safety-ordered kernel/TUN/proxy replay as soon as its required
+    // gateways exist. It deliberately runs alongside usage-history, Sub-Store,
+    // renderer and tray initialization instead of waiting behind those unrelated
+    // startup tasks (the same parallel-start shape used by the references).
+    const runtimeIntentDeps = {
+      kernel: queuedKernel,
+      tun: queuedTun,
+      systemProxy: systemProxyService,
+      restoreSelections: async (): Promise<void> => {
+        await proxySelectionService.restoreSelections()
+      },
+      shouldContinue: () => !state.isQuitting,
+      log: (message: string, error?: unknown): void => console.warn(message, error ?? '')
+    }
+    const startupRuntimeReady = (async (): Promise<void> => {
+      if (is.dev || skipKernelAutostart || hasArg('--hidden-smoke')) return
+      const startedAt = performance.now()
+      try {
+        await recoverManagedState
+        startupTimeline.mark('managed-state-recovered')
+        console.info(`[startup-timing] managed state recovered in ${Math.round(performance.now() - startedAt)}ms`)
+        const settings = await appSettingsService.get()
+        const restored = await restoreRuntimeIntent(settings, runtimeIntentDeps)
+        startupTimeline.mark('runtime-reconciled')
+        console.info(
+          `[startup-timing] runtime restored in ${Math.round(performance.now() - startedAt)}ms ` +
+          `(kernel=${restored.kernel.phase}, proxy=${restored.systemProxyPhase}, TUN=${restored.tun.phase})`
+        )
+        if (settings.tunDesired && restored.tun.phase !== 'active') {
+          console.warn(`[startup-restore] TUN intent remains pending (${restored.tun.phase})`)
+        }
+        if (settings.systemProxyDesired && restored.systemProxyPhase !== 'enabled') {
+          console.warn(`[startup-restore] system proxy intent remains pending (${restored.systemProxyPhase})`)
+        }
+      } catch (error) {
+        console.warn('[startup-restore] failed to restore runtime intent:', error)
+      }
+      if (state.isQuitting) return
+      state.runtimeIntentRecovery = new RuntimeIntentRecoveryCoordinator({
+        settings: appSettingsService,
+        restore: runtimeIntentDeps,
+        log: (message, error) => console.warn(message, error ?? '')
+      })
+      state.runtimeIntentRecovery.start()
+    })()
     liveConfigReloader = isDev
       ? null
       : new LiveConfigReloader(
@@ -844,14 +968,21 @@ export async function runWhenReady(shell: ShellBootstrap): Promise<void> {
     const liveGeodataSettings = new LiveGeodataSettingsGateway(geodataSettingsService, geodataEnhancementCoordinator)
     const updates = new UpdateService(new ElectronUpdaterDriver(() => windowAdapter.showMainWindowAt('/about')))
     bindUpdateService(state, updates)
+    updateServiceRef = updates
     updates.start()
     // Poll the feed while the app runs so a Release published mid-session is
-    // picked up without waiting for the next launch (10-minute cadence).
-    updates.startPolling()
+    // picked up without waiting for the next launch (10-minute cadence). Gated
+    // on the same "自动检查更新" setting as the launch check and toggled live
+    // from the settings listener; with it off only a manual "检查更新" reaches
+    // the feed. The service no-ops this on non-packaged builds.
+    applyUpdatePolling(state.cachedAppSettings.autoCheckUpdate)
     const usageHistoryService = new UsageHistoryService({
       store: app.isPackaged
         ? FileSystemUsageHistoryStore.forAppDataBase(app.getPath('appData'))
         : new InMemoryUsageHistoryStore(),
+      processStore: app.isPackaged
+        ? FileSystemProcessUsageStore.forAppDataBase(app.getPath('appData'))
+        : new InMemoryProcessUsageStore(),
       onTraffic: (listener) => gateway.onTraffic(listener),
       onConnections: (listener) => gateway.onConnections(listener),
       onError: (error) => console.error('[usage-history] background persistence failed:', error)
@@ -934,7 +1065,71 @@ export async function runWhenReady(shell: ShellBootstrap): Promise<void> {
         }
       }, createSubscriptionProxyFetchFn()]
     )
+    const backupCodec = {
+      isAvailable: () => safeStorage.isEncryptionAvailable(),
+      encrypt: (value: string) => safeStorage.encryptString(value),
+      decrypt: (value: Buffer) => safeStorage.decryptString(value)
+    }
     state.disposeIpc = registerIpc({
+      waitForStartup: () => startupRuntimeReady,
+      diagnostics: {
+        collect: () => collectDiagnosticReport({
+          version: app.getVersion(), platform: process.platform, arch: process.arch,
+          timeline: startupTimeline, kernel: queuedKernel, systemProxy: systemProxyService,
+          tun: queuedTun, settings: appSettingsService, core: coreSettingsService,
+          tunConfig: tunConfigService, host: new WindowsDiagnosticHost(), logDirectory: shell.logDirectory
+        })
+      },
+      backup: {
+        create: async (password) => {
+          if (is.dev) throw new Error('配置备份仅在安装版中可用')
+          const archive = await createConfigBackup(appDataBaseRoot, password, app.getVersion(), backupCodec)
+          const choice = await dialog.showSaveDialog({ title: `保存 ${brand.productName} 配置备份`, defaultPath: `${brand.executableName}-config-${new Date().toISOString().slice(0, 10)}.murge-backup`, filters: [{ name: `${brand.productName} 加密备份`, extensions: ['murge-backup'] }] })
+          if (choice.canceled || !choice.filePath) return { saved: false }
+          const temporary = join(dirname(choice.filePath), `.murge-backup-${randomUUID()}.tmp`)
+          try {
+            await writeFile(temporary, archive, { mode: 0o600 })
+            await rename(temporary, choice.filePath)
+          } finally { await rm(temporary, { force: true }).catch(() => undefined) }
+          return { saved: true }
+        },
+        preview: async (password) => {
+          if (is.dev) throw new Error('配置恢复仅在安装版中可用')
+          state.pendingBackupPreview = null
+          const choice = await dialog.showOpenDialog({ title: `选择 ${brand.productName} 配置备份`, properties: ['openFile'], filters: [{ name: `${brand.productName} 加密备份`, extensions: ['murge-backup'] }] })
+          if (choice.canceled || !choice.filePaths[0]) return null
+          const path = choice.filePaths[0]
+          if ((await stat(path)).size > MAX_ARCHIVE_BYTES) throw new Error('备份文件超过上限')
+          const inspected = inspectConfigBackup(await readFile(path), password, app.getVersion())
+          const impact = await describeConfigRestoreImpact(appDataBaseRoot, inspected.payload)
+          const token = randomUUID()
+          state.pendingBackupPreview = { token, payload: inspected.payload, compatible: inspected.preview.compatible }
+          return { ...inspected.preview, ...impact, token }
+        },
+        webdavUpload: async (target, password) => {
+          if (is.dev) throw new Error('配置备份仅在安装版中可用')
+          const archive = await createConfigBackup(appDataBaseRoot, password, app.getVersion(), backupCodec)
+          await uploadWebDavBackup(target, archive)
+          return { saved: true }
+        },
+        webdavPreview: async (target, password) => {
+          if (is.dev) throw new Error('配置恢复仅在安装版中可用')
+          state.pendingBackupPreview = null
+          const archive = await downloadWebDavBackup(target)
+          const inspected = inspectConfigBackup(archive, password, app.getVersion())
+          const impact = await describeConfigRestoreImpact(appDataBaseRoot, inspected.payload)
+          const token = randomUUID()
+          state.pendingBackupPreview = { token, payload: inspected.payload, compatible: inspected.preview.compatible }
+          return { ...inspected.preview, ...impact, token }
+        },
+        restore: async (token) => {
+          const pending = state.pendingBackupPreview
+          if (!pending || token !== pending.token || !pending.compatible) throw new Error('请重新选择兼容的备份并确认预览')
+          state.pendingBackupPreview = null
+          await stageConfigRestore(appDataBaseRoot, pending.payload, app.getVersion(), backupCodec)
+          setTimeout(() => { app.relaunch(); app.quit() }, 250)
+        }
+      },
       internetLatency: internetLatencyService,
       unlock: serviceUnlockService,
       kernel: queuedKernel,
@@ -948,7 +1143,7 @@ export async function runWhenReady(shell: ShellBootstrap): Promise<void> {
       overrides: overrideService,
       dns: liveDnsEnhancement,
       sniffer: liveSnifferEnhancement,
-      tunConfig: tunConfigService,
+      tunConfig: liveTunConfig,
       core: coreSettingsService,
       geodata: liveGeodataSettings,
       updates,
@@ -1004,7 +1199,12 @@ export async function runWhenReady(shell: ShellBootstrap): Promise<void> {
       },
       remoteIconCache
     })
+    startupTimeline.mark('ipc-ready')
     windowAdapter.createWindow()
+    startupTimeline.mark('window-created')
+    if (state.startupConfigRestoreOutcome === 'rolled-back') {
+      void dialog.showMessageBox({ type: 'warning', title: `${brand.productName} 配置恢复未完成`, message: '配置恢复失败，已回滚到恢复前的配置。请查看运行日志后重试。' })
+    }
 
     // Tray: construction + wiring moved to the tray adapter (same dependencies).
     const tray: TrayAdapter = createTrayAdapter({
@@ -1028,7 +1228,13 @@ export async function runWhenReady(shell: ShellBootstrap): Promise<void> {
         await proxySelectionService.restoreSelections()
       },
       showWindow: () => windowAdapter.showMainWindow(),
-      quit: () => app.quit(),
+      // Enter cleanup directly from the native menu callback. Waiting for a
+      // second application event here can leave Windows holding the process until
+      // another tray/window interaction pumps it again.
+      quit: () => { void lifecycle.beginApplicationShutdown(false) },
+      onModeChanged: (mode) => {
+        for (const win of BrowserWindow.getAllWindows()) win.webContents.send(IPC.mihomoModeChangedEvent, mode)
+      },
       tunStatusPhase: () => tunInstance.getStatus().phase,
       kernelRoot: productionKernelRoot,
       logDirectory: shell.logDirectory,
@@ -1067,46 +1273,16 @@ export async function runWhenReady(shell: ShellBootstrap): Promise<void> {
       return
     }
 
-    // Restore the user's last requested networking state after the deferred
-    // recovery layers complete. Login launches use `--hidden`, but must still
-    // restore the requested state; only the explicit Actions smoke flag
-    // suppresses it. Operations are sequential and bounded.
-    if (!is.dev && !skipKernelAutostart) {
-      const runtimeIntentDeps = {
-        kernel: queuedKernel,
-        tun: queuedTun,
-        systemProxy: systemProxyService,
-        restoreSelections: async (): Promise<void> => {
-          await proxySelectionService.restoreSelections()
-        },
-        log: (message: string, error?: unknown): void => console.warn(message, error ?? '')
-      }
-      try {
-        await recoverManagedState
-        const settings = await appSettingsService.get()
-        const restored = await restoreRuntimeIntent(settings, runtimeIntentDeps)
-        if (settings.tunDesired && restored.tun.phase !== 'active') {
-          console.warn(`[startup-restore] TUN intent remains pending (${restored.tun.phase})`)
-        }
-        if (settings.systemProxyDesired && restored.systemProxyPhase !== 'enabled') {
-          console.warn(`[startup-restore] system proxy intent remains pending (${restored.systemProxyPhase})`)
-        }
-      } catch (error) {
-        console.warn('[startup-restore] failed to restore runtime intent:', error)
-      }
-      state.runtimeIntentRecovery = new RuntimeIntentRecoveryCoordinator({
-        settings: appSettingsService,
-        restore: runtimeIntentDeps,
-        log: (message, error) => console.warn(message, error ?? '')
-      })
-      state.runtimeIntentRecovery.start()
-    }
-
-    // Arm connectivity recovery only after startup reconciliation.
+    // Arm connectivity recovery only after startup reconciliation. This prevents
+    // the first detector tick from racing a slow Windows TUN service bootstrap.
+    await startupRuntimeReady
     state.networkDetector.start()
+    startupTimeline.mark('network-monitor-started')
+    startupTimeline.seal()
+    if (!is.dev && !hasArg('--ui-smoke')) profileAutoUpdater.start()
 
     // Auto-check for a newer release on launch, gated on the persisted
-    // "启动时自动检查更新" setting. Wrapped so a transient network failure only
+    // "自动检查更新" setting. Wrapped so a transient network failure only
     // logs and never blocks startup.
     if (!isDev) {
       try {

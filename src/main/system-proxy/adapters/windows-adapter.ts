@@ -7,6 +7,7 @@ import type {
   SystemProxyWrittenState
 } from '../types'
 import {
+  AUTO_CONFIG_URL_READ_SCRIPT,
   PROXY_ENABLE_VALUE,
   PROXY_OVERRIDE_VALUE,
   PROXY_SERVER_VALUE,
@@ -170,6 +171,17 @@ export class WindowsSystemProxyAdapter implements SystemProxyAdapter {
   private async restoreValue(valueName: string, value: RegistryValue): Promise<void> {
     const args = regAddArgsFor(valueName, value)
     await this.runChecked(REG_COMMAND, args, ProtocolErrorCode.SYSTEM_PROXY_RESTORE_FAILED, `还原注册表项 ${valueName} 失败`)
+  }
+
+  async readAutoConfigUrl(): Promise<string | null> {
+    const result = await this.runChecked(
+      POWERSHELL_COMMAND,
+      ['-NoProfile', '-NonInteractive', '-Command', AUTO_CONFIG_URL_READ_SCRIPT],
+      ProtocolErrorCode.SYSTEM_PROXY_ENABLE_FAILED,
+      '读取 PAC 设置失败'
+    )
+    const value = result.stdout.trim()
+    return value.length > 0 ? value : null
   }
 
   async refresh(): Promise<void> {

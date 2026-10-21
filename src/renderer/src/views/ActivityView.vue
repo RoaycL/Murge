@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import SpeedSparkline from '../components/SpeedSparkline.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 import AppIcon from '../components/AppIcon.vue'
@@ -21,6 +21,7 @@ import ProcessIcon from '../components/ProcessIcon.vue'
 import CachedRemoteIcon from '../components/CachedRemoteIcon.vue'
 import { useSystemProxyStore } from '../stores/system-proxy'
 import { useTunStore } from '../stores/tun'
+import { useKernelStore } from '../stores/kernel'
 import { resolveRuntimeAccent } from '@shared/runtime-accent'
 
 const traffic = useTrafficStore()
@@ -32,6 +33,7 @@ const router = useRouter()
 const policies = usePoliciesStore()
 const systemProxy = useSystemProxyStore()
 const tun = useTunStore()
+const kernel = useKernelStore()
 const summaryDrawer = ref<'network' | 'usage' | 'topology' | null>(null)
 
 // The card samples itself once a minute so the numbers never go stale.
@@ -56,11 +58,21 @@ function openNetworkDiagnostics(): void {
 onMounted(() => {
   void runtime.refresh()
   void policies.load()
+  void policies.syncMode()
   void networkMeta.init()
   latency.init()
   // Keep the card honest without hammering the controller: one sample a minute
   // plus the manual refresh button.
   latencyTimer = window.setInterval(() => void latency.probe(), LATENCY_REFRESH_MS)
+})
+
+// A kernel restart (crash recovery, profile switch from the tray) replaces the
+// groups, the active profile and possibly the mode; reload what this page shows.
+watch(() => kernel.status.phase, (phase, previous) => {
+  if (phase !== 'running' || previous === 'running') return
+  void runtime.refresh()
+  void policies.load()
+  void policies.syncMode()
 })
 
 onUnmounted(() => {

@@ -29,6 +29,8 @@ export interface TunMutationAdapter {
    * stopped. Optional: the gated placeholder owns no process.
    */
   getActiveRuntime?(): { mixedPort: number } | null
+  /** Re-push the saved TUN settings to an already-active TUN. Optional. */
+  reapply?(): Promise<void>
 }
 
 /** Fail-closed production placeholder. It performs no I/O or OS mutation. */
@@ -145,6 +147,24 @@ export class TunCoordinator {
         this.move('fatal', { errorMessage: machineMessage(error) })
       }
     })
+  }
+
+  /**
+   * Apply edited TUN settings to a TUN that is already active. A no-op in any
+   * other phase: the next enable reads the saved settings anyway. Failures are
+   * rethrown so the settings page can show them; the TUN stays as it was.
+   */
+  async reapplyConfig(): Promise<void> {
+    let failure: unknown = null
+    await this.serialize(async () => {
+      if (this.status.phase !== 'active' || !this.adapter.reapply) return
+      try {
+        await this.adapter.reapply()
+      } catch (error) {
+        failure = error
+      }
+    })
+    if (failure) throw failure
   }
 
   /** Safe to call from before-quit or a recovery CLI without a renderer. */

@@ -146,10 +146,10 @@ func (service *windowsService) handleConnection(connection net.Conn) {
 	}
 	// ReadBytes grows only for the uncommon large profile request. Routine
 	// status/reconcile calls keep a small buffer instead of allocating the full
-	// 2 MiB application limit every five seconds.
-	reader := bufio.NewReaderSize(io.LimitReader(connection, maxProfileBytes+4097), 64*1024)
+	// request limit every five seconds.
+	reader := bufio.NewReaderSize(io.LimitReader(connection, maxRequestBytes+1), 64*1024)
 	data, err := reader.ReadBytes('\n')
-	if err != nil || len(data) == 0 || len(data) > maxProfileBytes+4096 {
+	if err != nil || len(data) == 0 || len(data) > maxRequestBytes {
 		return
 	}
 	request, err := decodeRequest(data[:len(data)-1])

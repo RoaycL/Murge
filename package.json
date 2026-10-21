@@ -1,6 +1,6 @@
 {
   "name": "proxy-desktop-shell",
-  "version": "0.9.16",
+  "version": "0.9.29",
   "license": "GPL-3.0-only",
   "private": true,
   "type": "module",
@@ -45,7 +45,6 @@
     "@electron-toolkit/preload": "^3.0.0",
     "@electron-toolkit/utils": "^4.0.0",
     "@tauri-apps/cli": "^2.11.4",
-    "@tauri-apps/cli-linux-arm64-gnu": "^2.11.4",
     "@types/node": "^24.0.0",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-vue": "^6.0.0",

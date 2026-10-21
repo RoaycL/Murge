@@ -53,9 +53,8 @@ export interface AppSettings {
   /** Optional global HTTP(S) delay target; blank uses the safe built-in 204 URL. */
   delayTestUrl: string
   /**
-   * Silent start (party/sparkle's 静默启动): when true the Windows login item
-   * is registered with `--hidden`, so a login launch stays in the tray instead
-   * of popping the main window. Manual launches are unaffected.
+   * Deprecated compatibility field. Windows login launches are now always
+   * tray-only; manual launches remain visible.
    */
   silentLaunch: boolean
   /**
@@ -92,10 +91,10 @@ export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = Object.freeze({
   kernelSpecificVersion: '',
   delayTestUrlScope: 'group',
   delayTestUrl: '',
-  // Reference-client parity: party/sparkle default silent start OFF, verge
-  // keeps close-to-tray ON and its proxy guard ON by default. Sub-Store ships
+  // Login launch is always tray-only. Verge keeps close-to-tray ON and its
+  // proxy guard ON by default. Sub-Store ships
   // as a first-class configuration tool and prepares its assets by default.
-  silentLaunch: false,
+  silentLaunch: true,
   closeToTray: true,
   proxyGuard: true,
   subStoreEnabled: true,
@@ -155,10 +154,9 @@ export function parseAppSettings(value: string | null): AppSettings {
         parsed.delayTestUrlScope === 'global' ? 'global' : DEFAULT_APP_SETTINGS.delayTestUrlScope,
       delayTestUrl:
         parseDelayTestUrl(parsed.delayTestUrl),
-      silentLaunch:
-        typeof parsed.silentLaunch === 'boolean'
-          ? parsed.silentLaunch
-          : DEFAULT_APP_SETTINGS.silentLaunch,
+      // Preserve the field on disk for schema compatibility while migrating
+      // every old visible-login preference to the tray-only contract.
+      silentLaunch: true,
       closeToTray:
         typeof parsed.closeToTray === 'boolean'
           ? parsed.closeToTray

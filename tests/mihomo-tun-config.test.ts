@@ -7,7 +7,8 @@ import {
   generateMihomoTunConfig,
   generateProxiedTunConfig,
   mihomoTunConfigErrors,
-  proxiedTunConfigErrors
+  proxiedTunConfigErrors,
+  TUN_PROFILE_MAX_BYTES
 } from '../src/main/tun/mihomo-tun-config'
 import type { TunConfigModel } from '../src/shared/tun-config'
 import { EMPTY_TUN_CONFIG } from '../src/shared/tun-config'
@@ -152,7 +153,7 @@ describe('proxied TUN config (real subscription content)', () => {
   })
 
   it('adds the fake-ip defaults to a dns-enabled profile and keeps the hijack', () => {
-    const withDns = `${document}dns:\n  enable: true\n  nameserver:\n    - 223.5.5.5\n`
+    const withDns = `${document}dns:\n  enable: true\n  enhanced-mode: fake-ip\n  nameserver:\n    - 223.5.5.5\n`
     const text = generateProxiedTunConfig({ ...proxied, document: withDns })
     expect(proxiedTunConfigErrors(text)).toEqual([])
     const config = parse(text) as Record<string, any>
@@ -176,28 +177,40 @@ describe('proxied TUN config (real subscription content)', () => {
     expect(config.dns.nameserver).toEqual(['223.5.5.5'])
   })
 
-  it('uses a system-DNS fallback for a dns-less profile without rebuilding TUN', () => {
-    const config = parse(generateProxiedTunConfig(proxied)) as Record<string, any>
-    expect(config.tun.enable).toBe(true)
+  it('keeps the profile mode, defaulting to mihomo redir-host instead of forcing fake-ip', () => {
+    const withDns = `${document}dns:\n  enable: true\n  nameserver:\n    - 223.5.5.5\n`
+    const config = parse(generateProxiedTunConfig({ ...proxied, document: withDns })) as Record<string, any>
     expect(config.tun['dns-hijack']).toEqual(['any:53'])
-    expect(config.dns).toMatchObject({
-      enable: true,
-      'enhanced-mode': 'fake-ip',
-      'fake-ip-range': '198.18.0.1/16',
-      nameserver: ['system']
-    })
-    expect(config.dns['fake-ip-filter']).toContain('+.lan')
+    expect(config.dns['enhanced-mode']).toBe('redir-host')
+    expect(config.dns['fake-ip-filter']).toBeUndefined()
   })
 
-  it('keeps the complete TUN block identical when the DNS override is enabled', () => {
-    const withoutOverride = parse(generateProxiedTunConfig(proxied)) as Record<string, any>
-    const withOverrideDocument = `${document}dns:\n  enable: true\n  enhanced-mode: fake-ip\n  fake-ip-range: 198.18.0.1/16\n  nameserver:\n    - system\n`
-    const withOverride = parse(generateProxiedTunConfig({
-      ...proxied,
-      document: withOverrideDocument
-    })) as Record<string, any>
+  it('leaves DNS off and does not hijack port 53 for a dns-less profile (clash-party parity)', () => {
+    const text = generateProxiedTunConfig(proxied)
+    expect(proxiedTunConfigErrors(text)).toEqual([])
+    const config = parse(text) as Record<string, any>
+    expect(config.tun.enable).toBe(true)
+    expect(config.tun['dns-hijack']).toEqual([])
+    // Only the inert prefix that keeps the Smart-core TUN address stable.
+    expect(config.dns).toEqual({ enable: false, 'fake-ip-range': '198.18.0.1/16' })
+  })
 
-    expect(withOverride.tun).toEqual(withoutOverride.tun)
+  it('matches the hot-switch enable path, so a later reload does not flip DNS handling', () => {
+    // The hot switch clears dns-hijack whenever the active document has no
+    // enabled DNS; the full generator must agree for the same document.
+    const tunOff = parse(generateProxiedTunConfig({ ...proxied, tunEnabled: false })) as Record<string, any>
+    const tunOn = parse(generateProxiedTunConfig(proxied)) as Record<string, any>
+    expect(tunOff.tun['dns-hijack']).toEqual([])
+    expect(tunOn.tun['dns-hijack']).toEqual([])
+    expect(tunOff.dns).toEqual(tunOn.dns)
+  })
+
+  it('persists fake-ip mappings unless the profile chose otherwise', () => {
+    const config = parse(generateProxiedTunConfig(proxied)) as Record<string, any>
+    expect(config.profile['store-fake-ip']).toBe(true)
+    const explicit = `${document}profile:\n  store-selected: true\n  store-fake-ip: false\n`
+    const kept = parse(generateProxiedTunConfig({ ...proxied, document: explicit })) as Record<string, any>
+    expect(kept.profile).toEqual({ 'store-selected': true, 'store-fake-ip': false })
   })
 
   it('keeps a disabled dns block verbatim and clears the hijack', () => {
@@ -217,16 +230,16 @@ describe('proxied TUN config (real subscription content)', () => {
   })
 
   it('injects the safety fake-ip filter only when omitted', () => {
-    const dnsOn = `${document}dns:\n  enable: true\n`
+    const dnsOn = `${document}dns:\n  enable: true\n  enhanced-mode: fake-ip\n`
     const omitted = parse(generateProxiedTunConfig({ ...proxied, document: dnsOn })) as Record<string, any>
     expect(omitted.dns['fake-ip-filter']).toContain('*')
     expect(omitted.dns['fake-ip-filter']).toContain('+.lan')
 
-    const explicitlyEmpty = `${document}dns:\n  enable: true\n  fake-ip-filter: []\n`
+    const explicitlyEmpty = `${document}dns:\n  enable: true\n  enhanced-mode: fake-ip\n  fake-ip-filter: []\n`
     const preserved = parse(generateProxiedTunConfig({ ...proxied, document: explicitlyEmpty })) as Record<string, any>
     expect(preserved.dns['fake-ip-filter']).toEqual([])
 
-    const malformed = `${document}dns:\n  enable: true\n  fake-ip-filter: invalid\n`
+    const malformed = `${document}dns:\n  enable: true\n  enhanced-mode: fake-ip\n  fake-ip-filter: invalid\n`
     expect(() => generateProxiedTunConfig({ ...proxied, document: malformed })).toThrow(/fake-ip-filter must be a sequence/)
   })
 
@@ -331,7 +344,7 @@ describe('proxied TUN config (real subscription content)', () => {
   it('rejects a profile that exceeds the privileged service byte ceiling', () => {
     // An unusually large inlined ruleset is the realistic way to blow the
     // generous service cap; normal subscriptions should not hit it.
-    const huge = `${document}${Array.from({ length: 40000 }, (_, i) => `  - DOMAIN-SUFFIX,host-${i}-padding-padding.example.invalid,PROXY`).join('\n')}\n`
+    const huge = `${document}  - DOMAIN-SUFFIX,${'a'.repeat(TUN_PROFILE_MAX_BYTES)}.example.invalid,PROXY\n`
     expect(() => generateProxiedTunConfig({ ...proxied, document: huge })).toThrow(/超过特权服务/)
   })
 

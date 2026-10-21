@@ -10,6 +10,8 @@ import {
 } from '../../shared/usage'
 import type { UsageHistoryGateway } from '../../shared/gateways'
 import { InMemoryUsageHistoryStore, type UsageHistoryStore } from './usage-history-store'
+import { InMemoryProcessUsageStore, type ProcessUsageStore } from './process-usage-store'
+import { coerceProcessUsageBuckets, processUsageName, processUsageWindow, PROCESS_USAGE_MAX_NAMES, PROCESS_USAGE_OTHER, type ProcessUsageBucket, type ProcessUsageSnapshot } from '../../shared/process-usage'
 
 /** A minimal traffic sample the service can integrate (rate in bytes/second). */
 export interface UsageSample {
@@ -22,6 +24,7 @@ export interface UsageHistoryServiceOptions {
   maxBuckets?: number
   /** Backing store; defaults to an in-memory database. */
   store?: UsageHistoryStore
+  processStore?: ProcessUsageStore
   /** Injectable clock for window alignment (defaults to `Date.now`). */
   now?: () => number
   /** Only persist at most this often unless a boundary or flush forces it. */
@@ -47,6 +50,7 @@ export interface UsageHistoryServiceOptions {
 export class UsageHistoryService implements UsageHistoryGateway {
   private readonly maxBuckets: number
   private readonly store: UsageHistoryStore
+  private readonly processStore: ProcessUsageStore
   private readonly now: () => number
   private readonly persistIntervalMs: number
   private readonly onError: (error: unknown) => void
@@ -58,12 +62,19 @@ export class UsageHistoryService implements UsageHistoryGateway {
   private trafficUnsub: (() => void) | null = null
   private connectionsUnsub: (() => void) | null = null
   private activeConnectionIds = new Set<string>()
+  private processBuckets: ProcessUsageBucket[] = []
+  private activeConnectionBytes = new Map<string, { up: number; down: number }>()
+  private seenProcessSnapshot = false
+  private processDirty = false
+  private lastProcessPersistAt = 0
+  private connectionsQueue: Promise<void> = Promise.resolve()
   private loaded = false
   private initPromise: Promise<void> | null = null
 
   constructor(options: UsageHistoryServiceOptions = {}) {
     this.maxBuckets = options.maxBuckets ?? USAGE_MAX_BUCKETS
     this.store = options.store ?? new InMemoryUsageHistoryStore()
+    this.processStore = options.processStore ?? new InMemoryProcessUsageStore()
     this.now = options.now ?? (() => Date.now())
     this.persistIntervalMs = options.persistIntervalMs ?? 10_000
     this.onError = options.onError ?? (() => undefined)
@@ -76,7 +87,9 @@ export class UsageHistoryService implements UsageHistoryGateway {
     if (this.loaded) return
     if (!this.initPromise) {
       this.initPromise = (async () => {
-        this.buckets = coerceUsageBuckets(await this.store.read(), this.maxBuckets)
+        const [usage, processes] = await Promise.all([this.store.read(), this.processStore.read()])
+        this.buckets = coerceUsageBuckets(usage, this.maxBuckets)
+        this.processBuckets = coerceProcessUsageBuckets(processes, this.maxBuckets)
         this.currentBucketStart = this.buckets.length ? this.buckets[this.buckets.length - 1].bucketStart : null
         this.loaded = true
       })().finally(() => { this.initPromise = null })
@@ -101,7 +114,10 @@ export class UsageHistoryService implements UsageHistoryGateway {
     onConnections: (listener: (snapshot: MihomoConnectionsSnapshot) => void) => () => void
   ): () => void {
     const unsub = onConnections((snapshot) => {
-      void this.recordConnections(snapshot).catch((error) => this.reportBackgroundError(error))
+      this.connectionsQueue = this.connectionsQueue.then(
+        () => this.recordConnections(snapshot),
+        () => this.recordConnections(snapshot)
+      ).catch((error) => this.reportBackgroundError(error))
     })
     this.connectionsUnsub = unsub
     return () => {
@@ -118,12 +134,28 @@ export class UsageHistoryService implements UsageHistoryGateway {
       if (!this.activeConnectionIds.has(id)) added += 1
     }
     this.activeConnectionIds = currentIds
-    if (added === 0) return
-    const current = this.ensureBucket(at)
-    current.count += added
-    current.countType = 'connections'
-    this.trimToBound()
-    await this.maybePersist(at)
+    if (added > 0) {
+      const current = this.ensureBucket(at)
+      current.count += added
+      current.countType = 'connections'
+      this.trimToBound()
+      await this.maybePersist(at)
+    }
+
+    const nextBytes = new Map<string, { up: number; down: number }>()
+    for (const connection of snapshot.connections) {
+      const { id, upload, download } = connection
+      if (!Number.isFinite(upload) || !Number.isFinite(download) || upload < 0 || download < 0) continue
+      nextBytes.set(id, { up: upload, down: download })
+      if (!this.seenProcessSnapshot) continue // restart baseline: never count persisted active bytes twice
+      const previous = this.activeConnectionBytes.get(id)
+      const up = previous ? Math.max(0, upload - previous.up) : upload
+      const down = previous ? Math.max(0, download - previous.down) : download
+      if (up > 0 || down > 0) this.addProcessBytes(processUsageName(connection.metadata.process), up, down, at)
+    }
+    this.activeConnectionBytes = nextBytes
+    this.seenProcessSnapshot = true
+    if (this.processDirty) await this.maybePersistProcesses(at)
   }
 
   /**
@@ -166,14 +198,24 @@ export class UsageHistoryService implements UsageHistoryGateway {
     return rankUsageBuckets(snapshot.buckets, ranking, limit)
   }
 
+  processRanking(window: UsageWindow): ProcessUsageSnapshot {
+    return processUsageWindow(this.processBuckets, window, this.now())
+  }
+
   /** Drop the whole bounded database and persist the empty list. */
   async clear(): Promise<void> {
+    await this.connectionsQueue
     this.buckets = []
+    this.processBuckets = []
     this.currentBucketStart = null
     this.lastAt = null
     this.activeConnectionIds.clear()
-    await this.store.write([])
+    this.activeConnectionBytes.clear()
+    this.seenProcessSnapshot = false
+    this.processDirty = false
+    await Promise.all([this.store.write([]), this.processStore.write([])])
     this.lastPersistAt = this.now()
+    this.lastProcessPersistAt = this.lastPersistAt
   }
 
   /** Static capacity facts surfaced to the renderer. */
@@ -183,9 +225,15 @@ export class UsageHistoryService implements UsageHistoryGateway {
 
   /** Persist the current bounded database immediately (e.g. on quit). */
   async flush(): Promise<void> {
+    await this.connectionsQueue
     if (!this.loaded) await this.init()
-    await this.store.write(this.buckets.map((bucket) => ({ ...bucket })))
+    await Promise.all([
+      this.store.write(this.buckets.map((bucket) => ({ ...bucket }))),
+      this.processStore.write(structuredClone(this.processBuckets))
+    ])
     this.lastPersistAt = this.now()
+    this.lastProcessPersistAt = this.lastPersistAt
+    this.processDirty = false
   }
 
   /** Detach from the traffic source and persist pending buckets. */
@@ -199,6 +247,34 @@ export class UsageHistoryService implements UsageHistoryGateway {
 
   private trimToBound(): void {
     while (this.buckets.length > this.maxBuckets) this.buckets.shift()
+  }
+
+  private addProcessBytes(name: string, up: number, down: number, time: number): void {
+    const start = usageHourStart(time)
+    let bucket = this.processBuckets[this.processBuckets.length - 1]
+    if (!bucket || bucket.bucketStart !== start) {
+      bucket = { bucketStart: start, rows: [] }
+      this.processBuckets.push(bucket)
+      while (this.processBuckets.length > this.maxBuckets) this.processBuckets.shift()
+    }
+    let row = bucket.rows.find((entry) => entry.name === name)
+    if (!row && bucket.rows.length >= PROCESS_USAGE_MAX_NAMES - 1) {
+      name = PROCESS_USAGE_OTHER
+      row = bucket.rows.find((entry) => entry.name === name)
+    }
+    if (!row) {
+      row = { name, up: 0, down: 0 }
+      bucket.rows.push(row)
+    }
+    row.up += up; row.down += down
+    this.processDirty = true
+  }
+
+  private async maybePersistProcesses(time: number): Promise<void> {
+    if (this.persistIntervalMs > 0 && time - this.lastProcessPersistAt < this.persistIntervalMs) return
+    await this.processStore.write(structuredClone(this.processBuckets))
+    this.lastProcessPersistAt = time
+    this.processDirty = false
   }
 
   private ensureBucket(time: number): UsageBucket {

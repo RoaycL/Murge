@@ -23,8 +23,9 @@ describe('update notification navigation contract', () => {
   })
 
   it('routes native notification clicks to the existing About page', async () => {
-    const [driver, main, shared, preload, app] = await Promise.all([
+    const [driver, factory, main, shared, preload, app] = await Promise.all([
       read('src/main/updates/electron-updater-driver.ts'),
+      read('src/main/updates/create-updater-driver.ts'),
       read('src/main/index.ts'),
       read('src/shared/ipc.ts'),
       read('src/preload/index.ts'),
@@ -32,7 +33,9 @@ describe('update notification navigation contract', () => {
     ])
 
     expect(driver).toMatch(/notification\.once\('click',[\s\S]*this\.onNotificationClick\(\)/)
-    expect(main).toContain("new ElectronUpdaterDriver(() => showMainWindowAt('/about'))")
+    expect(factory).toContain('return new ElectronUpdaterDriver(onNotificationClick)')
+    expect(factory).toMatch(/notification\.once\('click',[\s\S]*onNotificationClick\(\)/)
+    expect(main).toContain("createUpdaterDriver(() => showMainWindowAt('/about'))")
     expect(main).toMatch(/function showMainWindowAt\(route: '\/about'\)[\s\S]*window\.show\(\)[\s\S]*window\.focus\(\)[\s\S]*IPC\.appNavigateEvent/)
     expect(shared).toContain("appNavigateEvent: 'app:navigate-event'")
     expect(preload).toContain('onNavigate: (listener) => listen(IPC.appNavigateEvent, listener)')

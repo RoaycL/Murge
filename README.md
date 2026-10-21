@@ -11,6 +11,50 @@
 
 Murge 是一款基于 Electron + Vue 3 构建的现代化 Mihomo 图形客户端，专注于提供简洁、高效的代理管理体验。
 
+## 项目近况与反馈
+
+目前 Murge 的功能已经满足我个人的日常使用需求，后续会围绕实际使用中的问题和大家的反馈持续改进。如果你发现 Bug，或希望添加新功能，欢迎提交 [Issues](https://github.com/RoaycL/Murge/issues)。Codex 和 Claude 老师会第一时间一起研究，排查问题、评估需求并推进开发。
+
+反馈 Bug 时，请尽量附上应用版本、复现步骤、相关日志或截图；提出新功能时，也欢迎说明使用场景和期望效果，方便我们更快理解和处理。
+
+## 界面预览
+
+### 活动
+
+查看网络延迟、实时上传下载速率、活动连接与应用流量。
+
+![活动页面](docs/screenshots/activity.png)
+
+### 概览
+
+集中管理系统代理、TUN 模式、嗅探覆写和 DNS 覆写。
+
+![概览页面](docs/screenshots/overview.png)
+
+### 连接
+
+查看活动与已关闭连接，按进程、域名、IP 或策略搜索，检查连接路径。
+
+![连接页面](docs/screenshots/connections.png)
+
+### 进程
+
+按应用查看流量、连接数和程序路径。
+
+![进程页面](docs/screenshots/processes.png)
+
+### 策略
+
+切换出站模式，查看策略组及当前选中的节点。
+
+![策略页面](docs/screenshots/policies.png)
+
+### 节点选择
+
+展开策略组，查看节点延迟并切换节点。
+
+![策略组节点选择](docs/screenshots/policy-nodes.png)
+
 ## 特性
 
 - **开箱即用** — 无需复杂配置，启动即用

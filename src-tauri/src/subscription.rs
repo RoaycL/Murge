@@ -87,7 +87,10 @@ const fn ipv4_to_int(ip: &str) -> Option<u32> {
 
 /// [start, end] inclusive 32-bit range for an IPv4 CIDR block.
 const fn ipv4_cidr_range(base: &str, prefix: u32) -> (u32, u32) {
-    let start = ipv4_to_int(base).expect("CIDR base compiles");
+    let start = match ipv4_to_int(base) {
+        Some(value) => value,
+        None => panic!("CIDR base compiles"),
+    };
     let size = 1u32 << (32 - prefix);
     // Saturating: the last block (240.0.0.0/4) intentionally ends at u32::MAX.
     (start, start.saturating_add(size - 1))
@@ -394,8 +397,7 @@ pub fn derive_fallback_subscription_name(url: &str) -> Option<String> {
     let raw_segment = parsed
         .path()
         .split('/')
-        .filter(|segment| !segment.is_empty())
-        .last()
+        .rfind(|segment| !segment.is_empty())
         .unwrap_or("");
     let decoded = percent_decode(raw_segment);
     let unsafe_name =
@@ -1132,9 +1134,7 @@ mod tests {
 
     /// Direct-fetch stub pointing at a loopback HTTP server.
     fn loopback_fetcher(timeout_ms: u64, max_bytes: usize) -> SubscriptionFetcher {
-        let fetcher =
-            SubscriptionFetcher::for_testing(Arc::new(|_| Vec::new()), timeout_ms, max_bytes);
-        fetcher
+        SubscriptionFetcher::for_testing(Arc::new(|_| Vec::new()), timeout_ms, max_bytes)
     }
 
     #[tokio::test]

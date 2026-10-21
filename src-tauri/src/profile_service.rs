@@ -20,7 +20,6 @@
 //!   overrides disabled the enhanced document IS the raw document, so the
 //!   staging point is behavior-identical until composition lands.
 
-use std::path::PathBuf;
 use std::sync::Mutex;
 
 use serde_json::{json, Value};
@@ -45,9 +44,9 @@ pub struct ProfilesService {
 
 impl ProfilesService {
     /// Production constructor: real profile directory + OS credential store.
-    pub fn for_paths(profile_root: &PathBuf, service_name: &str) -> Self {
+    pub fn for_paths(profile_root: &std::path::Path, service_name: &str) -> Self {
         ProfilesService {
-            repository: ProfileRepository::new(profile_root.clone()),
+            repository: ProfileRepository::new(profile_root.to_path_buf()),
             source_store: Box::new(crate::profiles::KeyringProfileSourceStore::new(
                 service_name.to_string(),
             )),
@@ -57,9 +56,9 @@ impl ProfilesService {
     }
 
     /// Development/test constructor: ephemeral workspace + memory secrets.
-    pub fn for_development(profile_root: &PathBuf) -> Self {
+    pub fn for_development(profile_root: &std::path::Path) -> Self {
         ProfilesService {
-            repository: ProfileRepository::new(profile_root.clone()),
+            repository: ProfileRepository::new(profile_root.to_path_buf()),
             source_store: Box::new(MemoryProfileSourceStore::default()),
             fetcher: SubscriptionFetcher::new(None),
             lock: Mutex::new(()),
@@ -102,13 +101,7 @@ impl ProfilesService {
         Ok(self
             .repository
             .get_active()?
-            .and_then(|profile| {
-                if profile.is_null() {
-                    None
-                } else {
-                    Some(profile)
-                }
-            })
+            .filter(|profile| !profile.is_null())
             .unwrap_or(Value::Null))
     }
 
@@ -346,7 +339,7 @@ mod tests {
 
     fn service() -> (TempDir, ProfilesService) {
         let temp = TempDir::new().unwrap();
-        let service = ProfilesService::for_development(&temp.path().to_path_buf());
+        let service = ProfilesService::for_development(temp.path());
         (temp, service)
     }
 
@@ -485,7 +478,7 @@ mod tests {
                 }],
             )
             .unwrap();
-        assert_eq!(meta["updatedAt"].as_u64().is_some(), true);
+        assert!(meta["updatedAt"].as_u64().is_some());
         let profile = service.get(&id).unwrap();
         assert_eq!(profile["document"], "port: 1\nmode: global\n");
     }

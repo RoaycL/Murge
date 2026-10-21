@@ -136,7 +136,7 @@ fn invalid(message: impl Into<String>) -> IpcError {
 }
 
 fn assert_port(value: i64, label: &str) -> Result<(), IpcError> {
-    if value < PORT_MIN || value > PORT_MAX {
+    if !(PORT_MIN..=PORT_MAX).contains(&value) {
         return Err(invalid(format!(
             "{label} must be an integer between {PORT_MIN} and {PORT_MAX}"
         )));

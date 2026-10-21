@@ -191,6 +191,8 @@ fn find_tab_indent(document: &str) -> Option<usize> {
 
 fn find_top_level_keys(document: &str) -> Vec<String> {
     let mut keys = Vec::new();
+    let pattern =
+        regex::Regex::new(r"^([A-Za-z0-9_.-]+)\s*:(\s|$)").expect("top-level regex compiles");
     for line in document.split('\n') {
         if line.starts_with('#') {
             continue;
@@ -199,10 +201,7 @@ fn find_top_level_keys(document: &str) -> Vec<String> {
             continue;
         }
         let trimmed = line;
-        if let Some(captures) = regex::Regex::new(r"^([A-Za-z0-9_.-]+)\s*:(\s|$)")
-            .expect("top-level regex compiles")
-            .captures(trimmed)
-        {
+        if let Some(captures) = pattern.captures(trimmed) {
             keys.push(
                 captures
                     .get(1)

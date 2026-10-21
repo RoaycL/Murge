@@ -570,10 +570,8 @@ impl NetworkMetadataService {
 
     /// Resolve one specific provider (used by both `resolve` and `resolveAll`).
     async fn do_resolve_for(&self, provider_id: &str, force: bool) -> Value {
-        if !force {
-            if self.fresh_cache(provider_id).await.is_some() {
-                return self.state_for(provider_id, "ready", None).await;
-            }
+        if !force && self.fresh_cache(provider_id).await.is_some() {
+            return self.state_for(provider_id, "ready", None).await;
         }
         let port = (self.resolve_proxy_port)().await;
         let Some(port) = port else {
@@ -607,14 +605,12 @@ impl NetworkMetadataService {
             }
             return self.state().await;
         };
-        if !force {
-            if self.fresh_cache(&provider.id).await.is_some() {
-                {
-                    let mut phase = self.phase.lock().await;
-                    *phase = ("ready", None);
-                }
-                return self.state().await;
+        if !force && self.fresh_cache(provider.id).await.is_some() {
+            {
+                let mut phase = self.phase.lock().await;
+                *phase = ("ready", None);
             }
+            return self.state().await;
         }
         {
             let mut phase = self.phase.lock().await;

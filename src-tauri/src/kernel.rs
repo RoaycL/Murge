@@ -283,11 +283,9 @@ impl KernelManagerService {
                 }
             }
         }
-        settings
-            .set(&crate::settings::AppSettingsPatch(serde_json::json!({
-                "kernelChannel": channel, "kernelEnabled": true
-            })))
-            .kernel_channel;
+        settings.set(&crate::settings::AppSettingsPatch(serde_json::json!({
+            "kernelChannel": channel, "kernelEnabled": true
+        })));
         let target_version = match channel {
             "specific" => previous.1.clone(),
             "stable" => Some(MIHOMO_VERSION.to_string()),
@@ -462,8 +460,8 @@ impl KernelManagerService {
                         .map(|sha| sha.len() == 64)
                         .unwrap_or(false);
                 if valid {
-                    if let Some(mut asset) =
-                        serde_json::from_value::<crate::mihomo_artifact::MihomoAsset>(cached).ok()
+                    if let Ok(mut asset) =
+                        serde_json::from_value::<crate::mihomo_artifact::MihomoAsset>(cached)
                     {
                         asset.version = Some(version.to_string());
                         return Ok(asset);
@@ -635,7 +633,7 @@ impl KernelServices {
 
     /// The dev/fixture composition (`createKernelResolver({mode: 'fixture'})`
     /// + `TempKernelConfigStore` + the fixture-ready stdout marker). The
-    /// fixture opens NO socket, so the controller-ready gate never applies.
+    ///   fixture opens NO socket, so the controller-ready gate never applies.
     pub fn for_development(manager: Arc<KernelManagerService>) -> Self {
         KernelServices {
             supervisor: KernelSupervisor::create(
@@ -1075,7 +1073,7 @@ mod tests {
                     name: crate::mihomo_artifact::mihomo_asset_filename(
                         &platform,
                         &arch,
-                        &version.trim_start_matches('v').to_string(),
+                        version.trim_start_matches('v'),
                     ),
                     digest: Some(format!("sha256:{}", "a".repeat(64))),
                     size: Some(1024),

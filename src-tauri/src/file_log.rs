@@ -712,7 +712,7 @@ mod tests {
             parse_log_file_stamp("app-2024-01-01.log"),
             Some(1704067200000)
         );
-        assert_eq!(parse_log_file_stamp("core-2024-12-31.log").is_some(), true);
+        assert!(parse_log_file_stamp("core-2024-12-31.log").is_some());
         assert_eq!(parse_log_file_stamp("app-2024-13-01.log"), None);
         assert_eq!(parse_log_file_stamp("app-2024-01-01.log.bak"), None);
         assert_eq!(parse_log_file_stamp("unrelated.txt"), None);

@@ -383,7 +383,7 @@ pub struct ExitMonitorDeps {
     pub cancel_intent_recovery: Arc<dyn Fn() + Send + Sync>,
     pub is_controller_alive: Arc<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync>,
     pub is_suspended: Arc<dyn Fn() -> bool + Send + Sync>,
-    pub on_error: Arc<dyn Fn(&str, &str) + Send + Sync>,
+    pub on_error: ErrorCallback,
     pub now_ms: Arc<dyn Fn() -> u64 + Send + Sync>,
 }
 
@@ -489,6 +489,8 @@ impl PrivilegedExitMonitor {
         exits.len() >= CRASH_LOOP_LIMIT
     }
 }
+
+type ErrorCallback = Arc<dyn Fn(&str, &str) + Send + Sync>;
 
 #[cfg(test)]
 mod tests {

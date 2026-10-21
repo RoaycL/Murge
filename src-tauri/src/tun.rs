@@ -63,7 +63,7 @@ pub struct TunAuditEntry {
 // ---------------------------------------------------------------------------
 
 const DETAIL_CODE_PREFIX_OK: fn(&str) -> bool = |detail: &str| {
-    detail.len() >= 1
+    !detail.is_empty()
         && detail.len() <= 128
         && detail.bytes().all(|byte| {
             byte.is_ascii_uppercase()
@@ -848,7 +848,7 @@ mod tests {
         // configured+unsupported is legal (the supported flag drops).
         let unsupported = transition_tun_status(&status, "unsupported", None, None).unwrap();
         assert_eq!(unsupported.phase, "unsupported");
-        assert_eq!(unsupported.supported, false);
+        assert!(!unsupported.supported);
         let starting = transition_tun_status(&status, "enable", None, None).unwrap();
         let error = transition_tun_status(&starting, "conflict", None, None).unwrap_err();
         assert_eq!(
@@ -865,7 +865,7 @@ mod tests {
         let failed = transition_tun_status(&failed, "fatal", Some("boom"), None).unwrap();
         assert_eq!(failed.phase, "failed");
         assert_eq!(failed.error_message.as_deref(), Some("boom"));
-        assert_eq!(failed.supported, true);
+        assert!(failed.supported);
         // A later enable clears the message.
         let starting = transition_tun_status(&failed, "enable", None, None).unwrap();
         assert_eq!(starting.phase, "starting");

@@ -337,7 +337,7 @@ impl UsageHistoryStore {
 
     #[allow(dead_code)] // the record/flush surface attaches to the kernel traffic streams (3B/3D controller slice)
     /// Remove temp files left behind by an interrupted write.
-    fn prune_stale_temps(&self, path: &PathBuf) {
+    fn prune_stale_temps(&self, path: &std::path::Path) {
         let Some(directory) = path.parent() else {
             return;
         };
@@ -400,7 +400,7 @@ pub fn coerce_process_usage_buckets(input: &Value, max_buckets: usize) -> Vec<Pr
         let Some(bucket_start) = item.get("bucketStart").and_then(Value::as_i64) else {
             continue;
         };
-        if bucket_start < 0 || bucket_start > 9_007_199_254_740_991 {
+        if !(0..=9_007_199_254_740_991).contains(&bucket_start) {
             continue;
         }
         if item

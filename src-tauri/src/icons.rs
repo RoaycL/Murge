@@ -57,7 +57,7 @@ impl RemoteIconCache {
         RemoteIconCache {
             root,
             direct: build_client(None),
-            proxy: proxy.map(|client| client),
+            proxy,
             in_flight: Mutex::new(std::collections::HashMap::new()),
         }
     }

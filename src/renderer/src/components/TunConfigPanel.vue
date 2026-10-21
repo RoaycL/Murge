@@ -208,76 +208,76 @@ onMounted(async () => {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-5);
 }
-.tun-title { margin: 0 0 4px; font-size: 15px; }
-.tun-subtitle { margin: 0; color: var(--app-muted); font-size: 11px; line-height: 1.5; max-width: 560px; }
+.tun-title { margin: 0 0 4px; font-size: var(--font-size-lg); }
+.tun-subtitle { margin: 0; color: var(--app-muted); font-size: var(--font-size-xs); line-height: 1.5; max-width: 560px; }
 .tun-reset {
   min-height: 32px;
   padding: 0 12px;
   border: 1px solid var(--app-divider);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   background: var(--app-panel);
   color: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   white-space: nowrap;
 }
-.tun-head-actions { display: flex; align-items: center; gap: 8px; flex: none; }
-.tun-body { margin-top: 14px; display: grid; gap: 14px; }
+.tun-head-actions { display: flex; align-items: center; gap: var(--space-3); flex: none; }
+.tun-body { margin-top: 14px; display: grid; gap: var(--space-6); }
 .tun-group {
   margin: 0;
   padding: 12px;
   border: 1px solid var(--app-divider);
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   background: var(--app-panel);
 }
-.tun-group legend { padding: 0 6px; color: var(--app-muted); font-size: 11px; }
-.tun-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
-.tun-field { display: grid; gap: 5px; }
-.tun-label { color: var(--app-muted); font-size: 11px; }
+.tun-group legend { padding: 0 6px; color: var(--app-muted); font-size: var(--font-size-xs); }
+.tun-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-4); }
+.tun-field { display: grid; gap: var(--space-2); }
+.tun-label { color: var(--app-muted); font-size: var(--font-size-xs); }
 .tun-input,
 .tun-select {
   width: 100%;
   min-height: 34px;
   padding: 6px 10px;
   border: 1px solid var(--app-divider);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   background: var(--app-surface-solid);
   color: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 .tun-textarea {
   width: 100%;
   min-height: 72px;
   padding: 8px 10px;
   border: 1px solid var(--app-divider);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   background: var(--app-surface-solid);
   color: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   resize: vertical;
 }
-.tun-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.tun-actions { display: flex; justify-content: flex-end; gap: var(--space-3); }
 .tun-preview,
 .tun-save {
   min-height: 32px;
   padding: 0 16px;
   border: 0;
-  border-radius: 7px;
-  font-size: 12px;
+  border-radius: var(--radius-control);
+  font-size: var(--font-size-sm);
 }
-.tun-preview { background: rgba(127, 127, 127, 0.14); color: inherit; }
-.tun-save { background: var(--app-blue); color: white; }
+.tun-preview { background: var(--app-fill); color: inherit; }
+.tun-save { background: var(--app-blue); color: var(--app-on-accent); }
 .tun-save:disabled { opacity: 0.6; }
-.tun-switch { position: relative; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.tun-switch { position: relative; display: inline-flex; align-items: center; gap: var(--space-3); cursor: pointer; }
 .tun-switch.small { min-height: 34px; }
 .tun-switch input { position: absolute; opacity: 0; width: 0; height: 0; }
 .tun-switch-track {
   width: 34px;
   height: 20px;
-  border-radius: 10px;
-  background: rgba(127, 127, 127, 0.28);
+  border-radius: var(--radius-md);
+  background: var(--app-fill-strong);
   position: relative;
   transition: background 0.15s ease;
   flex: none;
@@ -297,10 +297,10 @@ onMounted(async () => {
 .tun-switch input:checked + .tun-switch-track::after { transform: translateX(14px); }
 .tun-preview {
   display: grid;
-  gap: 8px;
+  gap: var(--space-3);
   padding: 12px;
   border: 1px solid var(--app-divider);
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   background: var(--app-panel);
 }
 .tun-preview-head {
@@ -308,7 +308,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   color: var(--app-muted);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 .tun-icon {
   width: 26px;
@@ -317,10 +317,10 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: inherit;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
 }
 .tun-preview-body {
@@ -329,9 +329,9 @@ onMounted(async () => {
   overflow: auto;
   padding: 10px;
   border: 1px solid var(--app-divider);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   background: var(--app-surface-solid);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   white-space: pre-wrap;
 }

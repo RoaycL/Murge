@@ -202,18 +202,18 @@ function openSettings(key: SettingKey): void {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--space-4);
   margin-top: auto;
   min-height: 32px;
 }
 .setting-status {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--space-3);
   min-width: 0;
   overflow: hidden;
   color: var(--app-muted);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -227,13 +227,13 @@ function openSettings(key: SettingKey): void {
   margin: 0 -7px -7px 0;
   padding: 0;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--app-muted);
   cursor: pointer;
 }
-.setting-nav:hover { background: rgba(127, 127, 127, 0.1); color: var(--app-text); }
+.setting-nav:hover { background: var(--app-fill); color: var(--app-text); }
 .setting-nav:focus-visible { outline: 2px solid var(--app-blue); outline-offset: 1px; }
-.setting-card { gap: 8px; }
-.inline-error { margin-top: 8px; color: var(--app-danger, #d64f4f); font-size: 12px; }
+.setting-card { gap: var(--space-3); }
+.inline-error { margin-top: 8px; color: var(--app-danger); font-size: var(--font-size-sm); }
 </style>

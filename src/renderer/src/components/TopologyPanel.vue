@@ -77,28 +77,28 @@ function hopClass(name: string): string {
 
 <style scoped>
 .topology-card { min-width: 0; }
-.card-title-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.status { font-style: normal; color: var(--app-muted); font-size: 10px; margin-left: 6px; }
-.topology-total { color: var(--app-muted); font-size: 11px; }
-.topology-empty { margin: 14px 0; color: var(--app-muted); font-size: 11px; }
-.inline-note { margin: 12px 0 0; color: #c9a227; font-size: 11px; }
+.card-title-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
+.status { font-style: normal; color: var(--app-muted); font-size: var(--font-size-2xs); margin-left: 6px; }
+.topology-total { color: var(--app-muted); font-size: var(--font-size-xs); }
+.topology-empty { margin: 14px 0; color: var(--app-muted); font-size: var(--font-size-xs); }
+.inline-note { margin: 12px 0 0; color: var(--app-warning); font-size: var(--font-size-xs); }
 .topology-section { margin-top: 14px; }
-.topology-heading { display: block; color: var(--app-muted); font-size: 10px; letter-spacing: 0.06em; }
-.heading-hint { color: var(--app-faint, #b0b5bd); }
-.path-list { display: grid; gap: 8px; margin-top: 8px; }
-.path-row { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--app-surface-border); border-radius: 7px; background: var(--app-surface); }
-.path-meta { display: flex; align-items: center; gap: 10px; }
-.rule-chip { padding: 1px 8px; border-radius: 5px; background: rgba(21, 135, 248, 0.12); color: var(--app-blue); font-size: 10px; }
-.path-bytes { font-size: 12px; font-weight: 650; margin-left: auto; }
-.path-count { color: var(--app-muted); font-size: 10px; }
-.path-hops { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
-.topo-hop { padding: 2px 8px; border-radius: 5px; border: 1px solid var(--app-divider); font-size: 11px; }
+.topology-heading { display: block; color: var(--app-muted); font-size: var(--font-size-2xs); letter-spacing: 0.06em; }
+.heading-hint { color: var(--app-faint); }
+.path-list { display: grid; gap: var(--space-3); margin-top: 8px; }
+.path-row { display: grid; gap: var(--space-2); padding: 10px 12px; border: 1px solid var(--app-surface-border); border-radius: var(--radius-control); background: var(--app-surface); }
+.path-meta { display: flex; align-items: center; gap: var(--space-4); }
+.rule-chip { padding: 1px 8px; border-radius: var(--radius-sm); background: rgba(21, 135, 248, 0.12); color: var(--app-blue); font-size: var(--font-size-2xs); }
+.path-bytes { font-size: var(--font-size-sm); font-weight: var(--font-weight-bold); margin-left: auto; }
+.path-count { color: var(--app-muted); font-size: var(--font-size-2xs); }
+.path-hops { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1); }
+.topo-hop { padding: 2px 8px; border-radius: var(--radius-sm); border: 1px solid var(--app-divider); font-size: var(--font-size-xs); }
 .topo-hop.direct { color: var(--app-muted); }
-.path-arrow { color: var(--app-faint, #b0b5bd); font-size: 11px; font-style: normal; }
-.node-list { display: grid; gap: 6px; margin-top: 8px; }
-.node-row { display: grid; grid-template-columns: 120px 1fr auto; align-items: center; gap: 10px; }
-.node-name { font-size: 11px; }
-.node-bar { height: 7px; border-radius: 4px; background: rgba(127, 127, 127, 0.14); overflow: hidden; }
-.node-bar i { display: block; height: 100%; background: var(--app-blue); border-radius: 4px; }
-.node-row strong { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.path-arrow { color: var(--app-faint); font-size: var(--font-size-xs); font-style: normal; }
+.node-list { display: grid; gap: var(--space-2); margin-top: 8px; }
+.node-row { display: grid; grid-template-columns: 120px 1fr auto; align-items: center; gap: var(--space-4); }
+.node-name { font-size: var(--font-size-xs); }
+.node-bar { height: 7px; border-radius: var(--radius-xs); background: var(--app-fill); overflow: hidden; }
+.node-bar i { display: block; height: 100%; background: var(--app-blue); border-radius: var(--radius-xs); }
+.node-row strong { font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; }
 </style>

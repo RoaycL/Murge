@@ -71,7 +71,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: var(--space-7);
   margin: 0 0 1.25rem;
   padding: 0.75rem 1rem;
   border-radius: var(--radius-control);
@@ -81,9 +81,9 @@ onUnmounted(() => {
 }
 .update-banner.is-downloaded { border-color: var(--app-green); }
 .update-banner-text { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
-.update-banner-text strong { font-size: 0.95rem; color: var(--app-text); }
-.update-banner-body, .update-banner-progress { font-size: 0.8rem; color: var(--app-muted); }
+.update-banner-text strong { font-size: var(--font-size-lg); color: var(--app-text); }
+.update-banner-body, .update-banner-progress { font-size: var(--font-size-md); color: var(--app-muted); }
 .update-banner-actions { display: flex; align-items: center; flex: 0 0 auto; }
-.update-banner-bar { width: 120px; height: 8px; border-radius: 4px; background: var(--app-divider); overflow: hidden; }
+.update-banner-bar { width: 120px; height: 8px; border-radius: var(--radius-xs); background: var(--app-divider); overflow: hidden; }
 .update-banner-bar-fill { height: 100%; background: var(--app-blue); transition: width 0.2s ease; }
 </style>

@@ -296,43 +296,43 @@ onMounted(async () => {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-5);
 }
-.dns-title { margin: 0 0 4px; font-size: 15px; }
-.dns-subtitle { margin: 0; color: var(--app-muted); font-size: 11px; line-height: 1.5; max-width: 560px; }
+.dns-title { margin: 0 0 4px; font-size: var(--font-size-lg); }
+.dns-subtitle { margin: 0; color: var(--app-muted); font-size: var(--font-size-xs); line-height: 1.5; max-width: 560px; }
 .dns-reset {
   min-height: 32px;
   padding: 0 12px;
   border: 1px solid var(--app-divider);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   background: var(--app-panel);
   color: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   white-space: nowrap;
 }
-.dns-head-actions { display: flex; align-items: center; gap: 8px; flex: none; }
-.dns-body { margin-top: 14px; display: grid; gap: 14px; }
-.dns-row { display: flex; align-items: center; gap: 10px; }
+.dns-head-actions { display: flex; align-items: center; gap: var(--space-3); flex: none; }
+.dns-body { margin-top: 14px; display: grid; gap: var(--space-6); }
+.dns-row { display: flex; align-items: center; gap: var(--space-4); }
 .dns-group {
   margin: 0;
   padding: 12px;
   border: 1px solid var(--app-divider);
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   background: var(--app-panel);
 }
-.dns-group legend { padding: 0 6px; color: var(--app-muted); font-size: 11px; }
-.dns-group-hint { margin: 0 0 10px; color: var(--app-muted); font-size: 11px; line-height: 1.45; }
-.dns-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
-.dns-field { display: grid; gap: 5px; }
-.dns-label { color: var(--app-muted); font-size: 11px; }
+.dns-group legend { padding: 0 6px; color: var(--app-muted); font-size: var(--font-size-xs); }
+.dns-group-hint { margin: 0 0 10px; color: var(--app-muted); font-size: var(--font-size-xs); line-height: 1.45; }
+.dns-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-4); }
+.dns-field { display: grid; gap: var(--space-2); }
+.dns-label { color: var(--app-muted); font-size: var(--font-size-xs); }
 .dns-input {
   min-height: 34px;
   padding: 0 10px;
   border: 1px solid var(--app-divider);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   background: var(--app-surface-solid);
   color: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 .dns-input:focus { outline: 1px solid var(--app-blue); }
 .dns-textarea {
@@ -340,33 +340,33 @@ onMounted(async () => {
   min-height: 88px;
   padding: 8px 10px;
   border: 1px solid var(--app-divider);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   background: var(--app-surface-solid);
   color: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   resize: vertical;
 }
-.dns-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.dns-actions { display: flex; justify-content: flex-end; gap: var(--space-3); }
 .dns-preview,
 .dns-save {
   min-height: 32px;
   padding: 0 16px;
   border: 0;
-  border-radius: 7px;
-  font-size: 12px;
+  border-radius: var(--radius-control);
+  font-size: var(--font-size-sm);
 }
-.dns-preview { background: rgba(127, 127, 127, 0.14); color: inherit; }
-.dns-save { background: var(--app-blue); color: white; }
+.dns-preview { background: var(--app-fill); color: inherit; }
+.dns-save { background: var(--app-blue); color: var(--app-on-accent); }
 .dns-save:disabled { opacity: 0.6; }
-.dns-switch { position: relative; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.dns-switch { position: relative; display: inline-flex; align-items: center; gap: var(--space-3); cursor: pointer; }
 .dns-switch.small { min-height: 34px; }
 .dns-switch input { position: absolute; opacity: 0; width: 0; height: 0; }
 .dns-switch-track {
   width: 34px;
   height: 20px;
-  border-radius: 10px;
-  background: rgba(127, 127, 127, 0.28);
+  border-radius: var(--radius-md);
+  background: var(--app-fill-strong);
   position: relative;
   transition: background 0.15s ease;
   flex: none;
@@ -386,10 +386,10 @@ onMounted(async () => {
 .dns-switch input:checked + .dns-switch-track::after { transform: translateX(14px); }
 .dns-preview {
   display: grid;
-  gap: 8px;
+  gap: var(--space-3);
   padding: 12px;
   border: 1px solid var(--app-divider);
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   background: var(--app-panel);
 }
 .dns-preview-head {
@@ -397,7 +397,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   color: var(--app-muted);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 .dns-icon {
   width: 26px;
@@ -406,10 +406,10 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: inherit;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
 }
 .dns-preview-body {
@@ -418,9 +418,9 @@ onMounted(async () => {
   overflow: auto;
   padding: 10px;
   border: 1px solid var(--app-divider);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   background: var(--app-surface-solid);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   white-space: pre-wrap;
 }

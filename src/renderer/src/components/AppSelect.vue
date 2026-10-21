@@ -139,24 +139,24 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.app-select { position: relative; min-width: 132px; font-size: 12px; }
-.app-select-trigger { display: flex; width: 100%; min-height: 32px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 10px 0 12px; border: 1px solid var(--app-divider); border-radius: 8px; background: color-mix(in srgb, var(--app-surface) 88%, var(--app-bg)); color: var(--app-text); text-align: left; }
+.app-select { position: relative; min-width: 132px; font-size: var(--font-size-sm); }
+.app-select-trigger { display: flex; width: 100%; min-height: 32px; align-items: center; justify-content: space-between; gap: var(--space-5); padding: 0 10px 0 12px; border: 1px solid var(--app-divider); border-radius: var(--radius-control); background: color-mix(in srgb, var(--app-surface) 88%, var(--app-bg)); color: var(--app-text); text-align: left; }
 .app-select-trigger:hover:not(:disabled), .app-select.open .app-select-trigger { border-color: color-mix(in srgb, var(--app-blue) 55%, var(--app-divider)); background: color-mix(in srgb, var(--app-blue) 7%, var(--app-surface)); }
 .app-select-trigger:focus-visible { outline: 2px solid color-mix(in srgb, var(--app-blue) 55%, transparent); outline-offset: 2px; }
 .app-select-trigger svg { flex: none; color: var(--app-muted); transition: transform .16s ease; }
 .app-select.open .app-select-trigger svg { transform: rotate(180deg); }
-.app-select-menu { position: fixed; z-index: 3000; min-width: 132px; max-height: 248px; overflow: auto; box-sizing: border-box; padding: 5px; border: 1px solid color-mix(in srgb, var(--app-divider) 84%, white 16%); border-radius: 9px; background: var(--app-surface-solid, var(--app-surface)); box-shadow: 0 18px 38px rgba(0,0,0,.38); font-size: 12px; }
-.app-select-menu button { display: flex; width: 100%; min-height: 30px; align-items: center; justify-content: space-between; gap: 16px; padding: 0 8px; border: 0; border-radius: 6px; background: var(--app-surface); color: var(--app-text); white-space: nowrap; text-align: left; }
+.app-select-menu { position: fixed; z-index: 3000; min-width: 132px; max-height: 248px; overflow: auto; box-sizing: border-box; padding: 5px; border: 1px solid color-mix(in srgb, var(--app-divider) 84%, white 16%); border-radius: var(--radius-md); background: var(--app-surface-solid, var(--app-surface)); box-shadow: 0 18px 38px rgba(0,0,0,.38); font-size: var(--font-size-sm); }
+.app-select-menu button { display: flex; width: 100%; min-height: 30px; align-items: center; justify-content: space-between; gap: var(--space-7); padding: 0 8px; border: 0; border-radius: var(--radius-sm); background: var(--app-surface); color: var(--app-text); white-space: nowrap; text-align: left; }
 .app-select-menu button.active { background: color-mix(in srgb, var(--app-blue) 14%, var(--app-surface)); }
 .app-select-menu button.selected { color: var(--app-blue); }
 .app-select-menu button:disabled { opacity: .42; }
 .app-select.disabled { opacity: .52; }
 /* ---- plain 模式：常显如普通加粗文本，打开后进入控件态 ---- */
 .app-select.plain { min-width: 0; }
-.app-select.plain .app-select-trigger { min-height: 0; gap: 5px; padding: 0; border-color: transparent; background: transparent; font-size: 16px; line-height: 19px; font-weight: 650; }
+.app-select.plain .app-select-trigger { min-height: 0; gap: var(--space-2); padding: 0; border-color: transparent; background: transparent; font-size: var(--font-size-xl); line-height: 19px; font-weight: var(--font-weight-bold); }
 .app-select.plain .app-select-trigger:hover:not(:disabled) { border-color: transparent; background: transparent; color: var(--app-blue); }
 .app-select.plain .trigger-chevron { opacity: 0; transition: opacity .14s ease, transform .16s ease; }
 .app-select.plain .app-select-trigger:hover:not(:disabled) .trigger-chevron,
 .app-select.plain.open .trigger-chevron { opacity: 1; }
-.app-select.plain.open .app-select-trigger { padding: 0 10px 0 12px; border-color: color-mix(in srgb, var(--app-blue) 55%, var(--app-divider)); background: color-mix(in srgb, var(--app-blue) 7%, var(--app-surface)); font-size: 13px; font-weight: 500; }
+.app-select.plain.open .app-select-trigger { padding: 0 10px 0 12px; border-color: color-mix(in srgb, var(--app-blue) 55%, var(--app-divider)); background: color-mix(in srgb, var(--app-blue) 7%, var(--app-surface)); font-size: var(--font-size-md); font-weight: var(--font-weight-medium); }
 </style>

@@ -178,18 +178,18 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.process-list-icon{width:29px;height:29px;border-radius:7px;background:rgba(127,127,127,.14)}
-.process-rule-notice{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 16px;margin:12px 0}
-.process-rule-notice span{display:flex;flex-direction:column;gap:3px;min-width:0}
+.process-list-icon{width:29px;height:29px;border-radius:var(--radius-control);background:var(--app-fill)}
+.process-rule-notice{display:flex;align-items:center;justify-content:space-between;gap:var(--space-7);padding:12px 16px;margin:12px 0}
+.process-rule-notice span{display:flex;flex-direction:column;gap:var(--space-1);min-width:0}
 .process-rule-notice small{color:var(--app-muted);overflow-wrap:anywhere}
-.process-rule-notice button{border:1px solid var(--app-divider);background:transparent;color:var(--app-text);border-radius:8px;padding:7px 13px;cursor:pointer}
-.process-rule-editor{display:grid;gap:12px;margin:20px 0;padding:17px;border:1px solid var(--app-divider);border-radius:14px;background:color-mix(in srgb,var(--app-surface) 78%,var(--app-bg))}
+.process-rule-notice button{border:1px solid var(--app-divider);background:transparent;color:var(--app-text);border-radius:var(--radius-control);padding:7px 13px;cursor:pointer}
+.process-rule-editor{display:grid;gap:var(--space-5);margin:20px 0;padding:17px;border:1px solid var(--app-divider);border-radius:var(--radius-card);background:color-mix(in srgb,var(--app-surface) 78%,var(--app-bg))}
 .process-rule-editor h3{margin:0}
-.process-rule-editor p{margin:0;color:var(--app-muted);font-size:11px;line-height:1.5}
-.process-rule-editor label{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px}
-.process-rule-preview{display:grid;gap:5px;padding:11px;border-radius:8px;background:color-mix(in srgb,var(--app-bg) 78%,var(--app-surface));min-width:0}
-.process-rule-preview span{font-size:11px;color:var(--app-muted)}
-.process-rule-preview code{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px}
-.process-rule-save{justify-self:end;border:0;border-radius:8px;background:var(--app-accent);color:white;padding:8px 14px;cursor:pointer}
+.process-rule-editor p{margin:0;color:var(--app-muted);font-size:var(--font-size-xs);line-height:1.5}
+.process-rule-editor label{display:flex;align-items:center;justify-content:space-between;gap:var(--space-5);font-size:var(--font-size-sm)}
+.process-rule-preview{display:grid;gap:var(--space-2);padding:11px;border-radius:var(--radius-control);background:color-mix(in srgb,var(--app-bg) 78%,var(--app-surface));min-width:0}
+.process-rule-preview span{font-size:var(--font-size-xs);color:var(--app-muted)}
+.process-rule-preview code{white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--font-size-xs)}
+.process-rule-save{justify-self:end;border:0;border-radius:var(--radius-control);background:var(--app-accent);color:var(--app-on-accent);padding:8px 14px;cursor:pointer}
 .process-rule-save:disabled{opacity:.5;cursor:not-allowed}
 </style>

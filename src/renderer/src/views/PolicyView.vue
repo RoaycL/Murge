@@ -175,25 +175,25 @@ watch(() => kernel.status.phase, (phase, previous) => {
 
 <style scoped>
 .mode-selector { width: 100%; max-width: 510px; }
-.policy-group-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr)); gap: 10px; width: 100%; }
-.policy-group-grid button { display: grid; grid-template-columns: minmax(0, 1fr) 28px; grid-template-rows: 16px 24px 24px; column-gap: 8px; min-width: 0; min-height: 86px; padding: 10px; border: 1px solid transparent; border-radius: 10px; background: var(--app-surface); color: inherit; text-align: left; }
+.policy-group-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr)); gap: var(--space-4); width: 100%; }
+.policy-group-grid button { display: grid; grid-template-columns: minmax(0, 1fr) 28px; grid-template-rows: 16px 24px 24px; column-gap: 8px; min-width: 0; min-height: 86px; padding: 10px; border: 1px solid transparent; border-radius: var(--radius-md); background: var(--app-surface); color: inherit; text-align: left; }
 .policy-group-grid button:hover, .policy-group-grid button.selected { border-color: color-mix(in srgb, var(--app-blue) 48%, var(--app-divider)); background: color-mix(in srgb, var(--app-blue) 7%, var(--app-surface)); }
-.policy-group-grid small { grid-column: 1; grid-row: 1; align-self: start; color: var(--app-muted); font-size: 9px; }
-.policy-group-grid strong { grid-column: 1; grid-row: 2; align-self: center; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.policy-group-grid span { grid-column: 1; grid-row: 3; align-self: end; overflow: hidden; color: var(--app-muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.group-icon { grid-column: 2; grid-row: 1 / 3; align-self: start; justify-self: end; width: 26px; height: 26px; border-radius: 6px; object-fit: contain; }
+.policy-group-grid small { grid-column: 1; grid-row: 1; align-self: start; color: var(--app-muted); font-size: var(--font-size-2xs); }
+.policy-group-grid strong { grid-column: 1; grid-row: 2; align-self: center; overflow: hidden; font-size: var(--font-size-sm); text-overflow: ellipsis; white-space: nowrap; }
+.policy-group-grid span { grid-column: 1; grid-row: 3; align-self: end; overflow: hidden; color: var(--app-muted); font-size: var(--font-size-2xs); text-overflow: ellipsis; white-space: nowrap; }
+.group-icon { grid-column: 2; grid-row: 1 / 3; align-self: start; justify-self: end; width: 26px; height: 26px; border-radius: var(--radius-sm); object-fit: contain; }
 .policy-group-grid svg { grid-column: 2; grid-row: 1 / 4; align-self: center; justify-self: end; color: var(--app-muted); }
 .policy-group-grid button.has-icon > svg { grid-row: 3; align-self: end; }
-.node-caption{display:flex;justify-content:space-between;align-items:center;margin:4px 0 12px;color:var(--app-pink);font-size:12px}.node-caption button{border:0;background:transparent;color:var(--app-muted);font-size:11px}
+.node-caption{display:flex;justify-content:space-between;align-items:center;margin:4px 0 12px;color:var(--app-pink);font-size:var(--font-size-sm)}.node-caption button{border:0;background:transparent;color:var(--app-muted);font-size:var(--font-size-xs)}
 .drawer-panel-error{margin-top:12px}
 .drawer-body-grid .node-grid{--node-card-min:128px}
 .policy-view .node-caption{margin-top:4px}
-.group-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
-.group-tabs button { height: 27px; padding: 0 14px; border: 0; border-radius: 8px; background: rgba(127,127,127,.12); }
-.group-tabs button.selected { color: white; background: var(--app-blue); }
+.group-tabs { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: 20px; }
+.group-tabs button { height: 27px; padding: 0 14px; border: 0; border-radius: var(--radius-control); background: var(--app-fill); }
+.group-tabs button.selected { color: var(--app-on-accent); background: var(--app-blue); }
 /* 选中环用 inset box-shadow 画在卡片内部：outline 型外扩环会溢出网格，
    在抽屉左缘被裁切，看起来像整列边框错位。 */
-.node-grid .node-card { display:flex; flex-direction:column; min-width:0; height:94px; padding:12px; border-radius:8px; background:rgba(127,127,127,.12); }
+.node-grid .node-card { display:flex; flex-direction:column; min-width:0; height:94px; padding:12px; border-radius:var(--radius-control); background:var(--app-fill); }
 .node-grid .node-card.selected { box-shadow: inset 0 0 0 2px var(--app-blue); background: rgba(22,132,248,.12); }
 .node-grid .node-card.unavailable { opacity: .78; }
 .node-select,.node-delay { min-width:0; padding:0; border:0; background:transparent; color:inherit; text-align:left; }
@@ -202,27 +202,27 @@ watch(() => kernel.status.phase, (phase, previous) => {
 .node-select small { color:var(--app-muted); }
 .node-select strong { overflow:hidden; margin-top:3px; text-overflow:ellipsis; white-space:nowrap; }
 /* 节点协议/能力标签（协议 + udp/xudp/tfo/mptcp/smux），对齐 clash-party/sparkle。 */
-.node-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}
-.node-tags i{padding:1px 6px;border-radius:5px;background:rgba(127,127,127,.16);color:var(--app-muted);font-size:9px;font-style:normal;line-height:1.5;white-space:nowrap}
-.node-delay { align-self:flex-start; margin-top:auto; color:#68d21d; }
+.node-tags{display:flex;flex-wrap:wrap;gap:var(--space-1);margin-top:5px}
+.node-tags i{padding:1px 6px;border-radius:var(--radius-sm);background:rgba(127,127,127,.16);color:var(--app-muted);font-size:var(--font-size-2xs);font-style:normal;line-height:1.5;white-space:nowrap}
+.node-delay { align-self:flex-start; margin-top:auto; color:var(--app-latency-good); }
 .node-delay.testing { color: var(--app-muted); }
-.node-delay.timeout { color: #e05b5b; }
+.node-delay.timeout { color: var(--app-danger); }
 .node-delay.idle { color: var(--app-faint); }
-.panel-error { margin-top: 14px; color: #e05b5b; font-size: 12px; }
-.empty-state { margin-top: 26px; padding: 26px; border: 1px dashed var(--app-divider); border-radius: 8px; }
+.panel-error { margin-top: 14px; color: var(--app-danger); font-size: var(--font-size-sm); }
+.empty-state { margin-top: 26px; padding: 26px; border: 1px dashed var(--app-divider); border-radius: var(--radius-control); }
 .empty-state p { margin: 0 0 8px; }
-.empty-state span { color: var(--app-muted); font-size: 12px; }
-.empty-state button { margin-top: 12px; height: 28px; padding: 0 12px; border: 0; border-radius: 6px; background: rgba(127,127,127,.13); }
+.empty-state span { color: var(--app-muted); font-size: var(--font-size-sm); }
+.empty-state button { margin-top: 12px; height: 28px; padding: 0 12px; border: 0; border-radius: var(--radius-sm); background: var(--app-fill); }
 .provider-section { margin-top: 42px; }
 .provider-list { width: 100%; }
 .provider-row { display: grid; grid-template-columns: 1fr auto; column-gap: 14px; row-gap: 6px; align-items: center; padding: 13px 16px; border-top: 1px solid var(--app-divider); }
 .provider-row:first-child { border-top: 0; }
-.provider-info strong { display: block; font-size: 14px; }
-.provider-info small { display: block; margin-top: 3px; color: var(--app-muted); font-size: 11px; }
-.provider-actions { display: flex; gap: 8px; }
-.provider-actions button { height: 28px; padding: 0 12px; border: 0; border-radius: 6px; background: rgba(127,127,127,.13); }
+.provider-info strong { display: block; font-size: var(--font-size-body); }
+.provider-info small { display: block; margin-top: 3px; color: var(--app-muted); font-size: var(--font-size-xs); }
+.provider-actions { display: flex; gap: var(--space-3); }
+.provider-actions button { height: 28px; padding: 0 12px; border: 0; border-radius: var(--radius-sm); background: var(--app-fill); }
 .provider-actions button:disabled { opacity: .5; }
-.provider-error { grid-column: 1 / -1; color: #e05b5b; font-size: 11px; }
-.provider-health { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--app-muted); font-size: 11px; }
-.provider-health span.unavailable { color: #e05b5b; }
+.provider-error { grid-column: 1 / -1; color: var(--app-danger); font-size: var(--font-size-xs); }
+.provider-health { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--app-muted); font-size: var(--font-size-xs); }
+.provider-health span.unavailable { color: var(--app-danger); }
 </style>

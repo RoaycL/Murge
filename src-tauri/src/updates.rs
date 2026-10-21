@@ -3,10 +3,14 @@
 //!
 //! The service owns the lifecycle state machine and reduces a narrow driver's
 //! event stream into a single `UpdateState` snapshot pushed to renderer
-//! windows. The production driver is `GatedUpdaterDriver` (`supported:
-//! false`): this build cannot reach an update feed, so the service reports the
-//! exact same clear message the Electron build shows for dev/unpackaged runs
-//! instead of pretending to update.
+//! windows. The production driver is [`TauriUpdaterDriver`], backed by
+//! `tauri-plugin-updater`: every downloaded installer must carry a minisign
+//! signature from the release key whose public half is pinned in
+//! `tauri.conf.json` (`plugins.updater.pubkey`), and that signature must name
+//! the announced version (`requireSignedVersion`). GitHub mirrors therefore
+//! only ever act as transport — they cannot substitute or roll back a build
+//! (review item S1). `GatedUpdaterDriver` stays as the fail-closed fallback
+//! for dev runs and tests.
 
 use crate::error::IpcError;
 use crate::events::{EventHub, EventListener};
@@ -167,6 +171,335 @@ impl UpdaterDriver for GatedUpdaterDriver {
 
     fn on_event(&self, listener: EventListener) -> i64 {
         self.events.subscribe(listener)
+    }
+
+    fn dispose(&self) {}
+}
+
+/// GitHub mirrors tried alongside a direct connection (the Electron driver's
+/// list). In much of China a direct hit on `github.com` times out. They only
+/// carry bytes: the signature check below is what decides trust.
+const GITHUB_PROXIES: [&str; 2] = ["https://gh-proxy.org", "https://ghfast.top"];
+
+/// Timeout for a single manifest probe before the source is dropped.
+const FEED_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// Upper bound for one installer download attempt.
+const DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// The static manifest each GitHub Release carries (`latest.json`, written by
+/// `scripts/tauri-updater-manifest.mjs`).
+const MANIFEST_NAME: &str = "latest.json";
+
+/// `https://github.com/<owner>/<repo>/releases/latest/download` derived from
+/// the brand's repository URL (never hardcoded).
+pub fn direct_feed_base(repository_url: &str) -> Option<String> {
+    let url = url::Url::parse(repository_url).ok()?;
+    let mut segments = url.path_segments()?.filter(|segment| !segment.is_empty());
+    let owner = segments.next()?;
+    let repo = segments.next()?.trim_end_matches(".git");
+    Some(format!("https://github.com/{owner}/{repo}/releases/latest/download"))
+}
+
+/// Ordered, de-duplicated feed bases: last-known-good first, then direct, then
+/// the prefix mirrors.
+pub fn feed_base_candidates(direct: &str, last_good: Option<&str>) -> Vec<String> {
+    let mut all: Vec<String> = Vec::new();
+    let mirrors = GITHUB_PROXIES.iter().map(|proxy| format!("{proxy}/{direct}"));
+    for candidate in last_good.map(str::to_string).into_iter().chain(std::iter::once(direct.to_string())).chain(mirrors) {
+        if !all.contains(&candidate) {
+            all.push(candidate);
+        }
+    }
+    all
+}
+
+/// The download URL routed through the same source the manifest came from:
+/// a mirror base keeps its prefix, a direct base leaves the URL untouched.
+pub fn route_download_url(download_url: &str, feed_base: &str, direct: &str) -> String {
+    match feed_base.strip_suffix(direct) {
+        Some(prefix) if !prefix.is_empty() && download_url.starts_with("https://github.com/") => {
+            format!("{}/{download_url}", prefix.trim_end_matches('/'))
+        }
+        _ => download_url.to_string(),
+    }
+}
+
+/// Download-progress accumulator (electron-updater's percent / rate fields).
+struct ProgressMeter {
+    started: std::time::Instant,
+    last_emit: Option<std::time::Instant>,
+    transferred: u64,
+}
+
+impl ProgressMeter {
+    fn new() -> Self {
+        ProgressMeter { started: std::time::Instant::now(), last_emit: None, transferred: 0 }
+    }
+
+    /// Record a chunk; returns an event at most every 250 ms (and always on
+    /// the final chunk) so a fast link cannot flood the renderer.
+    fn record(&mut self, chunk: usize, total: Option<u64>) -> Option<UpdaterDriverEvent> {
+        self.transferred += chunk as u64;
+        let now = std::time::Instant::now();
+        let finished = total.is_some_and(|total| self.transferred >= total);
+        if !finished && self.last_emit.is_some_and(|last| now.duration_since(last) < std::time::Duration::from_millis(250)) {
+            return None;
+        }
+        self.last_emit = Some(now);
+        let elapsed = now.duration_since(self.started).as_secs_f64().max(0.001);
+        Some(UpdaterDriverEvent::DownloadProgress {
+            percent: total.filter(|total| *total > 0).map(|total| (self.transferred as f64 / total as f64 * 100.0).min(100.0)).unwrap_or(0.0),
+            bytes_per_second: (self.transferred as f64 / elapsed) as u64,
+            transferred: self.transferred,
+            total,
+        })
+    }
+}
+
+/// A verified installer waiting for the app to exit.
+struct ReadyUpdate {
+    update: tauri_plugin_updater::Update,
+    bytes: Vec<u8>,
+}
+
+/// The verified installer, installed from `RunEvent::Exit` (electron-updater's
+/// `autoInstallOnAppQuit`) so the ordered quit flow — restore the system
+/// proxy, stop the kernel — always runs before the installer replaces files.
+static READY_UPDATE: Mutex<Option<ReadyUpdate>> = Mutex::new(None);
+/// Set by "重启并安装": relaunch Murge once the installer finishes.
+static RESTART_AFTER_INSTALL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Cleared when the session is ending (logoff/shutdown): an installer UAC
+/// prompt must never block Windows from shutting down.
+static INSTALL_ON_EXIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Skip the pending install for this exit (session ending). The update stays
+/// in the release feed and is picked up again on the next launch.
+#[allow(dead_code)] // called from the session-ending shutdown path (W3)
+pub fn cancel_install_on_exit() {
+    INSTALL_ON_EXIT.store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Called from `RunEvent::Exit`: launch the verified installer, if any. On
+/// Windows the plugin hands the installer to ShellExecute and terminates the
+/// process, so this must be the last exit step.
+pub fn install_ready_update_on_exit() {
+    if !INSTALL_ON_EXIT.load(std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let Some(ready) = READY_UPDATE.lock().ok().and_then(|mut slot| slot.take()) else {
+        return;
+    };
+    let restart = RESTART_AFTER_INSTALL.load(std::sync::atomic::Ordering::SeqCst);
+    let update = ready.update.restart_after_install(restart);
+    if let Err(error) = update.install(&ready.bytes) {
+        eprintln!("[updates] launching the installer failed: {error}");
+    }
+}
+
+/// Production driver: signed Tauri updater over GitHub Releases + mirrors.
+pub struct TauriUpdaterDriver {
+    inner: Arc<TauriUpdaterInner>,
+}
+
+struct TauriUpdaterInner {
+    app: tauri::AppHandle,
+    events: EventHub,
+    supported: bool,
+    direct: String,
+    /// The feed base that worked most recently; tried first next time.
+    last_good: Mutex<Option<String>>,
+    /// The announced update and the feed base it came from.
+    available: Mutex<Option<(tauri_plugin_updater::Update, String)>>,
+    busy: std::sync::atomic::AtomicBool,
+}
+
+impl TauriUpdaterDriver {
+    pub fn new(app: tauri::AppHandle) -> Self {
+        let direct = crate::brand::load_brand().ok().and_then(|brand| direct_feed_base(&brand.repository_url));
+        let pubkey_pinned = app
+            .config()
+            .plugins
+            .0
+            .get("updater")
+            .and_then(|updater| updater.get("pubkey"))
+            .and_then(Value::as_str)
+            .is_some_and(|pubkey| !pubkey.trim().is_empty());
+        // Installed Windows builds only: dev runs never touch the feed, and a
+        // build without a pinned key has nothing to verify against.
+        let supported = cfg!(windows) && !crate::paths::is_dev() && pubkey_pinned && direct.is_some();
+        TauriUpdaterDriver {
+            inner: Arc::new(TauriUpdaterInner {
+                app,
+                events: EventHub::new(),
+                supported,
+                direct: direct.unwrap_or_default(),
+                last_good: Mutex::new(None),
+                available: Mutex::new(None),
+                busy: std::sync::atomic::AtomicBool::new(false),
+            }),
+        }
+    }
+}
+
+impl TauriUpdaterInner {
+    fn emit(&self, event: UpdaterDriverEvent) {
+        let value = serde_json::to_value(&event).expect("event serializes");
+        self.events.emit(&value);
+    }
+
+    fn updater_for(&self, base: &str) -> Result<tauri_plugin_updater::Updater, String> {
+        use tauri_plugin_updater::UpdaterExt;
+        let endpoint = url::Url::parse(&format!("{base}/{MANIFEST_NAME}")).map_err(|error| error.to_string())?;
+        self.app
+            .updater_builder()
+            .endpoints(vec![endpoint])
+            .and_then(|builder| builder.timeout(FEED_PROBE_TIMEOUT).build())
+            .map_err(|error| error.to_string())
+    }
+
+    /// Race every source for the manifest; the first one that answers (with
+    /// or without an update) wins, like the Electron driver's `Promise.any`.
+    async fn check(self: Arc<Self>) {
+        self.emit(UpdaterDriverEvent::Checking);
+        let last_good = self.last_good.lock().expect("updater last_good poisoned").clone();
+        let bases = feed_base_candidates(&self.direct, last_good.as_deref());
+        let probes = bases.iter().map(|base| {
+            let inner = self.clone();
+            let base = base.clone();
+            Box::pin(async move {
+                let updater = inner.updater_for(&base)?;
+                let found = updater.check().await.map_err(|error| error.to_string())?;
+                Ok::<_, String>((base, found))
+            })
+        });
+        match futures_util::future::select_ok(probes).await {
+            Ok(((base, found), _rest)) => {
+                *self.last_good.lock().expect("updater last_good poisoned") = Some(base.clone());
+                match found {
+                    None => {
+                        *self.available.lock().expect("updater available poisoned") = None;
+                        self.emit(UpdaterDriverEvent::NotAvailable);
+                    }
+                    Some(update) => {
+                        let version = update.version.clone();
+                        let release_notes = update.body.clone();
+                        *self.available.lock().expect("updater available poisoned") = Some((update, base));
+                        self.emit(UpdaterDriverEvent::Available { version, release_notes });
+                        // electron-updater autoDownload parity.
+                        self.download().await;
+                    }
+                }
+            }
+            Err(error) => {
+                *self.last_good.lock().expect("updater last_good poisoned") = None;
+                self.emit(UpdaterDriverEvent::Error { message: format!("无法连接更新源，请检查网络或稍后重试（{error}）") });
+            }
+        }
+    }
+
+    /// Download through the source the manifest came from, then every other
+    /// source. The plugin verifies the signature (and the signed version)
+    /// before returning bytes; a failed verification is never retried
+    /// elsewhere because the artifact itself is wrong.
+    async fn download(self: &Arc<Self>) {
+        let Some((update, base)) = self.available.lock().expect("updater available poisoned").clone() else {
+            return;
+        };
+        let last_good = Some(base.as_str());
+        let mut last_error = String::new();
+        for source in feed_base_candidates(&self.direct, last_good) {
+            let routed = route_download_url(update.download_url.as_str(), &source, &self.direct);
+            let Ok(routed) = url::Url::parse(&routed) else { continue };
+            let mut attempt = update.clone();
+            attempt.download_url = routed;
+            attempt.timeout = Some(DOWNLOAD_TIMEOUT);
+            let mut meter = ProgressMeter::new();
+            let inner = self.clone();
+            let result = attempt
+                .download(
+                    move |chunk, total| {
+                        if let Some(event) = meter.record(chunk, total) {
+                            inner.emit(event);
+                        }
+                    },
+                    || {},
+                )
+                .await;
+            match result {
+                Ok(bytes) => {
+                    *READY_UPDATE.lock().expect("ready update poisoned") = Some(ReadyUpdate { update, bytes });
+                    self.emit(UpdaterDriverEvent::Downloaded);
+                    return;
+                }
+                Err(error @ (tauri_plugin_updater::Error::Minisign(_)
+                | tauri_plugin_updater::Error::SignedVersionMismatch { .. }
+                | tauri_plugin_updater::Error::MissingSignedVersion
+                | tauri_plugin_updater::Error::Base64(_)
+                | tauri_plugin_updater::Error::SignatureUtf8(_))) => {
+                    self.emit(UpdaterDriverEvent::Error { message: format!("更新包签名校验失败，已丢弃（{error}）") });
+                    return;
+                }
+                Err(error) => last_error = error.to_string(),
+            }
+        }
+        self.emit(UpdaterDriverEvent::Error { message: format!("下载更新失败，请检查网络或稍后重试（{last_error}）") });
+    }
+}
+
+impl UpdaterDriver for TauriUpdaterDriver {
+    fn current_version(&self) -> String {
+        self.inner.app.package_info().version.to_string()
+    }
+
+    fn supported(&self) -> bool {
+        self.inner.supported
+    }
+
+    fn configure(&self) {}
+
+    fn check(&self) -> Result<(), String> {
+        if !self.inner.supported {
+            return Ok(());
+        }
+        if self.inner.busy.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return Ok(());
+        }
+        let inner = self.inner.clone();
+        tauri::async_runtime::spawn(async move {
+            inner.clone().check().await;
+            inner.busy.store(false, std::sync::atomic::Ordering::SeqCst);
+        });
+        Ok(())
+    }
+
+    fn download(&self) {
+        if !self.inner.supported || self.inner.busy.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        let inner = self.inner.clone();
+        tauri::async_runtime::spawn(async move {
+            inner.download().await;
+            inner.busy.store(false, std::sync::atomic::Ordering::SeqCst);
+        });
+    }
+
+    /// "重启并安装": run the ordered quit flow; `RunEvent::Exit` then hands
+    /// the verified installer to Windows and relaunches Murge afterwards.
+    fn quit_and_install(&self) {
+        if !self.inner.supported || READY_UPDATE.lock().map(|slot| slot.is_none()).unwrap_or(true) {
+            return;
+        }
+        RESTART_AFTER_INSTALL.store(true, std::sync::atomic::Ordering::SeqCst);
+        INSTALL_ON_EXIT.store(true, std::sync::atomic::Ordering::SeqCst);
+        let app = self.inner.app.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::lifecycle::begin_application_shutdown(app, false).await;
+        });
+    }
+
+    fn on_event(&self, listener: EventListener) -> i64 {
+        self.inner.events.subscribe(listener)
     }
 
     fn dispose(&self) {}
@@ -721,6 +1054,104 @@ mod tests {
         gated.install();
         assert_eq!(gated.get_state().phase, "idle");
         assert_eq!(gated.get_state().current_version.as_deref(), Some(env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn feed_base_is_derived_from_the_brand_repository() {
+        assert_eq!(
+            direct_feed_base("https://github.com/RoaycL/Murge").as_deref(),
+            Some("https://github.com/RoaycL/Murge/releases/latest/download")
+        );
+        assert_eq!(
+            direct_feed_base("https://github.com/RoaycL/Murge.git/").as_deref(),
+            Some("https://github.com/RoaycL/Murge/releases/latest/download")
+        );
+        assert_eq!(direct_feed_base("https://github.com/RoaycL"), None);
+        assert_eq!(direct_feed_base("not a url"), None);
+        let brand = crate::brand::load_brand().unwrap();
+        assert!(direct_feed_base(&brand.repository_url).is_some());
+    }
+
+    #[test]
+    fn feed_candidates_put_last_good_first_without_duplicates() {
+        let direct = "https://github.com/o/r/releases/latest/download";
+        assert_eq!(
+            feed_base_candidates(direct, None),
+            vec![
+                direct.to_string(),
+                format!("https://gh-proxy.org/{direct}"),
+                format!("https://ghfast.top/{direct}"),
+            ]
+        );
+        let mirror = format!("https://ghfast.top/{direct}");
+        assert_eq!(
+            feed_base_candidates(direct, Some(&mirror)),
+            vec![mirror.clone(), direct.to_string(), format!("https://gh-proxy.org/{direct}")]
+        );
+    }
+
+    #[test]
+    fn downloads_follow_the_manifest_source() {
+        let direct = "https://github.com/o/r/releases/latest/download";
+        let asset = "https://github.com/o/r/releases/download/v1.0.0/Murge_1.0.0_x64-setup.exe";
+        assert_eq!(route_download_url(asset, direct, direct), asset);
+        assert_eq!(
+            route_download_url(asset, &format!("https://ghfast.top/{direct}"), direct),
+            format!("https://ghfast.top/{asset}")
+        );
+        // Only GitHub assets are re-routed through a mirror.
+        let elsewhere = "https://example.com/Murge.exe";
+        assert_eq!(route_download_url(elsewhere, &format!("https://ghfast.top/{direct}"), direct), elsewhere);
+    }
+
+    #[test]
+    fn progress_meter_reports_percent_and_always_the_final_chunk() {
+        let mut meter = ProgressMeter::new();
+        let first = meter.record(25, Some(100)).expect("first chunk reports");
+        match first {
+            UpdaterDriverEvent::DownloadProgress { percent, transferred, total, .. } => {
+                assert_eq!(percent, 25.0);
+                assert_eq!(transferred, 25);
+                assert_eq!(total, Some(100));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        // Throttled inside the 250 ms window …
+        assert!(meter.record(25, Some(100)).is_none());
+        // … but the completing chunk always reports.
+        match meter.record(50, Some(100)).expect("final chunk reports") {
+            UpdaterDriverEvent::DownloadProgress { percent, .. } => assert_eq!(percent, 100.0),
+            other => panic!("unexpected {other:?}"),
+        }
+        // Unknown length never divides by zero.
+        let mut unknown = ProgressMeter::new();
+        match unknown.record(10, None).unwrap() {
+            UpdaterDriverEvent::DownloadProgress { percent, total, .. } => {
+                assert_eq!(percent, 0.0);
+                assert_eq!(total, None);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn updater_config_pins_signature_policy() {
+        let config: Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let updater = &config["plugins"]["updater"];
+        assert_eq!(updater["requireSignedVersion"], json!(true));
+        assert_eq!(updater["windows"]["installMode"], json!("passive"));
+        // Downgrades stay forbidden and no insecure transport is allowed.
+        assert!(updater.get("allowDowngrades").is_none());
+        assert!(updater.get("dangerousInsecureTransportProtocol").is_none());
+        assert!(updater.get("dangerousAcceptInvalidCerts").is_none());
+    }
+
+    #[test]
+    fn install_on_exit_without_a_ready_update_is_a_noop() {
+        install_ready_update_on_exit();
+        cancel_install_on_exit();
+        install_ready_update_on_exit();
+        INSTALL_ON_EXIT.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     #[test]

@@ -81,6 +81,8 @@ pub fn run() {
             // Deep-link argv delivery is wired with the deep-link slice
             // (Electron queues links; Phase 7 decides the UI reaction).
         }))
+        // Signed self-update (updates.rs owns the driver).
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // Dev builds never persist real user data: an ephemeral workspace
             // backs the profile store and secrets stay in memory. Production
@@ -664,17 +666,18 @@ pub fn run() {
                 reconcile_coordinator.initialize().await;
             });
             app.manage(std::sync::Arc::new(tun_coordinator));
-            // Updates: the gated driver honestly reports "not supported" in
-            // this build; state transitions forward to every renderer window.
+            // Updates: the signed Tauri updater (inert in dev runs and until a
+            // release public key is pinned); state transitions forward to
+            // every renderer window.
             let updates_service =
-                updates::UpdateService::new(std::sync::Arc::new(updates::GatedUpdaterDriver::new()));
+                updates::UpdateService::new(std::sync::Arc::new(updates::TauriUpdaterDriver::new(app.handle().clone())));
             updates_service.start();
             let updates_app = app.handle().clone();
             updates_service.subscribe(std::sync::Arc::new(move |value| {
                 let _ = tauri::Emitter::emit(&updates_app, "updates:state-event", value.clone());
             }));
             // Mid-session feed polling (the mihomo-party / sparkle model); a
-            // no-op on the gated driver.
+            // no-op when the driver is unsupported.
             updates_service.start_polling(10 * 60 * 1000);
             app.manage(std::sync::Arc::new(updates_service));
             // The ordered-kernel-gateway crash hook: when the supervisor
@@ -744,6 +747,9 @@ pub fn run() {
                     if let Some(substore) = app_handle.try_state::<std::sync::Arc<crate::substore::SubStoreService>>() {
                         substore.dispose();
                     }
+                    // Last: on Windows this launches the verified installer
+                    // and terminates the process.
+                    updates::install_ready_update_on_exit();
                 }
                 _ => {}
             }

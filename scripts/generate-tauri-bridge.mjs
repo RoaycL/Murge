@@ -21,7 +21,7 @@ const preloadPath = resolve(root, 'src/preload/index.ts')
 const ipcPath = resolve(root, 'src/shared/ipc.ts')
 const outPath = resolve(root, 'src/renderer/src/platform/generated/desktop-api.ts')
 
-const preload = await readFile(preloadPath, 'utf8')
+const preload = (await readFile(preloadPath, 'utf8')).replace(/\r\n?/g, '\n')
 
 // --- Parse the preload api surface -----------------------------------------
 const apiStart = preload.indexOf('const api: DesktopApi = {')
@@ -81,7 +81,7 @@ for (const rawLine of normalizedBody.split('\n')) {
 if (namespaces.length === 0) throw new Error('preload: no namespaces parsed')
 
 // --- Parse the IPC channel map ----------------------------------------------
-const ipcSource = await readFile(ipcPath, 'utf8')
+const ipcSource = (await readFile(ipcPath, 'utf8')).replace(/\r\n?/g, '\n')
 const channelMap = new Map()
 for (const match of ipcSource.matchAll(/^\s{2}(\w+): '([^']+)',?$/gm)) {
   channelMap.set(match[1], match[2])
@@ -156,7 +156,7 @@ for (const ns of namespaces) {
     if (method.kind === 'event') {
       lines.push(`      ${method.name}: (listener) => bridgeListen(${JSON.stringify(channel)}, listener),`)
     } else {
-      const argsLiteral = JSON.stringify(method.args)
+      const argsLiteral = `[${method.args.join(', ')}]`
       lines.push(`      ${method.name}: (${method.args.join(', ')}) => bridgeInvoke(${JSON.stringify(channel)}, ${argsLiteral}),`)
     }
   }

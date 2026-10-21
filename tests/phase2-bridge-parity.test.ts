@@ -44,8 +44,8 @@ describe('Tauri bridge parity (Phase 2)', () => {
     const generated = await read(GENERATED)
     expect(generated).toContain("tauriInvoke<T>('desktop_ipc', { channel, payload: args })")
     // Arguments travel as the payload array; the names never reach the wire.
-    expect(generated).toContain('getProcessIcon: (path) => bridgeInvoke("app:get-process-icon", ["path"])')
-    expect(generated).toContain('set: (patch) => bridgeInvoke("app-settings:set", ["patch"])')
+    expect(generated).toContain('getProcessIcon: (path) => bridgeInvoke("app:get-process-icon", [path])')
+    expect(generated).toContain('set: (patch) => bridgeInvoke("app-settings:set", [patch])')
   })
 
   it('decodes ProtocolError with the shared helper (identical error mapping for both shells)', async () => {

@@ -228,7 +228,6 @@ pub fn run() {
                     core_model["controllerSecret"].as_str().unwrap_or_default().to_string()
                 };
                 let ports = enhancements::coerce_core_settings(&models.core.get());
-                let secret_for_service = secret.clone();
                 // The controller-ready probe: one authenticated /version
                 // through the SAME loopback URL the streams endpoint binds.
                 let probe = crate::mihomo::MihomoClient::new(
@@ -278,7 +277,7 @@ pub fn run() {
                     paths.kernel_root().unwrap_or_default(),
                     None, // staged: bundled archive dir with the installer slice
                     secret,
-                    ports.clone(),
+                    ports,
                     Some(resolve_active_document),
                     Some(resolve_core),
                     Some(resolve_geodata),
@@ -291,17 +290,16 @@ pub fn run() {
                 // only mihomo process (ordinary and TUN modes alike). The
                 // `--kernel-smoke` probe keeps the direct supervisor.
                 if !std::env::args().any(|arg| arg == "--kernel-smoke") {
-                    services.privileged = compose_privileged_kernel(
-                        app.handle().clone(),
-                        &ports,
-                        &secret_for_service,
-                        version_selection,
-                    );
+                    services.privileged = compose_privileged_kernel(app.handle().clone(), version_selection);
                     if let Some(privileged) = &services.privileged {
                         let client = privileged.client().clone();
-                        let mixed_port = u16::try_from(ports["mixedPort"].as_i64().unwrap_or(0)).ok();
+                        let install_handle = app.handle().clone();
                         let _ = services.manager.install_version.set(std::sync::Arc::new(move |version| {
                             let client = client.clone();
+                            let mixed_port = install_handle
+                                .try_state::<std::sync::Arc<enhancements::ModelStores>>()
+                                .and_then(|models| enhancements::coerce_core_settings(&models.core.get())["mixedPort"].as_i64())
+                                .and_then(|port| u16::try_from(port).ok());
                             Box::pin(async move { client.install_version(&version, mixed_port).await })
                         }));
                     }
@@ -752,13 +750,25 @@ pub fn run() {
         });
 }
 
+/// The persisted controller endpoint `(port, secret)`, read at call time so a
+/// kernel restart follows the network settings without an app restart.
+fn current_controller(handle: &tauri::AppHandle) -> (i64, String) {
+    use tauri::Manager;
+    let core = handle
+        .try_state::<std::sync::Arc<enhancements::ModelStores>>()
+        .map(|models| enhancements::coerce_core_settings(&models.core.get()))
+        .unwrap_or_default();
+    (
+        core["controllerPort"].as_i64().unwrap_or(9090),
+        core["controllerSecret"].as_str().unwrap_or_default().to_string(),
+    )
+}
+
 /// The privileged-service kernel gateway (when-ready.ts `privilegedKernel`):
 /// one named-pipe client shared by start/stop, liveness and the exit monitor,
 /// so ownership never splits across handles.
 fn compose_privileged_kernel(
     handle: tauri::AppHandle,
-    ports: &serde_json::Value,
-    secret: &str,
     version_selection: kernel_process::VersionSelectionFn,
 ) -> Option<std::sync::Arc<privileged_kernel::PrivilegedKernelGateway>> {
     use tauri::Manager;
@@ -766,7 +776,6 @@ fn compose_privileged_kernel(
     let pipe_name = tun_service::tun_service_identity(&app_id).pipe_name;
     let transport = tun_service::NamedPipeTunServiceTransport::new(&pipe_name).ok()?;
     let client = std::sync::Arc::new(tun_service::TunServiceClient::new(Box::new(transport)));
-    let controller_port = ports["controllerPort"].as_i64().unwrap_or(9090);
     let profile_handle = handle.clone();
     let build_profile: privileged_kernel::ProfileBuilder = std::sync::Arc::new(move || {
         let profiles = profile_handle.state::<std::sync::Arc<profile_service::ProfilesService>>();
@@ -774,9 +783,9 @@ fn compose_privileged_kernel(
         let models = profile_handle.state::<std::sync::Arc<enhancements::ModelStores>>();
         live_config::build_service_profile(&profiles, &overrides, &models)
     });
-    let secret = secret.to_string();
+    let readiness_handle = handle.clone();
     let readiness: privileged_kernel::ReadinessProbe = std::sync::Arc::new(move || {
-        let secret = secret.clone();
+        let (controller_port, secret) = current_controller(&readiness_handle);
         Box::pin(async move {
             let client = mihomo::MihomoClient::new(controller_port, &secret)?;
             let version = client.get_version().await?;
@@ -789,7 +798,10 @@ fn compose_privileged_kernel(
         readiness,
         std::sync::Arc::new(|| true),
         std::sync::Arc::new(move || version_selection()),
-        privileged_kernel::PrivilegedKernelOptions { controller_port, ..Default::default() },
+        privileged_kernel::PrivilegedKernelOptions {
+            controller_port: std::sync::Arc::new(move || current_controller(&handle).0),
+            ..Default::default()
+        },
     )))
 }
 
@@ -800,12 +812,7 @@ fn start_privileged_monitor(
     kernel: std::sync::Arc<privileged_kernel::PrivilegedKernelGateway>,
 ) {
     use tauri::Manager;
-    let core = handle
-        .try_state::<std::sync::Arc<enhancements::ModelStores>>()
-        .map(|models| enhancements::coerce_core_settings(&models.core.get()))
-        .unwrap_or_default();
-    let controller_port = core["controllerPort"].as_i64().unwrap_or(9090);
-    let secret = core["controllerSecret"].as_str().unwrap_or_default().to_string();
+    let alive_handle = handle.clone();
     let start_handle = handle.clone();
     let start_kernel: std::sync::Arc<dyn Fn() -> futures_util::future::BoxFuture<'static, Result<(), error::IpcError>> + Send + Sync> =
         std::sync::Arc::new(move || {
@@ -867,7 +874,7 @@ fn start_privileged_monitor(
         }),
         cancel_intent_recovery: std::sync::Arc::new(|| {}),
         is_controller_alive: std::sync::Arc::new(move || {
-            let secret = secret.clone();
+            let (controller_port, secret) = current_controller(&alive_handle);
             Box::pin(async move {
                 match mihomo::MihomoClient::new(controller_port, &secret) {
                     Ok(client) => client.get_version().await.is_ok(),

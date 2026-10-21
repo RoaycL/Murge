@@ -26,7 +26,9 @@ pub type ProfileBuilder = Arc<dyn Fn() -> Result<String, IpcError> + Send + Sync
 pub type VersionSelection = Arc<dyn Fn() -> (String, Option<String>) + Send + Sync>;
 
 pub struct PrivilegedKernelOptions {
-    pub controller_port: i64,
+    /// Read on every start: the controller port is user-configurable and a
+    /// kernel restart must follow the persisted value (the TS runtime factory).
+    pub controller_port: Arc<dyn Fn() -> i64 + Send + Sync>,
     /// Bounded wait for the controller of a freshly started core. A cold
     /// service home may need to initialize provider caches first; liveness is
     /// still checked on every iteration, so this is not a blind delay.
@@ -38,7 +40,7 @@ pub struct PrivilegedKernelOptions {
 
 impl Default for PrivilegedKernelOptions {
     fn default() -> Self {
-        PrivilegedKernelOptions { controller_port: 9090, ready_timeout_ms: 60_000, service_retry_ms: 10_000, poll_ms: 100 }
+        PrivilegedKernelOptions { controller_port: Arc::new(|| 9090), ready_timeout_ms: 60_000, service_retry_ms: 10_000, poll_ms: 100 }
     }
 }
 
@@ -107,7 +109,7 @@ impl PrivilegedKernelGateway {
     }
 
     fn controller_url(&self) -> String {
-        format!("http://127.0.0.1:{}", self.options.controller_port)
+        format!("http://127.0.0.1:{}", (self.options.controller_port)())
     }
 
     /// Remove a service-owned child left by an abnormal GUI exit before the
@@ -326,6 +328,9 @@ fn is_release_tag(value: &str) -> bool {
 /// the user acts (or the window passes).
 pub const CRASH_LOOP_WINDOW_MS: u64 = 5 * 60 * 1000;
 pub const CRASH_LOOP_LIMIT: usize = 3;
+/// Consecutive ticks with an unreachable service AND a dead controller before
+/// the core is declared lost: an SCM service restart takes several seconds.
+pub const UNREACHABLE_TICKS: usize = 3;
 
 pub struct ExitMonitorDeps {
     pub kernel: Arc<PrivilegedKernelGateway>,
@@ -347,12 +352,18 @@ pub struct ExitMonitorDeps {
 pub struct PrivilegedExitMonitor {
     deps: ExitMonitorDeps,
     busy: std::sync::atomic::AtomicBool,
+    unreachable_streak: std::sync::atomic::AtomicUsize,
     exits: Mutex<Vec<u64>>,
 }
 
 impl PrivilegedExitMonitor {
     pub fn new(deps: ExitMonitorDeps) -> Self {
-        PrivilegedExitMonitor { deps, busy: std::sync::atomic::AtomicBool::new(false), exits: Mutex::new(Vec::new()) }
+        PrivilegedExitMonitor {
+            deps,
+            busy: std::sync::atomic::AtomicBool::new(false),
+            unreachable_streak: std::sync::atomic::AtomicUsize::new(0),
+            exits: Mutex::new(Vec::new()),
+        }
     }
 
     pub async fn tick(&self) {
@@ -366,19 +377,32 @@ impl PrivilegedExitMonitor {
 
     async fn tick_inner(&self) {
         let phase = self.deps.kernel.get_status()["phase"].as_str().unwrap_or("stopped").to_string();
+        use std::sync::atomic::Ordering;
         if phase != "running" && phase != "starting" {
+            self.unreachable_streak.store(0, Ordering::SeqCst);
             return;
         }
         let lost = match self.deps.kernel.reconcile_liveness().await {
-            Ok(true) => return,
-            Ok(false) => true,
+            Ok(true) => {
+                self.unreachable_streak.store(0, Ordering::SeqCst);
+                return;
+            }
+            Ok(false) => {
+                self.unreachable_streak.store(0, Ordering::SeqCst);
+                true
+            }
             Err(error) if error.parts().0 == code::UPSTREAM_UNREACHABLE => {
                 // The service itself is gone (crashed or being restarted by the
                 // SCM). Its job object has already killed the core; only the
                 // controller can tell us whether something still listens.
                 if (self.deps.is_controller_alive)().await {
+                    self.unreachable_streak.store(0, Ordering::SeqCst);
                     return;
                 }
+                if self.unreachable_streak.fetch_add(1, Ordering::SeqCst) + 1 < UNREACHABLE_TICKS {
+                    return;
+                }
+                self.unreachable_streak.store(0, Ordering::SeqCst);
                 self.deps.kernel.declare_lost("Privileged service stopped and its mihomo core is gone").await
             }
             Err(error) => {
@@ -444,7 +468,7 @@ mod tests {
             }),
             Arc::new(|| true),
             Arc::new(move || (channel.clone(), Some("v1.19.30".to_string()))),
-            PrivilegedKernelOptions { controller_port: 9097, ready_timeout_ms: 2_000, service_retry_ms: 500, poll_ms: 1 },
+            PrivilegedKernelOptions { controller_port: Arc::new(|| 9097), ready_timeout_ms: 2_000, service_retry_ms: 500, poll_ms: 1 },
         );
         (Arc::new(gateway), probes)
     }
@@ -657,7 +681,14 @@ mod tests {
         alive_monitor.tick().await;
         assert!(calls.lock().unwrap().is_empty());
         assert_eq!(gateway.get_status()["phase"], "running");
+        // A transient outage (SCM restart) is debounced: only the third
+        // consecutive unreachable tick with a dead controller declares it lost.
         let (dead_monitor, calls) = monitor(gateway.clone(), (true, false, true), false);
+        for _ in 1..UNREACHABLE_TICKS {
+            dead_monitor.tick().await;
+            assert!(calls.lock().unwrap().is_empty());
+            assert_eq!(gateway.get_status()["phase"], "running");
+        }
         dead_monitor.tick().await;
         assert_eq!(*calls.lock().unwrap(), vec!["tun-reset", "proxy-restore", "wake"]);
         assert_eq!(gateway.get_status()["phase"], "failed");

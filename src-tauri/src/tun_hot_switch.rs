@@ -212,6 +212,11 @@ where
                 .as_object()
                 .cloned()
                 .unwrap_or_default();
+            // mihomo's PATCH keeps any omitted key and the block builder omits
+            // empty route lists: send them explicitly so clearing a list in
+            // settings clears it on the running core (hot-switch-adapter.ts).
+            next.entry("route-address").or_insert(json!([]));
+            next.entry("route-exclude-address").or_insert(json!([]));
             // Previous runtime-only fields carry over (the TS spread of the
             // rebuilt block over the previous one).
             if let Some(previous_object) = previous.as_object() {

@@ -59,7 +59,8 @@ impl Default for AppSettings {
             kernel_specific_version: String::new(),
             delay_test_url_scope: "group".into(),
             delay_test_url: String::new(),
-            silent_launch: false,
+            // Login launch is always tray-only.
+            silent_launch: true,
             close_to_tray: true,
             proxy_guard: true,
             sub_store_enabled: true,
@@ -130,7 +131,9 @@ pub fn parse_app_settings(document: &serde_json::Value) -> AppSettings {
         delay_test_url_scope: is_valid_scope(object.get("delayTestUrlScope"))
             .unwrap_or_else(|| defaults.delay_test_url_scope.clone()),
         delay_test_url: parse_delay_test_url(object.get("delayTestUrl")),
-        silent_launch: boolean("silentLaunch", defaults.silent_launch),
+        // Kept on disk for schema compatibility; every old visible-login
+        // preference migrates to the tray-only contract (app-settings.ts).
+        silent_launch: true,
         close_to_tray: boolean("closeToTray", defaults.close_to_tray),
         proxy_guard: boolean("proxyGuard", defaults.proxy_guard),
         sub_store_enabled: boolean("subStoreEnabled", defaults.sub_store_enabled),
@@ -258,7 +261,7 @@ impl SettingsStore {
             // The TS set() stores the raw string; URL validation happens on
             // the next read (parseDelayTestUrl), exactly mirrored here.
             delay_test_url: string("delayTestUrl", &current.delay_test_url),
-            silent_launch: boolean("silentLaunch", current.silent_launch),
+            silent_launch: true,
             close_to_tray: boolean("closeToTray", current.close_to_tray),
             proxy_guard: boolean("proxyGuard", current.proxy_guard),
             sub_store_enabled: boolean("subStoreEnabled", current.sub_store_enabled),

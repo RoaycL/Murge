@@ -37,7 +37,7 @@ const PORT_MAX: i64 = 65535;
 /// The service enforces a hard 2 MiB ceiling on the submitted profile
 /// (`maxProfileBytes` in native/tun-service/protocol.go). Fail with a legible
 /// message instead of letting the service close the pipe without a response.
-pub const TUN_PROFILE_MAX_BYTES: usize = 2 * 1024 * 1024;
+pub const TUN_PROFILE_MAX_BYTES: usize = 16 * 1024 * 1024;
 
 /// `shared/tun-config.ts EMPTY_TUN_CONFIG.device` — the stock default marks
 /// "the user did not customize the device".
@@ -859,18 +859,17 @@ pub fn generate_proxied_tun_config(options: &Value) -> Result<String, IpcError> 
         _ => Map::new(),
     };
     if dns.get("enable") != Some(&Value::Bool(true)) && existing_dns.is_none() {
-        // "DNS override off" means the profile is authoritative, but a profile
-        // with no dns block still needs a safe runtime fallback while TUN owns
-        // port 53. Keeping this baseline enabled also keeps both the TUN prefix
-        // and its dns-hijack config byte-identical when the override is toggled,
-        // allowing mihomo's ReCreateTun equality guard to preserve the Windows
-        // adapter.
+        // clash-party parity: a profile without a dns block keeps the DNS
+        // module off and TUN does not hijack port 53, so apps keep real IPs.
+        // This must match the hot-switch enable path (which reads the same
+        // document and clears dns-hijack); a fake-ip fallback here made a later
+        // config reload flip a running TUN from real IPs to fake IPs and
+        // rebuild the adapter. Smart cores still derive the TUN prefix from
+        // dns.fake-ip-range.
+        tun_block.insert("dns-hijack".into(), json!([]));
         let mut baseline = Map::new();
-        baseline.insert("enable".into(), json!(true));
-        baseline.insert("enhanced-mode".into(), json!("fake-ip"));
+        baseline.insert("enable".into(), json!(false));
         baseline.insert("fake-ip-range".into(), json!("198.18.0.1/16"));
-        baseline.insert("fake-ip-filter".into(), json!(TUN_DEFAULT_FAKE_IP_FILTER));
-        baseline.insert("nameserver".into(), json!(["system"]));
         data.insert("dns".into(), Value::Object(baseline));
     } else if dns.get("enable") != Some(&Value::Bool(true)) {
         // An explicit profile dns.enable=false remains authoritative. Port-53
@@ -886,8 +885,11 @@ pub fn generate_proxied_tun_config(options: &Value) -> Result<String, IpcError> 
         }
         data.insert("dns".into(), Value::Object(dns));
     } else {
+        // mihomo's own default when a profile omits the mode is redir-host
+        // (real IPs); clash-party leaves it to the core. Never silently switch
+        // it to fake-ip.
         if !dns.contains_key("enhanced-mode") {
-            dns.insert("enhanced-mode".into(), json!("fake-ip"));
+            dns.insert("enhanced-mode".into(), json!("redir-host"));
         }
         let nameserver_empty = dns
             .get("nameserver")
@@ -907,6 +909,17 @@ pub fn generate_proxied_tun_config(options: &Value) -> Result<String, IpcError> 
         data.insert("dns".into(), Value::Object(dns));
     }
     data.insert("tun".into(), Value::Object(tun_block));
+
+    // clash-party always persists fake-ip mappings. Without it, every core
+    // restart (sleep/resume, network recovery) invalidates the fake IPs that
+    // apps such as game clients have already cached. Explicit choices (the
+    // profile's or the controlled core settings) are kept.
+    let mut profile_block = match data.get("profile") {
+        Some(Value::Object(block)) => block.clone(),
+        _ => Map::new(),
+    };
+    profile_block.entry("store-fake-ip").or_insert(json!(true));
+    data.insert("profile".into(), Value::Object(profile_block));
 
     let text = crate::override_apply::stringify_yaml(Value::Object(data));
     let errors = proxied_tun_config_errors(&text);
@@ -1317,9 +1330,9 @@ mod tests {
 
     #[test]
     fn dns_without_a_live_module_follows_the_authority_contract() {
-        // A document with NO dns block gets the baseline enabled fake-ip DNS
-        // while TUN owns port 53 (byte-identical prefix + hijack across the
-        // override toggle, so mihomo's ReCreateTun guard keeps the adapter).
+        // clash-party parity: a document with NO dns block keeps the DNS
+        // module off and TUN does not hijack port 53 (apps keep real IPs);
+        // the fake-ip prefix stays for smart cores.
         let text = generate_proxied_tun_config(&proxied_options(proxied_document())).unwrap();
         let dns_hijack = text
             .lines()
@@ -1327,12 +1340,19 @@ mod tests {
             .take_while(|line| !line.starts_with("rules:") && !line.starts_with("dns:"))
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(dns_hijack.contains("dns-hijack:"), "{dns_hijack}");
-        assert!(!dns_hijack.contains("dns-hijack: []"), "{dns_hijack}");
+        assert!(dns_hijack.contains("dns-hijack: []"), "{dns_hijack}");
         assert!(text.contains("dns:"), "{text}");
-        assert!(text.contains("enhanced-mode: fake-ip"), "{text}");
+        assert!(text.contains("enable: false"), "{text}");
+        assert!(!text.contains("enhanced-mode: fake-ip"), "{text}");
         assert!(text.contains("fake-ip-range: 198.18.0.1/16"), "{text}");
-        assert!(text.contains("nameserver:"), "{text}");
+        assert!(text.contains("store-fake-ip: true"), "{text}");
+        assert!(proxied_tun_config_errors(&text).is_empty(), "{text}");
+
+        // An enabled dns block without a mode defaults to mihomo's own
+        // redir-host, never a silent switch to fake-ip.
+        let no_mode = format!("dns:\n  enable: true\n{}", proxied_document());
+        let text = generate_proxied_tun_config(&proxied_options(&no_mode)).unwrap();
+        assert!(text.contains("enhanced-mode: redir-host"), "{text}");
         assert!(proxied_tun_config_errors(&text).is_empty(), "{text}");
 
         // An EXPLICIT dns.enable=false stays authoritative: port-53 hijacking

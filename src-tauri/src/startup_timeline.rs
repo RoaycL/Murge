@@ -21,7 +21,8 @@ struct Timeline {
     started: Instant,
     snapshot: Snapshot,
     setup_complete: bool,
-    reconciliation_complete: bool,
+    reconciled: [bool; 2],
+    sealed: bool,
 }
 
 impl Timeline {
@@ -34,14 +35,13 @@ impl Timeline {
                 marks: Vec::new(),
             },
             setup_complete: false,
-            reconciliation_complete: false,
+            reconciled: [false; 2],
+            sealed: false,
         }
     }
 
     fn mark_at(&mut self, stage: &'static str, elapsed: Duration) {
-        if (self.setup_complete && self.reconciliation_complete)
-            || self.snapshot.marks.iter().any(|mark| mark.stage == stage)
-        {
+        if self.sealed || self.snapshot.marks.iter().any(|mark| mark.stage == stage) {
             return;
         }
         self.snapshot.marks.push(Mark {
@@ -51,9 +51,28 @@ impl Timeline {
         });
     }
 
+    fn finish_reconciliation(&mut self, stage: Reconciliation) {
+        self.reconciled[stage as usize] = true;
+        if self.reconciled.iter().all(|done| *done) {
+            self.mark("managed-state-recovered");
+            self.mark("runtime-reconciled");
+        }
+        self.seal_if_ready();
+    }
+
+    fn seal_if_ready(&mut self) {
+        self.sealed = self.setup_complete && self.reconciled.iter().all(|done| *done);
+    }
+
     fn mark(&mut self, stage: &'static str) {
         self.mark_at(stage, self.started.elapsed());
     }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum Reconciliation {
+    Tun,
+    Kernel,
 }
 
 static TIMELINE: OnceLock<Mutex<Timeline>> = OnceLock::new();
@@ -71,14 +90,13 @@ pub(crate) fn mark(stage: &'static str) {
 }
 
 pub(crate) fn setup_complete() {
-    timeline().lock().unwrap().setup_complete = true;
+    let mut timeline = timeline().lock().unwrap();
+    timeline.setup_complete = true;
+    timeline.seal_if_ready();
 }
 
-pub(crate) fn reconciliation_complete() {
-    let mut timeline = timeline().lock().unwrap();
-    timeline.mark("managed-state-recovered");
-    timeline.mark("runtime-reconciled");
-    timeline.reconciliation_complete = true;
+pub(crate) fn reconciliation_complete(stage: Reconciliation) {
+    timeline().lock().unwrap().finish_reconciliation(stage);
 }
 
 // The diagnostics collector is introduced by the separate backup/diagnostics PR.
@@ -129,17 +147,36 @@ mod tests {
     }
 
     #[test]
-    fn seal_waits_for_both_async_reconciliation_and_setup_in_either_order() {
-        for reconciliation_first in [false, true] {
-            let mut timeline = Timeline::new();
-            timeline.setup_complete = !reconciliation_first;
-            timeline.reconciliation_complete = reconciliation_first;
-            timeline.mark_at("window-created", Duration::ZERO);
-            assert_eq!(timeline.snapshot.marks[0].elapsed_ms, 0);
-            timeline.setup_complete = true;
-            timeline.reconciliation_complete = true;
-            timeline.mark_at("kernel-ready", Duration::from_secs(10));
-            assert_eq!(timeline.snapshot.marks.len(), 1);
+    fn seal_waits_for_setup_and_both_recovery_tasks_in_any_order() {
+        for setup_first in [false, true] {
+            for kernel_first in [false, true] {
+                let mut timeline = Timeline::new();
+                timeline.setup_complete = setup_first;
+                let first = if kernel_first {
+                    Reconciliation::Kernel
+                } else {
+                    Reconciliation::Tun
+                };
+                let second = if kernel_first {
+                    Reconciliation::Tun
+                } else {
+                    Reconciliation::Kernel
+                };
+                timeline.finish_reconciliation(first);
+                timeline.mark_at("window-created", Duration::ZERO);
+                assert!(!timeline.sealed);
+                assert_eq!(timeline.snapshot.marks.len(), 1);
+                timeline.finish_reconciliation(second);
+                assert_eq!(timeline.sealed, setup_first);
+                timeline.setup_complete = true;
+                timeline.seal_if_ready();
+                timeline.mark_at("kernel-ready", Duration::from_secs(10));
+                assert_eq!(timeline.snapshot.marks.len(), 3);
+                timeline.finish_reconciliation(second);
+                assert_eq!(timeline.snapshot.marks.len(), 3);
+                assert_eq!(timeline.snapshot.marks[1].stage, "managed-state-recovered");
+                assert_eq!(timeline.snapshot.marks[2].stage, "runtime-reconciled");
+            }
         }
     }
 }

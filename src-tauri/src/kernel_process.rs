@@ -1851,7 +1851,7 @@ fn describe_exit(code: Option<i32>, signal: Option<String>) -> String {
 
 type AttachWatchdogCallback = Option<Arc<dyn Fn(u32) -> Arc<dyn KernelWatchdog> + Send + Sync>>;
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 type ExitRecords = Arc<std::sync::Mutex<Vec<(Option<i32>, Option<String>)>>>;
 
 #[cfg(test)]

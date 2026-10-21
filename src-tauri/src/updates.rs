@@ -400,14 +400,15 @@ impl TauriUpdaterInner {
 
     /// Download through the source the manifest came from, then every other
     /// source. The plugin verifies the signature (and the signed version)
-    /// before returning bytes; a failed verification is never retried
-    /// elsewhere because the artifact itself is wrong.
+    /// before returning bytes; bytes that fail verification are discarded and
+    /// the next source is tried, a signature bound to the wrong version stops.
     async fn download(self: &Arc<Self>) {
         let Some((update, base)) = self.available.lock().expect("updater available poisoned").clone() else {
             return;
         };
         let last_good = Some(base.as_str());
         let mut last_error = String::new();
+        let mut signature_failed = false;
         for source in feed_base_candidates(&self.direct, last_good) {
             let routed = route_download_url(update.download_url.as_str(), &source, &self.direct);
             let Ok(routed) = url::Url::parse(&routed) else { continue };
@@ -432,16 +433,30 @@ impl TauriUpdaterInner {
                     self.emit(UpdaterDriverEvent::Downloaded);
                     return;
                 }
-                Err(error @ (tauri_plugin_updater::Error::Minisign(_)
-                | tauri_plugin_updater::Error::SignedVersionMismatch { .. }
+                // Bytes that fail verification may be a broken or hostile
+                // mirror: discard them and try the next source.
+                Err(error @ tauri_plugin_updater::Error::Minisign(_)) => {
+                    last_error = error.to_string();
+                    signature_failed = true;
+                }
+                // The signature itself names another version (or none): the
+                // manifest is wrong on every source, so stop here.
+                Err(error @ (tauri_plugin_updater::Error::SignedVersionMismatch { .. }
                 | tauri_plugin_updater::Error::MissingSignedVersion
                 | tauri_plugin_updater::Error::Base64(_)
                 | tauri_plugin_updater::Error::SignatureUtf8(_))) => {
                     self.emit(UpdaterDriverEvent::Error { message: format!("更新包签名校验失败，已丢弃（{error}）") });
                     return;
                 }
-                Err(error) => last_error = error.to_string(),
+                Err(error) => {
+                    last_error = error.to_string();
+                    signature_failed = false;
+                }
             }
+        }
+        if signature_failed {
+            self.emit(UpdaterDriverEvent::Error { message: format!("更新包签名校验失败，已丢弃（{last_error}）") });
+            return;
         }
         self.emit(UpdaterDriverEvent::Error { message: format!("下载更新失败，请检查网络或稍后重试（{last_error}）") });
     }

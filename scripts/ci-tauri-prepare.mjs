@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { appendFile, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, resolve } from 'node:path'
+import { dirname, resolve, win32 } from 'node:path'
 
 const root = process.cwd()
 const manifest = JSON.parse(await readFile(resolve(root, 'resources/mihomo-assets.json'), 'utf8'))
@@ -36,7 +36,7 @@ const temporary = await realpath(tmpdir())
 // The supervisor intentionally clears its environment, so PATH alone is not
 // enough. Canonical temp paths also keep missing-member traversal tests from
 // comparing a symlink/verbatim prefix with a non-canonical fallback path.
-const canonicalTemp = platform === 'win32' && !temporary.startsWith('\\\\?\\') ? `\\\\?\\${temporary}` : temporary
+const canonicalTemp = platform === 'win32' ? win32.toNamespacedPath(temporary) : temporary
 if (process.env.GITHUB_ENV) {
   await appendFile(process.env.GITHUB_ENV, `MURGE_KERNEL_FIXTURE_COMMAND=${fixture}\nTMPDIR=${canonicalTemp}\nTMP=${canonicalTemp}\nTEMP=${canonicalTemp}\n`)
 }

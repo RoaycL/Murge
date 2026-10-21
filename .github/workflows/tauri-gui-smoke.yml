@@ -55,6 +55,7 @@ jobs:
         with:
           workspaces: src-tauri -> target
           shared-key: windows-x64
+          cache-on-failure: true
       # TODO: installed-package/upgrade smoke follows the installer workstream.
       # WebView2 release settings disable DevTools. A test-only window override
       # enables the live CDP assertions; tauri-build.yml produces normal release
@@ -67,8 +68,10 @@ jobs:
         # switch in elevated apps; Tauri's own Windows e2e workflow uses gsudo
         # at Medium integrity for the same reason. Grant only the runner user.
         run: |
-          winget install gerardog.gsudo --accept-source-agreements --accept-package-agreements --disable-interactivity
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Get-Command gsudo.exe -ErrorAction SilentlyContinue)) {
+            winget install gerardog.gsudo --accept-source-agreements --accept-package-agreements --disable-interactivity
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
           $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + $env:Path
           $gsudo = (Get-Command gsudo.exe -ErrorAction Stop).Source
           Split-Path $gsudo | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8

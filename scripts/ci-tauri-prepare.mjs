@@ -39,16 +39,6 @@ const temporary = await realpath(tmpdir())
 const canonicalTemp = platform === 'win32' ? win32.toNamespacedPath(temporary) : temporary
 if (process.env.GITHUB_ENV) {
   await appendFile(process.env.GITHUB_ENV, `MURGE_KERNEL_FIXTURE_COMMAND=${fixture}\nTMPDIR=${canonicalTemp}\nTMP=${canonicalTemp}\nTEMP=${canonicalTemp}\n`)
-  if (platform === 'win32') {
-    // Tauri enables Common Controls v6. Its application executable has a
-    // manifest, but Cargo's unit-test executable does not inherit it and cannot
-    // load TaskDialogIndirect from the default v5 DLL. Give the test harness
-    // the same activation context; every test still runs unchanged.
-    // https://learn.microsoft.com/en-us/windows/win32/controls/cookbook-overview
-    if (process.env.RUSTFLAGS && !process.env.CARGO_ENCODED_RUSTFLAGS) throw new Error('Use CARGO_ENCODED_RUSTFLAGS to preserve existing flags')
-    const flags = process.env.CARGO_ENCODED_RUSTFLAGS ? process.env.CARGO_ENCODED_RUSTFLAGS.split('\x1f') : []
-    flags.push('-C', 'link-arg=/MANIFEST:EMBED', '-C', "link-arg=/MANIFESTDEPENDENCY:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'")
-    await appendFile(process.env.GITHUB_ENV, `CARGO_ENCODED_RUSTFLAGS=${flags.join('\x1f')}\n`)
-  }
+
 }
 console.log(`Node fixture prepared: ${fixture}`)

@@ -73,7 +73,13 @@ jobs:
       - name: All Rust tests
         id: rust-tests
         working-directory: src-tauri
-        run: cargo test --locked -- --include-ignored
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            node "../${{ inputs.source_ref != '' && 'ci-harness/' || '' }}scripts/ci-tauri-tests.mjs"
+          else
+            cargo test --locked -- --include-ignored
+          fi
       - name: Diagnose a Windows test executable loader failure
         if: failure() && runner.os == 'Windows' && steps.rust-tests.outcome == 'failure'
         run: node "${{ inputs.source_ref != '' && 'ci-harness/' || '' }}scripts/ci-tauri-loader-diagnostics.mjs"

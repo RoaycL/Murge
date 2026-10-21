@@ -7,12 +7,10 @@ use serde_json::{json, Value};
 use std::{
     io::{Read, Seek, SeekFrom},
     path::Path,
-    sync::OnceLock,
 };
 
-static STARTED: OnceLock<String> = OnceLock::new();
 pub fn initialize() {
-    let _ = STARTED.set(now());
+    crate::startup_timeline::initialize();
 }
 fn now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
@@ -304,7 +302,7 @@ pub async fn collect(
     json!({"schemaVersion":1,"generatedAt":now(),"app":{"version":env!("CARGO_PKG_VERSION"),
         "platform":if cfg!(windows){"win32"}else if cfg!(target_os="macos"){"darwin"}else{"linux"},
         "arch":if cfg!(target_arch="x86_64"){"x64"}else if cfg!(target_arch="aarch64"){"arm64"}else{std::env::consts::ARCH}},
-        "startup":{"processStartedAt":STARTED.get_or_init(now),"marks":[]},
+        "startup":crate::startup_timeline::snapshot(),
         "runtime":{"kernel":{"phase":kernel["phase"],"pid":kernel["pid"]},
         "systemProxy":{"desired":settings.system_proxy_desired,"phase":proxy["phase"],"port":proxy["port"]},
         "tun":{"desired":settings.tun_desired,"phase":tun["phase"]}},"host":host,

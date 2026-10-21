@@ -2,7 +2,7 @@
 // PE layout: https://learn.microsoft.com/en-us/windows/win32/debug/pe-format
 import { execFileSync } from 'node:child_process'
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { resolve, win32 } from 'node:path'
 
 export function imports(bytes) {
   const pe = bytes.readUInt32LE(0x3c)
@@ -78,4 +78,24 @@ foreach($library in $report.imports) {
   const result = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', script], { encoding: 'utf8', timeout: 60_000, env: { ...process.env, TEMP: process.env.RUNNER_TEMP, TMP: process.env.RUNNER_TEMP, CI_TAURI_IMPORTS: input } })
   await writeFile(resolve(output, 'result.json'), result)
   console.log(result)
+  // Diagnose host-sensitive fixtures without changing their assertions.
+  const probeSource = resolve(output, 'fixture-probe.rs')
+  const probeExecutable = resolve(output, 'fixture-probe.exe')
+  await writeFile(probeSource, String.raw`
+use std::{net::{TcpListener,TcpStream},process::Command,time::Instant};
+fn main() {
+ let args:Vec<String>=std::env::args().collect();
+ for (name,cwd,system) in [("clean/normal",&args[3],false),("clean/verbatim",&args[4],false),("system/normal",&args[3],true),("system/verbatim",&args[4],true)] {
+  let mut child=Command::new(&args[1]);child.arg(&args[2]).args(["--exit-after-ms","100"]).env_clear().current_dir(cwd);
+  if system {for key in ["SystemRoot","WINDIR"] {if let Ok(value)=std::env::var(key){child.env(key,value);}}}
+  let began=Instant::now();match child.output(){Ok(value)=>println!("{name}: {:?}; {}ms; stdout={:?}; stderr={:?}",value.status.code(),began.elapsed().as_millis(),String::from_utf8_lossy(&value.stdout),String::from_utf8_lossy(&value.stderr)),Err(error)=>println!("{name}: {error}")}
+ }
+ let listener=TcpListener::bind("127.0.0.1:0").unwrap();let address=listener.local_addr().unwrap();drop(listener);
+ let began=Instant::now();let result=TcpStream::connect(address);println!("closed loopback connect: {:?}; {}ms",result.err(),began.elapsed().as_millis());
+}
+`)
+  execFileSync('rustc', ['--edition=2021', probeSource, '-o', probeExecutable], { timeout: 60_000, stdio: ['ignore', 'pipe', 'pipe'] })
+  const fixtureResult = execFileSync(probeExecutable, [process.env.MURGE_KERNEL_FIXTURE_COMMAND || process.execPath, resolve('src/main/testing/kernel-fixture.mjs'), process.env.RUNNER_TEMP, win32.toNamespacedPath(process.env.RUNNER_TEMP)], { encoding: 'utf8', timeout: 30_000 })
+  await writeFile(resolve(output, 'fixture-probe.txt'), fixtureResult)
+  console.log(fixtureResult)
 }

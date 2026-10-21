@@ -347,7 +347,7 @@ fn extract_archive_bytes(
             .map_err(|error| format!("Failed to write extracted binary: {error}"))?;
         return Ok(());
     }
-    crate::substore_zip::extract_zip_bytes(&bytes, dest_dir)
+    crate::substore_zip::extract_kernel_zip_bytes(&bytes, dest_dir)
         .map(|_| ())
         .map_err(|error| format!("unzip failed: {}", error.0))
 }

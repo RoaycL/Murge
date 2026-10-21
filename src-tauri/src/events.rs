@@ -787,20 +787,48 @@ mod tests {
 
     #[tokio::test]
     async fn connection_failure_reports_immediately_and_keeps_retrying() {
-        // Nothing listens on this port (bound then dropped).
+        // Windows may take two seconds to report TCP connection refusal.
+        // Reject the traffic handshake immediately instead, so this test
+        // measures error notification rather than host TCP retry policy.
         let probe = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = probe.local_addr().unwrap().port();
-        drop(probe);
+        let server = tokio::spawn(async move {
+            let mut sessions = tokio::task::JoinSet::new();
+            while let Ok((socket, _)) = probe.accept().await {
+                sessions.spawn(async move {
+                    use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+                    // Tungstenite fixes the callback's ErrorResponse type.
+                    #[allow(clippy::result_large_err)]
+                    let accepted = tokio_tungstenite::accept_hdr_async(
+                        socket,
+                        |request: &Request, response: Response| {
+                            if request.uri().path().starts_with("/traffic") {
+                                Err(tokio_tungstenite::tungstenite::http::Response::builder()
+                                    .status(503)
+                                    .body(Some("fixture rejection".to_string()))
+                                    .unwrap())
+                            } else {
+                                Ok(response)
+                            }
+                        },
+                    )
+                    .await;
+                    if let Ok(mut socket) = accepted {
+                        while futures_util::StreamExt::next(&mut socket).await.is_some() {}
+                    }
+                });
+            }
+        });
 
         let logs = Arc::new(MihomoLogBuffer::new());
         let streams = MihomoStreams::new(logs);
         let (errors, error_listener) = collector();
+        streams.errors.subscribe(error_listener);
         streams.ensure(&ControllerEndpoint {
             port: port as i64,
             secret: String::new(),
         });
-        streams.errors.subscribe(error_listener);
-        // The very first connect attempt fails fast (connection refused).
+        // The first traffic handshake fails immediately.
         for _ in 0..50 {
             if !errors.lock().unwrap().is_empty() {
                 break;
@@ -815,6 +843,7 @@ mod tests {
         assert_eq!(error[0]["kind"], "connection");
         assert_eq!(error[0]["source"], "traffic");
         streams.close();
+        server.abort();
     }
 
     #[tokio::test]

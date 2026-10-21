@@ -499,7 +499,6 @@ async fn run_child(command: &str, args: &[String]) -> Result<RunResult, String> 
     cmd.args(args);
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
     cmd.stdout(std::process::Stdio::piped());

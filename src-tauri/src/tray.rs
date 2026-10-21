@@ -213,6 +213,8 @@ pub struct TrayDeps {
     /// cannot drift from the renderer's gateway semantics.
     pub tun_desired: Box<dyn Fn(bool) -> BoxFuture<'static, Result<Value, IpcError>> + Send + Sync>,
     pub on_check_update: Box<dyn Fn() + Send + Sync>,
+    /// Called after the tray switched the outbound mode, so open windows can follow.
+    pub on_mode_changed: Box<dyn Fn(&str) + Send + Sync>,
     pub show_window: Box<dyn Fn() + Send + Sync>,
     pub quit: Box<dyn Fn() + Send + Sync>,
     pub open_directory: Box<dyn Fn(&str) -> Result<(), String> + Send + Sync>,
@@ -472,9 +474,9 @@ impl TrayController {
         // The tray mode patch is the same direct controller PATCH the renderer
         // uses (no queue in the TS gateway chain either).
         if let Ok(client) = client_for(&self.deps.models) {
-            let _ = client
-                .patch_config(&serde_json::json!({ "mode": mode }))
-                .await;
+            if client.patch_config(&serde_json::json!({ "mode": mode })).await.is_ok() {
+                (self.deps.on_mode_changed)(mode);
+            }
         }
     }
 
@@ -1139,6 +1141,12 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
                     )
                     .await
                 })
+            })
+        },
+        on_mode_changed: {
+            let app = app.clone();
+            Box::new(move |mode: &str| {
+                let _ = tauri::Emitter::emit(&app, "mihomo:mode-changed-event", mode);
             })
         },
         on_check_update: {

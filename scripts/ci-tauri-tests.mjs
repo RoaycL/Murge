@@ -34,10 +34,6 @@ for (const line of built.stdout.split(/\r?\n/)) {
 if (!count) throw new Error('Cargo reported no Windows test executables')
 console.log(`Prepared Common Controls v6 manifests for ${count} Cargo test executables`)
 // No filters, disabled tests or success fallback: propagate the full suite.
-// These tests launch real Node fixtures and loopback listeners. Avoid starving
-// their unchanged readiness deadlines on the shared two-core Windows runner.
-const tested = spawnSync('cargo', ['test', '--locked', '--', '--include-ignored'], {
-  stdio: 'inherit', env: { ...process.env, RUST_TEST_THREADS: process.env.RUST_TEST_THREADS || '1' }
-})
+const tested = spawnSync('cargo', ['test', '--locked', '--', '--include-ignored'], { stdio: 'inherit' })
 if (tested.error) throw tested.error
 process.exit(tested.status ?? 1)

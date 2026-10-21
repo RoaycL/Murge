@@ -32,7 +32,9 @@ pub fn load_brand() -> Result<BrandConfig, String> {
     let parsed: BrandConfig = serde_json::from_str(BRAND_JSON)
         .map_err(|error| format!("[brand] invalid brand configuration: {error}"))?;
     if parsed.product_name.trim().is_empty() || parsed.app_id.trim().is_empty() {
-        return Err("[brand] invalid brand configuration: productName and appId are required".into());
+        return Err(
+            "[brand] invalid brand configuration: productName and appId are required".into(),
+        );
     }
     Ok(parsed)
 }

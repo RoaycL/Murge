@@ -47,8 +47,13 @@ use crate::profile_service::ProfilesService;
 /// `LiveConfigSection` — the controlled sections that patch individually.
 pub const LIVE_SECTIONS: [&str; 3] = ["dns", "sniffer", "geodata"];
 
-const GEODATA_KEYS: [&str; 5] =
-    ["geodata-mode", "geodata-loader", "geo-auto-update", "geo-update-interval", "geox-url"];
+const GEODATA_KEYS: [&str; 5] = [
+    "geodata-mode",
+    "geodata-loader",
+    "geo-auto-update",
+    "geo-update-interval",
+    "geox-url",
+];
 
 /// The loaded-sniffer dispatcher signature temporarily muted by the runtime
 /// `sniffing` gate (`LiveConfigReloader.suspendedSnifferSignature`). The TS
@@ -95,10 +100,15 @@ impl LiveConfigRuntime {
                 .to_string(),
             allow_lan: core["allowLan"].as_bool() == Some(true),
             controller_panel: core["controllerPanel"].as_bool() == Some(true),
-            secret: core["controllerSecret"].as_str().unwrap_or_default().to_string(),
+            secret: core["controllerSecret"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
             device: format!(
                 "{} TUN",
-                crate::brand::load_brand().map(|brand| brand.short_name).unwrap_or_else(|_| "Murge".to_string())
+                crate::brand::load_brand()
+                    .map(|brand| brand.short_name)
+                    .unwrap_or_else(|_| "Murge".to_string())
             ),
         }
     }
@@ -142,7 +152,11 @@ pub fn resolve_enhanced_document(
     let profile_id = profile["meta"]["id"].as_str().unwrap_or_default();
     let overridden = overrides.apply_for_profile(
         &document,
-        if profile_id.is_empty() { None } else { Some(profile_id) },
+        if profile_id.is_empty() {
+            None
+        } else {
+            Some(profile_id)
+        },
     )?;
     let dns = enhancements::coerce_dns_enhancement(&models.dns.get());
     let (dns_text, _) = crate::inspection::apply_dns_to_document(&overridden, &dns);
@@ -166,7 +180,11 @@ pub fn resolve_overridden_document(
     let profile_id = profile["meta"]["id"].as_str().unwrap_or_default();
     let overridden = overrides.apply_for_profile(
         &document,
-        if profile_id.is_empty() { None } else { Some(profile_id) },
+        if profile_id.is_empty() {
+            None
+        } else {
+            Some(profile_id)
+        },
     )?;
     Ok(Some(overridden))
 }
@@ -216,7 +234,14 @@ impl<'a> LiveConfigReloader<'a> {
         overrides: &'a OverrideService,
         models: &'a enhancements::ModelStores,
     ) -> Self {
-        LiveConfigReloader { kernel, client, runtime, profiles, overrides, models }
+        LiveConfigReloader {
+            kernel,
+            client,
+            runtime,
+            profiles,
+            overrides,
+            models,
+        }
     }
 
     fn kernel_running(&self) -> bool {
@@ -270,7 +295,10 @@ impl<'a> LiveConfigReloader<'a> {
                 // A changed fake-IP range must not keep mappings from the
                 // previous DNS model. Cache cleanup is best-effort because
                 // the reload succeeded (`Promise.allSettled`).
-                let _ = tokio::join!(self.client.flush_dns_cache(), self.client.flush_fakeip_cache());
+                let _ = tokio::join!(
+                    self.client.flush_dns_cache(),
+                    self.client.flush_fakeip_cache()
+                );
             }
             return Ok(true);
         }
@@ -295,7 +323,11 @@ impl<'a> LiveConfigReloader<'a> {
             let value = data.get(*section).cloned().unwrap_or(Value::Null);
             patch.insert(
                 (*section).to_string(),
-                if value.is_object() { value } else { json!({ "enable": false }) },
+                if value.is_object() {
+                    value
+                } else {
+                    json!({ "enable": false })
+                },
             );
         }
 
@@ -325,13 +357,16 @@ impl<'a> LiveConfigReloader<'a> {
             // Decide under the lock, never hold it across an await.
             let disabling = next.get("enabled").and_then(Value::as_bool) == Some(false);
             let armed = {
-                let suspended =
-                    SUSPENDED_SNIFFER_SIGNATURE.lock().expect("suspended sniffer signature");
+                let suspended = SUSPENDED_SNIFFER_SIGNATURE
+                    .lock()
+                    .expect("suspended sniffer signature");
                 disabling || suspended.as_deref() == Some(signature.as_str())
             };
             if armed {
                 if disabling {
-                    self.client.patch_config(&json!({ "sniffing": false })).await?;
+                    self.client
+                        .patch_config(&json!({ "sniffing": false }))
+                        .await?;
                     if let Ok(confirmed) = self.client.get_config().await {
                         if confirmed.get("sniffing") == Some(&json!(false)) {
                             *SUSPENDED_SNIFFER_SIGNATURE
@@ -341,7 +376,9 @@ impl<'a> LiveConfigReloader<'a> {
                         }
                     }
                 } else {
-                    self.client.patch_config(&json!({ "sniffing": true })).await?;
+                    self.client
+                        .patch_config(&json!({ "sniffing": true }))
+                        .await?;
                     if let Ok(confirmed) = self.client.get_config().await {
                         if confirmed.get("sniffing") == Some(&json!(true)) {
                             *SUSPENDED_SNIFFER_SIGNATURE
@@ -353,7 +390,9 @@ impl<'a> LiveConfigReloader<'a> {
                 }
             }
         }
-        *SUSPENDED_SNIFFER_SIGNATURE.lock().expect("suspended sniffer signature") = None;
+        *SUSPENDED_SNIFFER_SIGNATURE
+            .lock()
+            .expect("suspended sniffer signature") = None;
         self.apply_sections(&["sniffer"]).await
     }
 
@@ -452,15 +491,8 @@ pub async fn reload_active_profile(
     kernel: &crate::kernel::KernelServices,
     system_proxy: &crate::system_proxy::SystemProxyService,
 ) -> Result<bool, IpcError> {
-    reload_active_profile_with_rollback(
-        profiles,
-        overrides,
-        models,
-        kernel,
-        system_proxy,
-        None,
-    )
-    .await
+    reload_active_profile_with_rollback(profiles, overrides, models, kernel, system_proxy, None)
+        .await
 }
 
 pub async fn reload_active_profile_with_rollback(
@@ -528,14 +560,15 @@ pub async fn restore_selections_after_reload(
     ) else {
         return;
     };
-    let active = profiles
-        .list()
-        .ok()
-        .and_then(|list| {
-            list.as_array()
-                .and_then(|metas| metas.iter().find(|meta| meta["active"].as_bool() == Some(true)))
-                .and_then(|meta| meta["id"].as_str().map(str::to_string))
-        });
+    let active = profiles.list().ok().and_then(|list| {
+        list.as_array()
+            .and_then(|metas| {
+                metas
+                    .iter()
+                    .find(|meta| meta["active"].as_bool() == Some(true))
+            })
+            .and_then(|meta| meta["id"].as_str().map(str::to_string))
+    });
     let _ = mihomo.restore_selections(&client, active).await;
 }
 
@@ -608,7 +641,11 @@ pub fn fetch_external_ip_via_proxy(
             Ok(proxy) => proxy,
             Err(_) => return None,
         };
-        let client = match reqwest::Client::builder().proxy(proxy).timeout(timeout).build() {
+        let client = match reqwest::Client::builder()
+            .proxy(proxy)
+            .timeout(timeout)
+            .build()
+        {
             Ok(client) => client,
             Err(_) => return None,
         };
@@ -637,7 +674,10 @@ pub fn build_service_profile(
     let core = enhancements::coerce_core_settings(&models.core.get());
     let mut options = LiveConfigRuntime::from_core(&core).builder_options();
     if let Some(map) = options.as_object_mut() {
-        map.insert("tunConfig".into(), enhancements::coerce_tun_config(&models.tun_config.get()));
+        map.insert(
+            "tunConfig".into(),
+            enhancements::coerce_tun_config(&models.tun_config.get()),
+        );
         map.insert("tunEnabled".into(), json!(false));
     }
     match document {
@@ -645,7 +685,10 @@ pub fn build_service_profile(
             if let Some(map) = options.as_object_mut() {
                 map.insert("document".into(), json!(document));
                 map.insert("core".into(), core);
-                map.insert("geodata".into(), enhancements::coerce_geodata_settings(&models.geodata.get()));
+                map.insert(
+                    "geodata".into(),
+                    enhancements::coerce_geodata_settings(&models.geodata.get()),
+                );
             }
             crate::tun_profile::generate_proxied_tun_config(&options)
         }
@@ -693,8 +736,8 @@ pub async fn resolve_external_ip(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::profile_service::ProfilesService;
     use crate::override_service::OverrideService;
+    use crate::profile_service::ProfilesService;
     use serde_json::json;
     use std::sync::Mutex;
 
@@ -712,7 +755,12 @@ mod tests {
         }
     }
 
-    fn service() -> (tempfile::TempDir, Arc<ProfilesService>, OverrideService, enhancements::ModelStores) {
+    fn service() -> (
+        tempfile::TempDir,
+        Arc<ProfilesService>,
+        OverrideService,
+        enhancements::ModelStores,
+    ) {
         let temp = tempfile::TempDir::new().unwrap();
         let profiles = Arc::new(ProfilesService::for_development(&temp.path().to_path_buf()));
         let overrides = OverrideService::new(None);
@@ -724,8 +772,14 @@ mod tests {
 
     #[test]
     fn extract_ip_prefers_a_clean_first_line() {
-        assert_eq!(extract_ip("198.51.100.7\nmore"), Some("198.51.100.7".to_string()));
-        assert_eq!(extract_ip("203.0.113.4\r\ntail"), Some("203.0.113.4".to_string()));
+        assert_eq!(
+            extract_ip("198.51.100.7\nmore"),
+            Some("198.51.100.7".to_string())
+        );
+        assert_eq!(
+            extract_ip("203.0.113.4\r\ntail"),
+            Some("203.0.113.4".to_string())
+        );
     }
 
     #[test]
@@ -769,9 +823,9 @@ mod tests {
                 );
             }
         });
-        let ip = tokio::runtime::Runtime::new().unwrap().block_on(async {
-            fetch_external_ip_via_proxy(port, None, Some(3000)).await
-        });
+        let ip = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { fetch_external_ip_via_proxy(port, None, Some(3000)).await });
         assert_eq!(ip, Some("198.51.100.7".to_string()));
     }
 
@@ -788,7 +842,11 @@ mod tests {
     fn probe_rejects_non_http_targets() {
         let ip = tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(fetch_external_ip_via_proxy(1, Some("https://ip.sb"), Some(300)));
+            .block_on(fetch_external_ip_via_proxy(
+                1,
+                Some("https://ip.sb"),
+                Some(300),
+            ));
         assert_eq!(ip, None);
     }
 
@@ -806,8 +864,13 @@ mod tests {
             &overrides,
             &models,
         );
-        let payload = reloader.build_payload(&json!({ "tun": { "enable": false } })).unwrap();
-        assert!(crate::kernel_config_validation::mihomo_config_errors(&payload).is_empty(), "{payload}");
+        let payload = reloader
+            .build_payload(&json!({ "tun": { "enable": false } }))
+            .unwrap();
+        assert!(
+            crate::kernel_config_validation::mihomo_config_errors(&payload).is_empty(),
+            "{payload}"
+        );
         assert!(payload.contains("mixed-port: 21000"));
         assert!(payload.contains("external-controller: 127.0.0.1:20001"));
     }
@@ -826,7 +889,9 @@ mod tests {
         );
         // No active profile: the mode fold is document-only (strict config is
         // always direct).
-        let payload = reloader.build_payload(&json!({ "mode": "global", "tun": { "enable": false } })).unwrap();
+        let payload = reloader
+            .build_payload(&json!({ "mode": "global", "tun": { "enable": false } }))
+            .unwrap();
         assert!(payload.contains("mode: direct"), "{payload}");
     }
 
@@ -845,7 +910,9 @@ mod tests {
             &models,
         );
         let _ = temp; // keeps the tempdir alive
-        let payload = reloader.build_payload(&json!({ "mode": "global", "tun": { "enable": false } })).unwrap();
+        let payload = reloader
+            .build_payload(&json!({ "mode": "global", "tun": { "enable": false } }))
+            .unwrap();
         assert!(payload.contains("mode: global"), "{payload}");
         assert!(payload.contains("name: a"), "{payload}");
         // The safety-critical keys are still forced.
@@ -865,8 +932,13 @@ mod tests {
             &models,
         );
         // No active profile + tun enabled → the privileged bootstrap profile.
-        let payload = reloader.build_payload(&json!({ "tun": { "enable": true } })).unwrap();
-        assert!(crate::tun_profile::mihomo_tun_config_errors(&payload).is_empty(), "{payload}");
+        let payload = reloader
+            .build_payload(&json!({ "tun": { "enable": true } }))
+            .unwrap();
+        assert!(
+            crate::tun_profile::mihomo_tun_config_errors(&payload).is_empty(),
+            "{payload}"
+        );
         assert!(payload.contains("tun:"), "{payload}");
         assert!(payload.contains("enable: true"), "{payload}");
     }
@@ -878,17 +950,26 @@ mod tests {
         let (temp, profiles, overrides, models) = service();
         let requests: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let captured = requests.clone();
-        let server = crate::mihomo::mock_controller::MockServer::start("s3cret", move |method, path, body| {
-            captured.lock().unwrap().push(format!("{method} {path} {body}"));
-            match (method, path) {
-                ("GET", "/configs") => (200, json!({ "mode": "rule", "tun": { "enable": false } }).to_string()),
-                ("PUT", "/configs") => (204, String::new()),
-                ("PATCH", "/configs") => (204, String::new()),
-                ("POST", "/cache/dns/flush") => (204, String::new()),
-                ("POST", "/cache/fakeip/flush") => (204, String::new()),
-                _ => (404, String::new()),
-            }
-        });
+        let server = crate::mihomo::mock_controller::MockServer::start(
+            "s3cret",
+            move |method, path, body| {
+                captured
+                    .lock()
+                    .unwrap()
+                    .push(format!("{method} {path} {body}"));
+                match (method, path) {
+                    ("GET", "/configs") => (
+                        200,
+                        json!({ "mode": "rule", "tun": { "enable": false } }).to_string(),
+                    ),
+                    ("PUT", "/configs") => (204, String::new()),
+                    ("PATCH", "/configs") => (204, String::new()),
+                    ("POST", "/cache/dns/flush") => (204, String::new()),
+                    ("POST", "/cache/fakeip/flush") => (204, String::new()),
+                    _ => (404, String::new()),
+                }
+            },
+        );
         let kernel = running_kernel().await;
         let reloader = LiveConfigReloader::with_client(
             kernel.as_ref(),
@@ -904,12 +985,29 @@ mod tests {
         let log = requests.lock().unwrap();
         // mihomo's PATCH /configs silently ignores nested DNS blocks: the DNS
         // section applies through the full payload reload instead.
-        assert!(log.iter().any(|entry| entry.starts_with("PUT /configs")), "{log:?}");
-        let put = log.iter().find(|entry| entry.starts_with("PUT /configs")).unwrap();
+        assert!(
+            log.iter().any(|entry| entry.starts_with("PUT /configs")),
+            "{log:?}"
+        );
+        let put = log
+            .iter()
+            .find(|entry| entry.starts_with("PUT /configs"))
+            .unwrap();
         assert!(put.contains("dns:"), "{put}");
-        assert!(!log.iter().any(|entry| entry.starts_with("PATCH /configs")), "{log:?}");
-        assert!(log.iter().any(|entry| entry.starts_with("POST /cache/dns/flush")), "{log:?}");
-        assert!(log.iter().any(|entry| entry.starts_with("POST /cache/fakeip/flush")), "{log:?}");
+        assert!(
+            !log.iter().any(|entry| entry.starts_with("PATCH /configs")),
+            "{log:?}"
+        );
+        assert!(
+            log.iter()
+                .any(|entry| entry.starts_with("POST /cache/dns/flush")),
+            "{log:?}"
+        );
+        assert!(
+            log.iter()
+                .any(|entry| entry.starts_with("POST /cache/fakeip/flush")),
+            "{log:?}"
+        );
     }
 
     #[tokio::test]
@@ -917,17 +1015,26 @@ mod tests {
         let (temp, profiles, overrides, models) = service();
         let requests: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let captured = requests.clone();
-        let server = crate::mihomo::mock_controller::MockServer::start("s3cret", move |method, path, body| {
-            captured.lock().unwrap().push(format!("{method} {path} {body}"));
-            match (method, path) {
-                ("GET", "/configs") => (200, json!({ "tun": { "enable": false } }).to_string()),
-                ("PATCH", "/configs") => (204, String::new()),
-                _ => (404, String::new()),
-            }
-        });
+        let server = crate::mihomo::mock_controller::MockServer::start(
+            "s3cret",
+            move |method, path, body| {
+                captured
+                    .lock()
+                    .unwrap()
+                    .push(format!("{method} {path} {body}"));
+                match (method, path) {
+                    ("GET", "/configs") => (200, json!({ "tun": { "enable": false } }).to_string()),
+                    ("PATCH", "/configs") => (204, String::new()),
+                    _ => (404, String::new()),
+                }
+            },
+        );
         models
             .geodata
-            .set(&json!({ "enabled": true, "geodataMode": true }), enhancements::coerce_geodata_settings)
+            .set(
+                &json!({ "enabled": true, "geodataMode": true }),
+                enhancements::coerce_geodata_settings,
+            )
             .unwrap();
         let kernel = running_kernel().await;
         let reloader = LiveConfigReloader::with_client(
@@ -941,8 +1048,17 @@ mod tests {
         let _ = temp;
         reloader.apply_sections(&["geodata"]).await.unwrap();
         let log = requests.lock().unwrap();
-        let patch = log.iter().find(|entry| entry.starts_with("PATCH /configs")).unwrap();
-        for key in ["geodata-mode", "geodata-loader", "geo-auto-update", "geo-update-interval", "geox-url"] {
+        let patch = log
+            .iter()
+            .find(|entry| entry.starts_with("PATCH /configs"))
+            .unwrap();
+        for key in [
+            "geodata-mode",
+            "geodata-loader",
+            "geo-auto-update",
+            "geo-update-interval",
+            "geox-url",
+        ] {
             assert!(patch.contains(key), "{key} missing in {patch}");
         }
         assert!(patch.contains("\"geodata-mode\":true"), "{patch}");
@@ -957,20 +1073,30 @@ mod tests {
         let captured = requests.clone();
         let sniffing = std::sync::Arc::new(std::sync::Mutex::new(true));
         let sniffing_state = sniffing.clone();
-        let server = crate::mihomo::mock_controller::MockServer::start("s3cret", move |method, path, body| {
-            captured.lock().unwrap().push(format!("{method} {path} {body}"));
-            match (method, path) {
-                ("GET", "/configs") => (200, json!({ "mode": "rule", "sniffing": *sniffing_state.lock().unwrap() }).to_string()),
-                ("PATCH", "/configs") => {
-                    let patch: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
-                    if let Some(value) = patch.get("sniffing").and_then(Value::as_bool) {
-                        *sniffing_state.lock().unwrap() = value;
+        let server = crate::mihomo::mock_controller::MockServer::start(
+            "s3cret",
+            move |method, path, body| {
+                captured
+                    .lock()
+                    .unwrap()
+                    .push(format!("{method} {path} {body}"));
+                match (method, path) {
+                    ("GET", "/configs") => (
+                        200,
+                        json!({ "mode": "rule", "sniffing": *sniffing_state.lock().unwrap() })
+                            .to_string(),
+                    ),
+                    ("PATCH", "/configs") => {
+                        let patch: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+                        if let Some(value) = patch.get("sniffing").and_then(Value::as_bool) {
+                            *sniffing_state.lock().unwrap() = value;
+                        }
+                        (204, String::new())
                     }
-                    (204, String::new())
+                    _ => (404, String::new()),
                 }
-                _ => (404, String::new()),
-            }
-        });
+            },
+        );
         let kernel = running_kernel().await;
         let reloader = LiveConfigReloader::with_client(
             kernel.as_ref(),
@@ -989,8 +1115,15 @@ mod tests {
             .unwrap();
         assert!(applied);
         let log = requests.lock().unwrap();
-        assert!(log.iter().any(|entry| entry.starts_with("PATCH /configs {\"sniffing\":false}")), "{log:?}");
-        assert!(!log.iter().any(|entry| entry.starts_with("PUT /configs")), "{log:?}");
+        assert!(
+            log.iter()
+                .any(|entry| entry.starts_with("PATCH /configs {\"sniffing\":false}")),
+            "{log:?}"
+        );
+        assert!(
+            !log.iter().any(|entry| entry.starts_with("PUT /configs")),
+            "{log:?}"
+        );
     }
 
     #[tokio::test]
@@ -999,14 +1132,20 @@ mod tests {
         let (temp, profiles, overrides, models) = service();
         let requests: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let captured = requests.clone();
-        let server = crate::mihomo::mock_controller::MockServer::start("s3cret", move |method, path, body| {
-            captured.lock().unwrap().push(format!("{method} {path} {body}"));
-            match (method, path) {
-                ("GET", "/configs") => (200, json!({ "mode": "rule" }).to_string()),
-                ("PUT", "/configs") => (204, String::new()),
-                _ => (404, String::new()),
-            }
-        });
+        let server = crate::mihomo::mock_controller::MockServer::start(
+            "s3cret",
+            move |method, path, body| {
+                captured
+                    .lock()
+                    .unwrap()
+                    .push(format!("{method} {path} {body}"));
+                match (method, path) {
+                    ("GET", "/configs") => (200, json!({ "mode": "rule" }).to_string()),
+                    ("PUT", "/configs") => (204, String::new()),
+                    _ => (404, String::new()),
+                }
+            },
+        );
         let kernel = running_kernel().await;
         let reloader = LiveConfigReloader::with_client(
             kernel.as_ref(),
@@ -1025,8 +1164,14 @@ mod tests {
             .unwrap();
         assert!(applied);
         let log = requests.lock().unwrap();
-        assert!(log.iter().any(|entry| entry.starts_with("PUT /configs")), "{log:?}");
-        assert!(!log.iter().any(|entry| entry.starts_with("PATCH /configs")), "{log:?}");
+        assert!(
+            log.iter().any(|entry| entry.starts_with("PUT /configs")),
+            "{log:?}"
+        );
+        assert!(
+            !log.iter().any(|entry| entry.starts_with("PATCH /configs")),
+            "{log:?}"
+        );
     }
 
     #[tokio::test]
@@ -1065,14 +1210,23 @@ mod tests {
         profiles.import(&import).unwrap();
         let requests: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let captured = requests.clone();
-        let server = crate::mihomo::mock_controller::MockServer::start("s3cret", move |method, path, body| {
-            captured.lock().unwrap().push(format!("{method} {path} {body}"));
-            match (method, path) {
-                ("GET", "/configs") => (200, json!({ "mode": "global", "tun": { "enable": false } }).to_string()),
-                ("PUT", "/configs") => (204, String::new()),
-                _ => (404, String::new()),
-            }
-        });
+        let server = crate::mihomo::mock_controller::MockServer::start(
+            "s3cret",
+            move |method, path, body| {
+                captured
+                    .lock()
+                    .unwrap()
+                    .push(format!("{method} {path} {body}"));
+                match (method, path) {
+                    ("GET", "/configs") => (
+                        200,
+                        json!({ "mode": "global", "tun": { "enable": false } }).to_string(),
+                    ),
+                    ("PUT", "/configs") => (204, String::new()),
+                    _ => (404, String::new()),
+                }
+            },
+        );
         let kernel = running_kernel().await;
         let reloader = LiveConfigReloader::with_client(
             kernel.as_ref(),
@@ -1085,7 +1239,10 @@ mod tests {
         let _ = temp;
         assert!(reloader.reload_if_running().await.unwrap());
         let log = requests.lock().unwrap();
-        let put = log.iter().find(|entry| entry.starts_with("PUT /configs")).unwrap();
+        let put = log
+            .iter()
+            .find(|entry| entry.starts_with("PUT /configs"))
+            .unwrap();
         assert!(put.contains("name: a"), "{put}");
         assert!(put.contains("mode: global"), "{put}");
         assert!(put.contains("MATCH,A"), "{put}");
@@ -1094,9 +1251,10 @@ mod tests {
     #[tokio::test]
     async fn reload_errors_propagate_for_the_coordinator_rollback() {
         let (_temp, profiles, overrides, models) = service();
-        let server = crate::mihomo::mock_controller::MockServer::start("s3cret", |_method, _path, _body| {
-            (500, "boom".to_string())
-        });
+        let server =
+            crate::mihomo::mock_controller::MockServer::start("s3cret", |_method, _path, _body| {
+                (500, "boom".to_string())
+            });
         let kernel = running_kernel().await;
         let reloader = LiveConfigReloader::with_client(
             kernel.as_ref(),

@@ -35,7 +35,10 @@ pub struct ProbeStep {
 
 impl ProbeStep {
     fn get(url: &str) -> Self {
-        ProbeStep { url: url.to_string(), ..Default::default() }
+        ProbeStep {
+            url: url.to_string(),
+            ..Default::default()
+        }
     }
 
     fn post(url: &str, content_type: &str, authorization: &str, body: String) -> Self {
@@ -67,16 +70,24 @@ impl ProbeResponse {
 
     #[cfg_attr(not(test), allow(dead_code))] // test fixture helper
     fn ok(status: u16, body: impl Into<String>) -> Self {
-        ProbeResponse { status: Some(status), body: body.into(), headers: Vec::new() }
+        ProbeResponse {
+            status: Some(status),
+            body: body.into(),
+            headers: Vec::new(),
+        }
     }
 
     fn header(&self, key: &str) -> Option<&Value> {
-        self.headers.iter().find(|(name, _)| name == key).map(|(_, value)| value)
+        self.headers
+            .iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value)
     }
 }
 
 /// The injectable transport: one probe step → one outcome, never throwing.
-pub type Probe = Arc<dyn Fn(ProbeStep) -> futures_util::future::BoxFuture<'static, ProbeResponse> + Send + Sync>;
+pub type Probe =
+    Arc<dyn Fn(ProbeStep) -> futures_util::future::BoxFuture<'static, ProbeResponse> + Send + Sync>;
 
 /// One service's unlock verdict (`ServiceUnlockResult`).
 #[derive(Debug, Clone, PartialEq)]
@@ -87,8 +98,10 @@ pub struct ServiceUnlockResult {
 }
 
 /// The preset services, in display order (AI → streaming → others).
-pub const UNLOCK_SERVICES: [&str; 10] =
-    ["ChatGPT", "Gemini", "Claude", "Grok", "Netflix", "Disney+", "TikTok", "YouTube", "GitHub", "Spotify"];
+pub const UNLOCK_SERVICES: [&str; 10] = [
+    "ChatGPT", "Gemini", "Claude", "Grok", "Netflix", "Disney+", "TikTok", "YouTube", "GitHub",
+    "Spotify",
+];
 
 // ---------------------------------------------------------------------------
 // Shared helpers (Verge semantics)
@@ -106,7 +119,9 @@ pub fn classify_blocked_status(status: Option<u16>) -> Option<&'static str> {
 
 /// Verge `get_trace_location`: value of the `loc=` line in a Cloudflare trace.
 pub fn trace_location(body: &str) -> Option<String> {
-    let line = body.lines().find(|candidate| candidate.starts_with("loc="))?;
+    let line = body
+        .lines()
+        .find(|candidate| candidate.starts_with("loc="))?;
     let value = line[4..].trim();
     (!value.is_empty()).then(|| value.to_uppercase())
 }
@@ -118,7 +133,9 @@ pub fn extract_quoted_field(body: &str, key: &str) -> Option<String> {
     let mut rest = body;
     while let Some(start) = rest.find('"') {
         let after_open = &rest[start + 1..];
-        let Some(close) = after_open.find('"') else { break };
+        let Some(close) = after_open.find('"') else {
+            break;
+        };
         let candidate = &after_open[..close];
         if candidate.to_lowercase() == lower_key {
             let tail = &after_open[close + 1..];
@@ -143,7 +160,9 @@ fn normalize_region(value: Option<String>) -> Option<String> {
 }
 
 const CLAUDE_BLOCKED: [&str; 10] = ["AF", "BY", "CN", "CU", "HK", "IR", "KP", "MO", "RU", "SY"];
-const GEMINI_BLOCKED: [&str; 9] = ["CHN", "RUS", "BLR", "CUB", "IRN", "PRK", "SYR", "HKG", "MAC"];
+const GEMINI_BLOCKED: [&str; 9] = [
+    "CHN", "RUS", "BLR", "CUB", "IRN", "PRK", "SYR", "HKG", "MAC",
+];
 // Grok (x.ai) publishes no machine-readable availability endpoint; its block
 // list tracks the same sanctioned/unsupported regions as the other AI vendors.
 // (Declared but unused in the TS detector too — kept for parity.)
@@ -158,11 +177,18 @@ const GROK_BLOCKED: [&str; 10] = ["AF", "BY", "CN", "CU", "HK", "IR", "KP", "MO"
 pub async fn chatgpt(probe: &Probe) -> ServiceUnlockResult {
     let trace = (probe)(ProbeStep::get("https://chat.openai.com/cdn-cgi/trace")).await;
     let region = normalize_region(trace_location(&trace.body));
-    let compliance = (probe)(ProbeStep::get("https://api.openai.com/compliance/cookie_requirements")).await;
+    let compliance = (probe)(ProbeStep::get(
+        "https://api.openai.com/compliance/cookie_requirements",
+    ))
+    .await;
     if compliance.status.is_none() {
         return verdict("ChatGPT", "error", region);
     }
-    if compliance.body.to_lowercase().contains("unsupported_country") {
+    if compliance
+        .body
+        .to_lowercase()
+        .contains("unsupported_country")
+    {
         return verdict("ChatGPT", "unsupported", region);
     }
     verdict("ChatGPT", "supported", region)
@@ -191,7 +217,9 @@ pub async fn gemini(probe: &Probe) -> ServiceUnlockResult {
     }
     let marker = ",2,1,200,\"";
     let code = match page.body.find(marker) {
-        Some(index) => &page.body[index + marker.len()..(index + marker.len() + 3).min(page.body.len())],
+        Some(index) => {
+            &page.body[index + marker.len()..(index + marker.len() + 3).min(page.body.len())]
+        }
         None => "",
     };
     let valid = code.len() == 3 && code.bytes().all(|byte| byte.is_ascii_uppercase());
@@ -212,7 +240,11 @@ pub async fn grok(probe: &Probe) -> ServiceUnlockResult {
     if let Some(blocked) = classify_blocked_status(page.status) {
         return verdict("Grok", blocked, region);
     }
-    if page.body.to_lowercase().contains("not available in your region") {
+    if page
+        .body
+        .to_lowercase()
+        .contains("not available in your region")
+    {
         return verdict("Grok", "unsupported", region);
     }
     verdict("Grok", "supported", region)
@@ -264,12 +296,14 @@ pub async fn netflix(probe: &Probe) -> ServiceUnlockResult {
         .and_then(Value::as_str)
         .and_then(|location| location.split('/').nth(3))
         .map(str::to_string);
-    let region = normalize_region(segment.and_then(|segment| segment.split('-').next().map(str::to_string)))
-        .or(Some(cdn_region));
+    let region =
+        normalize_region(segment.and_then(|segment| segment.split('-').next().map(str::to_string)))
+            .or(Some(cdn_region));
     verdict("Netflix", "supported", region)
 }
 
-const DISNEY_AUTH: &str = "Bearer ZGlzbmV5JmJyb3dzZXImMS4wLjA.Cu56AgSfBTDag5NiRA81oLHkDZfu5L3CKadnefEAY84";
+const DISNEY_AUTH: &str =
+    "Bearer ZGlzbmV5JmJyb3dzZXImMS4wLjA.Cu56AgSfBTDag5NiRA81oLHkDZfu5L3CKadnefEAY84";
 
 /// Disney+ — Verge disney_plus.rs: device-assertion → token → graphql country.
 pub async fn disney_plus(probe: &Probe) -> ServiceUnlockResult {
@@ -294,12 +328,18 @@ pub async fn disney_plus(probe: &Probe) -> ServiceUnlockResult {
         return verdict("Disney+", "error", None);
     };
     let token_body = serde_urlencoded(&[
-        ("grant_type", "urn:ietf:params:oauth:grant-type:token-exchange"),
+        (
+            "grant_type",
+            "urn:ietf:params:oauth:grant-type:token-exchange",
+        ),
         ("latitude", "0"),
         ("longitude", "0"),
         ("platform", "browser"),
         ("subject_token", &assertion),
-        ("subject_token_type", "urn:bamtech:params:oauth:token-type:device"),
+        (
+            "subject_token_type",
+            "urn:bamtech:params:oauth:token-type:device",
+        ),
     ]);
     let token_step = (probe)(ProbeStep::post(
         "https://disney.api.edge.bamgrid.com/token",
@@ -331,7 +371,11 @@ pub async fn disney_plus(probe: &Probe) -> ServiceUnlockResult {
         .to_string(),
     ))
     .await;
-    if graph.status.is_none() || graph.status.is_some_and(|status| status < 200 || status >= 300) {
+    if graph.status.is_none()
+        || graph
+            .status
+            .is_some_and(|status| status < 200 || status >= 300)
+    {
         return verdict("Disney+", "error", None);
     }
     let Ok(parsed) = serde_json::from_str::<Value>(&graph.body) else {
@@ -398,7 +442,9 @@ fn form_encode(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
     for byte in value.bytes() {
         match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'*' | b'-' | b'.' | b'_' => encoded.push(byte as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'*' | b'-' | b'.' | b'_' => {
+                encoded.push(byte as char)
+            }
             b' ' => encoded.push('+'),
             other => encoded.push_str(&format!("%{other:02X}")),
         }
@@ -415,12 +461,18 @@ pub async fn tiktok(probe: &Probe) -> ServiceUnlockResult {
         Some(blocked) => verdict("TikTok", blocked, region),
         None => {
             let text = homepage.body.to_lowercase();
-            if text.contains("access denied") || text.contains("not available in your region") || text.contains("tiktok is not available") {
+            if text.contains("access denied")
+                || text.contains("not available in your region")
+                || text.contains("tiktok is not available")
+            {
                 return verdict("TikTok", "unsupported", region);
             }
             if let Some(status) = homepage.status {
                 if (200..300).contains(&status) {
-                    let marker = normalize_region(extract_quoted_field(&homepage.body, "region").and_then(|value| value.split('-').next().map(str::to_string)));
+                    let marker = normalize_region(
+                        extract_quoted_field(&homepage.body, "region")
+                            .and_then(|value| value.split('-').next().map(str::to_string)),
+                    );
                     return verdict("TikTok", "supported", region.or(marker));
                 }
             }
@@ -441,12 +493,16 @@ pub async fn youtube(probe: &Probe) -> ServiceUnlockResult {
             .or_else(|| extract_quoted_field(&page.body, "country_code")),
     );
     let text = page.body.to_lowercase();
-    if text.contains("premium is not available in your country") || text.contains("premium is not available in your region") {
+    if text.contains("premium is not available in your country")
+        || text.contains("premium is not available in your region")
+    {
         return verdict("YouTube", "unsupported", region);
     }
     if let Some(status) = page.status {
         if (200..300).contains(&status)
-            && (text.contains("youtube premium") || text.contains("ad-free") || text.contains("\"browseid\":\"spunlimited\""))
+            && (text.contains("youtube premium")
+                || text.contains("ad-free")
+                || text.contains("\"browseid\":\"spunlimited\""))
         {
             return verdict("YouTube", "supported", region);
         }
@@ -479,7 +535,11 @@ pub async fn spotify(probe: &Probe) -> ServiceUnlockResult {
         Some(status) if status < 200 || status >= 300 => return verdict("Spotify", "error", None),
         _ => {}
     }
-    if selector.body.to_lowercase().contains("not available in your country") {
+    if selector
+        .body
+        .to_lowercase()
+        .contains("not available in your country")
+    {
         return verdict("Spotify", "unsupported", None);
     }
     let region = normalize_region(extract_quoted_field(&selector.body, "countryCode"));
@@ -487,7 +547,11 @@ pub async fn spotify(probe: &Probe) -> ServiceUnlockResult {
 }
 
 fn verdict(name: &str, status: &'static str, region: Option<String>) -> ServiceUnlockResult {
-    ServiceUnlockResult { name: name.to_string(), status, region }
+    ServiceUnlockResult {
+        name: name.to_string(),
+        status,
+        region,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -498,15 +562,12 @@ type DetectorFn = fn(&Probe) -> futures_util::future::BoxFuture<'static, Service
 
 macro_rules! detector {
     ($name:literal, $fn_name:ident) => {
-        (
-            $name,
-            |probe: &Probe| {
-                // The future must own the probe: clone the Arc in.
-                let probe = probe.clone();
-                Box::pin(async move { $fn_name(&probe).await })
-                    as futures_util::future::BoxFuture<'static, ServiceUnlockResult>
-            },
-        )
+        ($name, |probe: &Probe| {
+            // The future must own the probe: clone the Arc in.
+            let probe = probe.clone();
+            Box::pin(async move { $fn_name(&probe).await })
+                as futures_util::future::BoxFuture<'static, ServiceUnlockResult>
+        })
     };
 }
 
@@ -543,7 +604,11 @@ pub fn parse_unlock_service_name(input: &Value) -> Result<String, crate::error::
 /// Unknown names resolve as an error row so a stale renderer cannot crash IPC.
 pub async fn detect_service(name: &str, probe: Probe) -> ServiceUnlockResult {
     let Some((_, detector)) = detector_registry().iter().find(|(known, _)| *known == name) else {
-        return ServiceUnlockResult { name: name.to_string(), status: "error", region: None };
+        return ServiceUnlockResult {
+            name: name.to_string(),
+            status: "error",
+            region: None,
+        };
     };
     detector(&probe).await
 }
@@ -591,7 +656,10 @@ pub fn real_probe(mixed_port: u16) -> Probe {
                 .cookie_store(true)
                 .redirect(reqwest::redirect::Policy::default());
             match reqwest::Proxy::http(format!("http://127.0.0.1:{mixed_port}")) {
-                Ok(proxy) => builder.proxy(proxy).build().unwrap_or_else(|_| reqwest::Client::new()),
+                Ok(proxy) => builder
+                    .proxy(proxy)
+                    .build()
+                    .unwrap_or_else(|_| reqwest::Client::new()),
                 Err(_) => reqwest::Client::new(),
             }
         });
@@ -642,7 +710,9 @@ mod tests {
     use super::*;
 
     fn scripted(responses: Vec<ProbeResponse>) -> Probe {
-        let queue = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from(responses)));
+        let queue = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from(
+            responses,
+        )));
         Arc::new(move |_step: ProbeStep| {
             let next = queue
                 .lock()
@@ -655,10 +725,16 @@ mod tests {
 
     #[test]
     fn helpers_match_the_verge_semantics() {
-        assert_eq!(trace_location("fl=1\nloc=US\ntls=1.3"), Some("US".to_string()));
+        assert_eq!(
+            trace_location("fl=1\nloc=US\ntls=1.3"),
+            Some("US".to_string())
+        );
         assert_eq!(trace_location("loc=de\n"), Some("DE".to_string()));
         assert_eq!(trace_location("no loc here"), None);
-        assert_eq!(extract_quoted_field(r#"{"GL":"US"}"#, "gl"), Some("US".to_string()));
+        assert_eq!(
+            extract_quoted_field(r#"{"GL":"US"}"#, "gl"),
+            Some("US".to_string())
+        );
         assert_eq!(extract_quoted_field("noise", "GL"), None);
         assert_eq!(classify_blocked_status(Some(403)), Some("unsupported"));
         assert_eq!(classify_blocked_status(Some(451)), Some("unsupported"));
@@ -669,12 +745,24 @@ mod tests {
     #[tokio::test]
     async fn chatgpt_claude_gemini_follow_the_verge_verdicts() {
         // ChatGPT: unsupported_country body marks 不支持; clean body marks 支持.
-        let blocked = chatgpt(&scripted(vec![ProbeResponse::ok(200, "loc=US\n"), ProbeResponse::ok(200, "{\"unsupported_country_region_territory\":true}")])).await;
+        let blocked = chatgpt(&scripted(vec![
+            ProbeResponse::ok(200, "loc=US\n"),
+            ProbeResponse::ok(200, "{\"unsupported_country_region_territory\":true}"),
+        ]))
+        .await;
         assert_eq!(blocked.status, "unsupported");
         assert_eq!(blocked.region.as_deref(), Some("US"));
-        let clean = chatgpt(&scripted(vec![ProbeResponse::ok(200, ""), ProbeResponse::ok(200, "{}")])).await;
+        let clean = chatgpt(&scripted(vec![
+            ProbeResponse::ok(200, ""),
+            ProbeResponse::ok(200, "{}"),
+        ]))
+        .await;
         assert_eq!(clean.status, "supported");
-        let dead = chatgpt(&scripted(vec![ProbeResponse::failed(), ProbeResponse::failed()])).await;
+        let dead = chatgpt(&scripted(vec![
+            ProbeResponse::failed(),
+            ProbeResponse::failed(),
+        ]))
+        .await;
         assert_eq!(dead.status, "error");
         // Claude: blocked list → 不支持; missing trace → 测试失败.
         let blocked = claude(&scripted(vec![ProbeResponse::ok(200, "loc=HK\n")])).await;
@@ -689,20 +777,36 @@ mod tests {
         let page = format!("{}{}{}", "payload ", ",2,1,200,\"", "CHN\" tail");
         let blocked = gemini(&scripted(vec![ProbeResponse::ok(200, page)])).await;
         assert_eq!(blocked.status, "unsupported");
-        let ok = gemini(&scripted(vec![ProbeResponse::ok(200, format!("x,2,1,200,\"{}\"", "SGP"))])).await;
+        let ok = gemini(&scripted(vec![ProbeResponse::ok(
+            200,
+            format!("x,2,1,200,\"{}\"", "SGP"),
+        )]))
+        .await;
         assert_eq!(ok.status, "supported");
     }
 
     #[tokio::test]
     async fn grok_netflix_disney_follow_the_ts_fixtures() {
         // Grok: homepage gate + trace region.
-        let blocked = grok(&scripted(vec![ProbeResponse::ok(200, "loc=CN\n"), ProbeResponse::ok(200, "not available in your region")])).await;
+        let blocked = grok(&scripted(vec![
+            ProbeResponse::ok(200, "loc=CN\n"),
+            ProbeResponse::ok(200, "not available in your region"),
+        ]))
+        .await;
         assert_eq!(blocked.status, "unsupported");
-        let ok = grok(&scripted(vec![ProbeResponse::ok(200, "loc=US\n"), ProbeResponse::ok(200, "home")])).await;
+        let ok = grok(&scripted(vec![
+            ProbeResponse::ok(200, "loc=US\n"),
+            ProbeResponse::ok(200, "home"),
+        ]))
+        .await;
         assert_eq!(ok.status, "supported");
         // Netflix: fast.com CDN verdict, 403 → banned, titles gate → stage-3 region.
         let cdn_body = r#"{"targets":[{"location":{"country":"JP"}}]}"#;
-        let banned = netflix(&scripted(vec![ProbeResponse { status: Some(403), ..Default::default() }])).await;
+        let banned = netflix(&scripted(vec![ProbeResponse {
+            status: Some(403),
+            ..Default::default()
+        }]))
+        .await;
         assert_eq!(banned.status, "unsupported");
         let ok_case = netflix(&scripted(vec![
             ProbeResponse::ok(200, cdn_body),
@@ -715,9 +819,20 @@ mod tests {
         assert_eq!(ok_case.region.as_deref(), Some("JP"));
         let with_location = netflix(&scripted(vec![
             ProbeResponse::ok(200, cdn_body),
-            ProbeResponse { status: Some(301), body: String::new(), headers: Vec::new() },
+            ProbeResponse {
+                status: Some(301),
+                body: String::new(),
+                headers: Vec::new(),
+            },
             ProbeResponse::ok(200, ""),
-            ProbeResponse { status: Some(200), body: String::new(), headers: vec![("location".into(), json!("https://www.netflix.com/us/title/80018499"))] },
+            ProbeResponse {
+                status: Some(200),
+                body: String::new(),
+                headers: vec![(
+                    "location".into(),
+                    json!("https://www.netflix.com/us/title/80018499"),
+                )],
+            },
         ]))
         .await;
         assert_eq!(with_location.region.as_deref(), Some("US"));
@@ -737,7 +852,11 @@ mod tests {
         .await;
         assert_eq!(jp.status, "supported");
         assert_eq!(jp.region.as_deref(), Some("JP"));
-        let banned = disney_plus(&scripted(vec![ProbeResponse { status: Some(403), ..Default::default() }])).await;
+        let banned = disney_plus(&scripted(vec![ProbeResponse {
+            status: Some(403),
+            ..Default::default()
+        }]))
+        .await;
         assert_eq!(banned.status, "unsupported");
         let soon = disney_plus(&scripted(vec![
             ProbeResponse::ok(200, assertion),
@@ -759,34 +878,77 @@ mod tests {
     #[tokio::test]
     async fn tiktok_youtube_github_spotify_follow_the_ts_fixtures() {
         // TikTok: keyword blocklist → 不支持; trace region wins, homepage marker fallback.
-        let blocked = tiktok(&scripted(vec![ProbeResponse::ok(200, "loc=SG"), ProbeResponse::ok(200, "Access Denied")])).await;
+        let blocked = tiktok(&scripted(vec![
+            ProbeResponse::ok(200, "loc=SG"),
+            ProbeResponse::ok(200, "Access Denied"),
+        ]))
+        .await;
         assert_eq!(blocked.status, "unsupported");
-        let with_trace = tiktok(&scripted(vec![ProbeResponse::ok(200, "loc=SG"), ProbeResponse::ok(200, r#"{"region":"ALISG-1"}"#)])).await;
+        let with_trace = tiktok(&scripted(vec![
+            ProbeResponse::ok(200, "loc=SG"),
+            ProbeResponse::ok(200, r#"{"region":"ALISG-1"}"#),
+        ]))
+        .await;
         assert_eq!(with_trace.name, "TikTok");
         assert_eq!(with_trace.status, "supported");
         assert_eq!(with_trace.region.as_deref(), Some("SG"));
-        let fallback = tiktok(&scripted(vec![ProbeResponse::ok(200, ""), ProbeResponse::ok(200, r#"{"region":"ALISG-1"}"#)])).await;
+        let fallback = tiktok(&scripted(vec![
+            ProbeResponse::ok(200, ""),
+            ProbeResponse::ok(200, r#"{"region":"ALISG-1"}"#),
+        ]))
+        .await;
         assert_eq!(fallback.region.as_deref(), Some("ALISG"));
         // YouTube Premium: availability keywords + GL region.
-        let ok = youtube(&scripted(vec![ProbeResponse::ok(200, r#"Enjoy YouTube Premium ad-free {"GL":"US"}"#)])).await;
+        let ok = youtube(&scripted(vec![ProbeResponse::ok(
+            200,
+            r#"Enjoy YouTube Premium ad-free {"GL":"US"}"#,
+        )]))
+        .await;
         assert_eq!(ok.status, "supported");
         assert_eq!(ok.region.as_deref(), Some("US"));
-        let blocked = youtube(&scripted(vec![ProbeResponse::ok(200, r#"Premium is not available in your country {"GL":"CN"}"#)])).await;
+        let blocked = youtube(&scripted(vec![ProbeResponse::ok(
+            200,
+            r#"Premium is not available in your country {"GL":"CN"}"#,
+        )]))
+        .await;
         assert_eq!(blocked.status, "unsupported");
         assert_eq!(blocked.region.as_deref(), Some("CN"));
         // GitHub: homepage reachable → 支持 with trace region.
-        let ok = github(&scripted(vec![ProbeResponse::ok(200, "loc=NL"), ProbeResponse::ok(200, "github home")])).await;
+        let ok = github(&scripted(vec![
+            ProbeResponse::ok(200, "loc=NL"),
+            ProbeResponse::ok(200, "github home"),
+        ]))
+        .await;
         assert_eq!(ok.status, "supported");
         assert_eq!(ok.region.as_deref(), Some("NL"));
-        let blocked = github(&scripted(vec![ProbeResponse::ok(200, "loc=NL"), ProbeResponse { status: Some(451), ..Default::default() }])).await;
+        let blocked = github(&scripted(vec![
+            ProbeResponse::ok(200, "loc=NL"),
+            ProbeResponse {
+                status: Some(451),
+                ..Default::default()
+            },
+        ]))
+        .await;
         assert_eq!(blocked.status, "unsupported");
         // Spotify: country-selector API gate + market region.
-        let ok = spotify(&scripted(vec![ProbeResponse::ok(200, r#"{"countryCode":"US","lists":[]}"#)])).await;
+        let ok = spotify(&scripted(vec![ProbeResponse::ok(
+            200,
+            r#"{"countryCode":"US","lists":[]}"#,
+        )]))
+        .await;
         assert_eq!(ok.status, "supported");
         assert_eq!(ok.region.as_deref(), Some("US"));
-        let blocked = spotify(&scripted(vec![ProbeResponse::ok(200, "not available in your country")])).await;
+        let blocked = spotify(&scripted(vec![ProbeResponse::ok(
+            200,
+            "not available in your country",
+        )]))
+        .await;
         assert_eq!(blocked.status, "unsupported");
-        let banned = spotify(&scripted(vec![ProbeResponse { status: Some(403), ..Default::default() }])).await;
+        let banned = spotify(&scripted(vec![ProbeResponse {
+            status: Some(403),
+            ..Default::default()
+        }]))
+        .await;
         assert_eq!(banned.status, "unsupported");
     }
 
@@ -802,7 +964,14 @@ mod tests {
             assert_eq!(result.region, None);
         }
         // The wire shape.
-        let value = result_to_value(&ServiceUnlockResult { name: "GitHub".into(), status: "supported", region: Some("NL".into()) });
-        assert_eq!(value, json!({ "name": "GitHub", "status": "supported", "region": "NL" }));
+        let value = result_to_value(&ServiceUnlockResult {
+            name: "GitHub".into(),
+            status: "supported",
+            region: Some("NL".into()),
+        });
+        assert_eq!(
+            value,
+            json!({ "name": "GitHub", "status": "supported", "region": "NL" })
+        );
     }
 }

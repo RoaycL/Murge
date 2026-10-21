@@ -124,8 +124,9 @@ impl ModelStore {
             return Ok(()); // dev: memory-only
         };
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| IpcError::internal(format!("unable to create app-data directory: {error}")))?;
+            fs::create_dir_all(parent).map_err(|error| {
+                IpcError::internal(format!("unable to create app-data directory: {error}"))
+            })?;
         }
         let document = self.wrap(model.clone());
         let mut body = serde_json::to_string_pretty(&document).expect("model serializes");
@@ -141,7 +142,10 @@ impl ModelStore {
             Ok(()) => Ok(()),
             Err(error) => {
                 let _ = fs::remove_file(&tmp);
-                Err(IpcError::internal(format!("unable to persist {file}: {error}", file = self.file_name)))
+                Err(IpcError::internal(format!(
+                    "unable to persist {file}: {error}",
+                    file = self.file_name
+                )))
             }
         }
     }
@@ -167,8 +171,18 @@ impl ModelStores {
                 Some(Box::new(migrate_core_settings)),
             ),
             geodata: ModelStore::new(app_data_root.clone(), GEODATA_SETTINGS_FILE, None, None),
-            dns: ModelStore::new(app_data_root.clone(), DNS_ENHANCEMENT_FILE, Some("enhancement"), None),
-            sniffer: ModelStore::new(app_data_root.clone(), SNIFFER_ENHANCEMENT_FILE, Some("enhancement"), None),
+            dns: ModelStore::new(
+                app_data_root.clone(),
+                DNS_ENHANCEMENT_FILE,
+                Some("enhancement"),
+                None,
+            ),
+            sniffer: ModelStore::new(
+                app_data_root.clone(),
+                SNIFFER_ENHANCEMENT_FILE,
+                Some("enhancement"),
+                None,
+            ),
             tun_config: ModelStore::new(
                 app_data_root,
                 TUN_CONFIG_FILE,
@@ -188,13 +202,20 @@ fn get<'a>(source: &'a Value, key: &str) -> Option<&'a Value> {
 }
 
 fn as_bool(source: &Value, key: &str, fallback: bool) -> bool {
-    get(source, key).and_then(Value::as_bool).unwrap_or(fallback)
+    get(source, key)
+        .and_then(Value::as_bool)
+        .unwrap_or(fallback)
 }
 
 fn as_bool_defaulting(source: &Value, key: &str, default_value: &Value) -> bool {
     get(source, key)
         .and_then(Value::as_bool)
-        .unwrap_or_else(|| default_value.get(key).and_then(Value::as_bool).unwrap_or(false))
+        .unwrap_or_else(|| {
+            default_value
+                .get(key)
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
 }
 
 fn as_string(source: &Value, key: &str, fallback: &str) -> String {
@@ -206,11 +227,21 @@ fn as_string(source: &Value, key: &str, fallback: &str) -> String {
 
 fn as_string_list_defaulting(source: &Value, key: &str, default_value: &Value) -> Vec<String> {
     match get(source, key).and_then(Value::as_array) {
-        Some(items) => items.iter().filter_map(Value::as_str).map(str::to_string).collect(),
+        Some(items) => items
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect(),
         None => default_value
             .get(key)
             .and_then(Value::as_array)
-            .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
             .unwrap_or_default(),
     }
 }
@@ -271,7 +302,8 @@ pub fn migrate_core_settings(raw: Value) -> Value {
     if !raw.is_object() {
         return raw;
     }
-    let versioned = get(&raw, "storageVersion").and_then(Value::as_i64) == Some(CORE_SETTINGS_STORAGE_VERSION);
+    let versioned =
+        get(&raw, "storageVersion").and_then(Value::as_i64) == Some(CORE_SETTINGS_STORAGE_VERSION);
     if versioned {
         return raw;
     }
@@ -291,7 +323,11 @@ pub fn migrate_core_settings(raw: Value) -> Value {
 
 pub fn coerce_core_settings(input: &Value) -> Value {
     let defaults = core_defaults();
-    let source = if input.is_object() { input } else { &Value::Null };
+    let source = if input.is_object() {
+        input
+    } else {
+        &Value::Null
+    };
     let as_enum = |key: &str, allowed: &[&str]| -> String {
         let candidate = get(source, key).and_then(Value::as_str).unwrap_or("");
         if allowed.contains(&candidate) {
@@ -307,14 +343,46 @@ pub fn coerce_core_settings(input: &Value) -> Value {
         }
     };
     let mut model = Map::new();
-    set_object(&mut model, "enabled", json!(as_bool_defaulting(source, "enabled", &defaults)));
-    set_object(&mut model, "logLevel", json!(as_enum("logLevel", &LOG_LEVELS)));
-    set_object(&mut model, "ipv6", json!(as_bool_defaulting(source, "ipv6", &defaults)));
-    set_object(&mut model, "tcpConcurrent", json!(as_bool_defaulting(source, "tcpConcurrent", &defaults)));
-    set_object(&mut model, "unifiedDelay", json!(as_bool_defaulting(source, "unifiedDelay", &defaults)));
-    set_object(&mut model, "storeSelected", json!(as_bool_defaulting(source, "storeSelected", &defaults)));
-    set_object(&mut model, "storeFakeIp", json!(as_bool_defaulting(source, "storeFakeIp", &defaults)));
-    set_object(&mut model, "findProcessMode", json!(as_enum("findProcessMode", &FIND_PROCESS_MODES)));
+    set_object(
+        &mut model,
+        "enabled",
+        json!(as_bool_defaulting(source, "enabled", &defaults)),
+    );
+    set_object(
+        &mut model,
+        "logLevel",
+        json!(as_enum("logLevel", &LOG_LEVELS)),
+    );
+    set_object(
+        &mut model,
+        "ipv6",
+        json!(as_bool_defaulting(source, "ipv6", &defaults)),
+    );
+    set_object(
+        &mut model,
+        "tcpConcurrent",
+        json!(as_bool_defaulting(source, "tcpConcurrent", &defaults)),
+    );
+    set_object(
+        &mut model,
+        "unifiedDelay",
+        json!(as_bool_defaulting(source, "unifiedDelay", &defaults)),
+    );
+    set_object(
+        &mut model,
+        "storeSelected",
+        json!(as_bool_defaulting(source, "storeSelected", &defaults)),
+    );
+    set_object(
+        &mut model,
+        "storeFakeIp",
+        json!(as_bool_defaulting(source, "storeFakeIp", &defaults)),
+    );
+    set_object(
+        &mut model,
+        "findProcessMode",
+        json!(as_enum("findProcessMode", &FIND_PROCESS_MODES)),
+    );
     set_object(
         &mut model,
         "interfaceName",
@@ -329,24 +397,49 @@ pub fn coerce_core_settings(input: &Value) -> Value {
     set_object(
         &mut model,
         "controllerHost",
-        json!(if get(source, "controllerHost").and_then(Value::as_str) == Some("0.0.0.0") {
-            "0.0.0.0"
-        } else {
-            "127.0.0.1"
-        }),
+        json!(
+            if get(source, "controllerHost").and_then(Value::as_str) == Some("0.0.0.0") {
+                "0.0.0.0"
+            } else {
+                "127.0.0.1"
+            }
+        ),
     );
-    set_object(&mut model, "controllerPort", json!(as_port("controllerPort")));
+    set_object(
+        &mut model,
+        "controllerPort",
+        json!(as_port("controllerPort")),
+    );
     let secret_valid = get(source, "controllerSecret")
         .and_then(Value::as_str)
-        .map(|secret| secret.is_empty() || regex::Regex::new("^[0-9a-f]{64}$").expect("secret regex").is_match(secret))
+        .map(|secret| {
+            secret.is_empty()
+                || regex::Regex::new("^[0-9a-f]{64}$")
+                    .expect("secret regex")
+                    .is_match(secret)
+        })
         .unwrap_or(false);
     set_object(
         &mut model,
         "controllerSecret",
-        json!(if secret_valid { get(source, "controllerSecret").and_then(Value::as_str).unwrap_or("") } else { "" }),
+        json!(if secret_valid {
+            get(source, "controllerSecret")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+        } else {
+            ""
+        }),
     );
-    set_object(&mut model, "controllerPanel", json!(as_bool_defaulting(source, "controllerPanel", &defaults)));
-    set_object(&mut model, "allowLan", json!(as_bool_defaulting(source, "allowLan", &defaults)));
+    set_object(
+        &mut model,
+        "controllerPanel",
+        json!(as_bool_defaulting(source, "controllerPanel", &defaults)),
+    );
+    set_object(
+        &mut model,
+        "allowLan",
+        json!(as_bool_defaulting(source, "allowLan", &defaults)),
+    );
 
     // Duplicate active ports reset all four (the TS conflict handling).
     let ports: Vec<i64> = ["mixedPort", "socksPort", "httpPort", "controllerPort"]
@@ -367,8 +460,16 @@ pub fn build_core_settings_block(settings: &Value) -> Value {
     let mut block = Map::new();
     set_object(&mut block, "log-level", settings["logLevel"].clone());
     set_object(&mut block, "ipv6", settings["ipv6"].clone());
-    set_object(&mut block, "tcp-concurrent", settings["tcpConcurrent"].clone());
-    set_object(&mut block, "unified-delay", settings["unifiedDelay"].clone());
+    set_object(
+        &mut block,
+        "tcp-concurrent",
+        settings["tcpConcurrent"].clone(),
+    );
+    set_object(
+        &mut block,
+        "unified-delay",
+        settings["unifiedDelay"].clone(),
+    );
     set_object(
         &mut block,
         "profile",
@@ -377,11 +478,23 @@ pub fn build_core_settings_block(settings: &Value) -> Value {
             "store-fake-ip": settings["storeFakeIp"]
         }),
     );
-    set_object(&mut block, "find-process-mode", settings["findProcessMode"].clone());
+    set_object(
+        &mut block,
+        "find-process-mode",
+        settings["findProcessMode"].clone(),
+    );
     // interface-name only when set (an empty value keeps automatic route
     // selection, exactly like the TS conditional spread).
-    if !settings["interfaceName"].as_str().map(str::is_empty).unwrap_or(true) {
-        set_object(&mut block, "interface-name", settings["interfaceName"].clone());
+    if !settings["interfaceName"]
+        .as_str()
+        .map(str::is_empty)
+        .unwrap_or(true)
+    {
+        set_object(
+            &mut block,
+            "interface-name",
+            settings["interfaceName"].clone(),
+        );
     }
     Value::Object(block)
 }
@@ -415,7 +528,11 @@ pub fn core_preview_text(input: &Value) -> String {
     set_object(
         &mut block,
         "bind-address",
-        json!(if settings["allowLan"].as_bool() == Some(true) { "*" } else { "127.0.0.1" }),
+        json!(if settings["allowLan"].as_bool() == Some(true) {
+            "*"
+        } else {
+            "127.0.0.1"
+        }),
     );
     if settings["controllerPanel"].as_bool() == Some(true) {
         set_object(&mut block, "external-ui", json!("ui"));
@@ -480,10 +597,18 @@ fn is_valid_source_url(value: &str) -> bool {
 
 pub fn coerce_geodata_settings(input: &Value) -> Value {
     let defaults = geodata_defaults();
-    let source = if input.is_object() { input } else { &Value::Null };
+    let source = if input.is_object() {
+        input
+    } else {
+        &Value::Null
+    };
     let as_interval = || -> i64 {
         match get(source, "updateIntervalHours").and_then(is_integer_number) {
-            Some(hours) if (MIN_UPDATE_INTERVAL_HOURS..=MAX_UPDATE_INTERVAL_HOURS).contains(&hours) => hours,
+            Some(hours)
+                if (MIN_UPDATE_INTERVAL_HOURS..=MAX_UPDATE_INTERVAL_HOURS).contains(&hours) =>
+            {
+                hours
+            }
             _ => DEFAULT_UPDATE_INTERVAL_HOURS,
         }
     };
@@ -504,32 +629,50 @@ pub fn coerce_geodata_settings(input: &Value) -> Value {
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    let urls = Map::from_iter(
-        default_geox_urls()
-            .as_object()
-            .unwrap()
-            .iter()
-            .map(|(key, fallback)| {
-                let candidate = geox_urls.get(key).and_then(Value::as_str).unwrap_or("");
-                (
-                    key.clone(),
-                    json!(if is_valid_source_url(candidate) && !candidate.trim().is_empty() {
+    let urls = Map::from_iter(default_geox_urls().as_object().unwrap().iter().map(
+        |(key, fallback)| {
+            let candidate = geox_urls.get(key).and_then(Value::as_str).unwrap_or("");
+            (
+                key.clone(),
+                json!(
+                    if is_valid_source_url(candidate) && !candidate.trim().is_empty() {
                         candidate.trim().to_string()
                     } else {
                         fallback.as_str().unwrap_or_default().to_string()
-                    }),
-                )
-            }),
-    );
+                    }
+                ),
+            )
+        },
+    ));
     let mut model = Map::new();
-    set_object(&mut model, "enabled", json!(as_bool_defaulting(source, "enabled", &defaults)));
-    set_object(&mut model, "geodataMode", json!(as_bool_defaulting(source, "geodataMode", &defaults)));
-    set_object(&mut model, "geoipMode", json!(if GEOIP_MODES.contains(&get(source, "geoipMode").and_then(Value::as_str).unwrap_or("")) {
-        get(source, "geoipMode").and_then(Value::as_str).unwrap()
-    } else {
-        "standard"
-    }));
-    set_object(&mut model, "autoUpdate", json!(as_bool_defaulting(source, "autoUpdate", &defaults)));
+    set_object(
+        &mut model,
+        "enabled",
+        json!(as_bool_defaulting(source, "enabled", &defaults)),
+    );
+    set_object(
+        &mut model,
+        "geodataMode",
+        json!(as_bool_defaulting(source, "geodataMode", &defaults)),
+    );
+    set_object(
+        &mut model,
+        "geoipMode",
+        json!(if GEOIP_MODES.contains(
+            &get(source, "geoipMode")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+        ) {
+            get(source, "geoipMode").and_then(Value::as_str).unwrap()
+        } else {
+            "standard"
+        }),
+    );
+    set_object(
+        &mut model,
+        "autoUpdate",
+        json!(as_bool_defaulting(source, "autoUpdate", &defaults)),
+    );
     set_object(&mut model, "updateIntervalHours", json!(as_interval()));
     set_object(&mut model, "geoxUrl", json!(as_url()));
     set_object(&mut model, "geoxUrls", Value::Object(urls));
@@ -596,46 +739,105 @@ pub fn is_valid_port_token(value: &str) -> bool {
 
 pub fn coerce_sniffer_enhancement(input: &Value) -> Value {
     let defaults = sniffer_defaults();
-    let source = if input.is_object() { input } else { &Value::Null };
-    let as_string_list = |key: &str| -> Vec<String> {
-        as_string_list_defaulting(source, key, &defaults)
+    let source = if input.is_object() {
+        input
+    } else {
+        &Value::Null
     };
+    let as_string_list =
+        |key: &str| -> Vec<String> { as_string_list_defaulting(source, key, &defaults) };
     let ports_raw = get(source, "ports").cloned().unwrap_or(Value::Null);
     let as_ports = |key: &str| -> Vec<String> {
         ports_raw
             .get(key)
             .and_then(Value::as_array)
-            .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
             .unwrap_or_else(|| {
                 defaults["ports"][key]
                     .as_array()
-                    .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string)
+                            .collect()
+                    })
                     .unwrap_or_default()
             })
     };
     let mut model = Map::new();
-    set_object(&mut model, "enabled", json!(as_bool_defaulting(source, "enabled", &defaults)));
-    set_object(&mut model, "overrideDestination", json!(as_bool_defaulting(source, "overrideDestination", &defaults)));
-    set_object(&mut model, "forceDnsMapping", json!(as_bool_defaulting(source, "forceDnsMapping", &defaults)));
-    set_object(&mut model, "parsePureIp", json!(as_bool_defaulting(source, "parsePureIp", &defaults)));
+    set_object(
+        &mut model,
+        "enabled",
+        json!(as_bool_defaulting(source, "enabled", &defaults)),
+    );
+    set_object(
+        &mut model,
+        "overrideDestination",
+        json!(as_bool_defaulting(source, "overrideDestination", &defaults)),
+    );
+    set_object(
+        &mut model,
+        "forceDnsMapping",
+        json!(as_bool_defaulting(source, "forceDnsMapping", &defaults)),
+    );
+    set_object(
+        &mut model,
+        "parsePureIp",
+        json!(as_bool_defaulting(source, "parsePureIp", &defaults)),
+    );
     set_object(
         &mut model,
         "ports",
         json!({ "http": as_ports("http"), "tls": as_ports("tls"), "quic": as_ports("quic") }),
     );
-    set_object(&mut model, "skipDomain", json!(as_string_list("skipDomain")));
-    set_object(&mut model, "forceDomain", json!(as_string_list("forceDomain")));
-    set_object(&mut model, "skipSrcAddress", json!(as_string_list("skipSrcAddress")));
-    set_object(&mut model, "skipDstAddress", json!(as_string_list("skipDstAddress")));
+    set_object(
+        &mut model,
+        "skipDomain",
+        json!(as_string_list("skipDomain")),
+    );
+    set_object(
+        &mut model,
+        "forceDomain",
+        json!(as_string_list("forceDomain")),
+    );
+    set_object(
+        &mut model,
+        "skipSrcAddress",
+        json!(as_string_list("skipSrcAddress")),
+    );
+    set_object(
+        &mut model,
+        "skipDstAddress",
+        json!(as_string_list("skipDstAddress")),
+    );
     Value::Object(model)
 }
 
 pub fn build_sniffer_block(enhancement: &Value) -> Value {
     let mut block = Map::new();
     set_object(&mut block, "enable", enhancement["enabled"].clone());
-    set_object(&mut block, "override-destination", enhancement["overrideDestination"].clone());
-    set_object(&mut block, "force-dns-mapping", enhancement["forceDnsMapping"].clone());
-    set_object(&mut block, "parse-pure-ip", enhancement["parsePureIp"].clone());
+    set_object(
+        &mut block,
+        "override-destination",
+        enhancement["overrideDestination"].clone(),
+    );
+    set_object(
+        &mut block,
+        "force-dns-mapping",
+        enhancement["forceDnsMapping"].clone(),
+    );
+    set_object(
+        &mut block,
+        "parse-pure-ip",
+        enhancement["parsePureIp"].clone(),
+    );
     let mut sniff = Map::new();
     for (key, label) in [("http", "HTTP"), ("tls", "TLS"), ("quic", "QUIC")] {
         let ports = &enhancement["ports"][key];
@@ -700,7 +902,10 @@ pub fn migrate_tun_config(raw: Value) -> Value {
 }
 
 fn is_valid_tun_stack(value: &Value) -> bool {
-    matches!(value.as_str(), Some("mixed") | Some("system") | Some("gvisor"))
+    matches!(
+        value.as_str(),
+        Some("mixed") | Some("system") | Some("gvisor")
+    )
 }
 
 fn is_valid_tun_device(value: &str) -> bool {
@@ -760,7 +965,11 @@ pub fn is_valid_dns_hijack_entry(value: &str) -> bool {
 
 pub fn coerce_tun_config(input: &Value) -> Value {
     let defaults = tun_defaults();
-    let source = if input.is_object() { input } else { &Value::Null };
+    let source = if input.is_object() {
+        input
+    } else {
+        &Value::Null
+    };
     let filter_list = |key: &str, validator: fn(&str) -> bool| -> Vec<String> {
         get(source, key)
             .and_then(Value::as_array)
@@ -779,11 +988,17 @@ pub fn coerce_tun_config(input: &Value) -> Value {
         .filter(|mtu| is_valid_tun_mtu(*mtu))
         .unwrap_or_else(|| defaults["mtu"].as_i64().unwrap_or(1500));
     let mut model = Map::new();
-    set_object(&mut model, "stack", json!(if is_valid_tun_stack(get(source, "stack").unwrap_or(&Value::Null)) {
-        get(source, "stack").and_then(Value::as_str).unwrap()
-    } else {
-        "mixed"
-    }));
+    set_object(
+        &mut model,
+        "stack",
+        json!(
+            if is_valid_tun_stack(get(source, "stack").unwrap_or(&Value::Null)) {
+                get(source, "stack").and_then(Value::as_str).unwrap()
+            } else {
+                "mixed"
+            }
+        ),
+    );
     set_object(
         &mut model,
         "device",
@@ -793,9 +1008,21 @@ pub fn coerce_tun_config(input: &Value) -> Value {
         }),
     );
     set_object(&mut model, "mtu", json!(mtu));
-    set_object(&mut model, "strictRoute", json!(as_bool(source, "strictRoute", false)));
-    set_object(&mut model, "autoRoute", json!(as_bool(source, "autoRoute", true)));
-    set_object(&mut model, "autoDetectInterface", json!(as_bool(source, "autoDetectInterface", true)));
+    set_object(
+        &mut model,
+        "strictRoute",
+        json!(as_bool(source, "strictRoute", false)),
+    );
+    set_object(
+        &mut model,
+        "autoRoute",
+        json!(as_bool(source, "autoRoute", true)),
+    );
+    set_object(
+        &mut model,
+        "autoDetectInterface",
+        json!(as_bool(source, "autoDetectInterface", true)),
+    );
     // Missing list fields fall back to the curated defaults for dnsHijack and
     // to empty for the route lists (a present list is filtered, not replaced).
     let dns_hijack = match get(source, "dnsHijack") {
@@ -805,11 +1032,27 @@ pub fn coerce_tun_config(input: &Value) -> Value {
             .filter(|item| is_valid_dns_hijack_entry(item))
             .map(str::to_string)
             .collect::<Vec<_>>(),
-        _ => defaults["dnsHijack"].as_array().map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default(),
+        _ => defaults["dnsHijack"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default(),
     };
     set_object(&mut model, "dnsHijack", json!(dns_hijack));
-    set_object(&mut model, "routeAddress", json!(filter_list("routeAddress", is_valid_address_or_cidr)));
-    set_object(&mut model, "routeExcludeAddress", json!(filter_list("routeExcludeAddress", is_valid_address_or_cidr)));
+    set_object(
+        &mut model,
+        "routeAddress",
+        json!(filter_list("routeAddress", is_valid_address_or_cidr)),
+    );
+    set_object(
+        &mut model,
+        "routeExcludeAddress",
+        json!(filter_list("routeExcludeAddress", is_valid_address_or_cidr)),
+    );
     Value::Object(model)
 }
 
@@ -818,14 +1061,25 @@ pub fn coerce_tun_config(input: &Value) -> Value {
 pub fn build_tun_block(config: &Value) -> Value {
     let mut block = Map::new();
     set_object(&mut block, "auto-route", config["autoRoute"].clone());
-    set_object(&mut block, "auto-detect-interface", config["autoDetectInterface"].clone());
+    set_object(
+        &mut block,
+        "auto-detect-interface",
+        config["autoDetectInterface"].clone(),
+    );
     set_object(&mut block, "strict-route", config["strictRoute"].clone());
     set_object(&mut block, "device", config["device"].clone());
     set_object(&mut block, "stack", config["stack"].clone());
     set_object(&mut block, "mtu", config["mtu"].clone());
     set_object(&mut block, "dns-hijack", config["dnsHijack"].clone());
-    for (key, block_key) in [("routeAddress", "route-address"), ("routeExcludeAddress", "route-exclude-address")] {
-        if config[key].as_array().map(|a| !a.is_empty()).unwrap_or(false) {
+    for (key, block_key) in [
+        ("routeAddress", "route-address"),
+        ("routeExcludeAddress", "route-exclude-address"),
+    ] {
+        if config[key]
+            .as_array()
+            .map(|a| !a.is_empty())
+            .unwrap_or(false)
+        {
             set_object(&mut block, block_key, config[key].clone());
         }
     }
@@ -887,13 +1141,21 @@ pub fn is_valid_nameserver(value: &str) -> bool {
         return is_valid_ip(v) || is_valid_hostname(v);
     };
     if scheme.is_empty()
-        || !scheme.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false)
-        || !scheme.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '.' || c == '-')
+        || !scheme
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_alphabetic())
+            .unwrap_or(false)
+        || !scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '.' || c == '-')
     {
         // Not a scheme match — fall back to the bare-host forms.
         return is_valid_ip(v) || is_valid_hostname(v);
     }
-    if !["udp", "tcp", "tls", "https", "h3", "quic", "dhcp"].contains(&scheme.to_lowercase().as_str()) {
+    if !["udp", "tcp", "tls", "https", "h3", "quic", "dhcp"]
+        .contains(&scheme.to_lowercase().as_str())
+    {
         return false;
     }
     if rest.is_empty() {
@@ -947,7 +1209,12 @@ pub fn is_valid_default_nameserver(value: &str) -> bool {
         None => authority,
     };
     let host = match host.rfind(':') {
-        Some(colon) if host[colon + 1..].bytes().all(|b| b.is_ascii_digit()) && !host[colon + 1..].is_empty() => &host[..colon],
+        Some(colon)
+            if host[colon + 1..].bytes().all(|b| b.is_ascii_digit())
+                && !host[colon + 1..].is_empty() =>
+        {
+            &host[..colon]
+        }
         _ => host,
     };
     let host = host.trim_start_matches('[').trim_end_matches(']');
@@ -968,7 +1235,11 @@ pub fn redact_server(value: &str) -> String {
 
 pub fn coerce_dns_enhancement(input: &Value) -> Value {
     let defaults = dns_defaults();
-    let source = if input.is_object() { input } else { &Value::Null };
+    let source = if input.is_object() {
+        input
+    } else {
+        &Value::Null
+    };
     let as_string_list = |key: &str| as_string_list_defaulting(source, key, &defaults);
     let as_pairs = |key: &str, server_key: &str| -> Vec<Value> {
         get(source, key)
@@ -987,33 +1258,86 @@ pub fn coerce_dns_enhancement(input: &Value) -> Value {
         "redir-host".to_string()
     } else {
         match get(source, "enhancedMode").and_then(Value::as_str) {
-            Some("fake-ip") | Some("redir-host") => get(source, "enhancedMode").and_then(Value::as_str).unwrap().to_string(),
+            Some("fake-ip") | Some("redir-host") => get(source, "enhancedMode")
+                .and_then(Value::as_str)
+                .unwrap()
+                .to_string(),
             _ => "fake-ip".to_string(),
         }
     };
     let fake_ip_filter_mode = match get(source, "fakeIpFilterMode").and_then(Value::as_str) {
-        Some("blacklist") | Some("whitelist") => get(source, "fakeIpFilterMode").and_then(Value::as_str).unwrap().to_string(),
+        Some("blacklist") | Some("whitelist") => get(source, "fakeIpFilterMode")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string(),
         _ => "blacklist".to_string(),
     };
     let mut model = Map::new();
-    set_object(&mut model, "enabled", json!(as_bool_defaulting(source, "enabled", &defaults)));
+    set_object(
+        &mut model,
+        "enabled",
+        json!(as_bool_defaulting(source, "enabled", &defaults)),
+    );
     set_object(&mut model, "enhancedMode", json!(enhanced_mode));
-    set_object(&mut model, "ipv6", json!(as_bool_defaulting(source, "ipv6", &defaults)));
-    set_object(&mut model, "respectRules", json!(as_bool_defaulting(source, "respectRules", &defaults)));
-    set_object(&mut model, "fakeIpRange", json!(as_string(source, "fakeIpRange", "198.18.0.1/16")));
+    set_object(
+        &mut model,
+        "ipv6",
+        json!(as_bool_defaulting(source, "ipv6", &defaults)),
+    );
+    set_object(
+        &mut model,
+        "respectRules",
+        json!(as_bool_defaulting(source, "respectRules", &defaults)),
+    );
+    set_object(
+        &mut model,
+        "fakeIpRange",
+        json!(as_string(source, "fakeIpRange", "198.18.0.1/16")),
+    );
     set_object(&mut model, "fakeIpFilterMode", json!(fake_ip_filter_mode));
-    set_object(&mut model, "fakeIpFilter", json!(as_string_list("fakeIpFilter")));
-    set_object(&mut model, "useHosts", json!(as_bool_defaulting(source, "useHosts", &defaults)));
+    set_object(
+        &mut model,
+        "fakeIpFilter",
+        json!(as_string_list("fakeIpFilter")),
+    );
+    set_object(
+        &mut model,
+        "useHosts",
+        json!(as_bool_defaulting(source, "useHosts", &defaults)),
+    );
     set_object(&mut model, "hosts", json!(as_pairs("hosts", "address")));
-    set_object(&mut model, "defaultNameserver", json!(as_string_list("defaultNameserver")));
-    set_object(&mut model, "proxyServerNameserver", json!(as_string_list("proxyServerNameserver")));
-    set_object(&mut model, "directNameserver", json!(as_string_list("directNameserver")));
-    set_object(&mut model, "nameserver", json!(as_string_list("nameserver")));
+    set_object(
+        &mut model,
+        "defaultNameserver",
+        json!(as_string_list("defaultNameserver")),
+    );
+    set_object(
+        &mut model,
+        "proxyServerNameserver",
+        json!(as_string_list("proxyServerNameserver")),
+    );
+    set_object(
+        &mut model,
+        "directNameserver",
+        json!(as_string_list("directNameserver")),
+    );
+    set_object(
+        &mut model,
+        "nameserver",
+        json!(as_string_list("nameserver")),
+    );
     set_object(&mut model, "fallback", json!(as_string_list("fallback")));
-    set_object(&mut model, "nameserverPolicy", json!(as_pairs("nameserverPolicy", "server")));
+    set_object(
+        &mut model,
+        "nameserverPolicy",
+        json!(as_pairs("nameserverPolicy", "server")),
+    );
 
     // A stale persisted model must not create a DNS routing bootstrap loop.
-    let proxy_servers = model["proxyServerNameserver"].as_array().cloned().unwrap_or_default();
+    let proxy_servers = model["proxyServerNameserver"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     if model["respectRules"].as_bool() == Some(true) && proxy_servers.is_empty() {
         set_object(&mut model, "respectRules", json!(false));
     }
@@ -1023,13 +1347,29 @@ pub fn coerce_dns_enhancement(input: &Value) -> Value {
 pub fn build_dns_block(enhancement: &Value) -> Value {
     let mut block = Map::new();
     set_object(&mut block, "enable", enhancement["enabled"].clone());
-    set_object(&mut block, "enhanced-mode", enhancement["enhancedMode"].clone());
+    set_object(
+        &mut block,
+        "enhanced-mode",
+        enhancement["enhancedMode"].clone(),
+    );
     set_object(&mut block, "ipv6", enhancement["ipv6"].clone());
-    set_object(&mut block, "respect-rules", enhancement["respectRules"].clone());
+    set_object(
+        &mut block,
+        "respect-rules",
+        enhancement["respectRules"].clone(),
+    );
     set_object(&mut block, "use-hosts", enhancement["useHosts"].clone());
     if enhancement["enhancedMode"] == json!("fake-ip") {
-        set_object(&mut block, "fake-ip-range", enhancement["fakeIpRange"].clone());
-        set_object(&mut block, "fake-ip-filter-mode", enhancement["fakeIpFilterMode"].clone());
+        set_object(
+            &mut block,
+            "fake-ip-range",
+            enhancement["fakeIpRange"].clone(),
+        );
+        set_object(
+            &mut block,
+            "fake-ip-filter-mode",
+            enhancement["fakeIpFilterMode"].clone(),
+        );
         let filter = &enhancement["fakeIpFilter"];
         if filter.as_array().map(|a| !a.is_empty()).unwrap_or(false) {
             set_object(&mut block, "fake-ip-filter", filter.clone());
@@ -1039,7 +1379,9 @@ pub fn build_dns_block(enhancement: &Value) -> Value {
     if hosts.as_array().map(|a| !a.is_empty()).unwrap_or(false) {
         let mut host_map = Map::new();
         for entry in hosts.as_array().unwrap() {
-            if let (Some(domain), Some(address)) = (entry["domain"].as_str(), entry["address"].as_str()) {
+            if let (Some(domain), Some(address)) =
+                (entry["domain"].as_str(), entry["address"].as_str())
+            {
                 host_map.insert(domain.to_string(), json!(address));
             }
         }
@@ -1061,7 +1403,9 @@ pub fn build_dns_block(enhancement: &Value) -> Value {
     if policy.as_array().map(|a| !a.is_empty()).unwrap_or(false) {
         let mut policy_map = Map::new();
         for entry in policy.as_array().unwrap() {
-            if let (Some(domain), Some(server)) = (entry["domain"].as_str(), entry["server"].as_str()) {
+            if let (Some(domain), Some(server)) =
+                (entry["domain"].as_str(), entry["server"].as_str())
+            {
                 policy_map.insert(domain.to_string(), json!(server));
             }
         }
@@ -1073,7 +1417,13 @@ pub fn build_dns_block(enhancement: &Value) -> Value {
 fn redact_dns_enhancement(enhancement: &Value) -> Value {
     let mut model = enhancement.clone();
     if let Some(object) = model.as_object_mut() {
-        for key in ["defaultNameserver", "proxyServerNameserver", "directNameserver", "nameserver", "fallback"] {
+        for key in [
+            "defaultNameserver",
+            "proxyServerNameserver",
+            "directNameserver",
+            "nameserver",
+            "fallback",
+        ] {
             if let Some(list) = object.get_mut(key).and_then(Value::as_array_mut) {
                 *list = list
                     .iter()
@@ -1081,7 +1431,10 @@ fn redact_dns_enhancement(enhancement: &Value) -> Value {
                     .collect();
             }
         }
-        if let Some(policy) = object.get_mut("nameserverPolicy").and_then(Value::as_array_mut) {
+        if let Some(policy) = object
+            .get_mut("nameserverPolicy")
+            .and_then(Value::as_array_mut)
+        {
             *policy = policy
                 .iter()
                 .map(|entry| {
@@ -1097,7 +1450,9 @@ fn redact_dns_enhancement(enhancement: &Value) -> Value {
 }
 
 pub fn dns_preview_text(input: &Value) -> String {
-    yaml_stringify(json!({ "dns": build_dns_block(&redact_dns_enhancement(&coerce_dns_enhancement(input))) }))
+    yaml_stringify(
+        json!({ "dns": build_dns_block(&redact_dns_enhancement(&coerce_dns_enhancement(input))) }),
+    )
 }
 
 #[cfg(test)]
@@ -1131,7 +1486,9 @@ mod tests {
         let coerced = coerce_core_settings(&json!({ "mixedPort": 80, "socksPort": "x" }));
         assert_eq!(coerced["mixedPort"], 7890);
         assert_eq!(coerced["socksPort"], 7891);
-        let duplicated = coerce_core_settings(&json!({ "mixedPort": 9000, "socksPort": 9000, "httpPort": 9001, "controllerPort": 9002 }));
+        let duplicated = coerce_core_settings(
+            &json!({ "mixedPort": 9000, "socksPort": 9000, "httpPort": 9001, "controllerPort": 9002 }),
+        );
         assert_eq!(duplicated["mixedPort"], 7890);
         assert_eq!(duplicated["socksPort"], 7891);
         assert_eq!(duplicated["httpPort"], 7892);
@@ -1147,7 +1504,8 @@ mod tests {
         assert_eq!(migrated["mixedPort"], 7890);
         assert_eq!(migrated["httpPort"], 7892);
         // A custom combination is untouched.
-        let custom = json!({ "mixedPort": 7892, "socksPort": 7891, "httpPort": 7890, "storageVersion": 2 });
+        let custom =
+            json!({ "mixedPort": 7892, "socksPort": 7891, "httpPort": 7890, "storageVersion": 2 });
         assert_eq!(migrate_core_settings(custom)["mixedPort"], 7892);
     }
 
@@ -1160,8 +1518,14 @@ mod tests {
             None,
             Some(Box::new(migrate_core_settings)),
         );
-        assert_eq!(store.get(), Value::Null, "empty file -> defaults at service layer");
-        let model = store.set(&json!({ "enabled": true }), coerce_core_settings).unwrap();
+        assert_eq!(
+            store.get(),
+            Value::Null,
+            "empty file -> defaults at service layer"
+        );
+        let model = store
+            .set(&json!({ "enabled": true }), coerce_core_settings)
+            .unwrap();
         assert_eq!(model["enabled"], true);
         let raw = fs::read_to_string(temp.path().join(CORE_SETTINGS_FILE)).unwrap();
         assert!(raw.starts_with("{\n  \"enabled\": true"), "{}", raw);
@@ -1171,9 +1535,14 @@ mod tests {
 
     #[test]
     fn core_preview_includes_listener_keys_and_conditional_block() {
-        let text = core_preview_text(&json!({ "enabled": true, "mixedPort": 7893, "allowLan": true, "interfaceName": "wlan0" }));
+        let text = core_preview_text(
+            &json!({ "enabled": true, "mixedPort": 7893, "allowLan": true, "interfaceName": "wlan0" }),
+        );
         assert!(text.contains("mixed-port: 7893"), "{text}");
-        assert!(text.contains("external-controller: \"127.0.0.1:9090\""), "{text}");
+        assert!(
+            text.contains("external-controller: \"127.0.0.1:9090\""),
+            "{text}"
+        );
         assert!(text.contains("bind-address: \"*\""), "{text}");
         assert!(text.contains("log-level: info"), "{text}");
         assert!(text.contains("interface-name: wlan0"), "{text}");
@@ -1182,7 +1551,8 @@ mod tests {
         let text = core_preview_text(&json!({ "enabled": false }));
         assert!(text.contains("secret: （下次启动时自动生成）"), "{text}");
         assert!(!text.contains("log-level"), "{text}");
-        let text = core_preview_text(&json!({ "enabled": true, "controllerSecret": "c".repeat(64) }));
+        let text =
+            core_preview_text(&json!({ "enabled": true, "controllerSecret": "c".repeat(64) }));
         assert!(text.contains("log-level"), "{text}");
         assert!(!text.contains("（下次启动时自动生成）"), "{text}");
     }
@@ -1198,9 +1568,19 @@ mod tests {
             "geoxUrls": { "geoip": "ftp://bad", "mmdb": " https://ok.example.com/x " }
         }));
         assert_eq!(coerced["geoipMode"], "memconservative");
-        assert_eq!(coerced["updateIntervalHours"], 24, "out-of-bounds interval falls back");
-        assert_eq!(coerced["geoxUrls"]["geoip"], default_geox_urls()["geoip"], "invalid url falls back");
-        assert_eq!(coerced["geoxUrls"]["mmdb"], "https://ok.example.com/x", "trimmed");
+        assert_eq!(
+            coerced["updateIntervalHours"], 24,
+            "out-of-bounds interval falls back"
+        );
+        assert_eq!(
+            coerced["geoxUrls"]["geoip"],
+            default_geox_urls()["geoip"],
+            "invalid url falls back"
+        );
+        assert_eq!(
+            coerced["geoxUrls"]["mmdb"], "https://ok.example.com/x",
+            "trimmed"
+        );
     }
 
     #[test]
@@ -1209,7 +1589,10 @@ mod tests {
         assert_eq!(block["geodata-mode"], false);
         assert_eq!(block["geodata-loader"], "standard");
         assert_eq!(block["geo-update-interval"], 24);
-        assert!(block["geox-url"]["geoip"].as_str().unwrap().starts_with("https://"));
+        assert!(block["geox-url"]["geoip"]
+            .as_str()
+            .unwrap()
+            .starts_with("https://"));
         let text = geodata_preview_text(&json!({ "updateIntervalHours": 48 }));
         assert!(text.contains("geo-update-interval: 48"), "{text}");
     }
@@ -1218,7 +1601,9 @@ mod tests {
     fn geodata_store_round_trip() {
         let temp = TempDir::new().unwrap();
         let store = store_in(&temp, GEODATA_SETTINGS_FILE, None);
-        store.set(&json!({ "enabled": true }), coerce_geodata_settings).unwrap();
+        store
+            .set(&json!({ "enabled": true }), coerce_geodata_settings)
+            .unwrap();
         assert_eq!(store.get()["enabled"], true);
         let raw = fs::read_to_string(temp.path().join(GEODATA_SETTINGS_FILE)).unwrap();
         assert!(raw.contains("\"geoipMode\""), "{}", raw);
@@ -1268,7 +1653,9 @@ mod tests {
     fn sniffer_store_round_trip_with_envelope() {
         let temp = TempDir::new().unwrap();
         let store = store_in(&temp, SNIFFER_ENHANCEMENT_FILE, Some("enhancement"));
-        store.set(&json!({ "enabled": true }), coerce_sniffer_enhancement).unwrap();
+        store
+            .set(&json!({ "enabled": true }), coerce_sniffer_enhancement)
+            .unwrap();
         let raw = fs::read_to_string(temp.path().join(SNIFFER_ENHANCEMENT_FILE)).unwrap();
         assert!(raw.contains("\"enhancement\": {"), "{}", raw);
         assert_eq!(store.get()["enabled"], true);
@@ -1288,8 +1675,14 @@ mod tests {
         }));
         assert_eq!(coerced["stack"], "gvisor");
         assert_eq!(coerced["device"], "My Murge");
-        assert_eq!(coerced["mtu"], 9000, "9000 is in-range on input; only the LOAD migration resets it");
-        assert_eq!(coerced["dnsHijack"], json!(["any:53", "1.2.3.4:53", "[::1]:53"]));
+        assert_eq!(
+            coerced["mtu"], 9000,
+            "9000 is in-range on input; only the LOAD migration resets it"
+        );
+        assert_eq!(
+            coerced["dnsHijack"],
+            json!(["any:53", "1.2.3.4:53", "[::1]:53"])
+        );
         assert_eq!(coerced["routeAddress"], json!(["10.0.0.0/8"]));
     }
 
@@ -1301,7 +1694,10 @@ mod tests {
         assert!(is_valid_dns_hijack_entry("[2001:db8::1]"));
         assert!(is_valid_dns_hijack_entry("host.example.com:53"));
         assert!(!is_valid_dns_hijack_entry(""));
-        assert!(is_valid_dns_hijack_entry("no-port"), "a bare hostname is a legal host form");
+        assert!(
+            is_valid_dns_hijack_entry("no-port"),
+            "a bare hostname is a legal host form"
+        );
         assert!(!is_valid_dns_hijack_entry("[::1]:70000"));
         assert!(!is_valid_dns_hijack_entry("[::1"));
         assert!(!is_valid_dns_hijack_entry("1.2.3.4:0"));
@@ -1322,7 +1718,9 @@ mod tests {
         assert_eq!(block["auto-route"], true);
         assert_eq!(block["dns-hijack"], json!(["any:53"]));
         assert!(block.get("route-address").is_none());
-        let with_routes = build_tun_block(&coerce_tun_config(&json!({ "routeAddress": ["10.0.0.0/8"] })));
+        let with_routes = build_tun_block(&coerce_tun_config(
+            &json!({ "routeAddress": ["10.0.0.0/8"] }),
+        ));
         assert_eq!(with_routes["route-address"], json!(["10.0.0.0/8"]));
         let text = tun_config_preview_text(&Value::Null);
         assert!(text.contains("tun:"), "{text}");
@@ -1354,9 +1752,15 @@ mod tests {
 
     #[test]
     fn dns_respect_rules_needs_proxy_server_nameservers() {
-        let coerced = coerce_dns_enhancement(&json!({ "respectRules": true, "proxyServerNameserver": [] }));
-        assert_eq!(coerced["respectRules"], false, "no bootstrap loop from stale models");
-        let coerced = coerce_dns_enhancement(&json!({ "respectRules": true, "proxyServerNameserver": ["tls://223.5.5.5"] }));
+        let coerced =
+            coerce_dns_enhancement(&json!({ "respectRules": true, "proxyServerNameserver": [] }));
+        assert_eq!(
+            coerced["respectRules"], false,
+            "no bootstrap loop from stale models"
+        );
+        let coerced = coerce_dns_enhancement(
+            &json!({ "respectRules": true, "proxyServerNameserver": ["tls://223.5.5.5"] }),
+        );
         assert_eq!(coerced["respectRules"], true);
     }
 
@@ -1382,7 +1786,9 @@ mod tests {
         assert_eq!(block["nameserver"], json!(["tls://223.5.5.5"]));
         assert!(block.get("fallback").is_none());
         // redir-host mode omits the fake-ip keys.
-        let block = build_dns_block(&coerce_dns_enhancement(&json!({ "enhancedMode": "redir-host" })));
+        let block = build_dns_block(&coerce_dns_enhancement(
+            &json!({ "enhancedMode": "redir-host" }),
+        ));
         assert!(block.get("fake-ip-range").is_none());
         assert!(block.get("fake-ip-filter").is_none());
     }
@@ -1400,7 +1806,10 @@ mod tests {
 
     #[test]
     fn redact_server_only_masks_userinfo() {
-        assert_eq!(redact_server("https://user:pass@host/x"), "https://***@host/x");
+        assert_eq!(
+            redact_server("https://user:pass@host/x"),
+            "https://***@host/x"
+        );
         assert_eq!(redact_server("tls://223.5.5.5"), "tls://223.5.5.5");
         assert_eq!(redact_server("223.5.5.5"), "223.5.5.5");
     }
@@ -1409,7 +1818,9 @@ mod tests {
     fn dns_store_round_trip_with_envelope() {
         let temp = TempDir::new().unwrap();
         let store = store_in(&temp, DNS_ENHANCEMENT_FILE, Some("enhancement"));
-        store.set(&json!({ "enabled": true }), coerce_dns_enhancement).unwrap();
+        store
+            .set(&json!({ "enabled": true }), coerce_dns_enhancement)
+            .unwrap();
         let raw = fs::read_to_string(temp.path().join(DNS_ENHANCEMENT_FILE)).unwrap();
         assert!(raw.contains("\"enhancement\": {"), "{}", raw);
         assert_eq!(store.get()["enabled"], true);

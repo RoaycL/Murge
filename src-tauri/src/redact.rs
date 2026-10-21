@@ -12,14 +12,30 @@
 //!    `user:pass@` sequences wherever they sit.
 
 const SECRET_PARAM_NAMES: [&str; 16] = [
-    "token", "uuid", "secret", "key", "auth", "password", "sub", "access_token",
-    "apikey", "api_key", "bearer", "ticket", "session", "sid", "sess", "cid",
+    "token",
+    "uuid",
+    "secret",
+    "key",
+    "auth",
+    "password",
+    "sub",
+    "access_token",
+    "apikey",
+    "api_key",
+    "bearer",
+    "ticket",
+    "session",
+    "sid",
+    "sess",
+    "cid",
     // client_id/client_secret are covered by "cid"/"secret" prefix rules below.
 ];
 
 fn is_secret_param(name: &str) -> bool {
     let lower = name.to_lowercase();
-    SECRET_PARAM_NAMES.iter().any(|secret| lower.contains(secret))
+    SECRET_PARAM_NAMES
+        .iter()
+        .any(|secret| lower.contains(secret))
 }
 
 /// True when a URL is a REDACTION ARTIFACT rather than a fetchable address.
@@ -106,12 +122,18 @@ pub fn redact_credentials(url: &str) -> String {
                 .replace_all(&inline, |captures: &regex::Captures| {
                     let prefix = captures.get(1).map(|m| m.as_str()).unwrap_or("");
                     let name = captures.get(2).map(|m| m.as_str()).unwrap_or("");
-                    let secret = regex::Regex::new(r"token|uuid|secret|key|auth|password|sub|access_token|apikey|bearer")
-                        .expect("secret regex compiles");
+                    let secret = regex::Regex::new(
+                        r"token|uuid|secret|key|auth|password|sub|access_token|apikey|bearer",
+                    )
+                    .expect("secret regex compiles");
                     if secret.is_match(&name.to_lowercase()) {
                         format!("{prefix}{name}=***REDACTED***")
                     } else {
-                        captures.get(0).map(|m| m.as_str()).unwrap_or("").to_string()
+                        captures
+                            .get(0)
+                            .map(|m| m.as_str())
+                            .unwrap_or("")
+                            .to_string()
                     }
                 })
                 .to_string();
@@ -150,7 +172,21 @@ fn percent_encode(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for byte in value.bytes() {
         let keep = byte.is_ascii_alphanumeric()
-            || matches!(byte, b'-' | b'_' | b'.' | b'~' | b'!' | b'$' | b'\'' | b'(' | b')' | b'*' | b',' | b';' | b'@');
+            || matches!(
+                byte,
+                b'-' | b'_'
+                    | b'.'
+                    | b'~'
+                    | b'!'
+                    | b'$'
+                    | b'\''
+                    | b'('
+                    | b')'
+                    | b'*'
+                    | b','
+                    | b';'
+                    | b'@'
+            );
         if keep {
             out.push(byte as char);
         } else {
@@ -168,7 +204,10 @@ mod tests {
     fn strips_userinfo() {
         let redacted = redact_credentials("https://user:pass@example.com/path");
         assert!(!redacted.contains("pass"), "{redacted}");
-        assert!(redacted.starts_with("https://redacted@example.com/path"), "{redacted}");
+        assert!(
+            redacted.starts_with("https://redacted@example.com/path"),
+            "{redacted}"
+        );
     }
 
     #[test]
@@ -199,7 +238,8 @@ mod tests {
 
     #[test]
     fn malformed_url_falls_back_to_regex() {
-        let redacted = redact_credentials("https://user:pass@host/a0123456789abcdef01234567?token=x");
+        let redacted =
+            redact_credentials("https://user:pass@host/a0123456789abcdef01234567?token=x");
         assert!(!redacted.contains("user:pass"), "{redacted}");
         assert!(redacted.contains("***REDACTED***"), "{redacted}");
     }
@@ -214,7 +254,9 @@ mod tests {
     #[test]
     fn is_redacted_url_detects_artifacts() {
         assert!(is_redacted_url("https://example.com/[UUID_REDACTED]/x"));
-        assert!(is_redacted_url("https://example.com/sub?token=***REDACTED***"));
+        assert!(is_redacted_url(
+            "https://example.com/sub?token=***REDACTED***"
+        ));
         assert!(is_redacted_url("https://redacted@example.com/x"));
         assert!(!is_redacted_url("https://example.com/plain"));
     }
@@ -230,8 +272,10 @@ static SENSITIVE_KEY: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::n
 fn is_sensitive_query_key(name: &str) -> bool {
     SENSITIVE_KEY
         .get_or_init(|| {
-            regex::Regex::new(r"(access[_-]?token|api[_-]?key|authorization|cookie|password|secret|token)")
-                .expect("sensitive-key regex compiles")
+            regex::Regex::new(
+                r"(access[_-]?token|api[_-]?key|authorization|cookie|password|secret|token)",
+            )
+            .expect("sensitive-key regex compiles")
         })
         .is_match(name)
 }
@@ -253,7 +297,11 @@ pub fn redact_log_text(input: &str) -> String {
             if is_sensitive_query_key(key) {
                 format!("{separator}{key}=[REDACTED]")
             } else {
-                captures.get(0).map(|m| m.as_str()).unwrap_or("").to_string()
+                captures
+                    .get(0)
+                    .map(|m| m.as_str())
+                    .unwrap_or("")
+                    .to_string()
             }
         })
         .to_string();
@@ -266,7 +314,8 @@ pub fn redact_log_text(input: &str) -> String {
     let text = kv.replace_all(&text, "${1}=[REDACTED]").to_string();
 
     // 4. Inline userinfo (`https://user:pass@host`).
-    let userinfo = regex::Regex::new(r"(?i)\b(https?://)([^/@\s]+)@").expect("userinfo regex compiles");
+    let userinfo =
+        regex::Regex::new(r"(?i)\b(https?://)([^/@\s]+)@").expect("userinfo regex compiles");
     let text = userinfo.replace_all(&text, "${1}[REDACTED]@").to_string();
 
     // 5. Generated mihomo controller secrets are fixed-width lowercase hex.
@@ -283,15 +332,24 @@ mod log_redaction_tests {
     fn log_text_masks_bearer_and_basic_credentials() {
         // The TS applies the kv pass AFTER the bearer pass, so the value
         // "Bearer" itself gets kv-masked — byte-true to the shared helper.
-        assert_eq!(redact_log_text("Authorization: Bearer abc.def_ghi/jkl="), "Authorization=[REDACTED] [REDACTED]");
+        assert_eq!(
+            redact_log_text("Authorization: Bearer abc.def_ghi/jkl="),
+            "Authorization=[REDACTED] [REDACTED]"
+        );
         assert_eq!(redact_log_text("basic XYZ123abc"), "basic [REDACTED]");
         assert_eq!(redact_log_text("bearerish stays"), "bearerish stays");
     }
 
     #[test]
     fn log_text_masks_secret_query_keys_only() {
-        assert_eq!(redact_log_text("/x?token=abc&keep=1"), "/x?token=[REDACTED]&keep=1");
-        assert_eq!(redact_log_text("/x?api-key=zz&flag="), "/x?api-key=[REDACTED]&flag=");
+        assert_eq!(
+            redact_log_text("/x?token=abc&keep=1"),
+            "/x?token=[REDACTED]&keep=1"
+        );
+        assert_eq!(
+            redact_log_text("/x?api-key=zz&flag="),
+            "/x?api-key=[REDACTED]&flag="
+        );
         assert_eq!(redact_log_text("/x?name=jane"), "/x?name=jane");
     }
 
@@ -305,12 +363,18 @@ mod log_redaction_tests {
 
     #[test]
     fn log_text_masks_inline_userinfo() {
-        assert_eq!(redact_log_text("failed https://user:pass@host/x"), "failed https://[REDACTED]@host/x");
+        assert_eq!(
+            redact_log_text("failed https://user:pass@host/x"),
+            "failed https://[REDACTED]@host/x"
+        );
     }
 
     #[test]
     fn log_text_masks_64_hex_controller_secrets() {
         let secret = "a".repeat(64);
-        assert_eq!(redact_log_text(&format!("dial tcp: use of secret {secret} closed")), "dial tcp: use of secret [REDACTED] closed");
+        assert_eq!(
+            redact_log_text(&format!("dial tcp: use of secret {secret} closed")),
+            "dial tcp: use of secret [REDACTED] closed"
+        );
     }
 }

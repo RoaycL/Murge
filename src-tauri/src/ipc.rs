@@ -63,26 +63,7 @@ pub async fn desktop_ipc(
     system_proxy: State<'_, std::sync::Arc<crate::system_proxy::SystemProxyService>>,
     tun: State<'_, std::sync::Arc<crate::tun::TunCoordinator>>,
     updates: State<'_, std::sync::Arc<crate::updates::UpdateService>>,
-    window: tauri::WebviewWindow,
 ) -> IpcResult {
-    if channel == "window:close" {
-        if window.label() != "main" || payload.as_array().is_none_or(|args| !args.is_empty()) {
-            return Err(IpcError::invalid_argument("invalid window close request"));
-        }
-        if !crate::lifecycle::is_quitting() {
-            if settings.get().close_to_tray {
-                window
-                    .hide()
-                    .map_err(|_| IpcError::internal("unable to hide window"))?;
-            } else {
-                let app = window.app_handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    crate::lifecycle::begin_application_shutdown(app, false).await;
-                });
-            }
-        }
-        return Ok(Value::Null);
-    }
     let startup_inner = startup.inner();
     dispatch(
         &channel,

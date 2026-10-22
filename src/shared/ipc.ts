@@ -1,8 +1,5 @@
 import type { BrandConfig } from './brand'
 
-/** Shell-only window action. The cross-shell DesktopApi remains unchanged. */
-export const TAURI_WINDOW_IPC = { close: 'window:close' } as const
-export type TauriWindowCloseResult = void
 import type {
   MihomoConfigSnapshot,
   MihomoConnectionsSnapshot,

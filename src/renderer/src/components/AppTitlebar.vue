@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { UnlistenFn } from '@tauri-apps/api/event'
-import { TAURI_WINDOW_IPC, type TauriWindowCloseResult } from '@shared/ipc'
 import { detectShell } from '../platform/desktop-contract'
 
 const isTauri = detectShell().kind === 'tauri'
@@ -15,7 +13,7 @@ let disposed = false
 async function control(action: 'minimize' | 'maximize' | 'close'): Promise<void> {
   error.value = ''
   try {
-    if (action === 'close') await invoke<TauriWindowCloseResult>('desktop_ipc', { channel: TAURI_WINDOW_IPC.close, payload: [] })
+    if (action === 'close') await getCurrentWindow().close()
     else if (action === 'minimize') await getCurrentWindow().minimize()
     else await getCurrentWindow().toggleMaximize()
   } catch {
@@ -34,10 +32,6 @@ onMounted(async () => {
   try {
     // Listen before reading state so a maximize during setup is observed.
     retain(await current.onResized(async () => { maximized.value = await current.isMaximized() }))
-    retain(await current.onCloseRequested((event) => {
-      event.preventDefault()
-      void control('close')
-    }))
     maximized.value = await current.isMaximized()
   } catch {
     error.value = '窗口状态读取失败，请重试'
@@ -73,11 +67,12 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* Match Electron titleBarOverlay.symbolColor in both themes and focus states. */
-.tauri-titlebar { --caption-hover: rgba(0, 0, 0, 0.06); --caption-pressed: rgba(0, 0, 0, 0.04); position: fixed; z-index: 100; inset: 0 0 auto; height: 34px; display: flex; color: #858b95; user-select: none; }
+/* Match Electron's symbols. The wrapper creates no stacking context: drag
+   sits below drawer/modal shades (50/70); only caption buttons stay above. */
+.tauri-titlebar { --caption-hover: rgba(0, 0, 0, 0.06); --caption-pressed: rgba(0, 0, 0, 0.04); display: contents; color: #858b95; user-select: none; }
 :global(:root[data-theme="dark"]) .tauri-titlebar { --caption-hover: rgba(255, 255, 255, 0.06); --caption-pressed: rgba(255, 255, 255, 0.04); }
-.tauri-titlebar-drag { flex: 1; min-width: 0; height: 100%; touch-action: none; }
-.tauri-window-controls { display: flex; flex: 0 0 138px; height: 34px; }
+.tauri-titlebar-drag { position: fixed; z-index: 40; inset: 0 138px auto 0; height: 34px; touch-action: none; }
+.tauri-window-controls { position: fixed; z-index: 100; top: 0; right: 0; display: flex; width: 138px; height: 34px; }
 .tauri-caption-button { display: grid; place-items: center; width: 46px; height: 34px; padding: 0; border: 0; border-radius: 0; background: transparent; color: inherit; -webkit-app-region: no-drag; }
 .tauri-caption-button svg { fill: none; stroke: currentColor; stroke-width: 1; pointer-events: none; }
 .tauri-caption-button:hover { background: var(--caption-hover); }
@@ -85,5 +80,5 @@ onBeforeUnmount(() => {
 .tauri-caption-button:focus-visible { outline-offset: -3px; }
 .tauri-caption-close:hover { background: #c42b1c; color: #fff; }
 .tauri-caption-close:active { background: #b02518; color: #fff; }
-.tauri-titlebar-error { position: absolute; right: 8px; top: 38px; padding: 6px 10px; color: var(--app-danger); background: var(--app-surface-solid); border-radius: var(--radius-sm); font-size: var(--font-size-xs); }
+.tauri-titlebar-error { position: fixed; z-index: 100; right: 8px; top: 38px; padding: 6px 10px; color: var(--app-danger); background: var(--app-surface-solid); border-radius: var(--radius-sm); font-size: var(--font-size-xs); }
 </style>

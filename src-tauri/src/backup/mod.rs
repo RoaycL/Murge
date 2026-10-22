@@ -14,8 +14,6 @@ use managed::SecretCodec;
 use serde_json::{json, Value};
 use std::{path::Path, sync::OnceLock};
 
-use tauri::Manager;
-
 static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
 static PENDING: tokio::sync::Mutex<Option<Pending>> = tokio::sync::Mutex::const_new(None);
 struct Pending {
@@ -355,21 +353,8 @@ pub async fn restore(paths: &AppPaths, payload: &Value) -> Result<Value, IpcErro
     )
     .map_err(IpcError::internal)?;
     let handle = app()?.clone();
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-        // Reuse the existing network gate. A restore failure leaves the staged
-        // archive recoverable and keeps the live core/window available.
-        if !crate::lifecycle::restore_network_before_quit(&handle).await {
-            return;
-        }
-        let _gate = crate::kernel::RUNTIME_UPDATE.lock().await;
-        if let Some(kernel) = handle.try_state::<std::sync::Arc<crate::kernel::KernelServices>>() {
-            if kernel.stop().await.is_err() {
-                return;
-            }
-        }
-        handle.restart();
-    });
+    drop(pending);
+    crate::lifecycle::begin_application_restart(handle).await?;
     Ok(Value::Null)
 }
 

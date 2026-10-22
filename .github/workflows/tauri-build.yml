@@ -1,0 +1,74 @@
+name: Tauri Windows build
+
+on:
+  push:
+    branches: [tauri]
+  pull_request:
+    branches: [tauri]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tauri-build-${{ github.ref }}
+  # Let a heavy compile finish and populate its dependency cache.
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Windows ${{ matrix.arch }} installer
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            target: x86_64-pc-windows-msvc
+          - arch: arm64
+            target: aarch64-pc-windows-msvc
+    steps:
+      - name: Preserve repository LF line endings on Windows
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: npm ci --include=dev
+      - run: npm run tauri:bridge
+      - name: Check generated bridge is unchanged
+        run: git diff --exit-code -- src/renderer/src/platform/generated/desktop-api.ts
+      - run: npm run typecheck
+      - run: npm run brand:check
+      # Cached Rust fingerprint JSON contains generated branding strings.
+      # Check the clean sources before restoring those compiler outputs.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: windows-${{ matrix.arch }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: native/tun-service/go.sum
+      - name: Prepare pinned kernel and native service resources
+        run: |
+          npm run kernel:prepare
+          npm run tun-service:build
+      - name: Build unsigned per-machine NSIS installer
+        # Use W1's resource/installer script, selecting this matrix architecture.
+        # package:tauri invokes --all; the same script accepts one architecture.
+        run: node scripts/tauri-package.mjs ${{ matrix.arch }}
+      - name: Inspect payload architecture and stage installer artifacts
+        run: node scripts/ci-tauri-artifact.mjs ${{ matrix.target }} ${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tauri-windows-${{ matrix.arch }}
+          path: ${{ runner.temp }}/tauri-${{ matrix.arch }}/
+          if-no-files-found: error
+          retention-days: 14

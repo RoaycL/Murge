@@ -38,11 +38,12 @@ async fn restore_system_proxy(paths: AppPaths) -> i32 {
         println!("[restore-system-proxy] {}", serde_json::json!({ "phase": "error", "ok": false, "errorMessage": error }));
         return 1;
     }
-    let adapter: Arc<dyn SystemProxyAdapter> = if cfg!(windows) {
-        Arc::new(system_proxy::WindowsSystemProxyAdapter::with_runner(system_proxy::real_command_runner()))
-    } else {
-        Arc::new(system_proxy::DisabledSystemProxyAdapter::new(std::env::consts::OS))
-    };
+    // Same native registry adapter the app uses: no reg.exe/PowerShell child
+    // processes while the uninstaller waits on us.
+    #[cfg(windows)]
+    let adapter: Arc<dyn SystemProxyAdapter> = Arc::new(system_proxy::NativeWindowsSystemProxyAdapter::win32());
+    #[cfg(not(windows))]
+    let adapter: Arc<dyn SystemProxyAdapter> = Arc::new(system_proxy::DisabledSystemProxyAdapter::new(std::env::consts::OS));
     let outcome = restore_with(
         adapter,
         Arc::new(system_proxy::FileSystemBackupStore::for_base_dir(&root)),

@@ -1,5 +1,4 @@
 import type { BrandConfig } from './brand'
-
 import type {
   MihomoConfigSnapshot,
   MihomoConnectionsSnapshot,

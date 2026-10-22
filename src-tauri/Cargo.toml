@@ -17,7 +17,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 # preserve_order: profile metadata JSON is written byte-compatibly with the
@@ -54,6 +54,9 @@ boa_engine = "0.20"
 aes-gcm = "0.10"
 scrypt = "0.11"
 rfd = "0.15"
+# Signed self-update. 2.12 is the newest line that keeps rust-version 1.82
+# (2.14 needs 1.90) and already has requireSignedVersion.
+tauri-plugin-updater = "~2.12"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -66,8 +69,15 @@ windows = { version = "0.58", features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Graphics_Gdi",
+    # Native system-proxy registry/WinINet access + the session-end window.
+    "Win32_System_Registry",
+    "Win32_Networking_WinInet",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Shutdown",
 ] }
 png = "0.17"
+# Updater toasts with a click handler (notify-rust has none on Windows).
+tauri-winrt-notification = "0.7"
 
 [dev-dependencies]
 tempfile = "3"

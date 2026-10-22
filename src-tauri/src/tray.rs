@@ -286,7 +286,6 @@ impl TrayController {
         let mut config = None;
         let mut proxies = None;
         let mut connections = None;
-        let mut latency_ms = None;
         if kernel["phase"].as_str() == Some("running") {
             let Ok(client) = client_for(&self.deps.models) else {
                 let mut state = self.state.lock().await;
@@ -302,19 +301,6 @@ impl TrayController {
             config = config_result.ok();
             proxies = proxies_result.ok();
             connections = connections_result.ok();
-            // A network probe may take seconds; never hold the refresh cadence
-            // open for it — bounded wait, degrade to '—' (the TS background
-            // refresh runs unbounded; the tray here re-renders on the next
-            // cadence tick either way).
-            let sample = tokio::time::timeout(
-                std::time::Duration::from_secs(3),
-                crate::internet_latency::sample(&client, None),
-            )
-            .await
-            .ok();
-            if let Some(sample) = sample {
-                latency_ms = sample.proxy_ms.or(sample.gateway_ms);
-            }
         }
 
         let mut state = self.state.lock().await;
@@ -358,13 +344,35 @@ impl TrayController {
             if let Some(connections) = &connections {
                 state.connections = connections.clone();
             }
-            state.network_latency_ms = latency_ms;
         } else {
             state.proxies = Value::Null;
             state.connections = Value::Null;
             state.network_latency_ms = None;
             state.mixed_port = None;
         }
+        self.render_locked(&mut state);
+    }
+
+    /// The TS `refreshLatency`: a network probe may take seconds, so it never
+    /// holds the menu refresh open; the row re-renders when the sample lands.
+    pub async fn refresh_latency(&self) {
+        if self.state.lock().await.status_phase != "running" {
+            return;
+        }
+        let Ok(client) = client_for(&self.deps.models) else {
+            return;
+        };
+        let sample = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            crate::internet_latency::sample(&client, None),
+        )
+        .await
+        .ok();
+        let mut state = self.state.lock().await;
+        if state.disposed || state.status_phase != "running" {
+            return;
+        }
+        state.network_latency_ms = sample.and_then(|sample| sample.proxy_ms.or(sample.gateway_ms));
         self.render_locked(&mut state);
     }
 
@@ -926,6 +934,55 @@ fn open_file_manager(target: &std::path::Path) -> Result<(), String> {
         .map(|_| ())
 }
 
+/// Background cadence for the tray snapshot + icon (the hover refresh does
+/// the user-facing work).
+const TRAY_CADENCE_SECS: u64 = 15;
+/// Hover refreshes closer together than this reuse the last snapshot.
+const TRAY_HOVER_THROTTLE_MS: u128 = 1_500;
+
+/// Single-flight, throttled refresh (the TS `refreshPromise` reuse), with
+/// the latency probe in the background (the TS `latencyPromise`).
+struct TrayRefresher {
+    controller: Arc<TrayController>,
+    refreshing: std::sync::atomic::AtomicBool,
+    sampling: std::sync::atomic::AtomicBool,
+    last: std::sync::Mutex<Option<std::time::Instant>>,
+}
+
+impl TrayRefresher {
+    fn new(controller: Arc<TrayController>) -> Arc<Self> {
+        Arc::new(TrayRefresher {
+            controller,
+            refreshing: std::sync::atomic::AtomicBool::new(false),
+            sampling: std::sync::atomic::AtomicBool::new(false),
+            last: std::sync::Mutex::new(None),
+        })
+    }
+
+    fn trigger(self: &Arc<Self>) {
+        use std::sync::atomic::Ordering;
+        {
+            let mut last = self.last.lock().expect("tray refresher mutex");
+            if last.map(|at| at.elapsed().as_millis() < TRAY_HOVER_THROTTLE_MS).unwrap_or(false) {
+                return;
+            }
+            *last = Some(std::time::Instant::now());
+        }
+        if self.refreshing.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let this = self.clone();
+        tauri::async_runtime::spawn(async move {
+            this.controller.refresh().await;
+            this.refreshing.store(false, Ordering::SeqCst);
+            if !this.sampling.swap(true, Ordering::SeqCst) {
+                this.controller.refresh_latency().await;
+                this.sampling.store(false, Ordering::SeqCst);
+            }
+        });
+    }
+}
+
 /// Build the controller + native view, subscribe every status source, and
 /// start the bounded refresh cadence. Returns the error of a failed native
 /// tray (the caller logs it and continues tray-less).
@@ -1309,46 +1366,77 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
             });
         }));
     }
+    // The accent follows proxy/TUN transitions immediately (the TS
+    // attachAppearanceListeners), not only on the cadence.
+    let repaint: Arc<dyn Fn() + Send + Sync> = {
+        let view = view.clone();
+        let system_proxy = system_proxy.clone();
+        let tun = tun.clone();
+        let app = app.clone();
+        Arc::new(move || {
+            let accent = resolve_runtime_accent(
+                system_proxy.get_status().phase.as_str(),
+                tun.get_status_value()["phase"].as_str().unwrap_or("unsupported"),
+            );
+            view.set_runtime_appearance(accent, crate::tray_view::dark_theme(&app));
+        })
+    };
     {
         let controller = controller.clone();
+        let repaint = repaint.clone();
         system_proxy.listeners.subscribe(Arc::new(move |status| {
             let controller = controller.clone();
             let status = status.clone();
+            let repaint = repaint.clone();
             tauri::async_runtime::spawn(async move {
                 controller.on_system_proxy_status(&status).await;
+                repaint();
             });
         }));
     }
     tun.subscribe({
         let controller = controller.clone();
+        let repaint = repaint.clone();
         Arc::new(move |status| {
             let controller = controller.clone();
             let status = status.clone();
+            let repaint = repaint.clone();
             tauri::async_runtime::spawn(async move {
                 controller.on_tun_status(&status).await;
+                repaint();
             });
         })
     });
 
-    // The refresh cadence stands in for the TS onMenuOpen hook (Tauri has no
-    // menu-open event): the menu the OS draws is the latest snapshot. Each
-    // tick also recomputes the runtime accent (the TS
-    // updateRuntimeAppearance) so the icon follows proxy/TUN phases.
+    // Tauri has no menu-open hook (the OS draws the attached menu on
+    // right-click), so the TS onMenuOpen refresh runs when the pointer
+    // enters the icon, which precedes every click; a slow cadence covers
+    // keyboard access. Left click/double click reveal the window (the TS
+    // onActivate).
+    let refresher = TrayRefresher::new(controller.clone());
+    {
+        let refresher = refresher.clone();
+        let app_for_activate = app.clone();
+        app.on_tray_icon_event(move |_app, event| match event {
+            tauri::tray::TrayIconEvent::Enter { .. } => refresher.trigger(),
+            tauri::tray::TrayIconEvent::Click {
+                button: tauri::tray::MouseButton::Left,
+                button_state: tauri::tray::MouseButtonState::Up,
+                ..
+            }
+            | tauri::tray::TrayIconEvent::DoubleClick { button: tauri::tray::MouseButton::Left, .. } => {
+                reveal_window(&app_for_activate)
+            }
+            _ => {}
+        });
+    }
+    // Status listeners and every tick also recompute the runtime accent (the
+    // TS updateRuntimeAppearance) against the OS theme.
     tauri::async_runtime::spawn(async move {
         loop {
-            controller.refresh().await;
-            let accent = {
-                let proxy = controller.deps.system_proxy.get_status();
-                let tun = controller.deps.tun.get_status_value();
-                resolve_runtime_accent(
-                    proxy.phase.as_str(),
-                    tun["phase"].as_str().unwrap_or("unsupported"),
-                )
-            };
-            // Dark is the notification-area default (matches the view's
-            // initial paint; Windows tray glyphs are theme-stable here).
-            view.set_runtime_appearance(accent, true);
-            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            refresher.trigger();
+            repaint();
+            tokio::time::sleep(std::time::Duration::from_secs(TRAY_CADENCE_SECS)).await;
         }
     });
 

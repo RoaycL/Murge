@@ -326,7 +326,11 @@ pub async fn dispatch(
                 IpcError::invalid_argument("app-settings:set payload must be a JSON object")
             })?;
             let silent_launch_before = settings.get().silent_launch;
+            let auto_check_update_before = settings.get().auto_check_update;
             let applied = settings.set(&patch);
+            if applied.auto_check_update != auto_check_update_before {
+                updates.apply_polling(applied.auto_check_update);
+            }
             // The persisted silent-launch preference moved: the login item's
             // registered arguments must follow (the TS appSettings.onChange
             // hook), best-effort.

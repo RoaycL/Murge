@@ -3,10 +3,14 @@
 //!
 //! The service owns the lifecycle state machine and reduces a narrow driver's
 //! event stream into a single `UpdateState` snapshot pushed to renderer
-//! windows. The production driver is `GatedUpdaterDriver` (`supported:
-//! false`): this build cannot reach an update feed, so the service reports the
-//! exact same clear message the Electron build shows for dev/unpackaged runs
-//! instead of pretending to update.
+//! windows. The production driver is [`TauriUpdaterDriver`], backed by
+//! `tauri-plugin-updater`: every downloaded installer must carry a minisign
+//! signature from the release key whose public half is pinned in
+//! `tauri.conf.json` (`plugins.updater.pubkey`), and that signature must name
+//! the announced version (`requireSignedVersion`). GitHub mirrors therefore
+//! only ever act as transport — they cannot substitute or roll back a build
+//! (review item S1). `GatedUpdaterDriver` stays as the fail-closed fallback
+//! for dev runs and tests.
 
 use crate::error::IpcError;
 use crate::events::{EventHub, EventListener};
@@ -79,30 +83,16 @@ pub fn default_update_state() -> UpdateState {
 /// into a state snapshot — every missing field falls back to the default.
 #[allow(dead_code)] // renderer payload hardening for the notification slice
 pub fn coerce_update_state(value: &Value) -> UpdateState {
-    const PHASES: [&str; 7] = [
-        "idle",
-        "checking",
-        "available",
-        "downloading",
-        "downloaded",
-        "not-available",
-        "error",
-    ];
+    const PHASES: [&str; 7] = ["idle", "checking", "available", "downloading", "downloaded", "not-available", "error"];
     let Some(record) = value.as_object() else {
         return default_update_state();
     };
-    let progress = record
-        .get("progress")
-        .and_then(|raw| raw.as_object())
-        .map(|raw| UpdateProgress {
-            percent: raw.get("percent").and_then(Value::as_f64).unwrap_or(0.0),
-            bytes_per_second: raw
-                .get("bytesPerSecond")
-                .and_then(Value::as_u64)
-                .unwrap_or(0),
-            transferred: raw.get("transferred").and_then(Value::as_u64).unwrap_or(0),
-            total: raw.get("total").and_then(Value::as_u64),
-        });
+    let progress = record.get("progress").and_then(|raw| raw.as_object()).map(|raw| UpdateProgress {
+        percent: raw.get("percent").and_then(Value::as_f64).unwrap_or(0.0),
+        bytes_per_second: raw.get("bytesPerSecond").and_then(Value::as_u64).unwrap_or(0),
+        transferred: raw.get("transferred").and_then(Value::as_u64).unwrap_or(0),
+        total: raw.get("total").and_then(Value::as_u64),
+    });
     UpdateState {
         phase: record
             .get("phase")
@@ -110,23 +100,11 @@ pub fn coerce_update_state(value: &Value) -> UpdateState {
             .filter(|phase| PHASES.contains(phase))
             .unwrap_or("idle")
             .to_string(),
-        current_version: record
-            .get("currentVersion")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        available_version: record
-            .get("availableVersion")
-            .and_then(Value::as_str)
-            .map(str::to_string),
+        current_version: record.get("currentVersion").and_then(Value::as_str).map(str::to_string),
+        available_version: record.get("availableVersion").and_then(Value::as_str).map(str::to_string),
         progress,
-        error: record
-            .get("error")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        can_install: record
-            .get("canInstall")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
+        error: record.get("error").and_then(Value::as_str).map(str::to_string),
+        can_install: record.get("canInstall").and_then(Value::as_bool).unwrap_or(false),
     }
 }
 
@@ -162,9 +140,7 @@ pub struct GatedUpdaterDriver {
 
 impl GatedUpdaterDriver {
     pub fn new() -> Self {
-        GatedUpdaterDriver {
-            events: EventHub::new(),
-        }
+        GatedUpdaterDriver { events: EventHub::new() }
     }
 }
 
@@ -200,6 +176,411 @@ impl UpdaterDriver for GatedUpdaterDriver {
     fn dispose(&self) {}
 }
 
+/// GitHub mirrors tried alongside a direct connection (the Electron driver's
+/// list). In much of China a direct hit on `github.com` times out. They only
+/// carry bytes: the signature check below is what decides trust.
+const GITHUB_PROXIES: [&str; 2] = ["https://gh-proxy.org", "https://ghfast.top"];
+
+/// Mid-session feed polling cadence (the mihomo-party / sparkle model).
+pub const POLL_INTERVAL_MS: u64 = 10 * 60 * 1000;
+
+/// Timeout for a single manifest probe before the source is dropped.
+const FEED_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// Upper bound for one installer download attempt.
+const DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// The static manifest each GitHub Release carries (`latest.json`, written by
+/// `scripts/tauri-updater-manifest.mjs`).
+const MANIFEST_NAME: &str = "latest.json";
+
+/// `https://github.com/<owner>/<repo>/releases/latest/download` derived from
+/// the brand's repository URL (never hardcoded).
+pub fn direct_feed_base(repository_url: &str) -> Option<String> {
+    let url = url::Url::parse(repository_url).ok()?;
+    let mut segments = url.path_segments()?.filter(|segment| !segment.is_empty());
+    let owner = segments.next()?;
+    let repo = segments.next()?.trim_end_matches(".git");
+    Some(format!("https://github.com/{owner}/{repo}/releases/latest/download"))
+}
+
+/// Ordered, de-duplicated feed bases: last-known-good first, then direct, then
+/// the prefix mirrors.
+pub fn feed_base_candidates(direct: &str, last_good: Option<&str>) -> Vec<String> {
+    let mut all: Vec<String> = Vec::new();
+    let mirrors = GITHUB_PROXIES.iter().map(|proxy| format!("{proxy}/{direct}"));
+    for candidate in last_good.map(str::to_string).into_iter().chain(std::iter::once(direct.to_string())).chain(mirrors) {
+        if !all.contains(&candidate) {
+            all.push(candidate);
+        }
+    }
+    all
+}
+
+/// The download URL routed through the same source the manifest came from:
+/// a mirror base keeps its prefix, a direct base leaves the URL untouched.
+pub fn route_download_url(download_url: &str, feed_base: &str, direct: &str) -> String {
+    match feed_base.strip_suffix(direct) {
+        Some(prefix) if !prefix.is_empty() && download_url.starts_with("https://github.com/") => {
+            format!("{}/{download_url}", prefix.trim_end_matches('/'))
+        }
+        _ => download_url.to_string(),
+    }
+}
+
+/// True when `download_url` is one of this repository's release assets
+/// (`https://github.com/<owner>/<repo>/releases/download/...`).
+pub fn is_release_asset(download_url: &str, direct: &str) -> bool {
+    let Some(repository) = direct.strip_suffix("/releases/latest/download") else {
+        return false;
+    };
+    let Ok(url) = url::Url::parse(download_url) else {
+        return false;
+    };
+    url.scheme() == "https"
+        && url.host_str() == Some("github.com")
+        && url.port().is_none()
+        && url.query().is_none()
+        && url.as_str().starts_with(&format!("{repository}/releases/download/"))
+        && !url.path().contains("/../")
+}
+
+/// Result of racing the manifest probes.
+pub enum ProbeOutcome<T> {
+    /// A source announced an update (the first one to do so).
+    Update(String, T),
+    /// Every answering source said there is nothing newer; the first of them.
+    NoUpdate(String),
+    /// No source answered.
+    Failed(String),
+}
+
+/// Run every probe concurrently: return as soon as one announces an update,
+/// otherwise wait for all and report "no update" only if at least one source
+/// answered.
+pub async fn race_probes<T, F>(probes: impl IntoIterator<Item = F>) -> ProbeOutcome<T>
+where
+    F: std::future::Future<Output = Result<(String, Option<T>), String>>,
+{
+    use futures_util::stream::{FuturesUnordered, StreamExt};
+    let mut pending: FuturesUnordered<F> = probes.into_iter().collect();
+    let mut no_update: Option<String> = None;
+    let mut errors: Vec<String> = Vec::new();
+    while let Some(result) = pending.next().await {
+        match result {
+            Ok((base, Some(update))) => return ProbeOutcome::Update(base, update),
+            Ok((base, None)) => {
+                no_update.get_or_insert(base);
+            }
+            Err(error) => errors.push(error),
+        }
+    }
+    match no_update {
+        Some(base) => ProbeOutcome::NoUpdate(base),
+        None => ProbeOutcome::Failed(if errors.is_empty() { "no update source".to_string() } else { errors.join("; ") }),
+    }
+}
+
+/// Download-progress accumulator (electron-updater's percent / rate fields).
+struct ProgressMeter {
+    started: std::time::Instant,
+    last_emit: Option<std::time::Instant>,
+    transferred: u64,
+}
+
+impl ProgressMeter {
+    fn new() -> Self {
+        ProgressMeter { started: std::time::Instant::now(), last_emit: None, transferred: 0 }
+    }
+
+    /// Record a chunk; returns an event at most every 250 ms (and always on
+    /// the final chunk) so a fast link cannot flood the renderer.
+    fn record(&mut self, chunk: usize, total: Option<u64>) -> Option<UpdaterDriverEvent> {
+        self.transferred += chunk as u64;
+        let now = std::time::Instant::now();
+        let finished = total.is_some_and(|total| self.transferred >= total);
+        if !finished && self.last_emit.is_some_and(|last| now.duration_since(last) < std::time::Duration::from_millis(250)) {
+            return None;
+        }
+        self.last_emit = Some(now);
+        let elapsed = now.duration_since(self.started).as_secs_f64().max(0.001);
+        Some(UpdaterDriverEvent::DownloadProgress {
+            percent: total.filter(|total| *total > 0).map(|total| (self.transferred as f64 / total as f64 * 100.0).min(100.0)).unwrap_or(0.0),
+            bytes_per_second: (self.transferred as f64 / elapsed) as u64,
+            transferred: self.transferred,
+            total,
+        })
+    }
+}
+
+/// A verified installer waiting for the app to exit.
+struct ReadyUpdate {
+    update: tauri_plugin_updater::Update,
+    bytes: Vec<u8>,
+}
+
+/// The verified installer, installed from `RunEvent::Exit` (electron-updater's
+/// `autoInstallOnAppQuit`) so the ordered quit flow — restore the system
+/// proxy, stop the kernel — always runs before the installer replaces files.
+static READY_UPDATE: Mutex<Option<ReadyUpdate>> = Mutex::new(None);
+/// Set by "重启并安装": relaunch Murge once the installer finishes.
+static RESTART_AFTER_INSTALL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Cleared when the session is ending (logoff/shutdown): an installer UAC
+/// prompt must never block Windows from shutting down.
+static INSTALL_ON_EXIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Skip the pending install for this exit (session ending). The update stays
+/// in the release feed and is picked up again on the next launch.
+pub fn cancel_install_on_exit() {
+    INSTALL_ON_EXIT.store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Called from `RunEvent::Exit`: launch the verified installer, if any. On
+/// Windows the plugin hands the installer to ShellExecute and terminates the
+/// process, so this must be the last exit step.
+pub fn install_ready_update_on_exit() {
+    if !INSTALL_ON_EXIT.load(std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let Some(ready) = READY_UPDATE.lock().ok().and_then(|mut slot| slot.take()) else {
+        return;
+    };
+    let restart = RESTART_AFTER_INSTALL.load(std::sync::atomic::Ordering::SeqCst);
+    let update = ready.update.restart_after_install(restart);
+    if let Err(error) = update.install(&ready.bytes) {
+        eprintln!("[updates] launching the installer failed: {error}");
+    }
+}
+
+/// Production driver: signed Tauri updater over GitHub Releases + mirrors.
+pub struct TauriUpdaterDriver {
+    inner: Arc<TauriUpdaterInner>,
+}
+
+struct TauriUpdaterInner {
+    app: tauri::AppHandle,
+    events: EventHub,
+    supported: bool,
+    direct: String,
+    /// The feed base that worked most recently; tried first next time.
+    last_good: Mutex<Option<String>>,
+    /// The announced update and the feed base it came from.
+    available: Mutex<Option<(tauri_plugin_updater::Update, String)>>,
+    busy: std::sync::atomic::AtomicBool,
+}
+
+impl TauriUpdaterDriver {
+    pub fn new(app: tauri::AppHandle) -> Self {
+        let direct = crate::brand::load_brand().ok().and_then(|brand| direct_feed_base(&brand.repository_url));
+        let pubkey_pinned = app
+            .config()
+            .plugins
+            .0
+            .get("updater")
+            .and_then(|updater| updater.get("pubkey"))
+            .and_then(Value::as_str)
+            .is_some_and(|pubkey| !pubkey.trim().is_empty());
+        // Installed Windows builds only: dev runs never touch the feed, and a
+        // build without a pinned key has nothing to verify against.
+        let supported = cfg!(windows) && !crate::paths::is_dev() && pubkey_pinned && direct.is_some();
+        TauriUpdaterDriver {
+            inner: Arc::new(TauriUpdaterInner {
+                app,
+                events: EventHub::new(),
+                supported,
+                direct: direct.unwrap_or_default(),
+                last_good: Mutex::new(None),
+                available: Mutex::new(None),
+                busy: std::sync::atomic::AtomicBool::new(false),
+            }),
+        }
+    }
+}
+
+impl TauriUpdaterInner {
+    fn emit(&self, event: UpdaterDriverEvent) {
+        let value = serde_json::to_value(&event).expect("event serializes");
+        self.events.emit(&value);
+    }
+
+    fn updater_for(&self, base: &str) -> Result<tauri_plugin_updater::Updater, String> {
+        use tauri_plugin_updater::UpdaterExt;
+        let endpoint = url::Url::parse(&format!("{base}/{MANIFEST_NAME}")).map_err(|error| error.to_string())?;
+        self.app
+            .updater_builder()
+            .endpoints(vec![endpoint])
+            .and_then(|builder| builder.timeout(FEED_PROBE_TIMEOUT).build())
+            .map_err(|error| error.to_string())
+    }
+
+    /// Race every source for the manifest. The first source that announces an
+    /// update wins at once; "no update" is only concluded after every source
+    /// has answered, so a stale mirror cannot hide a release the direct feed
+    /// already lists.
+    async fn check(self: Arc<Self>) {
+        self.emit(UpdaterDriverEvent::Checking);
+        let last_good = self.last_good.lock().expect("updater last_good poisoned").clone();
+        let bases = feed_base_candidates(&self.direct, last_good.as_deref());
+        let probes = bases.iter().map(|base| {
+            let inner = self.clone();
+            let base = base.clone();
+            async move {
+                let updater = inner.updater_for(&base)?;
+                let found = updater.check().await.map_err(|error| error.to_string())?;
+                if let Some(update) = &found {
+                    // The manifest is unsigned: never let it point the client
+                    // at anything but this repository's release assets.
+                    if !is_release_asset(update.download_url.as_str(), &inner.direct) {
+                        return Err(format!("update manifest points outside the release: {}", update.download_url));
+                    }
+                }
+                Ok::<_, String>((base, found))
+            }
+        });
+        match race_probes(probes).await {
+            ProbeOutcome::Update(base, update) => {
+                *self.last_good.lock().expect("updater last_good poisoned") = Some(base.clone());
+                let version = update.version.clone();
+                let release_notes = update.body.clone();
+                *self.available.lock().expect("updater available poisoned") = Some((update, base));
+                self.emit(UpdaterDriverEvent::Available { version, release_notes });
+                // electron-updater autoDownload parity.
+                self.download().await;
+            }
+            ProbeOutcome::NoUpdate(base) => {
+                *self.last_good.lock().expect("updater last_good poisoned") = Some(base);
+                *self.available.lock().expect("updater available poisoned") = None;
+                self.emit(UpdaterDriverEvent::NotAvailable);
+            }
+            ProbeOutcome::Failed(error) => {
+                *self.last_good.lock().expect("updater last_good poisoned") = None;
+                self.emit(UpdaterDriverEvent::Error { message: format!("无法连接更新源，请检查网络或稍后重试（{error}）") });
+            }
+        }
+    }
+
+    /// Download through the source the manifest came from, then every other
+    /// source. The plugin verifies the signature (and the signed version)
+    /// before returning bytes; bytes that fail verification are discarded and
+    /// the next source is tried, a signature bound to the wrong version stops.
+    async fn download(self: &Arc<Self>) {
+        let Some((update, base)) = self.available.lock().expect("updater available poisoned").clone() else {
+            return;
+        };
+        let last_good = Some(base.as_str());
+        let mut last_error = String::new();
+        let mut signature_failed = false;
+        for source in feed_base_candidates(&self.direct, last_good) {
+            let routed = route_download_url(update.download_url.as_str(), &source, &self.direct);
+            let Ok(routed) = url::Url::parse(&routed) else { continue };
+            let mut attempt = update.clone();
+            attempt.download_url = routed;
+            attempt.timeout = Some(DOWNLOAD_TIMEOUT);
+            let mut meter = ProgressMeter::new();
+            let inner = self.clone();
+            let result = attempt
+                .download(
+                    move |chunk, total| {
+                        if let Some(event) = meter.record(chunk, total) {
+                            inner.emit(event);
+                        }
+                    },
+                    || {},
+                )
+                .await;
+            match result {
+                Ok(bytes) => {
+                    *READY_UPDATE.lock().expect("ready update poisoned") = Some(ReadyUpdate { update, bytes });
+                    self.emit(UpdaterDriverEvent::Downloaded);
+                    return;
+                }
+                // Bytes that fail verification may be a broken or hostile
+                // mirror: discard them and try the next source.
+                Err(error @ tauri_plugin_updater::Error::Minisign(_)) => {
+                    last_error = error.to_string();
+                    signature_failed = true;
+                }
+                // The signature itself names another version (or none): the
+                // manifest is wrong on every source, so stop here.
+                Err(error @ (tauri_plugin_updater::Error::SignedVersionMismatch { .. }
+                | tauri_plugin_updater::Error::MissingSignedVersion
+                | tauri_plugin_updater::Error::Base64(_)
+                | tauri_plugin_updater::Error::SignatureUtf8(_))) => {
+                    self.emit(UpdaterDriverEvent::Error { message: format!("更新包签名校验失败，已丢弃（{error}）") });
+                    return;
+                }
+                Err(error) => {
+                    last_error = error.to_string();
+                    signature_failed = false;
+                }
+            }
+        }
+        if signature_failed {
+            self.emit(UpdaterDriverEvent::Error { message: format!("更新包签名校验失败，已丢弃（{last_error}）") });
+            return;
+        }
+        self.emit(UpdaterDriverEvent::Error { message: format!("下载更新失败，请检查网络或稍后重试（{last_error}）") });
+    }
+}
+
+impl UpdaterDriver for TauriUpdaterDriver {
+    fn current_version(&self) -> String {
+        self.inner.app.package_info().version.to_string()
+    }
+
+    fn supported(&self) -> bool {
+        self.inner.supported
+    }
+
+    fn configure(&self) {}
+
+    fn check(&self) -> Result<(), String> {
+        if !self.inner.supported {
+            return Ok(());
+        }
+        if self.inner.busy.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return Ok(());
+        }
+        let inner = self.inner.clone();
+        tauri::async_runtime::spawn(async move {
+            inner.clone().check().await;
+            inner.busy.store(false, std::sync::atomic::Ordering::SeqCst);
+        });
+        Ok(())
+    }
+
+    fn download(&self) {
+        if !self.inner.supported || self.inner.busy.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        let inner = self.inner.clone();
+        tauri::async_runtime::spawn(async move {
+            inner.download().await;
+            inner.busy.store(false, std::sync::atomic::Ordering::SeqCst);
+        });
+    }
+
+    /// "重启并安装": run the ordered quit flow; `RunEvent::Exit` then hands
+    /// the verified installer to Windows and relaunches Murge afterwards.
+    fn quit_and_install(&self) {
+        if !self.inner.supported || READY_UPDATE.lock().map(|slot| slot.is_none()).unwrap_or(true) {
+            return;
+        }
+        RESTART_AFTER_INSTALL.store(true, std::sync::atomic::Ordering::SeqCst);
+        INSTALL_ON_EXIT.store(true, std::sync::atomic::Ordering::SeqCst);
+        let app = self.inner.app.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::lifecycle::begin_application_shutdown(app, false).await;
+        });
+    }
+
+    fn on_event(&self, listener: EventListener) -> i64 {
+        self.inner.events.subscribe(listener)
+    }
+
+    fn dispose(&self) {}
+}
+
 /// Owns the application-update state machine. It wraps a narrow
 /// [`UpdaterDriver`] and reduces its event stream into a single
 /// [`UpdateState`] snapshot that is pushed to renderer windows and returned
@@ -224,10 +605,7 @@ impl UpdateService {
         let state = default_update_state();
         UpdateService {
             inner: Arc::new(UpdateServiceInner {
-                state: Mutex::new(UpdateState {
-                    current_version: Some(driver.current_version()),
-                    ..state
-                }),
+                state: Mutex::new(UpdateState { current_version: Some(driver.current_version()), ..state }),
                 driver,
                 listeners: EventHub::new(),
                 started: Mutex::new(false),
@@ -275,25 +653,17 @@ impl UpdateService {
         if !self.inner.driver.supported() {
             return;
         }
-        let generation = self
-            .inner
-            .poll_generation
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-            + 1;
+        let generation = self.inner.poll_generation.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         let service = self.clone();
-        tokio::spawn(async move {
-            let mut ticker =
-                tokio::time::interval(std::time::Duration::from_millis(poll_interval_ms));
+        // Tauri's runtime, not tokio::spawn: setup() runs on the event-loop
+        // thread, which has not entered a Tokio runtime.
+        tauri::async_runtime::spawn(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_millis(poll_interval_ms));
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             ticker.tick().await; // polling never fires the first check eagerly
             loop {
                 ticker.tick().await;
-                if service
-                    .inner
-                    .poll_generation
-                    .load(std::sync::atomic::Ordering::SeqCst)
-                    != generation
-                {
+                if service.inner.poll_generation.load(std::sync::atomic::Ordering::SeqCst) != generation {
                     return; // stopped or restarted
                 }
                 service.poll_tick().await;
@@ -301,12 +671,18 @@ impl UpdateService {
         });
     }
 
-    // Wired into before-quit cleanup (before-quit slice).
-    #[allow(dead_code)]
     pub fn stop_polling(&self) {
-        self.inner
-            .poll_generation
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.poll_generation.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// The "自动检查更新" preference: poll while it is on, stop when it is
+    /// turned off (Electron's `applyUpdatePolling`).
+    pub fn apply_polling(&self, enabled: bool) {
+        if enabled {
+            self.start_polling(POLL_INTERVAL_MS);
+        } else {
+            self.stop_polling();
+        }
     }
 
     pub fn get_state(&self) -> UpdateState {
@@ -338,22 +714,10 @@ impl UpdateService {
             }
         }
         {
-            let mut pending = self
-                .inner
-                .downloaded_before_check
-                .lock()
-                .expect("update pending poisoned");
-            *pending = if self.state().phase == "downloaded" {
-                Some(self.get_state())
-            } else {
-                None
-            };
+            let mut pending = self.inner.downloaded_before_check.lock().expect("update pending poisoned");
+            *pending = if self.state().phase == "downloaded" { Some(self.get_state()) } else { None };
         }
-        self.transition(UpdateState {
-            phase: "checking".to_string(),
-            error: None,
-            ..self.get_state()
-        });
+        self.transition(UpdateState { phase: "checking".to_string(), error: None, ..self.get_state() });
         match self.inner.driver.check() {
             Ok(()) => {}
             // A driver may fail synchronously (a pre-flight failure) WITHOUT
@@ -363,18 +727,11 @@ impl UpdateService {
             // state the event path produces.
             Err(message) => {
                 let restored = {
-                    let mut pending = self
-                        .inner
-                        .downloaded_before_check
-                        .lock()
-                        .expect("update pending poisoned");
+                    let mut pending = self.inner.downloaded_before_check.lock().expect("update pending poisoned");
                     pending.take()
                 };
                 if let Some(restored) = restored {
-                    self.transition(UpdateState {
-                        error: Some(message),
-                        ..restored
-                    });
+                    self.transition(UpdateState { error: Some(message), ..restored });
                 } else {
                     self.transition(UpdateState {
                         phase: "error".to_string(),
@@ -395,11 +752,7 @@ impl UpdateService {
         if self.state().phase != "available" {
             return Ok(self.get_state());
         }
-        self.transition(UpdateState {
-            phase: "downloading".to_string(),
-            error: None,
-            ..self.get_state()
-        });
+        self.transition(UpdateState { phase: "downloading".to_string(), error: None, ..self.get_state() });
         self.inner.driver.download();
         Ok(self.get_state())
     }
@@ -428,33 +781,18 @@ impl UpdateService {
     }
 
     fn handle_event(&self, event: &Value) {
-        let kind = event
-            .get("kind")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
+        let kind = event.get("kind").and_then(Value::as_str).unwrap_or_default().to_string();
         match kind.as_str() {
             "checking" => {
-                self.transition(UpdateState {
-                    phase: "checking".to_string(),
-                    error: None,
-                    ..self.get_state()
-                });
+                self.transition(UpdateState { phase: "checking".to_string(), error: None, ..self.get_state() });
             }
             "not-available" => {
                 let restored = {
-                    let mut pending = self
-                        .inner
-                        .downloaded_before_check
-                        .lock()
-                        .expect("update pending poisoned");
+                    let mut pending = self.inner.downloaded_before_check.lock().expect("update pending poisoned");
                     pending.take()
                 };
                 if let Some(restored) = restored {
-                    self.transition(UpdateState {
-                        error: None,
-                        ..restored
-                    });
+                    self.transition(UpdateState { error: None, ..restored });
                 } else {
                     self.transition(UpdateState {
                         phase: "not-available".to_string(),
@@ -467,17 +805,10 @@ impl UpdateService {
                 }
             }
             "available" => {
-                *self
-                    .inner
-                    .downloaded_before_check
-                    .lock()
-                    .expect("update pending poisoned") = None;
+                *self.inner.downloaded_before_check.lock().expect("update pending poisoned") = None;
                 self.transition(UpdateState {
                     phase: "available".to_string(),
-                    available_version: event
-                        .get("version")
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
+                    available_version: event.get("version").and_then(Value::as_str).map(str::to_string),
                     progress: None,
                     can_install: false,
                     error: None,
@@ -485,34 +816,21 @@ impl UpdateService {
                 });
             }
             "download-progress" => {
-                *self
-                    .inner
-                    .downloaded_before_check
-                    .lock()
-                    .expect("update pending poisoned") = None;
+                *self.inner.downloaded_before_check.lock().expect("update pending poisoned") = None;
                 self.transition(UpdateState {
                     phase: "downloading".to_string(),
                     can_install: false,
                     progress: Some(UpdateProgress {
                         percent: event.get("percent").and_then(Value::as_f64).unwrap_or(0.0),
-                        bytes_per_second: Self::field(event, "bytesPerSecond", "bytes-per-second")
-                            .and_then(Value::as_u64)
-                            .unwrap_or(0),
-                        transferred: event
-                            .get("transferred")
-                            .and_then(Value::as_u64)
-                            .unwrap_or(0),
+                        bytes_per_second: Self::field(event, "bytesPerSecond", "bytes-per-second").and_then(Value::as_u64).unwrap_or(0),
+                        transferred: event.get("transferred").and_then(Value::as_u64).unwrap_or(0),
                         total: event.get("total").and_then(Value::as_u64),
                     }),
                     ..self.get_state()
                 });
             }
             "downloaded" => {
-                *self
-                    .inner
-                    .downloaded_before_check
-                    .lock()
-                    .expect("update pending poisoned") = None;
+                *self.inner.downloaded_before_check.lock().expect("update pending poisoned") = None;
                 self.transition(UpdateState {
                     phase: "downloaded".to_string(),
                     can_install: true,
@@ -523,34 +841,15 @@ impl UpdateService {
             }
             "error" => {
                 let restored = {
-                    let mut pending = self
-                        .inner
-                        .downloaded_before_check
-                        .lock()
-                        .expect("update pending poisoned");
+                    let mut pending = self.inner.downloaded_before_check.lock().expect("update pending poisoned");
                     pending.take()
                 };
                 if let Some(restored) = restored {
-                    self.transition(UpdateState {
-                        error: Some(
-                            event
-                                .get("message")
-                                .and_then(Value::as_str)
-                                .unwrap_or_default()
-                                .to_string(),
-                        ),
-                        ..restored
-                    });
+                    self.transition(UpdateState { error: Some(event.get("message").and_then(Value::as_str).unwrap_or_default().to_string()), ..restored });
                 } else {
                     self.transition(UpdateState {
                         phase: "error".to_string(),
-                        error: Some(
-                            event
-                                .get("message")
-                                .and_then(Value::as_str)
-                                .unwrap_or_default()
-                                .to_string(),
-                        ),
+                        error: Some(event.get("message").and_then(Value::as_str).unwrap_or_default().to_string()),
                         can_install: false,
                         ..self.get_state()
                     });
@@ -612,12 +911,10 @@ mod tests {
             self.supported
         }
         fn configure(&self) {
-            self.configure_calls
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.configure_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
         fn check(&self) -> Result<(), String> {
-            self.check_calls
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.check_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             if self.check_fails.load(std::sync::atomic::Ordering::SeqCst) {
                 Err("feed descriptor missing".to_string())
             } else {
@@ -625,37 +922,26 @@ mod tests {
             }
         }
         fn download(&self) {
-            self.download_calls
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.download_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
         fn quit_and_install(&self) {
-            self.install_calls
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.install_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
         fn on_event(&self, listener: EventListener) -> i64 {
             self.events.subscribe(listener)
         }
         fn dispose(&self) {
-            self.dispose_calls
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.dispose_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
     fn counters(driver: &FakeDriver) -> (usize, usize, usize, usize, usize) {
         (
-            driver
-                .configure_calls
-                .load(std::sync::atomic::Ordering::SeqCst),
+            driver.configure_calls.load(std::sync::atomic::Ordering::SeqCst),
             driver.check_calls.load(std::sync::atomic::Ordering::SeqCst),
-            driver
-                .download_calls
-                .load(std::sync::atomic::Ordering::SeqCst),
-            driver
-                .install_calls
-                .load(std::sync::atomic::Ordering::SeqCst),
-            driver
-                .dispose_calls
-                .load(std::sync::atomic::Ordering::SeqCst),
+            driver.download_calls.load(std::sync::atomic::Ordering::SeqCst),
+            driver.install_calls.load(std::sync::atomic::Ordering::SeqCst),
+            driver.dispose_calls.load(std::sync::atomic::Ordering::SeqCst),
         )
     }
 
@@ -667,10 +953,7 @@ mod tests {
         service.start();
         service.start();
         assert_eq!(counters(&driver).0, 1);
-        assert_eq!(
-            service.get_state().current_version.as_deref(),
-            Some("0.0.0-test")
-        );
+        assert_eq!(service.get_state().current_version.as_deref(), Some("0.0.0-test"));
         assert_eq!(service.get_state().phase, "idle");
     }
 
@@ -681,11 +964,8 @@ mod tests {
         service.start();
         let state = service.check().await.unwrap();
         assert_eq!(state.phase, "error");
-        assert_eq!(
-            state.error.as_deref(),
-            Some("当前构建不支持自动更新（仅安装版可用）")
-        );
-        assert!(!state.can_install);
+        assert_eq!(state.error.as_deref(), Some("当前构建不支持自动更新（仅安装版可用）"));
+        assert_eq!(state.can_install, false);
         assert_eq!(counters(&driver).1, 0);
         // Polling is a no-op on unsupported builds.
         service.start_polling(10);
@@ -715,18 +995,14 @@ mod tests {
     #[tokio::test]
     async fn synchronous_check_failure_is_reduced_into_error() {
         let driver = FakeDriver::new(true);
-        driver
-            .check_fails
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+        driver.check_fails.store(true, std::sync::atomic::Ordering::SeqCst);
         let service = UpdateService::new(driver.clone());
         service.start();
         let state = service.check().await.unwrap();
         assert_eq!(state.phase, "error");
         assert_eq!(state.error.as_deref(), Some("feed descriptor missing"));
         // A later check must not be blocked by the previous stuck phase.
-        driver
-            .check_fails
-            .store(false, std::sync::atomic::Ordering::SeqCst);
+        driver.check_fails.store(false, std::sync::atomic::Ordering::SeqCst);
         let next = service.check().await.unwrap();
         assert_eq!(next.phase, "checking");
     }
@@ -753,26 +1029,20 @@ mod tests {
         let driver = FakeDriver::new(true);
         let service = UpdateService::new(driver.clone());
         service.start();
-        driver.emit(&UpdaterDriverEvent::Available {
-            version: "1.0.1".to_string(),
-            release_notes: None,
-        });
+        driver.emit(&UpdaterDriverEvent::Available { version: "1.0.1".to_string(), release_notes: None });
         driver.emit(&UpdaterDriverEvent::Downloaded);
         let state = service.check().await.unwrap();
         assert_eq!(counters(&driver).1, 1);
         // The downloaded package stays installable while re-checking.
         assert_eq!(state.phase, "checking");
         assert_eq!(state.available_version.as_deref(), Some("1.0.1"));
-        assert!(state.can_install);
+        assert_eq!(state.can_install, true);
         // A newer release replaces it.
-        driver.emit(&UpdaterDriverEvent::Available {
-            version: "1.0.2".to_string(),
-            release_notes: None,
-        });
+        driver.emit(&UpdaterDriverEvent::Available { version: "1.0.2".to_string(), release_notes: None });
         let state = service.get_state();
         assert_eq!(state.phase, "available");
         assert_eq!(state.available_version.as_deref(), Some("1.0.2"));
-        assert!(!state.can_install);
+        assert_eq!(state.can_install, false);
         driver.emit(&UpdaterDriverEvent::DownloadProgress {
             percent: 10.0,
             bytes_per_second: 1,
@@ -789,19 +1059,14 @@ mod tests {
         let driver = FakeDriver::new(true);
         let service = UpdateService::new(driver.clone());
         service.start();
-        driver.emit(&UpdaterDriverEvent::Available {
-            version: "1.0.1".to_string(),
-            release_notes: None,
-        });
+        driver.emit(&UpdaterDriverEvent::Available { version: "1.0.1".to_string(), release_notes: None });
         driver.emit(&UpdaterDriverEvent::Downloaded);
         service.check().await.unwrap();
-        driver.emit(&UpdaterDriverEvent::Error {
-            message: "feed unavailable".to_string(),
-        });
+        driver.emit(&UpdaterDriverEvent::Error { message: "feed unavailable".to_string() });
         let state = service.get_state();
         assert_eq!(state.phase, "downloaded");
         assert_eq!(state.available_version.as_deref(), Some("1.0.1"));
-        assert!(state.can_install);
+        assert_eq!(state.can_install, true);
         assert_eq!(state.error.as_deref(), Some("feed unavailable"));
     }
 
@@ -812,14 +1077,11 @@ mod tests {
         service.start();
         driver.emit(&UpdaterDriverEvent::Checking);
         assert_eq!(service.get_state().phase, "checking");
-        driver.emit(&UpdaterDriverEvent::Available {
-            version: "1.2.3".to_string(),
-            release_notes: Some("notes".to_string()),
-        });
+        driver.emit(&UpdaterDriverEvent::Available { version: "1.2.3".to_string(), release_notes: Some("notes".to_string()) });
         let state = service.get_state();
         assert_eq!(state.phase, "available");
         assert_eq!(state.available_version.as_deref(), Some("1.2.3"));
-        assert!(!state.can_install);
+        assert_eq!(state.can_install, false);
         driver.emit(&UpdaterDriverEvent::DownloadProgress {
             percent: 42.0,
             bytes_per_second: 2048,
@@ -828,23 +1090,18 @@ mod tests {
         });
         assert_eq!(
             service.get_state().progress,
-            Some(UpdateProgress {
-                percent: 42.0,
-                bytes_per_second: 2048,
-                transferred: 1024,
-                total: Some(4096)
-            })
+            Some(UpdateProgress { percent: 42.0, bytes_per_second: 2048, transferred: 1024, total: Some(4096) })
         );
         driver.emit(&UpdaterDriverEvent::Downloaded);
         let state = service.get_state();
         assert_eq!(state.phase, "downloaded");
-        assert!(state.can_install);
+        assert_eq!(state.can_install, true);
         assert_eq!(state.progress, None);
         driver.emit(&UpdaterDriverEvent::NotAvailable);
         let state = service.get_state();
         assert_eq!(state.phase, "not-available");
         assert_eq!(state.available_version, None);
-        assert!(!state.can_install);
+        assert_eq!(state.can_install, false);
     }
 
     #[tokio::test]
@@ -854,10 +1111,7 @@ mod tests {
         service.start();
         service.download().await.unwrap();
         assert_eq!(counters(&driver).2, 0);
-        driver.emit(&UpdaterDriverEvent::Available {
-            version: "1.0.1".to_string(),
-            release_notes: None,
-        });
+        driver.emit(&UpdaterDriverEvent::Available { version: "1.0.1".to_string(), release_notes: None });
         service.download().await.unwrap();
         assert_eq!(counters(&driver).2, 1);
         assert_eq!(service.get_state().phase, "downloading");
@@ -874,10 +1128,7 @@ mod tests {
         service.start();
         service.install();
         assert_eq!(counters(&driver).3, 0);
-        driver.emit(&UpdaterDriverEvent::Available {
-            version: "1.0.1".to_string(),
-            release_notes: None,
-        });
+        driver.emit(&UpdaterDriverEvent::Available { version: "1.0.1".to_string(), release_notes: None });
         service.install();
         assert_eq!(counters(&driver).3, 0);
         driver.emit(&UpdaterDriverEvent::Downloaded);
@@ -888,19 +1139,179 @@ mod tests {
         gated.start();
         gated.install();
         assert_eq!(gated.get_state().phase, "idle");
+        assert_eq!(gated.get_state().current_version.as_deref(), Some(env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn feed_base_is_derived_from_the_brand_repository() {
         assert_eq!(
-            gated.get_state().current_version.as_deref(),
-            Some(env!("CARGO_PKG_VERSION"))
+            direct_feed_base("https://github.com/RoaycL/Murge").as_deref(),
+            Some("https://github.com/RoaycL/Murge/releases/latest/download")
         );
+        assert_eq!(
+            direct_feed_base("https://github.com/RoaycL/Murge.git/").as_deref(),
+            Some("https://github.com/RoaycL/Murge/releases/latest/download")
+        );
+        assert_eq!(direct_feed_base("https://github.com/RoaycL"), None);
+        assert_eq!(direct_feed_base("not a url"), None);
+        let brand = crate::brand::load_brand().unwrap();
+        assert!(direct_feed_base(&brand.repository_url).is_some());
+    }
+
+    #[test]
+    fn feed_candidates_put_last_good_first_without_duplicates() {
+        let direct = "https://github.com/o/r/releases/latest/download";
+        assert_eq!(
+            feed_base_candidates(direct, None),
+            vec![
+                direct.to_string(),
+                format!("https://gh-proxy.org/{direct}"),
+                format!("https://ghfast.top/{direct}"),
+            ]
+        );
+        let mirror = format!("https://ghfast.top/{direct}");
+        assert_eq!(
+            feed_base_candidates(direct, Some(&mirror)),
+            vec![mirror.clone(), direct.to_string(), format!("https://gh-proxy.org/{direct}")]
+        );
+    }
+
+    #[test]
+    fn downloads_follow_the_manifest_source() {
+        let direct = "https://github.com/o/r/releases/latest/download";
+        let asset = "https://github.com/o/r/releases/download/v1.0.0/Murge_1.0.0_x64-setup.exe";
+        assert_eq!(route_download_url(asset, direct, direct), asset);
+        assert_eq!(
+            route_download_url(asset, &format!("https://ghfast.top/{direct}"), direct),
+            format!("https://ghfast.top/{asset}")
+        );
+        // Only GitHub assets are re-routed through a mirror.
+        let elsewhere = "https://example.com/Murge.exe";
+        assert_eq!(route_download_url(elsewhere, &format!("https://ghfast.top/{direct}"), direct), elsewhere);
+    }
+
+    #[test]
+    fn only_this_repositorys_release_assets_are_downloadable() {
+        let direct = "https://github.com/o/r/releases/latest/download";
+        assert!(is_release_asset("https://github.com/o/r/releases/download/v1.0.0/App_1.0.0_x64-setup.exe", direct));
+        for url in [
+            "http://github.com/o/r/releases/download/v1.0.0/a.exe",
+            "https://github.com:8443/o/r/releases/download/v1.0.0/a.exe",
+            "https://github.com/other/r/releases/download/v1.0.0/a.exe",
+            "https://github.com/o/r-evil/releases/download/v1.0.0/a.exe",
+            "https://github.com/o/r/releases/download/v1.0.0/a.exe?x=1",
+            "https://127.0.0.1:9090/o/r/releases/download/v1.0.0/a.exe",
+            "https://ghfast.top/https://github.com/o/r/releases/download/v1.0.0/a.exe",
+            "not a url",
+        ] {
+            assert!(!is_release_asset(url, direct), "{url}");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_update_from_any_source_beats_an_earlier_no_update() {
+        use std::time::Duration;
+        type Probe = std::pin::Pin<Box<dyn std::future::Future<Output = Result<(String, Option<u32>), String>> + Send>>;
+        let probes: Vec<Probe> = vec![
+            Box::pin(async { Ok(("stale-mirror".to_string(), None)) }),
+            Box::pin(async {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                Ok(("direct".to_string(), Some(7)))
+            }),
+            Box::pin(async { Err("timed out".to_string()) }),
+        ];
+        match race_probes(probes).await {
+            ProbeOutcome::Update(base, update) => {
+                assert_eq!(base, "direct");
+                assert_eq!(update, 7);
+            }
+            _ => panic!("expected the update"),
+        }
+        let none: Vec<Probe> = vec![
+            Box::pin(async { Err("refused".to_string()) }),
+            Box::pin(async { Ok(("direct".to_string(), None)) }),
+        ];
+        assert!(matches!(race_probes(none).await, ProbeOutcome::NoUpdate(base) if base == "direct"));
+        let failed: Vec<Probe> = vec![Box::pin(async { Err("a".to_string()) }), Box::pin(async { Err("b".to_string()) })];
+        assert!(matches!(race_probes(failed).await, ProbeOutcome::Failed(error) if error == "a; b"));
+    }
+
+    #[tokio::test]
+    async fn polling_follows_the_auto_check_preference() {
+        let driver = FakeDriver::new(true);
+        let service = UpdateService::new(driver.clone());
+        service.start();
+        service.apply_polling(false);
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        assert_eq!(counters(&driver).1, 0);
+        service.start_polling(5);
+        service.apply_polling(false);
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        assert_eq!(counters(&driver).1, 0);
+    }
+
+    #[test]
+    fn progress_meter_reports_percent_and_always_the_final_chunk() {
+        let mut meter = ProgressMeter::new();
+        let first = meter.record(25, Some(100)).expect("first chunk reports");
+        match first {
+            UpdaterDriverEvent::DownloadProgress { percent, transferred, total, .. } => {
+                assert_eq!(percent, 25.0);
+                assert_eq!(transferred, 25);
+                assert_eq!(total, Some(100));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        // Throttled inside the 250 ms window …
+        assert!(meter.record(25, Some(100)).is_none());
+        // … but the completing chunk always reports.
+        match meter.record(50, Some(100)).expect("final chunk reports") {
+            UpdaterDriverEvent::DownloadProgress { percent, .. } => assert_eq!(percent, 100.0),
+            other => panic!("unexpected {other:?}"),
+        }
+        // Unknown length never divides by zero.
+        let mut unknown = ProgressMeter::new();
+        match unknown.record(10, None).unwrap() {
+            UpdaterDriverEvent::DownloadProgress { percent, total, .. } => {
+                assert_eq!(percent, 0.0);
+                assert_eq!(total, None);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn updater_config_pins_signature_policy() {
+        let config: Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let updater = &config["plugins"]["updater"];
+        assert_eq!(updater["requireSignedVersion"], json!(true));
+        // The pinned release key: a base64-wrapped minisign Ed25519 public key.
+        use base64::Engine;
+        let pubkey = updater["pubkey"].as_str().expect("pubkey is pinned");
+        let text = String::from_utf8(base64::engine::general_purpose::STANDARD.decode(pubkey).unwrap()).unwrap();
+        let key_line = text.lines().nth(1).expect("key line");
+        let raw = base64::engine::general_purpose::STANDARD.decode(key_line).unwrap();
+        assert_eq!(raw.len(), 42);
+        assert_eq!(&raw[..2], b"Ed");
+        assert_eq!(updater["windows"]["installMode"], json!("passive"));
+        // Downgrades stay forbidden and no insecure transport is allowed.
+        assert!(updater.get("allowDowngrades").is_none());
+        assert!(updater.get("dangerousInsecureTransportProtocol").is_none());
+        assert!(updater.get("dangerousAcceptInvalidCerts").is_none());
+    }
+
+    #[test]
+    fn install_on_exit_without_a_ready_update_is_a_noop() {
+        install_ready_update_on_exit();
+        cancel_install_on_exit();
+        install_ready_update_on_exit();
+        INSTALL_ON_EXIT.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     #[test]
     fn coerce_update_state_falls_back_field_wise() {
         assert_eq!(coerce_update_state(&json!(null)), default_update_state());
-        assert_eq!(
-            coerce_update_state(&json!({ "phase": "bogus" })),
-            default_update_state()
-        );
+        assert_eq!(coerce_update_state(&json!({ "phase": "bogus" })), default_update_state());
         let state = coerce_update_state(&json!({
             "phase": "downloading",
             "currentVersion": "1.0.0",
@@ -913,7 +1324,7 @@ mod tests {
         assert_eq!(state.current_version.as_deref(), Some("1.0.0"));
         assert_eq!(state.progress.as_ref().map(|p| p.percent), Some(12.5));
         assert_eq!(state.progress.as_ref().and_then(|p| p.total), None);
-        assert!(state.can_install);
+        assert_eq!(state.can_install, true);
     }
 
     #[tokio::test]
@@ -923,20 +1334,12 @@ mod tests {
         let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = seen.clone();
         service.subscribe(Arc::new(move |value| {
-            sink.lock()
-                .unwrap()
-                .push(value["phase"].as_str().unwrap_or_default().to_string());
+            sink.lock().unwrap().push(value["phase"].as_str().unwrap_or_default().to_string());
         }));
         service.start();
-        driver.emit(&UpdaterDriverEvent::Available {
-            version: "1.0.1".to_string(),
-            release_notes: None,
-        });
+        driver.emit(&UpdaterDriverEvent::Available { version: "1.0.1".to_string(), release_notes: None });
         driver.emit(&UpdaterDriverEvent::Downloaded);
-        assert_eq!(
-            seen.lock().unwrap().clone(),
-            vec!["available".to_string(), "downloaded".to_string()]
-        );
+        assert_eq!(seen.lock().unwrap().clone(), vec!["available".to_string(), "downloaded".to_string()]);
         service.dispose();
         assert_eq!(counters(&driver).4, 1);
     }

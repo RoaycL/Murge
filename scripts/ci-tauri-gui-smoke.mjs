@@ -41,6 +41,7 @@ public class TauriWindowProbe {
  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
  [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref Point point);
  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+ [DllImport("user32.dll")] public static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra);
  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
 }
 '@
@@ -83,6 +84,17 @@ if($env:CI_TAURI_ACTION -eq 'drag' -or $env:CI_TAURI_ACTION -eq 'double-click') 
  $debug=@($rows|Where-Object {$ids -contains [int]$_.ProcessId}|ForEach-Object { $port=$null;if($_.CommandLine -match '--remote-debugging-port=(\d+)'){$port=[int]$Matches[1]};@{pid=$_.ProcessId;name=$_.Name;debugPort=$port}})
  $listeners=@(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue|Where-Object {$ids -contains [int]$_.OwningProcess}|ForEach-Object {@{pid=$_.OwningProcess;port=$_.LocalPort;address=$_.LocalAddress}})
  @{processes=$debug;listeners=$listeners}|ConvertTo-Json -Depth 5 -Compress
+} elseif($env:CI_TAURI_ACTION -eq 'alt-f4') {
+ $null=[TauriWindowProbe]::SetForegroundWindow($h)
+ Start-Sleep -Milliseconds 150
+ try {
+  [TauriWindowProbe]::keybd_event(0x12,0,0,[UIntPtr]::Zero)
+  [TauriWindowProbe]::keybd_event(0x73,0,0,[UIntPtr]::Zero)
+ } finally {
+  [TauriWindowProbe]::keybd_event(0x73,0,2,[UIntPtr]::Zero)
+  [TauriWindowProbe]::keybd_event(0x12,0,2,[UIntPtr]::Zero)
+ }
+ Write-Output '{"closeRequested":true}'
 } elseif($env:CI_TAURI_ACTION -eq 'close') {
  if(-not $p.CloseMainWindow()){throw 'Native close request failed'}
  Write-Output '{"closeRequested":true}'
@@ -206,6 +218,18 @@ async function smoke(kind, executable, args = []) {
       await evaluate(`document.documentElement.dataset.theme = '${theme}'`)
       await pause(500)
       await native(child.pid, 'capture', resolve(output, `${kind}-${theme}.png`))
+      // Open the actual Vue drawer rather than injecting a synthetic overlay.
+      await evaluate(`document.querySelector('.sidebar-nav a[href="#/activity"]').click()`)
+      await waitFor(() => evaluate(`Boolean(document.querySelector('button[aria-label="查看网络信息"]'))`), alive)
+      await evaluate(`document.querySelector('button[aria-label="查看网络信息"]').click()`)
+      await waitFor(() => evaluate(`Boolean(document.querySelector('.detail-drawer[role="dialog"]'))`), alive)
+      assert.equal(await evaluate(`document.elementFromPoint(300, 17)?.classList.contains('detail-drawer-shade')`), true,
+        'Drawer shade must receive input in the top 34px, above the drag region')
+      await pause(300)
+      await native(child.pid, 'capture', resolve(output, `${kind}-${theme}-drawer.png`))
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 300, y: 17, button: 'left', clickCount: 1 })
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 300, y: 17, button: 'left', clickCount: 1 })
+      await waitFor(() => evaluate(`!document.querySelector('.detail-drawer[role="dialog"]')`), alive)
     }
     const controls = {}
     if (kind === 'tauri' && await evaluate(`Boolean(document.querySelector('.tauri-window-controls'))`)) {
@@ -231,8 +255,16 @@ async function smoke(kind, executable, args = []) {
       assert.ok(alive(), 'Close-to-tray must preserve the application process')
       await native(child.pid, 'restore', '', window.handle)
       await waitFor(async () => (await state()).visible, alive)
+      // Taskbar close / WM_CLOSE and real Alt+F4 must share the same Rust owner.
+      for (const action of ['close', 'alt-f4']) {
+        await native(child.pid, action)
+        await waitFor(async () => !(await state()).visible, alive)
+        assert.ok(alive(), `${action} must preserve the tray process`)
+        await native(child.pid, 'restore', '', window.handle)
+        await waitFor(async () => (await state()).visible, alive)
+      }
       await evaluate(`window.desktop.appSettings.set({closeToTray:false})`)
-      Object.assign(controls, { maximizeRestore: true, minimize: true, nativeDrag: true, doubleClickMaximizeRestore: true, closeToTray: true })
+      Object.assign(controls, { maximizeRestore: true, minimize: true, nativeDrag: true, doubleClickMaximizeRestore: true, closeToTray: true, nativeCloseToTray: true, altF4ToTray: true })
     }
     await pause(3000)
     assert.ok(alive(), 'Application must remain alive after rendering')
@@ -241,7 +273,7 @@ async function smoke(kind, executable, args = []) {
     await waitFor(async () => exit, () => true, 30_000)
     assert.equal(exit.code, 0, 'Native close must exit normally; forced termination never counts as success')
     assert.equal(exit.signal, null)
-    const result = { kind, windowVisible: true, rendererLoaded: true, backendIpc: true, stable: true, normalExit: true, viewport, controls }
+    const result = { kind, windowVisible: true, rendererLoaded: true, backendIpc: true, stable: true, normalExit: true, drawerOverlayTopEdge: true, viewport, controls }
     await writeFile(resolve(output, `${kind}-result.json`), JSON.stringify({ sourceCommit, ...result }, null, 2) + '\n')
     console.log(`${kind}: renderer, IPC, native controls and normal exit passed`)
     return result

@@ -22,6 +22,8 @@ const LOCAL_FIXED_LEN: usize = 30;
 const MAX_ENTRIES: usize = 4096;
 const MAX_ENTRY_BYTES: usize = 32 * 1024 * 1024;
 const MAX_TOTAL_BYTES: usize = 128 * 1024 * 1024;
+const KERNEL_MAX_ENTRY_BYTES: usize = 128 * 1024 * 1024;
+const KERNEL_MAX_TOTAL_BYTES: usize = 256 * 1024 * 1024;
 
 /// Every parse/extraction rejection carries the TS `ZIP 解析失败：` prefix.
 #[derive(Debug)]
@@ -48,26 +50,40 @@ fn read_u16(buf: &[u8], offset: usize) -> u16 {
 }
 
 fn read_u32(buf: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes([buf[offset], buf[offset + 1], buf[offset + 2], buf[offset + 3]])
+    u32::from_le_bytes([
+        buf[offset],
+        buf[offset + 1],
+        buf[offset + 2],
+        buf[offset + 3],
+    ])
 }
 
 fn find_eocd(buf: &[u8]) -> Result<usize, ZipFormatError> {
     // The EOCD is at the very end unless a zip comment follows; scan back the
     // maximum comment length (65535) plus the fixed record size.
     let min_start = buf.len().saturating_sub(EOCD_MIN_LEN + 0xffff);
-    let mut index = buf.len().checked_sub(EOCD_MIN_LEN).ok_or_else(|| ZipFormatError("未找到目录结束记录（不是 ZIP 文件或已截断）".into()))?;
+    let mut index = buf
+        .len()
+        .checked_sub(EOCD_MIN_LEN)
+        .ok_or_else(|| ZipFormatError("未找到目录结束记录（不是 ZIP 文件或已截断）".into()))?;
     loop {
         if read_u32(buf, index) == EOCD_SIGNATURE {
             return Ok(index);
         }
         if index == min_start {
-            return Err(ZipFormatError("未找到目录结束记录（不是 ZIP 文件或已截断）".into()));
+            return Err(ZipFormatError(
+                "未找到目录结束记录（不是 ZIP 文件或已截断）".into(),
+            ));
         }
         index -= 1;
     }
 }
 
-fn parse_central_directory(buf: &[u8]) -> Result<Vec<ZipEntry>, ZipFormatError> {
+fn parse_central_directory(
+    buf: &[u8],
+    max_entry_bytes: usize,
+    max_total_bytes: usize,
+) -> Result<Vec<ZipEntry>, ZipFormatError> {
     let eocd = find_eocd(buf)?;
     let entry_count = read_u16(buf, eocd + 10) as usize;
     let cd_size = read_u32(buf, eocd + 12) as usize;
@@ -103,12 +119,14 @@ fn parse_central_directory(buf: &[u8]) -> Result<Vec<ZipEntry>, ZipFormatError> 
         }
         let name = String::from_utf8_lossy(&buf[name_start..name_start + name_len]).to_string();
         if method != 0 && method != 8 {
-            return Err(ZipFormatError(format!("不支持的压缩方式 {method}（{name}）")));
+            return Err(ZipFormatError(format!(
+                "不支持的压缩方式 {method}（{name}）"
+            )));
         }
         if flags & 0x1 != 0 {
             return Err(ZipFormatError(format!("不支持加密条目（{name}）")));
         }
-        if uncompressed_size as usize > MAX_ENTRY_BYTES {
+        if uncompressed_size as usize > max_entry_bytes {
             return Err(ZipFormatError(format!("条目解压后过大（{name}）")));
         }
         entries.push(ZipEntry {
@@ -122,14 +140,21 @@ fn parse_central_directory(buf: &[u8]) -> Result<Vec<ZipEntry>, ZipFormatError> 
         });
         cursor += CENTRAL_FIXED_LEN + name_len + extra_len + comment_len;
     }
-    let total_size: usize = entries.iter().map(|entry| entry.uncompressed_size as usize).sum();
-    if total_size > MAX_TOTAL_BYTES {
+    let total_size: usize = entries
+        .iter()
+        .map(|entry| entry.uncompressed_size as usize)
+        .sum();
+    if total_size > max_total_bytes {
         return Err(ZipFormatError("解压后总大小超过上限".into()));
     }
     Ok(entries)
 }
 
-fn entry_data(buf: &[u8], entry: &ZipEntry) -> Result<Vec<u8>, ZipFormatError> {
+fn entry_data(
+    buf: &[u8],
+    entry: &ZipEntry,
+    max_entry_bytes: usize,
+) -> Result<Vec<u8>, ZipFormatError> {
     let local = entry.local_header_offset as usize;
     if local + LOCAL_FIXED_LEN > buf.len() || read_u32(buf, local) != LOCAL_SIGNATURE {
         return Err(ZipFormatError(format!("本地头损坏（{}）", entry.name)));
@@ -148,7 +173,7 @@ fn entry_data(buf: &[u8], entry: &ZipEntry) -> Result<Vec<u8>, ZipFormatError> {
             let decoder = flate2::read::DeflateDecoder::new(raw);
             let mut output = Vec::with_capacity(entry.uncompressed_size as usize);
             decoder
-                .take(MAX_ENTRY_BYTES as u64)
+                .take(max_entry_bytes as u64)
                 .read_to_end(&mut output)
                 .map_err(|_| ZipFormatError(format!("解压失败（{}）", entry.name)))?;
             output
@@ -167,11 +192,22 @@ fn entry_data(buf: &[u8], entry: &ZipEntry) -> Result<Vec<u8>, ZipFormatError> {
 /// network and the destination sits in user app-data.
 fn assert_safe_rel_path(name: &str) -> Result<String, ZipFormatError> {
     let normalized = name.replace('\\', "/");
-    if normalized.starts_with('/') || normalized.chars().take(1).next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false) && normalized.chars().nth(1) == Some(':') {
+    if normalized.starts_with('/')
+        || normalized
+            .chars()
+            .take(1)
+            .next()
+            .map(|c| c.is_ascii_alphabetic())
+            .unwrap_or(false)
+            && normalized.chars().nth(1) == Some(':')
+    {
         return Err(ZipFormatError(format!("条目为绝对路径（{name}）")));
     }
-    let parts: Vec<&str> = normalized.split('/').filter(|part| !part.is_empty()).collect();
-    if parts.iter().any(|part| *part == "..") {
+    let parts: Vec<&str> = normalized
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    if parts.contains(&"..") {
         return Err(ZipFormatError(format!("条目路径越界（{name}）")));
     }
     Ok(parts.join("/"))
@@ -187,7 +223,31 @@ fn resolved_dest(dest_dir: &Path) -> PathBuf {
 ///
 /// Returns the written file paths relative to `destDir`.
 pub fn extract_zip_bytes(buf: &[u8], dest_dir: &Path) -> Result<Vec<String>, ZipFormatError> {
-    let entries = parse_central_directory(buf)?;
+    extract_zip_with_entry_limit(buf, dest_dir, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES)
+}
+
+/// Verified kernel executables can exceed the Sub-Store per-file budget.
+/// Bound kernel entries to 128 MiB and the archive total to 256 MiB.
+/// Sub-Store limits and every path/format/CRC check remain unchanged.
+pub(crate) fn extract_kernel_zip_bytes(
+    buf: &[u8],
+    dest_dir: &Path,
+) -> Result<Vec<String>, ZipFormatError> {
+    extract_zip_with_entry_limit(
+        buf,
+        dest_dir,
+        KERNEL_MAX_ENTRY_BYTES,
+        KERNEL_MAX_TOTAL_BYTES,
+    )
+}
+
+fn extract_zip_with_entry_limit(
+    buf: &[u8],
+    dest_dir: &Path,
+    max_entry_bytes: usize,
+    max_total_bytes: usize,
+) -> Result<Vec<String>, ZipFormatError> {
+    let entries = parse_central_directory(buf, max_entry_bytes, max_total_bytes)?;
     if entries.is_empty() {
         return Err(ZipFormatError("归档为空".into()));
     }
@@ -200,18 +260,23 @@ pub fn extract_zip_bytes(buf: &[u8], dest_dir: &Path) -> Result<Vec<String>, Zip
             }
         }
     }
-    let strip_one = first_segments.len() == 1 && entries.iter().all(|entry| entry.name.contains('/'));
+    let strip_one =
+        first_segments.len() == 1 && entries.iter().all(|entry| entry.name.contains('/'));
     let resolved_dest = resolved_dest(dest_dir);
     let mut written = Vec::new();
     for entry in &entries {
         let rel = assert_safe_rel_path(&entry.name)?;
-        let stripped = if strip_one { rel.splitn(2, '/').nth(1).unwrap_or("").to_string() } else { rel };
+        let stripped = if strip_one {
+            rel.split_once('/').map(|x| x.1).unwrap_or("").to_string()
+        } else {
+            rel
+        };
         if stripped.is_empty() {
             continue;
         }
         let target = resolved_dest.join(&stripped);
         let target = std::fs::canonicalize(&target).unwrap_or(target);
-        if target != resolved_dest && !target.starts_with(&resolved_dest.join("")) {
+        if target != resolved_dest && !target.starts_with(resolved_dest.join("")) {
             // The join above already normalizes; the explicit starts_with
             // check keeps a canonicalized symlink escape from writing.
             if !target.starts_with(&resolved_dest) {
@@ -219,13 +284,15 @@ pub fn extract_zip_bytes(buf: &[u8], dest_dir: &Path) -> Result<Vec<String>, Zip
             }
         }
         if entry.is_directory {
-            std::fs::create_dir_all(&target).map_err(|_| ZipFormatError(format!("目录创建失败（{}）", entry.name)))?;
+            std::fs::create_dir_all(&target)
+                .map_err(|_| ZipFormatError(format!("目录创建失败（{}）", entry.name)))?;
             continue;
         }
         if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent).map_err(|_| ZipFormatError(format!("目录创建失败（{}）", entry.name)))?;
+            std::fs::create_dir_all(parent)
+                .map_err(|_| ZipFormatError(format!("目录创建失败（{}）", entry.name)))?;
         }
-        std::fs::write(&target, entry_data(buf, entry)?)
+        std::fs::write(&target, entry_data(buf, entry, max_entry_bytes)?)
             .map_err(|_| ZipFormatError(format!("写入失败（{}）", entry.name)))?;
         written.push(stripped);
     }
@@ -355,7 +422,14 @@ mod tests {
     }
 
     fn staging_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("murge-zip-test-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let dir = std::env::temp_dir().join(format!(
+            "murge-zip-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -372,8 +446,51 @@ mod tests {
         // One top-level dir (dist/) is stripped: the output IS the site root.
         assert!(written.contains(&"index.html".to_string()));
         assert!(written.contains(&"assets/app.js".to_string()));
-        assert_eq!(std::fs::read(dest.join("index.html")).unwrap(), b"<html></html>");
-        assert_eq!(std::fs::read(dest.join("assets/app.js")).unwrap(), b"console.log(1)");
+        assert_eq!(
+            std::fs::read(dest.join("index.html")).unwrap(),
+            b"<html></html>"
+        );
+        assert_eq!(
+            std::fs::read(dest.join("assets/app.js")).unwrap(),
+            b"console.log(1)"
+        );
+        let _ = std::fs::remove_dir_all(&dest);
+    }
+
+    #[test]
+    fn kernel_total_budget_rejects_an_oversized_archive_before_inflating() {
+        let mut archive = zip_bytes(vec![
+            ("a", vec![0], 0),
+            ("b", vec![0], 0),
+            ("c", vec![0], 0),
+        ]);
+        let mut central = read_u32(&archive, find_eocd(&archive).unwrap() + 16) as usize;
+        for _ in 0..3 {
+            archive[central + 24..central + 28]
+                .copy_from_slice(&(100_u32 * 1024 * 1024).to_le_bytes());
+            central += CENTRAL_FIXED_LEN + 1;
+        }
+        let error =
+            parse_central_directory(&archive, KERNEL_MAX_ENTRY_BYTES, KERNEL_MAX_TOTAL_BYTES)
+                .err()
+                .unwrap();
+        assert!(error.0.contains("总大小"));
+    }
+
+    #[test]
+    fn kernel_budget_accepts_large_executables_without_relaxing_substore() {
+        let mut archive = zip_bytes(vec![("mihomo.exe", vec![0; MAX_ENTRY_BYTES + 1], 8)]);
+        let dest = staging_dir();
+        assert!(extract_zip_bytes(&archive, &dest).is_err());
+        extract_kernel_zip_bytes(&archive, &dest).unwrap();
+        assert_eq!(
+            std::fs::metadata(dest.join("mihomo.exe")).unwrap().len(),
+            (MAX_ENTRY_BYTES + 1) as u64
+        );
+        let central = read_u32(&archive, find_eocd(&archive).unwrap() + 16) as usize;
+        archive[central + 24..central + 28]
+            .copy_from_slice(&((KERNEL_MAX_ENTRY_BYTES + 1) as u32).to_le_bytes());
+        assert!(extract_kernel_zip_bytes(&archive, &dest).is_err());
         let _ = std::fs::remove_dir_all(&dest);
     }
 
@@ -411,11 +528,17 @@ mod tests {
 
     #[test]
     fn no_top_level_layout_is_written_without_stripping() {
-        let archive = zip_bytes(vec![("index.html", b"<html></html>".to_vec(), 0), ("app.js", b"x".to_vec(), 8)]);
+        let archive = zip_bytes(vec![
+            ("index.html", b"<html></html>".to_vec(), 0),
+            ("app.js", b"x".to_vec(), 8),
+        ]);
         let dest = staging_dir();
         let written = extract_zip_bytes(&archive, &dest).unwrap();
         assert!(written.contains(&"index.html".to_string()));
-        assert_eq!(std::fs::read(dest.join("index.html")).unwrap(), b"<html></html>");
+        assert_eq!(
+            std::fs::read(dest.join("index.html")).unwrap(),
+            b"<html></html>"
+        );
         let _ = std::fs::remove_dir_all(&dest);
     }
 }

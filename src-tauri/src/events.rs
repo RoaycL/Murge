@@ -44,24 +44,42 @@ pub type EventListener = Arc<dyn Fn(&Value) + Send + Sync>;
 
 impl EventHub {
     pub fn new() -> Self {
-        EventHub { inner: Arc::new(EventHubInner { listeners: Mutex::new(Vec::new()), next_id: AtomicI64::new(0) }) }
+        EventHub {
+            inner: Arc::new(EventHubInner {
+                listeners: Mutex::new(Vec::new()),
+                next_id: AtomicI64::new(0),
+            }),
+        }
     }
 
     /// Register a listener; returns the unsubscribe handle.
     pub fn subscribe(&self, listener: EventListener) -> i64 {
         let id = self.next_seq();
-        self.inner.listeners.lock().expect("event hub mutex poisoned").push((id, listener));
+        self.inner
+            .listeners
+            .lock()
+            .expect("event hub mutex poisoned")
+            .push((id, listener));
         id
     }
 
     #[allow(dead_code)] // lifecycle API exercised by tests; prod uses hub teardown on close
     pub fn unsubscribe(&self, id: i64) {
-        self.inner.listeners.lock().expect("event hub mutex poisoned").retain(|(entry, _)| *entry != id);
+        self.inner
+            .listeners
+            .lock()
+            .expect("event hub mutex poisoned")
+            .retain(|(entry, _)| *entry != id);
     }
 
     /// Fan a value out to every listener (registration order, like the TS Set).
     pub fn emit(&self, value: &Value) {
-        let listeners = self.inner.listeners.lock().expect("event hub mutex poisoned").clone();
+        let listeners = self
+            .inner
+            .listeners
+            .lock()
+            .expect("event hub mutex poisoned")
+            .clone();
         for (_, listener) in listeners {
             listener(value);
         }
@@ -69,7 +87,11 @@ impl EventHub {
 
     #[cfg(test)]
     pub fn listener_count(&self) -> usize {
-        self.inner.listeners.lock().expect("event hub mutex poisoned").len()
+        self.inner
+            .listeners
+            .lock()
+            .expect("event hub mutex poisoned")
+            .len()
     }
 
     fn next_seq(&self) -> i64 {
@@ -135,14 +157,24 @@ pub struct StreamOptions {
 impl Default for StreamOptions {
     fn default() -> Self {
         // The production streams retry FOREVER while listeners remain.
-        StreamOptions { max_retries: 0, backoff_ms: 250, max_backoff_ms: 5000, jitter: 0.2, stable_reset_ms: 10_000 }
+        StreamOptions {
+            max_retries: 0,
+            backoff_ms: 250,
+            max_backoff_ms: 5000,
+            jitter: 0.2,
+            stable_reset_ms: 10_000,
+        }
     }
 }
 
 /// Exponential backoff with jitter, clamped to the configured maximum — the
 /// exact TS formula.
 pub fn backoff_delay(attempt: i64, options: &StreamOptions) -> u64 {
-    let base = (options.max_backoff_ms).min(options.backoff_ms.saturating_mul(2u64.pow(attempt.max(0) as u32)));
+    let base = (options.max_backoff_ms).min(
+        options
+            .backoff_ms
+            .saturating_mul(2u64.pow(attempt.max(0) as u32)),
+    );
     let factor = if options.jitter <= 0.0 {
         1.0
     } else {
@@ -154,7 +186,10 @@ pub fn backoff_delay(attempt: i64, options: &StreamOptions) -> u64 {
 /// A tiny deterministic-enough unit sampler (the TS uses Math.random; the
 /// exact sequence is not observable in the protocol).
 fn pseudo_random_unit() -> f64 {
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
     (nanos % 10_000) as f64 / 10_000.0
 }
 
@@ -247,7 +282,10 @@ impl StreamShared {
 }
 
 fn now_millis() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 #[cfg(not(test))]
@@ -278,7 +316,9 @@ async fn connect_socket(url: &str, secret: &str) -> Result<WsStream, String> {
     if !secret.is_empty() {
         request.headers_mut().insert(
             "Authorization",
-            format!("Bearer {secret}").parse().map_err(|_| "invalid header".to_string())?,
+            format!("Bearer {secret}")
+                .parse()
+                .map_err(|_| "invalid header".to_string())?,
         );
     }
     let (stream, _response) = tokio_tungstenite::connect_async(request)
@@ -377,7 +417,20 @@ pub struct MihomoStreams {
 impl MihomoStreams {
     pub fn new(logs: Arc<MihomoLogBuffer>) -> Self {
         MihomoStreams {
-            slots: Mutex::new([StreamSlot { shared: None, task: None }, StreamSlot { shared: None, task: None }, StreamSlot { shared: None, task: None }]),
+            slots: Mutex::new([
+                StreamSlot {
+                    shared: None,
+                    task: None,
+                },
+                StreamSlot {
+                    shared: None,
+                    task: None,
+                },
+                StreamSlot {
+                    shared: None,
+                    task: None,
+                },
+            ]),
             hubs: [EventHub::new(), EventHub::new(), EventHub::new()],
             errors: EventHub::new(),
             endpoint: Mutex::new(None),
@@ -389,7 +442,10 @@ impl MihomoStreams {
     /// the controller the kernel will use; later slices rebind on kernel
     /// transitions. Already-running streams for the same endpoint are kept.
     pub fn ensure(&self, endpoint: &ControllerEndpoint) {
-        let mut current = self.endpoint.lock().expect("streams endpoint mutex poisoned");
+        let mut current = self
+            .endpoint
+            .lock()
+            .expect("streams endpoint mutex poisoned");
         if current.as_ref() == Some(endpoint) {
             return;
         }
@@ -403,7 +459,11 @@ impl MihomoStreams {
             if let Some(task) = slots[index].task.take() {
                 task.abort();
             }
-            let kind = [StreamKind::Traffic, StreamKind::Connections, StreamKind::Logs][index];
+            let kind = [
+                StreamKind::Traffic,
+                StreamKind::Connections,
+                StreamKind::Logs,
+            ][index];
             let shared = Arc::new(StreamShared {
                 kind,
                 url: format!("ws://127.0.0.1:{}/{}/", endpoint.port, path_of(kind)),
@@ -411,12 +471,19 @@ impl MihomoStreams {
                 options: StreamOptions::default(),
                 listeners: self.hubs[index].clone(),
                 errors: self.errors.clone(),
-                logs: if kind == StreamKind::Logs { Some(self.logs.clone()) } else { None },
+                logs: if kind == StreamKind::Logs {
+                    Some(self.logs.clone())
+                } else {
+                    None
+                },
                 closed: AtomicBool::new(false),
                 attempt: AtomicI64::new(0),
             });
             let task = spawn_task(run_stream(shared.clone()));
-            slots[index] = StreamSlot { shared: Some(shared), task: Some(task) };
+            slots[index] = StreamSlot {
+                shared: Some(shared),
+                task: Some(task),
+            };
         }
         *current = Some(endpoint.clone());
     }
@@ -433,14 +500,23 @@ impl MihomoStreams {
         for slot in slots.iter_mut() {
             if let Some(shared) = &slot.shared {
                 shared.closed.store(true, Ordering::SeqCst);
-                shared.listeners.inner.listeners.lock().expect("event hub mutex poisoned").clear();
+                shared
+                    .listeners
+                    .inner
+                    .listeners
+                    .lock()
+                    .expect("event hub mutex poisoned")
+                    .clear();
             }
             if let Some(task) = slot.task.take() {
                 task.abort();
             }
             slot.shared = None;
         }
-        *self.endpoint.lock().expect("streams endpoint mutex poisoned") = None;
+        *self
+            .endpoint
+            .lock()
+            .expect("streams endpoint mutex poisoned") = None;
     }
 }
 
@@ -476,13 +552,14 @@ pub fn start_forwarding(
     let emit = move |channel: &str, value: Value| {
         let _ = tauri::Emitter::emit(&app, channel, value);
     };
-    for kind in [StreamKind::Traffic, StreamKind::Connections, StreamKind::Logs] {
+    for kind in [
+        StreamKind::Traffic,
+        StreamKind::Connections,
+        StreamKind::Logs,
+    ] {
         let emitter = emit.clone();
         let channel = kind.channel();
-        streams.subscribe(
-            kind,
-            Arc::new(move |value| emitter(channel, value.clone())),
-        );
+        streams.subscribe(kind, Arc::new(move |value| emitter(channel, value.clone())));
     }
     // The `logSink` wiring (when-ready.ts): every VALID kernel log message
     // lands in the bounded daily file, independent of who is subscribed.
@@ -499,9 +576,12 @@ pub fn start_forwarding(
         emitter("kernel:status-event", value.clone())
     }));
     let emitter = emit.clone();
-    kernel.manager.state_listeners.subscribe(Arc::new(move |value| {
-        emitter("kernel-manager:state-event", value.clone())
-    }));
+    kernel
+        .manager
+        .state_listeners
+        .subscribe(Arc::new(move |value| {
+            emitter("kernel-manager:state-event", value.clone())
+        }));
 }
 
 #[cfg(test)]
@@ -511,7 +591,10 @@ mod tests {
     fn collector() -> (Arc<Mutex<Vec<Value>>>, EventListener) {
         let events: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = events.clone();
-        (events.clone(), Arc::new(move |value: &Value| sink.lock().unwrap().push(value.clone())))
+        (
+            events.clone(),
+            Arc::new(move |value: &Value| sink.lock().unwrap().push(value.clone())),
+        )
     }
 
     #[test]
@@ -524,12 +607,19 @@ mod tests {
         hub.unsubscribe(id);
         assert_eq!(hub.listener_count(), 0);
         hub.emit(&json!({ "phase": "running" }));
-        assert_eq!(received.lock().unwrap().len(), 1, "unsubscribed listeners stop receiving");
+        assert_eq!(
+            received.lock().unwrap().len(),
+            1,
+            "unsubscribed listeners stop receiving"
+        );
     }
 
     #[test]
     fn backoff_doubles_and_clamps() {
-        let options = StreamOptions { jitter: 0.0, ..StreamOptions::default() };
+        let options = StreamOptions {
+            jitter: 0.0,
+            ..StreamOptions::default()
+        };
         assert_eq!(backoff_delay(0, &options), 250);
         assert_eq!(backoff_delay(1, &options), 500);
         assert_eq!(backoff_delay(2, &options), 1000);
@@ -557,14 +647,23 @@ mod tests {
         shared.report_connection_error("stream closed unexpectedly");
         let error = received.lock().unwrap()[0].clone();
         assert_eq!(error["code"], "UPSTREAM_UNREACHABLE");
-        assert_eq!(error["message"], "traffic stream: stream closed unexpectedly");
+        assert_eq!(
+            error["message"],
+            "traffic stream: stream closed unexpectedly"
+        );
         assert_eq!(error["source"], "traffic");
         assert_eq!(error["kind"], "connection");
-        shared.report_parse_error(IpcError::code(code::INVALID_UPSTREAM, "Invalid traffic payload: Required"));
+        shared.report_parse_error(IpcError::code(
+            code::INVALID_UPSTREAM,
+            "Invalid traffic payload: Required",
+        ));
         let error = received.lock().unwrap()[1].clone();
         assert_eq!(error["code"], "INVALID_UPSTREAM");
         assert_eq!(error["kind"], "parse");
-        assert_eq!(error["message"], "traffic stream: Invalid traffic payload: Required");
+        assert_eq!(
+            error["message"],
+            "traffic stream: Invalid traffic payload: Required"
+        );
     }
 
     #[tokio::test]
@@ -578,17 +677,24 @@ mod tests {
             use futures_util::SinkExt;
             use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
             loop {
-                let Ok((socket, _)) = listener.accept().await else { break };
+                let Ok((socket, _)) = listener.accept().await else {
+                    break;
+                };
                 // Route by the client's upgrade path (accept_hdr_async hands
                 // us the request before completing the handshake).
                 let path: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
                 let capture = path.clone();
-                let ws = tokio_tungstenite::accept_hdr_async(socket, move |req: &Request, resp: Response| {
-                    if let Ok(mut held) = capture.lock() {
-                        *held = req.uri().path().to_string();
-                    }
-                    Ok(resp)
-                })
+                let ws = tokio_tungstenite::accept_hdr_async(
+                    socket,
+                    #[allow(clippy::result_large_err)]
+                    // Upstream WebSocket handshake callback signature.
+                    move |req: &Request, resp: Response| {
+                        if let Ok(mut held) = capture.lock() {
+                            *held = req.uri().path().to_string();
+                        }
+                        Ok(resp)
+                    },
+                )
                 .await;
                 let Ok(mut ws) = ws else { break };
                 let path = path.lock().unwrap().clone();
@@ -622,13 +728,16 @@ mod tests {
         // persistent hub must still deliver to it.
         streams.subscribe(StreamKind::Traffic, traffic_listener);
         streams.subscribe(StreamKind::Logs, log_listener);
-        streams.ensure(&ControllerEndpoint { port: port as i64, secret: String::new() });
+        streams.ensure(&ControllerEndpoint {
+            port: port as i64,
+            secret: String::new(),
+        });
         streams.errors.subscribe(error_listener);
         // Wait for the fan-out (both messages) + the parse error.
         for _ in 0..150 {
-            if traffic_events.lock().unwrap().len() >= 1
-                && log_events.lock().unwrap().len() >= 1
-                && errors.lock().unwrap().len() >= 1
+            if !traffic_events.lock().unwrap().is_empty()
+                && !log_events.lock().unwrap().is_empty()
+                && !errors.lock().unwrap().is_empty()
             {
                 break;
             }
@@ -638,13 +747,19 @@ mod tests {
             let traffic = traffic_events.lock().unwrap();
             assert!(!traffic.is_empty(), "traffic sample fanned out");
             assert_eq!(traffic[0]["up"], 10);
-            assert!(traffic[0]["timestamp"].as_u64().unwrap_or(0) > 0, "arrival timestamp stamped");
+            assert!(
+                traffic[0]["timestamp"].as_u64().unwrap_or(0) > 0,
+                "arrival timestamp stamped"
+            );
         }
         {
             let log_events = log_events.lock().unwrap();
             assert!(!log_events.is_empty(), "log message fanned out");
             assert_eq!(log_events[0]["payload"], "kernel started");
-            assert_eq!(log_events[0]["seq"], 1, "the retained copy and the event agree on seq");
+            assert_eq!(
+                log_events[0]["seq"], 1,
+                "the retained copy and the event agree on seq"
+            );
         }
         {
             let snapshot = logs.snapshot(0);
@@ -658,7 +773,10 @@ mod tests {
             assert_eq!(errors[0]["kind"], "parse");
             assert_eq!(errors[0]["source"], "logs");
             assert!(
-                errors[0]["message"].as_str().unwrap_or("").starts_with("logs stream: mihomo returned invalid JSON"),
+                errors[0]["message"]
+                    .as_str()
+                    .unwrap_or("")
+                    .starts_with("logs stream: mihomo returned invalid JSON"),
                 "{}",
                 errors[0]["message"]
             );
@@ -669,17 +787,48 @@ mod tests {
 
     #[tokio::test]
     async fn connection_failure_reports_immediately_and_keeps_retrying() {
-        // Nothing listens on this port (bound then dropped).
+        // Windows may take two seconds to report TCP connection refusal.
+        // Reject the traffic handshake immediately instead, so this test
+        // measures error notification rather than host TCP retry policy.
         let probe = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = probe.local_addr().unwrap().port();
-        drop(probe);
+        let server = tokio::spawn(async move {
+            let mut sessions = tokio::task::JoinSet::new();
+            while let Ok((socket, _)) = probe.accept().await {
+                sessions.spawn(async move {
+                    use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+                    // Tungstenite fixes the callback's ErrorResponse type.
+                    #[allow(clippy::result_large_err)]
+                    let accepted = tokio_tungstenite::accept_hdr_async(
+                        socket,
+                        |request: &Request, response: Response| {
+                            if request.uri().path().starts_with("/traffic") {
+                                Err(tokio_tungstenite::tungstenite::http::Response::builder()
+                                    .status(503)
+                                    .body(Some("fixture rejection".to_string()))
+                                    .unwrap())
+                            } else {
+                                Ok(response)
+                            }
+                        },
+                    )
+                    .await;
+                    if let Ok(mut socket) = accepted {
+                        while futures_util::StreamExt::next(&mut socket).await.is_some() {}
+                    }
+                });
+            }
+        });
 
         let logs = Arc::new(MihomoLogBuffer::new());
         let streams = MihomoStreams::new(logs);
         let (errors, error_listener) = collector();
-        streams.ensure(&ControllerEndpoint { port: port as i64, secret: String::new() });
         streams.errors.subscribe(error_listener);
-        // The very first connect attempt fails fast (connection refused).
+        streams.ensure(&ControllerEndpoint {
+            port: port as i64,
+            secret: String::new(),
+        });
+        // The first traffic handshake fails immediately.
         for _ in 0..50 {
             if !errors.lock().unwrap().is_empty() {
                 break;
@@ -687,10 +836,14 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         let error = errors.lock().unwrap();
-        assert!(!error.is_empty(), "first connection failure surfaces immediately");
+        assert!(
+            !error.is_empty(),
+            "first connection failure surfaces immediately"
+        );
         assert_eq!(error[0]["kind"], "connection");
         assert_eq!(error[0]["source"], "traffic");
         streams.close();
+        server.abort();
     }
 
     #[tokio::test]
@@ -701,11 +854,17 @@ mod tests {
 
         let logs = Arc::new(MihomoLogBuffer::new());
         let streams = MihomoStreams::new(logs);
-        streams.ensure(&ControllerEndpoint { port: port as i64, secret: String::new() });
+        streams.ensure(&ControllerEndpoint {
+            port: port as i64,
+            secret: String::new(),
+        });
         streams.close();
         tokio::time::sleep(Duration::from_millis(50)).await;
         // After close the endpoint is cleared; re-ensure rebuilds cleanly.
-        streams.ensure(&ControllerEndpoint { port: port as i64, secret: String::new() });
+        streams.ensure(&ControllerEndpoint {
+            port: port as i64,
+            secret: String::new(),
+        });
         streams.close();
     }
 }

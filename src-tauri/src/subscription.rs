@@ -37,7 +37,8 @@ const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 pub const MAX_SUGGESTED_NAME_LENGTH: usize = 48;
 
 const SUBSCRIPTION_USER_AGENT: &str = "ClashforWindows/0.20.39";
-const SUBSCRIPTION_ACCEPT: &str = "application/x-yaml,text/yaml,text/plain,application/octet-stream,*/*";
+const SUBSCRIPTION_ACCEPT: &str =
+    "application/x-yaml,text/yaml,text/plain,application/octet-stream,*/*";
 
 // ---------------------------------------------------------------------------
 // Public-IP allow-list (the SSRF reject table)
@@ -86,7 +87,10 @@ const fn ipv4_to_int(ip: &str) -> Option<u32> {
 
 /// [start, end] inclusive 32-bit range for an IPv4 CIDR block.
 const fn ipv4_cidr_range(base: &str, prefix: u32) -> (u32, u32) {
-    let start = ipv4_to_int(base).expect("CIDR base compiles");
+    let start = match ipv4_to_int(base) {
+        Some(value) => value,
+        None => panic!("CIDR base compiles"),
+    };
     let size = 1u32 << (32 - prefix);
     // Saturating: the last block (240.0.0.0/4) intentionally ends at u32::MAX.
     (start, start.saturating_add(size - 1))
@@ -149,8 +153,16 @@ fn expand_ipv6(address: &str) -> Option<Vec<u32>> {
     }
     let mut parts: Vec<String> = Vec::new();
     if split.len() == 2 {
-        let left: Vec<&str> = if split[0].is_empty() { Vec::new() } else { split[0].split(':').collect() };
-        let right: Vec<&str> = if split[1].is_empty() { Vec::new() } else { split[1].split(':').collect() };
+        let left: Vec<&str> = if split[0].is_empty() {
+            Vec::new()
+        } else {
+            split[0].split(':').collect()
+        };
+        let right: Vec<&str> = if split[1].is_empty() {
+            Vec::new()
+        } else {
+            split[1].split(':').collect()
+        };
         if left.len() + right.len() > 7 {
             return None;
         }
@@ -187,10 +199,18 @@ fn is_public_ipv6(address: &str) -> bool {
         .expect("mapped-hex regex compiles")
         .captures(address)
     {
-        let high = u32::from_str_radix(mapped.get(1).map(|m| m.as_str()).unwrap_or("0"), 16).unwrap_or(0);
-        let low = u32::from_str_radix(mapped.get(2).map(|m| m.as_str()).unwrap_or("0"), 16).unwrap_or(0);
+        let high =
+            u32::from_str_radix(mapped.get(1).map(|m| m.as_str()).unwrap_or("0"), 16).unwrap_or(0);
+        let low =
+            u32::from_str_radix(mapped.get(2).map(|m| m.as_str()).unwrap_or("0"), 16).unwrap_or(0);
         let int = (high << 16) | low;
-        return is_public_ipv4(&format!("{}.{}.{}.{}", (int >> 24) & 0xff, (int >> 16) & 0xff, (int >> 8) & 0xff, int & 0xff));
+        return is_public_ipv4(&format!(
+            "{}.{}.{}.{}",
+            (int >> 24) & 0xff,
+            (int >> 16) & 0xff,
+            (int >> 8) & 0xff,
+            int & 0xff
+        ));
     }
     let Some(hextets) = expand_ipv6(address) else {
         return false;
@@ -251,7 +271,10 @@ fn is_ipv6(value: &str) -> bool {
     if value.is_empty() {
         return false;
     }
-    if value.bytes().any(|b| !(b.is_ascii_hexdigit() || b == b':' || b == b'.')) {
+    if value
+        .bytes()
+        .any(|b| !(b.is_ascii_hexdigit() || b == b':' || b == b'.'))
+    {
         return false;
     }
     expand_ipv6(value).is_some()
@@ -320,7 +343,9 @@ pub fn parse_disposition_filename(header: Option<&str>) -> Option<String> {
         .expect("filename* regex compiles")
         .captures(header)
     {
-        candidate = Some(percent_decode(extended.get(1).map(|m| m.as_str().trim()).unwrap_or("")));
+        candidate = Some(percent_decode(
+            extended.get(1).map(|m| m.as_str().trim()).unwrap_or(""),
+        ));
     }
     if candidate.as_deref().map(str::is_empty).unwrap_or(true) {
         let plain = regex::Regex::new(r#"(?:^|;)\s*filename\s*=\s*(?:"([^"]*)"|([^;]*))"#)
@@ -372,16 +397,16 @@ pub fn derive_fallback_subscription_name(url: &str) -> Option<String> {
     let raw_segment = parsed
         .path()
         .split('/')
-        .filter(|segment| !segment.is_empty())
-        .last()
+        .rfind(|segment| !segment.is_empty())
         .unwrap_or("");
     let decoded = percent_decode(raw_segment);
-    let unsafe_name = regex::Regex::new(r"^(?:raw|sub|subscribe|subscription|config|clash|api|v\d+)$")
-        .expect("unsafe-name regex compiles")
-        .is_match(&decoded)
-        || regex::Regex::new(r"^[0-9a-f-]{20,}$")
-            .expect("hex-name regex compiles")
-            .is_match(&decoded);
+    let unsafe_name =
+        regex::Regex::new(r"^(?:raw|sub|subscribe|subscription|config|clash|api|v\d+)$")
+            .expect("unsafe-name regex compiles")
+            .is_match(&decoded)
+            || regex::Regex::new(r"^[0-9a-f-]{20,}$")
+                .expect("hex-name regex compiles")
+                .is_match(&decoded);
     if !unsafe_name {
         if let Some(filename) = sanitize_suggested_name(&decoded) {
             return Some(filename);
@@ -488,7 +513,10 @@ impl SubscriptionFetcher {
         if parsed.scheme() != "http" && parsed.scheme() != "https" {
             return Err(IpcError::code(
                 code::INVALID_ARGUMENT,
-                format!("订阅 URL 必须使用 http 或 https 协议：{}", redact_credentials(url)),
+                format!(
+                    "订阅 URL 必须使用 http 或 https 协议：{}",
+                    redact_credentials(url)
+                ),
             ));
         }
         let host = parsed.host_str().unwrap_or_default().to_string();
@@ -504,7 +532,9 @@ impl SubscriptionFetcher {
             .trim_start_matches('[')
             .trim_end_matches(']')
             .to_string();
-        let is_literal = is_ipv4(&bare_host) || is_ipv6(&bare_host) || bare_host.eq_ignore_ascii_case("localhost");
+        let is_literal = is_ipv4(&bare_host)
+            || is_ipv6(&bare_host)
+            || bare_host.eq_ignore_ascii_case("localhost");
         // A literal IP (or the localhost alias) is checked directly against
         // the public-unicast allow-list. A hostname is resolved and every
         // returned address must be globally routable, so both verdicts share
@@ -526,11 +556,14 @@ impl SubscriptionFetcher {
             // answers remain rejected.
             let trusted_fake_ip_answer = parsed.scheme() == "https";
             let fake_ip_only = !addresses.is_empty()
-                && addresses
-                    .iter()
-                    .all(|address| regex::Regex::new(r"^198\.(?:18|19)\.").expect("fake-ip regex compiles").is_match(address));
+                && addresses.iter().all(|address| {
+                    regex::Regex::new(r"^198\.(?:18|19)\.")
+                        .expect("fake-ip regex compiles")
+                        .is_match(address)
+                });
             if addresses.is_empty()
-                || (addresses.iter().any(|address| !is_public_address(address)) && !(trusted_fake_ip_answer && fake_ip_only))
+                || (addresses.iter().any(|address| !is_public_address(address))
+                    && !(trusted_fake_ip_answer && fake_ip_only))
             {
                 return Err(IpcError::code(
                     code::INVALID_ARGUMENT,
@@ -551,19 +584,36 @@ impl SubscriptionFetcher {
     /// Fetch a subscription config with SSRF protection, redirect tracking,
     /// and a streaming size limit. `via_proxy` routes the sweep through the
     /// fallback transport (which must have been configured).
-    pub async fn fetch(&self, url: &str, via_proxy: bool) -> Result<FetchSubscriptionResult, IpcError> {
+    pub async fn fetch(
+        &self,
+        url: &str,
+        via_proxy: bool,
+    ) -> Result<FetchSubscriptionResult, IpcError> {
         // One timeout covers the ENTIRE sweep (every hop), exactly like the TS
         // abort-signal timer that is cleared in a `finally`.
-        match tokio::time::timeout(Duration::from_millis(self.timeout_ms), self.fetch_sweep(url, via_proxy)).await {
+        match tokio::time::timeout(
+            Duration::from_millis(self.timeout_ms),
+            self.fetch_sweep(url, via_proxy),
+        )
+        .await
+        {
             Ok(result) => result,
             Err(_elapsed) => Err(IpcError::code(
                 code::UPSTREAM_UNREACHABLE,
-                format!("订阅获取超时（{}ms）：{}", self.timeout_ms, redact_credentials(url)),
+                format!(
+                    "订阅获取超时（{}ms）：{}",
+                    self.timeout_ms,
+                    redact_credentials(url)
+                ),
             )),
         }
     }
 
-    async fn fetch_sweep(&self, url: &str, via_proxy: bool) -> Result<FetchSubscriptionResult, IpcError> {
+    async fn fetch_sweep(
+        &self,
+        url: &str,
+        via_proxy: bool,
+    ) -> Result<FetchSubscriptionResult, IpcError> {
         let transport = self.transport(via_proxy);
         let mut current_url = url.to_string();
         let mut redirect_count = 0usize;
@@ -573,8 +623,12 @@ impl SubscriptionFetcher {
             // Validate current URL before each request.
             self.validate_url(&current_url)?;
 
-            let parsed = url::Url::parse(&current_url)
-                .map_err(|_| IpcError::code(code::INVALID_ARGUMENT, format!("无效的订阅 URL：{}", redact_credentials(&current_url))))?;
+            let parsed = url::Url::parse(&current_url).map_err(|_| {
+                IpcError::code(
+                    code::INVALID_ARGUMENT,
+                    format!("无效的订阅 URL：{}", redact_credentials(&current_url)),
+                )
+            })?;
             let sent = transport
                 .get(parsed)
                 .header(reqwest::header::USER_AGENT, SUBSCRIPTION_USER_AGENT)
@@ -586,7 +640,11 @@ impl SubscriptionFetcher {
                 Err(error) => {
                     return Err(IpcError::code(
                         code::UPSTREAM_UNREACHABLE,
-                        format!("订阅获取失败：{}（{}）", redact_credentials(url), redact_credentials(&describe_reqwest_error(&error))),
+                        format!(
+                            "订阅获取失败：{}（{}）",
+                            redact_credentials(url),
+                            redact_credentials(&describe_reqwest_error(&error))
+                        ),
                     ));
                 }
             };
@@ -606,12 +664,18 @@ impl SubscriptionFetcher {
 
             // Handle redirects manually with validation.
             let status = hop.status().as_u16();
-            if (300..400).contains(&status) && hop.headers().get(reqwest::header::LOCATION).is_some() {
+            if (300..400).contains(&status)
+                && hop.headers().get(reqwest::header::LOCATION).is_some()
+            {
                 redirect_count += 1;
                 if redirect_count > self.max_redirects {
                     return Err(IpcError::code(
                         code::UPSTREAM_HTTP_ERROR,
-                        format!("重定向次数过多（超过 {}）：{}", self.max_redirects, redact_credentials(&current_url)),
+                        format!(
+                            "重定向次数过多（超过 {}）：{}",
+                            self.max_redirects,
+                            redact_credentials(&current_url)
+                        ),
                     ));
                 }
                 let location = hop
@@ -622,11 +686,18 @@ impl SubscriptionFetcher {
                     .to_string();
                 // Resolve relative URLs; a redirect target is attacker-
                 // controlled and may embed credentials.
-                let base = url::Url::parse(&current_url)
-                    .map_err(|_| IpcError::code(code::INVALID_ARGUMENT, format!("无效的订阅 URL：{}", redact_credentials(&current_url))))?;
-                let next_url = base
-                    .join(&location)
-                    .map_err(|_| IpcError::code(code::INVALID_ARGUMENT, format!("无效的重定向地址：{}", redact_credentials(&location))))?;
+                let base = url::Url::parse(&current_url).map_err(|_| {
+                    IpcError::code(
+                        code::INVALID_ARGUMENT,
+                        format!("无效的订阅 URL：{}", redact_credentials(&current_url)),
+                    )
+                })?;
+                let next_url = base.join(&location).map_err(|_| {
+                    IpcError::code(
+                        code::INVALID_ARGUMENT,
+                        format!("无效的重定向地址：{}", redact_credentials(&location)),
+                    )
+                })?;
                 // Validate the redirect target.
                 self.validate_url(next_url.as_str())?;
                 current_url = next_url.to_string();
@@ -654,22 +725,26 @@ impl SubscriptionFetcher {
         let mut total_bytes = 0usize;
         let mut raw: Vec<u8> = Vec::new();
         loop {
-            let chunk = response
-                .chunk()
-                .await
-                .map_err(|error| {
-                    IpcError::code(
-                        code::UPSTREAM_UNREACHABLE,
-                        format!("订阅获取失败：{}（{}）", redacted_url, redact_credentials(&describe_reqwest_error(&error))),
-                    )
-                })?;
+            let chunk = response.chunk().await.map_err(|error| {
+                IpcError::code(
+                    code::UPSTREAM_UNREACHABLE,
+                    format!(
+                        "订阅获取失败：{}（{}）",
+                        redacted_url,
+                        redact_credentials(&describe_reqwest_error(&error))
+                    ),
+                )
+            })?;
             let Some(chunk) = chunk else { break };
             total_bytes += chunk.len();
             // Check size limit during streaming.
             if total_bytes > self.max_bytes {
                 return Err(IpcError::code(
                     code::UPSTREAM_HTTP_ERROR,
-                    format!("订阅配置过大：{} 字节超过上限 {}", total_bytes, self.max_bytes),
+                    format!(
+                        "订阅配置过大：{} 字节超过上限 {}",
+                        total_bytes, self.max_bytes
+                    ),
                 ));
             }
             raw.extend_from_slice(&chunk);
@@ -754,7 +829,10 @@ fn resolve_host_system(hostname: &str) -> Vec<String> {
 /// Shared composition used by the profile service: prefer the
 /// system-proxy-aware transport, fall back to direct ONLY on a transport-level
 /// failure (`ProfileService.fetchSubscription`).
-pub async fn fetch_with_fallback(fetcher: &SubscriptionFetcher, url: &str) -> Result<FetchSubscriptionResult, IpcError> {
+pub async fn fetch_with_fallback(
+    fetcher: &SubscriptionFetcher,
+    url: &str,
+) -> Result<FetchSubscriptionResult, IpcError> {
     if !fetcher.has_proxy_transport() {
         return fetcher.fetch(url, false).await;
     }
@@ -780,14 +858,23 @@ pub async fn fetch_with_fallback(fetcher: &SubscriptionFetcher, url: &str) -> Re
 pub fn parse_subscription_url(input: Option<&str>) -> Result<String, IpcError> {
     let input = match input {
         Some(input) => input,
-        None => return Err(IpcError::invalid_argument("subscription URL must be a non-empty string of at most 2048 characters")),
+        None => {
+            return Err(IpcError::invalid_argument(
+                "subscription URL must be a non-empty string of at most 2048 characters",
+            ))
+        }
     };
     if input.is_empty() || input.len() > 2048 {
-        return Err(IpcError::invalid_argument("subscription URL must be a non-empty string of at most 2048 characters"));
+        return Err(IpcError::invalid_argument(
+            "subscription URL must be a non-empty string of at most 2048 characters",
+        ));
     }
-    let parsed = url::Url::parse(input).map_err(|_| IpcError::invalid_argument("subscription URL is invalid"))?;
+    let parsed = url::Url::parse(input)
+        .map_err(|_| IpcError::invalid_argument("subscription URL is invalid"))?;
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
-        return Err(IpcError::invalid_argument("subscription URL must use http or https"));
+        return Err(IpcError::invalid_argument(
+            "subscription URL must use http or https",
+        ));
     }
     Ok(input.to_string())
 }
@@ -798,10 +885,14 @@ pub fn parse_optional_import_name(input: Option<&str>) -> Result<String, IpcErro
         return Ok(String::new());
     };
     if name.chars().count() > 256 {
-        return Err(IpcError::invalid_argument("profile name must be a string of at most 256 characters"));
+        return Err(IpcError::invalid_argument(
+            "profile name must be a string of at most 256 characters",
+        ));
     }
     if name.contains('\n') || name.contains('\r') || name.contains('\0') {
-        return Err(IpcError::invalid_argument("profile name contains invalid control characters"));
+        return Err(IpcError::invalid_argument(
+            "profile name contains invalid control characters",
+        ));
     }
     Ok(name.to_string())
 }
@@ -811,7 +902,9 @@ pub fn parse_optional_boolean(input: Option<&Value>, field: &str) -> Result<bool
     match input {
         None | Some(Value::Null) => Ok(false),
         Some(Value::Bool(value)) => Ok(*value),
-        Some(_) => Err(IpcError::invalid_argument(format!("{field} must be a boolean when provided"))),
+        Some(_) => Err(IpcError::invalid_argument(format!(
+            "{field} must be a boolean when provided"
+        ))),
     }
 }
 
@@ -896,7 +989,9 @@ pub(crate) mod test_support {
                                 if line.trim().is_empty() {
                                     break;
                                 }
-                                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                                if let Some(value) =
+                                    line.to_ascii_lowercase().strip_prefix("content-length:")
+                                {
                                     content_length = value.trim().parse().unwrap_or(0);
                                 }
                                 head.push_str(&line);
@@ -969,13 +1064,21 @@ mod tests {
     fn disposition_filenames_follow_the_ts_precedence() {
         // RFC 5987 extended form wins and percent-decodes.
         assert_eq!(
-            parse_disposition_filename(Some("attachment; filename*=UTF-8''%E6%9C%BA%E5%9C%BA%E8%AE%A2%E9%98%85.yaml")),
+            parse_disposition_filename(Some(
+                "attachment; filename*=UTF-8''%E6%9C%BA%E5%9C%BA%E8%AE%A2%E9%98%85.yaml"
+            )),
             Some("机场订阅".to_string())
         );
         // Plain quoted form.
-        assert_eq!(parse_disposition_filename(Some("attachment; filename=\"home lab.yaml\"")), Some("home lab".to_string()));
+        assert_eq!(
+            parse_disposition_filename(Some("attachment; filename=\"home lab.yaml\"")),
+            Some("home lab".to_string())
+        );
         // Extension stripped, quotes/control characters sanitized.
-        assert_eq!(parse_disposition_filename(Some("attachment; filename=sub.yaml")), Some("sub".to_string()));
+        assert_eq!(
+            parse_disposition_filename(Some("attachment; filename=sub.yaml")),
+            Some("sub".to_string())
+        );
         // Nothing usable.
         assert_eq!(parse_disposition_filename(Some("attachment")), None);
         assert_eq!(parse_disposition_filename(None), None);
@@ -989,7 +1092,9 @@ mod tests {
             Some("MihomoParty".to_string())
         );
         assert_eq!(
-            derive_fallback_subscription_name("https://example.com/8bb169258b029784d6a534b23b92cc8e"),
+            derive_fallback_subscription_name(
+                "https://example.com/8bb169258b029784d6a534b23b92cc8e"
+            ),
             Some("example.com".to_string())
         );
         assert_eq!(
@@ -1004,7 +1109,9 @@ mod tests {
     #[test]
     fn redaction_artifacts_are_recognized() {
         assert!(is_redacted_url("https://example.com/[UUID_REDACTED]"));
-        assert!(is_redacted_url("https://example.com/sub?token=***REDACTED***"));
+        assert!(is_redacted_url(
+            "https://example.com/sub?token=***REDACTED***"
+        ));
         assert!(is_redacted_url("https://[redacted]@example.com/x"));
         assert!(!is_redacted_url("https://example.com/sub"));
     }
@@ -1027,8 +1134,7 @@ mod tests {
 
     /// Direct-fetch stub pointing at a loopback HTTP server.
     fn loopback_fetcher(timeout_ms: u64, max_bytes: usize) -> SubscriptionFetcher {
-        let fetcher = SubscriptionFetcher::for_testing(Arc::new(|_| Vec::new()), timeout_ms, max_bytes);
-        fetcher
+        SubscriptionFetcher::for_testing(Arc::new(|_| Vec::new()), timeout_ms, max_bytes)
     }
 
     #[tokio::test]
@@ -1037,10 +1143,20 @@ mod tests {
         let fetcher = loopback_fetcher(5000, 1024 * 1024);
         // Credentials in the URL are redacted in the stored envelope (strict
         // validation is off in the test constructor).
-        let url = format!("http://user:secret@{}/x", base.trim_start_matches("http://"));
+        let url = format!(
+            "http://user:secret@{}/x",
+            base.trim_start_matches("http://")
+        );
         let result = fetcher.fetch(&url, false).await.unwrap();
         assert_eq!(result.document, VALID_DOC);
-        assert!(result.source["url"].as_str().unwrap().contains("://redacted@"), "{}", result.source["url"]);
+        assert!(
+            result.source["url"]
+                .as_str()
+                .unwrap()
+                .contains("://redacted@"),
+            "{}",
+            result.source["url"]
+        );
         assert!(!result.source["url"].as_str().unwrap().contains("secret"));
         assert_eq!(result.source["type"], "url");
         assert!(result.source["expire"].is_null());
@@ -1054,16 +1170,25 @@ mod tests {
     async fn http_errors_and_transport_failures_are_typed() {
         let (base, _server) = test_support::start_http_stub(404, vec![], "not found".to_string());
         let fetcher = loopback_fetcher(5000, 1024 * 1024);
-        let error = fetcher.fetch(&format!("{base}/missing"), false).await.unwrap_err();
+        let error = fetcher
+            .fetch(&format!("{base}/missing"), false)
+            .await
+            .unwrap_err();
         assert_eq!(error.parts().0, code::UPSTREAM_HTTP_ERROR);
         assert!(error.parts().1.contains("HTTP 404"), "{}", error.parts().1);
         // A closed port is a transport failure (UPSTREAM_UNREACHABLE).
         let fetcher = loopback_fetcher(1000, 1024 * 1024);
-        let error = fetcher.fetch("http://127.0.0.1:9/x", false).await.unwrap_err();
+        let error = fetcher
+            .fetch("http://127.0.0.1:9/x", false)
+            .await
+            .unwrap_err();
         assert_eq!(error.parts().0, code::UPSTREAM_UNREACHABLE);
         assert!(is_transport_failure(&error));
         // And an HTTP failure is NOT a transport failure (no proxy retry).
-        let error = fetcher.fetch(&format!("{base}/missing"), false).await.unwrap_err();
+        let error = fetcher
+            .fetch(&format!("{base}/missing"), false)
+            .await
+            .unwrap_err();
         assert!(!is_transport_failure(&error));
     }
 
@@ -1072,20 +1197,40 @@ mod tests {
         // Chain: 302 (absolute) -> 301 (relative) -> 200, all loopback (strict
         // validation is off in the test constructor).
         let (base_c, _server_c) = test_support::start_http_stub(200, vec![], VALID_DOC.to_string());
-        let (base_b, _server_b) = test_support::start_http_stub(301, vec![("location", format!("{base_c}/c"))], String::new());
-        let (base_a, _server_a) = test_support::start_http_stub(302, vec![("location", format!("{base_b}/b"))], String::new());
+        let (base_b, _server_b) = test_support::start_http_stub(
+            301,
+            vec![("location", format!("{base_c}/c"))],
+            String::new(),
+        );
+        let (base_a, _server_a) = test_support::start_http_stub(
+            302,
+            vec![("location", format!("{base_b}/b"))],
+            String::new(),
+        );
         let fetcher = loopback_fetcher(5000, 1024 * 1024);
         let result = fetcher.fetch(&format!("{base_a}/a"), false).await.unwrap();
         assert_eq!(result.document, VALID_DOC);
         // The final URL is adopted (the stored source lands on /c).
-        assert!(result.source["url"].as_str().unwrap().ends_with("/c"), "{}", result.source["url"]);
+        assert!(
+            result.source["url"].as_str().unwrap().ends_with("/c"),
+            "{}",
+            result.source["url"]
+        );
         let _ = (&base_b, &_server_b);
         // Budget exhaustion: a redirect loop trips the cap with the TS copy.
-        let (loop_base, _loop_server) = test_support::start_http_stub(302, vec![("location", "/next".to_string())], String::new());
+        let (loop_base, _loop_server) = test_support::start_http_stub(
+            302,
+            vec![("location", "/next".to_string())],
+            String::new(),
+        );
         let fetcher = loopback_fetcher(5000, 1024 * 1024);
         let error = fetcher.fetch(&loop_base, false).await.unwrap_err();
         assert_eq!(error.parts().0, code::UPSTREAM_HTTP_ERROR);
-        assert!(error.parts().1.contains("重定向次数过多（超过 5）"), "{}", error.parts().1);
+        assert!(
+            error.parts().1.contains("重定向次数过多（超过 5）"),
+            "{}",
+            error.parts().1
+        );
         let _ = base_c;
     }
 
@@ -1096,8 +1241,16 @@ mod tests {
         let fetcher = loopback_fetcher(5000, 32 * 1024);
         let error = fetcher.fetch(&base, false).await.unwrap_err();
         assert_eq!(error.parts().0, code::UPSTREAM_HTTP_ERROR);
-        assert!(error.parts().1.contains("订阅配置过大"), "{}", error.parts().1);
-        assert!(error.parts().1.contains("超过上限 32768"), "{}", error.parts().1);
+        assert!(
+            error.parts().1.contains("订阅配置过大"),
+            "{}",
+            error.parts().1
+        );
+        assert!(
+            error.parts().1.contains("超过上限 32768"),
+            "{}",
+            error.parts().1
+        );
     }
 
     #[tokio::test]
@@ -1105,24 +1258,54 @@ mod tests {
         // A server that accepts, reads the request head, and never answers.
         let (base, _server) = test_support::start_hanging_stub();
         let fetcher = loopback_fetcher(300, 1024 * 1024);
-        let error = fetcher.fetch(&format!("{base}/x"), false).await.unwrap_err();
+        let error = fetcher
+            .fetch(&format!("{base}/x"), false)
+            .await
+            .unwrap_err();
         assert_eq!(error.parts().0, code::UPSTREAM_UNREACHABLE);
-        assert!(error.parts().1.contains("订阅获取超时（300ms）"), "{}", error.parts().1);
+        assert!(
+            error.parts().1.contains("订阅获取超时（300ms）"),
+            "{}",
+            error.parts().1
+        );
     }
 
     #[tokio::test]
     async fn strict_validation_rejects_non_public_targets_before_any_request() {
         let fetcher = SubscriptionFetcher::new(None);
         // Literal private addresses.
-        for host in ["127.0.0.1", "10.0.0.1", "192.168.1.1", "169.254.1.1", "[::1]"] {
-            let error = fetcher.fetch(&format!("http://{host}/x"), false).await.unwrap_err();
+        for host in [
+            "127.0.0.1",
+            "10.0.0.1",
+            "192.168.1.1",
+            "169.254.1.1",
+            "[::1]",
+        ] {
+            let error = fetcher
+                .fetch(&format!("http://{host}/x"), false)
+                .await
+                .unwrap_err();
             assert_eq!(error.parts().0, code::INVALID_ARGUMENT, "{host}");
-            assert!(error.parts().1.contains("禁止访问内部地址"), "{host}: {}", error.parts().1);
+            assert!(
+                error.parts().1.contains("禁止访问内部地址"),
+                "{host}: {}",
+                error.parts().1
+            );
         }
         // Non-http schemes.
-        let error = fetcher.fetch("ftp://example.com/x", false).await.unwrap_err();
+        let error = fetcher
+            .fetch("ftp://example.com/x", false)
+            .await
+            .unwrap_err();
         assert_eq!(error.parts().0, code::INVALID_ARGUMENT);
-        assert!(error.parts().1.contains("订阅 URL 必须使用 http 或 https 协议"), "{}", error.parts().1);
+        assert!(
+            error
+                .parts()
+                .1
+                .contains("订阅 URL 必须使用 http 或 https 协议"),
+            "{}",
+            error.parts().1
+        );
         // No request ever reached the wire: the loopback stubs above would
         // have answered a literal-loopback URL.
     }
@@ -1136,9 +1319,16 @@ mod tests {
             1024 * 1024,
         )
         .with_strict_urls(true);
-        let error = fetcher.fetch("http://private.example/x", false).await.unwrap_err();
+        let error = fetcher
+            .fetch("http://private.example/x", false)
+            .await
+            .unwrap_err();
         assert_eq!(error.parts().0, code::INVALID_ARGUMENT);
-        assert!(error.parts().1.contains("订阅域名解析到非公网地址"), "{}", error.parts().1);
+        assert!(
+            error.parts().1.contains("订阅域名解析到非公网地址"),
+            "{}",
+            error.parts().1
+        );
         // The fake-ip carve-out: an ALL-fake-ip answer is allowed on HTTPS only.
         let fake = SubscriptionFetcher::for_testing(
             Arc::new(|_| vec!["198.18.0.7".to_string()]),
@@ -1152,7 +1342,10 @@ mod tests {
         // ...and HTTPS gets past DNS (the fetch itself fails on the bogus
         // certificate/host, which is a transport-level error, proving DNS
         // validation passed).
-        let error = fake.fetch("https://tun.example/x", false).await.unwrap_err();
+        let error = fake
+            .fetch("https://tun.example/x", false)
+            .await
+            .unwrap_err();
         assert_eq!(error.parts().0, code::UPSTREAM_UNREACHABLE);
         // Mixed answers (fake-ip + private) stay rejected even on HTTPS.
         let mixed = SubscriptionFetcher::for_testing(
@@ -1161,7 +1354,10 @@ mod tests {
             1024 * 1024,
         )
         .with_strict_urls(true);
-        let error = mixed.fetch("https://tun.example/x", false).await.unwrap_err();
+        let error = mixed
+            .fetch("https://tun.example/x", false)
+            .await
+            .unwrap_err();
         assert_eq!(error.parts().0, code::INVALID_ARGUMENT);
     }
 }

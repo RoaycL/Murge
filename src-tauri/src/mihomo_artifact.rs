@@ -22,16 +22,23 @@ use std::time::Duration;
 #[allow(dead_code)] // re-exported for diagnostics/tests
 pub const MIHOMO_ASSETS_JSON: &str = include_str!("../../resources/mihomo-assets.json");
 
-const MANIFEST: once_cell::sync::Lazy<Value> =
-    once_cell::sync::Lazy::new(|| serde_json::from_str(MIHOMO_ASSETS_JSON).expect("mihomo-assets.json parses"));
+static MANIFEST: once_cell::sync::Lazy<Value> = once_cell::sync::Lazy::new(|| {
+    serde_json::from_str(MIHOMO_ASSETS_JSON).expect("mihomo-assets.json parses")
+});
 
 /// The pinned bundled mihomo build (resources/mihomo-assets.json `version`).
 pub fn mihomo_version() -> String {
-    MANIFEST["version"].as_str().expect("manifest version").to_string()
+    MANIFEST["version"]
+        .as_str()
+        .expect("manifest version")
+        .to_string()
 }
 
 pub fn mihomo_release_base() -> String {
-    MANIFEST["releaseBase"].as_str().expect("manifest releaseBase").to_string()
+    MANIFEST["releaseBase"]
+        .as_str()
+        .expect("manifest releaseBase")
+        .to_string()
 }
 
 /// Convenience: `MIHOMO_VERSION` without the leading `v`.
@@ -73,7 +80,11 @@ fn asset_catalog() -> Vec<MihomoAsset> {
             platform: asset["platform"].as_str().unwrap_or_default().to_string(),
             arch: asset["arch"].as_str().unwrap_or_default().to_string(),
             filename: asset["filename"].as_str().unwrap_or_default().to_string(),
-            url: format!("{}/{}", mihomo_release_base(), asset["filename"].as_str().unwrap_or_default()),
+            url: format!(
+                "{}/{}",
+                mihomo_release_base(),
+                asset["filename"].as_str().unwrap_or_default()
+            ),
             sha256: asset["sha256"].as_str().unwrap_or_default().to_string(),
             size: asset["size"].as_u64().unwrap_or(0),
             kind: asset["kind"].as_str().unwrap_or_default().to_string(),
@@ -85,7 +96,9 @@ fn asset_catalog() -> Vec<MihomoAsset> {
 
 /// Resolve the pinned asset for a platform/arch pair, or null when unsupported.
 pub fn mihomo_asset_for(platform: &str, arch: &str) -> Option<MihomoAsset> {
-    asset_catalog().into_iter().find(|asset| asset.platform == platform && asset.arch == arch)
+    asset_catalog()
+        .into_iter()
+        .find(|asset| asset.platform == platform && asset.arch == arch)
 }
 
 /// All supported asset specs (used for metadata tests).
@@ -110,8 +123,14 @@ pub struct DownloadResponse {
     pub body: Vec<u8>,
 }
 
-pub type DownloadTransport =
-    Arc<dyn Fn(String, u64) -> futures_util::future::BoxFuture<'static, Result<DownloadResponse, String>> + Send + Sync>;
+pub type DownloadTransport = Arc<
+    dyn Fn(
+            String,
+            u64,
+        ) -> futures_util::future::BoxFuture<'static, Result<DownloadResponse, String>>
+        + Send
+        + Sync,
+>;
 
 /// The production transport: reqwest GET with redirect follow, a hard byte
 /// ceiling (the stream is aborted past it) and an overall timeout.
@@ -129,7 +148,12 @@ pub fn real_download_transport() -> DownloadTransport {
                 .await
                 .map_err(|error| format!("Mihomo download request failed for {url}: {error}"))?
                 .error_for_status()
-                .map_err(|error| format!("Mihomo download returned HTTP {} for {url}", error.status().map(|s| s.as_u16()).unwrap_or(0)))?;
+                .map_err(|error| {
+                    format!(
+                        "Mihomo download returned HTTP {} for {url}",
+                        error.status().map(|s| s.as_u16()).unwrap_or(0)
+                    )
+                })?;
             let content_length = response.content_length();
             if let Some(length) = content_length {
                 if length > max_bytes {
@@ -146,11 +170,17 @@ pub fn real_download_transport() -> DownloadTransport {
             while let Some(chunk) = stream.next().await {
                 let chunk = chunk.map_err(|error| error.to_string())?;
                 if body.len() as u64 + chunk.len() as u64 > max_bytes {
-                    return Err(format!("mihomo download exceeded the {max_bytes}-byte limit"));
+                    return Err(format!(
+                        "mihomo download exceeded the {max_bytes}-byte limit"
+                    ));
                 }
                 body.extend_from_slice(&chunk);
             }
-            Ok(DownloadResponse { status: 200, content_length, body })
+            Ok(DownloadResponse {
+                status: 200,
+                content_length,
+                body,
+            })
         })
     })
 }
@@ -159,7 +189,9 @@ pub fn real_download_transport() -> DownloadTransport {
 /// `writeAndHash`).
 fn write_and_hash(body: &[u8], dest_file: &Path, max_bytes: u64) -> Result<(String, u64), String> {
     if body.len() as u64 > max_bytes {
-        return Err(format!("mihomo download exceeded the {max_bytes}-byte limit"));
+        return Err(format!(
+            "mihomo download exceeded the {max_bytes}-byte limit"
+        ));
     }
     let mut hasher = Sha256::new();
     hasher.update(body);
@@ -178,7 +210,10 @@ pub async fn download_and_verify_mihomo(
     transport: &DownloadTransport,
 ) -> Result<PathBuf, IpcError> {
     std::fs::create_dir_all(dest_dir).map_err(|error| {
-        IpcError::code(code::ARTIFACT_DOWNLOAD_FAILED, format!("Failed to create {}: {error}", dest_dir.display()))
+        IpcError::code(
+            code::ARTIFACT_DOWNLOAD_FAILED,
+            format!("Failed to create {}: {error}", dest_dir.display()),
+        )
     })?;
     let max_bytes = asset.size.saturating_add(DOWNLOAD_SIZE_SLACK_BYTES);
     let archive_path = dest_dir.join(&asset.filename);
@@ -190,7 +225,10 @@ pub async fn download_and_verify_mihomo(
     if response.status != 200 {
         return Err(IpcError::code(
             code::ARTIFACT_DOWNLOAD_FAILED,
-            format!("Mihomo download returned HTTP {} for {}", response.status, asset.url),
+            format!(
+                "Mihomo download returned HTTP {} for {}",
+                response.status, asset.url
+            ),
         ));
     }
     if let Some(length) = response.content_length {
@@ -208,7 +246,10 @@ pub async fn download_and_verify_mihomo(
             let _ = std::fs::remove_file(&archive_path);
             return Err(IpcError::code(
                 code::ARTIFACT_DOWNLOAD_FAILED,
-                format!("Failed to save mihomo archive {}: {message}", asset.filename),
+                format!(
+                    "Failed to save mihomo archive {}: {message}",
+                    asset.filename
+                ),
             ));
         }
     };
@@ -216,7 +257,10 @@ pub async fn download_and_verify_mihomo(
         let _ = std::fs::remove_file(&archive_path);
         return Err(IpcError::code(
             code::ARTIFACT_HASH_MISMATCH,
-            format!("SHA-256 mismatch for {}: expected {}, got {}", asset.filename, asset.sha256, digest),
+            format!(
+                "SHA-256 mismatch for {}: expected {}, got {}",
+                asset.filename, asset.sha256, digest
+            ),
         ));
     }
     if bytes != asset.size {
@@ -238,13 +282,20 @@ pub async fn download_and_verify_mihomo(
 
 /// Compute the SHA-256 of a file's bytes.
 pub fn sha256_file(path: &Path) -> Result<String, IpcError> {
-    let mut file = std::fs::File::open(path)
-        .map_err(|error| IpcError::code(code::ARTIFACT_EXTRACT_FAILED, format!("Failed to open {}: {error}", path.display())))?;
+    let mut file = std::fs::File::open(path).map_err(|error| {
+        IpcError::code(
+            code::ARTIFACT_EXTRACT_FAILED,
+            format!("Failed to open {}: {error}", path.display()),
+        )
+    })?;
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 64 * 1024];
     loop {
         let read = file.read(&mut buffer).map_err(|error| {
-            IpcError::code(code::ARTIFACT_EXTRACT_FAILED, format!("Failed to read {}: {error}", path.display()))
+            IpcError::code(
+                code::ARTIFACT_EXTRACT_FAILED,
+                format!("Failed to read {}: {error}", path.display()),
+            )
         })?;
         if read == 0 {
             break;
@@ -257,7 +308,10 @@ pub fn sha256_file(path: &Path) -> Result<String, IpcError> {
 /// Assert `path` is a real regular file (not a symlink/reparse point).
 fn assert_regular_file(path: &Path, label: &str) -> Result<(), IpcError> {
     let metadata = std::fs::symlink_metadata(path).map_err(|error| {
-        IpcError::code(code::ARTIFACT_EXTRACT_FAILED, format!("Mihomo {label} is missing: {error}"))
+        IpcError::code(
+            code::ARTIFACT_EXTRACT_FAILED,
+            format!("Mihomo {label} is missing: {error}"),
+        )
     })?;
     if metadata.file_type().is_symlink() {
         return Err(IpcError::code(
@@ -276,18 +330,24 @@ fn assert_regular_file(path: &Path, label: &str) -> Result<(), IpcError> {
 
 /// Default extraction: gz via flate2; zip via the pinned-reader used by the
 /// Sub-Store backend (never shells out, unlike the TS PowerShell fallback).
-fn extract_archive_bytes(asset: &MihomoAsset, archive_path: &Path, dest_dir: &Path) -> Result<(), String> {
-    let bytes =
-        std::fs::read(archive_path).map_err(|error| format!("Failed to read {}: {error}", archive_path.display()))?;
+fn extract_archive_bytes(
+    asset: &MihomoAsset,
+    archive_path: &Path,
+    dest_dir: &Path,
+) -> Result<(), String> {
+    let bytes = std::fs::read(archive_path)
+        .map_err(|error| format!("Failed to read {}: {error}", archive_path.display()))?;
     if asset.kind == "gz" {
         let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
         let mut plain: Vec<u8> = Vec::new();
-        decoder.read_to_end(&mut plain).map_err(|error| format!("gunzip failed: {error}"))?;
+        decoder
+            .read_to_end(&mut plain)
+            .map_err(|error| format!("gunzip failed: {error}"))?;
         std::fs::write(dest_dir.join(&asset.inner_name), plain)
             .map_err(|error| format!("Failed to write extracted binary: {error}"))?;
         return Ok(());
     }
-    crate::substore_zip::extract_zip_bytes(&bytes, dest_dir)
+    crate::substore_zip::extract_kernel_zip_bytes(&bytes, dest_dir)
         .map(|_| ())
         .map_err(|error| format!("unzip failed: {}", error.0))
 }
@@ -297,14 +357,25 @@ fn extract_archive_bytes(asset: &MihomoAsset, archive_path: &Path, dest_dir: &Pa
 /// the destination directory, refuses symlinks, makes the binary executable on
 /// non-Windows, and renames it to a stable basename so callers never depend on
 /// the archive's internal name.
-pub fn extract_mihomo(asset: &MihomoAsset, dest_dir: &Path, archive_path: &Path, binary_name: Option<&str>) -> Result<PathBuf, IpcError> {
+pub fn extract_mihomo(
+    asset: &MihomoAsset,
+    dest_dir: &Path,
+    archive_path: &Path,
+    binary_name: Option<&str>,
+) -> Result<PathBuf, IpcError> {
     std::fs::create_dir_all(dest_dir).map_err(|error| {
-        IpcError::code(code::ARTIFACT_EXTRACT_FAILED, format!("Failed to create {}: {error}", dest_dir.display()))
+        IpcError::code(
+            code::ARTIFACT_EXTRACT_FAILED,
+            format!("Failed to create {}: {error}", dest_dir.display()),
+        )
     })?;
     extract_archive_bytes(asset, archive_path, dest_dir).map_err(|message| {
         IpcError::code(
             code::ARTIFACT_EXTRACT_FAILED,
-            format!("Failed to extract mihomo archive {}: {message}", asset.filename),
+            format!(
+                "Failed to extract mihomo archive {}: {message}",
+                asset.filename
+            ),
         )
     })?;
 
@@ -312,15 +383,23 @@ pub fn extract_mihomo(asset: &MihomoAsset, dest_dir: &Path, archive_path: &Path,
     // determines its target basename and permission semantics. This also keeps
     // cross-platform artifact tests truthful on Windows runners.
     let is_win = asset.platform == "win32";
-    let target_name = binary_name
-        .map(str::to_string)
-        .unwrap_or_else(|| if is_win { "mihomo.exe".to_string() } else { "mihomo".to_string() });
+    let target_name = binary_name.map(str::to_string).unwrap_or_else(|| {
+        if is_win {
+            "mihomo.exe".to_string()
+        } else {
+            "mihomo".to_string()
+        }
+    });
     let extracted_path = dest_dir.join(&asset.inner_name);
     let target_path = dest_dir.join(&target_name);
 
     // Guard against paths inside the archive that escaped the destination dir.
-    let dest_root = dest_dir.canonicalize().unwrap_or_else(|_| dest_dir.to_path_buf());
-    let resolved_extracted = extracted_path.canonicalize().unwrap_or_else(|_| extracted_path.clone());
+    let dest_root = dest_dir
+        .canonicalize()
+        .unwrap_or_else(|_| dest_dir.to_path_buf());
+    let resolved_extracted = extracted_path
+        .canonicalize()
+        .unwrap_or_else(|_| extracted_path.clone());
     if !resolved_extracted.starts_with(&dest_root) {
         return Err(IpcError::code(
             code::ARTIFACT_EXTRACT_FAILED,
@@ -329,18 +408,30 @@ pub fn extract_mihomo(asset: &MihomoAsset, dest_dir: &Path, archive_path: &Path,
     }
     assert_regular_file(&extracted_path, "extracted binary")?;
 
-    if resolved_extracted != target_path.canonicalize().unwrap_or_else(|_| target_path.clone()) {
+    if resolved_extracted
+        != target_path
+            .canonicalize()
+            .unwrap_or_else(|_| target_path.clone())
+    {
         std::fs::rename(&resolved_extracted, &target_path).map_err(|error| {
-            IpcError::code(code::ARTIFACT_EXTRACT_FAILED, format!("Failed to rename extracted binary: {error}"))
+            IpcError::code(
+                code::ARTIFACT_EXTRACT_FAILED,
+                format!("Failed to rename extracted binary: {error}"),
+            )
         })?;
     }
     assert_regular_file(&target_path, "binary")?;
     #[cfg(unix)]
     if !is_win {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&target_path, std::fs::Permissions::from_mode(0o755)).map_err(|error| {
-            IpcError::code(code::ARTIFACT_EXTRACT_FAILED, format!("Failed to chmod the binary: {error}"))
-        })?;
+        std::fs::set_permissions(&target_path, std::fs::Permissions::from_mode(0o755)).map_err(
+            |error| {
+                IpcError::code(
+                    code::ARTIFACT_EXTRACT_FAILED,
+                    format!("Failed to chmod the binary: {error}"),
+                )
+            },
+        )?;
     }
     Ok(target_path)
 }
@@ -370,11 +461,20 @@ const MARKER_TMP_FILENAME: &str = ".mihomo-verified.tmp";
 pub fn write_verified_marker(dir: &Path, marker: &MihomoVerifiedMarker) -> Result<(), IpcError> {
     let tmp = dir.join(MARKER_TMP_FILENAME);
     let final_path = dir.join(MARKER_FILENAME);
-    std::fs::write(&tmp, serde_json::to_vec(marker).expect("marker serializes")).map_err(|error| {
-        IpcError::code(code::ARTIFACT_EXTRACT_FAILED, format!("Failed to write the marker: {error}"))
+    std::fs::write(&tmp, serde_json::to_vec(marker).expect("marker serializes")).map_err(
+        |error| {
+            IpcError::code(
+                code::ARTIFACT_EXTRACT_FAILED,
+                format!("Failed to write the marker: {error}"),
+            )
+        },
+    )?;
+    std::fs::rename(&tmp, &final_path).map_err(|error| {
+        IpcError::code(
+            code::ARTIFACT_EXTRACT_FAILED,
+            format!("Failed to commit the marker: {error}"),
+        )
     })?;
-    std::fs::rename(&tmp, &final_path)
-        .map_err(|error| IpcError::code(code::ARTIFACT_EXTRACT_FAILED, format!("Failed to commit the marker: {error}")))?;
     Ok(())
 }
 
@@ -422,7 +522,10 @@ pub async fn resolve_mihomo(
     let Some(asset) = mihomo_asset_for(platform, arch) else {
         return Err(IpcError::code(
             crate::error::code::UNSUPPORTED,
-            format!("No pinned mihomo artifact for {platform}/{arch} (version {})", mihomo_version()),
+            format!(
+                "No pinned mihomo artifact for {platform}/{arch} (version {})",
+                mihomo_version()
+            ),
         ));
     };
     resolve_mihomo_asset(&asset, workspace_dir, transport).await
@@ -441,7 +544,10 @@ pub async fn resolve_mihomo_asset(
         .map(|version| version.trim_start_matches('v').to_string())
         .unwrap_or_else(mihomo_version_no_v);
     std::fs::create_dir_all(workspace_dir).map_err(|error| {
-        IpcError::code(code::ARTIFACT_EXTRACT_FAILED, format!("Failed to create {}: {error}", workspace_dir.display()))
+        IpcError::code(
+            code::ARTIFACT_EXTRACT_FAILED,
+            format!("Failed to create {}: {error}", workspace_dir.display()),
+        )
     })?;
     let is_win = asset.platform == "win32";
     let target_name = if is_win { "mihomo.exe" } else { "mihomo" }.to_string();
@@ -455,12 +561,10 @@ pub async fn resolve_mihomo_asset(
             && marker.platform == asset.platform
             && marker.arch == asset.arch
             && marker.binary == target_name
+            && assert_regular_file(&binary_path, "binary").is_ok()
+            && sha256_file(&binary_path).is_ok_and(|digest| digest == marker.binary_sha256)
         {
-            if assert_regular_file(&binary_path, "binary").is_ok()
-                && sha256_file(&binary_path).is_ok_and(|digest| digest == marker.binary_sha256)
-            {
-                reusable = true;
-            }
+            reusable = true;
         }
     }
 
@@ -547,18 +651,31 @@ pub fn mihomo_asset_token(platform: &str, arch: &str) -> String {
 
 /// mihomo ships Windows builds as `.zip` and everything else as a raw `.gz`.
 pub fn mihomo_asset_kind_for(platform: &str) -> &'static str {
-    if platform == "win32" { "zip" } else { "gz" }
+    if platform == "win32" {
+        "zip"
+    } else {
+        "gz"
+    }
 }
 
 /// The executable name held inside the archive for a platform/arch.
 pub fn mihomo_asset_inner_name(platform: &str, arch: &str, kind: &str) -> String {
     let token = mihomo_asset_token(platform, arch);
-    if kind == "zip" { format!("mihomo-{token}.exe") } else { format!("mihomo-{token}") }
+    if kind == "zip" {
+        format!("mihomo-{token}.exe")
+    } else {
+        format!("mihomo-{token}")
+    }
 }
 
 /// Expected release asset filename for a version (leading `v`).
 pub fn mihomo_asset_filename(platform: &str, arch: &str, version: &str) -> String {
-    format!("mihomo-{}-{}.{}", mihomo_asset_token(platform, arch), version, mihomo_asset_kind_for(platform))
+    format!(
+        "mihomo-{}-{}.{}",
+        mihomo_asset_token(platform, arch),
+        version,
+        mihomo_asset_kind_for(platform)
+    )
 }
 
 /// Build a [`MihomoAsset`] for `version` from a matching GitHub release
@@ -585,8 +702,14 @@ pub fn build_mihomo_asset_from_release(
     Some(MihomoAsset {
         platform: platform.to_string(),
         arch: arch.to_string(),
-        filename: release_asset["name"].as_str().expect("checked name").to_string(),
-        url: release_asset["browser_download_url"].as_str().unwrap_or_default().to_string(),
+        filename: release_asset["name"]
+            .as_str()
+            .expect("checked name")
+            .to_string(),
+        url: release_asset["browser_download_url"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
         sha256,
         size,
         kind: kind.to_string(),
@@ -624,7 +747,12 @@ async fn github_get_json(url: &str) -> Result<Value, IpcError> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(GITHUB_API_TIMEOUT_SECS))
         .build()
-        .map_err(|error| IpcError::code(code::ARTIFACT_DOWNLOAD_FAILED, format!("GitHub 请求失败：{error}")))?;
+        .map_err(|error| {
+            IpcError::code(
+                code::ARTIFACT_DOWNLOAD_FAILED,
+                format!("GitHub 请求失败：{error}"),
+            )
+        })?;
     let response = client
         .get(url)
         .header("Accept", "application/vnd.github+json")
@@ -634,13 +762,19 @@ async fn github_get_json(url: &str) -> Result<Value, IpcError> {
         .await
         .map_err(|error| {
             let message = error.to_string();
-            if regex::Regex::new(r"(?i)timeout|abort").expect("timeout regex").is_match(&message) {
+            if regex::Regex::new(r"(?i)timeout|abort")
+                .expect("timeout regex")
+                .is_match(&message)
+            {
                 IpcError::code(
                     code::ARTIFACT_DOWNLOAD_FAILED,
                     format!("GitHub 请求超时（{}ms）", GITHUB_API_TIMEOUT_SECS * 1000),
                 )
             } else {
-                IpcError::code(code::ARTIFACT_DOWNLOAD_FAILED, format!("GitHub 请求失败：{message}"))
+                IpcError::code(
+                    code::ARTIFACT_DOWNLOAD_FAILED,
+                    format!("GitHub 请求失败：{message}"),
+                )
             }
         })?;
     if !response.status().is_success() {
@@ -650,14 +784,18 @@ async fn github_get_json(url: &str) -> Result<Value, IpcError> {
         ));
     }
     response.json::<Value>().await.map_err(|error| {
-        IpcError::code(code::ARTIFACT_DOWNLOAD_FAILED, format!("GitHub 请求失败：{error}"))
+        IpcError::code(
+            code::ARTIFACT_DOWNLOAD_FAILED,
+            format!("GitHub 请求失败：{error}"),
+        )
     })
 }
 
 /// The published version tags (`fetchGithubVersions`): per_page=50, tags
 /// filtered to the strict release shape.
 pub async fn fetch_github_versions() -> Result<Vec<String>, IpcError> {
-    let url = format!("https://api.github.com/repos/{MIHOMO_OWNER}/{MIHOMO_REPO}/releases?per_page=50");
+    let url =
+        format!("https://api.github.com/repos/{MIHOMO_OWNER}/{MIHOMO_REPO}/releases?per_page=50");
     let releases = github_get_json(&url).await?;
     let pattern = regex::Regex::new(r"^v\d+\.\d+\.\d+$").expect("version tag regex");
     let Some(releases) = releases.as_array() else {
@@ -672,8 +810,12 @@ pub async fn fetch_github_versions() -> Result<Vec<String>, IpcError> {
 }
 
 /// One release's asset metadata (`fetchGithubReleaseAssets`).
-pub async fn fetch_github_release_assets(version: &str) -> Result<Vec<MihomoReleaseAsset>, IpcError> {
-    let url = format!("https://api.github.com/repos/{MIHOMO_OWNER}/{MIHOMO_REPO}/releases/tags/{version}");
+pub async fn fetch_github_release_assets(
+    version: &str,
+) -> Result<Vec<MihomoReleaseAsset>, IpcError> {
+    let url = format!(
+        "https://api.github.com/repos/{MIHOMO_OWNER}/{MIHOMO_REPO}/releases/tags/{version}"
+    );
     let release = github_get_json(&url).await?;
     let Some(assets) = release["assets"].as_array() else {
         return Ok(Vec::new());
@@ -684,7 +826,10 @@ pub async fn fetch_github_release_assets(version: &str) -> Result<Vec<MihomoRele
             name: asset["name"].as_str().unwrap_or_default().to_string(),
             digest: asset["digest"].as_str().map(str::to_string),
             size: asset["size"].as_u64(),
-            browser_download_url: asset["browser_download_url"].as_str().unwrap_or_default().to_string(),
+            browser_download_url: asset["browser_download_url"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
         })
         .collect())
 }
@@ -695,12 +840,22 @@ mod tests {
     use std::io::Write;
 
     fn fake_asset(bytes: &[u8], overrides: Value) -> MihomoAsset {
-        let platform = overrides["platform"].as_str().unwrap_or("win32").to_string();
+        let platform = overrides["platform"]
+            .as_str()
+            .unwrap_or("win32")
+            .to_string();
         let arch = overrides["arch"].as_str().unwrap_or("x64").to_string();
         let kind = overrides["kind"].as_str().unwrap_or("zip").to_string();
-        let inner = overrides["innerName"].as_str().map(str::to_string).unwrap_or_else(|| {
-            if kind == "zip" { "mihomo-windows-amd64.exe".to_string() } else { "mihomo-linux-arm64".to_string() }
-        });
+        let inner = overrides["innerName"]
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                if kind == "zip" {
+                    "mihomo-windows-amd64.exe".to_string()
+                } else {
+                    "mihomo-linux-arm64".to_string()
+                }
+            });
         let digest = {
             let mut hasher = Sha256::new();
             hasher.update(bytes);
@@ -709,8 +864,14 @@ mod tests {
         MihomoAsset {
             platform,
             arch,
-            filename: overrides["filename"].as_str().unwrap_or("mihomo-test.zip").to_string(),
-            url: overrides["url"].as_str().unwrap_or("https://example.invalid/asset.zip").to_string(),
+            filename: overrides["filename"]
+                .as_str()
+                .unwrap_or("mihomo-test.zip")
+                .to_string(),
+            url: overrides["url"]
+                .as_str()
+                .unwrap_or("https://example.invalid/asset.zip")
+                .to_string(),
             sha256: digest,
             size: bytes.len() as u64,
             kind,
@@ -723,7 +884,11 @@ mod tests {
         Arc::new(move |_url: String, _max: u64| {
             let body = bytes.to_vec();
             Box::pin(async move {
-                Ok(DownloadResponse { status: 200, content_length: Some(body.len() as u64), body })
+                Ok(DownloadResponse {
+                    status: 200,
+                    content_length: Some(body.len() as u64),
+                    body,
+                })
             })
         })
     }
@@ -743,7 +908,12 @@ mod tests {
 
     fn dir_entries(dir: &Path) -> Vec<String> {
         let mut names: Vec<String> = std::fs::read_dir(dir)
-            .map(|entries| entries.filter_map(|entry| entry.ok()).map(|entry| entry.file_name().to_string_lossy().to_string()).collect())
+            .map(|entries| {
+                entries
+                    .filter_map(|entry| entry.ok())
+                    .map(|entry| entry.file_name().to_string_lossy().to_string())
+                    .collect()
+            })
             .unwrap_or_default();
         names.sort();
         names
@@ -752,7 +922,10 @@ mod tests {
     #[test]
     fn manifest_pins_the_official_version_and_release_base() {
         assert_eq!(mihomo_version(), "v1.19.30");
-        assert_eq!(mihomo_release_base(), "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.30");
+        assert_eq!(
+            mihomo_release_base(),
+            "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.30"
+        );
         assert_eq!(mihomo_version_no_v(), "1.19.30");
     }
 
@@ -785,8 +958,14 @@ mod tests {
         assert_eq!(mihomo_asset_token("linux", "arm64"), "linux-arm64");
         assert_eq!(mihomo_asset_kind_for("win32"), "zip");
         assert_eq!(mihomo_asset_kind_for("linux"), "gz");
-        assert_eq!(mihomo_asset_filename("win32", "x64", "v1.19.30"), "mihomo-windows-amd64-v1.19.30.zip");
-        assert_eq!(mihomo_asset_inner_name("linux", "arm64", "gz"), "mihomo-linux-arm64");
+        assert_eq!(
+            mihomo_asset_filename("win32", "x64", "v1.19.30"),
+            "mihomo-windows-amd64-v1.19.30.zip"
+        );
+        assert_eq!(
+            mihomo_asset_inner_name("linux", "arm64", "gz"),
+            "mihomo-linux-arm64"
+        );
     }
 
     #[tokio::test]
@@ -794,7 +973,9 @@ mod tests {
         let temp = tempfile::TempDir::new().unwrap();
         let bytes: &'static [u8] = Box::leak(b"archive bytes".to_vec().into_boxed_slice());
         let asset = fake_asset(bytes, serde_json::json!({}));
-        let archive = download_and_verify_mihomo(&asset, temp.path(), &transport_from_bytes(bytes)).await.unwrap();
+        let archive = download_and_verify_mihomo(&asset, temp.path(), &transport_from_bytes(bytes))
+            .await
+            .unwrap();
         assert!(archive.exists());
         assert_eq!(std::fs::read(&archive).unwrap(), bytes);
     }
@@ -803,10 +984,18 @@ mod tests {
     async fn download_rejects_and_removes_on_digest_mismatch() {
         let temp = tempfile::TempDir::new().unwrap();
         let asset = fake_asset(b"pinned bytes", serde_json::json!({}));
-        let wrong: &'static [u8] = Box::leak(b"bytes that do not match the pinned digest".to_vec().into_boxed_slice());
-        let error = download_and_verify_mihomo(&asset, temp.path(), &transport_from_bytes(wrong)).await.unwrap_err();
+        let wrong: &'static [u8] = Box::leak(
+            b"bytes that do not match the pinned digest"
+                .to_vec()
+                .into_boxed_slice(),
+        );
+        let error = download_and_verify_mihomo(&asset, temp.path(), &transport_from_bytes(wrong))
+            .await
+            .unwrap_err();
         assert!(
-            error.0.starts_with("PROTOCOL_ERROR:ARTIFACT_HASH_MISMATCH::SHA-256 mismatch for mihomo-test.zip"),
+            error.0.starts_with(
+                "PROTOCOL_ERROR:ARTIFACT_HASH_MISMATCH::SHA-256 mismatch for mihomo-test.zip"
+            ),
             "{}",
             error.0
         );
@@ -820,13 +1009,17 @@ mod tests {
         // Same digest tail is impossible; fewer bytes simply fails the digest
         // (and even a padded match would fail the byte-size check).
         let short: &'static [u8] = Box::leak(b"pinned".to_vec().into_boxed_slice());
-        let error = download_and_verify_mihomo(&asset, temp.path(), &transport_from_bytes(short)).await.unwrap_err();
+        let error = download_and_verify_mihomo(&asset, temp.path(), &transport_from_bytes(short))
+            .await
+            .unwrap_err();
         assert!(error.0.contains("ARTIFACT_HASH_MISMATCH"), "{}", error.0);
         // A digest-matching but shorter body fails the byte-size check.
         let bytes: &'static [u8] = Box::leak(b"pinned bytes".to_vec().into_boxed_slice());
         let mut asset2 = fake_asset(bytes, serde_json::json!({}));
         asset2.size = bytes.len() as u64 + 1;
-        let error = download_and_verify_mihomo(&asset2, temp.path(), &transport_from_bytes(bytes)).await.unwrap_err();
+        let error = download_and_verify_mihomo(&asset2, temp.path(), &transport_from_bytes(bytes))
+            .await
+            .unwrap_err();
         assert!(
             error.0.contains("SHA-256-matched but byte-size mismatch"),
             "{}",
@@ -844,19 +1037,39 @@ mod tests {
         let transport: DownloadTransport = {
             Arc::new(move |_url: String, _max: u64| {
                 Box::pin(async move {
-                    Ok(DownloadResponse { status: 200, content_length: Some(u64::MAX), body: Vec::new() })
+                    Ok(DownloadResponse {
+                        status: 200,
+                        content_length: Some(u64::MAX),
+                        body: Vec::new(),
+                    })
                 })
             })
         };
-        let error = download_and_verify_mihomo(&asset, temp.path(), &transport).await.unwrap_err();
+        let error = download_and_verify_mihomo(&asset, temp.path(), &transport)
+            .await
+            .unwrap_err();
         assert!(error.0.contains("declares content-length"), "{}", error.0);
         // Transport failure surfaces as ARTIFACT_DOWNLOAD_FAILED.
-        let error = download_and_verify_mihomo(&asset, temp.path(), &transport_error("connection reset")).await.unwrap_err();
-        assert_eq!(error.0, "PROTOCOL_ERROR:ARTIFACT_DOWNLOAD_FAILED::connection reset");
+        let error =
+            download_and_verify_mihomo(&asset, temp.path(), &transport_error("connection reset"))
+                .await
+                .unwrap_err();
+        assert_eq!(
+            error.0,
+            "PROTOCOL_ERROR:ARTIFACT_DOWNLOAD_FAILED::connection reset"
+        );
         // A body larger than size + slack is capped.
-        let big: &'static [u8] = Box::leak(vec![0u8; (asset.size + DOWNLOAD_SIZE_SLACK_BYTES + 1) as usize].into_boxed_slice());
-        let error = download_and_verify_mihomo(&asset, temp.path(), &transport_from_bytes(big)).await.unwrap_err();
-        assert!(error.0.contains("exceeded") || error.0.contains("byte"), "{}", error.0);
+        let big: &'static [u8] = Box::leak(
+            vec![0u8; (asset.size + DOWNLOAD_SIZE_SLACK_BYTES + 1) as usize].into_boxed_slice(),
+        );
+        let error = download_and_verify_mihomo(&asset, temp.path(), &transport_from_bytes(big))
+            .await
+            .unwrap_err();
+        assert!(
+            error.0.contains("exceeded") || error.0.contains("byte"),
+            "{}",
+            error.0
+        );
         assert!(!temp.path().join(&asset.filename).exists());
     }
 
@@ -867,8 +1080,17 @@ mod tests {
         // gz → raw binary, renamed to the stable target name.
         let gz = gz_bytes(b"ELF");
         std::fs::write(temp.path().join("archive.gz"), &gz).unwrap();
-        let asset = fake_asset(&gz, serde_json::json!({ "platform": "linux", "arch": "arm64", "kind": "gz", "innerName": "mihomo-linux-arm64", "filename": "archive.gz" }));
-        let target = extract_mihomo(&asset, &dest, temp.path().join("archive.gz").as_path(), None).unwrap();
+        let asset = fake_asset(
+            &gz,
+            serde_json::json!({ "platform": "linux", "arch": "arm64", "kind": "gz", "innerName": "mihomo-linux-arm64", "filename": "archive.gz" }),
+        );
+        let target = extract_mihomo(
+            &asset,
+            &dest,
+            temp.path().join("archive.gz").as_path(),
+            None,
+        )
+        .unwrap();
         assert_eq!(target, dest.join("mihomo"));
         assert_eq!(std::fs::read(&target).unwrap(), b"ELF");
         #[cfg(unix)]
@@ -878,10 +1100,22 @@ mod tests {
             assert_ne!(mode & 0o111, 0, "the binary must be executable");
         }
         // zip → inner exe renamed to mihomo.exe.
-        let zip = crate::substore_zip::zip_stored_bytes(vec![("mihomo-windows-amd64.exe", b"PE".to_vec())]);
+        let zip = crate::substore_zip::zip_stored_bytes(vec![(
+            "mihomo-windows-amd64.exe",
+            b"PE".to_vec(),
+        )]);
         std::fs::write(temp.path().join("archive.zip"), &zip).unwrap();
-        let asset = fake_asset(&zip, serde_json::json!({ "platform": "win32", "arch": "x64", "kind": "zip", "innerName": "mihomo-windows-amd64.exe", "filename": "archive.zip" }));
-        let target = extract_mihomo(&asset, &dest, temp.path().join("archive.zip").as_path(), None).unwrap();
+        let asset = fake_asset(
+            &zip,
+            serde_json::json!({ "platform": "win32", "arch": "x64", "kind": "zip", "innerName": "mihomo-windows-amd64.exe", "filename": "archive.zip" }),
+        );
+        let target = extract_mihomo(
+            &asset,
+            &dest,
+            temp.path().join("archive.zip").as_path(),
+            None,
+        )
+        .unwrap();
         assert_eq!(target, dest.join("mihomo.exe"));
         assert_eq!(std::fs::read(&target).unwrap(), b"PE");
     }
@@ -893,8 +1127,17 @@ mod tests {
         std::fs::create_dir_all(&dest).unwrap();
         // A corrupt gz fails as ARTIFACT_EXTRACT_FAILED with the wrapped copy.
         std::fs::write(temp.path().join("archive.gz"), b"not gzip at all").unwrap();
-        let asset = fake_asset(b"x", serde_json::json!({ "platform": "linux", "arch": "arm64", "kind": "gz", "innerName": "mihomo-linux-arm64", "filename": "archive.gz" }));
-        let error = extract_mihomo(&asset, &dest, temp.path().join("archive.gz").as_path(), None).unwrap_err();
+        let asset = fake_asset(
+            b"x",
+            serde_json::json!({ "platform": "linux", "arch": "arm64", "kind": "gz", "innerName": "mihomo-linux-arm64", "filename": "archive.gz" }),
+        );
+        let error = extract_mihomo(
+            &asset,
+            &dest,
+            temp.path().join("archive.gz").as_path(),
+            None,
+        )
+        .unwrap_err();
         assert!(
             error.0.starts_with("PROTOCOL_ERROR:ARTIFACT_EXTRACT_FAILED::Failed to extract mihomo archive archive.gz"),
             "{}",
@@ -903,8 +1146,17 @@ mod tests {
         // A missing member is a regular-file refusal.
         let zip = crate::substore_zip::zip_stored_bytes(vec![("other.bin", b"PE".to_vec())]);
         std::fs::write(temp.path().join("archive2.zip"), &zip).unwrap();
-        let asset = fake_asset(&zip, serde_json::json!({ "platform": "win32", "arch": "x64", "kind": "zip", "innerName": "mihomo-windows-amd64.exe", "filename": "archive2.zip" }));
-        let error = extract_mihomo(&asset, &dest, temp.path().join("archive2.zip").as_path(), None).unwrap_err();
+        let asset = fake_asset(
+            &zip,
+            serde_json::json!({ "platform": "win32", "arch": "x64", "kind": "zip", "innerName": "mihomo-windows-amd64.exe", "filename": "archive2.zip" }),
+        );
+        let error = extract_mihomo(
+            &asset,
+            &dest,
+            temp.path().join("archive2.zip").as_path(),
+            None,
+        )
+        .unwrap_err();
         assert!(error.0.contains("is missing"), "{}", error.0);
     }
 
@@ -935,9 +1187,13 @@ mod tests {
     #[tokio::test]
     async fn resolve_rejects_unsupported_platforms() {
         let temp = tempfile::TempDir::new().unwrap();
-        let error = resolve_mihomo("freebsd", "x64", temp.path(), &transport_error("never")).await.unwrap_err();
+        let error = resolve_mihomo("freebsd", "x64", temp.path(), &transport_error("never"))
+            .await
+            .unwrap_err();
         assert!(
-            error.0.starts_with("PROTOCOL_ERROR:UNSUPPORTED::No pinned mihomo artifact for freebsd/x64"),
+            error.0.starts_with(
+                "PROTOCOL_ERROR:UNSUPPORTED::No pinned mihomo artifact for freebsd/x64"
+            ),
             "{}",
             error.0
         );
@@ -951,8 +1207,14 @@ mod tests {
         // The pinned digest cannot be forged by a fake transport, so the
         // fresh-download path must REJECT (the real digest arrives from the
         // real release only). Provenance: the directory ends empty.
-        let wrong: &'static [u8] = Box::leak(b"bytes that do not match the pinned digest".to_vec().into_boxed_slice());
-        let error = resolve_mihomo("win32", "x64", temp.path(), &transport_from_bytes(wrong)).await.unwrap_err();
+        let wrong: &'static [u8] = Box::leak(
+            b"bytes that do not match the pinned digest"
+                .to_vec()
+                .into_boxed_slice(),
+        );
+        let error = resolve_mihomo("win32", "x64", temp.path(), &transport_from_bytes(wrong))
+            .await
+            .unwrap_err();
         assert!(error.0.contains("ARTIFACT_HASH_MISMATCH"), "{}", error.0);
         assert_eq!(dir_entries(temp.path()), Vec::<String>::new());
     }
@@ -985,8 +1247,10 @@ mod tests {
                 Box::pin(async move { Err("must not download".to_string()) })
             })
         };
-        let resolved = resolve_mihomo_asset(&asset, temp.path(), &transport).await.unwrap();
-        assert_eq!(resolved.reused, true);
+        let resolved = resolve_mihomo_asset(&asset, temp.path(), &transport)
+            .await
+            .unwrap();
+        assert!(resolved.reused);
         assert_eq!(resolved.path, binary);
         assert_eq!(std::fs::read(&resolved.path).unwrap(), payload);
         assert_eq!(downloads.load(std::sync::atomic::Ordering::SeqCst), 0);
@@ -1014,7 +1278,9 @@ mod tests {
         .unwrap();
         std::fs::write(temp.path().join("mihomo.exe"), b"tampered payload!!!").unwrap();
         let wrong: &'static [u8] = Box::leak(b"not the pinned bytes".to_vec().into_boxed_slice());
-        let error = resolve_mihomo_asset(&asset, temp.path(), &transport_from_bytes(wrong)).await.unwrap_err();
+        let error = resolve_mihomo_asset(&asset, temp.path(), &transport_from_bytes(wrong))
+            .await
+            .unwrap_err();
         assert!(error.0.contains("ARTIFACT_HASH_MISMATCH"), "{}", error.0);
         assert_eq!(dir_entries(temp.path()), Vec::<String>::new());
         // 2. Forged marker (wrong recorded binary hash) → not reusable.
@@ -1032,7 +1298,9 @@ mod tests {
             },
         )
         .unwrap();
-        let error = resolve_mihomo_asset(&asset, temp.path(), &transport_from_bytes(wrong)).await.unwrap_err();
+        let error = resolve_mihomo_asset(&asset, temp.path(), &transport_from_bytes(wrong))
+            .await
+            .unwrap_err();
         assert!(error.0.contains("ARTIFACT_HASH_MISMATCH"), "{}", error.0);
         assert_eq!(dir_entries(temp.path()), Vec::<String>::new());
         // 3. Marker platform mismatch → not reusable.
@@ -1051,7 +1319,9 @@ mod tests {
             },
         )
         .unwrap();
-        let error = resolve_mihomo_asset(&asset, temp.path(), &transport_from_bytes(wrong)).await.unwrap_err();
+        let error = resolve_mihomo_asset(&asset, temp.path(), &transport_from_bytes(wrong))
+            .await
+            .unwrap_err();
         assert!(error.0.contains("ARTIFACT_HASH_MISMATCH"), "{}", error.0);
         assert_eq!(dir_entries(temp.path()), Vec::<String>::new());
     }
@@ -1064,7 +1334,8 @@ mod tests {
             "size": 18400000,
             "browser_download_url": "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.29/mihomo-windows-amd64-v1.19.29.zip"
         });
-        let asset = build_mihomo_asset_from_release("v1.19.29", "win32", "x64", &release).expect("asset");
+        let asset =
+            build_mihomo_asset_from_release("v1.19.29", "win32", "x64", &release).expect("asset");
         assert_eq!(asset.filename, "mihomo-windows-amd64-v1.19.29.zip");
         assert_eq!(asset.version.as_deref(), Some("v1.19.29"));
         assert_eq!(asset.sha256, "a".repeat(64));

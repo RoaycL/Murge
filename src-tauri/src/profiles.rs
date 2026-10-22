@@ -92,7 +92,11 @@ impl ProfileRepository {
         id_generator: Box<dyn Fn() -> String + Send + Sync>,
         now: Box<dyn Fn() -> u64 + Send + Sync>,
     ) -> Self {
-        ProfileRepository { root_dir, id_generator, now }
+        ProfileRepository {
+            root_dir,
+            id_generator,
+            now,
+        }
     }
 
     /// Lexical path resolution mirroring TS `resolve()`: normalize `.`/`..`
@@ -159,8 +163,9 @@ impl ProfileRepository {
     /// content, never a torn file. A failed write removes its temp file.
     fn write_bytes(&self, path: &Path, content: &str) -> ProfileResult<()> {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| IpcError::internal(format!("unable to create profile directory: {error}")))?;
+            fs::create_dir_all(parent).map_err(|error| {
+                IpcError::internal(format!("unable to create profile directory: {error}"))
+            })?;
         }
         let temp = self
             .root_dir
@@ -182,15 +187,15 @@ impl ProfileRepository {
             handle.sync_all()
         });
         match result {
-            Ok(()) => {
-                fs::rename(&temp, path).map_err(|error| {
-                    let _ = fs::remove_file(&temp);
-                    IpcError::internal(format!("unable to finalize profile write: {error}"))
-                })
-            }
+            Ok(()) => fs::rename(&temp, path).map_err(|error| {
+                let _ = fs::remove_file(&temp);
+                IpcError::internal(format!("unable to finalize profile write: {error}"))
+            }),
             Err(error) => {
                 let _ = fs::remove_file(&temp);
-                Err(IpcError::internal(format!("unable to write profile: {error}")))
+                Err(IpcError::internal(format!(
+                    "unable to write profile: {error}"
+                )))
             }
         }
     }
@@ -220,11 +225,13 @@ impl ProfileRepository {
     /// All metas sorted by creation time, with the active flag from the
     /// pointer. Torn/unreadable meta files are skipped, not fatal.
     pub fn list(&self) -> ProfileResult<Vec<Value>> {
-        fs::create_dir_all(&self.root_dir)
-            .map_err(|error| IpcError::internal(format!("unable to create profile directory: {error}")))?;
+        fs::create_dir_all(&self.root_dir).map_err(|error| {
+            IpcError::internal(format!("unable to create profile directory: {error}"))
+        })?;
         let active_id = self.read_active();
-        let entries = fs::read_dir(&self.root_dir)
-            .map_err(|error| IpcError::internal(format!("unable to read profile directory: {error}")))?;
+        let entries = fs::read_dir(&self.root_dir).map_err(|error| {
+            IpcError::internal(format!("unable to read profile directory: {error}"))
+        })?;
         let mut metas: Vec<Value> = Vec::new();
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
@@ -239,7 +246,10 @@ impl ProfileRepository {
                 continue;
             };
             if let Some(object) = meta.as_object_mut() {
-                object.insert("active".into(), Value::Bool(active_id.as_deref() == Some(id)));
+                object.insert(
+                    "active".into(),
+                    Value::Bool(active_id.as_deref() == Some(id)),
+                );
                 metas.push(meta);
             }
         }
@@ -300,8 +310,9 @@ impl ProfileRepository {
         source: &Value,
         activate: bool,
     ) -> ProfileResult<Value> {
-        fs::create_dir_all(&self.root_dir)
-            .map_err(|error| IpcError::internal(format!("unable to create profile directory: {error}")))?;
+        fs::create_dir_all(&self.root_dir).map_err(|error| {
+            IpcError::internal(format!("unable to create profile directory: {error}"))
+        })?;
         self.ensure_unique_name(name, None)?;
         let id = self.create_id();
         let timestamp = (self.now)();
@@ -318,10 +329,7 @@ impl ProfileRepository {
         meta.insert("id".into(), Value::String(id.clone()));
         meta.insert("name".into(), Value::String(name.trim().to_string()));
         meta.insert("source".into(), source);
-        meta.insert(
-            "size".into(),
-            Value::Number(document.as_bytes().len().into()),
-        );
+        meta.insert("size".into(), Value::Number(document.len().into()));
         meta.insert("createdAt".into(), Value::Number(timestamp.into()));
         meta.insert("updatedAt".into(), Value::Number(timestamp.into()));
         meta.insert("active".into(), Value::Bool(false));
@@ -399,18 +407,12 @@ impl ProfileRepository {
     /// their order and comments survive verbatim.
     pub fn edit_document(&self, id: &str, edits: &[ConfigEdit]) -> ProfileResult<Value> {
         let profile = self.get(id)?;
-        let updated_document = apply_edits(
-            profile["document"].as_str().unwrap_or_default(),
-            edits,
-        );
+        let updated_document = apply_edits(profile["document"].as_str().unwrap_or_default(), edits);
         self.write_bytes(&self.doc_path(id)?, &updated_document)?;
         let mut meta = profile["meta"].clone();
         if let Some(object) = meta.as_object_mut() {
             object.insert("updatedAt".into(), Value::Number((self.now)().into()));
-            object.insert(
-                "size".into(),
-                Value::Number(updated_document.as_bytes().len().into()),
-            );
+            object.insert("size".into(), Value::Number(updated_document.len().into()));
         }
         self.write_bytes(
             &self.meta_path(id)?,
@@ -428,7 +430,7 @@ impl ProfileRepository {
         let mut meta = profile["meta"].clone();
         if let Some(object) = meta.as_object_mut() {
             object.insert("updatedAt".into(), Value::Number((self.now)().into()));
-            object.insert("size".into(), Value::Number(document.as_bytes().len().into()));
+            object.insert("size".into(), Value::Number(document.len().into()));
         }
         self.write_bytes(
             &self.meta_path(id)?,
@@ -443,7 +445,7 @@ impl ProfileRepository {
         let mut meta = profile["meta"].clone();
         if let Some(object) = meta.as_object_mut() {
             object.insert("updatedAt".into(), Value::Number((self.now)().into()));
-            object.insert("size".into(), Value::Number(document.as_bytes().len().into()));
+            object.insert("size".into(), Value::Number(document.len().into()));
         }
         self.write_bytes(
             &self.meta_path(id)?,
@@ -481,7 +483,7 @@ impl ProfileRepository {
         if let Some(object) = meta.as_object_mut() {
             object.insert("source".into(), source.clone());
             object.insert("updatedAt".into(), Value::Number((self.now)().into()));
-            object.insert("size".into(), Value::Number(document.as_bytes().len().into()));
+            object.insert("size".into(), Value::Number(document.len().into()));
         }
         self.write_bytes(
             &self.meta_path(id)?,
@@ -519,7 +521,10 @@ fn find_comment_index(value_text: &str) -> Option<usize> {
         match ch {
             '\'' if !in_double => in_single = !in_single,
             '"' if !in_single => in_double = !in_double,
-            '#' if !in_single && !in_double && (i == 0 || matches!(value_text.as_bytes()[i - 1], b' ' | b'\t')) => {
+            '#' if !in_single
+                && !in_double
+                && (i == 0 || matches!(value_text.as_bytes()[i - 1], b' ' | b'\t')) =>
+            {
                 return Some(i)
             }
             _ => {}
@@ -545,7 +550,9 @@ fn replace_scalar(document: &str, key: &str, value: &str) -> String {
     let Some(start_index) = start_index else {
         return insert_key(document, key, value);
     };
-    let captures = compiled.captures(lines[start_index]).expect("matched above");
+    let captures = compiled
+        .captures(lines[start_index])
+        .expect("matched above");
     let value_text = captures.get(4).map(|m| m.as_str()).unwrap_or("");
     let replacement = match find_comment_index(value_text) {
         Some(comment_index) => {
@@ -600,7 +607,12 @@ pub struct MemoryProfileSourceStore {
 
 impl ProfileSourceStore for MemoryProfileSourceStore {
     fn get(&self, id: &str) -> ProfileResult<Option<String>> {
-        Ok(self.values.lock().expect("source store mutex").get(id).cloned())
+        Ok(self
+            .values
+            .lock()
+            .expect("source store mutex")
+            .get(id)
+            .cloned())
     }
 
     fn set(&self, id: &str, url: &str) -> ProfileResult<()> {
@@ -649,7 +661,9 @@ impl ProfileSourceStore for KeyringProfileSourceStore {
             Err(keyring::Error::PlatformFailure(_) | keyring::Error::NoStorageAccess(_)) => {
                 Err(IpcError::internal("无法解密订阅地址"))
             }
-            Err(error) => Err(IpcError::internal(format!("credential store error: {error}"))),
+            Err(error) => Err(IpcError::internal(format!(
+                "credential store error: {error}"
+            ))),
         }
     }
 
@@ -667,7 +681,9 @@ impl ProfileSourceStore for KeyringProfileSourceStore {
     fn delete(&self, id: &str) -> ProfileResult<()> {
         match self.entry(id)?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(error) => Err(IpcError::internal(format!("credential store error: {error}"))),
+            Err(error) => Err(IpcError::internal(format!(
+                "credential store error: {error}"
+            ))),
         }
     }
 }
@@ -708,12 +724,12 @@ mod tests {
     fn import_meta_is_compact_json_with_insertion_order() {
         let temp = TempDir::new().unwrap();
         let repo = repo_in(&temp);
-        let meta = repo.import("A", "mode: rule\n", &url_source(None), false).unwrap();
+        let meta = repo
+            .import("A", "mode: rule\n", &url_source(None), false)
+            .unwrap();
         let raw = fs::read_to_string(
-            temp.path().join(format!(
-                "{}{META_EXTENSION}",
-                meta["id"].as_str().unwrap()
-            )),
+            temp.path()
+                .join(format!("{}{META_EXTENSION}", meta["id"].as_str().unwrap())),
         )
         .unwrap();
         assert_eq!(raw, serde_json::to_string(&meta).unwrap());
@@ -724,17 +740,24 @@ mod tests {
     fn names_are_unique_case_insensitively() {
         let temp = TempDir::new().unwrap();
         let repo = repo_in(&temp);
-        repo.import("Home", "mode: rule\n", &url_source(None), false).unwrap();
-        let error = repo.import(" home ", "doc2", &url_source(None), false).unwrap_err();
+        repo.import("Home", "mode: rule\n", &url_source(None), false)
+            .unwrap();
+        let error = repo
+            .import(" home ", "doc2", &url_source(None), false)
+            .unwrap_err();
         assert!(error.0.contains("INVALID_ARGUMENT"), "{}", error.0);
-        assert!(error.0.contains("a profile named \" home \" already exists"));
+        assert!(error
+            .0
+            .contains("a profile named \" home \" already exists"));
     }
 
     #[test]
     fn activate_sets_pointer_and_list_reflects_it() {
         let temp = TempDir::new().unwrap();
         let repo = repo_in(&temp);
-        let a = repo.import("A", "mode: rule\n", &url_source(None), false).unwrap();
+        let a = repo
+            .import("A", "mode: rule\n", &url_source(None), false)
+            .unwrap();
         let b = repo.import("B", "doc", &url_source(None), false).unwrap();
         repo.activate(b["id"].as_str().unwrap()).unwrap();
         let list = repo.list().unwrap();
@@ -755,14 +778,21 @@ mod tests {
     fn get_active_returns_null_when_pointer_is_stale() {
         let temp = TempDir::new().unwrap();
         let repo = repo_in(&temp);
-        let a = repo.import("A", "mode: rule\n", &url_source(None), false).unwrap();
+        let a = repo
+            .import("A", "mode: rule\n", &url_source(None), false)
+            .unwrap();
         repo.activate(a["id"].as_str().unwrap()).unwrap();
         // Simulate a pointer to a profile deleted out-of-band.
         fs::remove_file(
-            temp.path().join(format!("{}{META_EXTENSION}", a["id"].as_str().unwrap())),
+            temp.path()
+                .join(format!("{}{META_EXTENSION}", a["id"].as_str().unwrap())),
         )
         .unwrap();
-        fs::remove_file(temp.path().join(format!("{}{DOC_EXTENSION}", a["id"].as_str().unwrap()))).unwrap();
+        fs::remove_file(
+            temp.path()
+                .join(format!("{}{DOC_EXTENSION}", a["id"].as_str().unwrap())),
+        )
+        .unwrap();
         assert_eq!(repo.get_active().unwrap(), None);
     }
 
@@ -770,7 +800,9 @@ mod tests {
     fn delete_clears_active_pointer() {
         let temp = TempDir::new().unwrap();
         let repo = repo_in(&temp);
-        let a = repo.import("A", "mode: rule\n", &url_source(None), false).unwrap();
+        let a = repo
+            .import("A", "mode: rule\n", &url_source(None), false)
+            .unwrap();
         let id = a["id"].as_str().unwrap().to_string();
         repo.activate(&id).unwrap();
         repo.delete(&id).unwrap();
@@ -786,7 +818,13 @@ mod tests {
         let a = repo.import("A", doc, &url_source(None), false).unwrap();
         let id = a["id"].as_str().unwrap().to_string();
         let meta = repo
-            .edit_document(&id, &[ConfigEdit { key: "mode".into(), value: "global".into() }])
+            .edit_document(
+                &id,
+                &[ConfigEdit {
+                    key: "mode".into(),
+                    value: "global".into(),
+                }],
+            )
             .unwrap();
         let profile = repo.get(&id).unwrap();
         assert_eq!(
@@ -803,8 +841,14 @@ mod tests {
         let doc = "proxies: []\n";
         let a = repo.import("A", doc, &url_source(None), false).unwrap();
         let id = a["id"].as_str().unwrap().to_string();
-        repo.edit_document(&id, &[ConfigEdit { key: "ipv6".into(), value: "false".into() }])
-            .unwrap();
+        repo.edit_document(
+            &id,
+            &[ConfigEdit {
+                key: "ipv6".into(),
+                value: "false".into(),
+            }],
+        )
+        .unwrap();
         let profile = repo.get(&id).unwrap();
         assert_eq!(
             profile["document"],
@@ -814,7 +858,16 @@ mod tests {
 
     #[test]
     fn edit_on_empty_document_appends() {
-        assert_eq!(apply_edits("", &[ConfigEdit { key: "mode".into(), value: "rule".into() }]), "mode: rule\n");
+        assert_eq!(
+            apply_edits(
+                "",
+                &[ConfigEdit {
+                    key: "mode".into(),
+                    value: "rule".into()
+                }]
+            ),
+            "mode: rule\n"
+        );
     }
 
     #[test]
@@ -848,7 +901,9 @@ mod tests {
             .import(
                 "Sub2",
                 "doc",
-                &url_source(Some("https://user:secret@example.com/a0123456789abcdef01234567")),
+                &url_source(Some(
+                    "https://user:secret@example.com/a0123456789abcdef01234567",
+                )),
                 false,
             )
             .unwrap();
@@ -862,7 +917,10 @@ mod tests {
         let store = MemoryProfileSourceStore::default();
         assert_eq!(store.get("x").unwrap(), None);
         store.set("x", "https://example.com/sub").unwrap();
-        assert_eq!(store.get("x").unwrap().as_deref(), Some("https://example.com/sub"));
+        assert_eq!(
+            store.get("x").unwrap().as_deref(),
+            Some("https://example.com/sub")
+        );
         store.delete("x").unwrap();
         assert_eq!(store.get("x").unwrap(), None);
     }
@@ -871,10 +929,21 @@ mod tests {
     fn replace_from_source_preserves_name_and_pointer() {
         let temp = TempDir::new().unwrap();
         let repo = repo_in(&temp);
-        let a = repo.import("Keep", "mode: rule\n", &url_source(Some("https://e.com/s")), true).unwrap();
+        let a = repo
+            .import(
+                "Keep",
+                "mode: rule\n",
+                &url_source(Some("https://e.com/s")),
+                true,
+            )
+            .unwrap();
         let id = a["id"].as_str().unwrap().to_string();
         let meta = repo
-            .replace_from_source(&id, "mode: global\n", &json!({ "type": "url", "url": "https://e.com/s2" }))
+            .replace_from_source(
+                &id,
+                "mode: global\n",
+                &json!({ "type": "url", "url": "https://e.com/s2" }),
+            )
             .unwrap();
         assert_eq!(meta["name"], "Keep");
         assert_eq!(meta["source"]["url"], "https://e.com/s2");
@@ -886,7 +955,8 @@ mod tests {
     fn torn_meta_files_are_skipped_by_list() {
         let temp = TempDir::new().unwrap();
         let repo = repo_in(&temp);
-        repo.import("Good", "mode: rule\n", &url_source(None), false).unwrap();
+        repo.import("Good", "mode: rule\n", &url_source(None), false)
+            .unwrap();
         fs::write(temp.path().join("bad.meta.json"), "{ torn").unwrap();
         let list = repo.list().unwrap();
         assert_eq!(list.len(), 1);
@@ -894,13 +964,33 @@ mod tests {
     }
 
     #[test]
-    fn meta_files_use_0600_on_unix() {
-        use std::os::unix::fs::PermissionsExt;
+    fn profile_write_preserves_content_and_native_file_properties() {
         let temp = TempDir::new().unwrap();
         let repo = repo_in(&temp);
-        let a = repo.import("A", "mode: rule\n", &url_source(None), false).unwrap();
-        let doc = temp.path().join(format!("{}{DOC_EXTENSION}", a["id"].as_str().unwrap()));
-        let mode = fs::metadata(doc).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o600);
+        let a = repo
+            .import("A", "mode: rule\n", &url_source(None), false)
+            .unwrap();
+        let doc = temp
+            .path()
+            .join(format!("{}{DOC_EXTENSION}", a["id"].as_str().unwrap()));
+        assert_eq!(fs::read_to_string(&doc).unwrap(), "mode: rule\n");
+        let metadata = fs::metadata(&doc).unwrap();
+        assert!(metadata.is_file());
+        // POSIX mode bits have no Windows equivalent. Keep this test running
+        // on both platforms and assert each platform's native file property.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            assert_eq!(
+                metadata.file_attributes() & 0x400,
+                0,
+                "profile is not a reparse point"
+            );
+        }
     }
 }

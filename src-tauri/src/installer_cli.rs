@@ -20,10 +20,16 @@ pub const RESTORE_SYSTEM_PROXY_ARG: &str = "--restore-system-proxy";
 /// Run a headless installer command named on the command line. Returns the
 /// process exit code when one ran; `None` means a normal GUI launch.
 pub fn run_from_args(args: impl IntoIterator<Item = String>) -> Option<i32> {
-    if !args.into_iter().skip(1).any(|arg| arg == RESTORE_SYSTEM_PROXY_ARG) {
+    if !args
+        .into_iter()
+        .skip(1)
+        .any(|arg| arg == RESTORE_SYSTEM_PROXY_ARG)
+    {
         return None;
     }
-    Some(tauri::async_runtime::block_on(restore_system_proxy(AppPaths::probe())))
+    Some(tauri::async_runtime::block_on(restore_system_proxy(
+        AppPaths::probe(),
+    )))
 }
 
 async fn restore_system_proxy(paths: AppPaths) -> i32 {
@@ -35,15 +41,21 @@ async fn restore_system_proxy(paths: AppPaths) -> i32 {
     // let the uninstaller remove the app while it still owns the proxy, so a
     // backup that exists but cannot be read fails the restore.
     if let Err(error) = backup_readable(&root) {
-        println!("[restore-system-proxy] {}", serde_json::json!({ "phase": "error", "ok": false, "errorMessage": error }));
+        println!(
+            "[restore-system-proxy] {}",
+            serde_json::json!({ "phase": "error", "ok": false, "errorMessage": error })
+        );
         return 1;
     }
     // Same native registry adapter the app uses: no reg.exe/PowerShell child
     // processes while the uninstaller waits on us.
     #[cfg(windows)]
-    let adapter: Arc<dyn SystemProxyAdapter> = Arc::new(system_proxy::NativeWindowsSystemProxyAdapter::win32());
+    let adapter: Arc<dyn SystemProxyAdapter> =
+        Arc::new(system_proxy::NativeWindowsSystemProxyAdapter::win32());
     #[cfg(not(windows))]
-    let adapter: Arc<dyn SystemProxyAdapter> = Arc::new(system_proxy::DisabledSystemProxyAdapter::new(std::env::consts::OS));
+    let adapter: Arc<dyn SystemProxyAdapter> = Arc::new(
+        system_proxy::DisabledSystemProxyAdapter::new(std::env::consts::OS),
+    );
     let outcome = restore_with(
         adapter,
         Arc::new(system_proxy::FileSystemBackupStore::for_base_dir(&root)),
@@ -52,7 +64,11 @@ async fn restore_system_proxy(paths: AppPaths) -> i32 {
     .await;
     // Release builds have no console; the line is for CI runs and logs.
     println!("[restore-system-proxy] {}", outcome.report);
-    if outcome.ok { 0 } else { 1 }
+    if outcome.ok {
+        0
+    } else {
+        1
+    }
 }
 
 /// Ok when the owned backup is absent or readable.
@@ -118,8 +134,8 @@ pub async fn restore_with(
 mod tests {
     use super::*;
     use crate::system_proxy::{
-        FakeSystemProxyAdapter, InMemoryBackupStore, InMemoryBypassStore, RegistryState, RegistryValue,
-        SystemProxyService,
+        FakeSystemProxyAdapter, InMemoryBackupStore, InMemoryBypassStore, RegistryState,
+        RegistryValue, SystemProxyService,
     };
 
     fn arg_list(values: &[&str]) -> Vec<String> {
@@ -135,7 +151,11 @@ mod tests {
     }
 
     /// Enable through the real service so the backup has the production shape.
-    async fn enabled_fixture() -> (Arc<FakeSystemProxyAdapter>, Arc<InMemoryBackupStore>, Arc<InMemoryBypassStore>) {
+    async fn enabled_fixture() -> (
+        Arc<FakeSystemProxyAdapter>,
+        Arc<InMemoryBackupStore>,
+        Arc<InMemoryBypassStore>,
+    ) {
         let adapter = Arc::new(FakeSystemProxyAdapter::new());
         adapter.set_registry(original_registry());
         let backup = Arc::new(InMemoryBackupStore::new());
@@ -213,8 +233,16 @@ mod tests {
     #[tokio::test]
     async fn a_corrupt_backup_fails() {
         let backup = Arc::new(InMemoryBackupStore::new());
-        backup.write(&serde_json::json!({ "schemaVersion": 999 })).await.unwrap();
-        let outcome = restore_with(Arc::new(FakeSystemProxyAdapter::new()), backup, Arc::new(InMemoryBypassStore::new())).await;
+        backup
+            .write(&serde_json::json!({ "schemaVersion": 999 }))
+            .await
+            .unwrap();
+        let outcome = restore_with(
+            Arc::new(FakeSystemProxyAdapter::new()),
+            backup,
+            Arc::new(InMemoryBypassStore::new()),
+        )
+        .await;
         assert!(!outcome.ok, "{}", outcome.report);
     }
 

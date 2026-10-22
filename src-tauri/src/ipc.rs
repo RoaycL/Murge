@@ -17,21 +17,21 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app_info;
+use crate::brand;
 use crate::enhancements;
+use crate::error::IpcError;
 use crate::icons;
-use crate::network_metadata::NetworkMetadataService;
-use crate::startup::StartupService;
 use crate::inspection;
 use crate::kernel;
+use crate::live_config;
 use crate::mihomo;
-use crate::usage;
-use crate::brand;
-use crate::error::IpcError;
+use crate::network_metadata::NetworkMetadataService;
 use crate::override_service::OverrideService;
 use crate::paths::AppPaths;
 use crate::profile_service::ProfilesService;
-use crate::live_config;
 use crate::settings::{AppSettingsPatch, SettingsStore};
+use crate::startup::StartupService;
+use crate::usage;
 
 pub type IpcResult = Result<Value, IpcError>;
 
@@ -44,6 +44,7 @@ use crate::kernel::RUNTIME_UPDATE;
 /// The one command the webview is allowed to call. Everything else —
 /// filesystem, registry, the privileged named pipe — stays in Rust.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri injects each managed state independently.
 pub async fn desktop_ipc(
     channel: String,
     payload: Value,
@@ -64,7 +65,26 @@ pub async fn desktop_ipc(
     updates: State<'_, std::sync::Arc<crate::updates::UpdateService>>,
 ) -> IpcResult {
     let startup_inner = startup.inner();
-    dispatch(&channel, &payload, &paths, &settings, &profiles, &overrides, &models, &usage, &kernel, &mihomo, &desktop, &metadata, startup_inner, &substore, &system_proxy, &tun, &updates).await
+    dispatch(
+        &channel,
+        &payload,
+        &paths,
+        &settings,
+        &profiles,
+        &overrides,
+        &models,
+        &usage,
+        &kernel,
+        &mihomo,
+        &desktop,
+        &metadata,
+        startup_inner,
+        &substore,
+        &system_proxy,
+        &tun,
+        &updates,
+    )
+    .await
 }
 
 /// Payload arrays arrive as a JSON array; positional access mirrors the
@@ -91,7 +111,9 @@ fn arg(payload: &Value, index: usize) -> Option<&Value> {
 }
 
 fn string_arg(payload: &Value, index: usize) -> Option<String> {
-    arg(payload, index).and_then(Value::as_str).map(str::to_string)
+    arg(payload, index)
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 /// Channel dispatch table. Phase 3 slices extend this match; channels that do
@@ -99,6 +121,7 @@ fn string_arg(payload: &Value, index: usize) -> Option<String> {
 /// no-op), so the renderer sees an honest error during the migration. The
 /// `paths` parameter is part of the stable dispatch signature from day one —
 /// the log/usage slices (3A) consume it.
+#[allow(clippy::too_many_arguments)] // Stable vertical-slice dispatch boundary.
 pub async fn dispatch(
     channel: &str,
     payload: &Value,
@@ -127,20 +150,21 @@ pub async fn dispatch(
             let key = string_arg(payload, 0);
             let url = string_arg(payload, 1);
             let refresh = payload.get(2).and_then(Value::as_bool).unwrap_or(false);
-            Ok(desktop.icon_cache.get(key.as_deref(), url.as_deref(), refresh).await)
+            Ok(desktop
+                .icon_cache
+                .get(key.as_deref(), url.as_deref(), refresh)
+                .await)
         }
         "app:list-network-interfaces" => Ok(desktop.list_network_interfaces()),
         // Network (egress) metadata — Phase 3C slice 13. State lives on the
         // app handle (cached, single-flight); the payload tail carries the
         // per-call argument.
-        "network-metadata:get-providers" => {
-            Ok(metadata.get_providers().await)
-        }
-        "network-metadata:get-state" => {
-            Ok(metadata.get_state().await)
-        }
+        "network-metadata:get-providers" => Ok(metadata.get_providers().await),
+        "network-metadata:get-state" => Ok(metadata.get_state().await),
         "network-metadata:select-provider" => {
-            let id = crate::network_metadata::parse_provider_id(arg(payload, 0).unwrap_or(&Value::Null))?;
+            let id = crate::network_metadata::parse_provider_id(
+                arg(payload, 0).unwrap_or(&Value::Null),
+            )?;
             Ok(metadata.select_provider(&id).await?)
         }
         "network-metadata:resolve" => {
@@ -153,8 +177,13 @@ pub async fn dispatch(
         "substore:stop" => Ok(substore.stop().await),
         "substore:check-update" => Ok(substore.check_update().await),
         "substore:open-external" => {
-            let url = crate::substore::parse_sub_store_external_url(arg(payload, 0).unwrap_or(&Value::Null))?;
-            substore.open_external(&url).await.map_err(|error| IpcError::code(crate::error::code::UPSTREAM_UNREACHABLE, error))?;
+            let url = crate::substore::parse_sub_store_external_url(
+                arg(payload, 0).unwrap_or(&Value::Null),
+            )?;
+            substore
+                .open_external(&url)
+                .await
+                .map_err(|error| IpcError::code(crate::error::code::UPSTREAM_UNREACHABLE, error))?;
             Ok(Value::Null)
         }
         // 系统代理 — Phase 3D slice 17. The enable/disable handlers are
@@ -162,14 +191,18 @@ pub async fn dispatch(
         // enable starts the kernel when it is not running.
         "system-proxy:get-status" => Ok(system_proxy.get_status_value()),
         "system-proxy:enable" => {
-            settings.set(&crate::settings::AppSettingsPatch(serde_json::json!({"systemProxyDesired": true})));
+            settings.set(&crate::settings::AppSettingsPatch(
+                serde_json::json!({"systemProxyDesired": true}),
+            ));
             if kernel.get_status_value()["phase"].as_str() != Some("running") {
                 kernel.start().await?;
             }
             Ok(serde_json::to_value(system_proxy.enable().await?).expect("status serializes"))
         }
         "system-proxy:disable" => {
-            settings.set(&crate::settings::AppSettingsPatch(serde_json::json!({"systemProxyDesired": false})));
+            settings.set(&crate::settings::AppSettingsPatch(
+                serde_json::json!({"systemProxyDesired": false}),
+            ));
             Ok(serde_json::to_value(system_proxy.disable().await?).expect("status serializes"))
         }
         "system-proxy:get-proxy-bypass" => Ok(system_proxy.get_proxy_bypass().await),
@@ -179,7 +212,9 @@ pub async fn dispatch(
         }
         "system-proxy:preview-proxy-bypass" => {
             let policy = crate::system_proxy::parse_proxy_bypass_policy(arg(payload, 0))?;
-            Ok(Value::String(system_proxy.preview_proxy_bypass(&policy).await))
+            Ok(Value::String(
+                system_proxy.preview_proxy_bypass(&policy).await,
+            ))
         }
         // TUN 生命周期 — Phase 3D slice 18. The coordinator is fully ported;
         // the privileged mutation stays behind the fail-closed gate (the same
@@ -209,7 +244,9 @@ pub async fn dispatch(
                     kernel.start().await?;
                 }
             }
-            settings.set(&crate::settings::AppSettingsPatch(serde_json::json!({"tunDesired": true})));
+            settings.set(&crate::settings::AppSettingsPatch(
+                serde_json::json!({"tunDesired": true}),
+            ));
             // The intent device is the shared stock default ('Mihomo'): the
             // profile model overrides it only when the user actually
             // customized the device (EMPTY_TUN_CONFIG parity).
@@ -222,14 +259,20 @@ pub async fn dispatch(
         }
         "tun:disable" => {
             let _gate = RUNTIME_UPDATE.lock().await;
-            settings.set(&crate::settings::AppSettingsPatch(serde_json::json!({"tunDesired": false})));
+            settings.set(&crate::settings::AppSettingsPatch(
+                serde_json::json!({"tunDesired": false}),
+            ));
             Ok(serde_json::to_value(tun.emergency_disable().await).expect("tun status serializes"))
         }
         // 应用更新 — Phase 5 slice 19. The gated driver reports the honest
         // "not supported" state (no feed in this build) instead of faking one.
         "updates:get-state" => Ok(updates.get_state_value()),
-        "updates:check" => Ok(serde_json::to_value(updates.check().await?).expect("update state serializes")),
-        "updates:download" => Ok(serde_json::to_value(updates.download().await?).expect("update state serializes")),
+        "updates:check" => {
+            Ok(serde_json::to_value(updates.check().await?).expect("update state serializes"))
+        }
+        "updates:download" => {
+            Ok(serde_json::to_value(updates.download().await?).expect("update state serializes"))
+        }
         "updates:install" => {
             updates.install();
             Ok(Value::Null)
@@ -247,10 +290,13 @@ pub async fn dispatch(
         // UPSTREAM_UNREACHABLE copy, never a DIRECT sample).
         "network:unlock-test-all" => {
             let port = resolve_mixed_port(models).await?;
-            Ok(Value::Array(crate::unlock::sample(|_| crate::unlock::real_probe(port)).await))
+            Ok(Value::Array(
+                crate::unlock::sample(|_| crate::unlock::real_probe(port)).await,
+            ))
         }
         "network:unlock-test-one" => {
-            let name = crate::unlock::parse_unlock_service_name(arg(payload, 0).unwrap_or(&Value::Null))?;
+            let name =
+                crate::unlock::parse_unlock_service_name(arg(payload, 0).unwrap_or(&Value::Null))?;
             let port = resolve_mixed_port(models).await?;
             Ok(Value::Array(vec![crate::unlock::result_to_value(
                 &crate::unlock::detect_service(&name, crate::unlock::real_probe(port)).await,
@@ -265,8 +311,9 @@ pub async fn dispatch(
         "app-settings:set" => {
             // The bridge sends positional args; the patch is args[0].
             let patch_value = arg(payload, 0).cloned().unwrap_or(Value::Null);
-            let patch: AppSettingsPatch = serde_json::from_value(patch_value)
-                .map_err(|_| IpcError::invalid_argument("app-settings:set payload must be a JSON object"))?;
+            let patch: AppSettingsPatch = serde_json::from_value(patch_value).map_err(|_| {
+                IpcError::invalid_argument("app-settings:set payload must be a JSON object")
+            })?;
             let silent_launch_before = settings.get().silent_launch;
             let auto_check_update_before = settings.get().auto_check_update;
             let applied = settings.set(&patch);
@@ -281,7 +328,9 @@ pub async fn dispatch(
             }
             // The Sub-Store mirrors track every settings change; an actual
             // enable/proxy-mode flip drives stop/restart inside the service.
-            substore.on_settings(applied.sub_store_enabled, applied.sub_store_use_proxy).await;
+            substore
+                .on_settings(applied.sub_store_enabled, applied.sub_store_use_proxy)
+                .await;
             Ok(serde_json::to_value(applied).expect("settings serialize"))
         }
 
@@ -290,12 +339,19 @@ pub async fn dispatch(
         "profiles:get" => profiles.get(&required_string(payload, 0, "profiles:get id")?),
         "profiles:import" => {
             let _gate = RUNTIME_UPDATE.lock().await;
-            let request = arg(payload, 0)
-                .ok_or_else(|| IpcError::invalid_argument("profiles:import requires a request object"))?;
+            let request = arg(payload, 0).ok_or_else(|| {
+                IpcError::invalid_argument("profiles:import requires a request object")
+            })?;
             let previous_active = active_profile_id(profiles)?;
             let meta = profiles.import(request)?;
-            if request.get("activate").and_then(Value::as_bool).unwrap_or(false) {
-                let result = profile_reload_step(profiles, overrides, models, kernel, system_proxy, mihomo).await;
+            if request
+                .get("activate")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                let result =
+                    profile_reload_step(profiles, overrides, models, kernel, system_proxy, mihomo)
+                        .await;
                 if result.is_err() {
                     restore_active(profiles, &previous_active);
                 }
@@ -309,8 +365,10 @@ pub async fn dispatch(
             // the renderer's arg list; schema validation mirrors
             // shared/schemas/profiles.ts (parseOptionalImportName +
             // parseSubscriptionUrl + parseOptionalBoolean).
-            let name = crate::subscription::parse_optional_import_name(string_arg(payload, 0).as_deref())?;
-            let url = crate::subscription::parse_subscription_url(string_arg(payload, 1).as_deref())?;
+            let name =
+                crate::subscription::parse_optional_import_name(string_arg(payload, 0).as_deref())?;
+            let url =
+                crate::subscription::parse_subscription_url(string_arg(payload, 1).as_deref())?;
             let activate = crate::subscription::parse_optional_boolean(payload.get(2), "activate")?;
             profiles.import_from_url(&name, &url, activate).await
         }
@@ -318,12 +376,18 @@ pub async fn dispatch(
             let _gate = RUNTIME_UPDATE.lock().await;
             let id = required_string(payload, 0, "profiles:update-from-source id")?;
             let previous_active = active_profile_id(profiles)?;
-            let previous_document = profiles.get(&id)?["document"].as_str().unwrap_or_default().to_string();
+            let previous_document = profiles.get(&id)?["document"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
             let meta = profiles.update_from_source(&id).await?;
             // ONLY when the updated profile is the live one: updating a
             // non-active profile must not switch or restart anything.
             if previous_active.as_deref() == Some(id.as_str()) {
-                if let Err(error) = profile_reload_step(profiles, overrides, models, kernel, system_proxy, mihomo).await {
+                if let Err(error) =
+                    profile_reload_step(profiles, overrides, models, kernel, system_proxy, mihomo)
+                        .await
+                {
                     let _ = profiles.restore_document(&id, &previous_document);
                     restore_active(profiles, &previous_active);
                     return Err(error);
@@ -335,7 +399,9 @@ pub async fn dispatch(
             let _gate = RUNTIME_UPDATE.lock().await;
             let previous_active = active_profile_id(profiles)?;
             let meta = profiles.activate(&required_string(payload, 0, "profiles:activate id")?)?;
-            let result = profile_reload_step(profiles, overrides, models, kernel, system_proxy, mihomo).await;
+            let result =
+                profile_reload_step(profiles, overrides, models, kernel, system_proxy, mihomo)
+                    .await;
             if result.is_err() {
                 restore_active(profiles, &previous_active);
             }
@@ -350,7 +416,9 @@ pub async fn dispatch(
             // strict fallback immediately so the process never keeps using
             // deleted secrets.
             if previous_active.as_deref() == deleted["meta"]["id"].as_str() {
-                let result = profile_reload_step(profiles, overrides, models, kernel, system_proxy, mihomo).await;
+                let result =
+                    profile_reload_step(profiles, overrides, models, kernel, system_proxy, mihomo)
+                        .await;
                 if result.is_err() {
                     // The deleted document cannot be restored: only the
                     // pointer can be re-pointed (at nothing).
@@ -381,7 +449,10 @@ pub async fn dispatch(
                 .collect();
             let id = required_string(payload, 0, "profiles:edit-document id")?;
             let previous_active = active_profile_id(profiles)?;
-            let previous_document = profiles.get(&id)?["document"].as_str().unwrap_or_default().to_string();
+            let previous_document = profiles.get(&id)?["document"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
             let meta = profiles.edit_document(&id, &edits)?;
             // Editing the live profile: its pointer is already the desired
             // one; editing a non-active profile auto-activates it first.
@@ -392,7 +463,9 @@ pub async fn dispatch(
                 // document becomes the live one before the kernel reloads.
                 profiles.activate(&id)?;
             }
-            if let Err(error) = profile_reload_step(profiles, overrides, models, kernel, system_proxy, mihomo).await {
+            if let Err(error) =
+                profile_reload_step(profiles, overrides, models, kernel, system_proxy, mihomo).await
+            {
                 // restoreEdit: restore the document, then the pointer.
                 let _ = profiles.restore_document(&id, &previous_document);
                 restore_active(profiles, &previous_active);
@@ -406,10 +479,17 @@ pub async fn dispatch(
             let _gate = RUNTIME_UPDATE.lock().await;
             let id = required_string(payload, 0, "profiles:replace-document id")?;
             let previous_active = active_profile_id(profiles)?;
-            let previous_document = profiles.get(&id)?["document"].as_str().unwrap_or_default().to_string();
-            let meta = profiles.replace_document(&id, &string_arg(payload, 1).unwrap_or_default())?;
+            let previous_document = profiles.get(&id)?["document"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            let meta =
+                profiles.replace_document(&id, &string_arg(payload, 1).unwrap_or_default())?;
             if previous_active.as_deref() == Some(id.as_str()) {
-                if let Err(error) = profile_reload_step(profiles, overrides, models, kernel, system_proxy, mihomo).await {
+                if let Err(error) =
+                    profile_reload_step(profiles, overrides, models, kernel, system_proxy, mihomo)
+                        .await
+                {
                     let _ = profiles.restore_document(&id, &previous_document);
                     restore_active(profiles, &previous_active);
                     return Err(error);
@@ -417,7 +497,9 @@ pub async fn dispatch(
             }
             Ok(meta)
         }
-        "profiles:get-source-url" => profiles.get_source_url(&required_string(payload, 0, "profiles:get-source-url id")?),
+        "profiles:get-source-url" => {
+            profiles.get_source_url(&required_string(payload, 0, "profiles:get-source-url id")?)
+        }
         "profiles:set-source-url" => profiles.set_source_url(
             &required_string(payload, 0, "profiles:set-source-url id")?,
             &string_arg(payload, 1).unwrap_or_default(),
@@ -432,12 +514,23 @@ pub async fn dispatch(
             // otherwise the same INTERNAL copy the Electron build surfaces.
             let raw_kind = arg(payload, 0).and_then(Value::as_str).unwrap_or_default();
             if raw_kind != "proxy" && raw_kind != "rule" {
-                return Err(IpcError::code(crate::error::code::INVALID_ARGUMENT, "外部资源类型无效"));
+                return Err(IpcError::code(
+                    crate::error::code::INVALID_ARGUMENT,
+                    "外部资源类型无效",
+                ));
             }
             let name = mihomo::parse_mihomo_name(arg(payload, 1).unwrap_or(&Value::Null))?;
             match &kernel.privileged {
-                Some(privileged) => privileged.client().get_provider_content(raw_kind, &name).await,
-                None => Err(IpcError::code(crate::error::code::INTERNAL, "当前运行方式不支持读取外部资源内容")),
+                Some(privileged) => {
+                    privileged
+                        .client()
+                        .get_provider_content(raw_kind, &name)
+                        .await
+                }
+                None => Err(IpcError::code(
+                    crate::error::code::INTERNAL,
+                    "当前运行方式不支持读取外部资源内容",
+                )),
             }
         }
         "profiles:inspect-active-config" => {
@@ -459,7 +552,10 @@ pub async fn dispatch(
                 ));
             }
             let document = profile["document"].as_str().unwrap_or_default().to_string();
-            let profile_id = profile["meta"]["id"].as_str().unwrap_or_default().to_string();
+            let profile_id = profile["meta"]["id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
             let profile_name = profile["meta"]["name"].as_str().map(str::to_string);
             let overridden = overrides.apply_for_profile(&document, Some(&profile_id))?;
             let dns = enhancements::coerce_dns_enhancement(&models.dns.get());
@@ -511,22 +607,26 @@ pub async fn dispatch(
         // --- overrides (Phase 3A) -------------------------------------------
         "overrides:list" => overrides.list(),
         "overrides:create" => {
-            let input = arg(payload, 0)
-                .ok_or_else(|| IpcError::invalid_argument("overrides:create requires an input object"))?;
+            let input = arg(payload, 0).ok_or_else(|| {
+                IpcError::invalid_argument("overrides:create requires an input object")
+            })?;
             overrides.create(input)
         }
         "overrides:update" => {
             let id = required_string(payload, 0, "overrides:update id")?;
-            let input = arg(payload, 1)
-                .ok_or_else(|| IpcError::invalid_argument("overrides:update requires an input object"))?;
+            let input = arg(payload, 1).ok_or_else(|| {
+                IpcError::invalid_argument("overrides:update requires an input object")
+            })?;
             overrides.update(&id, input)
         }
-        "overrides:remove" => overrides.remove(&required_string(payload, 0, "overrides:remove id")?),
+        "overrides:remove" => {
+            overrides.remove(&required_string(payload, 0, "overrides:remove id")?)
+        }
         "overrides:set-enabled" => {
             let id = required_string(payload, 0, "overrides:set-enabled id")?;
-            let enabled = arg(payload, 1)
-                .and_then(Value::as_bool)
-                .ok_or_else(|| IpcError::invalid_argument("overrides:set-enabled requires a boolean"))?;
+            let enabled = arg(payload, 1).and_then(Value::as_bool).ok_or_else(|| {
+                IpcError::invalid_argument("overrides:set-enabled requires a boolean")
+            })?;
             overrides.set_enabled(&id, enabled)
         }
         "overrides:move" => overrides.move_item(
@@ -541,10 +641,13 @@ pub async fn dispatch(
         // --- typed single-model stores (Phase 3A) ---------------------------
         // get/set return the same envelope shapes the Electron services use;
         // preview renders the block a model would produce (never writes).
-        "core-settings:get" => Ok(coerce(enhancements::coerce_core_settings(&models.core.get()))),
+        "core-settings:get" => Ok(coerce(enhancements::coerce_core_settings(
+            &models.core.get(),
+        ))),
         "core-settings:set" => {
-            let input = arg(payload, 0)
-                .ok_or_else(|| IpcError::invalid_argument("core-settings:set requires a settings object"))?;
+            let input = arg(payload, 0).ok_or_else(|| {
+                IpcError::invalid_argument("core-settings:set requires a settings object")
+            })?;
             // Plain persist: the TS core gateway is NOT live-wrapped; the
             // controlled keys fold into the runtime document on the next
             // materialization/reload.
@@ -554,22 +657,30 @@ pub async fn dispatch(
             let input = arg(payload, 0).cloned().unwrap_or(Value::Null);
             Ok(Value::String(enhancements::core_preview_text(&input)))
         }
-        "geodata-settings:get" => Ok(coerce(enhancements::coerce_geodata_settings(&models.geodata.get()))),
+        "geodata-settings:get" => Ok(coerce(enhancements::coerce_geodata_settings(
+            &models.geodata.get(),
+        ))),
         "geodata-settings:set" => {
             let _gate = RUNTIME_UPDATE.lock().await;
-            let input = arg(payload, 0)
-                .ok_or_else(|| IpcError::invalid_argument("geodata-settings:set requires a settings object"))?;
+            let input = arg(payload, 0).ok_or_else(|| {
+                IpcError::invalid_argument("geodata-settings:set requires a settings object")
+            })?;
             let previous = models.geodata.get();
-            let next = models.geodata.set(input, enhancements::coerce_geodata_settings)?;
+            let next = models
+                .geodata
+                .set(input, enhancements::coerce_geodata_settings)?;
             match live_config::LiveConfigReloader::from_ipc(kernel, models, profiles, overrides)?
                 .apply_sections(&["geodata"])
                 .await
             {
                 Ok(_) => Ok(next),
                 Err(apply_error) => {
-                    let _ = models.geodata.set(&previous, enhancements::coerce_geodata_settings);
-                    let reloader =
-                        live_config::LiveConfigReloader::from_ipc(kernel, models, profiles, overrides)?;
+                    let _ = models
+                        .geodata
+                        .set(&previous, enhancements::coerce_geodata_settings);
+                    let reloader = live_config::LiveConfigReloader::from_ipc(
+                        kernel, models, profiles, overrides,
+                    )?;
                     let _ = reloader.apply_sections(&["geodata"]).await;
                     Err(apply_error)
                 }
@@ -579,11 +690,15 @@ pub async fn dispatch(
             let input = arg(payload, 0).cloned().unwrap_or(Value::Null);
             Ok(Value::String(enhancements::geodata_preview_text(&input)))
         }
-        "dns:get" => Ok(json_envelope("enhancement", coerce(enhancements::coerce_dns_enhancement(&models.dns.get())))),
+        "dns:get" => Ok(json_envelope(
+            "enhancement",
+            coerce(enhancements::coerce_dns_enhancement(&models.dns.get())),
+        )),
         "dns:set" => {
             let _gate = RUNTIME_UPDATE.lock().await;
-            let input = arg(payload, 0)
-                .ok_or_else(|| IpcError::invalid_argument("dns:set requires an enhancement object"))?;
+            let input = arg(payload, 0).ok_or_else(|| {
+                IpcError::invalid_argument("dns:set requires an enhancement object")
+            })?;
             let previous = models.dns.get();
             let next = models
                 .dns
@@ -598,9 +713,12 @@ pub async fn dispatch(
             {
                 Ok(_) => Ok(next),
                 Err(apply_error) => {
-                    let _ = models.dns.set(&previous, enhancements::coerce_dns_enhancement);
-                    let reloader =
-                        live_config::LiveConfigReloader::from_ipc(kernel, models, profiles, overrides)?;
+                    let _ = models
+                        .dns
+                        .set(&previous, enhancements::coerce_dns_enhancement);
+                    let reloader = live_config::LiveConfigReloader::from_ipc(
+                        kernel, models, profiles, overrides,
+                    )?;
                     let _ = reloader.apply_sections(&["dns"]).await;
                     Err(apply_error)
                 }
@@ -610,13 +728,21 @@ pub async fn dispatch(
             let input = arg(payload, 0).cloned().unwrap_or(Value::Null);
             Ok(Value::String(enhancements::dns_preview_text(&input)))
         }
-        "sniffer:get" => Ok(json_envelope("enhancement", coerce(enhancements::coerce_sniffer_enhancement(&models.sniffer.get())))),
+        "sniffer:get" => Ok(json_envelope(
+            "enhancement",
+            coerce(enhancements::coerce_sniffer_enhancement(
+                &models.sniffer.get(),
+            )),
+        )),
         "sniffer:set" => {
             let _gate = RUNTIME_UPDATE.lock().await;
-            let input = arg(payload, 0)
-                .ok_or_else(|| IpcError::invalid_argument("sniffer:set requires an enhancement object"))?;
+            let input = arg(payload, 0).ok_or_else(|| {
+                IpcError::invalid_argument("sniffer:set requires an enhancement object")
+            })?;
             let previous = models.sniffer.get();
-            let next_model = models.sniffer.set(input, enhancements::coerce_sniffer_enhancement)?;
+            let next_model = models
+                .sniffer
+                .set(input, enhancements::coerce_sniffer_enhancement)?;
             // EnhancementApplyCoordinator.update with the sniffer transition
             // apply: the runtime `sniffing` gate fast path, payload-reload
             // fallback. Rollback transitions FROM the failed model TO the
@@ -627,9 +753,12 @@ pub async fn dispatch(
             {
                 Ok(_) => Ok(json_envelope("enhancement", next_model)),
                 Err(apply_error) => {
-                    let restored = models.sniffer.set(&previous, enhancements::coerce_sniffer_enhancement);
-                    let reloader =
-                        live_config::LiveConfigReloader::from_ipc(kernel, models, profiles, overrides)?;
+                    let restored = models
+                        .sniffer
+                        .set(&previous, enhancements::coerce_sniffer_enhancement);
+                    let reloader = live_config::LiveConfigReloader::from_ipc(
+                        kernel, models, profiles, overrides,
+                    )?;
                     let _ = match &restored {
                         Ok(restored_model) => {
                             reloader
@@ -646,10 +775,14 @@ pub async fn dispatch(
             let input = arg(payload, 0).cloned().unwrap_or(Value::Null);
             Ok(Value::String(enhancements::sniffer_preview_text(&input)))
         }
-        "tun-config:get" => Ok(json_envelope("config", coerce(enhancements::coerce_tun_config(&models.tun_config.get())))),
+        "tun-config:get" => Ok(json_envelope(
+            "config",
+            coerce(enhancements::coerce_tun_config(&models.tun_config.get())),
+        )),
         "tun-config:set" => {
-            let input = arg(payload, 0)
-                .ok_or_else(|| IpcError::invalid_argument("tun-config:set requires a config object"))?;
+            let input = arg(payload, 0).ok_or_else(|| {
+                IpcError::invalid_argument("tun-config:set requires a config object")
+            })?;
             models
                 .tun_config
                 .set(input, enhancements::coerce_tun_config)
@@ -661,16 +794,24 @@ pub async fn dispatch(
         }
 
         // --- usage history (Phase 3A) ---------------------------------------
-        "usage-history:get-window" => usage.get_window(&required_string(payload, 0, "usage-history:get-window window")?),
+        "usage-history:get-window" => usage.get_window(&required_string(
+            payload,
+            0,
+            "usage-history:get-window window",
+        )?),
         "usage-history:rank" => {
             let window = required_string(payload, 0, "usage-history:rank window")?;
             let ranking = required_string(payload, 1, "usage-history:rank ranking")?;
-            let limit = arg(payload, 2).and_then(Value::as_u64).map(|value| value as usize);
+            let limit = arg(payload, 2)
+                .and_then(Value::as_u64)
+                .map(|value| value as usize);
             usage.rank(&window, &ranking, limit)
         }
-        "usage-history:process-ranking" => {
-            usage.process_ranking(&required_string(payload, 0, "usage-history:process-ranking window")?)
-        }
+        "usage-history:process-ranking" => usage.process_ranking(&required_string(
+            payload,
+            0,
+            "usage-history:process-ranking window",
+        )?),
         "usage-history:clear" => usage.clear().map(|()| Value::Null),
         "usage-history:get-capacity" => Ok(usage.get_capacity()),
 
@@ -682,7 +823,7 @@ pub async fn dispatch(
         "kernel:start" => {
             let _gate = RUNTIME_UPDATE.lock().await;
             kernel.start().await
-        },
+        }
         "kernel:stop" => {
             let _gate = RUNTIME_UPDATE.lock().await;
             // The ordered gateway (system-proxy precondition): a user stop,
@@ -692,9 +833,9 @@ pub async fn dispatch(
         }
         "kernel-manager:get-state" => Ok(kernel.manager.get_state(settings)),
         "kernel-manager:set-enabled" => {
-            let enabled = arg(payload, 0)
-                .and_then(Value::as_bool)
-                .ok_or_else(|| IpcError::invalid_argument("kernel-manager:set-enabled requires a boolean"))?;
+            let enabled = arg(payload, 0).and_then(Value::as_bool).ok_or_else(|| {
+                IpcError::invalid_argument("kernel-manager:set-enabled requires a boolean")
+            })?;
             Ok(kernel.manager.set_enabled(settings, enabled).await)
         }
         "kernel-manager:set-channel" => {
@@ -737,51 +878,86 @@ pub async fn dispatch(
                 arg(payload, 0).unwrap_or(&Value::Null),
                 arg(payload, 1).unwrap_or(&Value::Null),
             )?;
-            let active = profiles.get_active().ok().filter(|profile| !profile.is_null());
+            let active = profiles
+                .get_active()
+                .ok()
+                .filter(|profile| !profile.is_null());
             let profile_id = active
                 .as_ref()
                 .and_then(|profile| profile["meta"]["id"].as_str())
                 .map(str::to_string);
-            Ok(mihomo::select_proxy_gateway(mihomo, &controller_client(models)?, profile_id, &group, &name).await?)
+            Ok(mihomo::select_proxy_gateway(
+                mihomo,
+                &controller_client(models)?,
+                profile_id,
+                &group,
+                &name,
+            )
+            .await?)
         }
         "mihomo:get-rules" => Ok(controller_client(models)?.get_rules().await?),
-        "mihomo:get-proxy-providers" => Ok(controller_client(models)?.get_proxy_providers().await?),
+        "mihomo:get-proxy-providers" => {
+            Ok(controller_client(models)?.get_proxy_providers().await?)
+        }
         "mihomo:refresh-proxy-provider" => {
             let name = mihomo::parse_mihomo_name(arg(payload, 0).unwrap_or(&Value::Null))?;
-            Ok(controller_client(models)?.refresh_proxy_provider(&name).await?)
+            Ok(controller_client(models)?
+                .refresh_proxy_provider(&name)
+                .await?)
         }
         "mihomo:health-check-proxy-provider" => {
             let name = mihomo::parse_mihomo_name(arg(payload, 0).unwrap_or(&Value::Null))?;
-            Ok(controller_client(models)?.health_check_proxy_provider(&name).await?)
+            Ok(controller_client(models)?
+                .health_check_proxy_provider(&name)
+                .await?)
         }
         "mihomo:get-rule-providers" => Ok(controller_client(models)?.get_rule_providers().await?),
         "mihomo:refresh-rule-provider" => {
             let name = mihomo::parse_mihomo_name(arg(payload, 0).unwrap_or(&Value::Null))?;
-            Ok(controller_client(models)?.refresh_rule_provider(&name).await?)
+            Ok(controller_client(models)?
+                .refresh_rule_provider(&name)
+                .await?)
         }
         "mihomo:delay-test" => {
             let name = mihomo::parse_mihomo_name(arg(payload, 0).unwrap_or(&Value::Null))?;
-            let timeout = mihomo::parse_delay_options(arg(payload, 1))?.unwrap_or(mihomo::DEFAULT_DELAY_TIMEOUT_MS as i64);
-            Ok(controller_client(models)?.delay_test(&name, None, timeout).await?)
+            let timeout = mihomo::parse_delay_options(arg(payload, 1))?
+                .unwrap_or(mihomo::DEFAULT_DELAY_TIMEOUT_MS as i64);
+            Ok(controller_client(models)?
+                .delay_test(&name, None, timeout)
+                .await?)
         }
         "mihomo:group-member-delay-test" => {
             let (group, name) = mihomo::parse_proxy_selection(
                 arg(payload, 0).unwrap_or(&Value::Null),
                 arg(payload, 1).unwrap_or(&Value::Null),
             )?;
-            let timeout = mihomo::parse_delay_options(arg(payload, 2))?.unwrap_or(mihomo::DEFAULT_DELAY_TIMEOUT_MS as i64);
+            let timeout = mihomo::parse_delay_options(arg(payload, 2))?
+                .unwrap_or(mihomo::DEFAULT_DELAY_TIMEOUT_MS as i64);
             let urls = mihomo::get_group_test_urls_cached(mihomo, || {
                 resolve_group_test_urls(profiles, overrides, models)
             });
             let app = settings.get();
             let global_scope = app.delay_test_url_scope == "global";
             let global_url = Some(app.delay_test_url.as_str()).filter(|url| !url.trim().is_empty());
-            Ok(mihomo::group_member_delay_test_gateway(mihomo, &controller_client(models)?, &urls, global_scope, global_url, &group, &name, timeout).await?)
+            Ok(mihomo::group_member_delay_test_gateway(
+                mihomo,
+                &controller_client(models)?,
+                &urls,
+                global_scope,
+                global_url,
+                &group,
+                &name,
+                timeout,
+            )
+            .await?)
         }
         "mihomo:group-delay-test" => {
             let name = mihomo::parse_mihomo_name(arg(payload, 0).unwrap_or(&Value::Null))?;
-            let timeout = mihomo::parse_delay_options(arg(payload, 1))?.unwrap_or(mihomo::DEFAULT_DELAY_TIMEOUT_MS as i64);
-            Ok(controller_client(models)?.group_delay_test(&name, None, timeout).await?)
+            let timeout = mihomo::parse_delay_options(arg(payload, 1))?
+                .unwrap_or(mihomo::DEFAULT_DELAY_TIMEOUT_MS as i64);
+            Ok(controller_client(models)?
+                .group_delay_test(&name, None, timeout)
+                .await?)
         }
         "mihomo:get-connections" => Ok(controller_client(models)?.get_connections().await?),
         "mihomo:close-connection" => {
@@ -830,11 +1006,17 @@ pub async fn dispatch(
 async fn resolve_mixed_port(models: &enhancements::ModelStores) -> Result<u16, IpcError> {
     let client = controller_client(models)?;
     let Ok(config) = client.get_config().await else {
-        return Err(IpcError::code(crate::error::code::UPSTREAM_UNREACHABLE, "内核未运行，无法通过当前节点执行解锁测试。"));
+        return Err(IpcError::code(
+            crate::error::code::UPSTREAM_UNREACHABLE,
+            "内核未运行，无法通过当前节点执行解锁测试。",
+        ));
     };
     let port = config["mixed-port"].as_i64().unwrap_or(0);
     if port <= 0 || port > u16::MAX as i64 {
-        return Err(IpcError::code(crate::error::code::UPSTREAM_UNREACHABLE, "内核未运行，无法通过当前节点执行解锁测试。"));
+        return Err(IpcError::code(
+            crate::error::code::UPSTREAM_UNREACHABLE,
+            "内核未运行，无法通过当前节点执行解锁测试。",
+        ));
     }
     Ok(port as u16)
 }
@@ -860,7 +1042,10 @@ fn resolve_group_test_urls(
         _ => return serde_json::json!({}),
     };
     let document = profile["document"].as_str().unwrap_or_default().to_string();
-    let profile_id = profile["meta"]["id"].as_str().unwrap_or_default().to_string();
+    let profile_id = profile["meta"]["id"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
     let overridden = match overrides.apply_for_profile(&document, Some(&profile_id)) {
         Ok(text) => text,
         Err(_) => return serde_json::json!({}),
@@ -877,7 +1062,11 @@ fn active_profile_id(profiles: &ProfilesService) -> Result<Option<String>, IpcEr
     let list = profiles.list()?;
     Ok(list
         .as_array()
-        .and_then(|metas| metas.iter().find(|meta| meta["active"].as_bool() == Some(true)))
+        .and_then(|metas| {
+            metas
+                .iter()
+                .find(|meta| meta["active"].as_bool() == Some(true))
+        })
         .and_then(|meta| meta["id"].as_str().map(str::to_string)))
 }
 
@@ -948,7 +1137,9 @@ mod tests {
     }
 
     fn test_updates_service() -> crate::updates::UpdateService {
-        crate::updates::UpdateService::new(std::sync::Arc::new(crate::updates::GatedUpdaterDriver::new()))
+        crate::updates::UpdateService::new(std::sync::Arc::new(
+            crate::updates::GatedUpdaterDriver::new(),
+        ))
     }
 
     fn test_tun_coordinator() -> crate::tun::TunCoordinator {
@@ -978,9 +1169,11 @@ mod tests {
             on_log: None,
             get_mixed_port: Box::new(|| None),
             create_worker: None,
-            fetch_fn: Some(std::sync::Arc::new(|_request: crate::substore::FetchRequest| {
-                Box::pin(async { Err("fixture transport disabled".to_string()) })
-            })),
+            fetch_fn: Some(std::sync::Arc::new(
+                |_request: crate::substore::FetchRequest| {
+                    Box::pin(async { Err("fixture transport disabled".to_string()) })
+                },
+            )),
             find_free_port: None,
             settings: std::sync::Arc::new(|| {
                 Box::pin(async { crate::settings::AppSettings::default() })
@@ -1005,22 +1198,62 @@ mod tests {
 
     fn fixtures() -> Fixture {
         let temp = TempDir::new().unwrap();
-        let paths = AppPaths { app_data_root: None, profile_root: None };
+        let paths = AppPaths {
+            app_data_root: None,
+            profile_root: None,
+        };
         let settings = SettingsStore::new(None);
-        let profiles = Arc::new(ProfilesService::for_development(&temp.path().to_path_buf()));
+        let profiles = Arc::new(ProfilesService::for_development(temp.path()));
         let overrides = OverrideService::new(None);
         let models = enhancements::ModelStores::new(None);
         let usage = usage::UsageHistoryService::new(usage::UsageHistoryStore::in_memory());
         let kernel = kernel::KernelServices::new();
         let mihomo = mihomo::MihomoServices::new(temp.path().to_path_buf().into());
         let desktop = icons::DesktopServices::new(temp.path().to_path_buf().join("icon-cache"));
-        Fixture { _temp: temp, paths, settings, profiles, overrides, models, usage, kernel, mihomo, desktop, metadata: NetworkMetadataService::new(), startup: test_startup_service(), substore: test_substore_service(), system_proxy: test_system_proxy_service(), tun: test_tun_coordinator(), updates: test_updates_service() }
+        Fixture {
+            _temp: temp,
+            paths,
+            settings,
+            profiles,
+            overrides,
+            models,
+            usage,
+            kernel,
+            mihomo,
+            desktop,
+            metadata: NetworkMetadataService::new(),
+            startup: test_startup_service(),
+            substore: test_substore_service(),
+            system_proxy: test_system_proxy_service(),
+            tun: test_tun_coordinator(),
+            updates: test_updates_service(),
+        }
     }
 
     #[tokio::test]
     async fn serves_brand_document_from_the_checked_in_file() {
         let f = fixtures();
-        let brand = dispatch("app:get-brand", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        let brand = dispatch(
+            "app:get-brand",
+            &Value::Null,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
         assert_eq!(brand["appId"], "io.murge.desktop");
         assert_eq!(brand["protocolScheme"], "murge");
     }
@@ -1028,7 +1261,27 @@ mod tests {
     #[tokio::test]
     async fn serves_app_info_in_electron_vocabulary() {
         let f = fixtures();
-        let info = dispatch("app:get-info", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        let info = dispatch(
+            "app:get-info",
+            &Value::Null,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
         assert_eq!(info["version"], env!("CARGO_PKG_VERSION"));
         assert!(matches!(
             info["platform"].as_str(),
@@ -1039,7 +1292,27 @@ mod tests {
     #[tokio::test]
     async fn settings_round_trip_through_the_dispatch() {
         let f = fixtures();
-        let before = dispatch("app-settings:get", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        let before = dispatch(
+            "app-settings:get",
+            &Value::Null,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
         assert_eq!(before["closeToTray"], true);
         let after = dispatch(
             "app-settings:set",
@@ -1051,14 +1324,16 @@ mod tests {
             &f.models,
             &f.usage,
             &f.kernel,
-            &f.mihomo, &f.desktop,
+            &f.mihomo,
+            &f.desktop,
             &f.metadata,
             &f.startup,
             &f.substore,
             &f.system_proxy,
             &f.tun,
             &f.updates,
-        ).await
+        )
+        .await
         .unwrap();
         assert_eq!(after["closeToTray"], false);
         // kernelEnabled is forced true (deprecated field).
@@ -1068,7 +1343,27 @@ mod tests {
     #[tokio::test]
     async fn profile_channels_flow_through_the_dispatch() {
         let f = fixtures();
-        let list = dispatch("profiles:list", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        let list = dispatch(
+            "profiles:list",
+            &Value::Null,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
         assert_eq!(list, serde_json::json!([]));
         let meta = dispatch(
             "profiles:import",
@@ -1101,14 +1396,16 @@ mod tests {
             &f.models,
             &f.usage,
             &f.kernel,
-            &f.mihomo, &f.desktop,
+            &f.mihomo,
+            &f.desktop,
             &f.metadata,
             &f.startup,
             &f.substore,
             &f.system_proxy,
             &f.tun,
             &f.updates,
-        ).await
+        )
+        .await
         .unwrap();
         assert_eq!(profile["document"], "port: 7890\n");
         let meta = dispatch(
@@ -1121,14 +1418,16 @@ mod tests {
             &f.models,
             &f.usage,
             &f.kernel,
-            &f.mihomo, &f.desktop,
+            &f.mihomo,
+            &f.desktop,
             &f.metadata,
             &f.startup,
             &f.substore,
             &f.system_proxy,
             &f.tun,
             &f.updates,
-        ).await
+        )
+        .await
         .unwrap();
         assert_eq!(meta["active"], true);
     }
@@ -1146,13 +1445,20 @@ mod tests {
         );
         let temp = TempDir::new().unwrap();
         let icon_root = temp.path().to_path_buf().join("icon-cache");
-        let profiles = ProfilesService::for_development(&temp.path().to_path_buf()).with_fetcher(
-            SubscriptionFetcher::for_testing(std::sync::Arc::new(|_| Vec::new()), 5000, 1024 * 1024),
+        let profiles = ProfilesService::for_development(temp.path()).with_fetcher(
+            SubscriptionFetcher::for_testing(
+                std::sync::Arc::new(|_| Vec::new()),
+                5000,
+                1024 * 1024,
+            ),
         );
         let profiles = Arc::new(profiles);
         let f = Fixture {
             _temp: temp,
-            paths: AppPaths { app_data_root: None, profile_root: None },
+            paths: AppPaths {
+                app_data_root: None,
+                profile_root: None,
+            },
             settings: SettingsStore::new(None),
             profiles: profiles.clone(),
             overrides: OverrideService::new(None),
@@ -1164,7 +1470,9 @@ mod tests {
             metadata: NetworkMetadataService::new(),
             startup: StartupService::new(crate::startup::ScheduledTaskStartupAdapter::with_runner(
                 false,
-                std::sync::Arc::new(|_c: String, _a: Vec<String>| Box::pin(async { Ok(crate::startup::RunResult::default()) })),
+                std::sync::Arc::new(|_c: String, _a: Vec<String>| {
+                    Box::pin(async { Ok(crate::startup::RunResult::default()) })
+                }),
                 std::sync::Arc::new(|| false),
             )),
             substore: test_substore_service(),
@@ -1176,49 +1484,103 @@ mod tests {
         let meta = dispatch(
             "profiles:import-from-url",
             &serde_json::json!(["", format!("{base}/sub"), true]),
-            &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
             &f.metadata,
             &f.startup,
             &f.substore,
             &f.system_proxy,
             &f.tun,
             &f.updates,
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
         assert_eq!(meta["name"], "机场订阅");
         assert_eq!(meta["active"], true, "activate=true moved the pointer");
         assert_eq!(meta["source"]["type"], "url");
         // The private raw URL went to the source store; meta keeps the display form.
         let id = meta["id"].as_str().unwrap().to_string();
         assert_eq!(
-            dispatch("profiles:get-source-url", &serde_json::json!([id]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap(),
+            dispatch(
+                "profiles:get-source-url",
+                &serde_json::json!([id]),
+                &f.paths,
+                &f.settings,
+                &f.profiles,
+                &f.overrides,
+                &f.models,
+                &f.usage,
+                &f.kernel,
+                &f.mihomo,
+                &f.desktop,
+                &f.metadata,
+                &f.startup,
+                &f.substore,
+                &f.system_proxy,
+                &f.tun,
+                &f.updates
+            )
+            .await
+            .unwrap(),
             serde_json::json!(format!("{base}/sub"))
         );
         // Update from source: same channel chain replaces the document.
         let updated = dispatch(
             "profiles:update-from-source",
             &serde_json::json!([id]),
-            &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
             &f.metadata,
             &f.startup,
             &f.substore,
             &f.system_proxy,
             &f.tun,
             &f.updates,
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
         assert_eq!(updated["name"], "机场订阅");
         // Schema gate: a non-http URL is rejected before any fetch.
         let error = dispatch(
             "profiles:import-from-url",
             &serde_json::json!(["x", "ftp://example.com/sub"]),
-            &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
             &f.metadata,
             &f.startup,
             &f.substore,
             &f.system_proxy,
             &f.tun,
             &f.updates,
-        ).await.unwrap_err();
-        assert!(error.0.contains("subscription URL must use http or https"), "{}", error.0);
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error.0.contains("subscription URL must use http or https"),
+            "{}",
+            error.0
+        );
     }
 
     #[tokio::test]
@@ -1229,7 +1591,8 @@ mod tests {
         // has no 1.1.1.1 route guarantee — the system probe returns false on
         // failure, and the slot reads null either way; the gateway slot is
         // environment-dependent and only shape-checked).
-        let server = MockServer::start("s3cret", |method, path, _body| match (method, path) {
+        let server = MockServer::start("s3cret", |method, path, _body| {
+            match (method, path) {
             ("GET", "/proxies") if !path.contains("/delay") && !path.contains("/dns") => (
                 200,
                 r#"{"proxies":{"节点选择":{"type":"Selector","name":"节点选择","now":"香港 01"},"香港 01":{"type":"Shadowsocks","name":"香港 01"}}}"#.to_string(),
@@ -1238,9 +1601,10 @@ mod tests {
             (_, p) if p.starts_with("/proxies/%E9%A6%99%E6%B8%AF%2001/delay") => (200, r#"{"delay":220}"#.to_string()),
             (_, p) if p.starts_with("/dns/query") => (500, String::new()),
             _ => (404, String::new()),
+        }
         });
         let temp = TempDir::new().unwrap();
-        let profiles = ProfilesService::for_development(&temp.path().to_path_buf());
+        let profiles = ProfilesService::for_development(temp.path());
         profiles
             .import(&serde_json::json!({
                 "name": "Home",
@@ -1249,16 +1613,23 @@ mod tests {
                 "activate": true
             }))
             .unwrap();
-        let mut core = enhancements::coerce_core_settings(&enhancements::ModelStores::new(None).core.get());
+        let mut core =
+            enhancements::coerce_core_settings(&enhancements::ModelStores::new(None).core.get());
         if let Some(object) = core.as_object_mut() {
             object.insert("controllerPort".into(), serde_json::json!(server.port));
             object.insert("controllerSecret".into(), serde_json::json!("s3cret"));
         }
         let models = enhancements::ModelStores::new(None);
-        models.core.set(&core, enhancements::coerce_core_settings).unwrap();
+        models
+            .core
+            .set(&core, enhancements::coerce_core_settings)
+            .unwrap();
         let f = Fixture {
             _temp: temp,
-            paths: AppPaths { app_data_root: None, profile_root: None },
+            paths: AppPaths {
+                app_data_root: None,
+                profile_root: None,
+            },
             settings: SettingsStore::new(None),
             profiles: Arc::new(profiles),
             overrides: OverrideService::new(None),
@@ -1270,7 +1641,9 @@ mod tests {
             metadata: NetworkMetadataService::new(),
             startup: StartupService::new(crate::startup::ScheduledTaskStartupAdapter::with_runner(
                 false,
-                std::sync::Arc::new(|_c: String, _a: Vec<String>| Box::pin(async { Ok(crate::startup::RunResult::default()) })),
+                std::sync::Arc::new(|_c: String, _a: Vec<String>| {
+                    Box::pin(async { Ok(crate::startup::RunResult::default()) })
+                }),
                 std::sync::Arc::new(|| false),
             )),
             substore: test_substore_service(),
@@ -1278,7 +1651,27 @@ mod tests {
             tun: test_tun_coordinator(),
             updates: test_updates_service(),
         };
-        let sample = dispatch("mihomo:internet-latency", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        let sample = dispatch(
+            "mihomo:internet-latency",
+            &Value::Null,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
         // The proxy slot followed the DECLARED order (节点选择 -> 香港 01) and
         // carries the controller-reported delay.
         assert_eq!(sample["proxyMs"], 220, "{}", sample);
@@ -1291,7 +1684,11 @@ mod tests {
         // Every numeric slot that IS present is a real number (never a fake
         // placeholder).
         for key in ["gatewayMs", "dnsMs", "proxyMs"] {
-            assert!(sample[key].is_null() || sample[key].is_u64(), "{key}={}", sample[key]);
+            assert!(
+                sample[key].is_null() || sample[key].is_u64(),
+                "{key}={}",
+                sample[key]
+            );
         }
     }
 
@@ -1299,30 +1696,165 @@ mod tests {
     async fn network_metadata_channels_flow_and_reject_bad_provider_ids() {
         let f = fixtures();
         // Registry: the three shipped providers, function-free wire shape.
-        let providers = dispatch("network-metadata:get-providers", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
-        let ids: Vec<String> = providers.as_array().unwrap().iter().filter_map(|p| p["id"].as_str().map(str::to_string)).collect();
+        let providers = dispatch(
+            "network-metadata:get-providers",
+            &Value::Null,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
+        let ids: Vec<String> = providers
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|p| p["id"].as_str().map(str::to_string))
+            .collect();
         assert_eq!(ids, vec!["ipwhois", "ipapi", "ipinfo"]);
         // Starts idle on the default provider.
-        let state = dispatch("network-metadata:get-state", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        let state = dispatch(
+            "network-metadata:get-state",
+            &Value::Null,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
         assert_eq!(state["phase"], "idle");
         assert_eq!(state["provider"], "ipwhois");
         // Resolve with no kernel: the typed kernel-not-running error copy.
-        let state = dispatch("network-metadata:resolve", &serde_json::json!([false]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        let state = dispatch(
+            "network-metadata:resolve",
+            &serde_json::json!([false]),
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
         assert_eq!(state["phase"], "error");
         assert_eq!(state["error"], "内核未运行，无法查询出口信息");
         // Whole-set resolve: every row degrades independently, display order kept.
-        let snapshot = dispatch("network-metadata:resolve-all", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        let snapshot = dispatch(
+            "network-metadata:resolve-all",
+            &Value::Null,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
         let results = snapshot["results"].as_array().unwrap();
         assert_eq!(results.len(), 3);
         for result in results {
             assert_eq!(result["state"]["phase"], "error");
         }
         // select-provider: unknown id -> the TS invalid-argument copy.
-        let error = dispatch("network-metadata:select-provider", &serde_json::json!(["nope"]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap_err();
-        assert!(error.0.starts_with("PROTOCOL_ERROR:INVALID_ARGUMENT::"), "{}", error.0);
-        assert!(error.0.contains("invalid network metadata provider: ipwhois, ipapi, ipinfo"), "{}", error.0);
+        let error = dispatch(
+            "network-metadata:select-provider",
+            &serde_json::json!(["nope"]),
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error.0.starts_with("PROTOCOL_ERROR:INVALID_ARGUMENT::"),
+            "{}",
+            error.0
+        );
+        assert!(
+            error
+                .0
+                .contains("invalid network metadata provider: ipwhois, ipapi, ipinfo"),
+            "{}",
+            error.0
+        );
         // select-provider to a valid id resets to idle and reports it.
-        let state = dispatch("network-metadata:select-provider", &serde_json::json!(["ipapi"]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        let state = dispatch(
+            "network-metadata:select-provider",
+            &serde_json::json!(["ipapi"]),
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
         assert_eq!(state["provider"], "ipapi");
         assert_eq!(state["phase"], "idle");
     }
@@ -1332,11 +1864,58 @@ mod tests {
         use crate::mihomo::mock_controller::MockServer;
         let f = fixtures();
         // No controller: the typed fail-closed copy, never a DIRECT sample.
-        let error = dispatch("network:unlock-test-all", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap_err();
-        assert_eq!(error.0, "PROTOCOL_ERROR:UPSTREAM_UNREACHABLE::内核未运行，无法通过当前节点执行解锁测试。");
+        let error = dispatch(
+            "network:unlock-test-all",
+            &Value::Null,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error.0,
+            "PROTOCOL_ERROR:UPSTREAM_UNREACHABLE::内核未运行，无法通过当前节点执行解锁测试。"
+        );
         // Invalid service name: the TS invalid-argument list copy.
-        let error = dispatch("network:unlock-test-one", &serde_json::json!(["未知服务"]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap_err();
-        assert!(error.0.starts_with("PROTOCOL_ERROR:INVALID_ARGUMENT::"), "{}", error.0);
+        let error = dispatch(
+            "network:unlock-test-one",
+            &serde_json::json!(["未知服务"]),
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error.0.starts_with("PROTOCOL_ERROR:INVALID_ARGUMENT::"),
+            "{}",
+            error.0
+        );
         assert!(error.0.contains("invalid unlock service: ChatGPT, Gemini, Claude, Grok, Netflix, Disney+, TikTok, YouTube, GitHub, Spotify"), "{}", error.0);
         // With a live controller reporting a mixed port, the real probes run
         // through that port (a dead proxy degrades every row to `error` —
@@ -1353,15 +1932,48 @@ mod tests {
             object.insert("controllerPort".into(), serde_json::json!(server.port));
             object.insert("controllerSecret".into(), serde_json::json!("s3cret"));
         }
-        f.models.core.set(&core, enhancements::coerce_core_settings).unwrap();
-        let results = dispatch("network:unlock-test-all", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        f.models
+            .core
+            .set(&core, enhancements::coerce_core_settings)
+            .unwrap();
+        let results = dispatch(
+            "network:unlock-test-all",
+            &Value::Null,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
         let rows = results.as_array().unwrap();
         assert_eq!(rows.len(), 10);
         let names: Vec<&str> = rows.iter().filter_map(|row| row["name"].as_str()).collect();
-        assert_eq!(names, vec!["ChatGPT", "Gemini", "Claude", "Grok", "Netflix", "Disney+", "TikTok", "YouTube", "GitHub", "Spotify"]);
+        assert_eq!(
+            names,
+            vec![
+                "ChatGPT", "Gemini", "Claude", "Grok", "Netflix", "Disney+", "TikTok", "YouTube",
+                "GitHub", "Spotify"
+            ]
+        );
         for row in rows {
             assert!(row["status"].is_string(), "{}", row);
-            assert!(row["region"].is_null() || row["region"].is_string(), "{}", row);
+            assert!(
+                row["region"].is_null() || row["region"].is_string(),
+                "{}",
+                row
+            );
         }
     }
 
@@ -1369,31 +1981,120 @@ mod tests {
     async fn provider_content_matches_the_electron_gate_shape() {
         let f = fixtures();
         // Kind validation first (the exact handler order).
-        let error = dispatch("profiles:get-provider-content", &serde_json::json!(["node", "a"]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap_err();
+        let error = dispatch(
+            "profiles:get-provider-content",
+            &serde_json::json!(["node", "a"]),
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(error.0, "PROTOCOL_ERROR:INVALID_ARGUMENT::外部资源类型无效");
         // Name parse second.
-        let error = dispatch("profiles:get-provider-content", &serde_json::json!(["proxy", ""]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap_err();
-        assert_eq!(error.0, "PROTOCOL_ERROR:INVALID_ARGUMENT::name must be a non-empty string");
+        let error = dispatch(
+            "profiles:get-provider-content",
+            &serde_json::json!(["proxy", ""]),
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error.0,
+            "PROTOCOL_ERROR:INVALID_ARGUMENT::name must be a non-empty string"
+        );
         // The reader itself routes through the privileged Go service — the
         // same INTERNAL copy the Electron build surfaces with no client.
-        let error = dispatch("profiles:get-provider-content", &serde_json::json!(["proxy", "a"]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap_err();
-        assert_eq!(error.0, "PROTOCOL_ERROR:INTERNAL::当前运行方式不支持读取外部资源内容");
+        let error = dispatch(
+            "profiles:get-provider-content",
+            &serde_json::json!(["proxy", "a"]),
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error.0,
+            "PROTOCOL_ERROR:INTERNAL::当前运行方式不支持读取外部资源内容"
+        );
     }
 
     #[tokio::test]
     async fn inspect_active_config_unavailable_without_a_profile() {
         let f = fixtures();
-        let inspection = dispatch("profiles:inspect-active-config", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        let inspection = dispatch(
+            "profiles:inspect-active-config",
+            &Value::Null,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
         assert_eq!(inspection["profileName"], Value::Null);
         assert_eq!(inspection["sections"]["core"]["profileYaml"], "（未配置）");
-        assert_eq!(inspection["sections"]["tun"]["notes"][0], "TUN 当前未启用；启用状态和完整 TUN 参数由应用管理。");
+        assert_eq!(
+            inspection["sections"]["tun"]["notes"][0],
+            "TUN 当前未启用；启用状态和完整 TUN 参数由应用管理。"
+        );
     }
 
     #[tokio::test]
     async fn inspect_active_config_composes_overrides_and_models() {
         let temp = TempDir::new().unwrap();
         let icon_root = temp.path().to_path_buf().join("icon-cache");
-        let profiles = Arc::new(ProfilesService::for_development(&temp.path().to_path_buf()));
+        let profiles = Arc::new(ProfilesService::for_development(temp.path()));
         let profiles_for_import = profiles.clone();
         let imported = profiles_for_import
             .import(&serde_json::json!({
@@ -1406,7 +2107,10 @@ mod tests {
         profiles.activate(&id).unwrap();
         let f = Fixture {
             _temp: temp,
-            paths: AppPaths { app_data_root: None, profile_root: None },
+            paths: AppPaths {
+                app_data_root: None,
+                profile_root: None,
+            },
             settings: SettingsStore::new(None),
             profiles,
             overrides: OverrideService::new(None),
@@ -1418,7 +2122,9 @@ mod tests {
             metadata: NetworkMetadataService::new(),
             startup: StartupService::new(crate::startup::ScheduledTaskStartupAdapter::with_runner(
                 false,
-                std::sync::Arc::new(|_c: String, _a: Vec<String>| Box::pin(async { Ok(crate::startup::RunResult::default()) })),
+                std::sync::Arc::new(|_c: String, _a: Vec<String>| {
+                    Box::pin(async { Ok(crate::startup::RunResult::default()) })
+                }),
                 std::sync::Arc::new(|| false),
             )),
             substore: test_substore_service(),
@@ -1437,44 +2143,243 @@ mod tests {
         // DNS enhancement on: the composed effective config must carry it.
         f.models
             .dns
-            .set(&serde_json::json!({ "enabled": true, "nameserver": ["tls://223.5.5.5"] }), enhancements::coerce_dns_enhancement)
+            .set(
+                &serde_json::json!({ "enabled": true, "nameserver": ["tls://223.5.5.5"] }),
+                enhancements::coerce_dns_enhancement,
+            )
             .unwrap();
-        let inspection = dispatch("profiles:inspect-active-config", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        let inspection = dispatch(
+            "profiles:inspect-active-config",
+            &Value::Null,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
         assert_eq!(inspection["profileName"], "Home");
         let core = &inspection["sections"]["core"];
-        assert!(core["effectiveYaml"].as_str().unwrap().contains("unified-delay: true"), "{}", core["effectiveYaml"]);
-        assert!(core["effectiveYaml"].as_str().unwrap().contains("mixed-port: 7890"), "{}", core["effectiveYaml"]);
+        assert!(
+            core["effectiveYaml"]
+                .as_str()
+                .unwrap()
+                .contains("unified-delay: true"),
+            "{}",
+            core["effectiveYaml"]
+        );
+        assert!(
+            core["effectiveYaml"]
+                .as_str()
+                .unwrap()
+                .contains("mixed-port: 7890"),
+            "{}",
+            core["effectiveYaml"]
+        );
         // The section excerpt masks the secret (exercised by the unit test).
-        assert!(core["effectiveYaml"].as_str().unwrap().contains("secret: \"********\""), "{}", core["effectiveYaml"]);
+        assert!(
+            core["effectiveYaml"]
+                .as_str()
+                .unwrap()
+                .contains("secret: \"********\""),
+            "{}",
+            core["effectiveYaml"]
+        );
         // The DNS excerpt carries the enhancement's nameserver.
         assert!(
-            inspection["sections"]["dns"]["effectiveYaml"].as_str().unwrap().contains("tls://223.5.5.5"),
+            inspection["sections"]["dns"]["effectiveYaml"]
+                .as_str()
+                .unwrap()
+                .contains("tls://223.5.5.5"),
             "{}",
             inspection["sections"]["dns"]["effectiveYaml"]
         );
-        assert_eq!(core["effectiveYaml"].as_str().unwrap().contains("（未配置）"), false);
-        assert_eq!(inspection["sections"]["dns"]["notes"][0], "DNS 覆写已启用，应用字段优先，未知字段保留。");
+        assert!(!core["effectiveYaml"]
+            .as_str()
+            .unwrap()
+            .contains("（未配置）"));
+        assert_eq!(
+            inspection["sections"]["dns"]["notes"][0],
+            "DNS 覆写已启用，应用字段优先，未知字段保留。"
+        );
     }
 
     #[tokio::test]
     async fn kernel_channels_flow_through_the_dispatch() {
         let f = fixtures();
-        let status = dispatch("kernel:get-status", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        let status = dispatch(
+            "kernel:get-status",
+            &Value::Null,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
         assert_eq!(status["phase"], "stopped");
-        let error = dispatch("kernel:start", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap_err();
-        assert!(error.0.starts_with("PROTOCOL_ERROR:UNSUPPORTED::Kernel execution is disabled"), "{}", error.0);
-        let status = dispatch("kernel:get-status", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        let error = dispatch(
+            "kernel:start",
+            &Value::Null,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error
+                .0
+                .starts_with("PROTOCOL_ERROR:UNSUPPORTED::Kernel execution is disabled"),
+            "{}",
+            error.0
+        );
+        let status = dispatch(
+            "kernel:get-status",
+            &Value::Null,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
         assert_eq!(status["phase"], "failed");
-        let status = dispatch("kernel:stop", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        let status = dispatch(
+            "kernel:stop",
+            &Value::Null,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
         assert_eq!(status["phase"], "stopped");
-        let state = dispatch("kernel-manager:get-state", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        let state = dispatch(
+            "kernel-manager:get-state",
+            &Value::Null,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
         assert_eq!(state["stableVersion"], "v1.19.30");
         // Supported mode (no privileged-service gate in this build): the
         // smart channel persists and the state clears its error.
-        let state = dispatch("kernel-manager:set-enabled", &serde_json::json!([true]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        let state = dispatch(
+            "kernel-manager:set-enabled",
+            &serde_json::json!([true]),
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
         assert_eq!(state["channel"], "smart");
         assert_eq!(state["error"], Value::Null);
-        let state = dispatch("kernel-manager:set-channel", &serde_json::json!(["stable"]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        let state = dispatch(
+            "kernel-manager:set-channel",
+            &serde_json::json!(["stable"]),
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
         assert_eq!(state["channel"], "stable");
         // The scripted seam (never the live GitHub API inside tests).
         let mut f = f;
@@ -1482,18 +2387,78 @@ mod tests {
         sole.fetch_versions = Some(std::sync::Arc::new(|| {
             Box::pin(async { Ok(vec!["v1.19.30".to_string()]) })
         }));
-        let state = dispatch("kernel-manager:list-versions", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        let state = dispatch(
+            "kernel-manager:list-versions",
+            &Value::Null,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
         assert_eq!(state["versions"], serde_json::json!(["v1.19.30"]));
         assert_eq!(state["versionsLoading"], false);
         // Invalid tags are rejected before any network work.
-        let state = dispatch("kernel-manager:install", &serde_json::json!(["latest"]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        let state = dispatch(
+            "kernel-manager:install",
+            &serde_json::json!(["latest"]),
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
         assert_eq!(state["error"], "无效的版本号：latest");
     }
 
     #[tokio::test]
     async fn runtime_summary_reflects_the_active_profile() {
         let f = fixtures();
-        let summary = dispatch("runtime:get-summary", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        let summary = dispatch(
+            "runtime:get-summary",
+            &Value::Null,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
         assert_eq!(summary["profileName"], "Murge Default");
         let imported = dispatch(
             "profiles:import",
@@ -1514,24 +2479,128 @@ mod tests {
             &f.updates,
         ).await
         .unwrap();
-        dispatch("profiles:activate", &serde_json::json!([imported["id"]]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
-        let summary = dispatch("runtime:get-summary", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        dispatch(
+            "profiles:activate",
+            &serde_json::json!([imported["id"]]),
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
+        let summary = dispatch(
+            "runtime:get-summary",
+            &Value::Null,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
         assert_eq!(summary["profileName"], "Home");
-        let external = dispatch("runtime:get-external-ip", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        let external = dispatch(
+            "runtime:get-external-ip",
+            &Value::Null,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
         assert_eq!(external, Value::Null);
     }
 
     #[tokio::test]
     async fn unknown_channels_fail_closed_with_unsupported() {
         let f = fixtures();
-        let error = dispatch("kernel:start", &Value::Null, &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap_err();
-        assert!(error.0.starts_with("PROTOCOL_ERROR:UNSUPPORTED::"), "{}", error.0);
+        let error = dispatch(
+            "kernel:start",
+            &Value::Null,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error.0.starts_with("PROTOCOL_ERROR:UNSUPPORTED::"),
+            "{}",
+            error.0
+        );
     }
 
     #[tokio::test]
     async fn non_string_arguments_fail_with_invalid_argument() {
         let f = fixtures();
-        let error = dispatch("profiles:get", &serde_json::json!([42]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap_err();
+        let error = dispatch(
+            "profiles:get",
+            &serde_json::json!([42]),
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap_err();
         assert!(error.0.contains("INVALID_ARGUMENT"), "{}", error.0);
     }
 
@@ -1539,7 +2608,27 @@ mod tests {
     async fn dns_set_patches_the_live_core_and_rolls_back_on_failure() {
         let mut f = fixtures();
         // No kernel running: the patch defers (Ok) and the model persists.
-        let result = dispatch("dns:set", &serde_json::json!([{ "enabled": true }]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await.unwrap();
+        let result = dispatch(
+            "dns:set",
+            &serde_json::json!([{ "enabled": true }]),
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
         assert_eq!(result["enhancement"]["enabled"], true);
         // Rollback path: force a live failure by pointing the controller at a
         // dead port through the core model, with a fake running kernel.
@@ -1560,7 +2649,26 @@ mod tests {
             privileged: None,
         };
         let before = f.models.dns.get();
-        let result = dispatch("dns:set", &serde_json::json!([{ "enabled": true }]), &f.paths, &f.settings, &f.profiles, &f.overrides, &f.models, &f.usage, &f.kernel, &f.mihomo, &f.desktop, &f.metadata, &f.startup, &f.substore, &f.system_proxy, &f.tun, &f.updates).await;
+        let result = dispatch(
+            "dns:set",
+            &serde_json::json!([{ "enabled": true }]),
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await;
         // The controller points at port 1 (dead) — the patch fails and the
         // model must roll back to the pre-set value.
         assert!(result.is_err());

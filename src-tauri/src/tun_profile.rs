@@ -48,21 +48,52 @@ const STACKS: [&str; 3] = ["mixed", "system", "gvisor"];
 const LOG_LEVELS: [&str; 5] = ["silent", "error", "warn", "info", "debug"];
 
 const TOP_KEYS: [&str; 16] = [
-    "port", "socks-port", "mixed-port", "allow-lan", "bind-address", "mode", "log-level", "ipv6",
-    "external-controller", "secret", "external-ui", "external-ui-url", "external-ui-name", "tun",
-    "dns", "rules",
+    "port",
+    "socks-port",
+    "mixed-port",
+    "allow-lan",
+    "bind-address",
+    "mode",
+    "log-level",
+    "ipv6",
+    "external-controller",
+    "secret",
+    "external-ui",
+    "external-ui-url",
+    "external-ui-name",
+    "tun",
+    "dns",
+    "rules",
 ];
 const REQUIRED_TOP_KEYS: [&str; 11] = [
-    "mixed-port", "allow-lan", "bind-address", "mode", "log-level", "ipv6",
-    "external-controller", "secret", "tun", "dns", "rules",
+    "mixed-port",
+    "allow-lan",
+    "bind-address",
+    "mode",
+    "log-level",
+    "ipv6",
+    "external-controller",
+    "secret",
+    "tun",
+    "dns",
+    "rules",
 ];
 const TUN_KEYS: [&str; 7] = [
-    "enable", "device", "stack", "auto-route", "auto-detect-interface", "strict-route",
+    "enable",
+    "device",
+    "stack",
+    "auto-route",
+    "auto-detect-interface",
+    "strict-route",
     "dns-hijack",
 ];
 const OPTIONAL_TUN_KEYS: [&str; 3] = ["mtu", "route-address", "route-exclude-address"];
 const DNS_KEYS: [&str; 5] = [
-    "enable", "enhanced-mode", "fake-ip-range", "fake-ip-filter", "nameserver",
+    "enable",
+    "enhanced-mode",
+    "fake-ip-range",
+    "fake-ip-filter",
+    "nameserver",
 ];
 
 /// Top-level keys that must never reach the elevated child, mirroring the
@@ -70,11 +101,20 @@ const DNS_KEYS: [&str; 5] = [
 /// — the lists must stay in lockstep so a subscription that carries one is
 /// stripped here instead of failing opaquely at the service).
 const FORBIDDEN_TOP_KEYS: [&str; 14] = [
-    "redir-port", "tproxy-port", "listeners", "tunnels",
-    "external-controller-unix", "external-controller-pipe", "external-controller-tls",
-    "external-controller-routing-mark", "external-controller-cors", "external-doh-server",
+    "redir-port",
+    "tproxy-port",
+    "listeners",
+    "tunnels",
+    "external-controller-unix",
+    "external-controller-pipe",
+    "external-controller-tls",
+    "external-controller-routing-mark",
+    "external-controller-cors",
+    "external-doh-server",
     "ntp",
-    "ss-config", "vmess-config", "tuic-server",
+    "ss-config",
+    "vmess-config",
+    "tuic-server",
 ];
 
 /// Sections whose entries carry a `path` mihomo WRITES downloaded content to.
@@ -82,15 +122,21 @@ const PROVIDER_SECTIONS: [&str; 2] = ["proxy-providers", "rule-providers"];
 
 /// Hosts kept on real IPs under fake-ip mode, clash-party's shipped default
 /// verbatim. Only injected when the profile omits its own filter.
-const TUN_DEFAULT_FAKE_IP_FILTER: [&str; 6] =
-    ["*", "+.lan", "+.local", "time.*.com", "ntp.*.com", "+.market.xiaomi.com"];
+const TUN_DEFAULT_FAKE_IP_FILTER: [&str; 6] = [
+    "*",
+    "+.lan",
+    "+.local",
+    "time.*.com",
+    "ntp.*.com",
+    "+.market.xiaomi.com",
+];
 
 fn invalid(message: impl Into<String>) -> IpcError {
     IpcError::code(code::INVALID_ARGUMENT, message.into())
 }
 
 fn assert_port(value: i64, label: &str) -> Result<(), IpcError> {
-    if value < PORT_MIN || value > PORT_MAX {
+    if !(PORT_MIN..=PORT_MAX).contains(&value) {
         return Err(invalid(format!(
             "{label} must be an integer between {PORT_MIN} and {PORT_MAX}"
         )));
@@ -106,7 +152,11 @@ fn resolve_device(model: Option<&Value>, fallback: &str) -> String {
         None => fallback.to_string(),
         Some(model) => {
             let device = model["device"].as_str().unwrap_or_default();
-            if device == EMPTY_TUN_DEVICE { fallback.to_string() } else { device.to_string() }
+            if device == EMPTY_TUN_DEVICE {
+                fallback.to_string()
+            } else {
+                device.to_string()
+            }
         }
     }
 }
@@ -116,14 +166,17 @@ fn is_valid_tun_mtu(value: i64) -> bool {
 }
 
 fn device_pattern_matches(device: &str) -> bool {
-    regex::Regex::new(DEVICE_PATTERN).expect("device pattern").is_match(device)
+    regex::Regex::new(DEVICE_PATTERN)
+        .expect("device pattern")
+        .is_match(device)
 }
 
 fn scalar_text(node: &Node) -> Option<&str> {
     match node {
-        Node::Scalar(ScalarNode { value: ScalarValue::Str(text) | ScalarValue::Real(text), .. }) => {
-            Some(text)
-        }
+        Node::Scalar(ScalarNode {
+            value: ScalarValue::Str(text) | ScalarValue::Real(text),
+            ..
+        }) => Some(text),
         _ => None,
     }
 }
@@ -134,7 +187,13 @@ fn is_int_in(node: &Node, min: i64, max: i64) -> bool {
 }
 
 fn is_bool(node: &Node) -> bool {
-    matches!(node, Node::Scalar(ScalarNode { value: ScalarValue::Bool(_), .. }))
+    matches!(
+        node,
+        Node::Scalar(ScalarNode {
+            value: ScalarValue::Bool(_),
+            ..
+        })
+    )
 }
 
 fn is_bool_value(node: &Node, expected: bool) -> bool {
@@ -166,7 +225,9 @@ fn is_valid_dns_hijack_entry(value: &str) -> bool {
         return port.starts_with(':') && is_single_port(&port[1..]);
     }
     match v.rfind(':') {
-        None => crate::net_validators::is_valid_ip(v) || crate::net_validators::is_valid_hostname(v),
+        None => {
+            crate::net_validators::is_valid_ip(v) || crate::net_validators::is_valid_hostname(v)
+        }
         Some(idx) => {
             let (host_part, port_part) = (&v[..idx], &v[idx + 1..]);
             if !is_single_port(port_part) {
@@ -183,7 +244,10 @@ fn is_single_port(value: &str) -> bool {
     if value.is_empty() || value.len() > 5 || !value.bytes().all(|b| b.is_ascii_digit()) {
         return false;
     }
-    value.parse::<u32>().map(|n| (1..=65535).contains(&n)).unwrap_or(false)
+    value
+        .parse::<u32>()
+        .map(|n| (1..=65535).contains(&n))
+        .unwrap_or(false)
 }
 
 fn is_valid_tun_route_address(value: &str) -> bool {
@@ -223,7 +287,12 @@ fn mapping<'a>(
     found
 }
 
-fn require_exact_keys(found: &[(&str, &Node)], required: &[&str], label: &str, errors: &mut Vec<String>) {
+fn require_exact_keys(
+    found: &[(&str, &Node)],
+    required: &[&str],
+    label: &str,
+    errors: &mut Vec<String>,
+) {
     for key in required {
         if !found.iter().any(|(seen, _)| seen == key) {
             errors.push(format!("missing {label} key: {key}"));
@@ -231,7 +300,13 @@ fn require_exact_keys(found: &[(&str, &Node)], required: &[&str], label: &str, e
     }
 }
 
-fn scalar_matches(found: &[(&str, &Node)], key: &str, test: impl Fn(&Node) -> bool, message: &str, errors: &mut Vec<String>) {
+fn scalar_matches(
+    found: &[(&str, &Node)],
+    key: &str,
+    test: impl Fn(&Node) -> bool,
+    message: &str,
+    errors: &mut Vec<String>,
+) {
     match found.iter().find(|(seen, _)| *seen == key) {
         Some((_, node)) if test(node) => {}
         _ => errors.push(message.to_string()),
@@ -250,7 +325,10 @@ fn scalar_equals_str(found: &[(&str, &Node)], key: &str, expected: &str, errors:
 
 fn sequence_equals(node: &Node, expected: &[&str], label: &str, errors: &mut Vec<String>) {
     let Node::Sequence { items, .. } = node else {
-        errors.push(format!("{label} must contain exactly [{}]", expected.join(", ")));
+        errors.push(format!(
+            "{label} must contain exactly [{}]",
+            expected.join(", ")
+        ));
         return;
     };
     let matches = items.len() == expected.len()
@@ -258,7 +336,10 @@ fn sequence_equals(node: &Node, expected: &[&str], label: &str, errors: &mut Vec
             matches!(item, Node::Scalar(ScalarNode { value: ScalarValue::Str(value), .. }) if value == expect)
         });
     if !matches {
-        errors.push(format!("{label} must contain exactly [{}]", expected.join(", ")));
+        errors.push(format!(
+            "{label} must contain exactly [{}]",
+            expected.join(", ")
+        ));
     }
 }
 
@@ -286,7 +367,9 @@ fn validate_route_list(node: &Node, label: &str, errors: &mut Vec<String>) {
 fn scan_unsafe_nodes(node: &Node, errors: &mut Vec<String>) {
     match node {
         Node::Alias => errors.push("YAML aliases are not allowed".to_string()),
-        Node::Scalar(ScalarNode { tag, .. }) | Node::Sequence { tag, .. } | Node::Mapping { tag, .. } => {
+        Node::Scalar(ScalarNode { tag, .. })
+        | Node::Sequence { tag, .. }
+        | Node::Mapping { tag, .. } => {
             if tag.is_some() {
                 errors.push("YAML tags are not allowed".to_string());
             }
@@ -331,7 +414,14 @@ pub fn generate_mihomo_tun_config(options: &Value) -> Result<String, IpcError> {
     }
     for (index, port) in [http_port, socks_port].into_iter().enumerate() {
         if port != 0 {
-            assert_port(port, if index == 0 { "HTTP port" } else { "SOCKS port" })?;
+            assert_port(
+                port,
+                if index == 0 {
+                    "HTTP port"
+                } else {
+                    "SOCKS port"
+                },
+            )?;
         }
     }
     let mut active_ports = vec![mixed_port, controller_port];
@@ -345,7 +435,9 @@ pub fn generate_mihomo_tun_config(options: &Value) -> Result<String, IpcError> {
         return Err(invalid("listener ports must differ"));
     }
     if !crate::kernel_process::is_valid_secret(secret) {
-        return Err(invalid("secret must be a 64-character lowercase hex string"));
+        return Err(invalid(
+            "secret must be a 64-character lowercase hex string",
+        ));
     }
     let log_level = options["logLevel"].as_str().unwrap_or("info");
     if !LOG_LEVELS.contains(&log_level) {
@@ -371,26 +463,60 @@ pub fn generate_mihomo_tun_config(options: &Value) -> Result<String, IpcError> {
         format!("  device: {device}"),
         format!("  stack: {stack}"),
     ];
-    let model_mtu = model.and_then(|model| model["mtu"].as_i64()).filter(|mtu| is_valid_tun_mtu(*mtu));
+    let model_mtu = model
+        .and_then(|model| model["mtu"].as_i64())
+        .filter(|mtu| is_valid_tun_mtu(*mtu));
     if let Some(mtu) = model_mtu {
         tun_lines.push(format!("  mtu: {mtu}"));
     }
     let hijack: Vec<String> = match model {
         Some(model) => model["dnsHijack"]
             .as_array()
-            .map(|entries| entries.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
             .unwrap_or_default(),
         None => vec!["any:53".to_string()],
     };
-    tun_lines.push(format!("  auto-route: {}", model.map(|model| model["autoRoute"].as_bool().unwrap_or(true)).unwrap_or(true)));
-    tun_lines.push(format!("  auto-detect-interface: {}", model.map(|model| model["autoDetectInterface"].as_bool().unwrap_or(true)).unwrap_or(true)));
-    tun_lines.push(format!("  strict-route: {}", model.map(|model| model["strictRoute"].as_bool().unwrap_or(false)).unwrap_or(false)));
+    tun_lines.push(format!(
+        "  auto-route: {}",
+        model
+            .map(|model| model["autoRoute"].as_bool().unwrap_or(true))
+            .unwrap_or(true)
+    ));
+    tun_lines.push(format!(
+        "  auto-detect-interface: {}",
+        model
+            .map(|model| model["autoDetectInterface"].as_bool().unwrap_or(true))
+            .unwrap_or(true)
+    ));
+    tun_lines.push(format!(
+        "  strict-route: {}",
+        model
+            .map(|model| model["strictRoute"].as_bool().unwrap_or(false))
+            .unwrap_or(false)
+    ));
     tun_lines.push("  dns-hijack:".to_string());
     for entry in &hijack {
         tun_lines.push(format!("    - {entry}"));
     }
     let route_address = model
-        .map(|model| model["routeAddress"].as_array().map(|entries| entries.iter().filter_map(Value::as_str).map(str::to_string).collect::<Vec<_>>()).unwrap_or_default())
+        .map(|model| {
+            model["routeAddress"]
+                .as_array()
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        })
         .unwrap_or_default();
     if !route_address.is_empty() {
         tun_lines.push("  route-address:".to_string());
@@ -399,7 +525,18 @@ pub fn generate_mihomo_tun_config(options: &Value) -> Result<String, IpcError> {
         }
     }
     let route_exclude = model
-        .map(|model| model["routeExcludeAddress"].as_array().map(|entries| entries.iter().filter_map(Value::as_str).map(str::to_string).collect::<Vec<_>>()).unwrap_or_default())
+        .map(|model| {
+            model["routeExcludeAddress"]
+                .as_array()
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        })
         .unwrap_or_default();
     if !route_exclude.is_empty() {
         tun_lines.push("  route-exclude-address:".to_string());
@@ -420,11 +557,16 @@ pub fn generate_mihomo_tun_config(options: &Value) -> Result<String, IpcError> {
     }
     lines.push(format!("mixed-port: {mixed_port}"));
     lines.push(format!("allow-lan: {allow_lan}"));
-    lines.push(format!("bind-address: {}", if allow_lan { "'*'" } else { "127.0.0.1" }));
+    lines.push(format!(
+        "bind-address: {}",
+        if allow_lan { "'*'" } else { "127.0.0.1" }
+    ));
     lines.push("mode: direct".to_string());
     lines.push(format!("log-level: {log_level}"));
     lines.push("ipv6: false".to_string());
-    lines.push(format!("external-controller: {controller_host}:{controller_port}"));
+    lines.push(format!(
+        "external-controller: {controller_host}:{controller_port}"
+    ));
     lines.push(format!("secret: {secret}"));
     if controller_panel {
         lines.push("external-ui: ui".to_string());
@@ -451,7 +593,10 @@ pub fn generate_mihomo_tun_config(options: &Value) -> Result<String, IpcError> {
 
     let errors = mihomo_tun_config_errors(&text);
     if !errors.is_empty() {
-        return Err(invalid(format!("generated TUN config failed validation: {}", errors.join("; "))));
+        return Err(invalid(format!(
+            "generated TUN config failed validation: {}",
+            errors.join("; ")
+        )));
     }
     Ok(text)
 }
@@ -476,7 +621,13 @@ pub fn mihomo_tun_config_errors(text: &str) -> Vec<String> {
     let root_map = mapping(&root, &TOP_KEYS, "config", &mut errors);
     require_exact_keys(&root_map, &REQUIRED_TOP_KEYS, "config", &mut errors);
 
-    scalar_matches(&root_map, "allow-lan", is_bool, "allow-lan has an invalid value", &mut errors);
+    scalar_matches(
+        &root_map,
+        "allow-lan",
+        is_bool,
+        "allow-lan has an invalid value",
+        &mut errors,
+    );
     scalar_matches(
         &root_map,
         "bind-address",
@@ -485,8 +636,20 @@ pub fn mihomo_tun_config_errors(text: &str) -> Vec<String> {
         &mut errors,
     );
     scalar_equals_str(&root_map, "mode", "direct", &mut errors);
-    scalar_matches(&root_map, "ipv6", |node| is_bool_value(node, false), "ipv6 must equal false", &mut errors);
-    scalar_matches(&root_map, "mixed-port", |node| is_int_in(node, PORT_MIN, PORT_MAX), "mixed-port has an invalid value", &mut errors);
+    scalar_matches(
+        &root_map,
+        "ipv6",
+        |node| is_bool_value(node, false),
+        "ipv6 must equal false",
+        &mut errors,
+    );
+    scalar_matches(
+        &root_map,
+        "mixed-port",
+        |node| is_int_in(node, PORT_MIN, PORT_MAX),
+        "mixed-port has an invalid value",
+        &mut errors,
+    );
     for key in ["port", "socks-port"] {
         if root_map.iter().any(|(seen, _)| *seen == key) {
             scalar_matches(
@@ -501,16 +664,20 @@ pub fn mihomo_tun_config_errors(text: &str) -> Vec<String> {
     scalar_matches(
         &root_map,
         "external-controller",
-        |node| matches!(node, Node::Scalar(ScalarNode { value: ScalarValue::Str(value), .. })
-            if regex::Regex::new(r"^(?:127\.0\.0\.1|0\.0\.0\.0):(?:[1-9]\d*)$").expect("controller pattern").is_match(value)),
+        |node| {
+            matches!(node, Node::Scalar(ScalarNode { value: ScalarValue::Str(value), .. })
+            if regex::Regex::new(r"^(?:127\.0\.0\.1|0\.0\.0\.0):(?:[1-9]\d*)$").expect("controller pattern").is_match(value))
+        },
         "external-controller has an invalid value",
         &mut errors,
     );
     scalar_matches(
         &root_map,
         "secret",
-        |node| matches!(node, Node::Scalar(ScalarNode { value: ScalarValue::Str(value), .. })
-            if regex::Regex::new(SECRET_PATTERN).expect("secret pattern").is_match(value)),
+        |node| {
+            matches!(node, Node::Scalar(ScalarNode { value: ScalarValue::Str(value), .. })
+            if regex::Regex::new(SECRET_PATTERN).expect("secret pattern").is_match(value))
+        },
         "secret has an invalid value",
         &mut errors,
     );
@@ -537,7 +704,10 @@ pub fn mihomo_tun_config_errors(text: &str) -> Vec<String> {
 
     let mut tun_allowed: Vec<&str> = TUN_KEYS.to_vec();
     tun_allowed.extend(OPTIONAL_TUN_KEYS);
-    let tun_node = root_map.iter().find(|(seen, _)| *seen == "tun").map(|(_, node)| *node);
+    let tun_node = root_map
+        .iter()
+        .find(|(seen, _)| *seen == "tun")
+        .map(|(_, node)| *node);
     match tun_node {
         None => errors.push("tun must be a mapping".to_string()),
         Some(tun_node) => {
@@ -546,13 +716,37 @@ pub fn mihomo_tun_config_errors(text: &str) -> Vec<String> {
             } else {
                 let tun = mapping(tun_node, &tun_allowed, "tun", &mut errors);
                 require_exact_keys(&tun, &TUN_KEYS, "tun", &mut errors);
-                scalar_matches(&tun, "enable", is_bool, "tun.enable must be a boolean", &mut errors);
+                scalar_matches(
+                    &tun,
+                    "enable",
+                    is_bool,
+                    "tun.enable must be a boolean",
+                    &mut errors,
+                );
                 // auto-route / auto-detect-interface / strict-route are
                 // runtime-tunable via the TUN config model; only their type is
                 // constrained here.
-                scalar_matches(&tun, "auto-route", is_bool, "auto-route must be a boolean", &mut errors);
-                scalar_matches(&tun, "auto-detect-interface", is_bool, "auto-detect-interface must be a boolean", &mut errors);
-                scalar_matches(&tun, "strict-route", is_bool, "strict-route must be a boolean", &mut errors);
+                scalar_matches(
+                    &tun,
+                    "auto-route",
+                    is_bool,
+                    "auto-route must be a boolean",
+                    &mut errors,
+                );
+                scalar_matches(
+                    &tun,
+                    "auto-detect-interface",
+                    is_bool,
+                    "auto-detect-interface must be a boolean",
+                    &mut errors,
+                );
+                scalar_matches(
+                    &tun,
+                    "strict-route",
+                    is_bool,
+                    "strict-route must be a boolean",
+                    &mut errors,
+                );
                 scalar_matches(
                     &tun,
                     "device",
@@ -592,14 +786,20 @@ pub fn mihomo_tun_config_errors(text: &str) -> Vec<String> {
                 if let Some((_, list)) = tun.iter().find(|(seen, _)| *seen == "route-address") {
                     validate_route_list(list, "route-address", &mut errors);
                 }
-                if let Some((_, list)) = tun.iter().find(|(seen, _)| *seen == "route-exclude-address") {
+                if let Some((_, list)) = tun
+                    .iter()
+                    .find(|(seen, _)| *seen == "route-exclude-address")
+                {
                     validate_route_list(list, "route-exclude-address", &mut errors);
                 }
             }
         }
     }
 
-    let dns_node = root_map.iter().find(|(seen, _)| *seen == "dns").map(|(_, node)| *node);
+    let dns_node = root_map
+        .iter()
+        .find(|(seen, _)| *seen == "dns")
+        .map(|(_, node)| *node);
     match dns_node {
         None => errors.push("dns must be a mapping".to_string()),
         Some(dns_node) => {
@@ -608,18 +808,30 @@ pub fn mihomo_tun_config_errors(text: &str) -> Vec<String> {
             } else {
                 let dns = mapping(dns_node, &DNS_KEYS, "dns", &mut errors);
                 require_exact_keys(&dns, &DNS_KEYS, "dns", &mut errors);
-                scalar_matches(&dns, "enable", |node| is_bool_value(node, true), "enable must equal true", &mut errors);
+                scalar_matches(
+                    &dns,
+                    "enable",
+                    |node| is_bool_value(node, true),
+                    "enable must equal true",
+                    &mut errors,
+                );
                 scalar_equals_str(&dns, "enhanced-mode", "fake-ip", &mut errors);
                 scalar_equals_str(&dns, "fake-ip-range", "198.18.0.1/16", &mut errors);
                 match dns.iter().find(|(seen, _)| *seen == "fake-ip-filter") {
                     Some((_, Node::Sequence { items, .. })) if !items.is_empty() => {
                         for item in items {
                             let Some(text) = scalar_text(item) else {
-                                errors.push("dns.fake-ip-filter entries must be non-empty strings".to_string());
+                                errors.push(
+                                    "dns.fake-ip-filter entries must be non-empty strings"
+                                        .to_string(),
+                                );
                                 continue;
                             };
                             if text.is_empty() {
-                                errors.push("dns.fake-ip-filter entries must be non-empty strings".to_string());
+                                errors.push(
+                                    "dns.fake-ip-filter entries must be non-empty strings"
+                                        .to_string(),
+                                );
                             }
                         }
                     }
@@ -674,7 +886,11 @@ fn provider_path_error(path: &Value) -> Option<&'static str> {
     if path.contains(':') {
         return Some("must not name a drive or alternate stream");
     }
-    if path.replace('\\', "/").split('/').any(|segment| segment == "..") {
+    if path
+        .replace('\\', "/")
+        .split('/')
+        .any(|segment| segment == "..")
+    {
         return Some("must not traverse outside the state directory");
     }
     None
@@ -684,7 +900,13 @@ fn provider_path_error(path: &Value) -> Option<&'static str> {
 fn safe_provider_file_name(name: &str) -> String {
     let mut cleaned: String = name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     while cleaned.starts_with('.') {
         cleaned.remove(0);
@@ -698,17 +920,28 @@ fn safe_provider_file_name(name: &str) -> String {
 /// Add literal proxy endpoint IPs to mihomo's TUN route exclusions: a proxy
 /// tunnel cannot carry the socket used to establish itself. Literal endpoints
 /// are protected; hostname endpoints and provider-managed nodes stay untouched.
-fn exclude_literal_proxy_servers(data: &mut Map<String, Value>, tun_block: &mut Map<String, Value>) {
+fn exclude_literal_proxy_servers(
+    data: &mut Map<String, Value>,
+    tun_block: &mut Map<String, Value>,
+) {
     let Some(proxies) = data.get("proxies").and_then(Value::as_array).cloned() else {
         return;
     };
     let mut existing: Vec<String> = tun_block
         .get("route-exclude-address")
         .and_then(Value::as_array)
-        .map(|entries| entries.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
         .unwrap_or_default();
-    let mut normalized: std::collections::HashSet<String> =
-        existing.iter().map(|entry| entry.trim().to_lowercase()).collect();
+    let mut normalized: std::collections::HashSet<String> = existing
+        .iter()
+        .map(|entry| entry.trim().to_lowercase())
+        .collect();
     let mut changed = false;
 
     for proxy in &proxies {
@@ -718,7 +951,11 @@ fn exclude_literal_proxy_servers(data: &mut Map<String, Value>, tun_block: &mut 
         }) else {
             continue;
         };
-        let host = server.trim().trim_start_matches('[').trim_end_matches(']').to_lowercase();
+        let host = server
+            .trim()
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .to_lowercase();
         let is_v4 = crate::net_validators::is_valid_ip(&host) && !host.contains(':');
         let is_v6 = crate::net_validators::is_valid_ip(&host) && host.contains(':');
         if !is_v4 && !is_v6 {
@@ -754,7 +991,9 @@ pub fn generate_proxied_tun_config(options: &Value) -> Result<String, IpcError> 
         return Err(invalid("controller and mixed ports must differ"));
     }
     if !crate::kernel_process::is_valid_secret(secret) {
-        return Err(invalid("secret must be a 64-character lowercase hex string"));
+        return Err(invalid(
+            "secret must be a 64-character lowercase hex string",
+        ));
     }
     let device = resolve_device(model, options["device"].as_str().unwrap_or_default());
     if !device_pattern_matches(&device) {
@@ -789,7 +1028,11 @@ pub fn generate_proxied_tun_config(options: &Value) -> Result<String, IpcError> 
     // content there as SYSTEM, so an unsafe one is rewritten to a deterministic
     // contained location rather than rejecting the whole subscription.
     for section in PROVIDER_SECTIONS {
-        let Some(raw) = data.get_mut(section).and_then(Value::as_object_mut).map(|m| m.clone()) else {
+        let Some(raw) = data
+            .get_mut(section)
+            .and_then(Value::as_object_mut)
+            .map(|m| m.clone())
+        else {
             continue;
         };
         for (name, entry) in raw {
@@ -801,7 +1044,13 @@ pub fn generate_proxied_tun_config(options: &Value) -> Result<String, IpcError> 
             if vehicle == "inline" {
                 continue;
             }
-            if record.get("path").map(provider_path_error).unwrap_or(None).is_some() || record.get("path").is_none() {
+            if record
+                .get("path")
+                .map(provider_path_error)
+                .unwrap_or(None)
+                .is_some()
+                || record.get("path").is_none()
+            {
                 let format = record["format"].as_str().unwrap_or_default().to_lowercase();
                 let extension = match format.as_str() {
                     "mrs" => "mrs",
@@ -810,7 +1059,10 @@ pub fn generate_proxied_tun_config(options: &Value) -> Result<String, IpcError> 
                 };
                 record.insert(
                     "path".into(),
-                    json!(format!("./{section}/{}.{extension}", safe_provider_file_name(&name))),
+                    json!(format!(
+                        "./{section}/{}.{extension}",
+                        safe_provider_file_name(&name)
+                    )),
                 );
             }
             if let Some(section_map) = data.get_mut(section).and_then(Value::as_object_mut) {
@@ -924,7 +1176,10 @@ pub fn generate_proxied_tun_config(options: &Value) -> Result<String, IpcError> 
     let text = crate::override_apply::stringify_yaml(Value::Object(data));
     let errors = proxied_tun_config_errors(&text);
     if !errors.is_empty() {
-        return Err(invalid(format!("generated TUN config failed validation: {}", errors.join("; "))));
+        return Err(invalid(format!(
+            "generated TUN config failed validation: {}",
+            errors.join("; ")
+        )));
     }
     let bytes = text.len();
     if bytes > TUN_PROFILE_MAX_BYTES {
@@ -959,7 +1214,10 @@ pub fn proxied_tun_config_errors(text: &str) -> Vec<String> {
     let data = match crate::override_apply::parse_yaml_to_object(text) {
         Some(data) => data,
         None => {
-            errors.push("config could not be resolved: merge resolution is unavailable in this build".to_string());
+            errors.push(
+                "config could not be resolved: merge resolution is unavailable in this build"
+                    .to_string(),
+            );
             return dedupe(errors);
         }
     };
@@ -998,12 +1256,18 @@ pub fn proxied_tun_config_errors(text: &str) -> Vec<String> {
     let controller_ok = data
         .get("external-controller")
         .and_then(Value::as_str)
-        .map(|value| regex::Regex::new(r"^(?:127\.0\.0\.1|0\.0\.0\.0):(?:[1-9]\d*)$").expect("controller pattern").is_match(value))
+        .map(|value| {
+            regex::Regex::new(r"^(?:127\.0\.0\.1|0\.0\.0\.0):(?:[1-9]\d*)$")
+                .expect("controller pattern")
+                .is_match(value)
+        })
         .unwrap_or(false);
     if !controller_ok {
         errors.push("external-controller must use a supported listen address".to_string());
     }
-    let has_ui = ["external-ui", "external-ui-name", "external-ui-url"].iter().any(|key| data.contains_key(*key));
+    let has_ui = ["external-ui", "external-ui-name", "external-ui-url"]
+        .iter()
+        .any(|key| data.contains_key(*key));
     if has_ui
         && (data.get("external-ui").and_then(Value::as_str) != Some("ui")
             || data.get("external-ui-name").and_then(Value::as_str) != Some("metacubexd")
@@ -1013,7 +1277,10 @@ pub fn proxied_tun_config_errors(text: &str) -> Vec<String> {
         errors.push("external-ui settings must use the managed dashboard".to_string());
     }
     match data.get("secret").and_then(Value::as_str) {
-        Some(secret) if regex::Regex::new(SECRET_PATTERN).expect("secret pattern").is_match(secret) => {}
+        Some(secret)
+            if regex::Regex::new(SECRET_PATTERN)
+                .expect("secret pattern")
+                .is_match(secret) => {}
         _ => errors.push("secret must be a 64-character lowercase hex string".to_string()),
     }
     let mixed_port = data.get("mixed-port").and_then(Value::as_i64);
@@ -1035,7 +1302,16 @@ pub fn proxied_tun_config_errors(text: &str) -> Vec<String> {
         if let Some((_full, port)) = regex::Regex::new(r"^(?:127\.0\.0\.1|0\.0\.0\.0):(\d+)$")
             .expect("controller port pattern")
             .captures(controller)
-            .map(|captures| (captures.get(0).map(|m| m.as_str()).unwrap_or_default().to_string(), captures[1].to_string()))
+            .map(|captures| {
+                (
+                    captures
+                        .get(0)
+                        .map(|m| m.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    captures[1].to_string(),
+                )
+            })
         {
             if let Ok(port) = port.parse::<i64>() {
                 listener_ports.push(port);
@@ -1080,7 +1356,10 @@ pub fn proxied_tun_config_errors(text: &str) -> Vec<String> {
             for entry in entries {
                 match entry.as_str() {
                     Some(entry) if is_valid_dns_hijack_entry(entry) => {}
-                    other => errors.push(format!("invalid tun.dns-hijack entry: {}", other.map(str::to_string).unwrap_or_default())),
+                    other => errors.push(format!(
+                        "invalid tun.dns-hijack entry: {}",
+                        other.map(str::to_string).unwrap_or_default()
+                    )),
                 }
             }
             // clash-party parity: port-53 hijacking only exists when a live DNS
@@ -1101,7 +1380,10 @@ pub fn proxied_tun_config_errors(text: &str) -> Vec<String> {
         }
     }
     let _ = hijack_empty_allowed;
-    for (key, label) in [("route-address", "tun.route-address"), ("route-exclude-address", "tun.route-exclude-address")] {
+    for (key, label) in [
+        ("route-address", "tun.route-address"),
+        ("route-exclude-address", "tun.route-exclude-address"),
+    ] {
         let Some(list) = block.get(key) else {
             continue;
         };
@@ -1110,7 +1392,10 @@ pub fn proxied_tun_config_errors(text: &str) -> Vec<String> {
                 for entry in entries {
                     match entry.as_str() {
                         Some(entry) if is_valid_tun_route_address(entry) => {}
-                        other => errors.push(format!("invalid {label} entry: {}", other.map(str::to_string).unwrap_or_default())),
+                        other => errors.push(format!(
+                            "invalid {label} entry: {}",
+                            other.map(str::to_string).unwrap_or_default()
+                        )),
                     }
                 }
             }
@@ -1147,7 +1432,8 @@ pub fn proxied_tun_config_errors(text: &str) -> Vec<String> {
             if block.get("enable") == Some(&Value::Bool(true)) {
                 match block.get("enhanced-mode").and_then(Value::as_str) {
                     Some("fake-ip") | Some("redir-host") => {}
-                    _ => errors.push("dns.enhanced-mode must equal fake-ip or redir-host".to_string()),
+                    _ => errors
+                        .push("dns.enhanced-mode must equal fake-ip or redir-host".to_string()),
                 }
             }
             if block.contains_key("listen") {
@@ -1159,7 +1445,10 @@ pub fn proxied_tun_config_errors(text: &str) -> Vec<String> {
                         for entry in entries {
                             match entry.as_str() {
                                 Some(entry) if !entry.is_empty() => {}
-                                _ => errors.push("dns.fake-ip-filter entries must be non-empty strings".to_string()),
+                                _ => errors.push(
+                                    "dns.fake-ip-filter entries must be non-empty strings"
+                                        .to_string(),
+                                ),
                             }
                         }
                     }
@@ -1277,16 +1566,36 @@ mod tests {
         // An alias is rejected (the generator quotes the filter, so replace
         // the quoted form to produce a bare alias node).
         let aliased = text.replace("    - \"*\"", "    - *anchor-ref");
-        assert!(mihomo_tun_config_errors(&aliased).iter().any(|e| e.contains("alias")), "{aliased}");
+        assert!(
+            mihomo_tun_config_errors(&aliased)
+                .iter()
+                .any(|e| e.contains("alias")),
+            "{aliased}"
+        );
         // A mode change is rejected.
         let mutated = text.replace("mode: direct", "mode: rule");
-        assert!(mihomo_tun_config_errors(&mutated).iter().any(|e| e.contains("mode")), "{mutated}");
+        assert!(
+            mihomo_tun_config_errors(&mutated)
+                .iter()
+                .any(|e| e.contains("mode")),
+            "{mutated}"
+        );
         // A missing tun key is rejected.
         let mutated = text.replace("  dns-hijack:\n", "");
-        assert!(mihomo_tun_config_errors(&mutated).iter().any(|e| e.contains("missing tun key")), "{mutated}");
+        assert!(
+            mihomo_tun_config_errors(&mutated)
+                .iter()
+                .any(|e| e.contains("missing tun key")),
+            "{mutated}"
+        );
         // An unknown top-level key is rejected.
         let mutated = format!("ntp:\n  enabled: true\n{text}");
-        assert!(mihomo_tun_config_errors(&mutated).iter().any(|e| e.contains("unknown config key")), "{mutated}");
+        assert!(
+            mihomo_tun_config_errors(&mutated)
+                .iter()
+                .any(|e| e.contains("unknown config key")),
+            "{mutated}"
+        );
         // assert form.
         assert!(assert_mihomo_tun_config(&text).is_ok());
         assert!(assert_mihomo_tun_config(&mutated).is_err());
@@ -1371,7 +1680,10 @@ mod tests {
         assert!(proxied_tun_config_errors(&text).is_empty(), "{text}");
 
         // With an enabled dns block (fake-ip, no filter) the defaults are filled.
-        let with_dns = format!("dns:\n  enable: true\n  enhanced-mode: fake-ip\n{}", proxied_document());
+        let with_dns = format!(
+            "dns:\n  enable: true\n  enhanced-mode: fake-ip\n{}",
+            proxied_document()
+        );
         let text = generate_proxied_tun_config(&proxied_options(&with_dns)).unwrap();
         assert!(text.contains("fake-ip-range: 198.18.0.1/16"), "{text}");
         assert!(text.contains("nameserver:"), "{text}");
@@ -1413,7 +1725,8 @@ mod tests {
             "{mutated}"
         );
         // An escaping provider path is rejected.
-        let mutated = format!("proxy-providers:\n  sub:\n    type: http\n    path: ../../etc/passwd\n{text}");
+        let mutated =
+            format!("proxy-providers:\n  sub:\n    type: http\n    path: ../../etc/passwd\n{text}");
         assert!(
             proxied_tun_config_errors(&mutated)
                 .iter()
@@ -1422,9 +1735,15 @@ mod tests {
         );
         // dns.listen is rejected (use a document WITH a dns block: without
         // one the final config has no dns section at all).
-        let with_dns = format!("dns:\n  enable: true\n  enhanced-mode: fake-ip\n{}", proxied_document());
+        let with_dns = format!(
+            "dns:\n  enable: true\n  enhanced-mode: fake-ip\n{}",
+            proxied_document()
+        );
         let text_with_dns = generate_proxied_tun_config(&proxied_options(&with_dns)).unwrap();
-        let mutated = text_with_dns.replace("  enable: true\n  enhanced-mode: fake-ip", "  enable: true\n  enhanced-mode: fake-ip\n  listen: 0.0.0.0:53");
+        let mutated = text_with_dns.replace(
+            "  enable: true\n  enhanced-mode: fake-ip",
+            "  enable: true\n  enhanced-mode: fake-ip\n  listen: 0.0.0.0:53",
+        );
         assert!(
             proxied_tun_config_errors(&mutated)
                 .iter()
@@ -1441,7 +1760,10 @@ mod tests {
         let text = generate_proxied_tun_config(&proxied_options(proxied_document())).unwrap();
         let mutated = text
             .replace("auto-route: true", "auto-route: false")
-            .replace("auto-detect-interface: true", "auto-detect-interface: false");
+            .replace(
+                "auto-detect-interface: true",
+                "auto-detect-interface: false",
+            );
         assert!(
             proxied_tun_config_errors(&mutated)
                 .iter()
@@ -1467,14 +1789,32 @@ mod tests {
     #[test]
     fn provider_path_error_matches_the_service_contract() {
         assert_eq!(provider_path_error(&json!("cache/p.yaml")), None);
-        assert_eq!(provider_path_error(&json!("/etc/passwd")), Some("must be relative to the state directory"));
-        assert_eq!(provider_path_error(&json!("C:\\x\\y.yaml")), Some("must be relative to the state directory"));
-        assert_eq!(provider_path_error(&json!("a\\..\\b")), Some("must not traverse outside the state directory"));
+        assert_eq!(
+            provider_path_error(&json!("/etc/passwd")),
+            Some("must be relative to the state directory")
+        );
+        assert_eq!(
+            provider_path_error(&json!("C:\\x\\y.yaml")),
+            Some("must be relative to the state directory")
+        );
+        assert_eq!(
+            provider_path_error(&json!("a\\..\\b")),
+            Some("must not traverse outside the state directory")
+        );
         // A single letter followed by a colon matches the drive rule first
         // (TS `/^[A-Za-z]:/` runs before the includes(':') check).
-        assert_eq!(provider_path_error(&json!("a:b")), Some("must be relative to the state directory"));
-        assert_eq!(provider_path_error(&json!("cache/b:c")), Some("must not name a drive or alternate stream"));
-        assert_eq!(provider_path_error(&json!("  ")), Some("must be a non-empty string"));
+        assert_eq!(
+            provider_path_error(&json!("a:b")),
+            Some("must be relative to the state directory")
+        );
+        assert_eq!(
+            provider_path_error(&json!("cache/b:c")),
+            Some("must not name a drive or alternate stream")
+        );
+        assert_eq!(
+            provider_path_error(&json!("  ")),
+            Some("must be a non-empty string")
+        );
     }
 
     #[test]

@@ -19,8 +19,10 @@
 use serde_json::{json, Value};
 
 use crate::error::{code, IpcError};
-use crate::tun::{BoxFut, MihomoOwnedTunIntent, TunEnableResult, TunMutationAdapter, TunRestoreResult};
 use crate::mihomo::MihomoClient;
+use crate::tun::{
+    BoxFut, MihomoOwnedTunIntent, TunEnableResult, TunMutationAdapter, TunRestoreResult,
+};
 
 const DEFAULT_READY_TIMEOUT_MS: u64 = 20_000;
 const DEFAULT_PROBE_TIMEOUT_MS: i64 = 2_000;
@@ -74,10 +76,14 @@ pub async fn wait_for_tun_data_plane_ready(
         if client.get_version().await.is_ok() {
             // Promise.any parity: first success wins; every failure is retried
             // together until the owner aborts the window.
-            let attempts = urls.iter().cloned().map(|url| {
+            let attempts = urls.iter().map(|url| {
                 let client = client.clone();
                 let url = url.clone();
-                async move { client.delay_test("DIRECT", Some(&url), probe_timeout_ms).await }
+                async move {
+                    client
+                        .delay_test("DIRECT", Some(&url), probe_timeout_ms)
+                        .await
+                }
             });
             if futures_util::future::join_all(attempts)
                 .await
@@ -103,9 +109,8 @@ pub type BoxFutDocument = BoxFut<'static, Option<String>>;
 /// The live controller client factory (the TS production `MihomoGateway` is
 /// bound to the session controller; the Rust composition closes over the
 /// managed core-settings state the same way the TS closure does).
-pub type ControllerClientFactory = std::sync::Arc<
-    dyn Fn() -> BoxFut<'static, Result<MihomoClient, IpcError>> + Send + Sync,
->;
+pub type ControllerClientFactory =
+    std::sync::Arc<dyn Fn() -> BoxFut<'static, Result<MihomoClient, IpcError>> + Send + Sync>;
 
 /// `MihomoHotSwitchTunAdapter`. Generic over the persisted-TUN-model reader
 /// (`T`) and the active-document DNS-enabled reader (`D`) so tests fake them.
@@ -122,7 +127,7 @@ where
     /// another client still owns that adapter/address, applying tun.enable
     /// would make the shared core exit and leave an enabled system proxy with
     /// no listener.
-    external_tun_in_use: Box<dyn for<'a> Fn(&'a str) -> BoxFut<'a, bool> + Send + Sync>,
+    external_tun_in_use: ExternalTunProbe,
 }
 
 impl<T, D> MihomoHotSwitchTunAdapter<T, D>
@@ -130,7 +135,11 @@ where
     T: Fn() -> BoxFut<'static, Value> + Send + Sync + 'static,
     D: Fn() -> BoxFut<'static, Option<String>> + Send + Sync + 'static,
 {
-    pub fn new(client_factory: ControllerClientFactory, read_tun_config: T, read_dns_enabled: D) -> Self {
+    pub fn new(
+        client_factory: ControllerClientFactory,
+        read_tun_config: T,
+        read_dns_enabled: D,
+    ) -> Self {
         MihomoHotSwitchTunAdapter {
             client_factory,
             read_tun_config,
@@ -182,7 +191,10 @@ where
         None
     }
 
-    fn enable(&self, intent: &MihomoOwnedTunIntent) -> BoxFut<'_, Result<TunEnableResult, IpcError>> {
+    fn enable(
+        &self,
+        intent: &MihomoOwnedTunIntent,
+    ) -> BoxFut<'_, Result<TunEnableResult, IpcError>> {
         let intent = intent.clone();
         Box::pin(async move {
             let client = self.client().await?;
@@ -196,7 +208,10 @@ where
             let device = if model["device"].as_str() == Some(EMPTY_TUN_DEVICE) {
                 intent.device.clone()
             } else {
-                model["device"].as_str().unwrap_or(&intent.device).to_string()
+                model["device"]
+                    .as_str()
+                    .unwrap_or(&intent.device)
+                    .to_string()
             };
             if current["tun"]["enable"] != Value::Bool(true)
                 && (self.external_tun_in_use)(&device).await
@@ -227,13 +242,21 @@ where
             next.insert("enable".into(), json!(true));
             // clash-party parity: port-53 hijacking only exists when a live
             // DNS module can answer the hijacked queries.
-            if document_dns_enabled((self.read_dns_enabled)().await.as_deref()) != true {
+            if !document_dns_enabled((self.read_dns_enabled)().await.as_deref()) {
                 next.insert("dns-hijack".into(), json!([]));
             }
-            if let Err(error) = client.patch_config(&json!({ "tun": Value::Object(next) })).await {
+            if let Err(error) = client
+                .patch_config(&json!({ "tun": Value::Object(next) }))
+                .await
+            {
                 // Roll the previous tun block back, best-effort; a failed
                 // rollback is the unconfirmed state.
-                return match self.client().await?.patch_config(&json!({ "tun": previous })).await {
+                return match self
+                    .client()
+                    .await?
+                    .patch_config(&json!({ "tun": previous }))
+                    .await
+                {
                     Ok(_) => Err(error),
                     Err(_) => Ok(TunEnableResult::RollbackRequired {
                         error_message: "TUN_HOT_SWITCH_ROLLBACK_UNCONFIRMED".to_string(),
@@ -244,8 +267,16 @@ where
             if confirmed["tun"]["enable"] != Value::Bool(true) {
                 // The controller accepted the patch but the config did not
                 // stick: roll back and report.
-                return match self.client().await?.patch_config(&json!({ "tun": previous })).await {
-                    Ok(_) => Err(IpcError::code(code::INTERNAL, "TUN_HOT_SWITCH_ENABLE_NOT_APPLIED")),
+                return match self
+                    .client()
+                    .await?
+                    .patch_config(&json!({ "tun": previous }))
+                    .await
+                {
+                    Ok(_) => Err(IpcError::code(
+                        code::INTERNAL,
+                        "TUN_HOT_SWITCH_ENABLE_NOT_APPLIED",
+                    )),
                     Err(_) => Ok(TunEnableResult::RollbackRequired {
                         error_message: "TUN_HOT_SWITCH_ROLLBACK_UNCONFIRMED".to_string(),
                     }),
@@ -263,14 +294,20 @@ where
                 let Ok(client) = factory().await else {
                     return Err("TUN data-plane readiness timed out".to_string());
                 };
-                wait_for_tun_data_plane_ready(client, deadline, &[], DEFAULT_PROBE_TIMEOUT_MS, DEFAULT_RETRY_DELAY_MS)
-                    .await
+                wait_for_tun_data_plane_ready(
+                    client,
+                    deadline,
+                    &[],
+                    DEFAULT_PROBE_TIMEOUT_MS,
+                    DEFAULT_RETRY_DELAY_MS,
+                )
+                .await
             });
             Ok(TunEnableResult::Active {
                 readiness: Some(Box::pin(async move {
-                    readiness
-                        .await
-                        .unwrap_or_else(|join_error| Err(format!("TUN data-plane readiness timed out: {join_error}")))
+                    readiness.await.unwrap_or_else(|join_error| {
+                        Err(format!("TUN data-plane readiness timed out: {join_error}"))
+                    })
                 })),
             })
         })
@@ -284,13 +321,22 @@ where
                     error_message: "TUN_OPERATION_FAILED".to_string(),
                 });
             };
-            let mut tun = current.get("tun").cloned().filter(Value::is_object).unwrap_or(Value::Null);
+            let mut tun = current
+                .get("tun")
+                .cloned()
+                .filter(Value::is_object)
+                .unwrap_or(Value::Null);
             if tun.is_null() {
                 tun = json!({ "enable": false });
             } else {
                 tun["enable"] = json!(false);
             }
-            if let Err(error) = self.client().await?.patch_config(&json!({ "tun": tun })).await {
+            if let Err(error) = self
+                .client()
+                .await?
+                .patch_config(&json!({ "tun": tun }))
+                .await
+            {
                 return Ok(TunRestoreResult::RestoreFailed {
                     error_message: machine_message(&error),
                 });
@@ -319,6 +365,8 @@ fn machine_message(error: &IpcError) -> String {
 /* Tests                                                                       */
 /* -------------------------------------------------------------------------- */
 
+type ExternalTunProbe = Box<dyn for<'a> Fn(&'a str) -> BoxFut<'a, bool> + Send + Sync>;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -332,8 +380,9 @@ mod tests {
     fn factory(configs: Configs, log: SharedLog, fail_patches: bool) -> ControllerClientFactory {
         let port_holder: std::sync::Arc<std::sync::Mutex<Option<i64>>> =
             std::sync::Arc::new(std::sync::Mutex::new(None));
-        let server = crate::mihomo::mock_controller::MockServer::start("s3cret", move |method, path, body| {
-            match (method, path) {
+        let server = crate::mihomo::mock_controller::MockServer::start(
+            "s3cret",
+            move |method, path, body| match (method, path) {
                 ("GET", "/configs") => {
                     let mut configs = configs.lock().unwrap();
                     if configs.len() == 1 {
@@ -351,8 +400,8 @@ mod tests {
                 }
                 ("GET", "/version") => (200, json!({ "version": "v0.0.0-test" }).to_string()),
                 _ => (404, String::new()),
-            }
-        });
+            },
+        );
         *port_holder.lock().unwrap() = Some(server.port);
         let port = server.port;
         std::sync::Arc::new(move || {
@@ -377,16 +426,19 @@ mod tests {
     #[tokio::test]
     async fn external_tun_in_use_reports_a_conflict_before_any_patch() {
         let log: SharedLog = std::sync::Arc::new(Mutex::new(Vec::new()));
-        let configs: Configs = std::sync::Arc::new(Mutex::new(vec![
-            json!({ "tun": { "enable": false } }),
-        ]));
+        let configs: Configs =
+            std::sync::Arc::new(Mutex::new(vec![json!({ "tun": { "enable": false } })]));
         let adapter = MihomoHotSwitchTunAdapter::new(
             factory(configs, log.clone(), false),
             model_reader(json!({ "device": EMPTY_TUN_DEVICE, "stack": "mixed", "mtu": 1500 })),
             dns_reader(None),
         )
         .with_external_tun_in_use(|_| Box::pin(async { true }));
-        let intent = MihomoOwnedTunIntent { schema_version: 2, device: EMPTY_TUN_DEVICE.into(), stack: "mixed".into() };
+        let intent = MihomoOwnedTunIntent {
+            schema_version: 2,
+            device: EMPTY_TUN_DEVICE.into(),
+            stack: "mixed".into(),
+        };
         let result = TunMutationAdapter::enable(&adapter, &intent).await;
         match result {
             Ok(TunEnableResult::Conflict { conflict_detail }) => {
@@ -396,7 +448,10 @@ mod tests {
         }
         // The probe fires BEFORE any mutation: no PATCH reached the controller.
         let log = log.lock().unwrap();
-        assert!(!log.iter().any(|entry| entry.starts_with("PATCH")), "{log:?}");
+        assert!(
+            !log.iter().any(|entry| entry.starts_with("PATCH")),
+            "{log:?}"
+        );
     }
 
     #[tokio::test]
@@ -415,9 +470,16 @@ mod tests {
             dns_reader(Some("dns:\n  enable: true\n")),
         )
         .with_ready_timeout(50);
-        let intent = MihomoOwnedTunIntent { schema_version: 2, device: "Murge TUN".into(), stack: "mixed".into() };
+        let intent = MihomoOwnedTunIntent {
+            schema_version: 2,
+            device: "Murge TUN".into(),
+            stack: "mixed".into(),
+        };
         let result = TunMutationAdapter::enable(&adapter, &intent).await.unwrap();
-        assert!(matches!(result, TunEnableResult::Active { .. }), "{result:?}");
+        assert!(
+            matches!(result, TunEnableResult::Active { .. }),
+            "{result:?}"
+        );
         let patch: Value = serde_json::from_str(&log.lock().unwrap()[0]).unwrap();
         assert_eq!(patch["tun"]["enable"], json!(true));
         assert_eq!(patch["tun"]["device"], json!("Murge TUN"));
@@ -440,7 +502,11 @@ mod tests {
             dns_reader(Some("rules:\n  - MATCH,DIRECT\n")),
         )
         .with_ready_timeout(50);
-        let intent = MihomoOwnedTunIntent { schema_version: 2, device: "Murge TUN".into(), stack: "mixed".into() };
+        let intent = MihomoOwnedTunIntent {
+            schema_version: 2,
+            device: "Murge TUN".into(),
+            stack: "mixed".into(),
+        };
         let _ = TunMutationAdapter::enable(&adapter, &intent).await.unwrap();
         let patch: Value = serde_json::from_str(&log.lock().unwrap()[0]).unwrap();
         assert_eq!(patch["tun"]["dns-hijack"], json!([]));
@@ -456,7 +522,11 @@ mod tests {
             model_reader(json!({ "device": "Mihomo", "mtu": 1500, "dnsHijack": ["any:53"] })),
             dns_reader(None),
         );
-        let intent = MihomoOwnedTunIntent { schema_version: 2, device: "Murge TUN".into(), stack: "mixed".into() };
+        let intent = MihomoOwnedTunIntent {
+            schema_version: 2,
+            device: "Murge TUN".into(),
+            stack: "mixed".into(),
+        };
         // Patch AND rollback both fail → the UNCONFIRMED machine code.
         let result = TunMutationAdapter::enable(&adapter, &intent).await.unwrap();
         assert!(
@@ -482,7 +552,11 @@ mod tests {
             dns_reader(None),
         )
         .with_ready_timeout(50);
-        let intent = MihomoOwnedTunIntent { schema_version: 2, device: "Murge TUN".into(), stack: "mixed".into() };
+        let intent = MihomoOwnedTunIntent {
+            schema_version: 2,
+            device: "Murge TUN".into(),
+            stack: "mixed".into(),
+        };
         let _ = TunMutationAdapter::enable(&adapter, &intent).await;
         // (The scripted success path is covered by the enable test; the
         // machine-code mapping is unit-pinned here via machine_message.)

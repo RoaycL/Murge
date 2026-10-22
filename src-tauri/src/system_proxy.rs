@@ -64,7 +64,10 @@ pub struct ProxyBypassPolicy {
 
 impl ProxyBypassPolicy {
     pub fn empty() -> Self {
-        ProxyBypassPolicy { enabled: false, custom_entries: Vec::new() }
+        ProxyBypassPolicy {
+            enabled: false,
+            custom_entries: Vec::new(),
+        }
     }
 
     pub fn to_value(&self) -> Value {
@@ -110,15 +113,27 @@ impl Default for RegistryValue {
 
 impl RegistryValue {
     pub fn absent() -> Self {
-        RegistryValue { exists: false, kind: "none".to_string(), value: Value::Null }
+        RegistryValue {
+            exists: false,
+            kind: "none".to_string(),
+            value: Value::Null,
+        }
     }
 
     pub fn dword(value: u64) -> Self {
-        RegistryValue { exists: true, kind: "REG_DWORD".to_string(), value: json!(value) }
+        RegistryValue {
+            exists: true,
+            kind: "REG_DWORD".to_string(),
+            value: json!(value),
+        }
     }
 
     pub fn string(value: impl Into<String>) -> Self {
-        RegistryValue { exists: true, kind: "REG_SZ".to_string(), value: Value::String(value.into()) }
+        RegistryValue {
+            exists: true,
+            kind: "REG_SZ".to_string(),
+            value: Value::String(value.into()),
+        }
     }
 }
 
@@ -167,8 +182,10 @@ pub fn build_proxy_server_value(target: &Target) -> String {
 /// Insertion-ordered dedup merge: the mandatory local entries stay first, the
 /// given entries are trimmed, de-duplicated and appended (the TS Set order).
 fn merge_bypass_entries(entries: &[String]) -> String {
-    let mut merged: Vec<String> =
-        DEFAULT_LOCAL_BYPASS_ENTRIES.iter().map(|entry| entry.to_string()).collect();
+    let mut merged: Vec<String> = DEFAULT_LOCAL_BYPASS_ENTRIES
+        .iter()
+        .map(|entry| entry.to_string())
+        .collect();
     for entry in entries {
         let trimmed = entry.trim();
         if trimmed.is_empty() {
@@ -183,8 +200,11 @@ fn merge_bypass_entries(entries: &[String]) -> String {
 
 /// Build the `ProxyOverride` we write from whatever the OS already had.
 pub fn merge_proxy_override(original: Option<&str>) -> String {
-    let entries: Vec<String> =
-        original.unwrap_or("").split(';').map(|entry| entry.to_string()).collect();
+    let entries: Vec<String> = original
+        .unwrap_or("")
+        .split(';')
+        .map(|entry| entry.to_string())
+        .collect();
     merge_bypass_entries(&entries)
 }
 
@@ -272,7 +292,10 @@ pub fn conflict_detail(observed: &RegistryState, written: &WrittenState) -> Stri
 /// value we cannot faithfully restore (or a structurally inconsistent one).
 pub fn validate_restorable(previous: &RegistryState) -> Result<(), IpcError> {
     fn is_restorable(kind: &str) -> bool {
-        matches!(kind, "REG_DWORD" | "REG_SZ" | "REG_EXPAND_SZ" | "REG_BINARY")
+        matches!(
+            kind,
+            "REG_DWORD" | "REG_SZ" | "REG_EXPAND_SZ" | "REG_BINARY"
+        )
     }
     let entries = [
         ("ProxyEnable", &previous.proxy_enable),
@@ -292,7 +315,10 @@ pub fn validate_restorable(previous: &RegistryState) -> Result<(), IpcError> {
         if !is_restorable(&value.kind) {
             return Err(IpcError::code(
                 code::SYSTEM_PROXY_ENABLE_FAILED,
-                format!("系统代理项 {name} 的类型 {} 无法安全还原，已拒绝启用", value.kind),
+                format!(
+                    "系统代理项 {name} 的类型 {} 无法安全还原，已拒绝启用",
+                    value.kind
+                ),
             ));
         }
         if value.kind == "REG_DWORD" || value.kind == "REG_QWORD" {
@@ -364,7 +390,10 @@ pub fn coerce_proxy_bypass_policy(input: &Value) -> ProxyBypassPolicy {
         return ProxyBypassPolicy::empty();
     };
     ProxyBypassPolicy {
-        enabled: object.get("enabled").and_then(Value::as_bool).unwrap_or(false),
+        enabled: object
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         custom_entries: normalize_entries(object.get("customEntries")),
     }
 }
@@ -410,12 +439,17 @@ pub fn parse_proxy_bypass_policy(input: Option<&Value>) -> Result<ProxyBypassPol
         )))
     };
     let Value::Object(object) = input.unwrap_or(&Value::Null) else {
-        return Err(IpcError::invalid_argument("proxy bypass policy must be an object"));
+        return Err(IpcError::invalid_argument(
+            "proxy bypass policy must be an object",
+        ));
     };
     let enabled = match object.get("enabled") {
         Some(Value::Bool(value)) => *value,
         Some(value) => {
-            return invalid("enabled", format!("Expected boolean, received {}", kind_of(value)))
+            return invalid(
+                "enabled",
+                format!("Expected boolean, received {}", kind_of(value)),
+            )
         }
         None => return invalid("enabled", "Required".to_string()),
     };
@@ -455,11 +489,17 @@ pub fn parse_proxy_bypass_policy(input: Option<&Value>) -> Result<ProxyBypassPol
             entries
         }
         Some(value) => {
-            return invalid("customEntries", format!("Expected array, received {}", kind_of(value)))
+            return invalid(
+                "customEntries",
+                format!("Expected array, received {}", kind_of(value)),
+            )
         }
         None => return invalid("customEntries", "Required".to_string()),
     };
-    Ok(ProxyBypassPolicy { enabled, custom_entries })
+    Ok(ProxyBypassPolicy {
+        enabled,
+        custom_entries,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -490,18 +530,21 @@ fn is_iso_offset_datetime(raw: &str) -> bool {
     if bytes.len() < 20 || bytes[10] != b'T' {
         return false;
     }
-    let date_ok = bytes[..10].iter().enumerate().all(|(index, byte)| match index {
-        0..=3 | 5..=6 | 8..=9 => byte.is_ascii_digit(),
-        4 | 7 => *byte == b'-',
-        _ => false,
-    });
+    let date_ok = bytes[..10]
+        .iter()
+        .enumerate()
+        .all(|(index, byte)| match index {
+            0..=3 | 5..=6 | 8..=9 => byte.is_ascii_digit(),
+            4 | 7 => *byte == b'-',
+            _ => false,
+        });
     if !date_ok {
         return false;
     }
     let rest = &raw[11..];
     // The zone designator anchors the END: `Z`, or ±HH:MM.
-    let (clock, zone) = if rest.ends_with('Z') {
-        (&rest[..rest.len() - 1], "Z")
+    let (clock, zone) = if let Some(clock) = rest.strip_suffix('Z') {
+        (clock, "Z")
     } else if rest.len() > 6 {
         let (middle, zone) = rest.split_at(rest.len() - 6);
         (middle, zone)
@@ -527,12 +570,19 @@ fn is_iso_offset_datetime(raw: &str) -> bool {
         Some((head, fraction)) => (head, Some(fraction)),
         None => (clock, None),
     };
-    let seconds_ok = seconds_part.as_bytes().iter().enumerate().all(|(index, byte)| match index {
-        0..=1 | 3..=4 | 6..=7 => byte.is_ascii_digit(),
-        2 | 5 => *byte == b':',
-        _ => false,
-    }) && seconds_part.len() == 8;
-    let fraction_ok = fraction.map(|digits| !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())).unwrap_or(true);
+    let seconds_ok = seconds_part
+        .as_bytes()
+        .iter()
+        .enumerate()
+        .all(|(index, byte)| match index {
+            0..=1 | 3..=4 | 6..=7 => byte.is_ascii_digit(),
+            2 | 5 => *byte == b':',
+            _ => false,
+        })
+        && seconds_part.len() == 8;
+    let fraction_ok = fraction
+        .map(|digits| !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit()))
+        .unwrap_or(true);
     seconds_ok && fraction_ok
 }
 
@@ -541,41 +591,70 @@ fn is_iso_offset_datetime(raw: &str) -> bool {
 /// key anywhere rejects the bundle; validation fails closed so a corrupt or
 /// inconsistent backup is never trusted enough to write back to the registry.
 pub fn parse_system_proxy_backup(input: &Value) -> Result<SystemProxyBackup, IpcError> {
-    const BUNDLE_KEYS: [&str; 6] = ["schemaVersion", "instanceId", "createdAt", "target", "previous", "written"];
+    const BUNDLE_KEYS: [&str; 6] = [
+        "schemaVersion",
+        "instanceId",
+        "createdAt",
+        "target",
+        "previous",
+        "written",
+    ];
     let reject = || IpcError::internal("系统代理备份无效");
     let object = input.as_object().ok_or_else(reject)?;
     if !exact_keys(object, &BUNDLE_KEYS) {
         return Err(reject());
     }
-    if object.get("schemaVersion").and_then(Value::as_i64) != Some(SYSTEM_PROXY_BACKUP_SCHEMA_VERSION as i64) {
+    if object.get("schemaVersion").and_then(Value::as_i64)
+        != Some(SYSTEM_PROXY_BACKUP_SCHEMA_VERSION as i64)
+    {
         return Err(reject());
     }
-    let instance_id = object.get("instanceId").and_then(Value::as_str).unwrap_or_default();
+    let instance_id = object
+        .get("instanceId")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     if instance_id.is_empty() {
         return Err(reject());
     }
-    let created_at = object.get("createdAt").and_then(Value::as_str).unwrap_or_default();
+    let created_at = object
+        .get("createdAt")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     if !is_iso_offset_datetime(created_at) {
         return Err(reject());
     }
-    let target_object = object.get("target").and_then(Value::as_object).ok_or_else(reject)?;
+    let target_object = object
+        .get("target")
+        .and_then(Value::as_object)
+        .ok_or_else(reject)?;
     if !exact_keys(target_object, &["host", "port"]) {
         return Err(reject());
     }
-    let host = target_object.get("host").and_then(Value::as_str).unwrap_or_default();
+    let host = target_object
+        .get("host")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     if host != SYSTEM_PROXY_LOOPBACK_HOST {
         return Err(reject());
     }
-    let port = target_object.get("port").and_then(Value::as_i64).unwrap_or(0);
+    let port = target_object
+        .get("port")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
     if !(1..=65535).contains(&port) {
         return Err(reject());
     }
-    let previous = parse_state_strict(object.get("previous").unwrap_or(&Value::Null)).map_err(|_| reject())?;
-    let written = parse_state_strict(object.get("written").unwrap_or(&Value::Null)).map_err(|_| reject())?;
+    let previous =
+        parse_state_strict(object.get("previous").unwrap_or(&Value::Null)).map_err(|_| reject())?;
+    let written =
+        parse_state_strict(object.get("written").unwrap_or(&Value::Null)).map_err(|_| reject())?;
     Ok(SystemProxyBackup {
         instance_id: instance_id.to_string(),
         created_at: created_at.to_string(),
-        target: Target { host: host.to_string(), port: port as u16 },
+        target: Target {
+            host: host.to_string(),
+            port: port as u16,
+        },
         previous,
         written,
     })
@@ -594,11 +673,17 @@ fn parse_state_strict(input: &Value) -> Result<RegistryState, IpcError> {
         return Err(reject());
     }
     let value_for = |name: &str| -> Result<RegistryValue, IpcError> {
-        let raw = object.get(name).and_then(Value::as_object).ok_or_else(reject)?;
+        let raw = object
+            .get(name)
+            .and_then(Value::as_object)
+            .ok_or_else(reject)?;
         if !exact_keys(raw, &["exists", "type", "value"]) {
             return Err(reject());
         }
-        let exists = raw.get("exists").and_then(Value::as_bool).ok_or_else(reject)?;
+        let exists = raw
+            .get("exists")
+            .and_then(Value::as_bool)
+            .ok_or_else(reject)?;
         if !exists {
             // An absent value must be exactly { type: "none", value: null }.
             let kind = raw.get("type").and_then(Value::as_str).unwrap_or("");
@@ -621,7 +706,11 @@ fn parse_state_strict(input: &Value) -> Result<RegistryState, IpcError> {
             if number > (1u64 << 53) - 1 {
                 return Err(reject());
             }
-            return Ok(RegistryValue { exists: true, kind: kind.to_string(), value: json!(number) });
+            return Ok(RegistryValue {
+                exists: true,
+                kind: kind.to_string(),
+                value: json!(number),
+            });
         }
         let Some(string) = value.as_str() else {
             return Err(reject());
@@ -679,7 +768,9 @@ pub struct FileSystemBackupStore {
 impl FileSystemBackupStore {
     pub fn for_base_dir(base: &std::path::Path) -> Self {
         FileSystemBackupStore {
-            path: base.join(SYSTEM_PROXY_BACKUP_SUBDIR).join(SYSTEM_PROXY_BACKUP_FILE),
+            path: base
+                .join(SYSTEM_PROXY_BACKUP_SUBDIR)
+                .join(SYSTEM_PROXY_BACKUP_FILE),
         }
     }
 }
@@ -696,7 +787,9 @@ impl BackupStore for FileSystemBackupStore {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
                 Err(error) => return Err(format!("备份文件读取失败：{error}")),
             };
-            serde_json::from_slice::<Value>(&raw).map(Some).map_err(|error| format!("备份文件无效：{error}"))
+            serde_json::from_slice::<Value>(&raw)
+                .map(Some)
+                .map_err(|error| format!("备份文件无效：{error}"))
         })
     }
 
@@ -727,7 +820,9 @@ pub struct InMemoryBackupStore {
 
 impl InMemoryBackupStore {
     pub fn new() -> Self {
-        InMemoryBackupStore { value: Mutex::new(None) }
+        InMemoryBackupStore {
+            value: Mutex::new(None),
+        }
     }
 }
 
@@ -773,7 +868,9 @@ pub struct FileSystemBypassStore {
 impl FileSystemBypassStore {
     pub fn for_base_dir(base: &std::path::Path) -> Self {
         FileSystemBypassStore {
-            path: base.join(SYSTEM_PROXY_BACKUP_SUBDIR).join(SYSTEM_PROXY_BYPASS_FILE),
+            path: base
+                .join(SYSTEM_PROXY_BACKUP_SUBDIR)
+                .join(SYSTEM_PROXY_BYPASS_FILE),
         }
     }
 }
@@ -808,7 +905,9 @@ pub struct InMemoryBypassStore {
 
 impl InMemoryBypassStore {
     pub fn new() -> Self {
-        InMemoryBypassStore { value: Mutex::new(ProxyBypassPolicy::empty()) }
+        InMemoryBypassStore {
+            value: Mutex::new(ProxyBypassPolicy::empty()),
+        }
     }
 }
 
@@ -835,7 +934,10 @@ fn write_atomic(path: &std::path::Path, body: &[u8]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| format!("目录创建失败：{error}"))?;
     }
-    let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("file");
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("file");
     let tmp = path.with_file_name(format!(".{file_name}.{}.tmp", new_uuid()));
     std::fs::write(&tmp, body).map_err(|error| format!("写入失败：{error}"))?;
     std::fs::rename(&tmp, path).map_err(|error| {
@@ -975,14 +1077,23 @@ impl SystemProxyAdapter for FakeSystemProxyAdapter {
     }
 
     fn read(&self) -> BoxFut<'_, RegistryState> {
-        Box::pin(async move { Ok(self.registry.lock().expect("fake registry poisoned").clone()) })
+        Box::pin(async move {
+            Ok(self
+                .registry
+                .lock()
+                .expect("fake registry poisoned")
+                .clone())
+        })
     }
 
     fn apply(&self, written: &WrittenState) -> BoxFutUnit<'_> {
         let written = written.clone();
         Box::pin(async move {
             if self.apply_error.load(Ordering::SeqCst) {
-                return Err(IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, "fake apply failure"));
+                return Err(IpcError::code(
+                    code::SYSTEM_PROXY_ENABLE_FAILED,
+                    "fake apply failure",
+                ));
             }
             *self.registry.lock().expect("fake registry poisoned") = written;
             Ok(())
@@ -993,7 +1104,10 @@ impl SystemProxyAdapter for FakeSystemProxyAdapter {
         let previous = previous.clone();
         Box::pin(async move {
             if self.restore_error.load(Ordering::SeqCst) {
-                return Err(IpcError::code(code::SYSTEM_PROXY_RESTORE_FAILED, "fake restore failure"));
+                return Err(IpcError::code(
+                    code::SYSTEM_PROXY_RESTORE_FAILED,
+                    "fake restore failure",
+                ));
             }
             *self.registry.lock().expect("fake registry poisoned") = previous;
             Ok(())
@@ -1034,7 +1148,9 @@ async fn open_tcp(port: u16) -> Result<tokio::net::TcpStream, String> {
     let connect = tokio::net::TcpStream::connect((PROBE_HOST, port));
     match tokio::time::timeout(std::time::Duration::from_millis(PROBE_TIMEOUT_MS), connect).await {
         Ok(Ok(stream)) => Ok(stream),
-        Ok(Err(error)) => Err(format!("TCP connect to {PROBE_HOST}:{port} failed: {error}")),
+        Ok(Err(error)) => Err(format!(
+            "TCP connect to {PROBE_HOST}:{port} failed: {error}"
+        )),
         Err(_) => Err(format!("TCP connect to {PROBE_HOST}:{port} timed out")),
     }
 }
@@ -1045,25 +1161,35 @@ async fn open_tcp(port: u16) -> Result<tokio::net::TcpStream, String> {
 pub async fn probe_socks(port: u16) -> Result<(), String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut stream = open_tcp(port).await?;
-    let exchange = tokio::time::timeout(std::time::Duration::from_millis(PROBE_TIMEOUT_MS), async {
-        stream.write_all(&[0x05, 0x01, 0x00]).await.map_err(|error| format!("{error}"))?;
-        let mut buffer = Vec::new();
-        loop {
-            let mut chunk = [0u8; 64];
-            let read = stream.read(&mut chunk).await.map_err(|error| format!("{error}"))?;
-            if read == 0 {
-                return Err("SOCKS5 closed without a greeting reply".to_string());
-            }
-            buffer.extend_from_slice(&chunk[..read]);
-            if buffer.len() >= 2 {
-                if buffer[0] == 0x05 && buffer[1] == 0x00 {
-                    return Ok(());
+    let exchange =
+        tokio::time::timeout(std::time::Duration::from_millis(PROBE_TIMEOUT_MS), async {
+            stream
+                .write_all(&[0x05, 0x01, 0x00])
+                .await
+                .map_err(|error| format!("{error}"))?;
+            let mut buffer = Vec::new();
+            loop {
+                let mut chunk = [0u8; 64];
+                let read = stream
+                    .read(&mut chunk)
+                    .await
+                    .map_err(|error| format!("{error}"))?;
+                if read == 0 {
+                    return Err("SOCKS5 closed without a greeting reply".to_string());
                 }
-                return Err(format!("unexpected SOCKS5 greeting reply: {}", hex(&buffer[..2])));
+                buffer.extend_from_slice(&chunk[..read]);
+                if buffer.len() >= 2 {
+                    if buffer[0] == 0x05 && buffer[1] == 0x00 {
+                        return Ok(());
+                    }
+                    return Err(format!(
+                        "unexpected SOCKS5 greeting reply: {}",
+                        hex(&buffer[..2])
+                    ));
+                }
             }
-        }
-    })
-    .await;
+        })
+        .await;
     match exchange {
         Ok(inner) => inner,
         Err(_) => Err("SOCKS5 greeting timed out".to_string()),
@@ -1076,22 +1202,29 @@ pub async fn probe_socks(port: u16) -> Result<(), String> {
 pub async fn probe_http(port: u16) -> Result<(), String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut stream = open_tcp(port).await?;
-    let exchange = tokio::time::timeout(std::time::Duration::from_millis(PROBE_TIMEOUT_MS), async {
-        stream.write_all(HTTP_CONNECT_REQUEST).await.map_err(|error| format!("{error}"))?;
-        let mut buffer = Vec::new();
-        loop {
-            let mut chunk = [0u8; 256];
-            let read = stream.read(&mut chunk).await.map_err(|error| format!("{error}"))?;
-            if read == 0 {
-                return Err("HTTP CONNECT closed without a status line".to_string());
+    let exchange =
+        tokio::time::timeout(std::time::Duration::from_millis(PROBE_TIMEOUT_MS), async {
+            stream
+                .write_all(HTTP_CONNECT_REQUEST)
+                .await
+                .map_err(|error| format!("{error}"))?;
+            let mut buffer = Vec::new();
+            loop {
+                let mut chunk = [0u8; 256];
+                let read = stream
+                    .read(&mut chunk)
+                    .await
+                    .map_err(|error| format!("{error}"))?;
+                if read == 0 {
+                    return Err("HTTP CONNECT closed without a status line".to_string());
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+                if matches_http_status_line(&buffer) {
+                    return Ok(());
+                }
             }
-            buffer.extend_from_slice(&chunk[..read]);
-            if matches_http_status_line(&buffer) {
-                return Ok(());
-            }
-        }
-    })
-    .await;
+        })
+        .await;
     match exchange {
         Ok(inner) => inner,
         Err(_) => Err("HTTP CONNECT response timed out".to_string()),
@@ -1122,7 +1255,10 @@ fn matches_http_status_line(buffer: &[u8]) -> bool {
     if !space.is_ascii_whitespace() {
         return false;
     }
-    let after_space = &rest[rest.iter().position(|byte| !byte.is_ascii_whitespace()).unwrap_or(rest.len())..];
+    let after_space = &rest[rest
+        .iter()
+        .position(|byte| !byte.is_ascii_whitespace())
+        .unwrap_or(rest.len())..];
     after_space.len() >= 3 && after_space[..3].iter().all(|byte| byte.is_ascii_digit())
 }
 
@@ -1131,7 +1267,10 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn probe_error_suffix(results: [Result<(), String>; 2]) -> Option<String> {
-    let errors: Vec<String> = results.into_iter().filter_map(|result| result.err()).collect();
+    let errors: Vec<String> = results
+        .into_iter()
+        .filter_map(|result| result.err())
+        .collect();
     if errors.is_empty() {
         None
     } else {
@@ -1170,7 +1309,10 @@ pub fn live_probe(
                 ));
             }
             let config = client.get_config().await.map_err(|_| {
-                IpcError::code(code::SYSTEM_PROXY_KERNEL_REQUIRED, "内核控制器未就绪，无法启用系统代理")
+                IpcError::code(
+                    code::SYSTEM_PROXY_KERNEL_REQUIRED,
+                    "内核控制器未就绪，无法启用系统代理",
+                )
             })?;
             let mixed_port = config["mixed-port"].as_i64().unwrap_or(0);
             if !(1..=65535).contains(&mixed_port) {
@@ -1189,7 +1331,10 @@ pub fn live_probe(
                     format!("内核混合端口未就绪（{mixed_port}）：{detail}"),
                 ));
             }
-            Ok(Target { host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(), port })
+            Ok(Target {
+                host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+                port,
+            })
         }) as BoxFuture<'static, Result<Target, IpcError>>
     })
 }
@@ -1262,11 +1407,17 @@ impl SystemProxyService {
     }
 
     fn fenced_error(&self) -> IpcError {
-        IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, "会话正在结束，已取消启用系统代理")
+        IpcError::code(
+            code::SYSTEM_PROXY_ENABLE_FAILED,
+            "会话正在结束，已取消启用系统代理",
+        )
     }
 
     pub fn get_status(&self) -> SystemProxyStatus {
-        self.current.lock().expect("system-proxy status poisoned").clone()
+        self.current
+            .lock()
+            .expect("system-proxy status poisoned")
+            .clone()
     }
 
     pub fn get_status_value(&self) -> Value {
@@ -1277,7 +1428,10 @@ impl SystemProxyService {
         extra.supported = self.adapter.supported();
         extra.phase = phase.to_string();
         extra.updated_at = Some(now_iso());
-        *self.current.lock().expect("system-proxy status mutex poisoned") = extra.clone();
+        *self
+            .current
+            .lock()
+            .expect("system-proxy status mutex poisoned") = extra.clone();
         let value = serde_json::to_value(&extra).expect("status serializes");
         self.listeners.emit(&value);
         extra
@@ -1328,13 +1482,19 @@ impl SystemProxyService {
         let observed = match self.adapter.read().await {
             Ok(observed) => observed,
             Err(_) => {
-                return self.transition("disabled", error_status("系统代理注册表读取失败，请手动检查"))
+                return self.transition(
+                    "disabled",
+                    error_status("系统代理注册表读取失败，请手动检查"),
+                )
             }
         };
         if !can_restore_backup(&observed, &backup) {
             return self.transition(
                 "conflict",
-                status_extra(CONFLICT_MSG, Some(conflict_detail(&observed, &backup.written))),
+                status_extra(
+                    CONFLICT_MSG,
+                    Some(conflict_detail(&observed, &backup.written)),
+                ),
             );
         }
         self.transition("restoring", SystemProxyStatus::default());
@@ -1346,7 +1506,12 @@ impl SystemProxyService {
     pub async fn enable(&self) -> Result<SystemProxyStatus, IpcError> {
         let _guard = self.queue.lock().await;
         if !self.adapter.supported() {
-            return Err(self.fail("unsupported", code::SYSTEM_PROXY_UNSUPPORTED, NOT_SUPPORTED_MSG, None));
+            return Err(self.fail(
+                "unsupported",
+                code::SYSTEM_PROXY_UNSUPPORTED,
+                NOT_SUPPORTED_MSG,
+                None,
+            ));
         }
 
         // Kernel / controller gate — the proxy may only point at a live listener.
@@ -1382,7 +1547,13 @@ impl SystemProxyService {
                     enabled_status(
                         format_address(&backup.target),
                         backup.target.port,
-                        backup.written.proxy_override.value.as_str().unwrap_or_default().to_string(),
+                        backup
+                            .written
+                            .proxy_override
+                            .value
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_string(),
                     ),
                 ));
             }
@@ -1396,7 +1567,12 @@ impl SystemProxyService {
                 self.restore_backup_strict(&backup).await?;
             } else {
                 let detail = conflict_detail(&observed, &backup.written);
-                return Err(self.fail("conflict", code::SYSTEM_PROXY_STATE_CONFLICT, CONFLICT_MSG, Some(detail)));
+                return Err(self.fail(
+                    "conflict",
+                    code::SYSTEM_PROXY_STATE_CONFLICT,
+                    CONFLICT_MSG,
+                    Some(detail),
+                ));
             }
         }
 
@@ -1454,7 +1630,12 @@ impl SystemProxyService {
             enabled_status(
                 format_address(&bundle.target),
                 bundle.target.port,
-                written.proxy_override.value.as_str().unwrap_or_default().to_string(),
+                written
+                    .proxy_override
+                    .value
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
             ),
         ))
     }
@@ -1464,13 +1645,17 @@ impl SystemProxyService {
     pub async fn disable(&self) -> Result<SystemProxyStatus, IpcError> {
         let _guard = self.queue.lock().await;
         if !self.adapter.supported() {
-            return Err(self.fail("unsupported", code::SYSTEM_PROXY_UNSUPPORTED, NOT_SUPPORTED_MSG, None));
+            return Err(self.fail(
+                "unsupported",
+                code::SYSTEM_PROXY_UNSUPPORTED,
+                NOT_SUPPORTED_MSG,
+                None,
+            ));
         }
-        let backup = self
-            .backup
-            .read()
-            .await
-            .map_err(|_| IpcError::code(code::SYSTEM_PROXY_RESTORE_FAILED, "系统代理备份无效"))?;
+        let backup =
+            self.backup.read().await.map_err(|_| {
+                IpcError::code(code::SYSTEM_PROXY_RESTORE_FAILED, "系统代理备份无效")
+            })?;
         let Some(backup_value) = backup else {
             return Ok(self.transition("disabled", SystemProxyStatus::default()));
         };
@@ -1651,14 +1836,20 @@ impl SystemProxyService {
             return Ok(());
         };
         let backup = parse_system_proxy_backup(&backup_value).map_err(|_| {
-            IpcError::code(code::SYSTEM_PROXY_RESTORE_FAILED, "系统代理备份无效，无法安全停止内核")
+            IpcError::code(
+                code::SYSTEM_PROXY_RESTORE_FAILED,
+                "系统代理备份无效，无法安全停止内核",
+            )
         })?;
         let observed = self.adapter.read().await?;
         if !can_restore_backup(&observed, &backup) {
             // Another server took over. Never fought; reported as a conflict.
             self.transition(
                 "conflict",
-                status_extra(CONFLICT_MSG, Some(conflict_detail(&observed, &backup.written))),
+                status_extra(
+                    CONFLICT_MSG,
+                    Some(conflict_detail(&observed, &backup.written)),
+                ),
             );
             return Ok(());
         }
@@ -1712,15 +1903,19 @@ impl SystemProxyService {
     async fn read_backup_for_ownership(&self) -> Result<Option<SystemProxyBackup>, IpcError> {
         // A corrupt backup on enable fails closed (can't guarantee restore),
         // rather than enabling on top of an un-restorable state.
-        let backup = self
-            .backup
-            .read()
-            .await
-            .map_err(|_| IpcError::code(code::SYSTEM_PROXY_RESTORE_FAILED, "系统代理备份无效，无法启用"))?;
+        let backup = self.backup.read().await.map_err(|_| {
+            IpcError::code(
+                code::SYSTEM_PROXY_RESTORE_FAILED,
+                "系统代理备份无效，无法启用",
+            )
+        })?;
         match backup {
-            Some(value) => parse_system_proxy_backup(&value)
-                .map(Some)
-                .map_err(|_| IpcError::code(code::SYSTEM_PROXY_RESTORE_FAILED, "系统代理备份无效，无法启用")),
+            Some(value) => parse_system_proxy_backup(&value).map(Some).map_err(|_| {
+                IpcError::code(
+                    code::SYSTEM_PROXY_RESTORE_FAILED,
+                    "系统代理备份无效，无法启用",
+                )
+            }),
             None => Ok(None),
         }
     }
@@ -1744,7 +1939,10 @@ fn status_extra(error_message: &str, conflict_detail: Option<String>) -> SystemP
 }
 
 fn error_status(message: &str) -> SystemProxyStatus {
-    SystemProxyStatus { error_message: Some(message.to_string()), ..Default::default() }
+    SystemProxyStatus {
+        error_message: Some(message.to_string()),
+        ..Default::default()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1757,8 +1955,9 @@ pub fn new_uuid() -> String {
 
 /// UTC now as `YYYY-MM-DDTHH:MM:SS.mmmZ` (the JS `new Date().toISOString()`).
 pub fn now_iso() -> String {
-    let duration =
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let duration = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
     let millis_total = duration.as_millis() as i64;
     let secs = millis_total.div_euclid(1000);
     let millis = millis_total.rem_euclid(1000);
@@ -1773,7 +1972,11 @@ pub fn now_iso() -> String {
     let mp = (5 * doy + 2) / 153;
     let day = doy - (153 * mp + 2) / 5 + 1;
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = if month <= 2 { yoe + era * 400 + 1 } else { yoe + era * 400 };
+    let year = if month <= 2 {
+        yoe + era * 400 + 1
+    } else {
+        yoe + era * 400
+    };
     format!(
         "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{millis:03}Z",
         seconds_of_day / 3600,
@@ -1917,12 +2120,20 @@ exit 0
 /// a malformed or structurally inconsistent entry is a read failure, never
 /// silently coerced to a phantom value.
 pub fn coerce_registry_snapshot(stdout: &str) -> Result<RegistryState, String> {
-    let parsed: Value =
-        serde_json::from_str(stdout).map_err(|error| format!("注册表快照不是有效 JSON：{error}"))?;
-    let object = parsed.as_object().ok_or_else(|| "注册表快照不是 JSON 对象".to_string())?;
+    let parsed: Value = serde_json::from_str(stdout)
+        .map_err(|error| format!("注册表快照不是有效 JSON：{error}"))?;
+    let object = parsed
+        .as_object()
+        .ok_or_else(|| "注册表快照不是 JSON 对象".to_string())?;
     Ok(RegistryState {
-        proxy_enable: coerce_registry_value(object.get("ProxyEnable").unwrap_or(&Value::Null), "ProxyEnable")?,
-        proxy_server: coerce_registry_value(object.get("ProxyServer").unwrap_or(&Value::Null), "ProxyServer")?,
+        proxy_enable: coerce_registry_value(
+            object.get("ProxyEnable").unwrap_or(&Value::Null),
+            "ProxyEnable",
+        )?,
+        proxy_server: coerce_registry_value(
+            object.get("ProxyServer").unwrap_or(&Value::Null),
+            "ProxyServer",
+        )?,
         proxy_override: coerce_registry_value(
             object.get("ProxyOverride").unwrap_or(&Value::Null),
             "ProxyOverride",
@@ -1956,12 +2167,20 @@ fn coerce_registry_value(raw: &Value, name: &str) -> Result<RegistryValue, Strin
         if value.as_f64().is_none() {
             return Err(format!("注册表快照 {name} 不是有效的 {kind} 数值"));
         }
-        return Ok(RegistryValue { exists: true, kind: kind.to_string(), value });
+        return Ok(RegistryValue {
+            exists: true,
+            kind: kind.to_string(),
+            value,
+        });
     }
     if value.as_str().is_none() {
         return Err(format!("注册表快照 {name} 不是有效的 {kind} 字符串"));
     }
-    Ok(RegistryValue { exists: true, kind: kind.to_string(), value })
+    Ok(RegistryValue {
+        exists: true,
+        kind: kind.to_string(),
+        value,
+    })
 }
 
 /// The command runner result (the TS `RunResult`).
@@ -1972,7 +2191,11 @@ pub struct RunResult {
     pub code: i32,
 }
 
-pub type WindowsRunner = Arc<dyn Fn(&'static str, Vec<String>) -> BoxFuture<'static, Result<RunResult, String>> + Send + Sync>;
+pub type WindowsRunner = Arc<
+    dyn Fn(&'static str, Vec<String>) -> BoxFuture<'static, Result<RunResult, String>>
+        + Send
+        + Sync,
+>;
 
 /// Unreachable off-windows: the factory never composes the Windows adapter on
 /// a non-win32 host (the disabled adapter owns those platforms).
@@ -1996,7 +2219,9 @@ pub fn real_command_runner() -> WindowsRunner {
     Arc::new(move |command: &'static str, args: Vec<String>| {
         Box::pin(async move {
             let mut cmd = tokio::process::Command::new(command);
-            cmd.args(&args).creation_flags(CREATE_NO_WINDOW).kill_on_drop(true);
+            cmd.args(&args)
+                .creation_flags(CREATE_NO_WINDOW)
+                .kill_on_drop(true);
             let output = tokio::time::timeout(
                 std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS),
                 cmd.output(),
@@ -2035,9 +2260,7 @@ impl WindowsSystemProxyAdapter {
         error_code: &'static str,
         message: &str,
     ) -> Result<RunResult, IpcError> {
-        let result = self
-            .run
-            .clone()(command, args)
+        let result = self.run.clone()(command, args)
             .await
             .map_err(|transport| IpcError::code(error_code, format!("{message}：{transport}")))?;
         if result.code != 0 {
@@ -2119,24 +2342,39 @@ impl SystemProxyAdapter for WindowsSystemProxyAdapter {
     }
 
     fn apply(&self, written: &WrittenState) -> BoxFutUnit<'_> {
-        let server = written.proxy_server.value.as_str().unwrap_or_default().to_string();
-        let override_value = written.proxy_override.value.as_str().unwrap_or_default().to_string();
+        let server = written
+            .proxy_server
+            .value
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let override_value = written
+            .proxy_override
+            .value
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
         let run = self.run.clone();
         Box::pin(async move {
             if server.is_empty() {
-                return Err(IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, "系统代理目标值无效"));
+                return Err(IpcError::code(
+                    code::SYSTEM_PROXY_ENABLE_FAILED,
+                    "系统代理目标值无效",
+                ));
             }
-            let reg_add = |value_name: &str, kind: &str, data: String| vec![
-                "add".to_string(),
-                WIN_INTERNET_SETTINGS_KEY.to_string(),
-                "/v".to_string(),
-                value_name.to_string(),
-                "/t".to_string(),
-                kind.to_string(),
-                "/d".to_string(),
-                data,
-                "/f".to_string(),
-            ];
+            let reg_add = |value_name: &str, kind: &str, data: String| {
+                vec![
+                    "add".to_string(),
+                    WIN_INTERNET_SETTINGS_KEY.to_string(),
+                    "/v".to_string(),
+                    value_name.to_string(),
+                    "/t".to_string(),
+                    kind.to_string(),
+                    "/d".to_string(),
+                    data,
+                    "/f".to_string(),
+                ]
+            };
             // The TS apply order: ProxyEnable → ProxyServer → ProxyOverride.
             let enable = run(
                 "reg.exe",
@@ -2144,19 +2382,23 @@ impl SystemProxyAdapter for WindowsSystemProxyAdapter {
             )
             .await
             .and_then(verify_exit);
-            let enable = match enable {
+            match enable {
                 Ok(()) => (),
-                Err(message) => return Err(IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, format!("写入 ProxyEnable 失败：{message}"))),
+                Err(message) => {
+                    return Err(IpcError::code(
+                        code::SYSTEM_PROXY_ENABLE_FAILED,
+                        format!("写入 ProxyEnable 失败：{message}"),
+                    ))
+                }
             };
-            let _ = enable;
-            let server_result = run(
-                "reg.exe",
-                reg_add(PROXY_SERVER_VALUE, "REG_SZ", server),
-            )
-            .await
-            .and_then(verify_exit);
+            let server_result = run("reg.exe", reg_add(PROXY_SERVER_VALUE, "REG_SZ", server))
+                .await
+                .and_then(verify_exit);
             if let Err(message) = server_result {
-                return Err(IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, format!("写入 ProxyServer 失败：{message}")));
+                return Err(IpcError::code(
+                    code::SYSTEM_PROXY_ENABLE_FAILED,
+                    format!("写入 ProxyServer 失败：{message}"),
+                ));
             }
             let override_result = run(
                 "reg.exe",
@@ -2165,7 +2407,10 @@ impl SystemProxyAdapter for WindowsSystemProxyAdapter {
             .await
             .and_then(verify_exit);
             if let Err(message) = override_result {
-                return Err(IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, format!("写入 ProxyOverride 失败：{message}")));
+                return Err(IpcError::code(
+                    code::SYSTEM_PROXY_ENABLE_FAILED,
+                    format!("写入 ProxyOverride 失败：{message}"),
+                ));
             }
             Ok(())
         })
@@ -2176,9 +2421,12 @@ impl SystemProxyAdapter for WindowsSystemProxyAdapter {
         let proxy_server = previous.proxy_server.clone();
         let proxy_override = previous.proxy_override.clone();
         Box::pin(async move {
-            self.restore_value(PROXY_ENABLE_VALUE, &proxy_enable).await?;
-            self.restore_value(PROXY_SERVER_VALUE, &proxy_server).await?;
-            self.restore_value(PROXY_OVERRIDE_VALUE, &proxy_override).await?;
+            self.restore_value(PROXY_ENABLE_VALUE, &proxy_enable)
+                .await?;
+            self.restore_value(PROXY_SERVER_VALUE, &proxy_server)
+                .await?;
+            self.restore_value(PROXY_OVERRIDE_VALUE, &proxy_override)
+                .await?;
             Ok(())
         })
     }
@@ -2227,17 +2475,25 @@ pub const REG_TYPE_QWORD: u32 = 11;
 
 /// The Internet Settings subkey under HKCU (no hive prefix).
 #[cfg_attr(not(windows), allow(dead_code))]
-pub const INTERNET_SETTINGS_SUBKEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
+pub const INTERNET_SETTINGS_SUBKEY: &str =
+    r"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
 
 fn decode_utf16(data: &[u8]) -> String {
-    let units: Vec<u16> = data.chunks_exact(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]])).collect();
+    let units: Vec<u16> = data
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect();
     String::from_utf16_lossy(&units)
 }
 
 /// Decode one raw registry value (type + bytes) into the snapshot shape.
 /// `None` data means the value is absent. Unknown types fail closed, exactly
 /// like the PowerShell script's `throw`.
-pub fn decode_registry_value(kind: u32, data: Option<&[u8]>, name: &str) -> Result<RegistryValue, String> {
+pub fn decode_registry_value(
+    kind: u32,
+    data: Option<&[u8]>,
+    name: &str,
+) -> Result<RegistryValue, String> {
     let Some(data) = data else {
         return Ok(RegistryValue::absent());
     };
@@ -2252,9 +2508,7 @@ pub fn decode_registry_value(kind: u32, data: Option<&[u8]>, name: &str) -> Resu
             let parts: Vec<&str> = text.trim_end_matches('\0').split('\0').collect();
             Value::String(parts.join(";"))
         }
-        REG_TYPE_BINARY => {
-            Value::String(data.iter().map(|byte| format!("{byte:02X}")).collect())
-        }
+        REG_TYPE_BINARY => Value::String(data.iter().map(|byte| format!("{byte:02X}")).collect()),
         REG_TYPE_DWORD => {
             let bytes: [u8; 4] = data
                 .get(..4)
@@ -2280,11 +2534,18 @@ pub fn decode_registry_value(kind: u32, data: Option<&[u8]>, name: &str) -> Resu
         REG_TYPE_DWORD => "REG_DWORD",
         _ => "REG_QWORD",
     };
-    Ok(RegistryValue { exists: true, kind: label.to_string(), value })
+    Ok(RegistryValue {
+        exists: true,
+        kind: label.to_string(),
+        value,
+    })
 }
 
 fn encode_utf16_z(text: &str) -> Vec<u8> {
-    text.encode_utf16().chain(std::iter::once(0)).flat_map(|unit| unit.to_le_bytes()).collect()
+    text.encode_utf16()
+        .chain(std::iter::once(0))
+        .flat_map(|unit| unit.to_le_bytes())
+        .collect()
 }
 
 /// Encode a snapshot value for `RegSetValueExW`; `Ok(None)` means delete.
@@ -2303,7 +2564,9 @@ pub fn encode_registry_value(value: &RegistryValue) -> Result<Option<(u32, Vec<u
             Ok(Some((REG_TYPE_DWORD, raw.to_le_bytes().to_vec())))
         }
         ("REG_SZ", Value::String(text)) => Ok(Some((REG_TYPE_SZ, encode_utf16_z(text)))),
-        ("REG_EXPAND_SZ", Value::String(text)) => Ok(Some((REG_TYPE_EXPAND_SZ, encode_utf16_z(text)))),
+        ("REG_EXPAND_SZ", Value::String(text)) => {
+            Ok(Some((REG_TYPE_EXPAND_SZ, encode_utf16_z(text))))
+        }
         ("REG_BINARY", Value::String(hex)) => {
             if hex.len() % 2 != 0 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
                 return Err(IpcError::internal("invalid REG_BINARY payload"));
@@ -2318,7 +2581,9 @@ pub fn encode_registry_value(value: &RegistryValue) -> Result<Option<(u32, Vec<u
         ("REG_DWORD" | "REG_SZ" | "REG_EXPAND_SZ" | "REG_BINARY", _) => {
             Err(IpcError::internal(format!("invalid {kind} payload")))
         }
-        _ => Err(IpcError::internal(format!("unsupported registry type for restore: {kind}"))),
+        _ => Err(IpcError::internal(format!(
+            "unsupported registry type for restore: {kind}"
+        ))),
     }
 }
 
@@ -2356,7 +2621,10 @@ impl NativeWindowsSystemProxyAdapter {
     pub fn read_now(&self) -> Result<RegistryState, IpcError> {
         let read = |name: &str| -> Result<RegistryValue, IpcError> {
             let raw = self.registry.query(name).map_err(|message| {
-                IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, format!("解析系统代理注册表快照失败：{message}"))
+                IpcError::code(
+                    code::SYSTEM_PROXY_ENABLE_FAILED,
+                    format!("解析系统代理注册表快照失败：{message}"),
+                )
             })?;
             decode_registry_value(
                 raw.as_ref().map(|(kind, _)| *kind).unwrap_or(0),
@@ -2364,7 +2632,10 @@ impl NativeWindowsSystemProxyAdapter {
                 name,
             )
             .map_err(|message| {
-                IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, format!("解析系统代理注册表快照失败：{message}"))
+                IpcError::code(
+                    code::SYSTEM_PROXY_ENABLE_FAILED,
+                    format!("解析系统代理注册表快照失败：{message}"),
+                )
             })
         };
         Ok(RegistryState {
@@ -2377,7 +2648,10 @@ impl NativeWindowsSystemProxyAdapter {
     pub fn apply_now(&self, written: &WrittenState) -> Result<(), IpcError> {
         let server = written.proxy_server.value.as_str().unwrap_or_default();
         if server.is_empty() {
-            return Err(IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, "系统代理目标值无效"));
+            return Err(IpcError::code(
+                code::SYSTEM_PROXY_ENABLE_FAILED,
+                "系统代理目标值无效",
+            ));
         }
         // The reg.exe apply order: ProxyEnable → ProxyServer → ProxyOverride.
         for (name, value) in [
@@ -2385,14 +2659,24 @@ impl NativeWindowsSystemProxyAdapter {
             (PROXY_SERVER_VALUE, &written.proxy_server),
             (PROXY_OVERRIDE_VALUE, &written.proxy_override),
         ] {
-            let encoded = encode_registry_value(value)
-                .map_err(|error| IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, format!("写入 {name} 失败：{}", error.0)))?;
+            let encoded = encode_registry_value(value).map_err(|error| {
+                IpcError::code(
+                    code::SYSTEM_PROXY_ENABLE_FAILED,
+                    format!("写入 {name} 失败：{}", error.0),
+                )
+            })?;
             let Some((kind, data)) = encoded else {
-                return Err(IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, "系统代理目标值无效"));
+                return Err(IpcError::code(
+                    code::SYSTEM_PROXY_ENABLE_FAILED,
+                    "系统代理目标值无效",
+                ));
             };
-            self.registry
-                .set(name, kind, &data)
-                .map_err(|message| IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, format!("写入 {name} 失败：{message}")))?;
+            self.registry.set(name, kind, &data).map_err(|message| {
+                IpcError::code(
+                    code::SYSTEM_PROXY_ENABLE_FAILED,
+                    format!("写入 {name} 失败：{message}"),
+                )
+            })?;
         }
         Ok(())
     }
@@ -2404,7 +2688,10 @@ impl NativeWindowsSystemProxyAdapter {
             (PROXY_OVERRIDE_VALUE, &previous.proxy_override),
         ] {
             let failed = |message: String| {
-                IpcError::code(code::SYSTEM_PROXY_RESTORE_FAILED, format!("还原注册表项 {name} 失败：{message}"))
+                IpcError::code(
+                    code::SYSTEM_PROXY_RESTORE_FAILED,
+                    format!("还原注册表项 {name} 失败：{message}"),
+                )
             };
             match encode_registry_value(value).map_err(|error| failed(error.0))? {
                 Some((kind, data)) => self.registry.set(name, kind, &data).map_err(failed)?,
@@ -2416,7 +2703,10 @@ impl NativeWindowsSystemProxyAdapter {
 
     pub fn refresh_now(&self) -> Result<(), IpcError> {
         self.registry.refresh().map_err(|message| {
-            IpcError::code(code::SYSTEM_PROXY_RESTORE_FAILED, format!("刷新 WinINet 代理设置失败：{message}"))
+            IpcError::code(
+                code::SYSTEM_PROXY_RESTORE_FAILED,
+                format!("刷新 WinINet 代理设置失败：{message}"),
+            )
         })
     }
 }
@@ -2467,13 +2757,16 @@ pub fn restore_owned_proxy_blocking(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok("idle"),
         Err(error) => return Err(format!("backup unreadable: {error}")),
     };
-    let value: Value = serde_json::from_str(&raw).map_err(|_| "backup is not valid JSON".to_string())?;
+    let value: Value =
+        serde_json::from_str(&raw).map_err(|_| "backup is not valid JSON".to_string())?;
     let backup = parse_system_proxy_backup(&value).map_err(|_| "backup rejected".to_string())?;
     let observed = adapter.read_now().map_err(|error| error.0)?;
     if !can_restore_backup(&observed, &backup) {
         return Ok("conflict");
     }
-    adapter.restore_now(&backup.previous).map_err(|error| error.0)?;
+    adapter
+        .restore_now(&backup.previous)
+        .map_err(|error| error.0)?;
     adapter.refresh_now().map_err(|error| error.0)?;
     let readback = adapter.read_now().map_err(|error| error.0)?;
     if !matches_previous(&readback, &backup.previous) {
@@ -2492,14 +2785,27 @@ impl Win32Registry {
         text.encode_utf16().chain(std::iter::once(0)).collect()
     }
 
-    fn open(access: windows::Win32::System::Registry::REG_SAM_FLAGS) -> Result<windows::Win32::System::Registry::HKEY, String> {
+    fn open(
+        access: windows::Win32::System::Registry::REG_SAM_FLAGS,
+    ) -> Result<windows::Win32::System::Registry::HKEY, String> {
         use windows::core::PCWSTR;
         use windows::Win32::System::Registry::{RegOpenKeyExW, HKEY, HKEY_CURRENT_USER};
         let subkey = Self::wide(INTERNET_SETTINGS_SUBKEY);
         let mut key = HKEY::default();
-        let status = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, PCWSTR(subkey.as_ptr()), 0, access, &mut key) };
+        let status = unsafe {
+            RegOpenKeyExW(
+                HKEY_CURRENT_USER,
+                PCWSTR(subkey.as_ptr()),
+                0,
+                access,
+                &mut key,
+            )
+        };
         if status.is_err() {
-            return Err(format!("could not open the Internet Settings subkey ({})", status.0));
+            return Err(format!(
+                "could not open the Internet Settings subkey ({})",
+                status.0
+            ));
         }
         Ok(key)
     }
@@ -2560,7 +2866,15 @@ impl RawRegistry for Win32Registry {
         use windows::Win32::System::Registry::{RegSetValueExW, KEY_SET_VALUE, REG_VALUE_TYPE};
         let key = Self::open(KEY_SET_VALUE)?;
         let value_name = Self::wide(name);
-        let status = unsafe { RegSetValueExW(key, PCWSTR(value_name.as_ptr()), 0, REG_VALUE_TYPE(kind), Some(data)) };
+        let status = unsafe {
+            RegSetValueExW(
+                key,
+                PCWSTR(value_name.as_ptr()),
+                0,
+                REG_VALUE_TYPE(kind),
+                Some(data),
+            )
+        };
         Self::close(key);
         if status.is_err() {
             return Err(format!("writing {name} failed ({})", status.0));
@@ -2587,10 +2901,14 @@ impl RawRegistry for Win32Registry {
             InternetSetOptionW, INTERNET_OPTION_REFRESH, INTERNET_OPTION_SETTINGS_CHANGED,
         };
         unsafe {
-            InternetSetOptionW(None, INTERNET_OPTION_SETTINGS_CHANGED, None, 0)
-                .map_err(|error| format!("InternetSetOption(INTERNET_OPTION_SETTINGS_CHANGED) failed: {error}"))?;
-            InternetSetOptionW(None, INTERNET_OPTION_REFRESH, None, 0)
-                .map_err(|error| format!("InternetSetOption(INTERNET_OPTION_REFRESH) failed: {error}"))?;
+            InternetSetOptionW(None, INTERNET_OPTION_SETTINGS_CHANGED, None, 0).map_err(
+                |error| {
+                    format!("InternetSetOption(INTERNET_OPTION_SETTINGS_CHANGED) failed: {error}")
+                },
+            )?;
+            InternetSetOptionW(None, INTERNET_OPTION_REFRESH, None, 0).map_err(|error| {
+                format!("InternetSetOption(INTERNET_OPTION_REFRESH) failed: {error}")
+            })?;
         }
         Ok(())
     }
@@ -2611,6 +2929,9 @@ fn verify_exit(result: RunResult) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+type CommandRecords = Arc<Mutex<Vec<(String, Vec<String>)>>>;
 
 #[cfg(test)]
 mod tests {
@@ -2642,7 +2963,10 @@ mod tests {
     fn test_service() -> (SystemProxyService, Arc<FakeSystemProxyAdapter>) {
         service_with(
             Arc::new(FakeSystemProxyAdapter::new()),
-            static_probe(Target { host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(), port: 7890 }),
+            static_probe(Target {
+                host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+                port: 7890,
+            }),
         )
     }
 
@@ -2677,25 +3001,37 @@ mod tests {
 
     #[test]
     fn resolve_proxy_override_by_policy_mode() {
-        let enabled = ProxyBypassPolicy { enabled: true, custom_entries: vec!["*.corp".to_string()] };
+        let enabled = ProxyBypassPolicy {
+            enabled: true,
+            custom_entries: vec!["*.corp".to_string()],
+        };
         assert!(resolve_proxy_override(&enabled, Some("old.host")).contains("*.corp"));
         // Disabled policy preserves the OS value (never drops user entries).
         let disabled = ProxyBypassPolicy::empty();
         let resolved = resolve_proxy_override(&disabled, Some("old.host;extra"));
         assert!(resolved.contains("old.host") && resolved.contains("extra"));
         // No original → the mandatory list only.
-        assert_eq!(resolve_proxy_override(&ProxyBypassPolicy::empty(), None), DEFAULT_LOCAL_BYPASS_ENTRIES.join(";"));
+        assert_eq!(
+            resolve_proxy_override(&ProxyBypassPolicy::empty(), None),
+            DEFAULT_LOCAL_BYPASS_ENTRIES.join(";")
+        );
     }
 
     #[test]
     fn build_written_state_writes_dword_server_and_override() {
-        let target = Target { host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(), port: 7897 };
+        let target = Target {
+            host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+            port: 7897,
+        };
         let observed = RegistryState {
             proxy_enable: RegistryValue::absent(),
             proxy_server: RegistryValue::absent(),
             proxy_override: RegistryValue::string("legacy.host"),
         };
-        let policy = ProxyBypassPolicy { enabled: true, custom_entries: vec!["*.corp".to_string()] };
+        let policy = ProxyBypassPolicy {
+            enabled: true,
+            custom_entries: vec!["*.corp".to_string()],
+        };
         let written = build_written_state(&target, &observed, &policy);
         assert_eq!(written.proxy_enable.kind, "REG_DWORD");
         assert_eq!(written.proxy_enable.value, json!(1));
@@ -2708,16 +3044,37 @@ mod tests {
 
     #[test]
     fn same_registry_value_is_type_strict() {
-        assert!(same_registry_value(&RegistryValue::string("a"), &RegistryValue::string("a")));
-        assert!(!same_registry_value(&RegistryValue::string("a"), &RegistryValue { kind: "REG_EXPAND_SZ".to_string(), ..RegistryValue::string("a") }));
-        assert!(!same_registry_value(&RegistryValue::string("a"), &RegistryValue::absent()));
-        assert!(same_registry_value(&RegistryValue::absent(), &RegistryValue::absent()));
-        assert!(!same_registry_value(&RegistryValue::dword(1), &RegistryValue::string("1")));
+        assert!(same_registry_value(
+            &RegistryValue::string("a"),
+            &RegistryValue::string("a")
+        ));
+        assert!(!same_registry_value(
+            &RegistryValue::string("a"),
+            &RegistryValue {
+                kind: "REG_EXPAND_SZ".to_string(),
+                ..RegistryValue::string("a")
+            }
+        ));
+        assert!(!same_registry_value(
+            &RegistryValue::string("a"),
+            &RegistryValue::absent()
+        ));
+        assert!(same_registry_value(
+            &RegistryValue::absent(),
+            &RegistryValue::absent()
+        ));
+        assert!(!same_registry_value(
+            &RegistryValue::dword(1),
+            &RegistryValue::string("1")
+        ));
     }
 
     #[test]
     fn differing_keys_and_conflict_detail_name_mutated_keys() {
-        let target = Target { host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(), port: 7890 };
+        let target = Target {
+            host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+            port: 7890,
+        };
         let written = owned_state(&target, DEFAULT_LOCAL_BYPASS_ENTRIES.join(";").as_str());
         let mut observed = written.clone();
         observed.proxy_enable = RegistryValue::dword(0);
@@ -2725,20 +3082,31 @@ mod tests {
         let keys = differing_keys(&observed, &written);
         assert_eq!(keys, vec!["ProxyEnable", "ProxyOverride"]);
         assert!(!is_owned(&observed, &written));
-        assert_eq!(conflict_detail(&observed, &written), "注册表项被外部修改：ProxyEnable、ProxyOverride");
+        assert_eq!(
+            conflict_detail(&observed, &written),
+            "注册表项被外部修改：ProxyEnable、ProxyOverride"
+        );
         assert_eq!(conflict_detail(&written, &written), "");
     }
 
     #[test]
     fn validate_restorable_rejects_unrestorable_and_inconsistent() {
         let inconsistent = RegistryState {
-            proxy_enable: RegistryValue { exists: false, kind: "REG_SZ".to_string(), value: json!("x") },
+            proxy_enable: RegistryValue {
+                exists: false,
+                kind: "REG_SZ".to_string(),
+                value: json!("x"),
+            },
             proxy_server: RegistryValue::absent(),
             proxy_override: RegistryValue::absent(),
         };
         assert!(validate_restorable(&inconsistent).is_err());
         let unrestorable = RegistryState {
-            proxy_enable: RegistryValue { exists: true, kind: "REG_MULTI_SZ".to_string(), value: json!("a;b") },
+            proxy_enable: RegistryValue {
+                exists: true,
+                kind: "REG_MULTI_SZ".to_string(),
+                value: json!("a;b"),
+            },
             proxy_server: RegistryValue::absent(),
             proxy_override: RegistryValue::absent(),
         };
@@ -2746,13 +3114,24 @@ mod tests {
         assert!(message.contains("REG_MULTI_SZ 无法安全还原"));
         assert!(message.contains("系统代理项 ProxyEnable"));
         let negative_dword = RegistryState {
-            proxy_enable: RegistryValue { exists: true, kind: "REG_DWORD".to_string(), value: json!(-1) },
+            proxy_enable: RegistryValue {
+                exists: true,
+                kind: "REG_DWORD".to_string(),
+                value: json!(-1),
+            },
             proxy_server: RegistryValue::absent(),
             proxy_override: RegistryValue::absent(),
         };
-        assert_eq!(validate_restorable(&negative_dword).unwrap_err().0, "PROTOCOL_ERROR:SYSTEM_PROXY_ENABLE_FAILED::系统代理项 ProxyEnable 的数值无效");
+        assert_eq!(
+            validate_restorable(&negative_dword).unwrap_err().0,
+            "PROTOCOL_ERROR:SYSTEM_PROXY_ENABLE_FAILED::系统代理项 ProxyEnable 的数值无效"
+        );
         let string_dword = RegistryState {
-            proxy_enable: RegistryValue { exists: true, kind: "REG_SZ".to_string(), value: json!(1) },
+            proxy_enable: RegistryValue {
+                exists: true,
+                kind: "REG_SZ".to_string(),
+                value: json!(1),
+            },
             proxy_server: RegistryValue::absent(),
             proxy_override: RegistryValue::absent(),
         };
@@ -2761,14 +3140,29 @@ mod tests {
 
     #[test]
     fn validate_target_requires_loopback_and_valid_port() {
-        assert!(validate_target(&Target { host: "0.0.0.0".to_string(), port: 7890 }).is_err());
-        assert!(validate_target(&Target { host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(), port: 0 }).is_err());
-        assert!(validate_target(&Target { host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(), port: 65535 }).is_ok());
+        assert!(validate_target(&Target {
+            host: "0.0.0.0".to_string(),
+            port: 7890
+        })
+        .is_err());
+        assert!(validate_target(&Target {
+            host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+            port: 0
+        })
+        .is_err());
+        assert!(validate_target(&Target {
+            host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+            port: 65535
+        })
+        .is_ok());
     }
 
     #[test]
     fn can_restore_backup_accepts_all_self_owned_shapes() {
-        let target = Target { host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(), port: 7890 };
+        let target = Target {
+            host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+            port: 7890,
+        };
         let previous = RegistryState {
             proxy_enable: RegistryValue::absent(),
             proxy_server: RegistryValue::absent(),
@@ -2787,7 +3181,10 @@ mod tests {
         // b) already back at OUR pre-enable snapshot.
         assert!(can_restore_backup(&previous, &backup));
         // c) our server value with pieces flipped off inside our envelope.
-        let degraded = RegistryState { proxy_enable: RegistryValue::dword(0), ..written.clone() };
+        let degraded = RegistryState {
+            proxy_enable: RegistryValue::dword(0),
+            ..written.clone()
+        };
         assert!(can_restore_backup(&degraded, &backup));
         // d) an external takeover is NOT restorable.
         let takeover = RegistryState {
@@ -2806,15 +3203,30 @@ mod tests {
             "PROTOCOL_ERROR:INVALID_ARGUMENT::proxy bypass policy must be an object"
         );
         let missing = json!({});
-        assert!(parse_proxy_bypass_policy(Some(&missing)).unwrap_err().0.contains("at enabled: Required"));
+        assert!(parse_proxy_bypass_policy(Some(&missing))
+            .unwrap_err()
+            .0
+            .contains("at enabled: Required"));
         let no_entries = json!({ "enabled": true });
-        assert!(parse_proxy_bypass_policy(Some(&no_entries)).unwrap_err().0.contains("at customEntries: Required"));
+        assert!(parse_proxy_bypass_policy(Some(&no_entries))
+            .unwrap_err()
+            .0
+            .contains("at customEntries: Required"));
         let empty_entry = json!({ "enabled": true, "customEntries": ["   "] });
-        assert!(parse_proxy_bypass_policy(Some(&empty_entry)).unwrap_err().0.contains("String must contain at least 1 character(s)"));
+        assert!(parse_proxy_bypass_policy(Some(&empty_entry))
+            .unwrap_err()
+            .0
+            .contains("String must contain at least 1 character(s)"));
         let too_long = json!({ "enabled": true, "customEntries": ["x".repeat(256)] });
-        assert!(parse_proxy_bypass_policy(Some(&too_long)).unwrap_err().0.contains("String must contain at most 255 character(s)"));
+        assert!(parse_proxy_bypass_policy(Some(&too_long))
+            .unwrap_err()
+            .0
+            .contains("String must contain at most 255 character(s)"));
         let too_many = json!({ "enabled": true, "customEntries": (0..201).map(|i| format!("e{i}")).collect::<Vec<_>>() });
-        assert!(parse_proxy_bypass_policy(Some(&too_many)).unwrap_err().0.contains("Array must contain at most 200 element(s)"));
+        assert!(parse_proxy_bypass_policy(Some(&too_many))
+            .unwrap_err()
+            .0
+            .contains("Array must contain at most 200 element(s)"));
         let good = json!({ "enabled": true, "customEntries": ["*.corp", " *.corp "] });
         let parsed = parse_proxy_bypass_policy(Some(&good)).unwrap();
         assert_eq!(parsed.custom_entries, vec!["*.corp", "*.corp"]);
@@ -2822,15 +3234,23 @@ mod tests {
 
     #[test]
     fn coerce_proxy_bypass_policy_falls_back_field_independently() {
-        let coerced = coerce_proxy_bypass_policy(&json!({ "enabled": "yes", "customEntries": [1, " keep ", "", {"x": 1}] }));
+        let coerced = coerce_proxy_bypass_policy(
+            &json!({ "enabled": "yes", "customEntries": [1, " keep ", "", {"x": 1}] }),
+        );
         assert!(!coerced.enabled);
         assert_eq!(coerced.custom_entries, vec!["keep"]);
-        assert_eq!(coerce_proxy_bypass_policy(&json!("junk")), ProxyBypassPolicy::empty());
+        assert_eq!(
+            coerce_proxy_bypass_policy(&json!("junk")),
+            ProxyBypassPolicy::empty()
+        );
     }
 
     #[test]
     fn backup_schema_strictness() {
-        let target = Target { host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(), port: 7890 };
+        let target = Target {
+            host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+            port: 7890,
+        };
         let previous = RegistryState {
             proxy_enable: RegistryValue::absent(),
             proxy_server: RegistryValue::absent(),
@@ -2863,11 +3283,13 @@ mod tests {
         assert!(parse_system_proxy_backup(&foreign).is_err());
         // Absent value must be exactly { none, null }.
         let mut inconsistent = value.clone();
-        inconsistent["previous"]["proxyEnable"] = json!({ "exists": false, "type": "REG_SZ", "value": null });
+        inconsistent["previous"]["proxyEnable"] =
+            json!({ "exists": false, "type": "REG_SZ", "value": null });
         assert!(parse_system_proxy_backup(&inconsistent).is_err());
         // Present values may not be type none.
         let mut none_present = value.clone();
-        none_present["previous"]["proxyEnable"] = json!({ "exists": true, "type": "none", "value": null });
+        none_present["previous"]["proxyEnable"] =
+            json!({ "exists": true, "type": "none", "value": null });
         assert!(parse_system_proxy_backup(&none_present).is_err());
         // Numeric payloads must be non-negative safe integers.
         let mut huge = value.clone();
@@ -2912,7 +3334,10 @@ mod tests {
         assert_eq!(snapshot.proxy_enable.value, json!(1));
         assert!(!snapshot.proxy_override.exists);
         assert!(coerce_registry_snapshot("not json").is_err());
-        assert!(coerce_registry_snapshot("{}").is_err().then(|| ()).is_some());
+        assert!(coerce_registry_snapshot("{}")
+            .is_err()
+            .then_some(())
+            .is_some());
         let missing_exists = r#"{"ProxyEnable":{"type":"none","value":null},"ProxyServer":{"exists":false,"type":"none","value":null},"ProxyOverride":{"exists":false,"type":"none","value":null}}"#;
         assert!(coerce_registry_snapshot(missing_exists).is_err());
         let inconsistent_absent = r#"{"ProxyEnable":{"exists":false,"type":"REG_SZ","value":"x"},"ProxyServer":{"exists":false,"type":"none","value":null},"ProxyOverride":{"exists":false,"type":"none","value":null}}"#;
@@ -2936,11 +3361,24 @@ mod tests {
         assert_eq!(status.phase, "enabled");
         assert_eq!(status.address.as_deref(), Some("127.0.0.1:7890"));
         assert_eq!(status.port, Some(7890));
-        assert!(status.proxy_override.as_deref().unwrap().contains("<local>"));
+        assert!(status
+            .proxy_override
+            .as_deref()
+            .unwrap()
+            .contains("<local>"));
         // The backup was persisted and the fake registry matches it.
         assert!(service.backup.read().await.unwrap().is_some());
         let observed = adapter.read().await.unwrap();
-        assert!(is_owned(&observed, &owned_state(&Target { host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(), port: 7890 }, status.proxy_override.as_deref().unwrap())));
+        assert!(is_owned(
+            &observed,
+            &owned_state(
+                &Target {
+                    host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+                    port: 7890
+                },
+                status.proxy_override.as_deref().unwrap()
+            )
+        ));
         // Idempotent enable with the same target stays enabled.
         let again = service.enable().await.unwrap();
         assert_eq!(again.phase, "enabled");
@@ -2952,15 +3390,23 @@ mod tests {
             Arc::new(FakeSystemProxyAdapter::new()),
             Arc::new(|| {
                 Box::pin(async move {
-                    Err(IpcError::code(code::SYSTEM_PROXY_KERNEL_REQUIRED, "内核未运行，无法启用系统代理"))
-                        as Result<Target, IpcError>
+                    Err(IpcError::code(
+                        code::SYSTEM_PROXY_KERNEL_REQUIRED,
+                        "内核未运行，无法启用系统代理",
+                    )) as Result<Target, IpcError>
                 })
             }),
         );
         let error = service.enable().await.unwrap_err();
-        assert_eq!(error.0, "PROTOCOL_ERROR:SYSTEM_PROXY_KERNEL_REQUIRED::请先启动内核后再启用系统代理");
+        assert_eq!(
+            error.0,
+            "PROTOCOL_ERROR:SYSTEM_PROXY_KERNEL_REQUIRED::请先启动内核后再启用系统代理"
+        );
         assert_eq!(service.get_status().phase, "disabled");
-        assert_eq!(service.get_status().error_message.as_deref(), Some("请先启动内核"));
+        assert_eq!(
+            service.get_status().error_message.as_deref(),
+            Some("请先启动内核")
+        );
     }
 
     #[tokio::test]
@@ -2968,22 +3414,36 @@ mod tests {
         let (service, adapter) = test_service();
         // Pre-seed a backup whose written state points at another port, while
         // the registry holds a DIFFERENT tool's server (external takeover).
-        let target = Target { host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(), port: 7890 };
+        let target = Target {
+            host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+            port: 7890,
+        };
         let bundle = SystemProxyBackup {
             instance_id: service.instance_id.clone(),
             created_at: now_iso(),
             target: target.clone(),
-            previous: RegistryState { proxy_enable: RegistryValue::absent(), proxy_server: RegistryValue::absent(), proxy_override: RegistryValue::absent() },
+            previous: RegistryState {
+                proxy_enable: RegistryValue::absent(),
+                proxy_server: RegistryValue::absent(),
+                proxy_override: RegistryValue::absent(),
+            },
             written: owned_state(&target, "ours"),
         };
-        service.backup.write(&backup_to_value(&bundle)).await.unwrap();
+        service
+            .backup
+            .write(&backup_to_value(&bundle))
+            .await
+            .unwrap();
         adapter.set_registry(RegistryState {
             proxy_enable: RegistryValue::dword(1),
             proxy_server: RegistryValue::string("10.0.0.1:3128"),
             proxy_override: RegistryValue::string("ours"),
         });
         let error = service.enable().await.unwrap_err();
-        assert_eq!(error.0, "PROTOCOL_ERROR:SYSTEM_PROXY_STATE_CONFLICT::系统代理已被外部修改，未执行还原");
+        assert_eq!(
+            error.0,
+            "PROTOCOL_ERROR:SYSTEM_PROXY_STATE_CONFLICT::系统代理已被外部修改，未执行还原"
+        );
         assert_eq!(service.get_status().phase, "conflict");
         assert_eq!(
             service.get_status().conflict_detail.as_deref(),
@@ -2994,17 +3454,32 @@ mod tests {
     #[tokio::test]
     async fn stale_bundle_with_owned_shapes_self_recovers() {
         let (service, adapter) = test_service();
-        let stale = Target { host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(), port: 17890 };
+        let stale = Target {
+            host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+            port: 17890,
+        };
         let bundle = SystemProxyBackup {
             instance_id: service.instance_id.clone(),
             created_at: now_iso(),
             target: stale.clone(),
-            previous: RegistryState { proxy_enable: RegistryValue::absent(), proxy_server: RegistryValue::absent(), proxy_override: RegistryValue::string("old") },
+            previous: RegistryState {
+                proxy_enable: RegistryValue::absent(),
+                proxy_server: RegistryValue::absent(),
+                proxy_override: RegistryValue::string("old"),
+            },
             written: owned_state(&stale, "stale-override"),
         };
-        service.backup.write(&backup_to_value(&bundle)).await.unwrap();
+        service
+            .backup
+            .write(&backup_to_value(&bundle))
+            .await
+            .unwrap();
         // Shape (b): the restore finished but the delete was lost.
-        adapter.set_registry(RegistryState { proxy_enable: RegistryValue::absent(), proxy_server: RegistryValue::absent(), proxy_override: RegistryValue::string("old") });
+        adapter.set_registry(RegistryState {
+            proxy_enable: RegistryValue::absent(),
+            proxy_server: RegistryValue::absent(),
+            proxy_override: RegistryValue::string("old"),
+        });
         let status = service.enable().await.unwrap();
         assert_eq!(status.phase, "enabled");
         // The proxy now aims at the LIVE target, not the stale one.
@@ -3017,7 +3492,10 @@ mod tests {
         let (service, adapter) = test_service();
         adapter.fail_apply(true);
         let error = service.enable().await.unwrap_err();
-        assert_eq!(error.0, "PROTOCOL_ERROR:SYSTEM_PROXY_ENABLE_FAILED::系统代理启用失败，已还原");
+        assert_eq!(
+            error.0,
+            "PROTOCOL_ERROR:SYSTEM_PROXY_ENABLE_FAILED::系统代理启用失败，已还原"
+        );
         assert_eq!(service.get_status().phase, "disabled");
         // The rollback restored the pre-enable (absent) state and deleted the bundle.
         assert!(adapter.read().await.unwrap().proxy_server.kind == "none");
@@ -3030,7 +3508,10 @@ mod tests {
         adapter.fail_apply(true);
         adapter.fail_restore(true);
         let error = service.enable().await.unwrap_err();
-        assert_eq!(error.0, "PROTOCOL_ERROR:SYSTEM_PROXY_RESTORE_FAILED::系统代理启用失败且无法还原，已保留备份");
+        assert_eq!(
+            error.0,
+            "PROTOCOL_ERROR:SYSTEM_PROXY_RESTORE_FAILED::系统代理启用失败且无法还原，已保留备份"
+        );
         assert_eq!(service.get_status().phase, "restore-failed");
         // The bundle survives for a later retry / crash recovery.
         assert!(service.backup.read().await.unwrap().is_some());
@@ -3039,7 +3520,10 @@ mod tests {
     #[tokio::test]
     async fn disable_restores_previous_and_deletes_bundle() {
         let (service, adapter) = test_service();
-        let target = Target { host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(), port: 7890 };
+        let target = Target {
+            host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+            port: 7890,
+        };
         let previous = RegistryState {
             proxy_enable: RegistryValue::absent(),
             proxy_server: RegistryValue::string("127.0.0.1:7899"),
@@ -3052,8 +3536,15 @@ mod tests {
             previous: previous.clone(),
             written: owned_state(&target, DEFAULT_LOCAL_BYPASS_ENTRIES.join(";").as_str()),
         };
-        service.backup.write(&backup_to_value(&bundle)).await.unwrap();
-        adapter.set_registry(owned_state(&target, DEFAULT_LOCAL_BYPASS_ENTRIES.join(";").as_str()));
+        service
+            .backup
+            .write(&backup_to_value(&bundle))
+            .await
+            .unwrap();
+        adapter.set_registry(owned_state(
+            &target,
+            DEFAULT_LOCAL_BYPASS_ENTRIES.join(";").as_str(),
+        ));
         let status = service.disable().await.unwrap();
         assert_eq!(status.phase, "disabled");
         // The EXACT original values came back, including the old server.
@@ -3072,22 +3563,36 @@ mod tests {
     async fn unsupported_adapter_reports_the_phase() {
         let service = SystemProxyService::new(
             Arc::new(DisabledSystemProxyAdapter::new("linux")),
-            static_probe(Target { host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(), port: 7890 }),
+            static_probe(Target {
+                host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+                port: 7890,
+            }),
             Arc::new(InMemoryBackupStore::new()),
             Arc::new(InMemoryBypassStore::new()),
             "i".to_string(),
         );
         let error = service.enable().await.unwrap_err();
-        assert_eq!(error.0, "PROTOCOL_ERROR:SYSTEM_PROXY_UNSUPPORTED::当前平台不支持系统代理");
+        assert_eq!(
+            error.0,
+            "PROTOCOL_ERROR:SYSTEM_PROXY_UNSUPPORTED::当前平台不支持系统代理"
+        );
         assert_eq!(service.get_status().phase, "unsupported");
         assert!(!service.get_status().supported);
         // Disable mirrors the same fail-closed path.
         let disable_error = service.disable().await.unwrap_err();
-        assert_eq!(disable_error.0, "PROTOCOL_ERROR:SYSTEM_PROXY_UNSUPPORTED::当前平台不支持系统代理");
+        assert_eq!(
+            disable_error.0,
+            "PROTOCOL_ERROR:SYSTEM_PROXY_UNSUPPORTED::当前平台不支持系统代理"
+        );
         // init transitions to unsupported without touching anything.
         assert_eq!(service.init().await.phase, "unsupported");
         // Bypass reads still work (policy-only) and preview ignores the OS.
-        assert_eq!(service.preview_proxy_bypass(&ProxyBypassPolicy::empty()).await, DEFAULT_LOCAL_BYPASS_ENTRIES.join(";"));
+        assert_eq!(
+            service
+                .preview_proxy_bypass(&ProxyBypassPolicy::empty())
+                .await,
+            DEFAULT_LOCAL_BYPASS_ENTRIES.join(";")
+        );
     }
 
     #[tokio::test]
@@ -3098,25 +3603,42 @@ mod tests {
         // Corrupt backup → disabled + the manual-recovery message, registry untouched.
         let corrupt = SystemProxyService::new(
             Arc::new(FakeSystemProxyAdapter::new()),
-            static_probe(Target { host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(), port: 7890 }),
+            static_probe(Target {
+                host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+                port: 7890,
+            }),
             Arc::new(CorruptBackupStore),
             Arc::new(InMemoryBypassStore::new()),
             "i".to_string(),
         );
         let status = corrupt.init().await;
         assert_eq!(status.phase, "disabled");
-        assert_eq!(status.error_message.as_deref(), Some("系统代理备份无效，请手动恢复"));
+        assert_eq!(
+            status.error_message.as_deref(),
+            Some("系统代理备份无效，请手动恢复")
+        );
         // External takeover while we held a bundle → conflict.
         let (conflicted, adapter) = test_service();
-        let target = Target { host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(), port: 7890 };
+        let target = Target {
+            host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+            port: 7890,
+        };
         let bundle = SystemProxyBackup {
             instance_id: "i".to_string(),
             created_at: now_iso(),
             target: target.clone(),
-            previous: RegistryState { proxy_enable: RegistryValue::absent(), proxy_server: RegistryValue::absent(), proxy_override: RegistryValue::absent() },
+            previous: RegistryState {
+                proxy_enable: RegistryValue::absent(),
+                proxy_server: RegistryValue::absent(),
+                proxy_override: RegistryValue::absent(),
+            },
             written: owned_state(&target, "ours"),
         };
-        conflicted.backup.write(&backup_to_value(&bundle)).await.unwrap();
+        conflicted
+            .backup
+            .write(&backup_to_value(&bundle))
+            .await
+            .unwrap();
         adapter.set_registry(RegistryState {
             proxy_enable: RegistryValue::dword(1),
             proxy_server: RegistryValue::string("10.9.8.7:3128"),
@@ -3124,18 +3646,32 @@ mod tests {
         });
         let status = conflicted.init().await;
         assert_eq!(status.phase, "conflict");
-        assert_eq!(status.conflict_detail.as_deref(), Some("注册表项被外部修改：ProxyServer"));
+        assert_eq!(
+            status.conflict_detail.as_deref(),
+            Some("注册表项被外部修改：ProxyServer")
+        );
         // Owned degradation → restored to the pre-enable snapshot, bundle deleted.
         let (recoverable, adapter) = test_service();
-        let previous = RegistryState { proxy_enable: RegistryValue::absent(), proxy_server: RegistryValue::absent(), proxy_override: RegistryValue::string("old") };
+        let previous = RegistryState {
+            proxy_enable: RegistryValue::absent(),
+            proxy_server: RegistryValue::absent(),
+            proxy_override: RegistryValue::string("old"),
+        };
         let bundle = SystemProxyBackup {
             instance_id: "i".to_string(),
             created_at: now_iso(),
-            target: Target { host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(), port: 7890 },
+            target: Target {
+                host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+                port: 7890,
+            },
             previous: previous.clone(),
             written: owned_state(&target, "ours"),
         };
-        recoverable.backup.write(&backup_to_value(&bundle)).await.unwrap();
+        recoverable
+            .backup
+            .write(&backup_to_value(&bundle))
+            .await
+            .unwrap();
         adapter.set_registry(owned_state(&target, "ours"));
         let status = recoverable.init().await;
         assert_eq!(status.phase, "disabled");
@@ -3161,15 +3697,38 @@ mod tests {
     async fn bypass_round_trip_and_conflict_safe_set() {
         let (service, adapter) = test_service();
         // Read starts at the empty policy.
-        assert_eq!(service.get_proxy_bypass().await, serde_json::to_value(ProxyBypassPolicy::empty()).unwrap());
-        service.set_proxy_bypass(ProxyBypassPolicy { enabled: true, custom_entries: vec!["*.corp".to_string()] }).await.unwrap();
-        assert_eq!(service.get_proxy_bypass().await["customEntries"][0], json!("*.corp"));
+        assert_eq!(
+            service.get_proxy_bypass().await,
+            serde_json::to_value(ProxyBypassPolicy::empty()).unwrap()
+        );
+        service
+            .set_proxy_bypass(ProxyBypassPolicy {
+                enabled: true,
+                custom_entries: vec!["*.corp".to_string()],
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            service.get_proxy_bypass().await["customEntries"][0],
+            json!("*.corp")
+        );
         // Enable, then a set while still owned re-applies the override live.
         service.enable().await.unwrap();
         let before = adapter.refresh_count();
-        service.set_proxy_bypass(ProxyBypassPolicy { enabled: true, custom_entries: vec!["*.corp2".to_string()] }).await.unwrap();
+        service
+            .set_proxy_bypass(ProxyBypassPolicy {
+                enabled: true,
+                custom_entries: vec!["*.corp2".to_string()],
+            })
+            .await
+            .unwrap();
         let observed = adapter.read().await.unwrap();
-        assert!(observed.proxy_override.value.as_str().unwrap().contains("*.corp2"));
+        assert!(observed
+            .proxy_override
+            .value
+            .as_str()
+            .unwrap()
+            .contains("*.corp2"));
         assert!(adapter.refresh_count() > before);
         // A conflict (external edit) is treated as safe: policy persisted, phase flips.
         adapter.set_registry(RegistryState {
@@ -3177,7 +3736,13 @@ mod tests {
             proxy_server: RegistryValue::string("10.0.0.1:3128"),
             proxy_override: RegistryValue::absent(),
         });
-        let value = service.set_proxy_bypass(ProxyBypassPolicy { enabled: false, custom_entries: Vec::new() }).await.unwrap();
+        let value = service
+            .set_proxy_bypass(ProxyBypassPolicy {
+                enabled: false,
+                custom_entries: Vec::new(),
+            })
+            .await
+            .unwrap();
         assert_eq!(value["enabled"], json!(false));
         assert_eq!(service.get_status().phase, "conflict");
     }
@@ -3190,13 +3755,26 @@ mod tests {
         // Untouched → ok.
         assert_eq!(service.verify_integrity().await, "ok");
         // Degradation: proxy flipped off while OUR server stays → repaired.
-        let target = Target { host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(), port: 7890 };
-        let owned = owned_state(&target, service.get_status().proxy_override.as_deref().unwrap());
-        adapter.set_registry(RegistryState { proxy_enable: RegistryValue::dword(0), ..owned.clone() });
+        let target = Target {
+            host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+            port: 7890,
+        };
+        let owned = owned_state(
+            &target,
+            service.get_status().proxy_override.as_deref().unwrap(),
+        );
+        adapter.set_registry(RegistryState {
+            proxy_enable: RegistryValue::dword(0),
+            ..owned.clone()
+        });
         assert_eq!(service.verify_integrity().await, "repaired");
         assert!(is_owned(&adapter.read().await.unwrap(), &owned));
         // Takeover: a different server → conflict, never fought.
-        adapter.set_registry(RegistryState { proxy_enable: RegistryValue::dword(1), proxy_server: RegistryValue::string("9.9.9.9:3128"), proxy_override: RegistryValue::absent() });
+        adapter.set_registry(RegistryState {
+            proxy_enable: RegistryValue::dword(1),
+            proxy_server: RegistryValue::string("9.9.9.9:3128"),
+            proxy_override: RegistryValue::absent(),
+        });
         assert_eq!(service.verify_integrity().await, "conflict");
         assert_eq!(service.get_status().phase, "conflict");
     }
@@ -3227,17 +3805,35 @@ mod tests {
         assert!(adapter.read().await.unwrap().proxy_enable.kind == "none");
         // A conflict is safe (proxy no longer points at us): no error.
         let (conflicted, adapter) = test_service();
-        let target = Target { host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(), port: 7890 };
+        let target = Target {
+            host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+            port: 7890,
+        };
         let bundle = SystemProxyBackup {
             instance_id: "i".to_string(),
             created_at: now_iso(),
             target: target.clone(),
-            previous: RegistryState { proxy_enable: RegistryValue::absent(), proxy_server: RegistryValue::absent(), proxy_override: RegistryValue::absent() },
+            previous: RegistryState {
+                proxy_enable: RegistryValue::absent(),
+                proxy_server: RegistryValue::absent(),
+                proxy_override: RegistryValue::absent(),
+            },
             written: owned_state(&target, "ours"),
         };
-        conflicted.backup.write(&backup_to_value(&bundle)).await.unwrap();
-        adapter.set_registry(RegistryState { proxy_enable: RegistryValue::dword(1), proxy_server: RegistryValue::string("7.7.7.7:3128"), proxy_override: RegistryValue::absent() });
-        conflicted.restore_before_kernel_unavailable().await.unwrap();
+        conflicted
+            .backup
+            .write(&backup_to_value(&bundle))
+            .await
+            .unwrap();
+        adapter.set_registry(RegistryState {
+            proxy_enable: RegistryValue::dword(1),
+            proxy_server: RegistryValue::string("7.7.7.7:3128"),
+            proxy_override: RegistryValue::absent(),
+        });
+        conflicted
+            .restore_before_kernel_unavailable()
+            .await
+            .unwrap();
         assert_eq!(conflicted.get_status().phase, "conflict");
         // A genuine restore failure aborts the kernel stop with the copy.
         let (failing, adapter) = test_service();
@@ -3246,13 +3842,39 @@ mod tests {
             instance_id: "i".to_string(),
             created_at: now_iso(),
             target,
-            previous: RegistryState { proxy_enable: RegistryValue::absent(), proxy_server: RegistryValue::absent(), proxy_override: RegistryValue::absent() },
-            written: owned_state(&Target { host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(), port: 7890 }, "ours"),
+            previous: RegistryState {
+                proxy_enable: RegistryValue::absent(),
+                proxy_server: RegistryValue::absent(),
+                proxy_override: RegistryValue::absent(),
+            },
+            written: owned_state(
+                &Target {
+                    host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+                    port: 7890,
+                },
+                "ours",
+            ),
         };
-        failing.backup.write(&backup_to_value(&bundle)).await.unwrap();
-        adapter.set_registry(owned_state(&Target { host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(), port: 7890 }, "ours"));
-        let error = failing.restore_before_kernel_unavailable().await.unwrap_err();
-        assert_eq!(error.0, "PROTOCOL_ERROR:SYSTEM_PROXY_RESTORE_FAILED::系统代理还原失败，内核停止已中止");
+        failing
+            .backup
+            .write(&backup_to_value(&bundle))
+            .await
+            .unwrap();
+        adapter.set_registry(owned_state(
+            &Target {
+                host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+                port: 7890,
+            },
+            "ours",
+        ));
+        let error = failing
+            .restore_before_kernel_unavailable()
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.0,
+            "PROTOCOL_ERROR:SYSTEM_PROXY_RESTORE_FAILED::系统代理还原失败，内核停止已中止"
+        );
         assert_eq!(failing.get_status().phase, "restore-failed");
     }
 
@@ -3262,7 +3884,9 @@ mod tests {
         let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = events.clone();
         service.listeners.subscribe(Arc::new(move |value| {
-            sink.lock().unwrap().push(value["phase"].as_str().unwrap_or_default().to_string());
+            sink.lock()
+                .unwrap()
+                .push(value["phase"].as_str().unwrap_or_default().to_string());
         }));
         let _ = service.enable().await;
         let phases = events.lock().unwrap().clone();
@@ -3275,14 +3899,27 @@ mod tests {
         // Kernel not running.
         let probe = live_probe(
             || "stopped".to_string(),
-            || Err(IpcError::code(code::SYSTEM_PROXY_KERNEL_REQUIRED, "内核控制器未就绪，无法启用系统代理")),
+            || {
+                Err(IpcError::code(
+                    code::SYSTEM_PROXY_KERNEL_REQUIRED,
+                    "内核控制器未就绪，无法启用系统代理",
+                ))
+            },
         );
         let error = probe().await.unwrap_err();
-        assert_eq!(error.0, "PROTOCOL_ERROR:SYSTEM_PROXY_KERNEL_REQUIRED::内核未运行，无法启用系统代理");
+        assert_eq!(
+            error.0,
+            "PROTOCOL_ERROR:SYSTEM_PROXY_KERNEL_REQUIRED::内核未运行，无法启用系统代理"
+        );
         // Kernel running but the controller is dead.
         let probe = live_probe(
             || "running".to_string(),
-            || Err(IpcError::code(code::SYSTEM_PROXY_KERNEL_REQUIRED, "内核控制器未就绪，无法启用系统代理")),
+            || {
+                Err(IpcError::code(
+                    code::SYSTEM_PROXY_KERNEL_REQUIRED,
+                    "内核控制器未就绪，无法启用系统代理",
+                ))
+            },
         );
         assert_eq!(
             probe().await.unwrap_err().0,
@@ -3322,7 +3959,8 @@ mod tests {
                         return;
                     }
                     if read > 0 && buffer.starts_with(b"CONNECT") {
-                        let _ = stream.write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n");
+                        let _ = stream
+                            .write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n");
                     }
                     let _ = stream.flush();
                 });
@@ -3350,26 +3988,71 @@ mod tests {
         // reg add per original type; reg delete for an absent value.
         assert_eq!(
             reg_add_args_for("ProxyEnable", &RegistryValue::dword(1)).unwrap(),
-            vec!["add", WIN_INTERNET_SETTINGS_KEY, "/v", "ProxyEnable", "/t", "REG_DWORD", "/d", "1", "/f"]
+            vec![
+                "add",
+                WIN_INTERNET_SETTINGS_KEY,
+                "/v",
+                "ProxyEnable",
+                "/t",
+                "REG_DWORD",
+                "/d",
+                "1",
+                "/f"
+            ]
         );
         assert_eq!(
             reg_add_args_for("ProxyServer", &RegistryValue::string("127.0.0.1:7890")).unwrap(),
-            vec!["add", WIN_INTERNET_SETTINGS_KEY, "/v", "ProxyServer", "/t", "REG_SZ", "/d", "127.0.0.1:7890", "/f"]
+            vec![
+                "add",
+                WIN_INTERNET_SETTINGS_KEY,
+                "/v",
+                "ProxyServer",
+                "/t",
+                "REG_SZ",
+                "/d",
+                "127.0.0.1:7890",
+                "/f"
+            ]
         );
-        let expand = RegistryValue { exists: true, kind: "REG_EXPAND_SZ".to_string(), value: json!("%VAR%") };
+        let expand = RegistryValue {
+            exists: true,
+            kind: "REG_EXPAND_SZ".to_string(),
+            value: json!("%VAR%"),
+        };
         assert_eq!(
             reg_add_args_for("ProxyOverride", &expand).unwrap(),
-            vec!["add", WIN_INTERNET_SETTINGS_KEY, "/v", "ProxyOverride", "/t", "REG_EXPAND_SZ", "/d", "%VAR%", "/f"]
+            vec![
+                "add",
+                WIN_INTERNET_SETTINGS_KEY,
+                "/v",
+                "ProxyOverride",
+                "/t",
+                "REG_EXPAND_SZ",
+                "/d",
+                "%VAR%",
+                "/f"
+            ]
         );
         assert_eq!(
             reg_add_args_for("ProxyServer", &RegistryValue::absent()).unwrap(),
-            vec!["delete", WIN_INTERNET_SETTINGS_KEY, "/v", "ProxyServer", "/f"]
+            vec![
+                "delete",
+                WIN_INTERNET_SETTINGS_KEY,
+                "/v",
+                "ProxyServer",
+                "/f"
+            ]
         );
         // MULTI_SZ can never be restored — the guard throws instead of corrupting.
-        let multi = RegistryValue { exists: true, kind: "REG_MULTI_SZ".to_string(), value: json!("a;b") };
+        let multi = RegistryValue {
+            exists: true,
+            kind: "REG_MULTI_SZ".to_string(),
+            value: json!("a;b"),
+        };
         assert!(reg_add_args_for("ProxyServer", &multi).is_err());
         // Scripts keep their exact anchors.
-        assert!(REGISTRY_READ_SCRIPT.contains("[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($keyPath)"));
+        assert!(REGISTRY_READ_SCRIPT
+            .contains("[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($keyPath)"));
         assert!(REGISTRY_READ_SCRIPT.contains("DoNotExpandEnvironmentNames"));
         assert!(REGISTRY_READ_SCRIPT.contains("ConvertTo-Json -Depth 5 -Compress"));
         assert!(WIN_INET_REFRESH_SCRIPT.contains("InternetSetOption([IntPtr]::Zero, 39"));
@@ -3379,7 +4062,7 @@ mod tests {
     #[tokio::test]
     async fn windows_adapter_applies_restores_and_parses_via_injected_runner() {
         use std::sync::atomic::AtomicUsize;
-        let commands: Arc<Mutex<Vec<(String, Vec<String>)>>> = Arc::new(Mutex::new(Vec::new()));
+        let commands: CommandRecords = Arc::new(Mutex::new(Vec::new()));
         let sink = commands.clone();
         let snapshot = r#"{"ProxyEnable":{"exists":true,"type":"REG_DWORD","value":1},"ProxyServer":{"exists":true,"type":"REG_SZ","value":"127.0.0.1:7890"},"ProxyOverride":{"exists":false,"type":"none","value":null}}"#;
         let reads = Arc::new(AtomicUsize::new(0));
@@ -3390,17 +4073,30 @@ mod tests {
             let reads = reads_sink.clone();
             let snapshot = snapshot_owned.clone();
             Box::pin(async move {
-                sink.lock().unwrap().push((command.to_string(), args.clone()));
+                sink.lock()
+                    .unwrap()
+                    .push((command.to_string(), args.clone()));
                 if command == "powershell" {
                     reads.fetch_add(1, Ordering::SeqCst);
-                    Ok(RunResult { stdout: snapshot, stderr: String::new(), code: 0 })
+                    Ok(RunResult {
+                        stdout: snapshot,
+                        stderr: String::new(),
+                        code: 0,
+                    })
                 } else {
-                    Ok(RunResult { stdout: String::new(), stderr: String::new(), code: 0 })
+                    Ok(RunResult {
+                        stdout: String::new(),
+                        stderr: String::new(),
+                        code: 0,
+                    })
                 }
             })
         });
         let adapter = WindowsSystemProxyAdapter::with_runner(run);
-        let target = Target { host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(), port: 7890 };
+        let target = Target {
+            host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+            port: 7890,
+        };
         let written = owned_state(&target, "override");
         adapter.apply(&written).await.unwrap();
         adapter.refresh().await.unwrap();
@@ -3408,31 +4104,56 @@ mod tests {
         assert_eq!(observed.proxy_enable.value, json!(1));
         assert_eq!(observed.proxy_server.value, json!("127.0.0.1:7890"));
         // Apply order: enable → server → override, then the WinINet refresh.
-        let commands_log = commands.lock().unwrap();
-        assert_eq!(commands_log[0].0, "reg.exe");
-        let value_names: Vec<&str> = commands_log
-            .iter()
-            .filter(|(command, _)| command == "reg.exe")
-            .map(|(_, args)| args[3].as_str())
-            .collect();
-        assert_eq!(value_names, vec!["ProxyEnable", "ProxyServer", "ProxyOverride"]);
-        assert_eq!(commands_log[3].0, "powershell");
-        drop(commands_log);
+        {
+            let commands_log = commands.lock().unwrap();
+            assert_eq!(commands_log[0].0, "reg.exe");
+            let value_names: Vec<&str> = commands_log
+                .iter()
+                .filter(|(command, _)| command == "reg.exe")
+                .map(|(_, args)| args[3].as_str())
+                .collect();
+            assert_eq!(
+                value_names,
+                vec!["ProxyEnable", "ProxyServer", "ProxyOverride"]
+            );
+            assert_eq!(commands_log[3].0, "powershell");
+        }
         // Restore: the exact original types go back (delete for absent).
-        adapter.restore(&RegistryState { proxy_enable: RegistryValue::absent(), proxy_server: RegistryValue::string("old:1"), proxy_override: RegistryValue::absent() }).await.unwrap();
-        let all = commands.lock().unwrap();
-        // The log: 3 apply reg adds, refresh powershell, read powershell, then
-        // the 3 restore reg ops. Filter to the reg.exe ops after the apply.
-        let restore_kinds: Vec<&str> = all
-            .iter()
-            .filter(|(command, _)| command == "reg.exe")
-            .skip(3)
-            .map(|(_, args)| if args[0] == "delete" { "delete" } else { args[5].as_str() })
-            .collect();
-        assert_eq!(restore_kinds, vec!["delete", "REG_SZ", "delete"]);
+        adapter
+            .restore(&RegistryState {
+                proxy_enable: RegistryValue::absent(),
+                proxy_server: RegistryValue::string("old:1"),
+                proxy_override: RegistryValue::absent(),
+            })
+            .await
+            .unwrap();
+        {
+            let all = commands.lock().unwrap();
+            // The log: 3 apply reg adds, refresh powershell, read powershell, then
+            // the 3 restore reg ops. Filter to the reg.exe ops after the apply.
+            let restore_kinds: Vec<&str> = all
+                .iter()
+                .filter(|(command, _)| command == "reg.exe")
+                .skip(3)
+                .map(|(_, args)| {
+                    if args[0] == "delete" {
+                        "delete"
+                    } else {
+                        args[5].as_str()
+                    }
+                })
+                .collect();
+            assert_eq!(restore_kinds, vec!["delete", "REG_SZ", "delete"]);
+        }
         // A non-zero reg.exe exit carries the typed failure copy.
         let failing: WindowsRunner = Arc::new(|_command: &'static str, _args: Vec<String>| {
-            Box::pin(async move { Ok(RunResult { stdout: String::new(), stderr: "access denied".to_string(), code: 1 }) })
+            Box::pin(async move {
+                Ok(RunResult {
+                    stdout: String::new(),
+                    stderr: "access denied".to_string(),
+                    code: 1,
+                })
+            })
         });
         let failing_adapter = WindowsSystemProxyAdapter::with_runner(failing);
         let error = failing_adapter.apply(&written).await.unwrap_err();
@@ -3464,7 +4185,10 @@ mod tests {
             Ok(self.values.lock().unwrap().get(name).cloned())
         }
         fn set(&self, name: &str, kind: u32, data: &[u8]) -> Result<(), String> {
-            self.values.lock().unwrap().insert(name.to_string(), (kind, data.to_vec()));
+            self.values
+                .lock()
+                .unwrap()
+                .insert(name.to_string(), (kind, data.to_vec()));
             Ok(())
         }
         fn delete(&self, name: &str) -> Result<(), String> {
@@ -3478,12 +4202,18 @@ mod tests {
     }
 
     fn utf16z(text: &str) -> Vec<u8> {
-        text.encode_utf16().chain(std::iter::once(0)).flat_map(|unit| unit.to_le_bytes()).collect()
+        text.encode_utf16()
+            .chain(std::iter::once(0))
+            .flat_map(|unit| unit.to_le_bytes())
+            .collect()
     }
 
     #[test]
     fn native_codec_matches_the_powershell_snapshot_shape() {
-        assert_eq!(decode_registry_value(0, None, "x").unwrap(), RegistryValue::absent());
+        assert_eq!(
+            decode_registry_value(0, None, "x").unwrap(),
+            RegistryValue::absent()
+        );
         assert_eq!(
             decode_registry_value(REG_TYPE_DWORD, Some(&1u32.to_le_bytes()), "x").unwrap(),
             RegistryValue::dword(1)
@@ -3492,16 +4222,27 @@ mod tests {
             decode_registry_value(REG_TYPE_SZ, Some(&utf16z("127.0.0.1:7890")), "x").unwrap(),
             RegistryValue::string("127.0.0.1:7890")
         );
-        let expand = decode_registry_value(REG_TYPE_EXPAND_SZ, Some(&utf16z("%HOST%:1")), "x").unwrap();
-        assert_eq!((expand.kind.as_str(), expand.value.as_str()), ("REG_EXPAND_SZ", Some("%HOST%:1")));
+        let expand =
+            decode_registry_value(REG_TYPE_EXPAND_SZ, Some(&utf16z("%HOST%:1")), "x").unwrap();
+        assert_eq!(
+            (expand.kind.as_str(), expand.value.as_str()),
+            ("REG_EXPAND_SZ", Some("%HOST%:1"))
+        );
         let binary = decode_registry_value(REG_TYPE_BINARY, Some(&[0x0a, 0xff]), "x").unwrap();
         assert_eq!(binary.value, json!("0AFF"));
         let mut multi = utf16z("a");
         multi.extend(utf16z("b"));
         multi.extend([0, 0]);
-        assert_eq!(decode_registry_value(REG_TYPE_MULTI_SZ, Some(&multi), "x").unwrap().value, json!("a;b"));
         assert_eq!(
-            decode_registry_value(REG_TYPE_QWORD, Some(&5u64.to_le_bytes()), "x").unwrap().kind,
+            decode_registry_value(REG_TYPE_MULTI_SZ, Some(&multi), "x")
+                .unwrap()
+                .value,
+            json!("a;b")
+        );
+        assert_eq!(
+            decode_registry_value(REG_TYPE_QWORD, Some(&5u64.to_le_bytes()), "x")
+                .unwrap()
+                .kind,
             "REG_QWORD"
         );
         assert!(decode_registry_value(99, Some(&[]), "x").is_err());
@@ -3513,24 +4254,52 @@ mod tests {
         for value in [
             RegistryValue::dword(0),
             RegistryValue::string("<local>;10.*"),
-            RegistryValue { exists: true, kind: "REG_EXPAND_SZ".into(), value: json!("%X%") },
-            RegistryValue { exists: true, kind: "REG_BINARY".into(), value: json!("00AB") },
+            RegistryValue {
+                exists: true,
+                kind: "REG_EXPAND_SZ".into(),
+                value: json!("%X%"),
+            },
+            RegistryValue {
+                exists: true,
+                kind: "REG_BINARY".into(),
+                value: json!("00AB"),
+            },
         ] {
             let (kind, data) = encode_registry_value(&value).unwrap().unwrap();
-            assert_eq!(decode_registry_value(kind, Some(&data), "x").unwrap(), value);
+            assert_eq!(
+                decode_registry_value(kind, Some(&data), "x").unwrap(),
+                value
+            );
         }
-        assert_eq!(encode_registry_value(&RegistryValue::absent()).unwrap(), None);
-        let qword = RegistryValue { exists: true, kind: "REG_QWORD".into(), value: json!(1) };
+        assert_eq!(
+            encode_registry_value(&RegistryValue::absent()).unwrap(),
+            None
+        );
+        let qword = RegistryValue {
+            exists: true,
+            kind: "REG_QWORD".into(),
+            value: json!(1),
+        };
         assert!(encode_registry_value(&qword).is_err());
-        let bad_hex = RegistryValue { exists: true, kind: "REG_BINARY".into(), value: json!("0G") };
+        let bad_hex = RegistryValue {
+            exists: true,
+            kind: "REG_BINARY".into(),
+            value: json!("0G"),
+        };
         assert!(encode_registry_value(&bad_hex).is_err());
         assert!(encode_registry_value(&RegistryValue::dword(1u64 << 33)).is_err());
     }
 
-    fn native_service(registry: Arc<MapRegistry>, backup: Arc<dyn BackupStore>) -> SystemProxyService {
+    fn native_service(
+        registry: Arc<MapRegistry>,
+        backup: Arc<dyn BackupStore>,
+    ) -> SystemProxyService {
         SystemProxyService::new(
             Arc::new(NativeWindowsSystemProxyAdapter::new(registry)),
-            static_probe(Target { host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(), port: 7890 }),
+            static_probe(Target {
+                host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+                port: 7890,
+            }),
             backup,
             Arc::new(InMemoryBypassStore::new()),
             "native-test".to_string(),
@@ -3540,13 +4309,26 @@ mod tests {
     #[tokio::test]
     async fn native_adapter_enables_and_restores_the_exact_previous_state() {
         let registry = Arc::new(MapRegistry::default());
-        registry.set(PROXY_ENABLE_VALUE, REG_TYPE_DWORD, &0u32.to_le_bytes()).unwrap();
-        registry.set(PROXY_OVERRIDE_VALUE, REG_TYPE_EXPAND_SZ, &utf16z("corp.local")).unwrap();
+        registry
+            .set(PROXY_ENABLE_VALUE, REG_TYPE_DWORD, &0u32.to_le_bytes())
+            .unwrap();
+        registry
+            .set(
+                PROXY_OVERRIDE_VALUE,
+                REG_TYPE_EXPAND_SZ,
+                &utf16z("corp.local"),
+            )
+            .unwrap();
         let before = registry.values.lock().unwrap().clone();
         let service = native_service(registry.clone(), Arc::new(InMemoryBackupStore::new()));
         assert_eq!(service.enable().await.unwrap().phase, "enabled");
         let server = registry.query(PROXY_SERVER_VALUE).unwrap().unwrap();
-        assert_eq!(decode_registry_value(server.0, Some(&server.1), "s").unwrap().value, json!("127.0.0.1:7890"));
+        assert_eq!(
+            decode_registry_value(server.0, Some(&server.1), "s")
+                .unwrap()
+                .value,
+            json!("127.0.0.1:7890")
+        );
         service.disable().await.unwrap();
         // ProxyServer was absent before: restore deletes it; the EXPAND_SZ
         // override comes back with its original type.
@@ -3560,23 +4342,39 @@ mod tests {
         let registry = Arc::new(MapRegistry::default());
         let adapter = NativeWindowsSystemProxyAdapter::new(registry.clone());
         let store = FileSystemBackupStore::for_base_dir(dir.path());
-        let path = dir.path().join(SYSTEM_PROXY_BACKUP_SUBDIR).join(SYSTEM_PROXY_BACKUP_FILE);
-        assert_eq!(restore_owned_proxy_blocking(&adapter, &path).unwrap(), "idle");
+        let path = dir
+            .path()
+            .join(SYSTEM_PROXY_BACKUP_SUBDIR)
+            .join(SYSTEM_PROXY_BACKUP_FILE);
+        assert_eq!(
+            restore_owned_proxy_blocking(&adapter, &path).unwrap(),
+            "idle"
+        );
 
-        let service = native_service(registry.clone(), Arc::new(FileSystemBackupStore::for_base_dir(dir.path())));
+        let service = native_service(
+            registry.clone(),
+            Arc::new(FileSystemBackupStore::for_base_dir(dir.path())),
+        );
         service.enable().await.unwrap();
         assert!(store.read().await.unwrap().is_some());
-        assert_eq!(restore_owned_proxy_blocking(&adapter, &path).unwrap(), "restored");
+        assert_eq!(
+            restore_owned_proxy_blocking(&adapter, &path).unwrap(),
+            "restored"
+        );
         assert!(registry.values.lock().unwrap().is_empty());
         assert!(!path.exists());
 
         // A foreign takeover is never written over.
         service.enable().await.unwrap();
-        registry.set(PROXY_SERVER_VALUE, REG_TYPE_SZ, &utf16z("10.0.0.1:8080")).unwrap();
-        assert_eq!(restore_owned_proxy_blocking(&adapter, &path).unwrap(), "conflict");
+        registry
+            .set(PROXY_SERVER_VALUE, REG_TYPE_SZ, &utf16z("10.0.0.1:8080"))
+            .unwrap();
+        assert_eq!(
+            restore_owned_proxy_blocking(&adapter, &path).unwrap(),
+            "conflict"
+        );
         assert!(path.exists());
     }
-
 
     #[tokio::test]
     async fn fenced_service_never_writes_the_proxy_again() {
@@ -3586,5 +4384,4 @@ mod tests {
         assert!(service.enable().await.is_err());
         assert!(registry.values.lock().unwrap().is_empty());
     }
-
 }

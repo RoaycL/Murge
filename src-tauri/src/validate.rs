@@ -26,7 +26,10 @@ pub struct ValidationResult {
 
 impl ValidationResult {
     fn from_issues(issues: Vec<ValidationIssue>) -> Self {
-        ValidationResult { ok: issues.is_empty(), issues }
+        ValidationResult {
+            ok: issues.is_empty(),
+            issues,
+        }
     }
 }
 
@@ -39,7 +42,9 @@ pub struct StructuralValidator {
 
 impl StructuralValidator {
     pub fn new() -> Self {
-        StructuralValidator { require_proxy_sections: false }
+        StructuralValidator {
+            require_proxy_sections: false,
+        }
     }
 
     pub fn validate(&self, document: &str) -> ValidationResult {
@@ -90,7 +95,11 @@ impl StructuralValidator {
             });
         }
 
-        if self.require_proxy_sections && !top_level.iter().any(|key| key == "proxies" || key == "proxy-groups") {
+        if self.require_proxy_sections
+            && !top_level
+                .iter()
+                .any(|key| key == "proxies" || key == "proxy-groups")
+        {
             issues.push(ValidationIssue {
                 severity: "error",
                 message: "文档缺少 proxies 或 proxy-groups 段".into(),
@@ -140,7 +149,10 @@ pub fn profile_compatibility_diagnostics(document: &str) -> Vec<ValidationIssue>
         // a scan finds the key at column 0 (same warning, line optional per the
         // shared contract).
         let line = find_top_level_key_line(document, key);
-        if let Some((_, message)) = OBSOLETE_TOP_LEVEL_KEYS.iter().find(|(obsolete, _)| obsolete == key) {
+        if let Some((_, message)) = OBSOLETE_TOP_LEVEL_KEYS
+            .iter()
+            .find(|(obsolete, _)| obsolete == key)
+        {
             issues.push(ValidationIssue {
                 severity: "warning",
                 message: message.to_string(),
@@ -165,17 +177,22 @@ pub fn validate_document(document: &str) -> Result<ValidationResult, IpcError> {
 }
 
 fn find_top_level_key_line(document: &str, key: &str) -> Option<usize> {
-    document.split('\n').position(|line| line.starts_with(key) && line[key.len()..].trim_start().starts_with(':')).map(|i| i + 1)
+    document
+        .split('\n')
+        .position(|line| line.starts_with(key) && line[key.len()..].trim_start().starts_with(':'))
+        .map(|i| i + 1)
 }
 
 fn find_tab_indent(document: &str) -> Option<usize> {
-    document
-        .split('\n')
-        .position(|line| line.starts_with('\t') || regex::Regex::new(r"^\s+\t").unwrap().is_match(line))
+    document.split('\n').position(|line| {
+        line.starts_with('\t') || regex::Regex::new(r"^\s+\t").unwrap().is_match(line)
+    })
 }
 
 fn find_top_level_keys(document: &str) -> Vec<String> {
     let mut keys = Vec::new();
+    let pattern =
+        regex::Regex::new(r"^([A-Za-z0-9_.-]+)\s*:(\s|$)").expect("top-level regex compiles");
     for line in document.split('\n') {
         if line.starts_with('#') {
             continue;
@@ -184,11 +201,14 @@ fn find_top_level_keys(document: &str) -> Vec<String> {
             continue;
         }
         let trimmed = line;
-        if let Some(captures) = regex::Regex::new(r"^([A-Za-z0-9_.-]+)\s*:(\s|$)")
-            .expect("top-level regex compiles")
-            .captures(trimmed)
-        {
-            keys.push(captures.get(1).map(|m| m.as_str()).unwrap_or("").to_string());
+        if let Some(captures) = pattern.captures(trimmed) {
+            keys.push(
+                captures
+                    .get(1)
+                    .map(|m| m.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            );
         }
     }
     keys
@@ -254,7 +274,9 @@ pub fn throw_if_invalid(result: &ValidationResult) -> Result<(), IpcError> {
         .map(|issue| issue.message.as_str())
         .collect::<Vec<_>>()
         .join("；");
-    Err(IpcError::invalid_argument(format!("配置校验失败：{detail}")))
+    Err(IpcError::invalid_argument(format!(
+        "配置校验失败：{detail}"
+    )))
 }
 
 #[cfg(test)]
@@ -273,21 +295,30 @@ mod tests {
     fn duplicate_top_level_key_is_rejected_with_line() {
         let result = validate_document("port: 1\nmode: rule\nport: 2\n").unwrap();
         assert!(!result.ok);
-        assert!(result.issues.iter().any(|i| i.message == "重复的顶层键：port" && i.line == Some(3)));
+        assert!(result
+            .issues
+            .iter()
+            .any(|i| i.message == "重复的顶层键：port" && i.line == Some(3)));
     }
 
     #[test]
     fn tab_indent_is_rejected() {
         let result = validate_document("proxies:\n\t- name: a\n").unwrap();
         assert!(!result.ok);
-        assert!(result.issues.iter().any(|i| i.message == "YAML 不允许使用制表符缩进" && i.line == Some(2)));
+        assert!(result
+            .issues
+            .iter()
+            .any(|i| i.message == "YAML 不允许使用制表符缩进" && i.line == Some(2)));
     }
 
     #[test]
     fn unbalanced_flow_is_rejected() {
         let result = validate_document("rules: ['a', 'b'\n").unwrap();
         assert!(!result.ok);
-        assert!(result.issues.iter().any(|i| i.message == "存在未闭合的方括号或花括号"));
+        assert!(result
+            .issues
+            .iter()
+            .any(|i| i.message == "存在未闭合的方括号或花括号"));
     }
 
     #[test]
@@ -300,23 +331,36 @@ mod tests {
     #[test]
     fn clean_document_passes_without_issues() {
         let result = validate_document("port: 7890\nmode: rule\nproxies: []\nrules: []\n").unwrap();
-        assert!(result.ok, "{:?}", result.issues.iter().map(|i| &i.message).collect::<Vec<_>>());
+        assert!(
+            result.ok,
+            "{:?}",
+            result.issues.iter().map(|i| &i.message).collect::<Vec<_>>()
+        );
     }
 
     #[test]
     fn obsolete_keys_produce_warnings_not_errors() {
         let result = validate_document("udp: true\nmode: rule\n").unwrap();
         assert!(result.ok, "warnings never reject");
-        assert!(result.issues.iter().any(|i| i.severity == "warning" && i.message.contains("顶层 udp")));
+        assert!(result
+            .issues
+            .iter()
+            .any(|i| i.severity == "warning" && i.message.contains("顶层 udp")));
         let result2 = validate_document("global-client-fingerprint: xx\nmode: rule\n").unwrap();
         assert!(result2.ok);
-        assert!(result2.issues.iter().any(|i| i.severity == "warning" && i.message.contains("global-client-fingerprint")));
+        assert!(result2
+            .issues
+            .iter()
+            .any(|i| i.severity == "warning" && i.message.contains("global-client-fingerprint")));
     }
 
     #[test]
     fn invalid_error_uses_the_shared_copy() {
         let result = validate_document("   ").unwrap();
         let error = throw_if_invalid(&result).unwrap_err();
-        assert_eq!(error.0, "PROTOCOL_ERROR:INVALID_ARGUMENT::配置校验失败：配置文档为空");
+        assert_eq!(
+            error.0,
+            "PROTOCOL_ERROR:INVALID_ARGUMENT::配置校验失败：配置文档为空"
+        );
     }
 }

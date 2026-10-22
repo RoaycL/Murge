@@ -53,7 +53,9 @@ tokio = { version = "1", features = ["process", "macros", "rt-multi-thread", "sy
 boa_engine = "0.20"
 # Signed self-update. 2.12 is the newest line that keeps rust-version 1.82
 # (2.14 needs 1.90) and already has requireSignedVersion.
-tauri-plugin-updater = "~2.12"
+# Release manifests carry NSIS .exe payloads; ZIP extraction is unused.
+# Keep TLS/proxy support while excluding vulnerable optional zip 4.x.
+tauri-plugin-updater = { version = "~2.12", default-features = false, features = ["rustls-tls", "system-proxy"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -19,15 +19,18 @@ const PROBE_TIMEOUT_MS: u64 = 1200;
 /// `route -n get default` → `   gateway: 192.168.1.1`
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // platform-gated caller
 pub fn parse_darwin_default_gateway(stdout: &str) -> Option<String> {
-    let pattern = regex::Regex::new(r"(?m)^\s*gateway:\s*(\d{1,3}(?:\.\d{1,3}){3})\s*$").expect("gateway regex compiles");
-    pattern.captures(stdout).map(|captures| captures.get(1).expect("group").as_str().to_string())
+    let pattern = regex::Regex::new(r"(?m)^\s*gateway:\s*(\d{1,3}(?:\.\d{1,3}){3})\s*$")
+        .expect("gateway regex compiles");
+    pattern
+        .captures(stdout)
+        .map(|captures| captures.get(1).expect("group").as_str().to_string())
 }
 
 /// /proc/net/route → the destination-00000000 row's little-endian hex gateway.
-#[cfg_attr(windows, allow(dead_code))] // the Linux route source; Windows reads `route print`
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // the Linux route source; Windows reads `route print`
 pub fn parse_linux_proc_route(text: &str) -> Option<String> {
     for line in text.lines() {
-        let columns: Vec<&str> = line.trim().split_whitespace().collect();
+        let columns: Vec<&str> = line.split_whitespace().collect();
         if columns.get(1) != Some(&"00000000") {
             continue;
         }
@@ -37,7 +40,9 @@ pub fn parse_linux_proc_route(text: &str) -> Option<String> {
         }
         // /proc/net/route stores the address little-endian.
         let bytes: Vec<u8> = (0..4)
-            .map(|index| u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16).expect("hex checked"))
+            .map(|index| {
+                u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16).expect("hex checked")
+            })
             .collect();
         let mut owned = bytes;
         owned.reverse();
@@ -57,13 +62,14 @@ pub fn parse_linux_proc_route(text: &str) -> Option<String> {
 /// routes are listed by metric order, so the first match is the active one.
 #[cfg_attr(not(windows), allow(dead_code))] // platform-gated caller
 pub fn parse_windows_route_print(stdout: &str) -> Option<String> {
+    let pattern = regex::Regex::new(r"^\d{1,3}(?:\.\d{1,3}){3}$").expect("ipv4 regex compiles");
     for line in stdout.lines() {
-        let columns: Vec<&str> = line.trim().split_whitespace().collect();
+        let columns: Vec<&str> = line.split_whitespace().collect();
         if columns.first() != Some(&"0.0.0.0") || columns.get(1) != Some(&"0.0.0.0") {
             continue;
         }
         let gateway = columns.get(2)?;
-        if regex::Regex::new(r"^\d{1,3}(?:\.\d{1,3}){3}$").expect("ipv4 regex compiles").is_match(gateway) {
+        if pattern.is_match(gateway) {
             return Some(gateway.to_string());
         }
     }
@@ -114,7 +120,12 @@ async fn gateway_connect_rtt(host: &str) -> Option<u64> {
     for port in PROBE_PORTS {
         let address = format!("{host}:{port}");
         let started = Instant::now();
-        match tokio::time::timeout(Duration::from_millis(PROBE_TIMEOUT_MS), tokio::net::TcpStream::connect(&address)).await {
+        match tokio::time::timeout(
+            Duration::from_millis(PROBE_TIMEOUT_MS),
+            tokio::net::TcpStream::connect(&address),
+        )
+        .await
+        {
             Ok(Ok(_stream)) => return Some(started.elapsed().as_millis() as u64),
             // Refused / timed out / unreachable: try the next candidate port.
             Ok(Err(_)) | Err(_) => continue,
@@ -137,10 +148,16 @@ pub struct GatewayRttResult {
 /// failure degrades to nulls, which the UI renders as an em dash.
 pub async fn measure_gateway_rtt() -> GatewayRttResult {
     let Some(gateway) = detect_gateway() else {
-        return GatewayRttResult { gateway: None, rtt_ms: None };
+        return GatewayRttResult {
+            gateway: None,
+            rtt_ms: None,
+        };
     };
     let rtt = gateway_connect_rtt(&gateway).await;
-    GatewayRttResult { gateway: Some(gateway), rtt_ms: rtt }
+    GatewayRttResult {
+        gateway: Some(gateway),
+        rtt_ms: rtt,
+    }
 }
 
 /// System-resolver fallback (the `Resolver.resolveNs` analog): time a real
@@ -152,7 +169,9 @@ pub async fn measure_gateway_rtt() -> GatewayRttResult {
 pub async fn system_dns_probe(label: &str) -> bool {
     // Build a minimal DNS A query.
     let mut query = Vec::with_capacity(17 + label.len());
-    query.extend_from_slice(&[0xab, 0xcd, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    query.extend_from_slice(&[
+        0xab, 0xcd, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ]);
     for part in label.split('.') {
         query.push(part.len() as u8);
         query.extend_from_slice(part.as_bytes());
@@ -160,15 +179,26 @@ pub async fn system_dns_probe(label: &str) -> bool {
     query.push(0);
     query.extend_from_slice(&[0x00, 0x01, 0x00, 0x01]); // A, IN
 
-    let Ok(mut addrs) = ("1.1.1.1", 53u16).to_socket_addrs() else { return false };
-    let Some(address) = addrs.next() else { return false };
+    let Ok(mut addrs) = ("1.1.1.1", 53u16).to_socket_addrs() else {
+        return false;
+    };
+    let Some(address) = addrs.next() else {
+        return false;
+    };
     let _ = &mut addrs;
-    let Ok(udp) = tokio::net::UdpSocket::bind(if address.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" }).await else {
+    let Ok(udp) = tokio::net::UdpSocket::bind(if address.is_ipv4() {
+        "0.0.0.0:0"
+    } else {
+        "[::]:0"
+    })
+    .await
+    else {
         return false;
     };
     let send = udp.send_to(&query, address).await;
     let mut buffer = vec![0u8; 512];
-    let receive = tokio::time::timeout(Duration::from_millis(1200), udp.recv_from(&mut buffer)).await;
+    let receive =
+        tokio::time::timeout(Duration::from_millis(1200), udp.recv_from(&mut buffer)).await;
     match (send, receive) {
         (Ok(_), Ok(Ok((size, _)))) => {
             // A response (answer or rcode header) proves the upstream round
@@ -188,19 +218,31 @@ mod tests {
     #[test]
     fn parses_the_ts_route_tables_verbatim() {
         // darwin
-        assert_eq!(parse_darwin_default_gateway("   gateway: 192.168.1.1\n"), Some("192.168.1.1".to_string()));
+        assert_eq!(
+            parse_darwin_default_gateway("   gateway: 192.168.1.1\n"),
+            Some("192.168.1.1".to_string())
+        );
         assert_eq!(parse_darwin_default_gateway("no gateway here\n"), None);
         // linux: little-endian hex decode (0100A8C0 → 192.168.0.1), the TS
         // fixture byte-for-byte; a non-default row never matches.
         let proc_route = "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\neth0\t00000000\t0100A8C0\t0003\t0\t0\t100\t00000000\t0\neth0\t0000A8C0\t00000000\t0001\t0\t0\t100\t0000FFFF\t0\n";
-        assert_eq!(parse_linux_proc_route(proc_route), Some("192.168.0.1".to_string()));
+        assert_eq!(
+            parse_linux_proc_route(proc_route),
+            Some("192.168.0.1".to_string())
+        );
         let no_default = "eth0\t0000A8C0\t00000000\t0001\t0\t0\t100\t0000FFFF\t0\n";
         assert_eq!(parse_linux_proc_route(no_default), None);
         assert_eq!(parse_linux_proc_route("Iface\tDestination\tGateway\neth0\t08000000\tC0A80001\t0000\t0\t0\t0\t00000000\t0\n"), None);
         // windows: first 0.0.0.0/0 row wins
         let route_print = "Active Routes:\n  0.0.0.0          0.0.0.0      192.168.1.254      10\n  0.0.0.0          0.0.0.0      192.168.1.1        1\n";
-        assert_eq!(parse_windows_route_print(route_print), Some("192.168.1.254".to_string()));
-        assert_eq!(parse_windows_route_print("  0.0.0.0        128.0.0.0      192.168.1.1     5\n"), None);
+        assert_eq!(
+            parse_windows_route_print(route_print),
+            Some("192.168.1.254".to_string())
+        );
+        assert_eq!(
+            parse_windows_route_print("  0.0.0.0        128.0.0.0      192.168.1.1     5\n"),
+            None
+        );
     }
 
     #[tokio::test]
@@ -210,7 +252,9 @@ mod tests {
         // must not panic or throw).
         let result = measure_gateway_rtt().await;
         if let Some(gateway) = &result.gateway {
-            assert!(regex::Regex::new(r"^\d{1,3}(\.\d{1,3}){3}$").unwrap().is_match(gateway));
+            assert!(regex::Regex::new(r"^\d{1,3}(\.\d{1,3}){3}$")
+                .unwrap()
+                .is_match(gateway));
         } else {
             assert_eq!(result.rtt_ms, None);
         }

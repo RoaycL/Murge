@@ -12,7 +12,9 @@ use crate::brand;
 
 /// Canonical app-data folder name (product-name-free, brand-stable).
 pub fn app_data_namespace() -> String {
-    brand::load_brand().expect("brand validated at startup").app_id
+    brand::load_brand()
+        .expect("brand validated at startup")
+        .app_id
 }
 
 /// Platform app-data root following Electron's per-user convention.
@@ -48,8 +50,13 @@ pub fn platform_app_data_root() -> Option<PathBuf> {
 pub fn is_dev() -> bool {
     // tauri-build injects DEV into the build script for dev profiles; the
     // env var check keeps unit-testability outside a Tauri context.
-    cfg!(debug_assertions) && std::env::var("TAURI_ENV_DEBUG").map(|v| v == "true").unwrap_or(true)
-        || std::env::var("MURGE_TAURI_DEV").map(|v| v == "1").unwrap_or(false)
+    cfg!(debug_assertions)
+        && std::env::var("TAURI_ENV_DEBUG")
+            .map(|v| v == "true")
+            .unwrap_or(true)
+        || std::env::var("MURGE_TAURI_DEV")
+            .map(|v| v == "1")
+            .unwrap_or(false)
 }
 
 /// Resolved application paths, shared with IPC handlers through Tauri state.
@@ -67,12 +74,17 @@ impl AppPaths {
     /// Phase 3A handlers then serve from an in-memory store.
     pub fn probe() -> Self {
         if is_dev() {
-            return AppPaths { app_data_root: None, profile_root: None };
+            return AppPaths {
+                app_data_root: None,
+                profile_root: None,
+            };
         }
-        let root = platform_app_data_root()
-            .map(|base| base.join(app_data_namespace()));
+        let root = platform_app_data_root().map(|base| base.join(app_data_namespace()));
         let profile_root = root.as_ref().map(|root| root.join("profiles"));
-        AppPaths { app_data_root: root, profile_root }
+        AppPaths {
+            app_data_root: root,
+            profile_root,
+        }
     }
 
     /// The kernel home (`profile_root/kernel`), mirroring the Electron

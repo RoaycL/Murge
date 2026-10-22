@@ -80,9 +80,7 @@ pub fn parse_delay_test_url(value: Option<&serde_json::Value>) -> String {
         return String::new();
     }
     match url::Url::parse(normalized) {
-        Ok(parsed)
-            if parsed.scheme() == "http" || parsed.scheme() == "https" =>
-        {
+        Ok(parsed) if parsed.scheme() == "http" || parsed.scheme() == "https" => {
             normalized.to_string()
         }
         _ => String::new(),
@@ -112,12 +110,15 @@ pub fn parse_app_settings(document: &serde_json::Value) -> AppSettings {
         Some(object) => object,
         None => return AppSettings::default(),
     };
-    let boolean = |key: &str, default: bool| object.get(key).and_then(|v| v.as_bool()).unwrap_or(default);
-    let string = |key: &str, default: &str| object
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| default.to_string());
+    let boolean =
+        |key: &str, default: bool| object.get(key).and_then(|v| v.as_bool()).unwrap_or(default);
+    let string = |key: &str, default: &str| {
+        object
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| default.to_string())
+    };
     let defaults = AppSettings::default();
     AppSettings {
         auto_start_kernel: boolean("autoStartKernel", defaults.auto_start_kernel),
@@ -155,7 +156,8 @@ fn epoch_millis() -> u128 {
 
 /// The TS `AppSettingsGateway` analog: resolves the live settings snapshot at
 /// call time through a captured store handle.
-pub type SettingsGateway = std::sync::Arc<dyn Fn() -> futures_util::future::BoxFuture<'static, AppSettings> + Send + Sync>;
+pub type SettingsGateway =
+    std::sync::Arc<dyn Fn() -> futures_util::future::BoxFuture<'static, AppSettings> + Send + Sync>;
 
 /// The settings store. A `Mutex` serializes read-modify-write cycles (the TS
 /// version used a promise queue); dev mode keeps memory-only state.
@@ -186,7 +188,9 @@ impl SettingsStore {
     }
 
     fn file_path(&self) -> Option<PathBuf> {
-        self.app_data_root.as_ref().map(|root| root.join(APP_SETTINGS_FILE))
+        self.app_data_root
+            .as_ref()
+            .map(|root| root.join(APP_SETTINGS_FILE))
     }
 
     /// Read-through cache mirroring the TS `read()` semantics.
@@ -227,16 +231,16 @@ impl SettingsStore {
     }
 
     fn quarantine(&self, path: &Path) {
-        let target = path.with_file_name(format!(
-            "{}.corrupt-{}",
-            APP_SETTINGS_FILE,
-            epoch_millis()
-        ));
+        let target =
+            path.with_file_name(format!("{}.corrupt-{}", APP_SETTINGS_FILE, epoch_millis()));
         match fs::rename(path, &target) {
-            Ok(()) => eprintln!("[app-settings] quarantined invalid settings at {}", target.display()),
-            Err(error) => eprintln!(
-                "[app-settings] invalid settings could not be quarantined: {error}"
+            Ok(()) => eprintln!(
+                "[app-settings] quarantined invalid settings at {}",
+                target.display()
             ),
+            Err(error) => {
+                eprintln!("[app-settings] invalid settings could not be quarantined: {error}")
+            }
         }
     }
 
@@ -244,14 +248,20 @@ impl SettingsStore {
     /// values keep current, `kernelEnabled` forced true, atomic 2-space write.
     pub fn set(&self, patch: &AppSettingsPatch) -> AppSettings {
         let mut state = self.state.lock().expect("settings mutex poisoned");
-        let current = state.cached.clone().unwrap_or_else(|| self.read_from_disk());
+        let current = state
+            .cached
+            .clone()
+            .unwrap_or_else(|| self.read_from_disk());
         let patch = patch.0.as_object().cloned().unwrap_or_default();
-        let boolean = |key: &str, current: bool| patch.get(key).and_then(|v| v.as_bool()).unwrap_or(current);
-        let string = |key: &str, current: &str| patch
-            .get(key)
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| current.to_string());
+        let boolean =
+            |key: &str, current: bool| patch.get(key).and_then(|v| v.as_bool()).unwrap_or(current);
+        let string = |key: &str, current: &str| {
+            patch
+                .get(key)
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| current.to_string())
+        };
         let next = AppSettings {
             auto_start_kernel: boolean("autoStartKernel", current.auto_start_kernel),
             auto_check_update: boolean("autoCheckUpdate", current.auto_check_update),
@@ -260,7 +270,10 @@ impl SettingsStore {
             kernel_enabled: true,
             kernel_channel: is_valid_channel(patch.get("kernelChannel"))
                 .unwrap_or(current.kernel_channel),
-            kernel_specific_version: string("kernelSpecificVersion", &current.kernel_specific_version),
+            kernel_specific_version: string(
+                "kernelSpecificVersion",
+                &current.kernel_specific_version,
+            ),
             delay_test_url_scope: is_valid_scope(patch.get("delayTestUrlScope"))
                 .unwrap_or(current.delay_test_url_scope),
             // The TS set() stores the raw string; URL validation happens on
@@ -309,7 +322,7 @@ impl SettingsStore {
     }
 }
 
-/// Tiny helpers above keep the patch merge readable; nothing else.
+// Tiny helpers above keep the patch merge readable; nothing else.
 
 #[cfg(test)]
 mod tests {
@@ -347,7 +360,9 @@ mod tests {
     fn write_is_two_space_pretty_with_trailing_newline() {
         let temp = TempDir::new().unwrap();
         let store = store_in(&temp);
-        store.set(&AppSettingsPatch(serde_json::json!({ "silentLaunch": true })));
+        store.set(&AppSettingsPatch(
+            serde_json::json!({ "silentLaunch": true }),
+        ));
         let raw = fs::read_to_string(temp.path().join(APP_SETTINGS_FILE)).unwrap();
         assert!(raw.ends_with("\n"));
         assert!(raw.contains("\n  \"silentLaunch\": true"));
@@ -375,23 +390,26 @@ mod tests {
         let store = store_in(&temp);
         // set() stores the raw string (TS parity).
         let set = store.set(&AppSettingsPatch(
-            serde_json::json!({ "delayTestUrl": "ftp://example.com" })
+            serde_json::json!({ "delayTestUrl": "ftp://example.com" }),
         ));
         assert_eq!(set.delay_test_url, "ftp://example.com");
         // ...while the parse path (next launch read) normalizes it away.
         let raw = fs::read_to_string(temp.path().join(APP_SETTINGS_FILE)).unwrap();
         let document: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(parse_app_settings(&document).delay_test_url, "");
-        let ok = parse_app_settings(&serde_json::json!({ "delayTestUrl": "https://example.com/speed" }));
+        let ok =
+            parse_app_settings(&serde_json::json!({ "delayTestUrl": "https://example.com/speed" }));
         assert_eq!(ok.delay_test_url, "https://example.com/speed");
     }
 
     #[test]
     fn dev_store_is_memory_only() {
         let store = SettingsStore::new(None);
-        let next = store.set(&AppSettingsPatch(serde_json::json!({ "closeToTray": false })));
+        let next = store.set(&AppSettingsPatch(
+            serde_json::json!({ "closeToTray": false }),
+        ));
         assert!(!next.close_to_tray);
-        assert_eq!(store.get().close_to_tray, false);
+        assert!(!store.get().close_to_tray);
     }
 
     #[test]
@@ -405,6 +423,9 @@ mod tests {
         assert!(parsed.tun_desired);
         assert_eq!(parsed.kernel_channel, "specific");
         assert_eq!(parsed.kernel_specific_version, "v1.19.30");
-        assert!(parsed.auto_start_kernel, "invalid type falls back to default");
+        assert!(
+            parsed.auto_start_kernel,
+            "invalid type falls back to default"
+        );
     }
 }

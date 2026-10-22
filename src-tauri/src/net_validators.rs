@@ -35,7 +35,8 @@ fn is_ipv6(value: &str) -> bool {
         }
         let groups: Vec<&str> = section.split(':').collect();
         for group in &groups {
-            if group.is_empty() || group.len() > 4 || !group.bytes().all(|b| b.is_ascii_hexdigit()) {
+            if group.is_empty() || group.len() > 4 || !group.bytes().all(|b| b.is_ascii_hexdigit())
+            {
                 return None;
             }
         }
@@ -115,7 +116,10 @@ fn is_valid_domain_label(label: &str) -> bool {
         return false;
     }
     bytes.len() <= 63
-        && (bytes.len() == 1 || bytes[1..bytes.len() - 1].iter().all(|b| is_alnum(*b) || *b == b'-'))
+        && (bytes.len() == 1
+            || bytes[1..bytes.len() - 1]
+                .iter()
+                .all(|b| is_alnum(*b) || *b == b'-'))
 }
 
 /// A plain DNS-style hostname label sequence (no wildcard prefixes).
@@ -161,7 +165,10 @@ mod tests {
         assert!(is_valid_ip("127.0.0.1"));
         assert!(is_valid_ip("198.18.0.1"));
         assert!(!is_valid_ip("256.1.1.1"));
-        assert!(!is_valid_ip("01.2.3.4"), "leading zeros rejected like the TS impl");
+        assert!(
+            !is_valid_ip("01.2.3.4"),
+            "leading zeros rejected like the TS impl"
+        );
         assert!(!is_valid_ip("1.2.3"));
         assert!(!is_valid_ip(""));
     }

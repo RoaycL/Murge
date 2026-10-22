@@ -22,8 +22,8 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -50,7 +50,10 @@ pub fn encode_uri_component(value: &str) -> String {
     for byte in value.as_bytes() {
         let c = *byte;
         let keep = c.is_ascii_alphanumeric()
-            || matches!(c, b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')');
+            || matches!(
+                c,
+                b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
+            );
         if keep {
             out.push(c as char);
         } else {
@@ -116,7 +119,11 @@ fn expect_bool(label: &str, object: &Map<String, Value>, key: &str) -> Result<bo
     }
 }
 
-fn expect_object<'a>(label: &str, value: &'a Value, key: &str) -> Result<&'a Map<String, Value>, IpcError> {
+fn expect_object<'a>(
+    label: &str,
+    value: &'a Value,
+    key: &str,
+) -> Result<&'a Map<String, Value>, IpcError> {
     match value.get(key) {
         Some(Value::Object(object)) => Ok(object),
         Some(other) => Err(invalid_upstream(
@@ -143,7 +150,9 @@ fn expect_array<'a>(label: &str, value: &'a Value, key: &str) -> Result<&'a Vec<
 // ---------------------------------------------------------------------------
 
 pub fn parse_mihomo_version(input: &Value) -> Result<Value, IpcError> {
-    let object = input.as_object().ok_or_else(|| invalid_upstream("version", "Expected object, received null"))?;
+    let object = input
+        .as_object()
+        .ok_or_else(|| invalid_upstream("version", "Expected object, received null"))?;
     expect_bool("version", object, "meta")?;
     expect_string("version", object, "version")?;
     Ok(input.clone())
@@ -151,7 +160,10 @@ pub fn parse_mihomo_version(input: &Value) -> Result<Value, IpcError> {
 
 pub fn parse_mihomo_config(input: &Value) -> Result<Value, IpcError> {
     if !input.is_object() {
-        return Err(invalid_upstream("configs", format!("Expected object, received {}", type_of(input))));
+        return Err(invalid_upstream(
+            "configs",
+            format!("Expected object, received {}", type_of(input)),
+        ));
     }
     // Every field is optional; `mode` must be one of the three live modes.
     if let Some(mode) = input.get("mode") {
@@ -159,7 +171,9 @@ pub fn parse_mihomo_config(input: &Value) -> Result<Value, IpcError> {
         if !matches!(mode, "rule" | "global" | "direct") {
             return Err(invalid_upstream(
                 "configs",
-                format!("Invalid enum value. Expected 'rule' | 'global' | 'direct', received '{mode}'"),
+                format!(
+                    "Invalid enum value. Expected 'rule' | 'global' | 'direct', received '{mode}'"
+                ),
             ));
         }
     }
@@ -167,7 +181,9 @@ pub fn parse_mihomo_config(input: &Value) -> Result<Value, IpcError> {
 }
 
 fn validate_proxy(label: &str, proxy: &Value) -> Result<(), IpcError> {
-    let object = proxy.as_object().ok_or_else(|| invalid_upstream(label, "Expected object, received null"))?;
+    let object = proxy
+        .as_object()
+        .ok_or_else(|| invalid_upstream(label, "Expected object, received null"))?;
     expect_string(label, object, "name")?;
     expect_string(label, object, "type")?;
     Ok(())
@@ -250,7 +266,10 @@ pub fn parse_mihomo_dns_query(input: &Value) -> Result<Value, IpcError> {
         .ok_or_else(|| invalid_upstream("dns-query", "Expected object, received null"))?;
     let status = expect_number("dns-query", object, "Status")?;
     if status < 0.0 || status.fract() != 0.0 {
-        return Err(invalid_upstream("dns-query", "Expected number to be an integer"));
+        return Err(invalid_upstream(
+            "dns-query",
+            "Expected number to be an integer",
+        ));
     }
     let questions = expect_array("dns-query", input, "Question")?;
     for question in questions {
@@ -260,7 +279,10 @@ pub fn parse_mihomo_dns_query(input: &Value) -> Result<Value, IpcError> {
         expect_string("dns-query", object, "name")?;
         let kind = expect_number("dns-query", object, "type")?;
         if kind < 0.0 || kind.fract() != 0.0 {
-            return Err(invalid_upstream("dns-query", "Expected number to be an integer"));
+            return Err(invalid_upstream(
+                "dns-query",
+                "Expected number to be an integer",
+            ));
         }
     }
     for flag in ["TC", "RD", "RA", "AD", "CD"] {
@@ -269,20 +291,29 @@ pub fn parse_mihomo_dns_query(input: &Value) -> Result<Value, IpcError> {
     for section in ["Answer", "Authority", "Additional"] {
         if let Some(records) = object.get(section) {
             let records = records.as_array().ok_or_else(|| {
-                invalid_upstream("dns-query", format!("Expected array, received {}", type_of(records)))
+                invalid_upstream(
+                    "dns-query",
+                    format!("Expected array, received {}", type_of(records)),
+                )
             })?;
             for record in records {
-                let object = record
-                    .as_object()
-                    .ok_or_else(|| invalid_upstream("dns-query", "Expected object, received null"))?;
+                let object = record.as_object().ok_or_else(|| {
+                    invalid_upstream("dns-query", "Expected object, received null")
+                })?;
                 expect_string("dns-query", object, "name")?;
                 let kind = expect_number("dns-query", object, "type")?;
                 if kind < 0.0 || kind.fract() != 0.0 {
-                    return Err(invalid_upstream("dns-query", "Expected number to be an integer"));
+                    return Err(invalid_upstream(
+                        "dns-query",
+                        "Expected number to be an integer",
+                    ));
                 }
                 let ttl = expect_number("dns-query", object, "TTL")?;
                 if ttl < 0.0 || ttl.fract() != 0.0 {
-                    return Err(invalid_upstream("dns-query", "Expected number to be an integer"));
+                    return Err(invalid_upstream(
+                        "dns-query",
+                        "Expected number to be an integer",
+                    ));
                 }
                 expect_string("dns-query", object, "data")?;
             }
@@ -301,13 +332,24 @@ pub fn parse_mihomo_connections(input: &Value) -> Result<Value, IpcError> {
     let mut parsed = input.clone();
     // mihomo may emit null while the tracker is empty/initializing; normalize
     // at the protocol boundary so every consumer sees an array.
-    if parsed.get("connections").map(Value::is_null).unwrap_or(false) {
+    if parsed
+        .get("connections")
+        .map(Value::is_null)
+        .unwrap_or(false)
+    {
         parsed["connections"] = json!([]);
     }
-    if !parsed.get("connections").map(Value::is_array).unwrap_or(false) {
+    if !parsed
+        .get("connections")
+        .map(Value::is_array)
+        .unwrap_or(false)
+    {
         return Err(invalid_upstream(
             "connections",
-            format!("Expected array, received {}", type_of(parsed.get("connections").unwrap_or(&Value::Null))),
+            format!(
+                "Expected array, received {}",
+                type_of(parsed.get("connections").unwrap_or(&Value::Null))
+            ),
         ));
     }
     Ok(parsed)
@@ -328,7 +370,10 @@ pub fn parse_mihomo_traffic(input: &Value) -> Result<Value, IpcError> {
 /// Log stream frame: every field optional; `type` restricted to the 4 levels.
 pub fn parse_mihomo_log(input: &Value) -> Result<Value, IpcError> {
     if !input.is_object() {
-        return Err(invalid_upstream("log", format!("Expected object, received {}", type_of(input))));
+        return Err(invalid_upstream(
+            "log",
+            format!("Expected object, received {}", type_of(input)),
+        ));
     }
     if let Some(kind) = input.get("type") {
         let kind = kind.as_str().unwrap_or_default();
@@ -362,10 +407,16 @@ pub fn parse_mihomo_name(name: &Value) -> Result<String, IpcError> {
 }
 
 pub fn parse_proxy_selection(group: &Value, name: &Value) -> Result<(String, String), IpcError> {
-    let group = group.as_str().ok_or_else(|| invalid("invalid proxy selection at group: must be a non-empty string"))?;
-    let name = name.as_str().ok_or_else(|| invalid("invalid proxy selection at name: must be a non-empty string"))?;
-    non_empty_string(group).map_err(|_| invalid("invalid proxy selection at group: must be a non-empty string"))?;
-    non_empty_string(name).map_err(|_| invalid("invalid proxy selection at name: must be a non-empty string"))?;
+    let group = group
+        .as_str()
+        .ok_or_else(|| invalid("invalid proxy selection at group: must be a non-empty string"))?;
+    let name = name
+        .as_str()
+        .ok_or_else(|| invalid("invalid proxy selection at name: must be a non-empty string"))?;
+    non_empty_string(group)
+        .map_err(|_| invalid("invalid proxy selection at group: must be a non-empty string"))?;
+    non_empty_string(name)
+        .map_err(|_| invalid("invalid proxy selection at name: must be a non-empty string"))?;
     Ok((group.to_string(), name.to_string()))
 }
 
@@ -393,7 +444,9 @@ pub fn parse_delay_options(input: Option<&Value>) -> Result<Option<i64>, IpcErro
     };
     for key in input.keys() {
         if key != "timeout" {
-            return Err(invalid(format!("invalid delay options at {key}: Unrecognized key: \"{key}\"")));
+            return Err(invalid(format!(
+                "invalid delay options at {key}: Unrecognized key: \"{key}\""
+            )));
         }
     }
     match input.get("timeout") {
@@ -403,9 +456,10 @@ pub fn parse_delay_options(input: Option<&Value>) -> Result<Option<i64>, IpcErro
                 invalid("invalid delay options at timeout: Expected number to be an integer")
             })?;
             if !(1000..=30000).contains(&timeout) {
-                return Err(invalid(format!(
+                return Err(invalid(
                     "invalid delay options at timeout: Number must be between 1000 and 30000"
-                )));
+                        .to_string(),
+                ));
             }
             Ok(Some(timeout))
         }
@@ -500,24 +554,31 @@ const DNS_LABEL: &str = "DNS name must be a valid ASCII hostname";
 pub fn parse_dns_query(name: &Value, kind: &Value) -> Result<(String, String), IpcError> {
     let label_is_valid = |label: &str| -> bool {
         (1..=63).contains(&label.len())
-            && label.bytes().next().map(|b| b.is_ascii_alphanumeric()).unwrap_or(false)
-            && label.bytes().last().map(|b| b.is_ascii_alphanumeric()).unwrap_or(false)
+            && label
+                .bytes()
+                .next()
+                .map(|b| b.is_ascii_alphanumeric())
+                .unwrap_or(false)
+            && label
+                .bytes()
+                .last()
+                .map(|b| b.is_ascii_alphanumeric())
+                .unwrap_or(false)
             && label
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b == b'-')
     };
     let valid = match name.as_str() {
-        Some(name) => {
-            (1..=253).contains(&name.len())
-                && name.split('.').all(label_is_valid)
-        }
+        Some(name) => (1..=253).contains(&name.len()) && name.split('.').all(label_is_valid),
         None => false,
     };
     if !valid {
         return Err(invalid(DNS_LABEL));
     }
     match kind.as_str() {
-        Some(kind) if DNS_TYPES.contains(&kind) => Ok((name.as_str().unwrap().to_string(), kind.to_string())),
+        Some(kind) if DNS_TYPES.contains(&kind) => {
+            Ok((name.as_str().unwrap().to_string(), kind.to_string()))
+        }
         _ => Err(invalid("DNS query type is not supported")),
     }
 }
@@ -527,10 +588,16 @@ pub fn parse_log_after_seq(value: Option<&Value>) -> Result<i64, IpcError> {
     match value {
         None | Some(Value::Null) => Ok(0),
         Some(Value::Number(number)) => match number.as_i64() {
-            Some(seq) if seq >= 0 && number.as_f64().map(|f| f.fract() == 0.0).unwrap_or(false) => Ok(seq),
-            _ => Err(invalid("log snapshot cursor must be a non-negative integer")),
+            Some(seq) if seq >= 0 && number.as_f64().map(|f| f.fract() == 0.0).unwrap_or(false) => {
+                Ok(seq)
+            }
+            _ => Err(invalid(
+                "log snapshot cursor must be a non-negative integer",
+            )),
         },
-        Some(_) => Err(invalid("log snapshot cursor must be a non-negative integer")),
+        Some(_) => Err(invalid(
+            "log snapshot cursor must be a non-negative integer",
+        )),
     }
 }
 
@@ -549,7 +616,11 @@ pub struct MihomoLogBuffer {
 
 impl MihomoLogBuffer {
     pub fn new() -> Self {
-        MihomoLogBuffer { entries: Mutex::new(Vec::new()), next_seq: AtomicI64::new(0), capacity: 2000 }
+        MihomoLogBuffer {
+            entries: Mutex::new(Vec::new()),
+            next_seq: AtomicI64::new(0),
+            capacity: 2000,
+        }
     }
 
     /// Retain one message; the stored copy carries its `seq` so the snapshot
@@ -607,7 +678,10 @@ impl MihomoLogBuffer {
     /// Drop retained lines and return the atomic high-water mark that was
     /// cleared. Sequence numbering continues uninterrupted.
     pub fn clear(&self) -> i64 {
-        self.entries.lock().expect("log buffer mutex poisoned").clear();
+        self.entries
+            .lock()
+            .expect("log buffer mutex poisoned")
+            .clear();
         self.next_seq.load(Ordering::SeqCst)
     }
 }
@@ -634,24 +708,37 @@ pub struct ProxySelectionStore {
 
 impl ProxySelectionStore {
     pub fn new(app_data_base: Option<PathBuf>) -> Self {
-        ProxySelectionStore { app_data_base, queue: Mutex::new(()) }
+        ProxySelectionStore {
+            app_data_base,
+            queue: Mutex::new(()),
+        }
     }
 
     fn file_path(&self) -> Option<PathBuf> {
-        self.app_data_base.as_ref().map(|base| base.join(PROXY_SELECTIONS_FILE))
+        self.app_data_base
+            .as_ref()
+            .map(|base| base.join(PROXY_SELECTIONS_FILE))
     }
 
     fn read_all(&self) -> Value {
-        let Some(path) = self.file_path() else { return json!({}) };
-        let Ok(raw) = std::fs::read_to_string(path) else { return json!({}) };
-        let Ok(parsed) = serde_json::from_str::<Value>(&raw) else { return json!({}) };
+        let Some(path) = self.file_path() else {
+            return json!({});
+        };
+        let Ok(raw) = std::fs::read_to_string(path) else {
+            return json!({});
+        };
+        let Ok(parsed) = serde_json::from_str::<Value>(&raw) else {
+            return json!({});
+        };
         if !parsed.is_object() {
             return json!({});
         }
         // Coerce defensively: only string group -> node pairs survive.
         let mut out = Map::new();
         for (profile_id, groups) in parsed.as_object().unwrap() {
-            let Some(groups) = groups.as_object() else { continue };
+            let Some(groups) = groups.as_object() else {
+                continue;
+            };
             let mut clean = Map::new();
             for (group, node) in groups {
                 if let Some(node) = node.as_str().filter(|n| !n.is_empty()) {
@@ -664,12 +751,18 @@ impl ProxySelectionStore {
     }
 
     fn write(&self, all: &Value) -> Result<(), IpcError> {
-        let Some(path) = self.file_path() else { return Ok(()) };
+        let Some(path) = self.file_path() else {
+            return Ok(());
+        };
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| IpcError::internal(error.to_string()))?;
+            std::fs::create_dir_all(parent)
+                .map_err(|error| IpcError::internal(error.to_string()))?;
         }
         let tmp = path.with_file_name(format!(".{PROXY_SELECTIONS_FILE}.{}.tmp", Uuid::new_v4()));
-        let body = format!("{}\n", serde_json::to_string_pretty(all).unwrap_or_default());
+        let body = format!(
+            "{}\n",
+            serde_json::to_string_pretty(all).unwrap_or_default()
+        );
         std::fs::write(&tmp, body).map_err(|error| IpcError::internal(error.to_string()))?;
         std::fs::rename(&tmp, &path).map_err(|error| IpcError::internal(error.to_string()))?;
         Ok(())
@@ -678,7 +771,10 @@ impl ProxySelectionStore {
     /// All remembered selections for one profile ({} when none).
     pub fn get(&self, profile_id: &str) -> Value {
         let _serial = self.queue.lock().expect("selection queue mutex poisoned");
-        self.read_all().get(profile_id).cloned().unwrap_or(json!({}))
+        self.read_all()
+            .get(profile_id)
+            .cloned()
+            .unwrap_or(json!({}))
     }
 
     /// Remember `node` for `group` under `profile_id`.
@@ -723,7 +819,11 @@ impl MihomoClient {
         let http = reqwest::Client::builder()
             .build()
             .map_err(|error| IpcError::internal(error.to_string()))?;
-        Ok(MihomoClient { http, base_url: format!("http://127.0.0.1:{port}"), secret: secret.to_string() })
+        Ok(MihomoClient {
+            http,
+            base_url: format!("http://127.0.0.1:{port}"),
+            secret: secret.to_string(),
+        })
     }
 
     /// Perform a controller request and map every failure mode to a typed
@@ -737,7 +837,10 @@ impl MihomoClient {
         empty_204: bool,
     ) -> Result<Option<Value>, IpcError> {
         let url = format!("{}{}", self.base_url, path);
-        let mut request = self.http.request(reqwest::Method::from_bytes(method.as_bytes()).expect("valid method"), &url);
+        let mut request = self.http.request(
+            reqwest::Method::from_bytes(method.as_bytes()).expect("valid method"),
+            &url,
+        );
         if !self.secret.is_empty() {
             request = request.header("Authorization", format!("Bearer {}", self.secret));
         }
@@ -746,7 +849,11 @@ impl MihomoClient {
                 .header("Content-Type", "application/json")
                 .body(serde_json::to_string(body).unwrap_or_default());
         }
-        let response = match request.timeout(Duration::from_millis(timeout_ms)).send().await {
+        let response = match request
+            .timeout(Duration::from_millis(timeout_ms))
+            .send()
+            .await
+        {
             Ok(response) => response,
             Err(error) if error.is_timeout() => {
                 return Err(IpcError::code(
@@ -767,47 +874,77 @@ impl MihomoClient {
                 401 => IpcError::code(code::UNAUTHORIZED, "controller secret mismatch"),
                 // 504: a group delay test reported every proxy as timed out; 503:
                 // a single node test failed (unreachable or delay == 0).
-                504 => IpcError::code(code::UPSTREAM_TIMEOUT, "mihomo delay test timed out with HTTP 504"),
-                503 => IpcError::code(code::UPSTREAM_TEST_FAILED, "mihomo delay test failed: HTTP 503"),
-                _ => IpcError::code(code::UPSTREAM_HTTP_ERROR, format!("mihomo request failed with HTTP {status}")),
-            }
-            );
+                504 => IpcError::code(
+                    code::UPSTREAM_TIMEOUT,
+                    "mihomo delay test timed out with HTTP 504",
+                ),
+                503 => IpcError::code(
+                    code::UPSTREAM_TEST_FAILED,
+                    "mihomo delay test failed: HTTP 503",
+                ),
+                _ => IpcError::code(
+                    code::UPSTREAM_HTTP_ERROR,
+                    format!("mihomo request failed with HTTP {status}"),
+                ),
+            });
         }
         if status == 204 || empty_204 {
             return Ok(None);
         }
         let raw = response.text().await.unwrap_or_default();
-        let parsed: Value = serde_json::from_str(&raw)
-            .map_err(|error| IpcError::code(code::INVALID_UPSTREAM, format!("mihomo returned invalid JSON: {error}")))?;
+        let parsed: Value = serde_json::from_str(&raw).map_err(|error| {
+            IpcError::code(
+                code::INVALID_UPSTREAM,
+                format!("mihomo returned invalid JSON: {error}"),
+            )
+        })?;
         Ok(Some(parsed))
     }
 
     pub async fn get_version(&self) -> Result<Value, IpcError> {
-        let raw = self.request("GET", "/version", None, DEFAULT_TIMEOUT_MS, false).await?;
+        let raw = self
+            .request("GET", "/version", None, DEFAULT_TIMEOUT_MS, false)
+            .await?;
         parse_mihomo_version(&raw.unwrap_or(Value::Null))
     }
 
     pub async fn get_config(&self) -> Result<Value, IpcError> {
-        let raw = self.request("GET", "/configs", None, DEFAULT_TIMEOUT_MS, false).await?;
+        let raw = self
+            .request("GET", "/configs", None, DEFAULT_TIMEOUT_MS, false)
+            .await?;
         parse_mihomo_config(&raw.unwrap_or(Value::Null))
     }
 
     pub async fn patch_config(&self, patch: &Value) -> Result<Value, IpcError> {
-        self.request("PATCH", "/configs", Some(patch.clone()), DEFAULT_TIMEOUT_MS, true)
-            .await?;
+        self.request(
+            "PATCH",
+            "/configs",
+            Some(patch.clone()),
+            DEFAULT_TIMEOUT_MS,
+            true,
+        )
+        .await?;
         Ok(Value::Null)
     }
 
     /// Apply a complete runtime document without replacing the process.
     /// No `force=true`: mihomo keeps the already-bound listeners.
     pub async fn reload_config(&self, payload: &str) -> Result<Value, IpcError> {
-        self.request("PUT", "/configs", Some(json!({ "payload": payload })), DEFAULT_TIMEOUT_MS, true)
-            .await?;
+        self.request(
+            "PUT",
+            "/configs",
+            Some(json!({ "payload": payload })),
+            DEFAULT_TIMEOUT_MS,
+            true,
+        )
+        .await?;
         Ok(Value::Null)
     }
 
     pub async fn get_proxies(&self) -> Result<Value, IpcError> {
-        let raw = self.request("GET", "/proxies", None, DEFAULT_TIMEOUT_MS, false).await?;
+        let raw = self
+            .request("GET", "/proxies", None, DEFAULT_TIMEOUT_MS, false)
+            .await?;
         parse_mihomo_proxies(&raw.unwrap_or(Value::Null))
     }
 
@@ -824,12 +961,16 @@ impl MihomoClient {
     }
 
     pub async fn get_rules(&self) -> Result<Value, IpcError> {
-        let raw = self.request("GET", "/rules", None, DEFAULT_TIMEOUT_MS, false).await?;
+        let raw = self
+            .request("GET", "/rules", None, DEFAULT_TIMEOUT_MS, false)
+            .await?;
         parse_mihomo_rules(&raw.unwrap_or(Value::Null))
     }
 
     pub async fn get_proxy_providers(&self) -> Result<Value, IpcError> {
-        let raw = self.request("GET", "/providers/proxies", None, DEFAULT_TIMEOUT_MS, false).await?;
+        let raw = self
+            .request("GET", "/providers/proxies", None, DEFAULT_TIMEOUT_MS, false)
+            .await?;
         parse_mihomo_proxy_providers(&raw.unwrap_or(Value::Null))
     }
 
@@ -850,7 +991,10 @@ impl MihomoClient {
     pub async fn health_check_proxy_provider(&self, name: &str) -> Result<Value, IpcError> {
         self.request(
             "GET",
-            &format!("/providers/proxies/{}/healthcheck", encode_uri_component(name)),
+            &format!(
+                "/providers/proxies/{}/healthcheck",
+                encode_uri_component(name)
+            ),
             None,
             DEFAULT_TIMEOUT_MS,
             true,
@@ -860,7 +1004,9 @@ impl MihomoClient {
     }
 
     pub async fn get_rule_providers(&self) -> Result<Value, IpcError> {
-        let raw = self.request("GET", "/providers/rules", None, DEFAULT_TIMEOUT_MS, false).await?;
+        let raw = self
+            .request("GET", "/providers/rules", None, DEFAULT_TIMEOUT_MS, false)
+            .await?;
         parse_mihomo_rule_providers(&raw.unwrap_or(Value::Null))
     }
 
@@ -899,7 +1045,12 @@ impl MihomoClient {
         (DEFAULT_TIMEOUT_MS as i64).max(timeout + 3000) as u64
     }
 
-    pub async fn delay_test(&self, name: &str, url: Option<&str>, timeout: i64) -> Result<Value, IpcError> {
+    pub async fn delay_test(
+        &self,
+        name: &str,
+        url: Option<&str>,
+        timeout: i64,
+    ) -> Result<Value, IpcError> {
         let url = Self::resolve_test_url(url);
         Self::assert_safe_test_url(&url)?;
         let query = format!(
@@ -954,7 +1105,12 @@ impl MihomoClient {
         Ok(parsed)
     }
 
-    pub async fn group_delay_test(&self, name: &str, url: Option<&str>, timeout: i64) -> Result<Value, IpcError> {
+    pub async fn group_delay_test(
+        &self,
+        name: &str,
+        url: Option<&str>,
+        timeout: i64,
+    ) -> Result<Value, IpcError> {
         let url = Self::resolve_test_url(url);
         Self::assert_safe_test_url(&url)?;
         let query = format!(
@@ -980,28 +1136,52 @@ impl MihomoClient {
             encode_uri_component(name),
             encode_uri_component(kind)
         );
-        let raw = self.request("GET", &format!("/dns/query{query}"), None, DEFAULT_TIMEOUT_MS, false).await?;
+        let raw = self
+            .request(
+                "GET",
+                &format!("/dns/query{query}"),
+                None,
+                DEFAULT_TIMEOUT_MS,
+                false,
+            )
+            .await?;
         parse_mihomo_dns_query(&raw.unwrap_or(Value::Null))
     }
 
     pub async fn flush_dns_cache(&self) -> Result<Value, IpcError> {
-        self.request("POST", "/cache/dns/flush", None, DEFAULT_TIMEOUT_MS, true).await?;
+        self.request("POST", "/cache/dns/flush", None, DEFAULT_TIMEOUT_MS, true)
+            .await?;
         Ok(Value::Null)
     }
 
     pub async fn flush_fakeip_cache(&self) -> Result<Value, IpcError> {
-        self.request("POST", "/cache/fakeip/flush", None, DEFAULT_TIMEOUT_MS, true).await?;
+        self.request(
+            "POST",
+            "/cache/fakeip/flush",
+            None,
+            DEFAULT_TIMEOUT_MS,
+            true,
+        )
+        .await?;
         Ok(Value::Null)
     }
 
     pub async fn get_connections(&self) -> Result<Value, IpcError> {
-        let raw = self.request("GET", "/connections", None, DEFAULT_TIMEOUT_MS, false).await?;
+        let raw = self
+            .request("GET", "/connections", None, DEFAULT_TIMEOUT_MS, false)
+            .await?;
         parse_mihomo_connections(&raw.unwrap_or(Value::Null))
     }
 
     pub async fn close_connection(&self, id: &str) -> Result<Value, IpcError> {
-        self.request("DELETE", &format!("/connections/{}", encode_uri_component(id)), None, DEFAULT_TIMEOUT_MS, false)
-            .await?;
+        self.request(
+            "DELETE",
+            &format!("/connections/{}", encode_uri_component(id)),
+            None,
+            DEFAULT_TIMEOUT_MS,
+            false,
+        )
+        .await?;
         Ok(Value::Null)
     }
 }
@@ -1019,8 +1199,12 @@ pub fn parse_proxy_group_test_urls(document: &str) -> Value {
     let Ok(docs) = yaml_rust2::YamlLoader::load_from_str(document) else {
         return json!({});
     };
-    let Some(root) = docs.first() else { return json!({}) };
-    let Some(root_map) = root.as_hash() else { return json!({}) };
+    let Some(root) = docs.first() else {
+        return json!({});
+    };
+    let Some(root_map) = root.as_hash() else {
+        return json!({});
+    };
     let Some(groups) = root_map
         .get(&yaml_rust2::Yaml::String("proxy-groups".to_string()))
         .and_then(|value| value.as_vec())
@@ -1029,10 +1213,14 @@ pub fn parse_proxy_group_test_urls(document: &str) -> Value {
     };
     let mut urls = Map::new();
     for value in groups {
-        let Some(entry) = value.as_hash() else { continue };
+        let Some(entry) = value.as_hash() else {
+            continue;
+        };
         let name = yaml_str(entry, "name").filter(|name| !name.is_empty());
         let Some(name) = name else { continue };
-        let url = yaml_str(entry, "url").map(|url| url.trim().to_string()).filter(|url| !url.is_empty());
+        let url = yaml_str(entry, "url")
+            .map(|url| url.trim().to_string())
+            .filter(|url| !url.is_empty());
         urls.insert(name, url.map(|url| json!(url)).unwrap_or(Value::Null));
     }
     Value::Object(urls)
@@ -1092,7 +1280,12 @@ impl MihomoServices {
     /// Provider-name index: node name -> every provider that currently lists
     /// it (first-seen order; duplicates across subscriptions are routine).
     async fn get_provider_owners(&self, client: &MihomoClient) -> Result<Value, IpcError> {
-        if let Some((at, cached)) = self.provider_owners.lock().expect("owners mutex poisoned").clone() {
+        if let Some((at, cached)) = self
+            .provider_owners
+            .lock()
+            .expect("owners mutex poisoned")
+            .clone()
+        {
             if at.elapsed() < Duration::from_millis(1000) {
                 return Ok(cached);
             }
@@ -1101,14 +1294,22 @@ impl MihomoServices {
         let mut owners: HashMap<String, Vec<Value>> = HashMap::new();
         if let Some(map) = providers.get("providers").and_then(Value::as_object) {
             for (provider_name, provider) in map {
-                let test_url = provider.get("testUrl").and_then(Value::as_str).map(|s| s.trim().to_string());
+                let test_url = provider
+                    .get("testUrl")
+                    .and_then(Value::as_str)
+                    .map(|s| s.trim().to_string());
                 let test_url = test_url.filter(|s| !s.is_empty());
                 if let Some(proxies) = provider.get("proxies").and_then(Value::as_array) {
                     for proxy in proxies {
-                        let Some(name) = proxy.get("name").and_then(Value::as_str) else { continue };
+                        let Some(name) = proxy.get("name").and_then(Value::as_str) else {
+                            continue;
+                        };
                         let owner = json!({ "name": provider_name, "testUrl": test_url });
                         let list = owners.entry(name.to_string()).or_default();
-                        if !list.iter().any(|candidate| candidate["name"] == *provider_name) {
+                        if !list
+                            .iter()
+                            .any(|candidate| candidate["name"] == *provider_name)
+                        {
                             list.push(owner);
                         }
                     }
@@ -1128,14 +1329,21 @@ impl MihomoServices {
     /// Group -> explicit probe URL from the ACTIVE profile document (bounded
     /// 1s cache; the resolver itself fails open to `{}`).
     fn get_group_test_urls(&self, resolver: impl FnOnce() -> Value) -> Value {
-        if let Some((at, cached)) = self.group_test_urls.lock().expect("group urls mutex poisoned").clone() {
+        if let Some((at, cached)) = self
+            .group_test_urls
+            .lock()
+            .expect("group urls mutex poisoned")
+            .clone()
+        {
             if at.elapsed() < Duration::from_millis(1000) {
                 return cached;
             }
         }
         let urls = resolver();
-        *self.group_test_urls.lock().expect("group urls mutex poisoned") =
-            Some((Instant::now(), urls.clone()));
+        *self
+            .group_test_urls
+            .lock()
+            .expect("group urls mutex poisoned") = Some((Instant::now(), urls.clone()));
         urls
     }
 
@@ -1144,6 +1352,7 @@ impl MihomoServices {
     /// then the owner group's testUrl, then the default probe. Leaf nodes are
     /// first probed through every provider that lists them (404 -> next
     /// candidate), nested groups through the plain proxy endpoint.
+    #[allow(clippy::too_many_arguments)] // Mirrors the existing delay-test contract.
     pub async fn group_member_delay_test(
         &self,
         client: &MihomoClient,
@@ -1155,14 +1364,27 @@ impl MihomoServices {
         timeout: i64,
     ) -> Result<Value, IpcError> {
         let snapshot = client.get_proxies().await?;
-        let proxies = snapshot.get("proxies").and_then(Value::as_object).cloned().unwrap_or_default();
+        let proxies = snapshot
+            .get("proxies")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
         let owner = proxies.get(group);
-        let owner_all = owner.and_then(|owner| owner.get("all")).and_then(Value::as_array).cloned();
+        let owner_all = owner
+            .and_then(|owner| owner.get("all"))
+            .and_then(Value::as_array)
+            .cloned();
         let Some(owner_all) = owner_all else {
-            return Err(IpcError::code(code::NOT_FOUND, format!("策略组 {group} 中不存在成员 {name}")));
+            return Err(IpcError::code(
+                code::NOT_FOUND,
+                format!("策略组 {group} 中不存在成员 {name}"),
+            ));
         };
         if !owner_all.iter().any(|member| member.as_str() == Some(name)) {
-            return Err(IpcError::code(code::NOT_FOUND, format!("策略组 {group} 中不存在成员 {name}")));
+            return Err(IpcError::code(
+                code::NOT_FOUND,
+                format!("策略组 {group} 中不存在成员 {name}"),
+            ));
         }
 
         let global_url = global_url.map(str::trim).filter(|url| !url.is_empty());
@@ -1177,10 +1399,17 @@ impl MihomoServices {
                 .filter(|url| !url.is_empty())
         };
         let member = proxies.get(name);
-        let member_is_group = member.and_then(|member| member.get("all")).map(Value::is_array).unwrap_or(false);
+        let member_is_group = member
+            .and_then(|member| member.get("all"))
+            .map(Value::is_array)
+            .unwrap_or(false);
         if !member_is_group {
             let candidates = match self.get_provider_owners(client).await {
-                Ok(owners) => owners.get(name).and_then(Value::as_array).cloned().unwrap_or_default(),
+                Ok(owners) => owners
+                    .get(name)
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default(),
                 Err(error) => {
                     // A controller/provider-list failure must not make a globally
                     // resolvable node untestable; UNAUTHORIZED still propagates.
@@ -1217,7 +1446,11 @@ impl MihomoServices {
                 }
             }
         }
-        let resolved_url = if global_scope { global_url } else { group_url.as_deref().or(global_url) };
+        let resolved_url = if global_scope {
+            global_url
+        } else {
+            group_url.as_deref().or(global_url)
+        };
         client.delay_test(name, resolved_url, timeout).await
     }
 
@@ -1249,29 +1482,53 @@ impl MihomoServices {
         client: &MihomoClient,
         active_profile_id: Option<String>,
     ) -> Result<i64, IpcError> {
-        let Some(profile_id) = active_profile_id else { return Ok(0) };
+        let Some(profile_id) = active_profile_id else {
+            return Ok(0);
+        };
         let remembered = self.selections.get(&profile_id);
-        let Some(groups) = remembered.as_object() else { return Ok(0) };
+        let Some(groups) = remembered.as_object() else {
+            return Ok(0);
+        };
         if groups.is_empty() {
             return Ok(0);
         }
         let live = match client.get_proxies().await {
-            Ok(proxies) => proxies.get("proxies").and_then(Value::as_object).cloned().unwrap_or_default(),
+            Ok(proxies) => proxies
+                .get("proxies")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default(),
             Err(_) => return Ok(0),
         };
         let mut restored = 0i64;
         for (group, node) in groups {
             let Some(node) = node.as_str() else { continue };
-            let Some(target) = live.get(group) else { continue };
-            if !SELECTABLE_GROUP_TYPES.contains(&target.get("type").and_then(Value::as_str).unwrap_or_default()) {
+            let Some(target) = live.get(group) else {
+                continue;
+            };
+            if !SELECTABLE_GROUP_TYPES.contains(
+                &target
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            ) {
                 continue;
             }
-            if !target.get("all").and_then(Value::as_array).map(|all| all.iter().any(|m| m.as_str() == Some(node))).unwrap_or(false) {
+            if !target
+                .get("all")
+                .and_then(Value::as_array)
+                .map(|all| all.iter().any(|m| m.as_str() == Some(node)))
+                .unwrap_or(false)
+            {
                 continue;
             }
             let selected = match target.get("fixed").and_then(Value::as_str) {
                 Some(fixed) if !fixed.is_empty() => fixed.to_string(),
-                _ => target.get("now").and_then(Value::as_str).unwrap_or_default().to_string(),
+                _ => target
+                    .get("now")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
             };
             if selected == node {
                 continue;
@@ -1291,7 +1548,10 @@ impl Default for MihomoServices {
 }
 
 /// Bounded 1s group-test-url cache wrapper for the dispatch layer.
-pub fn get_group_test_urls_cached(services: &MihomoServices, resolver: impl FnOnce() -> Value) -> Value {
+pub fn get_group_test_urls_cached(
+    services: &MihomoServices,
+    resolver: impl FnOnce() -> Value,
+) -> Value {
     services.get_group_test_urls(resolver)
 }
 
@@ -1320,7 +1580,15 @@ pub async fn group_member_delay_test_gateway(
     timeout: i64,
 ) -> Result<Value, IpcError> {
     services
-        .group_member_delay_test(client, explicit_urls, global_scope, global_url, group, name, timeout)
+        .group_member_delay_test(
+            client,
+            explicit_urls,
+            global_scope,
+            global_url,
+            group,
+            name,
+            timeout,
+        )
         .await
 }
 
@@ -1338,7 +1606,10 @@ pub(crate) mod mock_controller {
     }
 
     impl MockServer {
-        pub fn start(secret: &'static str, handler: impl Fn(&str, &str, &str) -> (u16, String) + Send + 'static) -> Self {
+        pub fn start(
+            secret: &'static str,
+            handler: impl Fn(&str, &str, &str) -> (u16, String) + Send + 'static,
+        ) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock server");
             let port = listener.local_addr().unwrap().port() as i64;
             let handle = std::thread::spawn(move || {
@@ -1406,7 +1677,10 @@ pub(crate) mod mock_controller {
                     let _ = stream.write_all(response.as_bytes());
                 }
             });
-            MockServer { port, _handle: handle }
+            MockServer {
+                port,
+                _handle: handle,
+            }
         }
     }
 }
@@ -1423,8 +1697,13 @@ mod tests {
     #[tokio::test]
     async fn request_maps_success_paths_and_carries_the_secret() {
         let server = MockServer::start("s3cret", |method, path, _body| match path {
-            "/version" if method == "GET" => (200, r#"{"meta":true,"version":"v1.19.30"}"#.to_string()),
-            "/configs" if method == "GET" => (200, r#"{"mode":"rule","mixed-port":7890,"extra":1}"#.to_string()),
+            "/version" if method == "GET" => {
+                (200, r#"{"meta":true,"version":"v1.19.30"}"#.to_string())
+            }
+            "/configs" if method == "GET" => (
+                200,
+                r#"{"mode":"rule","mixed-port":7890,"extra":1}"#.to_string(),
+            ),
             "/cache/dns/flush" if method == "POST" => (204, String::new()),
             _ => (404, String::new()),
         });
@@ -1449,15 +1728,33 @@ mod tests {
         });
         let client = client(server.port);
         let error = client.get_config().await.unwrap_err();
-        assert_eq!(error.0, "PROTOCOL_ERROR:UPSTREAM_HTTP_ERROR::mihomo request failed with HTTP 500");
+        assert_eq!(
+            error.0,
+            "PROTOCOL_ERROR:UPSTREAM_HTTP_ERROR::mihomo request failed with HTTP 500"
+        );
         let error = client.get_rules().await.unwrap_err();
-        assert_eq!(error.0, "PROTOCOL_ERROR:UPSTREAM_TEST_FAILED::mihomo delay test failed: HTTP 503");
+        assert_eq!(
+            error.0,
+            "PROTOCOL_ERROR:UPSTREAM_TEST_FAILED::mihomo delay test failed: HTTP 503"
+        );
         let error = client.get_proxies().await.unwrap_err();
-        assert_eq!(error.0, "PROTOCOL_ERROR:UPSTREAM_TIMEOUT::mihomo delay test timed out with HTTP 504");
+        assert_eq!(
+            error.0,
+            "PROTOCOL_ERROR:UPSTREAM_TIMEOUT::mihomo delay test timed out with HTTP 504"
+        );
         let error = client.get_rule_providers().await.unwrap_err();
-        assert_eq!(error.0, "PROTOCOL_ERROR:UNAUTHORIZED::controller secret mismatch");
+        assert_eq!(
+            error.0,
+            "PROTOCOL_ERROR:UNAUTHORIZED::controller secret mismatch"
+        );
         let error = client.get_version().await.unwrap_err();
-        assert!(error.0.starts_with("PROTOCOL_ERROR:INVALID_UPSTREAM::mihomo returned invalid JSON: "), "{}", error.0);
+        assert!(
+            error
+                .0
+                .starts_with("PROTOCOL_ERROR:INVALID_UPSTREAM::mihomo returned invalid JSON: "),
+            "{}",
+            error.0
+        );
     }
 
     #[tokio::test]
@@ -1469,7 +1766,9 @@ mod tests {
         let client = client(port);
         let error = client.get_config().await.unwrap_err();
         assert!(
-            error.0.starts_with("PROTOCOL_ERROR:UPSTREAM_UNREACHABLE::mihomo controller unreachable: "),
+            error.0.starts_with(
+                "PROTOCOL_ERROR:UPSTREAM_UNREACHABLE::mihomo controller unreachable: "
+            ),
             "{}",
             error.0
         );
@@ -1478,7 +1777,10 @@ mod tests {
     #[tokio::test]
     async fn delay_tests_default_url_and_echo_it_back() {
         let server = MockServer::start("s3cret", |_method, path, _body| {
-            assert!(path.starts_with("/proxies/%E9%A6%99%E6%B8%AF/delay?timeout=5000&url="), "{path}");
+            assert!(
+                path.starts_with("/proxies/%E9%A6%99%E6%B8%AF/delay?timeout=5000&url="),
+                "{path}"
+            );
             (200, r#"{"delay":123}"#.to_string())
         });
         let client = client(server.port);
@@ -1505,13 +1807,19 @@ mod tests {
             parse_proxy_selection(&json!(""), &json!("x")).unwrap_err().0,
             "PROTOCOL_ERROR:INVALID_ARGUMENT::invalid proxy selection at group: must be a non-empty string"
         );
-        assert_eq!(parse_proxy_selection(&json!("G"), &json!("N")).unwrap(), ("G".into(), "N".into()));
+        assert_eq!(
+            parse_proxy_selection(&json!("G"), &json!("N")).unwrap(),
+            ("G".into(), "N".into())
+        );
         assert_eq!(
             parse_connection_id(&json!(" ")).unwrap_err().0,
             "PROTOCOL_ERROR:INVALID_ARGUMENT::connection id must be a non-empty string"
         );
         assert_eq!(parse_delay_options(None).unwrap(), None);
-        assert_eq!(parse_delay_options(Some(&json!({"timeout": 5000}))).unwrap(), Some(5000));
+        assert_eq!(
+            parse_delay_options(Some(&json!({"timeout": 5000}))).unwrap(),
+            Some(5000)
+        );
         assert_eq!(
             parse_delay_options(Some(&json!({"url": "http://x"}))).unwrap_err().0,
             "PROTOCOL_ERROR:INVALID_ARGUMENT::invalid delay options at url: Unrecognized key: \"url\""
@@ -1529,13 +1837,18 @@ mod tests {
             parse_config_patch(&json!({"log-level": "loud"})).unwrap_err().0,
             "PROTOCOL_ERROR:INVALID_ARGUMENT::invalid config patch at log-level: Invalid enum value. Expected 'silent' | 'error' | 'warning' | 'info' | 'debug', received 'loud'"
         );
-        assert_eq!(parse_dns_query(&json!("a.b-c.example"), &json!("AAAA")).unwrap(), ("a.b-c.example".into(), "AAAA".into()));
+        assert_eq!(
+            parse_dns_query(&json!("a.b-c.example"), &json!("AAAA")).unwrap(),
+            ("a.b-c.example".into(), "AAAA".into())
+        );
         assert_eq!(
             parse_dns_query(&json!("-bad"), &json!("A")).unwrap_err().0,
             "PROTOCOL_ERROR:INVALID_ARGUMENT::DNS name must be a valid ASCII hostname"
         );
         assert_eq!(
-            parse_dns_query(&json!("ok.example"), &json!("PTR")).unwrap_err().0,
+            parse_dns_query(&json!("ok.example"), &json!("PTR"))
+                .unwrap_err()
+                .0,
             "PROTOCOL_ERROR:INVALID_ARGUMENT::DNS query type is not supported"
         );
         assert_eq!(parse_log_after_seq(None).unwrap(), 0);
@@ -1552,22 +1865,33 @@ mod tests {
             parse_mihomo_version(&json!({"meta": "yes", "version": "v1"})).unwrap_err().0,
             "PROTOCOL_ERROR:INVALID_UPSTREAM::Invalid version payload: Expected boolean, received string"
         );
-        assert!(parse_mihomo_proxies(&json!({"proxies": {"A": {"name": "A", "type": "ss"}}})).is_ok());
+        assert!(
+            parse_mihomo_proxies(&json!({"proxies": {"A": {"name": "A", "type": "ss"}}})).is_ok()
+        );
         assert_eq!(
             parse_mihomo_proxies(&json!({"proxies": {"A": {"name": 1}}})).unwrap_err().0,
             "PROTOCOL_ERROR:INVALID_UPSTREAM::Invalid proxies payload: Expected string, received number"
         );
         assert!(parse_mihomo_rules(&json!({"rules": [{"index": 0, "type": "DOMAIN", "payload": "x", "proxy": "A", "size": 1}]})).is_ok());
         assert_eq!(
-            parse_mihomo_rules(&json!({"rules": [{"index": 0}]})).unwrap_err().0,
+            parse_mihomo_rules(&json!({"rules": [{"index": 0}]}))
+                .unwrap_err()
+                .0,
             "PROTOCOL_ERROR:INVALID_UPSTREAM::Invalid rules payload: Required"
         );
         assert_eq!(
             parse_mihomo_delay_map(&json!({"A": 120, "B": "x"})).unwrap_err().0,
             "PROTOCOL_ERROR:INVALID_UPSTREAM::Invalid delay-map payload: Expected number, received string"
         );
-        let connections = parse_mihomo_connections(&json!({"downloadTotal": 1, "uploadTotal": 2, "memory": 3, "connections": null})).unwrap();
-        assert_eq!(connections["connections"], json!([]), "null normalizes to []");
+        let connections = parse_mihomo_connections(
+            &json!({"downloadTotal": 1, "uploadTotal": 2, "memory": 3, "connections": null}),
+        )
+        .unwrap();
+        assert_eq!(
+            connections["connections"],
+            json!([]),
+            "null normalizes to []"
+        );
         assert!(parse_mihomo_dns_query(&json!({"Status": 0, "Question": [{"name": "a", "type": 1}], "TC": false, "RD": true, "RA": true, "AD": false, "CD": false})).is_ok());
     }
 
@@ -1583,7 +1907,11 @@ mod tests {
         assert_eq!(buffer.snapshot(2), Vec::<Value>::new());
         assert_eq!(buffer.clear(), 2, "high-water mark survives the clear");
         assert_eq!(buffer.snapshot(0), Vec::<Value>::new());
-        assert_eq!(buffer.append(json!({"payload": "c"})), 3, "numbering never resets");
+        assert_eq!(
+            buffer.append(json!({"payload": "c"})),
+            3,
+            "numbering never resets"
+        );
         assert_eq!(buffer.last_seq(), 3);
     }
 
@@ -1630,32 +1958,33 @@ mod tests {
 
     #[tokio::test]
     async fn group_member_test_rejects_missing_members_verbatim() {
-        let server = MockServer::start(
-            "s3cret",
-            |_method, path, _body| {
-                if path == "/proxies" {
-                    (
+        let server = MockServer::start("s3cret", |_method, path, _body| {
+            if path == "/proxies" {
+                (
                         200,
                         r#"{"proxies":{"香港":{"name":"香港","type":"Selector","all":["A","B"],"now":"A"}}}"#
                             .to_string(),
                     )
-                } else {
-                    (404, String::new())
-                }
-            },
-        );
+            } else {
+                (404, String::new())
+            }
+        });
         let services = MihomoServices::new(None);
         let client = client(server.port);
         let error = services
             .group_member_delay_test(&client, &json!({}), false, None, "香港", "不存在", 5000)
             .await
             .unwrap_err();
-        assert_eq!(error.0, "PROTOCOL_ERROR:NOT_FOUND::策略组 香港 中不存在成员 不存在");
+        assert_eq!(
+            error.0,
+            "PROTOCOL_ERROR:NOT_FOUND::策略组 香港 中不存在成员 不存在"
+        );
     }
 
     #[tokio::test]
     async fn group_member_test_prefers_provider_healthcheck_and_group_url() {
-        let server = MockServer::start("s3cret", |method, path, _body| match path {
+        let server = MockServer::start("s3cret", |method, path, _body| {
+            match path {
             "/proxies" => (
                 200,
                 r#"{"proxies":{
@@ -1673,6 +2002,7 @@ mod tests {
                 (200, r#"{"delay":77}"#.to_string())
             }
             _ => (404, String::new()),
+        }
         });
         let services = MihomoServices::new(None);
         let client = client(server.port);
@@ -1681,12 +2011,16 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result["delay"], 77);
-        assert_eq!(result["url"], "https://group.example", "owner testUrl fills in when the profile omits one");
+        assert_eq!(
+            result["url"], "https://group.example",
+            "owner testUrl fills in when the profile omits one"
+        );
     }
 
     #[tokio::test]
     async fn group_member_test_falls_through_404_providers_to_the_plain_endpoint() {
-        let server = MockServer::start("s3cret", |method, path, _body| match (method, path) {
+        let server = MockServer::start("s3cret", |method, path, _body| {
+            match (method, path) {
             ("GET", "/proxies") => (
                 200,
                 r#"{"proxies":{
@@ -1702,6 +2036,7 @@ mod tests {
             (_, p) if p.starts_with("/providers/proxies/prov1/") && method == "GET" => (404, String::new()),
             (_, p) if p.starts_with("/proxies/A/delay") => (200, r#"{"delay":55}"#.to_string()),
             _ => (404, String::new()),
+        }
         });
         let services = MihomoServices::new(None);
         let client = client(server.port);
@@ -1723,7 +2058,9 @@ mod tests {
                 }}"#
                 .to_string(),
             ),
-            (_, p) if p.starts_with("/proxies/%E5%86%85%E5%B1%82/delay") => (200, r#"{"delay":88}"#.to_string()),
+            (_, p) if p.starts_with("/proxies/%E5%86%85%E5%B1%82/delay") => {
+                (200, r#"{"delay":88}"#.to_string())
+            }
             _ => (404, String::new()),
         });
         let services = MihomoServices::new(None);
@@ -1739,7 +2076,10 @@ mod tests {
     async fn select_proxy_records_the_attributed_selection() {
         let server = MockServer::start("s3cret", |method, path, body| match (method, path) {
             ("PUT", p) if p.starts_with("/proxies/%E9%A6%99%E6%B8%AF") => {
-                assert!(body == r#"{"name":"Node-A"}"# || body == r#"{"name":"Node-B"}"#, "{body}");
+                assert!(
+                    body == r#"{"name":"Node-A"}"# || body == r#"{"name":"Node-B"}"#,
+                    "{body}"
+                );
                 (204, String::new())
             }
             _ => (404, String::new()),
@@ -1747,16 +2087,30 @@ mod tests {
         let temp = tempfile::TempDir::new().unwrap();
         let services = MihomoServices::new(Some(temp.path().to_path_buf()));
         let client = client(server.port);
-        services.select_proxy(&client, Some("profile-1".to_string()), "香港", "Node-A").await.unwrap();
-        assert_eq!(services.selections.get("profile-1"), json!({"香港": "Node-A"}));
+        services
+            .select_proxy(&client, Some("profile-1".to_string()), "香港", "Node-A")
+            .await
+            .unwrap();
+        assert_eq!(
+            services.selections.get("profile-1"),
+            json!({"香港": "Node-A"})
+        );
         // Without an active profile the controller switch still happens.
-        services.select_proxy(&client, None, "香港", "Node-B").await.unwrap();
-        assert_eq!(services.selections.get("profile-1"), json!({"香港": "Node-A"}), "unattributed pick not recorded");
+        services
+            .select_proxy(&client, None, "香港", "Node-B")
+            .await
+            .unwrap();
+        assert_eq!(
+            services.selections.get("profile-1"),
+            json!({"香港": "Node-A"}),
+            "unattributed pick not recorded"
+        );
     }
 
     #[tokio::test]
     async fn restore_selections_replays_only_live_selectable_groups() {
-        let server = MockServer::start("s3cret", |method, path, body| match (method, path) {
+        let server = MockServer::start("s3cret", |method, path, body| {
+            match (method, path) {
             ("GET", "/proxies") => (
                 200,
                 r#"{"proxies":{
@@ -1771,6 +2125,7 @@ mod tests {
                 (204, String::new())
             }
             _ => (404, String::new()),
+        }
         });
         let temp = tempfile::TempDir::new().unwrap();
         let services = MihomoServices::new(Some(temp.path().to_path_buf()));
@@ -1780,7 +2135,13 @@ mod tests {
         services.selections.set("p", "香港", "Node-A").unwrap();
         // current now == Node-A would skip; make it differ via a second group
         let client = client(server.port);
-        let restored = services.restore_selections(&client, Some("p".to_string())).await.unwrap();
-        assert_eq!(restored, 1, "only the selectable, differing, still-live group is replayed");
+        let restored = services
+            .restore_selections(&client, Some("p".to_string()))
+            .await
+            .unwrap();
+        assert_eq!(
+            restored, 1,
+            "only the selectable, differing, still-live group is replayed"
+        );
     }
 }

@@ -18,7 +18,8 @@ use crate::tun_service::{TunOwnedSession, TunServiceClient};
 
 /// One readiness attempt: `Ok(Some(version))` once the authenticated
 /// controller answers for this run's endpoint.
-pub type ReadinessProbe = Arc<dyn Fn() -> BoxFuture<'static, Result<Option<String>, IpcError>> + Send + Sync>;
+pub type ReadinessProbe =
+    Arc<dyn Fn() -> BoxFuture<'static, Result<Option<String>, IpcError>> + Send + Sync>;
 /// Builds the service profile (ports, secret, active document, TUN block
 /// present but disabled) for one start.
 pub type ProfileBuilder = Arc<dyn Fn() -> Result<String, IpcError> + Send + Sync>;
@@ -40,7 +41,12 @@ pub struct PrivilegedKernelOptions {
 
 impl Default for PrivilegedKernelOptions {
     fn default() -> Self {
-        PrivilegedKernelOptions { controller_port: Arc::new(|| 9090), ready_timeout_ms: 60_000, service_retry_ms: 10_000, poll_ms: 100 }
+        PrivilegedKernelOptions {
+            controller_port: Arc::new(|| 9090),
+            ready_timeout_ms: 60_000,
+            service_retry_ms: 10_000,
+            poll_ms: 100,
+        }
     }
 }
 
@@ -96,16 +102,25 @@ impl PrivilegedKernelGateway {
     }
 
     pub fn get_status(&self) -> Value {
-        self.status.lock().expect("privileged status mutex poisoned").clone()
+        self.status
+            .lock()
+            .expect("privileged status mutex poisoned")
+            .clone()
     }
 
     fn set_status(&self, status: Value) {
-        *self.status.lock().expect("privileged status mutex poisoned") = status.clone();
+        *self
+            .status
+            .lock()
+            .expect("privileged status mutex poisoned") = status.clone();
         self.status_listeners.emit(&status);
     }
 
     fn phase(&self) -> String {
-        self.get_status()["phase"].as_str().unwrap_or("stopped").to_string()
+        self.get_status()["phase"]
+            .as_str()
+            .unwrap_or("stopped")
+            .to_string()
     }
 
     fn controller_url(&self) -> String {
@@ -132,7 +147,9 @@ impl PrivilegedKernelGateway {
             return Ok(self.get_status());
         }
         if !(self.can_start)() {
-            return Err(IpcError::unsupported("内核已停用，请先在通用设置中启用内核。"));
+            return Err(IpcError::unsupported(
+                "内核已停用，请先在通用设置中启用内核。",
+            ));
         }
         self.set_status(json!({
             "phase": "starting", "pid": null, "version": null,
@@ -169,11 +186,16 @@ impl PrivilegedKernelGateway {
         let owned = self.start_profile(&profile, requested.as_deref()).await?;
         let observed = self.wait_until_ready_or_exited().await?;
         if let Some(requested) = requested.as_deref().filter(|value| is_release_tag(value)) {
-            let effective = observed.as_deref().map(|value| value.trim_start_matches('v'));
+            let effective = observed
+                .as_deref()
+                .map(|value| value.trim_start_matches('v'));
             if effective != Some(requested.trim_start_matches('v')) {
                 return Err(IpcError::code(
                     code::ARTIFACT_HASH_MISMATCH,
-                    format!("内核版本未生效：请求 {requested}，实际 {}", observed.as_deref().unwrap_or("未知")),
+                    format!(
+                        "内核版本未生效：请求 {requested}，实际 {}",
+                        observed.as_deref().unwrap_or("未知")
+                    ),
                 ));
             }
         }
@@ -260,7 +282,9 @@ impl PrivilegedKernelGateway {
                     response
                         .validation_message
                         .or(response.error_code)
-                        .unwrap_or_else(|| "privileged mihomo exited before its controller became ready".into()),
+                        .unwrap_or_else(|| {
+                            "privileged mihomo exited before its controller became ready".into()
+                        }),
                 ));
             }
             tokio::time::sleep(Duration::from_millis(self.options.poll_ms)).await;
@@ -282,7 +306,10 @@ impl PrivilegedKernelGateway {
         loop {
             match operation().await {
                 Ok(value) => return Ok(value),
-                Err(error) if error.parts().0 == code::UPSTREAM_UNREACHABLE && Instant::now() < deadline => {
+                Err(error)
+                    if error.parts().0 == code::UPSTREAM_UNREACHABLE
+                        && Instant::now() < deadline =>
+                {
                     tokio::time::sleep(Duration::from_millis(150)).await;
                 }
                 Err(error) => return Err(error),
@@ -293,12 +320,19 @@ impl PrivilegedKernelGateway {
     /// Recover the ambiguous "service started the child but the reply was
     /// lost" case by reconciling ownership before retrying: a blind second
     /// start would turn a successful first start into a conflict.
-    async fn start_profile(&self, profile: &str, version: Option<&str>) -> Result<TunOwnedSession, IpcError> {
+    async fn start_profile(
+        &self,
+        profile: &str,
+        version: Option<&str>,
+    ) -> Result<TunOwnedSession, IpcError> {
         let deadline = Instant::now() + Duration::from_millis(self.options.service_retry_ms);
         loop {
             match self.client.start(profile, version).await {
                 Ok(owned) => return Ok(owned),
-                Err(error) if error.parts().0 == code::UPSTREAM_UNREACHABLE && Instant::now() < deadline => {
+                Err(error)
+                    if error.parts().0 == code::UPSTREAM_UNREACHABLE
+                        && Instant::now() < deadline =>
+                {
                     if let Ok(reconciled) = self.client.reconcile().await {
                         if reconciled.outcome == "running" {
                             if let Some(owned) = self.client.get_owned_session() {
@@ -315,9 +349,14 @@ impl PrivilegedKernelGateway {
 }
 
 fn is_release_tag(value: &str) -> bool {
-    let Some(rest) = value.strip_prefix('v') else { return false };
+    let Some(rest) = value.strip_prefix('v') else {
+        return false;
+    };
     let parts: Vec<&str> = rest.split('.').collect();
-    parts.len() == 3 && parts.iter().all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+    parts.len() == 3
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
 // ---------------------------------------------------------------------------
@@ -335,7 +374,8 @@ pub const UNREACHABLE_TICKS: usize = 3;
 pub struct ExitMonitorDeps {
     pub kernel: Arc<PrivilegedKernelGateway>,
     pub handle_host_exit: Arc<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync>,
-    pub restore_system_proxy: Arc<dyn Fn() -> BoxFuture<'static, Result<(), IpcError>> + Send + Sync>,
+    pub restore_system_proxy:
+        Arc<dyn Fn() -> BoxFuture<'static, Result<(), IpcError>> + Send + Sync>,
     /// `(autoStartKernel, tunDesired, systemProxyDesired)`.
     pub read_settings: Arc<dyn Fn() -> (bool, bool, bool) + Send + Sync>,
     pub start_kernel: Arc<dyn Fn() -> BoxFuture<'static, Result<(), IpcError>> + Send + Sync>,
@@ -343,7 +383,7 @@ pub struct ExitMonitorDeps {
     pub cancel_intent_recovery: Arc<dyn Fn() + Send + Sync>,
     pub is_controller_alive: Arc<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync>,
     pub is_suspended: Arc<dyn Fn() -> bool + Send + Sync>,
-    pub on_error: Arc<dyn Fn(&str, &str) + Send + Sync>,
+    pub on_error: ErrorCallback,
     pub now_ms: Arc<dyn Fn() -> u64 + Send + Sync>,
 }
 
@@ -376,7 +416,10 @@ impl PrivilegedExitMonitor {
     }
 
     async fn tick_inner(&self) {
-        let phase = self.deps.kernel.get_status()["phase"].as_str().unwrap_or("stopped").to_string();
+        let phase = self.deps.kernel.get_status()["phase"]
+            .as_str()
+            .unwrap_or("stopped")
+            .to_string();
         use std::sync::atomic::Ordering;
         if phase != "running" && phase != "starting" {
             self.unreachable_streak.store(0, Ordering::SeqCst);
@@ -403,7 +446,10 @@ impl PrivilegedExitMonitor {
                     return;
                 }
                 self.unreachable_streak.store(0, Ordering::SeqCst);
-                self.deps.kernel.declare_lost("Privileged service stopped and its mihomo core is gone").await
+                self.deps
+                    .kernel
+                    .declare_lost("Privileged service stopped and its mihomo core is gone")
+                    .await
             }
             Err(error) => {
                 (self.deps.on_error)(&error.extract_message(), "liveness probe");
@@ -419,7 +465,10 @@ impl PrivilegedExitMonitor {
         }
         if self.crash_loop() {
             (self.deps.cancel_intent_recovery)();
-            (self.deps.on_error)("core exited repeatedly; automatic restart paused", "crash loop");
+            (self.deps.on_error)(
+                "core exited repeatedly; automatic restart paused",
+                "crash loop",
+            );
             return;
         }
         let (auto_start, tun_desired, proxy_desired) = (self.deps.read_settings)();
@@ -441,6 +490,8 @@ impl PrivilegedExitMonitor {
     }
 }
 
+type ErrorCallback = Arc<dyn Fn(&str, &str) + Send + Sync>;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,7 +500,11 @@ mod tests {
 
     const SESSION: &str = "6f1c2f1e-8a5b-4c1d-9e2f-0a1b2c3d4e5f";
 
-    fn gateway(transport: ScriptedTransport, ready_after: usize, channel: &str) -> (Arc<PrivilegedKernelGateway>, Arc<AtomicUsize>) {
+    fn gateway(
+        transport: ScriptedTransport,
+        ready_after: usize,
+        channel: &str,
+    ) -> (Arc<PrivilegedKernelGateway>, Arc<AtomicUsize>) {
         let probes = Arc::new(AtomicUsize::new(0));
         let counter = probes.clone();
         let channel = channel.to_string();
@@ -462,19 +517,34 @@ mod tests {
                     if attempt > ready_after {
                         Ok(Some("v1.19.30".to_string()))
                     } else {
-                        Err(IpcError::code(code::UPSTREAM_UNREACHABLE, "controller unreachable"))
+                        Err(IpcError::code(
+                            code::UPSTREAM_UNREACHABLE,
+                            "controller unreachable",
+                        ))
                     }
                 })
             }),
             Arc::new(|| true),
             Arc::new(move || (channel.clone(), Some("v1.19.30".to_string()))),
-            PrivilegedKernelOptions { controller_port: Arc::new(|| 9097), ready_timeout_ms: 2_000, service_retry_ms: 500, poll_ms: 1 },
+            PrivilegedKernelOptions {
+                controller_port: Arc::new(|| 9097),
+                ready_timeout_ms: 2_000,
+                service_retry_ms: 500,
+                poll_ms: 1,
+            },
         );
         (Arc::new(gateway), probes)
     }
 
     fn running(transport: &ScriptedTransport) {
-        transport.push(|request| Ok(reply(request, "running", request["sessionId"].as_str(), Some(321))));
+        transport.push(|request| {
+            Ok(reply(
+                request,
+                "running",
+                request["sessionId"].as_str(),
+                Some(321),
+            ))
+        });
     }
 
     #[tokio::test]
@@ -486,7 +556,11 @@ mod tests {
         let (gateway, probes) = gateway(transport.clone(), 1, "stable");
         let events = Arc::new(Mutex::new(Vec::new()));
         let sink = events.clone();
-        gateway.status_listeners.subscribe(Arc::new(move |status| sink.lock().unwrap().push(status["phase"].as_str().unwrap().to_string())));
+        gateway.status_listeners.subscribe(Arc::new(move |status| {
+            sink.lock()
+                .unwrap()
+                .push(status["phase"].as_str().unwrap().to_string())
+        }));
         let status = gateway.start().await.unwrap();
         assert_eq!(status["phase"], "running");
         assert_eq!(status["pid"], 321);
@@ -494,7 +568,13 @@ mod tests {
         assert_eq!(status["controllerUrl"], "http://127.0.0.1:9097");
         assert_eq!(probes.load(Ordering::SeqCst), 2);
         assert_eq!(*events.lock().unwrap(), vec!["starting", "running"]);
-        let operations: Vec<String> = transport.requests.lock().unwrap().iter().map(|r| r["operation"].as_str().unwrap().to_string()).collect();
+        let operations: Vec<String> = transport
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| r["operation"].as_str().unwrap().to_string())
+            .collect();
         assert_eq!(operations, vec!["reconcile", "start", "reconcile"]);
         // A second start while running is a no-op.
         assert_eq!(gateway.start().await.unwrap()["phase"], "running");
@@ -539,7 +619,12 @@ mod tests {
         transport.push(|request| Ok(reply(request, "stopped", None, None)));
         transport.push(|request| {
             assert_eq!(request["version"], "v1.19.31");
-            Ok(reply(request, "running", request["sessionId"].as_str(), Some(5)))
+            Ok(reply(
+                request,
+                "running",
+                request["sessionId"].as_str(),
+                Some(5),
+            ))
         });
         transport.push(|request| Ok(reply(request, "stopped", None, None)));
         let probes = Arc::new(AtomicUsize::new(0));
@@ -552,7 +637,10 @@ mod tests {
             }),
             Arc::new(|| true),
             Arc::new(|| ("specific".to_string(), Some("v1.19.31".to_string()))),
-            PrivilegedKernelOptions { poll_ms: 1, ..PrivilegedKernelOptions::default() },
+            PrivilegedKernelOptions {
+                poll_ms: 1,
+                ..PrivilegedKernelOptions::default()
+            },
         );
         let error = gateway.start().await.unwrap_err();
         assert_eq!(error.parts().0, code::ARTIFACT_HASH_MISMATCH);
@@ -561,7 +649,12 @@ mod tests {
     #[tokio::test]
     async fn start_retries_while_the_service_pipe_is_not_up_yet() {
         let transport = ScriptedTransport::default();
-        transport.push(|_| Err(IpcError::code(code::UPSTREAM_UNREACHABLE, "TUN service is unavailable")));
+        transport.push(|_| {
+            Err(IpcError::code(
+                code::UPSTREAM_UNREACHABLE,
+                "TUN service is unavailable",
+            ))
+        });
         transport.push(|request| Ok(reply(request, "stopped", None, None)));
         running(&transport);
         let (gateway, _) = gateway(transport, 0, "stable");
@@ -571,14 +664,19 @@ mod tests {
     #[tokio::test]
     async fn disabled_kernel_refuses_to_start() {
         let gateway = PrivilegedKernelGateway::new(
-            Arc::new(TunServiceClient::new(Box::new(ScriptedTransport::default()))),
+            Arc::new(TunServiceClient::new(
+                Box::new(ScriptedTransport::default()),
+            )),
             Arc::new(|| Ok(String::new())),
             Arc::new(|| Box::pin(async { Ok(None) })),
             Arc::new(|| false),
             Arc::new(|| ("stable".to_string(), None)),
             PrivilegedKernelOptions::default(),
         );
-        assert_eq!(gateway.start().await.unwrap_err().parts().0, code::UNSUPPORTED);
+        assert_eq!(
+            gateway.start().await.unwrap_err().parts().0,
+            code::UNSUPPORTED
+        );
         assert_eq!(gateway.get_status()["phase"], "stopped");
     }
 
@@ -592,9 +690,15 @@ mod tests {
         }
     }
 
-    fn monitor(gateway: Arc<PrivilegedKernelGateway>, settings: (bool, bool, bool), controller_alive: bool) -> (PrivilegedExitMonitor, Arc<Mutex<Vec<String>>>) {
+    fn monitor(
+        gateway: Arc<PrivilegedKernelGateway>,
+        settings: (bool, bool, bool),
+        controller_alive: bool,
+    ) -> (PrivilegedExitMonitor, Arc<Mutex<Vec<String>>>) {
         let calls = Arc::new(Mutex::new(Vec::new()));
-        let recorder = Arc::new(Recorder { calls: calls.clone() });
+        let recorder = Arc::new(Recorder {
+            calls: calls.clone(),
+        });
         let clock = Arc::new(AtomicUsize::new(0));
         let r = |name: &'static str, recorder: &Arc<Recorder>| {
             let recorder = recorder.clone();
@@ -652,7 +756,10 @@ mod tests {
         transport.push(|request| Ok(reply(request, "failed", None, None)));
         let (monitor, calls) = monitor(gateway.clone(), (true, true, false), false);
         monitor.tick().await;
-        assert_eq!(*calls.lock().unwrap(), vec!["tun-reset", "proxy-restore", "wake"]);
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["tun-reset", "proxy-restore", "wake"]
+        );
         assert_eq!(gateway.get_status()["phase"], "failed");
         // A stopped/failed core is not probed again.
         monitor.tick().await;
@@ -667,9 +774,15 @@ mod tests {
         transport.push(|request| Ok(reply(request, "stopped", None, None)));
         let (monitor, calls) = monitor(gateway, (true, false, false), false);
         monitor.tick().await;
-        assert!(calls.lock().unwrap().is_empty(), "a live core needs nothing");
+        assert!(
+            calls.lock().unwrap().is_empty(),
+            "a live core needs nothing"
+        );
         monitor.tick().await;
-        assert_eq!(*calls.lock().unwrap(), vec!["tun-reset", "proxy-restore", "start"]);
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["tun-reset", "proxy-restore", "start"]
+        );
     }
 
     #[tokio::test]
@@ -690,7 +803,10 @@ mod tests {
             assert_eq!(gateway.get_status()["phase"], "running");
         }
         dead_monitor.tick().await;
-        assert_eq!(*calls.lock().unwrap(), vec!["tun-reset", "proxy-restore", "wake"]);
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["tun-reset", "proxy-restore", "wake"]
+        );
         assert_eq!(gateway.get_status()["phase"], "failed");
     }
 
@@ -709,7 +825,10 @@ mod tests {
             monitor.tick().await;
         }
         let calls = calls.lock().unwrap();
-        assert_eq!(calls.iter().filter(|call| *call == "start").count(), CRASH_LOOP_LIMIT - 1);
+        assert_eq!(
+            calls.iter().filter(|call| *call == "start").count(),
+            CRASH_LOOP_LIMIT - 1
+        );
         assert_eq!(calls.last().map(String::as_str), Some("error:crash loop"));
         assert!(calls.contains(&"cancel".to_string()));
     }

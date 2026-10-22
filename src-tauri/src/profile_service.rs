@@ -20,7 +20,6 @@
 //!   overrides disabled the enhanced document IS the raw document, so the
 //!   staging point is behavior-identical until composition lands.
 
-use std::path::PathBuf;
 use std::sync::Mutex;
 
 use serde_json::{json, Value};
@@ -45,19 +44,21 @@ pub struct ProfilesService {
 
 impl ProfilesService {
     /// Production constructor: real profile directory + OS credential store.
-    pub fn for_paths(profile_root: &PathBuf, service_name: &str) -> Self {
+    pub fn for_paths(profile_root: &std::path::Path, service_name: &str) -> Self {
         ProfilesService {
-            repository: ProfileRepository::new(profile_root.clone()),
-            source_store: Box::new(crate::profiles::KeyringProfileSourceStore::new(service_name.to_string())),
+            repository: ProfileRepository::new(profile_root.to_path_buf()),
+            source_store: Box::new(crate::profiles::KeyringProfileSourceStore::new(
+                service_name.to_string(),
+            )),
             fetcher: SubscriptionFetcher::new(None),
             lock: Mutex::new(()),
         }
     }
 
     /// Development/test constructor: ephemeral workspace + memory secrets.
-    pub fn for_development(profile_root: &PathBuf) -> Self {
+    pub fn for_development(profile_root: &std::path::Path) -> Self {
         ProfilesService {
-            repository: ProfileRepository::new(profile_root.clone()),
+            repository: ProfileRepository::new(profile_root.to_path_buf()),
             source_store: Box::new(MemoryProfileSourceStore::default()),
             fetcher: SubscriptionFetcher::new(None),
             lock: Mutex::new(()),
@@ -100,7 +101,7 @@ impl ProfilesService {
         Ok(self
             .repository
             .get_active()?
-            .and_then(|profile| if profile.is_null() { None } else { Some(profile) })
+            .filter(|profile| !profile.is_null())
             .unwrap_or(Value::Null))
     }
 
@@ -113,7 +114,10 @@ impl ProfilesService {
             .get("source")
             .cloned()
             .unwrap_or_else(|| json!({ "type": "manual" }));
-        let activate = request.get("activate").and_then(Value::as_bool).unwrap_or(false);
+        let activate = request
+            .get("activate")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         // Validate BEFORE anything reaches disk (the import envelope is
         // redacted inside the repository).
         throw_if_invalid(&validate_document(&document)?)?;
@@ -125,7 +129,12 @@ impl ProfilesService {
     /// import WITHOUT activating, secure the raw refresh URL, then activate.
     /// A secure-storage failure deletes the just-created profile and
     /// rethrows, exactly like the TS composition.
-    pub async fn import_from_url(&self, name: &str, url: &str, activate: bool) -> ProfileResult<Value> {
+    pub async fn import_from_url(
+        &self,
+        name: &str,
+        url: &str,
+        activate: bool,
+    ) -> ProfileResult<Value> {
         let fetched = crate::subscription::fetch_with_fallback(&self.fetcher, url).await?;
         let trimmed = name.trim();
         let effective_name = if !trimmed.is_empty() {
@@ -166,8 +175,12 @@ impl ProfilesService {
     pub async fn update_from_source(&self, id: &str) -> ProfileResult<Value> {
         let profile = self.repository.get(id)?;
         let source = &profile["meta"]["source"];
-        if source["type"] != json!("url") || source["url"].as_str().map(str::is_empty).unwrap_or(true) {
-            return Err(IpcError::invalid_argument("该配置没有远程订阅地址，无法更新"));
+        if source["type"] != json!("url")
+            || source["url"].as_str().map(str::is_empty).unwrap_or(true)
+        {
+            return Err(IpcError::invalid_argument(
+                "该配置没有远程订阅地址，无法更新",
+            ));
         }
         let display_url = source["url"].as_str().unwrap_or_default().to_string();
         let refresh_url = match self.source_store.get(id)? {
@@ -188,7 +201,8 @@ impl ProfilesService {
         // valid existing document. A secure-storage failure must leave that
         // document intact.
         self.source_store.set(id, &refresh_url)?;
-        self.repository.replace_from_source(id, &fetched.document, &fetched.source)
+        self.repository
+            .replace_from_source(id, &fetched.document, &fetched.source)
     }
 
     pub fn activate(&self, id: &str) -> ProfileResult<Value> {
@@ -276,7 +290,9 @@ impl ProfilesService {
     pub fn get_active_group_order(&self) -> ProfileResult<Value> {
         let _guard = self.guard();
         let document = self.active_document()?;
-        Ok(json!(crate::profile_parse::parse_proxy_group_order(&document)))
+        Ok(json!(crate::profile_parse::parse_proxy_group_order(
+            &document
+        )))
     }
 
     /// Declared provider catalog from the active profile document.
@@ -298,7 +314,9 @@ impl ProfilesService {
     pub fn get_active_provider_catalog(&self) -> ProfileResult<Value> {
         let _guard = self.guard();
         let document = self.active_document()?;
-        Ok(json!(crate::profile_parse::parse_provider_catalog(&document)))
+        Ok(json!(crate::profile_parse::parse_provider_catalog(
+            &document
+        )))
     }
 
     fn active_document(&self) -> ProfileResult<String> {
@@ -321,7 +339,7 @@ mod tests {
 
     fn service() -> (TempDir, ProfilesService) {
         let temp = TempDir::new().unwrap();
-        let service = ProfilesService::for_development(&temp.path().to_path_buf());
+        let service = ProfilesService::for_development(temp.path());
         (temp, service)
     }
 
@@ -332,7 +350,9 @@ mod tests {
     #[test]
     fn import_validates_before_persisting() {
         let (_temp, service) = service();
-        let error = service.import(&import_request("Bad", "\t- tab\n")).unwrap_err();
+        let error = service
+            .import(&import_request("Bad", "\t- tab\n"))
+            .unwrap_err();
         assert!(error.0.contains("INVALID_ARGUMENT"), "{}", error.0);
         assert!(error.0.contains("配置校验失败"), "{}", error.0);
         assert!(service.list().unwrap().as_array().unwrap().is_empty());
@@ -341,7 +361,9 @@ mod tests {
     #[test]
     fn import_then_list_and_get() {
         let (_temp, service) = service();
-        let meta = service.import(&import_request("Home", "port: 7890\n")).unwrap();
+        let meta = service
+            .import(&import_request("Home", "port: 7890\n"))
+            .unwrap();
         assert_eq!(meta["name"], "Home");
         assert_eq!(service.list().unwrap().as_array().unwrap().len(), 1);
         let profile = service.get(meta["id"].as_str().unwrap()).unwrap();
@@ -353,7 +375,10 @@ mod tests {
         let (_temp, service) = service();
         // Seed an INVALID meta+doc directly (bypassing import validation) to
         // prove activation refuses invalid documents.
-        let meta = service.repository.import("Bad", "doc", &json!({"type":"manual"}), false).unwrap();
+        let meta = service
+            .repository
+            .import("Bad", "doc", &json!({"type":"manual"}), false)
+            .unwrap();
         let id = meta["id"].as_str().unwrap().to_string();
         // Overwrite the doc with a duplicate-key document (structurally invalid).
         std::fs::write(
@@ -385,7 +410,9 @@ mod tests {
             .import(&json!({ "name": "A", "document": "mode: rule\n", "source": { "type": "url", "url": "https://old.example.com" } }))
             .unwrap();
         let id = a["id"].as_str().unwrap().to_string();
-        service.set_source_url(&id, "https://example.com/sub?token=1").unwrap();
+        service
+            .set_source_url(&id, "https://example.com/sub?token=1")
+            .unwrap();
         service.delete(&id).unwrap();
         assert!(service.list().unwrap().as_array().unwrap().is_empty());
         assert_eq!(service.get_source_url(&id).unwrap(), Value::Null);
@@ -394,10 +421,18 @@ mod tests {
     #[test]
     fn set_source_url_requires_url_type() {
         let (_temp, service) = service();
-        let a = service.import(&import_request("A", "mode: rule\n")).unwrap();
+        let a = service
+            .import(&import_request("A", "mode: rule\n"))
+            .unwrap();
         let id = a["id"].as_str().unwrap().to_string();
-        let error = service.set_source_url(&id, "https://example.com").unwrap_err();
-        assert!(error.0.contains("只有远程配置可以修改订阅地址"), "{}", error.0);
+        let error = service
+            .set_source_url(&id, "https://example.com")
+            .unwrap_err();
+        assert!(
+            error.0.contains("只有远程配置可以修改订阅地址"),
+            "{}",
+            error.0
+        );
     }
 
     #[test]
@@ -408,25 +443,42 @@ mod tests {
             .unwrap();
         let id = a["id"].as_str().unwrap().to_string();
         // Promote to a url source through replace_source, then set the URL.
-        service.repository
-            .replace_source(&id, &json!({ "type": "url", "url": "https://old.example.com" }))
+        service
+            .repository
+            .replace_source(
+                &id,
+                &json!({ "type": "url", "url": "https://old.example.com" }),
+            )
             .unwrap();
-        let meta = service.set_source_url(&id, "https://user:secret@example.com/sub?token=abc").unwrap();
+        let meta = service
+            .set_source_url(&id, "https://user:secret@example.com/sub?token=abc")
+            .unwrap();
         assert!(!meta["source"]["url"].as_str().unwrap().contains("secret"));
         let raw = service.get_source_url(&id).unwrap();
-        assert_eq!(raw, Value::String("https://user:secret@example.com/sub?token=abc".into()));
+        assert_eq!(
+            raw,
+            Value::String("https://user:secret@example.com/sub?token=abc".into())
+        );
     }
 
     #[test]
     fn edit_document_validates_preview() {
         let (_temp, service) = service();
-        let a = service.import(&import_request("A", "port: 1\nmode: rule\n")).unwrap();
+        let a = service
+            .import(&import_request("A", "port: 1\nmode: rule\n"))
+            .unwrap();
         let id = a["id"].as_str().unwrap().to_string();
         // A valid scalar edit succeeds and keeps other lines.
         let meta = service
-            .edit_document(&id, &[ConfigEdit { key: "mode".into(), value: "global".into() }])
+            .edit_document(
+                &id,
+                &[ConfigEdit {
+                    key: "mode".into(),
+                    value: "global".into(),
+                }],
+            )
             .unwrap();
-        assert_eq!(meta["updatedAt"].as_u64().is_some(), true);
+        assert!(meta["updatedAt"].as_u64().is_some());
         let profile = service.get(&id).unwrap();
         assert_eq!(profile["document"], "port: 1\nmode: global\n");
     }
@@ -434,10 +486,16 @@ mod tests {
     #[test]
     fn replace_document_gates_invalid() {
         let (_temp, service) = service();
-        let a = service.import(&import_request("A", "mode: rule\n")).unwrap();
+        let a = service
+            .import(&import_request("A", "mode: rule\n"))
+            .unwrap();
         let id = a["id"].as_str().unwrap().to_string();
         let error = service.replace_document(&id, "rules: ['x'\n").unwrap_err();
-        assert!(error.0.contains("存在未闭合的方括号或花括号"), "{}", error.0);
+        assert!(
+            error.0.contains("存在未闭合的方括号或花括号"),
+            "{}",
+            error.0
+        );
         // The stored document is untouched after a rejected replace.
         assert_eq!(service.get(&id).unwrap()["document"], "mode: rule\n");
     }
@@ -447,7 +505,11 @@ mod tests {
         let (_temp, service) = service();
         let result = service.validate("udp: true\nmode: rule\n").unwrap();
         assert_eq!(result["ok"], true);
-        assert!(result["issues"].as_array().unwrap().iter().any(|i| i["severity"] == "warning"));
+        assert!(result["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["severity"] == "warning"));
     }
 
     #[test]

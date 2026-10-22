@@ -29,7 +29,9 @@ const SESSION_END_TOTAL_BUDGET_MS: u64 = 4_000;
 pub fn on_resume(app: tauri::AppHandle) {
     use tauri::Manager;
     tauri::async_runtime::spawn(async move {
-        if let Some(detector) = app.try_state::<std::sync::Arc<crate::network_detector::NetworkDetector>>() {
+        if let Some(detector) =
+            app.try_state::<std::sync::Arc<crate::network_detector::NetworkDetector>>()
+        {
             let detector = detector.inner().clone();
             detector.probe_now().await;
         }
@@ -48,7 +50,8 @@ pub fn on_session_end(app: &tauri::AppHandle) {
     // No path may write the proxy from here on: an enable that holds the
     // queue (mid-probe) aborts before its first write instead of applying
     // after our restore.
-    if let Some(proxy) = app.try_state::<std::sync::Arc<crate::system_proxy::SystemProxyService>>() {
+    if let Some(proxy) = app.try_state::<std::sync::Arc<crate::system_proxy::SystemProxyService>>()
+    {
         proxy.fence_mutations();
     }
     let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
@@ -60,7 +63,8 @@ pub fn on_session_end(app: &tauri::AppHandle) {
         });
     }
     // 1. The queued restore (same decision rules as every other path).
-    let restored = match app.try_state::<std::sync::Arc<crate::system_proxy::SystemProxyService>>() {
+    let restored = match app.try_state::<std::sync::Arc<crate::system_proxy::SystemProxyService>>()
+    {
         Some(proxy) => {
             let proxy = proxy.inner().clone();
             tauri::async_runtime::block_on(async move {
@@ -92,7 +96,8 @@ pub fn on_session_end(app: &tauri::AppHandle) {
     }
     // 3. Give the ordered flow (TUN off, core stop, flush) the rest of the
     //    budget; the process may be terminated any time after we return.
-    let remaining = Duration::from_millis(SESSION_END_TOTAL_BUDGET_MS).saturating_sub(started.elapsed());
+    let remaining =
+        Duration::from_millis(SESSION_END_TOTAL_BUDGET_MS).saturating_sub(started.elapsed());
     let _ = done_rx.recv_timeout(remaining);
 }
 
@@ -105,9 +110,9 @@ mod platform {
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::System::Shutdown::{ShutdownBlockReasonCreate, ShutdownBlockReasonDestroy};
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW, TranslateMessage,
-        MSG, PBT_APMRESUMEAUTOMATIC, WINDOW_EX_STYLE, WM_ENDSESSION, WM_POWERBROADCAST, WM_QUERYENDSESSION,
-        WNDCLASSW, WS_OVERLAPPED,
+        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW,
+        TranslateMessage, MSG, PBT_APMRESUMEAUTOMATIC, WINDOW_EX_STYLE, WM_ENDSESSION,
+        WM_POWERBROADCAST, WM_QUERYENDSESSION, WNDCLASSW, WS_OVERLAPPED,
     };
 
     static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
@@ -125,7 +130,12 @@ mod platform {
             .unwrap_or(false)
     }
 
-    unsafe extern "system" fn window_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    unsafe extern "system" fn window_proc(
+        hwnd: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
         match message {
             WM_QUERYENDSESSION => {
                 if let Some(app) = APP.get() {
@@ -160,47 +170,49 @@ mod platform {
         if APP.set(app).is_err() {
             return;
         }
-        let spawned = std::thread::Builder::new().name("murge-session-events".into()).spawn(|| unsafe {
-            let Ok(module) = GetModuleHandleW(None) else {
-                eprintln!("[session-events] GetModuleHandleW failed");
-                return;
-            };
-            let class = WNDCLASSW {
-                lpfnWndProc: Some(window_proc),
-                hInstance: module.into(),
-                lpszClassName: w!("MurgeSessionEvents"),
-                ..Default::default()
-            };
-            if RegisterClassW(&class) == 0 {
-                eprintln!("[session-events] RegisterClassW failed");
-                return;
-            }
-            // A hidden TOP-LEVEL window: message-only windows do not receive
-            // the session/power broadcasts.
-            let created = CreateWindowExW(
-                WINDOW_EX_STYLE(0),
-                w!("MurgeSessionEvents"),
-                w!("Murge session events"),
-                WS_OVERLAPPED,
-                0,
-                0,
-                0,
-                0,
-                None,
-                None,
-                module,
-                None,
-            );
-            if created.is_err() {
-                eprintln!("[session-events] CreateWindowExW failed");
-                return;
-            }
-            let mut message = MSG::default();
-            while GetMessageW(&mut message, None, 0, 0).0 > 0 {
-                let _ = TranslateMessage(&message);
-                DispatchMessageW(&message);
-            }
-        });
+        let spawned = std::thread::Builder::new()
+            .name("murge-session-events".into())
+            .spawn(|| unsafe {
+                let Ok(module) = GetModuleHandleW(None) else {
+                    eprintln!("[session-events] GetModuleHandleW failed");
+                    return;
+                };
+                let class = WNDCLASSW {
+                    lpfnWndProc: Some(window_proc),
+                    hInstance: module.into(),
+                    lpszClassName: w!("MurgeSessionEvents"),
+                    ..Default::default()
+                };
+                if RegisterClassW(&class) == 0 {
+                    eprintln!("[session-events] RegisterClassW failed");
+                    return;
+                }
+                // A hidden TOP-LEVEL window: message-only windows do not receive
+                // the session/power broadcasts.
+                let created = CreateWindowExW(
+                    WINDOW_EX_STYLE(0),
+                    w!("MurgeSessionEvents"),
+                    w!("Murge session events"),
+                    WS_OVERLAPPED,
+                    0,
+                    0,
+                    0,
+                    0,
+                    None,
+                    None,
+                    module,
+                    None,
+                );
+                if created.is_err() {
+                    eprintln!("[session-events] CreateWindowExW failed");
+                    return;
+                }
+                let mut message = MSG::default();
+                while GetMessageW(&mut message, None, 0, 0).0 > 0 {
+                    let _ = TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+            });
         if let Err(error) = spawned {
             eprintln!("[session-events] thread spawn failed: {error}");
         }

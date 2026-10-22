@@ -58,12 +58,15 @@ pub enum QuitFlowResult {
     Quitting,
 }
 
+type StopKernelCallback =
+    Option<Box<dyn FnOnce() -> BoxFuture<'static, Result<serde_json::Value, IpcError>> + Send>>;
+
 pub struct QuitFlowDeps {
     /// Restore the owned system proxy, retrying internally. `true` = confirmed
     /// restored (or nothing owned — conflict is safe); `false` = could not.
     pub restore: Box<dyn FnOnce() -> BoxFuture<'static, bool> + Send>,
     /// Stop the kernel / controller (only called after a confirmed restore).
-    pub stop_kernel: Option<Box<dyn FnOnce() -> BoxFuture<'static, Result<serde_json::Value, IpcError>> + Send>>,
+    pub stop_kernel: StopKernelCallback,
     /// Dispose IPC / services (only called after a confirmed restore).
     pub dispose: Option<Box<dyn FnOnce() -> BoxFuture<'static, ()> + Send>>,
 }
@@ -108,7 +111,10 @@ where
             return true;
         }
         if attempt < MAX_QUIT_RESTORE_ATTEMPTS {
-            tokio::time::sleep(std::time::Duration::from_millis(QUIT_RESTORE_RETRY_DELAY_MS)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(
+                QUIT_RESTORE_RETRY_DELAY_MS,
+            ))
+            .await;
         }
     }
     false
@@ -121,7 +127,8 @@ where
 pub async fn restore_network_before_quit(app: &tauri::AppHandle) -> bool {
     let _gate = crate::kernel::RUNTIME_UPDATE.lock().await;
     use tauri::Manager;
-    let restored = match app.try_state::<std::sync::Arc<crate::system_proxy::SystemProxyService>>() {
+    let restored = match app.try_state::<std::sync::Arc<crate::system_proxy::SystemProxyService>>()
+    {
         Some(proxy) => {
             let proxy = proxy.inner();
             restore_with_retry(|| Box::pin(proxy.restore_before_kernel_unavailable())).await
@@ -132,7 +139,10 @@ pub async fn restore_network_before_quit(app: &tauri::AppHandle) -> bool {
         let status = tun.emergency_disable().await;
         // Unconfirmed TUN teardown is logged, never blocking (the TS console).
         if !matches!(status.phase.as_str(), "configured" | "unsupported") {
-            eprintln!("[tun] TUN stop was not confirmed during quit: {}", status.phase);
+            eprintln!(
+                "[tun] TUN stop was not confirmed during quit: {}",
+                status.phase
+            );
         }
     }
     restored
@@ -157,7 +167,9 @@ async fn flush_logs(app: &tauri::AppHandle) {
 async fn dispose_services(app: &tauri::AppHandle) {
     use tauri::Manager;
     crate::runtime_intent::stop(app);
-    if let Some(detector) = app.try_state::<std::sync::Arc<crate::network_detector::NetworkDetector>>() {
+    if let Some(detector) =
+        app.try_state::<std::sync::Arc<crate::network_detector::NetworkDetector>>()
+    {
         detector.stop();
     }
     if let Some(updates) = app.try_state::<std::sync::Arc<crate::updates::UpdateService>>() {
@@ -208,7 +220,9 @@ pub async fn begin_application_shutdown(app: tauri::AppHandle, session_ending: b
                     // Inside the same mode queue as the restore step, so a
                     // queued renderer transition cannot interleave.
                     let _gate = crate::kernel::RUNTIME_UPDATE.lock().await;
-                    if let Some(kernel) = app.try_state::<std::sync::Arc<crate::kernel::KernelServices>>() {
+                    if let Some(kernel) =
+                        app.try_state::<std::sync::Arc<crate::kernel::KernelServices>>()
+                    {
                         return kernel.stop().await;
                     }
                     Ok(serde_json::Value::Null)
@@ -249,7 +263,6 @@ pub async fn begin_application_shutdown(app: tauri::AppHandle, session_ending: b
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // window-adapter.ts / boot-flags.ts — launch, close and second-instance rules
 // ---------------------------------------------------------------------------
@@ -262,7 +275,11 @@ pub fn has_boot_flag(argv: &[String], ci_flags: &str, flag: &str) -> bool {
 /// Login-item silent launch: the window must not be shown.
 pub fn launch_hidden() -> bool {
     let argv: Vec<String> = std::env::args().collect();
-    has_boot_flag(&argv, &std::env::var("MURGE_CI_BOOT_FLAGS").unwrap_or_default(), "--hidden")
+    has_boot_flag(
+        &argv,
+        &std::env::var("MURGE_CI_BOOT_FLAGS").unwrap_or_default(),
+        "--hidden",
+    )
 }
 
 /// `onSecondInstance`: a duplicate login registration (`--hidden`) must never
@@ -327,7 +344,11 @@ pub fn wire_main_window(app: &tauri::AppHandle) {
                 .try_state::<std::sync::Arc<crate::settings::SettingsStore>>()
                 .map(|settings| settings.get().close_to_tray)
                 .unwrap_or(true);
-            match close_action(is_quitting(), close_to_tray, TRAY_READY.load(Ordering::SeqCst)) {
+            match close_action(
+                is_quitting(),
+                close_to_tray,
+                TRAY_READY.load(Ordering::SeqCst),
+            ) {
                 CloseAction::Allow => {}
                 CloseAction::Hide => {
                     api.prevent_close();
@@ -356,7 +377,8 @@ const PROXY_GUARD_INTERVAL_SECS: u64 = 30;
 fn start_proxy_guard(app: tauri::AppHandle) {
     use tauri::Manager;
     tauri::async_runtime::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(PROXY_GUARD_INTERVAL_SECS));
+        let mut interval =
+            tokio::time::interval(std::time::Duration::from_secs(PROXY_GUARD_INTERVAL_SECS));
         interval.tick().await;
         loop {
             interval.tick().await;
@@ -370,9 +392,13 @@ fn start_proxy_guard(app: tauri::AppHandle) {
             if !enabled {
                 continue;
             }
-            if let Some(proxy) = app.try_state::<std::sync::Arc<crate::system_proxy::SystemProxyService>>() {
+            if let Some(proxy) =
+                app.try_state::<std::sync::Arc<crate::system_proxy::SystemProxyService>>()
+            {
                 match proxy.verify_integrity().await {
-                    "repaired" => eprintln!("[system-proxy] guard repaired an externally mutated proxy"),
+                    "repaired" => {
+                        eprintln!("[system-proxy] guard repaired an externally mutated proxy")
+                    }
                     "repair-failed" => eprintln!("[system-proxy] guard re-apply failed"),
                     _ => {}
                 }
@@ -408,12 +434,19 @@ mod tests {
         let argv = vec!["murge.exe".to_string(), "--hidden".to_string()];
         assert!(has_boot_flag(&argv, "", "--hidden"));
         assert!(!has_boot_flag(&argv, "", "--hidden-smoke"));
-        assert!(has_boot_flag(&["murge.exe".to_string()], " --hidden-smoke  ", "--hidden-smoke"));
+        assert!(has_boot_flag(
+            &["murge.exe".to_string()],
+            " --hidden-smoke  ",
+            "--hidden-smoke"
+        ));
     }
 
     #[test]
     fn a_hidden_second_instance_stays_in_the_tray() {
-        assert!(!second_instance_reveals(&["murge.exe".into(), "--hidden".into()]));
+        assert!(!second_instance_reveals(&[
+            "murge.exe".into(),
+            "--hidden".into()
+        ]));
         assert!(second_instance_reveals(&["murge.exe".into()]));
     }
 

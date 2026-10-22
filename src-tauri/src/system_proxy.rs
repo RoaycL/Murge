@@ -1407,7 +1407,10 @@ impl SystemProxyService {
     }
 
     fn fenced_error(&self) -> IpcError {
-        IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, "会话正在结束，已取消启用系统代理")
+        IpcError::code(
+            code::SYSTEM_PROXY_ENABLE_FAILED,
+            "会话正在结束，已取消启用系统代理",
+        )
     }
 
     pub fn get_status(&self) -> SystemProxyStatus {
@@ -2472,17 +2475,25 @@ pub const REG_TYPE_QWORD: u32 = 11;
 
 /// The Internet Settings subkey under HKCU (no hive prefix).
 #[cfg_attr(not(windows), allow(dead_code))]
-pub const INTERNET_SETTINGS_SUBKEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
+pub const INTERNET_SETTINGS_SUBKEY: &str =
+    r"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
 
 fn decode_utf16(data: &[u8]) -> String {
-    let units: Vec<u16> = data.chunks_exact(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]])).collect();
+    let units: Vec<u16> = data
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect();
     String::from_utf16_lossy(&units)
 }
 
 /// Decode one raw registry value (type + bytes) into the snapshot shape.
 /// `None` data means the value is absent. Unknown types fail closed, exactly
 /// like the PowerShell script's `throw`.
-pub fn decode_registry_value(kind: u32, data: Option<&[u8]>, name: &str) -> Result<RegistryValue, String> {
+pub fn decode_registry_value(
+    kind: u32,
+    data: Option<&[u8]>,
+    name: &str,
+) -> Result<RegistryValue, String> {
     let Some(data) = data else {
         return Ok(RegistryValue::absent());
     };
@@ -2497,9 +2508,7 @@ pub fn decode_registry_value(kind: u32, data: Option<&[u8]>, name: &str) -> Resu
             let parts: Vec<&str> = text.trim_end_matches('\0').split('\0').collect();
             Value::String(parts.join(";"))
         }
-        REG_TYPE_BINARY => {
-            Value::String(data.iter().map(|byte| format!("{byte:02X}")).collect())
-        }
+        REG_TYPE_BINARY => Value::String(data.iter().map(|byte| format!("{byte:02X}")).collect()),
         REG_TYPE_DWORD => {
             let bytes: [u8; 4] = data
                 .get(..4)
@@ -2525,11 +2534,18 @@ pub fn decode_registry_value(kind: u32, data: Option<&[u8]>, name: &str) -> Resu
         REG_TYPE_DWORD => "REG_DWORD",
         _ => "REG_QWORD",
     };
-    Ok(RegistryValue { exists: true, kind: label.to_string(), value })
+    Ok(RegistryValue {
+        exists: true,
+        kind: label.to_string(),
+        value,
+    })
 }
 
 fn encode_utf16_z(text: &str) -> Vec<u8> {
-    text.encode_utf16().chain(std::iter::once(0)).flat_map(|unit| unit.to_le_bytes()).collect()
+    text.encode_utf16()
+        .chain(std::iter::once(0))
+        .flat_map(|unit| unit.to_le_bytes())
+        .collect()
 }
 
 /// Encode a snapshot value for `RegSetValueExW`; `Ok(None)` means delete.
@@ -2548,7 +2564,9 @@ pub fn encode_registry_value(value: &RegistryValue) -> Result<Option<(u32, Vec<u
             Ok(Some((REG_TYPE_DWORD, raw.to_le_bytes().to_vec())))
         }
         ("REG_SZ", Value::String(text)) => Ok(Some((REG_TYPE_SZ, encode_utf16_z(text)))),
-        ("REG_EXPAND_SZ", Value::String(text)) => Ok(Some((REG_TYPE_EXPAND_SZ, encode_utf16_z(text)))),
+        ("REG_EXPAND_SZ", Value::String(text)) => {
+            Ok(Some((REG_TYPE_EXPAND_SZ, encode_utf16_z(text))))
+        }
         ("REG_BINARY", Value::String(hex)) => {
             if hex.len() % 2 != 0 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
                 return Err(IpcError::internal("invalid REG_BINARY payload"));
@@ -2563,7 +2581,9 @@ pub fn encode_registry_value(value: &RegistryValue) -> Result<Option<(u32, Vec<u
         ("REG_DWORD" | "REG_SZ" | "REG_EXPAND_SZ" | "REG_BINARY", _) => {
             Err(IpcError::internal(format!("invalid {kind} payload")))
         }
-        _ => Err(IpcError::internal(format!("unsupported registry type for restore: {kind}"))),
+        _ => Err(IpcError::internal(format!(
+            "unsupported registry type for restore: {kind}"
+        ))),
     }
 }
 
@@ -2601,7 +2621,10 @@ impl NativeWindowsSystemProxyAdapter {
     pub fn read_now(&self) -> Result<RegistryState, IpcError> {
         let read = |name: &str| -> Result<RegistryValue, IpcError> {
             let raw = self.registry.query(name).map_err(|message| {
-                IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, format!("解析系统代理注册表快照失败：{message}"))
+                IpcError::code(
+                    code::SYSTEM_PROXY_ENABLE_FAILED,
+                    format!("解析系统代理注册表快照失败：{message}"),
+                )
             })?;
             decode_registry_value(
                 raw.as_ref().map(|(kind, _)| *kind).unwrap_or(0),
@@ -2609,7 +2632,10 @@ impl NativeWindowsSystemProxyAdapter {
                 name,
             )
             .map_err(|message| {
-                IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, format!("解析系统代理注册表快照失败：{message}"))
+                IpcError::code(
+                    code::SYSTEM_PROXY_ENABLE_FAILED,
+                    format!("解析系统代理注册表快照失败：{message}"),
+                )
             })
         };
         Ok(RegistryState {
@@ -2622,7 +2648,10 @@ impl NativeWindowsSystemProxyAdapter {
     pub fn apply_now(&self, written: &WrittenState) -> Result<(), IpcError> {
         let server = written.proxy_server.value.as_str().unwrap_or_default();
         if server.is_empty() {
-            return Err(IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, "系统代理目标值无效"));
+            return Err(IpcError::code(
+                code::SYSTEM_PROXY_ENABLE_FAILED,
+                "系统代理目标值无效",
+            ));
         }
         // The reg.exe apply order: ProxyEnable → ProxyServer → ProxyOverride.
         for (name, value) in [
@@ -2630,14 +2659,24 @@ impl NativeWindowsSystemProxyAdapter {
             (PROXY_SERVER_VALUE, &written.proxy_server),
             (PROXY_OVERRIDE_VALUE, &written.proxy_override),
         ] {
-            let encoded = encode_registry_value(value)
-                .map_err(|error| IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, format!("写入 {name} 失败：{}", error.0)))?;
+            let encoded = encode_registry_value(value).map_err(|error| {
+                IpcError::code(
+                    code::SYSTEM_PROXY_ENABLE_FAILED,
+                    format!("写入 {name} 失败：{}", error.0),
+                )
+            })?;
             let Some((kind, data)) = encoded else {
-                return Err(IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, "系统代理目标值无效"));
+                return Err(IpcError::code(
+                    code::SYSTEM_PROXY_ENABLE_FAILED,
+                    "系统代理目标值无效",
+                ));
             };
-            self.registry
-                .set(name, kind, &data)
-                .map_err(|message| IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, format!("写入 {name} 失败：{message}")))?;
+            self.registry.set(name, kind, &data).map_err(|message| {
+                IpcError::code(
+                    code::SYSTEM_PROXY_ENABLE_FAILED,
+                    format!("写入 {name} 失败：{message}"),
+                )
+            })?;
         }
         Ok(())
     }
@@ -2649,7 +2688,10 @@ impl NativeWindowsSystemProxyAdapter {
             (PROXY_OVERRIDE_VALUE, &previous.proxy_override),
         ] {
             let failed = |message: String| {
-                IpcError::code(code::SYSTEM_PROXY_RESTORE_FAILED, format!("还原注册表项 {name} 失败：{message}"))
+                IpcError::code(
+                    code::SYSTEM_PROXY_RESTORE_FAILED,
+                    format!("还原注册表项 {name} 失败：{message}"),
+                )
             };
             match encode_registry_value(value).map_err(|error| failed(error.0))? {
                 Some((kind, data)) => self.registry.set(name, kind, &data).map_err(failed)?,
@@ -2661,7 +2703,10 @@ impl NativeWindowsSystemProxyAdapter {
 
     pub fn refresh_now(&self) -> Result<(), IpcError> {
         self.registry.refresh().map_err(|message| {
-            IpcError::code(code::SYSTEM_PROXY_RESTORE_FAILED, format!("刷新 WinINet 代理设置失败：{message}"))
+            IpcError::code(
+                code::SYSTEM_PROXY_RESTORE_FAILED,
+                format!("刷新 WinINet 代理设置失败：{message}"),
+            )
         })
     }
 }
@@ -2712,13 +2757,16 @@ pub fn restore_owned_proxy_blocking(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok("idle"),
         Err(error) => return Err(format!("backup unreadable: {error}")),
     };
-    let value: Value = serde_json::from_str(&raw).map_err(|_| "backup is not valid JSON".to_string())?;
+    let value: Value =
+        serde_json::from_str(&raw).map_err(|_| "backup is not valid JSON".to_string())?;
     let backup = parse_system_proxy_backup(&value).map_err(|_| "backup rejected".to_string())?;
     let observed = adapter.read_now().map_err(|error| error.0)?;
     if !can_restore_backup(&observed, &backup) {
         return Ok("conflict");
     }
-    adapter.restore_now(&backup.previous).map_err(|error| error.0)?;
+    adapter
+        .restore_now(&backup.previous)
+        .map_err(|error| error.0)?;
     adapter.refresh_now().map_err(|error| error.0)?;
     let readback = adapter.read_now().map_err(|error| error.0)?;
     if !matches_previous(&readback, &backup.previous) {
@@ -2737,14 +2785,27 @@ impl Win32Registry {
         text.encode_utf16().chain(std::iter::once(0)).collect()
     }
 
-    fn open(access: windows::Win32::System::Registry::REG_SAM_FLAGS) -> Result<windows::Win32::System::Registry::HKEY, String> {
+    fn open(
+        access: windows::Win32::System::Registry::REG_SAM_FLAGS,
+    ) -> Result<windows::Win32::System::Registry::HKEY, String> {
         use windows::core::PCWSTR;
         use windows::Win32::System::Registry::{RegOpenKeyExW, HKEY, HKEY_CURRENT_USER};
         let subkey = Self::wide(INTERNET_SETTINGS_SUBKEY);
         let mut key = HKEY::default();
-        let status = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, PCWSTR(subkey.as_ptr()), 0, access, &mut key) };
+        let status = unsafe {
+            RegOpenKeyExW(
+                HKEY_CURRENT_USER,
+                PCWSTR(subkey.as_ptr()),
+                0,
+                access,
+                &mut key,
+            )
+        };
         if status.is_err() {
-            return Err(format!("could not open the Internet Settings subkey ({})", status.0));
+            return Err(format!(
+                "could not open the Internet Settings subkey ({})",
+                status.0
+            ));
         }
         Ok(key)
     }
@@ -2805,7 +2866,15 @@ impl RawRegistry for Win32Registry {
         use windows::Win32::System::Registry::{RegSetValueExW, KEY_SET_VALUE, REG_VALUE_TYPE};
         let key = Self::open(KEY_SET_VALUE)?;
         let value_name = Self::wide(name);
-        let status = unsafe { RegSetValueExW(key, PCWSTR(value_name.as_ptr()), 0, REG_VALUE_TYPE(kind), Some(data)) };
+        let status = unsafe {
+            RegSetValueExW(
+                key,
+                PCWSTR(value_name.as_ptr()),
+                0,
+                REG_VALUE_TYPE(kind),
+                Some(data),
+            )
+        };
         Self::close(key);
         if status.is_err() {
             return Err(format!("writing {name} failed ({})", status.0));
@@ -2832,10 +2901,14 @@ impl RawRegistry for Win32Registry {
             InternetSetOptionW, INTERNET_OPTION_REFRESH, INTERNET_OPTION_SETTINGS_CHANGED,
         };
         unsafe {
-            InternetSetOptionW(None, INTERNET_OPTION_SETTINGS_CHANGED, None, 0)
-                .map_err(|error| format!("InternetSetOption(INTERNET_OPTION_SETTINGS_CHANGED) failed: {error}"))?;
-            InternetSetOptionW(None, INTERNET_OPTION_REFRESH, None, 0)
-                .map_err(|error| format!("InternetSetOption(INTERNET_OPTION_REFRESH) failed: {error}"))?;
+            InternetSetOptionW(None, INTERNET_OPTION_SETTINGS_CHANGED, None, 0).map_err(
+                |error| {
+                    format!("InternetSetOption(INTERNET_OPTION_SETTINGS_CHANGED) failed: {error}")
+                },
+            )?;
+            InternetSetOptionW(None, INTERNET_OPTION_REFRESH, None, 0).map_err(|error| {
+                format!("InternetSetOption(INTERNET_OPTION_REFRESH) failed: {error}")
+            })?;
         }
         Ok(())
     }
@@ -4112,7 +4185,10 @@ mod tests {
             Ok(self.values.lock().unwrap().get(name).cloned())
         }
         fn set(&self, name: &str, kind: u32, data: &[u8]) -> Result<(), String> {
-            self.values.lock().unwrap().insert(name.to_string(), (kind, data.to_vec()));
+            self.values
+                .lock()
+                .unwrap()
+                .insert(name.to_string(), (kind, data.to_vec()));
             Ok(())
         }
         fn delete(&self, name: &str) -> Result<(), String> {
@@ -4126,12 +4202,18 @@ mod tests {
     }
 
     fn utf16z(text: &str) -> Vec<u8> {
-        text.encode_utf16().chain(std::iter::once(0)).flat_map(|unit| unit.to_le_bytes()).collect()
+        text.encode_utf16()
+            .chain(std::iter::once(0))
+            .flat_map(|unit| unit.to_le_bytes())
+            .collect()
     }
 
     #[test]
     fn native_codec_matches_the_powershell_snapshot_shape() {
-        assert_eq!(decode_registry_value(0, None, "x").unwrap(), RegistryValue::absent());
+        assert_eq!(
+            decode_registry_value(0, None, "x").unwrap(),
+            RegistryValue::absent()
+        );
         assert_eq!(
             decode_registry_value(REG_TYPE_DWORD, Some(&1u32.to_le_bytes()), "x").unwrap(),
             RegistryValue::dword(1)
@@ -4140,16 +4222,27 @@ mod tests {
             decode_registry_value(REG_TYPE_SZ, Some(&utf16z("127.0.0.1:7890")), "x").unwrap(),
             RegistryValue::string("127.0.0.1:7890")
         );
-        let expand = decode_registry_value(REG_TYPE_EXPAND_SZ, Some(&utf16z("%HOST%:1")), "x").unwrap();
-        assert_eq!((expand.kind.as_str(), expand.value.as_str()), ("REG_EXPAND_SZ", Some("%HOST%:1")));
+        let expand =
+            decode_registry_value(REG_TYPE_EXPAND_SZ, Some(&utf16z("%HOST%:1")), "x").unwrap();
+        assert_eq!(
+            (expand.kind.as_str(), expand.value.as_str()),
+            ("REG_EXPAND_SZ", Some("%HOST%:1"))
+        );
         let binary = decode_registry_value(REG_TYPE_BINARY, Some(&[0x0a, 0xff]), "x").unwrap();
         assert_eq!(binary.value, json!("0AFF"));
         let mut multi = utf16z("a");
         multi.extend(utf16z("b"));
         multi.extend([0, 0]);
-        assert_eq!(decode_registry_value(REG_TYPE_MULTI_SZ, Some(&multi), "x").unwrap().value, json!("a;b"));
         assert_eq!(
-            decode_registry_value(REG_TYPE_QWORD, Some(&5u64.to_le_bytes()), "x").unwrap().kind,
+            decode_registry_value(REG_TYPE_MULTI_SZ, Some(&multi), "x")
+                .unwrap()
+                .value,
+            json!("a;b")
+        );
+        assert_eq!(
+            decode_registry_value(REG_TYPE_QWORD, Some(&5u64.to_le_bytes()), "x")
+                .unwrap()
+                .kind,
             "REG_QWORD"
         );
         assert!(decode_registry_value(99, Some(&[]), "x").is_err());
@@ -4161,24 +4254,52 @@ mod tests {
         for value in [
             RegistryValue::dword(0),
             RegistryValue::string("<local>;10.*"),
-            RegistryValue { exists: true, kind: "REG_EXPAND_SZ".into(), value: json!("%X%") },
-            RegistryValue { exists: true, kind: "REG_BINARY".into(), value: json!("00AB") },
+            RegistryValue {
+                exists: true,
+                kind: "REG_EXPAND_SZ".into(),
+                value: json!("%X%"),
+            },
+            RegistryValue {
+                exists: true,
+                kind: "REG_BINARY".into(),
+                value: json!("00AB"),
+            },
         ] {
             let (kind, data) = encode_registry_value(&value).unwrap().unwrap();
-            assert_eq!(decode_registry_value(kind, Some(&data), "x").unwrap(), value);
+            assert_eq!(
+                decode_registry_value(kind, Some(&data), "x").unwrap(),
+                value
+            );
         }
-        assert_eq!(encode_registry_value(&RegistryValue::absent()).unwrap(), None);
-        let qword = RegistryValue { exists: true, kind: "REG_QWORD".into(), value: json!(1) };
+        assert_eq!(
+            encode_registry_value(&RegistryValue::absent()).unwrap(),
+            None
+        );
+        let qword = RegistryValue {
+            exists: true,
+            kind: "REG_QWORD".into(),
+            value: json!(1),
+        };
         assert!(encode_registry_value(&qword).is_err());
-        let bad_hex = RegistryValue { exists: true, kind: "REG_BINARY".into(), value: json!("0G") };
+        let bad_hex = RegistryValue {
+            exists: true,
+            kind: "REG_BINARY".into(),
+            value: json!("0G"),
+        };
         assert!(encode_registry_value(&bad_hex).is_err());
         assert!(encode_registry_value(&RegistryValue::dword(1u64 << 33)).is_err());
     }
 
-    fn native_service(registry: Arc<MapRegistry>, backup: Arc<dyn BackupStore>) -> SystemProxyService {
+    fn native_service(
+        registry: Arc<MapRegistry>,
+        backup: Arc<dyn BackupStore>,
+    ) -> SystemProxyService {
         SystemProxyService::new(
             Arc::new(NativeWindowsSystemProxyAdapter::new(registry)),
-            static_probe(Target { host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(), port: 7890 }),
+            static_probe(Target {
+                host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+                port: 7890,
+            }),
             backup,
             Arc::new(InMemoryBypassStore::new()),
             "native-test".to_string(),
@@ -4188,13 +4309,26 @@ mod tests {
     #[tokio::test]
     async fn native_adapter_enables_and_restores_the_exact_previous_state() {
         let registry = Arc::new(MapRegistry::default());
-        registry.set(PROXY_ENABLE_VALUE, REG_TYPE_DWORD, &0u32.to_le_bytes()).unwrap();
-        registry.set(PROXY_OVERRIDE_VALUE, REG_TYPE_EXPAND_SZ, &utf16z("corp.local")).unwrap();
+        registry
+            .set(PROXY_ENABLE_VALUE, REG_TYPE_DWORD, &0u32.to_le_bytes())
+            .unwrap();
+        registry
+            .set(
+                PROXY_OVERRIDE_VALUE,
+                REG_TYPE_EXPAND_SZ,
+                &utf16z("corp.local"),
+            )
+            .unwrap();
         let before = registry.values.lock().unwrap().clone();
         let service = native_service(registry.clone(), Arc::new(InMemoryBackupStore::new()));
         assert_eq!(service.enable().await.unwrap().phase, "enabled");
         let server = registry.query(PROXY_SERVER_VALUE).unwrap().unwrap();
-        assert_eq!(decode_registry_value(server.0, Some(&server.1), "s").unwrap().value, json!("127.0.0.1:7890"));
+        assert_eq!(
+            decode_registry_value(server.0, Some(&server.1), "s")
+                .unwrap()
+                .value,
+            json!("127.0.0.1:7890")
+        );
         service.disable().await.unwrap();
         // ProxyServer was absent before: restore deletes it; the EXPAND_SZ
         // override comes back with its original type.
@@ -4208,23 +4342,39 @@ mod tests {
         let registry = Arc::new(MapRegistry::default());
         let adapter = NativeWindowsSystemProxyAdapter::new(registry.clone());
         let store = FileSystemBackupStore::for_base_dir(dir.path());
-        let path = dir.path().join(SYSTEM_PROXY_BACKUP_SUBDIR).join(SYSTEM_PROXY_BACKUP_FILE);
-        assert_eq!(restore_owned_proxy_blocking(&adapter, &path).unwrap(), "idle");
+        let path = dir
+            .path()
+            .join(SYSTEM_PROXY_BACKUP_SUBDIR)
+            .join(SYSTEM_PROXY_BACKUP_FILE);
+        assert_eq!(
+            restore_owned_proxy_blocking(&adapter, &path).unwrap(),
+            "idle"
+        );
 
-        let service = native_service(registry.clone(), Arc::new(FileSystemBackupStore::for_base_dir(dir.path())));
+        let service = native_service(
+            registry.clone(),
+            Arc::new(FileSystemBackupStore::for_base_dir(dir.path())),
+        );
         service.enable().await.unwrap();
         assert!(store.read().await.unwrap().is_some());
-        assert_eq!(restore_owned_proxy_blocking(&adapter, &path).unwrap(), "restored");
+        assert_eq!(
+            restore_owned_proxy_blocking(&adapter, &path).unwrap(),
+            "restored"
+        );
         assert!(registry.values.lock().unwrap().is_empty());
         assert!(!path.exists());
 
         // A foreign takeover is never written over.
         service.enable().await.unwrap();
-        registry.set(PROXY_SERVER_VALUE, REG_TYPE_SZ, &utf16z("10.0.0.1:8080")).unwrap();
-        assert_eq!(restore_owned_proxy_blocking(&adapter, &path).unwrap(), "conflict");
+        registry
+            .set(PROXY_SERVER_VALUE, REG_TYPE_SZ, &utf16z("10.0.0.1:8080"))
+            .unwrap();
+        assert_eq!(
+            restore_owned_proxy_blocking(&adapter, &path).unwrap(),
+            "conflict"
+        );
         assert!(path.exists());
     }
-
 
     #[tokio::test]
     async fn fenced_service_never_writes_the_proxy_again() {
@@ -4234,5 +4384,4 @@ mod tests {
         assert!(service.enable().await.is_err());
         assert!(registry.values.lock().unwrap().is_empty());
     }
-
 }

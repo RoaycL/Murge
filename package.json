@@ -31,7 +31,7 @@
     "node": "^20.19.0 || >=22.12.0"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/api": "2.12.4",
     "@vueuse/core": "^13.0.0",
     "electron-updater": "^6.8.9",
     "lucide-vue-next": "^0.468.0",
@@ -45,7 +45,7 @@
   "devDependencies": {
     "@electron-toolkit/preload": "^3.0.0",
     "@electron-toolkit/utils": "^4.0.0",
-    "@tauri-apps/cli": "^2.11.4",
+    "@tauri-apps/cli": "2.12.4",
     "@types/node": "^24.0.0",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-vue": "^6.0.0",

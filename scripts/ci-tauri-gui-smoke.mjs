@@ -87,7 +87,7 @@ if($env:CI_TAURI_ACTION -eq 'drag' -or $env:CI_TAURI_ACTION -eq 'double-click') 
 } elseif($env:CI_TAURI_ACTION -eq 'system-close') {
  # SC_CLOSE is the native system-menu/Alt+F4 route. Target the already
  # verified application HWND; do not depend on hosted-desktop focus policy.
- if(-not [TauriWindowProbe]::PostMessage($h,0x0112,[UIntPtr]0xF060,[IntPtr]::Zero)){throw 'Native system close request failed'}
+ if(-not [TauriWindowProbe]::PostMessage($h,0x0112,[UIntPtr]::new([uint64]0xF060),[IntPtr]::Zero)){throw 'Native system close request failed'}
  Write-Output '{"closeRequested":true}'
 } elseif($env:CI_TAURI_ACTION -eq 'close') {
  if(-not [TauriWindowProbe]::PostMessage($h,0x0010,[UIntPtr]::Zero,[IntPtr]::Zero)){throw 'Native close request failed'}

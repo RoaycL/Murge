@@ -13,14 +13,20 @@
 
 mod app_info;
 mod brand;
+mod client_hardening;
 mod enhancements;
 mod error;
 mod inspection;
+mod installer_cli;
 mod net_validators;
 mod events;
 mod file_log;
 mod js_sandbox;
 mod lifecycle;
+mod network_detector;
+mod notifications;
+mod runtime_intent;
+mod session_events;
 mod tray;
 mod tray_view;
 mod ipc;
@@ -68,19 +74,24 @@ pub fn run() {
     // Electron shell exits on an invalid brand). Parse it before anything else.
     // (The parsed document is also embedded into the binary via include_str!.)
     brand::load_brand().expect("invalid brand.config.json");
+    // Headless installer commands (uninstall proxy restore) exit here, before
+    // the single-instance lock could forward them to a running window.
+    if let Some(code) = installer_cli::run_from_args(std::env::args()) {
+        std::process::exit(code);
+    }
+    client_hardening::scrub_webview_environment();
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             // A second launch reveals the existing window, mirroring the
-            // Electron second-instance handler (restore -> show -> focus).
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            // Electron second-instance handler (restore -> show -> focus);
+            // a duplicate `--hidden` login launch stays in the tray.
             // Deep-link argv delivery is wired with the deep-link slice
             // (Electron queues links; Phase 7 decides the UI reaction).
+            lifecycle::on_second_instance(app, &argv);
         }))
+        // Signed self-update (updates.rs owns the driver).
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // Dev builds never persist real user data: an ephemeral workspace
             // backs the profile store and secrets stay in memory. Production
@@ -492,9 +503,9 @@ pub fn run() {
             let adapter: std::sync::Arc<dyn system_proxy::SystemProxyAdapter> = if is_dev {
                 std::sync::Arc::new(system_proxy::FakeSystemProxyAdapter::new())
             } else if cfg!(windows) {
-                std::sync::Arc::new(system_proxy::WindowsSystemProxyAdapter::with_runner(
-                    system_proxy::real_command_runner(),
-                ))
+                // Direct Win32 registry + WinINet: no reg.exe/PowerShell child
+                // processes, so the session-end restore can finish in time.
+                native_system_proxy_adapter()
             } else {
                 std::sync::Arc::new(system_proxy::DisabledSystemProxyAdapter::new(std::env::consts::OS))
             };
@@ -658,24 +669,30 @@ pub fn run() {
                 let _ = tauri::Emitter::emit(&tun_app, "tun:status-event", value.clone());
             }));
             // Startup reconciliation of an interrupted TUN transaction (the
-            // tunReconcile recovery layer; never a cached crash-time status).
-            let reconcile_coordinator = tun_coordinator.clone();
-            tauri::async_runtime::spawn(async move {
-                reconcile_coordinator.initialize().await;
-            });
+            // tunReconcile layer) runs inside the ordered startup recovery
+            // chain (runtime_intent::spawn_startup_recovery).
             app.manage(std::sync::Arc::new(tun_coordinator));
-            // Updates: the gated driver honestly reports "not supported" in
-            // this build; state transitions forward to every renderer window.
+            // Updates: the signed Tauri updater (inert in dev runs and until a
+            // release public key is pinned); state transitions forward to
+            // every renderer window.
             let updates_service =
-                updates::UpdateService::new(std::sync::Arc::new(updates::GatedUpdaterDriver::new()));
+                updates::UpdateService::new(std::sync::Arc::new(updates::TauriUpdaterDriver::new(app.handle().clone())));
             updates_service.start();
             let updates_app = app.handle().clone();
             updates_service.subscribe(std::sync::Arc::new(move |value| {
                 let _ = tauri::Emitter::emit(&updates_app, "updates:state-event", value.clone());
             }));
-            // Mid-session feed polling (the mihomo-party / sparkle model); a
-            // no-op on the gated driver.
-            updates_service.start_polling(10 * 60 * 1000);
+            // "自动检查更新": a launch check plus mid-session polling, both
+            // only while the preference is on (toggled live from
+            // app-settings:set); no-ops when the driver is unsupported.
+            let auto_check_update = app.state::<std::sync::Arc<settings::SettingsStore>>().get().auto_check_update;
+            updates_service.apply_polling(auto_check_update);
+            if auto_check_update {
+                let launch_check = updates_service.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = launch_check.poll_tick().await;
+                });
+            }
             app.manage(std::sync::Arc::new(updates_service));
             // The ordered-kernel-gateway crash hook: when the supervisor
             // reports `failed` while the system proxy is owned, restore it
@@ -703,9 +720,12 @@ pub fn run() {
             // never gates startup (the TS `trayReady` contract): a headless
             // session (or a failed tray) logs and continues tray-less.
             match tray::wire_tray(app.handle().clone()) {
-                Ok(()) => {}
+                Ok(()) => lifecycle::set_tray_ready(true),
                 Err(error) => eprintln!("[tray] initialization failed (continuing tray-less): {error}"),
             }
+            // Phase 4: window rules, startup recovery + intent replay,
+            // connectivity watchdog, proxy guard, session/power events.
+            lifecycle::start_desktop_integration(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![ipc::desktop_ipc])
@@ -744,6 +764,9 @@ pub fn run() {
                     if let Some(substore) = app_handle.try_state::<std::sync::Arc<crate::substore::SubStoreService>>() {
                         substore.dispose();
                     }
+                    // Last: on Windows this launches the verified installer
+                    // and terminates the process.
+                    updates::install_ready_update_on_exit();
                 }
                 _ => {}
             }
@@ -862,17 +885,28 @@ fn start_privileged_monitor(
                 .unwrap_or((false, false, false))
         }),
         start_kernel,
-        // No durable intent-recovery loop exists in this shell yet: recreate
-        // the core and let the user re-enable TUN / proxy.
-        wake_intent_recovery: std::sync::Arc::new(move || {
-            let start = wake_start.clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(error) = start().await {
-                    eprintln!("[kernel] privileged core recovery start: {}", error.extract_message());
+        // The durable-intent recovery recreates the same service core and
+        // desired TUN/proxy state; before it exists (early startup) fall back
+        // to recreating the core alone.
+        wake_intent_recovery: {
+            let handle = handle.clone();
+            std::sync::Arc::new(move || {
+                if handle.try_state::<std::sync::Arc<runtime_intent::RecoveryCoordinator>>().is_some() {
+                    runtime_intent::wake(&handle);
+                    return;
                 }
-            });
-        }),
-        cancel_intent_recovery: std::sync::Arc::new(|| {}),
+                let start = wake_start.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(error) = start().await {
+                        eprintln!("[kernel] privileged core recovery start: {}", error.extract_message());
+                    }
+                });
+            })
+        },
+        cancel_intent_recovery: {
+            let handle = handle.clone();
+            std::sync::Arc::new(move || runtime_intent::cancel_pending(&handle))
+        },
         is_controller_alive: std::sync::Arc::new(move || {
             let (controller_port, secret) = current_controller(&alive_handle);
             Box::pin(async move {
@@ -887,10 +921,9 @@ fn start_privileged_monitor(
         now_ms: std::sync::Arc::new(|| usage::epoch_millis_now().max(0) as u64),
     };
     let monitor = privileged_kernel::PrivilegedExitMonitor::new(deps);
+    // The reconcile (stale service core stop) runs in the ordered startup
+    // recovery chain; the monitor only ticks.
     tauri::async_runtime::spawn(async move {
-        if let Err(error) = kernel.initialize().await {
-            eprintln!("[kernel] privileged service reconcile failed: {}", error.extract_message());
-        }
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
         interval.tick().await;
         loop {
@@ -898,4 +931,15 @@ fn start_privileged_monitor(
             monitor.tick().await;
         }
     });
+}
+
+/// The production Windows system-proxy adapter (native registry access).
+#[cfg(windows)]
+fn native_system_proxy_adapter() -> std::sync::Arc<dyn system_proxy::SystemProxyAdapter> {
+    std::sync::Arc::new(system_proxy::NativeWindowsSystemProxyAdapter::win32())
+}
+
+#[cfg(not(windows))]
+fn native_system_proxy_adapter() -> std::sync::Arc<dyn system_proxy::SystemProxyAdapter> {
+    unreachable!("the native system-proxy adapter is only composed on Windows")
 }

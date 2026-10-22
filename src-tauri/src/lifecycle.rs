@@ -35,6 +35,20 @@ pub fn is_quitting() -> bool {
     IS_QUITTING.load(Ordering::SeqCst)
 }
 
+/// Fence every reconnect/replay path before a session-end shutdown starts
+/// (the Windows session-end handler calls this first).
+pub fn mark_quitting() {
+    IS_QUITTING.store(true, Ordering::SeqCst);
+}
+
+/// Whether a live native tray exists. Without one, close-to-tray would strand
+/// a windowless process the user cannot reach, so the close button quits.
+static TRAY_READY: AtomicBool = AtomicBool::new(false);
+
+pub fn set_tray_ready(ready: bool) {
+    TRAY_READY.store(ready, Ordering::SeqCst);
+}
+
 // ---------------------------------------------------------------------------
 // quit-guard.ts — the before-quit decision, unit-testable without a runtime
 // ---------------------------------------------------------------------------
@@ -139,9 +153,13 @@ async fn flush_logs(app: &tauri::AppHandle) {
 }
 
 /// The dispose step (the TS `state.*` teardown list, minus the surfaces this
-/// build has not ported yet: tray, IPC dispose, exit monitor, intent recovery).
+/// build has not ported yet: tray, IPC dispose, exit monitor).
 async fn dispose_services(app: &tauri::AppHandle) {
     use tauri::Manager;
+    crate::runtime_intent::stop(app);
+    if let Some(detector) = app.try_state::<std::sync::Arc<crate::network_detector::NetworkDetector>>() {
+        detector.stop();
+    }
     if let Some(updates) = app.try_state::<std::sync::Arc<crate::updates::UpdateService>>() {
         updates.dispose();
     }
@@ -160,6 +178,10 @@ async fn dispose_services(app: &tauri::AppHandle) {
 /// quit signal funnels here; the first call runs the ordered sequence, later
 /// calls join it (no-op).
 pub async fn begin_application_shutdown(app: tauri::AppHandle, session_ending: bool) {
+    if session_ending {
+        // Never launch a downloaded update's installer while Windows ends the session.
+        crate::updates::cancel_install_on_exit();
+    }
     if SHUTDOWN_IN_FLIGHT.swap(true, Ordering::SeqCst) {
         return;
     }
@@ -227,6 +249,150 @@ pub async fn begin_application_shutdown(app: tauri::AppHandle, session_ending: b
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// window-adapter.ts / boot-flags.ts — launch, close and second-instance rules
+// ---------------------------------------------------------------------------
+
+/// `MURGE_CI_BOOT_FLAGS` forwarding + argv, exactly like `parseBootFlags`.
+pub fn has_boot_flag(argv: &[String], ci_flags: &str, flag: &str) -> bool {
+    argv.iter().any(|arg| arg == flag) || ci_flags.split_whitespace().any(|value| value == flag)
+}
+
+/// Login-item silent launch: the window must not be shown.
+pub fn launch_hidden() -> bool {
+    let argv: Vec<String> = std::env::args().collect();
+    has_boot_flag(&argv, &std::env::var("MURGE_CI_BOOT_FLAGS").unwrap_or_default(), "--hidden")
+}
+
+/// `onSecondInstance`: a duplicate login registration (`--hidden`) must never
+/// turn a tray-only startup into a visible launch; a manual launch reveals
+/// the existing window. (Deep links are not registered in this shell yet.)
+pub fn second_instance_reveals(argv: &[String]) -> bool {
+    !argv.iter().any(|arg| arg == "--hidden")
+}
+
+pub fn reveal_main_window(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    if is_quitting() {
+        return;
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+pub fn on_second_instance(app: &tauri::AppHandle, argv: &[String]) {
+    if second_instance_reveals(argv) {
+        reveal_main_window(app);
+    }
+}
+
+/// What the close button does (the TS `window.on('close')`).
+#[derive(Debug, PartialEq, Eq)]
+pub enum CloseAction {
+    /// A real quit is already running: let the window go.
+    Allow,
+    /// Close-to-tray (最小化到托盘而非退出).
+    Hide,
+    /// The same bounded restore-and-shutdown flow as the tray menu.
+    Quit,
+}
+
+pub fn close_action(quitting: bool, close_to_tray: bool, tray_ready: bool) -> CloseAction {
+    if quitting {
+        CloseAction::Allow
+    } else if close_to_tray && tray_ready {
+        CloseAction::Hide
+    } else {
+        CloseAction::Quit
+    }
+}
+
+/// Main-window wiring: close-to-tray and the hidden login launch. The window
+/// is created invisible (`visible: false` in tauri.conf.json) and shown here
+/// unless this is a `--hidden` launch.
+pub fn wire_main_window(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let handle = app.clone();
+    let target = window.clone();
+    window.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            let close_to_tray = handle
+                .try_state::<std::sync::Arc<crate::settings::SettingsStore>>()
+                .map(|settings| settings.get().close_to_tray)
+                .unwrap_or(true);
+            match close_action(is_quitting(), close_to_tray, TRAY_READY.load(Ordering::SeqCst)) {
+                CloseAction::Allow => {}
+                CloseAction::Hide => {
+                    api.prevent_close();
+                    let _ = target.hide();
+                }
+                CloseAction::Quit => {
+                    api.prevent_close();
+                    let app = handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        begin_application_shutdown(app, false).await;
+                    });
+                }
+            }
+        }
+    });
+    if !launch_hidden() {
+        let _ = window.show();
+    }
+}
+
+/// Proxy guard cadence (clash-verge-rev defaults to 30s; same as Electron).
+const PROXY_GUARD_INTERVAL_SECS: u64 = 30;
+
+/// The proxy guard loop: repair an externally degraded owned proxy, never
+/// fight a takeover. Gated live on the `proxyGuard` setting.
+fn start_proxy_guard(app: tauri::AppHandle) {
+    use tauri::Manager;
+    tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(PROXY_GUARD_INTERVAL_SECS));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            if is_quitting() {
+                continue;
+            }
+            let enabled = app
+                .try_state::<std::sync::Arc<crate::settings::SettingsStore>>()
+                .map(|settings| settings.get().proxy_guard)
+                .unwrap_or(false);
+            if !enabled {
+                continue;
+            }
+            if let Some(proxy) = app.try_state::<std::sync::Arc<crate::system_proxy::SystemProxyService>>() {
+                match proxy.verify_integrity().await {
+                    "repaired" => eprintln!("[system-proxy] guard repaired an externally mutated proxy"),
+                    "repair-failed" => eprintln!("[system-proxy] guard re-apply failed"),
+                    _ => {}
+                }
+            }
+        }
+    });
+}
+
+/// Phase 4 desktop integration, started once from setup after every service
+/// is managed: window rules, startup recovery + intent replay, connectivity
+/// watchdog, proxy guard and the Windows session/power listener.
+pub fn start_desktop_integration(app: &tauri::AppHandle) {
+    wire_main_window(app);
+    crate::runtime_intent::spawn_startup_recovery(app.clone());
+    crate::network_detector::start(app.clone());
+    start_proxy_guard(app.clone());
+    crate::session_events::install(app.clone());
+    crate::notifications::start(app);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,6 +401,30 @@ mod tests {
 
     fn ok<T: Send + 'static>(value: T) -> BoxFuture<'static, T> {
         Box::pin(async move { value })
+    }
+
+    #[test]
+    fn boot_flags_read_argv_and_the_ci_forwarder() {
+        let argv = vec!["murge.exe".to_string(), "--hidden".to_string()];
+        assert!(has_boot_flag(&argv, "", "--hidden"));
+        assert!(!has_boot_flag(&argv, "", "--hidden-smoke"));
+        assert!(has_boot_flag(&["murge.exe".to_string()], " --hidden-smoke  ", "--hidden-smoke"));
+    }
+
+    #[test]
+    fn a_hidden_second_instance_stays_in_the_tray() {
+        assert!(!second_instance_reveals(&["murge.exe".into(), "--hidden".into()]));
+        assert!(second_instance_reveals(&["murge.exe".into()]));
+    }
+
+    #[test]
+    fn close_button_follows_the_close_to_tray_preference() {
+        assert_eq!(close_action(false, true, true), CloseAction::Hide);
+        assert_eq!(close_action(false, false, true), CloseAction::Quit);
+        assert_eq!(close_action(true, false, true), CloseAction::Allow);
+        assert_eq!(close_action(true, true, true), CloseAction::Allow);
+        // No live tray: closing must not strand an unreachable process.
+        assert_eq!(close_action(false, true, false), CloseAction::Quit);
     }
 
     #[tokio::test]

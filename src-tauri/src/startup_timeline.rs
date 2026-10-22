@@ -71,8 +71,8 @@ impl Timeline {
 
 #[derive(Clone, Copy)]
 pub(crate) enum Reconciliation {
-    Tun,
-    Kernel,
+    ManagedState,
+    RuntimeIntent,
 }
 
 static TIMELINE: OnceLock<Mutex<Timeline>> = OnceLock::new();
@@ -153,14 +153,14 @@ mod tests {
                 let mut timeline = Timeline::new();
                 timeline.setup_complete = setup_first;
                 let first = if kernel_first {
-                    Reconciliation::Kernel
+                    Reconciliation::RuntimeIntent
                 } else {
-                    Reconciliation::Tun
+                    Reconciliation::ManagedState
                 };
                 let second = if kernel_first {
-                    Reconciliation::Tun
+                    Reconciliation::ManagedState
                 } else {
-                    Reconciliation::Kernel
+                    Reconciliation::RuntimeIntent
                 };
                 timeline.finish_reconciliation(first);
                 timeline.mark_at("window-created", Duration::ZERO);

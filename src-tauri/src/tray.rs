@@ -963,7 +963,10 @@ impl TrayRefresher {
         use std::sync::atomic::Ordering;
         {
             let mut last = self.last.lock().expect("tray refresher mutex");
-            if last.map(|at| at.elapsed().as_millis() < TRAY_HOVER_THROTTLE_MS).unwrap_or(false) {
+            if last
+                .map(|at| at.elapsed().as_millis() < TRAY_HOVER_THROTTLE_MS)
+                .unwrap_or(false)
+            {
                 return;
             }
             *last = Some(std::time::Instant::now());
@@ -1376,7 +1379,9 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
         Arc::new(move || {
             let accent = resolve_runtime_accent(
                 system_proxy.get_status().phase.as_str(),
-                tun.get_status_value()["phase"].as_str().unwrap_or("unsupported"),
+                tun.get_status_value()["phase"]
+                    .as_str()
+                    .unwrap_or("unsupported"),
             );
             view.set_runtime_appearance(accent, crate::tray_view::dark_theme(&app));
         })
@@ -1424,9 +1429,10 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
                 button_state: tauri::tray::MouseButtonState::Up,
                 ..
             }
-            | tauri::tray::TrayIconEvent::DoubleClick { button: tauri::tray::MouseButton::Left, .. } => {
-                reveal_window(&app_for_activate)
-            }
+            | tauri::tray::TrayIconEvent::DoubleClick {
+                button: tauri::tray::MouseButton::Left,
+                ..
+            } => reveal_window(&app_for_activate),
             _ => {}
         });
     }

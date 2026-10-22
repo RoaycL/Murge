@@ -24,16 +24,25 @@ pub struct UpdateToast {
 /// The toast an update-state snapshot calls for, if any.
 pub fn toast_for_state(state: &Value) -> Option<UpdateToast> {
     let phase = state["phase"].as_str()?;
-    let version = state["availableVersion"].as_str().filter(|version| !version.is_empty())?;
+    let version = state["availableVersion"]
+        .as_str()
+        .filter(|version| !version.is_empty())?;
     let (title, body) = match phase {
-        "available" => (format!("发现新版本 v{version}"), "正在后台下载，退出应用时自动安装。".to_string()),
+        "available" => (
+            format!("发现新版本 v{version}"),
+            "正在后台下载，退出应用时自动安装。".to_string(),
+        ),
         "downloaded" => (
             format!("新版本 v{version} 已就绪"),
             "退出应用时自动安装，或点击“重启并安装”立即更新。".to_string(),
         ),
         _ => return None,
     };
-    Some(UpdateToast { key: format!("{phase}:{version}"), title, body })
+    Some(UpdateToast {
+        key: format!("{phase}:{version}"),
+        title,
+        body,
+    })
 }
 
 /// Remembers which (phase, version) toasts were already shown.
@@ -71,7 +80,11 @@ fn show(app: &tauri::AppHandle, toast: UpdateToast) {
         .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf()))
         .map(|dir| dir.ends_with("target/debug") || dir.ends_with("target/release"))
         .unwrap_or(false);
-    let app_id = if dev_build { Toast::POWERSHELL_APP_ID.to_string() } else { app.config().identifier.clone() };
+    let app_id = if dev_build {
+        Toast::POWERSHELL_APP_ID.to_string()
+    } else {
+        app.config().identifier.clone()
+    };
     let click_app = app.clone();
     // WinRT activation may block briefly; never on the event loop or a
     // state listener.
@@ -121,21 +134,32 @@ mod tests {
 
     #[test]
     fn electron_copy_for_available_and_downloaded() {
-        let found = toast_for_state(&json!({ "phase": "available", "availableVersion": "1.2.3" })).unwrap();
+        let found =
+            toast_for_state(&json!({ "phase": "available", "availableVersion": "1.2.3" })).unwrap();
         assert_eq!(found.title, "发现新版本 v1.2.3");
         assert_eq!(found.body, "正在后台下载，退出应用时自动安装。");
-        let ready = toast_for_state(&json!({ "phase": "downloaded", "availableVersion": "1.2.3" })).unwrap();
+        let ready = toast_for_state(&json!({ "phase": "downloaded", "availableVersion": "1.2.3" }))
+            .unwrap();
         assert_eq!(ready.title, "新版本 v1.2.3 已就绪");
-        assert_eq!(ready.body, "退出应用时自动安装，或点击“重启并安装”立即更新。");
+        assert_eq!(
+            ready.body,
+            "退出应用时自动安装，或点击“重启并安装”立即更新。"
+        );
     }
 
     #[test]
     fn other_phases_and_missing_versions_stay_silent() {
         for phase in ["idle", "checking", "downloading", "not-available", "error"] {
-            assert!(toast_for_state(&json!({ "phase": phase, "availableVersion": "1.2.3" })).is_none());
+            assert!(
+                toast_for_state(&json!({ "phase": phase, "availableVersion": "1.2.3" })).is_none()
+            );
         }
-        assert!(toast_for_state(&json!({ "phase": "available", "availableVersion": null })).is_none());
-        assert!(toast_for_state(&json!({ "phase": "downloaded", "availableVersion": "" })).is_none());
+        assert!(
+            toast_for_state(&json!({ "phase": "available", "availableVersion": null })).is_none()
+        );
+        assert!(
+            toast_for_state(&json!({ "phase": "downloaded", "availableVersion": "" })).is_none()
+        );
     }
 
     #[test]
@@ -149,9 +173,13 @@ mod tests {
         assert!(notifier.take(&downloading).is_none());
         assert!(notifier.take(&downloaded).is_some());
         // A re-check restoring the ready download does not toast again.
-        assert!(notifier.take(&json!({ "phase": "checking", "availableVersion": "1.2.3" })).is_none());
+        assert!(notifier
+            .take(&json!({ "phase": "checking", "availableVersion": "1.2.3" }))
+            .is_none());
         assert!(notifier.take(&downloaded).is_none());
         // A newer release toasts afresh.
-        assert!(notifier.take(&json!({ "phase": "available", "availableVersion": "1.2.4" })).is_some());
+        assert!(notifier
+            .take(&json!({ "phase": "available", "availableVersion": "1.2.4" }))
+            .is_some());
     }
 }

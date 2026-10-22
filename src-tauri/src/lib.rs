@@ -19,54 +19,54 @@ mod brand;
 mod client_hardening;
 mod enhancements;
 mod error;
-mod inspection;
-mod installer_cli;
-mod net_validators;
 mod events;
 mod file_log;
-mod js_sandbox;
-mod lifecycle;
-mod network_detector;
-mod notifications;
-mod runtime_intent;
-mod session_events;
-mod tray;
-mod tray_view;
+mod inspection;
+mod installer_cli;
+mod internet_latency;
 mod ipc;
+mod js_sandbox;
+mod kernel;
+mod lifecycle;
 #[allow(dead_code)] // wired incrementally; the lint fires on staged-but-unwired items
 mod mihomo;
-mod kernel;
+mod net_validators;
+mod network_detector;
+mod network_metadata;
+mod notifications;
 mod override_apply;
 mod override_model;
 mod override_service;
 mod paths;
-mod internet_latency;
-mod network_metadata;
+mod runtime_intent;
+mod session_events;
+mod tray;
+mod tray_view;
 // Network metadata service: shared, cached, single-flight app state.
 use network_metadata::NetworkMetadataService;
+mod icons;
+mod kernel_config_validation;
+mod kernel_process;
+mod live_config;
+mod mihomo_artifact;
+mod privileged_kernel;
 mod profile_parse;
-mod unlock;
+mod profile_service;
+mod profiles;
+mod redact;
 mod route_latency;
+mod settings;
 mod startup;
+mod subscription;
 mod substore;
 mod substore_zip;
 mod system_proxy;
 mod tun;
-mod tun_service;
-mod privileged_kernel;
-mod tun_profile;
 mod tun_hot_switch;
+mod tun_profile;
+mod tun_service;
+mod unlock;
 mod updates;
-mod mihomo_artifact;
-mod kernel_config_validation;
-mod live_config;
-mod kernel_process;
-mod icons;
-mod profile_service;
-mod subscription;
-mod profiles;
-mod redact;
-mod settings;
 mod usage;
 mod validate;
 
@@ -464,7 +464,7 @@ pub fn run() {
                             use tauri::Manager;
                             app.try_state::<std::sync::Arc<crate::settings::SettingsStore>>()
                                 .map(|store| store.get())
-                                .unwrap_or_else(|| settings::AppSettings::default())
+                                .unwrap_or_else(settings::AppSettings::default)
                         }) as futures_util::future::BoxFuture<'static, settings::AppSettings>
                     })
                 },
@@ -653,8 +653,8 @@ pub fn run() {
                                             == std::net::IpAddr::V6(
                                                 "fdfe:dcba:9876::1"
                                                     .parse()
-                                                    .unwrap_or_else(|_| {
-                                                        std::net::Ipv6Addr::UNSPECIFIED.into()
+                                                    .unwrap_or({
+                                                        std::net::Ipv6Addr::UNSPECIFIED
                                                     }),
                                             );
                                     name_match || addr_match
@@ -787,7 +787,10 @@ fn current_controller(handle: &tauri::AppHandle) -> (i64, String) {
         .unwrap_or_default();
     (
         core["controllerPort"].as_i64().unwrap_or(9090),
-        core["controllerSecret"].as_str().unwrap_or_default().to_string(),
+        core["controllerSecret"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
     )
 }
 
@@ -799,7 +802,9 @@ fn compose_privileged_kernel(
     version_selection: kernel_process::VersionSelectionFn,
 ) -> Option<std::sync::Arc<privileged_kernel::PrivilegedKernelGateway>> {
     use tauri::Manager;
-    let app_id = brand::load_brand().map(|brand| brand.app_id).unwrap_or_else(|_| "io.murge.desktop".to_string());
+    let app_id = brand::load_brand()
+        .map(|brand| brand.app_id)
+        .unwrap_or_else(|_| "io.murge.desktop".to_string());
     let pipe_name = tun_service::tun_service_identity(&app_id).pipe_name;
     let transport = tun_service::NamedPipeTunServiceTransport::new(&pipe_name).ok()?;
     let client = std::sync::Arc::new(tun_service::TunServiceClient::new(Box::new(transport)));
@@ -819,17 +824,19 @@ fn compose_privileged_kernel(
             Ok(version["version"].as_str().map(str::to_string))
         })
     });
-    Some(std::sync::Arc::new(privileged_kernel::PrivilegedKernelGateway::new(
-        client,
-        build_profile,
-        readiness,
-        std::sync::Arc::new(|| true),
-        std::sync::Arc::new(move || version_selection()),
-        privileged_kernel::PrivilegedKernelOptions {
-            controller_port: std::sync::Arc::new(move || current_controller(&handle).0),
-            ..Default::default()
-        },
-    )))
+    Some(std::sync::Arc::new(
+        privileged_kernel::PrivilegedKernelGateway::new(
+            client,
+            build_profile,
+            readiness,
+            std::sync::Arc::new(|| true),
+            std::sync::Arc::new(move || version_selection()),
+            privileged_kernel::PrivilegedKernelOptions {
+                controller_port: std::sync::Arc::new(move || current_controller(&handle).0),
+                ..Default::default()
+            },
+        ),
+    ))
 }
 
 /// Reconcile the service-owned core once, then run the five-second exit
@@ -841,17 +848,23 @@ fn start_privileged_monitor(
     use tauri::Manager;
     let alive_handle = handle.clone();
     let start_handle = handle.clone();
-    let start_kernel: std::sync::Arc<dyn Fn() -> futures_util::future::BoxFuture<'static, Result<(), error::IpcError>> + Send + Sync> =
-        std::sync::Arc::new(move || {
-            let handle = start_handle.clone();
-            Box::pin(async move {
-                if lifecycle::is_quitting() {
-                    return Ok(());
-                }
-                let services = handle.state::<std::sync::Arc<kernel::KernelServices>>().inner().clone();
-                services.start().await.map(|_| ())
-            })
-        });
+    let start_kernel: std::sync::Arc<
+        dyn Fn() -> futures_util::future::BoxFuture<'static, Result<(), error::IpcError>>
+            + Send
+            + Sync,
+    > = std::sync::Arc::new(move || {
+        let handle = start_handle.clone();
+        Box::pin(async move {
+            if lifecycle::is_quitting() {
+                return Ok(());
+            }
+            let services = handle
+                .state::<std::sync::Arc<kernel::KernelServices>>()
+                .inner()
+                .clone();
+            services.start().await.map(|_| ())
+        })
+    });
     let wake_start = start_kernel.clone();
     let tun_handle = handle.clone();
     let proxy_handle = handle.clone();
@@ -884,7 +897,11 @@ fn start_privileged_monitor(
                 .try_state::<std::sync::Arc<settings::SettingsStore>>()
                 .map(|store| {
                     let current = store.get();
-                    (current.auto_start_kernel, current.tun_desired, current.system_proxy_desired)
+                    (
+                        current.auto_start_kernel,
+                        current.tun_desired,
+                        current.system_proxy_desired,
+                    )
                 })
                 .unwrap_or((false, false, false))
         }),
@@ -895,14 +912,20 @@ fn start_privileged_monitor(
         wake_intent_recovery: {
             let handle = handle.clone();
             std::sync::Arc::new(move || {
-                if handle.try_state::<std::sync::Arc<runtime_intent::RecoveryCoordinator>>().is_some() {
+                if handle
+                    .try_state::<std::sync::Arc<runtime_intent::RecoveryCoordinator>>()
+                    .is_some()
+                {
                     runtime_intent::wake(&handle);
                     return;
                 }
                 let start = wake_start.clone();
                 tauri::async_runtime::spawn(async move {
                     if let Err(error) = start().await {
-                        eprintln!("[kernel] privileged core recovery start: {}", error.extract_message());
+                        eprintln!(
+                            "[kernel] privileged core recovery start: {}",
+                            error.extract_message()
+                        );
                     }
                 });
             })
@@ -921,7 +944,9 @@ fn start_privileged_monitor(
             })
         }),
         is_suspended: std::sync::Arc::new(lifecycle::is_quitting),
-        on_error: std::sync::Arc::new(|message, step| eprintln!("[kernel] privileged core exit {step}: {message}")),
+        on_error: std::sync::Arc::new(|message, step| {
+            eprintln!("[kernel] privileged core exit {step}: {message}")
+        }),
         now_ms: std::sync::Arc::new(|| usage::epoch_millis_now().max(0) as u64),
     };
     let monitor = privileged_kernel::PrivilegedExitMonitor::new(deps);

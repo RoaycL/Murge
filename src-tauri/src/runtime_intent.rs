@@ -115,11 +115,18 @@ pub async fn restore_runtime_intent(
         // A remembered node becoming unavailable must not tear down a
         // healthy host.
         if let Err(error) = gateways.restore_selections().await {
-            eprintln!("[startup-restore] proxy selection restore failed: {}", error.extract_message());
+            eprintln!(
+                "[startup-restore] proxy selection restore failed: {}",
+                error.extract_message()
+            );
         }
     }
     let _ = proxy;
-    IntentResult { kernel, tun, system_proxy: gateways.proxy_status() }
+    IntentResult {
+        kernel,
+        tun,
+        system_proxy: gateways.proxy_status(),
+    }
 }
 
 async fn retry_kernel_start(
@@ -223,13 +230,19 @@ pub fn needs_another_attempt(flags: IntentFlags, result: &IntentResult) -> bool 
     }
     if flags.tun_desired
         && result.tun.supported
-        && !matches!(result.tun.phase.as_str(), "active" | "conflict" | "unsupported")
+        && !matches!(
+            result.tun.phase.as_str(),
+            "active" | "conflict" | "unsupported"
+        )
     {
         return true;
     }
     flags.system_proxy_desired
         && result.system_proxy.supported
-        && !matches!(result.system_proxy.phase.as_str(), "enabled" | "conflict" | "unsupported")
+        && !matches!(
+            result.system_proxy.phase.as_str(),
+            "enabled" | "conflict" | "unsupported"
+        )
 }
 
 // ---------------------------------------------------------------------------
@@ -461,15 +474,24 @@ pub struct AppIntentGateways {
 impl AppIntentGateways {
     fn kernel(&self) -> Arc<crate::kernel::KernelServices> {
         use tauri::Manager;
-        self.app.state::<Arc<crate::kernel::KernelServices>>().inner().clone()
+        self.app
+            .state::<Arc<crate::kernel::KernelServices>>()
+            .inner()
+            .clone()
     }
     fn tun(&self) -> Arc<crate::tun::TunCoordinator> {
         use tauri::Manager;
-        self.app.state::<Arc<crate::tun::TunCoordinator>>().inner().clone()
+        self.app
+            .state::<Arc<crate::tun::TunCoordinator>>()
+            .inner()
+            .clone()
     }
     fn proxy(&self) -> Arc<crate::system_proxy::SystemProxyService> {
         use tauri::Manager;
-        self.app.state::<Arc<crate::system_proxy::SystemProxyService>>().inner().clone()
+        self.app
+            .state::<Arc<crate::system_proxy::SystemProxyService>>()
+            .inner()
+            .clone()
     }
 }
 
@@ -480,7 +502,10 @@ pub async fn enable_tun_queued(
     tun: &crate::tun::TunCoordinator,
 ) -> Result<(), IpcError> {
     let _gate = crate::kernel::RUNTIME_UPDATE.lock().await;
-    let phase = kernel.get_status_value()["phase"].as_str().unwrap_or_default().to_string();
+    let phase = kernel.get_status_value()["phase"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
     if phase != "running" {
         if phase == "starting" {
             return Err(IpcError::code(
@@ -496,7 +521,10 @@ pub async fn enable_tun_queued(
 
 impl IntentGateways for AppIntentGateways {
     fn kernel_phase(&self) -> String {
-        self.kernel().get_status_value()["phase"].as_str().unwrap_or("stopped").to_string()
+        self.kernel().get_status_value()["phase"]
+            .as_str()
+            .unwrap_or("stopped")
+            .to_string()
     }
 
     fn kernel_start(&self) -> BoxFuture<'_, Result<(), IpcError>> {
@@ -519,7 +547,10 @@ impl IntentGateways for AppIntentGateways {
 
     fn proxy_status(&self) -> PhaseStatus {
         let status = self.proxy().get_status();
-        PhaseStatus { supported: status.supported, phase: status.phase }
+        PhaseStatus {
+            supported: status.supported,
+            phase: status.phase,
+        }
     }
 
     fn proxy_enable(&self) -> BoxFuture<'_, Result<(), IpcError>> {
@@ -531,9 +562,18 @@ impl IntentGateways for AppIntentGateways {
         use tauri::Manager;
         let app = self.app.clone();
         Box::pin(async move {
-            let mihomo = app.state::<Arc<crate::mihomo::MihomoServices>>().inner().clone();
-            let models = app.state::<Arc<crate::enhancements::ModelStores>>().inner().clone();
-            let profiles = app.state::<Arc<crate::profile_service::ProfilesService>>().inner().clone();
+            let mihomo = app
+                .state::<Arc<crate::mihomo::MihomoServices>>()
+                .inner()
+                .clone();
+            let models = app
+                .state::<Arc<crate::enhancements::ModelStores>>()
+                .inner()
+                .clone();
+            let profiles = app
+                .state::<Arc<crate::profile_service::ProfilesService>>()
+                .inner()
+                .clone();
             crate::live_config::restore_selections_after_reload(&mihomo, &models, &profiles).await;
             Ok(())
         })
@@ -547,10 +587,13 @@ static STARTUP_STARTED: AtomicBool = AtomicBool::new(false);
 fn replay_suppressed() -> bool {
     let ci_flags = std::env::var("MURGE_CI_BOOT_FLAGS").unwrap_or_default();
     let has = |flag: &str| {
-        std::env::args().any(|arg| arg == flag) || ci_flags.split_whitespace().any(|value| value == flag)
+        std::env::args().any(|arg| arg == flag)
+            || ci_flags.split_whitespace().any(|value| value == flag)
     };
-    let skip_autostart =
-        std::env::var("GITHUB_ACTIONS").map(|value| value == "true").unwrap_or(false) && has("--no-kernel-autostart");
+    let skip_autostart = std::env::var("GITHUB_ACTIONS")
+        .map(|value| value == "true")
+        .unwrap_or(false)
+        && has("--no-kernel-autostart");
     skip_autostart || has("--hidden-smoke")
 }
 
@@ -562,9 +605,15 @@ pub fn spawn_startup_recovery(app: tauri::AppHandle) {
         return;
     }
     use tauri::Manager;
-    let is_dev = app.state::<crate::paths::AppPaths>().app_data_root.is_none();
+    let is_dev = app
+        .state::<crate::paths::AppPaths>()
+        .app_data_root
+        .is_none();
     let gateways: Arc<dyn IntentGateways> = Arc::new(AppIntentGateways { app: app.clone() });
-    let settings = app.state::<Arc<crate::settings::SettingsStore>>().inner().clone();
+    let settings = app
+        .state::<Arc<crate::settings::SettingsStore>>()
+        .inner()
+        .clone();
     let read_flags: Arc<dyn Fn() -> IntentFlags + Send + Sync> = {
         let settings = settings.clone();
         Arc::new(move || IntentFlags::from_settings(&settings.get()))
@@ -603,7 +652,8 @@ pub fn spawn_startup_recovery(app: tauri::AppHandle) {
             let read_flags = read_flags.clone();
             move || !crate::lifecycle::is_quitting() && read_flags() == flags
         };
-        let restored = restore_runtime_intent(flags, gateways.as_ref(), &RETRY_DELAYS_MS, &fence).await;
+        let restored =
+            restore_runtime_intent(flags, gateways.as_ref(), &RETRY_DELAYS_MS, &fence).await;
         eprintln!(
             "[startup-timing] runtime restored in {}ms (kernel={}, proxy={}, TUN={})",
             started_at.elapsed().as_millis(),
@@ -612,10 +662,16 @@ pub fn spawn_startup_recovery(app: tauri::AppHandle) {
             restored.tun.phase
         );
         if flags.tun_desired && restored.tun.phase != "active" {
-            eprintln!("[startup-restore] TUN intent remains pending ({})", restored.tun.phase);
+            eprintln!(
+                "[startup-restore] TUN intent remains pending ({})",
+                restored.tun.phase
+            );
         }
         if flags.system_proxy_desired && restored.system_proxy.phase != "enabled" {
-            eprintln!("[startup-restore] system proxy intent remains pending ({})", restored.system_proxy.phase);
+            eprintln!(
+                "[startup-restore] system proxy intent remains pending ({})",
+                restored.system_proxy.phase
+            );
         }
         if crate::lifecycle::is_quitting() {
             return;
@@ -639,7 +695,10 @@ async fn recover_managed_state(app: &tauri::AppHandle) {
             sleep_ms(delay).await;
             status = proxy.init().await;
         }
-        if status.error_message.is_some() || status.phase == "conflict" || status.phase == "restore-failed" {
+        if status.error_message.is_some()
+            || status.phase == "conflict"
+            || status.phase == "restore-failed"
+        {
             eprintln!(
                 "[system-proxy] orphan recovery: {} {}",
                 status.phase,
@@ -650,7 +709,10 @@ async fn recover_managed_state(app: &tauri::AppHandle) {
     if let Some(kernel) = app.try_state::<Arc<crate::kernel::KernelServices>>() {
         if let Some(privileged) = kernel.privileged.clone() {
             if let Err(error) = privileged.initialize().await {
-                eprintln!("[kernel] privileged service reconcile failed: {}", error.extract_message());
+                eprintln!(
+                    "[kernel] privileged service reconcile failed: {}",
+                    error.extract_message()
+                );
             }
         }
     }
@@ -705,11 +767,21 @@ mod tests {
             *host.kernel.lock().unwrap() = "stopped".into();
             *host.tun.lock().unwrap() = PhaseStatus {
                 supported: tun_supported,
-                phase: if tun_supported { "configured" } else { "unsupported" }.into(),
+                phase: if tun_supported {
+                    "configured"
+                } else {
+                    "unsupported"
+                }
+                .into(),
             };
             *host.proxy.lock().unwrap() = PhaseStatus {
                 supported: proxy_supported,
-                phase: if proxy_supported { "disabled" } else { "unsupported" }.into(),
+                phase: if proxy_supported {
+                    "disabled"
+                } else {
+                    "unsupported"
+                }
+                .into(),
             };
             Arc::new(host)
         }
@@ -717,14 +789,23 @@ mod tests {
             self.calls.lock().unwrap().clone()
         }
         fn take_failure(counter: &AtomicUsize) -> bool {
-            counter
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| value.checked_sub(1))
-                .is_ok()
+            // Preserve the atomic decrement on the declared Rust 1.82 MSRV.
+            let mut value = counter.load(Ordering::SeqCst);
+            while let Some(next) = value.checked_sub(1) {
+                match counter.compare_exchange(value, next, Ordering::SeqCst, Ordering::SeqCst) {
+                    Ok(_) => return true,
+                    Err(current) => value = current,
+                }
+            }
+            false
         }
     }
 
     fn failure() -> IpcError {
-        IpcError::code(crate::error::code::KERNEL_CRASHED, "scripted failure".to_string())
+        IpcError::code(
+            crate::error::code::KERNEL_CRASHED,
+            "scripted failure".to_string(),
+        )
     }
 
     impl IntentGateways for FakeHost {
@@ -778,7 +859,10 @@ mod tests {
         }
     }
 
-    const BOTH: IntentFlags = IntentFlags { tun_desired: true, system_proxy_desired: true };
+    const BOTH: IntentFlags = IntentFlags {
+        tun_desired: true,
+        system_proxy_desired: true,
+    };
     const FAST: [u64; 2] = [1, 1];
 
     #[tokio::test]
@@ -802,9 +886,13 @@ mod tests {
     async fn kernel_start_is_retried_within_the_bounded_delays() {
         let host = FakeHost::new(true, true);
         host.kernel_starts_fail.store(2, Ordering::SeqCst);
-        let result = restore_runtime_intent(IntentFlags::default(), host.as_ref(), &FAST, &|| true).await;
+        let result =
+            restore_runtime_intent(IntentFlags::default(), host.as_ref(), &FAST, &|| true).await;
         assert_eq!(result.kernel, "running");
-        assert_eq!(host.calls(), vec!["kernel", "kernel", "kernel", "selections"]);
+        assert_eq!(
+            host.calls(),
+            vec!["kernel", "kernel", "kernel", "selections"]
+        );
     }
 
     #[tokio::test]
@@ -822,7 +910,10 @@ mod tests {
         let host = FakeHost::new(true, true);
         host.proxy_enables_fail.store(1, Ordering::SeqCst);
         let result = restore_runtime_intent(BOTH, host.as_ref(), &FAST, &|| true).await;
-        assert_eq!(host.calls(), vec!["kernel", "proxy", "tun", "proxy", "selections"]);
+        assert_eq!(
+            host.calls(),
+            vec!["kernel", "proxy", "tun", "proxy", "selections"]
+        );
         assert_eq!(result.system_proxy.phase, "enabled");
     }
 
@@ -865,14 +956,22 @@ mod tests {
         coordinator.start();
         wait_until(|| host.tun_status().phase == "active").await;
         wait_until(|| coordinator.is_idle()).await;
-        assert_eq!(host.calls().iter().filter(|call| **call == "tun").count(), 3);
+        assert_eq!(
+            host.calls().iter().filter(|call| **call == "tun").count(),
+            3
+        );
     }
 
     #[tokio::test]
     async fn background_recovery_stops_after_the_window() {
         let host = FakeHost::new(true, true);
         host.kernel_starts_fail.store(100, Ordering::SeqCst);
-        let coordinator = RecoveryCoordinator::new(host.clone(), Arc::new(|| BOTH), Arc::new(|| false), vec![1, 1, 1]);
+        let coordinator = RecoveryCoordinator::new(
+            host.clone(),
+            Arc::new(|| BOTH),
+            Arc::new(|| false),
+            vec![1, 1, 1],
+        );
         coordinator.start();
         wait_until(|| !host.calls().is_empty()).await;
         // The window (3ms) closes: attempts stop on their own.
@@ -890,7 +989,8 @@ mod tests {
     #[tokio::test]
     async fn suspended_and_stopped_coordinators_do_nothing() {
         let host = FakeHost::new(true, true);
-        let coordinator = RecoveryCoordinator::new(host.clone(), Arc::new(|| BOTH), Arc::new(|| true), vec![1]);
+        let coordinator =
+            RecoveryCoordinator::new(host.clone(), Arc::new(|| BOTH), Arc::new(|| true), vec![1]);
         coordinator.start();
         tokio::time::sleep(std::time::Duration::from_millis(30)).await;
         assert!(host.calls().is_empty());
@@ -903,7 +1003,8 @@ mod tests {
     #[tokio::test]
     async fn an_unchanged_intent_does_not_rearm() {
         let host = FakeHost::new(true, true);
-        let coordinator = RecoveryCoordinator::new(host.clone(), Arc::new(|| BOTH), Arc::new(|| false), vec![1]);
+        let coordinator =
+            RecoveryCoordinator::new(host.clone(), Arc::new(|| BOTH), Arc::new(|| false), vec![1]);
         coordinator.start();
         wait_until(|| coordinator.is_idle() && !host.calls().is_empty()).await;
         let calls = host.calls().len();

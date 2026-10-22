@@ -14,7 +14,7 @@
 
 use serde_json::Value;
 use std::sync::Arc;
-use tauri::{Manager, State};
+use tauri::State;
 
 use crate::app_info;
 use crate::brand;

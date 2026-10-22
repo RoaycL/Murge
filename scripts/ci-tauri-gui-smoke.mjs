@@ -226,6 +226,19 @@ async function smoke(kind, executable, args = []) {
       await waitFor(() => evaluate(`!document.querySelector('.detail-drawer[role="dialog"]')`), alive)
     }
     const controls = {}
+    // Re-show through W3's real second-instance handler. Direct ShowWindow
+    // bypasses Tao's cached VISIBLE flag, making a later hide a no-op.
+    const revealThroughSecondInstance = async () => {
+      const duplicate = spawn(executable, args, { cwd: root, env, stdio: 'ignore' })
+      let timedOut = false
+      const timer = setTimeout(() => { timedOut = true; duplicate.kill() }, 45_000)
+      try {
+        const [code, signal] = await once(duplicate, 'exit')
+        assert.equal(timedOut, false, 'Second-instance reveal must finish normally')
+        assert.equal(code, 0, 'Second instance must hand off to the existing process')
+        assert.equal(signal, null)
+      } finally { clearTimeout(timer) }
+    }
     if (kind === 'tauri' && await evaluate(`Boolean(document.querySelector('.tauri-window-controls'))`)) {
       const state = () => native(child.pid, 'state', '', window.handle)
       const click = (label) => evaluate(`document.querySelector('.tauri-window-controls button[aria-label="${label}"]').click()`)
@@ -236,7 +249,7 @@ async function smoke(kind, executable, args = []) {
       await waitFor(async () => !(await state()).maximized, alive)
       await click('最小化')
       await waitFor(async () => (await state()).minimized, alive)
-      await native(child.pid, 'restore', '', window.handle)
+      await revealThroughSecondInstance()
       await waitFor(async () => !(await state()).minimized, alive)
       assert.equal((await native(child.pid, 'drag', '', window.handle)).moved, true, 'Native mouse dragging must move the window')
       await native(child.pid, 'double-click', '', window.handle)
@@ -247,7 +260,7 @@ async function smoke(kind, executable, args = []) {
       await click('关闭')
       await waitFor(async () => !(await state()).visible, alive)
       assert.ok(alive(), 'Close-to-tray must preserve the application process')
-      await native(child.pid, 'restore', '', window.handle)
+      await revealThroughSecondInstance()
       await waitFor(async () => (await state()).visible, alive)
       // WM_CLOSE and the system-menu/Alt+F4 SC_CLOSE message share W3 ownership.
       for (const action of ['close', 'system-close']) {
@@ -255,11 +268,11 @@ async function smoke(kind, executable, args = []) {
         await native(child.pid, action, '', window.handle)
         await waitFor(async () => !(await state()).visible, alive)
         assert.ok(alive(), `${action} must preserve the tray process`)
-        await native(child.pid, 'restore', '', window.handle)
+        await revealThroughSecondInstance()
         await waitFor(async () => (await state()).visible, alive)
       }
       await evaluate(`window.desktop.appSettings.set({closeToTray:false})`)
-      Object.assign(controls, { maximizeRestore: true, minimize: true, nativeDrag: true, doubleClickMaximizeRestore: true, closeToTray: true, nativeCloseToTray: true, systemCloseToTray: true })
+      Object.assign(controls, { maximizeRestore: true, minimize: true, nativeDrag: true, doubleClickMaximizeRestore: true, closeToTray: true, nativeCloseToTray: true, systemCloseToTray: true, secondInstanceReveal: true })
     }
     await pause(3000)
     assert.ok(alive(), 'Application must remain alive after rendering')

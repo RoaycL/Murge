@@ -57,12 +57,14 @@ jobs:
           shared-key: windows-x64
           cache-on-failure: true
       # TODO: installed-package/upgrade smoke follows the installer workstream.
-      # WebView2 release settings disable DevTools. A test-only window override
+      # W3 scrubs CDP environment variables in release builds. Use debug for
+      # this inspection harness; the installer job verifies the release build.
+      # A test-only window override
       # enables the live CDP assertions; tauri-build.yml produces normal release
       # artifacts without this feature/override. Window geometry is unchanged.
       - name: Prepare test-only WebView2 inspection settings
         run: node "${{ inputs.source_ref != '' && 'ci-harness/' || '' }}scripts/ci-tauri-gui-config.mjs"
-      - run: npm run tauri:build -- --no-bundle --target x86_64-pc-windows-msvc --features tauri/devtools --config "$env:RUNNER_TEMP/tauri-gui-config.json"
+      - run: npm run tauri:build -- --debug --no-bundle --target x86_64-pc-windows-msvc --features tauri/devtools --config "$env:RUNNER_TEMP/tauri-gui-config.json"
       # Both shells emit out/renderer. Tauri has now embedded its assets;
       # restore Electron's file://-relative renderer for the comparison app.
       # Source branding/type checks already passed before Rust cache restore.
@@ -74,7 +76,7 @@ jobs:
         # at Medium integrity for the same reason. Grant only the runner user.
         run: |
           if (-not (Get-Command gsudo.exe -ErrorAction SilentlyContinue)) {
-            winget install gerardog.gsudo --accept-source-agreements --accept-package-agreements --disable-interactivity
+            winget install --id gerardog.gsudo --exact --version 2.6.0 --accept-source-agreements --accept-package-agreements --disable-interactivity
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
           $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + $env:Path
@@ -83,6 +85,8 @@ jobs:
           $account = [Security.Principal.WindowsIdentity]::GetCurrent().Name
           icacls "$env:GITHUB_WORKSPACE" /grant "${account}:(OI)(CI)M"
       - name: Verify native window, live renderer IPC, stability and normal exit
+        env:
+          MURGE_TAURI_BUILD_PROFILE: debug
         run: gsudo.exe --integrity Medium node "${{ inputs.source_ref != '' && 'ci-harness/' || '' }}scripts/ci-tauri-gui-smoke.mjs" --compare-electron
       - uses: actions/upload-artifact@v4
         if: always()

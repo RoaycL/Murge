@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 const [target, arch] = process.argv.slice(2)
@@ -16,5 +16,19 @@ if (pe + 6 > bytes.length || bytes.toString('ascii', pe, pe + 4) !== 'PE\0\0' ||
 const output = resolve(process.env.RUNNER_TEMP, `tauri-${arch}`)
 await mkdir(output, { recursive: true })
 await copyFile(path, resolve(output, name))
-await writeFile(resolve(output, 'manifest.json'), JSON.stringify({ filename: name, arch, target, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), commit: process.env.GITHUB_SHA }, null, 2) + '\n')
+const bundle = resolve('src-tauri', 'target', target, 'release', 'bundle', 'nsis')
+const installers = []
+for (const entry of await readdir(bundle, { withFileTypes: true })) {
+  if (!entry.isFile() || !entry.name.endsWith('-setup.exe')) continue
+  const installer = await readFile(resolve(bundle, entry.name))
+  if (installer.length < 64 || installer.toString('ascii', 0, 2) !== 'MZ') throw new Error('Invalid NSIS installer header')
+  const digest = createHash('sha256').update(installer).digest('hex')
+  const checksum = await readFile(resolve(bundle, `${entry.name}.sha256`), 'utf8')
+  if (checksum.trim() !== `${digest}  ${entry.name}`) throw new Error('Installer SHA-256 mismatch')
+  await copyFile(resolve(bundle, entry.name), resolve(output, entry.name))
+  await copyFile(resolve(bundle, `${entry.name}.sha256`), resolve(output, `${entry.name}.sha256`))
+  installers.push({ filename: entry.name, bytes: installer.length, sha256: digest })
+}
+if (installers.length === 0) throw new Error('No NSIS installers were produced')
+await writeFile(resolve(output, 'manifest.json'), JSON.stringify({ filename: name, arch, target, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), installers, commit: process.env.GITHUB_SHA }, null, 2) + '\n')
 console.log(`Verified and staged ${arch} executable (${bytes.length} bytes)`)

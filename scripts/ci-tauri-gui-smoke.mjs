@@ -263,7 +263,9 @@ async function smoke(kind, executable, args = []) {
 }
 
 try {
-  const executable = resolve(root, 'src-tauri/target/x86_64-pc-windows-msvc/release', `${brand.executableName}.exe`)
+  const profile = process.env.MURGE_TAURI_BUILD_PROFILE || 'release'
+  assert.ok(['debug', 'release'].includes(profile), 'Unsupported Tauri build profile')
+  const executable = resolve(root, 'src-tauri/target/x86_64-pc-windows-msvc', profile, `${brand.executableName}.exe`)
   const evidence = [await smoke('tauri', executable)]
   if (process.argv.includes('--compare-electron')) evidence.push(await smoke('electron', require('electron'), [root]))
   await writeFile(resolve(output, 'result.json'), JSON.stringify({ sourceCommit, workflowCommit: process.env.GITHUB_SHA, evidence }, null, 2) + '\n')

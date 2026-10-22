@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   build:
-    name: Windows ${{ matrix.arch }} executable
+    name: Windows ${{ matrix.arch }} installer
     runs-on: windows-latest
     timeout-minutes: 60
     strategy:
@@ -52,11 +52,19 @@ jobs:
         with:
           workspaces: src-tauri -> target
           shared-key: windows-${{ matrix.arch }}
-      # TODO: enable bundle only after the separate installer/resource scripts
-      # merge. This builds unsigned executables; no signing secrets are needed.
-      - name: Build the Tauri executable without bundling
-        run: npm run tauri:build -- --no-bundle --target ${{ matrix.target }}
-      - name: Inspect executable architecture and stage artifact
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: native/tun-service/go.sum
+      - name: Prepare pinned kernel and native service resources
+        run: |
+          npm run kernel:prepare
+          npm run tun-service:build
+      - name: Build unsigned per-machine NSIS installer
+        # Use W1's resource/installer script, selecting this matrix architecture.
+        # package:tauri invokes --all; the same script accepts one architecture.
+        run: node scripts/tauri-package.mjs ${{ matrix.arch }}
+      - name: Inspect payload architecture and stage installer artifacts
         run: node scripts/ci-tauri-artifact.mjs ${{ matrix.target }} ${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
         with:

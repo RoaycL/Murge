@@ -29,7 +29,13 @@ fn icon_file(accent: &str, dark: bool) -> &'static str {
         (true, "tun") => "tray-dark-tun.png",
         (false, "proxy") => "tray-light-proxy.png",
         (false, "tun") => "tray-light-tun.png",
-        (_, _) => if dark { "tray-dark-idle.png" } else { "tray-light-idle.png" },
+        (_, _) => {
+            if dark {
+                "tray-dark-idle.png"
+            } else {
+                "tray-light-idle.png"
+            }
+        }
     }
 }
 
@@ -75,7 +81,11 @@ impl NativeTrayView {
                 // The assets are PNG files: decode them (passing the file
                 // bytes as raw RGBA painted garbage or nothing at all).
                 match tauri::image::Image::from_path(&path) {
-                    Ok(image) => tauri::image::Image::new_owned(image.rgba().to_vec(), image.width(), image.height()),
+                    Ok(image) => tauri::image::Image::new_owned(
+                        image.rgba().to_vec(),
+                        image.width(),
+                        image.height(),
+                    ),
                     Err(_) => default_icon(&self.app),
                 }
             }
@@ -97,9 +107,9 @@ impl NativeTrayView {
     /// Repaint only when the accent or theme actually moved (the cadence
     /// would otherwise re-upload the HICON every tick).
     fn appearance_changed(&self, accent: &str, dark: bool) -> bool {
-        *self.accent.lock().expect("accent mutex") != accent || *self.dark.lock().expect("dark mutex") != dark
+        *self.accent.lock().expect("accent mutex") != accent
+            || *self.dark.lock().expect("dark mutex") != dark
     }
-
 }
 
 /// The TS `nativeTheme.shouldUseDarkColors`: the OS app theme, read through
@@ -140,13 +150,9 @@ impl TrayView for NativeTrayView {
         let Some(tray) = guard.as_ref() else {
             return;
         };
-        match build_menu(&self.app, &items) {
-            Ok(menu) => {
-                let _ = tray.set_menu(Some(menu));
-            }
-            // A menu rebuild failure keeps the previous menu visible instead
-            // of dropping the tray entirely.
-            Err(_) => {}
+        // A failed rebuild preserves the previous menu and the tray.
+        if let Ok(menu) = build_menu(&self.app, &items) {
+            let _ = tray.set_menu(Some(menu));
         }
     }
 
@@ -172,11 +178,18 @@ fn build_menu_inner(app: &AppHandle, items: &[TrayMenuItem]) -> tauri::Result<Me
             }
             MenuKind::Normal => {
                 if !item.children.is_empty() {
-                    let submenu = Submenu::with_id_and_items(app, &item.id, &item.label, item.enabled, &[])?;
+                    let submenu =
+                        Submenu::with_id_and_items(app, &item.id, &item.label, item.enabled, &[])?;
                     append_children(app, &submenu, &item.children)?;
                     menu.append(&submenu)?;
                 } else {
-                    menu.append(&MenuItem::with_id(app, &item.id, &item.label, item.enabled, None::<&str>)?)?;
+                    menu.append(&MenuItem::with_id(
+                        app,
+                        &item.id,
+                        &item.label,
+                        item.enabled,
+                        None::<&str>,
+                    )?)?;
                 }
             }
             MenuKind::Checkbox | MenuKind::Radio => {
@@ -206,11 +219,18 @@ fn append_children(
             }
             MenuKind::Normal => {
                 if !item.children.is_empty() {
-                    let submenu = Submenu::with_id_and_items(app, &item.id, &item.label, item.enabled, &[])?;
+                    let submenu =
+                        Submenu::with_id_and_items(app, &item.id, &item.label, item.enabled, &[])?;
                     append_children(app, &submenu, &item.children)?;
                     parent.append(&submenu)?;
                 } else {
-                    parent.append(&MenuItem::with_id(app, &item.id, &item.label, item.enabled, None::<&str>)?)?;
+                    parent.append(&MenuItem::with_id(
+                        app,
+                        &item.id,
+                        &item.label,
+                        item.enabled,
+                        None::<&str>,
+                    )?)?;
                 }
             }
             MenuKind::Checkbox | MenuKind::Radio => {

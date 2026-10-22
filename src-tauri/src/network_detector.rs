@@ -18,12 +18,15 @@ use crate::error::IpcError;
 /// Interfaces that never count as connectivity. Short loopback names match
 /// exactly (a substring `lo` hid "Local Area Connection").
 const IGNORED_INTERFACE_NAMES: [&str; 2] = ["lo", "lo0"];
-const IGNORED_INTERFACE_PATTERNS: [&str; 7] = ["docker", "utun", "tun", "veth", "mihomo", "meta", "vmnet"];
+const IGNORED_INTERFACE_PATTERNS: [&str; 7] =
+    ["docker", "utun", "tun", "veth", "mihomo", "meta", "vmnet"];
 
 pub fn is_ignored_interface_name(name: &str) -> bool {
     let lower = name.to_lowercase();
     IGNORED_INTERFACE_NAMES.contains(&lower.as_str())
-        || IGNORED_INTERFACE_PATTERNS.iter().any(|pattern| lower.contains(pattern))
+        || IGNORED_INTERFACE_PATTERNS
+            .iter()
+            .any(|pattern| lower.contains(pattern))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,7 +91,8 @@ impl NetworkDetector {
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let this = self.clone();
         tauri::async_runtime::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(this.interval_seconds));
+            let mut interval =
+                tokio::time::interval(std::time::Duration::from_secs(this.interval_seconds));
             interval.tick().await;
             loop {
                 interval.tick().await;
@@ -98,7 +102,10 @@ impl NetworkDetector {
                 this.tick(generation).await;
             }
         });
-        eprintln!("[network-detector] started (every {}s)", self.interval_seconds);
+        eprintln!(
+            "[network-detector] started (every {}s)",
+            self.interval_seconds
+        );
     }
 
     pub fn stop(&self) {
@@ -123,7 +130,10 @@ impl NetworkDetector {
         // A single offline sample (route/TUN adapter churn) must never restore
         // the proxy and kill the shared core: confirm the first sample.
         if !connected && !state.outage_handled && self.offline_confirmation_ms > 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(self.offline_confirmation_ms)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(
+                self.offline_confirmation_ms,
+            ))
+            .await;
             if generation != self.generation.load(Ordering::SeqCst) {
                 state.checking = false;
                 return;
@@ -154,17 +164,27 @@ impl NetworkDetector {
                 if state.resume_mode.is_none() || current != RunMode::Stopped {
                     proxy_recovered = self.gateway.network_up().await != "failed";
                 }
-                if proxy_recovered && state.resume_mode.map(|resume| resume == current).unwrap_or(true) {
+                if proxy_recovered
+                    && state
+                        .resume_mode
+                        .map(|resume| resume == current)
+                        .unwrap_or(true)
+                {
                     state.saw_offline = false;
                     state.resume_mode = None;
                 }
             }
-        } else if !state.outage_handled || state.proxy_disable_pending || state.stop_kernel_pending {
+        } else if !state.outage_handled || state.proxy_disable_pending || state.stop_kernel_pending
+        {
             state.saw_offline = true;
             if !state.outage_handled {
                 state.outage_handled = true;
                 let mode = self.gateway.run_mode();
-                state.resume_mode = if mode == RunMode::Stopped { None } else { Some(mode) };
+                state.resume_mode = if mode == RunMode::Stopped {
+                    None
+                } else {
+                    Some(mode)
+                };
                 state.stop_kernel_pending = mode != RunMode::Stopped;
                 state.proxy_disable_pending = true;
             }
@@ -173,10 +193,11 @@ impl NetworkDetector {
             }
             // A failed proxy restore keeps the listener alive (a dead-port
             // proxy is worse); the next offline tick retries the restore.
-            if !state.proxy_disable_pending && state.stop_kernel_pending {
-                if self.gateway.stop_kernel().await.is_ok() {
-                    state.stop_kernel_pending = false;
-                }
+            if !state.proxy_disable_pending
+                && state.stop_kernel_pending
+                && self.gateway.stop_kernel().await.is_ok()
+            {
+                state.stop_kernel_pending = false;
             }
         }
         // Keep the episode latched while recovery is incomplete, so a brief
@@ -198,9 +219,9 @@ pub fn system_is_connected() -> bool {
 fn has_real_interface() -> bool {
     if_addrs::get_if_addrs()
         .map(|interfaces| {
-            interfaces
-                .iter()
-                .any(|interface| !interface.is_loopback() && !is_ignored_interface_name(&interface.name))
+            interfaces.iter().any(|interface| {
+                !interface.is_loopback() && !is_ignored_interface_name(&interface.name)
+            })
         })
         .unwrap_or(true)
 }
@@ -226,15 +247,24 @@ pub struct AppNetworkGateway {
 impl AppNetworkGateway {
     fn kernel(&self) -> Arc<crate::kernel::KernelServices> {
         use tauri::Manager;
-        self.app.state::<Arc<crate::kernel::KernelServices>>().inner().clone()
+        self.app
+            .state::<Arc<crate::kernel::KernelServices>>()
+            .inner()
+            .clone()
     }
     fn tun(&self) -> Arc<crate::tun::TunCoordinator> {
         use tauri::Manager;
-        self.app.state::<Arc<crate::tun::TunCoordinator>>().inner().clone()
+        self.app
+            .state::<Arc<crate::tun::TunCoordinator>>()
+            .inner()
+            .clone()
     }
     fn proxy(&self) -> Arc<crate::system_proxy::SystemProxyService> {
         use tauri::Manager;
-        self.app.state::<Arc<crate::system_proxy::SystemProxyService>>().inner().clone()
+        self.app
+            .state::<Arc<crate::system_proxy::SystemProxyService>>()
+            .inner()
+            .clone()
     }
 }
 
@@ -341,7 +371,6 @@ mod tests {
     use std::sync::atomic::AtomicBool;
     use std::sync::Mutex;
 
-
     struct FakeGateway {
         mode: Mutex<RunMode>,
         down_result: Mutex<&'static str>,
@@ -350,7 +379,11 @@ mod tests {
 
     impl FakeGateway {
         fn new(mode: RunMode) -> Arc<Self> {
-            Arc::new(FakeGateway { mode: Mutex::new(mode), down_result: Mutex::new("disabled"), calls: Mutex::new(Vec::new()) })
+            Arc::new(FakeGateway {
+                mode: Mutex::new(mode),
+                down_result: Mutex::new("disabled"),
+                calls: Mutex::new(Vec::new()),
+            })
         }
         fn calls(&self) -> Vec<&'static str> {
             self.calls.lock().unwrap().clone()
@@ -397,7 +430,12 @@ mod tests {
     }
 
     fn detector(gateway: Arc<FakeGateway>, online: Arc<AtomicBool>) -> Arc<NetworkDetector> {
-        NetworkDetector::new(gateway, Arc::new(move || online.load(Ordering::SeqCst)), 15, 0)
+        NetworkDetector::new(
+            gateway,
+            Arc::new(move || online.load(Ordering::SeqCst)),
+            15,
+            0,
+        )
     }
 
     #[test]
@@ -421,7 +459,10 @@ mod tests {
         assert_eq!(gateway.calls().len(), 2);
         online.store(true, Ordering::SeqCst);
         detector.probe_now().await;
-        assert_eq!(gateway.calls(), vec!["down", "stop-kernel", "start-tun", "up"]);
+        assert_eq!(
+            gateway.calls(),
+            vec!["down", "stop-kernel", "start-tun", "up"]
+        );
         detector.probe_now().await;
         assert_eq!(gateway.calls().len(), 4);
     }

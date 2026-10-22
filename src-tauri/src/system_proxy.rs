@@ -688,8 +688,13 @@ impl BackupStore for FileSystemBackupStore {
     fn read(&self) -> BoxResult<'_, Option<Value>> {
         let path = self.path.clone();
         Box::pin(async move {
-            let Ok(raw) = std::fs::read(&path) else {
-                return Ok(None);
+            // Only a missing file means "nothing owned" (backup-store.ts
+            // ENOENT): an existing backup we cannot read must surface, or
+            // startup would report a clean state while the proxy is ours.
+            let raw = match std::fs::read(&path) {
+                Ok(raw) => raw,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(error) => return Err(format!("备份文件读取失败：{error}")),
             };
             serde_json::from_slice::<Value>(&raw).map(Some).map_err(|error| format!("备份文件无效：{error}"))
         })
@@ -1213,6 +1218,9 @@ pub struct SystemProxyService {
     /// Latched by the network detector (3D slice); read by handle_network_up.
     #[allow(dead_code)]
     network_resume_pending: AtomicBool,
+    /// Set once the session is ending: no path may write the proxy again
+    /// (an enable that is mid-probe aborts before its first write).
+    mutations_fenced: AtomicBool,
 }
 
 // init/verify_integrity/network handlers/restore_before_kernel_unavailable
@@ -1243,7 +1251,18 @@ impl SystemProxyService {
             listeners: EventHub::new(),
             queue: tokio::sync::Mutex::new(()),
             network_resume_pending: AtomicBool::new(false),
+            mutations_fenced: AtomicBool::new(false),
         }
+    }
+
+    /// Fence every proxy-writing path for the rest of the process (Windows
+    /// session end). Restores stay allowed.
+    pub fn fence_mutations(&self) {
+        self.mutations_fenced.store(true, Ordering::SeqCst);
+    }
+
+    fn fenced_error(&self) -> IpcError {
+        IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, "会话正在结束，已取消启用系统代理")
     }
 
     pub fn get_status(&self) -> SystemProxyStatus {
@@ -1346,6 +1365,9 @@ impl SystemProxyService {
             }
         };
         validate_target(&target)?;
+        if self.mutations_fenced.load(Ordering::SeqCst) {
+            return Err(self.fenced_error());
+        }
 
         // An existing owned bundle: either we are already enabled (idempotent),
         // we own a stale bundle from a previous session, or the OS values were
@@ -1386,6 +1408,9 @@ impl SystemProxyService {
         validate_restorable(&observed)?;
         let policy = self.bypass.read().await;
         let written = build_written_state(&target, &observed, &policy);
+        if self.mutations_fenced.load(Ordering::SeqCst) {
+            return Err(self.fenced_error());
+        }
         let bundle = SystemProxyBackup {
             instance_id: self.instance_id.clone(),
             created_at: now_iso(),
@@ -1542,6 +1567,9 @@ impl SystemProxyService {
                 status_extra(CONFLICT_MSG, Some(conflict_detail(&observed, written))),
             );
             return "conflict";
+        }
+        if self.mutations_fenced.load(Ordering::SeqCst) {
+            return "repair-failed";
         }
         match self.apply_and_verify(written).await {
             Ok(()) => "repaired",
@@ -1949,6 +1977,7 @@ pub type WindowsRunner = Arc<dyn Fn(&'static str, Vec<String>) -> BoxFuture<'sta
 /// Unreachable off-windows: the factory never composes the Windows adapter on
 /// a non-win32 host (the disabled adapter owns those platforms).
 #[cfg(not(windows))]
+#[allow(dead_code)]
 pub fn real_command_runner() -> WindowsRunner {
     Arc::new(move |_command: &'static str, _args: Vec<String>| {
         Box::pin(async move { Err("reg.exe is only available on Windows".to_string()) })
@@ -1960,6 +1989,7 @@ pub fn real_command_runner() -> WindowsRunner {
 /// timeout) surface as Err so the caller sees a typed error instead of a
 /// phantom "value absent"; non-zero exits return Ok with the exit code.
 #[cfg(windows)]
+#[allow(dead_code)] // superseded by the native adapter; kept for the installer CLI
 pub fn real_command_runner() -> WindowsRunner {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     const DEFAULT_TIMEOUT_MS: u64 = 5000;
@@ -1992,6 +2022,7 @@ pub struct WindowsSystemProxyAdapter {
 }
 
 impl WindowsSystemProxyAdapter {
+    #[allow(dead_code)] // superseded by the native adapter; kept for the installer CLI
     pub fn with_runner(run: WindowsRunner) -> Self {
         WindowsSystemProxyAdapter { run }
     }
@@ -2170,6 +2201,398 @@ impl SystemProxyAdapter for WindowsSystemProxyAdapter {
             .await
             .map(|_| ())
         })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Native Windows adapter (Win32 registry + WinINet, no child processes)
+// ---------------------------------------------------------------------------
+//
+// The Electron shell could only reach the registry through `reg.exe` and a
+// PowerShell read/refresh script, so every restore spawned four processes.
+// That is the reason the Windows logoff/shutdown restore never reliably
+// finished: process creation is slow (PowerShell) and can fail outright once
+// the session is ending. The Tauri shell owns the three values directly. The
+// codec below produces exactly the snapshot shape the PowerShell script
+// emitted (same type labels, `[int64]` numbers, upper-case hex for binary,
+// `;`-joined multi-strings), so backups written by either shell compare
+// equal, and restore accepts exactly the types `reg_add_args_for` accepted.
+
+pub const REG_TYPE_SZ: u32 = 1;
+pub const REG_TYPE_EXPAND_SZ: u32 = 2;
+pub const REG_TYPE_BINARY: u32 = 3;
+pub const REG_TYPE_DWORD: u32 = 4;
+pub const REG_TYPE_MULTI_SZ: u32 = 7;
+pub const REG_TYPE_QWORD: u32 = 11;
+
+/// The Internet Settings subkey under HKCU (no hive prefix).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub const INTERNET_SETTINGS_SUBKEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
+
+fn decode_utf16(data: &[u8]) -> String {
+    let units: Vec<u16> = data.chunks_exact(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]])).collect();
+    String::from_utf16_lossy(&units)
+}
+
+/// Decode one raw registry value (type + bytes) into the snapshot shape.
+/// `None` data means the value is absent. Unknown types fail closed, exactly
+/// like the PowerShell script's `throw`.
+pub fn decode_registry_value(kind: u32, data: Option<&[u8]>, name: &str) -> Result<RegistryValue, String> {
+    let Some(data) = data else {
+        return Ok(RegistryValue::absent());
+    };
+    let value = match kind {
+        REG_TYPE_SZ | REG_TYPE_EXPAND_SZ => {
+            // .NET drops the terminating NUL(s); never expands %VARS%.
+            let text = decode_utf16(data);
+            Value::String(text.trim_end_matches('\0').to_string())
+        }
+        REG_TYPE_MULTI_SZ => {
+            let text = decode_utf16(data);
+            let parts: Vec<&str> = text.trim_end_matches('\0').split('\0').collect();
+            Value::String(parts.join(";"))
+        }
+        REG_TYPE_BINARY => {
+            Value::String(data.iter().map(|byte| format!("{byte:02X}")).collect())
+        }
+        REG_TYPE_DWORD => {
+            let bytes: [u8; 4] = data
+                .get(..4)
+                .and_then(|slice| slice.try_into().ok())
+                .ok_or_else(|| format!("registry value {name} is a truncated REG_DWORD"))?;
+            json!(u32::from_le_bytes(bytes) as i64)
+        }
+        REG_TYPE_QWORD => {
+            let bytes: [u8; 8] = data
+                .get(..8)
+                .and_then(|slice| slice.try_into().ok())
+                .ok_or_else(|| format!("registry value {name} is a truncated REG_QWORD"))?;
+            // The script casts to [int64]; keep the same signed view.
+            json!(i64::from_le_bytes(bytes))
+        }
+        other => return Err(format!("unknown registry value kind: {other} for {name}")),
+    };
+    let label = match kind {
+        REG_TYPE_SZ => "REG_SZ",
+        REG_TYPE_EXPAND_SZ => "REG_EXPAND_SZ",
+        REG_TYPE_MULTI_SZ => "REG_MULTI_SZ",
+        REG_TYPE_BINARY => "REG_BINARY",
+        REG_TYPE_DWORD => "REG_DWORD",
+        _ => "REG_QWORD",
+    };
+    Ok(RegistryValue { exists: true, kind: label.to_string(), value })
+}
+
+fn encode_utf16_z(text: &str) -> Vec<u8> {
+    text.encode_utf16().chain(std::iter::once(0)).flat_map(|unit| unit.to_le_bytes()).collect()
+}
+
+/// Encode a snapshot value for `RegSetValueExW`; `Ok(None)` means delete.
+/// Accepts exactly what `reg_add_args_for` accepts (DWORD/SZ/EXPAND_SZ/BINARY).
+pub fn encode_registry_value(value: &RegistryValue) -> Result<Option<(u32, Vec<u8>)>, IpcError> {
+    if !value.exists {
+        return Ok(None);
+    }
+    let kind = value.kind.as_str();
+    match (kind, &value.value) {
+        ("REG_DWORD", Value::Number(number)) => {
+            let raw = number
+                .as_u64()
+                .and_then(|raw| u32::try_from(raw).ok())
+                .ok_or_else(|| IpcError::internal("invalid REG_DWORD payload"))?;
+            Ok(Some((REG_TYPE_DWORD, raw.to_le_bytes().to_vec())))
+        }
+        ("REG_SZ", Value::String(text)) => Ok(Some((REG_TYPE_SZ, encode_utf16_z(text)))),
+        ("REG_EXPAND_SZ", Value::String(text)) => Ok(Some((REG_TYPE_EXPAND_SZ, encode_utf16_z(text)))),
+        ("REG_BINARY", Value::String(hex)) => {
+            if hex.len() % 2 != 0 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(IpcError::internal("invalid REG_BINARY payload"));
+            }
+            let bytes = (0..hex.len())
+                .step_by(2)
+                .map(|index| u8::from_str_radix(&hex[index..index + 2], 16))
+                .collect::<Result<Vec<u8>, _>>()
+                .map_err(|_| IpcError::internal("invalid REG_BINARY payload"))?;
+            Ok(Some((REG_TYPE_BINARY, bytes)))
+        }
+        ("REG_DWORD" | "REG_SZ" | "REG_EXPAND_SZ" | "REG_BINARY", _) => {
+            Err(IpcError::internal(format!("invalid {kind} payload")))
+        }
+        _ => Err(IpcError::internal(format!("unsupported registry type for restore: {kind}"))),
+    }
+}
+
+/// The raw registry seam of the native adapter: one HKCU subkey, three
+/// operations. Production is Win32; tests use an in-memory map.
+pub trait RawRegistry: Send + Sync {
+    /// `Ok(None)` when the value is absent.
+    fn query(&self, name: &str) -> Result<Option<(u32, Vec<u8>)>, String>;
+    fn set(&self, name: &str, kind: u32, data: &[u8]) -> Result<(), String>;
+    /// Deleting an absent value succeeds (the `reg delete /f` outcome the
+    /// restore path relies on is "value absent afterwards").
+    fn delete(&self, name: &str) -> Result<(), String>;
+    /// WinINet SETTINGS_CHANGED + REFRESH.
+    fn refresh(&self) -> Result<(), String>;
+}
+
+/// The native adapter: synchronous, process-free, and therefore usable from
+/// a Windows session-end handler (see `session_events.rs`).
+pub struct NativeWindowsSystemProxyAdapter {
+    registry: Arc<dyn RawRegistry>,
+}
+
+impl NativeWindowsSystemProxyAdapter {
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn new(registry: Arc<dyn RawRegistry>) -> Self {
+        NativeWindowsSystemProxyAdapter { registry }
+    }
+
+    /// The production adapter on Windows.
+    #[cfg(windows)]
+    pub fn win32() -> Self {
+        Self::new(Arc::new(Win32Registry))
+    }
+
+    pub fn read_now(&self) -> Result<RegistryState, IpcError> {
+        let read = |name: &str| -> Result<RegistryValue, IpcError> {
+            let raw = self.registry.query(name).map_err(|message| {
+                IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, format!("解析系统代理注册表快照失败：{message}"))
+            })?;
+            decode_registry_value(
+                raw.as_ref().map(|(kind, _)| *kind).unwrap_or(0),
+                raw.as_ref().map(|(_, data)| data.as_slice()),
+                name,
+            )
+            .map_err(|message| {
+                IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, format!("解析系统代理注册表快照失败：{message}"))
+            })
+        };
+        Ok(RegistryState {
+            proxy_enable: read(PROXY_ENABLE_VALUE)?,
+            proxy_server: read(PROXY_SERVER_VALUE)?,
+            proxy_override: read(PROXY_OVERRIDE_VALUE)?,
+        })
+    }
+
+    pub fn apply_now(&self, written: &WrittenState) -> Result<(), IpcError> {
+        let server = written.proxy_server.value.as_str().unwrap_or_default();
+        if server.is_empty() {
+            return Err(IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, "系统代理目标值无效"));
+        }
+        // The reg.exe apply order: ProxyEnable → ProxyServer → ProxyOverride.
+        for (name, value) in [
+            (PROXY_ENABLE_VALUE, &written.proxy_enable),
+            (PROXY_SERVER_VALUE, &written.proxy_server),
+            (PROXY_OVERRIDE_VALUE, &written.proxy_override),
+        ] {
+            let encoded = encode_registry_value(value)
+                .map_err(|error| IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, format!("写入 {name} 失败：{}", error.0)))?;
+            let Some((kind, data)) = encoded else {
+                return Err(IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, "系统代理目标值无效"));
+            };
+            self.registry
+                .set(name, kind, &data)
+                .map_err(|message| IpcError::code(code::SYSTEM_PROXY_ENABLE_FAILED, format!("写入 {name} 失败：{message}")))?;
+        }
+        Ok(())
+    }
+
+    pub fn restore_now(&self, previous: &RegistryState) -> Result<(), IpcError> {
+        for (name, value) in [
+            (PROXY_ENABLE_VALUE, &previous.proxy_enable),
+            (PROXY_SERVER_VALUE, &previous.proxy_server),
+            (PROXY_OVERRIDE_VALUE, &previous.proxy_override),
+        ] {
+            let failed = |message: String| {
+                IpcError::code(code::SYSTEM_PROXY_RESTORE_FAILED, format!("还原注册表项 {name} 失败：{message}"))
+            };
+            match encode_registry_value(value).map_err(|error| failed(error.0))? {
+                Some((kind, data)) => self.registry.set(name, kind, &data).map_err(failed)?,
+                None => self.registry.delete(name).map_err(failed)?,
+            }
+        }
+        Ok(())
+    }
+
+    pub fn refresh_now(&self) -> Result<(), IpcError> {
+        self.registry.refresh().map_err(|message| {
+            IpcError::code(code::SYSTEM_PROXY_RESTORE_FAILED, format!("刷新 WinINet 代理设置失败：{message}"))
+        })
+    }
+}
+
+impl SystemProxyAdapter for NativeWindowsSystemProxyAdapter {
+    fn platform(&self) -> &'static str {
+        "win32"
+    }
+
+    fn supported(&self) -> bool {
+        true
+    }
+
+    fn read(&self) -> BoxFut<'_, RegistryState> {
+        let result = self.read_now();
+        Box::pin(async move { result })
+    }
+
+    fn apply(&self, written: &WrittenState) -> BoxFutUnit<'_> {
+        let result = self.apply_now(written);
+        Box::pin(async move { result })
+    }
+
+    fn restore(&self, previous: &RegistryState) -> BoxFutUnit<'_> {
+        let result = self.restore_now(previous);
+        Box::pin(async move { result })
+    }
+
+    fn refresh(&self) -> BoxFutUnit<'_> {
+        let result = self.refresh_now();
+        Box::pin(async move { result })
+    }
+}
+
+/// Restore an owned proxy synchronously, outside the service queue — the
+/// last-resort path for a Windows session end, when the async flow may not
+/// get scheduled before the process is terminated. The decision rules are the
+/// service's own: a missing backup is a no-op, an unparseable backup or a
+/// foreign registry state is never written over, and the backup is deleted
+/// only after the read-back matches.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn restore_owned_proxy_blocking(
+    adapter: &NativeWindowsSystemProxyAdapter,
+    backup_path: &std::path::Path,
+) -> Result<&'static str, String> {
+    let raw = match std::fs::read_to_string(backup_path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok("idle"),
+        Err(error) => return Err(format!("backup unreadable: {error}")),
+    };
+    let value: Value = serde_json::from_str(&raw).map_err(|_| "backup is not valid JSON".to_string())?;
+    let backup = parse_system_proxy_backup(&value).map_err(|_| "backup rejected".to_string())?;
+    let observed = adapter.read_now().map_err(|error| error.0)?;
+    if !can_restore_backup(&observed, &backup) {
+        return Ok("conflict");
+    }
+    adapter.restore_now(&backup.previous).map_err(|error| error.0)?;
+    adapter.refresh_now().map_err(|error| error.0)?;
+    let readback = adapter.read_now().map_err(|error| error.0)?;
+    if !matches_previous(&readback, &backup.previous) {
+        return Err("restore read-back mismatch".to_string());
+    }
+    let _ = std::fs::remove_file(backup_path);
+    Ok("restored")
+}
+
+#[cfg(windows)]
+struct Win32Registry;
+
+#[cfg(windows)]
+impl Win32Registry {
+    fn wide(text: &str) -> Vec<u16> {
+        text.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    fn open(access: windows::Win32::System::Registry::REG_SAM_FLAGS) -> Result<windows::Win32::System::Registry::HKEY, String> {
+        use windows::core::PCWSTR;
+        use windows::Win32::System::Registry::{RegOpenKeyExW, HKEY, HKEY_CURRENT_USER};
+        let subkey = Self::wide(INTERNET_SETTINGS_SUBKEY);
+        let mut key = HKEY::default();
+        let status = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, PCWSTR(subkey.as_ptr()), 0, access, &mut key) };
+        if status.is_err() {
+            return Err(format!("could not open the Internet Settings subkey ({})", status.0));
+        }
+        Ok(key)
+    }
+
+    fn close(key: windows::Win32::System::Registry::HKEY) {
+        unsafe {
+            let _ = windows::Win32::System::Registry::RegCloseKey(key);
+        }
+    }
+}
+
+#[cfg(windows)]
+impl RawRegistry for Win32Registry {
+    fn query(&self, name: &str) -> Result<Option<(u32, Vec<u8>)>, String> {
+        use windows::core::PCWSTR;
+        use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA};
+        use windows::Win32::System::Registry::{RegQueryValueExW, KEY_QUERY_VALUE, REG_VALUE_TYPE};
+        let key = Self::open(KEY_QUERY_VALUE)?;
+        let value_name = Self::wide(name);
+        let mut result = Err(format!("registry value {name} kept changing size"));
+        let mut capacity: u32 = 512;
+        for _ in 0..4 {
+            let mut kind = REG_VALUE_TYPE::default();
+            let mut buffer = vec![0u8; capacity as usize];
+            let mut size = capacity;
+            let status = unsafe {
+                RegQueryValueExW(
+                    key,
+                    PCWSTR(value_name.as_ptr()),
+                    None,
+                    Some(&mut kind),
+                    Some(buffer.as_mut_ptr()),
+                    Some(&mut size),
+                )
+            };
+            if status == ERROR_FILE_NOT_FOUND {
+                result = Ok(None);
+                break;
+            }
+            if status == ERROR_MORE_DATA {
+                capacity = size.max(capacity * 2);
+                continue;
+            }
+            if status.is_err() {
+                result = Err(format!("reading {name} failed ({})", status.0));
+                break;
+            }
+            buffer.truncate(size as usize);
+            result = Ok(Some((kind.0, buffer)));
+            break;
+        }
+        Self::close(key);
+        result
+    }
+
+    fn set(&self, name: &str, kind: u32, data: &[u8]) -> Result<(), String> {
+        use windows::core::PCWSTR;
+        use windows::Win32::System::Registry::{RegSetValueExW, KEY_SET_VALUE, REG_VALUE_TYPE};
+        let key = Self::open(KEY_SET_VALUE)?;
+        let value_name = Self::wide(name);
+        let status = unsafe { RegSetValueExW(key, PCWSTR(value_name.as_ptr()), 0, REG_VALUE_TYPE(kind), Some(data)) };
+        Self::close(key);
+        if status.is_err() {
+            return Err(format!("writing {name} failed ({})", status.0));
+        }
+        Ok(())
+    }
+
+    fn delete(&self, name: &str) -> Result<(), String> {
+        use windows::core::PCWSTR;
+        use windows::Win32::Foundation::ERROR_FILE_NOT_FOUND;
+        use windows::Win32::System::Registry::{RegDeleteValueW, KEY_SET_VALUE};
+        let key = Self::open(KEY_SET_VALUE)?;
+        let value_name = Self::wide(name);
+        let status = unsafe { RegDeleteValueW(key, PCWSTR(value_name.as_ptr())) };
+        Self::close(key);
+        if status.is_err() && status != ERROR_FILE_NOT_FOUND {
+            return Err(format!("deleting {name} failed ({})", status.0));
+        }
+        Ok(())
+    }
+
+    fn refresh(&self) -> Result<(), String> {
+        use windows::Win32::Networking::WinInet::{
+            InternetSetOptionW, INTERNET_OPTION_REFRESH, INTERNET_OPTION_SETTINGS_CHANGED,
+        };
+        unsafe {
+            InternetSetOptionW(None, INTERNET_OPTION_SETTINGS_CHANGED, None, 0)
+                .map_err(|error| format!("InternetSetOption(INTERNET_OPTION_SETTINGS_CHANGED) failed: {error}"))?;
+            InternetSetOptionW(None, INTERNET_OPTION_REFRESH, None, 0)
+                .map_err(|error| format!("InternetSetOption(INTERNET_OPTION_REFRESH) failed: {error}"))?;
+        }
+        Ok(())
     }
 }
 
@@ -2472,6 +2895,11 @@ mod tests {
             // A corrupt file is an Err, never a phantom None.
             std::fs::create_dir_all(dir.join("system-proxy")).unwrap();
             std::fs::write(dir.join("system-proxy").join("owned-backup.json"), b"{nope").unwrap();
+            assert!(store.read().await.is_err());
+            // So is a backup that exists but cannot be read (here: a
+            // directory in its place); only a missing file means None.
+            std::fs::remove_file(dir.join("system-proxy").join("owned-backup.json")).unwrap();
+            std::fs::create_dir_all(dir.join("system-proxy").join("owned-backup.json")).unwrap();
             assert!(store.read().await.is_err());
         });
         let _ = std::fs::remove_dir_all(&dir);
@@ -3022,4 +3450,141 @@ mod tests {
             Some("a；b".to_string())
         );
     }
+
+    // --- native adapter --------------------------------------------------
+
+    #[derive(Default)]
+    struct MapRegistry {
+        values: Mutex<std::collections::HashMap<String, (u32, Vec<u8>)>>,
+        refreshes: std::sync::atomic::AtomicUsize,
+    }
+
+    impl RawRegistry for MapRegistry {
+        fn query(&self, name: &str) -> Result<Option<(u32, Vec<u8>)>, String> {
+            Ok(self.values.lock().unwrap().get(name).cloned())
+        }
+        fn set(&self, name: &str, kind: u32, data: &[u8]) -> Result<(), String> {
+            self.values.lock().unwrap().insert(name.to_string(), (kind, data.to_vec()));
+            Ok(())
+        }
+        fn delete(&self, name: &str) -> Result<(), String> {
+            self.values.lock().unwrap().remove(name);
+            Ok(())
+        }
+        fn refresh(&self) -> Result<(), String> {
+            self.refreshes.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    fn utf16z(text: &str) -> Vec<u8> {
+        text.encode_utf16().chain(std::iter::once(0)).flat_map(|unit| unit.to_le_bytes()).collect()
+    }
+
+    #[test]
+    fn native_codec_matches_the_powershell_snapshot_shape() {
+        assert_eq!(decode_registry_value(0, None, "x").unwrap(), RegistryValue::absent());
+        assert_eq!(
+            decode_registry_value(REG_TYPE_DWORD, Some(&1u32.to_le_bytes()), "x").unwrap(),
+            RegistryValue::dword(1)
+        );
+        assert_eq!(
+            decode_registry_value(REG_TYPE_SZ, Some(&utf16z("127.0.0.1:7890")), "x").unwrap(),
+            RegistryValue::string("127.0.0.1:7890")
+        );
+        let expand = decode_registry_value(REG_TYPE_EXPAND_SZ, Some(&utf16z("%HOST%:1")), "x").unwrap();
+        assert_eq!((expand.kind.as_str(), expand.value.as_str()), ("REG_EXPAND_SZ", Some("%HOST%:1")));
+        let binary = decode_registry_value(REG_TYPE_BINARY, Some(&[0x0a, 0xff]), "x").unwrap();
+        assert_eq!(binary.value, json!("0AFF"));
+        let mut multi = utf16z("a");
+        multi.extend(utf16z("b"));
+        multi.extend([0, 0]);
+        assert_eq!(decode_registry_value(REG_TYPE_MULTI_SZ, Some(&multi), "x").unwrap().value, json!("a;b"));
+        assert_eq!(
+            decode_registry_value(REG_TYPE_QWORD, Some(&5u64.to_le_bytes()), "x").unwrap().kind,
+            "REG_QWORD"
+        );
+        assert!(decode_registry_value(99, Some(&[]), "x").is_err());
+        assert!(decode_registry_value(REG_TYPE_DWORD, Some(&[1]), "x").is_err());
+    }
+
+    #[test]
+    fn native_codec_round_trips_every_restorable_type() {
+        for value in [
+            RegistryValue::dword(0),
+            RegistryValue::string("<local>;10.*"),
+            RegistryValue { exists: true, kind: "REG_EXPAND_SZ".into(), value: json!("%X%") },
+            RegistryValue { exists: true, kind: "REG_BINARY".into(), value: json!("00AB") },
+        ] {
+            let (kind, data) = encode_registry_value(&value).unwrap().unwrap();
+            assert_eq!(decode_registry_value(kind, Some(&data), "x").unwrap(), value);
+        }
+        assert_eq!(encode_registry_value(&RegistryValue::absent()).unwrap(), None);
+        let qword = RegistryValue { exists: true, kind: "REG_QWORD".into(), value: json!(1) };
+        assert!(encode_registry_value(&qword).is_err());
+        let bad_hex = RegistryValue { exists: true, kind: "REG_BINARY".into(), value: json!("0G") };
+        assert!(encode_registry_value(&bad_hex).is_err());
+        assert!(encode_registry_value(&RegistryValue::dword(1u64 << 33)).is_err());
+    }
+
+    fn native_service(registry: Arc<MapRegistry>, backup: Arc<dyn BackupStore>) -> SystemProxyService {
+        SystemProxyService::new(
+            Arc::new(NativeWindowsSystemProxyAdapter::new(registry)),
+            static_probe(Target { host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(), port: 7890 }),
+            backup,
+            Arc::new(InMemoryBypassStore::new()),
+            "native-test".to_string(),
+        )
+    }
+
+    #[tokio::test]
+    async fn native_adapter_enables_and_restores_the_exact_previous_state() {
+        let registry = Arc::new(MapRegistry::default());
+        registry.set(PROXY_ENABLE_VALUE, REG_TYPE_DWORD, &0u32.to_le_bytes()).unwrap();
+        registry.set(PROXY_OVERRIDE_VALUE, REG_TYPE_EXPAND_SZ, &utf16z("corp.local")).unwrap();
+        let before = registry.values.lock().unwrap().clone();
+        let service = native_service(registry.clone(), Arc::new(InMemoryBackupStore::new()));
+        assert_eq!(service.enable().await.unwrap().phase, "enabled");
+        let server = registry.query(PROXY_SERVER_VALUE).unwrap().unwrap();
+        assert_eq!(decode_registry_value(server.0, Some(&server.1), "s").unwrap().value, json!("127.0.0.1:7890"));
+        service.disable().await.unwrap();
+        // ProxyServer was absent before: restore deletes it; the EXPAND_SZ
+        // override comes back with its original type.
+        assert_eq!(*registry.values.lock().unwrap(), before);
+        assert!(registry.refreshes.load(Ordering::SeqCst) >= 2);
+    }
+
+    #[tokio::test]
+    async fn blocking_restore_follows_the_service_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = Arc::new(MapRegistry::default());
+        let adapter = NativeWindowsSystemProxyAdapter::new(registry.clone());
+        let store = FileSystemBackupStore::for_base_dir(dir.path());
+        let path = dir.path().join(SYSTEM_PROXY_BACKUP_SUBDIR).join(SYSTEM_PROXY_BACKUP_FILE);
+        assert_eq!(restore_owned_proxy_blocking(&adapter, &path).unwrap(), "idle");
+
+        let service = native_service(registry.clone(), Arc::new(FileSystemBackupStore::for_base_dir(dir.path())));
+        service.enable().await.unwrap();
+        assert!(store.read().await.unwrap().is_some());
+        assert_eq!(restore_owned_proxy_blocking(&adapter, &path).unwrap(), "restored");
+        assert!(registry.values.lock().unwrap().is_empty());
+        assert!(!path.exists());
+
+        // A foreign takeover is never written over.
+        service.enable().await.unwrap();
+        registry.set(PROXY_SERVER_VALUE, REG_TYPE_SZ, &utf16z("10.0.0.1:8080")).unwrap();
+        assert_eq!(restore_owned_proxy_blocking(&adapter, &path).unwrap(), "conflict");
+        assert!(path.exists());
+    }
+
+
+    #[tokio::test]
+    async fn fenced_service_never_writes_the_proxy_again() {
+        let registry = Arc::new(MapRegistry::default());
+        let service = native_service(registry.clone(), Arc::new(InMemoryBackupStore::new()));
+        service.fence_mutations();
+        assert!(service.enable().await.is_err());
+        assert!(registry.values.lock().unwrap().is_empty());
+    }
+
 }

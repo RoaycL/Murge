@@ -41,7 +41,7 @@ public class TauriWindowProbe {
  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
  [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref Point point);
  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
- [DllImport("user32.dll")] public static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra);
+ [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint message, UIntPtr wParam, IntPtr lParam);
  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
 }
 '@
@@ -84,19 +84,13 @@ if($env:CI_TAURI_ACTION -eq 'drag' -or $env:CI_TAURI_ACTION -eq 'double-click') 
  $debug=@($rows|Where-Object {$ids -contains [int]$_.ProcessId}|ForEach-Object { $port=$null;if($_.CommandLine -match '--remote-debugging-port=(\d+)'){$port=[int]$Matches[1]};@{pid=$_.ProcessId;name=$_.Name;debugPort=$port}})
  $listeners=@(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue|Where-Object {$ids -contains [int]$_.OwningProcess}|ForEach-Object {@{pid=$_.OwningProcess;port=$_.LocalPort;address=$_.LocalAddress}})
  @{processes=$debug;listeners=$listeners}|ConvertTo-Json -Depth 5 -Compress
-} elseif($env:CI_TAURI_ACTION -eq 'alt-f4') {
- $null=[TauriWindowProbe]::SetForegroundWindow($h)
- Start-Sleep -Milliseconds 150
- try {
-  [TauriWindowProbe]::keybd_event(0x12,0,0,[UIntPtr]::Zero)
-  [TauriWindowProbe]::keybd_event(0x73,0,0,[UIntPtr]::Zero)
- } finally {
-  [TauriWindowProbe]::keybd_event(0x73,0,2,[UIntPtr]::Zero)
-  [TauriWindowProbe]::keybd_event(0x12,0,2,[UIntPtr]::Zero)
- }
+} elseif($env:CI_TAURI_ACTION -eq 'system-close') {
+ # SC_CLOSE is the native system-menu/Alt+F4 route. Target the already
+ # verified application HWND; do not depend on hosted-desktop focus policy.
+ if(-not [TauriWindowProbe]::PostMessage($h,0x0112,[UIntPtr]0xF060,[IntPtr]::Zero)){throw 'Native system close request failed'}
  Write-Output '{"closeRequested":true}'
 } elseif($env:CI_TAURI_ACTION -eq 'close') {
- if(-not $p.CloseMainWindow()){throw 'Native close request failed'}
+ if(-not [TauriWindowProbe]::PostMessage($h,0x0010,[UIntPtr]::Zero,[IntPtr]::Zero)){throw 'Native close request failed'}
  Write-Output '{"closeRequested":true}'
 } elseif($env:CI_TAURI_ACTION -eq 'capture') {
  $null=[TauriWindowProbe]::SetForegroundWindow($h)
@@ -255,21 +249,22 @@ async function smoke(kind, executable, args = []) {
       assert.ok(alive(), 'Close-to-tray must preserve the application process')
       await native(child.pid, 'restore', '', window.handle)
       await waitFor(async () => (await state()).visible, alive)
-      // Taskbar close / WM_CLOSE and real Alt+F4 must share the same Rust owner.
-      for (const action of ['close', 'alt-f4']) {
-        await native(child.pid, action)
+      // WM_CLOSE and the system-menu/Alt+F4 SC_CLOSE message share W3 ownership.
+      for (const action of ['close', 'system-close']) {
+        console.log(`${kind}: checking ${action} on HWND ${window.handle}`)
+        await native(child.pid, action, '', window.handle)
         await waitFor(async () => !(await state()).visible, alive)
         assert.ok(alive(), `${action} must preserve the tray process`)
         await native(child.pid, 'restore', '', window.handle)
         await waitFor(async () => (await state()).visible, alive)
       }
       await evaluate(`window.desktop.appSettings.set({closeToTray:false})`)
-      Object.assign(controls, { maximizeRestore: true, minimize: true, nativeDrag: true, doubleClickMaximizeRestore: true, closeToTray: true, nativeCloseToTray: true, altF4ToTray: true })
+      Object.assign(controls, { maximizeRestore: true, minimize: true, nativeDrag: true, doubleClickMaximizeRestore: true, closeToTray: true, nativeCloseToTray: true, systemCloseToTray: true })
     }
     await pause(3000)
     assert.ok(alive(), 'Application must remain alive after rendering')
     assert.deepEqual(cdp.failures, [], 'Renderer must not emit uncaught exceptions or crashes')
-    await native(child.pid, 'close')
+    await native(child.pid, 'close', '', window.handle)
     await waitFor(async () => exit, () => true, 30_000)
     assert.equal(exit.code, 0, 'Native close must exit normally; forced termination never counts as success')
     assert.equal(exit.signal, null)

@@ -13,6 +13,7 @@ use crate::{
 use managed::SecretCodec;
 use serde_json::{json, Value};
 use std::{path::Path, sync::OnceLock};
+
 use tauri::Manager;
 
 static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
@@ -23,14 +24,56 @@ struct Pending {
     compatible: bool,
 }
 
-pub fn initialize(app: tauri::AppHandle, paths: &AppPaths) -> Result<(), std::io::Error> {
+pub fn initialize(app: tauri::AppHandle, paths: &AppPaths) -> Result<(), std::convert::Infallible> {
     crate::diagnostics::initialize();
     if let Some(root) = &paths.app_data_root {
-        let outcome = managed::apply_with_sources(root, &|paths| sync_changed_sources(root, paths))
-            .map_err(std::io::Error::other)?;
-        synchronize_sources(root, outcome == "restored").map_err(std::io::Error::other)?;
+        let codec = secrets::Codec { root: root.clone() };
+        initialize_with(
+            root,
+            &codec,
+            &store(),
+            |root| {
+                let root = root.to_owned();
+                // Only pending restore gates config readers. Routine credential
+                // migration must never hold up the window or service composition.
+                tauri::async_runtime::spawn_blocking(move || {
+                    synchronize_sources(
+                        &root,
+                        &secrets::Codec { root: root.clone() },
+                        &store(),
+                        &startup_warning,
+                    );
+                });
+            },
+            &startup_warning,
+        )?;
     }
     let _ = APP.set(app);
+    Ok(())
+}
+
+fn startup_warning(message: &'static str) {
+    // Fixed messages only: neither errors, paths nor subscription URLs enter logs.
+    eprintln!("[backup] {message}");
+}
+
+fn initialize_with(
+    root: &Path,
+    codec: &dyn SecretCodec,
+    source_store: &dyn ProfileSourceStore,
+    schedule_migration: impl FnOnce(&Path),
+    warn: &dyn Fn(&'static str),
+) -> Result<(), std::convert::Infallible> {
+    // Synchronous and before SettingsStore/ProfilesService: rollback and apply
+    // stay inside the same recoverable transaction as the credential writes.
+    match managed::apply_with_sources(root, &|paths| {
+        sync_changed_sources(root, paths, codec, source_store)
+    }) {
+        Ok("rolled-back") => warn("pending restore rolled back; continuing startup"),
+        Err(_) => warn("pending restore recovery failed; continuing startup"),
+        _ => {}
+    }
+    schedule_migration(root);
     Ok(())
 }
 
@@ -41,9 +84,9 @@ fn store() -> KeyringProfileSourceStore {
 fn sync_changed_sources(
     root: &Path,
     paths: &std::collections::BTreeSet<String>,
+    codec: &dyn SecretCodec,
+    store: &dyn ProfileSourceStore,
 ) -> archive::Result<()> {
-    let codec = secrets::Codec { root: root.into() };
-    let store = store();
     for path in paths {
         if let Some(id) = path
             .strip_prefix("profiles/.sources/")
@@ -83,23 +126,61 @@ fn persist_current_sources(root: &Path) -> archive::Result<()> {
     Ok(())
 }
 
-fn synchronize_sources(root: &Path, restored: bool) -> archive::Result<()> {
-    let codec = secrets::Codec { root: root.into() };
-    let store = store();
-    for path in managed::list(root, true)? {
-        if let Some(id) = path
-            .strip_prefix("profiles/.sources/")
-            .and_then(|p| p.strip_suffix(".source.enc"))
-        {
-            if restored || store.get(id).map_err(|_| "系统安全存储不可用")?.is_none() {
-                let url = codec.decrypt(&managed::read(&root.join(&path), archive::MAX_FILE)?)?;
-                store
-                    .set(id, &url)
-                    .map_err(|_| "系统安全存储不可用，无法恢复订阅地址")?;
+fn synchronize_sources(
+    root: &Path,
+    codec: &dyn SecretCodec,
+    store: &dyn ProfileSourceStore,
+    warn: &dyn Fn(&'static str),
+) {
+    if managed::safe(root, "profiles/.sources").is_err() {
+        warn("unsafe source directory; migration skipped");
+        return;
+    }
+    let entries = match std::fs::read_dir(root.join("profiles/.sources")) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(_) => {
+            warn("cannot enumerate source files; migration skipped");
+            return;
+        }
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            warn("cannot read source entry; continuing migration");
+            continue;
+        };
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        let Some(id) = name.strip_suffix(".source.enc") else {
+            continue;
+        };
+        let path = format!("profiles/.sources/{name}");
+        if crate::profiles::sanitize_id(id).is_err() || managed::safe(root, &path).is_err() {
+            warn("unsafe source file; continuing migration");
+            continue;
+        }
+        match store.get(id) {
+            Ok(Some(_)) => continue,
+            Ok(None) => {}
+            Err(_) => {
+                warn("credential read failed; continuing migration");
+                continue;
             }
         }
+        let url = match managed::read(&root.join(path), archive::MAX_FILE)
+            .and_then(|bytes| codec.decrypt(&bytes))
+        {
+            Ok(url) => url,
+            Err(_) => {
+                warn("source decryption failed; continuing migration");
+                continue;
+            }
+        };
+        if store.set(id, &url).is_err() {
+            warn("credential write failed; continuing migration");
+        }
     }
-    Ok(())
 }
 
 fn root(paths: &AppPaths, restore: bool) -> Result<&Path, IpcError> {
@@ -295,7 +376,238 @@ pub async fn restore(paths: &AppPaths, payload: &Value) -> Result<Value, IpcErro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
     use std::collections::BTreeMap;
+    struct StartupCodec;
+    impl SecretCodec for StartupCodec {
+        fn encrypt(&self, value: &str) -> archive::Result<Vec<u8>> {
+            Ok(format!("encrypted:{value}").into_bytes())
+        }
+        fn decrypt(&self, value: &[u8]) -> archive::Result<String> {
+            std::str::from_utf8(value)
+                .ok()
+                .and_then(|s| s.strip_prefix("encrypted:"))
+                .map(str::to_owned)
+                .ok_or_else(|| "https://private.invalid/?token=secret".into())
+        }
+    }
+    #[derive(Default)]
+    struct StartupStore {
+        inner: crate::profiles::MemoryProfileSourceStore,
+        fail_read: bool,
+        fail_write: bool,
+    }
+    impl ProfileSourceStore for StartupStore {
+        fn get(&self, id: &str) -> crate::profiles::ProfileResult<Option<String>> {
+            if self.fail_read && id == "bad" {
+                return Err(IpcError::internal("https://private.invalid/?token=secret"));
+            }
+            self.inner.get(id)
+        }
+        fn set(&self, id: &str, url: &str) -> crate::profiles::ProfileResult<()> {
+            if self.fail_write {
+                return Err(IpcError::internal("private storage error"));
+            }
+            self.inner.set(id, url)
+        }
+        fn delete(&self, id: &str) -> crate::profiles::ProfileResult<()> {
+            self.inner.delete(id)
+        }
+    }
+    fn initialize_inline(
+        root: &Path,
+        store: &StartupStore,
+        messages: &std::cell::RefCell<Vec<&'static str>>,
+    ) -> Result<(), std::convert::Infallible> {
+        let warn = |message| messages.borrow_mut().push(message);
+        initialize_with(
+            root,
+            &StartupCodec,
+            store,
+            |root| synchronize_sources(root, &StartupCodec, store, &warn),
+            &warn,
+        )
+    }
+    fn source_file(root: &Path, id: &str, bytes: &[u8]) {
+        std::fs::create_dir_all(root.join("profiles/.sources")).unwrap();
+        std::fs::write(
+            root.join(format!("profiles/.sources/{id}.source.enc")),
+            bytes,
+        )
+        .unwrap();
+    }
+    fn assert_startup_continues(root: &Path) {
+        // This is the next operation in the real composition root.
+        let settings = crate::settings::SettingsStore::new(Some(root.to_owned()));
+        assert!(!settings.get().close_to_tray);
+    }
+    #[test]
+    fn initialize_ok_with_corrupt_source_and_other_sources_still_migrate() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("app-settings.json"),
+            br#"{"closeToTray":false}"#,
+        )
+        .unwrap();
+        source_file(root.path(), "bad", b"corrupt DPAPI ciphertext");
+        source_file(
+            root.path(),
+            "good",
+            b"encrypted:https://example.invalid/sub?token=secret",
+        );
+        let store = StartupStore::default();
+        let messages = std::cell::RefCell::new(Vec::new());
+        assert!(initialize_inline(root.path(), &store, &messages).is_ok());
+        assert!(store.inner.get("bad").unwrap().is_none());
+        assert!(store.inner.get("good").unwrap().is_some());
+        assert!(messages
+            .borrow()
+            .iter()
+            .any(|m| m.contains("decryption failed")));
+        assert!(messages
+            .borrow()
+            .iter()
+            .all(|m| !m.contains("https:") && !m.contains("secret")));
+        assert_startup_continues(root.path());
+    }
+    #[test]
+    fn initialize_ok_with_keyring_read_failure_and_other_sources_still_migrate() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("app-settings.json"),
+            br#"{"closeToTray":false}"#,
+        )
+        .unwrap();
+        source_file(root.path(), "bad", b"encrypted:https://private.invalid/sub");
+        source_file(
+            root.path(),
+            "good",
+            b"encrypted:https://example.invalid/sub",
+        );
+        let store = StartupStore {
+            fail_read: true,
+            ..Default::default()
+        };
+        let messages = std::cell::RefCell::new(Vec::new());
+        assert!(initialize_inline(root.path(), &store, &messages).is_ok());
+        assert!(store.inner.get("good").unwrap().is_some());
+        assert!(messages
+            .borrow()
+            .iter()
+            .any(|m| m.contains("credential read failed")));
+        assert!(messages
+            .borrow()
+            .iter()
+            .all(|m| !m.contains("https:") && !m.contains("secret")));
+        assert_startup_continues(root.path());
+    }
+    #[test]
+    fn initialize_ok_with_invalid_pending_manifest_and_keeps_existing_settings() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("app-settings.json"),
+            br#"{"closeToTray":false}"#,
+        )
+        .unwrap();
+        let pending = root.path().join(".config-restore-pending");
+        std::fs::create_dir_all(&pending).unwrap();
+        std::fs::write(
+            pending.join("manifest.json"),
+            b"invalid private https://url",
+        )
+        .unwrap();
+        let messages = std::cell::RefCell::new(Vec::new());
+        assert!(initialize_inline(root.path(), &StartupStore::default(), &messages).is_ok());
+        assert!(messages
+            .borrow()
+            .iter()
+            .any(|m| m.contains("restore recovery failed")));
+        assert!(
+            pending.exists(),
+            "retain invalid journal for diagnosis; never trust its paths"
+        );
+        assert_startup_continues(root.path());
+    }
+    #[test]
+    fn initialize_applies_restore_before_scheduling_routine_migration() {
+        let root = tempfile::tempdir().unwrap();
+        let payload = archive::Payload {
+            app_id: crate::paths::app_data_namespace(),
+            app_version: env!("CARGO_PKG_VERSION").into(),
+            created_at: "2026-10-22T00:00:00Z".into(),
+            files: [(
+                "app-settings.json".into(),
+                base64::engine::general_purpose::STANDARD.encode(br#"{"closeToTray":false}"#),
+            )]
+            .into(),
+            source_urls: BTreeMap::new(),
+        };
+        managed::stage(
+            root.path(),
+            &payload,
+            env!("CARGO_PKG_VERSION"),
+            &StartupCodec,
+        )
+        .unwrap();
+        let scheduled = std::cell::Cell::new(false);
+        assert!(initialize_with(
+            root.path(),
+            &StartupCodec,
+            &StartupStore::default(),
+            |root| {
+                assert_startup_continues(root);
+                scheduled.set(true); // Scheduler need not run migration to return Ok.
+            },
+            &|_| {}
+        )
+        .is_ok());
+        assert!(scheduled.get());
+        assert_startup_continues(root.path());
+    }
+    #[test]
+    fn initialize_rolls_back_failed_restore_without_aborting_startup() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("app-settings.json"),
+            br#"{"closeToTray":false}"#,
+        )
+        .unwrap();
+        source_file(root.path(), "old", b"encrypted:https://old.invalid/sub");
+        let payload = archive::Payload {
+            app_id: crate::paths::app_data_namespace(),
+            app_version: env!("CARGO_PKG_VERSION").into(),
+            created_at: "2026-10-22T00:00:00Z".into(),
+            files: [(
+                "app-settings.json".into(),
+                base64::engine::general_purpose::STANDARD.encode(br#"{"closeToTray":true}"#),
+            )]
+            .into(),
+            source_urls: [("new".into(), "https://new.invalid/sub".into())].into(),
+        };
+        managed::stage(
+            root.path(),
+            &payload,
+            env!("CARGO_PKG_VERSION"),
+            &StartupCodec,
+        )
+        .unwrap();
+        let store = StartupStore {
+            fail_write: true,
+            ..Default::default()
+        };
+        let messages = std::cell::RefCell::new(Vec::new());
+        assert!(initialize_inline(root.path(), &store, &messages).is_ok());
+        assert!(root
+            .path()
+            .join("profiles/.sources/old.source.enc")
+            .exists());
+        assert!(!root
+            .path()
+            .join("profiles/.sources/new.source.enc")
+            .exists());
+        assert_startup_continues(root.path());
+    }
+
     fn dev() -> AppPaths {
         AppPaths {
             app_data_root: None,

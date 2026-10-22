@@ -638,11 +638,18 @@ pub fn spawn_startup_recovery(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let started_at = std::time::Instant::now();
         recover_managed_state(&app).await;
+        crate::startup_timeline::mark("managed-state-recovered");
+        crate::startup_timeline::reconciliation_complete(
+            crate::startup_timeline::Reconciliation::ManagedState,
+        );
         eprintln!(
             "[startup-timing] managed state recovered in {}ms",
             started_at.elapsed().as_millis()
         );
         if is_dev || replay_suppressed() {
+            crate::startup_timeline::reconciliation_complete(
+                crate::startup_timeline::Reconciliation::RuntimeIntent,
+            );
             return;
         }
         let flags = read_flags();
@@ -654,6 +661,9 @@ pub fn spawn_startup_recovery(app: tauri::AppHandle) {
         };
         let restored =
             restore_runtime_intent(flags, gateways.as_ref(), &RETRY_DELAYS_MS, &fence).await;
+        crate::startup_timeline::reconciliation_complete(
+            crate::startup_timeline::Reconciliation::RuntimeIntent,
+        );
         eprintln!(
             "[startup-timing] runtime restored in {}ms (kernel={}, proxy={}, TUN={})",
             started_at.elapsed().as_millis(),

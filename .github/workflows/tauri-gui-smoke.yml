@@ -1,0 +1,97 @@
+name: Tauri Windows GUI smoke
+
+on:
+  push:
+    branches: [tauri]
+  pull_request:
+    branches: [tauri]
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Optional same-repository branch/commit to validate with this CI harness
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tauri-gui-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  gui-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Preserve repository LF line endings on Windows
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+      - name: Keep the reviewed CI harness when testing another source branch
+        if: github.event_name == 'workflow_dispatch' && inputs.source_ref != ''
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: ci-harness
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - run: npm ci --include=dev
+      - run: npm run tauri:bridge
+      - name: Check generated bridge is unchanged
+        run: git diff --exit-code -- src/renderer/src/platform/generated/desktop-api.ts
+      # Run source branding checks before restoring Rust-generated JSON files.
+      - name: Prepare Electron comparison executable and renderer
+        run: npx install-electron --no
+      - run: npm run build
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: windows-x64
+          cache-on-failure: true
+      # TODO: installed-package/upgrade smoke follows the installer workstream.
+      # W3 scrubs CDP environment variables in release builds. Use debug for
+      # this inspection harness; the installer job verifies the release build.
+      # A test-only window override
+      # enables the live CDP assertions; tauri-build.yml produces normal release
+      # artifacts without this feature/override. Window geometry is unchanged.
+      - name: Prepare test-only WebView2 inspection settings
+        run: node "${{ inputs.source_ref != '' && 'ci-harness/' || '' }}scripts/ci-tauri-gui-config.mjs"
+      - run: npm run tauri:build -- --debug --no-bundle --target x86_64-pc-windows-msvc --features tauri/devtools --config "$env:RUNNER_TEMP/tauri-gui-config.json"
+      # Both shells emit out/renderer. Tauri has now embedded its assets;
+      # restore Electron's file://-relative renderer for the comparison app.
+      # Source branding/type checks already passed before Rust cache restore.
+      - name: Restore Electron comparison assets after the Tauri renderer build
+        run: npx electron-vite build
+      - name: Prepare a normal user integrity session for WebView2 inspection
+        # Hosted Windows runs elevated. WebView2 ignores the CDP environment
+        # switch in elevated apps; Tauri's own Windows e2e workflow uses gsudo
+        # at Medium integrity for the same reason. Grant only the runner user.
+        run: |
+          if (-not (Get-Command gsudo.exe -ErrorAction SilentlyContinue)) {
+            winget install --id gerardog.gsudo --exact --version 2.6.0 --accept-source-agreements --accept-package-agreements --disable-interactivity
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + $env:Path
+          $gsudo = (Get-Command gsudo.exe -ErrorAction Stop).Source
+          Split-Path $gsudo | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          $account = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+          icacls "$env:GITHUB_WORKSPACE" /grant "${account}:(OI)(CI)M"
+      - name: Verify native window, live renderer IPC, stability and normal exit
+        env:
+          MURGE_TAURI_BUILD_PROFILE: debug
+        run: gsudo.exe --integrity Medium node "${{ inputs.source_ref != '' && 'ci-harness/' || '' }}scripts/ci-tauri-gui-smoke.mjs" --compare-electron
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tauri-gui-evidence
+          path: ${{ runner.temp }}/tauri-gui-evidence/
+          if-no-files-found: error
+          retention-days: 14

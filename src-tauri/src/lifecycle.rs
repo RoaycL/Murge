@@ -190,12 +190,29 @@ async fn dispose_services(app: &tauri::AppHandle) {
 /// quit signal funnels here; the first call runs the ordered sequence, later
 /// calls join it (no-op).
 pub async fn begin_application_shutdown(app: tauri::AppHandle, session_ending: bool) {
+    let _ = begin_application_shutdown_inner(app, session_ending, false).await;
+}
+
+/// Backup restore registration: reuse W3's complete shutdown sequence and
+/// report network restore failures to the invoking renderer before relaunch.
+pub async fn begin_application_restart(app: tauri::AppHandle) -> Result<(), IpcError> {
+    begin_application_shutdown_inner(app, false, true).await
+}
+
+async fn begin_application_shutdown_inner(
+    app: tauri::AppHandle,
+    session_ending: bool,
+    restart_after_shutdown: bool,
+) -> Result<(), IpcError> {
     if session_ending {
         // Never launch a downloaded update's installer while Windows ends the session.
         crate::updates::cancel_install_on_exit();
     }
     if SHUTDOWN_IN_FLIGHT.swap(true, Ordering::SeqCst) {
-        return;
+        return Err(IpcError::internal("应用正在退出，请稍后重试"));
+    }
+    if restart_after_shutdown {
+        crate::updates::cancel_install_on_exit();
     }
     IS_QUITTING.store(true, Ordering::SeqCst);
     use tauri::Manager;
@@ -247,7 +264,7 @@ pub async fn begin_application_shutdown(app: tauri::AppHandle, session_ending: b
                 // them before replaying the saved user intent.
                 flush_logs(&app).await;
                 app.exit(0);
-                return;
+                return Ok(());
             }
             IS_QUITTING.store(false, Ordering::SeqCst);
             // Reveal the window so the user can fix the proxy and retry.
@@ -256,9 +273,23 @@ pub async fn begin_application_shutdown(app: tauri::AppHandle, session_ending: b
                 let _ = window.show();
                 let _ = window.set_focus();
             }
+            Err(IpcError::internal(
+                "无法恢复系统网络设置，应用尚未重启，请检查后重试",
+            ))
         }
         QuitFlowResult::Quitting => {
-            app.exit(0);
+            if restart_after_shutdown {
+                // Give the successful IPC response time to reach the renderer.
+                // Relaunch is requested only after proxy/kernel/guards/update
+                // teardown and final log flush have completed.
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    app.request_restart();
+                });
+            } else {
+                app.exit(0);
+            }
+            Ok(())
         }
     }
 }

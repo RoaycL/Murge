@@ -161,6 +161,17 @@ pub async fn dispatch(
     updates: &crate::updates::UpdateService,
 ) -> IpcResult {
     match channel {
+        "diagnostics:collect" => {
+            Ok(
+                crate::diagnostics::collect(_paths, settings, models, kernel, system_proxy, tun)
+                    .await,
+            )
+        }
+        "backup:create" => crate::backup::create(_paths, payload).await,
+        "backup:preview" => crate::backup::local_preview(_paths, payload).await,
+        "backup:restore" => crate::backup::restore(_paths, payload).await,
+        "backup:webdav-upload" => crate::backup::webdav_upload(_paths, payload).await,
+        "backup:webdav-preview" => crate::backup::webdav_preview(_paths, payload).await,
         "app:get-brand" => Ok(brand::brand_document()),
         // Desktop integrations (Phase 3C): icons + network interfaces. The
         // TS handlers return null/[] quietly on invalid input — no errors.

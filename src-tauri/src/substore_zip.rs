@@ -22,6 +22,8 @@ const LOCAL_FIXED_LEN: usize = 30;
 const MAX_ENTRIES: usize = 4096;
 const MAX_ENTRY_BYTES: usize = 32 * 1024 * 1024;
 const MAX_TOTAL_BYTES: usize = 128 * 1024 * 1024;
+const KERNEL_MAX_ENTRY_BYTES: usize = 128 * 1024 * 1024;
+const KERNEL_MAX_TOTAL_BYTES: usize = 256 * 1024 * 1024;
 
 /// Every parse/extraction rejection carries the TS `ZIP 解析失败：` prefix.
 #[derive(Debug)]
@@ -80,6 +82,7 @@ fn find_eocd(buf: &[u8]) -> Result<usize, ZipFormatError> {
 fn parse_central_directory(
     buf: &[u8],
     max_entry_bytes: usize,
+    max_total_bytes: usize,
 ) -> Result<Vec<ZipEntry>, ZipFormatError> {
     let eocd = find_eocd(buf)?;
     let entry_count = read_u16(buf, eocd + 10) as usize;
@@ -141,7 +144,7 @@ fn parse_central_directory(
         .iter()
         .map(|entry| entry.uncompressed_size as usize)
         .sum();
-    if total_size > MAX_TOTAL_BYTES {
+    if total_size > max_total_bytes {
         return Err(ZipFormatError("解压后总大小超过上限".into()));
     }
     Ok(entries)
@@ -220,24 +223,31 @@ fn resolved_dest(dest_dir: &Path) -> PathBuf {
 ///
 /// Returns the written file paths relative to `destDir`.
 pub fn extract_zip_bytes(buf: &[u8], dest_dir: &Path) -> Result<Vec<String>, ZipFormatError> {
-    extract_zip_with_entry_limit(buf, dest_dir, MAX_ENTRY_BYTES)
+    extract_zip_with_entry_limit(buf, dest_dir, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES)
 }
 
 /// Verified kernel executables can exceed the Sub-Store per-file budget.
-/// Keep the shared 128 MiB total cap and every path/format/CRC check intact.
+/// Bound kernel entries to 128 MiB and the archive total to 256 MiB.
+/// Sub-Store limits and every path/format/CRC check remain unchanged.
 pub(crate) fn extract_kernel_zip_bytes(
     buf: &[u8],
     dest_dir: &Path,
 ) -> Result<Vec<String>, ZipFormatError> {
-    extract_zip_with_entry_limit(buf, dest_dir, MAX_TOTAL_BYTES)
+    extract_zip_with_entry_limit(
+        buf,
+        dest_dir,
+        KERNEL_MAX_ENTRY_BYTES,
+        KERNEL_MAX_TOTAL_BYTES,
+    )
 }
 
 fn extract_zip_with_entry_limit(
     buf: &[u8],
     dest_dir: &Path,
     max_entry_bytes: usize,
+    max_total_bytes: usize,
 ) -> Result<Vec<String>, ZipFormatError> {
-    let entries = parse_central_directory(buf, max_entry_bytes)?;
+    let entries = parse_central_directory(buf, max_entry_bytes, max_total_bytes)?;
     if entries.is_empty() {
         return Err(ZipFormatError("归档为空".into()));
     }
@@ -448,6 +458,26 @@ mod tests {
     }
 
     #[test]
+    fn kernel_total_budget_rejects_an_oversized_archive_before_inflating() {
+        let mut archive = zip_bytes(vec![
+            ("a", vec![0], 0),
+            ("b", vec![0], 0),
+            ("c", vec![0], 0),
+        ]);
+        let mut central = read_u32(&archive, find_eocd(&archive).unwrap() + 16) as usize;
+        for _ in 0..3 {
+            archive[central + 24..central + 28]
+                .copy_from_slice(&(100_u32 * 1024 * 1024).to_le_bytes());
+            central += CENTRAL_FIXED_LEN + 1;
+        }
+        let error =
+            parse_central_directory(&archive, KERNEL_MAX_ENTRY_BYTES, KERNEL_MAX_TOTAL_BYTES)
+                .err()
+                .unwrap();
+        assert!(error.0.contains("总大小"));
+    }
+
+    #[test]
     fn kernel_budget_accepts_large_executables_without_relaxing_substore() {
         let mut archive = zip_bytes(vec![("mihomo.exe", vec![0; MAX_ENTRY_BYTES + 1], 8)]);
         let dest = staging_dir();
@@ -459,7 +489,7 @@ mod tests {
         );
         let central = read_u32(&archive, find_eocd(&archive).unwrap() + 16) as usize;
         archive[central + 24..central + 28]
-            .copy_from_slice(&((MAX_TOTAL_BYTES + 1) as u32).to_le_bytes());
+            .copy_from_slice(&((KERNEL_MAX_ENTRY_BYTES + 1) as u32).to_le_bytes());
         assert!(extract_kernel_zip_bytes(&archive, &dest).is_err());
         let _ = std::fs::remove_dir_all(&dest);
     }

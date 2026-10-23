@@ -1,4 +1,5 @@
 import { createHash, generateKeyPairSync, randomBytes, sign } from 'node:crypto'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   SignedManifestUpdaterDriver,
@@ -40,6 +41,8 @@ const mirror = `https://ghfast.top/${direct}`
 const fileName = 'App-Setup-1.0.0-x64.exe'
 const assetUrl = `https://github.com/owner/repo/releases/download/v1.0.0/${fileName}`
 const installer = Buffer.from('tauri setup bytes')
+/** Where the driver stages an installer (path.join, so `\` on Windows). */
+const staged = (name: string): string => join('/tmp/update', name)
 
 type Routes = Record<string, () => Response>
 
@@ -141,14 +144,14 @@ describe('SignedManifestUpdaterDriver', () => {
     await h.settle()
     expect(h.events.map((event) => event.kind)).toEqual(['checking', 'available', 'download-progress', 'downloaded'])
     expect(h.events[1]).toEqual({ kind: 'available', version: '1.0.0', releaseNotes: 'notes', product: 'electron' })
-    expect(h.written.map((entry) => entry.path)).toEqual([`/tmp/update/${fileName}`])
+    expect(h.written.map((entry) => entry.path)).toEqual([staged(fileName)])
     expect(h.requested).toContain(`https://ghfast.top/${assetUrl}`)
     h.driver.quitAndInstall()
     expect(h.quits()).toBe(1)
     expect(h.launched).toEqual([])
     // The quit flow disposes the driver after restoring the proxy.
     h.driver.dispose()
-    expect(h.launched).toEqual([{ path: `/tmp/update/${fileName}`, args: ['--updated', '/S', '--force-run'] }])
+    expect(h.launched).toEqual([{ path: staged(fileName), args: ['--updated', '/S', '--force-run'] }])
     h.driver.dispose()
     expect(h.launched).toHaveLength(1)
   })
@@ -266,7 +269,7 @@ describe('SignedManifestUpdaterDriver', () => {
     h.driver.check()
     await h.settle()
     expect(h.events.at(-1)?.kind).toBe('downloaded')
-    h.disk.set(`/tmp/update/${fileName}`, Buffer.from('swapped by another process'))
+    h.disk.set(staged(fileName), Buffer.from('swapped by another process'))
     h.driver.dispose()
     expect(h.launched).toEqual([])
   })
@@ -393,7 +396,7 @@ describe('SignedManifestUpdaterDriver', () => {
     h.driver.quitAndInstall()
     expect(h.quits()).toBe(1)
     h.driver.dispose()
-    expect(h.launched).toEqual([{ path: `/tmp/update/${tauriName}`, args: ['/P', '/R'] }])
+    expect(h.launched).toEqual([{ path: staged(tauriName), args: ['/P', '/R'] }])
   })
 
   it('refuses a stable manifest that names the experimental build', async () => {

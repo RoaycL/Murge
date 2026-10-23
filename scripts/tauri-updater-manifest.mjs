@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // Writes the static Tauri updater manifest (`latest.json`) a GitHub Release
 // carries, after proving every installer signature against the public key
 // pinned in src-tauri/tauri.conf.json (`plugins.updater.pubkey`).

@@ -92,6 +92,9 @@ pub fn on_session_end(app: &tauri::AppHandle) {
                 Ok(outcome) => crate::diag!("[session-end] direct proxy restore: {outcome}"),
                 Err(error) => crate::diag!("[session-end] direct proxy restore failed: {error}"),
             }
+            // The ordered flow may already have flushed; Windows can end the
+            // process as soon as this handler returns.
+            crate::file_log::flush_diagnostics_blocking();
         }
     }
     // 3. Give the ordered flow (TUN off, core stop, flush) the rest of the

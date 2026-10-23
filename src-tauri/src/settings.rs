@@ -346,8 +346,18 @@ impl SettingsStore {
             return false;
         };
         let seen_path = root.join(INSTALLER_CHANNEL_RESET_SEEN_FILE);
-        if fs::read_to_string(&seen_path).ok().as_deref() == Some(stamp.as_str()) {
-            return false;
+        match fs::read_to_string(&seen_path) {
+            Ok(seen) if seen == stamp => return false,
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            // Unreadable is not unseen: never undo a later choice of "stable"
+            // because of a transient read failure; try again next launch.
+            Err(error) => {
+                crate::diag!(
+                    "[app-settings] unable to read the installer channel stamp record: {error}"
+                );
+                return false;
+            }
         }
         if self.get().update_channel != "experimental" {
             self.set(&AppSettingsPatch(

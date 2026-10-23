@@ -223,12 +223,16 @@ jobs:
               throw "Refusing to overwrite an already-published release for $env:GITHUB_REF_NAME"
             }
             gh release upload $env:GITHUB_REF_NAME $env:X64_INSTALLER $env:ARM64_INSTALLER $env:CHECKSUM_FILE $env:UPDATE_FEED $env:RELEASE_EVIDENCE dist/channel-stable.json --clobber
+            if ($LASTEXITCODE -ne 0) { throw 'Uploading assets to the draft release failed; it stays a draft' }
             gh release edit $env:GITHUB_REF_NAME --notes-file $env:RELEASE_NOTES
+            if ($LASTEXITCODE -ne 0) { throw 'Updating the draft release notes failed' }
             # A re-run against a leftover draft publishes it rather than leaving it draft.
             gh release edit $env:GITHUB_REF_NAME --draft=false
+            if ($LASTEXITCODE -ne 0) { throw 'Publishing the draft release failed' }
           } else {
             # Owner directive: publish directly as a final release, never a draft.
             gh release create $env:GITHUB_REF_NAME $env:X64_INSTALLER $env:ARM64_INSTALLER $env:CHECKSUM_FILE $env:UPDATE_FEED $env:RELEASE_EVIDENCE dist/channel-stable.json --verify-tag --title $env:GITHUB_REF_NAME --notes-file $env:RELEASE_NOTES
+            if ($LASTEXITCODE -ne 0) { throw 'Creating the release failed' }
           }
 
       # The channel lives in a fixed pre-release that is never "latest", so

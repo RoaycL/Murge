@@ -78,7 +78,7 @@ onUnmounted(() => {
 
 <template>
   <Teleport to="body">
-    <div v-if="open" class="modal-shade" role="presentation" @click.self="later">
+    <div v-if="open" class="modal-shade update-dialog-shade" role="presentation" @click.self="later">
       <section ref="dialog" class="confirm-modal update-dialog" role="dialog" aria-modal="true" :aria-label="title">
         <header>
           <h2>{{ title }}</h2>
@@ -100,6 +100,8 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* It takes focus when it opens, so it must also be the visible top modal. */
+.update-dialog-shade { z-index: 71; }
 .update-dialog { width: min(520px, calc(100vw - 48px)); }
 .update-dialog-version { display: block; margin-top: var(--space-2); color: var(--app-muted); }
 .update-dialog-notes {

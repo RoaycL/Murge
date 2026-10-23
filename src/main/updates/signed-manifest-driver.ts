@@ -247,7 +247,7 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
     const generation = this.generation
     this.busy = true
     void work()
-      .catch((error) => this.emit({ kind: 'error', message: message(error) }))
+      .catch((error) => { if (generation === this.generation) this.emit({ kind: 'error', message: message(error) }) })
       .finally(() => { if (generation === this.generation) this.busy = false })
   }
 

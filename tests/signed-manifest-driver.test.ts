@@ -394,6 +394,27 @@ describe('SignedManifestUpdaterDriver', () => {
     expect(h.launched).toEqual([{ path: `/tmp/update/${tauriName}`, args: ['/P', '/R'] }])
   })
 
+  it('refuses a stable manifest that names the experimental build', async () => {
+    const key = makeKey()
+    const signature = key.signFile(installer, `timestamp:1\tfile:${fileName}\tversion:1.0.0`)
+    const tauriName = 'App_0.1.0_x64-setup.exe'
+    const tauriUrl = `https://github.com/owner/repo/releases/download/tauri-v0.1.0/${tauriName}`
+    // A hostile mirror replays an old, validly signed Tauri installer on the stable channel.
+    const h = harness({
+      [`${direct}/latest.json`]: manifest(signature),
+      [`${mirror}/latest.json`]: () => Response.json({
+        version: '0.1.0',
+        platforms: { 'windows-x86_64': { url: tauriUrl, signature: key.signFile(installer, `timestamp:1\tfile:${tauriName}\tversion:0.1.0`) } }
+      }),
+      [assetUrl]: asset(),
+      [tauriUrl]: asset()
+    }, { publicKey: key.publicKey })
+    h.driver.check()
+    await h.settle()
+    expect(h.events[1]).toMatchObject({ kind: 'available', version: '1.0.0', product: 'electron' })
+    expect(h.requested).not.toContain(tauriUrl)
+  })
+
   it('refuses manifests that name an installer of neither build', async () => {
     const key = makeKey()
     const odd = 'App-portable-1.0.0.exe'

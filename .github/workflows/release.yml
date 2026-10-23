@@ -195,6 +195,8 @@ jobs:
           }
           node scripts/channel-manifest.mjs --version $version --tag $env:GITHUB_REF_NAME --dir dist --notes-file $env:RELEASE_NOTES --out dist/channel-stable/latest.json
           if ($LASTEXITCODE -ne 0) { throw 'Writing the stable channel manifest failed' }
+          # Published with the installers it signs, so a re-run can move the channel from it.
+          Copy-Item dist/channel-stable/latest.json dist/channel-stable.json
 
       - name: Publish GitHub Release
         shell: pwsh
@@ -210,15 +212,23 @@ jobs:
           $existing = gh release view $env:GITHUB_REF_NAME --json isDraft --jq '.isDraft' 2>$null
           if ($LASTEXITCODE -eq 0) {
             if ($existing -ne 'true') {
+              # A re-run after a failed channel update: leave the published
+              # release untouched; the next step moves the channel from the
+              # manifest published with it.
+              $assets = gh release view $env:GITHUB_REF_NAME --json assets --jq '.assets[].name'
+              if ($assets -contains 'channel-stable.json') {
+                Write-Host "::warning::$env:GITHUB_REF_NAME is already published; only the stable channel is updated"
+                exit 0
+              }
               throw "Refusing to overwrite an already-published release for $env:GITHUB_REF_NAME"
             }
-            gh release upload $env:GITHUB_REF_NAME $env:X64_INSTALLER $env:ARM64_INSTALLER $env:CHECKSUM_FILE $env:UPDATE_FEED $env:RELEASE_EVIDENCE --clobber
+            gh release upload $env:GITHUB_REF_NAME $env:X64_INSTALLER $env:ARM64_INSTALLER $env:CHECKSUM_FILE $env:UPDATE_FEED $env:RELEASE_EVIDENCE dist/channel-stable.json --clobber
             gh release edit $env:GITHUB_REF_NAME --notes-file $env:RELEASE_NOTES
             # A re-run against a leftover draft publishes it rather than leaving it draft.
             gh release edit $env:GITHUB_REF_NAME --draft=false
           } else {
             # Owner directive: publish directly as a final release, never a draft.
-            gh release create $env:GITHUB_REF_NAME $env:X64_INSTALLER $env:ARM64_INSTALLER $env:CHECKSUM_FILE $env:UPDATE_FEED $env:RELEASE_EVIDENCE --verify-tag --title $env:GITHUB_REF_NAME --notes-file $env:RELEASE_NOTES
+            gh release create $env:GITHUB_REF_NAME $env:X64_INSTALLER $env:ARM64_INSTALLER $env:CHECKSUM_FILE $env:UPDATE_FEED $env:RELEASE_EVIDENCE dist/channel-stable.json --verify-tag --title $env:GITHUB_REF_NAME --notes-file $env:RELEASE_NOTES
           }
 
       # The channel lives in a fixed pre-release that is never "latest", so
@@ -234,7 +244,13 @@ jobs:
             gh release create channel-stable --target $env:GITHUB_SHA --prerelease --latest=false --title 'Stable update channel' --notes 'Maintained by the release workflow: latest.json here is the signed manifest the stable update channel follows. Do not download from this release.'
             if ($LASTEXITCODE -ne 0) { throw 'Creating the channel-stable release failed' }
           }
-          gh release upload channel-stable dist/channel-stable/latest.json --clobber
+          # Always the manifest published with this release's installers, which
+          # on a re-run are not the ones this run built and signed.
+          $from = New-Item -ItemType Directory -Force -Path dist/channel-from-release
+          gh release download $env:GITHUB_REF_NAME --pattern channel-stable.json --dir $from --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Downloading the release channel manifest failed' }
+          Move-Item -Force (Join-Path $from 'channel-stable.json') (Join-Path $from 'latest.json')
+          gh release upload channel-stable (Join-Path $from 'latest.json') --clobber
           if ($LASTEXITCODE -ne 0) { throw 'Updating the stable channel manifest failed' }
 
       - name: Preserve installers as workflow artifact

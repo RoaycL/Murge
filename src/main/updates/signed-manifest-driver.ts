@@ -40,7 +40,19 @@ export const CHANNEL_TAGS: Readonly<Record<UpdateChannel, string>> = {
   stable: 'channel-stable',
   experimental: 'channel-experimental'
 }
-const SAFE_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.exe$/
+/**
+ * The build each channel delivers. A manifest naming the other build is
+ * refused: manifests are unsigned, so a stale or hostile mirror could
+ * otherwise serve an old, validly signed installer of the other build, which
+ * would be taken as a channel switch at any version. Moving the stable
+ * channel to Tauri later takes a client release that changes this mapping.
+ */
+export const CHANNEL_PRODUCTS: Readonly<Record<UpdateChannel, UpdateProduct>> = {
+  stable: 'electron',
+  experimental: 'tauri'
+}
+/** Installer names GitHub serves unchanged and that are safe as a file name. */
+export const SAFE_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.exe$/
 
 /** The updater's `{{target}}-{{arch}}` platform keys. */
 const PLATFORM_KEYS: Readonly<Record<string, string>> = { x64: 'windows-x86_64', arm64: 'windows-aarch64' }
@@ -176,11 +188,6 @@ function platformFileName(url: string): string {
   }
 }
 
-/** A channel switch outranks a same-build update offered by a stale source. */
-function offerRank(offer: { product: UpdateProduct }, running: UpdateProduct): number {
-  return offer.product === running ? 0 : 1
-}
-
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -313,6 +320,9 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
     }
     const product = installerProduct(platformFileName(platform.url))
     if (!product) throw new Error(`update manifest names an unexpected installer: ${platform.url}`)
+    if (product !== CHANNEL_PRODUCTS[this.channel]) {
+      throw new Error(`update manifest of the ${this.channel} channel names the other build: ${platform.url}`)
+    }
     // Same build: only a newer release. Other build: a channel switch.
     if (product === this.product && !isNewerVersion(manifest.version, this.currentVersion)) return null
     // Already downloaded and waiting for quit: nothing new to fetch.
@@ -348,8 +358,7 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
       for (const base of bases) {
         this.probe(base, controller.signal).then(
           (offer) => {
-            if (offer && (!best || offerRank(offer, this.product) > offerRank(best, this.product) ||
-                (offer.product === best.product && isNewerVersion(offer.manifest.version, best.manifest.version)))) {
+            if (offer && (!best || isNewerVersion(offer.manifest.version, best.manifest.version))) {
               best = { kind: 'offer', base, ...offer }
             } else if (!offer) {
               answered ??= base

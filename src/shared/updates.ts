@@ -49,6 +49,8 @@ export interface UpdateState {
   error: string | null
   /** True when a downloaded update is ready to be installed on restart. */
   canInstall: boolean
+  /** True when this build can follow the stable / experimental release channels. */
+  channelsSupported: boolean
 }
 
 export const DEFAULT_UPDATE_STATE: Readonly<UpdateState> = Object.freeze({
@@ -60,7 +62,8 @@ export const DEFAULT_UPDATE_STATE: Readonly<UpdateState> = Object.freeze({
   availableProduct: null,
   progress: null,
   error: null,
-  canInstall: false
+  canInstall: false,
+  channelsSupported: false
 })
 
 /**
@@ -108,6 +111,9 @@ export function coerceUpdateState(value: unknown): UpdateState {
       : DEFAULT_UPDATE_STATE.availableProduct,
     progress,
     error: typeof record.error === 'string' ? record.error : DEFAULT_UPDATE_STATE.error,
-    canInstall: typeof record.canInstall === 'boolean' ? record.canInstall : DEFAULT_UPDATE_STATE.canInstall
+    canInstall: typeof record.canInstall === 'boolean' ? record.canInstall : DEFAULT_UPDATE_STATE.canInstall,
+    channelsSupported: typeof record.channelsSupported === 'boolean'
+      ? record.channelsSupported
+      : DEFAULT_UPDATE_STATE.channelsSupported
   }
 }

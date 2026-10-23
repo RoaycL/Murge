@@ -27,7 +27,12 @@ export class UpdateService implements UpdatesGateway {
   private downloadedBeforeCheck: UpdateState | null = null
 
   constructor(private readonly driver: UpdaterDriver, options: { pollIntervalMs?: number } = {}) {
-    this.state = { ...DEFAULT_UPDATE_STATE, currentVersion: driver.currentVersion, currentProduct: driver.product ?? 'electron' }
+    this.state = {
+      ...DEFAULT_UPDATE_STATE,
+      currentVersion: driver.currentVersion,
+      currentProduct: driver.product ?? 'electron',
+      channelsSupported: driver.supported && typeof driver.setChannel === 'function'
+    }
     this.pollIntervalMs = options.pollIntervalMs ?? 10 * 60 * 1000
   }
 

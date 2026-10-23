@@ -40,6 +40,7 @@ describe('channel-manifest', () => {
     expect(name).toBe('App-Setup-1.2.3-x64.exe')
     expect(installerProduct(name)).toBe('electron')
     expect(() => selectElectronInstallers([name], 'App', '1.2.3')).toThrow(/missing installer App-Setup-1.2.3-arm64.exe/)
+    expect(() => electronInstallerName('My App', '1.2.3', 'x64')).toThrow(/not usable by the updater/)
   })
 
   it('writes a manifest the Electron driver accepts, with the release notes', async () => {

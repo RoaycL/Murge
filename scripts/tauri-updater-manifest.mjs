@@ -134,13 +134,23 @@ function argValue(argv, name) {
   return index === -1 ? null : (argv[index + 1] ?? null)
 }
 
+/** The key the Tauri build pins, or brand.config.json's on a checkout without src-tauri. */
+async function pinnedPublicKey(brand) {
+  try {
+    const tauriConfig = JSON.parse(await readFile(resolve(root, 'src-tauri/tauri.conf.json'), 'utf8'))
+    return tauriConfig.plugins?.updater?.pubkey ?? ''
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error
+    return brand.updatePublicKey ?? ''
+  }
+}
+
 async function main(argv) {
   const version = argValue(argv, '--version')
   const out = argValue(argv, '--out')
   if (!version || !out) throw new Error('--version and --out are required')
   const brand = JSON.parse(await readFile(resolve(root, 'brand.config.json'), 'utf8'))
-  const tauriConfig = JSON.parse(await readFile(resolve(root, 'src-tauri/tauri.conf.json'), 'utf8'))
-  const publicKey = argValue(argv, '--pubkey') ?? tauriConfig.plugins?.updater?.pubkey ?? ''
+  const publicKey = argValue(argv, '--pubkey') ?? await pinnedPublicKey(brand)
   const notesFile = argValue(argv, '--notes-file')
   const installers = {}
   for (const arch of Object.keys(PLATFORM_KEYS)) {

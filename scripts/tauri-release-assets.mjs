@@ -12,6 +12,7 @@
 // Usage:
 //   node scripts/tauri-release-assets.mjs --version 0.9.31 --tag tauri-v0.9.31 \
 //     --dir <folder with <product>_0.9.31_x64-setup.exe and <product>_0.9.31_arm64-setup.exe> \
+//     [--notes-file <release notes, shown in the update dialog>] \
 //     [--pubkey <base64>]   # dry runs with a throwaway key only
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -81,10 +82,11 @@ async function main(argv) {
     checksums.push(`${createHash('sha256').update(data).digest('hex')} *${fileName}`)
   }
 
+  const notesFile = argValue(argv, '--notes-file')
   const manifest = buildManifest({
     version,
     tag,
-    notes: '',
+    notes: notesFile ? await readFile(notesFile, 'utf8') : '',
     pubDate: new Date().toISOString(),
     repositoryUrl: brand.repositoryUrl,
     publicKey,

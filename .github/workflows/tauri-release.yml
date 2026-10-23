@@ -1,12 +1,13 @@
 name: Tauri release
 
 # Tag `tauri-vX.Y.Z` on the tauri branch to publish a signed Tauri build as a
-# GitHub *pre-release*. Plain `vX.Y.Z` tags stay with release.yml (Electron)
-# until the Phase 7 cutover. A pre-release is never "latest", so it cannot
-# change what Electron's electron-updater or the Tauri updater
-# (releases/latest/download/latest.json) see. Making a Tauri build the latest
-# release is a cutover step that happens after the last Electron version
-# (the upgrade bridge) has shipped.
+# GitHub *pre-release* and point the experimental update channel at it
+# (latest.json in the fixed `channel-experimental` pre-release). Plain
+# `vX.Y.Z` tags stay with release.yml (Electron), which maintains
+# `channel-stable`. Neither ever becomes GitHub's "latest" release, so
+# electron-updater clients older than the channel-aware build are unaffected.
+# Moving stable users to Tauri (the Phase 7 cutover) is then a matter of
+# publishing a Tauri manifest to `channel-stable`.
 #
 # workflow_dispatch builds, signs and verifies everything with the real key
 # without publishing (a dry run before tagging).
@@ -53,10 +54,11 @@ jobs:
           mkdir -p "$work/keys" "$work/dist"
           npx tauri signer generate --ci -p '' -w "$work/keys/throwaway.key" > /dev/null
           for arch in x64 arm64; do head -c 4096 /dev/urandom > "$work/dist/${product}_${version}_${arch}-setup.exe"; done
+          printf -- '- dry run notes\n' > "$work/notes.md"
           TAURI_SIGNING_PRIVATE_KEY="$(cat "$work/keys/throwaway.key")" TAURI_SIGNING_PRIVATE_KEY_PASSWORD='' \
             node scripts/tauri-release-assets.mjs --version "$version" --tag "tauri-v$version" --dir "$work/dist" \
-            --pubkey "$(cat "$work/keys/throwaway.key.pub")"
-          node -e "const m=require('$work/dist/latest.json'); if (Object.keys(m.platforms).sort().join()!=='windows-aarch64,windows-x86_64') process.exit(1)"
+            --notes-file "$work/notes.md" --pubkey "$(cat "$work/keys/throwaway.key.pub")"
+          node -e "const m=require('$work/dist/latest.json'); if (Object.keys(m.platforms).sort().join()!=='windows-aarch64,windows-x86_64' || m.notes!=='- dry run notes\n') process.exit(1)"
           # The real pinned key must reject the throwaway signatures.
           if TAURI_SIGNING_PRIVATE_KEY="$(cat "$work/keys/throwaway.key")" TAURI_SIGNING_PRIVATE_KEY_PASSWORD='' \
             node scripts/tauri-release-assets.mjs --version "$version" --tag "tauri-v$version" --dir "$work/dist"; then
@@ -171,6 +173,20 @@ jobs:
           pattern: tauri-release-*
           path: ${{ runner.temp }}/release
           merge-multiple: true
+      # The same notes go into the release and into latest.json, where the
+      # update dialog shows them. Dry runs (no tag yet) carry none.
+      - name: Generate release notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$TAG" --jq .body > "$RUNNER_TEMP/notes.md"
+          else
+            : > "$RUNNER_TEMP/notes.md"
+          fi
       - name: Sign installers and write latest.json + SHA256SUMS.txt
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -180,6 +196,7 @@ jobs:
           --version "${{ needs.version.outputs.version }}"
           --tag "${{ needs.version.outputs.tag }}"
           --dir "$RUNNER_TEMP/release"
+          --notes-file "$RUNNER_TEMP/notes.md"
       - uses: actions/upload-artifact@v4
         with:
           name: tauri-release-signed-${{ needs.version.outputs.version }}
@@ -205,4 +222,17 @@ jobs:
             "${PRODUCT}_${VERSION}_arm64-setup.exe" "${PRODUCT}_${VERSION}_arm64-setup.exe.sig" \
             latest.json SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease --latest=false \
-            --title "$PRODUCT $VERSION (Tauri preview)" --generate-notes
+            --title "$PRODUCT $VERSION (Tauri preview)" --notes-file "$RUNNER_TEMP/notes.md"
+      - name: Point the experimental update channel at this release
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! gh release view channel-experimental --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create channel-experimental --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --prerelease --latest=false --title 'Experimental update channel' \
+              --notes 'Maintained by the Tauri release workflow: latest.json here is the signed manifest the experimental update channel follows. Do not download from this release.'
+          fi
+          gh release upload channel-experimental "$RUNNER_TEMP/release/latest.json" --repo "$GITHUB_REPOSITORY" --clobber

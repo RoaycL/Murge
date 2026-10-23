@@ -11,6 +11,13 @@
 //! only ever act as transport — they cannot substitute or roll back a build
 //! (review item S1). `GatedUpdaterDriver` stays as the fail-closed fallback
 //! for dev runs and tests.
+//!
+//! Releases are announced on two channels, each a fixed GitHub release whose
+//! `latest.json` the release workflows rewrite: `channel-stable` (the
+//! Electron build) and `channel-experimental` (this build). An installer of
+//! this build must be newer; one of the Electron build is a switch back to
+//! stable and is taken whatever its version (same model as
+//! `src/main/updates/signed-manifest-driver.ts`).
 
 use crate::error::IpcError;
 use crate::events::{EventHub, EventListener};
@@ -32,6 +39,9 @@ pub enum UpdaterDriverEvent {
     Available {
         version: String,
         release_notes: Option<String>,
+        /// The build the installer belongs to ("tauri" | "electron").
+        #[serde(skip_serializing_if = "Option::is_none")]
+        product: Option<String>,
     },
     DownloadProgress {
         percent: f64,
@@ -63,16 +73,29 @@ pub struct UpdateState {
     pub phase: String,
     pub current_version: Option<String>,
     pub available_version: Option<String>,
+    /// Release notes of the available update, as published.
+    pub release_notes: Option<String>,
+    /// The build that is running ("tauri").
+    pub current_product: String,
+    /// The build the available update installs; differs from
+    /// `current_product` on a channel switch.
+    pub available_product: Option<String>,
     pub progress: Option<UpdateProgress>,
     pub error: Option<String>,
     pub can_install: bool,
 }
+
+/// This build, as `UpdateState.currentProduct` names it.
+pub const PRODUCT: &str = "tauri";
 
 pub fn default_update_state() -> UpdateState {
     UpdateState {
         phase: "idle".to_string(),
         current_version: None,
         available_version: None,
+        release_notes: None,
+        current_product: PRODUCT.to_string(),
+        available_product: None,
         progress: None,
         error: None,
         can_install: false,
@@ -83,6 +106,7 @@ pub fn default_update_state() -> UpdateState {
 /// into a state snapshot — every missing field falls back to the default.
 #[allow(dead_code)] // renderer payload hardening for the notification slice
 pub fn coerce_update_state(value: &Value) -> UpdateState {
+    const PRODUCTS: [&str; 2] = ["electron", "tauri"];
     const PHASES: [&str; 7] = [
         "idle",
         "checking",
@@ -122,6 +146,21 @@ pub fn coerce_update_state(value: &Value) -> UpdateState {
             .get("availableVersion")
             .and_then(Value::as_str)
             .map(str::to_string),
+        release_notes: record
+            .get("releaseNotes")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        current_product: record
+            .get("currentProduct")
+            .and_then(Value::as_str)
+            .filter(|product| PRODUCTS.contains(product))
+            .unwrap_or(PRODUCT)
+            .to_string(),
+        available_product: record
+            .get("availableProduct")
+            .and_then(Value::as_str)
+            .filter(|product| PRODUCTS.contains(product))
+            .map(str::to_string),
         progress,
         error: record
             .get("error")
@@ -138,6 +177,10 @@ pub fn coerce_update_state(value: &Value) -> UpdateState {
 /// until the updater integration lands; it performs no I/O.
 pub trait UpdaterDriver: Send + Sync {
     fn current_version(&self) -> String;
+    /// Follow another release channel ("stable" | "experimental"). Drops any
+    /// offer or staged installer of the previous channel; the caller starts
+    /// a fresh check. Drivers without channels ignore it.
+    fn set_channel(&self, _channel: &str) {}
     /// Whether this build can actually reach an update feed. False for dev /
     /// unpackaged runs, so the service reports a clear "not supported" state
     /// instead of throwing on a missing feed.
@@ -218,21 +261,119 @@ const FEED_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8
 /// Upper bound for one installer download attempt.
 const DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
-/// The static manifest each GitHub Release carries (`latest.json`, written by
-/// `scripts/tauri-updater-manifest.mjs`).
+/// The static manifest each channel release carries (`latest.json`, written
+/// by `scripts/tauri-updater-manifest.mjs` / `scripts/channel-manifest.mjs`).
 const MANIFEST_NAME: &str = "latest.json";
 
-/// `https://github.com/<owner>/<repo>/releases/latest/download` derived from
-/// the brand's repository URL (never hardcoded).
-pub fn direct_feed_base(repository_url: &str) -> Option<String> {
+/// `https://github.com/<owner>/<repo>` derived from the brand's repository URL
+/// (never hardcoded).
+pub fn repository_base(repository_url: &str) -> Option<String> {
     let url = url::Url::parse(repository_url).ok()?;
     let mut segments = url.path_segments()?.filter(|segment| !segment.is_empty());
     let owner = segments.next()?;
     let repo = segments.next()?.trim_end_matches(".git");
-    Some(format!(
-        "https://github.com/{owner}/{repo}/releases/latest/download"
-    ))
+    Some(format!("https://github.com/{owner}/{repo}"))
 }
+
+/// The fixed release tag that carries a channel's manifest.
+pub fn channel_tag(channel: &str) -> &'static str {
+    if channel == "stable" {
+        "channel-stable"
+    } else {
+        "channel-experimental"
+    }
+}
+
+/// Direct GitHub download base of a channel's manifest release.
+pub fn channel_feed_base(repository: &str, channel: &str) -> String {
+    format!("{repository}/releases/download/{}", channel_tag(channel))
+}
+
+/// The build an installer belongs to, from its file name: the Tauri bundler
+/// writes `<product>_<version>_<arch>-setup.exe`, electron-builder
+/// `<product>-Setup-<version>-<arch>.exe`.
+pub fn installer_product(file_name: &str) -> Option<&'static str> {
+    let tauri = regex::Regex::new(r"_\d+\.\d+\.\d+_(?:x64|arm64)-setup\.exe$").expect("valid regex");
+    let electron = regex::Regex::new(r"-Setup-\d+\.\d+\.\d+-(?:x64|arm64)\.exe$").expect("valid regex");
+    if tauri.is_match(file_name) {
+        Some("tauri")
+    } else if electron.is_match(file_name) {
+        Some("electron")
+    } else {
+        None
+    }
+}
+
+/// The last path segment of a download URL, percent-decoded.
+pub fn installer_file_name(download_url: &url::Url) -> String {
+    let raw = download_url
+        .path_segments()
+        .and_then(|mut segments| segments.next_back())
+        .unwrap_or_default();
+    percent_decode(raw)
+}
+
+fn percent_decode(raw: &str) -> String {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).unwrap_or("");
+            if let Ok(byte) = u8::from_str_radix(hex, 16) {
+                out.push(byte);
+                index += 3;
+                continue;
+            }
+        }
+        out.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Strict `x.y.z` (optional leading `v`, no pre-release) as a numeric triple.
+pub fn parse_stable_version(version: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = version.trim().trim_start_matches('v').split('.');
+    let triple = (
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+    );
+    parts.next().is_none().then_some(triple)
+}
+
+pub fn is_newer_version(candidate: &str, current: &str) -> bool {
+    match (parse_stable_version(candidate), parse_stable_version(current)) {
+        (Some(next), Some(now)) => next > now,
+        _ => false,
+    }
+}
+
+/// The `key:value` fields of a Tauri signature's trusted comment. Only read
+/// after the updater verified the signature, whose global signature covers
+/// this comment.
+pub fn signed_fields(signature: &str) -> std::collections::HashMap<String, String> {
+    use base64::Engine;
+    let text = base64::engine::general_purpose::STANDARD
+        .decode(signature.trim())
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .unwrap_or_default();
+    text.lines()
+        .find_map(|line| line.trim().strip_prefix("trusted comment: ").map(str::to_string))
+        .unwrap_or_default()
+        .split('\t')
+        .filter_map(|field| {
+            let (key, value) = field.split_once(':')?;
+            Some((key.to_string(), value.to_string()))
+        })
+        .collect()
+}
+
+/// Command line for an Electron installer: silent, relaunch afterwards.
+/// (`--updated` is not passed: this is a takeover, not an in-place upgrade.)
+pub const ELECTRON_INSTALLER_ARGS: [&str; 2] = ["/S", "--force-run"];
 
 /// Ordered, de-duplicated feed bases: last-known-good first, then direct, then
 /// the prefix mirrors.
@@ -267,10 +408,8 @@ pub fn route_download_url(download_url: &str, feed_base: &str, direct: &str) -> 
 
 /// True when `download_url` is one of this repository's release assets
 /// (`https://github.com/<owner>/<repo>/releases/download/...`).
-pub fn is_release_asset(download_url: &str, direct: &str) -> bool {
-    let Some(repository) = direct.strip_suffix("/releases/latest/download") else {
-        return false;
-    };
+pub fn is_release_asset(download_url: &str, repository: &str) -> bool {
+    let repository = repository.trim_end_matches('/');
     let Ok(url) = url::Url::parse(download_url) else {
         return false;
     };
@@ -284,9 +423,9 @@ pub fn is_release_asset(download_url: &str, direct: &str) -> bool {
         && !url.path().contains("/../")
 }
 
-/// Result of racing the manifest probes.
+/// Result of asking every source for the manifest.
 pub enum ProbeOutcome<T> {
-    /// A source announced an update (the first one to do so).
+    /// The best update any source announced, and that source.
     Update(String, T),
     /// Every answering source said there is nothing newer; the first of them.
     NoUpdate(String),
@@ -294,25 +433,38 @@ pub enum ProbeOutcome<T> {
     Failed(String),
 }
 
-/// Run every probe concurrently: return as soon as one announces an update,
-/// otherwise wait for all and report "no update" only if at least one source
-/// answered.
-pub async fn race_probes<T, F>(probes: impl IntoIterator<Item = F>) -> ProbeOutcome<T>
+/// Run every probe concurrently (each is time-limited) and keep the best
+/// offer by `better`: manifests are unsigned, so a stale or replaying mirror
+/// that answers first must not pin the client to an older release. "No
+/// update" is reported only if no source announced one and at least one
+/// source answered.
+pub async fn race_probes<T, F>(
+    probes: impl IntoIterator<Item = F>,
+    better: impl Fn(&T, &T) -> bool,
+) -> ProbeOutcome<T>
 where
     F: std::future::Future<Output = Result<(String, Option<T>), String>>,
 {
     use futures_util::stream::{FuturesUnordered, StreamExt};
     let mut pending: FuturesUnordered<F> = probes.into_iter().collect();
+    let mut best: Option<(String, T)> = None;
     let mut no_update: Option<String> = None;
     let mut errors: Vec<String> = Vec::new();
     while let Some(result) = pending.next().await {
         match result {
-            Ok((base, Some(update))) => return ProbeOutcome::Update(base, update),
+            Ok((base, Some(update))) => {
+                if best.as_ref().is_none_or(|(_, current)| better(&update, current)) {
+                    best = Some((base, update));
+                }
+            }
             Ok((base, None)) => {
                 no_update.get_or_insert(base);
             }
             Err(error) => errors.push(error),
         }
+    }
+    if let Some((base, update)) = best {
+        return ProbeOutcome::Update(base, update);
     }
     match no_update {
         Some(base) => ProbeOutcome::NoUpdate(base),
@@ -371,6 +523,10 @@ impl ProgressMeter {
 struct ReadyUpdate {
     update: tauri_plugin_updater::Update,
     bytes: Vec<u8>,
+    /// "tauri" (installed by the updater plugin) or "electron" (a switch back
+    /// to the stable build, launched by [`launch_electron_installer`]).
+    product: &'static str,
+    file_name: String,
 }
 
 /// The verified installer, installed from `RunEvent::Exit` (electron-updater's
@@ -400,11 +556,61 @@ pub fn install_ready_update_on_exit() {
     let Some(ready) = READY_UPDATE.lock().ok().and_then(|mut slot| slot.take()) else {
         return;
     };
+    if ready.product == "electron" {
+        if let Err(error) = launch_electron_installer(&ready.file_name, &ready.bytes) {
+            eprintln!("[updates] launching the stable installer failed: {error}");
+        }
+        return;
+    }
     let restart = RESTART_AFTER_INSTALL.load(std::sync::atomic::Ordering::SeqCst);
     let update = ready.update.restart_after_install(restart);
     if let Err(error) = update.install(&ready.bytes) {
         eprintln!("[updates] launching the installer failed: {error}");
     }
+}
+
+/// Write the verified Electron installer to a temp folder and start it once
+/// this process has exited, so its running-app check never meets a
+/// half-closed Murge. ShellExecute (via Start-Process) lets the per-machine
+/// installer raise its own UAC prompt; the path travels in the environment,
+/// never through command-line quoting. The Electron installer removes this
+/// installation first (keeping service, data and the startup task).
+fn launch_electron_installer(file_name: &str, bytes: &[u8]) -> Result<(), String> {
+    let dir = std::env::temp_dir().join("murge-update");
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let path = dir.join(file_name);
+    std::fs::write(&path, bytes).map_err(|error| error.to_string())?;
+    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+    let powershell = std::path::Path::new(&system_root)
+        .join("System32")
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe");
+    let argument_list = ELECTRON_INSTALLER_ARGS
+        .iter()
+        .map(|arg| format!("'{}'", arg.replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(",");
+    let command = format!(
+        "Wait-Process -Id ([int]$env:UPDATE_PARENT_PID) -Timeout 60 -ErrorAction SilentlyContinue; \
+         Start-Process -FilePath $env:UPDATE_INSTALLER_PATH -ArgumentList {argument_list}"
+    );
+    let mut process = std::process::Command::new(powershell);
+    process
+        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &command])
+        .env("UPDATE_INSTALLER_PATH", &path)
+        .env("UPDATE_PARENT_PID", std::process::id().to_string())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        process.creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW);
+    }
+    process.spawn().map(|_| ()).map_err(|error| error.to_string())
 }
 
 /// Production driver: signed Tauri updater over GitHub Releases + mirrors.
@@ -416,19 +622,24 @@ struct TauriUpdaterInner {
     app: tauri::AppHandle,
     events: EventHub,
     supported: bool,
-    direct: String,
+    /// `https://github.com/<owner>/<repo>`.
+    repository: String,
+    /// "stable" | "experimental".
+    channel: Mutex<String>,
+    /// Bumped on a channel switch; work started before it is discarded.
+    generation: std::sync::atomic::AtomicU64,
     /// The feed base that worked most recently; tried first next time.
     last_good: Mutex<Option<String>>,
-    /// The announced update and the feed base it came from.
-    available: Mutex<Option<(tauri_plugin_updater::Update, String)>>,
+    /// The announced update, the feed base it came from, and its build.
+    available: Mutex<Option<(tauri_plugin_updater::Update, String, &'static str)>>,
     busy: std::sync::atomic::AtomicBool,
 }
 
 impl TauriUpdaterDriver {
-    pub fn new(app: tauri::AppHandle) -> Self {
-        let direct = crate::brand::load_brand()
+    pub fn new(app: tauri::AppHandle, channel: &str) -> Self {
+        let repository = crate::brand::load_brand()
             .ok()
-            .and_then(|brand| direct_feed_base(&brand.repository_url));
+            .and_then(|brand| repository_base(&brand.repository_url));
         let pubkey_pinned = app
             .config()
             .plugins
@@ -440,13 +651,15 @@ impl TauriUpdaterDriver {
         // Installed Windows builds only: dev runs never touch the feed, and a
         // build without a pinned key has nothing to verify against.
         let supported =
-            cfg!(windows) && !crate::paths::is_dev() && pubkey_pinned && direct.is_some();
+            cfg!(windows) && !crate::paths::is_dev() && pubkey_pinned && repository.is_some();
         TauriUpdaterDriver {
             inner: Arc::new(TauriUpdaterInner {
                 app,
                 events: EventHub::new(),
                 supported,
-                direct: direct.unwrap_or_default(),
+                repository: repository.unwrap_or_default(),
+                channel: Mutex::new(channel.to_string()),
+                generation: std::sync::atomic::AtomicU64::new(0),
                 last_good: Mutex::new(None),
                 available: Mutex::new(None),
                 busy: std::sync::atomic::AtomicBool::new(false),
@@ -468,50 +681,109 @@ impl TauriUpdaterInner {
         self.app
             .updater_builder()
             .endpoints(vec![endpoint])
+            // Every offer comes back; `offer_for` applies the version rule,
+            // which depends on the installer's build.
+            .map(|builder| builder.version_comparator(|_, _| true))
             .and_then(|builder| builder.timeout(FEED_PROBE_TIMEOUT).build())
             .map_err(|error| error.to_string())
     }
 
-    /// Race every source for the manifest. The first source that announces an
-    /// update wins at once; "no update" is only concluded after every source
-    /// has answered, so a stale mirror cannot hide a release the direct feed
-    /// already lists.
+    fn direct(&self) -> String {
+        channel_feed_base(
+            &self.repository,
+            &self.channel.lock().expect("updater channel poisoned"),
+        )
+    }
+
+    fn generation(&self) -> u64 {
+        self.generation.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// The build of a manifest's installer and whether it is an offer: an
+    /// installer of this build must be newer (and newer than one already
+    /// staged); an Electron installer is a switch back to stable.
+    fn offer_for(&self, update: &tauri_plugin_updater::Update) -> Result<Option<&'static str>, String> {
+        // The manifest is unsigned: never let it point the client at anything
+        // but this repository's release assets.
+        if !is_release_asset(update.download_url.as_str(), &self.repository) {
+            return Err(format!(
+                "update manifest points outside the release: {}",
+                update.download_url
+            ));
+        }
+        let Some(product) = installer_product(&installer_file_name(&update.download_url)) else {
+            return Err(format!(
+                "update manifest names an unexpected installer: {}",
+                update.download_url
+            ));
+        };
+        if parse_stable_version(&update.version).is_none() {
+            return Ok(None);
+        }
+        if product == PRODUCT && !is_newer_version(&update.version, &update.current_version) {
+            return Ok(None);
+        }
+        // Already downloaded and waiting for exit: nothing new to fetch.
+        let staged = READY_UPDATE.lock().expect("ready update poisoned");
+        if let Some(ready) = staged.as_ref() {
+            if ready.product == product && !is_newer_version(&update.version, &ready.update.version) {
+                return Ok(None);
+            }
+        }
+        Ok(Some(product))
+    }
+
+    /// Ask every source for the manifest and keep the best offer: a switch
+    /// of build first, then the newest version. "No update" is only concluded
+    /// when no source announced one, so a stale mirror can neither hide nor
+    /// roll back a release.
     async fn check(self: Arc<Self>) {
+        let generation = self.generation();
         self.emit(UpdaterDriverEvent::Checking);
         let last_good = self
             .last_good
             .lock()
             .expect("updater last_good poisoned")
             .clone();
-        let bases = feed_base_candidates(&self.direct, last_good.as_deref());
+        let direct = self.direct();
+        let bases = feed_base_candidates(&direct, last_good.as_deref());
         let probes = bases.iter().map(|base| {
             let inner = self.clone();
             let base = base.clone();
             async move {
                 let updater = inner.updater_for(&base)?;
                 let found = updater.check().await.map_err(|error| error.to_string())?;
-                if let Some(update) = &found {
-                    // The manifest is unsigned: never let it point the client
-                    // at anything but this repository's release assets.
-                    if !is_release_asset(update.download_url.as_str(), &inner.direct) {
-                        return Err(format!(
-                            "update manifest points outside the release: {}",
-                            update.download_url
-                        ));
-                    }
-                }
-                Ok::<_, String>((base, found))
+                let offer = match found {
+                    Some(update) => inner.offer_for(&update)?.map(|product| (update, product)),
+                    None => None,
+                };
+                Ok::<_, String>((base, offer))
             }
         });
-        match race_probes(probes).await {
-            ProbeOutcome::Update(base, update) => {
+        let better = |next: &(tauri_plugin_updater::Update, &'static str),
+                      best: &(tauri_plugin_updater::Update, &'static str)| {
+            let switch = |product: &str| u8::from(product != PRODUCT);
+            switch(next.1) > switch(best.1)
+                || (next.1 == best.1 && is_newer_version(&next.0.version, &best.0.version))
+        };
+        let outcome = race_probes(probes, better).await;
+        if generation != self.generation() {
+            return; // the channel changed while the sources answered
+        }
+        match outcome {
+            ProbeOutcome::Update(base, (update, product)) => {
                 *self.last_good.lock().expect("updater last_good poisoned") = Some(base.clone());
                 let version = update.version.clone();
                 let release_notes = update.body.clone();
-                *self.available.lock().expect("updater available poisoned") = Some((update, base));
+                // A newer release supersedes the staged installer: what runs
+                // on exit must match what the UI reports.
+                *READY_UPDATE.lock().expect("ready update poisoned") = None;
+                *self.available.lock().expect("updater available poisoned") =
+                    Some((update, base, product));
                 self.emit(UpdaterDriverEvent::Available {
                     version,
                     release_notes,
+                    product: Some(product.to_string()),
                 });
                 // electron-updater autoDownload parity.
                 self.download().await;
@@ -533,9 +805,11 @@ impl TauriUpdaterInner {
     /// Download through the source the manifest came from, then every other
     /// source. The plugin verifies the signature (and the signed version)
     /// before returning bytes; bytes that fail verification are discarded and
-    /// the next source is tried, a signature bound to the wrong version stops.
+    /// the next source is tried, a signature bound to the wrong version or
+    /// file stops.
     async fn download(self: &Arc<Self>) {
-        let Some((update, base)) = self
+        let generation = self.generation();
+        let Some((update, base, product)) = self
             .available
             .lock()
             .expect("updater available poisoned")
@@ -543,11 +817,16 @@ impl TauriUpdaterInner {
         else {
             return;
         };
+        let direct = self.direct();
+        let file_name = installer_file_name(&update.download_url);
         let last_good = Some(base.as_str());
         let mut last_error = String::new();
         let mut signature_failed = false;
-        for source in feed_base_candidates(&self.direct, last_good) {
-            let routed = route_download_url(update.download_url.as_str(), &source, &self.direct);
+        for source in feed_base_candidates(&direct, last_good) {
+            if generation != self.generation() {
+                return;
+            }
+            let routed = route_download_url(update.download_url.as_str(), &source, &direct);
             let Ok(routed) = url::Url::parse(&routed) else {
                 continue;
             };
@@ -559,6 +838,10 @@ impl TauriUpdaterInner {
             let result = attempt
                 .download(
                     move |chunk, total| {
+                        // A superseded download stays silent.
+                        if inner.generation() != generation {
+                            return;
+                        }
                         if let Some(event) = meter.record(chunk, total) {
                             inner.emit(event);
                         }
@@ -566,10 +849,30 @@ impl TauriUpdaterInner {
                     || {},
                 )
                 .await;
+            if generation != self.generation() {
+                return;
+            }
             match result {
                 Ok(bytes) => {
-                    *READY_UPDATE.lock().expect("ready update poisoned") =
-                        Some(ReadyUpdate { update, bytes });
+                    // The verified signature's trusted comment also names the
+                    // file: an installer filed under another name (and so
+                    // possibly another build) is refused.
+                    let signed_file = signed_fields(&update.signature).remove("file");
+                    if signed_file.as_deref() != Some(file_name.as_str()) {
+                        self.emit(UpdaterDriverEvent::Error {
+                            message: format!(
+                                "更新包签名校验失败，已丢弃（signature names {}, manifest says {file_name}）",
+                                signed_file.as_deref().unwrap_or("(none)")
+                            ),
+                        });
+                        return;
+                    }
+                    *READY_UPDATE.lock().expect("ready update poisoned") = Some(ReadyUpdate {
+                        update,
+                        bytes,
+                        product,
+                        file_name,
+                    });
                     self.emit(UpdaterDriverEvent::Downloaded);
                     return;
                 }
@@ -617,6 +920,27 @@ impl UpdaterDriver for TauriUpdaterDriver {
 
     fn supported(&self) -> bool {
         self.inner.supported
+    }
+
+    fn set_channel(&self, channel: &str) {
+        {
+            let mut current = self.inner.channel.lock().expect("updater channel poisoned");
+            if *current == channel {
+                return;
+            }
+            *current = channel.to_string();
+        }
+        self.inner
+            .generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        *self.inner.available.lock().expect("updater available poisoned") = None;
+        *self.inner.last_good.lock().expect("updater last_good poisoned") = None;
+        *READY_UPDATE.lock().expect("ready update poisoned") = None;
+        // Work of the old channel may still be running; its results are
+        // dropped by generation, so let the new check start now.
+        self.inner
+            .busy
+            .store(false, std::sync::atomic::Ordering::SeqCst);
     }
 
     fn configure(&self) {}
@@ -896,6 +1220,31 @@ impl UpdateService {
         Ok(self.get_state())
     }
 
+    /// Switch release channel: forget the old channel's offer and staged
+    /// installer, then check the new channel at once (an explicit user
+    /// choice, so it ignores the automatic-check preference).
+    pub async fn set_channel(&self, channel: &str) {
+        self.inner.driver.set_channel(channel);
+        *self
+            .inner
+            .downloaded_before_check
+            .lock()
+            .expect("update pending poisoned") = None;
+        self.transition(UpdateState {
+            phase: "idle".to_string(),
+            available_version: None,
+            available_product: None,
+            release_notes: None,
+            progress: None,
+            error: None,
+            can_install: false,
+            ..self.get_state()
+        });
+        if self.inner.driver.supported() {
+            let _ = self.check().await;
+        }
+    }
+
     pub fn install(&self) {
         if self.inner.driver.supported() && self.state().can_install {
             self.inner.driver.quit_and_install();
@@ -951,6 +1300,8 @@ impl UpdateService {
                     self.transition(UpdateState {
                         phase: "not-available".to_string(),
                         available_version: None,
+                        available_product: None,
+                        release_notes: None,
                         progress: None,
                         can_install: false,
                         error: None,
@@ -970,6 +1321,16 @@ impl UpdateService {
                         .get("version")
                         .and_then(Value::as_str)
                         .map(str::to_string),
+                    release_notes: Self::field(event, "releaseNotes", "release_notes")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    available_product: Some(
+                        event
+                            .get("product")
+                            .and_then(Value::as_str)
+                            .unwrap_or(PRODUCT)
+                            .to_string(),
+                    ),
                     progress: None,
                     can_install: false,
                     error: None,
@@ -1248,6 +1609,7 @@ mod tests {
         driver.emit(&UpdaterDriverEvent::Available {
             version: "1.0.1".to_string(),
             release_notes: None,
+            product: None,
         });
         driver.emit(&UpdaterDriverEvent::Downloaded);
         let state = service.check().await.unwrap();
@@ -1260,6 +1622,7 @@ mod tests {
         driver.emit(&UpdaterDriverEvent::Available {
             version: "1.0.2".to_string(),
             release_notes: None,
+            product: None,
         });
         let state = service.get_state();
         assert_eq!(state.phase, "available");
@@ -1284,6 +1647,7 @@ mod tests {
         driver.emit(&UpdaterDriverEvent::Available {
             version: "1.0.1".to_string(),
             release_notes: None,
+            product: None,
         });
         driver.emit(&UpdaterDriverEvent::Downloaded);
         service.check().await.unwrap();
@@ -1307,6 +1671,7 @@ mod tests {
         driver.emit(&UpdaterDriverEvent::Available {
             version: "1.2.3".to_string(),
             release_notes: Some("notes".to_string()),
+            product: None,
         });
         let state = service.get_state();
         assert_eq!(state.phase, "available");
@@ -1349,6 +1714,7 @@ mod tests {
         driver.emit(&UpdaterDriverEvent::Available {
             version: "1.0.1".to_string(),
             release_notes: None,
+            product: None,
         });
         service.download().await.unwrap();
         assert_eq!(counters(&driver).2, 1);
@@ -1369,6 +1735,7 @@ mod tests {
         driver.emit(&UpdaterDriverEvent::Available {
             version: "1.0.1".to_string(),
             release_notes: None,
+            product: None,
         });
         service.install();
         assert_eq!(counters(&driver).3, 0);
@@ -1387,24 +1754,32 @@ mod tests {
     }
 
     #[test]
-    fn feed_base_is_derived_from_the_brand_repository() {
+    fn channel_feeds_are_derived_from_the_brand_repository() {
         assert_eq!(
-            direct_feed_base("https://github.com/RoaycL/Murge").as_deref(),
-            Some("https://github.com/RoaycL/Murge/releases/latest/download")
+            repository_base("https://github.com/RoaycL/Murge").as_deref(),
+            Some("https://github.com/RoaycL/Murge")
         );
         assert_eq!(
-            direct_feed_base("https://github.com/RoaycL/Murge.git/").as_deref(),
-            Some("https://github.com/RoaycL/Murge/releases/latest/download")
+            repository_base("https://github.com/RoaycL/Murge.git/").as_deref(),
+            Some("https://github.com/RoaycL/Murge")
         );
-        assert_eq!(direct_feed_base("https://github.com/RoaycL"), None);
-        assert_eq!(direct_feed_base("not a url"), None);
+        assert_eq!(repository_base("https://github.com/RoaycL"), None);
+        assert_eq!(repository_base("not a url"), None);
         let brand = crate::brand::load_brand().unwrap();
-        assert!(direct_feed_base(&brand.repository_url).is_some());
+        assert!(repository_base(&brand.repository_url).is_some());
+        assert_eq!(
+            channel_feed_base("https://github.com/o/r", "stable"),
+            "https://github.com/o/r/releases/download/channel-stable"
+        );
+        assert_eq!(
+            channel_feed_base("https://github.com/o/r", "experimental"),
+            "https://github.com/o/r/releases/download/channel-experimental"
+        );
     }
 
     #[test]
     fn feed_candidates_put_last_good_first_without_duplicates() {
-        let direct = "https://github.com/o/r/releases/latest/download";
+        let direct = "https://github.com/o/r/releases/download/channel-experimental";
         assert_eq!(
             feed_base_candidates(direct, None),
             vec![
@@ -1426,15 +1801,15 @@ mod tests {
 
     #[test]
     fn downloads_follow_the_manifest_source() {
-        let direct = "https://github.com/o/r/releases/latest/download";
-        let asset = "https://github.com/o/r/releases/download/v1.0.0/Murge_1.0.0_x64-setup.exe";
+        let direct = "https://github.com/o/r/releases/download/channel-experimental";
+        let asset = "https://github.com/o/r/releases/download/v1.0.0/App_1.0.0_x64-setup.exe";
         assert_eq!(route_download_url(asset, direct, direct), asset);
         assert_eq!(
             route_download_url(asset, &format!("https://ghfast.top/{direct}"), direct),
             format!("https://ghfast.top/{asset}")
         );
         // Only GitHub assets are re-routed through a mirror.
-        let elsewhere = "https://example.com/Murge.exe";
+        let elsewhere = "https://example.com/App.exe";
         assert_eq!(
             route_download_url(elsewhere, &format!("https://ghfast.top/{direct}"), direct),
             elsewhere
@@ -1443,10 +1818,10 @@ mod tests {
 
     #[test]
     fn only_this_repositorys_release_assets_are_downloadable() {
-        let direct = "https://github.com/o/r/releases/latest/download";
+        let repository = "https://github.com/o/r";
         assert!(is_release_asset(
             "https://github.com/o/r/releases/download/v1.0.0/App_1.0.0_x64-setup.exe",
-            direct
+            repository
         ));
         for url in [
             "http://github.com/o/r/releases/download/v1.0.0/a.exe",
@@ -1458,25 +1833,54 @@ mod tests {
             "https://ghfast.top/https://github.com/o/r/releases/download/v1.0.0/a.exe",
             "not a url",
         ] {
-            assert!(!is_release_asset(url, direct), "{url}");
+            assert!(!is_release_asset(url, repository), "{url}");
         }
     }
 
+    #[test]
+    fn installers_are_told_apart_by_name_and_versions_compare_strictly() {
+        assert_eq!(installer_product("App_0.9.31_x64-setup.exe"), Some("tauri"));
+        assert_eq!(installer_product("App_0.9.31_arm64-setup.exe"), Some("tauri"));
+        assert_eq!(installer_product("App-Setup-0.9.31-x64.exe"), Some("electron"));
+        assert_eq!(installer_product("App-Setup-0.9.31-arm64.exe"), Some("electron"));
+        assert_eq!(installer_product("App-0.9.31.exe"), None);
+        let url = url::Url::parse("https://github.com/o/r/releases/download/v1/App%20X_1.0.0_x64-setup.exe").unwrap();
+        assert_eq!(installer_file_name(&url), "App X_1.0.0_x64-setup.exe");
+        assert!(is_newer_version("1.0.0", "0.9.31"));
+        assert!(is_newer_version("v0.10.0", "0.9.31"));
+        assert!(!is_newer_version("0.9.31", "0.9.31"));
+        assert!(!is_newer_version("1.0.0-beta.1", "0.9.31"));
+        assert!(!is_newer_version("1.0", "0.9.31"));
+    }
+
+    #[test]
+    fn signed_fields_read_the_trusted_comment() {
+        use base64::Engine;
+        let text = "untrusted comment: signature from tauri secret key\nRUQ=\ntrusted comment: timestamp:1\tfile:App-Setup-1.0.0-x64.exe\tversion:1.0.0\nAA==\n";
+        let signature = base64::engine::general_purpose::STANDARD.encode(text);
+        let fields = signed_fields(&signature);
+        assert_eq!(fields.get("file").map(String::as_str), Some("App-Setup-1.0.0-x64.exe"));
+        assert_eq!(fields.get("version").map(String::as_str), Some("1.0.0"));
+        assert!(signed_fields("not base64").is_empty());
+    }
+
     #[tokio::test]
-    async fn an_update_from_any_source_beats_an_earlier_no_update() {
+    async fn the_best_offer_wins_whoever_answers_first() {
         use std::time::Duration;
         type Probe = std::pin::Pin<
             Box<dyn std::future::Future<Output = Result<(String, Option<u32>), String>> + Send>,
         >;
+        let higher = |next: &u32, best: &u32| next > best;
         let probes: Vec<Probe> = vec![
             Box::pin(async { Ok(("stale-mirror".to_string(), None)) }),
+            Box::pin(async { Ok(("replaying-mirror".to_string(), Some(3))) }),
             Box::pin(async {
                 tokio::time::sleep(Duration::from_millis(20)).await;
                 Ok(("direct".to_string(), Some(7)))
             }),
             Box::pin(async { Err("timed out".to_string()) }),
         ];
-        match race_probes(probes).await {
+        match race_probes(probes, higher).await {
             ProbeOutcome::Update(base, update) => {
                 assert_eq!(base, "direct");
                 assert_eq!(update, 7);
@@ -1488,15 +1892,40 @@ mod tests {
             Box::pin(async { Ok(("direct".to_string(), None)) }),
         ];
         assert!(
-            matches!(race_probes(none).await, ProbeOutcome::NoUpdate(base) if base == "direct")
+            matches!(race_probes(none, higher).await, ProbeOutcome::NoUpdate(base) if base == "direct")
         );
         let failed: Vec<Probe> = vec![
             Box::pin(async { Err("a".to_string()) }),
             Box::pin(async { Err("b".to_string()) }),
         ];
         assert!(
-            matches!(race_probes(failed).await, ProbeOutcome::Failed(error) if error == "a; b")
+            matches!(race_probes(failed, higher).await, ProbeOutcome::Failed(error) if error == "a; b")
         );
+    }
+
+    #[tokio::test]
+    async fn offers_carry_notes_and_build_and_a_channel_switch_rechecks() {
+        let driver = FakeDriver::new(true);
+        let service = UpdateService::new(driver.clone());
+        service.start();
+        assert_eq!(service.get_state().current_product, "tauri");
+        driver.emit(&UpdaterDriverEvent::Available {
+            version: "0.9.31".to_string(),
+            release_notes: Some("- 修复".to_string()),
+            product: Some("electron".to_string()),
+        });
+        let state = service.get_state_value();
+        assert_eq!(state["releaseNotes"], "- 修复");
+        assert_eq!(state["availableProduct"], "electron");
+        assert_eq!(state["currentProduct"], "tauri");
+        driver.emit(&UpdaterDriverEvent::Downloaded);
+        assert!(service.get_state().can_install);
+        service.set_channel("experimental").await;
+        let state = service.get_state();
+        assert_eq!(state.phase, "checking");
+        assert!(!state.can_install);
+        assert_eq!(state.available_product, None);
+        assert_eq!(counters(&driver).1, 1);
     }
 
     #[tokio::test]
@@ -1620,6 +2049,7 @@ mod tests {
         driver.emit(&UpdaterDriverEvent::Available {
             version: "1.0.1".to_string(),
             release_notes: None,
+            product: None,
         });
         driver.emit(&UpdaterDriverEvent::Downloaded);
         assert_eq!(

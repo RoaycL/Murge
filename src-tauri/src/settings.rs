@@ -32,6 +32,9 @@ pub const APP_SETTINGS_FILE: &str = "app-settings.json";
 pub struct AppSettings {
     pub auto_start_kernel: bool,
     pub auto_check_update: bool,
+    /// Release channel the updater follows: "stable" (the Electron build) or
+    /// "experimental" (this Tauri build).
+    pub update_channel: String,
     pub system_proxy_desired: bool,
     pub tun_desired: bool,
     pub kernel_enabled: bool,
@@ -52,6 +55,7 @@ impl Default for AppSettings {
         AppSettings {
             auto_start_kernel: true,
             auto_check_update: true,
+            update_channel: "stable".into(),
             system_proxy_desired: false,
             tun_desired: false,
             kernel_enabled: true,
@@ -96,6 +100,13 @@ fn is_valid_channel(value: Option<&serde_json::Value>) -> Option<String> {
     }
 }
 
+fn valid_update_channel(value: Option<&serde_json::Value>) -> Option<String> {
+    match value.and_then(|v| v.as_str()) {
+        Some(channel @ ("stable" | "experimental")) => Some(channel.to_string()),
+        _ => None,
+    }
+}
+
 fn is_valid_scope(value: Option<&serde_json::Value>) -> Option<String> {
     match value.and_then(|v| v.as_str()) {
         Some("global") => Some("global".into()),
@@ -123,6 +134,8 @@ pub fn parse_app_settings(document: &serde_json::Value) -> AppSettings {
     AppSettings {
         auto_start_kernel: boolean("autoStartKernel", defaults.auto_start_kernel),
         auto_check_update: boolean("autoCheckUpdate", defaults.auto_check_update),
+        update_channel: valid_update_channel(object.get("updateChannel"))
+            .unwrap_or_else(|| defaults.update_channel.clone()),
         system_proxy_desired: boolean("systemProxyDesired", defaults.system_proxy_desired),
         tun_desired: boolean("tunDesired", defaults.tun_desired),
         kernel_enabled: true,
@@ -265,6 +278,8 @@ impl SettingsStore {
         let next = AppSettings {
             auto_start_kernel: boolean("autoStartKernel", current.auto_start_kernel),
             auto_check_update: boolean("autoCheckUpdate", current.auto_check_update),
+            update_channel: valid_update_channel(patch.get("updateChannel"))
+                .unwrap_or(current.update_channel),
             system_proxy_desired: boolean("systemProxyDesired", current.system_proxy_desired),
             tun_desired: boolean("tunDesired", current.tun_desired),
             kernel_enabled: true,
@@ -382,6 +397,19 @@ mod tests {
         assert!(next.kernel_enabled, "kernelEnabled is migrated to true");
         assert_eq!(next.delay_test_url_scope, "group");
         assert!(!next.proxy_guard);
+    }
+
+    #[test]
+    fn update_channel_accepts_only_the_two_channels() {
+        let temp = TempDir::new().unwrap();
+        let store = store_in(&temp);
+        assert_eq!(store.get().update_channel, "stable");
+        let next = store.set(&AppSettingsPatch(serde_json::json!({ "updateChannel": "experimental" })));
+        assert_eq!(next.update_channel, "experimental");
+        let kept = store.set(&AppSettingsPatch(serde_json::json!({ "updateChannel": "nightly" })));
+        assert_eq!(kept.update_channel, "experimental");
+        let raw = fs::read_to_string(temp.path().join(APP_SETTINGS_FILE)).unwrap();
+        assert!(raw.contains("\"updateChannel\": \"experimental\""));
     }
 
     #[test]

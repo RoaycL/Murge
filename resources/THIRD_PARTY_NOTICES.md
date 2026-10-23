@@ -30,6 +30,7 @@ copyright owners and license terms are retained exactly as published upstream.
 | zod                | `licenses/zod.txt`           | 3.x     | MIT     |
 | ws                 | `licenses/ws.txt`            | 8.x     | MIT     |
 | yaml               | `licenses/yaml.txt`          | 2.x     | ISC     |
+| @noble/hashes      | `licenses/noble-hashes.txt`  | 2.x     | MIT     |
 
 ## Electron runtime
 

@@ -2049,6 +2049,13 @@ function beginApplicationShutdown(sessionEnding: boolean): Promise<void> {
         else await stop()
       },
       dispose: async () => {
+        // First and on its own: this launches a staged update installer, which
+        // a failing teardown step below must never skip.
+        try {
+          updateService?.dispose()
+        } catch (error) {
+          console.error('[updates] failed to dispose the update service during quit:', error)
+        }
         try {
           tunExitMonitor?.stop()
           tunExitMonitor = null
@@ -2056,7 +2063,6 @@ function beginApplicationShutdown(sessionEnding: boolean): Promise<void> {
           disposeRuntimeAppearance = null
           trayController?.dispose()
           disposeIpc?.()
-          updateService?.dispose()
           await usageHistoryServiceRef?.dispose()
           if (proxyGuardTimer) {
             clearInterval(proxyGuardTimer)

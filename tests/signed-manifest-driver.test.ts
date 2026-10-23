@@ -262,6 +262,23 @@ describe('SignedManifestUpdaterDriver', () => {
     expect(h.written).toHaveLength(1)
   })
 
+  it('reports a download cut short as a network failure, not a bad signature', async () => {
+    const key = makeKey()
+    const signature = key.signFile(installer, `timestamp:1\tfile:${fileName}\tversion:1.0.0`)
+    const short = (): Response => new Response(installer.subarray(0, 4), { headers: { 'content-length': String(installer.byteLength) } })
+    const h = harness({
+      [`${mirror}/latest.json`]: manifest(signature),
+      [`https://ghfast.top/${assetUrl}`]: short,
+      [assetUrl]: short
+    }, { publicKey: key.publicKey })
+    h.driver.check()
+    await h.settle()
+    const last = h.events.at(-1)
+    expect(last?.kind).toBe('error')
+    expect(last?.kind === 'error' && last.message).toMatch(/^下载更新失败.*ended after 4 of/)
+    expect(h.written).toHaveLength(0)
+  })
+
   it('refuses to launch a staged installer that was swapped after verification', async () => {
     const key = makeKey()
     const signature = key.signFile(installer, `timestamp:1\tfile:${fileName}\tversion:1.0.0`)

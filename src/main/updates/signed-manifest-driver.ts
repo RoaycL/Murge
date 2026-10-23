@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import type { UpdateChannel } from '@shared/app-settings'
 import type { UpdateProduct } from '@shared/updates'
-import { verifyMinisign } from './minisign'
+import { createPrehash, verifyMinisign } from './minisign'
 import type { UpdaterDriver, UpdaterDriverEvent } from './updater-driver'
 
 /**
@@ -276,7 +276,9 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
       if (fields.version !== installer.version || fields.file !== installer.fileName) {
         throw new Error('staged installer no longer matches its signature')
       }
-      this.deps.launchInstaller(installer.path, installerArgs(installer.product, this.product, this.restartAfterInstall))
+      const args = installerArgs(installer.product, this.product, this.restartAfterInstall)
+      console.info(`[updates] launching ${installer.fileName} ${args.join(' ')}`)
+      this.deps.launchInstaller(installer.path, args)
     } catch (error) {
       console.error('[updates] failed to launch the installer:', error)
     }
@@ -399,6 +401,7 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
     }
     const selected = outcome
     const platform = outcome.platform
+    console.info(`[updates] ${this.channel} channel offers ${selected.product} ${selected.manifest.version} (from ${selected.base})`)
     // A newer release supersedes the staged installer: what runs on quit must
     // match what the UI reports, even if this download then fails.
     this.readyInstaller = null
@@ -424,19 +427,21 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
     let signatureFailed = false
     for (const source of sources) {
       if (generation !== this.generation) return
-      let data: Uint8Array
+      let download: { data: Uint8Array; prehash: Uint8Array }
       try {
-        data = await this.fetchInstaller(routeDownloadUrl(available.platform.url, source, this.directBase()), generation)
+        download = await this.fetchInstaller(routeDownloadUrl(available.platform.url, source, this.directBase()), generation)
       } catch (error) {
+        console.warn(`[updates] installer download from ${source} failed:`, message(error))
         lastError = error
         continue
       }
       let fields: Record<string, string>
       try {
-        fields = verifyMinisign(data, available.platform.signature, this.deps.publicKey)
+        fields = verifyMinisign(download.data, available.platform.signature, this.deps.publicKey, download.prehash)
       } catch (error) {
         // Bytes that fail verification may come from a broken or hostile
         // mirror: discard them and try the next source.
+        console.warn(`[updates] installer from ${source} failed verification:`, message(error))
         lastError = error
         signatureFailed = true
         continue
@@ -452,8 +457,9 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
       }
       if (generation !== this.generation) return
       const path = join(this.deps.downloadDir, fileName)
-      await this.deps.writeFile(path, data)
+      await this.deps.writeFile(path, download.data)
       if (generation !== this.generation) return
+      console.info(`[updates] verified ${fileName} ${expected}, staged at ${path}`)
       this.readyInstaller = { path, version: expected, fileName, signature: available.platform.signature, product: available.product }
       this.emit({ kind: 'downloaded' })
       this.deps.notify?.(`新版本 v${available.manifest.version.replace(/^v/, '')} 已就绪`, '退出应用时自动安装，或点击“重启并安装”立即更新。')
@@ -468,13 +474,18 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
     })
   }
 
-  private async fetchInstaller(url: string, generation: number): Promise<Uint8Array> {
+  /**
+   * Download an installer, hashing it as it streams: hashing ~40 MB in one go
+   * would block the main process for seconds.
+   */
+  private async fetchInstaller(url: string, generation: number): Promise<{ data: Uint8Array; prehash: Uint8Array }> {
     const response = await this.deps.fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) })
     if (!response.ok || !response.body) throw new Error(`installer download returned HTTP ${response.status}`)
     const header = Number(response.headers.get('content-length'))
     const total = Number.isFinite(header) && header > 0 ? header : null
     if (total !== null && total > MAX_INSTALLER_BYTES) throw new Error('installer is larger than allowed')
     const chunks: Uint8Array[] = []
+    const hash = createPrehash()
     let transferred = 0
     let lastEmit = 0
     const started = Date.now()
@@ -493,6 +504,7 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
         throw new Error('installer is larger than allowed')
       }
       chunks.push(value)
+      hash.update(value)
       const now = Date.now()
       if (now - lastEmit >= 250 || (total !== null && transferred >= total)) {
         lastEmit = now
@@ -505,6 +517,10 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
         })
       }
     }
-    return Buffer.concat(chunks)
+    // A connection that ends early is a network failure, not a bad signature.
+    if (total !== null && transferred !== total) {
+      throw new Error(`installer download ended after ${transferred} of ${total} bytes`)
+    }
+    return { data: Buffer.concat(chunks), prehash: hash.digest() }
   }
 }

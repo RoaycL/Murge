@@ -942,7 +942,14 @@ impl TauriUpdaterInner {
                         });
                         return;
                     }
-                    *READY_UPDATE.lock().expect("ready update poisoned") = Some(ReadyUpdate {
+                    // Staged under the lock a channel switch takes to bump the
+                    // generation, so a switch either happens first (and this
+                    // download is dropped) or clears what is staged here.
+                    let mut staged = READY_UPDATE.lock().expect("ready update poisoned");
+                    if generation != self.generation() {
+                        return;
+                    }
+                    *staged = Some(ReadyUpdate {
                         update,
                         bytes,
                         product,
@@ -1009,9 +1016,14 @@ impl UpdaterDriver for TauriUpdaterDriver {
             }
             *current = channel.to_string();
         }
-        self.inner
-            .generation
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        {
+            // Bumped under the staging lock: see `download`.
+            let mut staged = READY_UPDATE.lock().expect("ready update poisoned");
+            self.inner
+                .generation
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            *staged = None;
+        }
         *self
             .inner
             .available
@@ -1022,7 +1034,6 @@ impl UpdaterDriver for TauriUpdaterDriver {
             .last_good
             .lock()
             .expect("updater last_good poisoned") = None;
-        *READY_UPDATE.lock().expect("ready update poisoned") = None;
         // Work of the old channel may still be running; its results are
         // dropped by generation, so let the new check start now.
         self.inner

@@ -336,8 +336,9 @@ impl SettingsStore {
     /// Apply the installer's channel stamp in `install_dir` once per install
     /// for this user: follow this build's (experimental) channel. Returns
     /// true when a new stamp was applied. Call once at startup, before the
-    /// updater reads the channel. The stamp is recorded as applied only once
-    /// the channel is on disk, so a failed write is retried next launch.
+    /// updater reads the channel. The stamp is recorded before the channel
+    /// changes and taken back if the change does not reach the disk, so
+    /// neither failure can repeat a reset over a later choice.
     pub fn apply_installer_channel_reset(&self, install_dir: Option<&Path>) -> bool {
         let (Some(root), Some(install_dir)) = (&self.app_data_root, install_dir) else {
             return false;
@@ -365,6 +366,13 @@ impl SettingsStore {
             crate::diag!("[app-settings] settings unreadable; channel reset retried next launch");
             return false;
         };
+        // Record first: a reset whose record failed would repeat next launch
+        // and undo whatever the user picked in between. A first launch may
+        // find no app-data folder yet.
+        if let Err(error) = fs::create_dir_all(root).and_then(|()| fs::write(&seen_path, &stamp)) {
+            crate::diag!("[app-settings] unable to record the installer channel stamp: {error}");
+            return false;
+        }
         if persisted != "experimental" {
             self.set(&AppSettingsPatch(
                 serde_json::json!({ "updateChannel": "experimental" }),
@@ -373,14 +381,10 @@ impl SettingsStore {
                 crate::diag!(
                     "[app-settings] update channel reset not persisted; retrying next launch"
                 );
+                // Take the record back so the next launch retries.
+                let _ = fs::remove_file(&seen_path);
                 return false;
             }
-        }
-        // A first launch may find no app-data folder yet; without the record
-        // the reset would repeat and undo a later choice of "stable".
-        if let Err(error) = fs::create_dir_all(root).and_then(|()| fs::write(&seen_path, &stamp)) {
-            crate::diag!("[app-settings] unable to record the installer channel stamp: {error}");
-            return false;
         }
         true
     }

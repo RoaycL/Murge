@@ -1,4 +1,5 @@
-import { createHash, createPublicKey, verify } from 'node:crypto'
+import { createPublicKey, verify } from 'node:crypto'
+import { blake2b } from '@noble/hashes/blake2.js'
 
 /**
  * Minisign verification for Tauri updater signatures (the format
@@ -24,11 +25,23 @@ function parsePublicKey(base64Text: string): { keyId: Buffer; key: Buffer } {
   return { keyId: raw.subarray(2, 10), key: raw.subarray(10) }
 }
 
+/** Incremental BLAKE2b-512, the prehash of an `ED` minisign signature. */
+export function createPrehash(): { update: (chunk: Uint8Array) => void; digest: () => Uint8Array } {
+  const hash = blake2b.create({ dkLen: 64 })
+  return { update: (chunk) => { hash.update(chunk) }, digest: () => hash.digest() }
+}
+
 /**
  * Verify `data` against a Tauri signature and the pinned public key. Returns
- * the trusted comment's `key:value` fields; throws on any mismatch.
+ * the trusted comment's `key:value` fields; throws on any mismatch. `prehash`
+ * is `data`'s BLAKE2b-512 when the caller already hashed it while streaming.
  */
-export function verifyMinisign(data: Uint8Array, signatureBase64: string, publicKeyBase64: string): Record<string, string> {
+export function verifyMinisign(
+  data: Uint8Array,
+  signatureBase64: string,
+  publicKeyBase64: string,
+  prehash?: Uint8Array
+): Record<string, string> {
   const publicKey = parsePublicKey(publicKeyBase64)
   const lines = unwrap(signatureBase64, 'signature')
   const raw = Buffer.from(lines[1]!, 'base64')
@@ -47,7 +60,9 @@ export function verifyMinisign(data: Uint8Array, signatureBase64: string, public
 
   const key = createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: publicKey.key.toString('base64url') }, format: 'jwk' })
   const fileSignature = raw.subarray(10)
-  const message = algorithm === 'ED' ? createHash('blake2b512').update(data).digest() : Buffer.from(data)
+  // Electron's BoringSSL has no BLAKE2 (`createHash('blake2b512')` throws
+  // there although it works under plain Node), so hash in JavaScript.
+  const message = algorithm === 'ED' ? prehash ?? blake2b(data, { dkLen: 64 }) : Buffer.from(data)
   if (!verify(null, message, key, fileSignature)) throw new Error('file signature does not verify')
   const signedComment = Buffer.concat([fileSignature, Buffer.from(trustedComment, 'utf8')])
   if (!verify(null, signedComment, key, globalSignature)) throw new Error('trusted comment signature does not verify')

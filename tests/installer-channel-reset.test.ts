@@ -64,6 +64,17 @@ describe('applyInstallerChannelReset', () => {
     expect((await settings.get()).updateChannel).toBe('experimental')
   })
 
+  it('waits while the settings file is unreadable', async () => {
+    const installDir = await tempDir()
+    const appData = await tempDir()
+    await writeFile(join(installDir, INSTALLER_CHANNEL_RESET_FILE), 'stable')
+    // A directory where the file should be makes every read fail.
+    await mkdir(join(appData, 'app-settings.json'))
+    const settings = new AppSettingsService(appData)
+    expect(await applyInstallerChannelReset(settings, appData, installDir, 'stable')).toBe(false)
+    await expect(readFile(join(appData, INSTALLER_CHANNEL_RESET_SEEN_FILE), 'utf8')).rejects.toThrow()
+  })
+
   it('uses the stamp name the installer writes', async () => {
     const source = await readFile('resources/nsis/uninstall-restore.nsh', 'utf8')
     expect(source).toContain(`!define MURGE_CHANNEL_RESET_FILE "${INSTALLER_CHANNEL_RESET_FILE}"`)

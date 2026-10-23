@@ -1,7 +1,7 @@
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { UpdateChannel } from '@shared/app-settings'
-import type { AppSettingsService } from './service'
+import { parseAppSettings, type UpdateChannel } from '@shared/app-settings'
+import { APP_SETTINGS_FILE, type AppSettingsService } from './service'
 
 /**
  * Written to the install directory by every new install of this build, not by
@@ -43,9 +43,11 @@ export async function applyInstallerChannelReset(
     }
   }
   try {
-    if ((await settings.get()).updateChannel !== channel) {
+    // Decide from the file itself: a failed read falls back to the defaults
+    // (already "stable") and would record the stamp unapplied.
+    if ((await persistedUpdateChannel(appDataBase)) !== channel) {
       await settings.set({ updateChannel: channel })
-      if ((await settings.get()).updateChannel !== channel) throw new Error('the update channel did not persist')
+      if ((await persistedUpdateChannel(appDataBase)) !== channel) throw new Error('the update channel did not persist')
     }
     await mkdir(appDataBase, { recursive: true })
     await writeFile(seenPath, stamp, 'utf8')
@@ -54,4 +56,20 @@ export async function applyInstallerChannelReset(
     return false
   }
   return true
+}
+
+/** The stored channel, the default without a settings file; throws when the file is unreadable. */
+async function persistedUpdateChannel(appDataBase: string): Promise<UpdateChannel> {
+  let raw: string | null
+  try {
+    raw = await readFile(join(appDataBase, APP_SETTINGS_FILE), 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    raw = null
+  }
+  if (raw !== null) {
+    const decoded = JSON.parse(raw) as unknown
+    if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) throw new TypeError('settings document must be an object')
+  }
+  return parseAppSettings(raw).updateChannel
 }

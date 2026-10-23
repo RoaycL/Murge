@@ -404,9 +404,16 @@ pub fn signed_fields(signature: &str) -> std::collections::HashMap<String, Strin
         .collect()
 }
 
-/// Command line for an Electron installer: silent, relaunch afterwards.
+/// Command line for an Electron installer: silent, and relaunching the app
+/// (`--force-run`) only for "重启并安装", not for an install on quit.
 /// (`--updated` is not passed: this is a takeover, not an in-place upgrade.)
-pub const ELECTRON_INSTALLER_ARGS: [&str; 2] = ["/S", "--force-run"];
+pub fn electron_installer_args(restart: bool) -> &'static [&'static str] {
+    if restart {
+        &["/S", "--force-run"]
+    } else {
+        &["/S"]
+    }
+}
 
 /// Ordered, de-duplicated feed bases: last-known-good first, then direct, then
 /// the prefix mirrors.
@@ -592,13 +599,13 @@ pub fn install_ready_update_on_exit() {
     let Some(ready) = READY_UPDATE.lock().ok().and_then(|mut slot| slot.take()) else {
         return;
     };
+    let restart = RESTART_AFTER_INSTALL.load(std::sync::atomic::Ordering::SeqCst);
     if ready.product == "electron" {
-        if let Err(error) = launch_electron_installer(&ready.file_name, &ready.bytes) {
+        if let Err(error) = launch_electron_installer(&ready.file_name, &ready.bytes, restart) {
             eprintln!("[updates] launching the stable installer failed: {error}");
         }
         return;
     }
-    let restart = RESTART_AFTER_INSTALL.load(std::sync::atomic::Ordering::SeqCst);
     let update = ready.update.restart_after_install(restart);
     if let Err(error) = update.install(&ready.bytes) {
         eprintln!("[updates] launching the installer failed: {error}");
@@ -611,7 +618,7 @@ pub fn install_ready_update_on_exit() {
 /// installer raise its own UAC prompt; the path travels in the environment,
 /// never through command-line quoting. The Electron installer removes this
 /// installation first (keeping service, data and the startup task).
-fn launch_electron_installer(file_name: &str, bytes: &[u8]) -> Result<(), String> {
+fn launch_electron_installer(file_name: &str, bytes: &[u8], restart: bool) -> Result<(), String> {
     let dir = std::env::temp_dir().join("murge-update");
     std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     let path = dir.join(file_name);
@@ -622,7 +629,7 @@ fn launch_electron_installer(file_name: &str, bytes: &[u8]) -> Result<(), String
         .join("WindowsPowerShell")
         .join("v1.0")
         .join("powershell.exe");
-    let argument_list = ELECTRON_INSTALLER_ARGS
+    let argument_list = electron_installer_args(restart)
         .iter()
         .map(|arg| format!("'{}'", arg.replace('\'', "''")))
         .collect::<Vec<_>>()
@@ -743,6 +750,14 @@ impl TauriUpdaterInner {
 
     fn generation(&self) -> u64 {
         self.generation.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// End a check or download started in `generation`. Work superseded by a
+    /// channel switch leaves `busy` to the new channel's work.
+    fn release_busy(&self, generation: u64) {
+        if generation == self.generation() {
+            self.busy.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
     }
 
     /// The build of a manifest's installer and whether it is an offer: it
@@ -1029,9 +1044,10 @@ impl UpdaterDriver for TauriUpdaterDriver {
             return Ok(());
         }
         let inner = self.inner.clone();
+        let generation = inner.generation();
         tauri::async_runtime::spawn(async move {
             inner.clone().check().await;
-            inner.busy.store(false, std::sync::atomic::Ordering::SeqCst);
+            inner.release_busy(generation);
         });
         Ok(())
     }
@@ -1046,9 +1062,10 @@ impl UpdaterDriver for TauriUpdaterDriver {
             return;
         }
         let inner = self.inner.clone();
+        let generation = inner.generation();
         tauri::async_runtime::spawn(async move {
             inner.download().await;
-            inner.busy.store(false, std::sync::atomic::Ordering::SeqCst);
+            inner.release_busy(generation);
         });
     }
 
@@ -1830,6 +1847,8 @@ mod tests {
     fn each_channel_delivers_one_build() {
         assert_eq!(channel_product("stable"), "electron");
         assert_eq!(channel_product("experimental"), "tauri");
+        assert_eq!(electron_installer_args(true), ["/S", "--force-run"]);
+        assert_eq!(electron_installer_args(false), ["/S"]);
         // A driver without channels does not offer the setting.
         let service = UpdateService::new(FakeDriver::new(true));
         assert!(!service.get_state().channels_supported);

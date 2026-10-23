@@ -51,11 +51,14 @@ pub struct AppSettings {
 
 impl Default for AppSettings {
     fn default() -> Self {
-        // Byte-for-byte mirror of DEFAULT_APP_SETTINGS (@shared/app-settings.ts).
+        // Byte-for-byte mirror of DEFAULT_APP_SETTINGS (@shared/app-settings.ts),
+        // except the update channel: a settings file without one belongs to a
+        // fresh install of this build, which must keep following its own
+        // (experimental) channel rather than switch to Electron.
         AppSettings {
             auto_start_kernel: true,
             auto_check_update: true,
-            update_channel: "stable".into(),
+            update_channel: "experimental".into(),
             system_proxy_desired: false,
             tun_desired: false,
             kernel_enabled: true,
@@ -403,17 +406,18 @@ mod tests {
     fn update_channel_accepts_only_the_two_channels() {
         let temp = TempDir::new().unwrap();
         let store = store_in(&temp);
-        assert_eq!(store.get().update_channel, "stable");
+        // A fresh Tauri install stays on its own channel.
+        assert_eq!(store.get().update_channel, "experimental");
         let next = store.set(&AppSettingsPatch(
-            serde_json::json!({ "updateChannel": "experimental" }),
+            serde_json::json!({ "updateChannel": "stable" }),
         ));
-        assert_eq!(next.update_channel, "experimental");
+        assert_eq!(next.update_channel, "stable");
         let kept = store.set(&AppSettingsPatch(
             serde_json::json!({ "updateChannel": "nightly" }),
         ));
-        assert_eq!(kept.update_channel, "experimental");
+        assert_eq!(kept.update_channel, "stable");
         let raw = fs::read_to_string(temp.path().join(APP_SETTINGS_FILE)).unwrap();
-        assert!(raw.contains("\"updateChannel\": \"experimental\""));
+        assert!(raw.contains("\"updateChannel\": \"stable\""));
     }
 
     #[test]

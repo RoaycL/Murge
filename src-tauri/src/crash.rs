@@ -17,15 +17,21 @@ pub fn install_panic_hook() {
             .map(|location| format!(" at {}:{}", location.file(), location.line()))
             .unwrap_or_default();
         let line = format!("[panic] thread '{thread_name}' panicked{location}: {message}");
-        // Before setup there is no app log yet: write a file of its own.
-        let logged = if crate::file_log::diagnostic_log_installed() {
-            crate::file_log::diagnostic(&line);
-            true
-        } else {
-            write_early_crash_log(&line)
-        };
         // A worker-thread panic ends that task, not the app: log it only.
-        if thread_name == "main" && tokio::runtime::Handle::try_current().is_err() {
+        let fatal = thread_name == "main" && tokio::runtime::Handle::try_current().is_err();
+        let installed = crate::file_log::diagnostic_log_installed();
+        if installed {
+            crate::file_log::diagnostic(&line);
+        }
+        // Before setup there is no app log yet, and the app log writes in the
+        // background: a fatal panic also gets a synchronous file of its own,
+        // and only a confirmed write lets the dialog point at the logs.
+        let logged = if fatal || !installed {
+            write_crash_log(&line)
+        } else {
+            true
+        };
+        if fatal {
             crate::file_log::flush_diagnostics_blocking();
             show_fatal_dialog(&message, logged);
         }
@@ -40,10 +46,10 @@ pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
         .unwrap_or_else(|| "unknown error".to_string())
 }
 
-/// `<app data>/<appId>/logs/startup-crash.log`, appended synchronously.
-fn write_early_crash_log(line: &str) -> bool {
+/// `<app data>/<appId>/logs/crash.log`, appended synchronously.
+fn write_crash_log(line: &str) -> bool {
     use std::io::Write;
-    let Some(dir) = early_log_dir() else {
+    let Some(dir) = crash_log_dir() else {
         return false;
     };
     let stamp = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
@@ -52,15 +58,15 @@ fn write_early_crash_log(line: &str) -> bool {
             std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(dir.join(EARLY_CRASH_LOG))
+                .open(dir.join(CRASH_LOG))
         })
         .and_then(|mut file| writeln!(file, "[{stamp}] [ERROR] {line}"))
         .is_ok()
 }
 
-const EARLY_CRASH_LOG: &str = "startup-crash.log";
+const CRASH_LOG: &str = "crash.log";
 
-fn early_log_dir() -> Option<std::path::PathBuf> {
+fn crash_log_dir() -> Option<std::path::PathBuf> {
     // The brand may be what failed; its appId is the stable fallback.
     let app_id = crate::brand::load_brand()
         .map(|brand| brand.app_id)
@@ -80,7 +86,7 @@ fn show_fatal_dialog(message: &str, logged: bool) {
         .set_level(rfd::MessageLevel::Error)
         .set_title(product.as_str())
         .set_description(if logged {
-            format!("{product} 遇到意外错误，即将退出。\n\n{message}\n\n详细信息已写入应用日志。")
+            format!("{product} 遇到意外错误，即将退出。\n\n{message}\n\n详细信息已写入日志文件夹中的 crash.log。")
         } else {
             format!("{product} 遇到意外错误，即将退出。\n\n{message}")
         })

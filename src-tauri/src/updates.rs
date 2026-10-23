@@ -927,6 +927,9 @@ impl TauriUpdaterInner {
             .clear();
         // Each round drops at most one offer per source.
         let mut rounds_left = GITHUB_PROXIES.len() + 2;
+        // Why the last offer was dropped: with nothing valid left, that is
+        // the answer, not "up to date".
+        let mut dropped: Option<String> = None;
         loop {
             rounds_left -= 1;
             let outcome = self.probe_sources().await;
@@ -953,6 +956,7 @@ impl TauriUpdaterInner {
                     match self.download_offer().await {
                         DownloadOutcome::InvalidOffer(message) if rounds_left > 0 => {
                             crate::diag!("[updates] dropped an update offer that failed verification: {message}");
+                            dropped = Some(message);
                         }
                         outcome => {
                             self.report_download(outcome);
@@ -963,7 +967,12 @@ impl TauriUpdaterInner {
                 ProbeOutcome::NoUpdate(base) => {
                     *self.last_good.lock().expect("updater last_good poisoned") = Some(base);
                     *self.available.lock().expect("updater available poisoned") = None;
-                    self.emit(UpdaterDriverEvent::NotAvailable);
+                    match dropped {
+                        Some(message) => {
+                            self.report_download(DownloadOutcome::InvalidOffer(message))
+                        }
+                        None => self.emit(UpdaterDriverEvent::NotAvailable),
+                    }
                     return;
                 }
                 ProbeOutcome::Failed(error) => {

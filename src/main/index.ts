@@ -75,6 +75,7 @@ import { WindowsDiagnosticHost } from './diagnostics/windows-host'
 import { applyPendingConfigRestore, createConfigBackup, describeConfigRestoreImpact, inspectConfigBackup, MAX_ARCHIVE_BYTES, stageConfigRestore, type ConfigBackupPayload } from './backup/config-backup'
 import { uploadWebDavBackup, downloadWebDavBackup } from './backup/webdav-backup'
 import { AppSettingsService } from './app-settings/service'
+import { applyInstallerChannelReset } from './app-settings/installer-channel-reset'
 import { SubStoreService } from './substore/service'
 import { DEFAULT_APP_SETTINGS, type AppSettings } from '@shared/app-settings'
 import { OverrideService } from './kernel/overrides/override-service'
@@ -235,7 +236,14 @@ const storageWarmup = (async (): Promise<string> => {
   return resolveRuntimeProfileRoot(app.getPath('appData'), { dev: is.dev })
 })()
 const coreSettingsWarm = storageWarmup.then(() => coreSettingsService.getRaw())
-const appSettingsWarm = storageWarmup.then(() => appSettingsService.get())
+const appSettingsWarm = storageWarmup.then(async () => {
+  // A new install of this build (not a self-update) means this build was
+  // chosen: follow its channel even if the Tauri build left "experimental".
+  if (!is.dev && app.isPackaged && await applyInstallerChannelReset(appSettingsService, appDataBaseRoot, dirname(process.execPath), 'stable')) {
+    console.info('[updates] new install: update channel set to stable')
+  }
+  return appSettingsService.get()
+})
 
 // Created inside app.whenReady; held here so the quit path can stop it.
 let kernel: KernelGateway | null = null

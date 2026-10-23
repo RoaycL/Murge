@@ -27,6 +27,12 @@
 ; retry, covering transient SCM/antivirus locks without making removal impossible.
 ; A persistent failure is surfaced accurately and the installer remains usable
 ; for a repair run instead of trapping the user on a broken release.
+
+; A new install (not this build's own update) stamps its install directory;
+; the app then follows this build's channel even if the Tauri build left
+; "experimental" in the shared settings (src/main/app-settings/installer-channel-reset.ts).
+!define MURGE_CHANNEL_RESET_FILE "update-channel-reset"
+
 ; Capture the old per-user Run preference BEFORE electron-builder runs the old
 ; uninstaller. Releases before this hook removed that value even on an upgrade.
 !ifndef BUILD_UNINSTALLER
@@ -52,6 +58,13 @@ Var /GLOBAL MurgeStartupWasEnabled
     StrCmp $R8 0 0 StartupCaptureDone
       StrCpy $MurgeStartupWasEnabled "1"
   StartupCaptureDone:
+
+  ; The old uninstaller of a self-update removes the install directory: keep
+  ; the reset stamp, with its time, for customInstall to put back. Users who
+  ; have not launched since the last new install still get their reset.
+  InitPluginsDir
+  IfFileExists "$INSTDIR\${MURGE_CHANNEL_RESET_FILE}" 0 +2
+    CopyFiles /SILENT "$INSTDIR\${MURGE_CHANNEL_RESET_FILE}" "$PLUGINSDIR\${MURGE_CHANNEL_RESET_FILE}"
 
   ; --- Tauri build takeover --------------------------------------------------
   ; Switching back from the experimental (Tauri) build installs this build over
@@ -87,6 +100,16 @@ Var /GLOBAL MurgeStartupWasEnabled
 !macroend
 
 !macro customInstall
+  ${if} ${isUpdated}
+    IfFileExists "$PLUGINSDIR\${MURGE_CHANNEL_RESET_FILE}" 0 +2
+      CopyFiles /SILENT "$PLUGINSDIR\${MURGE_CHANNEL_RESET_FILE}" "$INSTDIR\${MURGE_CHANNEL_RESET_FILE}"
+  ${else}
+    ClearErrors
+    FileOpen $R0 "$INSTDIR\${MURGE_CHANNEL_RESET_FILE}" w
+    IfErrors +3
+      FileWrite $R0 "stable"
+      FileClose $R0
+  ${endif}
   IfFileExists "$INSTDIR\resources\tun-service\tun-service.exe" 0 TunServiceInstallMissing
     DetailPrint "Installing privileged core lifecycle service..."
     nsExec::ExecToStack '"$INSTDIR\resources\tun-service\tun-service.exe" --install'
@@ -189,6 +212,7 @@ Var /GLOBAL MurgeStartupWasEnabled
         DetailPrint "TUN service removal failed with exit code $R0; continuing uninstall so removal is not blocked"
         MessageBox MB_ICONEXCLAMATION|MB_OK "未能确认 TUN 服务已移除。为避免阻塞卸载，本程序将继续执行。若残留的 TUN 服务需清理，请以管理员身份在「Windows 服务」中找到并停止、删除对应服务。"
     TunServiceUninstallDone:
+    Delete "$INSTDIR\${MURGE_CHANNEL_RESET_FILE}"
   ${endif}
   ; Upgrades must preserve startup intent. The NEW installer re-registers the
   ; task after installing its files; the old uninstaller may predate this rule,

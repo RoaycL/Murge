@@ -42,6 +42,7 @@ type Routes = Record<string, () => Response>
 function harness(routes: Routes, overrides: Partial<SignedManifestDeps> = {}) {
   const events: UpdaterDriverEvent[] = []
   const written: Array<{ path: string; data: Uint8Array }> = []
+  const disk = new Map<string, Uint8Array>()
   const launched: Array<{ path: string; args: readonly string[] }> = []
   const requested: string[] = []
   let quits = 0
@@ -59,21 +60,29 @@ function harness(routes: Routes, overrides: Partial<SignedManifestDeps> = {}) {
       return route()
     },
     downloadDir: '/tmp/update',
-    writeFile: async (path, data) => { written.push({ path, data }) },
+    writeFile: async (path, data) => {
+      written.push({ path, data })
+      disk.set(path, data)
+    },
+    readFile: (path) => {
+      const data = disk.get(path)
+      if (!data) throw new Error(`ENOENT ${path}`)
+      return data
+    },
     launchInstaller: (path, args) => { launched.push({ path, args }) },
     requestQuit: () => { quits += 1 },
     ...overrides
   }
   const driver = new SignedManifestUpdaterDriver(deps)
   driver.onEvent((event) => events.push(event))
-  const settle = async (): Promise<void> => {
+  const settle = async (from = 0): Promise<void> => {
     for (let index = 0; index < 50; index += 1) {
-      const last = events.at(-1)?.kind
+      const last = events.length > from ? events.at(-1)?.kind : undefined
       if (last === 'downloaded' || last === 'error' || last === 'not-available') return
       await new Promise((resolve) => setTimeout(resolve, 5))
     }
   }
-  return { driver, events, written, launched, requested, settle, quits: () => quits }
+  return { driver, events, written, launched, requested, disk, settle, quits: () => quits }
 }
 
 function manifest(signature: string, version = '1.0.0'): () => Response {
@@ -217,6 +226,60 @@ describe('SignedManifestUpdaterDriver', () => {
     await h.settle()
     expect(h.events.at(-1)?.kind).toBe('downloaded')
     expect(h.written).toHaveLength(1)
+  })
+
+  it('refuses to launch a staged installer that was swapped after verification', async () => {
+    const key = makeKey()
+    const signature = key.signFile(installer, `timestamp:1\tfile:${fileName}\tversion:1.0.0`)
+    const h = harness({ [`${direct}/latest.json`]: manifest(signature), [assetUrl]: asset() }, { publicKey: key.publicKey })
+    h.driver.check()
+    await h.settle()
+    expect(h.events.at(-1)?.kind).toBe('downloaded')
+    h.disk.set(`/tmp/update/${fileName}`, Buffer.from('swapped by another process'))
+    h.driver.dispose()
+    expect(h.launched).toEqual([])
+  })
+
+  it('does not download the same release again while it waits for quit', async () => {
+    const key = makeKey()
+    const signature = key.signFile(installer, `timestamp:1\tfile:${fileName}\tversion:1.0.0`)
+    const h = harness({ [`${direct}/latest.json`]: manifest(signature), [assetUrl]: asset() }, { publicKey: key.publicKey })
+    h.driver.check()
+    await h.settle()
+    const before = h.events.length
+    h.driver.check()
+    await h.settle(before)
+    expect(h.events.slice(before).map((event) => event.kind)).toEqual(['checking', 'not-available'])
+    expect(h.written).toHaveLength(1)
+    h.driver.dispose()
+    expect(h.launched).toHaveLength(1)
+  })
+
+  it('retires the staged installer when a newer release then fails to download', async () => {
+    const key = makeKey()
+    const signature = key.signFile(installer, `timestamp:1\tfile:${fileName}\tversion:1.0.0`)
+    const routes: Routes = { [`${direct}/latest.json`]: manifest(signature), [assetUrl]: asset() }
+    const h = harness(routes, { publicKey: key.publicKey })
+    h.driver.check()
+    await h.settle()
+    const nextName = 'App_1.0.1_x64-setup.exe'
+    routes[`${direct}/latest.json`] = () => Response.json({
+      version: '1.0.1',
+      platforms: {
+        'windows-x86_64': {
+          url: `https://github.com/owner/repo/releases/download/v1.0.1/${nextName}`,
+          signature: key.signFile(installer, `timestamp:2\tfile:${nextName}\tversion:1.0.1`)
+        }
+      }
+    })
+    const before = h.events.length
+    h.driver.check()
+    await h.settle(before)
+    expect(h.events.at(-1)?.kind).toBe('error')
+    h.driver.quitAndInstall()
+    expect(h.quits()).toBe(0)
+    h.driver.dispose()
+    expect(h.launched).toEqual([])
   })
 
   it('ignores manifests that are not newer than the running build', async () => {

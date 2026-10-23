@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { app, net, Notification } from 'electron'
@@ -35,6 +36,7 @@ export function createUpdaterDriver(onNotificationClick: () => void): UpdaterDri
       await mkdir(dirname(file), { recursive: true })
       await writeFile(file, data)
     },
+    readFile: (file) => readFileSync(file),
     launchInstaller: (file, args) => {
       // ShellExecute (via Start-Process) so the per-machine installer can
       // raise its own UAC prompt; a plain CreateProcess cannot elevate. The

@@ -49,6 +49,8 @@ export interface SignedManifestDeps {
   /** Directory the verified installer is written to. */
   downloadDir: string
   writeFile: (path: string, data: Uint8Array) => Promise<void>
+  /** Synchronous read of the staged installer, re-verified right before launch. */
+  readFile: (path: string) => Uint8Array
   /** Start the installer detached (it elevates itself). */
   launchInstaller: (path: string, args: readonly string[]) => void
   /** Begin the app's ordered quit flow. */
@@ -135,7 +137,8 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
   private readonly listeners = new Set<(event: UpdaterDriverEvent) => void>()
   private lastGoodBase: string | null = null
   private available: { manifest: Manifest; platform: ManifestPlatform; base: string } | null = null
-  private readyInstaller: string | null = null
+  /** The verified installer awaiting quit, with what it was verified as. */
+  private readyInstaller: { path: string; version: string; fileName: string; signature: string } | null = null
   private busy = false
 
   constructor(private readonly deps: SignedManifestDeps) {
@@ -178,7 +181,14 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
     this.listeners.clear()
     if (!installer) return
     try {
-      this.deps.launchInstaller(installer, INSTALLER_ARGS)
+      // The staged file sits in a user-writable directory: verify the bytes
+      // on disk again immediately before handing them to Windows, so a file
+      // swapped after download can never reach the UAC prompt.
+      const fields = verifyMinisign(this.deps.readFile(installer.path), installer.signature, this.deps.publicKey)
+      if (fields.version !== installer.version || fields.file !== installer.fileName) {
+        throw new Error('staged installer no longer matches its signature')
+      }
+      this.deps.launchInstaller(installer.path, INSTALLER_ARGS)
     } catch (error) {
       console.error('[updates] failed to launch the installer:', error)
     }
@@ -215,6 +225,8 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
     }
     const platform = manifest.platforms[PLATFORM_KEYS[this.deps.arch]!]
     if (!platform || !isNewerVersion(manifest.version, this.currentVersion)) return null
+    // Already downloaded and waiting for quit: nothing new to fetch.
+    if (this.readyInstaller && !isNewerVersion(manifest.version, this.readyInstaller.version)) return null
     // The manifest is unsigned: never let it point the client at anything
     // but this repository's release assets.
     if (!isReleaseAsset(platform.url, this.deps.directBase)) {
@@ -273,6 +285,9 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
     }
     const selected = outcome
     const platform = outcome.platform
+    // A newer release supersedes the staged installer: what runs on quit must
+    // match what the UI reports, even if this download then fails.
+    this.readyInstaller = null
     this.available = { manifest: selected.manifest, platform, base: selected.base }
     const version = selected.manifest.version.replace(/^v/, '')
     this.emit({ kind: 'available', version, releaseNotes: selected.manifest.notes })
@@ -318,7 +333,7 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
       }
       const path = join(this.deps.downloadDir, fileName)
       await this.deps.writeFile(path, data)
-      this.readyInstaller = path
+      this.readyInstaller = { path, version: expected, fileName, signature: available.platform.signature }
       this.emit({ kind: 'downloaded' })
       this.deps.notify?.(`新版本 v${available.manifest.version.replace(/^v/, '')} 已就绪`, '退出应用时自动安装，或点击“重启并安装”立即更新。')
       return

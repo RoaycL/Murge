@@ -89,9 +89,12 @@ pub fn on_session_end(app: &tauri::AppHandle) {
                 .join(crate::system_proxy::SYSTEM_PROXY_BACKUP_SUBDIR)
                 .join(crate::system_proxy::SYSTEM_PROXY_BACKUP_FILE);
             match crate::system_proxy::restore_owned_proxy_blocking(&adapter, &path) {
-                Ok(outcome) => eprintln!("[session-end] direct proxy restore: {outcome}"),
-                Err(error) => eprintln!("[session-end] direct proxy restore failed: {error}"),
+                Ok(outcome) => crate::diag!("[session-end] direct proxy restore: {outcome}"),
+                Err(error) => crate::diag!("[session-end] direct proxy restore failed: {error}"),
             }
+            // The ordered flow may already have flushed; Windows can end the
+            // process as soon as this handler returns.
+            crate::file_log::flush_diagnostics_blocking();
         }
     }
     // 3. Give the ordered flow (TUN off, core stop, flush) the rest of the
@@ -174,7 +177,7 @@ mod platform {
             .name("murge-session-events".into())
             .spawn(|| unsafe {
                 let Ok(module) = GetModuleHandleW(None) else {
-                    eprintln!("[session-events] GetModuleHandleW failed");
+                    crate::diag!("[session-events] GetModuleHandleW failed");
                     return;
                 };
                 let class = WNDCLASSW {
@@ -184,7 +187,7 @@ mod platform {
                     ..Default::default()
                 };
                 if RegisterClassW(&class) == 0 {
-                    eprintln!("[session-events] RegisterClassW failed");
+                    crate::diag!("[session-events] RegisterClassW failed");
                     return;
                 }
                 // A hidden TOP-LEVEL window: message-only windows do not receive
@@ -204,7 +207,7 @@ mod platform {
                     None,
                 );
                 if created.is_err() {
-                    eprintln!("[session-events] CreateWindowExW failed");
+                    crate::diag!("[session-events] CreateWindowExW failed");
                     return;
                 }
                 let mut message = MSG::default();
@@ -214,7 +217,7 @@ mod platform {
                 }
             });
         if let Err(error) = spawned {
-            eprintln!("[session-events] thread spawn failed: {error}");
+            crate::diag!("[session-events] thread spawn failed: {error}");
         }
     }
 }

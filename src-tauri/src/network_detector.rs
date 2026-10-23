@@ -102,7 +102,7 @@ impl NetworkDetector {
                 this.tick(generation).await;
             }
         });
-        eprintln!(
+        crate::diag!(
             "[network-detector] started (every {}s)",
             self.interval_seconds
         );
@@ -152,7 +152,7 @@ impl NetworkDetector {
                             _ => self.gateway.start_kernel().await,
                         };
                         if let Err(error) = result {
-                            eprintln!(
+                            crate::diag!(
                                 "[network-detector] kernel restart after reconnect failed: {}",
                                 error.extract_message()
                             );

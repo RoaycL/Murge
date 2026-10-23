@@ -602,13 +602,16 @@ pub fn install_ready_update_on_exit() {
     let restart = RESTART_AFTER_INSTALL.load(std::sync::atomic::Ordering::SeqCst);
     if ready.product == "electron" {
         if let Err(error) = launch_electron_installer(&ready.file_name, &ready.bytes, restart) {
-            eprintln!("[updates] launching the stable installer failed: {error}");
+            crate::diag!("[updates] launching the stable installer failed: {error}");
+            crate::file_log::flush_diagnostics_blocking();
         }
         return;
     }
     let update = ready.update.restart_after_install(restart);
     if let Err(error) = update.install(&ready.bytes) {
-        eprintln!("[updates] launching the installer failed: {error}");
+        crate::diag!("[updates] launching the installer failed: {error}");
+        // The process exits right after this callback.
+        crate::file_log::flush_diagnostics_blocking();
     }
 }
 
@@ -685,7 +688,57 @@ struct TauriUpdaterInner {
     last_good: Mutex<Option<String>>,
     /// The announced update, the feed base it came from, and its build.
     available: Mutex<Option<(tauri_plugin_updater::Update, String, &'static str)>>,
+    /// Offers whose signature did not hold up, by [`offer_key`]. Manifests
+    /// are unsigned, so one source can announce a version it cannot deliver;
+    /// remembering the bad offer lets the next-best one through instead of
+    /// failing on the same offer every round. Cleared when a check starts.
+    rejected: Mutex<std::collections::HashSet<String>>,
     busy: std::sync::atomic::AtomicBool,
+}
+
+/// How one download attempt of the announced offer ended.
+#[derive(Debug, PartialEq)]
+enum DownloadOutcome {
+    /// Verified and staged for install on exit.
+    Staged,
+    /// A channel switch made this download moot.
+    Superseded,
+    /// The offer itself is bad (its signature does not verify or names
+    /// another version or file); it has been added to `rejected`.
+    InvalidOffer(String),
+    /// Every source failed for another reason (network, timeouts).
+    Failed(String),
+}
+
+/// Identity of one manifest offer: the claimed version, installer and the
+/// signature it came with. Not the source: mirrors serve the same manifest,
+/// so one rejection covers every copy of it.
+fn offer_key(update: &tauri_plugin_updater::Update) -> String {
+    format!(
+        "{}\n{}\n{}",
+        update.version, update.download_url, update.signature
+    )
+}
+
+/// The signed version and file must be the ones the manifest claims. Checked
+/// before an offer is accepted; the signature itself is verified on download.
+pub fn signed_fields_match(signature: &str, version: &str, file_name: &str) -> Result<(), String> {
+    let fields = signed_fields(signature);
+    let signed_version = fields.get("version").map(String::as_str);
+    if signed_version.and_then(parse_stable_version) != parse_stable_version(version) {
+        return Err(format!(
+            "update manifest claims {version}, its signature names {}",
+            signed_version.unwrap_or("(none)")
+        ));
+    }
+    let signed_file = fields.get("file").map(String::as_str);
+    if signed_file != Some(file_name) {
+        return Err(format!(
+            "update manifest names {file_name}, its signature names {}",
+            signed_file.unwrap_or("(none)")
+        ));
+    }
+    Ok(())
 }
 
 impl TauriUpdaterDriver {
@@ -715,6 +768,7 @@ impl TauriUpdaterDriver {
                 generation: std::sync::atomic::AtomicU64::new(0),
                 last_good: Mutex::new(None),
                 available: Mutex::new(None),
+                rejected: Mutex::new(std::collections::HashSet::new()),
                 busy: std::sync::atomic::AtomicBool::new(false),
             }),
         }
@@ -796,6 +850,11 @@ impl TauriUpdaterInner {
         if parse_stable_version(&update.version).is_none() {
             return Ok(None);
         }
+        signed_fields_match(
+            &update.signature,
+            &update.version,
+            &installer_file_name(&update.download_url),
+        )?;
         if product == PRODUCT && !is_newer_version(&update.version, &update.current_version) {
             return Ok(None);
         }
@@ -810,13 +869,12 @@ impl TauriUpdaterInner {
         Ok(Some(product))
     }
 
-    /// Ask every source for the manifest and keep the newest offer. "No
-    /// update" is only concluded
-    /// when no source announced one, so a stale mirror can neither hide nor
-    /// roll back a release.
-    async fn check(self: Arc<Self>) {
-        let generation = self.generation();
-        self.emit(UpdaterDriverEvent::Checking);
+    /// Ask every source for the manifest and keep the newest offer not yet
+    /// rejected. "No update" is only concluded when no source announced one,
+    /// so a stale mirror can neither hide nor roll back a release.
+    async fn probe_sources(
+        self: &Arc<Self>,
+    ) -> ProbeOutcome<(tauri_plugin_updater::Update, &'static str)> {
         let last_good = self
             .last_good
             .lock()
@@ -831,6 +889,7 @@ impl TauriUpdaterInner {
                 let updater = inner.updater_for(&base)?;
                 let found = updater.check().await.map_err(|error| error.to_string())?;
                 let offer = match found {
+                    Some(update) if inner.is_rejected(&update) => None,
                     Some(update) => inner.offer_for(&update)?.map(|product| (update, product)),
                     None => None,
                 };
@@ -841,48 +900,125 @@ impl TauriUpdaterInner {
                       best: &(tauri_plugin_updater::Update, &'static str)| {
             is_newer_version(&next.0.version, &best.0.version)
         };
-        let outcome = race_probes(probes, better).await;
-        if generation != self.generation() {
-            return; // the channel changed while the sources answered
+        race_probes(probes, better).await
+    }
+
+    fn is_rejected(&self, update: &tauri_plugin_updater::Update) -> bool {
+        self.rejected
+            .lock()
+            .expect("updater rejected poisoned")
+            .contains(&offer_key(update))
+    }
+
+    /// Check, announce the best offer and download it. An offer whose
+    /// signature does not hold up is dropped and the sources are asked again,
+    /// so one bad source cannot hold back a real release.
+    async fn check(self: Arc<Self>) {
+        let generation = self.generation();
+        self.emit(UpdaterDriverEvent::Checking);
+        // Rejections last for this check only. A manifest whose signature
+        // names another version or file is refused before any download, so
+        // what lands here is bytes that failed to verify: maybe one broken
+        // mirror while the others were down, which must not hide a real
+        // release until restart.
+        self.rejected
+            .lock()
+            .expect("updater rejected poisoned")
+            .clear();
+        // Each round drops at most one offer per source.
+        let mut rounds_left = GITHUB_PROXIES.len() + 2;
+        // Why the last offer was dropped: with nothing valid left, that is
+        // the answer, not "up to date".
+        let mut dropped: Option<String> = None;
+        loop {
+            rounds_left -= 1;
+            let outcome = self.probe_sources().await;
+            if generation != self.generation() {
+                return; // the channel changed while the sources answered
+            }
+            match outcome {
+                ProbeOutcome::Update(base, (update, product)) => {
+                    *self.last_good.lock().expect("updater last_good poisoned") =
+                        Some(base.clone());
+                    let version = update.version.clone();
+                    let release_notes = update.body.clone();
+                    // A newer release supersedes the staged installer: what
+                    // runs on exit must match what the UI reports.
+                    *READY_UPDATE.lock().expect("ready update poisoned") = None;
+                    *self.available.lock().expect("updater available poisoned") =
+                        Some((update, base, product));
+                    self.emit(UpdaterDriverEvent::Available {
+                        version,
+                        release_notes,
+                        product: Some(product.to_string()),
+                    });
+                    // electron-updater autoDownload parity.
+                    match self.download_offer().await {
+                        DownloadOutcome::InvalidOffer(message) if rounds_left > 0 => {
+                            crate::diag!("[updates] dropped an update offer that failed verification: {message}");
+                            dropped = Some(message);
+                        }
+                        outcome => {
+                            self.report_download(outcome);
+                            return;
+                        }
+                    }
+                }
+                ProbeOutcome::NoUpdate(base) => {
+                    *self.last_good.lock().expect("updater last_good poisoned") = Some(base);
+                    *self.available.lock().expect("updater available poisoned") = None;
+                    match dropped {
+                        Some(message) => {
+                            self.report_download(DownloadOutcome::InvalidOffer(message))
+                        }
+                        None => self.emit(UpdaterDriverEvent::NotAvailable),
+                    }
+                    return;
+                }
+                ProbeOutcome::Failed(error) => {
+                    *self.last_good.lock().expect("updater last_good poisoned") = None;
+                    self.emit(UpdaterDriverEvent::Error {
+                        message: format!("无法连接更新源，请检查网络或稍后重试（{error}）"),
+                    });
+                    return;
+                }
+            }
         }
+    }
+
+    /// Download the announced offer and report how it ended.
+    async fn download(self: &Arc<Self>) {
+        let outcome = self.download_offer().await;
+        self.report_download(outcome);
+    }
+
+    fn report_download(&self, outcome: DownloadOutcome) {
         match outcome {
-            ProbeOutcome::Update(base, (update, product)) => {
-                *self.last_good.lock().expect("updater last_good poisoned") = Some(base.clone());
-                let version = update.version.clone();
-                let release_notes = update.body.clone();
-                // A newer release supersedes the staged installer: what runs
-                // on exit must match what the UI reports.
-                *READY_UPDATE.lock().expect("ready update poisoned") = None;
-                *self.available.lock().expect("updater available poisoned") =
-                    Some((update, base, product));
-                self.emit(UpdaterDriverEvent::Available {
-                    version,
-                    release_notes,
-                    product: Some(product.to_string()),
-                });
-                // electron-updater autoDownload parity.
-                self.download().await;
-            }
-            ProbeOutcome::NoUpdate(base) => {
-                *self.last_good.lock().expect("updater last_good poisoned") = Some(base);
-                *self.available.lock().expect("updater available poisoned") = None;
-                self.emit(UpdaterDriverEvent::NotAvailable);
-            }
-            ProbeOutcome::Failed(error) => {
-                *self.last_good.lock().expect("updater last_good poisoned") = None;
-                self.emit(UpdaterDriverEvent::Error {
-                    message: format!("无法连接更新源，请检查网络或稍后重试（{error}）"),
-                });
-            }
+            DownloadOutcome::Staged | DownloadOutcome::Superseded => {}
+            DownloadOutcome::InvalidOffer(message) => self.emit(UpdaterDriverEvent::Error {
+                message: format!("更新包签名校验失败，已丢弃（{message}）"),
+            }),
+            DownloadOutcome::Failed(message) => self.emit(UpdaterDriverEvent::Error {
+                message: format!("下载更新失败，请检查网络或稍后重试（{message}）"),
+            }),
         }
+    }
+
+    /// Remember an offer that failed verification and say why.
+    fn reject(&self, update: &tauri_plugin_updater::Update, message: String) -> DownloadOutcome {
+        self.rejected
+            .lock()
+            .expect("updater rejected poisoned")
+            .insert(offer_key(update));
+        DownloadOutcome::InvalidOffer(message)
     }
 
     /// Download through the source the manifest came from, then every other
     /// source. The plugin verifies the signature (and the signed version)
     /// before returning bytes; bytes that fail verification are discarded and
-    /// the next source is tried, a signature bound to the wrong version or
-    /// file stops.
-    async fn download(self: &Arc<Self>) {
+    /// the next source is tried. A signature that fails on every source, or
+    /// that names another version or file, rejects the offer.
+    async fn download_offer(self: &Arc<Self>) -> DownloadOutcome {
         let generation = self.generation();
         let Some((update, base, product)) = self
             .available
@@ -890,7 +1026,7 @@ impl TauriUpdaterInner {
             .expect("updater available poisoned")
             .clone()
         else {
-            return;
+            return DownloadOutcome::Superseded;
         };
         let direct = self.direct();
         let file_name = installer_file_name(&update.download_url);
@@ -899,7 +1035,7 @@ impl TauriUpdaterInner {
         let mut signature_failed = false;
         for source in feed_base_candidates(&direct, last_good) {
             if generation != self.generation() {
-                return;
+                return DownloadOutcome::Superseded;
             }
             let routed = route_download_url(update.download_url.as_str(), &source, &direct);
             let Ok(routed) = url::Url::parse(&routed) else {
@@ -925,7 +1061,7 @@ impl TauriUpdaterInner {
                 )
                 .await;
             if generation != self.generation() {
-                return;
+                return DownloadOutcome::Superseded;
             }
             match result {
                 Ok(bytes) => {
@@ -934,20 +1070,18 @@ impl TauriUpdaterInner {
                     // possibly another build) is refused.
                     let signed_file = signed_fields(&update.signature).remove("file");
                     if signed_file.as_deref() != Some(file_name.as_str()) {
-                        self.emit(UpdaterDriverEvent::Error {
-                            message: format!(
-                                "更新包签名校验失败，已丢弃（signature names {}, manifest says {file_name}）",
-                                signed_file.as_deref().unwrap_or("(none)")
-                            ),
-                        });
-                        return;
+                        let message = format!(
+                            "signature names {}, manifest says {file_name}",
+                            signed_file.as_deref().unwrap_or("(none)")
+                        );
+                        return self.reject(&update, message);
                     }
                     // Staged under the lock a channel switch takes to bump the
                     // generation, so a switch either happens first (and this
                     // download is dropped) or clears what is staged here.
                     let mut staged = READY_UPDATE.lock().expect("ready update poisoned");
                     if generation != self.generation() {
-                        return;
+                        return DownloadOutcome::Superseded;
                     }
                     *staged = Some(ReadyUpdate {
                         update,
@@ -956,7 +1090,7 @@ impl TauriUpdaterInner {
                         file_name,
                     });
                     self.emit(UpdaterDriverEvent::Downloaded);
-                    return;
+                    return DownloadOutcome::Staged;
                 }
                 // Bytes that fail verification may be a broken or hostile
                 // mirror: discard them and try the next source.
@@ -965,33 +1099,28 @@ impl TauriUpdaterInner {
                     signature_failed = true;
                 }
                 // The signature itself names another version (or none): the
-                // manifest is wrong on every source, so stop here.
+                // offer is wrong on every source.
                 Err(
                     error @ (tauri_plugin_updater::Error::SignedVersionMismatch { .. }
                     | tauri_plugin_updater::Error::MissingSignedVersion
                     | tauri_plugin_updater::Error::Base64(_)
                     | tauri_plugin_updater::Error::SignatureUtf8(_)),
                 ) => {
-                    self.emit(UpdaterDriverEvent::Error {
-                        message: format!("更新包签名校验失败，已丢弃（{error}）"),
-                    });
-                    return;
+                    return self.reject(&update, error.to_string());
                 }
+                // A network failure on a later source must not hide a
+                // signature failure on an earlier one.
                 Err(error) => {
                     last_error = error.to_string();
-                    signature_failed = false;
                 }
             }
         }
+        // No source delivered verified bytes and at least one delivered bytes
+        // that failed verification: the offer's signature is not ours.
         if signature_failed {
-            self.emit(UpdaterDriverEvent::Error {
-                message: format!("更新包签名校验失败，已丢弃（{last_error}）"),
-            });
-            return;
+            return self.reject(&update, last_error);
         }
-        self.emit(UpdaterDriverEvent::Error {
-            message: format!("下载更新失败，请检查网络或稍后重试（{last_error}）"),
-        });
+        DownloadOutcome::Failed(last_error)
     }
 }
 
@@ -1034,6 +1163,11 @@ impl UpdaterDriver for TauriUpdaterDriver {
             .last_good
             .lock()
             .expect("updater last_good poisoned") = None;
+        self.inner
+            .rejected
+            .lock()
+            .expect("updater rejected poisoned")
+            .clear();
         // Work of the old channel may still be running; its results are
         // dropped by generation, so let the new check start now.
         self.inner
@@ -1990,6 +2124,19 @@ mod tests {
         );
         assert_eq!(fields.get("version").map(String::as_str), Some("1.0.0"));
         assert!(signed_fields("not base64").is_empty());
+    }
+
+    #[test]
+    fn an_offer_must_claim_the_version_and_file_its_signature_names() {
+        use base64::Engine;
+        let text = "untrusted comment: signature from tauri secret key\nRUQ=\ntrusted comment: timestamp:1\tfile:Murge_0.9.31_x64-setup.exe\tversion:0.9.31\nAA==\n";
+        let signature = base64::engine::general_purpose::STANDARD.encode(text);
+        assert!(signed_fields_match(&signature, "0.9.31", "Murge_0.9.31_x64-setup.exe").is_ok());
+        assert!(signed_fields_match(&signature, "v0.9.31", "Murge_0.9.31_x64-setup.exe").is_ok());
+        // A source that inflates the version of a real release is refused.
+        assert!(signed_fields_match(&signature, "99.0.0", "Murge_0.9.31_x64-setup.exe").is_err());
+        assert!(signed_fields_match(&signature, "0.9.31", "Murge_0.9.31_arm64-setup.exe").is_err());
+        assert!(signed_fields_match("not base64", "0.9.31", "Murge_0.9.31_x64-setup.exe").is_err());
     }
 
     #[tokio::test]

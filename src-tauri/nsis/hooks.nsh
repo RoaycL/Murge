@@ -43,6 +43,8 @@
 ; Startup intent is carried from an uninstall to the next install in the
 ; HKCU "${MANUPRODUCTKEY}" value below (Tauri's own per-product key).
 !define MURGE_STARTUP_MARKER_VALUE "StartupWasEnabled"
+; Consumed by the app on its next launch (settings.rs INSTALLER_CHANNEL_RESET_FILE).
+!define MURGE_CHANNEL_RESET_FILE "update-channel-reset"
 
 Var MurgeStartupWasEnabled
 Var MurgeElectronUninstaller
@@ -178,6 +180,23 @@ Var MurgeElectronDir
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
   MurgeStartupEnd:
   DeleteRegValue HKCU "${MANUPRODUCTKEY}" "${MURGE_STARTUP_MARKER_VALUE}"
+
+  ; --- Update channel ---------------------------------------------------------
+  ; Anything but this build's own self-update (a manual install, an Electron
+  ; takeover, a channel switch from the stable build) means this build was
+  ; chosen. The Electron build stores "stable" in each user's settings file,
+  ; so stamp the install: every user's first launch after a new stamp follows
+  ; the experimental channel instead of switching straight back
+  ; (settings.rs INSTALLER_CHANNEL_RESET_FILE). The stamp sits in $INSTDIR,
+  ; not one user's profile: this is a per-machine install, and the account
+  ; that elevated it may not be the one that uses it.
+  ${If} $UpdateMode <> 1
+    ClearErrors
+    FileOpen $R2 "$INSTDIR\${MURGE_CHANNEL_RESET_FILE}" w
+    IfErrors +3
+      FileWrite $R2 "experimental"
+      FileClose $R2
+  ${EndIf}
   SetShellVarContext all
 !macroend
 
@@ -209,6 +228,9 @@ Var MurgeElectronDir
   ${If} $UpdateMode = 1
     DetailPrint "Preserving privileged TUN service and startup task for update..."
   ${Else}
+    ; The install stamp is not in the bundler's file list.
+    Delete "$INSTDIR\${MURGE_CHANNEL_RESET_FILE}"
+
     ; --- Startup task ---------------------------------------------------------
     ; Remember an enabled auto-start so a reinstall right after this keeps it.
     !insertmacro MURGE_CAPTURE_STARTUP_INTENT "${BUNDLEID}" "${BUNDLEID}"

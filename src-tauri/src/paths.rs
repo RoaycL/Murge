@@ -50,13 +50,12 @@ pub fn platform_app_data_root() -> Option<PathBuf> {
 pub fn is_dev() -> bool {
     // tauri-build injects DEV into the build script for dev profiles; the
     // env var check keeps unit-testability outside a Tauri context.
+    // Only a debug build: an environment variable must never switch a
+    // release build to throwaway data and a fake system-proxy adapter.
     cfg!(debug_assertions)
         && std::env::var("TAURI_ENV_DEBUG")
             .map(|v| v == "true")
             .unwrap_or(true)
-        || std::env::var("MURGE_TAURI_DEV")
-            .map(|v| v == "1")
-            .unwrap_or(false)
 }
 
 /// Resolved application paths, shared with IPC handlers through Tauri state.

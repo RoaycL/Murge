@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use serde_json::Value;
 use tokio::sync::{mpsc, watch};
@@ -30,6 +30,64 @@ const RETAIN_RATIO: f64 = 0.5;
 const TRUNCATE_MARKER: &[u8] =
     b"\n[LOG] Earlier entries were removed because the file size limit was reached.\n";
 const LINE_CAP: usize = 64 * 1024;
+
+/// The app log that [`diag!`](crate::diag) lines are copied into. Release
+/// builds run under the Windows GUI subsystem, where stderr goes nowhere, so
+/// without this every runtime diagnostic would be lost (the Electron build
+/// routes `console.*` into the same file through its console bridge).
+static DIAGNOSTIC_LOG: OnceLock<Arc<FileLogService>> = OnceLock::new();
+
+/// Send every later [`diag!`](crate::diag) line to `service` as well. The
+/// first call wins.
+pub fn install_diagnostic_log(service: Arc<FileLogService>) {
+    let _ = DIAGNOSTIC_LOG.set(service);
+}
+
+/// `"[module] message"` -> `("module", "message")`; an untagged line is filed
+/// under `runtime`.
+pub fn split_module_tag(line: &str) -> (&str, &str) {
+    if let Some(rest) = line.strip_prefix('[') {
+        if let Some((module, message)) = rest.split_once("] ") {
+            if !module.is_empty() && !module.contains(['[', ']', '\n']) {
+                return (module, message);
+            }
+        }
+    }
+    ("runtime", line)
+}
+
+/// Write one diagnostic line to stderr and, once installed, to the app log.
+pub fn diagnostic(line: &str) {
+    eprintln!("{line}");
+    if let Some(service) = DIAGNOSTIC_LOG.get() {
+        let (module, message) = split_module_tag(line);
+        service.write_app(FileLogLevel::Warn, message, module);
+    }
+}
+
+/// True once [`install_diagnostic_log`] ran (setup has started).
+pub fn diagnostic_log_installed() -> bool {
+    DIAGNOSTIC_LOG.get().is_some()
+}
+
+/// Wait up to two seconds until every diagnostic written so far is on disk.
+/// For the exit path, where the process ends right after.
+pub fn flush_diagnostics_blocking() {
+    if let Some(service) = DIAGNOSTIC_LOG.get() {
+        let service = service.clone();
+        tauri::async_runtime::block_on(async move {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), service.flush()).await;
+        });
+    }
+}
+
+/// `eprintln!` that also reaches the app log file: `diag!("[tun] stop failed: {error}")`.
+#[macro_export]
+macro_rules! diag {
+    ($($arg:tt)*) => {
+        $crate::file_log::diagnostic(&format!($($arg)*))
+    };
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FileLogKind {
@@ -486,6 +544,20 @@ mod tests {
     use serde_json::json;
 
     const FIXED_NOW: i64 = 1_704_067_200_000; // 2024-01-01T00:00:00.000Z UTC
+
+    #[test]
+    fn diagnostic_lines_keep_their_module_tag() {
+        assert_eq!(
+            split_module_tag("[session-end] direct proxy restore: restored"),
+            ("session-end", "direct proxy restore: restored")
+        );
+        assert_eq!(split_module_tag("no tag here"), ("runtime", "no tag here"));
+        assert_eq!(split_module_tag("[] empty"), ("runtime", "[] empty"));
+        assert_eq!(
+            split_module_tag("[unclosed tag"),
+            ("runtime", "[unclosed tag")
+        );
+    }
 
     fn fixed_clock() -> NowFn {
         Box::new(|| FIXED_NOW)

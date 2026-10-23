@@ -83,6 +83,8 @@ pub struct UpdateState {
     pub progress: Option<UpdateProgress>,
     pub error: Option<String>,
     pub can_install: bool,
+    /// True when this build can follow the stable / experimental channels.
+    pub channels_supported: bool,
 }
 
 /// This build, as `UpdateState.currentProduct` names it.
@@ -99,6 +101,7 @@ pub fn default_update_state() -> UpdateState {
         progress: None,
         error: None,
         can_install: false,
+        channels_supported: false,
     }
 }
 
@@ -170,6 +173,10 @@ pub fn coerce_update_state(value: &Value) -> UpdateState {
             .get("canInstall")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        channels_supported: record
+            .get("channelsSupported")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     }
 }
 
@@ -181,6 +188,10 @@ pub trait UpdaterDriver: Send + Sync {
     /// offer or staged installer of the previous channel; the caller starts
     /// a fresh check. Drivers without channels ignore it.
     fn set_channel(&self, _channel: &str) {}
+    /// Whether [`UpdaterDriver::set_channel`] does anything.
+    fn channels_supported(&self) -> bool {
+        false
+    }
     /// Whether this build can actually reach an update feed. False for dev /
     /// unpackaged runs, so the service reports a clear "not supported" state
     /// instead of throwing on a missing feed.
@@ -284,6 +295,19 @@ pub fn channel_tag(channel: &str) -> &'static str {
     }
 }
 
+/// The build each channel delivers. A manifest naming the other build is
+/// refused: manifests are unsigned, so a stale or hostile mirror could
+/// otherwise serve an old, validly signed installer of the other build, which
+/// would be taken as a channel switch at any version. Moving the stable
+/// channel to Tauri later takes a client release that changes this mapping.
+pub fn channel_product(channel: &str) -> &'static str {
+    if channel == "stable" {
+        "electron"
+    } else {
+        "tauri"
+    }
+}
+
 /// Direct GitHub download base of a channel's manifest release.
 pub fn channel_feed_base(repository: &str, channel: &str) -> String {
     format!("{repository}/releases/download/{}", channel_tag(channel))
@@ -293,8 +317,10 @@ pub fn channel_feed_base(repository: &str, channel: &str) -> String {
 /// writes `<product>_<version>_<arch>-setup.exe`, electron-builder
 /// `<product>-Setup-<version>-<arch>.exe`.
 pub fn installer_product(file_name: &str) -> Option<&'static str> {
-    let tauri = regex::Regex::new(r"_\d+\.\d+\.\d+_(?:x64|arm64)-setup\.exe$").expect("valid regex");
-    let electron = regex::Regex::new(r"-Setup-\d+\.\d+\.\d+-(?:x64|arm64)\.exe$").expect("valid regex");
+    let tauri =
+        regex::Regex::new(r"_\d+\.\d+\.\d+_(?:x64|arm64)-setup\.exe$").expect("valid regex");
+    let electron =
+        regex::Regex::new(r"-Setup-\d+\.\d+\.\d+-(?:x64|arm64)\.exe$").expect("valid regex");
     if tauri.is_match(file_name) {
         Some("tauri")
     } else if electron.is_match(file_name) {
@@ -344,7 +370,10 @@ pub fn parse_stable_version(version: &str) -> Option<(u64, u64, u64)> {
 }
 
 pub fn is_newer_version(candidate: &str, current: &str) -> bool {
-    match (parse_stable_version(candidate), parse_stable_version(current)) {
+    match (
+        parse_stable_version(candidate),
+        parse_stable_version(current),
+    ) {
         (Some(next), Some(now)) => next > now,
         _ => false,
     }
@@ -361,7 +390,11 @@ pub fn signed_fields(signature: &str) -> std::collections::HashMap<String, Strin
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .unwrap_or_default();
     text.lines()
-        .find_map(|line| line.trim().strip_prefix("trusted comment: ").map(str::to_string))
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix("trusted comment: ")
+                .map(str::to_string)
+        })
         .unwrap_or_default()
         .split('\t')
         .filter_map(|field| {
@@ -453,7 +486,10 @@ where
     while let Some(result) = pending.next().await {
         match result {
             Ok((base, Some(update))) => {
-                if best.as_ref().is_none_or(|(_, current)| better(&update, current)) {
+                if best
+                    .as_ref()
+                    .is_none_or(|(_, current)| better(&update, current))
+                {
                     best = Some((base, update));
                 }
             }
@@ -597,7 +633,14 @@ fn launch_electron_installer(file_name: &str, bytes: &[u8]) -> Result<(), String
     );
     let mut process = std::process::Command::new(powershell);
     process
-        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &command])
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            &command,
+        ])
         .env("UPDATE_INSTALLER_PATH", &path)
         .env("UPDATE_PARENT_PID", std::process::id().to_string())
         .stdin(std::process::Stdio::null())
@@ -610,7 +653,10 @@ fn launch_electron_installer(file_name: &str, bytes: &[u8]) -> Result<(), String
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         process.creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW);
     }
-    process.spawn().map(|_| ()).map_err(|error| error.to_string())
+    process
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 /// Production driver: signed Tauri updater over GitHub Releases + mirrors.
@@ -699,10 +745,14 @@ impl TauriUpdaterInner {
         self.generation.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    /// The build of a manifest's installer and whether it is an offer: an
-    /// installer of this build must be newer (and newer than one already
-    /// staged); an Electron installer is a switch back to stable.
-    fn offer_for(&self, update: &tauri_plugin_updater::Update) -> Result<Option<&'static str>, String> {
+    /// The build of a manifest's installer and whether it is an offer: it
+    /// must be the build of the followed channel, and an installer of this
+    /// build must be newer (and newer than one already staged); an Electron
+    /// installer on the stable channel is a switch back, at any version.
+    fn offer_for(
+        &self,
+        update: &tauri_plugin_updater::Update,
+    ) -> Result<Option<&'static str>, String> {
         // The manifest is unsigned: never let it point the client at anything
         // but this repository's release assets.
         if !is_release_asset(update.download_url.as_str(), &self.repository) {
@@ -717,6 +767,17 @@ impl TauriUpdaterInner {
                 update.download_url
             ));
         };
+        let channel = self
+            .channel
+            .lock()
+            .expect("updater channel poisoned")
+            .clone();
+        if product != channel_product(&channel) {
+            return Err(format!(
+                "update manifest of the {channel} channel names the other build: {}",
+                update.download_url
+            ));
+        }
         if parse_stable_version(&update.version).is_none() {
             return Ok(None);
         }
@@ -726,15 +787,16 @@ impl TauriUpdaterInner {
         // Already downloaded and waiting for exit: nothing new to fetch.
         let staged = READY_UPDATE.lock().expect("ready update poisoned");
         if let Some(ready) = staged.as_ref() {
-            if ready.product == product && !is_newer_version(&update.version, &ready.update.version) {
+            if ready.product == product && !is_newer_version(&update.version, &ready.update.version)
+            {
                 return Ok(None);
             }
         }
         Ok(Some(product))
     }
 
-    /// Ask every source for the manifest and keep the best offer: a switch
-    /// of build first, then the newest version. "No update" is only concluded
+    /// Ask every source for the manifest and keep the newest offer. "No
+    /// update" is only concluded
     /// when no source announced one, so a stale mirror can neither hide nor
     /// roll back a release.
     async fn check(self: Arc<Self>) {
@@ -762,9 +824,7 @@ impl TauriUpdaterInner {
         });
         let better = |next: &(tauri_plugin_updater::Update, &'static str),
                       best: &(tauri_plugin_updater::Update, &'static str)| {
-            let switch = |product: &str| u8::from(product != PRODUCT);
-            switch(next.1) > switch(best.1)
-                || (next.1 == best.1 && is_newer_version(&next.0.version, &best.0.version))
+            is_newer_version(&next.0.version, &best.0.version)
         };
         let outcome = race_probes(probes, better).await;
         if generation != self.generation() {
@@ -922,6 +982,10 @@ impl UpdaterDriver for TauriUpdaterDriver {
         self.inner.supported
     }
 
+    fn channels_supported(&self) -> bool {
+        true
+    }
+
     fn set_channel(&self, channel: &str) {
         {
             let mut current = self.inner.channel.lock().expect("updater channel poisoned");
@@ -933,8 +997,16 @@ impl UpdaterDriver for TauriUpdaterDriver {
         self.inner
             .generation
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        *self.inner.available.lock().expect("updater available poisoned") = None;
-        *self.inner.last_good.lock().expect("updater last_good poisoned") = None;
+        *self
+            .inner
+            .available
+            .lock()
+            .expect("updater available poisoned") = None;
+        *self
+            .inner
+            .last_good
+            .lock()
+            .expect("updater last_good poisoned") = None;
         *READY_UPDATE.lock().expect("ready update poisoned") = None;
         // Work of the old channel may still be running; its results are
         // dropped by generation, so let the new check start now.
@@ -1032,6 +1104,7 @@ impl UpdateService {
             inner: Arc::new(UpdateServiceInner {
                 state: Mutex::new(UpdateState {
                     current_version: Some(driver.current_version()),
+                    channels_supported: driver.supported() && driver.channels_supported(),
                     ..state
                 }),
                 driver,
@@ -1754,6 +1827,16 @@ mod tests {
     }
 
     #[test]
+    fn each_channel_delivers_one_build() {
+        assert_eq!(channel_product("stable"), "electron");
+        assert_eq!(channel_product("experimental"), "tauri");
+        // A driver without channels does not offer the setting.
+        let service = UpdateService::new(FakeDriver::new(true));
+        assert!(!service.get_state().channels_supported);
+        assert_eq!(service.get_state_value()["channelsSupported"], false);
+    }
+
+    #[test]
     fn channel_feeds_are_derived_from_the_brand_repository() {
         assert_eq!(
             repository_base("https://github.com/RoaycL/Murge").as_deref(),
@@ -1840,11 +1923,23 @@ mod tests {
     #[test]
     fn installers_are_told_apart_by_name_and_versions_compare_strictly() {
         assert_eq!(installer_product("App_0.9.31_x64-setup.exe"), Some("tauri"));
-        assert_eq!(installer_product("App_0.9.31_arm64-setup.exe"), Some("tauri"));
-        assert_eq!(installer_product("App-Setup-0.9.31-x64.exe"), Some("electron"));
-        assert_eq!(installer_product("App-Setup-0.9.31-arm64.exe"), Some("electron"));
+        assert_eq!(
+            installer_product("App_0.9.31_arm64-setup.exe"),
+            Some("tauri")
+        );
+        assert_eq!(
+            installer_product("App-Setup-0.9.31-x64.exe"),
+            Some("electron")
+        );
+        assert_eq!(
+            installer_product("App-Setup-0.9.31-arm64.exe"),
+            Some("electron")
+        );
         assert_eq!(installer_product("App-0.9.31.exe"), None);
-        let url = url::Url::parse("https://github.com/o/r/releases/download/v1/App%20X_1.0.0_x64-setup.exe").unwrap();
+        let url = url::Url::parse(
+            "https://github.com/o/r/releases/download/v1/App%20X_1.0.0_x64-setup.exe",
+        )
+        .unwrap();
         assert_eq!(installer_file_name(&url), "App X_1.0.0_x64-setup.exe");
         assert!(is_newer_version("1.0.0", "0.9.31"));
         assert!(is_newer_version("v0.10.0", "0.9.31"));
@@ -1859,7 +1954,10 @@ mod tests {
         let text = "untrusted comment: signature from tauri secret key\nRUQ=\ntrusted comment: timestamp:1\tfile:App-Setup-1.0.0-x64.exe\tversion:1.0.0\nAA==\n";
         let signature = base64::engine::general_purpose::STANDARD.encode(text);
         let fields = signed_fields(&signature);
-        assert_eq!(fields.get("file").map(String::as_str), Some("App-Setup-1.0.0-x64.exe"));
+        assert_eq!(
+            fields.get("file").map(String::as_str),
+            Some("App-Setup-1.0.0-x64.exe")
+        );
         assert_eq!(fields.get("version").map(String::as_str), Some("1.0.0"));
         assert!(signed_fields("not base64").is_empty());
     }

@@ -74,6 +74,16 @@ describe('UpdateService', () => {
     expect(driver.checkCalls).toBe(1)
   })
 
+  it('offers release channels only when the driver can switch them', () => {
+    expect(new UpdateService(new FakeUpdaterDriver()).getState().channelsSupported).toBe(false)
+    const switching = new FakeUpdaterDriver()
+    switching.setChannel = () => undefined
+    expect(new UpdateService(switching).getState().channelsSupported).toBe(true)
+    const unsupported = new FakeUpdaterDriver(false)
+    unsupported.setChannel = () => undefined
+    expect(new UpdateService(unsupported).getState().channelsSupported).toBe(false)
+  })
+
   it('start() configures the driver and subscribes to its events', () => {
     const driver = new FakeUpdaterDriver()
     const service = new UpdateService(driver)
@@ -376,7 +386,8 @@ describe('coerceUpdateState', () => {
       availableProduct: 'tauri',
       progress: { percent: 100, bytesPerSecond: 10, transferred: 10, total: 10 },
       error: null,
-      canInstall: true
+      canInstall: true,
+      channelsSupported: true
     }
     expect(coerceUpdateState(payload)).toEqual(payload)
   })

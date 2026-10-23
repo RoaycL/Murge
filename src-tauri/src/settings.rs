@@ -404,9 +404,13 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let store = store_in(&temp);
         assert_eq!(store.get().update_channel, "stable");
-        let next = store.set(&AppSettingsPatch(serde_json::json!({ "updateChannel": "experimental" })));
+        let next = store.set(&AppSettingsPatch(
+            serde_json::json!({ "updateChannel": "experimental" }),
+        ));
         assert_eq!(next.update_channel, "experimental");
-        let kept = store.set(&AppSettingsPatch(serde_json::json!({ "updateChannel": "nightly" })));
+        let kept = store.set(&AppSettingsPatch(
+            serde_json::json!({ "updateChannel": "nightly" }),
+        ));
         assert_eq!(kept.update_channel, "experimental");
         let raw = fs::read_to_string(temp.path().join(APP_SETTINGS_FILE)).unwrap();
         assert!(raw.contains("\"updateChannel\": \"experimental\""));

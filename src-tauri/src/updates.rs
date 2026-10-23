@@ -710,10 +710,14 @@ enum DownloadOutcome {
     Failed(String),
 }
 
-/// Identity of one manifest offer: the source, the claimed version and the
-/// signature it came with.
-fn offer_key(base: &str, update: &tauri_plugin_updater::Update) -> String {
-    format!("{base}\n{}\n{}", update.version, update.signature)
+/// Identity of one manifest offer: the claimed version, installer and the
+/// signature it came with. Not the source: mirrors serve the same manifest,
+/// so one rejection covers every copy of it.
+fn offer_key(update: &tauri_plugin_updater::Update) -> String {
+    format!(
+        "{}\n{}\n{}",
+        update.version, update.download_url, update.signature
+    )
 }
 
 /// The signed version and file must be the ones the manifest claims. Checked
@@ -885,7 +889,7 @@ impl TauriUpdaterInner {
                 let updater = inner.updater_for(&base)?;
                 let found = updater.check().await.map_err(|error| error.to_string())?;
                 let offer = match found {
-                    Some(update) if inner.is_rejected(&base, &update) => None,
+                    Some(update) if inner.is_rejected(&update) => None,
                     Some(update) => inner.offer_for(&update)?.map(|product| (update, product)),
                     None => None,
                 };
@@ -899,11 +903,11 @@ impl TauriUpdaterInner {
         race_probes(probes, better).await
     }
 
-    fn is_rejected(&self, base: &str, update: &tauri_plugin_updater::Update) -> bool {
+    fn is_rejected(&self, update: &tauri_plugin_updater::Update) -> bool {
         self.rejected
             .lock()
             .expect("updater rejected poisoned")
-            .contains(&offer_key(base, update))
+            .contains(&offer_key(update))
     }
 
     /// Check, announce the best offer and download it. An offer whose
@@ -983,16 +987,11 @@ impl TauriUpdaterInner {
     }
 
     /// Remember an offer that failed verification and say why.
-    fn reject(
-        &self,
-        base: &str,
-        update: &tauri_plugin_updater::Update,
-        message: String,
-    ) -> DownloadOutcome {
+    fn reject(&self, update: &tauri_plugin_updater::Update, message: String) -> DownloadOutcome {
         self.rejected
             .lock()
             .expect("updater rejected poisoned")
-            .insert(offer_key(base, update));
+            .insert(offer_key(update));
         DownloadOutcome::InvalidOffer(message)
     }
 
@@ -1057,7 +1056,7 @@ impl TauriUpdaterInner {
                             "signature names {}, manifest says {file_name}",
                             signed_file.as_deref().unwrap_or("(none)")
                         );
-                        return self.reject(&base, &update, message);
+                        return self.reject(&update, message);
                     }
                     // Staged under the lock a channel switch takes to bump the
                     // generation, so a switch either happens first (and this
@@ -1089,7 +1088,7 @@ impl TauriUpdaterInner {
                     | tauri_plugin_updater::Error::Base64(_)
                     | tauri_plugin_updater::Error::SignatureUtf8(_)),
                 ) => {
-                    return self.reject(&base, &update, error.to_string());
+                    return self.reject(&update, error.to_string());
                 }
                 // A network failure on a later source must not hide a
                 // signature failure on an earlier one.
@@ -1101,7 +1100,7 @@ impl TauriUpdaterInner {
         // No source delivered verified bytes and at least one delivered bytes
         // that failed verification: the offer's signature is not ours.
         if signature_failed {
-            return self.reject(&base, &update, last_error);
+            return self.reject(&update, last_error);
         }
         DownloadOutcome::Failed(last_error)
     }

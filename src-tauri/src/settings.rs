@@ -360,8 +360,11 @@ impl SettingsStore {
                 return false;
             }
         }
-        if let Err(error) = fs::write(&seen_path, &stamp) {
+        // A first launch may find no app-data folder yet; without the record
+        // the reset would repeat and undo a later choice of "stable".
+        if let Err(error) = fs::create_dir_all(root).and_then(|()| fs::write(&seen_path, &stamp)) {
             crate::diag!("[app-settings] unable to record the installer channel stamp: {error}");
+            return false;
         }
         true
     }
@@ -503,6 +506,12 @@ mod tests {
         ));
         assert!(!store.apply_installer_channel_reset(Some(install.path())));
         assert_eq!(store.get().update_channel, "stable");
+
+        // A user whose app-data folder does not exist yet records it too.
+        let fresh_root = TempDir::new().unwrap();
+        let fresh = SettingsStore::new(Some(fresh_root.path().join("io.murge.desktop")));
+        assert!(fresh.apply_installer_channel_reset(Some(install.path())));
+        assert!(!fresh.apply_installer_channel_reset(Some(install.path())));
 
         // Another user of the same install still gets the reset once.
         let other = TempDir::new().unwrap();

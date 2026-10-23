@@ -139,7 +139,7 @@ pub async fn restore_network_before_quit(app: &tauri::AppHandle) -> bool {
         let status = tun.emergency_disable().await;
         // Unconfirmed TUN teardown is logged, never blocking (the TS console).
         if !matches!(status.phase.as_str(), "configured" | "unsupported") {
-            eprintln!(
+            crate::diag!(
                 "[tun] TUN stop was not confirmed during quit: {}",
                 status.phase
             );
@@ -180,7 +180,7 @@ async fn dispose_services(app: &tauri::AppHandle) {
     }
     if let Some(usage) = app.try_state::<std::sync::Arc<crate::usage::UsageHistoryService>>() {
         if let Err(error) = usage.flush() {
-            eprintln!("[usage-history] final flush failed: {error:?}");
+            crate::diag!("[usage-history] final flush failed: {error:?}");
         }
     }
     flush_logs(app).await;
@@ -428,9 +428,9 @@ fn start_proxy_guard(app: tauri::AppHandle) {
             {
                 match proxy.verify_integrity().await {
                     "repaired" => {
-                        eprintln!("[system-proxy] guard repaired an externally mutated proxy")
+                        crate::diag!("[system-proxy] guard repaired an externally mutated proxy")
                     }
-                    "repair-failed" => eprintln!("[system-proxy] guard re-apply failed"),
+                    "repair-failed" => crate::diag!("[system-proxy] guard re-apply failed"),
                     _ => {}
                 }
             }

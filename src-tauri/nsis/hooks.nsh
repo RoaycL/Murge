@@ -43,6 +43,8 @@
 ; Startup intent is carried from an uninstall to the next install in the
 ; HKCU "${MANUPRODUCTKEY}" value below (Tauri's own per-product key).
 !define MURGE_STARTUP_MARKER_VALUE "StartupWasEnabled"
+; Consumed by the app on its next launch (settings.rs INSTALLER_CHANNEL_RESET_FILE).
+!define MURGE_CHANNEL_RESET_FILE "update-channel-reset"
 
 Var MurgeStartupWasEnabled
 Var MurgeElectronUninstaller
@@ -178,6 +180,22 @@ Var MurgeElectronDir
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
   MurgeStartupEnd:
   DeleteRegValue HKCU "${MANUPRODUCTKEY}" "${MURGE_STARTUP_MARKER_VALUE}"
+
+  ; --- Update channel ---------------------------------------------------------
+  ; Anything but this build's own self-update (a manual install, an Electron
+  ; takeover, a channel switch from the stable build) means the user chose this
+  ; build. The Electron build stores "stable" in the shared settings file, so
+  ; leave a marker the app consumes on its next launch to follow the
+  ; experimental channel instead of switching straight back
+  ; (settings.rs INSTALLER_CHANNEL_RESET_FILE).
+  ${If} $UpdateMode <> 1
+    CreateDirectory "$APPDATA\${BUNDLEID}"
+    ClearErrors
+    FileOpen $R2 "$APPDATA\${BUNDLEID}\${MURGE_CHANNEL_RESET_FILE}" w
+    IfErrors +3
+      FileWrite $R2 "experimental"
+      FileClose $R2
+  ${EndIf}
   SetShellVarContext all
 !macroend
 

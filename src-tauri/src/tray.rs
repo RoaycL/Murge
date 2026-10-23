@@ -1292,7 +1292,7 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
                 let updates = updates.clone();
                 tauri::async_runtime::spawn(async move {
                     if let Err(error) = updates.check().await {
-                        eprintln!("[updates] tray check failed: {}", error.extract_message());
+                        crate::diag!("[updates] tray check failed: {}", error.extract_message());
                     }
                 });
             })
@@ -1342,7 +1342,7 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
                 let _ = clipboard.set_text(value);
             }
         }),
-        on_error: Box::new(|error| eprintln!("[tray] kernel action failed: {error}")),
+        on_error: Box::new(|error| crate::diag!("[tray] kernel action failed: {error}")),
     };
 
     let controller = Arc::new(TrayController::new(deps, view.clone()));

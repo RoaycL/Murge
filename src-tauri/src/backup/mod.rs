@@ -52,7 +52,7 @@ pub fn initialize(app: tauri::AppHandle, paths: &AppPaths) -> Result<(), std::co
 
 fn startup_warning(message: &'static str) {
     // Fixed messages only: neither errors, paths nor subscription URLs enter logs.
-    eprintln!("[backup] {message}");
+    crate::diag!("[backup] {message}");
 }
 
 fn initialize_with(

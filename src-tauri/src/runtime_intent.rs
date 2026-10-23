@@ -115,7 +115,7 @@ pub async fn restore_runtime_intent(
         // A remembered node becoming unavailable must not tear down a
         // healthy host.
         if let Err(error) = gateways.restore_selections().await {
-            eprintln!(
+            crate::diag!(
                 "[startup-restore] proxy selection restore failed: {}",
                 error.extract_message()
             );
@@ -148,7 +148,7 @@ async fn retry_kernel_start(
             }
         }
         if let Err(error) = gateways.kernel_start().await {
-            eprintln!(
+            crate::diag!(
                 "[startup-restore] kernel start failed ({attempt}/{max_attempts}): {}",
                 error.extract_message()
             );
@@ -180,7 +180,7 @@ async fn retry_tun_start(
             }
         }
         if let Err(error) = gateways.tun_enable().await {
-            eprintln!(
+            crate::diag!(
                 "[startup-restore] TUN start failed ({attempt}/{max_attempts}): {}",
                 error.extract_message()
             );
@@ -212,7 +212,7 @@ async fn retry_proxy_start(
             }
         }
         if let Err(error) = gateways.proxy_enable().await {
-            eprintln!(
+            crate::diag!(
                 "[startup-restore] system proxy start failed ({attempt}/{max_attempts}): {}",
                 error.extract_message()
             );
@@ -434,9 +434,11 @@ impl RecoveryCoordinator {
             let mut state = self.lock();
             if generation == state.generation {
                 if needs_another_attempt(flags, &result) {
-                    eprintln!(
+                    crate::diag!(
                         "[startup-recovery] intent still pending (kernel={}, tun={}, proxy={})",
-                        result.kernel, result.tun.phase, result.system_proxy.phase
+                        result.kernel,
+                        result.tun.phase,
+                        result.system_proxy.phase
                     );
                     self.schedule_next(&mut state);
                 } else {
@@ -642,7 +644,7 @@ pub fn spawn_startup_recovery(app: tauri::AppHandle) {
         crate::startup_timeline::reconciliation_complete(
             crate::startup_timeline::Reconciliation::ManagedState,
         );
-        eprintln!(
+        crate::diag!(
             "[startup-timing] managed state recovered in {}ms",
             started_at.elapsed().as_millis()
         );
@@ -664,7 +666,7 @@ pub fn spawn_startup_recovery(app: tauri::AppHandle) {
         crate::startup_timeline::reconciliation_complete(
             crate::startup_timeline::Reconciliation::RuntimeIntent,
         );
-        eprintln!(
+        crate::diag!(
             "[startup-timing] runtime restored in {}ms (kernel={}, proxy={}, TUN={})",
             started_at.elapsed().as_millis(),
             restored.kernel,
@@ -672,13 +674,13 @@ pub fn spawn_startup_recovery(app: tauri::AppHandle) {
             restored.tun.phase
         );
         if flags.tun_desired && restored.tun.phase != "active" {
-            eprintln!(
+            crate::diag!(
                 "[startup-restore] TUN intent remains pending ({})",
                 restored.tun.phase
             );
         }
         if flags.system_proxy_desired && restored.system_proxy.phase != "enabled" {
-            eprintln!(
+            crate::diag!(
                 "[startup-restore] system proxy intent remains pending ({})",
                 restored.system_proxy.phase
             );
@@ -709,7 +711,7 @@ async fn recover_managed_state(app: &tauri::AppHandle) {
             || status.phase == "conflict"
             || status.phase == "restore-failed"
         {
-            eprintln!(
+            crate::diag!(
                 "[system-proxy] orphan recovery: {} {}",
                 status.phase,
                 status.error_message.unwrap_or_default()
@@ -719,7 +721,7 @@ async fn recover_managed_state(app: &tauri::AppHandle) {
     if let Some(kernel) = app.try_state::<Arc<crate::kernel::KernelServices>>() {
         if let Some(privileged) = kernel.privileged.clone() {
             if let Err(error) = privileged.initialize().await {
-                eprintln!(
+                crate::diag!(
                     "[kernel] privileged service reconcile failed: {}",
                     error.extract_message()
                 );

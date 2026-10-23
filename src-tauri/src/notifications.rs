@@ -99,7 +99,7 @@ fn show(app: &tauri::AppHandle, toast: UpdateToast) {
             .show();
         // A failing toast must never take down the update stream.
         if let Err(error) = result {
-            eprintln!("[notifications] update toast failed: {error}");
+            crate::diag!("[notifications] update toast failed: {error}");
         }
     });
 }
@@ -108,7 +108,7 @@ fn show(app: &tauri::AppHandle, toast: UpdateToast) {
 fn show(app: &tauri::AppHandle, toast: UpdateToast) {
     // Murge ships on Windows only; other builds just log.
     let _ = app;
-    eprintln!("[notifications] {}: {}", toast.title, toast.body);
+    crate::diag!("[notifications] {}: {}", toast.title, toast.body);
     let _ = open_about;
 }
 

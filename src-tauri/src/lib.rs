@@ -102,9 +102,40 @@ pub fn run() {
             // backs the profile store and secrets stay in memory. Production
             // uses the brand-stable app-data namespace + OS credential store.
             let paths = paths::AppPaths::probe();
+            // The bounded daily log files (bootstrap.ts `fileLogs`): app log
+            // under the stable namespace, dev keeps an ephemeral directory.
+            let log_directory = match &paths.app_data_root {
+                Some(root) => root.join("logs"),
+                None => std::env::temp_dir().join(format!("murge-dev-logs-{}", std::process::id())),
+            };
+            let file_logs = file_log::FileLogService::new(log_directory);
+            // The startup line (bootstrap.ts, module `startup`).
+            file_logs.write_app(
+                file_log::FileLogLevel::Info,
+                &format!(
+                    "version={} platform={} arch={}",
+                    env!("CARGO_PKG_VERSION"),
+                    std::env::consts::OS,
+                    std::env::consts::ARCH
+                ),
+                "startup",
+            );
+            app.manage(file_logs.clone());
+            // From here on every `diag!` line also lands in the app log file.
+            file_log::install_diagnostic_log(file_logs.clone());
             // Recovery is infallible at the startup boundary; failures are logged.
             let _ = backup::initialize(app.handle().clone(), &paths);
             let store = settings::SettingsStore::for_environment(&paths);
+            // A user-run installer means the user chose this build: follow its
+            // channel even if the Electron build left "stable" in the shared
+            // settings file (see settings::INSTALLER_CHANNEL_RESET_FILE).
+            if store.apply_installer_channel_reset() {
+                file_logs.write_app(
+                    file_log::FileLogLevel::Info,
+                    "installed by the user: update channel set to experimental",
+                    "updates",
+                );
+            }
             startup_timeline::mark("settings-ready");
             let profiles = std::sync::Arc::new(match &paths.profile_root {
                 Some(root) => profile_service::ProfilesService::for_paths(
@@ -328,25 +359,6 @@ pub fn run() {
                 // Non-Windows production: fail-closed (the disabled resolver).
                 kernel::KernelServices::with_manager(manager)
             };
-            // The bounded daily log files (bootstrap.ts `fileLogs`): app log
-            // under the stable namespace, dev keeps an ephemeral directory.
-            let log_directory = match &paths.app_data_root {
-                Some(root) => root.join("logs"),
-                None => std::env::temp_dir().join(format!("murge-dev-logs-{}", std::process::id())),
-            };
-            let file_logs = file_log::FileLogService::new(log_directory);
-            // The startup line (bootstrap.ts, module `startup`).
-            file_logs.write_app(
-                file_log::FileLogLevel::Info,
-                &format!(
-                    "version={} platform={} arch={}",
-                    env!("CARGO_PKG_VERSION"),
-                    std::env::consts::OS,
-                    std::env::consts::ARCH
-                ),
-                "startup",
-            );
-            app.manage(file_logs.clone());
             // Mihomo controller services: log retention + selection cache.
             let mihomo = mihomo::MihomoServices::new(Some(paths.app_data_root.clone().unwrap_or_default()));
             // Push-stream transports + event forwarders. The endpoint binds
@@ -368,7 +380,7 @@ pub fn run() {
                         };
                         if let Some(usage) = traffic_handle.try_state::<std::sync::Arc<crate::usage::UsageHistoryService>>() {
                             if let Err(error) = usage.record(&sample, None) {
-                                eprintln!("[usage-history] background persistence failed: {error:?}");
+                                crate::diag!("[usage-history] background persistence failed: {error:?}");
                             }
                         }
                     }),
@@ -379,7 +391,7 @@ pub fn run() {
                     std::sync::Arc::new(move |value| {
                         if let Some(usage) = connections_handle.try_state::<std::sync::Arc<crate::usage::UsageHistoryService>>() {
                             if let Err(error) = usage.record_connection_snapshot(value, usage::epoch_millis_now()) {
-                                eprintln!("[usage-history] background persistence failed: {error:?}");
+                                crate::diag!("[usage-history] background persistence failed: {error:?}");
                             }
                         }
                     }),
@@ -419,7 +431,7 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 let status = maintenance_service.refresh_registration().await;
                 if status["phase"] == "error" {
-                    eprintln!(
+                    crate::diag!(
                         "[startup] registration maintenance skipped: {}",
                         status["errorMessage"].as_str().unwrap_or("系统未确认开机启动设置")
                     );
@@ -497,7 +509,7 @@ pub fn run() {
                 if enabled {
                     let state = hydration_service.ensure_running().await;
                     if state["phase"] == "error" {
-                        eprintln!("[substore] default asset preparation failed: {}", state["error"].as_str().unwrap_or_default());
+                        crate::diag!("[substore] default asset preparation failed: {}", state["error"].as_str().unwrap_or_default());
                     }
                 }
             });
@@ -734,7 +746,7 @@ pub fn run() {
             // session (or a failed tray) logs and continues tray-less.
             match tray::wire_tray(app.handle().clone()) {
                 Ok(()) => lifecycle::set_tray_ready(true),
-                Err(error) => eprintln!("[tray] initialization failed (continuing tray-less): {error}"),
+                Err(error) => crate::diag!("[tray] initialization failed (continuing tray-less): {error}"),
             }
             // Phase 4: window rules, startup recovery + intent replay,
             // connectivity watchdog, proxy guard, session/power events.
@@ -935,7 +947,7 @@ fn start_privileged_monitor(
                 let start = wake_start.clone();
                 tauri::async_runtime::spawn(async move {
                     if let Err(error) = start().await {
-                        eprintln!(
+                        crate::diag!(
                             "[kernel] privileged core recovery start: {}",
                             error.extract_message()
                         );
@@ -958,7 +970,7 @@ fn start_privileged_monitor(
         }),
         is_suspended: std::sync::Arc::new(lifecycle::is_quitting),
         on_error: std::sync::Arc::new(|message, step| {
-            eprintln!("[kernel] privileged core exit {step}: {message}")
+            crate::diag!("[kernel] privileged core exit {step}: {message}")
         }),
         now_ms: std::sync::Arc::new(|| usage::epoch_millis_now().max(0) as u64),
     };

@@ -57,6 +57,14 @@ describe('tauri bundle config', () => {
     expect(hooks).toContain('--restore-system-proxy')
   })
 
+  it('writes the update-channel marker under the name the app consumes', async () => {
+    const settings = await readFile(join(root, 'src-tauri', 'src', 'settings.rs'), 'utf8')
+    const name = /INSTALLER_CHANNEL_RESET_FILE: &str = "([^"]+)"/.exec(settings)?.[1]
+    expect(name).toBeTruthy()
+    expect(hooks).toContain(`!define MURGE_CHANNEL_RESET_FILE "${name}"`)
+    expect(hooks).toContain('"$APPDATA\\${BUNDLEID}\\${MURGE_CHANNEL_RESET_FILE}"')
+  })
+
   it('accepts only the shipped arches', () => {
     expect(parseArches(['--all'])).toEqual(['x64', 'arm64'])
     expect(parseArches(['arm64'])).toEqual(['arm64'])

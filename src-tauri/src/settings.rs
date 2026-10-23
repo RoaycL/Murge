@@ -27,6 +27,15 @@ use crate::paths::AppPaths;
 
 pub const APP_SETTINGS_FILE: &str = "app-settings.json";
 
+/// Marker the NSIS installer writes next to the settings on every install
+/// that is not this build's own self-update (`src-tauri/nsis/hooks.nsh`).
+/// Running the Tauri installer is the user choosing this build, but the
+/// shared settings file may still say "stable": the Electron build writes its
+/// whole settings object on every change, channel included. Without the reset
+/// the first update check would download the Electron installer and the next
+/// quit would install it over this build.
+pub const INSTALLER_CHANNEL_RESET_FILE: &str = "update-channel-reset";
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -231,7 +240,7 @@ impl SettingsStore {
                 return AppSettings::default()
             }
             Err(error) => {
-                eprintln!("[app-settings] unable to read persisted settings: {error}");
+                crate::diag!("[app-settings] unable to read persisted settings: {error}");
                 return AppSettings::default();
             }
         };
@@ -250,12 +259,12 @@ impl SettingsStore {
         let target =
             path.with_file_name(format!("{}.corrupt-{}", APP_SETTINGS_FILE, epoch_millis()));
         match fs::rename(path, &target) {
-            Ok(()) => eprintln!(
+            Ok(()) => crate::diag!(
                 "[app-settings] quarantined invalid settings at {}",
                 target.display()
             ),
             Err(error) => {
-                eprintln!("[app-settings] invalid settings could not be quarantined: {error}")
+                crate::diag!("[app-settings] invalid settings could not be quarantined: {error}")
             }
         }
     }
@@ -314,6 +323,28 @@ impl SettingsStore {
         next
     }
 
+    /// Consume the installer's channel-reset marker: follow this build's
+    /// (experimental) channel and drop the marker. Returns true when a marker
+    /// was found. Call once at startup, before the updater reads the channel.
+    pub fn apply_installer_channel_reset(&self) -> bool {
+        let Some(root) = &self.app_data_root else {
+            return false;
+        };
+        let marker = root.join(INSTALLER_CHANNEL_RESET_FILE);
+        if !marker.exists() {
+            return false;
+        }
+        if self.get().update_channel != "experimental" {
+            self.set(&AppSettingsPatch(
+                serde_json::json!({ "updateChannel": "experimental" }),
+            ));
+        }
+        if let Err(error) = fs::remove_file(&marker) {
+            crate::diag!("[app-settings] unable to remove the installer channel marker: {error}");
+        }
+        true
+    }
+
     /// Subscribe to every applied `set` (the TS `onChange`).
     pub fn subscribe(&self, listener: crate::events::EventListener) -> i64 {
         self.listeners.subscribe(listener)
@@ -323,7 +354,7 @@ impl SettingsStore {
         let Some(path) = self.file_path() else { return };
         if let Some(parent) = path.parent() {
             if let Err(error) = fs::create_dir_all(parent) {
-                eprintln!("[app-settings] unable to create app-data directory: {error}");
+                crate::diag!("[app-settings] unable to create app-data directory: {error}");
                 return;
             }
         }
@@ -331,11 +362,11 @@ impl SettingsStore {
         let mut body = serde_json::to_string_pretty(settings).expect("settings serialize");
         body.push('\n');
         if let Err(error) = fs::write(&tmp, body) {
-            eprintln!("[app-settings] unable to write settings: {error}");
+            crate::diag!("[app-settings] unable to write settings: {error}");
             return;
         }
         if let Err(error) = fs::rename(&tmp, &path) {
-            eprintln!("[app-settings] unable to finalize settings write: {error}");
+            crate::diag!("[app-settings] unable to finalize settings write: {error}");
         }
     }
 }
@@ -418,6 +449,38 @@ mod tests {
         assert_eq!(kept.update_channel, "stable");
         let raw = fs::read_to_string(temp.path().join(APP_SETTINGS_FILE)).unwrap();
         assert!(raw.contains("\"updateChannel\": \"stable\""));
+    }
+
+    #[test]
+    fn installer_marker_moves_an_electron_stable_channel_to_experimental() {
+        let temp = TempDir::new().unwrap();
+        // What Electron v0.9.31 leaves behind after any settings change.
+        fs::write(
+            temp.path().join(APP_SETTINGS_FILE),
+            r#"{ "updateChannel": "stable", "closeToTray": false }"#,
+        )
+        .unwrap();
+        let store = store_in(&temp);
+        assert!(
+            !store.apply_installer_channel_reset(),
+            "no marker, no change"
+        );
+        assert_eq!(store.get().update_channel, "stable");
+
+        fs::write(temp.path().join(INSTALLER_CHANNEL_RESET_FILE), "").unwrap();
+        assert!(store.apply_installer_channel_reset());
+        assert_eq!(store.get().update_channel, "experimental");
+        assert!(!store.get().close_to_tray, "other settings are kept");
+        assert!(!temp.path().join(INSTALLER_CHANNEL_RESET_FILE).exists());
+        let raw = fs::read_to_string(temp.path().join(APP_SETTINGS_FILE)).unwrap();
+        assert!(raw.contains("\"updateChannel\": \"experimental\""));
+
+        // The marker is consumed once: a later choice of "stable" stays.
+        store.set(&AppSettingsPatch(
+            serde_json::json!({ "updateChannel": "stable" }),
+        ));
+        assert!(!store.apply_installer_channel_reset());
+        assert_eq!(store.get().update_channel, "stable");
     }
 
     #[test]

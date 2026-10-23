@@ -65,6 +65,17 @@ pub fn diagnostic(line: &str) {
     }
 }
 
+/// Wait up to two seconds until every diagnostic written so far is on disk.
+/// For the exit path, where the process ends right after.
+pub fn flush_diagnostics_blocking() {
+    if let Some(service) = DIAGNOSTIC_LOG.get() {
+        let service = service.clone();
+        tauri::async_runtime::block_on(async move {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), service.flush()).await;
+        });
+    }
+}
+
 /// `eprintln!` that also reaches the app log file: `diag!("[tun] stop failed: {error}")`.
 #[macro_export]
 macro_rules! diag {

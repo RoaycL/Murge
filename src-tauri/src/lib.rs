@@ -126,13 +126,16 @@ pub fn run() {
             // Recovery is infallible at the startup boundary; failures are logged.
             let _ = backup::initialize(app.handle().clone(), &paths);
             let store = settings::SettingsStore::for_environment(&paths);
-            // A user-run installer means the user chose this build: follow its
-            // channel even if the Electron build left "stable" in the shared
-            // settings file (see settings::INSTALLER_CHANNEL_RESET_FILE).
-            if store.apply_installer_channel_reset() {
+            // A new install of this build (not a self-update) means this build
+            // was chosen: follow its channel even if the Electron build left
+            // "stable" in this user's settings (settings::INSTALLER_CHANNEL_RESET_FILE).
+            let install_dir = std::env::current_exe()
+                .ok()
+                .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf));
+            if store.apply_installer_channel_reset(install_dir.as_deref()) {
                 file_logs.write_app(
                     file_log::FileLogLevel::Info,
-                    "installed by the user: update channel set to experimental",
+                    "new install: update channel set to experimental",
                     "updates",
                 );
             }

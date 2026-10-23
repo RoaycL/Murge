@@ -603,12 +603,15 @@ pub fn install_ready_update_on_exit() {
     if ready.product == "electron" {
         if let Err(error) = launch_electron_installer(&ready.file_name, &ready.bytes, restart) {
             crate::diag!("[updates] launching the stable installer failed: {error}");
+            crate::file_log::flush_diagnostics_blocking();
         }
         return;
     }
     let update = ready.update.restart_after_install(restart);
     if let Err(error) = update.install(&ready.bytes) {
         crate::diag!("[updates] launching the installer failed: {error}");
+        // The process exits right after this callback.
+        crate::file_log::flush_diagnostics_blocking();
     }
 }
 
@@ -1088,12 +1091,15 @@ impl TauriUpdaterInner {
                 ) => {
                     return self.reject(&base, &update, error.to_string());
                 }
+                // A network failure on a later source must not hide a
+                // signature failure on an earlier one.
                 Err(error) => {
                     last_error = error.to_string();
-                    signature_failed = false;
                 }
             }
         }
+        // No source delivered verified bytes and at least one delivered bytes
+        // that failed verification: the offer's signature is not ours.
         if signature_failed {
             return self.reject(&base, &update, last_error);
         }

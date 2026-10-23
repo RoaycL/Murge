@@ -62,7 +62,8 @@ describe('tauri bundle config', () => {
     const name = /INSTALLER_CHANNEL_RESET_FILE: &str = "([^"]+)"/.exec(settings)?.[1]
     expect(name).toBeTruthy()
     expect(hooks).toContain(`!define MURGE_CHANNEL_RESET_FILE "${name}"`)
-    expect(hooks).toContain('"$APPDATA\\${BUNDLEID}\\${MURGE_CHANNEL_RESET_FILE}"')
+    // A per-machine stamp, so every user of the machine sees it.
+    expect(hooks).toContain('"$INSTDIR\\${MURGE_CHANNEL_RESET_FILE}"')
   })
 
   it('accepts only the shipped arches', () => {

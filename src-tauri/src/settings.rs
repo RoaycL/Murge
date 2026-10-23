@@ -27,14 +27,24 @@ use crate::paths::AppPaths;
 
 pub const APP_SETTINGS_FILE: &str = "app-settings.json";
 
-/// Marker the NSIS installer writes next to the settings on every install
-/// that is not this build's own self-update (`src-tauri/nsis/hooks.nsh`).
-/// Running the Tauri installer is the user choosing this build, but the
-/// shared settings file may still say "stable": the Electron build writes its
-/// whole settings object on every change, channel included. Without the reset
-/// the first update check would download the Electron installer and the next
-/// quit would install it over this build.
+/// Stamp the NSIS installer writes into the install directory on every
+/// install that is not this build's own self-update (`src-tauri/nsis/hooks.nsh`).
+/// Running the Tauri installer means this build was chosen, but each user's
+/// settings file may still say "stable": the Electron build writes its whole
+/// settings object on every change, channel included. Without the reset the
+/// first update check would download the Electron installer and the next quit
+/// would install it over this build.
 pub const INSTALLER_CHANNEL_RESET_FILE: &str = "update-channel-reset";
+
+/// Per-user record of the install stamp already applied (its modified time),
+/// so each user resets once per install and a later choice of "stable" stays.
+pub const INSTALLER_CHANNEL_RESET_SEEN_FILE: &str = "update-channel-reset-seen";
+
+fn modified_stamp(path: &Path) -> Option<String> {
+    let modified = fs::metadata(path).ok()?.modified().ok()?;
+    let nanos = modified.duration_since(UNIX_EPOCH).ok()?.as_nanos();
+    Some(nanos.to_string())
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -323,24 +333,35 @@ impl SettingsStore {
         next
     }
 
-    /// Consume the installer's channel-reset marker: follow this build's
-    /// (experimental) channel and drop the marker. Returns true when a marker
-    /// was found. Call once at startup, before the updater reads the channel.
-    pub fn apply_installer_channel_reset(&self) -> bool {
-        let Some(root) = &self.app_data_root else {
+    /// Apply the installer's channel stamp in `install_dir` once per install
+    /// for this user: follow this build's (experimental) channel. Returns
+    /// true when a new stamp was applied. Call once at startup, before the
+    /// updater reads the channel. The stamp is recorded as applied only once
+    /// the channel is on disk, so a failed write is retried next launch.
+    pub fn apply_installer_channel_reset(&self, install_dir: Option<&Path>) -> bool {
+        let (Some(root), Some(install_dir)) = (&self.app_data_root, install_dir) else {
             return false;
         };
-        let marker = root.join(INSTALLER_CHANNEL_RESET_FILE);
-        if !marker.exists() {
+        let Some(stamp) = modified_stamp(&install_dir.join(INSTALLER_CHANNEL_RESET_FILE)) else {
+            return false;
+        };
+        let seen_path = root.join(INSTALLER_CHANNEL_RESET_SEEN_FILE);
+        if fs::read_to_string(&seen_path).ok().as_deref() == Some(stamp.as_str()) {
             return false;
         }
         if self.get().update_channel != "experimental" {
             self.set(&AppSettingsPatch(
                 serde_json::json!({ "updateChannel": "experimental" }),
             ));
+            if self.read_from_disk().update_channel != "experimental" {
+                crate::diag!(
+                    "[app-settings] update channel reset not persisted; retrying next launch"
+                );
+                return false;
+            }
         }
-        if let Err(error) = fs::remove_file(&marker) {
-            crate::diag!("[app-settings] unable to remove the installer channel marker: {error}");
+        if let Err(error) = fs::write(&seen_path, &stamp) {
+            crate::diag!("[app-settings] unable to record the installer channel stamp: {error}");
         }
         true
     }
@@ -452,8 +473,9 @@ mod tests {
     }
 
     #[test]
-    fn installer_marker_moves_an_electron_stable_channel_to_experimental() {
+    fn installer_stamp_moves_an_electron_stable_channel_to_experimental() {
         let temp = TempDir::new().unwrap();
+        let install = TempDir::new().unwrap();
         // What Electron v0.9.31 leaves behind after any settings change.
         fs::write(
             temp.path().join(APP_SETTINGS_FILE),
@@ -462,25 +484,47 @@ mod tests {
         .unwrap();
         let store = store_in(&temp);
         assert!(
-            !store.apply_installer_channel_reset(),
-            "no marker, no change"
+            !store.apply_installer_channel_reset(Some(install.path())),
+            "no stamp, no change"
         );
         assert_eq!(store.get().update_channel, "stable");
 
-        fs::write(temp.path().join(INSTALLER_CHANNEL_RESET_FILE), "").unwrap();
-        assert!(store.apply_installer_channel_reset());
+        let stamp = install.path().join(INSTALLER_CHANNEL_RESET_FILE);
+        fs::write(&stamp, "experimental").unwrap();
+        assert!(store.apply_installer_channel_reset(Some(install.path())));
         assert_eq!(store.get().update_channel, "experimental");
         assert!(!store.get().close_to_tray, "other settings are kept");
-        assert!(!temp.path().join(INSTALLER_CHANNEL_RESET_FILE).exists());
         let raw = fs::read_to_string(temp.path().join(APP_SETTINGS_FILE)).unwrap();
         assert!(raw.contains("\"updateChannel\": \"experimental\""));
 
-        // The marker is consumed once: a later choice of "stable" stays.
+        // Applied once per stamp: a later choice of "stable" stays.
         store.set(&AppSettingsPatch(
             serde_json::json!({ "updateChannel": "stable" }),
         ));
-        assert!(!store.apply_installer_channel_reset());
+        assert!(!store.apply_installer_channel_reset(Some(install.path())));
         assert_eq!(store.get().update_channel, "stable");
+
+        // Another user of the same install still gets the reset once.
+        let other = TempDir::new().unwrap();
+        fs::write(
+            other.path().join(APP_SETTINGS_FILE),
+            r#"{ "updateChannel": "stable" }"#,
+        )
+        .unwrap();
+        let other_store = store_in(&other);
+        assert!(other_store.apply_installer_channel_reset(Some(install.path())));
+        assert_eq!(other_store.get().update_channel, "experimental");
+
+        // A new install (a rewritten stamp) applies again.
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        fs::File::options()
+            .write(true)
+            .open(&stamp)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        assert!(store.apply_installer_channel_reset(Some(install.path())));
+        assert_eq!(store.get().update_channel, "experimental");
     }
 
     #[test]

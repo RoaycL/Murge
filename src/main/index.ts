@@ -813,7 +813,9 @@ app.whenReady().then(async () => {
   refreshStartupRegistration('registration maintenance skipped')
   appSettingsService.onChange((settings) => {
     const silentLaunchChanged = settings.silentLaunch !== cachedAppSettings.silentLaunch
+    const updateChannelChanged = settings.updateChannel !== cachedAppSettings.updateChannel
     cachedAppSettings = settings
+    if (updateChannelChanged) updateService?.setChannel(settings.updateChannel)
     if (silentLaunchChanged) {
       refreshStartupRegistration('failed to refresh login-item arguments')
     }
@@ -1555,7 +1557,7 @@ app.whenReady().then(async () => {
   const liveDnsEnhancement = new LiveDnsEnhancementGateway(dnsEnhancementService, dnsEnhancementCoordinator)
   const liveSnifferEnhancement = new LiveSnifferEnhancementGateway(snifferEnhancementService, snifferEnhancementCoordinator)
   const liveGeodataSettings = new LiveGeodataSettingsGateway(geodataSettingsService, geodataEnhancementCoordinator)
-  const updates = new UpdateService(createUpdaterDriver(() => showMainWindowAt('/about')))
+  const updates = new UpdateService(createUpdaterDriver(() => showMainWindowAt('/about'), cachedAppSettings.updateChannel))
   updateService = updates
   updates.start()
   // Poll the feed while the app runs so a Release published mid-session is

@@ -30,6 +30,7 @@
 ; Capture the old per-user Run preference BEFORE electron-builder runs the old
 ; uninstaller. Releases before this hook removed that value even on an upgrade.
 !ifndef BUILD_UNINSTALLER
+!define MURGE_TAURI_UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"
 Var /GLOBAL MurgeStartupWasEnabled
 !macro customInit
   StrCpy $MurgeStartupWasEnabled "0"
@@ -51,6 +52,38 @@ Var /GLOBAL MurgeStartupWasEnabled
     StrCmp $R8 0 0 StartupCaptureDone
       StrCpy $MurgeStartupWasEnabled "1"
   StartupCaptureDone:
+
+  ; --- Tauri build takeover --------------------------------------------------
+  ; Switching back from the experimental (Tauri) build installs this build over
+  ; it. The Tauri bundler registers under Uninstall\${PRODUCT_NAME} (this build
+  ; uses its GUID key, so the name is the Tauri install's alone). Its
+  ; uninstaller with /UPDATE keeps the privileged service, its state, the
+  ; startup task and app data; customInstall then repins the service trust to
+  ; this build's executable. A half-removed Tauri install would leave a second
+  ; uninstaller that deletes this build's files, so a failure stops here.
+  StrCpy $R3 "-"
+  ReadRegStr $R0 HKLM "${MURGE_TAURI_UNINSTALL_KEY}" "InstallLocation"
+  StrCmp $R0 "" TauriTakeoverDone
+  ; InstallLocation is written quoted: "C:\Program Files\<name>"
+  StrCpy $R1 $R0 1
+  StrCmp $R1 '"' 0 +3
+    StrCpy $R0 $R0 "" 1
+    StrCpy $R0 $R0 -1
+  IfFileExists "$R0\uninstall.exe" 0 TauriTakeoverFailed
+  DetailPrint "Replacing the experimental ${PRODUCT_NAME} installation in $R0..."
+  ; Run a copy: the original lives in the directory it is about to empty.
+  InitPluginsDir
+  CopyFiles /SILENT "$R0\uninstall.exe" "$PLUGINSDIR\tauri-uninstaller.exe"
+  ClearErrors
+  ExecWait '"$PLUGINSDIR\tauri-uninstaller.exe" /S /UPDATE _?=$R0' $R3
+  IfErrors TauriTakeoverFailed
+  StrCmp $R3 0 0 TauriTakeoverFailed
+  ReadRegStr $R2 HKLM "${MURGE_TAURI_UNINSTALL_KEY}" "UninstallString"
+  StrCmp $R2 "" TauriTakeoverDone TauriTakeoverFailed
+  TauriTakeoverFailed:
+    MessageBox MB_ICONSTOP|MB_OK "无法移除实验版 ${PRODUCT_NAME}（错误码 $R3）。请关闭 ${PRODUCT_NAME} 后重新运行安装包；如仍失败，请先在「设置 → 应用」中卸载实验版，您的配置不会丢失。" /SD IDOK
+    Quit
+  TauriTakeoverDone:
 !macroend
 
 !macro customInstall

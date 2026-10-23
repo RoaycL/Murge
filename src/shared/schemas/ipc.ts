@@ -140,6 +140,7 @@ export function parseAppSettingsPatch(
 ): {
   autoStartKernel?: boolean
   autoCheckUpdate?: boolean
+  updateChannel?: 'stable' | 'experimental'
   systemProxyDesired?: boolean
   tunDesired?: boolean
   kernelEnabled?: boolean
@@ -160,6 +161,7 @@ export function parseAppSettingsPatch(
   const patch: {
     autoStartKernel?: boolean
     autoCheckUpdate?: boolean
+    updateChannel?: 'stable' | 'experimental'
     systemProxyDesired?: boolean
     tunDesired?: boolean
     kernelEnabled?: boolean
@@ -180,6 +182,12 @@ export function parseAppSettingsPatch(
   if ('autoCheckUpdate' in record) {
     if (typeof record.autoCheckUpdate !== 'boolean') throw invalid('autoCheckUpdate must be a boolean')
     patch.autoCheckUpdate = record.autoCheckUpdate
+  }
+  if ('updateChannel' in record) {
+    if (record.updateChannel !== 'stable' && record.updateChannel !== 'experimental') {
+      throw invalid('updateChannel must be "stable" or "experimental"')
+    }
+    patch.updateChannel = record.updateChannel
   }
   if ('systemProxyDesired' in record) {
     if (typeof record.systemProxyDesired !== 'boolean') throw invalid('systemProxyDesired must be a boolean')

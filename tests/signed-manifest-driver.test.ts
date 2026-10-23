@@ -2,6 +2,8 @@ import { createHash, generateKeyPairSync, randomBytes, sign } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
   SignedManifestUpdaterDriver,
+  installerArgs,
+  installerProduct,
   isNewerVersion,
   isReleaseAsset,
   routeDownloadUrl
@@ -31,9 +33,11 @@ function makeKey(): { publicKey: string; signFile: (data: Buffer, trustedComment
   }
 }
 
-const direct = 'https://github.com/owner/repo/releases/latest/download'
+const repository = 'https://github.com/owner/repo'
+const direct = `${repository}/releases/download/channel-stable`
+const experimental = `${repository}/releases/download/channel-experimental`
 const mirror = `https://ghfast.top/${direct}`
-const fileName = 'App_1.0.0_x64-setup.exe'
+const fileName = 'App-Setup-1.0.0-x64.exe'
 const assetUrl = `https://github.com/owner/repo/releases/download/v1.0.0/${fileName}`
 const installer = Buffer.from('tauri setup bytes')
 
@@ -51,8 +55,10 @@ function harness(routes: Routes, overrides: Partial<SignedManifestDeps> = {}) {
     supported: true,
     arch: 'x64',
     publicKey: '',
-    feedBases: [direct, mirror],
-    directBase: direct,
+    product: 'electron',
+    repositoryUrl: repository,
+    mirrors: ['https://ghfast.top'],
+    channel: 'stable',
     fetch: async (url) => {
       requested.push(url)
       const route = routes[url]
@@ -134,7 +140,7 @@ describe('SignedManifestUpdaterDriver', () => {
     h.driver.check()
     await h.settle()
     expect(h.events.map((event) => event.kind)).toEqual(['checking', 'available', 'download-progress', 'downloaded'])
-    expect(h.events[1]).toEqual({ kind: 'available', version: '1.0.0', releaseNotes: 'notes' })
+    expect(h.events[1]).toEqual({ kind: 'available', version: '1.0.0', releaseNotes: 'notes', product: 'electron' })
     expect(h.written.map((entry) => entry.path)).toEqual([`/tmp/update/${fileName}`])
     expect(h.requested).toContain(`https://ghfast.top/${assetUrl}`)
     h.driver.quitAndInstall()
@@ -142,7 +148,7 @@ describe('SignedManifestUpdaterDriver', () => {
     expect(h.launched).toEqual([])
     // The quit flow disposes the driver after restoring the proxy.
     h.driver.dispose()
-    expect(h.launched).toEqual([{ path: `/tmp/update/${fileName}`, args: ['/P', '/R'] }])
+    expect(h.launched).toEqual([{ path: `/tmp/update/${fileName}`, args: ['--updated', '/S', '--force-run'] }])
     h.driver.dispose()
     expect(h.launched).toHaveLength(1)
   })
@@ -287,7 +293,7 @@ describe('SignedManifestUpdaterDriver', () => {
     const h = harness(routes, { publicKey: key.publicKey })
     h.driver.check()
     await h.settle()
-    const nextName = 'App_1.0.1_x64-setup.exe'
+    const nextName = 'App-Setup-1.0.1-x64.exe'
     routes[`${direct}/latest.json`] = () => Response.json({
       version: '1.0.1',
       platforms: {
@@ -315,9 +321,142 @@ describe('SignedManifestUpdaterDriver', () => {
     await h.settle()
     expect(h.events.map((event) => event.kind)).toEqual(['checking', 'not-available'])
   })
+  it('switches to the experimental build whatever its version, and back', async () => {
+    const key = makeKey()
+    const tauriName = 'App_0.1.0_x64-setup.exe'
+    const tauriUrl = `https://github.com/owner/repo/releases/download/tauri-v0.1.0/${tauriName}`
+    const routes: Routes = {
+      [`${direct}/latest.json`]: notFound,
+      [`${experimental}/latest.json`]: () => Response.json({
+        version: '0.1.0',
+        notes: 'tauri notes',
+        platforms: { 'windows-x86_64': { url: tauriUrl, signature: key.signFile(installer, `timestamp:1\tfile:${tauriName}\tversion:0.1.0`) } }
+      }),
+      [tauriUrl]: asset()
+    }
+    const h = harness(routes, { publicKey: key.publicKey })
+    h.driver.check()
+    await h.settle()
+    expect(h.events.map((event) => event.kind)).toEqual(['checking', 'not-available'])
+
+    h.driver.setChannel('experimental')
+    const before = h.events.length
+    h.driver.check()
+    await h.settle(before)
+    expect(h.events[before + 1]).toEqual({ kind: 'available', version: '0.1.0', releaseNotes: 'tauri notes', product: 'tauri' })
+    expect(h.events.at(-1)?.kind).toBe('downloaded')
+
+    // Back to stable before quitting: nothing from the experimental channel runs.
+    h.driver.setChannel('stable')
+    h.driver.dispose()
+    expect(h.launched).toEqual([])
+  })
+
+  it('drops a download that a channel switch superseded', async () => {
+    const key = makeKey()
+    const signature = key.signFile(installer, `timestamp:1\tfile:${fileName}\tversion:1.0.0`)
+    const routes: Routes = { [`${direct}/latest.json`]: manifest(signature), [assetUrl]: asset() }
+    const h = harness(routes, {
+      publicKey: key.publicKey,
+      fetch: async (url) => {
+        if (url === assetUrl) await new Promise((resolve) => setTimeout(resolve, 30))
+        const route = routes[url]
+        if (!route) throw new Error(`connect ETIMEDOUT ${url}`)
+        return route()
+      }
+    })
+    h.driver.check()
+    for (let index = 0; index < 50 && !h.events.some((event) => event.kind === 'available'); index += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2))
+    }
+    h.driver.setChannel('experimental')
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    expect(h.events.map((event) => event.kind)).toEqual(['checking', 'available'])
+    expect(h.written).toEqual([])
+    h.driver.dispose()
+    expect(h.launched).toEqual([])
+  })
+
+  it('launches the experimental installer as a takeover', async () => {
+    const key = makeKey()
+    const tauriName = 'App_0.1.0_x64-setup.exe'
+    const tauriUrl = `https://github.com/owner/repo/releases/download/tauri-v0.1.0/${tauriName}`
+    const h = harness({
+      [`${experimental}/latest.json`]: () => Response.json({
+        version: '0.1.0',
+        platforms: { 'windows-x86_64': { url: tauriUrl, signature: key.signFile(installer, `timestamp:1\tfile:${tauriName}\tversion:0.1.0`) } }
+      }),
+      [tauriUrl]: asset()
+    }, { publicKey: key.publicKey, channel: 'experimental' })
+    h.driver.check()
+    await h.settle()
+    h.driver.quitAndInstall()
+    expect(h.quits()).toBe(1)
+    h.driver.dispose()
+    expect(h.launched).toEqual([{ path: `/tmp/update/${tauriName}`, args: ['/P', '/R'] }])
+  })
+
+  it('refuses a stable manifest that names the experimental build', async () => {
+    const key = makeKey()
+    const signature = key.signFile(installer, `timestamp:1\tfile:${fileName}\tversion:1.0.0`)
+    const tauriName = 'App_0.1.0_x64-setup.exe'
+    const tauriUrl = `https://github.com/owner/repo/releases/download/tauri-v0.1.0/${tauriName}`
+    // A hostile mirror replays an old, validly signed Tauri installer on the stable channel.
+    const h = harness({
+      [`${direct}/latest.json`]: manifest(signature),
+      [`${mirror}/latest.json`]: () => Response.json({
+        version: '0.1.0',
+        platforms: { 'windows-x86_64': { url: tauriUrl, signature: key.signFile(installer, `timestamp:1\tfile:${tauriName}\tversion:0.1.0`) } }
+      }),
+      [assetUrl]: asset(),
+      [tauriUrl]: asset()
+    }, { publicKey: key.publicKey })
+    h.driver.check()
+    await h.settle()
+    expect(h.events[1]).toMatchObject({ kind: 'available', version: '1.0.0', product: 'electron' })
+    expect(h.requested).not.toContain(tauriUrl)
+  })
+
+  it('refuses manifests that name an installer of neither build', async () => {
+    const key = makeKey()
+    const odd = 'App-portable-1.0.0.exe'
+    const h = harness({
+      [`${direct}/latest.json`]: () => Response.json({
+        version: '1.0.0',
+        platforms: {
+          'windows-x86_64': {
+            url: `https://github.com/owner/repo/releases/download/v1.0.0/${odd}`,
+            signature: key.signFile(installer, `timestamp:1\tfile:${odd}\tversion:1.0.0`)
+          }
+        }
+      })
+    }, { publicKey: key.publicKey })
+    h.driver.check()
+    await h.settle()
+    expect(h.events.at(-1)?.kind).toBe('error')
+    expect(h.written).toEqual([])
+  })
 })
 
 describe('signed manifest helpers', () => {
+  it('tells the two builds apart by installer name', () => {
+    expect(installerProduct('App_0.9.31_x64-setup.exe')).toBe('tauri')
+    expect(installerProduct('App_0.9.31_arm64-setup.exe')).toBe('tauri')
+    expect(installerProduct('App-Setup-0.9.31-x64.exe')).toBe('electron')
+    expect(installerProduct('App-Setup-0.9.31-arm64.exe')).toBe('electron')
+    expect(installerProduct('App-0.9.31.exe')).toBeNull()
+  })
+
+  it('runs each installer unattended with a relaunch', () => {
+    expect(installerArgs('tauri', 'electron', true)).toEqual(['/P', '/R'])
+    expect(installerArgs('tauri', 'tauri', true)).toEqual(['/P', '/UPDATE', '/R'])
+    expect(installerArgs('electron', 'electron', true)).toEqual(['--updated', '/S', '--force-run'])
+    expect(installerArgs('electron', 'tauri', true)).toEqual(['/S', '--force-run'])
+    // Installed on an ordinary quit: the app stays closed.
+    expect(installerArgs('tauri', 'electron', false)).toEqual(['/P'])
+    expect(installerArgs('electron', 'electron', false)).toEqual(['--updated', '/S'])
+  })
+
   it('compares stable versions only', () => {
     expect(isNewerVersion('1.0.0', '0.9.31')).toBe(true)
     expect(isNewerVersion('v0.10.0', '0.9.31')).toBe(true)
@@ -327,12 +466,12 @@ describe('signed manifest helpers', () => {
   })
 
   it('accepts only this repository release assets', () => {
-    expect(isReleaseAsset(assetUrl, direct)).toBe(true)
-    expect(isReleaseAsset(assetUrl.replace('https:', 'http:'), direct)).toBe(false)
-    expect(isReleaseAsset('https://github.com/other/repo/releases/download/v1/a.exe', direct)).toBe(false)
-    expect(isReleaseAsset('https://github.com/owner/repo-evil/releases/download/v1/a.exe', direct)).toBe(false)
-    expect(isReleaseAsset(`${assetUrl}?x=1`, direct)).toBe(false)
-    expect(isReleaseAsset('not a url', direct)).toBe(false)
+    expect(isReleaseAsset(assetUrl, repository)).toBe(true)
+    expect(isReleaseAsset(assetUrl.replace('https:', 'http:'), repository)).toBe(false)
+    expect(isReleaseAsset('https://github.com/other/repo/releases/download/v1/a.exe', repository)).toBe(false)
+    expect(isReleaseAsset('https://github.com/owner/repo-evil/releases/download/v1/a.exe', repository)).toBe(false)
+    expect(isReleaseAsset(`${assetUrl}?x=1`, repository)).toBe(false)
+    expect(isReleaseAsset('not a url', repository)).toBe(false)
   })
 
   it('routes GitHub assets through the mirror prefix only', () => {

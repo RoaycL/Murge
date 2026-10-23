@@ -35,7 +35,7 @@ describe('update notification navigation contract', () => {
     expect(driver).toMatch(/notification\.once\('click',[\s\S]*this\.onNotificationClick\(\)/)
     expect(factory).toContain('return new ElectronUpdaterDriver(onNotificationClick)')
     expect(factory).toMatch(/notification\.once\('click',[\s\S]*onNotificationClick\(\)/)
-    expect(main).toContain("createUpdaterDriver(() => showMainWindowAt('/about'))")
+    expect(main).toContain("createUpdaterDriver(() => showMainWindowAt('/about'), cachedAppSettings.updateChannel)")
     expect(main).toMatch(/function showMainWindowAt\(route: '\/about'\)[\s\S]*window\.show\(\)[\s\S]*window\.focus\(\)[\s\S]*IPC\.appNavigateEvent/)
     expect(shared).toContain("appNavigateEvent: 'app:navigate-event'")
     expect(preload).toContain('onNavigate: (listener) => listen(IPC.appNavigateEvent, listener)')

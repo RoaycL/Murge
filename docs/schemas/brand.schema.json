@@ -41,6 +41,10 @@
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
       "description": "Additional app-data namespaces a released build may have written under before the appId namespace was adopted."
+    },
+    "updatePublicKey": {
+      "type": "string",
+      "description": "Release-signing public key (base64 of the minisign .pub file from `tauri signer generate`), the same key as src-tauri/tauri.conf.json plugins.updater.pubkey. When set, the Electron build only installs updates signed with it; empty or absent keeps electron-updater. Change it together with repositoryUrl."
     }
   }
 }

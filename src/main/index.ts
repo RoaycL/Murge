@@ -87,7 +87,7 @@ import { CoreSettingsService } from './kernel/core-settings-service'
 import { GeodataSettingsService } from './kernel/geodata-settings-service'
 import type { GeodataSettings } from '@shared/geodata'
 import { UpdateService } from './updates/service'
-import { ElectronUpdaterDriver } from './updates/electron-updater-driver'
+import { createUpdaterDriver } from './updates/create-updater-driver'
 import { TunCoordinator, GatedTunMutationAdapter } from './tun/coordinator'
 import { MihomoHotSwitchTunAdapter } from './tun/hot-switch-adapter'
 import { TunConfigService } from './tun/tun-config-service'
@@ -1555,7 +1555,7 @@ app.whenReady().then(async () => {
   const liveDnsEnhancement = new LiveDnsEnhancementGateway(dnsEnhancementService, dnsEnhancementCoordinator)
   const liveSnifferEnhancement = new LiveSnifferEnhancementGateway(snifferEnhancementService, snifferEnhancementCoordinator)
   const liveGeodataSettings = new LiveGeodataSettingsGateway(geodataSettingsService, geodataEnhancementCoordinator)
-  const updates = new UpdateService(new ElectronUpdaterDriver(() => showMainWindowAt('/about')))
+  const updates = new UpdateService(createUpdaterDriver(() => showMainWindowAt('/about')))
   updateService = updates
   updates.start()
   // Poll the feed while the app runs so a Release published mid-session is

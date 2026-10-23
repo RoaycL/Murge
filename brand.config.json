@@ -12,5 +12,6 @@
   "supportUrl": "https://github.com/RoaycL/Murge/issues",
   "copyright": "Copyright © 2026 Murge Contributors",
   "legacyProductNames": ["Murge"],
-  "legacyAppDataNamespaces": []
+  "legacyAppDataNamespaces": [],
+  "updatePublicKey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEIxM0MxOEYyN0U1QUREMUEKUldRYTNWcCs4aGc4c1VvUmNaR2VUSlNjUU9CNWdFVk9uTTlTVXk5a2ZjMjdRQm5VNVVLYVJ1aVMK"
 }

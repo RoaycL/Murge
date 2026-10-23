@@ -16,6 +16,9 @@ export type UpdatePhase =
   | 'not-available'
   | 'error'
 
+/** Which desktop build an installer belongs to. */
+export type UpdateProduct = 'electron' | 'tauri'
+
 export interface UpdateProgress {
   /** 0..100, the percentage of the update binary that has been downloaded. */
   percent: number
@@ -33,6 +36,15 @@ export interface UpdateState {
   currentVersion: string | null
   /** Version string of an update that was found and is downloadable. */
   availableVersion: string | null
+  /** Release notes of the available update, as published (Markdown/plain text). */
+  releaseNotes: string | null
+  /** The build that is running. */
+  currentProduct: UpdateProduct
+  /**
+   * The build the available update installs. Differs from
+   * {@link currentProduct} when the user switched release channel.
+   */
+  availableProduct: UpdateProduct | null
   progress: UpdateProgress | null
   error: string | null
   /** True when a downloaded update is ready to be installed on restart. */
@@ -43,6 +55,9 @@ export const DEFAULT_UPDATE_STATE: Readonly<UpdateState> = Object.freeze({
   phase: 'idle',
   currentVersion: null,
   availableVersion: null,
+  releaseNotes: null,
+  currentProduct: 'electron',
+  availableProduct: null,
   progress: null,
   error: null,
   canInstall: false
@@ -58,6 +73,7 @@ export function coerceUpdateState(value: unknown): UpdateState {
     return { ...DEFAULT_UPDATE_STATE }
   }
   const record = value as Record<string, unknown>
+  const products: UpdateProduct[] = ['electron', 'tauri']
   const phases: UpdatePhase[] = ['idle', 'checking', 'available', 'downloading', 'downloaded', 'not-available', 'error']
   const progressRaw = record.progress
   const progress: UpdateProgress | null =
@@ -83,6 +99,13 @@ export function coerceUpdateState(value: unknown): UpdateState {
       : DEFAULT_UPDATE_STATE.phase,
     currentVersion: typeof record.currentVersion === 'string' ? record.currentVersion : DEFAULT_UPDATE_STATE.currentVersion,
     availableVersion: typeof record.availableVersion === 'string' ? record.availableVersion : DEFAULT_UPDATE_STATE.availableVersion,
+    releaseNotes: typeof record.releaseNotes === 'string' ? record.releaseNotes : DEFAULT_UPDATE_STATE.releaseNotes,
+    currentProduct: products.includes(record.currentProduct as UpdateProduct)
+      ? record.currentProduct as UpdateProduct
+      : DEFAULT_UPDATE_STATE.currentProduct,
+    availableProduct: products.includes(record.availableProduct as UpdateProduct)
+      ? record.availableProduct as UpdateProduct
+      : DEFAULT_UPDATE_STATE.availableProduct,
     progress,
     error: typeof record.error === 'string' ? record.error : DEFAULT_UPDATE_STATE.error,
     canInstall: typeof record.canInstall === 'boolean' ? record.canInstall : DEFAULT_UPDATE_STATE.canInstall

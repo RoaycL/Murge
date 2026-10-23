@@ -7,10 +7,13 @@
  * Electron or the updater package.
  */
 
+import type { UpdateChannel } from '@shared/app-settings'
+import type { UpdateProduct } from '@shared/updates'
+
 /** Normalized events emitted by an {@link UpdaterDriver}. */
 export type UpdaterDriverEvent =
   | { kind: 'checking' }
-  | { kind: 'available'; version: string; releaseNotes: string | null }
+  | { kind: 'available'; version: string; releaseNotes: string | null; product?: UpdateProduct }
   | { kind: 'not-available' }
   | { kind: 'download-progress'; percent: number; bytesPerSecond: number; transferred: number; total: number | null }
   | { kind: 'downloaded' }
@@ -25,6 +28,14 @@ export interface UpdaterDriver {
    * clear "not supported" state instead of throwing on a missing feed.
    */
   readonly supported: boolean
+  /** The build this driver runs in. */
+  readonly product?: UpdateProduct
+  /**
+   * Follow another release channel. Drops any offer or staged installer from
+   * the previous channel; the caller starts a fresh check. Drivers without
+   * channels omit it.
+   */
+  setChannel?(channel: UpdateChannel): void
   /** Attach listeners and apply helper flags once, before any check. */
   configure(): void
   /** Kick off a feed check; results arrive as events. */

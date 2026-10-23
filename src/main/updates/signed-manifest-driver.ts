@@ -1,20 +1,28 @@
 import { join } from 'node:path'
+import type { UpdateChannel } from '@shared/app-settings'
+import type { UpdateProduct } from '@shared/updates'
 import { verifyMinisign } from './minisign'
 import type { UpdaterDriver, UpdaterDriverEvent } from './updater-driver'
 
 /**
- * {@link UpdaterDriver} for the signed release manifest (`latest.json`) the
- * Tauri build publishes. This is the last Electron release's way across:
- * it finds the Tauri setup exe in the manifest, downloads it through the same
+ * {@link UpdaterDriver} for the signed release-channel manifests
+ * (`latest.json`, Tauri updater format). Each channel is a fixed GitHub
+ * release whose manifest the release workflows rewrite: `stable` announces
+ * the Electron build, `experimental` the Tauri build. The driver finds the
+ * setup exe for this architecture, downloads it through the same
  * direct-or-mirror source the manifest came from, and accepts it only when
  * its minisign signature verifies against the pinned release key AND names
  * the announced version and file. Mirrors therefore carry bytes but cannot
  * substitute or roll back an installer (review item S1).
  *
+ * An installer of the running build must be newer; an installer of the other
+ * build is a channel switch and is taken whatever its version. Which build an
+ * installer belongs to follows from its (signed) file name.
+ *
  * The verified installer is launched from {@link dispose}, which the ordered
  * quit flow calls after it has restored the system proxy and stopped the
- * kernel — electron-updater's `autoInstallOnAppQuit` timing. The installer
- * takes over the Electron installation itself (keeps service and data).
+ * kernel — electron-updater's `autoInstallOnAppQuit` timing. Either installer
+ * takes over the other build's installation (keeps service and data).
  *
  * Electron-free: every side effect is an injected dependency, so the whole
  * flow is unit-tested with fakes.
@@ -27,8 +35,11 @@ const FEED_PROBE_TIMEOUT_MS = 5000
 const DOWNLOAD_TIMEOUT_MS = 15 * 60 * 1000
 /** Hard cap on the installer size; the whole file is verified in memory. */
 const MAX_INSTALLER_BYTES = 512 * 1024 * 1024
-/** Installer arguments: passive progress UI, relaunch the app afterwards. */
-export const INSTALLER_ARGS: readonly string[] = ['/P', '/R']
+/** Fixed GitHub release tag that carries each channel's manifest. */
+export const CHANNEL_TAGS: Readonly<Record<UpdateChannel, string>> = {
+  stable: 'channel-stable',
+  experimental: 'channel-experimental'
+}
 const SAFE_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.exe$/
 
 /** The updater's `{{target}}-{{arch}}` platform keys. */
@@ -41,10 +52,14 @@ export interface SignedManifestDeps {
   arch: string
   /** Pinned release public key (base64 minisign `.pub`). */
   publicKey: string
-  /** Ordered feed bases, last-known-good handling is internal. */
-  feedBases: readonly string[]
-  /** Direct GitHub base, used to route asset downloads through a mirror. */
-  directBase: string
+  /** The build this driver runs in. */
+  product: UpdateProduct
+  /** `https://github.com/<owner>/<repo>`. */
+  repositoryUrl: string
+  /** Mirror prefixes tried alongside direct GitHub, e.g. `https://ghfast.top`. */
+  mirrors: readonly string[]
+  /** Channel followed at start; {@link SignedManifestUpdaterDriver.setChannel} changes it. */
+  channel: UpdateChannel
   fetch: (url: string, init: { signal: AbortSignal }) => Promise<Response>
   /** Directory the verified installer is written to. */
   downloadDir: string
@@ -104,12 +119,35 @@ export function parseManifest(value: unknown): Manifest {
   return { version: record.version, notes: typeof record.notes === 'string' ? record.notes : null, platforms }
 }
 
-/** A GitHub asset URL routed through the mirror prefix of `feedBase`, if any. */
+/** Direct GitHub download base of a channel's manifest release. */
+export function channelFeedBase(repositoryUrl: string, channel: UpdateChannel): string {
+  return `${repositoryUrl.replace(/\/+$/, '')}/releases/download/${CHANNEL_TAGS[channel]}`
+}
+
+/**
+ * The build an installer belongs to, from its file name: the Tauri bundler
+ * writes `<product>_<version>_<arch>-setup.exe`, electron-builder
+ * `<product>-Setup-<version>-<arch>.exe`.
+ */
+export function installerProduct(fileName: string): UpdateProduct | null {
+  if (/_\d+\.\d+\.\d+_(?:x64|arm64)-setup\.exe$/.test(fileName)) return 'tauri'
+  if (/-Setup-\d+\.\d+\.\d+-(?:x64|arm64)\.exe$/.test(fileName)) return 'electron'
+  return null
+}
+
+/** Command line for an installer: unattended, relaunch the app afterwards. */
+export function installerArgs(target: UpdateProduct, running: UpdateProduct): readonly string[] {
+  // Tauri NSIS: passive progress UI, /R relaunches. Its own updates add
+  // /UPDATE (keeps shortcuts); a switch from Electron takes over instead.
+  if (target === 'tauri') return running === 'tauri' ? ['/P', '/UPDATE', '/R'] : ['/P', '/R']
+  // electron-builder NSIS: silent, --force-run relaunches; --updated marks an
+  // in-place upgrade of the same build.
+  return running === 'electron' ? ['--updated', '/S', '--force-run'] : ['/S', '--force-run']
+}
+
 /** True when `downloadUrl` is one of this repository's release assets. */
-export function isReleaseAsset(downloadUrl: string, directBase: string): boolean {
-  const suffix = '/releases/latest/download'
-  if (!directBase.endsWith(suffix)) return false
-  const repository = directBase.slice(0, -suffix.length)
+export function isReleaseAsset(downloadUrl: string, repositoryUrl: string): boolean {
+  const repository = repositoryUrl.replace(/\/+$/, '')
   let url: URL
   try {
     url = new URL(downloadUrl)
@@ -120,11 +158,27 @@ export function isReleaseAsset(downloadUrl: string, directBase: string): boolean
     url.href.startsWith(`${repository}/releases/download/`)
 }
 
+/** A GitHub asset URL routed through the mirror prefix of `feedBase`, if any. */
 export function routeDownloadUrl(downloadUrl: string, feedBase: string, directBase: string): string {
   if (!feedBase.endsWith(directBase)) return downloadUrl
   const prefix = feedBase.slice(0, feedBase.length - directBase.length).replace(/\/+$/, '')
   if (!prefix || !downloadUrl.startsWith('https://github.com/')) return downloadUrl
   return `${prefix}/${downloadUrl}`
+}
+
+const PRODUCT_LABELS: Readonly<Record<UpdateProduct, string>> = { electron: '稳定版', tauri: '实验版' }
+
+function platformFileName(url: string): string {
+  try {
+    return decodeURIComponent(new URL(url).pathname.split('/').pop() ?? '')
+  } catch {
+    return ''
+  }
+}
+
+/** A channel switch outranks a same-build update offered by a stale source. */
+function offerRank(offer: { product: UpdateProduct }, running: UpdateProduct): number {
+  return offer.product === running ? 0 : 1
 }
 
 function message(error: unknown): string {
@@ -136,17 +190,35 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
   readonly supported: boolean
   private readonly listeners = new Set<(event: UpdaterDriverEvent) => void>()
   private lastGoodBase: string | null = null
-  private available: { manifest: Manifest; platform: ManifestPlatform; base: string } | null = null
+  readonly product: UpdateProduct
+  private channel: UpdateChannel
+  /** Bumped on a channel switch; work started before it is discarded. */
+  private generation = 0
+  private available: { manifest: Manifest; platform: ManifestPlatform; base: string; product: UpdateProduct } | null = null
   /** The verified installer awaiting quit, with what it was verified as. */
-  private readyInstaller: { path: string; version: string; fileName: string; signature: string } | null = null
+  private readyInstaller: { path: string; version: string; fileName: string; signature: string; product: UpdateProduct } | null = null
   private busy = false
 
   constructor(private readonly deps: SignedManifestDeps) {
     this.currentVersion = deps.currentVersion
+    this.product = deps.product
+    this.channel = deps.channel
     this.supported = deps.supported && deps.publicKey.trim().length > 0 && Boolean(PLATFORM_KEYS[deps.arch])
   }
 
   configure(): void {}
+
+  setChannel(channel: UpdateChannel): void {
+    if (channel === this.channel) return
+    this.channel = channel
+    this.generation += 1
+    this.available = null
+    this.readyInstaller = null
+    this.lastGoodBase = null
+    // A check or download of the old channel may still be running; its
+    // results are dropped by generation, so let the new check start now.
+    this.busy = false
+  }
 
   check(): void {
     if (!this.supported || this.busy) return
@@ -188,7 +260,7 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
       if (fields.version !== installer.version || fields.file !== installer.fileName) {
         throw new Error('staged installer no longer matches its signature')
       }
-      this.deps.launchInstaller(installer.path, INSTALLER_ARGS)
+      this.deps.launchInstaller(installer.path, installerArgs(installer.product, this.product))
     } catch (error) {
       console.error('[updates] failed to launch the installer:', error)
     }
@@ -198,8 +270,14 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
     for (const listener of [...this.listeners]) listener(event)
   }
 
+  private directBase(): string {
+    return channelFeedBase(this.deps.repositoryUrl, this.channel)
+  }
+
   private candidates(): string[] {
-    return [...new Set([...(this.lastGoodBase ? [this.lastGoodBase] : []), ...this.deps.feedBases])]
+    const direct = this.directBase()
+    const feeds = [direct, ...this.deps.mirrors.map((mirror) => `${mirror.replace(/\/+$/, '')}/${direct}`)]
+    return [...new Set([...(this.lastGoodBase ? [this.lastGoodBase] : []), ...feeds])]
   }
 
   private async fetchManifest(base: string, signal: AbortSignal): Promise<{ base: string; manifest: Manifest }> {
@@ -215,7 +293,10 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
    * One source's answer: an offer when it announces a newer build for this
    * architecture, null when it answered without one (including 404).
    */
-  private async probe(base: string, signal: AbortSignal): Promise<{ manifest: Manifest; platform: ManifestPlatform } | null> {
+  private async probe(
+    base: string,
+    signal: AbortSignal
+  ): Promise<{ manifest: Manifest; platform: ManifestPlatform; product: UpdateProduct } | null> {
     let manifest: Manifest
     try {
       manifest = (await this.fetchManifest(base, signal)).manifest
@@ -224,23 +305,29 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
       throw error
     }
     const platform = manifest.platforms[PLATFORM_KEYS[this.deps.arch]!]
-    if (!platform || !isNewerVersion(manifest.version, this.currentVersion)) return null
-    // Already downloaded and waiting for quit: nothing new to fetch.
-    if (this.readyInstaller && !isNewerVersion(manifest.version, this.readyInstaller.version)) return null
+    if (!platform || !parseStableVersion(manifest.version)) return null
     // The manifest is unsigned: never let it point the client at anything
     // but this repository's release assets.
-    if (!isReleaseAsset(platform.url, this.deps.directBase)) {
+    if (!isReleaseAsset(platform.url, this.deps.repositoryUrl)) {
       throw new Error(`update manifest points outside the release: ${platform.url}`)
     }
-    return { manifest, platform }
+    const product = installerProduct(platformFileName(platform.url))
+    if (!product) throw new Error(`update manifest names an unexpected installer: ${platform.url}`)
+    // Same build: only a newer release. Other build: a channel switch.
+    if (product === this.product && !isNewerVersion(manifest.version, this.currentVersion)) return null
+    // Already downloaded and waiting for quit: nothing new to fetch.
+    if (this.readyInstaller && this.readyInstaller.product === product &&
+        !isNewerVersion(manifest.version, this.readyInstaller.version)) return null
+    return { manifest, platform, product }
   }
 
   private async runCheck(): Promise<void> {
+    const generation = this.generation
     this.emit({ kind: 'checking' })
     const bases = this.candidates()
     const controller = new AbortController()
     type Outcome =
-      | { kind: 'offer'; base: string; manifest: Manifest; platform: ManifestPlatform }
+      | { kind: 'offer'; base: string; manifest: Manifest; platform: ManifestPlatform; product: UpdateProduct }
       | { kind: 'none'; base: string }
       | { kind: 'failed'; errors: unknown[] }
     // Every source is heard out (each probe is time-limited) and the newest
@@ -261,7 +348,8 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
       for (const base of bases) {
         this.probe(base, controller.signal).then(
           (offer) => {
-            if (offer && (!best || isNewerVersion(offer.manifest.version, best.manifest.version))) {
+            if (offer && (!best || offerRank(offer, this.product) > offerRank(best, this.product) ||
+                (offer.product === best.product && isNewerVersion(offer.manifest.version, best.manifest.version)))) {
               best = { kind: 'offer', base, ...offer }
             } else if (!offer) {
               answered ??= base
@@ -276,6 +364,7 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
       }
     })
     controller.abort()
+    if (generation !== this.generation) return
     if (outcome.kind === 'failed') {
       this.lastGoodBase = null
       this.emit({
@@ -295,10 +384,13 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
     // A newer release supersedes the staged installer: what runs on quit must
     // match what the UI reports, even if this download then fails.
     this.readyInstaller = null
-    this.available = { manifest: selected.manifest, platform, base: selected.base }
+    this.available = { manifest: selected.manifest, platform, base: selected.base, product: selected.product }
     const version = selected.manifest.version.replace(/^v/, '')
-    this.emit({ kind: 'available', version, releaseNotes: selected.manifest.notes })
-    this.deps.notify?.(`发现新版本 v${version}`, '正在后台下载，退出应用时自动安装。')
+    this.emit({ kind: 'available', version, releaseNotes: selected.manifest.notes, product: selected.product })
+    this.deps.notify?.(
+      selected.product === this.product ? `发现新版本 v${version}` : `正在切换到${PRODUCT_LABELS[selected.product]} v${version}`,
+      '正在后台下载，退出应用时自动安装。'
+    )
     // electron-updater autoDownload parity.
     await this.runDownload()
   }
@@ -306,15 +398,17 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
   private async runDownload(): Promise<void> {
     const available = this.available
     if (!available) return
-    const fileName = decodeURIComponent(new URL(available.platform.url).pathname.split('/').pop() ?? '')
+    const generation = this.generation
+    const fileName = platformFileName(available.platform.url)
     if (!SAFE_FILE_NAME.test(fileName)) throw new Error(`update manifest names an unexpected installer: ${fileName}`)
     const sources = [...new Set([available.base, ...this.candidates()])]
     let lastError: unknown = null
     let signatureFailed = false
     for (const source of sources) {
+      if (generation !== this.generation) return
       let data: Uint8Array
       try {
-        data = await this.fetchInstaller(routeDownloadUrl(available.platform.url, source, this.deps.directBase))
+        data = await this.fetchInstaller(routeDownloadUrl(available.platform.url, source, this.directBase()), generation)
       } catch (error) {
         lastError = error
         continue
@@ -338,13 +432,16 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
         })
         return
       }
+      if (generation !== this.generation) return
       const path = join(this.deps.downloadDir, fileName)
       await this.deps.writeFile(path, data)
-      this.readyInstaller = { path, version: expected, fileName, signature: available.platform.signature }
+      if (generation !== this.generation) return
+      this.readyInstaller = { path, version: expected, fileName, signature: available.platform.signature, product: available.product }
       this.emit({ kind: 'downloaded' })
       this.deps.notify?.(`新版本 v${available.manifest.version.replace(/^v/, '')} 已就绪`, '退出应用时自动安装，或点击“重启并安装”立即更新。')
       return
     }
+    if (generation !== this.generation) return
     this.emit({
       kind: 'error',
       message: signatureFailed
@@ -353,7 +450,7 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
     })
   }
 
-  private async fetchInstaller(url: string): Promise<Uint8Array> {
+  private async fetchInstaller(url: string, generation: number): Promise<Uint8Array> {
     const response = await this.deps.fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) })
     if (!response.ok || !response.body) throw new Error(`installer download returned HTTP ${response.status}`)
     const header = Number(response.headers.get('content-length'))
@@ -367,6 +464,11 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
     for (;;) {
       const { done, value } = await reader.read()
       if (done) break
+      if (generation !== this.generation) {
+        // The channel changed mid-download: stop, and report nothing.
+        await reader.cancel()
+        throw new Error('download superseded by a channel switch')
+      }
       transferred += value.byteLength
       if (transferred > MAX_INSTALLER_BYTES) {
         await reader.cancel()

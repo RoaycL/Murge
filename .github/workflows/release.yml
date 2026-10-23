@@ -172,6 +172,30 @@ jobs:
           "notes=$((Join-Path $PWD 'dist\RELEASE_NOTES.md'))" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "evidence=$evidencePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
+      # Both builds' updaters follow signed release-channel manifests (see
+      # src/main/updates/signed-manifest-driver.ts): each installer gets a
+      # minisign signature bound to its version and file name, and the stable
+      # channel manifest is verified against brand.config.json updatePublicKey
+      # before anything is published.
+      - name: Sign installers and write the stable channel manifest
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          X64_INSTALLER: ${{ steps.assets.outputs.x64 }}
+          ARM64_INSTALLER: ${{ steps.assets.outputs.arm64 }}
+          RELEASE_NOTES: ${{ steps.assets.outputs.notes }}
+        run: |
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { throw 'TAURI_SIGNING_PRIVATE_KEY secret is not set' }
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          foreach ($installer in @($env:X64_INSTALLER, $env:ARM64_INSTALLER)) {
+            # CLI >= 2.12 writes the version into the signed trusted comment.
+            npx --yes @tauri-apps/cli@2.12.4 signer sign --app-version $version $installer
+            if ($LASTEXITCODE -ne 0) { throw "Signing $installer failed" }
+          }
+          node scripts/channel-manifest.mjs --version $version --tag $env:GITHUB_REF_NAME --dir dist --notes-file $env:RELEASE_NOTES --out dist/channel-stable/latest.json
+          if ($LASTEXITCODE -ne 0) { throw 'Writing the stable channel manifest failed' }
+
       - name: Publish GitHub Release
         shell: pwsh
         env:
@@ -197,6 +221,22 @@ jobs:
             gh release create $env:GITHUB_REF_NAME $env:X64_INSTALLER $env:ARM64_INSTALLER $env:CHECKSUM_FILE $env:UPDATE_FEED $env:RELEASE_EVIDENCE --verify-tag --title $env:GITHUB_REF_NAME --notes-file $env:RELEASE_NOTES
           }
 
+      # The channel lives in a fixed pre-release that is never "latest", so
+      # GitHub's latest release (and electron-updater's latest.yml for older
+      # clients) is unaffected.
+      - name: Point the stable update channel at this release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view channel-stable --json tagName *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create channel-stable --target $env:GITHUB_SHA --prerelease --latest=false --title 'Stable update channel' --notes 'Maintained by the release workflow: latest.json here is the signed manifest the stable update channel follows. Do not download from this release.'
+            if ($LASTEXITCODE -ne 0) { throw 'Creating the channel-stable release failed' }
+          }
+          gh release upload channel-stable dist/channel-stable/latest.json --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Updating the stable channel manifest failed' }
+
       - name: Preserve installers as workflow artifact
         uses: actions/upload-artifact@v4
         with:
@@ -208,5 +248,6 @@ jobs:
             dist/SHA256SUMS.txt
             dist/RELEASE_NOTES.md
             dist/release-evidence.json
+            dist/channel-stable/latest.json
           if-no-files-found: error
           retention-days: 30

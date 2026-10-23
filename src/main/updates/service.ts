@@ -1,3 +1,4 @@
+import type { UpdateChannel } from '@shared/app-settings'
 import type { UpdatesGateway } from '@shared/gateways'
 import type { UpdateState } from '@shared/updates'
 import { DEFAULT_UPDATE_STATE } from '@shared/updates'
@@ -26,7 +27,7 @@ export class UpdateService implements UpdatesGateway {
   private downloadedBeforeCheck: UpdateState | null = null
 
   constructor(private readonly driver: UpdaterDriver, options: { pollIntervalMs?: number } = {}) {
-    this.state = { ...DEFAULT_UPDATE_STATE, currentVersion: driver.currentVersion }
+    this.state = { ...DEFAULT_UPDATE_STATE, currentVersion: driver.currentVersion, currentProduct: driver.product ?? 'electron' }
     this.pollIntervalMs = options.pollIntervalMs ?? 10 * 60 * 1000
   }
 
@@ -102,6 +103,28 @@ export class UpdateService implements UpdatesGateway {
     this.driver.download()
   }
 
+  /**
+   * Switch release channel: forget the old channel's offer and staged
+   * installer, then check the new channel at once (an explicit user choice,
+   * so it ignores the automatic-check preference).
+   */
+  setChannel(channel: UpdateChannel): void {
+    if (!this.driver.setChannel) return
+    this.driver.setChannel(channel)
+    this.downloadedBeforeCheck = null
+    this.transition({
+      ...this.state,
+      phase: 'idle',
+      availableVersion: null,
+      availableProduct: null,
+      releaseNotes: null,
+      progress: null,
+      error: null,
+      canInstall: false
+    })
+    if (this.driver.supported) void this.check().catch(() => undefined)
+  }
+
   install(): void {
     if (this.driver.supported && this.state.canInstall) {
       this.driver.quitAndInstall()
@@ -131,12 +154,20 @@ export class UpdateService implements UpdatesGateway {
           this.transition({ ...this.downloadedBeforeCheck, error: null })
           this.downloadedBeforeCheck = null
         } else {
-          this.set({ phase: 'not-available', availableVersion: null, progress: null, canInstall: false, error: null })
+          this.set({ phase: 'not-available', availableVersion: null, availableProduct: null, releaseNotes: null, progress: null, canInstall: false, error: null })
         }
         break
       case 'available':
         this.downloadedBeforeCheck = null
-        this.set({ phase: 'available', availableVersion: event.version, progress: null, canInstall: false, error: null })
+        this.set({
+          phase: 'available',
+          availableVersion: event.version,
+          availableProduct: event.product ?? this.state.currentProduct,
+          releaseNotes: event.releaseNotes,
+          progress: null,
+          canInstall: false,
+          error: null
+        })
         break
       case 'download-progress':
         this.downloadedBeforeCheck = null

@@ -7,30 +7,32 @@ import { brand } from '@shared/brand'
 import { ElectronUpdaterDriver } from './electron-updater-driver'
 import { SignedManifestUpdaterDriver } from './signed-manifest-driver'
 import type { UpdaterDriver } from './updater-driver'
+import type { UpdateChannel } from '@shared/app-settings'
 
 /** Mirrors tried alongside direct GitHub (the electron-updater driver's list). */
 const GITHUB_PROXIES: readonly string[] = ['https://gh-proxy.org', 'https://ghfast.top']
 
 /**
  * Pick the production update driver. With a release key pinned in
- * `brand.config.json` (`updatePublicKey`) the build
- * follows the signed manifest (and so moves to the Tauri build); without one
- * it keeps electron-updater.
+ * `brand.config.json` (`updatePublicKey`) the build follows the signed
+ * release-channel manifests (stable = Electron, experimental = Tauri);
+ * without one it keeps electron-updater.
  */
-export function createUpdaterDriver(onNotificationClick: () => void): UpdaterDriver {
+export function createUpdaterDriver(onNotificationClick: () => void, channel: UpdateChannel): UpdaterDriver {
   const publicKey = brand.updatePublicKey?.trim() ?? ''
   if (!publicKey) return new ElectronUpdaterDriver(onNotificationClick)
   const path = new URL(brand.repositoryUrl).pathname.replace(/^\/+|\/+$/g, '')
   const [owner = '', repo = ''] = path.split('/')
-  const directBase = `https://github.com/${owner}/${repo}/releases/latest/download`
   const notifications = new Set<Notification>()
   return new SignedManifestUpdaterDriver({
     currentVersion: app.getVersion(),
     supported: app.isPackaged && process.platform === 'win32',
     arch: process.arch,
     publicKey,
-    feedBases: [directBase, ...GITHUB_PROXIES.map((proxy) => `${proxy}/${directBase}`)],
-    directBase,
+    product: 'electron',
+    repositoryUrl: `https://github.com/${owner}/${repo}`,
+    mirrors: GITHUB_PROXIES,
+    channel,
     fetch: (url, init) => net.fetch(url, { signal: init.signal, cache: 'no-store' }),
     downloadDir: join(app.getPath('temp'), `${brand.executableName}-update`),
     writeFile: async (file, data) => {

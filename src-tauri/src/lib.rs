@@ -15,6 +15,7 @@ mod app_info;
 mod backup;
 mod brand;
 mod client_hardening;
+mod crash;
 mod diagnostics;
 mod enhancements;
 mod error;
@@ -73,6 +74,7 @@ mod validate;
 use tauri::Manager;
 
 pub fn run() {
+    crash::install_panic_hook();
     startup_timeline::initialize();
     // Startup gate: the brand document is a behavioral specification (the
     // Electron shell exits on an invalid brand). Parse it before anything else.

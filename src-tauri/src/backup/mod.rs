@@ -26,6 +26,13 @@ pub fn initialize(app: tauri::AppHandle, paths: &AppPaths) -> Result<(), std::co
     crate::diagnostics::initialize();
     if let Some(root) = &paths.app_data_root {
         let codec = secrets::Codec { root: root.clone() };
+        let rolled_back = std::cell::Cell::new(false);
+        let warn = |message: &'static str| {
+            if message == RESTORE_ROLLED_BACK {
+                rolled_back.set(true);
+            }
+            startup_warning(message);
+        };
         initialize_with(
             root,
             &codec,
@@ -43,11 +50,33 @@ pub fn initialize(app: tauri::AppHandle, paths: &AppPaths) -> Result<(), std::co
                     );
                 });
             },
-            &startup_warning,
+            &warn,
         )?;
+        if rolled_back.get() {
+            show_restore_rolled_back();
+        }
     }
     let _ = APP.set(app);
     Ok(())
+}
+
+const RESTORE_ROLLED_BACK: &str = "pending restore rolled back; continuing startup";
+
+/// Electron's startup "配置恢复未完成" dialog: a restore the user asked for
+/// did not happen, so say so instead of only logging it.
+fn show_restore_rolled_back() {
+    let product = crate::brand::load_brand()
+        .map(|brand| brand.product_name)
+        .unwrap_or_default();
+    tauri::async_runtime::spawn(async move {
+        rfd::AsyncMessageDialog::new()
+            .set_level(rfd::MessageLevel::Warning)
+            .set_title(format!("{product} 配置恢复未完成"))
+            .set_description("配置恢复失败，已回滚到恢复前的配置。请查看运行日志后重试。")
+            .set_buttons(rfd::MessageButtons::Ok)
+            .show()
+            .await;
+    });
 }
 
 fn startup_warning(message: &'static str) {
@@ -67,7 +96,7 @@ fn initialize_with(
     match managed::apply_with_sources(root, &|paths| {
         sync_changed_sources(root, paths, codec, source_store)
     }) {
-        Ok("rolled-back") => warn("pending restore rolled back; continuing startup"),
+        Ok("rolled-back") => warn(RESTORE_ROLLED_BACK),
         Err(_) => warn("pending restore recovery failed; continuing startup"),
         _ => {}
     }

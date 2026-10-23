@@ -1,0 +1,208 @@
+name: Tauri release
+
+# Tag `tauri-vX.Y.Z` on the tauri branch to publish a signed Tauri build as a
+# GitHub *pre-release*. Plain `vX.Y.Z` tags stay with release.yml (Electron)
+# until the Phase 7 cutover. A pre-release is never "latest", so it cannot
+# change what Electron's electron-updater or the Tauri updater
+# (releases/latest/download/latest.json) see. Making a Tauri build the latest
+# release is a cutover step that happens after the last Electron version
+# (the upgrade bridge) has shipped.
+#
+# workflow_dispatch builds, signs and verifies everything with the real key
+# without publishing (a dry run before tagging).
+
+on:
+  push:
+    tags:
+      - 'tauri-v*'
+  workflow_dispatch:
+  pull_request:
+    branches: [tauri]
+    paths:
+      - .github/workflows/tauri-release.yml
+      - scripts/tauri-release-assets.mjs
+      - scripts/tauri-updater-manifest.mjs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tauri-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Pull requests: exercise signing + manifest verification with a throwaway
+  # key and stand-in files. No secrets, no Windows build.
+  signing-dry-run:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --include=dev
+      - name: Sign stand-in installers with a throwaway key and verify the manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          product=$(node -p "require('./src-tauri/tauri.conf.json').productName")
+          work="$RUNNER_TEMP/release-dry-run"
+          mkdir -p "$work/keys" "$work/dist"
+          npx tauri signer generate --ci -p '' -w "$work/keys/throwaway.key" > /dev/null
+          for arch in x64 arm64; do head -c 4096 /dev/urandom > "$work/dist/${product}_${version}_${arch}-setup.exe"; done
+          TAURI_SIGNING_PRIVATE_KEY="$(cat "$work/keys/throwaway.key")" TAURI_SIGNING_PRIVATE_KEY_PASSWORD='' \
+            node scripts/tauri-release-assets.mjs --version "$version" --tag "tauri-v$version" --dir "$work/dist" \
+            --pubkey "$(cat "$work/keys/throwaway.key.pub")"
+          node -e "const m=require('$work/dist/latest.json'); if (Object.keys(m.platforms).sort().join()!=='windows-aarch64,windows-x86_64') process.exit(1)"
+          # The real pinned key must reject the throwaway signatures.
+          if TAURI_SIGNING_PRIVATE_KEY="$(cat "$work/keys/throwaway.key")" TAURI_SIGNING_PRIVATE_KEY_PASSWORD='' \
+            node scripts/tauri-release-assets.mjs --version "$version" --tag "tauri-v$version" --dir "$work/dist"; then
+            echo 'pinned public key accepted a foreign signature'; exit 1
+          fi
+
+  version:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      tag: ${{ steps.check.outputs.tag }}
+      product: ${{ steps.check.outputs.product }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag, package.json and Cargo versions must agree
+        id: check
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          cargo_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' src-tauri/Cargo.toml | head -n 1)
+          if [ "$cargo_version" != "$version" ]; then
+            echo "src-tauri/Cargo.toml version $cargo_version != package.json $version"; exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "tauri-v$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match tauri-v$version"; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=tauri-v$version" >> "$GITHUB_OUTPUT"
+          # The bundler names installers after tauri.conf productName (brand-checked).
+          echo "product=$(node -p "require('./src-tauri/tauri.conf.json').productName")" >> "$GITHUB_OUTPUT"
+
+  # Builds never see the signing key; they only produce unsigned installers.
+  build:
+    needs: version
+    name: Windows ${{ matrix.arch }} installer
+    runs-on: windows-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: x64
+            target: x86_64-pc-windows-msvc
+          - arch: arm64
+            target: aarch64-pc-windows-msvc
+    steps:
+      - name: Preserve repository LF line endings on Windows
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: native/tun-service/go.sum
+      - run: npm ci --include=dev
+      - run: npm run license:check
+      - run: npm run brand:check
+      - run: npm run tauri:bridge
+      - name: Check generated bridge is unchanged
+        run: git diff --exit-code -- src/renderer/src/platform/generated/desktop-api.ts
+      - run: npm run typecheck
+      - run: npm test
+      - name: Prepare pinned kernel and native service resources
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          npm run kernel:prepare
+          npm run tun-service:test
+          npm run tun-service:build
+      # No Rust cache here: release binaries are built from a clean target.
+      - name: Build the per-machine NSIS installer
+        run: node scripts/tauri-package.mjs ${{ matrix.arch }}
+      - name: Inspect payload architecture
+        run: node scripts/ci-tauri-artifact.mjs ${{ matrix.target }} ${{ matrix.arch }}
+      - name: Stage the installer
+        shell: pwsh
+        run: |
+          $name = "${{ needs.version.outputs.product }}_${{ needs.version.outputs.version }}_${{ matrix.arch }}-setup.exe"
+          $source = "src-tauri/target/${{ matrix.target }}/release/bundle/nsis/$name"
+          if (-not (Test-Path $source)) { throw "expected installer $source" }
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP/release" | Out-Null
+          Copy-Item $source "$env:RUNNER_TEMP/release/$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tauri-release-${{ matrix.arch }}
+          path: ${{ runner.temp }}/release/
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --include=dev
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tauri-release-*
+          path: ${{ runner.temp }}/release
+          merge-multiple: true
+      - name: Sign installers and write latest.json + SHA256SUMS.txt
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: >-
+          node scripts/tauri-release-assets.mjs
+          --version "${{ needs.version.outputs.version }}"
+          --tag "${{ needs.version.outputs.tag }}"
+          --dir "$RUNNER_TEMP/release"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tauri-release-signed-${{ needs.version.outputs.version }}
+          path: ${{ runner.temp }}/release/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish the GitHub pre-release
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.version }}
+          PRODUCT: ${{ needs.version.outputs.product }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Refusing to overwrite the existing release $TAG"; exit 1
+          fi
+          cd "$RUNNER_TEMP/release"
+          gh release create "$TAG" \
+            "${PRODUCT}_${VERSION}_x64-setup.exe" "${PRODUCT}_${VERSION}_x64-setup.exe.sig" \
+            "${PRODUCT}_${VERSION}_arm64-setup.exe" "${PRODUCT}_${VERSION}_arm64-setup.exe.sig" \
+            latest.json SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease --latest=false \
+            --title "$PRODUCT $VERSION (Tauri preview)" --generate-notes

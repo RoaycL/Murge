@@ -390,6 +390,8 @@ describe('SignedManifestUpdaterDriver', () => {
     }, { publicKey: key.publicKey, channel: 'experimental' })
     h.driver.check()
     await h.settle()
+    h.driver.quitAndInstall()
+    expect(h.quits()).toBe(1)
     h.driver.dispose()
     expect(h.launched).toEqual([{ path: `/tmp/update/${tauriName}`, args: ['/P', '/R'] }])
   })
@@ -446,10 +448,13 @@ describe('signed manifest helpers', () => {
   })
 
   it('runs each installer unattended with a relaunch', () => {
-    expect(installerArgs('tauri', 'electron')).toEqual(['/P', '/R'])
-    expect(installerArgs('tauri', 'tauri')).toEqual(['/P', '/UPDATE', '/R'])
-    expect(installerArgs('electron', 'electron')).toEqual(['--updated', '/S', '--force-run'])
-    expect(installerArgs('electron', 'tauri')).toEqual(['/S', '--force-run'])
+    expect(installerArgs('tauri', 'electron', true)).toEqual(['/P', '/R'])
+    expect(installerArgs('tauri', 'tauri', true)).toEqual(['/P', '/UPDATE', '/R'])
+    expect(installerArgs('electron', 'electron', true)).toEqual(['--updated', '/S', '--force-run'])
+    expect(installerArgs('electron', 'tauri', true)).toEqual(['/S', '--force-run'])
+    // Installed on an ordinary quit: the app stays closed.
+    expect(installerArgs('tauri', 'electron', false)).toEqual(['/P'])
+    expect(installerArgs('electron', 'electron', false)).toEqual(['--updated', '/S'])
   })
 
   it('compares stable versions only', () => {

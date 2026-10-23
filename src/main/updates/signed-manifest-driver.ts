@@ -147,14 +147,17 @@ export function installerProduct(fileName: string): UpdateProduct | null {
   return null
 }
 
-/** Command line for an installer: unattended, relaunch the app afterwards. */
-export function installerArgs(target: UpdateProduct, running: UpdateProduct): readonly string[] {
+/**
+ * Command line for an installer: unattended, and relaunching the app
+ * afterwards only for "重启并安装" (`restart`), not for an install on quit.
+ */
+export function installerArgs(target: UpdateProduct, running: UpdateProduct, restart: boolean): readonly string[] {
   // Tauri NSIS: passive progress UI, /R relaunches. Its own updates add
   // /UPDATE (keeps shortcuts); a switch from Electron takes over instead.
-  if (target === 'tauri') return running === 'tauri' ? ['/P', '/UPDATE', '/R'] : ['/P', '/R']
+  if (target === 'tauri') return [...(running === 'tauri' ? ['/P', '/UPDATE'] : ['/P']), ...(restart ? ['/R'] : [])]
   // electron-builder NSIS: silent, --force-run relaunches; --updated marks an
   // in-place upgrade of the same build.
-  return running === 'electron' ? ['--updated', '/S', '--force-run'] : ['/S', '--force-run']
+  return [...(running === 'electron' ? ['--updated', '/S'] : ['/S']), ...(restart ? ['--force-run'] : [])]
 }
 
 /** True when `downloadUrl` is one of this repository's release assets. */
@@ -205,6 +208,8 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
   /** The verified installer awaiting quit, with what it was verified as. */
   private readyInstaller: { path: string; version: string; fileName: string; signature: string; product: UpdateProduct } | null = null
   private busy = false
+  /** Set by "重启并安装": relaunch once the installer finishes. */
+  private restartAfterInstall = false
 
   constructor(private readonly deps: SignedManifestDeps) {
     this.currentVersion = deps.currentVersion
@@ -229,22 +234,26 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
 
   check(): void {
     if (!this.supported || this.busy) return
-    this.busy = true
-    void this.runCheck()
-      .catch((error) => this.emit({ kind: 'error', message: message(error) }))
-      .finally(() => { this.busy = false })
+    this.run(() => this.runCheck())
   }
 
   download(): void {
     if (!this.supported || this.busy || !this.available) return
+    this.run(() => this.runDownload())
+  }
+
+  /** Run one check or download; only the current channel's work frees `busy`. */
+  private run(work: () => Promise<void>): void {
+    const generation = this.generation
     this.busy = true
-    void this.runDownload()
+    void work()
       .catch((error) => this.emit({ kind: 'error', message: message(error) }))
-      .finally(() => { this.busy = false })
+      .finally(() => { if (generation === this.generation) this.busy = false })
   }
 
   quitAndInstall(): void {
     if (!this.supported || !this.readyInstaller) return
+    this.restartAfterInstall = true
     this.deps.requestQuit()
   }
 
@@ -267,7 +276,7 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
       if (fields.version !== installer.version || fields.file !== installer.fileName) {
         throw new Error('staged installer no longer matches its signature')
       }
-      this.deps.launchInstaller(installer.path, installerArgs(installer.product, this.product))
+      this.deps.launchInstaller(installer.path, installerArgs(installer.product, this.product, this.restartAfterInstall))
     } catch (error) {
       console.error('[updates] failed to launch the installer:', error)
     }

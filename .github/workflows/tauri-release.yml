@@ -183,7 +183,9 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "push" ]; then
-            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$TAG" --jq .body > "$RUNNER_TEMP/notes.md"
+            # The hand-written Chinese notes the Electron release uses too.
+            node scripts/generate-release-notes.mjs
+            cp dist/RELEASE_NOTES.md "$RUNNER_TEMP/notes.md"
           else
             : > "$RUNNER_TEMP/notes.md"
           fi

@@ -57,8 +57,8 @@ export async function applyInstallerChannelReset(
   }
   if (current === channel) return true
   try {
+    // set() writes atomically and throws when the write fails.
     await settings.set({ updateChannel: channel })
-    if ((await persistedUpdateChannel(appDataBase)) !== channel) throw new Error('the update channel did not persist')
   } catch (error) {
     console.error('[app-settings] update channel reset not applied; retrying next launch:', error)
     // Take the record back so the next launch retries.

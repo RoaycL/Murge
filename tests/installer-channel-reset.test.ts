@@ -80,6 +80,11 @@ describe('applyInstallerChannelReset', () => {
     expect(source).toContain(`!define MURGE_CHANNEL_RESET_FILE "${INSTALLER_CHANNEL_RESET_FILE}"`)
     const install = source.slice(source.indexOf('!macro customInstall'), source.indexOf('!macroend', source.indexOf('!macro customInstall')))
     // Written by a new install only; this build's own updates keep the old stamp.
-    expect(install).toMatch(/\$\{ifNot\} \$\{isUpdated\}\s+ClearErrors\s+FileOpen \$R0 "\$INSTDIR\\\$\{MURGE_CHANNEL_RESET_FILE\}" w/)
+    expect(install).toMatch(/\$\{else\}\s+ClearErrors\s+FileOpen \$R0 "\$INSTDIR\\\$\{MURGE_CHANNEL_RESET_FILE\}" w/)
+    // A self-update puts back the stamp customInit kept, time included, so
+    // users who have not launched since the last new install still reset.
+    const init = source.slice(source.indexOf('!macro customInit'), source.indexOf('!macroend', source.indexOf('!macro customInit')))
+    expect(init).toContain('CopyFiles /SILENT "$INSTDIR\\${MURGE_CHANNEL_RESET_FILE}" "$PLUGINSDIR\\${MURGE_CHANNEL_RESET_FILE}"')
+    expect(install).toMatch(/\$\{if\} \$\{isUpdated\}[\s\S]*CopyFiles \/SILENT "\$PLUGINSDIR\\\$\{MURGE_CHANNEL_RESET_FILE\}" "\$INSTDIR\\\$\{MURGE_CHANNEL_RESET_FILE\}"[\s\S]*\$\{else\}/)
   })
 })

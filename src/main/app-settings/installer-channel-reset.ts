@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { parseAppSettings, type UpdateChannel } from '@shared/app-settings'
 import { APP_SETTINGS_FILE, type AppSettingsService } from './service'
@@ -42,17 +42,27 @@ export async function applyInstallerChannelReset(
       return false
     }
   }
+  let current: UpdateChannel
   try {
     // Decide from the file itself: a failed read falls back to the defaults
     // (already "stable") and would record the stamp unapplied.
-    if ((await persistedUpdateChannel(appDataBase)) !== channel) {
-      await settings.set({ updateChannel: channel })
-      if ((await persistedUpdateChannel(appDataBase)) !== channel) throw new Error('the update channel did not persist')
-    }
+    current = await persistedUpdateChannel(appDataBase)
+    // Record first: a reset whose record failed would repeat next launch and
+    // undo whatever the user picked in between.
     await mkdir(appDataBase, { recursive: true })
     await writeFile(seenPath, stamp, 'utf8')
   } catch (error) {
     console.error('[app-settings] update channel reset not applied; retrying next launch:', error)
+    return false
+  }
+  if (current === channel) return true
+  try {
+    await settings.set({ updateChannel: channel })
+    if ((await persistedUpdateChannel(appDataBase)) !== channel) throw new Error('the update channel did not persist')
+  } catch (error) {
+    console.error('[app-settings] update channel reset not applied; retrying next launch:', error)
+    // Take the record back so the next launch retries.
+    await rm(seenPath, { force: true }).catch(() => undefined)
     return false
   }
   return true

@@ -59,6 +59,13 @@ Var /GLOBAL MurgeStartupWasEnabled
       StrCpy $MurgeStartupWasEnabled "1"
   StartupCaptureDone:
 
+  ; The old uninstaller of a self-update removes the install directory: keep
+  ; the reset stamp, with its time, for customInstall to put back. Users who
+  ; have not launched since the last new install still get their reset.
+  InitPluginsDir
+  IfFileExists "$INSTDIR\${MURGE_CHANNEL_RESET_FILE}" 0 +2
+    CopyFiles /SILENT "$INSTDIR\${MURGE_CHANNEL_RESET_FILE}" "$PLUGINSDIR\${MURGE_CHANNEL_RESET_FILE}"
+
   ; --- Tauri build takeover --------------------------------------------------
   ; Switching back from the experimental (Tauri) build installs this build over
   ; it. The Tauri bundler registers under Uninstall\${PRODUCT_NAME} (this build
@@ -93,7 +100,10 @@ Var /GLOBAL MurgeStartupWasEnabled
 !macroend
 
 !macro customInstall
-  ${ifNot} ${isUpdated}
+  ${if} ${isUpdated}
+    IfFileExists "$PLUGINSDIR\${MURGE_CHANNEL_RESET_FILE}" 0 +2
+      CopyFiles /SILENT "$PLUGINSDIR\${MURGE_CHANNEL_RESET_FILE}" "$INSTDIR\${MURGE_CHANNEL_RESET_FILE}"
+  ${else}
     ClearErrors
     FileOpen $R0 "$INSTDIR\${MURGE_CHANNEL_RESET_FILE}" w
     IfErrors +3

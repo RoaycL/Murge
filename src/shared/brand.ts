@@ -24,6 +24,12 @@ export interface BrandConfig {
    * adopted. Keyed to {@link APP_DATA_NAMESPACE} during migration.
    */
   legacyAppDataNamespaces: string[]
+  /**
+   * Release-signing public key (base64 minisign `.pub`), shared with the Tauri
+   * build's `plugins.updater.pubkey`. Set: the Electron build installs only
+   * updates signed with it. Empty/absent: it keeps electron-updater.
+   */
+  updatePublicKey?: string
 }
 
 export const brand = Object.freeze(brandSource satisfies BrandConfig)

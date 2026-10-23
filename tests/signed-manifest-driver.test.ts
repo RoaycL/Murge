@@ -199,6 +199,31 @@ describe('SignedManifestUpdaterDriver', () => {
     expect(h.events.map((event) => event.kind)).toEqual(['checking', 'available', 'download-progress', 'downloaded'])
   })
 
+  it('takes the newest offer, not the first source to answer', async () => {
+    const key = makeKey()
+    const signature = key.signFile(installer, `timestamp:1\tfile:${fileName}\tversion:1.0.0`)
+    const older = key.signFile(installer, `timestamp:0\tfile:${fileName}\tversion:0.9.40`)
+    const routes: Routes = {
+      [`${mirror}/latest.json`]: manifest(older, '0.9.40'),
+      [`${direct}/latest.json`]: manifest(signature),
+      [assetUrl]: asset()
+    }
+    const h = harness(routes, {
+      publicKey: key.publicKey,
+      // The replaying mirror answers at once; GitHub answers later.
+      fetch: async (url) => {
+        if (url === `${direct}/latest.json`) await new Promise((resolve) => setTimeout(resolve, 20))
+        const route = routes[url]
+        if (!route) throw new Error(`connect ETIMEDOUT ${url}`)
+        return route()
+      }
+    })
+    h.driver.check()
+    await h.settle()
+    expect(h.events.find((event) => event.kind === 'available')).toMatchObject({ version: '1.0.0' })
+    expect(h.events.at(-1)?.kind).toBe('downloaded')
+  })
+
   it('never downloads from a manifest URL outside the repository releases', async () => {
     const key = makeKey()
     const signature = key.signFile(installer, `timestamp:1\tfile:${fileName}\tversion:1.0.0`)

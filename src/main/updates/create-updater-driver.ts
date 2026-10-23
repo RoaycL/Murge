@@ -6,19 +6,20 @@ import { app, net, Notification } from 'electron'
 import { brand } from '@shared/brand'
 import { ElectronUpdaterDriver } from './electron-updater-driver'
 import { SignedManifestUpdaterDriver } from './signed-manifest-driver'
-import { UPDATE_PUBLIC_KEY } from './update-public-key'
 import type { UpdaterDriver } from './updater-driver'
 
 /** Mirrors tried alongside direct GitHub (the electron-updater driver's list). */
 const GITHUB_PROXIES: readonly string[] = ['https://gh-proxy.org', 'https://ghfast.top']
 
 /**
- * Pick the production update driver. With a pinned release key the build
+ * Pick the production update driver. With a release key pinned in
+ * `brand.config.json` (`updatePublicKey`) the build
  * follows the signed manifest (and so moves to the Tauri build); without one
  * it keeps electron-updater.
  */
 export function createUpdaterDriver(onNotificationClick: () => void): UpdaterDriver {
-  if (!UPDATE_PUBLIC_KEY.trim()) return new ElectronUpdaterDriver(onNotificationClick)
+  const publicKey = brand.updatePublicKey?.trim() ?? ''
+  if (!publicKey) return new ElectronUpdaterDriver(onNotificationClick)
   const path = new URL(brand.repositoryUrl).pathname.replace(/^\/+|\/+$/g, '')
   const [owner = '', repo = ''] = path.split('/')
   const directBase = `https://github.com/${owner}/${repo}/releases/latest/download`
@@ -27,7 +28,7 @@ export function createUpdaterDriver(onNotificationClick: () => void): UpdaterDri
     currentVersion: app.getVersion(),
     supported: app.isPackaged && process.platform === 'win32',
     arch: process.arch,
-    publicKey: UPDATE_PUBLIC_KEY,
+    publicKey,
     feedBases: [directBase, ...GITHUB_PROXIES.map((proxy) => `${proxy}/${directBase}`)],
     directBase,
     fetch: (url, init) => net.fetch(url, { signal: init.signal, cache: 'no-store' }),
@@ -44,11 +45,24 @@ export function createUpdaterDriver(onNotificationClick: () => void): UpdaterDri
       const systemRoot = process.env.SystemRoot ?? 'C:\\Windows'
       const powershell = join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
       const argumentList = args.map((arg) => `'${arg.replace(/'/g, "''")}'`).join(',')
+      // The helper waits for this process to exit first: the quit flow still
+      // has cleanup to run, and the installer's running-app check would
+      // otherwise find (and stop) a half-closed Electron process.
+      const command = [
+        'Wait-Process -Id ([int]$env:UPDATE_PARENT_PID) -Timeout 60 -ErrorAction SilentlyContinue',
+        `Start-Process -FilePath $env:UPDATE_INSTALLER_PATH -ArgumentList ${argumentList}`
+      ].join('; ')
       const child = spawn(
         powershell,
-        ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', `Start-Process -FilePath $env:UPDATE_INSTALLER_PATH -ArgumentList ${argumentList}`],
-        { detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, UPDATE_INSTALLER_PATH: file } }
+        ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', command],
+        {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+          env: { ...process.env, UPDATE_INSTALLER_PATH: file, UPDATE_PARENT_PID: String(process.pid) }
+        }
       )
+      child.once('error', (error) => console.error('[updates] failed to start the installer helper:', error))
       child.unref()
     },
     requestQuit: () => app.quit(),

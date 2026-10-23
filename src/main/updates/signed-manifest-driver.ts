@@ -243,22 +243,29 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
       | { kind: 'offer'; base: string; manifest: Manifest; platform: ManifestPlatform }
       | { kind: 'none'; base: string }
       | { kind: 'failed'; errors: unknown[] }
-    // The first offer wins at once; "no update" is only concluded after every
-    // source answered, so a stale mirror cannot hide a release.
+    // Every source is heard out (each probe is time-limited) and the newest
+    // offer wins: manifests are unsigned, so a stale or replaying mirror that
+    // answers first must not pin the client to an older release, and "no
+    // update" is only concluded when no source announced one.
     const outcome = await new Promise<Outcome>((resolve) => {
       let remaining = bases.length
       let answered: string | null = null
+      let best: Extract<Outcome, { kind: 'offer' }> | null = null
       const errors: unknown[] = []
       const settle = (): void => {
         remaining -= 1
-        if (remaining === 0) resolve(answered ? { kind: 'none', base: answered } : { kind: 'failed', errors })
+        if (remaining > 0) return
+        resolve(best ?? (answered ? { kind: 'none', base: answered } : { kind: 'failed', errors }))
       }
       if (remaining === 0) resolve({ kind: 'failed', errors })
       for (const base of bases) {
         this.probe(base, controller.signal).then(
           (offer) => {
-            if (offer) resolve({ kind: 'offer', base, ...offer })
-            else answered ??= base
+            if (offer && (!best || isNewerVersion(offer.manifest.version, best.manifest.version))) {
+              best = { kind: 'offer', base, ...offer }
+            } else if (!offer) {
+              answered ??= base
+            }
             settle()
           },
           (error) => {

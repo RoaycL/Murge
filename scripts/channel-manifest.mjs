@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // Writes the stable release channel's manifest for one Electron release: a
 // Tauri-updater-format `latest.json` that the release workflow uploads to the
 // fixed `channel-stable` GitHub release, where both builds' updaters look.

@@ -691,7 +691,7 @@ struct TauriUpdaterInner {
     /// Offers whose signature did not hold up, by [`offer_key`]. Manifests
     /// are unsigned, so one source can announce a version it cannot deliver;
     /// remembering the bad offer lets the next-best one through instead of
-    /// failing on the same offer every time.
+    /// failing on the same offer every round. Cleared when a check starts.
     rejected: Mutex<std::collections::HashSet<String>>,
     busy: std::sync::atomic::AtomicBool,
 }
@@ -916,6 +916,15 @@ impl TauriUpdaterInner {
     async fn check(self: Arc<Self>) {
         let generation = self.generation();
         self.emit(UpdaterDriverEvent::Checking);
+        // Rejections last for this check only. A manifest whose signature
+        // names another version or file is refused before any download, so
+        // what lands here is bytes that failed to verify: maybe one broken
+        // mirror while the others were down, which must not hide a real
+        // release until restart.
+        self.rejected
+            .lock()
+            .expect("updater rejected poisoned")
+            .clear();
         // Each round drops at most one offer per source.
         let mut rounds_left = GITHUB_PROXIES.len() + 2;
         loop {

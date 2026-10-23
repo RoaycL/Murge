@@ -359,11 +359,17 @@ impl SettingsStore {
                 return false;
             }
         }
-        if self.get().update_channel != "experimental" {
+        // Decide from the file itself: a failed read falls back to defaults
+        // (already "experimental") and would record the stamp unapplied.
+        let Ok(persisted) = self.persisted_update_channel() else {
+            crate::diag!("[app-settings] settings unreadable; channel reset retried next launch");
+            return false;
+        };
+        if persisted != "experimental" {
             self.set(&AppSettingsPatch(
                 serde_json::json!({ "updateChannel": "experimental" }),
             ));
-            if self.read_from_disk().update_channel != "experimental" {
+            if self.persisted_update_channel().as_deref() != Ok("experimental") {
                 crate::diag!(
                     "[app-settings] update channel reset not persisted; retrying next launch"
                 );
@@ -377,6 +383,26 @@ impl SettingsStore {
             return false;
         }
         true
+    }
+
+    /// The update channel as stored on disk, the default when there is no
+    /// settings file yet; `Err` when the file exists but cannot be read.
+    fn persisted_update_channel(&self) -> Result<String, ()> {
+        let Some(path) = self.file_path() else {
+            return Ok(AppSettings::default().update_channel);
+        };
+        match fs::read_to_string(&path) {
+            Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
+                Ok(document) if document.is_object() => {
+                    Ok(parse_app_settings(&document).update_channel)
+                }
+                _ => Err(()),
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(AppSettings::default().update_channel)
+            }
+            Err(_) => Err(()),
+        }
     }
 
     /// Subscribe to every applied `set` (the TS `onChange`).
@@ -544,6 +570,22 @@ mod tests {
             .unwrap();
         assert!(store.apply_installer_channel_reset(Some(install.path())));
         assert_eq!(store.get().update_channel, "experimental");
+    }
+
+    #[test]
+    fn installer_stamp_waits_while_the_settings_file_is_unreadable() {
+        let temp = TempDir::new().unwrap();
+        let install = TempDir::new().unwrap();
+        fs::write(
+            install.path().join(INSTALLER_CHANNEL_RESET_FILE),
+            "experimental",
+        )
+        .unwrap();
+        // A directory where the file should be makes every read fail.
+        fs::create_dir(temp.path().join(APP_SETTINGS_FILE)).unwrap();
+        let store = store_in(&temp);
+        assert!(!store.apply_installer_channel_reset(Some(install.path())));
+        assert!(!temp.path().join(INSTALLER_CHANNEL_RESET_SEEN_FILE).exists());
     }
 
     #[test]

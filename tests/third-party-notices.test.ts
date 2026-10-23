@@ -16,6 +16,7 @@ const EXPECTED_LICENSES = [
   'zod.txt',
   'ws.txt',
   'yaml.txt',
+  'noble-hashes.txt',
   'electron.txt',
   'electron-toolkit-utils.txt',
   'electron-toolkit-preload.txt',

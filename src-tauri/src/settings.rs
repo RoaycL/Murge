@@ -377,7 +377,10 @@ impl SettingsStore {
             self.set(&AppSettingsPatch(
                 serde_json::json!({ "updateChannel": "experimental" }),
             ));
-            if self.persisted_update_channel().as_deref() != Ok("experimental") {
+            // set() only logs a failed write: read the file back. An unreadable
+            // file here says nothing about the write, so keep the record then.
+            if matches!(self.persisted_update_channel().as_deref(), Ok(channel) if channel != "experimental")
+            {
                 crate::diag!(
                     "[app-settings] update channel reset not persisted; retrying next launch"
                 );

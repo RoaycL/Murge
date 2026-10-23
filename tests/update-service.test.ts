@@ -7,6 +7,7 @@ import type { UpdateState } from '../src/shared/updates'
 /** A controllable fake driver so the service state machine is tested with no Electron. */
 class FakeUpdaterDriver implements UpdaterDriver {
   readonly currentVersion = '0.0.0-test'
+  setChannel?: (channel: 'stable' | 'experimental') => void
   configureCalls = 0
   checkCalls = 0
   downloadCalls = 0
@@ -47,6 +48,42 @@ class FakeUpdaterDriver implements UpdaterDriver {
 }
 
 describe('UpdateService', () => {
+  it('carries release notes and the target build of an offer', () => {
+    const driver = new FakeUpdaterDriver()
+    const service = new UpdateService(driver)
+    service.start()
+    driver.emit({ kind: 'available', version: '0.1.0', releaseNotes: '- 新功能', product: 'tauri' })
+    const state = service.getState()
+    expect(state).toMatchObject({ phase: 'available', availableVersion: '0.1.0', releaseNotes: '- 新功能', availableProduct: 'tauri', currentProduct: 'electron' })
+    driver.emit({ kind: 'not-available' })
+    expect(service.getState()).toMatchObject({ availableProduct: null, releaseNotes: null })
+  })
+
+  it('setChannel() hands the channel to the driver, drops a staged update and checks again', () => {
+    const driver = new FakeUpdaterDriver()
+    const channels: string[] = []
+    driver.setChannel = (channel) => { channels.push(channel) }
+    const service = new UpdateService(driver)
+    service.start()
+    driver.emit({ kind: 'available', version: '1.0.0', releaseNotes: null })
+    driver.emit({ kind: 'downloaded' })
+    expect(service.getState().canInstall).toBe(true)
+    service.setChannel('experimental')
+    expect(channels).toEqual(['experimental'])
+    expect(service.getState()).toMatchObject({ phase: 'checking', canInstall: false, availableVersion: null })
+    expect(driver.checkCalls).toBe(1)
+  })
+
+  it('offers release channels only when the driver can switch them', () => {
+    expect(new UpdateService(new FakeUpdaterDriver()).getState().channelsSupported).toBe(false)
+    const switching = new FakeUpdaterDriver()
+    switching.setChannel = () => undefined
+    expect(new UpdateService(switching).getState().channelsSupported).toBe(true)
+    const unsupported = new FakeUpdaterDriver(false)
+    unsupported.setChannel = () => undefined
+    expect(new UpdateService(unsupported).getState().channelsSupported).toBe(false)
+  })
+
   it('start() configures the driver and subscribes to its events', () => {
     const driver = new FakeUpdaterDriver()
     const service = new UpdateService(driver)
@@ -344,9 +381,13 @@ describe('coerceUpdateState', () => {
       phase: 'downloaded',
       currentVersion: '1.0.0',
       availableVersion: '1.1.0',
+      releaseNotes: '- 修复',
+      currentProduct: 'electron',
+      availableProduct: 'tauri',
       progress: { percent: 100, bytesPerSecond: 10, transferred: 10, total: 10 },
       error: null,
-      canInstall: true
+      canInstall: true,
+      channelsSupported: true
     }
     expect(coerceUpdateState(payload)).toEqual(payload)
   })

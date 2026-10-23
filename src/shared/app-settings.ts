@@ -1,6 +1,13 @@
 import type { KernelVersionChannel } from './kernel-manager'
 
 /**
+ * Release channel the updater follows: `stable` is the Electron build,
+ * `experimental` the Tauri build. Switching installs the other build in place
+ * (same data, service and startup task).
+ */
+export type UpdateChannel = 'stable' | 'experimental'
+
+/**
  * User-facing application preferences that live outside a profile and outside
  * the OS network configuration. Persisted by the main process in the stable
  * app-data namespace so they survive restarts and are readable at launch time
@@ -21,6 +28,8 @@ export interface AppSettings {
    * this flag.
    */
   autoCheckUpdate: boolean
+  /** Release channel the updater follows; see {@link UpdateChannel}. */
+  updateChannel: UpdateChannel
   /**
    * User's durable intent for the Windows system proxy. Clean application/OS
    * shutdown may temporarily restore the registry, but the next launch applies
@@ -84,6 +93,7 @@ export interface AppSettings {
 export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = Object.freeze({
   autoStartKernel: true,
   autoCheckUpdate: true,
+  updateChannel: 'stable',
   systemProxyDesired: false,
   tunDesired: false,
   kernelEnabled: true,
@@ -131,6 +141,8 @@ export function parseAppSettings(value: string | null): AppSettings {
         typeof parsed.autoCheckUpdate === 'boolean'
           ? parsed.autoCheckUpdate
           : DEFAULT_APP_SETTINGS.autoCheckUpdate,
+      updateChannel:
+        parsed.updateChannel === 'experimental' ? 'experimental' : DEFAULT_APP_SETTINGS.updateChannel,
       systemProxyDesired:
         typeof parsed.systemProxyDesired === 'boolean'
           ? parsed.systemProxyDesired

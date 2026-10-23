@@ -685,8 +685,10 @@ pub fn run() {
             // Updates: the signed Tauri updater (inert in dev runs and until a
             // release public key is pinned); state transitions forward to
             // every renderer window.
-            let updates_service =
-                updates::UpdateService::new(std::sync::Arc::new(updates::TauriUpdaterDriver::new(app.handle().clone())));
+            let update_channel = app.state::<std::sync::Arc<settings::SettingsStore>>().get().update_channel;
+            let updates_service = updates::UpdateService::new(std::sync::Arc::new(
+                updates::TauriUpdaterDriver::new(app.handle().clone(), &update_channel),
+            ));
             updates_service.start();
             let updates_app = app.handle().clone();
             updates_service.subscribe(std::sync::Arc::new(move |value| {

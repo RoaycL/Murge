@@ -4,6 +4,7 @@ import { RouterView } from 'vue-router'
 import AppSidebar from './components/AppSidebar.vue'
 import ToastHost from './components/ToastHost.vue'
 import ConfirmModal from './components/ConfirmModal.vue'
+import UpdateDialog from './components/UpdateDialog.vue'
 import type { BrandConfig } from '@shared/brand'
 import { brand as fallbackBrand } from '@shared/brand'
 import { useKernelStore } from './stores/kernel'
@@ -61,6 +62,7 @@ onBeforeUnmount(() => {
         <RouterView />
       </main>
       <ToastHost />
+      <UpdateDialog />
       <ConfirmModal :open="Boolean(pendingNavigation)" title="放弃未保存的修改？" :description="`${unsavedLabels.join('、') || '当前页面'}包含尚未保存的修改，离开后将无法恢复。`" confirm-label="放弃并离开" @close="cancelNavigation" @confirm="discardAndNavigate" />
     </div>
   </div>

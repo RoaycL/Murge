@@ -65,6 +65,11 @@ pub fn diagnostic(line: &str) {
     }
 }
 
+/// True once [`install_diagnostic_log`] ran (setup has started).
+pub fn diagnostic_log_installed() -> bool {
+    DIAGNOSTIC_LOG.get().is_some()
+}
+
 /// Wait up to two seconds until every diagnostic written so far is on disk.
 /// For the exit path, where the process ends right after.
 pub fn flush_diagnostics_blocking() {

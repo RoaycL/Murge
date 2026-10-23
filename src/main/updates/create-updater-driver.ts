@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readFileSync, rmSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { app, net, Notification } from 'electron'
@@ -24,6 +24,9 @@ export function createUpdaterDriver(onNotificationClick: () => void, channel: Up
   const path = new URL(brand.repositoryUrl).pathname.replace(/^\/+|\/+$/g, '')
   const [owner = '', repo = ''] = path.split('/')
   const notifications = new Set<Notification>()
+  const downloadDir = join(app.getPath('temp'), `${brand.executableName}-update`)
+  const failureFile = join(downloadDir, 'install-failure.txt')
+  reportPreviousInstallFailure(failureFile)
   return new SignedManifestUpdaterDriver({
     currentVersion: app.getVersion(),
     supported: app.isPackaged && process.platform === 'win32',
@@ -34,7 +37,7 @@ export function createUpdaterDriver(onNotificationClick: () => void, channel: Up
     mirrors: GITHUB_PROXIES,
     channel,
     fetch: (url, init) => net.fetch(url, { signal: init.signal, cache: 'no-store' }),
-    downloadDir: join(app.getPath('temp'), `${brand.executableName}-update`),
+    downloadDir,
     writeFile: async (file, data) => {
       await mkdir(dirname(file), { recursive: true })
       await writeFile(file, data)
@@ -52,7 +55,10 @@ export function createUpdaterDriver(onNotificationClick: () => void, channel: Up
       // otherwise find (and stop) a half-closed Electron process.
       const command = [
         'Wait-Process -Id ([int]$env:UPDATE_PARENT_PID) -Timeout 60 -ErrorAction SilentlyContinue',
-        `Start-Process -FilePath $env:UPDATE_INSTALLER_PATH -ArgumentList ${argumentList}`
+        // A refused UAC prompt or a blocked file fails here, after this
+        // process is gone: leave the reason for the next launch to log.
+        `try { Start-Process -FilePath $env:UPDATE_INSTALLER_PATH -ArgumentList ${argumentList} -ErrorAction Stop } ` +
+          'catch { Set-Content -LiteralPath $env:UPDATE_FAILURE_PATH -Value $_.Exception.Message -Encoding UTF8 }'
       ].join('; ')
       const child = spawn(
         powershell,
@@ -61,7 +67,7 @@ export function createUpdaterDriver(onNotificationClick: () => void, channel: Up
           detached: true,
           stdio: 'ignore',
           windowsHide: true,
-          env: { ...process.env, UPDATE_INSTALLER_PATH: file, UPDATE_PARENT_PID: String(process.pid) }
+          env: { ...process.env, UPDATE_INSTALLER_PATH: file, UPDATE_FAILURE_PATH: failureFile, UPDATE_PARENT_PID: String(process.pid) }
         }
       )
       child.once('error', (error) => console.error('[updates] failed to start the installer helper:', error))
@@ -85,4 +91,20 @@ export function createUpdaterDriver(onNotificationClick: () => void, channel: Up
       }
     }
   })
+}
+
+/** Log (once) why the installer launched at the previous quit did not start. */
+function reportPreviousInstallFailure(file: string): void {
+  let reason: string
+  try {
+    reason = readFileSync(file, 'utf8').trim()
+  } catch {
+    return
+  }
+  console.error(`[updates] the update installer did not start at the previous quit: ${reason}`)
+  try {
+    rmSync(file, { force: true })
+  } catch {
+    // Logged once is enough; a stale file only repeats the line.
+  }
 }

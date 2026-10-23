@@ -276,7 +276,9 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
       if (fields.version !== installer.version || fields.file !== installer.fileName) {
         throw new Error('staged installer no longer matches its signature')
       }
-      this.deps.launchInstaller(installer.path, installerArgs(installer.product, this.product, this.restartAfterInstall))
+      const args = installerArgs(installer.product, this.product, this.restartAfterInstall)
+      console.info(`[updates] launching ${installer.fileName} ${args.join(' ')}`)
+      this.deps.launchInstaller(installer.path, args)
     } catch (error) {
       console.error('[updates] failed to launch the installer:', error)
     }
@@ -399,6 +401,7 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
     }
     const selected = outcome
     const platform = outcome.platform
+    console.info(`[updates] ${this.channel} channel offers ${selected.product} ${selected.manifest.version} (from ${selected.base})`)
     // A newer release supersedes the staged installer: what runs on quit must
     // match what the UI reports, even if this download then fails.
     this.readyInstaller = null
@@ -428,6 +431,7 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
       try {
         data = await this.fetchInstaller(routeDownloadUrl(available.platform.url, source, this.directBase()), generation)
       } catch (error) {
+        console.warn(`[updates] installer download from ${source} failed:`, message(error))
         lastError = error
         continue
       }
@@ -437,6 +441,7 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
       } catch (error) {
         // Bytes that fail verification may come from a broken or hostile
         // mirror: discard them and try the next source.
+        console.warn(`[updates] installer from ${source} failed verification:`, message(error))
         lastError = error
         signatureFailed = true
         continue
@@ -454,6 +459,7 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
       const path = join(this.deps.downloadDir, fileName)
       await this.deps.writeFile(path, data)
       if (generation !== this.generation) return
+      console.info(`[updates] verified ${fileName} ${expected}, staged at ${path}`)
       this.readyInstaller = { path, version: expected, fileName, signature: available.platform.signature, product: available.product }
       this.emit({ kind: 'downloaded' })
       this.deps.notify?.(`新版本 v${available.manifest.version.replace(/^v/, '')} 已就绪`, '退出应用时自动安装，或点击“重启并安装”立即更新。')
@@ -504,6 +510,10 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
           total
         })
       }
+    }
+    // A connection that ends early is a network failure, not a bad signature.
+    if (total !== null && transferred !== total) {
+      throw new Error(`installer download ended after ${transferred} of ${total} bytes`)
     }
     return Buffer.concat(chunks)
   }

@@ -1194,6 +1194,10 @@ pub(crate) async fn refresh_subscription(
 ) -> IpcResult {
     // Download outside the mode queue: a slow source (up to the fetch
     // timeout) must not hold up node picks, proxy/TUN toggles or quit.
+    // Refreshes still serialize with each other, so an overlapping manual
+    // and automatic refresh can never commit an older download last.
+    static SUBSCRIPTION_REFRESH: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _refresh = SUBSCRIPTION_REFRESH.lock().await;
     let fetched = profiles.fetch_from_source(id).await?;
     let _gate = runtime_update_guard().await?;
     let previous_active = active_profile_id(profiles)?;

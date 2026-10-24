@@ -117,6 +117,17 @@ Var MurgeElectronDir
   ; The Electron uninstaller removes its own registry entries; make sure, so a
   ; stale "Apps" entry can never run against the new files.
   ReadRegStr $R0 HKLM "${MURGE_ELECTRON_UNINSTALL_KEY}" "UninstallString"
+  StrCmp $R0 "" MurgeElectronTakeoverDone
+  ; Older Electron uninstall hooks left SetShellVarContext current active.
+  ; Their successful uninstall removed files but cleaned HKCU rather than HKLM.
+  ; Never bypass a failed/partial uninstall: require exit 0 above AND both
+  ; Electron payload markers to be absent before retiring these exact keys.
+  IfFileExists "$MurgeElectronDir\${MAINBINARYNAME}.exe" MurgeElectronTakeoverFailed
+  IfFileExists "$MurgeElectronDir\resources\app.asar" MurgeElectronTakeoverFailed
+  DetailPrint "Removing stale Electron registration after verified file removal..."
+  DeleteRegKey HKLM "${MURGE_ELECTRON_UNINSTALL_KEY}"
+  DeleteRegKey HKLM "${MURGE_ELECTRON_INSTALL_KEY}"
+  ReadRegStr $R0 HKLM "${MURGE_ELECTRON_UNINSTALL_KEY}" "UninstallString"
   StrCmp $R0 "" MurgeElectronTakeoverDone MurgeElectronTakeoverFailed
   MurgeElectronTakeoverFailed:
     DetailPrint "Previous installation could not be removed (exit code $R3)"

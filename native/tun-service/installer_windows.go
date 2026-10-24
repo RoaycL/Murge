@@ -56,16 +56,37 @@ func runInstallerCommand(operation string, bootstrapDirectory string) error {
 	stateDirectory := filepath.Join(root, "state")
 	switch operation {
 	case "--install":
-		user, err := token.GetTokenUser()
+		allowedSID, err := installingUserSID(token)
 		if err != nil {
 			return err
 		}
-		return installOrUpgradeService(template, bootstrapDirectory, serviceHome, stateDirectory, user.User.Sid.String())
+		return installOrUpgradeService(template, bootstrapDirectory, serviceHome, stateDirectory, allowedSID)
+	case "--session-user-sid":
+		allowedSID, err := installingUserSID(token)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Println(allowedSID)
+		return err
+	case "--restore-client-proxy":
+		code, err := restoreClientProxy(installedClientPath(bootstrapDirectory, template))
+		if err != nil {
+			return err
+		}
+		if code != 0 {
+			return fmt.Errorf("system-proxy restore exited %d", code)
+		}
+		return nil
 	case "--uninstall":
 		return uninstallService(template, root, stateDirectory)
 	default:
 		return errors.New("unknown installer operation")
 	}
+}
+
+// installedClientPath is the GUI next to the installed resources directory.
+func installedClientPath(bootstrapDirectory string, template serviceTemplate) string {
+	return filepath.Clean(filepath.Join(bootstrapDirectory, "..", "..", template.ClientExecutableName+".exe"))
 }
 
 func loadServiceTemplate(path string) (serviceTemplate, error) {
@@ -140,7 +161,7 @@ func installOrUpgradeService(template serviceTemplate, bootstrapDirectory, servi
 	if digest, err := hashFile(archivePath); err != nil || digest != template.ArchiveSHA256 {
 		return errors.New("installer-bundled mihomo archive failed verification")
 	}
-	clientPath := filepath.Clean(filepath.Join(bootstrapDirectory, "..", "..", template.ClientExecutableName+".exe"))
+	clientPath := installedClientPath(bootstrapDirectory, template)
 	clientDigest, err := hashFile(clientPath)
 	if err != nil {
 		return fmt.Errorf("hash installed GUI: %w", err)

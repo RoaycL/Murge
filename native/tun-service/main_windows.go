@@ -33,7 +33,7 @@ func main() {
 		panic(err)
 	}
 	bootstrapDirectory := filepath.Dir(executable)
-	if len(os.Args) == 2 && (os.Args[1] == "--install" || os.Args[1] == "--uninstall") {
+	if len(os.Args) == 2 && isInstallerOperation(os.Args[1]) {
 		if err := runInstallerCommand(os.Args[1], bootstrapDirectory); err != nil {
 			// The installer captures stderr and presents this contextual error to
 			// the user. A panic only produced Go's generic exit code 2 in NSIS and
@@ -65,6 +65,15 @@ func main() {
 	if err := service.runConsole(); err != nil {
 		panic(err)
 	}
+}
+
+// isInstallerOperation names the elevated commands the NSIS hooks run.
+func isInstallerOperation(argument string) bool {
+	switch argument {
+	case "--install", "--uninstall", "--session-user-sid", "--restore-client-proxy":
+		return true
+	}
+	return false
 }
 
 func (service *windowsService) initialize() error {

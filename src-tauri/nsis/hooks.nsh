@@ -47,20 +47,24 @@
 !define MURGE_CHANNEL_RESET_FILE "update-channel-reset"
 
 Var MurgeStartupWasEnabled
+; SID of the user signed in at this desktop (tun-service.exe --session-user-sid).
+; It can differ from the elevated account this installer runs as, so per-user
+; registry values go through HKU "<sid>\" instead of HKCU when it is known.
+Var MurgeUserSid
 Var MurgeElectronUninstaller
 Var MurgeElectronDir
 
-; Sets $MurgeStartupWasEnabled to 1 when this user currently starts the app at
-; logon through the scheduled task or a Run value.
-!macro MURGE_CAPTURE_STARTUP_INTENT TASK_NAME RUN_NAME
+; Sets $MurgeStartupWasEnabled to 1 when the user whose registry is at
+; ROOT "PREFIX..." (HKCU "" or HKU "<sid>\") starts the app at logon through
+; the scheduled task or a Run value. Never clears it, so captures can be combined.
+!macro MURGE_CAPTURE_STARTUP_INTENT TASK_NAME ROOT PREFIX
   !define MURGE_ID ${__LINE__}
-  StrCpy $MurgeStartupWasEnabled "0"
-  ReadRegStr $R8 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${RUN_NAME}"
+  ReadRegStr $R8 ${ROOT} "${PREFIX}Software\Microsoft\Windows\CurrentVersion\Run" "${BUNDLEID}"
   StrCmp $R8 "" 0 murge_startup_on_${MURGE_ID}
   ; Older Electron builds registered auto-start under this legacy Run name.
-  ReadRegStr $R8 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "electron.app.${PRODUCTNAME}"
+  ReadRegStr $R8 ${ROOT} "${PREFIX}Software\Microsoft\Windows\CurrentVersion\Run" "electron.app.${PRODUCTNAME}"
   StrCmp $R8 "" 0 murge_startup_on_${MURGE_ID}
-  ReadRegStr $R8 HKCU "${MANUPRODUCTKEY}" "${MURGE_STARTUP_MARKER_VALUE}"
+  ReadRegStr $R8 ${ROOT} "${PREFIX}${MANUPRODUCTKEY}" "${MURGE_STARTUP_MARKER_VALUE}"
   StrCmp $R8 "1" murge_startup_on_${MURGE_ID}
   nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "if ((Get-ScheduledTask -TaskName ${TASK_NAME} -ErrorAction Stop).Settings.Enabled) { exit 0 } else { exit 1 }"'
   Pop $R8
@@ -72,13 +76,46 @@ Var MurgeElectronDir
   !undef MURGE_ID
 !macroend
 
+; Sets $MurgeUserSid from the installed service helper, or "" when unknown.
+!macro MURGE_RESOLVE_USER_SID
+  !define MURGE_ID ${__LINE__}
+  StrCpy $MurgeUserSid ""
+  IfFileExists "$INSTDIR\resources\tun-service\tun-service.exe" 0 murge_sid_done_${MURGE_ID}
+  nsExec::ExecToStack '"$INSTDIR\resources\tun-service\tun-service.exe" --session-user-sid'
+  Pop $R8
+  Pop $R9
+  StrCmp $R8 0 0 murge_sid_done_${MURGE_ID}
+  ; Strip the trailing line break.
+  murge_sid_trim_${MURGE_ID}:
+    StrCpy $R8 $R9 1 -1
+    StrCmp $R8 "$\n" +2
+    StrCmp $R8 "$\r" 0 murge_sid_check_${MURGE_ID}
+    StrCpy $R9 $R9 -1
+    Goto murge_sid_trim_${MURGE_ID}
+  murge_sid_check_${MURGE_ID}:
+  StrCpy $R8 $R9 6
+  StrCmp $R8 "S-1-5-" 0 murge_sid_done_${MURGE_ID}
+  StrCpy $MurgeUserSid $R9
+  DetailPrint "Signed-in user: $MurgeUserSid"
+  murge_sid_done_${MURGE_ID}:
+  !undef MURGE_ID
+!macroend
+
+; Retire the Run-key fallbacks once the scheduled task is in place.
+!macro MURGE_RETIRE_RUN_VALUES ROOT PREFIX
+  DeleteRegValue ${ROOT} "${PREFIX}Software\Microsoft\Windows\CurrentVersion\Run" "${BUNDLEID}"
+  DeleteRegValue ${ROOT} "${PREFIX}Software\Microsoft\Windows\CurrentVersion\Run" "electron.app.${PRODUCTNAME}"
+  DeleteRegValue ${ROOT} "${PREFIX}Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
   ; Close a running GUI first (an exiting Electron build included). The stock
   ; check after this hook would do it too, but only after the takeover below.
   !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
-  SetShellVarContext current
-  !insertmacro MURGE_CAPTURE_STARTUP_INTENT "${BUNDLEID}" "${BUNDLEID}"
-  SetShellVarContext all
+  ; The service helper is not on disk yet, so this reads the elevated
+  ; account's HKCU; POSTINSTALL adds the signed-in user's own values.
+  StrCpy $MurgeStartupWasEnabled "0"
+  !insertmacro MURGE_CAPTURE_STARTUP_INTENT "${BUNDLEID}" HKCU ""
 
   ; --- Electron takeover -----------------------------------------------------
   StrCpy $R3 "-"
@@ -154,10 +191,17 @@ Var MurgeElectronDir
   ; The installer already holds the one-time administrator authorization, so
   ; it registers the task (disabled unless the user had opted in) and the GUI
   ; only toggles it. register-task.ps1 keeps an existing task's enabled state.
+  ; The task belongs to the signed-in user, not the elevating account.
   SetShellVarContext current
+  !insertmacro MURGE_RESOLVE_USER_SID
+  StrCpy $R7 ""
+  ${If} $MurgeUserSid != ""
+    !insertmacro MURGE_CAPTURE_STARTUP_INTENT "${BUNDLEID}" HKU "$MurgeUserSid\"
+    StrCpy $R7 ' -UserSid "$MurgeUserSid"'
+  ${EndIf}
   IfFileExists "$INSTDIR\resources\startup\register-task.ps1" 0 MurgeStartupScriptMissing
     DetailPrint "Registering per-user startup task..."
-    nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\startup\register-task.ps1" -TaskName "${BUNDLEID}" -ExecutablePath "$INSTDIR\${MAINBINARYNAME}.exe" -PreviouslyEnabled "$MurgeStartupWasEnabled"'
+    nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\startup\register-task.ps1" -TaskName "${BUNDLEID}" -ExecutablePath "$INSTDIR\${MAINBINARYNAME}.exe" -PreviouslyEnabled "$MurgeStartupWasEnabled"$R7'
     Pop $R0
     Pop $R1
     StrCmp $R0 0 MurgeStartupRegistered MurgeStartupFailed
@@ -169,17 +213,25 @@ Var MurgeElectronDir
     StrCmp $MurgeStartupWasEnabled "1" 0 MurgeStartupEnd
       ; Keep the user's auto-start working through the Run-key fallback the
       ; GUI also understands, then report the best-effort failure.
-      WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${BUNDLEID}" '"$INSTDIR\${MAINBINARYNAME}.exe" --hidden'
+      ${If} $MurgeUserSid != ""
+        WriteRegStr HKU "$MurgeUserSid\Software\Microsoft\Windows\CurrentVersion\Run" "${BUNDLEID}" '"$INSTDIR\${MAINBINARYNAME}.exe" --hidden'
+      ${Else}
+        WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${BUNDLEID}" '"$INSTDIR\${MAINBINARYNAME}.exe" --hidden'
+      ${EndIf}
       MessageBox MB_ICONEXCLAMATION|MB_OK "未能注册高优先级开机启动任务，原有开机启动设置将保留为兼容模式。请以管理员身份重新运行安装包修复。" /SD IDOK
     Goto MurgeStartupEnd
   MurgeStartupRegistered:
     ; Only retire the fallback entries once the task is verified, so startup
     ; never launches twice and never silently disappears.
-    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${BUNDLEID}"
-    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "electron.app.${PRODUCTNAME}"
-    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
+    !insertmacro MURGE_RETIRE_RUN_VALUES HKCU ""
+    ${If} $MurgeUserSid != ""
+      !insertmacro MURGE_RETIRE_RUN_VALUES HKU "$MurgeUserSid\"
+    ${EndIf}
   MurgeStartupEnd:
   DeleteRegValue HKCU "${MANUPRODUCTKEY}" "${MURGE_STARTUP_MARKER_VALUE}"
+  ${If} $MurgeUserSid != ""
+    DeleteRegValue HKU "$MurgeUserSid\${MANUPRODUCTKEY}" "${MURGE_STARTUP_MARKER_VALUE}"
+  ${EndIf}
 
   ; --- Update channel ---------------------------------------------------------
   ; Anything but this build's own self-update (a manual install, an Electron
@@ -214,9 +266,18 @@ Var MurgeElectronDir
   ${If} $UpdateMode = 1
     Goto MurgeProxyDone
   ${EndIf}
-  IfFileExists "$APPDATA\${BUNDLEID}\system-proxy\owned-backup.json" 0 MurgeProxyDone
-    IfFileExists "$INSTDIR\${MAINBINARYNAME}.exe" 0 MurgeProxyWarn
-      DetailPrint "Restoring owned system proxy before uninstall..."
+  ; The proxy belongs to the signed-in user, whose HKCU and AppData the elevated
+  ; uninstaller may not see, so the service helper runs the GUI's headless
+  ; restore as that user. It exits 0 when nothing was owned.
+  IfFileExists "$INSTDIR\${MAINBINARYNAME}.exe" 0 MurgeProxyWarn
+    DetailPrint "Restoring owned system proxy before uninstall..."
+    IfFileExists "$INSTDIR\resources\tun-service\tun-service.exe" 0 MurgeProxyDirect
+      nsExec::ExecToStack '"$INSTDIR\resources\tun-service\tun-service.exe" --restore-client-proxy'
+      Pop $R0
+      Pop $R1
+      DetailPrint "system-proxy restore exit code: $R0 $R1"
+      StrCmp $R0 0 MurgeProxyDone MurgeProxyWarn
+    MurgeProxyDirect:
       ExecWait '"$INSTDIR\${MAINBINARYNAME}.exe" --restore-system-proxy' $R0
       DetailPrint "system-proxy restore exit code: $R0"
       StrCmp $R0 0 MurgeProxyDone
@@ -233,15 +294,27 @@ Var MurgeElectronDir
 
     ; --- Startup task ---------------------------------------------------------
     ; Remember an enabled auto-start so a reinstall right after this keeps it.
-    !insertmacro MURGE_CAPTURE_STARTUP_INTENT "${BUNDLEID}" "${BUNDLEID}"
-    StrCmp $MurgeStartupWasEnabled "1" 0 +2
-      WriteRegStr HKCU "${MANUPRODUCTKEY}" "${MURGE_STARTUP_MARKER_VALUE}" "1"
+    !insertmacro MURGE_RESOLVE_USER_SID
+    StrCpy $MurgeStartupWasEnabled "0"
+    ${If} $MurgeUserSid != ""
+      !insertmacro MURGE_CAPTURE_STARTUP_INTENT "${BUNDLEID}" HKU "$MurgeUserSid\"
+      StrCmp $MurgeStartupWasEnabled "1" 0 +2
+        WriteRegStr HKU "$MurgeUserSid\${MANUPRODUCTKEY}" "${MURGE_STARTUP_MARKER_VALUE}" "1"
+    ${Else}
+      !insertmacro MURGE_CAPTURE_STARTUP_INTENT "${BUNDLEID}" HKCU ""
+      StrCmp $MurgeStartupWasEnabled "1" 0 +2
+        WriteRegStr HKCU "${MANUPRODUCTKEY}" "${MURGE_STARTUP_MARKER_VALUE}" "1"
+    ${EndIf}
     DetailPrint "Removing auto-start scheduled task..."
     nsExec::Exec 'schtasks /delete /tn "${BUNDLEID}" /f'
     Pop $R0
     DetailPrint "auto-start task removal exit code: $R0"
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${BUNDLEID}"
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "${BUNDLEID}"
+    ${If} $MurgeUserSid != ""
+      DeleteRegValue HKU "$MurgeUserSid\Software\Microsoft\Windows\CurrentVersion\Run" "${BUNDLEID}"
+      DeleteRegValue HKU "$MurgeUserSid\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "${BUNDLEID}"
+    ${EndIf}
 
     ; --- Privileged core service ----------------------------------------------
     ; Stops the service (which stops its mihomo), deletes it and removes its

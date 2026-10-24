@@ -531,7 +531,10 @@ pub async fn reload_active_profile_with_rollback(
     match kernel.start().await {
         Ok(_) => {
             if proxy_was_enabled {
-                system_proxy.enable().await?;
+                // Keep the successfully applied profile committed even if an
+                // external proxy takeover prevents re-enabling. The proxy
+                // service publishes its own visible error/conflict state.
+                let _ = system_proxy.enable().await;
             }
             Ok(true)
         }

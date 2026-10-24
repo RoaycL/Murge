@@ -56,6 +56,13 @@ func sessionShellToken() (windows.Token, error) {
 	if ownSession != shellSession {
 		return 0, errors.New("shell window belongs to another session")
 	}
+	// Over the shoulder, the shell runs as a different account, and an
+	// administrator opens another account's process and token only with
+	// SeDebugPrivilege enabled. Elevation holds it but leaves it disabled. When
+	// it cannot be enabled the shell is usually our own user, which needs none.
+	if restore, err := enablePrivilege("SeDebugPrivilege"); err == nil {
+		defer restore()
+	}
 	process, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, processID)
 	if err != nil {
 		return 0, fmt.Errorf("open shell process: %w", err)

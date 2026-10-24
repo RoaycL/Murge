@@ -1,7 +1,10 @@
 param(
   [Parameter(Mandatory = $true)][string]$TaskName,
   [Parameter(Mandatory = $true)][string]$ExecutablePath,
-  [ValidateSet('0', '1')][string]$PreviouslyEnabled = '0'
+  [ValidateSet('0', '1')][string]$PreviouslyEnabled = '0',
+  # The signed-in user the task runs for. The elevated installer may run as a
+  # different administrator account; defaults to the caller for older hooks.
+  [ValidatePattern('^S-1-5-\d+(-\d+)+$')][string]$UserSid = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -16,7 +19,7 @@ try {
     throw "Installed executable does not exist: $ExecutablePath"
   }
 
-  $sid = $identity.User.Value
+  $sid = if ($UserSid) { $UserSid } else { $identity.User.Value }
   $service = New-Object -ComObject Schedule.Service
   $service.Connect()
   $folder = $service.GetFolder('\')

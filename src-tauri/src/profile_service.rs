@@ -32,6 +32,12 @@ use crate::redact::{is_redacted_url, redact_credentials};
 use crate::subscription::SubscriptionFetcher;
 use crate::validate::{throw_if_invalid, validate_document};
 
+/// A validated subscription download waiting to be committed.
+pub struct FetchedSource {
+    refresh_url: String,
+    fetched: crate::subscription::FetchSubscriptionResult,
+}
+
 pub struct ProfilesService {
     pub(crate) repository: ProfileRepository,
     source_store: Box<dyn ProfileSourceStore + Send + Sync>,
@@ -172,7 +178,37 @@ impl ProfilesService {
     /// id and active pointer are untouched. The fetch prefers the private raw
     /// URL held in the source store; a REDACTED display URL is refused with
     /// actionable copy instead of a confusing network error.
-    pub async fn update_from_source(&self, id: &str) -> ProfileResult<Value> {
+    /// `update-from-source`, network half. It touches no state, so callers
+    /// run it outside the runtime mode queue and then `commit_fetched`.
+    pub async fn fetch_from_source(&self, id: &str) -> ProfileResult<FetchedSource> {
+        let refresh_url = self.refresh_url(id)?;
+        let fetched = crate::subscription::fetch_with_fallback(&self.fetcher, &refresh_url).await?;
+        // Validate BEFORE writing so a failed update cannot corrupt the doc.
+        throw_if_invalid(&validate_document(&fetched.document)?)?;
+        Ok(FetchedSource {
+            refresh_url,
+            fetched,
+        })
+    }
+
+    /// The write half: re-resolves the source so a profile edited or
+    /// re-pointed while the fetch was in flight is never overwritten with the
+    /// old subscription's content.
+    pub fn commit_fetched(&self, id: &str, fetched: FetchedSource) -> ProfileResult<Value> {
+        if self.refresh_url(id)? != fetched.refresh_url {
+            return Err(IpcError::invalid_argument(
+                "订阅地址已在更新期间变更，请重试",
+            ));
+        }
+        // Persist/migrate the private refresh address before replacing a
+        // valid existing document. A secure-storage failure must leave that
+        // document intact.
+        self.source_store.set(id, &fetched.refresh_url)?;
+        self.repository
+            .replace_from_source(id, &fetched.fetched.document, &fetched.fetched.source)
+    }
+
+    fn refresh_url(&self, id: &str) -> ProfileResult<String> {
         let profile = self.repository.get(id)?;
         let source = &profile["meta"]["source"];
         if source["type"] != json!("url")
@@ -183,26 +219,14 @@ impl ProfilesService {
             ));
         }
         let display_url = source["url"].as_str().unwrap_or_default().to_string();
-        let refresh_url = match self.source_store.get(id)? {
-            Some(url) => Some(url),
+        match self.source_store.get(id)? {
+            Some(url) => Ok(url),
             // A NON-redacted display URL is still safe to fetch.
-            None if !is_redacted_url(&display_url) => Some(display_url.clone()),
-            None => None,
-        };
-        let Some(refresh_url) = refresh_url else {
-            return Err(IpcError::invalid_argument(
+            None if !is_redacted_url(&display_url) => Ok(display_url),
+            None => Err(IpcError::invalid_argument(
                 "缺少原始订阅地址，无法更新；请删除后重新添加该订阅",
-            ));
-        };
-        let fetched = crate::subscription::fetch_with_fallback(&self.fetcher, &refresh_url).await?;
-        // Validate BEFORE writing so a failed update cannot corrupt the doc.
-        throw_if_invalid(&validate_document(&fetched.document)?)?;
-        // Persist/migrate the private refresh address before replacing a
-        // valid existing document. A secure-storage failure must leave that
-        // document intact.
-        self.source_store.set(id, &refresh_url)?;
-        self.repository
-            .replace_from_source(id, &fetched.document, &fetched.source)
+            )),
+        }
     }
 
     pub fn activate(&self, id: &str) -> ProfileResult<Value> {
@@ -345,6 +369,32 @@ mod tests {
 
     fn import_request(name: &str, document: &str) -> Value {
         json!({ "name": name, "document": document, "source": { "type": "manual" }, "activate": false })
+    }
+
+    #[tokio::test]
+    async fn a_fetch_never_resurrects_a_profile_deleted_while_downloading() {
+        let (base, _stub) = crate::subscription::test_support::start_http_stub(
+            200,
+            vec![],
+            "proxies: []\nrules: [MATCH,DIRECT]\n".into(),
+        );
+        let temp = TempDir::new().unwrap();
+        let service = ProfilesService::for_development(temp.path()).with_fetcher(
+            crate::subscription::SubscriptionFetcher::for_testing(
+                std::sync::Arc::new(|_| Vec::new()),
+                5000,
+                1024 * 1024,
+            ),
+        );
+        let meta = service
+            .import_from_url("remote", &base, false)
+            .await
+            .unwrap();
+        let id = meta["id"].as_str().unwrap();
+        let fetched = service.fetch_from_source(id).await.unwrap();
+        service.delete(id).unwrap();
+        assert!(service.commit_fetched(id, fetched).is_err());
+        assert!(service.list().unwrap().as_array().unwrap().is_empty());
     }
 
     #[test]

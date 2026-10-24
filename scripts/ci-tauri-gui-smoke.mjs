@@ -113,10 +113,14 @@ async function native(pid, action = 'inspect', screenshot = '', handle = '') {
   let stdout = '', stderr = ''
   child.stdout.on('data', (chunk) => { stdout = (stdout + chunk).slice(-16384) })
   child.stderr.on('data', (chunk) => { stderr = (stderr + chunk).slice(-16384) })
-  const timer = setTimeout(() => child.kill(), 15_000)
+  // Hosted Windows can take >15s to start PowerShell and load System.Drawing.
+  // Keep a bounded failure, but distinguish our watchdog from a native error.
+  let timedOut = false
+  const timer = setTimeout(() => { timedOut = true; child.kill() }, 45_000)
   try {
-    const [code] = await once(child, 'exit')
-    if (code !== 0) throw new Error(`Native ${action} failed: ${stderr}`)
+    const [code, signal] = await once(child, 'exit')
+    if (timedOut) throw new Error(`Native ${action} timed out after 45000ms (PID ${pid})`)
+    if (code !== 0) throw new Error(`Native ${action} failed (exit ${code}, signal ${signal}): ${stderr || stdout || 'no diagnostic output'}`)
     return JSON.parse(stdout.trim())
   } finally { clearTimeout(timer) }
 }

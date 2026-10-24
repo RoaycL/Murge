@@ -6,6 +6,11 @@ import { describe, expect, it } from 'vitest'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 describe('installer-owned startup registration', () => {
+  it('restores the install scope before electron-builder cleans SHELL_CONTEXT keys', async () => {
+    const nsis = await readFile(path.join(root, 'resources/nsis/uninstall-restore.nsh'), 'utf8')
+    const uninstall = nsis.slice(nsis.indexOf('!macro customUnInstall'))
+    expect(uninstall).toMatch(/\$\{if\} \$installMode == "all"\s+SetShellVarContext all\s+\$\{else\}\s+SetShellVarContext current\s+\$\{endif\}\s+!macroend/)
+  })
   it('ships the registration script and uses the elevated install hook', async () => {
     const config = await readFile(path.join(root, 'electron-builder.config.mjs'), 'utf8')
     const nsis = await readFile(path.join(root, 'resources/nsis/uninstall-restore.nsh'), 'utf8')

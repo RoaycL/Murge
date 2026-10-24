@@ -233,4 +233,11 @@ Var /GLOBAL MurgeStartupWasEnabled
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APP_ID}"
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "${APP_ID}"
   ${endif}
+  ; electron-builder continues with SHELL_CONTEXT registry/shortcut cleanup.
+  ; Restore the installation scope after reading per-user AppData above.
+  ${if} $installMode == "all"
+    SetShellVarContext all
+  ${else}
+    SetShellVarContext current
+  ${endif}
 !macroend

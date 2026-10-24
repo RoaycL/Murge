@@ -14,7 +14,7 @@
 //! ordered flow runs, and the real exit goes through `AppHandle::exit(0)`
 //! (which re-enters `ExitRequested` with a code and passes straight through).
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use futures_util::future::BoxFuture;
 
@@ -29,10 +29,12 @@ static SHUTDOWN_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
 /// The `state.isQuitting` guard: once the confirmed flow starts tearing
 /// services down, a second quit signal passes straight through.
-static IS_QUITTING: AtomicBool = AtomicBool::new(false);
+const SESSION_ENDING: u8 = 1;
+const ORDINARY_QUIT: u8 = 2;
+static IS_QUITTING: AtomicU8 = AtomicU8::new(0);
 
 pub fn is_quitting() -> bool {
-    IS_QUITTING.load(Ordering::SeqCst)
+    IS_QUITTING.load(Ordering::SeqCst) != 0
 }
 
 /// Check after acquiring the FIFO boundary: a request queued before shutdown
@@ -43,19 +45,24 @@ pub async fn runtime_update_guard() -> Result<tokio::sync::MutexGuard<'static, (
 
 async fn lock_runtime_update<'a>(
     gate: &'a tokio::sync::Mutex<()>,
-    quitting: &AtomicBool,
+    quitting: &AtomicU8,
 ) -> Result<tokio::sync::MutexGuard<'a, ()>, IpcError> {
     let guard = gate.lock().await;
-    if quitting.load(Ordering::SeqCst) {
+    if quitting.load(Ordering::SeqCst) != 0 {
         return Err(IpcError::internal("应用正在退出，请稍后重试"));
     }
     Ok(guard)
 }
 
+/// A normal quit can be cancelled; a concurrent Windows session end cannot.
+fn cancel_normal_quit(quitting: &AtomicU8) {
+    quitting.fetch_and(!ORDINARY_QUIT, Ordering::SeqCst);
+}
+
 /// Fence every reconnect/replay path before a session-end shutdown starts
 /// (the Windows session-end handler calls this first).
 pub fn mark_quitting() {
-    IS_QUITTING.store(true, Ordering::SeqCst);
+    IS_QUITTING.fetch_or(SESSION_ENDING, Ordering::SeqCst);
 }
 
 /// Whether a live native tray exists. Without one, close-to-tray would strand
@@ -236,11 +243,11 @@ async fn begin_application_shutdown_inner(
     if restart_after_shutdown {
         crate::updates::cancel_install_on_exit();
     }
-    IS_QUITTING.store(true, Ordering::SeqCst);
+    IS_QUITTING.fetch_or(ORDINARY_QUIT, Ordering::SeqCst);
     use tauri::Manager;
     if let Some(proxy) = app.try_state::<std::sync::Arc<crate::system_proxy::SystemProxyService>>()
     {
-        proxy.fence_mutations();
+        proxy.fence_for_quit();
     }
 
     // Proxy selections share the profile mutation boundary; the RUNTIME_UPDATE
@@ -292,7 +299,7 @@ async fn begin_application_shutdown_inner(
                 app.exit(0);
                 return Ok(());
             }
-            IS_QUITTING.store(false, Ordering::SeqCst);
+            cancel_normal_quit(&IS_QUITTING);
             if let Some(proxy) =
                 app.try_state::<std::sync::Arc<crate::system_proxy::SystemProxyService>>()
             {
@@ -643,7 +650,7 @@ mod tests {
     #[tokio::test]
     async fn queued_mutation_is_rejected_after_shutdown_begins() {
         let gate = std::sync::Arc::new(tokio::sync::Mutex::new(()));
-        let quitting = std::sync::Arc::new(AtomicBool::new(false));
+        let quitting = std::sync::Arc::new(AtomicU8::new(0));
         let held = gate.lock().await;
         let next_gate = gate.clone();
         let next_flag = quitting.clone();
@@ -653,10 +660,17 @@ mod tests {
             lock_runtime_update(&next_gate, &next_flag).await.is_err()
         });
         ready.await.unwrap();
-        quitting.store(true, Ordering::SeqCst);
+        quitting.store(ORDINARY_QUIT, Ordering::SeqCst);
         drop(held);
         assert!(task.await.unwrap());
-        quitting.store(false, Ordering::SeqCst);
+        cancel_normal_quit(&quitting);
         assert!(lock_runtime_update(&gate, &quitting).await.is_ok());
+    }
+    #[tokio::test]
+    async fn cancelled_quit_keeps_queued_runtime_mutations_fenced_during_session_end() {
+        let gate = tokio::sync::Mutex::new(());
+        let quitting = AtomicU8::new(ORDINARY_QUIT | SESSION_ENDING);
+        cancel_normal_quit(&quitting);
+        assert!(lock_runtime_update(&gate, &quitting).await.is_err());
     }
 }

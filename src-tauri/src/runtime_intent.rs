@@ -503,7 +503,7 @@ pub async fn enable_tun_queued(
     kernel: &crate::kernel::KernelServices,
     tun: &crate::tun::TunCoordinator,
 ) -> Result<(), IpcError> {
-    let _gate = crate::kernel::RUNTIME_UPDATE.lock().await;
+    let _gate = crate::lifecycle::runtime_update_guard().await?;
     let phase = kernel.get_status_value()["phase"]
         .as_str()
         .unwrap_or_default()
@@ -532,7 +532,7 @@ impl IntentGateways for AppIntentGateways {
     fn kernel_start(&self) -> BoxFuture<'_, Result<(), IpcError>> {
         let kernel = self.kernel();
         Box::pin(async move {
-            let _gate = crate::kernel::RUNTIME_UPDATE.lock().await;
+            let _gate = crate::lifecycle::runtime_update_guard().await?;
             kernel.start().await.map(|_| ())
         })
     }
@@ -557,7 +557,10 @@ impl IntentGateways for AppIntentGateways {
 
     fn proxy_enable(&self) -> BoxFuture<'_, Result<(), IpcError>> {
         let proxy = self.proxy();
-        Box::pin(async move { proxy.enable().await.map(|_| ()) })
+        Box::pin(async move {
+            let _gate = crate::lifecycle::runtime_update_guard().await?;
+            proxy.enable().await.map(|_| ())
+        })
     }
 
     fn restore_selections(&self) -> BoxFuture<'_, Result<(), IpcError>> {
@@ -689,6 +692,7 @@ pub fn spawn_startup_recovery(app: tauri::AppHandle) {
             return;
         }
         coordinator.start();
+        crate::profile_auto_update::start(&app);
     });
 }
 

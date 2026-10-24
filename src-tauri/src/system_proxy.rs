@@ -12,7 +12,7 @@ use crate::error::{code, IpcError};
 use crate::events::EventHub;
 use futures_util::future::BoxFuture;
 use serde_json::{json, Map, Value};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
 // ---------------------------------------------------------------------------
@@ -1345,6 +1345,8 @@ pub fn live_probe(
 
 pub const NOT_SUPPORTED_MSG: &str = "当前平台不支持系统代理";
 const CONFLICT_MSG: &str = "系统代理已被外部修改，未执行还原";
+const SESSION_END_FENCE: u8 = 1;
+const ORDINARY_QUIT_FENCE: u8 = 2;
 
 /// The ownership-aware controller. It owns the FIRST backup it writes, refuses
 /// to overwrite externally-mutated values, and reuses one strict restore path
@@ -1365,7 +1367,7 @@ pub struct SystemProxyService {
     network_resume_pending: AtomicBool,
     /// Set once the session is ending: no path may write the proxy again
     /// (an enable that is mid-probe aborts before its first write).
-    mutations_fenced: AtomicBool,
+    mutations_fenced: AtomicU8,
 }
 
 // init/verify_integrity/network handlers/restore_before_kernel_unavailable
@@ -1396,14 +1398,28 @@ impl SystemProxyService {
             listeners: EventHub::new(),
             queue: tokio::sync::Mutex::new(()),
             network_resume_pending: AtomicBool::new(false),
-            mutations_fenced: AtomicBool::new(false),
+            mutations_fenced: AtomicU8::new(0),
         }
     }
 
     /// Fence every proxy-writing path for the rest of the process (Windows
     /// session end). Restores stay allowed.
     pub fn fence_mutations(&self) {
-        self.mutations_fenced.store(true, Ordering::SeqCst);
+        self.mutations_fenced
+            .fetch_or(SESSION_END_FENCE, Ordering::SeqCst);
+    }
+
+    /// Reversible normal-quit fence. Bit 0 belongs to Windows session end and
+    /// must survive cancellation of a concurrent ordinary quit (bit 1).
+    pub fn fence_for_quit(&self) {
+        self.mutations_fenced
+            .fetch_or(ORDINARY_QUIT_FENCE, Ordering::SeqCst);
+    }
+
+    /// Clear only ordinary quit's bit; never undo the terminal session fence.
+    pub fn resume_mutations(&self) {
+        self.mutations_fenced
+            .fetch_and(!ORDINARY_QUIT_FENCE, Ordering::SeqCst);
     }
 
     fn fenced_error(&self) -> IpcError {
@@ -1530,7 +1546,7 @@ impl SystemProxyService {
             }
         };
         validate_target(&target)?;
-        if self.mutations_fenced.load(Ordering::SeqCst) {
+        if self.mutations_fenced.load(Ordering::SeqCst) != 0 {
             return Err(self.fenced_error());
         }
 
@@ -1584,7 +1600,7 @@ impl SystemProxyService {
         validate_restorable(&observed)?;
         let policy = self.bypass.read().await;
         let written = build_written_state(&target, &observed, &policy);
-        if self.mutations_fenced.load(Ordering::SeqCst) {
+        if self.mutations_fenced.load(Ordering::SeqCst) != 0 {
             return Err(self.fenced_error());
         }
         let bundle = SystemProxyBackup {
@@ -1753,7 +1769,7 @@ impl SystemProxyService {
             );
             return "conflict";
         }
-        if self.mutations_fenced.load(Ordering::SeqCst) {
+        if self.mutations_fenced.load(Ordering::SeqCst) != 0 {
             return "repair-failed";
         }
         match self.apply_and_verify(written).await {
@@ -4383,5 +4399,36 @@ mod tests {
         service.fence_mutations();
         assert!(service.enable().await.is_err());
         assert!(registry.values.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn shutdown_fence_keeps_restored_proxy_off_until_quit_is_cancelled() {
+        let (service, adapter) = test_service();
+        service.enable().await.unwrap();
+        service.fence_for_quit();
+        service.restore_before_kernel_unavailable().await.unwrap();
+        assert!(service.enable().await.is_err());
+        assert_ne!(adapter.read().await.unwrap().proxy_enable.value, json!(1));
+        service.resume_mutations();
+        service.enable().await.unwrap();
+        assert_eq!(adapter.read().await.unwrap().proxy_enable.value, json!(1));
+    }
+    #[tokio::test]
+    async fn cancelling_normal_quit_never_clears_a_session_end_fence() {
+        for session_first in [true, false] {
+            let (service, adapter) = test_service();
+            service.enable().await.unwrap();
+            if session_first {
+                service.fence_mutations();
+            }
+            service.fence_for_quit();
+            service.restore_before_kernel_unavailable().await.unwrap();
+            if !session_first {
+                service.fence_mutations();
+            }
+            service.resume_mutations();
+            assert!(service.enable().await.is_err());
+            assert_ne!(adapter.read().await.unwrap().proxy_enable.value, json!(1));
+        }
     }
 }

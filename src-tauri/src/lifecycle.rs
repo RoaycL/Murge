@@ -14,7 +14,7 @@
 //! ordered flow runs, and the real exit goes through `AppHandle::exit(0)`
 //! (which re-enters `ExitRequested` with a code and passes straight through).
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use futures_util::future::BoxFuture;
 
@@ -27,18 +27,42 @@ const QUIT_RESTORE_RETRY_DELAY_MS: u64 = 250;
 /// the flow already in flight instead of interleaving with it.
 static SHUTDOWN_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
-/// The `state.isQuitting` guard: once the confirmed flow starts tearing
-/// services down, a second quit signal passes straight through.
-static IS_QUITTING: AtomicBool = AtomicBool::new(false);
+const SESSION_ENDING: u8 = 1;
+const ORDINARY_QUIT: u8 = 2;
+/// The `state.isQuitting` guard: ordinary quit can be cancelled, but a
+/// concurrent Windows session end remains latched.
+static IS_QUITTING: AtomicU8 = AtomicU8::new(0);
 
 pub fn is_quitting() -> bool {
-    IS_QUITTING.load(Ordering::SeqCst)
+    IS_QUITTING.load(Ordering::SeqCst) != 0
+}
+
+/// Check after acquiring the FIFO boundary: a request queued before shutdown
+/// must not restart a core or rewrite the proxy after shutdown has drained it.
+pub async fn runtime_update_guard() -> Result<tokio::sync::MutexGuard<'static, ()>, IpcError> {
+    lock_runtime_update(&crate::kernel::RUNTIME_UPDATE, &IS_QUITTING).await
+}
+
+async fn lock_runtime_update<'a>(
+    gate: &'a tokio::sync::Mutex<()>,
+    quitting: &AtomicU8,
+) -> Result<tokio::sync::MutexGuard<'a, ()>, IpcError> {
+    let guard = gate.lock().await;
+    if quitting.load(Ordering::SeqCst) != 0 {
+        return Err(IpcError::internal("应用正在退出，请稍后重试"));
+    }
+    Ok(guard)
+}
+
+/// A normal quit can be cancelled; a concurrent Windows session end cannot.
+fn cancel_normal_quit(quitting: &AtomicU8) {
+    quitting.fetch_and(!ORDINARY_QUIT, Ordering::SeqCst);
 }
 
 /// Fence every reconnect/replay path before a session-end shutdown starts
 /// (the Windows session-end handler calls this first).
 pub fn mark_quitting() {
-    IS_QUITTING.store(true, Ordering::SeqCst);
+    IS_QUITTING.fetch_or(SESSION_ENDING, Ordering::SeqCst);
 }
 
 /// Whether a live native tray exists. Without one, close-to-tray would strand
@@ -167,6 +191,11 @@ async fn flush_logs(app: &tauri::AppHandle) {
 async fn dispose_services(app: &tauri::AppHandle) {
     use tauri::Manager;
     crate::runtime_intent::stop(app);
+    if let Some(worker) =
+        app.try_state::<std::sync::Arc<crate::profile_auto_update::ProfileAutoUpdater>>()
+    {
+        worker.stop();
+    }
     if let Some(detector) =
         app.try_state::<std::sync::Arc<crate::network_detector::NetworkDetector>>()
     {
@@ -214,8 +243,12 @@ async fn begin_application_shutdown_inner(
     if restart_after_shutdown {
         crate::updates::cancel_install_on_exit();
     }
-    IS_QUITTING.store(true, Ordering::SeqCst);
+    IS_QUITTING.fetch_or(ORDINARY_QUIT, Ordering::SeqCst);
     use tauri::Manager;
+    if let Some(proxy) = app.try_state::<std::sync::Arc<crate::system_proxy::SystemProxyService>>()
+    {
+        proxy.fence_for_quit();
+    }
 
     // Proxy selections share the profile mutation boundary; the RUNTIME_UPDATE
     // gate IS that boundary in this build. Acquiring and RELEASING it once
@@ -257,7 +290,6 @@ async fn begin_application_shutdown_inner(
     let result = result.await;
     match result {
         QuitFlowResult::RestoreFailed => {
-            SHUTDOWN_IN_FLIGHT.store(false, Ordering::SeqCst);
             if session_ending {
                 // The host may terminate the process immediately. Preserve the
                 // proxy backup/TUN journal so the next launch's init restores
@@ -266,13 +298,21 @@ async fn begin_application_shutdown_inner(
                 app.exit(0);
                 return Ok(());
             }
-            IS_QUITTING.store(false, Ordering::SeqCst);
+            cancel_normal_quit(&IS_QUITTING);
+            if let Some(proxy) =
+                app.try_state::<std::sync::Arc<crate::system_proxy::SystemProxyService>>()
+            {
+                proxy.resume_mutations();
+            }
             // Reveal the window so the user can fix the proxy and retry.
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
             }
+            // Release single-flight last: another quit must not set its
+            // fences until this cancellation has finished clearing ours.
+            SHUTDOWN_IN_FLIGHT.store(false, Ordering::SeqCst);
             Err(IpcError::internal(
                 "无法恢复系统网络设置，应用尚未重启，请检查后重试",
             ))
@@ -423,6 +463,9 @@ fn start_proxy_guard(app: tauri::AppHandle) {
             if !enabled {
                 continue;
             }
+            let Ok(_gate) = runtime_update_guard().await else {
+                continue;
+            };
             if let Some(proxy) =
                 app.try_state::<std::sync::Arc<crate::system_proxy::SystemProxyService>>()
             {
@@ -604,5 +647,32 @@ mod tests {
         .await;
         assert!(!restored);
         assert_eq!(*attempts.lock().await, 3);
+    }
+
+    #[tokio::test]
+    async fn queued_mutation_is_rejected_after_shutdown_begins() {
+        let gate = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+        let quitting = std::sync::Arc::new(AtomicU8::new(0));
+        let held = gate.lock().await;
+        let next_gate = gate.clone();
+        let next_flag = quitting.clone();
+        let (queued, ready) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            queued.send(()).unwrap();
+            lock_runtime_update(&next_gate, &next_flag).await.is_err()
+        });
+        ready.await.unwrap();
+        quitting.store(ORDINARY_QUIT, Ordering::SeqCst);
+        drop(held);
+        assert!(task.await.unwrap());
+        cancel_normal_quit(&quitting);
+        assert!(lock_runtime_update(&gate, &quitting).await.is_ok());
+    }
+    #[tokio::test]
+    async fn cancelled_quit_keeps_queued_runtime_mutations_fenced_during_session_end() {
+        let gate = tokio::sync::Mutex::new(());
+        let quitting = AtomicU8::new(ORDINARY_QUIT | SESSION_ENDING);
+        cancel_normal_quit(&quitting);
+        assert!(lock_runtime_update(&gate, &quitting).await.is_err());
     }
 }

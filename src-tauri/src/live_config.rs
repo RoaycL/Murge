@@ -513,6 +513,15 @@ pub async fn reload_active_profile_with_rollback(
         return Ok(false);
     }
     let proxy_was_enabled = system_proxy.get_status().phase == "enabled";
+    // Unlike the dispatcher, KernelServices::stop is a raw lifecycle call.
+    // Confirm proxy restoration before taking its listener away, including
+    // when the replacement or the rollback's recovery start later fails.
+    if let Err(error) = system_proxy.restore_before_kernel_unavailable().await {
+        if let Some(rollback) = &rollback_active {
+            let _ = rollback().await;
+        }
+        return Err(error);
+    }
     if let Err(error) = kernel.stop().await {
         if let Some(rollback) = &rollback_active {
             let _ = rollback().await; // Preserve the lifecycle failure.
@@ -522,6 +531,9 @@ pub async fn reload_active_profile_with_rollback(
     match kernel.start().await {
         Ok(_) => {
             if proxy_was_enabled {
+                // Keep the successfully applied profile committed even if an
+                // external proxy takeover prevents re-enabling. The proxy
+                // service publishes its own visible error/conflict state.
                 let _ = system_proxy.enable().await;
             }
             Ok(true)
@@ -533,11 +545,8 @@ pub async fn reload_active_profile_with_rollback(
                 // failure: never restart against a pointer whose restoration
                 // failed, and the kernel status/logs retain any recovery
                 // failure for diagnostics.
-                if rollback_succeeded {
-                    let _ = kernel.start().await;
-                    if proxy_was_enabled {
-                        let _ = system_proxy.enable().await;
-                    }
+                if rollback_succeeded && kernel.start().await.is_ok() && proxy_was_enabled {
+                    let _ = system_proxy.enable().await;
                 }
             }
             Err(replacement_error)
@@ -1298,5 +1307,135 @@ mod tests {
         let harness = crate::kernel_process::tests::create_harness();
         crate::kernel_process::tests::start_to_running(&harness).await;
         harness.supervisor
+    }
+
+    struct FailReplacement(std::sync::atomic::AtomicUsize);
+    impl crate::kernel_process::KernelBinaryResolver for FailReplacement {
+        fn resolve(
+            &self,
+        ) -> futures_util::future::BoxFuture<
+            '_,
+            Result<crate::kernel_process::KernelBinary, IpcError>,
+        > {
+            Box::pin(async move {
+                if self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 1 {
+                    return Err(IpcError::internal("injected replacement failure"));
+                }
+                crate::kernel_process::FixtureKernelBinaryResolver::default()
+                    .resolve()
+                    .await
+            })
+        }
+    }
+
+    fn restart_fixture() -> crate::kernel::KernelServices {
+        use crate::kernel_process::*;
+        crate::kernel::KernelServices {
+            supervisor: KernelSupervisor::create(
+                KernelDependencies {
+                    resolver: Arc::new(FailReplacement(std::sync::atomic::AtomicUsize::new(0))),
+                    config_store: Arc::new(TempKernelConfigStore),
+                    adapter: Arc::new(NodeKernelProcessAdapter),
+                    secret: random_secret(),
+                    attach_watchdog: None,
+                },
+                SupervisorOptions {
+                    readiness_pattern: Some("fixture-ready".into()),
+                    ..SupervisorOptions::default()
+                },
+            ),
+            manager: Arc::new(crate::kernel::KernelManagerService::new()),
+            ready: None,
+            privileged: None,
+        }
+    }
+
+    fn proxy_fixture() -> (
+        crate::system_proxy::SystemProxyService,
+        Arc<crate::system_proxy::FakeSystemProxyAdapter>,
+    ) {
+        use crate::system_proxy::*;
+        let adapter = Arc::new(FakeSystemProxyAdapter::new());
+        let proxy = SystemProxyService::new(
+            adapter.clone(),
+            static_probe(Target {
+                host: "127.0.0.1".into(),
+                port: 7890,
+            }),
+            Arc::new(InMemoryBackupStore::new()),
+            Arc::new(InMemoryBypassStore::new()),
+            "reload-test".into(),
+        );
+        (proxy, adapter)
+    }
+
+    #[tokio::test]
+    async fn restart_fallback_never_stops_with_an_unrestored_proxy() {
+        use crate::system_proxy::SystemProxyAdapter;
+        let (_temp, profiles, overrides, models) = service();
+        models
+            .core
+            .set(
+                &json!({"controllerPort":1,"controllerSecret":"a".repeat(64)}),
+                enhancements::coerce_core_settings,
+            )
+            .unwrap();
+        let kernel = restart_fixture();
+        kernel.start().await.unwrap();
+        let (proxy, adapter) = proxy_fixture();
+        proxy.enable().await.unwrap();
+        adapter.fail_restore(true);
+        assert!(
+            reload_active_profile(&profiles, &overrides, &models, &kernel, &proxy)
+                .await
+                .is_err()
+        );
+        assert_eq!(kernel.get_status_value()["phase"], "running");
+        adapter.fail_restore(false);
+        assert!(
+            reload_active_profile(&profiles, &overrides, &models, &kernel, &proxy)
+                .await
+                .is_err()
+        );
+        assert_ne!(kernel.get_status_value()["phase"], "running");
+        assert_ne!(adapter.read().await.unwrap().proxy_enable.value, json!(1));
+        kernel.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_replacement_rolls_back_before_restarting_the_old_profile() {
+        let (_temp, profiles, overrides, models) = service();
+        models
+            .core
+            .set(
+                &json!({"controllerPort":1,"controllerSecret":"a".repeat(64)}),
+                enhancements::coerce_core_settings,
+            )
+            .unwrap();
+        let kernel = restart_fixture();
+        kernel.start().await.unwrap();
+        let (proxy, _adapter) = proxy_fixture();
+        proxy.enable().await.unwrap();
+        let restored = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed = restored.clone();
+        let rollback: RollbackActiveFn = Arc::new(move || {
+            observed.store(true, std::sync::atomic::Ordering::SeqCst);
+            Box::pin(async { Ok(()) })
+        });
+        assert!(reload_active_profile_with_rollback(
+            &profiles,
+            &overrides,
+            &models,
+            &kernel,
+            &proxy,
+            Some(rollback)
+        )
+        .await
+        .is_err());
+        assert!(restored.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(kernel.get_status_value()["phase"], "running");
+        assert_eq!(proxy.get_status().phase, "enabled");
+        proxy.disable().await.unwrap();
+        kernel.stop().await.unwrap();
     }
 }

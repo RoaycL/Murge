@@ -330,6 +330,22 @@ pub fn installer_product(file_name: &str) -> Option<&'static str> {
     }
 }
 
+/// The manifest's platform map is unsigned. Its selected entry may name a
+/// perfectly signed installer for another CPU, so bind the signed file name
+/// to the actual executable target as well as its product and version.
+pub fn installer_matches_arch(file_name: &str, arch: &str) -> bool {
+    let suffix = match arch {
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        _ => return false,
+    };
+    match installer_product(file_name) {
+        Some("tauri") => file_name.ends_with(&format!("_{suffix}-setup.exe")),
+        Some("electron") => file_name.ends_with(&format!("-{suffix}.exe")),
+        _ => false,
+    }
+}
+
 /// The last path segment of a download URL, percent-decoded.
 pub fn installer_file_name(download_url: &url::Url) -> String {
     let raw = download_url
@@ -836,6 +852,12 @@ impl TauriUpdaterInner {
                 update.download_url
             ));
         };
+        if !installer_matches_arch(
+            &installer_file_name(&update.download_url),
+            std::env::consts::ARCH,
+        ) {
+            return Err("更新安装包与当前应用架构不匹配".to_string());
+        }
         let channel = self
             .channel
             .lock()
@@ -2333,5 +2355,19 @@ mod tests {
         );
         service.dispose();
         assert_eq!(counters(&driver).4, 1);
+    }
+    #[test]
+    fn signed_installers_must_match_the_current_cpu_on_both_channels() {
+        for (arch, other) in [("x86_64", "aarch64"), ("aarch64", "x86_64")] {
+            let suffix = if arch == "x86_64" { "x64" } else { "arm64" };
+            for file in [
+                format!("Murge_0.9.32_{suffix}-setup.exe"),
+                format!("Murge-Setup-0.9.32-{suffix}.exe"),
+            ] {
+                assert!(installer_matches_arch(&file, arch));
+                assert!(!installer_matches_arch(&file, other));
+                assert!(!installer_matches_arch(&file, "unsupported"));
+            }
+        }
     }
 }

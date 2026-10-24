@@ -509,7 +509,9 @@ impl TrayController {
             .map(str::to_string);
         // ProxySelectionGateway parity: attribution -> PUT -> durable record
         // inside the profile mutation boundary.
-        let _gate = crate::kernel::RUNTIME_UPDATE.lock().await;
+        let Ok(_gate) = crate::lifecycle::runtime_update_guard().await else {
+            return;
+        };
         if let Ok(client) = client_for(&self.deps.models) {
             let _ = self
                 .deps
@@ -520,6 +522,9 @@ impl TrayController {
     }
 
     async fn toggle_system_proxy(&self) {
+        let Ok(_gate) = crate::lifecycle::runtime_update_guard().await else {
+            return;
+        };
         let (enabled, kernel_running, tun_active) = {
             let state = self.state.lock().await;
             (
@@ -533,7 +538,6 @@ impl TrayController {
         } else {
             // The TS tray starts the (queued) kernel before enabling the proxy.
             if !kernel_running && !tun_active {
-                let _gate = crate::kernel::RUNTIME_UPDATE.lock().await;
                 let _ = self.deps.kernel.start().await;
             }
             let _ = self.deps.system_proxy.enable().await;
@@ -1104,7 +1108,7 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
                 Box::pin(async move {
                     // updateRuntimeConfig parity: the gate serializes the live
                     // reload; a replay follows a successful apply.
-                    let _gate = crate::kernel::RUNTIME_UPDATE.lock().await;
+                    let _gate = crate::lifecycle::runtime_update_guard().await?;
                     let reloader = crate::live_config::LiveConfigReloader::from_ipc(
                         &kernel.supervisor,
                         &models,
@@ -1143,7 +1147,7 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
                 Box::pin(async move {
                     // reloadProfile(reloadKernelForActiveProfile) parity: the
                     // ordered restart inside the gate, then the replay.
-                    let _gate = crate::kernel::RUNTIME_UPDATE.lock().await;
+                    let _gate = crate::lifecycle::runtime_update_guard().await?;
                     crate::live_config::reload_active_profile_with_rollback(
                         &profiles,
                         &overrides,

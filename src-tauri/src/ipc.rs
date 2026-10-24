@@ -1192,13 +1192,16 @@ pub(crate) async fn refresh_subscription(
     system_proxy: &crate::system_proxy::SystemProxyService,
     mihomo: &mihomo::MihomoServices,
 ) -> IpcResult {
+    // Download outside the mode queue: a slow source (up to the fetch
+    // timeout) must not hold up node picks, proxy/TUN toggles or quit.
+    let fetched = profiles.fetch_from_source(id).await?;
     let _gate = runtime_update_guard().await?;
     let previous_active = active_profile_id(profiles)?;
     let previous_document = profiles.get(id)?["document"]
         .as_str()
         .unwrap_or_default()
         .to_string();
-    let meta = profiles.update_from_source(id).await?;
+    let meta = profiles.commit_fetched(id, fetched)?;
     // ONLY when the updated profile is the live one: updating a
     // non-active profile must not switch or restart anything.
     if previous_active.as_deref() == Some(id)

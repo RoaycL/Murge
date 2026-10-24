@@ -1345,15 +1345,14 @@ pub fn live_probe(
 
 pub const NOT_SUPPORTED_MSG: &str = "当前平台不支持系统代理";
 const CONFLICT_MSG: &str = "系统代理已被外部修改，未执行还原";
+const SESSION_END_FENCE: u8 = 1;
+const ORDINARY_QUIT_FENCE: u8 = 2;
 
 /// The ownership-aware controller. It owns the FIRST backup it writes, refuses
 /// to overwrite externally-mutated values, and reuses one strict restore path
 /// (restore → refresh → read-back verify → delete-on-success) for disable,
 /// rollback, recovery and the network handlers. Every public operation is
 /// serialized through one tokio queue (the TS promise-chain `serialize`).
-const SESSION_END_FENCE: u8 = 1;
-const ORDINARY_QUIT_FENCE: u8 = 2;
-
 pub struct SystemProxyService {
     adapter: Arc<dyn SystemProxyAdapter>,
     probe: ProbeFn,

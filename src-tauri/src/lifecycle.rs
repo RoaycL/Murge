@@ -27,10 +27,10 @@ const QUIT_RESTORE_RETRY_DELAY_MS: u64 = 250;
 /// the flow already in flight instead of interleaving with it.
 static SHUTDOWN_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
-/// The `state.isQuitting` guard: once the confirmed flow starts tearing
-/// services down, a second quit signal passes straight through.
 const SESSION_ENDING: u8 = 1;
 const ORDINARY_QUIT: u8 = 2;
+/// The `state.isQuitting` guard: ordinary quit can be cancelled, but a
+/// concurrent Windows session end remains latched.
 static IS_QUITTING: AtomicU8 = AtomicU8::new(0);
 
 pub fn is_quitting() -> bool {
@@ -290,7 +290,6 @@ async fn begin_application_shutdown_inner(
     let result = result.await;
     match result {
         QuitFlowResult::RestoreFailed => {
-            SHUTDOWN_IN_FLIGHT.store(false, Ordering::SeqCst);
             if session_ending {
                 // The host may terminate the process immediately. Preserve the
                 // proxy backup/TUN journal so the next launch's init restores
@@ -311,6 +310,9 @@ async fn begin_application_shutdown_inner(
                 let _ = window.show();
                 let _ = window.set_focus();
             }
+            // Release single-flight last: another quit must not set its
+            // fences until this cancellation has finished clearing ours.
+            SHUTDOWN_IN_FLIGHT.store(false, Ordering::SeqCst);
             Err(IpcError::internal(
                 "无法恢复系统网络设置，应用尚未重启，请检查后重试",
             ))

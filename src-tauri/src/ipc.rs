@@ -39,7 +39,7 @@ pub type IpcResult = Result<Value, IpcError>;
 /// (profile reloads, enhancement live-apply) are mutually exclusive — the
 /// `ModeTransitionController` serialization the TS build gets from its
 /// queued kernel/TUN gateways. One process, one queue.
-use crate::kernel::RUNTIME_UPDATE;
+use crate::lifecycle::runtime_update_guard;
 
 /// The one command the webview is allowed to call. Everything else —
 /// filesystem, registry, the privileged named pipe — stays in Rust.
@@ -202,6 +202,7 @@ pub async fn dispatch(
         // enable starts the kernel when it is not running.
         "system-proxy:get-status" => Ok(system_proxy.get_status_value()),
         "system-proxy:enable" => {
+            let _gate = runtime_update_guard().await?;
             settings.set(&crate::settings::AppSettingsPatch(
                 serde_json::json!({"systemProxyDesired": true}),
             ));
@@ -211,6 +212,7 @@ pub async fn dispatch(
             Ok(serde_json::to_value(system_proxy.enable().await?).expect("status serializes"))
         }
         "system-proxy:disable" => {
+            let _gate = runtime_update_guard().await?;
             settings.set(&crate::settings::AppSettingsPatch(
                 serde_json::json!({"systemProxyDesired": false}),
             ));
@@ -218,6 +220,7 @@ pub async fn dispatch(
         }
         "system-proxy:get-proxy-bypass" => Ok(system_proxy.get_proxy_bypass().await),
         "system-proxy:set-proxy-bypass" => {
+            let _gate = runtime_update_guard().await?;
             let policy = crate::system_proxy::parse_proxy_bypass_policy(arg(payload, 0))?;
             Ok(system_proxy.set_proxy_bypass(policy).await?)
         }
@@ -235,7 +238,7 @@ pub async fn dispatch(
             // queuedTunGateway parity: a TUN toggle shares THE ONE transition
             // queue with kernel start/stop (the coordinator's own queue only
             // serializes TUN work against itself).
-            let _gate = RUNTIME_UPDATE.lock().await;
+            let _gate = runtime_update_guard().await?;
             // enableTunInner in-place parity: a stopped kernel must be started
             // BEFORE the TUN adapter patches the live device — the elevated
             // runtime and the main kernel cannot share the unified ports, and
@@ -269,7 +272,7 @@ pub async fn dispatch(
             Ok(serde_json::to_value(tun.enable(&intent).await?).expect("tun status serializes"))
         }
         "tun:disable" => {
-            let _gate = RUNTIME_UPDATE.lock().await;
+            let _gate = runtime_update_guard().await?;
             settings.set(&crate::settings::AppSettingsPatch(
                 serde_json::json!({"tunDesired": false}),
             ));
@@ -355,7 +358,7 @@ pub async fn dispatch(
         "profiles:list" => profiles.list(),
         "profiles:get" => profiles.get(&required_string(payload, 0, "profiles:get id")?),
         "profiles:import" => {
-            let _gate = RUNTIME_UPDATE.lock().await;
+            let _gate = runtime_update_guard().await?;
             let request = arg(payload, 0).ok_or_else(|| {
                 IpcError::invalid_argument("profiles:import requires a request object")
             })?;
@@ -366,9 +369,17 @@ pub async fn dispatch(
                 .and_then(Value::as_bool)
                 .unwrap_or(false)
             {
-                let result =
-                    profile_reload_step(profiles, overrides, models, kernel, system_proxy, mihomo)
-                        .await;
+                let result = profile_reload_step(
+                    profiles,
+                    overrides,
+                    models,
+                    kernel,
+                    system_proxy,
+                    mihomo,
+                    &previous_active,
+                    None,
+                )
+                .await;
                 if result.is_err() {
                     restore_active(profiles, &previous_active);
                 }
@@ -377,7 +388,7 @@ pub async fn dispatch(
             Ok(meta)
         }
         "profiles:import-from-url" => {
-            let _gate = RUNTIME_UPDATE.lock().await;
+            let _gate = runtime_update_guard().await?;
             // Positional args: [name?, url, activate?] — the bridge forwards
             // the renderer's arg list; schema validation mirrors
             // shared/schemas/profiles.ts (parseOptionalImportName +
@@ -387,38 +398,55 @@ pub async fn dispatch(
             let url =
                 crate::subscription::parse_subscription_url(string_arg(payload, 1).as_deref())?;
             let activate = crate::subscription::parse_optional_boolean(payload.get(2), "activate")?;
-            profiles.import_from_url(&name, &url, activate).await
-        }
-        "profiles:update-from-source" => {
-            let _gate = RUNTIME_UPDATE.lock().await;
-            let id = required_string(payload, 0, "profiles:update-from-source id")?;
             let previous_active = active_profile_id(profiles)?;
-            let previous_document = profiles.get(&id)?["document"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string();
-            let meta = profiles.update_from_source(&id).await?;
-            // ONLY when the updated profile is the live one: updating a
-            // non-active profile must not switch or restart anything.
-            if previous_active.as_deref() == Some(id.as_str()) {
-                if let Err(error) =
-                    profile_reload_step(profiles, overrides, models, kernel, system_proxy, mihomo)
-                        .await
+            let meta = profiles.import_from_url(&name, &url, activate).await?;
+            if activate {
+                if let Err(error) = profile_reload_step(
+                    profiles,
+                    overrides,
+                    models,
+                    kernel,
+                    system_proxy,
+                    mihomo,
+                    &previous_active,
+                    None,
+                )
+                .await
                 {
-                    let _ = profiles.restore_document(&id, &previous_document);
                     restore_active(profiles, &previous_active);
                     return Err(error);
                 }
             }
             Ok(meta)
         }
+        "profiles:update-from-source" => {
+            let id = required_string(payload, 0, "profiles:update-from-source id")?;
+            refresh_subscription(
+                &id,
+                profiles,
+                overrides,
+                models,
+                kernel,
+                system_proxy,
+                mihomo,
+            )
+            .await
+        }
         "profiles:activate" => {
-            let _gate = RUNTIME_UPDATE.lock().await;
+            let _gate = runtime_update_guard().await?;
             let previous_active = active_profile_id(profiles)?;
             let meta = profiles.activate(&required_string(payload, 0, "profiles:activate id")?)?;
-            let result =
-                profile_reload_step(profiles, overrides, models, kernel, system_proxy, mihomo)
-                    .await;
+            let result = profile_reload_step(
+                profiles,
+                overrides,
+                models,
+                kernel,
+                system_proxy,
+                mihomo,
+                &previous_active,
+                None,
+            )
+            .await;
             if result.is_err() {
                 restore_active(profiles, &previous_active);
             }
@@ -426,16 +454,24 @@ pub async fn dispatch(
             Ok(meta)
         }
         "profiles:delete" => {
-            let _gate = RUNTIME_UPDATE.lock().await;
+            let _gate = runtime_update_guard().await?;
             let previous_active = active_profile_id(profiles)?;
             let deleted = profiles.delete(&required_string(payload, 0, "profiles:delete id")?)?;
             // The deleted document cannot be restored: re-materialize the
             // strict fallback immediately so the process never keeps using
             // deleted secrets.
             if previous_active.as_deref() == deleted["meta"]["id"].as_str() {
-                let result =
-                    profile_reload_step(profiles, overrides, models, kernel, system_proxy, mihomo)
-                        .await;
+                let result = profile_reload_step(
+                    profiles,
+                    overrides,
+                    models,
+                    kernel,
+                    system_proxy,
+                    mihomo,
+                    &None,
+                    None,
+                )
+                .await;
                 if result.is_err() {
                     // The deleted document cannot be restored: only the
                     // pointer can be re-pointed (at nothing).
@@ -450,7 +486,7 @@ pub async fn dispatch(
             &string_arg(payload, 1).unwrap_or_default(),
         ),
         "profiles:edit-document" => {
-            let _gate = RUNTIME_UPDATE.lock().await;
+            let _gate = runtime_update_guard().await?;
             let raw_edits: Vec<serde_json::Value> = arg(payload, 1)
                 .and_then(Value::as_array)
                 .cloned()
@@ -480,8 +516,17 @@ pub async fn dispatch(
                 // document becomes the live one before the kernel reloads.
                 profiles.activate(&id)?;
             }
-            if let Err(error) =
-                profile_reload_step(profiles, overrides, models, kernel, system_proxy, mihomo).await
+            if let Err(error) = profile_reload_step(
+                profiles,
+                overrides,
+                models,
+                kernel,
+                system_proxy,
+                mihomo,
+                &previous_active,
+                Some((&id, &previous_document)),
+            )
+            .await
             {
                 // restoreEdit: restore the document, then the pointer.
                 let _ = profiles.restore_document(&id, &previous_document);
@@ -493,7 +538,7 @@ pub async fn dispatch(
             Ok(meta)
         }
         "profiles:replace-document" => {
-            let _gate = RUNTIME_UPDATE.lock().await;
+            let _gate = runtime_update_guard().await?;
             let id = required_string(payload, 0, "profiles:replace-document id")?;
             let previous_active = active_profile_id(profiles)?;
             let previous_document = profiles.get(&id)?["document"]
@@ -503,9 +548,17 @@ pub async fn dispatch(
             let meta =
                 profiles.replace_document(&id, &string_arg(payload, 1).unwrap_or_default())?;
             if previous_active.as_deref() == Some(id.as_str()) {
-                if let Err(error) =
-                    profile_reload_step(profiles, overrides, models, kernel, system_proxy, mihomo)
-                        .await
+                if let Err(error) = profile_reload_step(
+                    profiles,
+                    overrides,
+                    models,
+                    kernel,
+                    system_proxy,
+                    mihomo,
+                    &previous_active,
+                    Some((&id, &previous_document)),
+                )
+                .await
                 {
                     let _ = profiles.restore_document(&id, &previous_document);
                     restore_active(profiles, &previous_active);
@@ -678,7 +731,7 @@ pub async fn dispatch(
             &models.geodata.get(),
         ))),
         "geodata-settings:set" => {
-            let _gate = RUNTIME_UPDATE.lock().await;
+            let _gate = runtime_update_guard().await?;
             let input = arg(payload, 0).ok_or_else(|| {
                 IpcError::invalid_argument("geodata-settings:set requires a settings object")
             })?;
@@ -712,7 +765,7 @@ pub async fn dispatch(
             coerce(enhancements::coerce_dns_enhancement(&models.dns.get())),
         )),
         "dns:set" => {
-            let _gate = RUNTIME_UPDATE.lock().await;
+            let _gate = runtime_update_guard().await?;
             let input = arg(payload, 0).ok_or_else(|| {
                 IpcError::invalid_argument("dns:set requires an enhancement object")
             })?;
@@ -752,7 +805,7 @@ pub async fn dispatch(
             )),
         )),
         "sniffer:set" => {
-            let _gate = RUNTIME_UPDATE.lock().await;
+            let _gate = runtime_update_guard().await?;
             let input = arg(payload, 0).ok_or_else(|| {
                 IpcError::invalid_argument("sniffer:set requires an enhancement object")
             })?;
@@ -838,11 +891,11 @@ pub async fn dispatch(
         // and the status records `failed` + lastError.
         "kernel:get-status" => Ok(kernel.get_status_value()),
         "kernel:start" => {
-            let _gate = RUNTIME_UPDATE.lock().await;
+            let _gate = runtime_update_guard().await?;
             kernel.start().await
         }
         "kernel:stop" => {
-            let _gate = RUNTIME_UPDATE.lock().await;
+            let _gate = runtime_update_guard().await?;
             // The ordered gateway (system-proxy precondition): a user stop,
             // mode switch or shutdown must never leave a dead-port proxy.
             system_proxy.restore_before_kernel_unavailable().await?;
@@ -890,7 +943,7 @@ pub async fn dispatch(
             // record triple runs inside the profile mutation boundary, so a
             // concurrent activation can never swap the live config between
             // attribution and application.
-            let _gate = RUNTIME_UPDATE.lock().await;
+            let _gate = runtime_update_guard().await?;
             let (group, name) = mihomo::parse_proxy_selection(
                 arg(payload, 0).unwrap_or(&Value::Null),
                 arg(payload, 1).unwrap_or(&Value::Null),
@@ -1099,9 +1152,82 @@ fn restore_active(profiles: &ProfilesService, previous: &Option<String>) {
     }
 }
 
+fn profile_rollback(
+    profiles: &Arc<ProfilesService>,
+    previous_active: &Option<String>,
+    previous_document: Option<(&str, &str)>,
+) -> live_config::RollbackActiveFn {
+    let profiles = profiles.clone();
+    let previous_active = previous_active.clone();
+    let document = previous_document.map(|(id, text)| (id.to_owned(), text.to_owned()));
+    Arc::new(move || {
+        let profiles = profiles.clone();
+        let previous_active = previous_active.clone();
+        let document = document.clone();
+        Box::pin(async move {
+            if let Some((id, text)) = document {
+                profiles.restore_document(&id, &text)?;
+            }
+            match previous_active {
+                Some(id) => {
+                    profiles.activate(&id)?;
+                }
+                None => {
+                    profiles.deactivate()?;
+                }
+            }
+            Ok(())
+        })
+    })
+}
+
+/// Shared manual/automatic subscription transaction, including unchanged-YAML
+/// suppression and rollback before any fallback recovery start.
+pub(crate) async fn refresh_subscription(
+    id: &str,
+    profiles: &Arc<ProfilesService>,
+    overrides: &OverrideService,
+    models: &enhancements::ModelStores,
+    kernel: &kernel::KernelServices,
+    system_proxy: &crate::system_proxy::SystemProxyService,
+    mihomo: &mihomo::MihomoServices,
+) -> IpcResult {
+    let _gate = runtime_update_guard().await?;
+    let previous_active = active_profile_id(profiles)?;
+    let previous_document = profiles.get(id)?["document"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let meta = profiles.update_from_source(id).await?;
+    // ONLY when the updated profile is the live one: updating a
+    // non-active profile must not switch or restart anything.
+    if previous_active.as_deref() == Some(id)
+        && profiles.get(id)?["document"].as_str() != Some(previous_document.as_str())
+    {
+        if let Err(error) = profile_reload_step(
+            profiles,
+            overrides,
+            models,
+            kernel,
+            system_proxy,
+            mihomo,
+            &previous_active,
+            Some((id, &previous_document)),
+        )
+        .await
+        {
+            let _ = profiles.restore_document(id, &previous_document);
+            restore_active(profiles, &previous_active);
+            return Err(error);
+        }
+    }
+    Ok(meta)
+}
+
 /// The reloader step of every profile-mutating arm: hot reload first
 /// (returning early on success), then the ordered restart fallback; a
 /// failure propagates AFTER the caller's document rollback.
+#[allow(clippy::too_many_arguments)] // Captured pointer/document form the rollback transaction.
 async fn profile_reload_step(
     profiles: &Arc<ProfilesService>,
     overrides: &OverrideService,
@@ -1109,9 +1235,19 @@ async fn profile_reload_step(
     kernel: &kernel::KernelServices,
     system_proxy: &crate::system_proxy::SystemProxyService,
     mihomo: &mihomo::MihomoServices,
+    previous_active: &Option<String>,
+    previous_document: Option<(&str, &str)>,
 ) -> Result<(), IpcError> {
-    let result =
-        live_config::reload_active_profile(profiles, overrides, models, kernel, system_proxy).await;
+    let rollback = profile_rollback(profiles, previous_active, previous_document);
+    let result = live_config::reload_active_profile_with_rollback(
+        profiles,
+        overrides,
+        models,
+        kernel,
+        system_proxy,
+        Some(rollback),
+    )
+    .await;
     if matches!(&result, Ok(true)) {
         // The kernel came back up on the (possibly new) active profile:
         // replay that profile's remembered node picks so they survive the
@@ -2690,5 +2826,114 @@ mod tests {
         // model must roll back to the pre-set value.
         assert!(result.is_err());
         assert_eq!(f.models.dns.get(), before);
+    }
+
+    #[tokio::test]
+    async fn url_import_activation_reloads_the_live_kernel() {
+        use serde_json::json;
+        let (base, _subscription) = crate::subscription::test_support::start_http_stub(
+            200,
+            vec![],
+            "proxies: []\nrules: [MATCH,DIRECT]\n".into(),
+        );
+        let mut f = fixtures();
+        f.profiles = Arc::new(
+            ProfilesService::for_development(f._temp.path()).with_fetcher(
+                crate::subscription::SubscriptionFetcher::for_testing(
+                    Arc::new(|_| Vec::new()),
+                    5000,
+                    1024 * 1024,
+                ),
+            ),
+        );
+        let reloads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = reloads.clone();
+        let server = crate::mihomo::mock_controller::MockServer::start(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            move |method, path, _| match (method, path) {
+                ("GET", "/configs") => (
+                    200,
+                    json!({"mode":"rule","tun":{"enable":false}}).to_string(),
+                ),
+                ("PUT", "/configs") => {
+                    observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    (204, String::new())
+                }
+                _ => (200, "{}".into()),
+            },
+        );
+        f.models
+            .core
+            .set(
+                &json!({"controllerPort":server.port,"controllerSecret":"a".repeat(64)}),
+                enhancements::coerce_core_settings,
+            )
+            .unwrap();
+        let harness = crate::kernel_process::tests::create_harness();
+        crate::kernel_process::tests::start_to_running(&harness).await;
+        f.kernel = kernel::KernelServices {
+            supervisor: harness.supervisor,
+            manager: Arc::new(kernel::KernelManagerService::new()),
+            ready: None,
+            privileged: None,
+        };
+        let meta = dispatch(
+            "profiles:import-from-url",
+            &json!(["remote", base, true]),
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
+        assert_eq!(f.profiles.get_active().unwrap()["meta"]["id"], meta["id"]);
+        assert_eq!(reloads.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // The automatic worker uses the same transaction. Unchanged YAML
+        // must not reload/bounce the live profile on its periodic checks.
+        refresh_subscription(
+            meta["id"].as_str().unwrap(),
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.kernel,
+            &f.system_proxy,
+            &f.mihomo,
+        )
+        .await
+        .unwrap();
+        assert_eq!(reloads.load(std::sync::atomic::Ordering::SeqCst), 1);
+        f.kernel.stop().await.unwrap();
+    }
+    #[tokio::test]
+    async fn profile_rollback_restores_document_and_pointer_before_recovery() {
+        let f = fixtures();
+        let old=f.profiles.import(&serde_json::json!({"name":"old","document":"proxies: []\nrules: [MATCH,DIRECT]\n","activate":true})).unwrap();
+        let changed=f.profiles.import(&serde_json::json!({"name":"changed","document":"proxies: []\nrules: [MATCH,REJECT]\n"})).unwrap();
+        let id = changed["id"].as_str().unwrap();
+        let document = f.profiles.get(id).unwrap()["document"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let previous = Some(old["id"].as_str().unwrap().to_owned());
+        let rollback = profile_rollback(&f.profiles, &previous, Some((id, &document)));
+        f.profiles
+            .replace_document(id, "proxies: []\nrules: [MATCH,DIRECT]\n")
+            .unwrap();
+        f.profiles.activate(id).unwrap();
+        rollback().await.unwrap();
+        assert_eq!(f.profiles.get_active().unwrap()["meta"]["id"], old["id"]);
+        assert_eq!(f.profiles.get(id).unwrap()["document"], document);
     }
 }

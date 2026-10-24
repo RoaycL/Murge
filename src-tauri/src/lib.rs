@@ -197,7 +197,7 @@ pub fn run() {
                     Some(std::sync::Arc::new(move |version, previous_channel, previous_specific| {
                         let handle = handle.clone();
                         Box::pin(async move {
-                            let _gate = kernel::RUNTIME_UPDATE.lock().await;
+                            let _gate = crate::lifecycle::runtime_update_guard().await?;
                             let kernel_state = handle.state::<std::sync::Arc<crate::kernel::KernelServices>>();
                             let status = kernel_state.get_status_value();
                             if status["phase"].as_str() != Some("running")

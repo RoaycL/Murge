@@ -1406,6 +1406,11 @@ impl SystemProxyService {
         self.mutations_fenced.store(true, Ordering::SeqCst);
     }
 
+    /// Only used when orderly shutdown was cancelled by a restore failure.
+    pub fn resume_mutations(&self) {
+        self.mutations_fenced.store(false, Ordering::SeqCst);
+    }
+
     fn fenced_error(&self) -> IpcError {
         IpcError::code(
             code::SYSTEM_PROXY_ENABLE_FAILED,
@@ -4383,5 +4388,18 @@ mod tests {
         service.fence_mutations();
         assert!(service.enable().await.is_err());
         assert!(registry.values.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn shutdown_fence_keeps_restored_proxy_off_until_quit_is_cancelled() {
+        let (service, adapter) = test_service();
+        service.enable().await.unwrap();
+        service.fence_mutations();
+        service.restore_before_kernel_unavailable().await.unwrap();
+        assert!(service.enable().await.is_err());
+        assert_ne!(adapter.read().await.unwrap().proxy_enable.value, json!(1));
+        service.resume_mutations();
+        service.enable().await.unwrap();
+        assert_eq!(adapter.read().await.unwrap().proxy_enable.value, json!(1));
     }
 }

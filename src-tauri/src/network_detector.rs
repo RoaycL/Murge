@@ -287,7 +287,7 @@ impl NetworkGateway for AppNetworkGateway {
             if crate::lifecycle::is_quitting() {
                 return Ok(());
             }
-            let _gate = crate::kernel::RUNTIME_UPDATE.lock().await;
+            let _gate = crate::lifecycle::runtime_update_guard().await?;
             kernel.start().await.map(|_| ())
         })
     }
@@ -309,7 +309,7 @@ impl NetworkGateway for AppNetworkGateway {
                 return Ok(());
             }
             if !tun_desired {
-                let _gate = crate::kernel::RUNTIME_UPDATE.lock().await;
+                let _gate = crate::lifecycle::runtime_update_guard().await?;
                 return kernel.start().await.map(|_| ());
             }
             crate::runtime_intent::enable_tun_queued(&kernel, &tun).await
@@ -323,7 +323,7 @@ impl NetworkGateway for AppNetworkGateway {
         Box::pin(async move {
             // The ordered gateway: restore the owned proxy before the
             // listener goes away, and take TUN down with the host.
-            let _gate = crate::kernel::RUNTIME_UPDATE.lock().await;
+            let _gate = crate::lifecycle::runtime_update_guard().await?;
             proxy.restore_before_kernel_unavailable().await?;
             if tun.get_status().phase == "active" {
                 tun.emergency_disable().await;
@@ -334,16 +334,21 @@ impl NetworkGateway for AppNetworkGateway {
 
     fn network_down(&self) -> BoxFuture<'_, &'static str> {
         let proxy = self.proxy();
-        Box::pin(async move { proxy.handle_network_down().await })
+        Box::pin(async move {
+            let Ok(_gate) = crate::lifecycle::runtime_update_guard().await else {
+                return "failed";
+            };
+            proxy.handle_network_down().await
+        })
     }
 
     fn network_up(&self) -> BoxFuture<'_, &'static str> {
         let proxy = self.proxy();
         let app = self.app.clone();
         Box::pin(async move {
-            if crate::lifecycle::is_quitting() {
+            let Ok(_gate) = crate::lifecycle::runtime_update_guard().await else {
                 return "failed";
-            }
+            };
             let result = proxy.handle_network_up().await;
             crate::runtime_intent::wake(&app);
             result

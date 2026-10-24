@@ -35,6 +35,23 @@ pub fn is_quitting() -> bool {
     IS_QUITTING.load(Ordering::SeqCst)
 }
 
+/// Check after acquiring the FIFO boundary: a request queued before shutdown
+/// must not restart a core or rewrite the proxy after shutdown has drained it.
+pub async fn runtime_update_guard() -> Result<tokio::sync::MutexGuard<'static, ()>, IpcError> {
+    lock_runtime_update(&crate::kernel::RUNTIME_UPDATE, &IS_QUITTING).await
+}
+
+async fn lock_runtime_update<'a>(
+    gate: &'a tokio::sync::Mutex<()>,
+    quitting: &AtomicBool,
+) -> Result<tokio::sync::MutexGuard<'a, ()>, IpcError> {
+    let guard = gate.lock().await;
+    if quitting.load(Ordering::SeqCst) {
+        return Err(IpcError::internal("应用正在退出，请稍后重试"));
+    }
+    Ok(guard)
+}
+
 /// Fence every reconnect/replay path before a session-end shutdown starts
 /// (the Windows session-end handler calls this first).
 pub fn mark_quitting() {
@@ -216,6 +233,10 @@ async fn begin_application_shutdown_inner(
     }
     IS_QUITTING.store(true, Ordering::SeqCst);
     use tauri::Manager;
+    if let Some(proxy) = app.try_state::<std::sync::Arc<crate::system_proxy::SystemProxyService>>()
+    {
+        proxy.fence_mutations();
+    }
 
     // Proxy selections share the profile mutation boundary; the RUNTIME_UPDATE
     // gate IS that boundary in this build. Acquiring and RELEASING it once
@@ -267,6 +288,11 @@ async fn begin_application_shutdown_inner(
                 return Ok(());
             }
             IS_QUITTING.store(false, Ordering::SeqCst);
+            if let Some(proxy) =
+                app.try_state::<std::sync::Arc<crate::system_proxy::SystemProxyService>>()
+            {
+                proxy.resume_mutations();
+            }
             // Reveal the window so the user can fix the proxy and retry.
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
@@ -423,6 +449,9 @@ fn start_proxy_guard(app: tauri::AppHandle) {
             if !enabled {
                 continue;
             }
+            let Ok(_gate) = runtime_update_guard().await else {
+                continue;
+            };
             if let Some(proxy) =
                 app.try_state::<std::sync::Arc<crate::system_proxy::SystemProxyService>>()
             {
@@ -604,5 +633,25 @@ mod tests {
         .await;
         assert!(!restored);
         assert_eq!(*attempts.lock().await, 3);
+    }
+
+    #[tokio::test]
+    async fn queued_mutation_is_rejected_after_shutdown_begins() {
+        let gate = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+        let quitting = std::sync::Arc::new(AtomicBool::new(false));
+        let held = gate.lock().await;
+        let next_gate = gate.clone();
+        let next_flag = quitting.clone();
+        let (queued, ready) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            queued.send(()).unwrap();
+            lock_runtime_update(&next_gate, &next_flag).await.is_err()
+        });
+        ready.await.unwrap();
+        quitting.store(true, Ordering::SeqCst);
+        drop(held);
+        assert!(task.await.unwrap());
+        quitting.store(false, Ordering::SeqCst);
+        assert!(lock_runtime_update(&gate, &quitting).await.is_ok());
     }
 }

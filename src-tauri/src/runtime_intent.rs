@@ -692,6 +692,7 @@ pub fn spawn_startup_recovery(app: tauri::AppHandle) {
             return;
         }
         coordinator.start();
+        crate::profile_auto_update::start(&app);
     });
 }
 

@@ -351,6 +351,7 @@ impl NetworkGateway for AppNetworkGateway {
             };
             let result = proxy.handle_network_up().await;
             crate::runtime_intent::wake(&app);
+            crate::profile_auto_update::retry_failed(&app);
             result
         })
     }

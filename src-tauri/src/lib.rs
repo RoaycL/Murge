@@ -50,6 +50,7 @@ mod kernel_process;
 mod live_config;
 mod mihomo_artifact;
 mod privileged_kernel;
+mod profile_auto_update;
 mod profile_parse;
 mod profile_service;
 mod profiles;
@@ -755,6 +756,7 @@ pub fn run() {
             }
             // Phase 4: window rules, startup recovery + intent replay,
             // connectivity watchdog, proxy guard, session/power events.
+            profile_auto_update::install(app.handle());
             lifecycle::start_desktop_integration(app.handle());
             startup_timeline::mark("network-monitor-started");
             startup_timeline::mark("ipc-ready");

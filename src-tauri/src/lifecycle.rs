@@ -184,6 +184,11 @@ async fn flush_logs(app: &tauri::AppHandle) {
 async fn dispose_services(app: &tauri::AppHandle) {
     use tauri::Manager;
     crate::runtime_intent::stop(app);
+    if let Some(worker) =
+        app.try_state::<std::sync::Arc<crate::profile_auto_update::ProfileAutoUpdater>>()
+    {
+        worker.stop();
+    }
     if let Some(detector) =
         app.try_state::<std::sync::Arc<crate::network_detector::NetworkDetector>>()
     {

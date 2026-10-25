@@ -632,66 +632,205 @@ pub fn install_ready_update_on_exit() {
     }
 }
 
-/// Write the verified Electron installer to a temp folder and start it once
-/// this process has exited, so its running-app check never meets a
-/// half-closed Murge. ShellExecute (via Start-Process) lets the per-machine
-/// installer raise its own UAC prompt; the path travels in the environment,
-/// never through command-line quoting. The Electron installer removes this
+/// How long the elevated helper waits for this process to finish exiting.
+pub const PARENT_EXIT_TIMEOUT_SECONDS: u32 = 120;
+/// How long the exit waits for the user to answer the administrator prompt.
+const ELEVATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+/// A PowerShell single-quoted string literal. PowerShell also reads the
+/// typographic single quotes as delimiters, so each of them is doubled too.
+pub fn ps_literal(value: &str) -> String {
+    let mut quoted = String::with_capacity(value.len() + 2);
+    quoted.push('\'');
+    for character in value.chars() {
+        if matches!(
+            character,
+            '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}'
+        ) {
+            quoted.push(character);
+        }
+        quoted.push(character);
+    }
+    quoted.push('\'');
+    quoted
+}
+
+/// `-EncodedCommand` payload: base64 of the UTF-16LE script.
+pub fn encode_powershell(script: &str) -> String {
+    use base64::Engine;
+    let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// Script of the elevated helper: wait for Murge to exit, then run the
+/// installer (already elevated, so no second prompt) with a visible window.
+/// Values are embedded as literals: an elevated process does not inherit this
+/// process's environment.
+pub fn elevated_helper_script(
+    installer: &str,
+    args: &[&str],
+    parent_pid: u32,
+    trace: &str,
+    failure: &str,
+) -> String {
+    let trace = ps_literal(trace);
+    let argument_list = args
+        .iter()
+        .map(|arg| ps_literal(arg))
+        .collect::<Vec<_>>()
+        .join(",");
+    let argument_list = if argument_list.is_empty() {
+        String::new()
+    } else {
+        format!(" -ArgumentList {argument_list}")
+    };
+    let timeout = PARENT_EXIT_TIMEOUT_SECONDS;
+    [
+        "try {".to_string(),
+        format!("  Add-Content -LiteralPath {trace} -Value 'Elevated helper started' -ErrorAction SilentlyContinue"),
+        format!("  Wait-Process -Id {parent_pid} -Timeout {timeout} -ErrorAction SilentlyContinue"),
+        format!("  if (Get-Process -Id {parent_pid} -ErrorAction SilentlyContinue) {{ throw 'the app did not exit within {timeout} seconds' }}"),
+        format!("  Add-Content -LiteralPath {trace} -Value 'Starting installer' -ErrorAction SilentlyContinue"),
+        format!(
+            "  $installer = Start-Process -FilePath {}{argument_list} -WindowStyle Normal -Wait -PassThru -ErrorAction Stop",
+            ps_literal(installer)
+        ),
+        format!("  Add-Content -LiteralPath {trace} -Value ('Installer exit code: ' + $installer.ExitCode) -ErrorAction SilentlyContinue"),
+        "  if ($installer.ExitCode -ne 0) { throw ('Installer exited with code ' + $installer.ExitCode) }".to_string(),
+        "} catch {".to_string(),
+        format!("  Set-Content -LiteralPath {} -Value $_.Exception.Message -Encoding UTF8", ps_literal(failure)),
+        "}".to_string(),
+    ]
+    .join("\n")
+}
+
+/// Script run while Murge still exists: request elevation and start the
+/// elevated helper. Exits 0 once it runs, 1 when elevation was refused.
+pub fn elevation_request_script(
+    helper: &str,
+    powershell: &str,
+    trace: &str,
+    failure: &str,
+) -> String {
+    let helper_args = [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-WindowStyle",
+        "Hidden",
+        "-EncodedCommand",
+        &encode_powershell(helper),
+    ]
+    .iter()
+    .map(|arg| ps_literal(arg))
+    .collect::<Vec<_>>()
+    .join(",");
+    let trace = ps_literal(trace);
+    [
+        "try {".to_string(),
+        format!("  Set-Content -LiteralPath {trace} -Value 'Requesting elevation' -ErrorAction SilentlyContinue"),
+        format!(
+            "  $null = Start-Process -FilePath {} -ArgumentList {helper_args} -Verb RunAs -WindowStyle Hidden -ErrorAction Stop",
+            ps_literal(powershell)
+        ),
+        format!("  Add-Content -LiteralPath {trace} -Value 'Elevated helper launched' -ErrorAction SilentlyContinue"),
+        "  exit 0".to_string(),
+        "} catch {".to_string(),
+        format!(
+            "  Set-Content -LiteralPath {} -Value ('Elevation failed: ' + $_.Exception.Message) -Encoding UTF8",
+            ps_literal(failure)
+        ),
+        "  exit 1".to_string(),
+        "}".to_string(),
+    ]
+    .join("\n")
+}
+
+/// Folder the switch-back installer and its diagnostics live in.
+fn update_temp_dir() -> std::path::PathBuf {
+    std::env::temp_dir().join("murge-update")
+}
+
+/// Write the verified Electron installer to a temp folder and hand it to
+/// Windows. A non-elevated child of this process does not reliably outlive
+/// it (a login task tears its whole process tree down), so — while Murge
+/// still runs — a short-lived PowerShell asks for elevation and starts an
+/// elevated helper, which Windows creates outside this process tree. That
+/// helper waits for Murge to exit and runs the installer. This blocks the
+/// exit while the UAC prompt is up. The Electron installer removes this
 /// installation first (keeping service, data and the startup task).
 fn launch_electron_installer(file_name: &str, bytes: &[u8], restart: bool) -> Result<(), String> {
-    let dir = std::env::temp_dir().join("murge-update");
+    let dir = update_temp_dir();
     std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     let path = dir.join(file_name);
     std::fs::write(&path, bytes).map_err(|error| error.to_string())?;
+    let trace = dir.join("install-trace.txt");
+    let failure = dir.join("install-failure.txt");
     let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
     let powershell = std::path::Path::new(&system_root)
         .join("System32")
         .join("WindowsPowerShell")
         .join("v1.0")
         .join("powershell.exe");
-    let argument_list = electron_installer_args(restart)
-        .iter()
-        .map(|arg| format!("'{}'", arg.replace('\'', "''")))
-        .collect::<Vec<_>>()
-        .join(",");
-    let command = format!(
-        "try {{ \
-         Add-Content -LiteralPath $env:UPDATE_TRACE_PATH -Value 'Helper started'; \
-         Wait-Process -Id ([int]$env:UPDATE_PARENT_PID) -Timeout 60 -ErrorAction SilentlyContinue; \
-         if (Get-Process -Id ([int]$env:UPDATE_PARENT_PID) -ErrorAction SilentlyContinue) {{ throw 'Murge did not exit within 60 seconds' }}; \
-         $installer = Start-Process -FilePath $env:UPDATE_INSTALLER_PATH -ArgumentList {argument_list} -Verb RunAs -WindowStyle Normal -Wait -PassThru -ErrorAction Stop; \
-         Add-Content -LiteralPath $env:UPDATE_TRACE_PATH -Value ('Installer exit code: ' + $installer.ExitCode); \
-         if ($installer.ExitCode -ne 0) {{ throw ('Installer exit code: ' + $installer.ExitCode) }} \
-         }} catch {{ Set-Content -LiteralPath $env:UPDATE_FAILURE_PATH -Value $_.Exception.Message -Encoding UTF8 }}"
+    let helper = elevated_helper_script(
+        &path.to_string_lossy(),
+        electron_installer_args(restart),
+        std::process::id(),
+        &trace.to_string_lossy(),
+        &failure.to_string_lossy(),
     );
-    let mut process = std::process::Command::new(powershell);
+    let request = elevation_request_script(
+        &helper,
+        &powershell.to_string_lossy(),
+        &trace.to_string_lossy(),
+        &failure.to_string_lossy(),
+    );
+    let mut process = std::process::Command::new(&powershell);
     process
         .args([
             "-NoProfile",
             "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
             "-WindowStyle",
             "Hidden",
-            "-Command",
-            &command,
+            "-EncodedCommand",
+            &encode_powershell(&request),
         ])
-        .env("UPDATE_INSTALLER_PATH", &path)
-        .env("UPDATE_TRACE_PATH", dir.join("install-trace.txt"))
-        .env("UPDATE_FAILURE_PATH", dir.join("install-failure.txt"))
-        .env("UPDATE_PARENT_PID", std::process::id().to_string())
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        process.creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW);
+        process.creation_flags(CREATE_NO_WINDOW);
     }
-    process
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    let mut child = process.spawn().map_err(|error| error.to_string())?;
+    let deadline = std::time::Instant::now() + ELEVATION_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => {
+                crate::diag!("[updates] elevated installer helper started");
+                return Ok(());
+            }
+            Ok(Some(status)) => {
+                return Err(format!(
+                    "elevation was refused or failed ({status}); see {}",
+                    failure.display()
+                ))
+            }
+            Ok(None) if std::time::Instant::now() >= deadline => {
+                let _ = child.kill();
+                let reason = "no answer to the administrator prompt";
+                let _ = std::fs::write(&failure, reason);
+                return Err(reason.to_string());
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+            Err(error) => return Err(error.to_string()),
+        }
+    }
 }
 
 /// Production driver: signed Tauri updater over GitHub Releases + mirrors.
@@ -768,9 +907,14 @@ pub fn signed_fields_match(signature: &str, version: &str, file_name: &str) -> R
 
 impl TauriUpdaterDriver {
     pub fn new(app: tauri::AppHandle, channel: &str) -> Self {
-        let failure_file = std::env::temp_dir().join("murge-update").join("install-failure.txt");
+        let failure_file = update_temp_dir().join("install-failure.txt");
         if let Ok(reason) = std::fs::read_to_string(&failure_file) {
-            crate::diag!("[updates] previous installer launch failed: {}", reason.trim());
+            crate::diag!(
+                "[updates] previous installer launch failed: {}",
+                reason.trim()
+            );
+            // Logged once; a stale file would repeat the line on every launch.
+            let _ = std::fs::remove_file(&failure_file);
         }
         let repository = crate::brand::load_brand()
             .ok()
@@ -2021,6 +2165,44 @@ mod tests {
             gated.get_state().current_version.as_deref(),
             Some(env!("CARGO_PKG_VERSION"))
         );
+    }
+
+    #[test]
+    fn installer_hand_off_elevates_before_exit_and_runs_installer_visibly() {
+        use base64::Engine;
+        assert_eq!(ps_literal("a'b"), "'a''b'");
+        assert_eq!(ps_literal("O\u{2019}Neil"), "'O\u{2019}\u{2019}Neil'");
+        let helper = elevated_helper_script(
+            "C:\\Users\\O'Neil\\Temp\\Murge-Setup-0.9.34-x64.exe",
+            &["--force-run"],
+            4242,
+            "C:\\t\\install-trace.txt",
+            "C:\\t\\install-failure.txt",
+        );
+        assert!(helper.contains("Wait-Process -Id 4242"));
+        assert!(helper.contains("-FilePath 'C:\\Users\\O''Neil\\Temp\\Murge-Setup-0.9.34-x64.exe' -ArgumentList '--force-run'"));
+        assert!(helper.contains("-WindowStyle Normal"));
+        assert!(!helper.contains("RunAs"));
+        let request = elevation_request_script(
+            &helper,
+            "C:\\ps.exe",
+            "C:\\t\\install-trace.txt",
+            "C:\\t\\install-failure.txt",
+        );
+        assert!(request.contains("-Verb RunAs"));
+        let encoded = request
+            .split("'-EncodedCommand','")
+            .nth(1)
+            .and_then(|rest| rest.split('\'').next())
+            .expect("helper embedded");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap();
+        let units: Vec<u16> = bytes
+            .chunks(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        assert_eq!(String::from_utf16(&units).unwrap(), helper);
     }
 
     #[test]

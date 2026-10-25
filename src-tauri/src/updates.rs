@@ -637,9 +637,22 @@ pub const PARENT_EXIT_TIMEOUT_SECONDS: u32 = 120;
 /// How long the exit waits for the user to answer the administrator prompt.
 const ELEVATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
-/// A PowerShell single-quoted string literal.
+/// A PowerShell single-quoted string literal. PowerShell also reads the
+/// typographic single quotes as delimiters, so each of them is doubled too.
 pub fn ps_literal(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
+    let mut quoted = String::with_capacity(value.len() + 2);
+    quoted.push('\'');
+    for character in value.chars() {
+        if matches!(
+            character,
+            '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}'
+        ) {
+            quoted.push(character);
+        }
+        quoted.push(character);
+    }
+    quoted.push('\'');
+    quoted
 }
 
 /// `-EncodedCommand` payload: base64 of the UTF-16LE script.
@@ -2158,6 +2171,7 @@ mod tests {
     fn installer_hand_off_elevates_before_exit_and_runs_installer_visibly() {
         use base64::Engine;
         assert_eq!(ps_literal("a'b"), "'a''b'");
+        assert_eq!(ps_literal("O\u{2019}Neil"), "'O\u{2019}\u{2019}Neil'");
         let helper = elevated_helper_script(
             "C:\\Users\\O'Neil\\Temp\\Murge-Setup-0.9.34-x64.exe",
             &["--force-run"],

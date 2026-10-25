@@ -8,7 +8,7 @@
 //! - YAML 1.2 core schema for plain scalars (`yes`/`on` stay strings, `0x1F`
 //!   and `0o17` are integers, `Null`/`~`/empty are null) and the standard
 //!   `!!str`/`!!int`/`!!float`/`!!bool`/`!!null` tags;
-//! - anchors and aliases are expanded, merge keys (`<<: *a`, `<<: [*a, *b]`)
+//! - anchors and aliases are expanded, plain merge keys (`<<: *a`, `<<: [*a, *b]`)
 //!   resolve with explicit keys winning and earlier merge sources winning;
 //! - duplicate keys are rejected, a leading BOM is ignored, and only the first
 //!   document is read (mihomo itself ignores any later one).
@@ -214,7 +214,9 @@ impl MarkedEventReceiver for Builder {
                     _ if plain => resolve_plain(&raw),
                     _ => Value::String(raw.clone()),
                 };
-                let merge = raw == MERGE_KEY && core_tag != Some("str");
+                // Only a plain `<<` merges (YAML spec, go-yaml): a quoted `"<<"` is an
+                // ordinary key, which is also how `stringify` writes a literal one.
+                let merge = raw == MERGE_KEY && plain && core_tag.is_none();
                 let key = key_text(&value).map(|name| (name, merge));
                 self.complete(value, anchor, key);
             }
@@ -509,6 +511,14 @@ mod tests {
         assert_eq!(data["many"], json!({"x": 1, "y": 2, "z": 4}));
         assert_eq!(data["list"], json!(["p", "q"]));
         assert!(data.get("a").is_some());
+    }
+
+    #[test]
+    fn quoted_merge_key_is_a_literal_key() {
+        let data = parse("b: &b {type: http}\np:\n  \"<<\": *b\n  url: u\n");
+        assert_eq!(data["p"], json!({"<<": {"type": "http"}, "url": "u"}));
+        let text = stringify(&data);
+        assert_eq!(parse(&text), data, "{text}");
     }
 
     #[test]

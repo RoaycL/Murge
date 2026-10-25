@@ -54,7 +54,7 @@ export function elevatedHelperScript(handoff: InstallerHandoff): string {
     `try {`,
     `  Add-Content -LiteralPath ${trace} -Value 'Elevated helper started' -ErrorAction SilentlyContinue`,
     `  Wait-Process -Id ${pid} -Timeout ${PARENT_EXIT_TIMEOUT_SECONDS} -ErrorAction SilentlyContinue`,
-    `  if (Get-Process -Id ${pid} -ErrorAction SilentlyContinue) { throw 'Murge did not exit within ${PARENT_EXIT_TIMEOUT_SECONDS} seconds' }`,
+    `  if (Get-Process -Id ${pid} -ErrorAction SilentlyContinue) { throw 'the app did not exit within ${PARENT_EXIT_TIMEOUT_SECONDS} seconds' }`,
     `  Add-Content -LiteralPath ${trace} -Value 'Starting installer' -ErrorAction SilentlyContinue`,
     `  $installer = Start-Process -FilePath ${psLiteral(handoff.installerPath)}` +
       (args ? ` -ArgumentList ${args}` : '') +

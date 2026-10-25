@@ -8,7 +8,7 @@ import {
 import type { InstallerHandoff } from '../src/main/updates/installer-handoff'
 
 const handoff: InstallerHandoff = {
-  installerPath: "C:\\Users\\O'Neil\\AppData\\Local\\Temp\\murge-update\\Murge_0.9.34_x64-setup.exe",
+  installerPath: "C:\\Users\\O'Neil\\AppData\\Local\\Temp\\app-update\\App_0.9.34_x64-setup.exe",
   installerArgs: ['/P', '/R'],
   parentPid: 4242,
   traceFile: 'C:\\Temp\\murge-update\\install-trace.txt',
@@ -25,7 +25,7 @@ describe('installer hand-off', () => {
   it('runs the installer from the elevated helper once the app has exited', () => {
     const script = elevatedHelperScript(handoff)
     expect(script).toContain('Wait-Process -Id 4242')
-    expect(script).toContain("-FilePath 'C:\\Users\\O''Neil\\AppData\\Local\\Temp\\murge-update\\Murge_0.9.34_x64-setup.exe'")
+    expect(script).toContain("-FilePath 'C:\\Users\\O''Neil\\AppData\\Local\\Temp\\app-update\\App_0.9.34_x64-setup.exe'")
     expect(script).toContain("-ArgumentList '/P','/R'")
     // Already elevated: the installer must not raise a second prompt, and it
     // must be visible.

@@ -54,10 +54,16 @@ export function createUpdaterDriver(onNotificationClick: () => void, channel: Up
       // has cleanup to run, and the installer's running-app check would
       // otherwise find (and stop) a half-closed Electron process.
       const command = [
+        'Add-Content -LiteralPath $env:UPDATE_TRACE_PATH -Value "Helper started"',
         'Wait-Process -Id ([int]$env:UPDATE_PARENT_PID) -Timeout 60 -ErrorAction SilentlyContinue',
         // A refused UAC prompt or a blocked file fails here, after this
         // process is gone: leave the reason for the next launch to log.
-        `try { Start-Process -FilePath $env:UPDATE_INSTALLER_PATH -ArgumentList ${argumentList} -ErrorAction Stop } ` +
+        // Explicitly show the installer rather than inheriting the helper's
+        // hidden window state. Keep the helper alive to observe its result.
+        `try { if (Get-Process -Id ([int]$env:UPDATE_PARENT_PID) -ErrorAction SilentlyContinue) { throw 'Murge did not exit within 60 seconds' }; ` +
+          `$installer = Start-Process -FilePath $env:UPDATE_INSTALLER_PATH -ArgumentList ${argumentList} -Verb RunAs -WindowStyle Normal -Wait -PassThru -ErrorAction Stop; ` +
+          'Add-Content -LiteralPath $env:UPDATE_TRACE_PATH -Value ("Installer exit code: " + $installer.ExitCode); ' +
+          'if ($installer.ExitCode -ne 0) { throw "Installer exited with code $($installer.ExitCode)" } } ' +
           'catch { Set-Content -LiteralPath $env:UPDATE_FAILURE_PATH -Value $_.Exception.Message -Encoding UTF8 }'
       ].join('; ')
       const child = spawn(
@@ -67,7 +73,7 @@ export function createUpdaterDriver(onNotificationClick: () => void, channel: Up
           detached: true,
           stdio: 'ignore',
           windowsHide: true,
-          env: { ...process.env, UPDATE_INSTALLER_PATH: file, UPDATE_FAILURE_PATH: failureFile, UPDATE_PARENT_PID: String(process.pid) }
+          env: { ...process.env, UPDATE_INSTALLER_PATH: file, UPDATE_FAILURE_PATH: failureFile, UPDATE_TRACE_PATH: join(downloadDir, 'install-trace.txt'), UPDATE_PARENT_PID: String(process.pid) }
         }
       )
       child.once('error', (error) => console.error('[updates] failed to start the installer helper:', error))

@@ -420,12 +420,13 @@ pub fn signed_fields(signature: &str) -> std::collections::HashMap<String, Strin
         .collect()
 }
 
-/// Command line for an Electron installer: silent, and relaunching the app
+/// Explicit restart/install shows the installer; background quit stays silent.
+/// Relaunch the app
 /// (`--force-run`) only for "重启并安装", not for an install on quit.
 /// (`--updated` is not passed: this is a takeover, not an in-place upgrade.)
 pub fn electron_installer_args(restart: bool) -> &'static [&'static str] {
     if restart {
-        &["/S", "--force-run"]
+        &["--force-run"]
     } else {
         &["/S"]
     }
@@ -654,8 +655,14 @@ fn launch_electron_installer(file_name: &str, bytes: &[u8], restart: bool) -> Re
         .collect::<Vec<_>>()
         .join(",");
     let command = format!(
-        "Wait-Process -Id ([int]$env:UPDATE_PARENT_PID) -Timeout 60 -ErrorAction SilentlyContinue; \
-         Start-Process -FilePath $env:UPDATE_INSTALLER_PATH -ArgumentList {argument_list}"
+        "try {{ \
+         Add-Content -LiteralPath $env:UPDATE_TRACE_PATH -Value 'Helper started'; \
+         Wait-Process -Id ([int]$env:UPDATE_PARENT_PID) -Timeout 60 -ErrorAction SilentlyContinue; \
+         if (Get-Process -Id ([int]$env:UPDATE_PARENT_PID) -ErrorAction SilentlyContinue) {{ throw 'Murge did not exit within 60 seconds' }}; \
+         $installer = Start-Process -FilePath $env:UPDATE_INSTALLER_PATH -ArgumentList {argument_list} -Verb RunAs -WindowStyle Normal -Wait -PassThru -ErrorAction Stop; \
+         Add-Content -LiteralPath $env:UPDATE_TRACE_PATH -Value ('Installer exit code: ' + $installer.ExitCode); \
+         if ($installer.ExitCode -ne 0) {{ throw ('Installer exit code: ' + $installer.ExitCode) }} \
+         }} catch {{ Set-Content -LiteralPath $env:UPDATE_FAILURE_PATH -Value $_.Exception.Message -Encoding UTF8 }}"
     );
     let mut process = std::process::Command::new(powershell);
     process
@@ -668,6 +675,8 @@ fn launch_electron_installer(file_name: &str, bytes: &[u8], restart: bool) -> Re
             &command,
         ])
         .env("UPDATE_INSTALLER_PATH", &path)
+        .env("UPDATE_TRACE_PATH", dir.join("install-trace.txt"))
+        .env("UPDATE_FAILURE_PATH", dir.join("install-failure.txt"))
         .env("UPDATE_PARENT_PID", std::process::id().to_string())
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -759,6 +768,10 @@ pub fn signed_fields_match(signature: &str, version: &str, file_name: &str) -> R
 
 impl TauriUpdaterDriver {
     pub fn new(app: tauri::AppHandle, channel: &str) -> Self {
+        let failure_file = std::env::temp_dir().join("murge-update").join("install-failure.txt");
+        if let Ok(reason) = std::fs::read_to_string(&failure_file) {
+            crate::diag!("[updates] previous installer launch failed: {}", reason.trim());
+        }
         let repository = crate::brand::load_brand()
             .ok()
             .and_then(|brand| repository_base(&brand.repository_url));
@@ -2014,7 +2027,7 @@ mod tests {
     fn each_channel_delivers_one_build() {
         assert_eq!(channel_product("stable"), "electron");
         assert_eq!(channel_product("experimental"), "tauri");
-        assert_eq!(electron_installer_args(true), ["/S", "--force-run"]);
+        assert_eq!(electron_installer_args(true), ["--force-run"]);
         assert_eq!(electron_installer_args(false), ["/S"]);
         // A driver without channels does not offer the setting.
         let service = UpdateService::new(FakeDriver::new(true));

@@ -1,10 +1,11 @@
 import { spawn } from 'node:child_process'
-import { readFileSync, rmSync } from 'node:fs'
+import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { app, net, Notification } from 'electron'
 import { brand } from '@shared/brand'
 import { ElectronUpdaterDriver } from './electron-updater-driver'
+import { elevationRequestScript, encodePowerShell, type InstallerHandoff } from './installer-handoff'
 import { SignedManifestUpdaterDriver } from './signed-manifest-driver'
 import type { UpdaterDriver } from './updater-driver'
 import type { UpdateChannel } from '@shared/app-settings'
@@ -43,42 +44,13 @@ export function createUpdaterDriver(onNotificationClick: () => void, channel: Up
       await writeFile(file, data)
     },
     readFile: (file) => readFileSync(file),
-    launchInstaller: (file, args) => {
-      // ShellExecute (via Start-Process) so the per-machine installer can
-      // raise its own UAC prompt; a plain CreateProcess cannot elevate. The
-      // path travels in the environment, never through command-line quoting.
-      const systemRoot = process.env.SystemRoot ?? 'C:\\Windows'
-      const powershell = join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
-      const argumentList = args.map((arg) => `'${arg.replace(/'/g, "''")}'`).join(',')
-      // The helper waits for this process to exit first: the quit flow still
-      // has cleanup to run, and the installer's running-app check would
-      // otherwise find (and stop) a half-closed Electron process.
-      const command = [
-        'Add-Content -LiteralPath $env:UPDATE_TRACE_PATH -Value "Helper started"',
-        'Wait-Process -Id ([int]$env:UPDATE_PARENT_PID) -Timeout 60 -ErrorAction SilentlyContinue',
-        // A refused UAC prompt or a blocked file fails here, after this
-        // process is gone: leave the reason for the next launch to log.
-        // Explicitly show the installer rather than inheriting the helper's
-        // hidden window state. Keep the helper alive to observe its result.
-        `try { if (Get-Process -Id ([int]$env:UPDATE_PARENT_PID) -ErrorAction SilentlyContinue) { throw 'Murge did not exit within 60 seconds' }; ` +
-          `$installer = Start-Process -FilePath $env:UPDATE_INSTALLER_PATH -ArgumentList ${argumentList} -Verb RunAs -WindowStyle Normal -Wait -PassThru -ErrorAction Stop; ` +
-          'Add-Content -LiteralPath $env:UPDATE_TRACE_PATH -Value ("Installer exit code: " + $installer.ExitCode); ' +
-          'if ($installer.ExitCode -ne 0) { throw "Installer exited with code $($installer.ExitCode)" } } ' +
-          'catch { Set-Content -LiteralPath $env:UPDATE_FAILURE_PATH -Value $_.Exception.Message -Encoding UTF8 }'
-      ].join('; ')
-      const child = spawn(
-        powershell,
-        ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', command],
-        {
-          detached: true,
-          stdio: 'ignore',
-          windowsHide: true,
-          env: { ...process.env, UPDATE_INSTALLER_PATH: file, UPDATE_FAILURE_PATH: failureFile, UPDATE_TRACE_PATH: join(downloadDir, 'install-trace.txt'), UPDATE_PARENT_PID: String(process.pid) }
-        }
-      )
-      child.once('error', (error) => console.error('[updates] failed to start the installer helper:', error))
-      child.unref()
-    },
+    launchInstaller: (file, args) => launchElevatedInstaller({
+      installerPath: file,
+      installerArgs: args,
+      parentPid: process.pid,
+      traceFile: join(downloadDir, 'install-trace.txt'),
+      failureFile
+    }),
     requestQuit: () => app.quit(),
     notify: (title, body) => {
       try {
@@ -96,6 +68,50 @@ export function createUpdaterDriver(onNotificationClick: () => void, channel: Up
         // A failing notification must never take down the updater event stream.
       }
     }
+  })
+}
+
+/** How long the quit waits for the user to answer the UAC prompt. */
+const ELEVATION_TIMEOUT_MS = 5 * 60 * 1000
+
+/**
+ * Get the elevated installer helper running before this process exits (see
+ * installer-handoff.ts): the quit waits here while the UAC prompt is up.
+ */
+function launchElevatedInstaller(handoff: InstallerHandoff): Promise<void> {
+  const systemRoot = process.env.SystemRoot ?? 'C:\\Windows'
+  const powershell = join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+  const script = elevationRequestScript(handoff, powershell)
+  return new Promise((resolve) => {
+    const fail = (reason: string): void => {
+      console.error(`[updates] the update installer was not handed off: ${reason}`)
+      try {
+        writeFileSync(handoff.failureFile, reason, 'utf8')
+      } catch {
+        // The console line above is the record.
+      }
+    }
+    const child = spawn(
+      powershell,
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-EncodedCommand', encodePowerShell(script)],
+      { stdio: 'ignore', windowsHide: true }
+    )
+    const timer = setTimeout(() => {
+      child.kill()
+      fail('no answer to the administrator prompt')
+      resolve()
+    }, ELEVATION_TIMEOUT_MS)
+    child.once('error', (error) => {
+      clearTimeout(timer)
+      fail(`failed to start PowerShell: ${error.message}`)
+      resolve()
+    })
+    child.once('exit', (code) => {
+      clearTimeout(timer)
+      if (code === 0) console.info('[updates] elevated installer helper started')
+      else console.error(`[updates] the update installer was not handed off (exit code ${code}); see ${handoff.failureFile}`)
+      resolve()
+    })
   })
 }
 

@@ -141,12 +141,14 @@ export class UpdateService implements UpdatesGateway {
     return () => this.listeners.delete(listener)
   }
 
-  dispose(): void {
+  /** Settles once a staged installer has been handed off (quit flow awaits it). */
+  dispose(options?: { skipInstall?: boolean }): Promise<void> {
     this.stopPolling()
     this.unsubscribe?.()
     this.unsubscribe = null
-    this.driver.dispose()
+    const handoff = this.driver.dispose(options)
     this.listeners.clear()
+    return Promise.resolve(handoff)
   }
 
   private handle(event: UpdaterDriverEvent): void {

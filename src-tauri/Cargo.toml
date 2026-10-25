@@ -1,6 +1,6 @@
 [package]
 name = "murge"
-version = "0.9.33"
+version = "0.9.34"
 description = "A desktop network client powered by mihomo."
 edition = "2021"
 rust-version = "1.82"

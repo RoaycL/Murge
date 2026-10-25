@@ -78,8 +78,11 @@ export interface SignedManifestDeps {
   writeFile: (path: string, data: Uint8Array) => Promise<void>
   /** Synchronous read of the staged installer, re-verified right before launch. */
   readFile: (path: string) => Uint8Array
-  /** Start the installer detached (it elevates itself). */
-  launchInstaller: (path: string, args: readonly string[]) => void
+  /**
+   * Hand the installer to Windows; it runs once this process has exited. The
+   * quit flow waits for the returned promise (the UAC prompt).
+   */
+  launchInstaller: (path: string, args: readonly string[]) => void | Promise<void>
   /** Begin the app's ordered quit flow. */
   requestQuit: () => void
   notify?: (title: string, body: string) => void
@@ -262,12 +265,16 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
     return () => this.listeners.delete(listener)
   }
 
-  /** Called by the quit flow after proxy restore + kernel stop. */
-  dispose(): void {
+  /**
+   * Called by the quit flow after proxy restore + kernel stop. Settles once
+   * the installer has been handed off; the launch itself happens synchronously
+   * before the first await.
+   */
+  async dispose(options: { skipInstall?: boolean } = {}): Promise<void> {
     const installer = this.readyInstaller
     this.readyInstaller = null
     this.listeners.clear()
-    if (!installer) return
+    if (!installer || options.skipInstall) return
     try {
       // The staged file sits in a user-writable directory: verify the bytes
       // on disk again immediately before handing them to Windows, so a file
@@ -278,7 +285,7 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
       }
       const args = installerArgs(installer.product, this.product, this.restartAfterInstall)
       console.info(`[updates] launching ${installer.fileName} ${args.join(' ')}`)
-      this.deps.launchInstaller(installer.path, args)
+      await this.deps.launchInstaller(installer.path, args)
     } catch (error) {
       console.error('[updates] failed to launch the installer:', error)
     }

@@ -2057,10 +2057,11 @@ function beginApplicationShutdown(sessionEnding: boolean): Promise<void> {
         else await stop()
       },
       dispose: async () => {
-        // First and on its own: this launches a staged update installer, which
-        // a failing teardown step below must never skip.
+        // First and on its own: this hands a staged update installer to
+        // Windows (waiting while the UAC prompt is up), which a failing
+        // teardown step below must never skip.
         try {
-          updateService?.dispose()
+          await updateService?.dispose({ skipInstall: sessionEnding })
         } catch (error) {
           console.error('[updates] failed to dispose the update service during quit:', error)
         }

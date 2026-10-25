@@ -46,5 +46,10 @@ export interface UpdaterDriver {
   quitAndInstall(): void
   /** Subscribe to normalized events; returns an unsubscribe function. */
   onEvent(listener: (event: UpdaterDriverEvent) => void): () => void
-  dispose(): void
+  /**
+   * Detach; may settle later when a staged installer is being handed off.
+   * `skipInstall` (Windows session ending) leaves a staged installer alone:
+   * an administrator prompt must never hold up a logoff or shutdown.
+   */
+  dispose(options?: { skipInstall?: boolean }): void | Promise<void>
 }

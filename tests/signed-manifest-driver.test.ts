@@ -156,6 +156,53 @@ describe('SignedManifestUpdaterDriver', () => {
     expect(h.launched).toHaveLength(1)
   })
 
+  it('lets the quit flow wait for the installer hand-off and survives its failure', async () => {
+    const key = makeKey()
+    const signature = key.signFile(installer, `timestamp:1\tfile:${fileName}\tversion:1.0.0`)
+    let finish: () => void = () => undefined
+    const handoffs: string[] = []
+    const h = harness({
+      [`${direct}/latest.json`]: manifest(signature),
+      [assetUrl]: asset()
+    }, {
+      publicKey: key.publicKey,
+      launchInstaller: (path) => {
+        handoffs.push(path)
+        return new Promise<void>((resolve) => { finish = resolve })
+      }
+    })
+    h.driver.check()
+    await h.settle()
+    h.driver.quitAndInstall()
+    let settled = false
+    const disposed = h.driver.dispose().then(() => { settled = true })
+    // Handed off synchronously; the promise waits for the UAC answer.
+    expect(handoffs).toEqual([staged(fileName)])
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(settled).toBe(false)
+    finish()
+    await disposed
+    expect(settled).toBe(true)
+
+    const failing = harness({
+      [`${direct}/latest.json`]: manifest(signature),
+      [assetUrl]: asset()
+    }, { publicKey: key.publicKey, launchInstaller: async () => { throw new Error('UAC refused') } })
+    failing.driver.check()
+    await failing.settle()
+    await expect(failing.driver.dispose()).resolves.toBeUndefined()
+  })
+
+  it('leaves a staged installer alone when Windows is ending the session', async () => {
+    const key = makeKey()
+    const signature = key.signFile(installer, `timestamp:1\tfile:${fileName}\tversion:1.0.0`)
+    const h = harness({ [`${direct}/latest.json`]: manifest(signature), [assetUrl]: asset() }, { publicKey: key.publicKey })
+    h.driver.check()
+    await h.settle()
+    await h.driver.dispose({ skipInstall: true })
+    expect(h.launched).toEqual([])
+  })
+
   it('discards a validly signed older installer announced under a newer version', async () => {
     const key = makeKey()
     const oldSignature = key.signFile(installer, `timestamp:1\tfile:${fileName}\tversion:0.9.0`)

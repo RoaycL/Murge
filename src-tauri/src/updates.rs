@@ -676,7 +676,7 @@ pub fn elevated_helper_script(
         "try {".to_string(),
         format!("  Add-Content -LiteralPath {trace} -Value 'Elevated helper started' -ErrorAction SilentlyContinue"),
         format!("  Wait-Process -Id {parent_pid} -Timeout {timeout} -ErrorAction SilentlyContinue"),
-        format!("  if (Get-Process -Id {parent_pid} -ErrorAction SilentlyContinue) {{ throw 'Murge did not exit within {timeout} seconds' }}"),
+        format!("  if (Get-Process -Id {parent_pid} -ErrorAction SilentlyContinue) {{ throw 'the app did not exit within {timeout} seconds' }}"),
         format!("  Add-Content -LiteralPath {trace} -Value 'Starting installer' -ErrorAction SilentlyContinue"),
         format!(
             "  $installer = Start-Process -FilePath {}{argument_list} -WindowStyle Normal -Wait -PassThru -ErrorAction Stop",

@@ -17,7 +17,7 @@ pub fn parse_proxy_group_order(document: &str) -> Vec<String> {
     if document.trim().is_empty() {
         return Vec::new();
     }
-    let Ok(docs) = yaml_rust2::YamlLoader::load_from_str(document) else {
+    let Ok(docs) = crate::yaml_value::load_as_yaml(document) else {
         return Vec::new();
     };
     let Some(Yaml::Hash(root)) = docs.into_iter().next() else {
@@ -79,7 +79,7 @@ pub fn parse_provider_catalog(document: &str) -> ProfileProviderCatalog {
     if document.trim().is_empty() {
         return empty();
     }
-    let Ok(docs) = yaml_rust2::YamlLoader::load_from_str(document) else {
+    let Ok(docs) = crate::yaml_value::load_as_yaml(document) else {
         return empty();
     };
     let Some(Yaml::Hash(root)) = docs.into_iter().next() else {

@@ -417,7 +417,7 @@ mod tests {
         let effective = build_profile_kernel_config(document, &runtime()).unwrap();
         assert!(effective.contains("mixed-port: 7890"), "{effective}");
         assert!(
-            effective.contains("external-controller: \"127.0.0.1:9090\""),
+            effective.contains("external-controller: 127.0.0.1:9090"),
             "{effective}"
         );
         assert!(
@@ -483,7 +483,7 @@ mod tests {
         let effective = build_profile_kernel_config(document, &options).unwrap();
         assert!(effective.contains("geo-update-interval: 48"), "{effective}");
         assert!(
-            effective.contains("external-ui-url: \"https://github.com/MetaCubeX"),
+            effective.contains("external-ui-url: https://github.com/MetaCubeX"),
             "{effective}"
         );
     }

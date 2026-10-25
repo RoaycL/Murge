@@ -9,13 +9,12 @@
 //!
 //! The `js` kind runs through the sealed boa sandbox (`crate::js_sandbox`) —
 //! the `node:vm` contract port (shadow console, no Node globals, hard
-//! runaway-trap bound). YAML output formatting may
-//! differ byte-wise from the Electron `yaml.stringify` (no 80-column folding,
-//! no leading `---`), which is semantically neutral for mihomo and documented
-//! in docs/tauri/phase3/README.md.
+//! runaway-trap bound). YAML parsing and output go
+//! through `crate::yaml_value`, which follows the Electron `yaml` package's
+//! rules; output may still differ byte-wise (no 80-column folding), which is
+//! semantically neutral for mihomo.
 
 use serde_json::{Map, Value};
-use yaml_rust2::yaml::Hash;
 use yaml_rust2::Yaml;
 
 use crate::error::IpcError;
@@ -104,128 +103,12 @@ pub fn merge_override_object(base: &mut Map<String, Value>, r#override: &Map<Str
 /// Parse a YAML document into the object model. Returns None on parse errors,
 /// duplicate keys or non-mapping roots (fail-open upstream).
 pub fn parse_yaml_to_object(text: &str) -> Option<Map<String, Value>> {
-    let docs = yaml_rust2::YamlLoader::load_from_str(text).ok()?;
-    let yaml = docs.into_iter().next()?;
-    match yaml_to_json(yaml) {
-        Value::Object(map) => Some(map),
-        _ => None,
-    }
-}
-
-const MERGE_KEY: &str = "<<";
-
-fn yaml_key(key: &Yaml) -> Option<String> {
-    match key {
-        Yaml::String(s) => Some(s.clone()),
-        Yaml::Integer(i) => Some(i.to_string()),
-        Yaml::Real(r) => Some(r.clone()),
-        Yaml::Boolean(b) => Some(b.to_string()),
-        _ => None,
-    }
-}
-
-fn yaml_to_json(yaml: Yaml) -> Value {
-    match yaml {
-        Yaml::Real(text) => {
-            let number = text.parse::<f64>().ok();
-            match number {
-                Some(v) if v.is_finite() => serde_json::Number::from_f64(v)
-                    .map(Value::Number)
-                    .unwrap_or(Value::Null),
-                _ => Value::String(text),
-            }
-        }
-        Yaml::Integer(v) => Value::Number(v.into()),
-        Yaml::String(s) => Value::String(s),
-        Yaml::Boolean(b) => Value::Bool(b),
-        Yaml::Array(items) => Value::Array(
-            items
-                .iter()
-                .map(|item| yaml_to_json(item.clone()))
-                .collect(),
-        ),
-        Yaml::Hash(map) => {
-            // YAML merge keys (`<<: *anchor` / `<<: [*a, *b]`) are resolved the
-            // way the Electron build's `parseDocument(.., { merge: true })` and
-            // mihomo itself do: explicit keys win over merged ones, and in a
-            // merge list the earlier source wins. Left unresolved, `<<` is
-            // re-emitted as a quoted literal key that mihomo no longer merges,
-            // so anchored providers lose their `type`/`format`.
-            let explicit: std::collections::HashSet<String> = map
-                .iter()
-                .filter_map(|(key, _)| yaml_key(key))
-                .filter(|key| key != MERGE_KEY)
-                .collect();
-            let mut object = Map::new();
-            for (key, value) in map.iter() {
-                let Some(key) = yaml_key(key) else {
-                    continue;
-                };
-                if key == MERGE_KEY {
-                    let sources = match value {
-                        Yaml::Hash(_) => vec![value.clone()],
-                        Yaml::Array(items) => items.clone(),
-                        _ => Vec::new(),
-                    };
-                    let mut resolved = 0;
-                    for source in sources {
-                        if let Value::Object(fields) = yaml_to_json(source) {
-                            resolved += 1;
-                            for (field, field_value) in fields {
-                                if !explicit.contains(&field) && !object.contains_key(&field) {
-                                    object.insert(field, field_value);
-                                }
-                            }
-                        }
-                    }
-                    if resolved > 0 {
-                        continue;
-                    }
-                }
-                object.insert(key, yaml_to_json(value.clone()));
-            }
-            Value::Object(object)
-        }
-        _ => Value::Null,
-    }
-}
-
-fn json_to_yaml(value: Value) -> Yaml {
-    match value {
-        Value::Null => Yaml::Null,
-        Value::Bool(b) => Yaml::Boolean(b),
-        Value::Number(number) => {
-            if let Some(i) = number.as_i64() {
-                Yaml::Integer(i)
-            } else if let Some(u) = number.as_u64() {
-                Yaml::Integer(u as i64)
-            } else if let Some(f) = number.as_f64() {
-                Yaml::Real(format!("{f}"))
-            } else {
-                Yaml::Null
-            }
-        }
-        Value::String(s) => Yaml::String(s),
-        Value::Array(items) => Yaml::Array(items.into_iter().map(json_to_yaml).collect()),
-        Value::Object(map) => {
-            let mut hash = Hash::new();
-            for (key, value) in map.into_iter() {
-                hash.insert(Yaml::String(key), json_to_yaml(value));
-            }
-            Yaml::Hash(hash)
-        }
-    }
+    crate::yaml_value::parse_object(text)
 }
 
 /// Serialize the object model back to YAML (the runtime config text).
 pub fn stringify_yaml(value: Value) -> String {
-    let yaml = json_to_yaml(value);
-    let mut out = String::new();
-    let mut emitter = yaml_rust2::YamlEmitter::new(&mut out);
-    if emitter.dump(&yaml).is_err() {
-        return String::new();
-    }
-    out.strip_prefix("---\n").map(str::to_string).unwrap_or(out)
+    crate::yaml_value::stringify(&value)
 }
 
 fn is_runnable(item: &OverrideItem) -> bool {
@@ -317,7 +200,7 @@ pub fn profile_kernel_config_errors(text: &str) -> Vec<String> {
         return vec!["配置文档为空".into()];
     }
 
-    let parsed = yaml_rust2::YamlLoader::load_from_str(text);
+    let parsed = crate::yaml_value::load_as_yaml(text);
     let root = match parsed {
         Ok(docs) => docs.into_iter().next(),
         Err(error) => {

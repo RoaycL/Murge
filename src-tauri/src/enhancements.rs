@@ -1540,7 +1540,7 @@ mod tests {
         );
         assert!(text.contains("mixed-port: 7893"), "{text}");
         assert!(
-            text.contains("external-controller: \"127.0.0.1:9090\""),
+            text.contains("external-controller: 127.0.0.1:9090"),
             "{text}"
         );
         assert!(text.contains("bind-address: \"*\""), "{text}");

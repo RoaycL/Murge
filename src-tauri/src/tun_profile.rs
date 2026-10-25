@@ -1651,7 +1651,10 @@ mod tests {
         let text = generate_proxied_tun_config(&proxied_options(&document)).unwrap();
         assert!(proxied_tun_config_errors(&text).is_empty(), "{text}");
         assert!(!text.contains("<<"), "{text}");
-        assert!(text.contains("path: \"./proxy-providers/sub.yaml\""), "{text}");
+        assert!(
+            text.contains("path: \"./proxy-providers/sub.yaml\""),
+            "{text}"
+        );
         assert!(text.contains("path: \"./rule-providers/cn.mrs\""), "{text}");
         assert!(text.contains("behavior: domain"), "{text}");
     }

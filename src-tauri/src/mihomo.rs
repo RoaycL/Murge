@@ -1196,7 +1196,7 @@ pub fn parse_proxy_group_test_urls(document: &str) -> Value {
     if document.trim().is_empty() {
         return json!({});
     }
-    let Ok(docs) = yaml_rust2::YamlLoader::load_from_str(document) else {
+    let Ok(docs) = crate::yaml_value::load_as_yaml(document) else {
         return json!({});
     };
     let Some(root) = docs.first() else {

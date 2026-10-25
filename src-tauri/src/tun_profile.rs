@@ -17,9 +17,9 @@
 //!   directory).
 //!
 //! Staged approximations (documented, same as the profile gate):
-//! - YAML merge keys (`<<: *anchor`) are not resolved by the event-stream
-//!   parser; documents using them are validated on their literal content
-//!   and a merge-resolver lands with the resolver slice.
+//! - The generated profile is parsed with `crate::yaml_value` (merge keys and
+//!   aliases resolved, as in the Electron build), so the validator below only
+//!   ever sees expanded content.
 //! - Error copy for duplicate keys follows the shared Rust validator
 //!   convention (`duplicate tun key: x`) rather than the `yaml` package's
 //!   parse-error wording; the accept/reject decision is identical.
@@ -1012,7 +1012,7 @@ pub fn generate_proxied_tun_config(options: &Value) -> Result<String, IpcError> 
     let document = options["document"].as_str().unwrap_or_default();
     let safe_text = crate::inspection::build_profile_kernel_config(document, options)?;
 
-    // Staged: merge keys are not resolved (see module doc).
+    // Merge keys and aliases are resolved here, as in the Electron build.
     let mut data = crate::override_apply::parse_yaml_to_object(&safe_text)
         .ok_or_else(|| invalid("配置解析失败：安全转换后的配置无法解析"))?;
 
@@ -1040,7 +1040,11 @@ pub fn generate_proxied_tun_config(options: &Value) -> Result<String, IpcError> 
                 continue;
             };
             let mut record = record.clone();
-            let vehicle = record["type"].as_str().unwrap_or_default().to_lowercase();
+            let vehicle = record
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_lowercase();
             if vehicle == "inline" {
                 continue;
             }
@@ -1051,7 +1055,11 @@ pub fn generate_proxied_tun_config(options: &Value) -> Result<String, IpcError> 
                 .is_some()
                 || record.get("path").is_none()
             {
-                let format = record["format"].as_str().unwrap_or_default().to_lowercase();
+                let format = record
+                    .get("format")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_lowercase();
                 let extension = match format.as_str() {
                     "mrs" => "mrs",
                     "text" => "txt",
@@ -1629,6 +1637,23 @@ mod tests {
         assert!(text.contains("device: Murge TUN"), "{text}");
         assert!(text.contains("mixed-port: 21000"), "{text}");
         assert!(text.contains("secret:"), "{text}");
+    }
+
+    #[test]
+    fn proxied_profile_accepts_providers_without_format_and_merge_keys() {
+        // Regression: a `type: http` proxy-provider without `path`/`format`
+        // panicked on `record["format"]`, and rule-providers built from
+        // `<<: *anchor` lost their `type`/`format` (stable resolves merges).
+        let document = format!(
+            "proxy-providers:\n  sub:\n    url: https://example.com/sub\n    type: http\nrule-anchor:\n  domain: &domain {{type: http, interval: 86400, behavior: domain, format: mrs}}\nrule-providers:\n  cn:\n    <<: *domain\n    url: https://example.com/cn.mrs\n{}",
+            proxied_document()
+        );
+        let text = generate_proxied_tun_config(&proxied_options(&document)).unwrap();
+        assert!(proxied_tun_config_errors(&text).is_empty(), "{text}");
+        assert!(!text.contains("<<"), "{text}");
+        assert!(text.contains("path: ./proxy-providers/sub.yaml"), "{text}");
+        assert!(text.contains("path: ./rule-providers/cn.mrs"), "{text}");
+        assert!(text.contains("behavior: domain"), "{text}");
     }
 
     #[test]

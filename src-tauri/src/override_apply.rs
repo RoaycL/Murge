@@ -9,13 +9,12 @@
 //!
 //! The `js` kind runs through the sealed boa sandbox (`crate::js_sandbox`) —
 //! the `node:vm` contract port (shadow console, no Node globals, hard
-//! runaway-trap bound). YAML output formatting may
-//! differ byte-wise from the Electron `yaml.stringify` (no 80-column folding,
-//! no leading `---`), which is semantically neutral for mihomo and documented
-//! in docs/tauri/phase3/README.md.
+//! runaway-trap bound). YAML parsing and output go
+//! through `crate::yaml_value`, which follows the Electron `yaml` package's
+//! rules; output may still differ byte-wise (no 80-column folding), which is
+//! semantically neutral for mihomo.
 
 use serde_json::{Map, Value};
-use yaml_rust2::yaml::Hash;
 use yaml_rust2::Yaml;
 
 use crate::error::IpcError;
@@ -104,88 +103,12 @@ pub fn merge_override_object(base: &mut Map<String, Value>, r#override: &Map<Str
 /// Parse a YAML document into the object model. Returns None on parse errors,
 /// duplicate keys or non-mapping roots (fail-open upstream).
 pub fn parse_yaml_to_object(text: &str) -> Option<Map<String, Value>> {
-    let docs = yaml_rust2::YamlLoader::load_from_str(text).ok()?;
-    let yaml = docs.into_iter().next()?;
-    match yaml_to_json(yaml) {
-        Value::Object(map) => Some(map),
-        _ => None,
-    }
-}
-
-fn yaml_to_json(yaml: Yaml) -> Value {
-    match yaml {
-        Yaml::Real(text) => {
-            let number = text.parse::<f64>().ok();
-            match number {
-                Some(v) if v.is_finite() => serde_json::Number::from_f64(v)
-                    .map(Value::Number)
-                    .unwrap_or(Value::Null),
-                _ => Value::String(text),
-            }
-        }
-        Yaml::Integer(v) => Value::Number(v.into()),
-        Yaml::String(s) => Value::String(s),
-        Yaml::Boolean(b) => Value::Bool(b),
-        Yaml::Array(items) => Value::Array(
-            items
-                .iter()
-                .map(|item| yaml_to_json(item.clone()))
-                .collect(),
-        ),
-        Yaml::Hash(map) => {
-            let mut object = Map::new();
-            for (key, value) in map.iter() {
-                let key = match key {
-                    Yaml::String(s) => s.clone(),
-                    Yaml::Integer(i) => i.to_string(),
-                    Yaml::Real(r) => r.clone(),
-                    Yaml::Boolean(b) => b.to_string(),
-                    _ => continue,
-                };
-                object.insert(key, yaml_to_json(value.clone()));
-            }
-            Value::Object(object)
-        }
-        _ => Value::Null,
-    }
-}
-
-fn json_to_yaml(value: Value) -> Yaml {
-    match value {
-        Value::Null => Yaml::Null,
-        Value::Bool(b) => Yaml::Boolean(b),
-        Value::Number(number) => {
-            if let Some(i) = number.as_i64() {
-                Yaml::Integer(i)
-            } else if let Some(u) = number.as_u64() {
-                Yaml::Integer(u as i64)
-            } else if let Some(f) = number.as_f64() {
-                Yaml::Real(format!("{f}"))
-            } else {
-                Yaml::Null
-            }
-        }
-        Value::String(s) => Yaml::String(s),
-        Value::Array(items) => Yaml::Array(items.into_iter().map(json_to_yaml).collect()),
-        Value::Object(map) => {
-            let mut hash = Hash::new();
-            for (key, value) in map.into_iter() {
-                hash.insert(Yaml::String(key), json_to_yaml(value));
-            }
-            Yaml::Hash(hash)
-        }
-    }
+    crate::yaml_value::parse_object(text)
 }
 
 /// Serialize the object model back to YAML (the runtime config text).
 pub fn stringify_yaml(value: Value) -> String {
-    let yaml = json_to_yaml(value);
-    let mut out = String::new();
-    let mut emitter = yaml_rust2::YamlEmitter::new(&mut out);
-    if emitter.dump(&yaml).is_err() {
-        return String::new();
-    }
-    out.strip_prefix("---\n").map(str::to_string).unwrap_or(out)
+    crate::yaml_value::stringify(&value)
 }
 
 fn is_runnable(item: &OverrideItem) -> bool {
@@ -277,7 +200,7 @@ pub fn profile_kernel_config_errors(text: &str) -> Vec<String> {
         return vec!["配置文档为空".into()];
     }
 
-    let parsed = yaml_rust2::YamlLoader::load_from_str(text);
+    let parsed = crate::yaml_value::load_as_yaml(text);
     let root = match parsed {
         Ok(docs) => docs.into_iter().next(),
         Err(error) => {
@@ -374,6 +297,14 @@ const SCOPE_CHECK: (&str, &str) = ("global", "profile");
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn parse_resolves_yaml_merge_keys() {
+        let text = "a: &a {x: 1, y: 2}\nb: &b {y: 3, z: 4}\none:\n  <<: *a\n  y: 9\nmany:\n  <<: [*a, *b]\n";
+        let data = parse_yaml_to_object(text).unwrap();
+        assert_eq!(data["one"], json!({"x": 1, "y": 9}));
+        assert_eq!(data["many"], json!({"x": 1, "y": 2, "z": 4}));
+    }
 
     fn item(kind: &str, content: &str, order: i64) -> OverrideItem {
         OverrideItem {

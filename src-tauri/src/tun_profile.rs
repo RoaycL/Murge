@@ -1040,7 +1040,11 @@ pub fn generate_proxied_tun_config(options: &Value) -> Result<String, IpcError> 
                 continue;
             };
             let mut record = record.clone();
-            let vehicle = record["type"].as_str().unwrap_or_default().to_lowercase();
+            let vehicle = record
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_lowercase();
             if vehicle == "inline" {
                 continue;
             }
@@ -1051,7 +1055,11 @@ pub fn generate_proxied_tun_config(options: &Value) -> Result<String, IpcError> 
                 .is_some()
                 || record.get("path").is_none()
             {
-                let format = record["format"].as_str().unwrap_or_default().to_lowercase();
+                let format = record
+                    .get("format")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_lowercase();
                 let extension = match format.as_str() {
                     "mrs" => "mrs",
                     "text" => "txt",
@@ -1629,6 +1637,23 @@ mod tests {
         assert!(text.contains("device: Murge TUN"), "{text}");
         assert!(text.contains("mixed-port: 21000"), "{text}");
         assert!(text.contains("secret:"), "{text}");
+    }
+
+    #[test]
+    fn proxied_profile_accepts_providers_without_format_and_merge_keys() {
+        // Regression: a `type: http` proxy-provider without `path`/`format`
+        // panicked on `record["format"]`, and rule-providers built from
+        // `<<: *anchor` lost their `type`/`format` (stable resolves merges).
+        let document = format!(
+            "proxy-providers:\n  sub:\n    url: https://example.com/sub\n    type: http\nrule-anchor:\n  domain: &domain {{type: http, interval: 86400, behavior: domain, format: mrs}}\nrule-providers:\n  cn:\n    <<: *domain\n    url: https://example.com/cn.mrs\n{}",
+            proxied_document()
+        );
+        let text = generate_proxied_tun_config(&proxied_options(&document)).unwrap();
+        assert!(proxied_tun_config_errors(&text).is_empty(), "{text}");
+        assert!(!text.contains("<<"), "{text}");
+        assert!(text.contains("path: \"./proxy-providers/sub.yaml\""), "{text}");
+        assert!(text.contains("path: \"./rule-providers/cn.mrs\""), "{text}");
+        assert!(text.contains("behavior: domain"), "{text}");
     }
 
     #[test]

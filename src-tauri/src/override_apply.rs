@@ -112,6 +112,18 @@ pub fn parse_yaml_to_object(text: &str) -> Option<Map<String, Value>> {
     }
 }
 
+const MERGE_KEY: &str = "<<";
+
+fn yaml_key(key: &Yaml) -> Option<String> {
+    match key {
+        Yaml::String(s) => Some(s.clone()),
+        Yaml::Integer(i) => Some(i.to_string()),
+        Yaml::Real(r) => Some(r.clone()),
+        Yaml::Boolean(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
 fn yaml_to_json(yaml: Yaml) -> Value {
     match yaml {
         Yaml::Real(text) => {
@@ -133,15 +145,43 @@ fn yaml_to_json(yaml: Yaml) -> Value {
                 .collect(),
         ),
         Yaml::Hash(map) => {
+            // YAML merge keys (`<<: *anchor` / `<<: [*a, *b]`) are resolved the
+            // way the Electron build's `parseDocument(.., { merge: true })` and
+            // mihomo itself do: explicit keys win over merged ones, and in a
+            // merge list the earlier source wins. Left unresolved, `<<` is
+            // re-emitted as a quoted literal key that mihomo no longer merges,
+            // so anchored providers lose their `type`/`format`.
+            let explicit: std::collections::HashSet<String> = map
+                .iter()
+                .filter_map(|(key, _)| yaml_key(key))
+                .filter(|key| key != MERGE_KEY)
+                .collect();
             let mut object = Map::new();
             for (key, value) in map.iter() {
-                let key = match key {
-                    Yaml::String(s) => s.clone(),
-                    Yaml::Integer(i) => i.to_string(),
-                    Yaml::Real(r) => r.clone(),
-                    Yaml::Boolean(b) => b.to_string(),
-                    _ => continue,
+                let Some(key) = yaml_key(key) else {
+                    continue;
                 };
+                if key == MERGE_KEY {
+                    let sources = match value {
+                        Yaml::Hash(_) => vec![value.clone()],
+                        Yaml::Array(items) => items.clone(),
+                        _ => Vec::new(),
+                    };
+                    let mut resolved = 0;
+                    for source in sources {
+                        if let Value::Object(fields) = yaml_to_json(source) {
+                            resolved += 1;
+                            for (field, field_value) in fields {
+                                if !explicit.contains(&field) && !object.contains_key(&field) {
+                                    object.insert(field, field_value);
+                                }
+                            }
+                        }
+                    }
+                    if resolved > 0 {
+                        continue;
+                    }
+                }
                 object.insert(key, yaml_to_json(value.clone()));
             }
             Value::Object(object)
@@ -374,6 +414,14 @@ const SCOPE_CHECK: (&str, &str) = ("global", "profile");
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn parse_resolves_yaml_merge_keys() {
+        let text = "a: &a {x: 1, y: 2}\nb: &b {y: 3, z: 4}\none:\n  <<: *a\n  y: 9\nmany:\n  <<: [*a, *b]\n";
+        let data = parse_yaml_to_object(text).unwrap();
+        assert_eq!(data["one"], json!({"x": 1, "y": 9}));
+        assert_eq!(data["many"], json!({"x": 1, "y": 2, "z": 4}));
+    }
 
     fn item(kind: &str, content: &str, order: i64) -> OverrideItem {
         OverrideItem {

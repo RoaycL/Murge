@@ -20,6 +20,7 @@ const decode = (encoded: string): string => Buffer.from(encoded, 'base64').toStr
 describe('installer hand-off', () => {
   it('quotes PowerShell literals', () => {
     expect(psLiteral("a'b")).toBe("'a''b'")
+    expect(psLiteral('O\u2019Neil')).toBe("'O\u2019\u2019Neil'")
   })
 
   it('runs the installer from the elevated helper once the app has exited', () => {

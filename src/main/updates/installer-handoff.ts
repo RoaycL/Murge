@@ -34,9 +34,12 @@ export interface InstallerHandoff {
 /** How long the elevated helper waits for the app to finish quitting. */
 export const PARENT_EXIT_TIMEOUT_SECONDS = 120
 
-/** A PowerShell single-quoted string literal. */
+/**
+ * A PowerShell single-quoted string literal. PowerShell also reads the
+ * typographic single quotes as delimiters, so each of them is doubled too.
+ */
 export function psLiteral(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`
+  return `'${value.replace(/['\u2018\u2019\u201A\u201B]/g, '$&$&')}'`
 }
 
 /** `-EncodedCommand` payload: base64 of the UTF-16LE script. */

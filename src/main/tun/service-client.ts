@@ -3,6 +3,9 @@ import { parseTunServiceResponse, TUN_SERVICE_PROTOCOL_VERSION, type TunServiceR
 import { ProtocolError, ProtocolErrorCode } from '../../shared/protocol-errors'
 import type { ProfileProviderContent } from '../../shared/profiles'
 
+/** The exact reply when the service's own `mihomo -t` deadline expires. */
+const SERVICE_VALIDATE_TIMEOUT = 'mihomo config validation failed: timeout'
+
 export interface TunServiceTransport {
   request(message: TunServiceRequest, signal?: AbortSignal, timeoutMs?: number): Promise<unknown>
 }
@@ -87,8 +90,11 @@ export class TunServiceClient {
       // integrity failure or an uncached version is the service's problem, not
       // the document's, so it carries another code and the profile gate falls
       // through to the local check.
+      // The service also files its own 30s deadline under CONFIG_INVALID; a
+      // timeout says nothing about the document, so it falls back too.
       const message = response.validationMessage || response.errorCode || `Service returned ${response.outcome}`
-      fail(response.errorCode === 'CONFIG_INVALID' ? ProtocolErrorCode.INVALID_ARGUMENT : ProtocolErrorCode.KERNEL_SPAWN_FAILED, message)
+      const rejected = response.errorCode === 'CONFIG_INVALID' && message.trim() !== SERVICE_VALIDATE_TIMEOUT
+      fail(rejected ? ProtocolErrorCode.INVALID_ARGUMENT : ProtocolErrorCode.KERNEL_SPAWN_FAILED, message)
     }
   }
 

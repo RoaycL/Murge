@@ -149,6 +149,9 @@ describe('Phase 9B privileged service protocol', () => {
     const broken = await new TunServiceClient(reply('TUN_SERVICE_OPERATION_FAILED', 'extracted mihomo integrity check failed'))
       .validateProfile(profile).catch((error: unknown) => error)
     expect((broken as ProtocolError).code).not.toBe(ProtocolErrorCode.INVALID_ARGUMENT)
+    const timedOut = await new TunServiceClient(reply('CONFIG_INVALID', 'mihomo config validation failed: timeout'))
+      .validateProfile(profile).catch((error: unknown) => error)
+    expect((timedOut as ProtocolError).code).not.toBe(ProtocolErrorCode.INVALID_ARGUMENT)
   })
 
   it('reads a named provider without exposing a file path', async () => {

@@ -1109,8 +1109,10 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
                     // updateRuntimeConfig parity: the gate serializes the live
                     // reload; a replay follows a successful apply.
                     let _gate = crate::lifecycle::runtime_update_guard().await?;
+                    // The composed services, not the raw supervisor: on
+                    // Windows the service-owned core is the one that runs.
                     let reloader = crate::live_config::LiveConfigReloader::from_ipc(
-                        &kernel.supervisor,
+                        kernel.as_ref(),
                         &models,
                         &profiles,
                         &overrides,
@@ -1134,26 +1136,23 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
             let models = models.clone();
             let mihomo = mihomo.clone();
             let profiles = profiles.clone();
-            let overrides = overrides.clone();
             let kernel = kernel.clone();
             let system_proxy = system_proxy.clone();
             Box::new(move || {
                 let models = models.clone();
                 let mihomo = mihomo.clone();
                 let profiles = profiles.clone();
-                let overrides = overrides.clone();
                 let kernel = kernel.clone();
                 let system_proxy = system_proxy.clone();
                 Box::pin(async move {
-                    // reloadProfile(reloadKernelForActiveProfile) parity: the
-                    // ordered restart inside the gate, then the replay.
+                    // reloadProfile(reloadKernelForActiveProfile) parity: a
+                    // real stop + start inside the gate (a hot reload would
+                    // keep the old process), then the replay.
                     let _gate = crate::lifecycle::runtime_update_guard().await?;
-                    crate::live_config::reload_active_profile_with_rollback(
-                        &profiles,
-                        &overrides,
-                        &models,
+                    crate::live_config::restart_kernel_for_active_profile(
                         &kernel,
                         &system_proxy,
+                        client_for(&models).ok(),
                         None,
                     )
                     .await?;

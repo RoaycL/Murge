@@ -234,11 +234,24 @@ pub fn run() {
                                 let (port, secret) = current_controller(&handle);
                                 crate::mihomo::MihomoClient::new(port, &secret).ok()
                             };
-                            crate::live_config::restart_kernel_for_active_profile(
+                            // A fresh core forgets the group selections: replay
+                            // the remembered picks whenever one runs again,
+                            // including after a recovered failed replacement.
+                            let replay_selections = || async {
+                                if kernel_state.get_status_value()["phase"].as_str() == Some("running") {
+                                    let mihomo = handle.state::<std::sync::Arc<crate::mihomo::MihomoServices>>();
+                                    let models = handle.state::<std::sync::Arc<crate::enhancements::ModelStores>>();
+                                    let profiles = handle.state::<std::sync::Arc<profile_service::ProfilesService>>();
+                                    crate::live_config::restore_selections_after_reload(&mihomo, &models, &profiles).await;
+                                }
+                            };
+                            let restarted = crate::live_config::restart_kernel_for_active_profile(
                                 &kernel_state, &system_proxy, controller.clone(),
                                 Some(rollback.clone()),
                             )
-                            .await?;
+                            .await;
+                            replay_selections().await;
+                            restarted?;
                             // The verification only applies to release tags
                             // (the TS `/^v\d+\.\d+\.\d+$/` gate).
                             let version_tag = regex::Regex::new(r"^v\d+\.\d+\.\d+$")
@@ -256,6 +269,7 @@ pub fn run() {
                                         &kernel_state, &system_proxy, controller, None,
                                     )
                                     .await;
+                                    replay_selections().await;
                                     return Err(crate::error::IpcError::code(
                                         crate::error::code::ARTIFACT_HASH_MISMATCH,
                                         format!(

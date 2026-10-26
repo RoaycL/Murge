@@ -1087,6 +1087,12 @@ impl KernelSupervisor {
         arc
     }
 
+    /// The binary resolver, for the unprivileged `mihomo -t` profile gate:
+    /// the config check must run the same build this supervisor would spawn.
+    pub fn binary_resolver(&self) -> Arc<dyn KernelBinaryResolver> {
+        self.deps.resolver.clone()
+    }
+
     pub fn get_status(&self) -> Value {
         self.state
             .lock()

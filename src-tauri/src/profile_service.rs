@@ -32,8 +32,10 @@ use crate::redact::{is_redacted_url, redact_credentials};
 use crate::subscription::SubscriptionFetcher;
 use crate::validate::{throw_if_invalid, validate_document};
 
-/// The packaged-host mihomo `-t` gate (`setSemanticValidator`): resolves
-/// `Err` with mihomo's own message when the real core rejects a document.
+/// The mihomo `-t` gate (`setSemanticValidator`): resolves `Err` with
+/// mihomo's own message when the real core rejects a document. A check that
+/// could not run at all answers with any OTHER error code, and the gate
+/// treats that as "no opinion" — see `semantic_error`.
 pub type SemanticValidator = std::sync::Arc<
     dyn Fn(String) -> futures_util::future::BoxFuture<'static, Result<(), IpcError>> + Send + Sync,
 >;
@@ -115,6 +117,12 @@ impl ProfilesService {
 
     /// The core's rejection message, if any (`None` without a gate or when
     /// the structural validator already rejects the document).
+    ///
+    /// Only a real rejection (`INVALID_ARGUMENT`, mihomo's own output) gates a
+    /// write. A check that could not run — no binary resolved yet, a spawn the
+    /// OS refused, the privileged service missing — is NOT the document's
+    /// fault, so it is logged and the structural checks stay the only gate.
+    /// An import must never fail because the core could not be asked.
     pub async fn semantic_error(&self, document: &str) -> ProfileResult<Option<String>> {
         let Some(validator) = self.semantic.get().cloned() else {
             return Ok(None);
@@ -122,10 +130,15 @@ impl ProfilesService {
         if !validate_document(document)?.ok {
             return Ok(None);
         }
-        Ok(validator(document.to_string())
-            .await
-            .err()
-            .map(|error| error.extract_message()))
+        let Err(error) = validator(document.to_string()).await else {
+            return Ok(None);
+        };
+        let (code, message) = error.parts();
+        if code == crate::error::code::INVALID_ARGUMENT {
+            return Ok(Some(message.to_string()));
+        }
+        crate::diag!("[profiles] 跳过内核配置校验：{message}");
+        Ok(None)
     }
 
     /// The would-be document of an edit, for the semantic gate.
@@ -486,6 +499,27 @@ mod tests {
             service.semantic_error("\t- tab bad-rule\n").await.unwrap(),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn a_check_that_cannot_run_never_blocks_an_import() {
+        // The TUN service missing, no binary resolved yet, a spawn the OS
+        // refused: none of it is the document's fault, so the import stands.
+        let (_temp, service) = service();
+        service.set_semantic_validator(std::sync::Arc::new(|_document: String| {
+            Box::pin(async move {
+                Err(IpcError::code(
+                    crate::error::code::KERNEL_SPAWN_FAILED,
+                    "TUN 服务未安装",
+                ))
+            })
+        }));
+        assert_eq!(service.semantic_error("port: 7890\n").await.unwrap(), None);
+        service.check_semantics("port: 7890\n").await.unwrap();
+        service
+            .import(&import_request("Home", "port: 7890\n"))
+            .expect("a core that cannot be asked keeps the import working");
+        assert_eq!(service.list().unwrap().as_array().unwrap().len(), 1);
     }
 
     #[test]

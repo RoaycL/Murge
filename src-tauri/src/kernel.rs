@@ -544,6 +544,10 @@ pub struct KernelServices {
     /// packaged Windows): the LocalSystem TUN service owns the only mihomo
     /// process, so start/stop/status route to it instead of the supervisor.
     pub privileged: Option<Arc<crate::privileged_kernel::PrivilegedKernelGateway>>,
+    /// The TUN coordinator, set once by the composition root after it exists.
+    /// A full core restart must take TUN down first and bring it back after
+    /// (the TS `ModeTransitionController.reloadProfile` in-place branch).
+    pub tun: std::sync::OnceLock<Arc<crate::tun::TunCoordinator>>,
 }
 
 /// Anything that reports the kernel status snapshot (the TS
@@ -628,6 +632,7 @@ impl KernelServices {
             manager: Arc::new(KernelManagerService::new()),
             ready: None,
             privileged: None,
+            tun: std::sync::OnceLock::new(),
         }
     }
 
@@ -654,6 +659,7 @@ impl KernelServices {
             manager,
             ready: None,
             privileged: None,
+            tun: std::sync::OnceLock::new(),
         }
     }
 
@@ -674,6 +680,7 @@ impl KernelServices {
             manager,
             ready: None,
             privileged: None,
+            tun: std::sync::OnceLock::new(),
         }
     }
 
@@ -753,6 +760,7 @@ impl KernelServices {
             manager,
             ready,
             privileged: None,
+            tun: std::sync::OnceLock::new(),
         }
     }
 }

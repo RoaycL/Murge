@@ -484,6 +484,7 @@ impl<'a> LiveConfigReloader<'a> {
 pub type RollbackActiveFn =
     Arc<dyn Fn() -> futures_util::future::BoxFuture<'static, Result<(), IpcError>> + Send + Sync>;
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub async fn reload_active_profile(
     profiles: &Arc<ProfilesService>,
     overrides: &OverrideService,
@@ -512,6 +513,63 @@ pub async fn reload_active_profile_with_rollback(
         // manual start; never spin up a kernel the user did not ask for.
         return Ok(false);
     }
+    restart_kernel_for_active_profile(kernel, system_proxy, rollback_active)
+        .await
+        .map(|()| true)
+}
+
+/// The full stop + start of the shared core (`reloadProfile` in-place +
+/// `reloadKernelForActiveProfile`). A hot reload never swaps the binary, so a
+/// kernel version change and the tray "restart kernel" must come through
+/// here. The new core starts with TUN off: an active TUN is taken down first
+/// and brought back once the core runs again, so its status never claims a
+/// device the new process does not have.
+pub async fn restart_kernel_for_active_profile(
+    kernel: &crate::kernel::KernelServices,
+    system_proxy: &crate::system_proxy::SystemProxyService,
+    rollback_active: Option<RollbackActiveFn>,
+) -> Result<(), IpcError> {
+    if !live_phase(&kernel.get_status_value()) {
+        return Ok(());
+    }
+    let tun = kernel.tun.get().cloned();
+    let tun_was_active = tun
+        .as_ref()
+        .is_some_and(|tun| tun.get_status().phase == "active");
+    if let Some(tun) = tun.as_ref().filter(|_| tun_was_active) {
+        let disabled = tun.emergency_disable().await;
+        if !matches!(disabled.phase.as_str(), "configured" | "unsupported") {
+            if let Some(rollback) = &rollback_active {
+                let _ = rollback().await;
+            }
+            return Err(IpcError::internal(format!(
+                "TUN 未能关闭（{}），已取消重启内核",
+                disabled.phase
+            )));
+        }
+    }
+    let result = restart_kernel_inner(kernel, system_proxy, rollback_active).await;
+    // Restore the user's TUN whenever a live core exists, including after a
+    // failed replacement that recovered the previous profile.
+    if let Some(tun) = tun.as_ref().filter(|_| tun_was_active) {
+        if kernel.get_status_value()["phase"].as_str() == Some("running") {
+            let intent = json!({ "schemaVersion": 2, "device": "Mihomo", "stack": "mixed" });
+            if let Err(error) = tun.enable(&intent).await {
+                crate::diag!(
+                    "[tun] re-enable after kernel restart failed: {}",
+                    error.extract_message()
+                );
+            }
+        }
+    }
+    result
+}
+
+async fn restart_kernel_inner(
+    kernel: &crate::kernel::KernelServices,
+    system_proxy: &crate::system_proxy::SystemProxyService,
+    rollback_active: Option<RollbackActiveFn>,
+) -> Result<(), IpcError> {
     let proxy_was_enabled = system_proxy.get_status().phase == "enabled";
     // Unlike the dispatcher, KernelServices::stop is a raw lifecycle call.
     // Confirm proxy restoration before taking its listener away, including
@@ -536,7 +594,7 @@ pub async fn reload_active_profile_with_rollback(
                 // service publishes its own visible error/conflict state.
                 let _ = system_proxy.enable().await;
             }
-            Ok(true)
+            Ok(())
         }
         Err(replacement_error) => {
             if let Some(rollback) = &rollback_active {
@@ -1329,11 +1387,19 @@ mod tests {
     }
 
     fn restart_fixture() -> crate::kernel::KernelServices {
+        restart_fixture_with(Arc::new(FailReplacement(
+            std::sync::atomic::AtomicUsize::new(0),
+        )))
+    }
+
+    fn restart_fixture_with(
+        resolver: Arc<dyn crate::kernel_process::KernelBinaryResolver>,
+    ) -> crate::kernel::KernelServices {
         use crate::kernel_process::*;
         crate::kernel::KernelServices {
             supervisor: KernelSupervisor::create(
                 KernelDependencies {
-                    resolver: Arc::new(FailReplacement(std::sync::atomic::AtomicUsize::new(0))),
+                    resolver,
                     config_store: Arc::new(TempKernelConfigStore),
                     adapter: Arc::new(NodeKernelProcessAdapter),
                     secret: random_secret(),
@@ -1347,6 +1413,7 @@ mod tests {
             manager: Arc::new(crate::kernel::KernelManagerService::new()),
             ready: None,
             privileged: None,
+            tun: std::sync::OnceLock::new(),
         }
     }
 
@@ -1436,6 +1503,57 @@ mod tests {
         assert_eq!(kernel.get_status_value()["phase"], "running");
         assert_eq!(proxy.get_status().phase, "enabled");
         proxy.disable().await.unwrap();
+        kernel.stop().await.unwrap();
+    }
+    #[derive(Default)]
+    struct CountingTun {
+        enables: std::sync::atomic::AtomicUsize,
+        restores: std::sync::atomic::AtomicUsize,
+    }
+
+    impl crate::tun::TunMutationAdapter for CountingTun {
+        fn recovery_required(&self) -> crate::tun::BoxFut<'_, bool> {
+            Box::pin(async { false })
+        }
+        fn enable(
+            &self,
+            _intent: &crate::tun::MihomoOwnedTunIntent,
+        ) -> crate::tun::BoxFut<'_, Result<crate::tun::TunEnableResult, IpcError>> {
+            self.enables
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Box::pin(async { Ok(crate::tun::TunEnableResult::Active { readiness: None }) })
+        }
+        fn restore(
+            &self,
+        ) -> crate::tun::BoxFut<'_, Result<crate::tun::TunRestoreResult, IpcError>> {
+            self.restores
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Box::pin(async { Ok(crate::tun::TunRestoreResult::Restored) })
+        }
+    }
+
+    #[tokio::test]
+    async fn kernel_restart_takes_tun_down_and_brings_it_back() {
+        use std::sync::atomic::Ordering;
+        let kernel = restart_fixture_with(Arc::new(
+            crate::kernel_process::FixtureKernelBinaryResolver::default(),
+        ));
+        kernel.start().await.unwrap();
+        let adapter = Arc::new(CountingTun::default());
+        let tun = Arc::new(crate::tun::TunCoordinator::new(adapter.clone(), true));
+        assert!(kernel.tun.set(tun.clone()).is_ok());
+        tun.enable(&json!({ "schemaVersion": 2, "device": "Mihomo", "stack": "mixed" }))
+            .await
+            .unwrap();
+        let (proxy, _adapter) = proxy_fixture();
+        restart_kernel_for_active_profile(&kernel, &proxy, None)
+            .await
+            .unwrap();
+        assert_eq!(kernel.get_status_value()["phase"], "running");
+        // Down before the stop, up again on the new core.
+        assert_eq!(adapter.restores.load(Ordering::SeqCst), 1);
+        assert_eq!(adapter.enables.load(Ordering::SeqCst), 2);
+        assert_eq!(tun.get_status().phase, "active");
         kernel.stop().await.unwrap();
     }
 }

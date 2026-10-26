@@ -228,12 +228,10 @@ pub fn run() {
                                 })
                             };
                             let system_proxy = handle.state::<std::sync::Arc<crate::system_proxy::SystemProxyService>>();
-                            let profiles =
-                                handle.state::<std::sync::Arc<profile_service::ProfilesService>>();
-                            let overrides = handle.state::<std::sync::Arc<crate::override_service::OverrideService>>();
-                            let models = handle.state::<std::sync::Arc<crate::enhancements::ModelStores>>();
-                            crate::live_config::reload_active_profile_with_rollback(
-                                &profiles, &overrides, &models, &kernel_state, &system_proxy,
+                            // A controller hot reload keeps the running binary,
+                            // so a version change always restarts the core.
+                            crate::live_config::restart_kernel_for_active_profile(
+                                &kernel_state, &system_proxy,
                                 Some(rollback.clone()),
                             )
                             .await?;
@@ -250,8 +248,8 @@ pub fn run() {
                                     // Roll the durable selection back and
                                     // restart on it (best-effort).
                                     (rollback)().await.ok();
-                                    let _ = crate::live_config::reload_active_profile(
-                                        &profiles, &overrides, &models, &kernel_state, &system_proxy,
+                                    let _ = crate::live_config::restart_kernel_for_active_profile(
+                                        &kernel_state, &system_proxy, None,
                                     )
                                     .await;
                                     return Err(crate::error::IpcError::code(
@@ -690,7 +688,11 @@ pub fn run() {
             } else {
                 std::sync::Arc::new(tun::GatedTunMutationAdapter)
             };
-            let tun_coordinator = tun::TunCoordinator::new(tun_adapter, tun_supported);
+            let tun_coordinator = std::sync::Arc::new(tun::TunCoordinator::new(tun_adapter, tun_supported));
+            let _ = app
+                .state::<std::sync::Arc<crate::kernel::KernelServices>>()
+                .tun
+                .set(tun_coordinator.clone());
             // Forward TUN status transitions to every renderer window.
             let tun_app = app.handle().clone();
             tun_coordinator.subscribe(std::sync::Arc::new(move |value| {
@@ -700,7 +702,7 @@ pub fn run() {
             // Startup reconciliation of an interrupted TUN transaction (the
             // tunReconcile layer) runs inside the ordered startup recovery
             // chain (runtime_intent::spawn_startup_recovery).
-            app.manage(std::sync::Arc::new(tun_coordinator));
+            app.manage(tun_coordinator);
             // Updates: the signed Tauri updater (inert in dev runs and until a
             // release public key is pinned); state transitions forward to
             // every renderer window.
@@ -731,7 +733,16 @@ pub fn run() {
             let recovery_app = app.handle().clone();
             let kernel_services = app.state::<std::sync::Arc<crate::kernel::KernelServices>>();
             kernel_services.status_listeners().subscribe(std::sync::Arc::new(move |value| {
-                if value["phase"].as_str() == Some("running") { startup_timeline::mark("kernel-ready"); }
+                if value["phase"].as_str() == Some("running") {
+                    startup_timeline::mark("kernel-ready");
+                    // The push streams follow the controller the core runs on
+                    // now: the port/secret are read per start, not per launch.
+                    use tauri::Manager;
+                    if let Some(streams) = recovery_app.try_state::<events::MihomoStreams>() {
+                        let (port, secret) = current_controller(&recovery_app);
+                        streams.ensure(&events::ControllerEndpoint { port, secret });
+                    }
+                }
                 if value["phase"].as_str() == Some("failed") {
                     use tauri::Manager;
                     let recovery_app = recovery_app.clone();

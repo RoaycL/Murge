@@ -899,6 +899,22 @@ pub async fn dispatch(
             // The ordered gateway (system-proxy precondition): a user stop,
             // mode switch or shutdown must never leave a dead-port proxy.
             system_proxy.restore_before_kernel_unavailable().await?;
+            // ModeTransitionController.stopKernel in-place parity: TUN lives
+            // in the shared core, so take it down first. Otherwise its status
+            // stays `active` for a device the next core never creates, and
+            // enabling TUN again would be a no-op.
+            if matches!(
+                tun.get_status().phase.as_str(),
+                "active" | "starting" | "restoring" | "failed" | "restore-failed"
+            ) {
+                let disabled = tun.emergency_disable().await;
+                if !matches!(disabled.phase.as_str(), "configured" | "unsupported") {
+                    return Err(IpcError::internal(format!(
+                        "TUN 未能关闭（{}），已取消停止内核",
+                        disabled.phase
+                    )));
+                }
+            }
             kernel.stop().await
         }
         "kernel-manager:get-state" => Ok(kernel.manager.get_state(settings)),
@@ -2375,6 +2391,71 @@ mod tests {
         );
     }
 
+    struct ScriptedTun;
+
+    impl crate::tun::TunMutationAdapter for ScriptedTun {
+        fn recovery_required(&self) -> crate::tun::BoxFut<'_, bool> {
+            Box::pin(async { false })
+        }
+        fn enable(
+            &self,
+            _intent: &crate::tun::MihomoOwnedTunIntent,
+        ) -> crate::tun::BoxFut<'_, Result<crate::tun::TunEnableResult, IpcError>> {
+            Box::pin(async { Ok(crate::tun::TunEnableResult::Active { readiness: None }) })
+        }
+        fn restore(
+            &self,
+        ) -> crate::tun::BoxFut<'_, Result<crate::tun::TunRestoreResult, IpcError>> {
+            Box::pin(async { Ok(crate::tun::TunRestoreResult::Restored) })
+        }
+    }
+
+    #[tokio::test]
+    async fn kernel_stop_takes_an_active_tun_down_first() {
+        let mut f = fixtures();
+        let harness = crate::kernel_process::tests::create_harness();
+        crate::kernel_process::tests::start_to_running(&harness).await;
+        f.kernel = kernel::KernelServices {
+            supervisor: harness.supervisor,
+            manager: Arc::new(kernel::KernelManagerService::new()),
+            ready: None,
+            privileged: None,
+            tun: std::sync::OnceLock::new(),
+        };
+        f.tun = crate::tun::TunCoordinator::new(Arc::new(ScriptedTun), true);
+        f.tun
+            .enable(
+                &serde_json::json!({ "schemaVersion": 2, "device": "Mihomo", "stack": "mixed" }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(f.tun.get_status().phase, "active");
+        let status = dispatch(
+            "kernel:stop",
+            &Value::Null,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+        .unwrap();
+        assert_eq!(status["phase"], "stopped");
+        // The next core starts without TUN, so the status must not claim it.
+        assert_eq!(f.tun.get_status().phase, "configured");
+    }
+
     #[tokio::test]
     async fn kernel_channels_flow_through_the_dispatch() {
         let f = fixtures();
@@ -2807,6 +2888,7 @@ mod tests {
             manager: std::sync::Arc::new(kernel::KernelManagerService::new()),
             ready: None,
             privileged: None,
+            tun: std::sync::OnceLock::new(),
         };
         let before = f.models.dns.get();
         let result = dispatch(
@@ -2883,6 +2965,7 @@ mod tests {
             manager: Arc::new(kernel::KernelManagerService::new()),
             ready: None,
             privileged: None,
+            tun: std::sync::OnceLock::new(),
         };
         let meta = dispatch(
             "profiles:import-from-url",

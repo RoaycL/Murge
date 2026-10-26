@@ -15,7 +15,7 @@ import { KernelSupervisor } from './kernel/supervisor'
 import { createKernelResolver, MihomoKernelResolver } from './kernel/resolvers'
 import { TempKernelConfigStore } from './kernel/config-store'
 import { checkConfigWithCore } from './kernel/config-check'
-import { MihomoKernelConfigStore } from './kernel/mihomo-config-store'
+import { MihomoKernelConfigStore, seedGeodataFiles } from './kernel/mihomo-config-store'
 import { randomSecret } from './kernel/mihomo-config'
 import { ControllerReadyKernelGateway } from './kernel/controller-ready-gateway'
 import { LateBoundKernelGateway } from './kernel/single-kernel-gateway'
@@ -943,8 +943,13 @@ app.whenReady().then(async () => {
           timer = setTimeout(() => reject(new ProtocolError(ProtocolErrorCode.KERNEL_START_TIMEOUT, '内核二进制解析超时，跳过配置校验')), 20_000)
         })
       ]).finally(() => clearTimeout(timer))
+      const homeDir = join(productionKernelRoot, 'geodata')
+      // Same first-run seeding the kernel start does: a fresh home must not
+      // depend on downloading geodata the installer already ships, or a valid
+      // GEOSITE/GEOIP profile could fail the check before any proxy exists.
+      if (geodataSeedDir) await seedGeodataFiles(homeDir, geodataSeedDir).catch(() => [])
       await checkConfigWithCore(binary, {
-        homeDir: join(productionKernelRoot, 'geodata'),
+        homeDir,
         workDir: join(productionKernelRoot, 'validate')
       }, effective)
       return { ok: true, issues: [] }

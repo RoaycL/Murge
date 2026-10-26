@@ -552,6 +552,11 @@ impl TunServiceClient {
     }
 
     /// Validate with the same pinned binary the service will run.
+    ///
+    /// Only `CONFIG_INVALID` (mihomo `-t` itself rejected the document) maps
+    /// to `INVALID_ARGUMENT`. Every other failure — an integrity check, a
+    /// version the service could not fetch — is the service's, not the
+    /// document's, and carries another code so the profile gate falls back.
     pub async fn validate_profile(
         &self,
         profile: &str,
@@ -566,7 +571,10 @@ impl TunServiceClient {
                 .filter(|text| !text.is_empty())
                 .or_else(|| response.error_code.clone())
                 .unwrap_or_else(|| format!("Service returned {}", response.outcome));
-            return Err(IpcError::invalid_argument(message));
+            if response.error_code.as_deref() == Some("CONFIG_INVALID") {
+                return Err(IpcError::invalid_argument(message));
+            }
+            return Err(fail(code::KERNEL_SPAWN_FAILED, message));
         }
         Ok(())
     }
@@ -847,6 +855,33 @@ pub(crate) mod tests {
             .map(|r| r["requestId"].as_str().unwrap().to_string())
             .collect();
         assert_eq!(ids, vec!["1", "2"], "a locally refused start sends nothing");
+    }
+
+    #[tokio::test]
+    async fn only_a_core_rejection_counts_as_an_invalid_profile() {
+        let transport = ScriptedTransport::default();
+        transport.push(|request| {
+            let mut value = reply(request, "failed", None, None);
+            value["errorCode"] = json!("CONFIG_INVALID");
+            value["validationMessage"] = json!("mihomo config validation failed: bad rule");
+            Ok(value)
+        });
+        transport.push(|request| {
+            let mut value = reply(request, "failed", None, None);
+            value["errorCode"] = json!("TUN_SERVICE_OPERATION_FAILED");
+            value["validationMessage"] = json!("extracted mihomo integrity check failed");
+            Ok(value)
+        });
+        let client = TunServiceClient::new(Box::new(transport));
+        let rejected = client.validate_profile("a: 1\n", None).await.unwrap_err();
+        assert_eq!(rejected.parts().0, code::INVALID_ARGUMENT);
+        assert!(rejected.extract_message().contains("bad rule"));
+        let broken = client.validate_profile("a: 1\n", None).await.unwrap_err();
+        assert_ne!(
+            broken.parts().0,
+            code::INVALID_ARGUMENT,
+            "a service failure is not the document's fault"
+        );
     }
 
     #[tokio::test]

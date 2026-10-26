@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { generateMihomoTunConfig } from '../src/main/tun/mihomo-tun-config'
 import { parseTunServiceRequest, TUN_SERVICE_PROTOCOL_VERSION, type TunServiceRequest } from '../src/main/tun/service-protocol'
 import { TunServiceClient, type TunServiceTransport } from '../src/main/tun/service-client'
+import { ProtocolError, ProtocolErrorCode } from '../src/shared/protocol-errors'
 
 const profile = generateMihomoTunConfig({
   mixedPort: 17890,
@@ -128,6 +129,26 @@ describe('Phase 9B privileged service protocol', () => {
     const client = new TunServiceClient(transport)
     await expect(client.validateProfile(profile)).rejects.toThrow(/invalid proxy type/)
     expect(client.getOwnedSession()).toBeNull()
+  })
+
+  it('keeps a service failure apart from a core rejection', async () => {
+    const reply = (errorCode: string, validationMessage: string) => ({
+      request: vi.fn(async (request: { requestId: string }) => ({
+        protocolVersion: TUN_SERVICE_PROTOCOL_VERSION,
+        requestId: request.requestId,
+        outcome: 'failed',
+        sessionId: null,
+        pid: null,
+        errorCode,
+        validationMessage
+      }))
+    }) as unknown as TunServiceTransport
+    const rejected = await new TunServiceClient(reply('CONFIG_INVALID', 'mihomo config validation failed: bad rule'))
+      .validateProfile(profile).catch((error: unknown) => error)
+    expect((rejected as ProtocolError).code).toBe(ProtocolErrorCode.INVALID_ARGUMENT)
+    const broken = await new TunServiceClient(reply('TUN_SERVICE_OPERATION_FAILED', 'extracted mihomo integrity check failed'))
+      .validateProfile(profile).catch((error: unknown) => error)
+    expect((broken as ProtocolError).code).not.toBe(ProtocolErrorCode.INVALID_ARGUMENT)
   })
 
   it('reads a named provider without exposing a file path', async () => {

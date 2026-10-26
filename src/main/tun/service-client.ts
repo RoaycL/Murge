@@ -83,7 +83,12 @@ export class TunServiceClient {
       ...(version ? { version } : {})
     }, signal, 45_000)
     if (response.outcome !== 'valid') {
-      fail(ProtocolErrorCode.INVALID_ARGUMENT, response.validationMessage || response.errorCode || `Service returned ${response.outcome}`)
+      // Only CONFIG_INVALID means mihomo -t rejected the document. An
+      // integrity failure or an uncached version is the service's problem, not
+      // the document's, so it carries another code and the profile gate falls
+      // through to the local check.
+      const message = response.validationMessage || response.errorCode || `Service returned ${response.outcome}`
+      fail(response.errorCode === 'CONFIG_INVALID' ? ProtocolErrorCode.INVALID_ARGUMENT : ProtocolErrorCode.KERNEL_SPAWN_FAILED, message)
     }
   }
 

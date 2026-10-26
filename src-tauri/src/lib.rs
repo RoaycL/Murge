@@ -230,8 +230,12 @@ pub fn run() {
                             let system_proxy = handle.state::<std::sync::Arc<crate::system_proxy::SystemProxyService>>();
                             // A controller hot reload keeps the running binary,
                             // so a version change always restarts the core.
+                            let controller = {
+                                let (port, secret) = current_controller(&handle);
+                                crate::mihomo::MihomoClient::new(port, &secret).ok()
+                            };
                             crate::live_config::restart_kernel_for_active_profile(
-                                &kernel_state, &system_proxy,
+                                &kernel_state, &system_proxy, controller.clone(),
                                 Some(rollback.clone()),
                             )
                             .await?;
@@ -249,7 +253,7 @@ pub fn run() {
                                     // restart on it (best-effort).
                                     (rollback)().await.ok();
                                     let _ = crate::live_config::restart_kernel_for_active_profile(
-                                        &kernel_state, &system_proxy, None,
+                                        &kernel_state, &system_proxy, controller, None,
                                     )
                                     .await;
                                     return Err(crate::error::IpcError::code(

@@ -513,9 +513,14 @@ pub async fn reload_active_profile_with_rollback(
         // manual start; never spin up a kernel the user did not ask for.
         return Ok(false);
     }
-    restart_kernel_for_active_profile(kernel, system_proxy, rollback_active)
-        .await
-        .map(|()| true)
+    restart_kernel_for_active_profile(
+        kernel,
+        system_proxy,
+        Some(reloader.client.clone()),
+        rollback_active,
+    )
+    .await
+    .map(|()| true)
 }
 
 /// The full stop + start of the shared core (`reloadProfile` in-place +
@@ -527,32 +532,53 @@ pub async fn reload_active_profile_with_rollback(
 pub async fn restart_kernel_for_active_profile(
     kernel: &crate::kernel::KernelServices,
     system_proxy: &crate::system_proxy::SystemProxyService,
+    controller: Option<crate::mihomo::MihomoClient>,
     rollback_active: Option<RollbackActiveFn>,
 ) -> Result<(), IpcError> {
     if !live_phase(&kernel.get_status_value()) {
         return Ok(());
     }
+    // The fresh service profile always starts in rule mode; a live
+    // Direct/Global choice is runtime intent that survives the restart (the
+    // hot-reload path folds it into its payload the same way).
+    let previous_mode = match &controller {
+        Some(client) => client
+            .get_config()
+            .await
+            .ok()
+            .and_then(|config| config["mode"].as_str().map(str::to_string))
+            .filter(|mode| matches!(mode.as_str(), "direct" | "global")),
+        None => None,
+    };
     let tun = kernel.tun.get().cloned();
     let tun_was_active = tun
         .as_ref()
         .is_some_and(|tun| tun.get_status().phase == "active");
     if let Some(tun) = tun.as_ref().filter(|_| tun_was_active) {
+        // Best-effort orderly teardown. It can fail when the persisted
+        // controller endpoint no longer matches the running core; the stop
+        // removes the device either way, so it never blocks the restart.
         let disabled = tun.emergency_disable().await;
         if !matches!(disabled.phase.as_str(), "configured" | "unsupported") {
-            if let Some(rollback) = &rollback_active {
-                let _ = rollback().await;
-            }
-            return Err(IpcError::internal(format!(
-                "TUN 未能关闭（{}），已取消重启内核",
+            crate::diag!(
+                "[tun] disable before kernel restart not confirmed: {}",
                 disabled.phase
-            )));
+            );
         }
     }
     let result = restart_kernel_inner(kernel, system_proxy, rollback_active).await;
-    // Restore the user's TUN whenever a live core exists, including after a
-    // failed replacement that recovered the previous profile.
+    let running = kernel.get_status_value()["phase"].as_str() == Some("running");
     if let Some(tun) = tun.as_ref().filter(|_| tun_was_active) {
-        if kernel.get_status_value()["phase"].as_str() == Some("running") {
+        // The old core and its device are gone: never report a stale phase.
+        if !matches!(
+            tun.get_status().phase.as_str(),
+            "configured" | "unsupported"
+        ) {
+            tun.handle_host_exit().await;
+        }
+        // Restore the user's TUN whenever a live core exists, including
+        // after a failed replacement that recovered the previous profile.
+        if running {
             let intent = json!({ "schemaVersion": 2, "device": "Mihomo", "stack": "mixed" });
             if let Err(error) = tun.enable(&intent).await {
                 crate::diag!(
@@ -560,6 +586,14 @@ pub async fn restart_kernel_for_active_profile(
                     error.extract_message()
                 );
             }
+        }
+    }
+    if let (Some(mode), Some(client), true) = (previous_mode, &controller, running) {
+        if let Err(error) = client.patch_config(&json!({ "mode": mode })).await {
+            crate::diag!(
+                "[kernel] mode restore after restart failed: {}",
+                error.extract_message()
+            );
         }
     }
     result
@@ -1546,7 +1580,7 @@ mod tests {
             .await
             .unwrap();
         let (proxy, _adapter) = proxy_fixture();
-        restart_kernel_for_active_profile(&kernel, &proxy, None)
+        restart_kernel_for_active_profile(&kernel, &proxy, None, None)
             .await
             .unwrap();
         assert_eq!(kernel.get_status_value()["phase"], "running");
@@ -1554,6 +1588,41 @@ mod tests {
         assert_eq!(adapter.restores.load(Ordering::SeqCst), 1);
         assert_eq!(adapter.enables.load(Ordering::SeqCst), 2);
         assert_eq!(tun.get_status().phase, "active");
+        kernel.stop().await.unwrap();
+    }
+    #[tokio::test]
+    async fn kernel_restart_keeps_a_live_global_mode() {
+        let requests = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let captured = requests.clone();
+        let server = crate::mihomo::mock_controller::MockServer::start(
+            "s3cret",
+            move |method, path, body| {
+                captured
+                    .lock()
+                    .unwrap()
+                    .push(format!("{method} {path} {body}"));
+                match (method, path) {
+                    ("GET", "/configs") => (200, json!({ "mode": "global" }).to_string()),
+                    ("PATCH", "/configs") => (204, String::new()),
+                    _ => (404, String::new()),
+                }
+            },
+        );
+        let kernel = restart_fixture_with(Arc::new(
+            crate::kernel_process::FixtureKernelBinaryResolver::default(),
+        ));
+        kernel.start().await.unwrap();
+        let (proxy, _adapter) = proxy_fixture();
+        let client = crate::mihomo::MihomoClient::new(server.port, "s3cret").unwrap();
+        restart_kernel_for_active_profile(&kernel, &proxy, Some(client), None)
+            .await
+            .unwrap();
+        let patched = requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|entry| entry.starts_with("PATCH /configs") && entry.contains("global"));
+        assert!(patched);
         kernel.stop().await.unwrap();
     }
 }

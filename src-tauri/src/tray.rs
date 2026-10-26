@@ -1152,6 +1152,7 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
                     crate::live_config::restart_kernel_for_active_profile(
                         &kernel,
                         &system_proxy,
+                        client_for(&models).ok(),
                         None,
                     )
                     .await?;

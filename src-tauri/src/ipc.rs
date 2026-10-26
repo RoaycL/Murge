@@ -902,20 +902,28 @@ pub async fn dispatch(
             // ModeTransitionController.stopKernel in-place parity: TUN lives
             // in the shared core, so take it down first. Otherwise its status
             // stays `active` for a device the next core never creates, and
-            // enabling TUN again would be a no-op.
-            if matches!(
+            // enabling TUN again would be a no-op. The orderly disable is
+            // best-effort (the persisted controller endpoint may already
+            // differ from the running core's); the stop removes the device
+            // either way, so the status is reset after it.
+            let tun_serving = matches!(
                 tun.get_status().phase.as_str(),
                 "active" | "starting" | "restoring" | "failed" | "restore-failed"
-            ) {
-                let disabled = tun.emergency_disable().await;
-                if !matches!(disabled.phase.as_str(), "configured" | "unsupported") {
-                    return Err(IpcError::internal(format!(
-                        "TUN 未能关闭（{}），已取消停止内核",
-                        disabled.phase
-                    )));
-                }
+            );
+            if tun_serving {
+                let _ = tun.emergency_disable().await;
             }
-            kernel.stop().await
+            let stopped = kernel.stop().await;
+            if tun_serving
+                && stopped.is_ok()
+                && !matches!(
+                    tun.get_status().phase.as_str(),
+                    "configured" | "unsupported"
+                )
+            {
+                tun.handle_host_exit().await;
+            }
+            stopped
         }
         "kernel-manager:get-state" => Ok(kernel.manager.get_state(settings)),
         "kernel-manager:set-enabled" => {
@@ -2391,7 +2399,9 @@ mod tests {
         );
     }
 
-    struct ScriptedTun;
+    struct ScriptedTun {
+        restore_fails: bool,
+    }
 
     impl crate::tun::TunMutationAdapter for ScriptedTun {
         fn recovery_required(&self) -> crate::tun::BoxFut<'_, bool> {
@@ -2406,12 +2416,27 @@ mod tests {
         fn restore(
             &self,
         ) -> crate::tun::BoxFut<'_, Result<crate::tun::TunRestoreResult, IpcError>> {
-            Box::pin(async { Ok(crate::tun::TunRestoreResult::Restored) })
+            let fails = self.restore_fails;
+            Box::pin(async move {
+                Ok(if fails {
+                    crate::tun::TunRestoreResult::RestoreFailed {
+                        error_message: "controller unreachable".into(),
+                    }
+                } else {
+                    crate::tun::TunRestoreResult::Restored
+                })
+            })
         }
     }
 
     #[tokio::test]
     async fn kernel_stop_takes_an_active_tun_down_first() {
+        for restore_fails in [false, true] {
+            kernel_stop_with_active_tun(restore_fails).await;
+        }
+    }
+
+    async fn kernel_stop_with_active_tun(restore_fails: bool) {
         let mut f = fixtures();
         let harness = crate::kernel_process::tests::create_harness();
         crate::kernel_process::tests::start_to_running(&harness).await;
@@ -2422,7 +2447,7 @@ mod tests {
             privileged: None,
             tun: std::sync::OnceLock::new(),
         };
-        f.tun = crate::tun::TunCoordinator::new(Arc::new(ScriptedTun), true);
+        f.tun = crate::tun::TunCoordinator::new(Arc::new(ScriptedTun { restore_fails }), true);
         f.tun
             .enable(
                 &serde_json::json!({ "schemaVersion": 2, "device": "Mihomo", "stack": "mixed" }),

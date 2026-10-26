@@ -80,7 +80,6 @@ async fn run_check(
         .kill_on_drop(true);
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
         for key in OS_ENVIRONMENT {
             if let Ok(value) = std::env::var(key) {
                 process.env(key, value);

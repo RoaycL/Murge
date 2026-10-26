@@ -552,7 +552,6 @@ impl TunServiceClient {
     }
 
     /// Validate with the same pinned binary the service will run.
-    #[allow(dead_code)] // staged: the profile import semantic validator
     pub async fn validate_profile(
         &self,
         profile: &str,

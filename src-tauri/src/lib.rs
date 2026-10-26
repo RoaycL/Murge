@@ -363,8 +363,35 @@ pub fn run() {
                 // only mihomo process (ordinary and TUN modes alike). The
                 // `--kernel-smoke` probe keeps the direct supervisor.
                 if !std::env::args().any(|arg| arg == "--kernel-smoke") {
-                    services.privileged = compose_privileged_kernel(app.handle().clone(), version_selection);
+                    services.privileged = compose_privileged_kernel(app.handle().clone(), version_selection.clone());
                     if let Some(privileged) = &services.privileged {
+                        // The profile semantic gate: the service runs the
+                        // same pinned binary the core will use (`mihomo -t`).
+                        {
+                            let client = privileged.client().clone();
+                            let validate_handle = app.handle().clone();
+                            let selection = version_selection.clone();
+                            profiles.set_semantic_validator(std::sync::Arc::new(move |document| {
+                                let client = client.clone();
+                                let handle = validate_handle.clone();
+                                let selection = selection.clone();
+                                Box::pin(async move {
+                                    let models = handle
+                                        .try_state::<std::sync::Arc<enhancements::ModelStores>>()
+                                        .ok_or_else(|| error::IpcError::internal("配置校验服务未就绪"))?
+                                        .inner()
+                                        .clone();
+                                    let effective = live_config::build_validation_profile(&document, &models)?;
+                                    let (channel, specific) = selection();
+                                    let version = match channel.as_str() {
+                                        "specific" => specific,
+                                        "preview" | "smart" => Some(channel),
+                                        _ => None,
+                                    };
+                                    client.validate_profile(&effective, version.as_deref()).await
+                                })
+                            }));
+                        }
                         let client = privileged.client().clone();
                         let install_handle = app.handle().clone();
                         let _ = services.manager.install_version.set(std::sync::Arc::new(move |version| {

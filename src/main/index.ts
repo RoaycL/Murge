@@ -14,7 +14,8 @@ import { registerIpc } from './ipc/register-ipc'
 import { KernelSupervisor } from './kernel/supervisor'
 import { createKernelResolver, MihomoKernelResolver } from './kernel/resolvers'
 import { TempKernelConfigStore } from './kernel/config-store'
-import { MihomoKernelConfigStore } from './kernel/mihomo-config-store'
+import { checkConfigWithCore } from './kernel/config-check'
+import { MihomoKernelConfigStore, seedGeodataFiles } from './kernel/mihomo-config-store'
 import { randomSecret } from './kernel/mihomo-config'
 import { ControllerReadyKernelGateway } from './kernel/controller-ready-gateway'
 import { LateBoundKernelGateway } from './kernel/single-kernel-gateway'
@@ -882,7 +883,25 @@ app.whenReady().then(async () => {
     installVersion: tunServiceClient ? (version) => tunServiceClient.installVersion(version, productionMixedPort!) : undefined,
     applyInstalledVersion: (version, previous) => applyInstalledKernelVersion(version, previous)
   })
-  if (tunServiceClient) {
+  // Windows production resolves the pinned mihomo for the supervisor; the
+  // profile gate below runs `mihomo -t` with the same resolver.
+  const productionKernelResolver = tunSupported
+    ? new MihomoKernelResolver({
+        allowReal: true,
+        workspaceDir: productionKernelRoot,
+        bundledArchiveDir: join(process.resourcesPath, 'bin'),
+        kernelEnabled: () => kernelManagerService.isEnabled(),
+        versionSelection: () => kernelManagerService.getVersionSelection(),
+        ensureSpecificBinary: (version) => kernelManagerService.ensureVersionBinary(version)
+      })
+    : null
+  if (productionKernelResolver) {
+    // The profile semantic gate (`mihomo -t`). `-t` reads a file and exits —
+    // no port, no adapter, no elevation — so an import never depends on the
+    // TUN service being installed. An installed service is asked first, since
+    // it runs the exact pinned binary it will spawn; anything other than a core
+    // rejection falls through to the local check, and a check that cannot run
+    // at all leaves the gate open (ProfileService.validateDocument).
     profileService.setSemanticValidator(async (document) => {
       const dnsApplied = await dnsEnhancementService.applyToDocument(document)
       const enhanced = await snifferEnhancementService.applyToDocument(dnsApplied)
@@ -909,7 +928,33 @@ app.whenReady().then(async () => {
       const version = selection.channel === 'specific'
         ? selection.specificVersion ?? undefined
         : selection.channel === 'preview' || selection.channel === 'smart' ? selection.channel : undefined
-      await tunServiceClient.validateProfile(effective, version)
+      if (tunServiceClient) {
+        try {
+          await tunServiceClient.validateProfile(effective, version)
+          return { ok: true, issues: [] }
+        } catch (error) {
+          if (error instanceof ProtocolError && error.code === ProtocolErrorCode.INVALID_ARGUMENT) throw error
+          console.warn('[profiles] 服务端配置校验不可用，改用本地内核：', error instanceof Error ? error.message : String(error))
+        }
+      }
+      // Resolving may still have to fetch the build; bound it so an import
+      // cannot hang on it.
+      let timer: NodeJS.Timeout | undefined
+      const binary = await Promise.race([
+        productionKernelResolver.resolve(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new ProtocolError(ProtocolErrorCode.KERNEL_START_TIMEOUT, '内核二进制解析超时，跳过配置校验')), 20_000)
+        })
+      ]).finally(() => clearTimeout(timer))
+      const homeDir = join(productionKernelRoot, 'geodata')
+      // Same first-run seeding the kernel start does: a fresh home must not
+      // depend on downloading geodata the installer already ships, or a valid
+      // GEOSITE/GEOIP profile could fail the check before any proxy exists.
+      if (geodataSeedDir) await seedGeodataFiles(homeDir, geodataSeedDir).catch(() => [])
+      await checkConfigWithCore(binary, {
+        homeDir,
+        workDir: join(productionKernelRoot, 'validate')
+      }, effective)
       return { ok: true, issues: [] }
     })
   }
@@ -921,14 +966,7 @@ app.whenReady().then(async () => {
       resolver: is.dev
         ? createKernelResolver({ appPath: app.getAppPath(), mode: 'fixture' })
         : process.platform === 'win32'
-          ? new MihomoKernelResolver({
-              allowReal: true,
-              workspaceDir: productionKernelRoot,
-              bundledArchiveDir: join(process.resourcesPath, 'bin'),
-              kernelEnabled: () => kernelManagerService.isEnabled(),
-              versionSelection: () => kernelManagerService.getVersionSelection(),
-              ensureSpecificBinary: (version) => kernelManagerService.ensureVersionBinary(version)
-            })
+          ? productionKernelResolver!
           : createKernelResolver({ appPath: app.getAppPath(), mode: 'disabled' }),
       configStore: is.dev
         ? new TempKernelConfigStore()

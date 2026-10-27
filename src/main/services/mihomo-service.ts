@@ -29,6 +29,8 @@ export interface MihomoServiceStreams {
   enabled?: boolean
   /** Explicit group URLs parsed from the active runtime profile document. */
   resolveGroupTestUrls?: () => Promise<Record<string, string | null>>
+  /** `use` providers per group parsed from the same document ('*' = include-all). */
+  resolveGroupProviders?: () => Promise<Record<string, string[] | '*'>>
   resolveDelayTestSettings?: () => Promise<{ scope: 'group' | 'global'; url: string }>
   /**
    * Retention buffer for the log history snapshot channel. Created internally
@@ -58,7 +60,10 @@ export class MihomoService implements MihomoGateway {
   private readonly logsStream: MihomoStream<MihomoLogMessage> | null
   private readonly errorListeners = new Set<(error: MihomoStreamError) => void>()
   private readonly resolveGroupTestUrls?: MihomoServiceStreams['resolveGroupTestUrls']
+  private readonly resolveGroupProviders?: MihomoServiceStreams['resolveGroupProviders']
   private readonly resolveDelayTestSettings?: MihomoServiceStreams['resolveDelayTestSettings']
+  private groupProvidersPromise: Promise<Record<string, string[] | '*'>> | null = null
+  private groupProvidersExpiresAt = 0
   private groupTestUrlsPromise: Promise<Record<string, string | null>> | null = null
   private groupTestUrlsExpiresAt = 0
   private providerOwnersPromise: Promise<Map<string, ProviderOwner[]>> | null = null
@@ -68,6 +73,7 @@ export class MihomoService implements MihomoGateway {
 
   constructor(private readonly client: MihomoClient, streams: MihomoServiceStreams) {
     this.resolveGroupTestUrls = streams.resolveGroupTestUrls
+    this.resolveGroupProviders = streams.resolveGroupProviders
     this.resolveDelayTestSettings = streams.resolveDelayTestSettings
     const enabled = streams.enabled ?? true
     this.logBuffer = streams.logBuffer ?? new MihomoLogBuffer()
@@ -172,9 +178,10 @@ export class MihomoService implements MihomoGateway {
    * routes provider nodes through the provider health-check endpoint.
    */
   async groupMemberDelayTest(group: string, name: string, opts?: { timeout?: number }): Promise<MihomoDelayResult> {
-    const [snapshot, explicitUrls, settings] = await Promise.all([
+    const [snapshot, explicitUrls, groupProviders, settings] = await Promise.all([
       this.client.getProxies(),
       this.getGroupTestUrls(),
+      this.getGroupProviders(),
       this.resolveDelayTestSettings?.().catch(() => ({ scope: 'group' as const, url: '' })) ??
         Promise.resolve({ scope: 'group' as const, url: '' })
     ])
@@ -202,6 +209,16 @@ export class MihomoService implements MihomoGateway {
         // A controller/provider-list failure must not make a globally resolvable
         // node untestable; fall through to the standard proxy endpoint.
         if (error instanceof ProtocolError && error.code === ProtocolErrorCode.UNAUTHORIZED) throw error
+      }
+      // Provider node names are only unique within one provider. When several
+      // subscriptions each carry a `hysteria2`, probing whichever sorts first
+      // tests a different server, and its 503 surfaces as this member failing.
+      // Keep only the providers this group draws from (plus the group's own
+      // compatible provider for inline members) when the profile says so.
+      const scope = groupProviders[group]
+      if (Array.isArray(scope)) {
+        const scoped = candidates.filter((candidate) => candidate.name === group || scope.includes(candidate.name))
+        if (scoped.length > 0) candidates = scoped
       }
       // Try every provider that currently exposes this node name. Duplicate
       // controller names across subscriptions are routine (merged airports,
@@ -248,6 +265,15 @@ export class MihomoService implements MihomoGateway {
     this.groupTestUrlsExpiresAt = now + 1_000
     this.groupTestUrlsPromise = this.resolveGroupTestUrls().catch(() => ({}))
     return this.groupTestUrlsPromise
+  }
+
+  private getGroupProviders(): Promise<Record<string, string[] | '*'>> {
+    if (!this.resolveGroupProviders) return Promise.resolve({})
+    const now = Date.now()
+    if (this.groupProvidersPromise && now < this.groupProvidersExpiresAt) return this.groupProvidersPromise
+    this.groupProvidersExpiresAt = now + 1_000
+    this.groupProvidersPromise = this.resolveGroupProviders().catch(() => ({}))
+    return this.groupProvidersPromise
   }
 
   /**

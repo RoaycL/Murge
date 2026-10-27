@@ -662,10 +662,48 @@ pub fn encode_powershell(script: &str) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
-/// Script of the elevated helper: wait for Murge to exit, then run the
-/// installer (already elevated, so no second prompt) with a visible window.
-/// Values are embedded as literals: an elevated process does not inherit this
-/// process's environment.
+/// A JScript string literal (JSON, with the ES5 line separators escaped).
+pub fn js_literal(value: &str) -> String {
+    serde_json::to_string(value)
+        .unwrap_or_else(|_| "\"\"".to_string())
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
+}
+
+/// One argument of a Windows command line (CommandLineToArgvW rules).
+pub fn windows_arg(value: &str) -> String {
+    if !value.is_empty() && !value.chars().any(|c| c.is_whitespace() || c == '"') {
+        return value.to_string();
+    }
+    let mut quoted = String::from("\"");
+    let mut backslashes = 0;
+    for character in value.chars() {
+        match character {
+            '\\' => backslashes += 1,
+            '"' => {
+                quoted.push_str(&"\\".repeat(backslashes * 2 + 1));
+                quoted.push('"');
+                backslashes = 0;
+            }
+            other => {
+                quoted.push_str(&"\\".repeat(backslashes));
+                quoted.push(other);
+                backslashes = 0;
+            }
+        }
+    }
+    quoted.push_str(&"\\".repeat(backslashes * 2));
+    quoted.push('"');
+    quoted
+}
+
+/// Script of the elevated helper, run by `wscript.exe`: wait for Murge to
+/// exit, then run the installer (already elevated, so no second prompt) with
+/// a visible window. `wscript.exe` is a GUI program: an elevated PowerShell
+/// gets a console window of its own that `-WindowStyle Hidden` does not
+/// reliably hide (Windows Terminal as the default terminal ignores it), and
+/// it stayed up for the whole install. Values are embedded as literals: an
+/// elevated process does not inherit this process's environment.
 pub fn elevated_helper_script(
     installer: &str,
     args: &[&str],
@@ -673,66 +711,75 @@ pub fn elevated_helper_script(
     trace: &str,
     failure: &str,
 ) -> String {
-    let trace = ps_literal(trace);
-    let argument_list = args
-        .iter()
-        .map(|arg| ps_literal(arg))
+    let command_line = std::iter::once(installer)
+        .chain(args.iter().copied())
+        .map(windows_arg)
         .collect::<Vec<_>>()
-        .join(",");
-    let argument_list = if argument_list.is_empty() {
-        String::new()
-    } else {
-        format!(" -ArgumentList {argument_list}")
-    };
+        .join(" ");
     let timeout = PARENT_EXIT_TIMEOUT_SECONDS;
     [
+        format!("var trace = {};", js_literal(trace)),
+        format!("var failure = {};", js_literal(failure)),
+        "var fso = new ActiveXObject('Scripting.FileSystemObject');".to_string(),
+        "function log(line) {".to_string(),
+        "  try { var file = fso.OpenTextFile(trace, 8, true); file.WriteLine(line); file.Close(); } catch (e) {}".to_string(),
+        "}".to_string(),
+        "function fail(message) {".to_string(),
+        "  var stream = new ActiveXObject('ADODB.Stream');".to_string(),
+        "  stream.Type = 2; stream.Charset = 'utf-8'; stream.Open();".to_string(),
+        "  stream.WriteText(message); stream.SaveToFile(failure, 2); stream.Close();".to_string(),
+        "}".to_string(),
+        "function running() {".to_string(),
+        format!("  return GetObject('winmgmts:root\\\\cimv2').ExecQuery('SELECT ProcessId FROM Win32_Process WHERE ProcessId = {parent_pid}').Count > 0;"),
+        "}".to_string(),
         "try {".to_string(),
-        format!("  Add-Content -LiteralPath {trace} -Value 'Elevated helper started' -ErrorAction SilentlyContinue"),
-        format!("  Wait-Process -Id {parent_pid} -Timeout {timeout} -ErrorAction SilentlyContinue"),
-        format!("  if (Get-Process -Id {parent_pid} -ErrorAction SilentlyContinue) {{ throw 'the app did not exit within {timeout} seconds' }}"),
-        format!("  Add-Content -LiteralPath {trace} -Value 'Starting installer' -ErrorAction SilentlyContinue"),
-        format!(
-            "  $installer = Start-Process -FilePath {}{argument_list} -WindowStyle Normal -Wait -PassThru -ErrorAction Stop",
-            ps_literal(installer)
-        ),
-        format!("  Add-Content -LiteralPath {trace} -Value ('Installer exit code: ' + $installer.ExitCode) -ErrorAction SilentlyContinue"),
-        "  if ($installer.ExitCode -ne 0) { throw ('Installer exited with code ' + $installer.ExitCode) }".to_string(),
-        "} catch {".to_string(),
-        format!("  Set-Content -LiteralPath {} -Value $_.Exception.Message -Encoding UTF8", ps_literal(failure)),
+        "  log('Elevated helper started');".to_string(),
+        format!("  var deadline = new Date().getTime() + {};", u64::from(timeout) * 1000),
+        "  while (running()) {".to_string(),
+        format!("    if (new Date().getTime() > deadline) throw new Error('the app did not exit within {timeout} seconds');"),
+        "    WScript.Sleep(250);".to_string(),
+        "  }".to_string(),
+        "  log('Starting installer');".to_string(),
+        format!("  var code = new ActiveXObject('WScript.Shell').Run({}, 1, true);", js_literal(&command_line)),
+        "  log('Installer exit code: ' + code);".to_string(),
+        "  if (code !== 0) throw new Error('Installer exited with code ' + code);".to_string(),
+        "} catch (e) {".to_string(),
+        "  try { fail(e.message || String(e)); } catch (ignored) {}".to_string(),
         "}".to_string(),
     ]
-    .join("\n")
+    .join("\r\n")
+}
+
+/// The helper file's bytes: UTF-16LE with a BOM, which WSH reads as Unicode.
+pub fn helper_script_file(script: &str) -> Vec<u8> {
+    std::iter::once(0xFEFF_u16)
+        .chain(script.encode_utf16())
+        .flat_map(u16::to_le_bytes)
+        .collect()
 }
 
 /// Script run while Murge still exists: request elevation and start the
 /// elevated helper. Exits 0 once it runs, 1 when elevation was refused.
+/// `Start-Process` joins `-ArgumentList` with spaces, so the helper path
+/// carries its own quotes.
 pub fn elevation_request_script(
-    helper: &str,
-    powershell: &str,
+    helper_file: &str,
+    wscript: &str,
     trace: &str,
     failure: &str,
 ) -> String {
-    let helper_args = [
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-WindowStyle",
-        "Hidden",
-        "-EncodedCommand",
-        &encode_powershell(helper),
-    ]
-    .iter()
-    .map(|arg| ps_literal(arg))
-    .collect::<Vec<_>>()
-    .join(",");
+    let helper_args = ["//B", "//NoLogo", "//E:jscript", &windows_arg(helper_file)]
+        .iter()
+        .map(|arg| ps_literal(arg))
+        .collect::<Vec<_>>()
+        .join(",");
     let trace = ps_literal(trace);
     [
         "try {".to_string(),
         format!("  Set-Content -LiteralPath {trace} -Value 'Requesting elevation' -ErrorAction SilentlyContinue"),
         format!(
-            "  $null = Start-Process -FilePath {} -ArgumentList {helper_args} -Verb RunAs -WindowStyle Hidden -ErrorAction Stop",
-            ps_literal(powershell)
+            "  $null = Start-Process -FilePath {} -ArgumentList {helper_args} -Verb RunAs -ErrorAction Stop",
+            ps_literal(wscript)
         ),
         format!("  Add-Content -LiteralPath {trace} -Value 'Elevated helper launched' -ErrorAction SilentlyContinue"),
         "  exit 0".to_string(),
@@ -755,8 +802,9 @@ fn update_temp_dir() -> std::path::PathBuf {
 /// Write the verified Electron installer to a temp folder and hand it to
 /// Windows. A non-elevated child of this process does not reliably outlive
 /// it (a login task tears its whole process tree down), so — while Murge
-/// still runs — a short-lived PowerShell asks for elevation and starts an
-/// elevated helper, which Windows creates outside this process tree. That
+/// still runs — a short-lived hidden PowerShell asks for elevation and starts
+/// an elevated `wscript.exe` helper (no console window), which Windows
+/// creates outside this process tree. That
 /// helper waits for Murge to exit and runs the installer. This blocks the
 /// exit while the UAC prompt is up. The Electron installer removes this
 /// installation first (keeping service, data and the startup task).
@@ -767,12 +815,14 @@ fn launch_electron_installer(file_name: &str, bytes: &[u8], restart: bool) -> Re
     std::fs::write(&path, bytes).map_err(|error| error.to_string())?;
     let trace = dir.join("install-trace.txt");
     let failure = dir.join("install-failure.txt");
+    let helper_file = dir.join("install-helper.js");
     let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
-    let powershell = std::path::Path::new(&system_root)
-        .join("System32")
+    let system32 = std::path::Path::new(&system_root).join("System32");
+    let powershell = system32
         .join("WindowsPowerShell")
         .join("v1.0")
         .join("powershell.exe");
+    let wscript = system32.join("wscript.exe");
     let helper = elevated_helper_script(
         &path.to_string_lossy(),
         electron_installer_args(restart),
@@ -780,9 +830,10 @@ fn launch_electron_installer(file_name: &str, bytes: &[u8], restart: bool) -> Re
         &trace.to_string_lossy(),
         &failure.to_string_lossy(),
     );
+    std::fs::write(&helper_file, helper_script_file(&helper)).map_err(|error| error.to_string())?;
     let request = elevation_request_script(
-        &helper,
-        &powershell.to_string_lossy(),
+        &helper_file.to_string_lossy(),
+        &wscript.to_string_lossy(),
         &trace.to_string_lossy(),
         &failure.to_string_lossy(),
     );
@@ -2169,40 +2220,48 @@ mod tests {
 
     #[test]
     fn installer_hand_off_elevates_before_exit_and_runs_installer_visibly() {
-        use base64::Engine;
         assert_eq!(ps_literal("a'b"), "'a''b'");
         assert_eq!(ps_literal("O\u{2019}Neil"), "'O\u{2019}\u{2019}Neil'");
+        assert_eq!(
+            js_literal("C:\\a \"b\"\u{2028}"),
+            "\"C:\\\\a \\\"b\\\"\\u2028\""
+        );
+        assert_eq!(windows_arg("/S"), "/S");
+        assert_eq!(
+            windows_arg("C:\\Program Files\\x.exe"),
+            "\"C:\\Program Files\\x.exe\""
+        );
+        assert_eq!(
+            windows_arg("C:\\dir with space\\"),
+            "\"C:\\dir with space\\\\\""
+        );
+        assert_eq!(windows_arg(""), "\"\"");
+        let installer = "C:\\Users\\O'Neil Lee\\Temp\\Murge-Setup-0.9.34-x64.exe";
         let helper = elevated_helper_script(
-            "C:\\Users\\O'Neil\\Temp\\Murge-Setup-0.9.34-x64.exe",
+            installer,
             &["--force-run"],
             4242,
             "C:\\t\\install-trace.txt",
             "C:\\t\\install-failure.txt",
         );
-        assert!(helper.contains("Wait-Process -Id 4242"));
-        assert!(helper.contains("-FilePath 'C:\\Users\\O''Neil\\Temp\\Murge-Setup-0.9.34-x64.exe' -ArgumentList '--force-run'"));
-        assert!(helper.contains("-WindowStyle Normal"));
+        assert!(helper.contains("WHERE ProcessId = 4242"));
+        assert!(helper.contains(&format!(
+            "Run({}, 1, true)",
+            js_literal(&format!("\"{installer}\" --force-run"))
+        )));
         assert!(!helper.contains("RunAs"));
+        assert!(!helper.to_lowercase().contains("powershell"));
+        let file = helper_script_file("用户");
+        assert_eq!(&file[..2], &[0xFF, 0xFE]);
         let request = elevation_request_script(
-            &helper,
-            "C:\\ps.exe",
+            "C:\\Users\\O'Neil Lee\\Temp\\install-helper.js",
+            "C:\\Windows\\System32\\wscript.exe",
             "C:\\t\\install-trace.txt",
             "C:\\t\\install-failure.txt",
         );
+        assert!(request.contains("-FilePath 'C:\\Windows\\System32\\wscript.exe'"));
         assert!(request.contains("-Verb RunAs"));
-        let encoded = request
-            .split("'-EncodedCommand','")
-            .nth(1)
-            .and_then(|rest| rest.split('\'').next())
-            .expect("helper embedded");
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(encoded)
-            .unwrap();
-        let units: Vec<u16> = bytes
-            .chunks(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-            .collect();
-        assert_eq!(String::from_utf16(&units).unwrap(), helper);
+        assert!(request.contains("'\"C:\\Users\\O''Neil Lee\\Temp\\install-helper.js\"'"));
     }
 
     #[test]

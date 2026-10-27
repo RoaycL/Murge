@@ -1027,7 +1027,8 @@ pub async fn dispatch(
             )?;
             let timeout = mihomo::parse_delay_options(arg(payload, 2))?
                 .unwrap_or(mihomo::DEFAULT_DELAY_TIMEOUT_MS as i64);
-            let urls = mihomo::get_group_test_urls_cached(mihomo, || {
+            // `{urls, providers}`; a failed resolve is `{}` and both read as absent.
+            let profile_groups = mihomo::get_group_test_urls_cached(mihomo, || {
                 resolve_group_test_urls(profiles, overrides, models)
             });
             let app = settings.get();
@@ -1036,7 +1037,8 @@ pub async fn dispatch(
             Ok(mihomo::group_member_delay_test_gateway(
                 mihomo,
                 &controller_client(models)?,
-                &urls,
+                &profile_groups["urls"],
+                &profile_groups["providers"],
                 global_scope,
                 global_url,
                 &group,
@@ -1123,7 +1125,7 @@ fn controller_client(models: &enhancements::ModelStores) -> Result<mihomo::Mihom
     )
 }
 
-/// Group -> explicit probe URL from the ACTIVE enhanced document
+/// `{urls, providers}` per group from the ACTIVE enhanced document
 /// (overrides -> DNS -> sniffer, exactly `resolveEnhancedActiveDocument`).
 /// Every failure mode fails open to `{}` like the TS resolver.
 fn resolve_group_test_urls(
@@ -1148,7 +1150,10 @@ fn resolve_group_test_urls(
     let (dns_text, _) = inspection::apply_dns_to_document(&overridden, &dns);
     let sniffer = enhancements::coerce_sniffer_enhancement(&models.sniffer.get());
     let (text, _) = inspection::apply_sniffer_to_document(&dns_text, &sniffer);
-    mihomo::parse_proxy_group_test_urls(&text)
+    serde_json::json!({
+        "urls": mihomo::parse_proxy_group_test_urls(&text),
+        "providers": mihomo::parse_proxy_group_providers(&text),
+    })
 }
 
 /// `ProfileAutoReloadGateway.currentActiveId`: the active meta id.

@@ -1226,6 +1226,60 @@ pub fn parse_proxy_group_test_urls(document: &str) -> Value {
     Value::Object(urls)
 }
 
+/// Providers each `proxy-groups` entry draws from (`use`), `"*"` for
+/// `include-all` / `include-all-providers` groups (parseProxyGroupProviders).
+/// Provider node names are only unique within one provider, so the member
+/// test needs this to probe the group's own copy of a shared name.
+pub fn parse_proxy_group_providers(document: &str) -> Value {
+    if document.trim().is_empty() {
+        return json!({});
+    }
+    let Ok(docs) = crate::yaml_value::load_as_yaml(document) else {
+        return json!({});
+    };
+    let Some(groups) = docs
+        .first()
+        .and_then(|root| root.as_hash())
+        .and_then(|root| root.get(&yaml_rust2::Yaml::String("proxy-groups".to_string())))
+        .and_then(|value| value.as_vec())
+    else {
+        return json!({});
+    };
+    let flag = |entry: &yaml_rust2::yaml::Hash, key: &str| {
+        entry
+            .get(&yaml_rust2::Yaml::String(key.to_string()))
+            .and_then(|value| value.as_bool())
+            == Some(true)
+    };
+    let mut providers = Map::new();
+    for value in groups {
+        let Some(entry) = value.as_hash() else {
+            continue;
+        };
+        let Some(name) = yaml_str(entry, "name").filter(|name| !name.is_empty()) else {
+            continue;
+        };
+        if flag(entry, "include-all") || flag(entry, "include-all-providers") {
+            providers.insert(name, json!("*"));
+            continue;
+        }
+        let uses: Vec<Value> = entry
+            .get(&yaml_rust2::Yaml::String("use".to_string()))
+            .and_then(|value| value.as_vec())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str())
+                    .filter(|item| !item.is_empty())
+                    .map(|item| json!(item))
+                    .collect()
+            })
+            .unwrap_or_default();
+        providers.insert(name, Value::Array(uses));
+    }
+    Value::Object(providers)
+}
+
 fn yaml_str(entry: &yaml_rust2::yaml::Hash, key: &str) -> Option<String> {
     entry
         .get(&yaml_rust2::Yaml::String(key.to_string()))
@@ -1357,6 +1411,7 @@ impl MihomoServices {
         &self,
         client: &MihomoClient,
         explicit_urls: &Value,
+        group_providers: &Value,
         global_scope: bool,
         global_url: Option<&str>,
         group: &str,
@@ -1418,6 +1473,30 @@ impl MihomoServices {
                     }
                     Vec::new()
                 }
+            };
+            // Provider node names are only unique within one provider: when
+            // several subscriptions each carry a `hysteria2`, probing whichever
+            // sorts first tests a different server and its 503 surfaces as this
+            // member failing. Keep the providers this group draws from (plus
+            // its own compatible provider for inline members) when known.
+            let candidates = match group_providers.get(group).and_then(Value::as_array) {
+                Some(scope) => {
+                    let scoped: Vec<Value> = candidates
+                        .iter()
+                        .filter(|candidate| {
+                            let provider = candidate["name"].as_str().unwrap_or_default();
+                            provider == group
+                                || scope.iter().any(|item| item.as_str() == Some(provider))
+                        })
+                        .cloned()
+                        .collect();
+                    if scoped.is_empty() {
+                        candidates
+                    } else {
+                        scoped
+                    }
+                }
+                None => candidates,
             };
             for candidate in candidates {
                 let candidate_test_url = candidate["testUrl"].as_str();
@@ -1573,6 +1652,7 @@ pub async fn group_member_delay_test_gateway(
     services: &MihomoServices,
     client: &MihomoClient,
     explicit_urls: &Value,
+    group_providers: &Value,
     global_scope: bool,
     global_url: Option<&str>,
     group: &str,
@@ -1583,6 +1663,7 @@ pub async fn group_member_delay_test_gateway(
         .group_member_delay_test(
             client,
             explicit_urls,
+            group_providers,
             global_scope,
             global_url,
             group,
@@ -1972,7 +2053,16 @@ mod tests {
         let services = MihomoServices::new(None);
         let client = client(server.port);
         let error = services
-            .group_member_delay_test(&client, &json!({}), false, None, "香港", "不存在", 5000)
+            .group_member_delay_test(
+                &client,
+                &json!({}),
+                &json!({}),
+                false,
+                None,
+                "香港",
+                "不存在",
+                5000,
+            )
             .await
             .unwrap_err();
         assert_eq!(
@@ -2007,7 +2097,16 @@ mod tests {
         let services = MihomoServices::new(None);
         let client = client(server.port);
         let result = services
-            .group_member_delay_test(&client, &json!({}), false, None, "香港", "A", 5000)
+            .group_member_delay_test(
+                &client,
+                &json!({}),
+                &json!({}),
+                false,
+                None,
+                "香港",
+                "A",
+                5000,
+            )
             .await
             .unwrap();
         assert_eq!(result["delay"], 77);
@@ -2015,6 +2114,62 @@ mod tests {
             result["url"], "https://group.example",
             "owner testUrl fills in when the profile omits one"
         );
+    }
+
+    #[test]
+    fn group_provider_parser_reads_use_lists_and_include_all() {
+        let document = "proxy-groups:\n  - {name: VMISS, type: select, use: [VMISS]}\n  - {name: Inline, type: select, proxies: [DIRECT]}\n  - {name: All, type: select, include-all: true}\n  - {name: Prov, type: select, include-all-providers: true}\n";
+        let providers = parse_proxy_group_providers(document);
+        assert_eq!(providers["VMISS"], json!(["VMISS"]));
+        assert_eq!(providers["Inline"], json!([]));
+        assert_eq!(providers["All"], "*");
+        assert_eq!(providers["Prov"], "*");
+        assert_eq!(parse_proxy_group_providers(""), json!({}));
+        assert_eq!(parse_proxy_group_providers("::: broken"), json!({}));
+    }
+
+    #[tokio::test]
+    async fn group_member_test_skips_same_named_nodes_in_other_providers() {
+        // Two self-hosted subscriptions both ship `hysteria2`; the dead
+        // CloudCone copy sorts first and used to fail every VMISS member.
+        let server = MockServer::start("s3cret", |method, path, _body| {
+            match path {
+            "/proxies" => (
+                200,
+                r#"{"proxies":{"VMISS":{"name":"VMISS","type":"Selector","all":["hysteria2"],"now":"hysteria2"}}}"#
+                    .to_string(),
+            ),
+            "/providers/proxies" if method == "GET" => (
+                200,
+                r#"{"providers":{
+                    "CloudCone":{"name":"CloudCone","type":"Proxy","proxies":[{"name":"hysteria2"}]},
+                    "VMISS":{"name":"VMISS","type":"Proxy","proxies":[{"name":"hysteria2"}]}
+                }}"#
+                .to_string(),
+            ),
+            p if p.starts_with("/providers/proxies/CloudCone/") => {
+                (503, r#"{"message":"An error occurred in the delay test"}"#.to_string())
+            }
+            p if p.starts_with("/providers/proxies/VMISS/") => (200, r#"{"delay":151}"#.to_string()),
+            _ => (404, String::new()),
+        }
+        });
+        let services = MihomoServices::new(None);
+        let client = client(server.port);
+        let result = services
+            .group_member_delay_test(
+                &client,
+                &json!({}),
+                &json!({"VMISS": ["VMISS"]}),
+                false,
+                None,
+                "VMISS",
+                "hysteria2",
+                5000,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result["delay"], 151);
     }
 
     #[tokio::test]
@@ -2041,7 +2196,16 @@ mod tests {
         let services = MihomoServices::new(None);
         let client = client(server.port);
         let result = services
-            .group_member_delay_test(&client, &json!({}), false, None, "香港", "A", 5000)
+            .group_member_delay_test(
+                &client,
+                &json!({}),
+                &json!({}),
+                false,
+                None,
+                "香港",
+                "A",
+                5000,
+            )
             .await
             .unwrap();
         assert_eq!(result["delay"], 55);
@@ -2066,7 +2230,16 @@ mod tests {
         let services = MihomoServices::new(None);
         let client = client(server.port);
         let result = services
-            .group_member_delay_test(&client, &json!({}), false, None, "香港", "内层", 5000)
+            .group_member_delay_test(
+                &client,
+                &json!({}),
+                &json!({}),
+                false,
+                None,
+                "香港",
+                "内层",
+                5000,
+            )
             .await
             .unwrap();
         assert_eq!(result["delay"], 88);

@@ -229,9 +229,15 @@ export class ProfileService implements ProfileGateway {
       try {
         semantic = await this.semanticValidator(document)
       } catch (error) {
-        semantic = {
-          ok: false,
-          issues: [{ severity: 'error', message: error instanceof Error ? error.message : String(error) }]
+        // Only a real core rejection (INVALID_ARGUMENT, mihomo's own output)
+        // gates a write. A check that could not run at all — no binary
+        // resolved yet, a spawn the OS refused, the TUN service missing — is
+        // not the document's fault, so the structural checks stay the only
+        // gate and an import never fails because the core could not be asked.
+        if (error instanceof ProtocolError && error.code === ProtocolErrorCode.INVALID_ARGUMENT) {
+          semantic = { ok: false, issues: [{ severity: 'error', message: error.message }] }
+        } else {
+          console.warn('[profiles] 跳过内核配置校验：', error instanceof Error ? error.message : String(error))
         }
       }
     }

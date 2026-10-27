@@ -61,6 +61,24 @@ describe('ProfileService', () => {
     expect(validated).toEqual([VALID_DOC, rejected])
   })
 
+  it('blocks a write only when the core really rejects the document', async () => {
+    service.setSemanticValidator(async () => {
+      throw new ProtocolError(ProtocolErrorCode.INVALID_ARGUMENT, 'rules[0] [bad-rule] error')
+    })
+    await expect(service.importProfile({ name: 'cfg', document: VALID_DOC, source: { type: 'manual' } }))
+      .rejects.toThrow(/bad-rule/)
+    expect(await service.listProfiles()).toEqual([])
+  })
+
+  it('keeps importing when the core check cannot run (e.g. the TUN service is not installed)', async () => {
+    service.setSemanticValidator(async () => {
+      throw new ProtocolError(ProtocolErrorCode.KERNEL_SPAWN_FAILED, 'TUN service unavailable')
+    })
+    const meta = await service.importProfile({ name: 'cfg', document: VALID_DOC, source: { type: 'manual' } })
+    expect((await service.getProfile(meta.id)).document).toBe(VALID_DOC)
+    expect((await service.validateDocument(VALID_DOC)).ok).toBe(true)
+  })
+
   it('returns compatibility diagnostics as warnings without rejecting or rewriting the profile', async () => {
     const document = `${VALID_DOC}global-client-fingerprint: chrome\nudp: true\n`
     const result = await service.validateDocument(document)

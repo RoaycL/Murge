@@ -217,6 +217,42 @@ describe('mihomo service gateway', () => {
     service.dispose()
   })
 
+  it('probes only the providers the group uses when another subscription has a same-named node', async () => {
+    // Two self-hosted subscriptions both ship `hysteria2`. The dead copy in
+    // CloudCone sorts first; probing it made every VMISS member read 失败.
+    const providerDelayTest = vi.fn(async (provider: string) => {
+      if (provider === 'CloudCone') {
+        throw new ProtocolError(ProtocolErrorCode.UPSTREAM_TEST_FAILED, 'mihomo delay test failed: HTTP 503')
+      }
+      return { delay: 151 }
+    })
+    const delayTest = vi.fn().mockResolvedValue({ delay: 1 })
+    const client = {
+      getProxies: vi.fn().mockResolvedValue({
+        proxies: { VMISS: { name: 'VMISS', type: 'Selector', all: ['hysteria2'] } }
+      }),
+      getProxyProviders: vi.fn().mockResolvedValue({
+        providers: {
+          CloudCone: { name: 'CloudCone', type: 'Proxy', proxies: [{ name: 'hysteria2', type: 'Hysteria2' }] },
+          VMISS: { name: 'VMISS', type: 'Proxy', proxies: [{ name: 'hysteria2', type: 'Hysteria2' }] }
+        }
+      }),
+      providerDelayTest,
+      delayTest
+    } as unknown as MihomoClient
+    const service = new MihomoService(client, {
+      wsBaseUrl: 'ws://127.0.0.1',
+      enabled: false,
+      resolveGroupProviders: async () => ({ VMISS: ['VMISS'] })
+    })
+
+    await expect(service.groupMemberDelayTest('VMISS', 'hysteria2', { timeout: 9000 })).resolves.toEqual({ delay: 151 })
+    expect(providerDelayTest).toHaveBeenCalledTimes(1)
+    expect(providerDelayTest).toHaveBeenCalledWith('VMISS', 'hysteria2', { timeout: 9000 })
+    expect(delayTest).not.toHaveBeenCalled()
+    service.dispose()
+  })
+
   it('falls back to the top-level proxy endpoint when no provider currently lists the node', async () => {
     const providerDelayTest = vi
       .fn()

@@ -72,3 +72,42 @@ export function parseProxyGroupTestUrls(document: string): Record<string, string
   }
   return urls
 }
+
+/**
+ * Proxy providers each `proxy-groups` entry draws members from (`use`).
+ *
+ * The controller does not expose a group's providers, yet provider node names
+ * are only unique WITHIN a provider: two self-hosted subscriptions both naming
+ * a node `hysteria2` is routine. Without this map a member test could probe the
+ * other subscription's same-named node. `'*'` marks `include-all` /
+ * `include-all-providers` groups, which really can draw from every provider.
+ */
+export function parseProxyGroupProviders(document: string): Record<string, string[] | '*'> {
+  if (!document.trim()) return {}
+  let doc: ReturnType<typeof parseDocument>
+  try {
+    doc = parseDocument(document, { merge: true })
+  } catch {
+    return {}
+  }
+  if (doc.errors.length > 0) return {}
+  // Same merge-key projection as parseProxyGroupTestUrls.
+  const root = doc.toJS() as unknown
+  if (!(typeof root === 'object' && root !== null && !Array.isArray(root))) return {}
+  const groups = (root as Record<string, unknown>)['proxy-groups']
+  if (!Array.isArray(groups)) return {}
+  const providers: Record<string, string[] | '*'> = {}
+  for (const value of groups) {
+    if (!(typeof value === 'object' && value !== null && !Array.isArray(value))) continue
+    const entry = value as Record<string, unknown>
+    if (typeof entry.name !== 'string' || entry.name.length === 0) continue
+    if (entry['include-all'] === true || entry['include-all-providers'] === true) {
+      providers[entry.name] = '*'
+      continue
+    }
+    providers[entry.name] = Array.isArray(entry.use)
+      ? entry.use.filter((item): item is string => typeof item === 'string' && item.length > 0)
+      : []
+  }
+  return providers
+}

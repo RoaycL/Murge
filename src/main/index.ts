@@ -44,7 +44,7 @@ import { EncryptedProfileSourceStore } from './profiles/profile-source-store'
 import { ProfileService } from './profiles/profile-service'
 import { ProfileAutoReloadGateway } from './profiles/profile-auto-reload-gateway'
 import { ProfileAutoUpdateService } from './profiles/profile-auto-update-service'
-import { parseProxyGroupOrder, parseProxyGroupTestUrls } from './profiles/proxy-group-order'
+import { parseProxyGroupOrder, parseProxyGroupProviders, parseProxyGroupTestUrls } from './profiles/proxy-group-order'
 import { parseProviderCatalog } from './profiles/provider-configs'
 import { inspectActiveProfileConfig } from './profiles/profile-config-inspection'
 import { buildProfileKernelConfig } from './kernel/profile-kernel-config'
@@ -315,6 +315,7 @@ if (!hasSingleInstanceLock) {
 async function createMihomoGateway(
   productionController?: { url: string; secret: string },
   resolveGroupTestUrls?: () => Promise<Record<string, string | null>>,
+  resolveGroupProviders?: () => Promise<Record<string, string[] | '*'>>,
   resolveDelayTestSettings?: () => Promise<{ scope: 'group' | 'global'; url: string }>,
   logSink?: (message: MihomoLogMessage) => void | Promise<void>
 ): Promise<MihomoGateway> {
@@ -327,6 +328,7 @@ async function createMihomoGateway(
       secret,
       enabled: true,
       resolveGroupTestUrls,
+      resolveGroupProviders,
       resolveDelayTestSettings,
       logSink
     })
@@ -342,6 +344,7 @@ async function createMihomoGateway(
         secret: productionController.secret,
         enabled: true,
         resolveGroupTestUrls,
+        resolveGroupProviders,
         resolveDelayTestSettings,
         logSink
       }
@@ -1104,6 +1107,7 @@ app.whenReady().then(async () => {
           secret: productionSecret!
         },
     async () => parseProxyGroupTestUrls((await resolveEnhancedActiveDocument()) ?? ''),
+    async () => parseProxyGroupProviders((await resolveEnhancedActiveDocument()) ?? ''),
     async () => {
       const settings = await appSettingsService.get()
       return { scope: settings.delayTestUrlScope, url: settings.delayTestUrl }

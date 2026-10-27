@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseProxyGroupOrder, parseProxyGroupTestUrls } from '../src/main/profiles/proxy-group-order'
+import { parseProxyGroupOrder, parseProxyGroupProviders, parseProxyGroupTestUrls } from '../src/main/profiles/proxy-group-order'
 
 describe('parseProxyGroupOrder', () => {
   it('returns proxy-group names in document order', () => {
@@ -119,5 +119,30 @@ describe('parseProxyGroupTestUrls', () => {
       base: 'https://probe.example/204',
       inherited: 'https://probe.example/204'
     })
+  })
+})
+
+describe('parseProxyGroupProviders', () => {
+  it('maps each group to its `use` providers and marks include-all groups', () => {
+    const document = [
+      'proxy-groups:',
+      '  - { name: VMISS, type: select, use: [VMISS] }',
+      '  - { name: Mixed, type: select, proxies: [DIRECT], use: [a, b] }',
+      '  - { name: Inline, type: select, proxies: [DIRECT] }',
+      '  - { name: All, type: select, include-all: true }',
+      '  - { name: AllProviders, type: url-test, include-all-providers: true }'
+    ].join('\n')
+    expect(parseProxyGroupProviders(document)).toEqual({
+      VMISS: ['VMISS'],
+      Mixed: ['a', 'b'],
+      Inline: [],
+      All: '*',
+      AllProviders: '*'
+    })
+  })
+
+  it('returns an empty map for unusable documents', () => {
+    expect(parseProxyGroupProviders('')).toEqual({})
+    expect(parseProxyGroupProviders('proxy-groups: [')).toEqual({})
   })
 })

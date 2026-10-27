@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import { app, net, Notification } from 'electron'
 import { brand } from '@shared/brand'
 import { ElectronUpdaterDriver } from './electron-updater-driver'
-import { elevationRequestScript, encodePowerShell, type InstallerHandoff } from './installer-handoff'
+import { elevationRequestScript, encodePowerShell, helperScriptFile, type InstallerHandoff } from './installer-handoff'
 import { SignedManifestUpdaterDriver } from './signed-manifest-driver'
 import type { UpdaterDriver } from './updater-driver'
 import type { UpdateChannel } from '@shared/app-settings'
@@ -48,6 +48,7 @@ export function createUpdaterDriver(onNotificationClick: () => void, channel: Up
       installerPath: file,
       installerArgs: args,
       parentPid: process.pid,
+      helperFile: join(downloadDir, 'install-helper.js'),
       traceFile: join(downloadDir, 'install-trace.txt'),
       failureFile
     }),
@@ -81,7 +82,8 @@ const ELEVATION_TIMEOUT_MS = 5 * 60 * 1000
 function launchElevatedInstaller(handoff: InstallerHandoff): Promise<void> {
   const systemRoot = process.env.SystemRoot ?? 'C:\\Windows'
   const powershell = join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
-  const script = elevationRequestScript(handoff, powershell)
+  const wscript = join(systemRoot, 'System32', 'wscript.exe')
+  const script = elevationRequestScript(handoff, wscript)
   return new Promise((resolve) => {
     const fail = (reason: string): void => {
       console.error(`[updates] the update installer was not handed off: ${reason}`)
@@ -90,6 +92,13 @@ function launchElevatedInstaller(handoff: InstallerHandoff): Promise<void> {
       } catch {
         // The console line above is the record.
       }
+    }
+    try {
+      writeFileSync(handoff.helperFile, helperScriptFile(handoff))
+    } catch (error) {
+      fail(`failed to write the installer helper: ${(error as Error).message}`)
+      resolve()
+      return
     }
     const child = spawn(
       powershell,

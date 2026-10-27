@@ -151,16 +151,21 @@ export function installerProduct(fileName: string): UpdateProduct | null {
 }
 
 /**
- * Command line for an installer: unattended, and relaunching the app
- * afterwards only for "重启并安装" (`restart`), not for an install on quit.
+ * Command line for an installer. "重启并安装" (`restart`) shows the install and
+ * relaunches the app afterwards; an install on quit keeps the app closed.
  */
 export function installerArgs(target: UpdateProduct, running: UpdateProduct, restart: boolean): readonly string[] {
   // Tauri NSIS: passive progress UI, /R relaunches. Its own updates add
   // /UPDATE (keeps shortcuts); a switch from Electron takes over instead.
   if (target === 'tauri') return [...(running === 'tauri' ? ['/P', '/UPDATE'] : ['/P']), ...(restart ? ['/R'] : [])]
-  // electron-builder NSIS: silent, --force-run relaunches; --updated marks an
-  // in-place upgrade of the same build.
-  return [...(running === 'electron' ? ['--updated', '/S'] : ['/S']), ...(restart ? ['--force-run'] : [])]
+  // electron-builder NSIS; --updated marks an in-place upgrade of the same
+  // build. "重启并安装" on it runs the assisted installer with its window: the
+  // updated flag skips straight to the progress page, and the finish page's
+  // "run" box (checked) relaunches. On quit, or coming from Tauri (where
+  // the full wizard would ask for a folder), it stays silent and
+  // --force-run relaunches.
+  if (running === 'electron') return restart ? ['--updated'] : ['--updated', '/S']
+  return ['/S', ...(restart ? ['--force-run'] : [])]
 }
 
 /** True when `downloadUrl` is one of this repository's release assets. */

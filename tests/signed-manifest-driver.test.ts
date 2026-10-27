@@ -151,7 +151,7 @@ describe('SignedManifestUpdaterDriver', () => {
     expect(h.launched).toEqual([])
     // The quit flow disposes the driver after restoring the proxy.
     h.driver.dispose()
-    expect(h.launched).toEqual([{ path: staged(fileName), args: ['--updated', '/S', '--force-run'] }])
+    expect(h.launched).toEqual([{ path: staged(fileName), args: ['--updated'] }])
     h.driver.dispose()
     expect(h.launched).toHaveLength(1)
   })
@@ -517,7 +517,8 @@ describe('signed manifest helpers', () => {
   it('runs each installer unattended with a relaunch', () => {
     expect(installerArgs('tauri', 'electron', true)).toEqual(['/P', '/R'])
     expect(installerArgs('tauri', 'tauri', true)).toEqual(['/P', '/UPDATE', '/R'])
-    expect(installerArgs('electron', 'electron', true)).toEqual(['--updated', '/S', '--force-run'])
+    // Same build: the installer shows its progress and finish pages.
+    expect(installerArgs('electron', 'electron', true)).toEqual(['--updated'])
     expect(installerArgs('electron', 'tauri', true)).toEqual(['/S', '--force-run'])
     // Installed on an ordinary quit: the app stays closed.
     expect(installerArgs('tauri', 'electron', false)).toEqual(['/P'])

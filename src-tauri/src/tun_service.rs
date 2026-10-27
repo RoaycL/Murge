@@ -24,6 +24,9 @@ pub const TUN_SERVICE_MAX_PROVIDER_CONTENT_BYTES: usize = 4 * 1024 * 1024;
 #[cfg(any(windows, test))]
 pub const MAX_RESPONSE_BYTES: usize = 12 * 1024 * 1024;
 pub const DEFAULT_TIMEOUT_MS: u64 = 10_000;
+/// The exact message the service reports when its own `mihomo -t` deadline
+/// expires (`fmt.Errorf("%w: timeout", errConfigInvalid)`).
+const SERVICE_VALIDATE_TIMEOUT: &str = "mihomo config validation failed: timeout";
 /// A rolling/specific selection may make the service fetch and verify the
 /// official core before it replies.
 pub const START_TIMEOUT_MS: u64 = 150_000;
@@ -552,7 +555,11 @@ impl TunServiceClient {
     }
 
     /// Validate with the same pinned binary the service will run.
-    #[allow(dead_code)] // staged: the profile import semantic validator
+    ///
+    /// Only `CONFIG_INVALID` (mihomo `-t` itself rejected the document) maps
+    /// to `INVALID_ARGUMENT`. Every other failure — an integrity check, a
+    /// version the service could not fetch — is the service's, not the
+    /// document's, and carries another code so the profile gate falls back.
     pub async fn validate_profile(
         &self,
         profile: &str,
@@ -567,7 +574,14 @@ impl TunServiceClient {
                 .filter(|text| !text.is_empty())
                 .or_else(|| response.error_code.clone())
                 .unwrap_or_else(|| format!("Service returned {}", response.outcome));
-            return Err(IpcError::invalid_argument(message));
+            // The service also files its own 30s deadline under CONFIG_INVALID
+            // (`runtime_windows.go` Validate): a timeout says nothing about the
+            // document, so it falls back like any other service failure.
+            let timed_out = message.trim() == SERVICE_VALIDATE_TIMEOUT;
+            if response.error_code.as_deref() == Some("CONFIG_INVALID") && !timed_out {
+                return Err(IpcError::invalid_argument(message));
+            }
+            return Err(fail(code::KERNEL_SPAWN_FAILED, message));
         }
         Ok(())
     }
@@ -848,6 +862,45 @@ pub(crate) mod tests {
             .map(|r| r["requestId"].as_str().unwrap().to_string())
             .collect();
         assert_eq!(ids, vec!["1", "2"], "a locally refused start sends nothing");
+    }
+
+    #[tokio::test]
+    async fn only_a_core_rejection_counts_as_an_invalid_profile() {
+        let transport = ScriptedTransport::default();
+        transport.push(|request| {
+            let mut value = reply(request, "failed", None, None);
+            value["errorCode"] = json!("CONFIG_INVALID");
+            value["validationMessage"] = json!("mihomo config validation failed: bad rule");
+            Ok(value)
+        });
+        transport.push(|request| {
+            let mut value = reply(request, "failed", None, None);
+            value["errorCode"] = json!("TUN_SERVICE_OPERATION_FAILED");
+            value["validationMessage"] = json!("extracted mihomo integrity check failed");
+            Ok(value)
+        });
+        transport.push(|request| {
+            let mut value = reply(request, "failed", None, None);
+            value["errorCode"] = json!("CONFIG_INVALID");
+            value["validationMessage"] = json!(SERVICE_VALIDATE_TIMEOUT);
+            Ok(value)
+        });
+        let client = TunServiceClient::new(Box::new(transport));
+        let rejected = client.validate_profile("a: 1\n", None).await.unwrap_err();
+        assert_eq!(rejected.parts().0, code::INVALID_ARGUMENT);
+        assert!(rejected.extract_message().contains("bad rule"));
+        let broken = client.validate_profile("a: 1\n", None).await.unwrap_err();
+        assert_ne!(
+            broken.parts().0,
+            code::INVALID_ARGUMENT,
+            "a service failure is not the document's fault"
+        );
+        let timed_out = client.validate_profile("a: 1\n", None).await.unwrap_err();
+        assert_ne!(
+            timed_out.parts().0,
+            code::INVALID_ARGUMENT,
+            "the service's own deadline says nothing about the document"
+        );
     }
 
     #[tokio::test]

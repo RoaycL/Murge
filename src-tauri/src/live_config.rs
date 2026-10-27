@@ -797,6 +797,38 @@ pub fn build_service_profile(
     }
 }
 
+/// The document the profile semantic gate hands to the service's `mihomo -t`
+/// (the TS `setSemanticValidator` composition): DNS + sniffer enhancement,
+/// then the privileged TUN composition with TUN on, so the check covers the
+/// strictest shape the core will ever load for this document.
+pub fn build_validation_profile(
+    document: &str,
+    models: &enhancements::ModelStores,
+) -> Result<String, IpcError> {
+    let dns = enhancements::coerce_dns_enhancement(&models.dns.get());
+    let (dns_text, _) = crate::inspection::apply_dns_to_document(document, &dns);
+    let sniffer = enhancements::coerce_sniffer_enhancement(&models.sniffer.get());
+    let (enhanced, _) = crate::inspection::apply_sniffer_to_document(&dns_text, &sniffer);
+    let core = enhancements::coerce_core_settings(&models.core.get());
+    let mut options = LiveConfigRuntime::from_core(&core).builder_options();
+    if let Some(map) = options.as_object_mut() {
+        // The TS runtime passes the stock device for validation.
+        map.insert("device".into(), json!("Mihomo"));
+        map.insert("document".into(), json!(enhanced));
+        map.insert("core".into(), core);
+        map.insert(
+            "geodata".into(),
+            enhancements::coerce_geodata_settings(&models.geodata.get()),
+        );
+        map.insert(
+            "tunConfig".into(),
+            enhancements::coerce_tun_config(&models.tun_config.get()),
+        );
+        map.insert("tunEnabled".into(), json!(true));
+    }
+    crate::tun_profile::generate_proxied_tun_config(&options)
+}
+
 pub async fn resolve_external_ip(
     kernel: &dyn crate::kernel::KernelStatusSource,
     models: &enhancements::ModelStores,

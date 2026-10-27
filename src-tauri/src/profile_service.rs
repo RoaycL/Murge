@@ -32,6 +32,14 @@ use crate::redact::{is_redacted_url, redact_credentials};
 use crate::subscription::SubscriptionFetcher;
 use crate::validate::{throw_if_invalid, validate_document};
 
+/// The mihomo `-t` gate (`setSemanticValidator`): resolves `Err` with
+/// mihomo's own message when the real core rejects a document. A check that
+/// could not run at all answers with any OTHER error code, and the gate
+/// treats that as "no opinion" — see `semantic_error`.
+pub type SemanticValidator = std::sync::Arc<
+    dyn Fn(String) -> futures_util::future::BoxFuture<'static, Result<(), IpcError>> + Send + Sync,
+>;
+
 /// A validated subscription download waiting to be committed.
 pub struct FetchedSource {
     refresh_url: String,
@@ -46,6 +54,9 @@ pub struct ProfilesService {
     fetcher: SubscriptionFetcher,
     /// Serializes mutations, mirroring the TS gateway's `runExclusive`.
     lock: Mutex<()>,
+    /// Attached once by the Windows composition after the service client
+    /// exists; absent in dev and on other platforms (structural checks only).
+    semantic: std::sync::OnceLock<SemanticValidator>,
 }
 
 impl ProfilesService {
@@ -58,6 +69,7 @@ impl ProfilesService {
             )),
             fetcher: SubscriptionFetcher::new(None),
             lock: Mutex::new(()),
+            semantic: std::sync::OnceLock::new(),
         }
     }
 
@@ -68,6 +80,7 @@ impl ProfilesService {
             source_store: Box::new(MemoryProfileSourceStore::default()),
             fetcher: SubscriptionFetcher::new(None),
             lock: Mutex::new(()),
+            semantic: std::sync::OnceLock::new(),
         }
     }
 
@@ -82,6 +95,56 @@ impl ProfilesService {
     #[allow(dead_code)] // exercised by tests; production uses the default fetcher
     pub fn set_fetcher(&mut self, fetcher: SubscriptionFetcher) {
         self.fetcher = fetcher;
+    }
+
+    /// Attach the packaged-host mihomo `-t` gate after the service is composed.
+    pub fn set_semantic_validator(&self, validator: SemanticValidator) {
+        let _ = self.semantic.set(validator);
+    }
+
+    /// The semantic half of `validateDocument`: run the real core's config
+    /// check on a document that already passes the structural validator.
+    /// Callers run it BEFORE the synchronous write, which repeats the
+    /// structural check, so a structural failure keeps its own wording.
+    pub async fn check_semantics(&self, document: &str) -> ProfileResult<()> {
+        match self.semantic_error(document).await? {
+            Some(message) => Err(IpcError::invalid_argument(format!(
+                "配置校验失败：{message}"
+            ))),
+            None => Ok(()),
+        }
+    }
+
+    /// The core's rejection message, if any (`None` without a gate or when
+    /// the structural validator already rejects the document).
+    ///
+    /// Only a real rejection (`INVALID_ARGUMENT`, mihomo's own output) gates a
+    /// write. A check that could not run — no binary resolved yet, a spawn the
+    /// OS refused, the privileged service missing — is NOT the document's
+    /// fault, so it is logged and the structural checks stay the only gate.
+    /// An import must never fail because the core could not be asked.
+    pub async fn semantic_error(&self, document: &str) -> ProfileResult<Option<String>> {
+        let Some(validator) = self.semantic.get().cloned() else {
+            return Ok(None);
+        };
+        if !validate_document(document)?.ok {
+            return Ok(None);
+        }
+        let Err(error) = validator(document.to_string()).await else {
+            return Ok(None);
+        };
+        let (code, message) = error.parts();
+        if code == crate::error::code::INVALID_ARGUMENT {
+            return Ok(Some(message.to_string()));
+        }
+        crate::diag!("[profiles] 跳过内核配置校验：{message}");
+        Ok(None)
+    }
+
+    /// The would-be document of an edit, for the semantic gate.
+    pub fn preview_edit(&self, id: &str, edits: &[ConfigEdit]) -> ProfileResult<String> {
+        let _guard = self.guard();
+        self.repository.preview_edit(id, edits)
     }
 
     fn guard(&self) -> std::sync::MutexGuard<'_, ()> {
@@ -142,6 +205,7 @@ impl ProfilesService {
         activate: bool,
     ) -> ProfileResult<Value> {
         let fetched = crate::subscription::fetch_with_fallback(&self.fetcher, url).await?;
+        self.check_semantics(&fetched.document).await?;
         let trimmed = name.trim();
         let effective_name = if !trimmed.is_empty() {
             trimmed.to_string()
@@ -185,6 +249,7 @@ impl ProfilesService {
         let fetched = crate::subscription::fetch_with_fallback(&self.fetcher, &refresh_url).await?;
         // Validate BEFORE writing so a failed update cannot corrupt the doc.
         throw_if_invalid(&validate_document(&fetched.document)?)?;
+        self.check_semantics(&fetched.document).await?;
         Ok(FetchedSource {
             refresh_url,
             fetched,
@@ -406,6 +471,55 @@ mod tests {
         assert!(error.0.contains("INVALID_ARGUMENT"), "{}", error.0);
         assert!(error.0.contains("配置校验失败"), "{}", error.0);
         assert!(service.list().unwrap().as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn semantic_gate_reports_the_core_rejection() {
+        let (_temp, service) = service();
+        // No gate attached (dev/other platforms): structural checks only.
+        assert!(service.check_semantics("port: 7890\n").await.is_ok());
+        service.set_semantic_validator(std::sync::Arc::new(|document: String| {
+            Box::pin(async move {
+                if document.contains("bad-rule") {
+                    Err(IpcError::invalid_argument("rules[0] [bad-rule] error"))
+                } else {
+                    Ok(())
+                }
+            })
+        }));
+        assert!(service.check_semantics("port: 7890\n").await.is_ok());
+        let error = service
+            .check_semantics("rules:\n  - bad-rule\n")
+            .await
+            .unwrap_err();
+        assert!(error.0.contains("配置校验失败"), "{}", error.0);
+        assert!(error.0.contains("bad-rule"), "{}", error.0);
+        // A structurally broken document keeps the structural wording.
+        assert_eq!(
+            service.semantic_error("\t- tab bad-rule\n").await.unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn a_check_that_cannot_run_never_blocks_an_import() {
+        // The TUN service missing, no binary resolved yet, a spawn the OS
+        // refused: none of it is the document's fault, so the import stands.
+        let (_temp, service) = service();
+        service.set_semantic_validator(std::sync::Arc::new(|_document: String| {
+            Box::pin(async move {
+                Err(IpcError::code(
+                    crate::error::code::KERNEL_SPAWN_FAILED,
+                    "TUN 服务未安装",
+                ))
+            })
+        }));
+        assert_eq!(service.semantic_error("port: 7890\n").await.unwrap(), None);
+        service.check_semantics("port: 7890\n").await.unwrap();
+        service
+            .import(&import_request("Home", "port: 7890\n"))
+            .expect("a core that cannot be asked keeps the import working");
+        assert_eq!(service.list().unwrap().as_array().unwrap().len(), 1);
     }
 
     #[test]

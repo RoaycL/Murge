@@ -52,6 +52,7 @@ mod live_config;
 mod mihomo_artifact;
 mod privileged_kernel;
 mod profile_auto_update;
+mod profile_check;
 mod profile_parse;
 mod profile_service;
 mod profiles;
@@ -346,8 +347,9 @@ pub fn run() {
                         };
                         (current.kernel_channel.clone(), specific)
                     });
+                let kernel_workspace = paths.kernel_root().unwrap_or_default();
                 let mut services = kernel::KernelServices::for_real_kernel(
-                    paths.kernel_root().unwrap_or_default(),
+                    kernel_workspace.clone(),
                     None, // staged: bundled archive dir with the installer slice
                     secret,
                     ports,
@@ -363,7 +365,7 @@ pub fn run() {
                 // only mihomo process (ordinary and TUN modes alike). The
                 // `--kernel-smoke` probe keeps the direct supervisor.
                 if !std::env::args().any(|arg| arg == "--kernel-smoke") {
-                    services.privileged = compose_privileged_kernel(app.handle().clone(), version_selection);
+                    services.privileged = compose_privileged_kernel(app.handle().clone(), version_selection.clone());
                     if let Some(privileged) = &services.privileged {
                         let client = privileged.client().clone();
                         let install_handle = app.handle().clone();
@@ -376,6 +378,77 @@ pub fn run() {
                             Box::pin(async move { client.install_version(&version, mixed_port).await })
                         }));
                     }
+                }
+                // The profile semantic gate (`mihomo -t`). `-t` reads a file
+                // and exits — no port, no adapter, no elevation — so the app
+                // runs it itself with the build the resolver hands out, and
+                // an import never depends on the TUN service being installed.
+                // An installed service is asked first, because it runs the
+                // exact pinned binary it will spawn; anything other than a
+                // core rejection falls through to the local check, and a
+                // check that cannot run at all leaves the gate open.
+                {
+                    let resolver = services.supervisor.binary_resolver();
+                    let service_client = services
+                        .privileged
+                        .as_ref()
+                        .map(|privileged| privileged.client().clone());
+                    let validate_handle = app.handle().clone();
+                    let selection = version_selection.clone();
+                    let workspace = kernel_workspace.clone();
+                    profiles.set_semantic_validator(std::sync::Arc::new(move |document| {
+                        let resolver = resolver.clone();
+                        let service_client = service_client.clone();
+                        let handle = validate_handle.clone();
+                        let selection = selection.clone();
+                        let workspace = workspace.clone();
+                        Box::pin(async move {
+                            let models = handle
+                                .try_state::<std::sync::Arc<enhancements::ModelStores>>()
+                                .ok_or_else(|| error::IpcError::internal("配置校验服务未就绪"))?
+                                .inner()
+                                .clone();
+                            let effective = live_config::build_validation_profile(&document, &models)?;
+                            let (channel, specific) = selection();
+                            let version = match channel.as_str() {
+                                "specific" => specific,
+                                "preview" | "smart" => Some(channel),
+                                _ => None,
+                            };
+                            if let Some(client) = &service_client {
+                                match client.validate_profile(&effective, version.as_deref()).await {
+                                    Ok(()) => return Ok(()),
+                                    Err(error) if error.parts().0 == error::code::INVALID_ARGUMENT => {
+                                        return Err(error)
+                                    }
+                                    Err(error) => {
+                                        crate::diag!("[profiles] 服务端配置校验不可用，改用本地内核：{}", error.extract_message());
+                                    }
+                                }
+                            }
+                            // Resolving may still have to fetch the build;
+                            // bound it so an import cannot hang on it.
+                            let binary = tokio::time::timeout(
+                                std::time::Duration::from_secs(20),
+                                resolver.resolve(),
+                            )
+                            .await
+                            .map_err(|_| {
+                                error::IpcError::code(
+                                    error::code::KERNEL_START_TIMEOUT,
+                                    "内核二进制解析超时，跳过配置校验",
+                                )
+                            })??;
+                            profile_check::validate_with_core(
+                                &binary.command,
+                                &binary.env,
+                                &workspace.join("geodata"),
+                                &workspace.join("validate"),
+                                &effective,
+                            )
+                            .await
+                        })
+                    }));
                 }
                 services
             } else {

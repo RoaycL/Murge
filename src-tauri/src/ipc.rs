@@ -362,6 +362,9 @@ pub async fn dispatch(
             let request = arg(payload, 0).ok_or_else(|| {
                 IpcError::invalid_argument("profiles:import requires a request object")
             })?;
+            if let Some(document) = request.get("document").and_then(Value::as_str) {
+                profiles.check_semantics(document).await?;
+            }
             let previous_active = active_profile_id(profiles)?;
             let meta = profiles.import(request)?;
             if request
@@ -434,8 +437,12 @@ pub async fn dispatch(
         }
         "profiles:activate" => {
             let _gate = runtime_update_guard().await?;
+            let id = required_string(payload, 0, "profiles:activate id")?;
+            if let Some(document) = profiles.get(&id)?["document"].as_str() {
+                profiles.check_semantics(document).await?;
+            }
             let previous_active = active_profile_id(profiles)?;
-            let meta = profiles.activate(&required_string(payload, 0, "profiles:activate id")?)?;
+            let meta = profiles.activate(&id)?;
             let result = profile_reload_step(
                 profiles,
                 overrides,
@@ -501,6 +508,9 @@ pub async fn dispatch(
                 })
                 .collect();
             let id = required_string(payload, 0, "profiles:edit-document id")?;
+            profiles
+                .check_semantics(&profiles.preview_edit(&id, &edits)?)
+                .await?;
             let previous_active = active_profile_id(profiles)?;
             let previous_document = profiles.get(&id)?["document"]
                 .as_str()
@@ -540,6 +550,9 @@ pub async fn dispatch(
         "profiles:replace-document" => {
             let _gate = runtime_update_guard().await?;
             let id = required_string(payload, 0, "profiles:replace-document id")?;
+            profiles
+                .check_semantics(&string_arg(payload, 1).unwrap_or_default())
+                .await?;
             let previous_active = active_profile_id(profiles)?;
             let previous_document = profiles.get(&id)?["document"]
                 .as_str()
@@ -574,7 +587,17 @@ pub async fn dispatch(
             &required_string(payload, 0, "profiles:set-source-url id")?,
             &string_arg(payload, 1).unwrap_or_default(),
         ),
-        "profiles:validate" => profiles.validate(&string_arg(payload, 0).unwrap_or_default()),
+        "profiles:validate" => {
+            let document = string_arg(payload, 0).unwrap_or_default();
+            let mut result = profiles.validate(&document)?;
+            if let Some(message) = profiles.semantic_error(&document).await? {
+                result["ok"] = Value::Bool(false);
+                if let Some(issues) = result["issues"].as_array_mut() {
+                    issues.push(serde_json::json!({ "severity": "error", "message": message }));
+                }
+            }
+            Ok(result)
+        }
         "profiles:get-active-group-order" => profiles.get_active_group_order(),
         "profiles:get-active-provider-catalog" => profiles.get_active_provider_catalog(),
         "profiles:get-provider-content" => {
@@ -2397,6 +2420,55 @@ mod tests {
             inspection["sections"]["dns"]["notes"][0],
             "DNS 覆写已启用，应用字段优先，未知字段保留。"
         );
+    }
+
+    #[tokio::test]
+    async fn a_document_the_core_rejects_is_never_imported() {
+        let f = fixtures();
+        f.profiles
+            .set_semantic_validator(Arc::new(|_document: String| {
+                Box::pin(async { Err(IpcError::invalid_argument("proxy group [A] not found")) })
+            }));
+        let call = |channel: &'static str, payload: Value| {
+            let f = &f;
+            async move {
+                dispatch(
+                    channel,
+                    &payload,
+                    &f.paths,
+                    &f.settings,
+                    &f.profiles,
+                    &f.overrides,
+                    &f.models,
+                    &f.usage,
+                    &f.kernel,
+                    &f.mihomo,
+                    &f.desktop,
+                    &f.metadata,
+                    &f.startup,
+                    &f.substore,
+                    &f.system_proxy,
+                    &f.tun,
+                    &f.updates,
+                )
+                .await
+            }
+        };
+        let error = call(
+            "profiles:import",
+            serde_json::json!([{ "name": "Home", "document": "port: 7890\n", "source": { "type": "manual" } }]),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.0.contains("proxy group [A] not found"), "{}", error.0);
+        assert_eq!(
+            call("profiles:list", Value::Null).await.unwrap(),
+            serde_json::json!([])
+        );
+        let validated = call("profiles:validate", serde_json::json!(["port: 7890\n"]))
+            .await
+            .unwrap();
+        assert_eq!(validated["ok"], false);
     }
 
     struct ScriptedTun {

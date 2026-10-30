@@ -325,10 +325,9 @@ impl NetworkGateway for AppNetworkGateway {
             // listener goes away, and take TUN down with the host.
             let _gate = crate::lifecycle::runtime_update_guard().await?;
             proxy.restore_before_kernel_unavailable().await?;
-            if tun.get_status().phase == "active" {
-                tun.emergency_disable().await;
-            }
-            kernel.stop().await.map(|_| ())
+            crate::runtime_intent::stop_kernel_with_tun(&kernel, &tun)
+                .await
+                .map(|_| ())
         })
     }
 

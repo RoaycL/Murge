@@ -363,10 +363,11 @@ fn is_release_tag(value: &str) -> bool {
 // Exit monitor (privileged-exit-monitor.ts)
 // ---------------------------------------------------------------------------
 
-/// Three unexpected exits inside this window stop automatic restarts until
-/// the user acts (or the window passes).
-pub const CRASH_LOOP_WINDOW_MS: u64 = 5 * 60 * 1000;
-pub const CRASH_LOOP_LIMIT: usize = 3;
+/// Automatic restarts allowed inside this sliding window (the stable build's
+/// `maxRestarts` / `restartWindowMs`); the next exit pauses them until the
+/// user acts or the window passes.
+pub const CRASH_LOOP_WINDOW_MS: u64 = 10 * 60 * 1000;
+pub const MAX_AUTO_RESTARTS: usize = 3;
 /// Consecutive ticks with an unreachable service AND a dead controller before
 /// the core is declared lost: an SCM service restart takes several seconds.
 pub const UNREACHABLE_TICKS: usize = 3;
@@ -393,7 +394,10 @@ pub struct PrivilegedExitMonitor {
     deps: ExitMonitorDeps,
     busy: std::sync::atomic::AtomicBool,
     unreachable_streak: std::sync::atomic::AtomicUsize,
-    exits: Mutex<Vec<u64>>,
+    restarts: Mutex<Vec<u64>>,
+    /// An exit confirmed while suspended (quit in progress). The failed kernel
+    /// is never probed again, so a cancelled quit recovers it on the next tick.
+    deferred_recovery: std::sync::atomic::AtomicBool,
 }
 
 impl PrivilegedExitMonitor {
@@ -402,7 +406,8 @@ impl PrivilegedExitMonitor {
             deps,
             busy: std::sync::atomic::AtomicBool::new(false),
             unreachable_streak: std::sync::atomic::AtomicUsize::new(0),
-            exits: Mutex::new(Vec::new()),
+            restarts: Mutex::new(Vec::new()),
+            deferred_recovery: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -411,7 +416,11 @@ impl PrivilegedExitMonitor {
         if (self.deps.is_suspended)() || self.busy.swap(true, Ordering::SeqCst) {
             return;
         }
-        self.tick_inner().await;
+        if self.deferred_recovery.swap(false, Ordering::SeqCst) {
+            self.recover().await;
+        } else {
+            self.tick_inner().await;
+        }
         self.busy.store(false, Ordering::SeqCst);
     }
 
@@ -456,19 +465,34 @@ impl PrivilegedExitMonitor {
                 return;
             }
         };
-        if !lost || (self.deps.is_suspended)() {
+        if !lost {
             return;
         }
+        if (self.deps.is_suspended)() {
+            self.deferred_recovery.store(true, Ordering::SeqCst);
+            return;
+        }
+        self.recover().await;
+    }
+
+    /// Make the network safe (TUN reset, owned proxy restored), then restart
+    /// within the crash-loop budget. Each step is best-effort.
+    async fn recover(&self) {
         (self.deps.handle_host_exit)().await;
         if let Err(error) = (self.deps.restore_system_proxy)().await {
             (self.deps.on_error)(&error.extract_message(), "system proxy restore");
         }
-        if self.crash_loop() {
+        if !self.consume_restart() {
             (self.deps.cancel_intent_recovery)();
             (self.deps.on_error)(
                 "core exited repeatedly; automatic restart paused",
                 "crash loop",
             );
+            return;
+        }
+        // Shutdown may have begun while the steps above were awaiting; a
+        // restart queued now would run after the quit flow's own core stop.
+        if (self.deps.is_suspended)() {
             return;
         }
         let (auto_start, tun_desired, proxy_desired) = (self.deps.read_settings)();
@@ -481,12 +505,16 @@ impl PrivilegedExitMonitor {
         }
     }
 
-    fn crash_loop(&self) -> bool {
+    /// Spend one automatic restart; false once the window's budget is used.
+    fn consume_restart(&self) -> bool {
         let now = (self.deps.now_ms)();
-        let mut exits = self.exits.lock().expect("exit monitor mutex poisoned");
-        exits.retain(|at| now.saturating_sub(*at) < CRASH_LOOP_WINDOW_MS);
-        exits.push(now);
-        exits.len() >= CRASH_LOOP_LIMIT
+        let mut restarts = self.restarts.lock().expect("exit monitor mutex poisoned");
+        restarts.retain(|at| now.saturating_sub(*at) < CRASH_LOOP_WINDOW_MS);
+        if restarts.len() >= MAX_AUTO_RESTARTS {
+            return false;
+        }
+        restarts.push(now);
+        true
     }
 }
 
@@ -695,6 +723,16 @@ mod tests {
         settings: (bool, bool, bool),
         controller_alive: bool,
     ) -> (PrivilegedExitMonitor, Arc<Mutex<Vec<String>>>) {
+        let suspended = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        suspendable_monitor(gateway, settings, controller_alive, suspended)
+    }
+
+    fn suspendable_monitor(
+        gateway: Arc<PrivilegedKernelGateway>,
+        settings: (bool, bool, bool),
+        controller_alive: bool,
+        suspended: Arc<std::sync::atomic::AtomicBool>,
+    ) -> (PrivilegedExitMonitor, Arc<Mutex<Vec<String>>>) {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let recorder = Arc::new(Recorder {
             calls: calls.clone(),
@@ -731,7 +769,7 @@ mod tests {
             wake_intent_recovery: r("wake", &recorder),
             cancel_intent_recovery: r("cancel", &recorder),
             is_controller_alive: Arc::new(move || Box::pin(async move { controller_alive })),
-            is_suspended: Arc::new(|| false),
+            is_suspended: Arc::new(move || suspended.load(Ordering::SeqCst)),
             on_error: {
                 let recorder = recorder.clone();
                 Arc::new(move |_message, step| recorder.push(&format!("error:{step}")))
@@ -815,7 +853,8 @@ mod tests {
         let transport = ScriptedTransport::default();
         let gateway = running_gateway(&transport).await;
         let (monitor, calls) = monitor(gateway.clone(), (true, false, false), false);
-        for round in 0..CRASH_LOOP_LIMIT {
+        // The stable build's budget: three restarts, the fourth exit pauses.
+        for round in 0..=MAX_AUTO_RESTARTS {
             if round > 0 {
                 transport.push(|request| Ok(reply(request, "stopped", None, None)));
                 running(&transport);
@@ -827,9 +866,45 @@ mod tests {
         let calls = calls.lock().unwrap();
         assert_eq!(
             calls.iter().filter(|call| *call == "start").count(),
-            CRASH_LOOP_LIMIT - 1
+            MAX_AUTO_RESTARTS
         );
         assert_eq!(calls.last().map(String::as_str), Some("error:crash loop"));
         assert!(calls.contains(&"cancel".to_string()));
+        // The network is still made safe on the paused exit.
+        assert_eq!(
+            calls.iter().filter(|call| *call == "proxy-restore").count(),
+            MAX_AUTO_RESTARTS + 1
+        );
+    }
+
+    #[tokio::test]
+    async fn monitor_recovers_an_exit_seen_during_a_cancelled_quit() {
+        let transport = ScriptedTransport::default();
+        let gateway = running_gateway(&transport).await;
+        let suspended = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (monitor, calls) = suspendable_monitor(
+            gateway.clone(),
+            (true, false, true),
+            false,
+            suspended.clone(),
+        );
+        // Quit in progress: the confirmed exit is remembered, not recovered.
+        transport.push(|request| Ok(reply(request, "failed", None, None)));
+        let tick = monitor.tick_inner();
+        suspended.store(true, Ordering::SeqCst);
+        tick.await;
+        assert!(calls.lock().unwrap().is_empty());
+        assert_eq!(gateway.get_status()["phase"], "failed");
+        monitor.tick().await;
+        assert!(calls.lock().unwrap().is_empty());
+        // The quit was cancelled: the next tick recovers once.
+        suspended.store(false, Ordering::SeqCst);
+        monitor.tick().await;
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["tun-reset", "proxy-restore", "wake"]
+        );
+        monitor.tick().await;
+        assert_eq!(calls.lock().unwrap().len(), 3);
     }
 }

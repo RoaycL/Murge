@@ -417,7 +417,12 @@ impl PrivilegedExitMonitor {
             return;
         }
         if self.deferred_recovery.swap(false, Ordering::SeqCst) {
-            self.recover().await;
+            // Only while the recorded exit still stands: a start (or an
+            // explicit stop) after the cancelled quit owns the runtime now, and
+            // replaying the host-exit cleanup would reset its live TUN.
+            if self.deps.kernel.get_status()["phase"].as_str() == Some("failed") {
+                self.recover().await;
+            }
         } else {
             self.tick_inner().await;
         }
@@ -906,5 +911,30 @@ mod tests {
         );
         monitor.tick().await;
         assert_eq!(calls.lock().unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn a_restart_after_the_cancelled_quit_drops_the_deferred_recovery() {
+        let transport = ScriptedTransport::default();
+        let gateway = running_gateway(&transport).await;
+        let suspended = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (monitor, calls) = suspendable_monitor(
+            gateway.clone(),
+            (true, false, true),
+            false,
+            suspended.clone(),
+        );
+        transport.push(|request| Ok(reply(request, "failed", None, None)));
+        let tick = monitor.tick_inner();
+        suspended.store(true, Ordering::SeqCst);
+        tick.await;
+        suspended.store(false, Ordering::SeqCst);
+        // The user (or intent recovery) starts the core before the next tick.
+        transport.push(|request| Ok(reply(request, "stopped", None, None)));
+        running(&transport);
+        gateway.start().await.unwrap();
+        monitor.tick().await;
+        assert!(calls.lock().unwrap().is_empty());
+        assert_eq!(gateway.get_status()["phase"], "running");
     }
 }

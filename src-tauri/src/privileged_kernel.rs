@@ -497,7 +497,15 @@ impl PrivilegedExitMonitor {
         }
         // Shutdown may have begun while the steps above were awaiting; a
         // restart queued now would run after the quit flow's own core stop.
+        // Keep it deferred (and refund the restart) in case that quit is
+        // cancelled too.
         if (self.deps.is_suspended)() {
+            self.restarts
+                .lock()
+                .expect("exit monitor mutex poisoned")
+                .pop();
+            self.deferred_recovery
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             return;
         }
         let (auto_start, tun_desired, proxy_desired) = (self.deps.read_settings)();
@@ -911,6 +919,45 @@ mod tests {
         );
         monitor.tick().await;
         assert_eq!(calls.lock().unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn a_quit_starting_during_recovery_keeps_the_restart_deferred() {
+        let transport = ScriptedTransport::default();
+        let gateway = running_gateway(&transport).await;
+        let suspended = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let calls = Arc::new(Mutex::new(Vec::<String>::new()));
+        let (mut monitor, recorded) = suspendable_monitor(
+            gateway.clone(),
+            (true, false, true),
+            false,
+            suspended.clone(),
+        );
+        // The quit begins while the proxy restore is awaiting.
+        monitor.deps.restore_system_proxy = {
+            let suspended = suspended.clone();
+            let calls = calls.clone();
+            Arc::new(move || {
+                let mut calls = calls.lock().unwrap();
+                if calls.is_empty() {
+                    suspended.store(true, Ordering::SeqCst);
+                }
+                calls.push("proxy-restore".to_string());
+                Box::pin(async { Ok(()) })
+            })
+        };
+        transport.push(|request| Ok(reply(request, "failed", None, None)));
+        monitor.tick().await;
+        assert_eq!(*recorded.lock().unwrap(), vec!["tun-reset"]);
+        // The quit is cancelled: the next tick finishes the recovery.
+        suspended.store(false, Ordering::SeqCst);
+        monitor.tick().await;
+        assert_eq!(
+            *recorded.lock().unwrap(),
+            vec!["tun-reset", "tun-reset", "wake"]
+        );
+        assert_eq!(calls.lock().unwrap().len(), 2);
+        assert_eq!(monitor.restarts.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

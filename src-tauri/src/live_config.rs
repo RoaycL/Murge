@@ -198,7 +198,14 @@ pub struct LiveConfigReloader<'a> {
     profiles: &'a Arc<ProfilesService>,
     overrides: &'a OverrideService,
     models: &'a enhancements::ModelStores,
+    /// How long a full reload may take before the controller is asked
+    /// whether the core is merely still applying it.
+    reload_timeout_ms: u64,
 }
+
+/// mihomo answers PUT /configs only after every proxy/rule provider without
+/// a fresh cache has been downloaded, which can take far longer than this.
+const RELOAD_TIMEOUT_MS: u64 = 10_000;
 
 impl<'a> LiveConfigReloader<'a> {
     /// The dispatch composition: controller + runtime from the core model
@@ -221,6 +228,7 @@ impl<'a> LiveConfigReloader<'a> {
             profiles,
             overrides,
             models,
+            reload_timeout_ms: RELOAD_TIMEOUT_MS,
         })
     }
 
@@ -241,7 +249,15 @@ impl<'a> LiveConfigReloader<'a> {
             profiles,
             overrides,
             models,
+            reload_timeout_ms: RELOAD_TIMEOUT_MS,
         }
+    }
+
+    /// Test seam: a shorter reload budget.
+    #[cfg(test)]
+    fn with_reload_timeout(mut self, timeout_ms: u64) -> Self {
+        self.reload_timeout_ms = timeout_ms;
+        self
     }
 
     fn kernel_running(&self) -> bool {
@@ -264,8 +280,28 @@ impl<'a> LiveConfigReloader<'a> {
         }
         let current = self.client.get_config().await?;
         let payload = self.build_payload(&current)?;
-        self.client.reload_config(&payload).await?;
-        Ok(true)
+        match self
+            .client
+            .reload_config_within(&payload, self.reload_timeout_ms)
+            .await
+        {
+            Ok(_) => Ok(true),
+            // The core accepted the document and is still downloading
+            // providers (Mihomo Party counts a switch done once the API
+            // answers, too). A restart would only repeat the downloads and
+            // tear TUN down, so it is reserved for a core that stopped
+            // answering.
+            Err(error)
+                if error.parts().0 == crate::error::code::UPSTREAM_TIMEOUT
+                    && self.client.is_responsive(3_000).await =>
+            {
+                crate::diag!(
+                    "[live-config] mihomo is still applying the new config (providers loading); continuing without a restart"
+                );
+                Ok(true)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// Apply controlled sections through the lightest endpoint that actually
@@ -1397,6 +1433,80 @@ mod tests {
             &overrides,
             &models,
         );
+        assert!(reloader.reload_if_running().await.is_err());
+    }
+
+    /// A controller that answers concurrently (like mihomo): PUT /configs
+    /// hangs past the reload budget, GET /version answers when `alive`.
+    fn slow_apply_controller(alive: bool) -> u16 {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                std::thread::spawn(move || {
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    let mut request_line = String::new();
+                    let _ = reader.read_line(&mut request_line);
+                    let (status, body) = if request_line.starts_with("PUT /configs") {
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        (204, String::new())
+                    } else if request_line.starts_with("GET /configs") {
+                        (200, json!({ "mode": "rule" }).to_string())
+                    } else if request_line.starts_with("GET /version") && alive {
+                        (
+                            200,
+                            json!({ "meta": true, "version": "v1.19.30" }).to_string(),
+                        )
+                    } else {
+                        std::thread::sleep(std::time::Duration::from_secs(15));
+                        (500, String::new())
+                    };
+                    let _ = stream.write_all(
+                        format!(
+                            "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    );
+                });
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn a_slow_apply_on_a_live_core_is_not_a_failure() {
+        let (_temp, profiles, overrides, models) = service();
+        let port = slow_apply_controller(true);
+        let kernel = running_kernel().await;
+        let reloader = LiveConfigReloader::with_client(
+            kernel.as_ref(),
+            crate::mihomo::MihomoClient::new(port as i64, "").unwrap(),
+            runtime(),
+            &profiles,
+            &overrides,
+            &models,
+        )
+        .with_reload_timeout(300);
+        assert!(reloader.reload_if_running().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_reload_timeout_on_a_hung_controller_still_fails() {
+        let (_temp, profiles, overrides, models) = service();
+        let port = slow_apply_controller(false);
+        let kernel = running_kernel().await;
+        let reloader = LiveConfigReloader::with_client(
+            kernel.as_ref(),
+            crate::mihomo::MihomoClient::new(port as i64, "").unwrap(),
+            runtime(),
+            &profiles,
+            &overrides,
+            &models,
+        )
+        .with_reload_timeout(300);
         assert!(reloader.reload_if_running().await.is_err());
     }
 

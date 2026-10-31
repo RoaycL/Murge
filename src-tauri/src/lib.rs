@@ -155,6 +155,27 @@ pub fn run() {
                     profile_service::ProfilesService::for_development(&temp)
                 }
             });
+            // Subscription fetches go through the running core's mixed-port
+            // first, so a subscription the direct route cannot reach is
+            // fetched with the current profile's nodes.
+            {
+                let app = app.handle().clone();
+                profiles.attach_subscription_proxy(std::sync::Arc::new(move || {
+                    use tauri::Manager;
+                    let app = app.clone();
+                    Box::pin(async move {
+                        let kernel = app.try_state::<std::sync::Arc<kernel::KernelServices>>()?;
+                        if kernel.get_status_value()["phase"].as_str() != Some("running") {
+                            return None;
+                        }
+                        // The LIVE listener: a saved but not yet applied
+                        // mixed-port change must not redirect the fetch.
+                        let models = app.try_state::<std::sync::Arc<enhancements::ModelStores>>()?;
+                        let port = ipc::resolve_mixed_port(&models).await.ok()?;
+                        Some(format!("http://127.0.0.1:{port}"))
+                    })
+                }));
+            }
             // Preview/validate resolve the base document from the ACTIVE
             // profile (document + id), mirroring the Electron composition.
             let overrides = {

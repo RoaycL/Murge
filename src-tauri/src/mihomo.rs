@@ -908,6 +908,13 @@ impl MihomoClient {
         parse_mihomo_version(&raw.unwrap_or(Value::Null))
     }
 
+    /// A short liveness probe: /version never waits on a config apply.
+    pub async fn is_responsive(&self, timeout_ms: u64) -> bool {
+        self.request("GET", "/version", None, timeout_ms, false)
+            .await
+            .is_ok()
+    }
+
     pub async fn get_config(&self) -> Result<Value, IpcError> {
         let raw = self
             .request("GET", "/configs", None, DEFAULT_TIMEOUT_MS, false)
@@ -930,11 +937,19 @@ impl MihomoClient {
     /// Apply a complete runtime document without replacing the process.
     /// No `force=true`: mihomo keeps the already-bound listeners.
     pub async fn reload_config(&self, payload: &str) -> Result<Value, IpcError> {
+        self.reload_config_within(payload, DEFAULT_TIMEOUT_MS).await
+    }
+
+    pub async fn reload_config_within(
+        &self,
+        payload: &str,
+        timeout_ms: u64,
+    ) -> Result<Value, IpcError> {
         self.request(
             "PUT",
             "/configs",
             Some(json!({ "payload": payload })),
-            DEFAULT_TIMEOUT_MS,
+            timeout_ms,
             true,
         )
         .await?;

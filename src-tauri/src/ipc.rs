@@ -922,31 +922,7 @@ pub async fn dispatch(
             // The ordered gateway (system-proxy precondition): a user stop,
             // mode switch or shutdown must never leave a dead-port proxy.
             system_proxy.restore_before_kernel_unavailable().await?;
-            // ModeTransitionController.stopKernel in-place parity: TUN lives
-            // in the shared core, so take it down first. Otherwise its status
-            // stays `active` for a device the next core never creates, and
-            // enabling TUN again would be a no-op. The orderly disable is
-            // best-effort (the persisted controller endpoint may already
-            // differ from the running core's); the stop removes the device
-            // either way, so the status is reset after it.
-            let tun_serving = matches!(
-                tun.get_status().phase.as_str(),
-                "active" | "starting" | "restoring" | "failed" | "restore-failed"
-            );
-            if tun_serving {
-                let _ = tun.emergency_disable().await;
-            }
-            let stopped = kernel.stop().await;
-            if tun_serving
-                && stopped.is_ok()
-                && !matches!(
-                    tun.get_status().phase.as_str(),
-                    "configured" | "unsupported"
-                )
-            {
-                tun.handle_host_exit().await;
-            }
-            stopped
+            crate::runtime_intent::stop_kernel_with_tun(kernel, tun).await
         }
         "kernel-manager:get-state" => Ok(kernel.manager.get_state(settings)),
         "kernel-manager:set-enabled" => {
@@ -1122,7 +1098,9 @@ pub async fn dispatch(
 /// The kernel's LIVE mixed port for proxied probes — the TS
 /// `resolveMixedPort` composition: `config['mixed-port'] ?? null`, every
 /// failure (controller down, missing key, port <= 0) fails closed null.
-async fn resolve_mixed_port(models: &enhancements::ModelStores) -> Result<u16, IpcError> {
+pub(crate) async fn resolve_mixed_port(
+    models: &enhancements::ModelStores,
+) -> Result<u16, IpcError> {
     let client = controller_client(models)?;
     let Ok(config) = client.get_config().await else {
         return Err(IpcError::code(

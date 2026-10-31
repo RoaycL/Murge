@@ -49,8 +49,8 @@ pub struct FetchedSource {
 pub struct ProfilesService {
     pub(crate) repository: ProfileRepository,
     source_store: Box<dyn ProfileSourceStore + Send + Sync>,
-    /// Subscription transport (Phase 3C); the system-proxy-aware client is
-    /// wired by the 3D system-proxy slice, until then fetches go direct only.
+    /// Subscription transport: the running core's mixed-port first (attached
+    /// by the production composition), direct as the fallback.
     fetcher: SubscriptionFetcher,
     /// Serializes mutations, mirroring the TS gateway's `runExclusive`.
     lock: Mutex<()>,
@@ -67,7 +67,7 @@ impl ProfilesService {
             source_store: Box::new(crate::profiles::KeyringProfileSourceStore::new(
                 service_name.to_string(),
             )),
-            fetcher: SubscriptionFetcher::new(None),
+            fetcher: SubscriptionFetcher::new(),
             lock: Mutex::new(()),
             semantic: std::sync::OnceLock::new(),
         }
@@ -78,7 +78,7 @@ impl ProfilesService {
         ProfilesService {
             repository: ProfileRepository::new(profile_root.to_path_buf()),
             source_store: Box::new(MemoryProfileSourceStore::default()),
-            fetcher: SubscriptionFetcher::new(None),
+            fetcher: SubscriptionFetcher::new(),
             lock: Mutex::new(()),
             semantic: std::sync::OnceLock::new(),
         }
@@ -95,6 +95,12 @@ impl ProfilesService {
     #[allow(dead_code)] // exercised by tests; production uses the default fetcher
     pub fn set_fetcher(&mut self, fetcher: SubscriptionFetcher) {
         self.fetcher = fetcher;
+    }
+
+    /// Route subscription fetches through the running core's mixed-port
+    /// first (the current profile's nodes), direct as the fallback.
+    pub fn attach_subscription_proxy(&self, source: crate::subscription::ProxyUrlSource) {
+        self.fetcher.attach_proxy(source);
     }
 
     /// Attach the packaged-host mihomo `-t` gate after the service is composed.

@@ -426,10 +426,15 @@ pub fn derive_fallback_subscription_name(url: &str) -> Option<String> {
 
 /// Injectable DNS resolver (tests pin verdicts without a live resolver).
 type ResolveHost = Arc<dyn Fn(&str) -> Vec<String> + Send + Sync>;
+/// The proxy route for subscription fetches, asked per fetch: the running
+/// core's live mixed-port (`http://127.0.0.1:<port>`), or `None` while no
+/// core is serving. A fetch through it uses the current profile's nodes.
+pub type ProxyUrlSource =
+    Arc<dyn Fn() -> futures_util::future::BoxFuture<'static, Option<String>> + Send + Sync>;
 
 pub struct SubscriptionFetcher {
     direct: reqwest::Client,
-    proxy: Option<reqwest::Client>,
+    proxy: std::sync::OnceLock<ProxyUrlSource>,
     max_bytes: usize,
     strict_url_validation: bool,
     max_redirects: usize,
@@ -437,14 +442,19 @@ pub struct SubscriptionFetcher {
     resolve_host: ResolveHost,
 }
 
+impl Default for SubscriptionFetcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SubscriptionFetcher {
-    /// Production constructor. `proxy_client` is the system-proxy-aware
-    /// transport (the app's own mixed port when the system proxy is enabled);
-    /// it is wired by the 3D system-proxy slice.
-    pub fn new(proxy_client: Option<reqwest::Client>) -> Self {
+    /// Production constructor: direct only until [`Self::attach_proxy`]
+    /// wires the running core's mixed-port.
+    pub fn new() -> Self {
         SubscriptionFetcher {
             direct: Self::build_client(None),
-            proxy: proxy_client,
+            proxy: std::sync::OnceLock::new(),
             max_bytes: DEFAULT_MAX_BYTES,
             strict_url_validation: true,
             max_redirects: DEFAULT_MAX_REDIRECTS,
@@ -460,7 +470,7 @@ impl SubscriptionFetcher {
     pub fn for_testing(resolve_host: ResolveHost, timeout_ms: u64, max_bytes: usize) -> Self {
         SubscriptionFetcher {
             direct: Self::build_client(None),
-            proxy: None,
+            proxy: std::sync::OnceLock::new(),
             max_bytes,
             strict_url_validation: false,
             max_redirects: DEFAULT_MAX_REDIRECTS,
@@ -489,13 +499,31 @@ impl SubscriptionFetcher {
         self
     }
 
-    /// Whether a distinct system-proxy-aware transport is available.
-    pub fn has_proxy_transport(&self) -> bool {
-        self.proxy.is_some()
+    /// Attach the proxy route once the kernel is composed.
+    pub fn attach_proxy(&self, source: ProxyUrlSource) {
+        let _ = self.proxy.set(source);
     }
 
-    /// Validate a URL against SSRF protections.
-    fn validate_url(&self, url: &str) -> Result<(), IpcError> {
+    /// Test builder: a fixed proxy route.
+    #[allow(dead_code)] // exercised by tests
+    pub fn with_proxy(self, source: ProxyUrlSource) -> Self {
+        self.attach_proxy(source);
+        self
+    }
+
+    /// The proxy route serving right now, if any.
+    pub async fn proxy_url(&self) -> Option<String> {
+        match self.proxy.get() {
+            Some(source) => source().await,
+            None => None,
+        }
+    }
+
+    /// Validate a URL against SSRF protections. Through the proxy the core
+    /// resolves the host itself, so a local resolver that answers nothing
+    /// (polluted or blocked DNS) does not reject it; any private answer still
+    /// does.
+    fn validate_url(&self, url: &str, via_proxy: bool) -> Result<(), IpcError> {
         if !self.strict_url_validation {
             return Ok(());
         }
@@ -561,7 +589,7 @@ impl SubscriptionFetcher {
                         .expect("fake-ip regex compiles")
                         .is_match(address)
                 });
-            if addresses.is_empty()
+            if (addresses.is_empty() && !via_proxy)
                 || (addresses.iter().any(|address| !is_public_address(address))
                     && !(trusted_fake_ip_answer && fake_ip_only))
             {
@@ -574,26 +602,41 @@ impl SubscriptionFetcher {
         Ok(())
     }
 
-    fn transport(&self, via_proxy: bool) -> &reqwest::Client {
-        match (via_proxy, &self.proxy) {
-            (true, Some(proxy)) => proxy,
-            _ => &self.direct,
+    fn transport(&self, proxy: Option<&str>) -> reqwest::Client {
+        match proxy {
+            Some(proxy) => Self::build_client(Some(proxy)),
+            None => self.direct.clone(),
         }
     }
 
     /// Fetch a subscription config with SSRF protection, redirect tracking,
     /// and a streaming size limit. `via_proxy` routes the sweep through the
-    /// fallback transport (which must have been configured).
+    /// proxy route when one is serving.
+    #[cfg_attr(not(test), allow(dead_code))] // production resolves the route once
     pub async fn fetch(
         &self,
         url: &str,
         via_proxy: bool,
     ) -> Result<FetchSubscriptionResult, IpcError> {
+        let proxy = if via_proxy {
+            self.proxy_url().await
+        } else {
+            None
+        };
+        self.fetch_via(url, proxy.as_deref()).await
+    }
+
+    /// [`Self::fetch`] through an already-resolved route.
+    pub async fn fetch_via(
+        &self,
+        url: &str,
+        proxy: Option<&str>,
+    ) -> Result<FetchSubscriptionResult, IpcError> {
         // One timeout covers the ENTIRE sweep (every hop), exactly like the TS
         // abort-signal timer that is cleared in a `finally`.
         match tokio::time::timeout(
             Duration::from_millis(self.timeout_ms),
-            self.fetch_sweep(url, via_proxy),
+            self.fetch_sweep(url, proxy),
         )
         .await
         {
@@ -612,16 +655,17 @@ impl SubscriptionFetcher {
     async fn fetch_sweep(
         &self,
         url: &str,
-        via_proxy: bool,
+        proxy: Option<&str>,
     ) -> Result<FetchSubscriptionResult, IpcError> {
-        let transport = self.transport(via_proxy);
+        let via_proxy = proxy.is_some();
+        let transport = self.transport(proxy);
         let mut current_url = url.to_string();
         let mut redirect_count = 0usize;
         let mut response;
 
         loop {
             // Validate current URL before each request.
-            self.validate_url(&current_url)?;
+            self.validate_url(&current_url, via_proxy)?;
 
             let parsed = url::Url::parse(&current_url).map_err(|_| {
                 IpcError::code(
@@ -658,7 +702,7 @@ impl SubscriptionFetcher {
             // as "landing elsewhere".)
             let final_url = hop.url().to_string();
             if final_url != current_url && final_url != strip_userinfo(&current_url) {
-                self.validate_url(&final_url)?;
+                self.validate_url(&final_url, via_proxy)?;
                 current_url = final_url;
             }
 
@@ -699,7 +743,7 @@ impl SubscriptionFetcher {
                     )
                 })?;
                 // Validate the redirect target.
-                self.validate_url(next_url.as_str())?;
+                self.validate_url(next_url.as_str(), via_proxy)?;
                 current_url = next_url.to_string();
                 continue;
             }
@@ -826,23 +870,26 @@ fn resolve_host_system(hostname: &str) -> Vec<String> {
     }
 }
 
-/// Shared composition used by the profile service: prefer the
-/// system-proxy-aware transport, fall back to direct ONLY on a transport-level
-/// failure (`ProfileService.fetchSubscription`).
+/// Shared composition used by the profile service: while a core is serving,
+/// fetch through its mixed-port first (the current profile's nodes — the
+/// stable build prefers its proxy route the same way, and Mihomo Party's
+/// "smart fallback" uses the same port), then fall back to direct when the
+/// proxied attempt failed on the network or with an HTTP error (a dead node
+/// surfaces as mihomo's own 502). A rejected URL or document is final.
 pub async fn fetch_with_fallback(
     fetcher: &SubscriptionFetcher,
     url: &str,
 ) -> Result<FetchSubscriptionResult, IpcError> {
-    if !fetcher.has_proxy_transport() {
-        return fetcher.fetch(url, false).await;
-    }
-    match fetcher.fetch(url, true).await {
+    let Some(proxy) = fetcher.proxy_url().await else {
+        return fetcher.fetch_via(url, None).await;
+    };
+    match fetcher.fetch_via(url, Some(&proxy)).await {
         Ok(result) => Ok(result),
         Err(error) => {
-            if !is_transport_failure(&error) {
+            if !is_transport_failure(&error) && error.parts().0 != code::UPSTREAM_HTTP_ERROR {
                 return Err(error);
             }
-            match fetcher.fetch(url, false).await {
+            match fetcher.fetch_via(url, None).await {
                 Ok(result) => Ok(result),
                 // Both routes failed — keep the preferred-route failure
                 // because it is the one matching the user's current
@@ -1193,6 +1240,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fetches_through_the_running_core_first() {
+        // The "core" answers the proxied request; the direct route never would.
+        let (proxy, _proxy_server) =
+            test_support::start_http_stub(200, vec![], VALID_DOC.to_string());
+        let fetcher = loopback_fetcher(5000, 1024 * 1024).with_proxy(Arc::new(move || {
+            let proxy = proxy.clone();
+            Box::pin(async move { Some(proxy) })
+        }));
+        let result = fetch_with_fallback(&fetcher, "http://127.0.0.1:9/sub")
+            .await
+            .unwrap();
+        assert_eq!(result.document, VALID_DOC);
+    }
+
+    #[tokio::test]
+    async fn a_failed_proxied_fetch_falls_back_to_direct() {
+        let (direct, _direct_server) =
+            test_support::start_http_stub(200, vec![], VALID_DOC.to_string());
+        // mihomo answers a dead node with its own 502.
+        let (proxy, _proxy_server) = test_support::start_http_stub(502, vec![], String::new());
+        let fetcher = loopback_fetcher(5000, 1024 * 1024).with_proxy(Arc::new(move || {
+            let proxy = proxy.clone();
+            Box::pin(async move { Some(proxy) })
+        }));
+        let result = fetch_with_fallback(&fetcher, &format!("{direct}/sub"))
+            .await
+            .unwrap();
+        assert_eq!(result.document, VALID_DOC);
+        // No core serving: straight to direct.
+        let fetcher =
+            loopback_fetcher(5000, 1024 * 1024).with_proxy(Arc::new(|| Box::pin(async { None })));
+        assert!(fetcher.proxy_url().await.is_none());
+        let result = fetch_with_fallback(&fetcher, &format!("{direct}/sub"))
+            .await
+            .unwrap();
+        assert_eq!(result.document, VALID_DOC);
+    }
+
+    #[test]
+    fn an_unresolvable_host_is_only_accepted_through_the_core() {
+        let fetcher = SubscriptionFetcher::for_testing(Arc::new(|_| Vec::new()), 1000, 1024)
+            .with_strict_urls(true);
+        assert!(fetcher
+            .validate_url("https://sub.example.com/x", false)
+            .is_err());
+        assert!(fetcher
+            .validate_url("https://sub.example.com/x", true)
+            .is_ok());
+        // A private answer is rejected on either route.
+        let fetcher = SubscriptionFetcher::for_testing(
+            Arc::new(|_| vec!["10.0.0.1".to_string()]),
+            1000,
+            1024,
+        )
+        .with_strict_urls(true);
+        assert!(fetcher
+            .validate_url("https://sub.example.com/x", true)
+            .is_err());
+    }
+
+    #[tokio::test]
     async fn redirects_are_validated_and_budgeted_hop_by_hop() {
         // Chain: 302 (absolute) -> 301 (relative) -> 200, all loopback (strict
         // validation is off in the test constructor).
@@ -1272,7 +1380,7 @@ mod tests {
 
     #[tokio::test]
     async fn strict_validation_rejects_non_public_targets_before_any_request() {
-        let fetcher = SubscriptionFetcher::new(None);
+        let fetcher = SubscriptionFetcher::new();
         // Literal private addresses.
         for host in [
             "127.0.0.1",

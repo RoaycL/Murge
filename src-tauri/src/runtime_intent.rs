@@ -497,6 +497,39 @@ impl AppIntentGateways {
     }
 }
 
+/// Stop the kernel and the TUN mode it hosts (`ModeTransitionController.
+/// stopKernel` in-place parity). The caller holds the runtime-update gate and
+/// has already restored the owned system proxy.
+///
+/// TUN lives in the shared core: without this its status stays `active` (or
+/// `starting`/`failed`) for a device the next core never creates, and enabling
+/// TUN again is a no-op. The orderly disable is best-effort (the persisted
+/// controller endpoint may already differ from the running core's); the stop
+/// removes the device either way, so the status is reset after it.
+pub async fn stop_kernel_with_tun(
+    kernel: &crate::kernel::KernelServices,
+    tun: &crate::tun::TunCoordinator,
+) -> Result<serde_json::Value, IpcError> {
+    let tun_serving = matches!(
+        tun.get_status().phase.as_str(),
+        "active" | "starting" | "restoring" | "failed" | "restore-failed"
+    );
+    if tun_serving {
+        let _ = tun.emergency_disable().await;
+    }
+    let stopped = kernel.stop().await;
+    if tun_serving
+        && stopped.is_ok()
+        && !matches!(
+            tun.get_status().phase.as_str(),
+            "configured" | "unsupported"
+        )
+    {
+        tun.handle_host_exit().await;
+    }
+    stopped
+}
+
 /// The `tun:enable` IPC arm without its intent write: start a stopped kernel
 /// first (in-place strategy), then enable the stock-default device.
 pub async fn enable_tun_queued(

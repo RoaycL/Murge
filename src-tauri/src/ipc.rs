@@ -1098,7 +1098,9 @@ pub async fn dispatch(
 /// The kernel's LIVE mixed port for proxied probes — the TS
 /// `resolveMixedPort` composition: `config['mixed-port'] ?? null`, every
 /// failure (controller down, missing key, port <= 0) fails closed null.
-async fn resolve_mixed_port(models: &enhancements::ModelStores) -> Result<u16, IpcError> {
+pub(crate) async fn resolve_mixed_port(
+    models: &enhancements::ModelStores,
+) -> Result<u16, IpcError> {
     let client = controller_client(models)?;
     let Ok(config) = client.get_config().await else {
         return Err(IpcError::code(

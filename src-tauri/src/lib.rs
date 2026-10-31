@@ -162,15 +162,18 @@ pub fn run() {
                 let app = app.handle().clone();
                 profiles.attach_subscription_proxy(std::sync::Arc::new(move || {
                     use tauri::Manager;
-                    let kernel = app.try_state::<std::sync::Arc<kernel::KernelServices>>()?;
-                    if kernel.get_status_value()["phase"].as_str() != Some("running") {
-                        return None;
-                    }
-                    let models = app.try_state::<std::sync::Arc<enhancements::ModelStores>>()?;
-                    let port = enhancements::coerce_core_settings(&models.core.get())["mixedPort"]
-                        .as_i64()
-                        .filter(|port| (1..=65535).contains(port))?;
-                    Some(format!("http://127.0.0.1:{port}"))
+                    let app = app.clone();
+                    Box::pin(async move {
+                        let kernel = app.try_state::<std::sync::Arc<kernel::KernelServices>>()?;
+                        if kernel.get_status_value()["phase"].as_str() != Some("running") {
+                            return None;
+                        }
+                        // The LIVE listener: a saved but not yet applied
+                        // mixed-port change must not redirect the fetch.
+                        let models = app.try_state::<std::sync::Arc<enhancements::ModelStores>>()?;
+                        let port = ipc::resolve_mixed_port(&models).await.ok()?;
+                        Some(format!("http://127.0.0.1:{port}"))
+                    })
                 }));
             }
             // Preview/validate resolve the base document from the ACTIVE

@@ -427,9 +427,10 @@ pub fn derive_fallback_subscription_name(url: &str) -> Option<String> {
 /// Injectable DNS resolver (tests pin verdicts without a live resolver).
 type ResolveHost = Arc<dyn Fn(&str) -> Vec<String> + Send + Sync>;
 /// The proxy route for subscription fetches, asked per fetch: the running
-/// core's mixed-port (`http://127.0.0.1:<port>`), or `None` while no core
-/// is serving. A fetch through it uses the current profile's nodes.
-pub type ProxyUrlSource = Arc<dyn Fn() -> Option<String> + Send + Sync>;
+/// core's live mixed-port (`http://127.0.0.1:<port>`), or `None` while no
+/// core is serving. A fetch through it uses the current profile's nodes.
+pub type ProxyUrlSource =
+    Arc<dyn Fn() -> futures_util::future::BoxFuture<'static, Option<String>> + Send + Sync>;
 
 pub struct SubscriptionFetcher {
     direct: reqwest::Client,
@@ -510,13 +511,12 @@ impl SubscriptionFetcher {
         self
     }
 
-    fn proxy_url(&self) -> Option<String> {
-        self.proxy.get().and_then(|source| source())
-    }
-
-    /// Whether the proxy route is serving right now.
-    pub fn has_proxy_transport(&self) -> bool {
-        self.proxy_url().is_some()
+    /// The proxy route serving right now, if any.
+    pub async fn proxy_url(&self) -> Option<String> {
+        match self.proxy.get() {
+            Some(source) => source().await,
+            None => None,
+        }
     }
 
     /// Validate a URL against SSRF protections. Through the proxy the core
@@ -602,26 +602,41 @@ impl SubscriptionFetcher {
         Ok(())
     }
 
-    fn transport(&self, via_proxy: bool) -> reqwest::Client {
-        match via_proxy.then(|| self.proxy_url()).flatten() {
-            Some(proxy) => Self::build_client(Some(&proxy)),
+    fn transport(&self, proxy: Option<&str>) -> reqwest::Client {
+        match proxy {
+            Some(proxy) => Self::build_client(Some(proxy)),
             None => self.direct.clone(),
         }
     }
 
     /// Fetch a subscription config with SSRF protection, redirect tracking,
     /// and a streaming size limit. `via_proxy` routes the sweep through the
-    /// fallback transport (which must have been configured).
+    /// proxy route when one is serving.
+    #[cfg_attr(not(test), allow(dead_code))] // production resolves the route once
     pub async fn fetch(
         &self,
         url: &str,
         via_proxy: bool,
     ) -> Result<FetchSubscriptionResult, IpcError> {
+        let proxy = if via_proxy {
+            self.proxy_url().await
+        } else {
+            None
+        };
+        self.fetch_via(url, proxy.as_deref()).await
+    }
+
+    /// [`Self::fetch`] through an already-resolved route.
+    pub async fn fetch_via(
+        &self,
+        url: &str,
+        proxy: Option<&str>,
+    ) -> Result<FetchSubscriptionResult, IpcError> {
         // One timeout covers the ENTIRE sweep (every hop), exactly like the TS
         // abort-signal timer that is cleared in a `finally`.
         match tokio::time::timeout(
             Duration::from_millis(self.timeout_ms),
-            self.fetch_sweep(url, via_proxy),
+            self.fetch_sweep(url, proxy),
         )
         .await
         {
@@ -640,10 +655,10 @@ impl SubscriptionFetcher {
     async fn fetch_sweep(
         &self,
         url: &str,
-        via_proxy: bool,
+        proxy: Option<&str>,
     ) -> Result<FetchSubscriptionResult, IpcError> {
-        let via_proxy = via_proxy && self.has_proxy_transport();
-        let transport = self.transport(via_proxy);
+        let via_proxy = proxy.is_some();
+        let transport = self.transport(proxy);
         let mut current_url = url.to_string();
         let mut redirect_count = 0usize;
         let mut response;
@@ -865,16 +880,16 @@ pub async fn fetch_with_fallback(
     fetcher: &SubscriptionFetcher,
     url: &str,
 ) -> Result<FetchSubscriptionResult, IpcError> {
-    if !fetcher.has_proxy_transport() {
-        return fetcher.fetch(url, false).await;
-    }
-    match fetcher.fetch(url, true).await {
+    let Some(proxy) = fetcher.proxy_url().await else {
+        return fetcher.fetch_via(url, None).await;
+    };
+    match fetcher.fetch_via(url, Some(&proxy)).await {
         Ok(result) => Ok(result),
         Err(error) => {
             if !is_transport_failure(&error) && error.parts().0 != code::UPSTREAM_HTTP_ERROR {
                 return Err(error);
             }
-            match fetcher.fetch(url, false).await {
+            match fetcher.fetch_via(url, None).await {
                 Ok(result) => Ok(result),
                 // Both routes failed — keep the preferred-route failure
                 // because it is the one matching the user's current
@@ -1229,8 +1244,10 @@ mod tests {
         // The "core" answers the proxied request; the direct route never would.
         let (proxy, _proxy_server) =
             test_support::start_http_stub(200, vec![], VALID_DOC.to_string());
-        let fetcher =
-            loopback_fetcher(5000, 1024 * 1024).with_proxy(Arc::new(move || Some(proxy.clone())));
+        let fetcher = loopback_fetcher(5000, 1024 * 1024).with_proxy(Arc::new(move || {
+            let proxy = proxy.clone();
+            Box::pin(async move { Some(proxy) })
+        }));
         let result = fetch_with_fallback(&fetcher, "http://127.0.0.1:9/sub")
             .await
             .unwrap();
@@ -1243,15 +1260,18 @@ mod tests {
             test_support::start_http_stub(200, vec![], VALID_DOC.to_string());
         // mihomo answers a dead node with its own 502.
         let (proxy, _proxy_server) = test_support::start_http_stub(502, vec![], String::new());
-        let fetcher =
-            loopback_fetcher(5000, 1024 * 1024).with_proxy(Arc::new(move || Some(proxy.clone())));
+        let fetcher = loopback_fetcher(5000, 1024 * 1024).with_proxy(Arc::new(move || {
+            let proxy = proxy.clone();
+            Box::pin(async move { Some(proxy) })
+        }));
         let result = fetch_with_fallback(&fetcher, &format!("{direct}/sub"))
             .await
             .unwrap();
         assert_eq!(result.document, VALID_DOC);
         // No core serving: straight to direct.
-        let fetcher = loopback_fetcher(5000, 1024 * 1024).with_proxy(Arc::new(|| None));
-        assert!(!fetcher.has_proxy_transport());
+        let fetcher =
+            loopback_fetcher(5000, 1024 * 1024).with_proxy(Arc::new(|| Box::pin(async { None })));
+        assert!(fetcher.proxy_url().await.is_none());
         let result = fetch_with_fallback(&fetcher, &format!("{direct}/sub"))
             .await
             .unwrap();

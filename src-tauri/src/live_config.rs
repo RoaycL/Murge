@@ -198,14 +198,16 @@ pub struct LiveConfigReloader<'a> {
     profiles: &'a Arc<ProfilesService>,
     overrides: &'a OverrideService,
     models: &'a enhancements::ModelStores,
-    /// How long a full reload may take before the controller is asked
-    /// whether the core is merely still applying it.
+    /// How often a pending reload checks that the controller still answers.
     reload_timeout_ms: u64,
 }
 
 /// mihomo answers PUT /configs only after every proxy/rule provider without
-/// a fresh cache has been downloaded, which can take far longer than this.
+/// a fresh cache has been downloaded, which can take far longer than this:
+/// each interval past it asks /version whether the core is still alive.
 const RELOAD_TIMEOUT_MS: u64 = 10_000;
+/// The longest a live core may take to apply a config.
+const RELOAD_CAP_MS: u64 = 120_000;
 
 impl<'a> LiveConfigReloader<'a> {
     /// The dispatch composition: controller + runtime from the core model
@@ -280,27 +282,38 @@ impl<'a> LiveConfigReloader<'a> {
         }
         let current = self.client.get_config().await?;
         let payload = self.build_payload(&current)?;
-        match self
-            .client
-            .reload_config_within(&payload, self.reload_timeout_ms)
+        // mihomo answers only once the new config, including every provider
+        // that must be downloaded first, is applied. While the controller
+        // keeps answering it is still working, so keep waiting rather than
+        // restarting (which would repeat the downloads and tear TUN down);
+        // the caller's tail (selection restore) then runs on the applied
+        // config. Only a controller that stops answering fails the reload.
+        let reload = self.client.reload_config_within(&payload, RELOAD_CAP_MS);
+        tokio::pin!(reload);
+        let mut reported = false;
+        loop {
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(self.reload_timeout_ms),
+                &mut reload,
+            )
             .await
-        {
-            Ok(_) => Ok(true),
-            // The core accepted the document and is still downloading
-            // providers (Mihomo Party counts a switch done once the API
-            // answers, too). A restart would only repeat the downloads and
-            // tear TUN down, so it is reserved for a core that stopped
-            // answering.
-            Err(error)
-                if error.parts().0 == crate::error::code::UPSTREAM_TIMEOUT
-                    && self.client.is_responsive(3_000).await =>
             {
-                crate::diag!(
-                    "[live-config] mihomo is still applying the new config (providers loading); continuing without a restart"
-                );
-                Ok(true)
+                Ok(result) => return result.map(|_| true),
+                Err(_) if self.client.is_responsive(3_000).await => {
+                    if !reported {
+                        reported = true;
+                        crate::diag!(
+                            "[live-config] mihomo is still applying the new config (providers loading); waiting instead of restarting"
+                        );
+                    }
+                }
+                Err(_) => {
+                    return Err(IpcError::code(
+                        crate::error::code::UPSTREAM_TIMEOUT,
+                        "mihomo stopped answering while applying the new config",
+                    ))
+                }
             }
-            Err(error) => Err(error),
         }
     }
 
@@ -1477,7 +1490,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_slow_apply_on_a_live_core_is_not_a_failure() {
+    async fn a_slow_apply_on_a_live_core_is_awaited_not_failed() {
         let (_temp, profiles, overrides, models) = service();
         let port = slow_apply_controller(true);
         let kernel = running_kernel().await;

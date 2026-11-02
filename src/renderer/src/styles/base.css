@@ -387,6 +387,8 @@ input,textarea,[contenteditable="true"],code,pre{user-select:text;-webkit-user-s
 :root[data-frosted="true"] body { background: transparent; }
 :root[data-frosted="true"] .app-frame { background: var(--frosted-sidebar); box-shadow: none; }
 :root[data-frosted="true"] .app-content { background: var(--frosted-content); border-color: var(--frosted-content-border); }
+/* 叠加层页面（进程 / 设备）的整页列表直接铺在面板上，不再多垫一层卡片底，和 Surge 一致。 */
+.app-frame[data-surface="panel"] .full-width-list.surface-card { background: transparent; border: 0; border-radius: 0; box-shadow: none; }
 /* 一整块背景（活动 / 概览 / 配置）：不画叠加面板，内容区与侧栏共用同一层窗口底，只有卡片浮起。 */
 .app-frame[data-surface="flat"] .app-content, :root[data-frosted="true"] .app-frame[data-surface="flat"] .app-content { height: 100%; margin: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 /* 弹出卡片与活动 / 概览页不显示滚动条（仍可滚轮、触控板、键盘滚动），

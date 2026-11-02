@@ -35,7 +35,7 @@ describe('Activity fluid-layout UI contract', () => {
     expect(main).toMatch(/minWidth:\s*848,\s*\n\s*minHeight:\s*640,/)
     expect(main).toMatch(/titleBarStyle:\s*'hidden'/)
     expect(main).toMatch(/titleBarOverlay:\s*\{[^}]*height:\s*34/s)
-    expect(tokens).toMatch(/--sidebar-width:\s*205px/)
+    expect(tokens).toMatch(/--sidebar-width:\s*190px/)
     expect(css).toMatch(/\.app-window\s*\{[^}]*height:\s*100%;\s*overflow:\s*hidden;/)
     expect(css).not.toMatch(/\.app-window\s*\{[^}]*padding:/)
     // 完全流式仪表盘：弹性列 + 居中内容壳，禁止回到写死列宽。

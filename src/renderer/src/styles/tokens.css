@@ -72,7 +72,7 @@
   --space-6: 14px;
   --space-7: 16px;
   --space-gutter: 15px;
-  --sidebar-width: 205px;
+  --sidebar-width: 190px;
   /* 页面内容基准列宽：完全流式布局中的最大内容宽度。低于此宽度时页面
      收缩为单列/流体网格；高于时内容居中并保留规范留白。 */
   --content-max-width: 760px;
@@ -152,21 +152,24 @@
    卡片几乎不透明以保证可读性。不支持、关闭或高对比度时 data-frosted="false"，
    沿用上面的不透明渐变。 */
 :root[data-frosted="true"] {
-  --frosted-sidebar: rgba(234, 239, 246, 0.42);
-  --frosted-content: rgba(248, 249, 252, 0.7);
+  /* 取色对齐 Surge（2026-11）：日间窗口底是偏白的磨砂，只透一点桌面色；
+     卡片几乎是实白。 */
+  --frosted-sidebar: rgba(242, 244, 248, 0.66);
+  --frosted-content: rgba(250, 251, 253, 0.74);
   --frosted-content-border: rgba(255, 255, 255, 0.75);
-  /* 卡片留一点通透感（磨砂透出系统背景），文字区域仍以白底为主。 */
-  --app-surface: rgba(255, 255, 255, 0.8);
-  --app-surface-border: rgba(255, 255, 255, 0.85);
+  --app-surface: rgba(255, 255, 255, 0.94);
+  --app-surface-border: rgba(255, 255, 255, 0.9);
   --frame-radius: 8px;
   --frame-border: rgba(255, 255, 255, 0.35);
 }
 
 :root[data-frosted="true"][data-theme="dark"] {
-  --frosted-sidebar: rgba(20, 23, 30, 0.46);
-  --frosted-content: rgba(30, 32, 41, 0.74);
+  /* 夜间对齐 Surge：窗口底和叠加层都很通透，桌面颜色明显透出；卡片是更深的
+     半透明黑，比底色暗一档，仍能看出背后的颜色。 */
+  --frosted-sidebar: rgba(28, 30, 38, 0.22);
+  --frosted-content: rgba(26, 28, 36, 0.42);
   --frosted-content-border: rgba(255, 255, 255, 0.07);
-  --app-surface: rgba(39, 42, 51, 0.82);
+  --app-surface: rgba(20, 22, 29, 0.55);
   --app-surface-border: rgba(255, 255, 255, 0.06);
   --frame-border: rgba(255, 255, 255, 0.08);
 }

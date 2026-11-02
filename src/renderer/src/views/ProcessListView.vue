@@ -5,12 +5,12 @@ import { useOverridesStore } from "../stores/overrides";
 import { usePoliciesStore } from "../stores/policies";
 import { groupConnectionsByProcess } from "../lib/connection-groups";
 import { formatBytes, formatRate, formatWallClock } from "../lib/format";
+import AppIcon from "../components/AppIcon.vue";
 import ProcessIcon from "../components/ProcessIcon.vue";
 import DetailDrawer from "../components/DetailDrawer.vue";
 import AppSelect from "../components/AppSelect.vue";
 import EmptyState from "../components/EmptyState.vue";
 import EntityStatsPanel from "../components/EntityStatsPanel.vue";
-import OverflowMenu from "../components/OverflowMenu.vue";
 import { formatConnectionChain } from "@shared/connection-chain";
 import { buildProcessRuleOverride, type ProcessRuleMatch } from "@shared/process-rule";
 
@@ -22,7 +22,6 @@ const sort = ref<"traffic" | "name">("traffic");
 const match = ref<ProcessRuleMatch>("path");
 const target = ref("DIRECT");
 const savingRule = ref(false);
-const ruleDrawerOpen = ref(false);
 const ruleError = ref("");
 const lastCreated = ref<{ id: string; rule: string } | null>(null);
 const matchOptions = computed(() => [
@@ -103,7 +102,6 @@ function selectProcess(key: string): void {
   match.value = processPath.value && !/[\r\n,]/.test(processPath.value) ? "path" : "name";
   target.value = "DIRECT";
   ruleError.value = "";
-  ruleDrawerOpen.value = false;
 }
 
 async function saveRule(): Promise<void> {
@@ -118,7 +116,6 @@ async function saveRule(): Promise<void> {
     if (!saved) throw new Error(overrides.lastError ?? "保存失败");
     const created = overrides.items.find((item) => !before.has(item.id));
     if (created) lastCreated.value = { id: created.id, rule: draft.value.rule };
-    ruleDrawerOpen.value = false;
   } catch (error) {
     ruleError.value = error instanceof Error ? error.message : "保存失败";
   } finally { savingRule.value = false; }
@@ -145,7 +142,7 @@ onMounted(() => {
         <h1>进程</h1>
         <small aria-live="polite">{{
           store.status === "live"
-            ? `${groups.length} 个活动进程`
+            ? `${groups.length} 个活动进程 · 点击查看详情`
             : "正在连接"
         }}</small>
       </div>
@@ -156,75 +153,67 @@ onMounted(() => {
       <button type="button" :disabled="savingRule" @click="undoRule">撤销</button>
     </div>
     <p v-if="ruleError" class="inline-error" role="alert">{{ ruleError }}</p>
-    <div class="master-detail">
-      <section class="entity-list master-list" aria-label="进程列表">
-        <button
-          v-for="group in groups"
-          :key="group.key"
-          type="button"
-          class="entity-row"
-          :class="{ selected: selectedKey === group.key }"
-          :aria-pressed="selectedKey === group.key"
-          @click="selectProcess(group.key)"
-        >
-          <ProcessIcon class="entity-row-icon" :path="group.connections[0]?.metadata.processPath" :name="group.label" :size="22" />
-          <span>{{ group.label }}</span>
-          <strong>{{ rowRate(group.key) }}<small>总计 {{ rowTotal(group) }}</small></strong>
-        </button>
-        <EmptyState v-if="!groups.length" icon="processes" title="暂无活动进程" detail="产生网络连接的进程会自动汇总到这里。" />
-      </section>
-      <aside class="entity-pane" :class="{ empty: !selected }" aria-label="进程详情">
-        <template v-if="selected">
-          <header class="entity-pane-header">
-            <ProcessIcon class="entity-pane-icon" :path="processPath || undefined" :name="selected.label" :size="40" />
-            <div><h2>{{ selected.label }}</h2><p>{{ processPath || selected.subtitle }}</p></div>
-            <OverflowMenu label="进程操作">
-              <button type="button" role="menuitem" :disabled="!draft" @click="ruleDrawerOpen = true">创建分流规则…</button>
-              <button type="button" role="menuitem" @click="selectedKey = null">取消选择</button>
-            </OverflowMenu>
-          </header>
-          <div class="entity-detail">
-            <EntityStatsPanel :stats="stats" :active-connections="selected.connections.length" :details="details" />
-            <h3>活动连接</h3>
-            <ul>
-              <li v-for="connection in selected.connections" :key="connection.id">
-                <span>{{
-                  connection.metadata.host ||
-                  connection.metadata.destinationIP ||
-                  "未知目标"
-                }}</span
-                ><small>{{ formatConnectionChain(connection.chains) }} · ↑ {{ formatBytes(connection.upload) }} ↓ {{ formatBytes(connection.download) }}</small>
-              </li>
-              <li v-if="!selected.connections.length" class="entity-empty-row">当前没有活动连接</li>
-            </ul>
-          </div>
-        </template>
-        <p v-else class="entity-pane-placeholder">选择一个进程查看带宽、连接与流量统计</p>
-      </aside>
-    </div>
+    <section class="surface-card entity-list full-width-list">
+      <button
+        v-for="group in groups"
+        :key="group.key"
+        type="button"
+        class="entity-row wide"
+        :class="{ selected: selectedKey === group.key }"
+        :aria-pressed="selectedKey === group.key"
+        @click="selectProcess(group.key)"
+      >
+        <ProcessIcon class="process-list-icon" :path="group.connections[0]?.metadata.processPath" :name="group.label" :size="16" />
+        <span
+          >{{ group.label }}<small>{{ group.subtitle }}</small></span
+        ><strong
+          >{{ rowRate(group.key)
+          }}<small>总计 {{ rowTotal(group) }} · {{ group.connections.length }} 个连接</small></strong
+        ><AppIcon name="next" :size="15" />
+      </button>
+      <EmptyState v-if="!groups.length" icon="processes" title="暂无活动进程" detail="产生网络连接的进程会自动汇总到这里。" />
+    </section>
     <DetailDrawer
-      :open="Boolean(selected) && ruleDrawerOpen"
-      title="创建分流规则"
-      :subtitle="selected?.label"
-      @close="ruleDrawerOpen = false"
-      ><section v-if="selected" class="process-rule-editor" aria-label="为进程创建分流规则">
-        <p>生成全局覆写，规则置于订阅规则之前；不会修改订阅文件。保存后可在「覆写」中编辑或删除。</p>
-        <label>匹配方式<AppSelect v-model="match" :options="matchOptions" label="进程规则匹配方式" /></label>
-        <label>出站策略<AppSelect v-model="target" :options="targetOptions" label="进程出站策略" /></label>
-        <div class="process-rule-preview"><span>保存前预览</span><code>{{ draft?.rule ?? '当前进程信息不足，无法生成规则' }}</code></div>
-        <button type="button" class="process-rule-save" :disabled="!draft || savingRule || !targetOptions.some((option) => option.value === target)" @click="saveRule">{{ savingRule ? '保存中…' : '保存规则' }}</button>
-      </section></DetailDrawer
+      :open="Boolean(selected)"
+      :title="selected?.label ?? '进程详情'"
+      :subtitle="selected?.subtitle"
+      @close="selectedKey = null"
+      ><div v-if="selected" class="entity-detail drawer-detail">
+        <EntityStatsPanel :stats="stats" :active-connections="selected.connections.length" :details="details" />
+        <h3>活动连接</h3>
+        <ul>
+          <li v-for="connection in selected.connections" :key="connection.id">
+            <span>{{
+              connection.metadata.host ||
+              connection.metadata.destinationIP ||
+              "未知目标"
+            }}</span
+            ><small>{{ formatConnectionChain(connection.chains) }} · ↑ {{ formatBytes(connection.upload) }} ↓ {{ formatBytes(connection.download) }}</small>
+          </li>
+          <li v-if="!selected.connections.length" class="entity-empty-row">当前没有活动连接</li>
+        </ul>
+        <section class="process-rule-editor" aria-label="为进程创建分流规则">
+          <h3>创建分流规则</h3>
+          <p>生成全局覆写，规则置于订阅规则之前；不会修改订阅文件。保存后可在「覆写」中编辑或删除。</p>
+          <label>匹配方式<AppSelect v-model="match" :options="matchOptions" label="进程规则匹配方式" /></label>
+          <label>出站策略<AppSelect v-model="target" :options="targetOptions" label="进程出站策略" /></label>
+          <div class="process-rule-preview"><span>保存前预览</span><code>{{ draft?.rule ?? '当前进程信息不足，无法生成规则' }}</code></div>
+          <button type="button" class="process-rule-save" :disabled="!draft || savingRule || !targetOptions.some((option) => option.value === target)" @click="saveRule">{{ savingRule ? '保存中…' : '保存规则' }}</button>
+        </section>
+      </div></DetailDrawer
     >
   </div>
 </template>
 
 <style scoped>
+.process-list-icon{width:29px;height:29px;border-radius:var(--radius-control);background:var(--app-fill)}
 .process-rule-notice{display:flex;align-items:center;justify-content:space-between;gap:var(--space-7);padding:12px 16px;margin:12px 0}
 .process-rule-notice span{display:flex;flex-direction:column;gap:var(--space-1);min-width:0}
 .process-rule-notice small{color:var(--app-muted);overflow-wrap:anywhere}
 .process-rule-notice button{border:1px solid var(--app-divider);background:transparent;color:var(--app-text);border-radius:var(--radius-control);padding:7px 13px;cursor:pointer}
 .entity-empty-row{color:var(--app-muted)}
-.process-rule-editor{display:grid;gap:var(--space-5)}
+.process-rule-editor{display:grid;gap:var(--space-5);margin:24px 0 4px;padding:17px;border:1px solid var(--app-divider);border-radius:var(--radius-card);background:color-mix(in srgb,var(--app-surface) 78%,var(--app-bg))}
+.process-rule-editor h3{margin:0}
 .process-rule-editor p{margin:0;color:var(--app-muted);font-size:var(--font-size-xs);line-height:1.5}
 .process-rule-editor label{display:flex;align-items:center;justify-content:space-between;gap:var(--space-5);font-size:var(--font-size-sm)}
 .process-rule-preview{display:grid;gap:var(--space-2);padding:11px;border-radius:var(--radius-control);background:color-mix(in srgb,var(--app-bg) 78%,var(--app-surface));min-width:0}

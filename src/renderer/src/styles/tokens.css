@@ -84,6 +84,12 @@
   --card-min: 280px;
   --node-card-min: 150px;
   --frame-radius: 12px;
+  /* 内容面板（叠加层）：比窗口底更亮一档，四周留 8px，带轻微描边与阴影。 */
+  --content-panel-inset: 8px;
+  --content-panel-radius: 12px;
+  --content-panel: rgba(251, 252, 254, 0.9);
+  --content-panel-border: rgba(255, 255, 255, 0.9);
+  --content-panel-shadow: 0 0 0 0.5px rgba(30, 38, 52, 0.06), 0 6px 22px rgba(30, 38, 52, 0.08);
   --frame-border: rgba(213, 218, 226, 0.85);
   --frame-shadow: 0 18px 55px rgba(24, 31, 45, 0.18);
 }
@@ -104,11 +110,16 @@
     --app-danger: #e05b5b;
     --app-warning: #e79a35;
     --app-panel: rgba(255, 255, 255, 0.03);
+    --content-panel: rgba(32, 35, 44, 0.86);
+    --content-panel-border: rgba(255, 255, 255, 0.06);
+    --content-panel-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.3), 0 6px 22px rgba(0, 0, 0, 0.25);
     --frame-border: rgba(52, 56, 66, 0.85);
     --frame-shadow: 0 18px 55px rgba(0, 0, 0, 0.35);
 }
 
 :root[data-contrast="high"] {
+  --content-panel: var(--app-background-start);
+  --content-panel-shadow: none;
   --app-text: #000000;
   --app-muted: #3f4650;
   --app-faint: #606873;
@@ -135,7 +146,8 @@
    沿用上面的不透明渐变。 */
 :root[data-frosted="true"] {
   --frosted-sidebar: rgba(234, 239, 246, 0.42);
-  --frosted-content: rgba(242, 244, 249, 0.66);
+  --frosted-content: rgba(248, 249, 252, 0.8);
+  --frosted-content-border: rgba(255, 255, 255, 0.75);
   --app-surface: rgba(255, 255, 255, 0.94);
   --app-surface-border: rgba(255, 255, 255, 0.9);
   --frame-radius: 8px;
@@ -144,7 +156,8 @@
 
 :root[data-frosted="true"][data-theme="dark"] {
   --frosted-sidebar: rgba(20, 23, 30, 0.46);
-  --frosted-content: rgba(26, 28, 36, 0.74);
+  --frosted-content: rgba(30, 32, 41, 0.82);
+  --frosted-content-border: rgba(255, 255, 255, 0.07);
   --app-surface: rgba(39, 42, 51, 0.97);
   --app-surface-border: rgba(255, 255, 255, 0.06);
   --frame-border: rgba(255, 255, 255, 0.08);

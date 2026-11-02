@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import type { ActiveProfileConfigInspection, ProfileConfigSection } from '@shared/profiles'
-import AppIcon from './AppIcon.vue'
+import RefreshIndicator from './RefreshIndicator.vue'
 
 const props = defineProps<{ section: ProfileConfigSection; title: string }>()
 const inspection = ref<ActiveProfileConfigInspection | null>(null)
@@ -28,7 +28,7 @@ onMounted(() => void refresh())
   <section class="inspection-card surface-card" :aria-label="`${title}配置来源`">
     <header>
       <div><h3>{{ title }}当前生效配置</h3><p>{{ inspection?.profileName ? `活动配置：${inspection.profileName}` : '当前没有活动配置' }}</p></div>
-      <button type="button" class="inspection-refresh" :disabled="loading" aria-label="刷新生效配置" @click="refresh"><AppIcon name="refresh" :size="14" /></button>
+      <button type="button" class="inspection-refresh refresh-control" :disabled="loading" aria-label="刷新生效配置" @click="refresh"><RefreshIndicator :busy="loading" :size="14" /></button>
     </header>
     <p v-if="error" class="inspection-error">{{ error }}</p>
     <template v-else-if="inspection">

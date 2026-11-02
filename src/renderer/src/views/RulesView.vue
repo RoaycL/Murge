@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, watch } from 'vue'
 import { useRulesStore, type RulesSortKey } from '../stores/rules'
 import { useProvidersStore } from '../stores/providers'
 import { useKernelStore } from '../stores/kernel'
 import AppIcon from '../components/AppIcon.vue'
+import RefreshAllButton from '../components/RefreshAllButton.vue'
+import RefreshIndicator from '../components/RefreshIndicator.vue'
 
 const rules = useRulesStore()
 const providers = useProvidersStore()
@@ -35,18 +37,6 @@ async function init(): Promise<void> {
   if (kernel.status.phase !== 'running') return
   await rules.load()
   void providers.loadRuleProviders()
-}
-
-/** Refresh every remote rule set in one click (规则集全部更新). */
-const refreshingAllRules = ref(false)
-async function refreshAllRules(): Promise<void> {
-  if (refreshingAllRules.value) return
-  refreshingAllRules.value = true
-  try {
-    await providers.refreshAllRuleProviders()
-  } finally {
-    refreshingAllRules.value = false
-  }
 }
 
 onMounted(() => {
@@ -112,9 +102,7 @@ watch(() => kernel.status.phase, (phase, previous) => {
     <section v-if="providers.orderedRuleProviders.length" class="provider-section">
       <header class="section-caption rules-provider-caption">
         <span>规则集</span>
-        <button type="button" class="rules-refresh-all" :disabled="providers.batchRefreshing || !providers.remoteRuleProviders.length || kernel.status.phase !== 'running'" @click="refreshAllRules">
-          {{ refreshingAllRules ? '更新中…' : '全部更新' }}
-        </button>
+        <RefreshAllButton :run="providers.refreshAllRuleProviders" :disabled="providers.batchRefreshing || !providers.remoteRuleProviders.length || kernel.status.phase !== 'running'" />
       </header>
       <div class="provider-list surface-card">
         <div v-for="provider in providers.orderedRuleProviders" :key="provider.name" class="provider-row">
@@ -128,13 +116,12 @@ watch(() => kernel.status.phase, (phase, previous) => {
           <div class="provider-actions">
             <button
               type="button"
-              class="icon-control"
-              :class="{ spinning: providers.opOf(provider.name, 'rule').refreshing }"
+              class="icon-control refresh-control"
               :disabled="providers.opOf(provider.name, 'rule').refreshing"
               :aria-label="providers.opOf(provider.name, 'rule').refreshing ? '更新中' : '更新规则集'"
               title="更新"
               @click="providers.refreshRuleProvider(provider.name)"
-            ><AppIcon name="refresh" :size="16" /></button>
+            ><RefreshIndicator :busy="providers.opOf(provider.name, 'rule').refreshing" :failed="Boolean(providers.opOf(provider.name, 'rule').error)" :size="16" /></button>
           </div>
         </div>
       </div>
@@ -146,8 +133,6 @@ watch(() => kernel.status.phase, (phase, previous) => {
 .rules-counters { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-5); margin-bottom: 10px; color: var(--app-muted); font-size: var(--font-size-xs); }
 .rules-hint { text-align: right; }
 .rules-provider-caption { display: flex; align-items: center; justify-content: space-between; }
-.rules-refresh-all { display: inline-flex; align-items: center; gap: var(--space-2); height: 26px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: var(--radius-control); background: transparent; color: var(--app-muted); font-size: var(--font-size-xs); white-space: nowrap; }
-.rules-refresh-all:disabled { opacity: 0.5; }
 .sort-arrow { margin-left: 3px; font-size: var(--font-size-2xs); }
 .empty-state { padding: 26px; border: 1px dashed var(--app-divider); border-radius: var(--radius-control); }
 .empty-state p { margin: 0 0 8px; }
@@ -159,7 +144,7 @@ watch(() => kernel.status.phase, (phase, previous) => {
 .provider-row:first-child { border-top: 0; }
 .provider-info strong { display: block; font-size: var(--font-size-body); }
 .provider-info small { display: block; margin-top: 3px; color: var(--app-muted); font-size: var(--font-size-xs); }
-.provider-actions { display: flex; gap: var(--space-3); }
+.provider-actions { display: flex; grid-column: 2; grid-row: 1 / span 2; gap: var(--space-3); }
 /* 逐项更新改为图标按钮后移除旧的文本按钮底色规则。 */
-.provider-error { grid-column: 1 / -1; color: var(--app-danger); font-size: var(--font-size-xs); }
+.provider-error { grid-column: 1; color: var(--app-danger); font-size: var(--font-size-xs); }
 </style>

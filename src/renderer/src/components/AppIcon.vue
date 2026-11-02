@@ -2,7 +2,7 @@
 import {
   Activity, AppWindow, ArrowDown, ArrowUp, Braces, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, Clipboard,
   Code2, Cpu, Database, Download, Ellipsis, Eye, Files, FilePlus2, Globe2, Info, Laptop, Layers,
-  LayoutDashboard, ListTree, Logs, Network, Palette, PanelRightClose, Pencil, Plus, RefreshCw,
+  LayoutDashboard, ListTree, Logs, Network, Palette, PanelRightClose, Pencil, Plus, RotateCw,
   Route, Search, ServerCog, Settings2, ShieldCheck, SlidersHorizontal, Trash2,
   Upload, Wifi, X
 } from 'lucide-vue-next'
@@ -40,7 +40,7 @@ const icons: Record<AppIconName, Component> = {
   logs: Logs,
   about: Info,
   search: Search,
-  refresh: RefreshCw,
+  refresh: RotateCw,
   'add-file': FilePlus2,
   clipboard: Clipboard,
   upload: Upload,

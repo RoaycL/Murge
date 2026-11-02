@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useProfilesStore } from '../stores/profiles'
 import type { ValidationResult } from '@shared/profiles'
 import AppIcon from '../components/AppIcon.vue'
+import RefreshIndicator from '../components/RefreshIndicator.vue'
 import AppSelect from '../components/AppSelect.vue'
 import DetailDrawer from '../components/DetailDrawer.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
@@ -327,13 +328,12 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
           <div class="card-actions">
             <button
               type="button"
-              class="icon-button small"
-              :class="{ spinning: updatingId === meta.id }"
+              class="icon-button small refresh-control"
               :aria-label="meta.source.type === 'url' ? '更新订阅配置' : '重新应用该配置'"
               :title="meta.source.type === 'url' ? '更新订阅配置' : '重新应用'"
               :disabled="updatingId === meta.id"
               @click.stop="cardRefresh(meta.id)"
-            ><AppIcon name="refresh" :size="15" /></button>
+            ><RefreshIndicator :busy="updatingId === meta.id" :size="15" /></button>
             <button
               type="button"
               class="icon-button small"

@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import SpeedSparkline from '../components/SpeedSparkline.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 import AppIcon from '../components/AppIcon.vue'
+import RefreshIndicator from '../components/RefreshIndicator.vue'
 import DetailDrawer from '../components/DetailDrawer.vue'
 import UsageHistoryPanel from '../components/UsageHistoryPanel.vue'
 import NetworkMetadataPanel from '../components/NetworkMetadataPanel.vue'
@@ -174,7 +175,7 @@ const chartBars = computed<number[]>(() => {
     <section class="dashboard-grid">
       <SurfaceCard class="latency-card">
         <div class="card-title-row">
-          <span class="metric-label latency-label">INTERNET 延迟<button type="button" class="latency-refresh" :disabled="latency.state === 'probing'" aria-label="重新测速" @click="latency.probe()"><AppIcon name="refresh" :size="12" /></button></span>
+          <span class="metric-label latency-label">INTERNET 延迟<button type="button" class="latency-refresh refresh-control" :disabled="latency.state === 'probing'" aria-label="重新测速" @click="latency.probe()"><RefreshIndicator :busy="latency.state === 'probing'" :failed="latency.state === 'error'" :size="12" /></button></span>
           <button type="button" class="quiet-button" @click="openNetworkDiagnostics">{{ diagnosisButtonLabel }}</button>
         </div>
         <div class="large-metric" :class="{ 'metric-dimmed': headlineText === '—' }">{{ headlineText }}<span>ms</span></div>
@@ -257,8 +258,8 @@ const chartBars = computed<number[]>(() => {
   color: var(--app-text);
 }
 .latency-refresh:disabled {
-  opacity: 0.5;
-  cursor: default;
+  opacity: 1;
+  cursor: progress;
 }
 .delay-unit {
   margin-left: 3px;

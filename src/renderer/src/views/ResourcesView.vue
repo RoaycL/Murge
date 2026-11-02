@@ -10,10 +10,11 @@ import { formatBytes } from '../lib/format'
 import type { MihomoProxyProvider, MihomoRuleProvider } from '@shared/mihomo-api'
 import type { ProfileProviderConfig } from '@shared/profiles'
 import ConfigInspectionCard from '../components/ConfigInspectionCard.vue'
+import RefreshAllButton from '../components/RefreshAllButton.vue'
+import RefreshIndicator from '../components/RefreshIndicator.vue'
 
 const kernel = useKernelStore()
 const providers = useProvidersStore()
-const refreshing = ref(false)
 const total = computed(() => providers.remoteProxyProviders.length + providers.remoteRuleProviders.length)
 
 type ResourceKind = 'proxy' | 'rule'
@@ -99,13 +100,10 @@ async function load(): Promise<void> {
 }
 
 /** 全部更新 follows the type filter: 代理集合 / 规则集合 only refresh that section. */
-async function refreshAll(): Promise<void> {
-  refreshing.value = true
-  try {
-    if (kindFilter.value === 'proxy') await providers.refreshAllProxyProviders()
-    else if (kindFilter.value === 'rule') await providers.refreshAllRuleProviders()
-    else await providers.refreshAllProviders()
-  } finally { refreshing.value = false }
+function refreshAll(): Promise<{ updated: number; failed: number }> {
+  if (kindFilter.value === 'proxy') return providers.refreshAllProxyProviders()
+  if (kindFilter.value === 'rule') return providers.refreshAllRuleProviders()
+  return providers.refreshAllProviders()
 }
 function refreshRow(row: ResourceRow): void {
   if (row.kind === 'proxy') void providers.refreshProxyProvider(row.name)
@@ -169,8 +167,17 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
   </header>
   <p v-if="kernel.status.phase !== 'running'" class="inline-note">启动内核后即可读取和更新集合。</p>
   <section v-else class="surface-card resource-table-card" aria-label="远程集合">
-    <div class="resource-table-filter" role="group" aria-label="集合类型">
-      <button v-for="tab in kindTabs" :key="tab.value" type="button" :class="{ selected: kindFilter === tab.value }" :aria-pressed="kindFilter === tab.value" @click="kindFilter = tab.value">{{ tab.label }}<span>{{ tab.count }}</span></button>
+    <div class="resource-table-toolbar">
+      <div class="resource-table-filter" role="group" aria-label="集合类型">
+        <button v-for="tab in kindTabs" :key="tab.value" type="button" :class="{ selected: kindFilter === tab.value }" :aria-pressed="kindFilter === tab.value" @click="kindFilter = tab.value">{{ tab.label }}<span>{{ tab.count }}</span></button>
+      </div>
+      <div class="resource-table-actions">
+        <div class="resource-only-pending" @click="onlyNotReady = !onlyNotReady">
+          <span>仅显示未就绪<em v-if="notReadyCount">{{ notReadyCount }}</em></span>
+          <button type="button" class="switch" :class="{ on: onlyNotReady }" role="switch" :aria-checked="onlyNotReady" aria-label="仅显示未就绪的项目" />
+        </div>
+        <RefreshAllButton :run="refreshAll" :disabled="providers.batchRefreshing || !total" />
+      </div>
     </div>
     <div class="resource-table" role="table" aria-label="外部资源列表">
       <div class="resource-tr resource-th" role="row">
@@ -183,16 +190,12 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
         <span role="cell" class="resource-path" :title="row.url || '未声明远程地址'"><span>{{ pathParts(row.url).head }}</span><span v-if="pathParts(row.url).tail">{{ pathParts(row.url).tail }}</span></span>
         <span role="cell" class="resource-status" :title="row.error ?? undefined"><i />{{ STATUS_TEXT[row.status] }}</span>
         <span role="cell" class="resource-actions">
-          <button class="icon-control" type="button" :aria-label="row.kind === 'proxy' ? '查看代理集合内容' : '查看规则集合内容'" title="查看内容" @click="viewingContent = { kind: row.kind, name: row.name }"><AppIcon name="code" :size="15" /></button>
-          <button class="icon-control" type="button" :class="{ spinning: providers.opOf(row.name, row.kind).refreshing }" :disabled="providers.opOf(row.name, row.kind).refreshing" :aria-label="providers.opOf(row.name, row.kind).refreshing ? '更新中' : row.kind === 'proxy' ? '更新代理集合' : '更新规则集合'" title="更新" @click="refreshRow(row)"><AppIcon name="refresh" :size="15" /></button>
+          <button class="icon-control" type="button" :aria-label="row.kind === 'proxy' ? '查看代理集合内容' : '查看规则集合内容'" title="查看内容" @click="viewingContent = { kind: row.kind, name: row.name }"><AppIcon name="eye" :size="15" /></button>
+          <button class="icon-control refresh-control" type="button" :disabled="providers.opOf(row.name, row.kind).refreshing" :aria-label="providers.opOf(row.name, row.kind).refreshing ? '更新中' : row.kind === 'proxy' ? '更新代理集合' : '更新规则集合'" title="更新" @click="refreshRow(row)"><RefreshIndicator :busy="providers.opOf(row.name, row.kind).refreshing" :failed="Boolean(providers.opOf(row.name, row.kind).error)" :size="15" /></button>
         </span>
       </div>
       <p v-if="!visibleRows.length" class="resource-table-empty">{{ onlyNotReady ? '所有集合都已就绪。' : total ? '该类型下没有远程集合。' : '当前配置没有远程代理集合或规则集合。' }}</p>
     </div>
-    <footer class="resource-table-footer">
-      <label class="resource-only-pending"><input v-model="onlyNotReady" type="checkbox" />仅显示未就绪的项目<span v-if="notReadyCount">（{{ notReadyCount }}）</span></label>
-      <button type="button" class="secondary-button" :disabled="providers.batchRefreshing || !total" @click="refreshAll">{{ refreshing ? '更新中…' : '全部更新' }}</button>
-    </footer>
   </section>
   <ConfigInspectionCard section="geodata" title="Geodata" />
   <GeodataSettingsPanel />
@@ -226,7 +229,9 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
 
 <style scoped>
 .resource-table-card { display: flex; flex-direction: column; width: 100%; margin-bottom: 18px; padding: 0; overflow: hidden; }
-.resource-table-filter { display: flex; gap: var(--space-2); padding: 12px 14px 10px; }
+.resource-table-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-4); padding: 10px 14px; }
+.resource-table-filter { display: flex; gap: var(--space-2); }
+.resource-table-actions { display: flex; align-items: center; gap: var(--space-6); margin-left: auto; }
 .resource-table-filter button { display: inline-flex; align-items: center; gap: var(--space-2); min-height: 26px; padding: 0 10px; border: 0; border-radius: 999px; background: transparent; color: var(--app-muted); font-size: var(--font-size-xs); cursor: pointer; }
 .resource-table-filter button span { color: var(--app-faint, var(--app-muted)); font-variant-numeric: tabular-nums; }
 .resource-table-filter button.selected { background: var(--app-fill); color: var(--app-text); font-weight: var(--font-weight-medium); }
@@ -255,11 +260,9 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
 .resource-actions { display: inline-flex; justify-content: flex-end; gap: var(--space-1); }
 .resource-actions .icon-control { width: 26px; height: 26px; border-color: transparent; background: transparent; color: var(--app-muted); }
 .resource-actions .icon-control:hover:not(:disabled) { background: var(--app-fill); color: var(--app-text); }
-.resource-table-empty { margin: 0; padding: 22px 14px; color: var(--app-muted); font-size: var(--font-size-xs); text-align: center; }
-.resource-table-footer { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); padding: 10px 14px; }
-.resource-only-pending { display: inline-flex; align-items: center; gap: var(--space-3); color: var(--app-text); font-size: var(--font-size-sm); cursor: pointer; }
-.resource-only-pending input { width: 15px; height: 15px; margin: 0; accent-color: var(--app-accent); }
-.resource-only-pending span { color: var(--app-muted); }
+.resource-actions .resource-table-empty { margin: 0; padding: 22px 14px; color: var(--app-muted); font-size: var(--font-size-xs); text-align: center; }
+.resource-only-pending { display: inline-flex; align-items: center; gap: var(--space-3); color: var(--app-muted); font-size: var(--font-size-xs); cursor: pointer; user-select: none; }
+.resource-only-pending em { margin-left: 5px; padding: 0 6px; border-radius: 999px; background: color-mix(in srgb, var(--app-danger) 12%, transparent); color: var(--app-danger); font-style: normal; font-variant-numeric: tabular-nums; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .row-error { color: var(--app-danger); }
 .detail-list { display: grid; gap: 0; margin: 0; }

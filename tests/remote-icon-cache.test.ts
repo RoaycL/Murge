@@ -62,11 +62,12 @@ describe('RemoteIconCache', () => {
 
   it('bounds persistent cache growth by pruning the oldest records', async () => {
     const root = await mkdtemp(join(tmpdir(), 'murge-icons-'))
-    for (let index = 0; index < 260; index += 1) {
-      await writeFile(join(root, `${index.toString(16).padStart(64, '0')}.json`), '{"dataUrl":"data:image/png;base64,AQ=="}')
-    }
+    await Promise.all(Array.from({ length: 260 }, (_, index) =>
+      writeFile(join(root, `${index.toString(16).padStart(64, '0')}.json`), '{"dataUrl":"data:image/png;base64,AQ=="}')))
     const cache = new RemoteIconCache(root, [vi.fn<FetchFn>().mockResolvedValue(response(new Uint8Array([1])))], async () => ['1.1.1.1'])
     await cache.get('new-policy', 'https://icons.example/new.png', true)
     expect((await readdir(root)).filter((name) => name.endsWith('.json')).length).toBeLessThanOrEqual(256)
-  })
+    // Hundreds of small files: slow on Windows runners (tauri-v0.10.0 release
+    // build timed out at the default 5 s), so allow more time.
+  }, 30_000)
 })

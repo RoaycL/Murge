@@ -123,6 +123,11 @@ const modeOptions = [
   { value: 'global', label: '全局代理' },
   { value: 'direct', label: '直接连接' }
 ]
+const modePicker = ref<HTMLElement | null>(null)
+// 与 Surge 一致：可切换的标签（出站模式）后面带小箭头，点标签也能展开菜单。
+function toggleModePicker(): void {
+  modePicker.value?.querySelector<HTMLButtonElement>('.app-select-trigger')?.click()
+}
 const selectedMode = computed({
   get: () => policies.mode,
   set: (value: string) => {
@@ -162,8 +167,8 @@ const chartBars = computed<number[]>(() => {
     <section class="runtime-context" aria-label="运行上下文">
       <div><span>网络</span><strong>{{ runtime.summary?.networkName ?? '以太网' }}</strong></div>
       <div><span>配置</span><strong>{{ runtime.summary?.profileName ?? brand.defaultProfileName }}</strong></div>
-      <div class="runtime-mode-picker"><span>出站模式</span><AppSelect v-model="selectedMode" :options="modeOptions" :label="`出站模式：${modeLabel}`" plain /></div>
-      <button type="button" class="runtime-detail-link" aria-label="查看网络信息" @click="summaryDrawer = 'network'"><span>外部 IP</span><strong>{{ externalIpText }}</strong><AppIcon name="next" :size="14" /></button>
+      <div ref="modePicker" class="runtime-mode-picker"><span class="runtime-detail-label" @pointerdown.stop @click="toggleModePicker">出站模式<AppIcon name="chevron-down" :size="12" /></span><AppSelect v-model="selectedMode" :options="modeOptions" :label="`出站模式：${modeLabel}`" plain /></div>
+      <button type="button" class="runtime-detail-link" aria-label="查看网络信息" @click="summaryDrawer = 'network'"><span class="runtime-detail-label">外部 IP<AppIcon name="chevron-down" :size="12" /></span><strong>{{ externalIpText }}</strong></button>
     </section>
 
     <section class="dashboard-grid">

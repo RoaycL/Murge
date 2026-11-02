@@ -67,7 +67,7 @@ describe('Activity fluid-layout UI contract', () => {
     expect(css).toMatch(/\.connections-card\s*\{[^}]*container-type:\s*inline-size[^}]*display:\s*flex[^}]*flex-direction:\s*column/)
     expect(css).toMatch(/\.total-card\s*\{[^}]*container-type:\s*inline-size[^}]*display:\s*flex[^}]*flex-direction:\s*column/)
     expect(css).toMatch(/\.latency-breakdown\s*\{[^}]*margin-top:\s*auto/)
-    expect(css).toMatch(/\.topology-inline\s*\{[^}]*margin-top:\s*auto/)
+    expect(css).toMatch(/\.connections-breakdown\{[^}]*margin-top:auto/)
     expect(css).toMatch(/\.total-labels\s*\{[^}]*margin-top:\s*auto/)
     expect(css).toMatch(/@container\s*\(max-width:\s*320px\)/)
   })

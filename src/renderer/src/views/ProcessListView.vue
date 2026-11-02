@@ -4,12 +4,13 @@ import { useConnectionsStore } from "../stores/connections";
 import { useOverridesStore } from "../stores/overrides";
 import { usePoliciesStore } from "../stores/policies";
 import { groupConnectionsByProcess } from "../lib/connection-groups";
-import { formatBytes } from "../lib/format";
+import { formatBytes, formatRate, formatWallClock } from "../lib/format";
 import AppIcon from "../components/AppIcon.vue";
 import ProcessIcon from "../components/ProcessIcon.vue";
 import DetailDrawer from "../components/DetailDrawer.vue";
 import AppSelect from "../components/AppSelect.vue";
 import EmptyState from "../components/EmptyState.vue";
+import EntityStatsPanel from "../components/EntityStatsPanel.vue";
 import { formatConnectionChain } from "@shared/connection-chain";
 import { buildProcessRuleOverride, type ProcessRuleMatch } from "@shared/process-rule";
 
@@ -37,10 +38,47 @@ const groups = computed(() => {
     ? [...rows].sort((a, b) => a.label.localeCompare(b.label))
     : rows;
 });
-const selected = computed(
-  () => groups.value.find((group) => group.key === selectedKey.value) ?? null,
-);
-const processPath = computed(() => selected.value?.connections[0]?.metadata.processPath?.trim() ?? "");
+// Remember who was opened so the drawer (and its history) stays up after the
+// process closes its last connection.
+const selectedMeta = ref<{ label: string; subtitle: string; path: string } | null>(null);
+const selected = computed(() => {
+  if (!selectedKey.value) return null;
+  const live = groups.value.find((group) => group.key === selectedKey.value);
+  if (live) return live;
+  const meta = selectedMeta.value;
+  return meta ? { key: selectedKey.value, label: meta.label, subtitle: meta.subtitle, upload: 0, download: 0, connections: [] } : null;
+});
+const processPath = computed(() => selected.value?.connections[0]?.metadata.processPath?.trim() ?? selectedMeta.value?.path ?? "");
+const stats = computed(() => (selectedKey.value ? store.entityStats("process", selectedKey.value) : null));
+const totals = computed(() => store.entityTotals("process"));
+function rowRate(key: string): string {
+  const rate = totals.value.get(key)?.rate;
+  const text = formatRate((rate?.up ?? 0) + (rate?.down ?? 0));
+  return `${text.value} ${text.unit}`;
+}
+function rowTotal(group: { key: string; upload: number; download: number }): string {
+  const total = totals.value.get(group.key);
+  return formatBytes(total ? total.up + total.down : group.upload + group.download);
+}
+function countBy(values: Array<string | undefined>): string {
+  const counts = new Map<string, number>();
+  for (const value of values) if (value) counts.set(value, (counts.get(value) ?? 0) + 1);
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([name, count]) => `${name} ${count}`).join(" · ") || "—";
+}
+const details = computed(() => {
+  const group = selected.value;
+  if (!group) return [];
+  const connections = group.connections;
+  return [
+    { label: "进程名", value: group.label },
+    { label: "路径", value: processPath.value || "—" },
+    { label: "网络", value: countBy(connections.map((item) => item.metadata.network?.toUpperCase())) },
+    { label: "入站", value: countBy(connections.map((item) => item.metadata.type)) },
+    { label: "来源设备", value: [...new Set(connections.map((item) => item.metadata.sourceIP).filter(Boolean))].join(", ") || "—" },
+    { label: "最高流量主机名", value: stats.value?.topHost ?? "—" },
+    { label: "首次出现", value: stats.value ? formatWallClock(new Date(stats.value.firstSeen)) : "—" },
+  ];
+});
 const targetOptions = computed(() => [
   { value: "DIRECT", label: "直连 · DIRECT" },
   ...policies.groups.filter((group) => group.name !== "DIRECT" && !/[\r\n,]/.test(group.name)).map((group) => ({ value: group.name, label: group.name })),
@@ -58,6 +96,8 @@ const draft = computed(() => {
 });
 
 function selectProcess(key: string): void {
+  const group = groups.value.find((item) => item.key === key);
+  selectedMeta.value = group ? { label: group.label, subtitle: group.subtitle, path: group.connections[0]?.metadata.processPath?.trim() ?? "" } : null;
   selectedKey.value = key;
   match.value = processPath.value && !/[\r\n,]/.test(processPath.value) ? "path" : "name";
   target.value = "DIRECT";
@@ -127,8 +167,8 @@ onMounted(() => {
         <span
           >{{ group.label }}<small>{{ group.subtitle }}</small></span
         ><strong
-          >{{ formatBytes(group.upload + group.download)
-          }}<small>{{ group.connections.length }} 个连接</small></strong
+          >{{ rowRate(group.key)
+          }}<small>总计 {{ rowTotal(group) }} · {{ group.connections.length }} 个连接</small></strong
         ><AppIcon name="next" :size="15" />
       </button>
       <EmptyState v-if="!groups.length" icon="processes" title="暂无活动进程" detail="产生网络连接的进程会自动汇总到这里。" />
@@ -139,20 +179,19 @@ onMounted(() => {
       :subtitle="selected?.subtitle"
       @close="selectedKey = null"
       ><div v-if="selected" class="entity-detail drawer-detail">
-        <dl>
-          <div>
-            <dt>活动连接</dt>
-            <dd>{{ selected.connections.length }}</dd>
-          </div>
-          <div>
-            <dt>上传</dt>
-            <dd>{{ formatBytes(selected.upload) }}</dd>
-          </div>
-          <div>
-            <dt>下载</dt>
-            <dd>{{ formatBytes(selected.download) }}</dd>
-          </div>
-        </dl>
+        <EntityStatsPanel :stats="stats" :active-connections="selected.connections.length" :details="details" />
+        <h3>活动连接</h3>
+        <ul>
+          <li v-for="connection in selected.connections" :key="connection.id">
+            <span>{{
+              connection.metadata.host ||
+              connection.metadata.destinationIP ||
+              "未知目标"
+            }}</span
+            ><small>{{ formatConnectionChain(connection.chains) }} · ↑ {{ formatBytes(connection.upload) }} ↓ {{ formatBytes(connection.download) }}</small>
+          </li>
+          <li v-if="!selected.connections.length" class="entity-empty-row">当前没有活动连接</li>
+        </ul>
         <section class="process-rule-editor" aria-label="为进程创建分流规则">
           <h3>创建分流规则</h3>
           <p>生成全局覆写，规则置于订阅规则之前；不会修改订阅文件。保存后可在「覆写」中编辑或删除。</p>
@@ -161,17 +200,6 @@ onMounted(() => {
           <div class="process-rule-preview"><span>保存前预览</span><code>{{ draft?.rule ?? '当前进程信息不足，无法生成规则' }}</code></div>
           <button type="button" class="process-rule-save" :disabled="!draft || savingRule || !targetOptions.some((option) => option.value === target)" @click="saveRule">{{ savingRule ? '保存中…' : '保存规则' }}</button>
         </section>
-        <h3>目标</h3>
-        <ul>
-          <li v-for="connection in selected.connections" :key="connection.id">
-            <span>{{
-              connection.metadata.host ||
-              connection.metadata.destinationIP ||
-              "未知目标"
-            }}</span
-            ><small>{{ formatConnectionChain(connection.chains) }}</small>
-          </li>
-        </ul>
       </div></DetailDrawer
     >
   </div>
@@ -183,7 +211,8 @@ onMounted(() => {
 .process-rule-notice span{display:flex;flex-direction:column;gap:var(--space-1);min-width:0}
 .process-rule-notice small{color:var(--app-muted);overflow-wrap:anywhere}
 .process-rule-notice button{border:1px solid var(--app-divider);background:transparent;color:var(--app-text);border-radius:var(--radius-control);padding:7px 13px;cursor:pointer}
-.process-rule-editor{display:grid;gap:var(--space-5);margin:20px 0;padding:17px;border:1px solid var(--app-divider);border-radius:var(--radius-card);background:color-mix(in srgb,var(--app-surface) 78%,var(--app-bg))}
+.entity-empty-row{color:var(--app-muted)}
+.process-rule-editor{display:grid;gap:var(--space-5);margin:24px 0 4px;padding:17px;border:1px solid var(--app-divider);border-radius:var(--radius-card);background:color-mix(in srgb,var(--app-surface) 78%,var(--app-bg))}
 .process-rule-editor h3{margin:0}
 .process-rule-editor p{margin:0;color:var(--app-muted);font-size:var(--font-size-xs);line-height:1.5}
 .process-rule-editor label{display:flex;align-items:center;justify-content:space-between;gap:var(--space-5);font-size:var(--font-size-sm)}

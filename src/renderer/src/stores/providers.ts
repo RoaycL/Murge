@@ -62,7 +62,11 @@ function refreshFailureMessage(error: unknown): string {
   return err.message
 }
 
-const BATCH_REFRESH_CONCURRENCY = 2
+// Proxy providers (subscriptions) still download over DIRECT first, so keep
+// that queue narrow. Rule sets now download through the profile's select group
+// (see inspection.rs assign_rule_provider_download_proxy) and can run wider.
+const PROXY_BATCH_CONCURRENCY = 2
+const RULE_BATCH_CONCURRENCY = 6
 const TRANSIENT_RETRY_DELAYS_MS = [800, 2_000] as const
 
 function wait(ms: number): Promise<void> {
@@ -97,7 +101,7 @@ async function refreshWithBackoff(action: () => Promise<void>): Promise<void> {
 }
 
 /** Run provider pulls with bounded concurrency so one slow source cannot block every later row. */
-async function runProviderBatch(names: string[], task: (name: string) => Promise<void>): Promise<void> {
+async function runProviderBatch(names: string[], concurrency: number, task: (name: string) => Promise<void>): Promise<void> {
   const queue = [...new Set(names)]
   let cursor = 0
   const worker = async (): Promise<void> => {
@@ -107,7 +111,7 @@ async function runProviderBatch(names: string[], task: (name: string) => Promise
     }
   }
   await Promise.all(
-    Array.from({ length: Math.min(BATCH_REFRESH_CONCURRENCY, queue.length) }, () => worker())
+    Array.from({ length: Math.min(concurrency, queue.length) }, () => worker())
   )
 }
 
@@ -258,7 +262,7 @@ export const useProvidersStore = defineStore('providers', () => {
   async function refreshProxyProvidersBatch(names: string[]): Promise<{ updated: number; failed: number }> {
     let updated = 0
     let failed = 0
-    await runProviderBatch(names, async (name) => {
+    await runProviderBatch(names, PROXY_BATCH_CONCURRENCY, async (name) => {
       setOp(name, { refreshing: true, error: null })
       try {
         await refreshWithBackoff(() => window.desktop.mihomo.refreshProxyProvider(name))
@@ -282,7 +286,7 @@ export const useProvidersStore = defineStore('providers', () => {
   async function refreshRuleProvidersBatch(names: string[]): Promise<{ updated: number; failed: number }> {
     let updated = 0
     let failed = 0
-    await runProviderBatch(names, async (name) => {
+    await runProviderBatch(names, RULE_BATCH_CONCURRENCY, async (name) => {
       setOp(name, { refreshing: true, error: null }, 'rule')
       try {
         await refreshWithBackoff(() => window.desktop.mihomo.refreshRuleProvider(name))

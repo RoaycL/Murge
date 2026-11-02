@@ -6,7 +6,6 @@ import AppIcon from '../components/AppIcon.vue'
 import DetailDrawer from '../components/DetailDrawer.vue'
 import UsageHistoryPanel from '../components/UsageHistoryPanel.vue'
 import NetworkMetadataPanel from '../components/NetworkMetadataPanel.vue'
-import TopologyPanel from '../components/TopologyPanel.vue'
 import { useTrafficStore } from '../stores/traffic'
 import { useConnectionsStore } from '../stores/connections'
 import { useRuntimeStore } from '../stores/runtime'
@@ -34,7 +33,7 @@ const policies = usePoliciesStore()
 const systemProxy = useSystemProxyStore()
 const tun = useTunStore()
 const kernel = useKernelStore()
-const summaryDrawer = ref<'network' | 'usage' | 'topology' | null>(null)
+const summaryDrawer = ref<'network' | 'usage' | null>(null)
 
 // The card samples itself once a minute so the numbers never go stale.
 const LATENCY_REFRESH_MS = 60_000
@@ -86,6 +85,8 @@ const up = computed(() => formatRate(traffic.current?.up ?? 0))
 const down = computed(() => formatRate(traffic.current?.down ?? 0))
 const activeCount = computed(() => connections.summary?.totalConnections ?? 0)
 const processCount = computed(() => connections.summary?.distinctProcesses ?? 0)
+const deviceCount = computed(() => connections.summary?.distinctDevices ?? 0)
+const hostCount = computed(() => connections.summary?.distinctHosts ?? 0)
 const directBytes = computed(() => connections.summary?.directDownload ?? 0)
 const proxyBytes = computed(() => connections.summary?.proxyDownload ?? 0)
 
@@ -187,7 +188,11 @@ const chartBars = computed<number[]>(() => {
       <SurfaceCard class="connections-card">
         <div class="card-title-row"><span class="metric-label">活动连接<span v-if="connStateLabel" class="stream-state">{{ connStateLabel }}</span></span><i :class="connDotClass" /></div>
         <button type="button" class="connections-summary-link" @click="router.push('/connections')"><strong>{{ activeCount }}</strong><span>查看连接</span><AppIcon name="next" :size="15" /></button>
-        <button type="button" class="topology-inline" @click="summaryDrawer = 'topology'"><AppIcon name="connections" :size="16" /><span><strong>活动拓扑</strong><small>{{ processCount }} 个进程 · {{ activeCount }} 条连接</small></span><AppIcon name="next" :size="14" /></button>
+        <div class="connections-breakdown">
+          <button type="button" aria-label="查看进程" @click="router.push('/processes')"><strong>{{ processCount }}</strong><span>进程</span></button>
+          <button type="button" aria-label="查看设备" @click="router.push('/devices')"><strong>{{ deviceCount }}</strong><span>设备</span></button>
+          <button type="button" aria-label="查看连接" @click="router.push('/connections')"><strong>{{ hostCount }}</strong><span>域名</span></button>
+        </div>
       </SurfaceCard>
 
       <SurfaceCard class="traffic-card">
@@ -215,9 +220,9 @@ const chartBars = computed<number[]>(() => {
       </SurfaceCard>
 
     </section>
-    <DetailDrawer :open="Boolean(summaryDrawer)" :title="summaryDrawer === 'network' ? '网络信息' : summaryDrawer === 'usage' ? '用量历史' : '连接拓扑'" @close="summaryDrawer = null">
+    <DetailDrawer :open="Boolean(summaryDrawer)" :title="summaryDrawer === 'network' ? '网络信息' : '用量历史'" @close="summaryDrawer = null">
       <template v-if="summaryDrawer === 'network'" #actions><button type="button" class="drawer-probe-button" :disabled="latency.state === 'probing'" @click="latency.probe()">{{ latency.state === 'probing' ? '检测中…' : '重新检测' }}</button></template>
-      <NetworkMetadataPanel v-if="summaryDrawer === 'network'" /><UsageHistoryPanel v-else-if="summaryDrawer === 'usage'" /><TopologyPanel v-else-if="summaryDrawer === 'topology'" />
+      <NetworkMetadataPanel v-if="summaryDrawer === 'network'" /><UsageHistoryPanel v-else-if="summaryDrawer === 'usage'" />
     </DetailDrawer>
   </div>
 </template>
@@ -282,11 +287,6 @@ const chartBars = computed<number[]>(() => {
   width: 100%;
 }
 .network-metadata-card {
-  grid-column: 1 / -1;
-  padding: 15px 16px;
-  width: 100%;
-}
-.topology-card {
   grid-column: 1 / -1;
   padding: 15px 16px;
   width: 100%;

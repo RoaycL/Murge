@@ -45,8 +45,12 @@ describe('network drawer + resources UI contract', () => {
     expect(service).not.toMatch(/setProxy\([^)]*mode:\s*'system'/s)
   })
 
-  it('renames Provider sections to 集合 with per-section 更新全部 and per-row 配置查看', async () => {
+  it('lists remote 集合 in one table with type filter, 仅显示未就绪 and per-row 配置查看', async () => {
     const view = await read('src/renderer/src/views/ResourcesView.vue')
+    expect(view).toMatch(/role="table"/)
+    expect(view).toMatch(/仅显示未就绪的项目/)
+    expect(view).toMatch(/最后更新/)
+    expect(view).not.toMatch(/完成/)
     expect(view).toMatch(/代理集合、规则集合与地理数据库/)
     expect(view).not.toMatch(/Sub-Store|subStore/)
     expect(view).toMatch(/代理集合/)
@@ -111,7 +115,7 @@ describe('network drawer + resources UI contract', () => {
     expect(base).toMatch(/@keyframes icon-spin/)
     expect(base).toMatch(/icon-spin 1s linear infinite/)
     // 外部资源: per-row refresh buttons spin while that row's op is refreshing.
-    expect(resources).toMatch(/spinning: providers\.opOf\(item\.name, 'proxy'\)\.refreshing/)
+    expect(resources).toMatch(/spinning: providers\.opOf\(row\.name, row\.kind\)\.refreshing/)
     // 规则页: per-row text buttons replaced by icon buttons with the same spin.
     expect(rules).toMatch(/class="icon-control"/)
     expect(rules).toMatch(/spinning: providers\.opOf\(provider\.name, 'rule'\)\.refreshing/)
@@ -182,7 +186,7 @@ describe('network drawer + resources UI contract', () => {
     expect(sidebar).toMatch(/label: '配置'[\s\S]*to: '\/profiles'[\s\S]*to: '\/overrides'[\s\S]*to: '\/resources'[\s\S]*to: '\/substore', label: 'Sub-Store'/)
     // Optical sizing: the wide Lucide resource glyph is slightly reduced;
     // Sub-Store's official artwork is cropped to remove its oversized SVG inset.
-    expect(sidebar).toMatch(/icon: 'resources', iconSize: 17/)
+    expect(sidebar).toMatch(/to: '\/resources', label: '外部资源', icon: 'resources' \}/)
     expect(subStoreIcon).toMatch(/viewBox="14 14 80 80"/)
     expect(settings).toMatch(/subStoreEnabled:\s*true/)
     expect(main).toMatch(/subStoreService\.ensureRunning\(\)/)

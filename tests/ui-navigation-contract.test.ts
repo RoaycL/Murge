@@ -107,7 +107,9 @@ describe('Surge-inspired UI navigation contract', () => {
     const activity = read('src/renderer/src/views/ActivityView.vue')
     expect(activity).not.toContain('DHCP 设备')
     expect(activity).not.toContain('activity-entry-grid')
-    expect(activity).toContain('class="topology-inline"')
+    expect(activity).not.toContain('topology-inline')
+    expect(activity).toContain('class="connections-breakdown"')
+    expect(connections).toContain('<TopologyPanel')
     expect(activity).toContain('class="total-bar total-history-link"')
   })
 

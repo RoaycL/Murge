@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   Activity, AppWindow, ArrowDown, ArrowUp, Braces, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, Clipboard,
-  CloudDownload, Code2, Cpu, Database, Download, Ellipsis, Eye, FileCog, FilePlus2, Globe2, Info, Laptop,
+  Code2, Cpu, Database, Download, Ellipsis, Eye, Files, FilePlus2, Globe2, Info, Laptop, Layers,
   LayoutDashboard, ListTree, Logs, Network, Palette, PanelRightClose, Pencil, Plus, RefreshCw,
   Route, Search, ServerCog, Settings2, ShieldCheck, SlidersHorizontal, Trash2,
   Upload, Wifi, X
@@ -28,9 +28,9 @@ const icons: Record<AppIconName, Component> = {
   devices: Laptop,
   policies: Route,
   rules: ListTree,
-  profiles: FileCog,
+  profiles: Files,
   overrides: Braces,
-  resources: CloudDownload,
+  resources: Layers,
   more: Settings2,
   general: SlidersHorizontal,
   network: Wifi,

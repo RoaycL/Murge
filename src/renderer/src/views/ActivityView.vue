@@ -163,7 +163,7 @@ const chartBars = computed<number[]>(() => {
       <div><span>网络</span><strong>{{ runtime.summary?.networkName ?? '以太网' }}</strong></div>
       <div><span>配置</span><strong>{{ runtime.summary?.profileName ?? brand.defaultProfileName }}</strong></div>
       <div class="runtime-mode-picker"><span>出站模式</span><AppSelect v-model="selectedMode" :options="modeOptions" :label="`出站模式：${modeLabel}`" plain /></div>
-      <button type="button" class="runtime-detail-link" aria-label="查看网络信息" @click="summaryDrawer = 'network'"><span>外部 IP</span><strong>{{ externalIpText }}</strong><AppIcon name="next" :size="14" /></button>
+      <button type="button" class="runtime-detail-link" aria-label="查看网络信息" @click="summaryDrawer = 'network'"><span class="runtime-detail-label">外部 IP<AppIcon name="chevron-down" :size="12" /></span><strong>{{ externalIpText }}</strong></button>
     </section>
 
     <section class="dashboard-grid">

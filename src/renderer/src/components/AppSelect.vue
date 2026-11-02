@@ -14,8 +14,9 @@ const props = withDefaults(defineProps<{
   label: string
   disabled?: boolean
   /**
-   * 纯文本模式：常显时与相邻的运行时数值一致（16px 加粗、无控件框/箭头），
-   * 仅打开下拉后才呈现控件态。用于活动页“出站模式”这类行内选择器。
+   * 纯文本模式：与相邻的运行时数值一致（16px 加粗、无控件框），打开下拉时
+   * 也不切换成控件框，只显示箭头并在文字下方弹出菜单（与 Surge 一致，
+   * 避免点开时文字跳动）。用于活动页“出站模式”这类行内选择器。
    */
   plain?: boolean
 }>(), { disabled: false, plain: false })
@@ -50,8 +51,10 @@ function positionMenu(): void {
   const top = menuAbove.value
     ? Math.max(VIEWPORT_MARGIN, triggerRect.top - MENU_GAP - Math.min(height, availableHeight))
     : triggerRect.bottom + MENU_GAP
+  // 纯文本模式与文字左对齐（菜单从文字下方展开），控件模式与右缘对齐。
+  const anchor = props.plain ? triggerRect.left - 8 : triggerRect.right - width
   const left = Math.min(
-    Math.max(VIEWPORT_MARGIN, triggerRect.right - width),
+    Math.max(VIEWPORT_MARGIN, anchor),
     Math.max(VIEWPORT_MARGIN, viewportWidth - width - VIEWPORT_MARGIN)
   )
   menuStyle.value = {
@@ -158,5 +161,10 @@ onBeforeUnmount(() => {
 .app-select.plain .trigger-chevron { opacity: 0; transition: opacity .14s ease, transform .16s ease; }
 .app-select.plain .app-select-trigger:hover:not(:disabled) .trigger-chevron,
 .app-select.plain.open .trigger-chevron { opacity: 1; }
-.app-select.plain.open .app-select-trigger { padding: 0 10px 0 12px; border-color: color-mix(in srgb, var(--app-blue) 55%, var(--app-divider)); background: color-mix(in srgb, var(--app-blue) 7%, var(--app-surface)); font-size: var(--font-size-md); font-weight: var(--font-weight-medium); }
+.app-select.plain.open .app-select-trigger { color: var(--app-blue); }
+.app-select-menu { animation: app-select-menu-in .12s ease-out; transform-origin: top left; }
+.app-select-menu.above { transform-origin: bottom left; }
+@keyframes app-select-menu-in { from { opacity: 0; transform: translateY(-4px) scale(.98); } to { opacity: 1; transform: none; } }
+.app-select-menu.above { animation-name: app-select-menu-in-above; }
+@keyframes app-select-menu-in-above { from { opacity: 0; transform: translateY(4px) scale(.98); } to { opacity: 1; transform: none; } }
 </style>

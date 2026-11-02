@@ -16,7 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const protocolVersion = 7
+const protocolVersion = 8
 const maxProfileBytes = 16 * 1024 * 1024
 
 // maxRequestBytes bounds one JSON request line. The profile travels as a JSON
@@ -45,6 +45,7 @@ type serviceRequest struct {
 	ProxyPort       int    `json:"proxyPort,omitempty"`
 	ProviderKind    string `json:"providerKind,omitempty"`
 	ProviderName    string `json:"providerName,omitempty"`
+	Forwarding      string `json:"forwarding,omitempty"`
 }
 
 type serviceResponse struct {
@@ -79,7 +80,15 @@ func decodeRequest(data []byte) (serviceRequest, error) {
 	if err := validateUint64(request.RequestID); err != nil {
 		return serviceRequest{}, fmt.Errorf("invalid requestId: %w", err)
 	}
+	if request.Operation != "forwarding" && request.Forwarding != "" {
+		return serviceRequest{}, errors.New("forwarding is only valid for the forwarding operation")
+	}
 	switch request.Operation {
+	case "forwarding":
+		if request.SessionID != "" || request.Profile != "" || request.ProfileSHA256 != "" || request.Version != "" || request.ProxyPort != 0 || request.ProviderKind != "" || request.ProviderName != "" ||
+			(request.Forwarding != "enable" && request.Forwarding != "disable" && request.Forwarding != "status") {
+			return serviceRequest{}, errors.New("invalid forwarding request")
+		}
 	case "start":
 		if !uuidPattern.MatchString(request.SessionID) {
 			return serviceRequest{}, errors.New("invalid start sessionId")

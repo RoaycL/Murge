@@ -31,6 +31,8 @@ const api: DesktopApi = {
     getCachedIcon: (cacheKey, url, refresh) => invoke(IPC.appGetCachedIcon, cacheKey, url, refresh),
     listNetworkInterfaces: () => invoke(IPC.appListNetworkInterfaces),
     listLocalAddresses: () => invoke(IPC.appListLocalAddresses),
+    getLanGateway: () => invoke(IPC.appGetLanGateway),
+    setLanGateway: (enabled, device) => invoke(IPC.appSetLanGateway, enabled, device),
     onNavigate: (listener) => listen(IPC.appNavigateEvent, listener)
   },
   diagnostics: {

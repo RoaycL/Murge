@@ -69,3 +69,22 @@ export function describeDevice(address: string, inbounds: readonly string[], loc
 export function lanAddresses(local: readonly LocalAddress[]): LocalAddress[] {
   return local.filter((entry) => entry.lan)
 }
+
+/** One adapter 网关模式 forwards on (reported by the privileged service). */
+export interface LanGatewayInterface {
+  name: string
+  role: 'lan' | 'tun'
+  forwarding: boolean
+  /** Switched on by Murge, so it is switched off again when 网关模式 ends. */
+  managed: boolean
+}
+
+/** `lan-gateway:get-state` / `lan-gateway:set-enabled`. */
+export interface LanGatewayState {
+  enabled: boolean
+  /** service: the TUN service applies it; elevated: a UAC prompt per switch. */
+  mode: 'service' | 'elevated' | 'unsupported'
+  tunPresent: boolean | null
+  interfaces: LanGatewayInterface[]
+  error: string | null
+}

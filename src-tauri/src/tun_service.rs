@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{code, IpcError};
 
-pub const TUN_SERVICE_PROTOCOL_VERSION: u64 = 7;
+pub const TUN_SERVICE_PROTOCOL_VERSION: u64 = 8;
 pub const TUN_SERVICE_MAX_PROFILE_BYTES: usize = 16 * 1024 * 1024;
 pub const TUN_SERVICE_MAX_PROVIDER_CONTENT_BYTES: usize = 4 * 1024 * 1024;
 /// Provider YAML can legitimately be several MiB; JSON escaping needs headroom.
@@ -161,6 +161,7 @@ pub fn parse_tun_service_response(
                     | "stopping"
                     | "installed"
                     | "content"
+                    | "forwarding"
                     | "valid"
                     | "failed"
                     | "conflict"
@@ -211,7 +212,7 @@ pub fn parse_tun_service_response(
     let content_format = optional_string(object, "contentFormat")?;
     if content_format
         .as_deref()
-        .map(|value| !matches!(value, "yaml" | "text"))
+        .map(|value| !matches!(value, "yaml" | "text" | "json"))
         .unwrap_or(false)
     {
         return Err(protocol_invalid("unknown contentFormat"));
@@ -250,7 +251,18 @@ pub fn parse_tun_service_response(
     {
         return Err(protocol_invalid("content requires payload metadata"));
     }
-    if outcome != "content" && has_content {
+    // 网关模式 forwarding status: a JSON document and nothing else.
+    if outcome == "forwarding"
+        && (content.is_none()
+            || content_format.as_deref() != Some("json")
+            || content_source.is_some())
+    {
+        return Err(protocol_invalid("forwarding requires a JSON status"));
+    }
+    if outcome == "content" && content_format.as_deref() == Some("json") {
+        return Err(protocol_invalid("provider content must be yaml or text"));
+    }
+    if !matches!(outcome.as_str(), "content" | "forwarding") && has_content {
         return Err(protocol_invalid(
             "non-content response must not carry provider content",
         ));
@@ -640,6 +652,32 @@ impl TunServiceClient {
         Ok(response)
     }
 
+    /// 网关模式: ask the service to switch IPv4 forwarding on the LAN and TUN
+    /// adapters (`enable` / `disable`) or just report it (`status`). The
+    /// service keeps it applied across TUN adapter rebuilds by itself.
+    pub async fn forwarding(&self, action: &str) -> Result<Value, IpcError> {
+        if !matches!(action, "enable" | "disable" | "status") {
+            return Err(IpcError::invalid_argument("invalid forwarding action"));
+        }
+        let mut request = Map::new();
+        request.insert("operation".into(), json!("forwarding"));
+        request.insert("forwarding".into(), json!(action));
+        let response = self.exchange(request, DEFAULT_TIMEOUT_MS).await?;
+        match (response.outcome.as_str(), &response.content) {
+            ("forwarding", Some(content)) => serde_json::from_str::<Value>(content)
+                .ok()
+                .filter(Value::is_object)
+                .ok_or_else(|| protocol_invalid("forwarding status must be a JSON object")),
+            _ => Err(IpcError::internal(
+                response
+                    .validation_message
+                    .clone()
+                    .or_else(|| response.error_code.clone())
+                    .unwrap_or_else(|| format!("Service returned {}", response.outcome)),
+            )),
+        }
+    }
+
     /// Read one provider from the service-owned live mihomo home.
     pub async fn get_provider_content(&self, kind: &str, name: &str) -> Result<Value, IpcError> {
         if !matches!(kind, "proxy" | "rule")
@@ -756,7 +794,7 @@ pub(crate) mod tests {
 
     #[test]
     fn response_validation_mirrors_the_schema() {
-        let base = |outcome: &str, session: Value, pid: Value| json!({"protocolVersion": 7, "requestId": "4", "outcome": outcome, "sessionId": session, "pid": pid, "errorCode": null});
+        let base = |outcome: &str, session: Value, pid: Value| json!({"protocolVersion": 8, "requestId": "4", "outcome": outcome, "sessionId": session, "pid": pid, "errorCode": null});
         let session = "6f1c2f1e-8a5b-4c1d-9e2f-0a1b2c3d4e5f";
         assert!(
             parse_tun_service_response(&base("running", json!(session), json!(42)), "4").is_ok()
@@ -942,6 +980,44 @@ pub(crate) mod tests {
         assert_eq!(client.get_owned_session().unwrap().pid, 5);
         client.reconcile().await.unwrap();
         assert_eq!(client.get_owned_session(), None);
+    }
+
+    #[tokio::test]
+    async fn forwarding_sends_the_action_and_reads_the_json_status() {
+        let transport = ScriptedTransport::default();
+        transport.push(|request| {
+            assert_eq!(request["operation"], "forwarding");
+            assert_eq!(request["forwarding"], "enable");
+            let mut value = reply(request, "forwarding", None, None);
+            value["content"] =
+                json!(r#"{"desired":true,"tunPresent":true,"interfaces":[],"error":""}"#);
+            value["contentFormat"] = json!("json");
+            Ok(value)
+        });
+        transport.push(|request| Ok(reply(request, "failed", None, None)));
+        let client = TunServiceClient::new(Box::new(transport.clone()));
+        let status = client.forwarding("enable").await.unwrap();
+        assert_eq!(status["desired"], true);
+        assert!(client.forwarding("disable").await.is_err());
+        assert!(client.forwarding("以太网").await.is_err());
+        assert_eq!(transport.requests.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn forwarding_responses_carry_only_a_json_status() {
+        let base = json!({"protocolVersion": 8, "requestId": "4", "outcome": "forwarding", "sessionId": null, "pid": null, "errorCode": null});
+        assert!(parse_tun_service_response(&base, "4").is_err());
+        let mut good = base.clone();
+        good["content"] = json!("{}");
+        good["contentFormat"] = json!("json");
+        assert!(parse_tun_service_response(&good, "4").is_ok());
+        let mut sourced = good.clone();
+        sourced["contentSource"] = json!("cache");
+        assert!(parse_tun_service_response(&sourced, "4").is_err());
+        let mut provider = good.clone();
+        provider["outcome"] = json!("content");
+        provider["contentSource"] = json!("cache");
+        assert!(parse_tun_service_response(&provider, "4").is_err());
     }
 
     #[tokio::test]

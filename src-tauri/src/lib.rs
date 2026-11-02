@@ -49,6 +49,7 @@ use network_metadata::NetworkMetadataService;
 mod icons;
 mod kernel_config_validation;
 mod kernel_process;
+mod lan_gateway;
 mod live_config;
 mod mihomo_artifact;
 mod privileged_kernel;
@@ -965,6 +966,7 @@ fn compose_privileged_kernel(
         live_config::build_service_profile(&profiles, &overrides, &models)
     });
     let readiness_handle = handle.clone();
+    let gateway_handle = handle.clone();
     let readiness: privileged_kernel::ReadinessProbe = std::sync::Arc::new(move || {
         let (controller_port, secret) = current_controller(&readiness_handle);
         Box::pin(async move {
@@ -982,6 +984,12 @@ fn compose_privileged_kernel(
             std::sync::Arc::new(move || version_selection()),
             privileged_kernel::PrivilegedKernelOptions {
                 controller_port: std::sync::Arc::new(move || current_controller(&handle).0),
+                lan_gateway: Some(std::sync::Arc::new(move || {
+                    gateway_handle
+                        .try_state::<std::sync::Arc<settings::SettingsStore>>()
+                        .map(|settings| settings.get().lan_gateway)
+                        .unwrap_or(false)
+                })),
                 ..Default::default()
             },
         ),

@@ -46,6 +46,8 @@ pub struct AppSettings {
     pub proxy_guard: bool,
     pub sub_store_enabled: bool,
     pub sub_store_use_proxy: bool,
+    /// 网关模式: keep Windows IPv4 forwarding on for the LAN and TUN adapters.
+    pub lan_gateway: bool,
 }
 
 impl Default for AppSettings {
@@ -68,6 +70,7 @@ impl Default for AppSettings {
             proxy_guard: true,
             sub_store_enabled: true,
             sub_store_use_proxy: false,
+            lan_gateway: false,
         }
     }
 }
@@ -143,6 +146,7 @@ pub fn parse_app_settings(document: &serde_json::Value) -> AppSettings {
         proxy_guard: boolean("proxyGuard", defaults.proxy_guard),
         sub_store_enabled: boolean("subStoreEnabled", defaults.sub_store_enabled),
         sub_store_use_proxy: boolean("subStoreUseProxy", defaults.sub_store_use_proxy),
+        lan_gateway: boolean("lanGateway", defaults.lan_gateway),
     }
 }
 
@@ -289,6 +293,7 @@ impl SettingsStore {
             proxy_guard: boolean("proxyGuard", current.proxy_guard),
             sub_store_enabled: boolean("subStoreEnabled", current.sub_store_enabled),
             sub_store_use_proxy: boolean("subStoreUseProxy", current.sub_store_use_proxy),
+            lan_gateway: boolean("lanGateway", current.lan_gateway),
         };
         self.write_to_disk(&next);
         state.cached = Some(next.clone());

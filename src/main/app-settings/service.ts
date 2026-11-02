@@ -77,7 +77,8 @@ export class AppSettingsService implements AppSettingsGateway {
         subStoreUseProxy:
           typeof patch.subStoreUseProxy === 'boolean'
             ? patch.subStoreUseProxy
-            : current.subStoreUseProxy
+            : current.subStoreUseProxy,
+        lanGateway: current.lanGateway
       }
       await this.write(next)
       for (const listener of this.listeners) {

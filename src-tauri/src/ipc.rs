@@ -177,6 +177,15 @@ pub async fn dispatch(
         }
         "app:list-network-interfaces" => Ok(desktop.list_network_interfaces()),
         "app:list-local-addresses" => Ok(desktop.list_local_addresses()),
+        // 网关模式: Windows IPv4 forwarding, applied by the privileged service.
+        "lan-gateway:get-state" => Ok(crate::lan_gateway::get_state(settings, kernel).await),
+        "lan-gateway:set-enabled" => {
+            let enabled = arg(payload, 0)
+                .and_then(Value::as_bool)
+                .ok_or_else(|| IpcError::invalid_argument("enabled must be a boolean"))?;
+            let device = string_arg(payload, 1);
+            crate::lan_gateway::set_enabled(settings, kernel, enabled, device).await
+        }
         // Network (egress) metadata — Phase 3C slice 13. State lives on the
         // app handle (cached, single-flight); the payload tail carries the
         // per-call argument.

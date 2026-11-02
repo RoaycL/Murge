@@ -244,6 +244,10 @@ export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemPro
       .filter((item) => item.name.length > 0 && item.name.length <= 255 && !/[\x00-\x1f\x7f]/.test(item.name))
       .sort((left, right) => Number(right.lan) - Number(left.lan) || left.name.localeCompare(right.name))
   }])
+  // 网关模式 forwarding exists only in the Tauri shell's TUN service.
+  const unsupportedGateway = async () => ({ enabled: false, mode: 'unsupported', tunPresent: null, interfaces: [], error: null })
+  entries.push([IPC.appGetLanGateway, unsupportedGateway])
+  entries.push([IPC.appSetLanGateway, unsupportedGateway])
   for (const [channel, handler] of entries) {
     ipcMain.handle(channel, wrapHandler(handler))
   }

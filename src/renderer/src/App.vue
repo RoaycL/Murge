@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { RouterView } from 'vue-router'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { RouterView, useRoute } from 'vue-router'
 import AppSidebar from './components/AppSidebar.vue'
 import ToastHost from './components/ToastHost.vue'
 import ConfirmModal from './components/ConfirmModal.vue'
@@ -17,6 +17,11 @@ import { approveNavigation, cancelNavigation, pendingNavigation, unsavedLabels }
 import { router } from './router'
 
 const brand = ref<BrandConfig>(fallbackBrand)
+const route = useRoute()
+// 与 Surge 一致：活动、概览、配置这类卡片主页整窗是一整块背景（侧栏与内容不分层），
+// 其他页面的内容区是浮在窗口底上的叠加面板。
+const FLAT_SURFACE_ROUTES = ['/activity', '/overview', '/profiles']
+const contentSurface = computed(() => FLAT_SURFACE_ROUTES.includes(route.path) ? 'flat' : 'panel')
 const kernel = useKernelStore()
 const systemProxy = useSystemProxyStore()
 const appearance = useAppearanceStore()
@@ -56,7 +61,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="app-window">
-    <div class="app-frame">
+    <div class="app-frame" :data-surface="contentSurface">
       <AppSidebar :brand="brand" />
       <main class="app-content">
         <RouterView />

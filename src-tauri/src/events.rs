@@ -466,7 +466,9 @@ impl MihomoStreams {
             ][index];
             let shared = Arc::new(StreamShared {
                 kind,
-                url: format!("ws://127.0.0.1:{}/{}/", endpoint.port, path_of(kind)),
+                // No trailing slash: mihomo routes `/traffic` and `/logs` exactly and
+                // answers `/traffic/` with 404 (same URLs as the Electron transport).
+                url: stream_url(endpoint.port, kind),
                 secret: endpoint.secret.clone(),
                 options: StreamOptions::default(),
                 listeners: self.hubs[index].clone(),
@@ -526,6 +528,10 @@ fn index_of(kind: StreamKind) -> usize {
         StreamKind::Connections => 1,
         StreamKind::Logs => 2,
     }
+}
+
+fn stream_url(port: i64, kind: StreamKind) -> String {
+    format!("ws://127.0.0.1:{port}/{}", path_of(kind))
 }
 
 fn path_of(kind: StreamKind) -> &'static str {
@@ -598,6 +604,22 @@ mod tests {
     }
 
     #[test]
+    fn stream_urls_match_the_mihomo_routes_without_a_trailing_slash() {
+        assert_eq!(
+            stream_url(9090, StreamKind::Traffic),
+            "ws://127.0.0.1:9090/traffic"
+        );
+        assert_eq!(
+            stream_url(9090, StreamKind::Connections),
+            "ws://127.0.0.1:9090/connections"
+        );
+        assert_eq!(
+            stream_url(9090, StreamKind::Logs),
+            "ws://127.0.0.1:9090/logs"
+        );
+    }
+
+    #[test]
     fn event_hub_subscription_semantics() {
         let hub = EventHub::new();
         let (received, listener) = collector();
@@ -633,7 +655,7 @@ mod tests {
     fn stream_error_payload_matches_the_ts_shape() {
         let shared = Arc::new(StreamShared {
             kind: StreamKind::Traffic,
-            url: "ws://127.0.0.1:1/traffic/".into(),
+            url: "ws://127.0.0.1:1/traffic".into(),
             secret: String::new(),
             options: StreamOptions::default(),
             listeners: EventHub::new(),

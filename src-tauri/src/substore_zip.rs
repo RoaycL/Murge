@@ -241,6 +241,18 @@ pub(crate) fn extract_kernel_zip_bytes(
     )
 }
 
+/// Read one named file entry out of an archive without extracting the rest
+/// (the Sub-Store Node runtime: only `node.exe` is needed from the official
+/// zip). Uses the kernel budgets because `node.exe` is ~90 MiB.
+pub(crate) fn read_zip_entry(buf: &[u8], name: &str) -> Result<Vec<u8>, ZipFormatError> {
+    let entries = parse_central_directory(buf, KERNEL_MAX_ENTRY_BYTES, KERNEL_MAX_TOTAL_BYTES)?;
+    let entry = entries
+        .iter()
+        .find(|entry| !entry.is_directory && entry.name == name)
+        .ok_or_else(|| ZipFormatError(format!("归档缺少条目（{name}）")))?;
+    entry_data(buf, entry, KERNEL_MAX_ENTRY_BYTES)
+}
+
 fn extract_zip_with_entry_limit(
     buf: &[u8],
     dest_dir: &Path,
@@ -432,6 +444,19 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn reads_a_single_named_entry() {
+        let archive = zip_stored_bytes(vec![
+            ("node-v1-win-x64/node.exe", b"MZ-node".to_vec()),
+            ("node-v1-win-x64/README.md", b"readme".to_vec()),
+        ]);
+        assert_eq!(
+            read_zip_entry(&archive, "node-v1-win-x64/node.exe").unwrap(),
+            b"MZ-node".to_vec()
+        );
+        assert!(read_zip_entry(&archive, "node.exe").is_err());
     }
 
     #[test]

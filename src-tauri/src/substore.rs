@@ -35,6 +35,8 @@ pub const SUB_STORE_PORT_BASE: u16 = 38324;
 pub const SUB_STORE_START_TIMEOUT_MS: u64 = 20_000;
 /// Budget for one GitHub asset/API request.
 pub const SUB_STORE_FETCH_TIMEOUT_MS: u64 = 60_000;
+/// Budget for one binary download (the ~36 MiB Node runtime on slow links).
+const SUB_STORE_DOWNLOAD_TIMEOUT_MS: u64 = 300_000;
 pub const SUB_STORE_BACKEND_LATEST_API: &str =
     "https://api.github.com/repos/sub-store-org/Sub-Store/releases/latest";
 pub const SUB_STORE_FRONTEND_LATEST_API: &str =
@@ -50,6 +52,70 @@ const VERSIONS_FILE: &str = "versions.json";
 const USER_AGENT: &str = "substore-kernel-manager";
 const HEALTH_POLL_MS: u64 = 300;
 const BACKEND_MAX_BYTES: u64 = 16 * 1024 * 1024;
+
+/// The JavaScript runtime the backend bundle runs on. Electron forks the
+/// bundle with its own embedded Node; the Tauri shell has none, so the
+/// official Node.js Windows build is fetched once (pinned version, size and
+/// SHA-256) and cached next to the Sub-Store assets.
+pub const NODE_RUNTIME_VERSION: &str = "v24.22.2";
+const NODE_RUNTIME_DIR: &str = "runtime";
+const NODE_ZIP_MAX_BYTES: u64 = 64 * 1024 * 1024;
+/// Official origin first, then the npmmirror copy (same bytes; the pinned
+/// digest makes the mirror as trustworthy as the origin).
+const NODE_DIST_BASES: [&str; 2] = [
+    "https://nodejs.org/dist",
+    "https://npmmirror.com/mirrors/node",
+];
+
+/// Pinned facts for one Windows Node.js build (from the release's
+/// SHASUMS256.txt).
+pub struct NodeRuntimeAsset {
+    pub arch: &'static str,
+    pub zip_size: u64,
+    pub zip_sha256: &'static str,
+    pub exe_size: u64,
+    pub exe_sha256: &'static str,
+}
+
+pub const NODE_RUNTIME_ASSETS: [NodeRuntimeAsset; 2] = [
+    NodeRuntimeAsset {
+        arch: "x64",
+        zip_size: 37_754_834,
+        zip_sha256: "ca1bff5d8ead13c9f2ea404a176db46bd430704d5b5113734049fa365e7799e2",
+        exe_size: 93_922_624,
+        exe_sha256: "1c331340fa6cac5e4294725959070a143fa0507195a78ad77eed7943f719aac9",
+    },
+    NodeRuntimeAsset {
+        arch: "arm64",
+        zip_size: 33_789_289,
+        zip_sha256: "f47968c213105077f64c6510f007632c0ca2574802a0b5067c327c49abe1c468",
+        exe_size: 82_156_872,
+        exe_sha256: "e2d6e75a0bfe4c176316d7c732eb8def9d94570c759eaeab335473a015abb7ea",
+    },
+];
+
+/// The pinned Node build for the running architecture (None = unsupported).
+pub fn node_runtime_asset() -> Option<&'static NodeRuntimeAsset> {
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        _ => return None,
+    };
+    NODE_RUNTIME_ASSETS.iter().find(|asset| asset.arch == arch)
+}
+
+/// `node-v24.22.2-win-x64` — the zip's base name and its top-level folder.
+pub fn node_runtime_stem(asset: &NodeRuntimeAsset) -> String {
+    format!("node-{NODE_RUNTIME_VERSION}-win-{}", asset.arch)
+}
+
+pub fn node_runtime_download_urls(asset: &NodeRuntimeAsset) -> Vec<String> {
+    let stem = node_runtime_stem(asset);
+    NODE_DIST_BASES
+        .iter()
+        .map(|base| format!("{base}/{NODE_RUNTIME_VERSION}/{stem}.zip"))
+        .collect()
+}
 const FRONTEND_ZIP_MAX_BYTES: u64 = 32 * 1024 * 1024;
 
 /// GitHub API endpoint listing a specific backend release tag.
@@ -113,6 +179,9 @@ fn versions_value(versions: &Versions) -> Value {
 /// interface so tests can inject a recording fake instead of spawning.
 pub struct SubStoreWorkerHandle {
     child: StdMutex<Option<tokio::process::Child>>,
+    /// Why the process could not be spawned (None for injected fakes and
+    /// successful spawns) — surfaced at once instead of a start timeout.
+    spawn_error: Option<String>,
     /// The `onLog` sink; None = `Stdio::null()` (no pipes at all). Held for
     /// the handle lifetime so the forwarded readers own a stable sink.
     #[allow(dead_code)]
@@ -120,6 +189,19 @@ pub struct SubStoreWorkerHandle {
 }
 
 impl SubStoreWorkerHandle {
+    /// A spawn failure or an early exit of the worker, if any.
+    pub fn exit_error(&self) -> Option<String> {
+        if let Some(error) = &self.spawn_error {
+            return Some(error.clone());
+        }
+        let mut guard = self.child.lock().unwrap();
+        let child = guard.as_mut()?;
+        match child.try_wait() {
+            Ok(Some(status)) => Some(format!("Sub-Store 进程已退出（{status}）")),
+            _ => None,
+        }
+    }
+
     pub async fn terminate(&self) {
         let taken = self.child.lock().unwrap().take();
         if let Some(mut child) = taken {
@@ -217,6 +299,8 @@ pub struct SubStoreService {
 struct SubStoreInner {
     worker: StdMutex<Option<Arc<SubStoreWorkerHandle>>>,
     unexpected_exit_error: StdMutex<Option<String>>,
+    /// The Node runtime path already verified this process.
+    node_verified: StdMutex<Option<PathBuf>>,
     port: StdMutex<Option<u16>>,
     phase: StdMutex<&'static str>,
     error: StdMutex<Option<String>>,
@@ -283,7 +367,7 @@ impl SubStoreHttp {
             .client()
             .get(url)
             .header("User-Agent", USER_AGENT)
-            .timeout(Duration::from_millis(SUB_STORE_FETCH_TIMEOUT_MS))
+            .timeout(Duration::from_millis(SUB_STORE_DOWNLOAD_TIMEOUT_MS))
             .send()
             .await
             .map_err(|error| format!("下载失败：{error}"))?;
@@ -339,6 +423,7 @@ impl SubStoreService {
             inner: Arc::new(SubStoreInner {
                 worker: StdMutex::new(None),
                 unexpected_exit_error: StdMutex::new(None),
+                node_verified: StdMutex::new(None),
                 port: StdMutex::new(None),
                 phase: StdMutex::new("idle"),
                 error: StdMutex::new(None),
@@ -798,6 +883,97 @@ impl SubStoreService {
         }
     }
 
+    fn node_runtime_path(&self, asset: &NodeRuntimeAsset) -> PathBuf {
+        self.deps
+            .base_dir
+            .join(NODE_RUNTIME_DIR)
+            .join(node_runtime_stem(asset))
+            .join("node.exe")
+    }
+
+    /// The Node executable the worker runs on. Windows: the pinned official
+    /// build, downloaded + verified on first use. Elsewhere (dev only): the
+    /// first `node` on PATH.
+    async fn ensure_node_runtime(&self) -> Result<PathBuf, String> {
+        if !cfg!(windows) {
+            return find_node_on_path().ok_or_else(|| "未找到 Node.js 运行环境".to_string());
+        }
+        let asset = node_runtime_asset().ok_or_else(|| "当前架构不支持 Sub-Store".to_string())?;
+        let target = self.node_runtime_path(asset);
+        // A cached runtime is trusted only when it is byte-identical to the
+        // pinned build (checked once per process; ~90 MiB hash).
+        if self.inner.node_verified.lock().unwrap().as_deref() == Some(target.as_path()) {
+            return Ok(target);
+        }
+        if let Ok(bytes) = tokio::fs::read(&target).await {
+            if bytes.len() as u64 == asset.exe_size
+                && hex(&Sha256::digest(&bytes)) == asset.exe_sha256
+            {
+                *self.inner.node_verified.lock().unwrap() = Some(target.clone());
+                return Ok(target);
+            }
+        }
+        *self.inner.phase.lock().unwrap() = "downloading";
+        let mut last_error = String::from("下载 Node.js 运行环境失败");
+        for url in node_runtime_download_urls(asset) {
+            match self.install_node_runtime(asset, &url, &target).await {
+                Ok(()) => {
+                    *self.inner.node_verified.lock().unwrap() = Some(target.clone());
+                    return Ok(target);
+                }
+                Err(error) => last_error = format!("下载 Node.js 运行环境失败：{error}"),
+            }
+        }
+        Err(last_error)
+    }
+
+    async fn install_node_runtime(
+        &self,
+        asset: &NodeRuntimeAsset,
+        url: &str,
+        target: &Path,
+    ) -> Result<(), String> {
+        let response = (self.fetch())(FetchRequest {
+            url: url.to_string(),
+            accept: None,
+        })
+        .await?;
+        if !(200..300).contains(&response.status) {
+            return Err(format!("HTTP {}", response.status));
+        }
+        let received = response.body.len() as u64;
+        if received != asset.zip_size || received > NODE_ZIP_MAX_BYTES {
+            return Err(format!(
+                "大小不匹配（预期 {}，实际 {received}）",
+                asset.zip_size
+            ));
+        }
+        if hex(&Sha256::digest(&response.body)) != asset.zip_sha256 {
+            return Err("SHA-256 校验不匹配".into());
+        }
+        let entry = format!("{}/node.exe", node_runtime_stem(asset));
+        let exe =
+            crate::substore_zip::read_zip_entry(&response.body, &entry).map_err(|error| error.0)?;
+        if exe.len() as u64 != asset.exe_size || hex(&Sha256::digest(&exe)) != asset.exe_sha256 {
+            return Err("node.exe 校验不匹配".into());
+        }
+        let parent = target
+            .parent()
+            .ok_or_else(|| "运行环境路径无效".to_string())?;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|error| error.to_string())?;
+        let tmp = target.with_extension(format!("{}.tmp", uuid()));
+        if let Err(error) = tokio::fs::write(&tmp, &exe).await {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return Err(error.to_string());
+        }
+        let _ = tokio::fs::remove_file(target).await;
+        tokio::fs::rename(&tmp, target)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
     fn worker_env(&self, port: u16, use_proxy: bool) -> HashMap<String, String> {
         let mut env = HashMap::new();
         env.insert("SUB_STORE_BACKEND_API_PORT".to_string(), port.to_string());
@@ -871,7 +1047,14 @@ impl SubStoreService {
         let bundle_path = self.backend_bundle_path().to_string_lossy().to_string();
         let worker = match &self.deps.create_worker {
             Some(create) => create(bundle_path, env),
-            None => default_create_worker(&bundle_path, env, self.deps.on_log.clone()),
+            None => {
+                let node = self.ensure_node_runtime().await?;
+                if !self.is_current(generation) {
+                    return Err("Sub-Store 操作已取消".to_string());
+                }
+                *self.inner.phase.lock().unwrap() = "starting";
+                default_create_worker(&node, &bundle_path, env, self.deps.on_log.clone())
+            }
         };
         let worker = Arc::new(worker);
         *self.inner.unexpected_exit_error.lock().unwrap() = None;
@@ -902,6 +1085,10 @@ impl SubStoreService {
                 return Err("Sub-Store 操作已取消".to_string());
             }
             if let Some(error) = self.inner.unexpected_exit_error.lock().unwrap().clone() {
+                return Err(error);
+            }
+            let worker = self.inner.worker.lock().unwrap().clone();
+            if let Some(error) = worker.and_then(|worker| worker.exit_error()) {
                 return Err(error);
             }
             if std::time::Instant::now() > deadline {
@@ -1115,12 +1302,24 @@ impl SubStoreService {
 }
 
 fn default_create_worker(
+    node_path: &Path,
     bundle_path: &str,
     env: HashMap<String, String>,
     on_log: LogCallback,
 ) -> SubStoreWorkerHandle {
-    let mut command = tokio::process::Command::new(bundle_path);
+    let mut command = tokio::process::Command::new(node_path);
+    command.arg(bundle_path);
+    // node.exe is a console program: never flash a console window.
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    command.kill_on_drop(true);
     command.env_clear();
+    // Windows needs SystemRoot for Winsock/crypto initialization; it is a
+    // fixed system path, not user state, so the env stays fully constructed.
+    #[cfg(windows)]
+    if let Ok(system_root) = std::env::var("SystemRoot") {
+        command.env("SystemRoot", system_root);
+    }
     for (key, value) in env {
         command.env(key, value);
     }
@@ -1133,7 +1332,10 @@ fn default_create_worker(
         command.stdout(std::process::Stdio::null());
         command.stderr(std::process::Stdio::null());
     }
-    let mut child = command.spawn().ok();
+    let (mut child, spawn_error) = match command.spawn() {
+        Ok(child) => (Some(child), None),
+        Err(error) => (None, Some(format!("Sub-Store 启动失败：{error}"))),
+    };
     // Forward each pipe as raw chunks (the TS `worker.stdout.on('data')` —
     // the service layer does no line framing either).
     if let (Some(sink), Some(child)) = (&on_log, child.as_mut()) {
@@ -1172,8 +1374,17 @@ fn default_create_worker(
     }
     SubStoreWorkerHandle {
         child: StdMutex::new(child),
+        spawn_error,
         on_log,
     }
+}
+
+/// Dev/test fallback outside Windows: the first `node` on PATH.
+fn find_node_on_path() -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join("node"))
+        .find(|candidate| candidate.is_file())
 }
 
 fn uuid() -> String {
@@ -1272,6 +1483,31 @@ mod tests {
                 SUB_STORE_FRONTEND_DEFAULT_DIGEST.to_string(),
             ),
         })
+    }
+
+    #[test]
+    fn node_runtime_assets_are_pinned_per_architecture() {
+        for asset in NODE_RUNTIME_ASSETS.iter() {
+            assert_eq!(asset.zip_sha256.len(), 64);
+            assert_eq!(asset.exe_sha256.len(), 64);
+            assert!(asset.zip_size > 0 && asset.zip_size <= NODE_ZIP_MAX_BYTES);
+        }
+        let x64 = &NODE_RUNTIME_ASSETS[0];
+        assert_eq!(
+            node_runtime_download_urls(x64),
+            vec![
+                "https://nodejs.org/dist/v24.22.2/node-v24.22.2-win-x64.zip".to_string(),
+                "https://npmmirror.com/mirrors/node/v24.22.2/node-v24.22.2-win-x64.zip".to_string(),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_worker_that_cannot_spawn_fails_fast_instead_of_timing_out() {
+        let missing = std::env::temp_dir().join(format!("murge-no-node-{}", uuid()));
+        let worker = default_create_worker(&missing, "bundle.cjs", HashMap::new(), None);
+        let error = worker.exit_error().expect("spawn failure is reported");
+        assert!(error.starts_with("Sub-Store 启动失败"), "{error}");
     }
 
     #[test]

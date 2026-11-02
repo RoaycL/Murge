@@ -305,6 +305,8 @@ h1 { margin: 0; font-size: var(--font-size-display); line-height: 34px; letter-s
 .connection-totals { display: flex; gap: var(--space-6); color: var(--app-muted); font-size: var(--font-size-sm); font-variant-numeric: tabular-nums; }.connection-totals span{display:flex;align-items:center;gap:var(--space-1)}
 .connections-toolbar { display: flex; gap: var(--space-3); width: 100%; margin: -4px 0 12px; }
 .connections-toolbar .search-control { height: 32px; }
+/* One radius for the whole toolbar row: search, sort select and action button. */
+.connections-toolbar .search-control, .connections-toolbar .connection-toolbar-action { border-radius: var(--radius-control); }
 .connections-toolbar .connection-toolbar-action { flex: 0 0 120px; width: 120px; height: 32px; min-height: 32px; white-space: nowrap; }
 .connections-toolbar input { flex: 1; min-width: 0; height: 29px; padding: 0 12px; border: 1px solid var(--app-divider); border-radius: var(--radius-panel); background: rgba(255,255,255,.24); color: inherit; }
 .connections-toolbar select { width: 108px; height: 29px; padding: 0 8px; border: 0; border-radius: var(--radius-control); background: var(--app-fill); color: inherit; }

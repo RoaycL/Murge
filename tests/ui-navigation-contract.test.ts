@@ -101,6 +101,7 @@ describe('Surge-inspired UI navigation contract', () => {
     expect(connections.match(/connection-toolbar-action/g)).toHaveLength(2)
     expect(css).toMatch(/\.connections-toolbar \.connection-toolbar-action \{[^}]*flex: 0 0 120px;[^}]*width: 120px;[^}]*height: 32px;/)
     expect(css).toContain('.connections-toolbar .search-control { height: 32px; }')
+    expect(css).toContain('.connections-toolbar .search-control, .connections-toolbar .connection-toolbar-action { border-radius: var(--radius-control); }')
     expect(connections).toContain('<ProcessIcon')
     expect(read('src/renderer/src/components/ProcessIcon.vue')).toContain('getProcessIcon')
     const activity = read('src/renderer/src/views/ActivityView.vue')

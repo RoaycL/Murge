@@ -96,6 +96,7 @@ export function buildIpcHandlers(deps: IpcDeps, options: IpcHandlerOptions = {})
     [IPC.mihomoHealthCheckProxyProvider]: async (_event, name) => mihomo.healthCheckProxyProvider(parseMihomoName(name)),
     [IPC.mihomoGetRuleProviders]: async () => afterStartup(() => mihomo.getRuleProviders()),
     [IPC.mihomoRefreshRuleProvider]: async (_event, name) => mihomo.refreshRuleProvider(parseMihomoName(name)),
+    [IPC.mihomoUpgradeGeo]: async () => mihomo.upgradeGeo(),
     [IPC.mihomoDelayTest]: async (_event, name, opts) => mihomo.delayTest(parseMihomoName(name), parseDelayOptions(opts)),
     [IPC.mihomoGroupMemberDelayTest]: async (_event, group, name, opts) => {
       const selection = parseProxySelection(group, name)

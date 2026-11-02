@@ -6,6 +6,8 @@ import { EMPTY_GEODATA_SETTINGS } from '@shared/geodata'
 import AppSelect from './AppSelect.vue'
 import AppIcon from './AppIcon.vue'
 import ConfirmModal from './ConfirmModal.vue'
+import RefreshIndicator from './RefreshIndicator.vue'
+import { toProtocolError } from '@shared/protocol-errors'
 import { useToast } from '../composables/use-toast'
 import { useUnsavedChanges } from '../composables/use-unsaved-changes'
 import { plainJsonClone } from '@shared/plain-clone'
@@ -19,6 +21,23 @@ const form = reactive<GeodataSettings>({ ...EMPTY_GEODATA_SETTINGS })
 
 const previewYaml = ref('')
 const previewOpen = ref(false)
+const geoUpgrading = ref(false)
+const geoUpgradeFailed = ref(false)
+
+/** mihomo re-downloads every geo database at once (POST /upgrade/geo). */
+async function upgradeGeo(): Promise<void> {
+  geoUpgrading.value = true
+  geoUpgradeFailed.value = false
+  try {
+    await window.desktop.mihomo.upgradeGeo()
+    toast.success('地理数据库已更新')
+  } catch (error) {
+    geoUpgradeFailed.value = true
+    toast.error('地理数据库更新失败', toProtocolError(error).message)
+  } finally {
+    geoUpgrading.value = false
+  }
+}
 
 const GEOIP_OPTIONS: Array<{ value: GeoipMode; label: string }> = [
   { value: 'standard', label: '标准模式' },
@@ -143,7 +162,7 @@ onMounted(async () => {
         </div>
       </fieldset>
 
-      <fieldset class="gd-group geodata-sources"><legend>数据库来源</legend><label class="gd-source-row"><span>GeoIP-DAT 数据库</span><input v-model="form.geoxUrls.geoip" class="gd-input" type="url" /></label><label class="gd-source-row"><span>GeoIP-MMDB 数据库</span><input v-model="form.geoxUrls.mmdb" class="gd-input" type="url" /></label><label class="gd-source-row"><span>GeoSite 数据库</span><input v-model="form.geoxUrls.geosite" class="gd-input" type="url" /></label><label class="gd-source-row"><span>IP-ASN 数据库</span><input v-model="form.geoxUrls.asn" class="gd-input" type="url" /></label></fieldset>
+      <fieldset class="gd-group geodata-sources"><legend>数据库来源</legend><div class="gd-source-update"><span>内核按下列地址重新下载 GeoIP、GeoSite、MMDB 和 ASN 数据库。</span><button type="button" class="gd-update-button" :disabled="geoUpgrading" :aria-label="geoUpgrading ? '更新中' : '立即更新地理数据库'" @click="upgradeGeo"><RefreshIndicator :busy="geoUpgrading" :failed="geoUpgradeFailed" :size="14" />{{ geoUpgrading ? '更新中…' : '立即更新' }}</button></div><label class="gd-source-row"><span>GeoIP-DAT 数据库</span><input v-model="form.geoxUrls.geoip" class="gd-input" type="url" /></label><label class="gd-source-row"><span>GeoIP-MMDB 数据库</span><input v-model="form.geoxUrls.mmdb" class="gd-input" type="url" /></label><label class="gd-source-row"><span>GeoSite 数据库</span><input v-model="form.geoxUrls.geosite" class="gd-input" type="url" /></label><label class="gd-source-row"><span>IP-ASN 数据库</span><input v-model="form.geoxUrls.asn" class="gd-input" type="url" /></label></fieldset>
 
       <div class="gd-actions">
         <button type="button" class="gd-preview" @click="preview">预览配置</button>
@@ -197,6 +216,9 @@ onMounted(async () => {
   background: var(--app-panel);
 }
 .gd-group legend { padding: 0 6px; color: var(--app-muted); font-size: var(--font-size-xs); }
+.gd-source-update { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); padding: 4px 0 10px; color: var(--app-muted); font-size: var(--font-size-xs); }
+.gd-update-button { display: inline-flex; align-items: center; gap: var(--space-2); flex-shrink: 0; min-height: 30px; padding: 0 12px; border: 1px solid var(--app-divider); border-radius: var(--radius-control); background: transparent; color: var(--app-text); font-size: var(--font-size-sm); white-space: nowrap; cursor: pointer; }
+.gd-update-button:disabled { opacity: .6; cursor: default; }
 .gd-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-4); }
 .gd-field { display: grid; gap: var(--space-2); }
 .gd-source-row { display:grid; grid-template-columns: 150px 1fr; align-items:center; gap:var(--space-5); padding:9px 0; border-bottom:1px solid var(--app-divider); font-size:var(--font-size-sm); }

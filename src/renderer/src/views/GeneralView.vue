@@ -282,6 +282,7 @@ onMounted(async () => {
 .backup-action{display:flex;flex-direction:column;align-items:flex-start;gap:var(--space-4);padding:16px;border:1px solid var(--app-divider);border-radius:var(--radius-card);background:color-mix(in srgb,var(--app-bg) 55%,var(--app-surface))}
 .backup-action>strong{font-size:var(--font-size-md)}
 .backup-action>input{width:100%;max-width:320px;height:35px;padding:0 11px;border:1px solid var(--app-divider);border-radius:var(--radius-control);background:var(--app-surface);color:var(--app-text)}
+.backup-action>button{margin-top:auto}
 .backup-action>button,.backup-preview>button{border:0;border-radius:var(--radius-control);background:var(--app-accent);color:var(--app-on-accent);padding:8px 13px;cursor:pointer}
 .backup-action button:disabled{opacity:.5;cursor:not-allowed}
 .backup-preview{display:flex;flex-direction:column;gap:var(--space-3);width:100%;padding:12px;border-radius:var(--radius-md);background:color-mix(in srgb,var(--app-accent) 9%,var(--app-surface));font-size:var(--font-size-xs);line-height:1.5}

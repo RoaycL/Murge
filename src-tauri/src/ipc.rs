@@ -1045,6 +1045,7 @@ pub async fn dispatch(
                 .refresh_rule_provider(&name)
                 .await?)
         }
+        "mihomo:upgrade-geo" => Ok(controller_client(models)?.upgrade_geo().await?),
         "mihomo:delay-test" => {
             let name = mihomo::parse_mihomo_name(arg(payload, 0).unwrap_or(&Value::Null))?;
             let timeout = mihomo::parse_delay_options(arg(payload, 1))?

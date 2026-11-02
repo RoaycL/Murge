@@ -478,7 +478,7 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
   gap: var(--space-4);
   margin: 12px 0;
 }
-.profile-import-modal { width: min(470px, calc(100vw - 48px)); padding: 20px; border: 1px solid var(--app-divider); border-radius: var(--radius-panel); color: var(--app-text); background: var(--app-surface-solid); box-shadow: 0 22px 70px rgba(0,0,0,.28); }
+.profile-import-modal { width: min(470px, calc(100vw - 48px)); padding: 20px; border: 1px solid var(--app-divider); border-radius: var(--radius-panel); color: var(--app-text); background: var(--app-popover); -webkit-backdrop-filter: var(--app-popover-filter); backdrop-filter: var(--app-popover-filter); box-shadow: 0 22px 70px rgba(0,0,0,.28); }
 .profile-import-modal header { display:flex; align-items:flex-start; justify-content:space-between; }
 .profile-import-modal h2 { margin:0; font-size:var(--font-size-title); }.profile-import-modal header p{margin:4px 0 0;color:var(--app-muted);font-size:var(--font-size-2xs)}
 .profile-source-tabs { display:grid; grid-template-columns:repeat(3,1fr); gap:var(--space-3); margin:18px 0; }
@@ -487,7 +487,7 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
 .modal-field { display:block; margin-top:12px; }.modal-field>span{display:block;margin-bottom:6px;color:var(--app-muted);font-size:var(--font-size-2xs)}.modal-field .field{min-height:34px}
 .field-with-action{display:grid;grid-template-columns:1fr 34px;gap:var(--space-3)}.field-with-action .icon-control{width:34px;height:34px}
 .profile-import-modal footer{display:flex;justify-content:flex-end;gap:var(--space-3);margin-top:18px}
-.rename-modal{width:min(380px,calc(100vw - 48px));padding:20px;border:1px solid var(--app-divider);border-radius:var(--radius-panel);color:var(--app-text);background:var(--app-surface-solid);box-shadow:0 22px 70px rgba(0,0,0,.28)}.rename-modal header,.rename-modal footer{display:flex;align-items:center;justify-content:space-between}.rename-modal h2{margin:0;font-size:var(--font-size-title)}.rename-modal>.field{min-height:36px;margin-top:18px}.rename-modal footer{justify-content:flex-end;gap:var(--space-3);margin-top:18px}
+.rename-modal{width:min(380px,calc(100vw - 48px));padding:20px;border:1px solid var(--app-divider);border-radius:var(--radius-panel);color:var(--app-text);background:var(--app-popover);-webkit-backdrop-filter:var(--app-popover-filter);backdrop-filter:var(--app-popover-filter);box-shadow:0 22px 70px rgba(0,0,0,.28)}.rename-modal header,.rename-modal footer{display:flex;align-items:center;justify-content:space-between}.rename-modal h2{margin:0;font-size:var(--font-size-title)}.rename-modal>.field{min-height:36px;margin-top:18px}.rename-modal footer{justify-content:flex-end;gap:var(--space-3);margin-top:18px}
 .file-input {
   color: var(--app-muted);
 }
@@ -629,7 +629,7 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
   display: flex;
   flex-direction: column;
   min-width: 120px;
-  background: var(--app-surface-solid);
+  background: var(--app-popover); -webkit-backdrop-filter: var(--app-popover-filter); backdrop-filter: var(--app-popover-filter);
   border: 1px solid var(--app-divider);
   border-radius: var(--radius-md);
   box-shadow: var(--app-shadow);

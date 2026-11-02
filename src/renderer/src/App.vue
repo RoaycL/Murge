@@ -22,6 +22,9 @@ const route = useRoute()
 // 其他页面的内容区是浮在窗口底上的叠加面板。
 const FLAT_SURFACE_ROUTES = ['/activity', '/overview', '/profiles']
 const contentSurface = computed(() => FLAT_SURFACE_ROUTES.includes(route.path) ? 'flat' : 'panel')
+// 活动（首页）与概览只是一屏卡片，偶尔多出几像素就冒出滚动条；隐藏它，内容仍可滚动。
+const HIDDEN_SCROLLBAR_ROUTES = ['/activity', '/overview']
+const contentScrollbar = computed(() => HIDDEN_SCROLLBAR_ROUTES.includes(route.path) ? 'hidden' : 'auto')
 const kernel = useKernelStore()
 const systemProxy = useSystemProxyStore()
 const appearance = useAppearanceStore()
@@ -61,7 +64,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="app-window">
-    <div class="app-frame" :data-surface="contentSurface">
+    <div class="app-frame" :data-surface="contentSurface" :data-scrollbar="contentScrollbar">
       <AppSidebar :brand="brand" />
       <main class="app-content">
         <RouterView />

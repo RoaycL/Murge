@@ -149,9 +149,9 @@ onBeforeUnmount(() => {
 .app-select-trigger:focus-visible { outline: 2px solid color-mix(in srgb, var(--app-blue) 55%, transparent); outline-offset: 2px; }
 .app-select-trigger svg { flex: none; color: var(--app-muted); transition: transform .16s ease; }
 .app-select.open .app-select-trigger svg { transform: rotate(180deg); }
-.app-select-menu { position: fixed; z-index: 3000; min-width: 132px; max-height: 248px; overflow: auto; box-sizing: border-box; padding: 5px; border: 1px solid color-mix(in srgb, var(--app-divider) 84%, white 16%); border-radius: var(--radius-md); background: var(--app-surface-solid, var(--app-surface)); box-shadow: 0 18px 38px rgba(0,0,0,.38); font-size: var(--font-size-sm); }
-.app-select-menu button { display: flex; width: 100%; min-height: 30px; align-items: center; justify-content: space-between; gap: var(--space-7); padding: 0 8px; border: 0; border-radius: var(--radius-sm); background: var(--app-surface); color: var(--app-text); white-space: nowrap; text-align: left; }
-.app-select-menu button.active { background: color-mix(in srgb, var(--app-blue) 14%, var(--app-surface)); }
+.app-select-menu { position: fixed; z-index: 3000; min-width: 132px; max-height: 248px; overflow: auto; box-sizing: border-box; padding: 5px; border: 1px solid color-mix(in srgb, var(--app-divider) 84%, white 16%); border-radius: var(--radius-md); background: var(--app-popover); -webkit-backdrop-filter: var(--app-popover-filter); backdrop-filter: var(--app-popover-filter); box-shadow: 0 18px 38px rgba(0,0,0,.38); font-size: var(--font-size-sm); }
+.app-select-menu button { display: flex; width: 100%; min-height: 30px; align-items: center; justify-content: space-between; gap: var(--space-7); padding: 0 8px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--app-text); white-space: nowrap; text-align: left; }
+.app-select-menu button.active { background: color-mix(in srgb, var(--app-blue) 14%, transparent); }
 .app-select-menu button.selected { color: var(--app-blue); }
 .app-select-menu button:disabled { opacity: .42; }
 .app-select.disabled { opacity: .52; }

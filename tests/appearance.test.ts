@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_APPEARANCE, frostedWindow, parseAppearancePreference, resolvedTheme, windowBackdrop } from '../src/renderer/src/stores/appearance'
+import { DEFAULT_APPEARANCE, frostedWindow, nativeWindowTheme, parseAppearancePreference, resolvedTheme, windowBackdrop } from '../src/renderer/src/stores/appearance'
 
 describe('appearance preference contract', () => {
   it('fails closed to defaults for missing, malformed or unknown values', () => {
@@ -19,6 +19,13 @@ describe('appearance preference contract', () => {
     expect(resolvedTheme('system', false)).toBe('light')
     expect(resolvedTheme('light', true)).toBe('light')
     expect(resolvedTheme('dark', false)).toBe('dark')
+  })
+
+  it('releases the native window theme in system mode so the OS theme is visible again', () => {
+    expect(nativeWindowTheme('system', 'dark')).toBeNull()
+    expect(nativeWindowTheme('system', 'light')).toBeNull()
+    expect(nativeWindowTheme('dark', 'dark')).toBe('dark')
+    expect(nativeWindowTheme('light', 'light')).toBe('light')
   })
 
   it('reads only the backdrops the shell can apply', () => {

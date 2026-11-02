@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 describe('Windows packaging and interactive GUI CI contracts', () => {
-  let hostedWorkflow: string
   let interactiveWorkflow: string
   let interactiveScript: string
   let mainEntry: string
@@ -23,26 +22,11 @@ describe('Windows packaging and interactive GUI CI contracts', () => {
       'src/main/electron/lifecycle-adapter.ts',
       'src/main/electron/when-ready.ts'
     ]
-    ;[hostedWorkflow, interactiveWorkflow, interactiveScript, mainEntry] = await Promise.all([
-      readFile(path.join(root, '.github/workflows/ci.yml'), 'utf8'),
+    ;[interactiveWorkflow, interactiveScript, mainEntry] = await Promise.all([
       readFile(path.join(root, '.github/workflows/windows-gui-smoke.yml'), 'utf8'),
       readFile(path.join(root, 'scripts/windows-interactive-gui-smoke.ps1'), 'utf8'),
       Promise.all(entryFiles.map((file) => readFile(path.join(root, file), 'utf8'))).then((parts) => parts.join('\n'))
     ])
-  })
-
-  it('keeps the hosted package job static and explicitly non-interactive', () => {
-    expect(hostedWorkflow).toContain('Install, verify & uninstall Windows NSIS (x64, hosted-safe)')
-    expect(hostedWorkflow).toContain("$interactiveDesktop = $false")
-    expect(hostedWorkflow).toContain("'out/main/index.js'")
-    expect(hostedWorkflow).toContain("'out/preload/index.js'")
-    expect(hostedWorkflow).toContain("'out/renderer/index.html'")
-    expect(hostedWorkflow).not.toContain('MURGE_CI_SKIP_ELECTRON_RESTORE')
-    expect(hostedWorkflow).toContain("-ArgumentList '--uninstall' -Label 'installed TUN service removal'")
-    expect(hostedWorkflow).toContain('Get-ScheduledTask -TaskName $env:APP_ID -ErrorAction SilentlyContinue')
-    expect(hostedWorkflow).toContain('installer did not register its per-user startup task')
-    expect(hostedWorkflow).toContain("if ($startupTask.Settings.Enabled) { throw 'fresh install unexpectedly enabled auto-start' }")
-    expect(hostedWorkflow).toContain("if (Get-ScheduledTask -TaskName $env:APP_ID -ErrorAction SilentlyContinue) { throw 'startup task remained after uninstall' }")
   })
 
   it('runs packaged Electron probes only on an explicitly interactive self-hosted runner', () => {

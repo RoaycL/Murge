@@ -87,8 +87,9 @@ describe.runIf(enabled)('Electron → Tauri update hand-off on Windows', () => {
     expect(trace()).toContain('Installer exit code: 0')
     expect(regKeyExists(ELECTRON_UNINSTALL_KEY)).toBe(false)
     const programFiles = process.env.ProgramFiles ?? 'C:\\Program Files'
-    const installDir = join(programFiles, 'Murge')
-    expect(existsSync(join(installDir, 'murge.exe'))).toBe(true)
+    const brand = JSON.parse(readFileSync(resolve('brand.config.json'), 'utf8')) as { productName: string; executableName: string }
+    const installDir = join(programFiles, brand.productName)
+    expect(existsSync(join(installDir, `${brand.executableName}.exe`))).toBe(true)
     expect(existsSync(join(installDir, 'resources', 'app.asar'))).toBe(false)
   }, 20 * 60 * 1000)
 })

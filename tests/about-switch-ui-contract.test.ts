@@ -20,3 +20,14 @@ describe('Layered content panel and switch color', () => {
     expect(css).toMatch(/\.switch\.on\s*\{\s*background:\s*var\(--app-blue\)/)
   })
 })
+
+describe('Flat surface on the card home pages', () => {
+  it('drops the layered panel on 活动 / 概览 / 配置 so the window is one continuous background', async () => {
+    const app = await readFile(new URL('../src/renderer/src/App.vue', import.meta.url), 'utf8')
+    const css = await readFile(new URL('../src/renderer/src/styles/base.css', import.meta.url), 'utf8')
+    // 所有者要求（2026-11-02）：这三页与 Surge 一致，除卡片外背景是一整块；其他页面用叠加层。
+    expect(app).toContain("const FLAT_SURFACE_ROUTES = ['/activity', '/overview', '/profiles']")
+    expect(app).toContain(':data-surface="contentSurface"')
+    expect(css).toMatch(/\.app-frame\[data-surface="flat"\] \.app-content[^{]*\{[^}]*background:\s*transparent/)
+  })
+})

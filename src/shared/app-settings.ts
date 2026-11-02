@@ -1,9 +1,9 @@
 import type { KernelVersionChannel } from './kernel-manager'
 
 /**
- * Release channel the updater follows: `stable` is the Electron build,
- * `experimental` the Tauri build. Switching installs the other build in place
- * (same data, service and startup task).
+ * Release channel the retired Electron build followed: `stable` was the
+ * Electron build, `experimental` the Tauri build. The Tauri build ignores it
+ * and offers {@link AppSettings.updateIncludeBeta} instead.
  */
 export type UpdateChannel = 'stable' | 'experimental'
 
@@ -28,8 +28,10 @@ export interface AppSettings {
    * this flag.
    */
   autoCheckUpdate: boolean
-  /** Release channel the updater follows; see {@link UpdateChannel}. */
+  /** Release channel the retired Electron build followed; see {@link UpdateChannel}. */
   updateChannel: UpdateChannel
+  /** "包括 Beta 版本": the updater also offers Beta releases. */
+  updateIncludeBeta: boolean
   /**
    * User's durable intent for the Windows system proxy. Clean application/OS
    * shutdown may temporarily restore the registry, but the next launch applies
@@ -94,6 +96,7 @@ export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = Object.freeze({
   autoStartKernel: true,
   autoCheckUpdate: true,
   updateChannel: 'stable',
+  updateIncludeBeta: false,
   systemProxyDesired: false,
   tunDesired: false,
   kernelEnabled: true,
@@ -143,6 +146,10 @@ export function parseAppSettings(value: string | null): AppSettings {
           : DEFAULT_APP_SETTINGS.autoCheckUpdate,
       updateChannel:
         parsed.updateChannel === 'experimental' ? 'experimental' : DEFAULT_APP_SETTINGS.updateChannel,
+      updateIncludeBeta:
+        typeof parsed.updateIncludeBeta === 'boolean'
+          ? parsed.updateIncludeBeta
+          : DEFAULT_APP_SETTINGS.updateIncludeBeta,
       systemProxyDesired:
         typeof parsed.systemProxyDesired === 'boolean'
           ? parsed.systemProxyDesired

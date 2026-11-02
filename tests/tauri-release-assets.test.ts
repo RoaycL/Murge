@@ -19,9 +19,13 @@ describe('Tauri release assets', () => {
     expect(() => selectInstallers([...both, 'App_1.2.2_x64-setup.exe'], 'App', '1.2.3')).toThrow(/unexpected installers/)
   })
 
-  it('publishes Tauri builds only as non-latest pre-releases from tauri-v tags', () => {
+  it('publishes 正式版 as the latest release and Beta as a pre-release from tauri-v tags', () => {
     expect(workflow).toMatch(/tags:\s*\n\s*- 'tauri-v\*'/)
-    expect(workflow).toContain('--prerelease --latest=false')
+    expect(workflow).toContain('kind=(--prerelease --latest=false')
+    expect(workflow).toContain('kind=(--latest ')
+    expect(workflow).toContain('node scripts/release-feeds.mjs --version')
+    // The retired Electron channel belongs to release.yml on main.
+    expect(workflow).not.toContain('gh release upload channel-stable')
     // The signing key is only handed to the publish job, never to the Windows builds.
     const build = workflow.slice(workflow.indexOf('\n  build:'), workflow.indexOf('\n  publish:'))
     expect(build).not.toContain('TAURI_SIGNING_PRIVATE_KEY')

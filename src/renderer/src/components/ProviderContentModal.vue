@@ -84,7 +84,7 @@ async function copyContent(): Promise<void> {
 
 <style scoped>
 .provider-content-backdrop { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: clamp(14px, 4vw, 42px); background: rgb(8 10 18 / 46%); backdrop-filter: blur(3px); }
-.provider-content-modal { width: min(960px, 100%); height: min(760px, 100%); min-height: 320px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--app-divider); border-radius: var(--radius-panel); background: var(--app-surface); color: var(--app-text); box-shadow: 0 24px 72px rgb(0 0 0 / 28%); }
+.provider-content-modal { width: min(960px, 100%); height: min(760px, 100%); min-height: 320px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--app-divider); border-radius: var(--radius-panel); background: var(--app-popover); -webkit-backdrop-filter: var(--app-popover-filter); backdrop-filter: var(--app-popover-filter); color: var(--app-text); box-shadow: 0 24px 72px rgb(0 0 0 / 28%); }
 .provider-content-modal > header { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 18px 20px; border-bottom: 1px solid var(--app-divider); }
 .provider-content-heading { min-width: 0; }
 .provider-content-heading h2 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-xl); }

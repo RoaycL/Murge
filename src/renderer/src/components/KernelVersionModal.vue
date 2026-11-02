@@ -125,7 +125,7 @@ async function confirmInstall(): Promise<void> {
   flex-direction: column;
   width: min(920px, calc(100vw - 40px));
   max-height: min(82vh, 720px);
-  background: var(--app-surface-solid);
+  background: var(--app-popover); -webkit-backdrop-filter: var(--app-popover-filter); backdrop-filter: var(--app-popover-filter);
   border: 1px solid var(--app-divider);
   border-radius: var(--radius-card);
   box-shadow: var(--app-shadow);

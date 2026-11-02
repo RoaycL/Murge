@@ -373,7 +373,7 @@ onMounted(() => {
   flex-direction: column;
   width: min(540px, calc(100vw - 48px));
   max-height: 80vh;
-  background: var(--app-surface-solid);
+  background: var(--app-popover); -webkit-backdrop-filter: var(--app-popover-filter); backdrop-filter: var(--app-popover-filter);
   border: 1px solid var(--app-divider);
   border-radius: var(--radius-card);
   box-shadow: var(--app-shadow);

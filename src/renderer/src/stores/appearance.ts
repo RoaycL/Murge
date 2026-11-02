@@ -37,6 +37,16 @@ export function resolvedTheme(theme: ThemePreference, systemDark: boolean): 'lig
   return theme === 'system' ? (systemDark ? 'dark' : 'light') : theme
 }
 
+/**
+ * The theme to pin on the native window. In system mode we must hand control
+ * back to the OS (null): once the window/webview has been pinned to light or
+ * dark, WebView2 reports that pinned value through prefers-color-scheme, so
+ * the renderer could never see the real system theme again.
+ */
+export function nativeWindowTheme(theme: ThemePreference, resolved: 'light' | 'dark'): 'light' | 'dark' | null {
+  return theme === 'system' ? null : resolved
+}
+
 export function windowBackdrop(target: { __MURGE_BACKDROP__?: unknown } = window): WindowBackdrop {
   const value = target.__MURGE_BACKDROP__
   return value === 'acrylic' || value === 'mica' ? value : 'none'
@@ -55,7 +65,8 @@ export const useAppearanceStore = defineStore('appearance', () => {
   const translucent = ref(initial.translucent)
   const backdrop = windowBackdrop()
   const isTauri = detectShell().kind === 'tauri'
-  let nativeTheme: 'light' | 'dark' | null = null
+  // undefined = never synced; null = following the system.
+  let nativeTheme: 'light' | 'dark' | null | undefined
   let media: MediaQueryList | null = null
 
   function apply(): void {
@@ -65,16 +76,20 @@ export const useAppearanceStore = defineStore('appearance', () => {
     document.documentElement.dataset.contrast = highContrast.value ? 'high' : 'normal'
     document.documentElement.dataset.reduceMotion = reduceMotion.value ? 'true' : 'false'
     document.documentElement.dataset.frosted = frostedWindow(backdrop, { translucent: translucent.value, highContrast: highContrast.value }) ? 'true' : 'false'
-    syncNativeTheme(resolved)
+    syncNativeTheme(nativeWindowTheme(theme.value, resolved))
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ theme: theme.value, highContrast: highContrast.value, reduceMotion: reduceMotion.value, translucent: translucent.value }))
   }
 
   // The acrylic/mica tint follows the window's own light/dark mode, which must
   // match the app theme rather than the system one.
-  function syncNativeTheme(resolved: 'light' | 'dark'): void {
-    if (!isTauri || nativeTheme === resolved) return
-    nativeTheme = resolved
-    getCurrentWindow().setTheme(resolved).catch(() => { nativeTheme = null })
+  function syncNativeTheme(target: 'light' | 'dark' | null): void {
+    if (!isTauri || nativeTheme === target) return
+    nativeTheme = target
+    getCurrentWindow().setTheme(target)
+      // Releasing the pin changes what prefers-color-scheme reports; re-read it
+      // in case the webview does not fire a media change event.
+      .then(() => { if (target === null && theme.value === 'system') apply() })
+      .catch(() => { nativeTheme = undefined })
   }
 
   function connect(): void {

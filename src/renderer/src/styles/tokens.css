@@ -92,6 +92,10 @@
   --content-panel-shadow: 0 0 0 0.5px rgba(30, 38, 52, 0.06), 0 6px 22px rgba(30, 38, 52, 0.08);
   --frame-border: rgba(213, 218, 226, 0.85);
   --frame-shadow: 0 18px 55px rgba(24, 31, 45, 0.18);
+  /* 弹出卡片（菜单、对话框、详情抽屉）：半透明底 + 背景模糊，透出下面的页面，
+     着色仍足够深，文字对比度不受影响。高对比度下退回不透明。 */
+  --app-popover: rgba(251, 251, 252, 0.8);
+  --app-popover-filter: saturate(1.6) blur(24px);
 }
 
 :root[data-theme="dark"] {
@@ -115,9 +119,12 @@
     --content-panel-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.3), 0 6px 22px rgba(0, 0, 0, 0.25);
     --frame-border: rgba(52, 56, 66, 0.85);
     --frame-shadow: 0 18px 55px rgba(0, 0, 0, 0.35);
+    --app-popover: rgba(41, 44, 52, 0.8);
 }
 
 :root[data-contrast="high"] {
+  --app-popover: var(--app-surface-solid);
+  --app-popover-filter: none;
   --content-panel: var(--app-background-start);
   --content-panel-shadow: none;
   --app-text: #000000;
@@ -146,19 +153,20 @@
    沿用上面的不透明渐变。 */
 :root[data-frosted="true"] {
   --frosted-sidebar: rgba(234, 239, 246, 0.42);
-  --frosted-content: rgba(248, 249, 252, 0.8);
+  --frosted-content: rgba(248, 249, 252, 0.7);
   --frosted-content-border: rgba(255, 255, 255, 0.75);
-  --app-surface: rgba(255, 255, 255, 0.94);
-  --app-surface-border: rgba(255, 255, 255, 0.9);
+  /* 卡片留一点通透感（磨砂透出系统背景），文字区域仍以白底为主。 */
+  --app-surface: rgba(255, 255, 255, 0.8);
+  --app-surface-border: rgba(255, 255, 255, 0.85);
   --frame-radius: 8px;
   --frame-border: rgba(255, 255, 255, 0.35);
 }
 
 :root[data-frosted="true"][data-theme="dark"] {
   --frosted-sidebar: rgba(20, 23, 30, 0.46);
-  --frosted-content: rgba(30, 32, 41, 0.82);
+  --frosted-content: rgba(30, 32, 41, 0.74);
   --frosted-content-border: rgba(255, 255, 255, 0.07);
-  --app-surface: rgba(39, 42, 51, 0.97);
+  --app-surface: rgba(39, 42, 51, 0.82);
   --app-surface-border: rgba(255, 255, 255, 0.06);
   --frame-border: rgba(255, 255, 255, 0.08);
 }

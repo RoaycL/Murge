@@ -1052,8 +1052,15 @@ mod tests {
     #[tokio::test]
     async fn an_unchanged_intent_does_not_rearm() {
         let host = FakeHost::new(true, true);
-        let coordinator =
-            RecoveryCoordinator::new(host.clone(), Arc::new(|| BOTH), Arc::new(|| false), vec![1]);
+        // A one-entry 1 ms backoff leaves a 1 ms recovery window, which a
+        // busy runner (or Windows' coarse clock) can close before the first
+        // attempt is even scheduled; the long tail keeps the window open.
+        let coordinator = RecoveryCoordinator::new(
+            host.clone(),
+            Arc::new(|| BOTH),
+            Arc::new(|| false),
+            vec![1, 60_000],
+        );
         coordinator.start();
         wait_until(|| coordinator.is_idle() && !host.calls().is_empty()).await;
         let calls = host.calls().len();

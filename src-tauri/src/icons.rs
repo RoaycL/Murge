@@ -402,15 +402,15 @@ fn process_icon_store(path: &str, value: String) {
 #[cfg(windows)]
 fn extract_process_icon(path: &str) -> Option<String> {
     use windows::core::PCWSTR;
-    use windows::Win32::Graphics::Gdi::{
-        DeleteObject, GetDC, GetDIBits, ReleaseDC, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS,
-        HDC,
-    };
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
     use windows::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON};
-    use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, ICONINFO};
+    use windows::Win32::UI::WindowsAndMessaging::DestroyIcon;
 
     let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
+        // SHGetFileInfo requires COM on the calling thread (the shell may
+        // route through icon handlers). Balance only a successful init.
+        let com_initialized = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
         let mut info = SHFILEINFOW::default();
         let result = SHGetFileInfoW(
             PCWSTR(wide.as_ptr()),
@@ -419,81 +419,124 @@ fn extract_process_icon(path: &str) -> Option<String> {
             std::mem::size_of::<SHFILEINFOW>() as u32,
             SHGFI_ICON | SHGFI_LARGEICON,
         );
-        if result == 0 || info.hIcon.is_invalid() {
-            return None;
+        let outcome = if result == 0 || info.hIcon.is_invalid() {
+            None
+        } else {
+            let pixels = icon_to_rgba(info.hIcon);
+            let _ = DestroyIcon(info.hIcon);
+            pixels.and_then(|(width, height, rgba)| encode_png_data_url(width, height, &rgba))
+        };
+        if com_initialized {
+            CoUninitialize();
         }
-        let icon: HICON = info.hIcon;
-        let outcome = icon_to_png(icon);
-        let _ = DestroyIcon(icon);
-        return outcome;
+        outcome
+    }
+}
+
+/// Reads an HICON into straight-alpha RGBA rows. Owns (and always frees) the
+/// bitmaps `GetIconInfo` hands back — they must stay alive until every
+/// `GetDIBits` call on them has finished.
+#[cfg(windows)]
+unsafe fn icon_to_rgba(
+    icon: windows::Win32::UI::WindowsAndMessaging::HICON,
+) -> Option<(u32, u32, Vec<u8>)> {
+    use windows::Win32::Graphics::Gdi::{
+        DeleteObject, GetDC, GetDIBits, GetObjectW, ReleaseDC, BITMAP, BITMAPINFO,
+        BITMAPINFOHEADER, DIB_RGB_COLORS, HBITMAP,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetIconInfo, ICONINFO};
+
+    struct IconBitmaps(ICONINFO);
+    impl Drop for IconBitmaps {
+        fn drop(&mut self) {
+            unsafe {
+                if !self.0.hbmColor.is_invalid() {
+                    let _ = DeleteObject(self.0.hbmColor);
+                }
+                if !self.0.hbmMask.is_invalid() {
+                    let _ = DeleteObject(self.0.hbmMask);
+                }
+            }
+        }
     }
 
-    fn icon_to_png(icon: HICON) -> Option<String> {
-        unsafe {
-            let mut icon_info = ICONINFO::default();
-            GetIconInfo(icon, &mut icon_info).ok()?;
-            let mut width = 0i32;
-            let mut height = 0i32;
-            // Prefer the color bitmap dimensions.
-            if !icon_info.hbmColor.is_invalid() {
-                let mut bmp = BITMAPINFO::default();
-                bmp.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
-                let dc: HDC = GetDC(None);
-                GetDIBits(dc, icon_info.hbmColor, 0, 0, None, &mut bmp, DIB_RGB_COLORS);
-                width = bmp.bmiHeader.biWidth;
-                height = bmp.bmiHeader.biHeight;
-                ReleaseDC(None, dc);
-            }
-            let _ = DeleteObject(icon_info.hbmColor);
-            let _ = DeleteObject(icon_info.hbmMask);
-            if width <= 0 || height == 0 {
-                return None;
-            }
-            let positive_height = height.abs();
-            // Pull 32bpp BGRA rows.
-            let mut bmi = BITMAPINFO::default();
-            bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
-            bmi.bmiHeader.biWidth = width;
-            bmi.bmiHeader.biHeight = -positive_height; // top-down
-            bmi.bmiHeader.biPlanes = 1;
-            bmi.bmiHeader.biBitCount = 32;
-            bmi.bmiHeader.biCompression = 0; // BI_RGB
-            let mut pixels = vec![0u8; (width as usize) * (positive_height as usize) * 4];
-            let dc: HDC = GetDC(None);
-            let copied = GetDIBits(
-                dc,
-                icon_info.hbmColor,
-                0,
-                positive_height as u32,
-                Some(pixels.as_mut_ptr().cast()),
-                &mut bmi,
-                DIB_RGB_COLORS,
-            );
-            ReleaseDC(None, dc);
-            if copied == 0 {
-                return None;
-            }
-            // BGRA -> RGBA. When the color bitmap carries no alpha channel
-            // (copied rows are fully opaque because icons are 32bpp with
-            // alpha in modern Windows), leave the bytes as-is.
-            for rgba in pixels.chunks_exact_mut(4) {
-                rgba.swap(0, 2);
-            }
-            let mut png_buffer = std::io::Cursor::new(Vec::new());
-            {
-                let mut encoder =
-                    png::Encoder::new(&mut png_buffer, width as u32, positive_height as u32);
-                encoder.set_color(png::ColorType::Rgba);
-                encoder.set_depth(png::BitDepth::Eight);
-                let mut writer = encoder.write_header().ok()?;
-                writer.write_image_data(&pixels).ok()?;
-            }
-            Some(format!(
-                "data:image/png;base64,{}",
-                base64::engine::general_purpose::STANDARD.encode(png_buffer.into_inner())
-            ))
+    unsafe fn read_bgra(bitmap: HBITMAP, width: i32, height: i32) -> Option<Vec<u8>> {
+        let mut bmi = BITMAPINFO::default();
+        bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+        bmi.bmiHeader.biWidth = width;
+        bmi.bmiHeader.biHeight = -height; // top-down rows
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = 0; // BI_RGB
+        let mut pixels = vec![0u8; (width as usize) * (height as usize) * 4];
+        let dc = GetDC(None);
+        let copied = GetDIBits(
+            dc,
+            bitmap,
+            0,
+            height as u32,
+            Some(pixels.as_mut_ptr().cast()),
+            &mut bmi,
+            DIB_RGB_COLORS,
+        );
+        ReleaseDC(None, dc);
+        (copied > 0).then_some(pixels)
+    }
+
+    let mut raw = ICONINFO::default();
+    GetIconInfo(icon, &mut raw).ok()?;
+    let bitmaps = IconBitmaps(raw);
+    // Monochrome icons have no color bitmap; nothing worth rendering.
+    if bitmaps.0.hbmColor.is_invalid() {
+        return None;
+    }
+    let mut header = BITMAP::default();
+    let read = GetObjectW(
+        bitmaps.0.hbmColor,
+        std::mem::size_of::<BITMAP>() as i32,
+        Some((&mut header as *mut BITMAP).cast()),
+    );
+    let (width, height) = (header.bmWidth, header.bmHeight.abs());
+    if read == 0 || width <= 0 || height <= 0 || width > 256 || height > 256 {
+        return None;
+    }
+    let mut pixels = read_bgra(bitmaps.0.hbmColor, width, height)?;
+    // Legacy (non-32bpp) icons come back with an all-zero alpha channel:
+    // derive transparency from the AND mask (white = transparent).
+    if pixels.chunks_exact(4).all(|px| px[3] == 0) {
+        let mask = if bitmaps.0.hbmMask.is_invalid() {
+            None
+        } else {
+            read_bgra(bitmaps.0.hbmMask, width, height)
+        };
+        for (index, px) in pixels.chunks_exact_mut(4).enumerate() {
+            let transparent = mask
+                .as_ref()
+                .map(|mask| mask[index * 4] != 0)
+                .unwrap_or(false);
+            px[3] = if transparent { 0 } else { 255 };
         }
     }
+    for px in pixels.chunks_exact_mut(4) {
+        px.swap(0, 2); // BGRA -> RGBA
+    }
+    Some((width as u32, height as u32, pixels))
+}
+
+#[cfg(windows)]
+fn encode_png_data_url(width: u32, height: u32, rgba: &[u8]) -> Option<String> {
+    let mut png_buffer = std::io::Cursor::new(Vec::new());
+    {
+        let mut encoder = png::Encoder::new(&mut png_buffer, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().ok()?;
+        writer.write_image_data(rgba).ok()?;
+    }
+    Some(format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(png_buffer.into_inner())
+    ))
 }
 
 #[cfg(not(windows))]
@@ -534,10 +577,6 @@ impl DesktopServices {
         DesktopServices {
             icon_cache: Arc::new(RemoteIconCache::new(icon_cache_root, None)),
         }
-    }
-
-    pub fn get_process_icon(&self, raw_path: Option<&str>) -> Value {
-        get_process_icon(raw_path)
     }
 
     pub fn list_network_interfaces(&self) -> Value {

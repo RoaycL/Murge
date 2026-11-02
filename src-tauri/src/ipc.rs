@@ -156,7 +156,16 @@ pub async fn dispatch(
         "app:get-brand" => Ok(brand::brand_document()),
         // Desktop integrations (Phase 3C): icons + network interfaces. The
         // TS handlers return null/[] quietly on invalid input — no errors.
-        "app:get-process-icon" => Ok(desktop.get_process_icon(string_arg(payload, 0).as_deref())),
+        // Shell icon extraction blocks (and initializes COM on its thread),
+        // so keep it off the async workers.
+        "app:get-process-icon" => {
+            let path = string_arg(payload, 0);
+            Ok(
+                tokio::task::spawn_blocking(move || icons::get_process_icon(path.as_deref()))
+                    .await
+                    .unwrap_or(Value::Null),
+            )
+        }
         "app:get-cached-icon" => {
             let key = string_arg(payload, 0);
             let url = string_arg(payload, 1);

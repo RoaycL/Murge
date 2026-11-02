@@ -90,9 +90,9 @@ onMounted(() => void initialize())
 .substore-header { margin-bottom: 14px; flex-shrink: 0; }
 .substore-header p { margin: 3px 0 0; color: var(--app-muted); font-size: var(--font-size-xs); }
 .substore-actions { display: inline-flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-2); }
-.quiet-button { min-height: 28px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: var(--radius-control); background: transparent; color: var(--app-muted); font-size: var(--font-size-xs); white-space: nowrap; flex-shrink: 0; }
+.quiet-button { float: none; width: auto; height: auto; min-height: 28px; margin: 0; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: var(--radius-control); background: transparent; color: var(--app-muted); font-size: var(--font-size-xs); white-space: nowrap; flex-shrink: 0; }
 .quiet-button:disabled { opacity: .5; }
 .substore-error { flex-shrink: 0; margin: 0 0 8px; color: var(--app-danger); font-size: var(--font-size-sm); }
 .substore-frame-wrap { flex: 1; min-height: 320px; }
-.substore-frame { display: block; width: 100%; height: 100%; border: 1px solid var(--app-surface-border, var(--app-divider)); border-radius: var(--radius-large); background: #fff; }
+.substore-frame { display: block; width: 100%; height: 100%; border: 1px solid var(--app-surface-border, var(--app-divider)); border-radius: var(--radius-large); background: transparent; }
 </style>

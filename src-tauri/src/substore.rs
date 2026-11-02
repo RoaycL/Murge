@@ -1037,6 +1037,15 @@ impl SubStoreService {
         tokio::fs::create_dir_all(self.deps.base_dir.join("data"))
             .await
             .map_err(|error| error.to_string())?;
+        // Blend the embedded page into Murge's panel; best-effort, a stock
+        // frontend still works.
+        if let Err(error) =
+            crate::substore_embed::apply(&self.assets_dir().join(FRONTEND_DIR_NAME)).await
+        {
+            if let Some(log) = &self.deps.on_log {
+                log("stderr", &format!("Sub-Store 嵌入样式未应用：{error}\n"));
+            }
+        }
         let port = self.find_free_port().await?;
         if !self.is_current(generation) {
             return Err("Sub-Store 操作已取消".to_string());
@@ -1251,9 +1260,12 @@ impl SubStoreService {
         }
         #[cfg(windows)]
         {
-            // `cmd /c start` requires an empty title argument; `explorer`
-            // accepts the URL directly and never spawns a console window.
-            tokio::process::Command::new("explorer")
+            // ShellExecute through url.dll hands the whole URL to the default
+            // browser. `explorer <url>` dropped the query string, so Sub-Store
+            // lost `?api=` and fell back to its public default backend.
+            // rundll32 is a GUI program, so no console window appears.
+            tokio::process::Command::new("rundll32.exe")
+                .arg("url.dll,FileProtocolHandler")
                 .arg(url)
                 .spawn()
                 .map_err(|error| error.to_string())?;

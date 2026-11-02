@@ -397,3 +397,6 @@ input,textarea,[contenteditable="true"],code,pre{user-select:text;-webkit-user-s
 .app-frame[data-scrollbar="hidden"] .app-content { scrollbar-width: none; }
 .app-select-menu::-webkit-scrollbar, .card-menu::-webkit-scrollbar, .detail-drawer ::-webkit-scrollbar, .modal-shade ::-webkit-scrollbar, .km-modal ::-webkit-scrollbar, .km-modal::-webkit-scrollbar, .ov-editor::-webkit-scrollbar, .ov-editor ::-webkit-scrollbar, .provider-content-modal ::-webkit-scrollbar, .profile-edit-modal::-webkit-scrollbar,
 .app-frame[data-scrollbar="hidden"] .app-content::-webkit-scrollbar { display: none; width: 0; height: 0; }
+/* 全局不显示滚动条（和 Surge 一致）：所有页面、列表与编辑器仍可用滚轮、触控板、键盘滚动。 */
+*, *::before, *::after { scrollbar-width: none; }
+*::-webkit-scrollbar { display: none; width: 0; height: 0; }

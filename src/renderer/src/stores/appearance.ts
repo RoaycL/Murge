@@ -1,14 +1,21 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import { detectShell } from '../platform/desktop-contract'
 
 export type ThemePreference = 'system' | 'light' | 'dark'
 export interface AppearancePreference {
   theme: ThemePreference
   highContrast: boolean
   reduceMotion: boolean
+  /** 窗口磨砂半透明背景（仅在系统支持时生效）。 */
+  translucent: boolean
 }
 
-export const DEFAULT_APPEARANCE: AppearancePreference = Object.freeze({ theme: 'system', highContrast: false, reduceMotion: false })
+/** The DWM backdrop the shell applied (see src-tauri/src/window_backdrop.rs). */
+export type WindowBackdrop = 'acrylic' | 'mica' | 'none'
+
+export const DEFAULT_APPEARANCE: AppearancePreference = Object.freeze({ theme: 'system', highContrast: false, reduceMotion: false, translucent: true })
 const STORAGE_KEY = 'appearance.v1'
 
 export function parseAppearancePreference(value: string | null): AppearancePreference {
@@ -18,7 +25,8 @@ export function parseAppearancePreference(value: string | null): AppearancePrefe
     return {
       theme: parsed.theme === 'light' || parsed.theme === 'dark' || parsed.theme === 'system' ? parsed.theme : 'system',
       highContrast: parsed.highContrast === true,
-      reduceMotion: parsed.reduceMotion === true
+      reduceMotion: parsed.reduceMotion === true,
+      translucent: parsed.translucent !== false
     }
   } catch {
     return { ...DEFAULT_APPEARANCE }
@@ -29,19 +37,44 @@ export function resolvedTheme(theme: ThemePreference, systemDark: boolean): 'lig
   return theme === 'system' ? (systemDark ? 'dark' : 'light') : theme
 }
 
+export function windowBackdrop(target: { __MURGE_BACKDROP__?: unknown } = window): WindowBackdrop {
+  const value = target.__MURGE_BACKDROP__
+  return value === 'acrylic' || value === 'mica' ? value : 'none'
+}
+
+/** Frosted only when the window really has a backdrop; high contrast stays opaque. */
+export function frostedWindow(backdrop: WindowBackdrop, preference: Pick<AppearancePreference, 'translucent' | 'highContrast'>): boolean {
+  return backdrop !== 'none' && preference.translucent && !preference.highContrast
+}
+
 export const useAppearanceStore = defineStore('appearance', () => {
   const initial = parseAppearancePreference(window.localStorage.getItem(STORAGE_KEY))
   const theme = ref<ThemePreference>(initial.theme)
   const highContrast = ref(initial.highContrast)
   const reduceMotion = ref(initial.reduceMotion)
+  const translucent = ref(initial.translucent)
+  const backdrop = windowBackdrop()
+  const isTauri = detectShell().kind === 'tauri'
+  let nativeTheme: 'light' | 'dark' | null = null
   let media: MediaQueryList | null = null
 
   function apply(): void {
     const systemDark = media?.matches ?? window.matchMedia('(prefers-color-scheme: dark)').matches
-    document.documentElement.dataset.theme = resolvedTheme(theme.value, systemDark)
+    const resolved = resolvedTheme(theme.value, systemDark)
+    document.documentElement.dataset.theme = resolved
     document.documentElement.dataset.contrast = highContrast.value ? 'high' : 'normal'
     document.documentElement.dataset.reduceMotion = reduceMotion.value ? 'true' : 'false'
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ theme: theme.value, highContrast: highContrast.value, reduceMotion: reduceMotion.value }))
+    document.documentElement.dataset.frosted = frostedWindow(backdrop, { translucent: translucent.value, highContrast: highContrast.value }) ? 'true' : 'false'
+    syncNativeTheme(resolved)
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ theme: theme.value, highContrast: highContrast.value, reduceMotion: reduceMotion.value, translucent: translucent.value }))
+  }
+
+  // The acrylic/mica tint follows the window's own light/dark mode, which must
+  // match the app theme rather than the system one.
+  function syncNativeTheme(resolved: 'light' | 'dark'): void {
+    if (!isTauri || nativeTheme === resolved) return
+    nativeTheme = resolved
+    getCurrentWindow().setTheme(resolved).catch(() => { nativeTheme = null })
   }
 
   function connect(): void {
@@ -59,7 +92,8 @@ export const useAppearanceStore = defineStore('appearance', () => {
   function setTheme(value: ThemePreference): void { theme.value = value; apply() }
   function setHighContrast(value: boolean): void { highContrast.value = value; apply() }
   function setReduceMotion(value: boolean): void { reduceMotion.value = value; apply() }
+  function setTranslucent(value: boolean): void { translucent.value = value; apply() }
 
-  return { theme, highContrast, reduceMotion, connect, disconnect, setTheme, setHighContrast, setReduceMotion }
+  return { theme, highContrast, reduceMotion, translucent, backdrop, connect, disconnect, setTheme, setHighContrast, setReduceMotion, setTranslucent }
 })
 

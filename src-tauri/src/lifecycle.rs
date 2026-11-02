@@ -407,6 +407,7 @@ pub fn wire_main_window(app: &tauri::AppHandle) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
+    crate::window_backdrop::apply(&window);
     let handle = app.clone();
     let target = window.clone();
     window.on_window_event(move |event| {

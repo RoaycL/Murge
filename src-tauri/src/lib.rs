@@ -42,6 +42,7 @@ mod runtime_intent;
 mod session_events;
 mod tray;
 mod tray_view;
+mod window_backdrop;
 mod yaml_value;
 // Network metadata service: shared, cached, single-flight app state.
 use network_metadata::NetworkMetadataService;
@@ -101,6 +102,8 @@ pub fn run() {
         }))
         // Signed self-update (updates.rs owns the driver).
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // Tells the renderer which frosted backdrop (if any) the window has.
+        .plugin(window_backdrop::plugin())
         .setup(|app| {
             startup_timeline::mark("electron-ready");
             // Dev builds never persist real user data: an ephemeral workspace

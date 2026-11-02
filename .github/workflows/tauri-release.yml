@@ -74,7 +74,11 @@ jobs:
   version:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
     outputs:
+      ci_verified: ${{ steps.ci.outputs.verified }}
       version: ${{ steps.check.outputs.version }}
       tag: ${{ steps.check.outputs.tag }}
       product: ${{ steps.check.outputs.product }}
@@ -104,6 +108,15 @@ jobs:
           echo "tag=tauri-v$version" >> "$GITHUB_OUTPUT"
           # The bundler names installers after tauri.conf productName (brand-checked).
           echo "product=$(node -p "require('./src-tauri/tauri.conf.json').productName")" >> "$GITHUB_OUTPUT"
+      # CI (typecheck + unit tests + Go tests) and the Windows build (Windows
+      # unit tests) already ran on this commit, or on the code it only bumps the
+      # version of. Reuse that instead of testing twice; if they failed the
+      # release stops here, if they have not finished the build tests itself.
+      - name: Reuse the CI result of this commit
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-gate.mjs release
 
   # Builds never see the signing key; they only produce unsigned installers.
   build:
@@ -140,14 +153,18 @@ jobs:
       - run: npm run tauri:bridge
       - name: Check generated bridge is unchanged
         run: git diff --exit-code -- src/renderer/src/platform/generated/desktop-api.ts
-      - run: npm run typecheck
-      - run: npm test
+      # Already passed in CI on this commit unless the version job says otherwise.
+      - name: Typecheck and unit tests (CI result not available)
+        if: needs.version.outputs.ci_verified != 'true'
+        run: |
+          npm run typecheck
+          npm test
+          npm run tun-service:test
       - name: Prepare pinned kernel and native service resources
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           npm run kernel:prepare
-          npm run tun-service:test
           npm run tun-service:build
       # No Rust cache here: release binaries are built from a clean target.
       - name: Build the per-machine NSIS installer

@@ -20,7 +20,28 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Skips the run when this code already passed (version-only bump or a merge
+  # whose tree the pull request already tested). See scripts/ci-gate.mjs.
+  gate:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-gate.mjs gate
+
   gui-smoke:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: windows-latest
     timeout-minutes: 60
     steps:

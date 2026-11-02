@@ -72,7 +72,7 @@ onBeforeUnmount(() => {
 .tauri-titlebar { --caption-hover: rgba(0, 0, 0, 0.06); --caption-pressed: rgba(0, 0, 0, 0.04); display: contents; color: #858b95; user-select: none; }
 :global(:root[data-theme="dark"]) .tauri-titlebar { --caption-hover: rgba(255, 255, 255, 0.06); --caption-pressed: rgba(255, 255, 255, 0.04); }
 .tauri-titlebar-drag { position: fixed; z-index: 40; inset: 0 138px auto 0; height: 34px; touch-action: none; }
-.tauri-window-controls { position: fixed; z-index: 100; top: 0; right: 0; display: flex; width: 138px; height: 34px; }
+.tauri-window-controls { position: fixed; z-index: 100; top: 0; right: 0; display: flex; width: 138px; height: 34px; transition: top .18s ease, right .18s ease; }
 .tauri-caption-button { display: grid; place-items: center; width: 46px; height: 34px; padding: 0; border: 0; border-radius: 0; background: transparent; color: inherit; -webkit-app-region: no-drag; }
 .tauri-caption-button svg { fill: none; stroke: currentColor; stroke-width: 1; pointer-events: none; }
 .tauri-caption-button:hover { background: var(--caption-hover); }
@@ -80,5 +80,13 @@ onBeforeUnmount(() => {
 .tauri-caption-button:focus-visible { outline-offset: -3px; }
 .tauri-caption-close:hover { background: #c42b1c; color: #fff; }
 .tauri-caption-close:active { background: #b02518; color: #fff; }
+/* While a drawer is open, the caption buttons move into the floating
+   drawer's top-right corner (same 8px inset as the content panel), so they
+   read as the drawer's own top bar instead of overlapping its edge. The
+   drawer header starts below them; close's hover follows the corner. */
+:global(body:has(.tauri-window-controls) .detail-drawer) { top: 8px; right: 8px; bottom: 8px; padding-top: 35px; }
+:global(body:has(.tauri-window-controls) .detail-drawer-header) { padding-top: 4px; }
+:global(body:has(.detail-drawer) .tauri-window-controls) { top: 9px; right: 9px; }
+:global(body:has(.detail-drawer) .tauri-caption-close) { border-top-right-radius: calc(var(--radius-large) - 1px); }
 .tauri-titlebar-error { position: fixed; z-index: 100; right: 8px; top: 38px; padding: 6px 10px; color: var(--app-danger); background: var(--app-surface-solid); border-radius: var(--radius-sm); font-size: var(--font-size-xs); }
 </style>

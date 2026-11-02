@@ -163,6 +163,6 @@ function hasRegion(region: string | null): boolean {
 .unlock-pill.pending { background: rgba(133, 139, 149, 0.14); color: var(--app-muted); }
 .unlock-region { overflow: hidden; color: var(--app-muted); font-size: var(--font-size-xs); text-overflow: ellipsis; white-space: nowrap; }
 .unlock-retest { justify-self: end; }
-.quiet-button { min-height: 28px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: var(--radius-control); background: transparent; color: var(--app-muted); font-size: var(--font-size-xs); white-space: nowrap; flex-shrink: 0; }
+.quiet-button { float: none; width: auto; height: auto; min-height: 28px; margin: 0; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: var(--radius-control); background: transparent; color: var(--app-muted); font-size: var(--font-size-xs); white-space: nowrap; flex-shrink: 0; }
 .quiet-button:disabled { opacity: 0.5; }
 </style>

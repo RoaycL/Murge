@@ -64,6 +64,7 @@ mod startup;
 mod startup_timeline;
 mod subscription;
 mod substore;
+mod substore_embed;
 mod substore_zip;
 mod system_proxy;
 mod tun;

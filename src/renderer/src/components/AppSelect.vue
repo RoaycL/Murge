@@ -14,8 +14,8 @@ const props = withDefaults(defineProps<{
   label: string
   disabled?: boolean
   /**
-   * 纯文本模式：与相邻的运行时数值一致（16px 加粗、无控件框），值后常显一个
-   * 小向下箭头提示可切换（与“外部 IP”一致）；打开下拉时
+   * 纯文本模式：与相邻的运行时数值一致（16px 加粗、无控件框），不画箭头（由
+   * 调用方在标签后放小箭头，与“外部 IP”一致）；打开下拉时
    * 也不切换成控件框，只显示箭头并在文字下方弹出菜单（与 Surge 一致，
    * 避免点开时文字跳动）。用于活动页“出站模式”这类行内选择器。
    */
@@ -159,9 +159,7 @@ onBeforeUnmount(() => {
 .app-select.plain { min-width: 0; }
 .app-select.plain .app-select-trigger { min-height: 0; gap: var(--space-2); padding: 0; border-color: transparent; background: transparent; font-size: var(--font-size-xl); line-height: 19px; font-weight: var(--font-weight-bold); }
 .app-select.plain .app-select-trigger:hover:not(:disabled) { border-color: transparent; background: transparent; color: var(--app-blue); }
-.app-select.plain .trigger-chevron { width: 12px; height: 12px; color: var(--app-muted); }
-.app-select.plain .app-select-trigger:hover:not(:disabled) .trigger-chevron,
-.app-select.plain.open .trigger-chevron { color: var(--app-blue); }
+.app-select.plain .trigger-chevron { display: none; }
 .app-select.plain.open .app-select-trigger { color: var(--app-blue); }
 .app-select-menu { animation: app-select-menu-in .12s ease-out; transform-origin: top left; }
 .app-select-menu.above { transform-origin: bottom left; }

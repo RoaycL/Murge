@@ -107,7 +107,7 @@ describe('Activity fluid-layout UI contract', () => {
       read('src/renderer/src/styles/base.css')
     ])
 
-    expect(activity).toContain('<div class="runtime-mode-picker"><span>出站模式</span><AppSelect')
+    expect(activity).toMatch(/<div ref="modePicker" class="runtime-mode-picker"><span class="runtime-detail-label"[^>]*>出站模式<AppIcon name="chevron-down"[^>]*\/><\/span><AppSelect/)
     expect(activity).toMatch(/<AppSelect[^>]*\splain\s*\/>/)
     expect(css).toMatch(/\.runtime-context\s*\{[^}]*align-items:\s*start/)
     expect(css).toMatch(/\.runtime-context\s*>\s*div,\s*\.runtime-context\s*>\s*button\s*\{[^}]*flex-direction:\s*column/)

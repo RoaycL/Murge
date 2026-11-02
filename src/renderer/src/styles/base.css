@@ -45,8 +45,8 @@ h1 { margin: 0; font-size: var(--font-size-display); line-height: 34px; letter-s
    网络=延迟卡左缘、配置=延迟卡中线、出站模式=上传卡左缘、外部 IP=下载卡左缘。 */
 .runtime-context { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); column-gap: 15px; align-items: start; width: 100%; min-width: calc(2 * var(--card-min) + 15px); min-height: 57px; }
 .runtime-context > div, .runtime-context > button { display: flex; flex-direction: column; justify-content: flex-start; min-width: 0; }
-/* 外部 IP：与 Surge 一样在标签后放一个向下小箭头，提示可展开网络详情。 */
-.runtime-context .runtime-detail-link{min-width:0;padding:0;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer}.runtime-detail-link .runtime-detail-label{display:inline-flex;align-items:center;gap:2px}.runtime-detail-link .runtime-detail-label svg{color:var(--app-muted)}.runtime-detail-link:hover strong,.runtime-detail-link:hover .runtime-detail-label{color:var(--app-blue)}
+/* 外部 IP / 出站模式：与 Surge 一样在标签后放一个向下小箭头，提示可展开/切换。 */
+.runtime-context .runtime-detail-link{min-width:0;padding:0;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer}.runtime-context .runtime-detail-label{display:inline-flex;align-items:center;align-self:flex-start;gap:2px;cursor:pointer}.runtime-context .runtime-detail-label svg{color:var(--app-muted)}.runtime-mode-picker .runtime-detail-label:hover,.runtime-mode-picker:has(.app-select.open) .runtime-detail-label{color:var(--app-blue)}.runtime-detail-link:hover strong,.runtime-detail-link:hover .runtime-detail-label{color:var(--app-blue)}
 .runtime-context > div > span, .runtime-context > button > span, .metric-label { color: var(--app-muted); font-size: var(--font-size-xs); }
 /* 值行：四格统一 16px/19px/650 与固定上边距，保证水平基线一致。 */
 .runtime-context strong { margin-top: 3px; font-size: var(--font-size-xl); line-height: 19px; font-weight: var(--font-weight-bold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

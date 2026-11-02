@@ -33,7 +33,8 @@ button:disabled { cursor: default; opacity: 0.55; }
 .activity-view.page-shell { max-width: none; min-width: calc(2 * var(--card-min) + 15px); padding-left: 5px; padding-right: 35px; }
 h1 { margin: 0; font-size: var(--font-size-display); line-height: 34px; letter-spacing: -0.7px; font-weight: var(--font-weight-bold); }
 .surface-card { background: var(--app-surface); border: 1px solid var(--app-surface-border); border-radius: var(--radius-large); box-shadow: var(--app-shadow); overflow: hidden; }
-.activity-header { width: 100%; max-width: var(--activity-content-width); }
+/* 与 Surge 一致：大标题与下方“网络/配置/出站模式”事实条之间留出明显间距。 */
+.activity-header { width: 100%; max-width: var(--activity-content-width); margin-bottom: 12px; }
 .status-pills { display: flex; gap: var(--space-5); }
 .status-pill { display: flex; align-items: center; justify-content: center; min-width: 122px; height: 23px; border-radius: var(--radius-pill); color: #4f535a; background: rgba(220, 221, 224, 0.9); font-size: var(--font-size-sm); }
 .status-pill i { width: 8px; height: 8px; margin-right: 14px; border-radius: 50%; background: var(--app-green); }

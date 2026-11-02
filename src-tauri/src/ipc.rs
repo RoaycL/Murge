@@ -787,6 +787,9 @@ pub async fn dispatch(
                     return Err(error);
                 }
             }
+            if changed {
+                crate::lan_gateway::sync_allow_lan(kernel, allow_lan).await;
+            }
             Ok(next)
         }
         "core-settings:preview" => {

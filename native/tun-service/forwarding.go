@@ -65,7 +65,10 @@ type forwardingKeeper struct {
 	mu      sync.Mutex
 	host    forwardingHost
 	desired bool
-	device  string
+	// lanProxy: allow-lan is on, so LAN devices dial mihomo's HTTP / SOCKS5
+	// listeners directly and need the same firewall rule.
+	lanProxy bool
+	device   string
 	// managed holds the adapters this keeper switched forwarding ON for, so
 	// that only those are switched back off.
 	managed map[uint64]string
@@ -104,6 +107,16 @@ func (keeper *forwardingKeeper) SetDesired(desired bool) forwardingStatus {
 	return keeper.statusLocked()
 }
 
+// SetLANProxy records whether allow-lan is on, which also needs the inbound
+// firewall rule while a core runs.
+func (keeper *forwardingKeeper) SetLANProxy(enabled bool) forwardingStatus {
+	keeper.mu.Lock()
+	defer keeper.mu.Unlock()
+	keeper.lanProxy = enabled
+	keeper.ensureLocked()
+	return keeper.statusLocked()
+}
+
 func (keeper *forwardingKeeper) Status() forwardingStatus {
 	keeper.mu.Lock()
 	defer keeper.mu.Unlock()
@@ -120,7 +133,7 @@ func (keeper *forwardingKeeper) Tick() {
 	}
 	keeper.mu.Lock()
 	defer keeper.mu.Unlock()
-	if !keeper.desired && len(keeper.managed) == 0 && keeper.firewall == "" {
+	if !keeper.desired && len(keeper.managed) == 0 {
 		return
 	}
 	keeper.ensureLocked()
@@ -160,6 +173,7 @@ func (keeper *forwardingKeeper) ensureLocked() {
 	keeper.lastErr = ""
 	keeper.targets = nil
 	keeper.tun = false
+	keeper.syncFirewallLocked()
 	wanted := map[uint64]string{}
 	roles := map[uint64]string{}
 	if keeper.desired && keeper.device != "" {
@@ -189,7 +203,6 @@ func (keeper *forwardingKeeper) ensureLocked() {
 		}
 	}
 	keeper.restoreLocked(wanted)
-	keeper.syncFirewallLocked()
 	luids := make([]uint64, 0, len(wanted))
 	for luid := range wanted {
 		luids = append(luids, luid)
@@ -224,14 +237,14 @@ func (keeper *forwardingKeeper) ensureLocked() {
 	}
 }
 
-// syncFirewallLocked keeps the inbound rule exactly while 网关模式 is wanted
-// and a core is running: forwarded devices reach mihomo from the LAN, which
+// syncFirewallLocked keeps the inbound rule exactly while 网关模式 or allow-lan
+// is wanted and a core is running: forwarded devices reach mihomo from the LAN, which
 // Windows Firewall otherwise blocks on a network marked Public. The rule is
 // limited to the local subnet and to the running mihomo executable, so the
 // network does not need to be switched to Private.
 func (keeper *forwardingKeeper) syncFirewallLocked() {
 	want := ""
-	if keeper.desired && keeper.device != "" {
+	if keeper.desired || keeper.lanProxy {
 		want = keeper.program
 	}
 	if want == keeper.firewall {

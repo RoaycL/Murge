@@ -985,10 +985,19 @@ fn compose_privileged_kernel(
             privileged_kernel::PrivilegedKernelOptions {
                 controller_port: std::sync::Arc::new(move || current_controller(&handle).0),
                 lan_gateway: Some(std::sync::Arc::new(move || {
-                    gateway_handle
+                    let gateway = gateway_handle
                         .try_state::<std::sync::Arc<settings::SettingsStore>>()
                         .map(|settings| settings.get().lan_gateway)
-                        .unwrap_or(false)
+                        .unwrap_or(false);
+                    let allow_lan = gateway_handle
+                        .try_state::<std::sync::Arc<enhancements::ModelStores>>()
+                        .map(|models| {
+                            enhancements::coerce_core_settings(&models.core.get())["allowLan"]
+                                .as_bool()
+                                == Some(true)
+                        })
+                        .unwrap_or(false);
+                    (gateway, allow_lan)
                 })),
                 ..Default::default()
             },

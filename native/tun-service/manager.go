@@ -125,6 +125,10 @@ func (manager *sessionManager) applyForwarding(request serviceRequest, response 
 		status = manager.forwarding.SetDesired(true)
 	case "disable":
 		status = manager.forwarding.SetDesired(false)
+	case "lan-proxy-on":
+		status = manager.forwarding.SetLANProxy(true)
+	case "lan-proxy-off":
+		status = manager.forwarding.SetLANProxy(false)
 	default:
 		status = manager.forwarding.Status()
 	}

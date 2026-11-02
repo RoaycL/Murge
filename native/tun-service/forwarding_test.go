@@ -164,6 +164,31 @@ func TestForwardingFirewallRuleFollowsDesireAndCore(t *testing.T) {
 	}
 }
 
+func TestFirewallRuleAlsoServesAllowLan(t *testing.T) {
+	host := newFakeForwardingHost(ethernet)
+	keeper := newForwardingKeeper(host)
+	keeper.SetLANProxy(true)
+	if host.rule != "" {
+		t.Fatal("rule added without a running core")
+	}
+	keeper.SetDevice("Murge TUN", `C:\\core.exe`)
+	if host.rule != `C:\\core.exe` {
+		t.Fatal("allow-lan did not get the rule")
+	}
+	if len(host.sets) != 0 {
+		t.Fatal("allow-lan alone must not switch forwarding on")
+	}
+	keeper.SetDesired(true)
+	keeper.SetDesired(false)
+	if host.rule == "" {
+		t.Fatal("turning 网关模式 off removed the rule allow-lan still needs")
+	}
+	keeper.SetLANProxy(false)
+	if host.rule != "" {
+		t.Fatal("rule survived both switches off")
+	}
+}
+
 func TestForwardingReportsFailures(t *testing.T) {
 	host := newFakeForwardingHost(ethernet, tunCard)
 	host.failSet[1] = true
@@ -201,6 +226,7 @@ func TestForwardingRequestDecoding(t *testing.T) {
 	}{
 		{`{"protocolVersion":8,"requestId":"1","operation":"forwarding","forwarding":"enable"}`, true},
 		{`{"protocolVersion":8,"requestId":"1","operation":"forwarding","forwarding":"status"}`, true},
+		{`{"protocolVersion":8,"requestId":"1","operation":"forwarding","forwarding":"lan-proxy-on"}`, true},
 		{`{"protocolVersion":8,"requestId":"1","operation":"forwarding"}`, false},
 		{`{"protocolVersion":8,"requestId":"1","operation":"forwarding","forwarding":"以太网"}`, false},
 		{`{"protocolVersion":8,"requestId":"1","operation":"status","forwarding":"enable"}`, false},

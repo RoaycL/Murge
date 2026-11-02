@@ -37,9 +37,9 @@ pub struct PrivilegedKernelOptions {
     /// The SCM start window absorbed by the service-call retries.
     pub service_retry_ms: u64,
     pub poll_ms: u64,
-    /// 网关模式, read after every start and handed to the service (which
-    /// forgets it when it restarts). None skips the sync.
-    pub lan_gateway: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    /// (网关模式, allow-lan), read after every start and handed to the
+    /// service (which forgets both when it restarts). None skips the sync.
+    pub lan_gateway: Option<Arc<dyn Fn() -> (bool, bool) + Send + Sync>>,
 }
 
 impl Default for PrivilegedKernelOptions {
@@ -211,7 +211,8 @@ impl PrivilegedKernelGateway {
         });
         self.set_status(status.clone());
         if let Some(lan_gateway) = &self.options.lan_gateway {
-            crate::lan_gateway::sync_after_start(&self.client, lan_gateway()).await;
+            let (gateway, allow_lan) = lan_gateway();
+            crate::lan_gateway::sync_after_start(&self.client, gateway, allow_lan).await;
         }
         Ok(status)
     }

@@ -655,8 +655,13 @@ impl TunServiceClient {
     /// 网关模式: ask the service to switch IPv4 forwarding on the LAN and TUN
     /// adapters (`enable` / `disable`) or just report it (`status`). The
     /// service keeps it applied across TUN adapter rebuilds by itself.
+    /// `lan-proxy-on` / `lan-proxy-off` tell it allow-lan's state, which needs
+    /// the same local-subnet firewall rule.
     pub async fn forwarding(&self, action: &str) -> Result<Value, IpcError> {
-        if !matches!(action, "enable" | "disable" | "status") {
+        if !matches!(
+            action,
+            "enable" | "disable" | "status" | "lan-proxy-on" | "lan-proxy-off"
+        ) {
             return Err(IpcError::invalid_argument("invalid forwarding action"));
         }
         let mut request = Map::new();

@@ -86,7 +86,7 @@ func decodeRequest(data []byte) (serviceRequest, error) {
 	switch request.Operation {
 	case "forwarding":
 		if request.SessionID != "" || request.Profile != "" || request.ProfileSHA256 != "" || request.Version != "" || request.ProxyPort != 0 || request.ProviderKind != "" || request.ProviderName != "" ||
-			(request.Forwarding != "enable" && request.Forwarding != "disable" && request.Forwarding != "status") {
+			!forwardingActions[request.Forwarding] {
 			return serviceRequest{}, errors.New("invalid forwarding request")
 		}
 	case "start":
@@ -148,6 +148,13 @@ func decodeRequest(data []byte) (serviceRequest, error) {
 		return serviceRequest{}, errors.New("operation is not allowlisted")
 	}
 	return request, nil
+}
+
+// forwardingActions: 网关模式 on/off, the allow-lan proxy firewall on/off, or
+// a plain status read.
+var forwardingActions = map[string]bool{
+	"enable": true, "disable": true, "status": true,
+	"lan-proxy-on": true, "lan-proxy-off": true,
 }
 
 func ensureJSONEOF(decoder *json.Decoder) error {

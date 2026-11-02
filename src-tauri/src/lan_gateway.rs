@@ -96,17 +96,42 @@ pub async fn set_enabled(
     }
 }
 
-/// Tell the service the persisted 网关模式 after a core start (best-effort):
-/// a restarted service has forgotten it.
-pub async fn sync_after_start(client: &crate::tun_service::TunServiceClient, enabled: bool) {
-    if let Err(error) = client
-        .forwarding(if enabled { "enable" } else { "disable" })
-        .await
-    {
-        eprintln!(
-            "[lan-gateway] forwarding sync failed: {}",
-            error.extract_message()
-        );
+/// Tell the service the persisted 网关模式 and allow-lan after a core start
+/// (best-effort): a restarted service has forgotten both.
+pub async fn sync_after_start(
+    client: &crate::tun_service::TunServiceClient,
+    enabled: bool,
+    allow_lan: bool,
+) {
+    for action in [
+        if enabled { "enable" } else { "disable" },
+        if allow_lan {
+            "lan-proxy-on"
+        } else {
+            "lan-proxy-off"
+        },
+    ] {
+        if let Err(error) = client.forwarding(action).await {
+            eprintln!(
+                "[lan-gateway] {action} sync failed: {}",
+                error.extract_message()
+            );
+        }
+    }
+}
+
+/// allow-lan moved: the service adds or drops the local-subnet firewall rule
+/// for the running core (best-effort, the proxy switch itself already applied).
+pub async fn sync_allow_lan(kernel: &KernelServices, allow_lan: bool) {
+    if let Some(privileged) = &kernel.privileged {
+        let action = if allow_lan {
+            "lan-proxy-on"
+        } else {
+            "lan-proxy-off"
+        };
+        if let Err(error) = privileged.client().forwarding(action).await {
+            eprintln!("[lan-gateway] {action} failed: {}", error.extract_message());
+        }
     }
 }
 

@@ -111,15 +111,25 @@ async fn sample_proxy(
     let Some(proxy_node) = resolve_proxy_node(&response, group_order) else {
         return (None, None);
     };
-    let proxy_ms = client
-        .delay_test(
-            &proxy_node,
-            None,
-            crate::mihomo::DEFAULT_DELAY_TIMEOUT_MS as i64,
-        )
-        .await
-        .ok()
-        .and_then(|result| result["delay"].as_u64());
+    // A cold chain (first handshake to the node, its server DNS lookup) can
+    // miss the delay budget once and then succeed right away, which showed
+    // up as "—" on the card until another feature happened to warm the
+    // chain. One immediate retry absorbs that without inventing a number.
+    let mut proxy_ms = None;
+    for _ in 0..2 {
+        proxy_ms = client
+            .delay_test(
+                &proxy_node,
+                None,
+                crate::mihomo::DEFAULT_DELAY_TIMEOUT_MS as i64,
+            )
+            .await
+            .ok()
+            .and_then(|result| result["delay"].as_u64());
+        if proxy_ms.is_some() {
+            break;
+        }
+    }
     (proxy_ms, Some(proxy_node))
 }
 

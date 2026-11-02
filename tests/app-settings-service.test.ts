@@ -27,8 +27,8 @@ describe('parseAppSettings', () => {
     expect(parseAppSettings('{"autoStartKernel":false}')).toEqual({ ...DEFAULT_OBJ, autoStartKernel: false })
   })
 
-  it('migrates a legacy visible login preference to tray-only startup', () => {
-    expect(parseAppSettings('{"silentLaunch":false}')).toEqual(DEFAULT_OBJ)
+  it('reads the 静默启动 toggle', () => {
+    expect(parseAppSettings('{"silentLaunch":false}')).toEqual({ ...DEFAULT_OBJ, silentLaunch: false })
   })
 
   it('coerces an unknown autoCheckUpdate to the default', () => {

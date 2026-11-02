@@ -303,6 +303,11 @@ export class MihomoClient {
     ).then(() => undefined)
   }
 
+  /** Re-download every geo database (GeoIP / GeoSite / MMDB / ASN). */
+  upgradeGeo(): Promise<void> {
+    return this.request('/upgrade/geo', { method: 'POST' }, { empty204: true, timeoutMs: 120_000 }).then(() => undefined)
+  }
+
   /** Reject any probe URL the controller must not be asked to fetch. */
   private assertSafeTestUrl(url: string): void {
     let parsed: URL

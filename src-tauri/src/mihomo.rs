@@ -38,6 +38,8 @@ use crate::error::{code, IpcError};
 pub const DEFAULT_TEST_URL: &str = "https://www.gstatic.com/generate_204";
 const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 const PROVIDER_REFRESH_TIMEOUT_MS: u64 = 45_000;
+/// Geo databases are tens of MB; give the kernel time to fetch all four.
+const GEO_UPGRADE_TIMEOUT_MS: u64 = 120_000;
 pub const DEFAULT_DELAY_TIMEOUT_MS: u64 = 5_000;
 
 const LOG_LEVELS: [&str; 5] = ["silent", "error", "warning", "info", "debug"];
@@ -1048,6 +1050,13 @@ impl MihomoClient {
             true,
         )
         .await?;
+        Ok(Value::Null)
+    }
+
+    /// Re-download every geo database (GeoIP / GeoSite / MMDB / ASN).
+    pub async fn upgrade_geo(&self) -> Result<Value, IpcError> {
+        self.request("POST", "/upgrade/geo", None, GEO_UPGRADE_TIMEOUT_MS, true)
+            .await?;
         Ok(Value::Null)
     }
 

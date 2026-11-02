@@ -98,6 +98,7 @@ export function createDesktopApi(): DesktopApi {
       healthCheckProxyProvider: (name) => bridgeInvoke("mihomo:health-check-proxy-provider", [name]),
       getRuleProviders: () => bridgeInvoke("mihomo:get-rule-providers", []),
       refreshRuleProvider: (name) => bridgeInvoke("mihomo:refresh-rule-provider", [name]),
+      upgradeGeo: () => bridgeInvoke("mihomo:upgrade-geo", []),
       delayTest: (name, opts) => bridgeInvoke("mihomo:delay-test", [name, opts]),
       groupMemberDelayTest: (group, name, opts) => bridgeInvoke("mihomo:group-member-delay-test", [group, name, opts]),
       groupDelayTest: (name, opts) => bridgeInvoke("mihomo:group-delay-test", [name, opts]),

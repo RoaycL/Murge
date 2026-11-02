@@ -120,6 +120,7 @@ export interface MihomoGateway {
   healthCheckProxyProvider(name: string): Promise<void>
   getRuleProviders(): Promise<MihomoRuleProvidersResponse>
   refreshRuleProvider(name: string): Promise<void>
+  upgradeGeo(): Promise<void>
   delayTest(name: string, opts?: { timeout?: number }): Promise<MihomoDelayResult>
   /** Test one member using its owning group's probe URL and provider route. */
   groupMemberDelayTest(group: string, name: string, opts?: { timeout?: number }): Promise<MihomoDelayResult>

@@ -31,13 +31,13 @@ describe('Tauri bridge parity (Phase 2)', () => {
     }
   })
 
-  it('covers the complete desktop surface (130 = 119 invoke + 11 events)', async () => {
+  it('covers the complete desktop surface (131 = 120 invoke + 11 events)', async () => {
     const generated = await read(GENERATED)
     const invokeChannels = [...generated.matchAll(/bridgeInvoke\("([^"]+)"/g)].map((m) => m[1])
     const eventChannels = [...generated.matchAll(/bridgeListen\("([^"]+)"/g)].map((m) => m[1])
-    expect(invokeChannels).toHaveLength(121)
+    expect(invokeChannels).toHaveLength(122)
     expect(eventChannels).toHaveLength(11)
-    expect(new Set([...invokeChannels, ...eventChannels]).size).toBe(132)
+    expect(new Set([...invokeChannels, ...eventChannels]).size).toBe(133)
   })
 
   it('dispatches through the single desktop_ipc command with positional payload arrays', async () => {

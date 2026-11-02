@@ -197,8 +197,8 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
       <p v-if="!visibleRows.length" class="resource-table-empty">{{ onlyNotReady ? '所有集合都已就绪。' : total ? '该类型下没有远程集合。' : '当前配置没有远程代理集合或规则集合。' }}</p>
     </div>
   </section>
-  <ConfigInspectionCard section="geodata" title="Geodata" />
   <GeodataSettingsPanel />
+  <ConfigInspectionCard section="geodata" title="Geodata" />
 
   <DetailDrawer :open="Boolean(viewing)" :title="viewTitle" subtitle="集合配置" @close="viewing = null">
     <div v-if="viewing" class="provider-config-detail">

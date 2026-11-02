@@ -186,6 +186,12 @@ export class FakeMihomoGateway implements MihomoGateway {
     return Promise.resolve()
   }
 
+  upgradeGeoCalls = 0
+  upgradeGeo(): Promise<void> {
+    this.upgradeGeoCalls += 1
+    return Promise.resolve()
+  }
+
   delayTest(name: string): Promise<MihomoDelayResult> {
     if (this.delayError) return Promise.reject(this.delayError)
     return Promise.resolve(this.delayResults[name] ?? { delay: 0 })

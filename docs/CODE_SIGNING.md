@@ -40,7 +40,7 @@
 ## 签名在本仓库中应用的位置
 
 - `electron-builder.config.mjs` 是唯一的打包配置。它通过 electron-builder 内置的 `WIN_CSC_LINK`/`WIN_CSC_KEY_PASSWORD` 处理机制从环境读取签名设置；没有硬编码任何证书路径。
-- `.github/workflows/ci.yml` 包含 `package-win` 任务。它**不**包含任何秘密。在真实发布中，签名秘密以加密的 GitHub Actions 秘密形式按名称提供，绝不可内联。
+- 旧 Electron 的 `package-win` 任务已从 `.github/workflows/ci.yml` 删除；Tauri 安装包由 `tauri-build.yml`（PR）和 `tauri-release.yml`（发布）构建，签名秘密只交给发布的 publish 任务。
 
 ## 生成签名构建的步骤（所有者/操作者）
 

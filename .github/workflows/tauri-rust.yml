@@ -20,8 +20,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Skips the run when this code already passed (version-only bump or a merge
+  # whose tree the pull request already tested). See scripts/ci-gate.mjs.
+  gate:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci-gate.mjs gate
+
   rust:
     name: Rust (${{ matrix.os }})
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -92,6 +113,8 @@ jobs:
 
   audit:
     name: Rust dependency audit
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:

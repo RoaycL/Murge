@@ -120,7 +120,7 @@ async function closeSelected(): Promise<void> {
       </button>
       <EmptyState v-if="!groups.length" icon="devices" title="暂无活动设备" detail="本机或局域网地址产生连接后会显示在这里。" />
       <p v-if="onlyThisHost && !core.settings.allowLan" class="device-lan-hint">
-        其他设备的流量经过 Murge 后才会出现在这里。在概览开启「局域网设备接管」，再把手机等设备的代理或网关指向本机。
+        其他设备的流量经过本机内核后才会出现在这里。在概览开启「局域网设备接管」，再把手机等设备的代理或网关指向本机。
         <button type="button" class="link-button" @click="router.push('/overview')">前往概览</button>
       </p>
     </section>

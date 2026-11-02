@@ -150,7 +150,7 @@ async function toggleAllowLan(): Promise<void> {
   void lan.refresh()
 }
 
-// 网关模式 — mihomo has no DHCP server, so Murge cannot hand out leases the way
+// 网关模式 — mihomo has no DHCP server, so the app cannot hand out leases the way
 // Surge does. With TUN on and Windows IP forwarding enabled, a device whose
 // gateway is set to this PC by hand is routed into the TUN adapter, where
 // mihomo takes over its traffic (DNS included, via dns-hijack).

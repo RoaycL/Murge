@@ -7,7 +7,7 @@ import { lanAddresses } from '@shared/lan'
 import { brand } from '@shared/brand'
 
 /**
- * 网关模式 setup guide. mihomo has no DHCP server, so Murge cannot hand out
+ * 网关模式 setup guide. mihomo has no DHCP server, so the app cannot hand out
  * leases the way Surge does. With TUN on and Windows IP forwarding enabled, a
  * device whose gateway is set to this PC by hand is routed into the TUN
  * adapter, where mihomo takes over its traffic (DNS included, via

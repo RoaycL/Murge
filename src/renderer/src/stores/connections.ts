@@ -4,6 +4,8 @@ import type { MihomoConnectionsSnapshot, MihomoStreamError } from '@shared/mihom
 import type { MihomoConnection } from '@shared/mihomo-api'
 import { toProtocolError } from '@shared/protocol-errors'
 import { connectionChainHops } from '@shared/connection-chain'
+import { EntityTrafficTracker, type EntityKind, type EntityTrafficStats } from '../lib/entity-traffic'
+import { deviceKeyOf } from '../lib/connection-groups'
 
 export type ConnectionsStreamStatus = 'loading' | 'live' | 'disconnected' | 'error'
 
@@ -24,6 +26,7 @@ export interface ConnectionsSummary {
   totalConnections: number
   distinctProcesses: number
   distinctDevices: number
+  distinctHosts: number
   downloadTotal: number
   uploadTotal: number
   memory: number
@@ -49,6 +52,10 @@ export const useConnectionsStore = defineStore('connections', () => {
   let errorUnsub: (() => void) | null = null
   let watchdog: ReturnType<typeof setTimeout> | null = null
   let connectionGeneration = 0
+  // Per-process/per-device history is plain (non-reactive) state; the version
+  // counter is what makes the drawers re-read it after each snapshot.
+  const entityTraffic = new EntityTrafficTracker()
+  const entityTrafficVersion = ref(0)
 
   function armWatchdog(): void {
     if (watchdog) clearTimeout(watchdog)
@@ -125,12 +132,15 @@ export const useConnectionsStore = defineStore('connections', () => {
     if (!snap) return null
     const processes = new Set<string>()
     const devices = new Set<string>()
+    const hosts = new Set<string>()
     let directDownload = 0
     let proxyDownload = 0
     for (const connection of snap.connections) {
       processes.add(connection.metadata.process ?? 'unknown')
-      const ip = connection.metadata.sourceIP ?? connection.metadata.destinationIP
-      if (ip) devices.add(ip)
+      // Same identity as the 设备 page so the Activity card and the list agree.
+      devices.add(deviceKeyOf(connection))
+      const host = connection.metadata.host || connection.metadata.destinationIP
+      if (host) hosts.add(host)
       if (connection.chains.includes('DIRECT')) directDownload += connection.download
       else proxyDownload += connection.download
     }
@@ -138,6 +148,7 @@ export const useConnectionsStore = defineStore('connections', () => {
       totalConnections: snap.connections.length,
       distinctProcesses: processes.size,
       distinctDevices: devices.size,
+      distinctHosts: hosts.size,
       downloadTotal: snap.downloadTotal,
       uploadTotal: snap.uploadTotal,
       memory: snap.memory,
@@ -192,12 +203,26 @@ export const useConnectionsStore = defineStore('connections', () => {
       .sort((left, right) => Date.parse(right.closedAt ?? '') - Date.parse(left.closedAt ?? ''))
       .slice(0, 500)
     snapshot.value = snap
+    entityTraffic.observe(snap.connections)
+    entityTrafficVersion.value += 1
     // Any valid snapshot proves the stream is alive; recover from loading or
     // disconnected and clear the stale error.
     lastError.value = null
     status.value = 'live'
     // Keep a fresh silence watchdog armed after every snapshot.
     armWatchdog()
+  }
+
+  /** Windowed traffic stats for one process or device row (this run only). */
+  function entityStats(kind: EntityKind, key: string): EntityTrafficStats | null {
+    void entityTrafficVersion.value
+    return entityTraffic.stats(kind, key)
+  }
+
+  /** Since-start bytes and current rate for every row of a kind. */
+  function entityTotals(kind: EntityKind): ReturnType<EntityTrafficTracker['totals']> {
+    void entityTrafficVersion.value
+    return entityTraffic.totals(kind)
   }
 
   function select(id: string | null): void {
@@ -301,7 +326,7 @@ export const useConnectionsStore = defineStore('connections', () => {
   return {
     status, lastError, snapshot, summary, closedConnections, view,
     selectedId, selectedConnection, search, visibleConnections, closingIds, closingMany, actionError, sort,
-    rankScope, setRankScope, topProcesses, topHosts, topPolicies,
+    rankScope, setRankScope, topProcesses, topHosts, topPolicies, entityStats, entityTotals,
     connect, disconnect, select, close, closeMany, setView, clearClosed
   }
 })

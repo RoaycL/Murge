@@ -78,7 +78,7 @@ h1 { margin: 0; font-size: var(--font-size-display); line-height: 34px; letter-s
 /* Surge 左列横卡：约 336×160。 */
 .connections-card { container-type: inline-size; display: flex; flex-direction: column; aspect-ratio: 2.1 / 1; padding: 16px; overflow: hidden; }
 .connections-summary-link{display:grid;grid-template-columns:auto 1fr auto;align-items:baseline;gap:var(--space-3);width:100%;margin-top:8px;padding:0;border:0;background:transparent;color:inherit;text-align:left}.connections-summary-link>strong{font-size:var(--font-size-hero);line-height:42px}.connections-summary-link>span{color:var(--app-muted);font-size:var(--font-size-2xs)}.connections-summary-link>svg{align-self:center;color:var(--app-muted)}
-.topology-inline{display:grid;grid-template-columns:28px 1fr auto;align-items:center;gap:var(--space-3);width:100%;min-height:52px;margin-top:auto;padding:7px 9px;border:1px solid var(--app-divider);border-radius:var(--radius-md);background:var(--app-fill-subtle);color:inherit;text-align:left}.topology-inline>svg:first-child{color:var(--app-blue)}.topology-inline span{display:flex;flex-direction:column}.topology-inline strong{font-size:var(--font-size-xs)}.topology-inline small{margin-top:3px;color:var(--app-muted);font-size:var(--font-size-2xs)}
+.connections-breakdown{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin-top:auto}.connections-breakdown button{display:flex;flex-direction:column;align-items:flex-start;min-width:0;padding:0 10px;border:0;border-left:1px solid var(--app-divider);background:transparent;color:inherit;text-align:left;cursor:pointer}.connections-breakdown button:first-child{padding-left:0;border-left:0}.connections-breakdown strong{font-size:var(--font-size-2xl);line-height:28px;font-weight:var(--font-weight-bold);font-variant-numeric:tabular-nums}.connections-breakdown span{margin-top:1px;color:var(--app-muted);font-size:var(--font-size-2xs)}.connections-breakdown button:hover strong{color:var(--app-accent)}
 .connections-link { cursor: pointer; }
 .connections-link:focus-visible { outline: 2px solid var(--app-blue); outline-offset: -2px; }
 .online-dot { --runtime-accent: var(--runtime-idle); float: right; width: 11px; height: 11px; margin-top: -1px; border-radius: 50%; background: var(--runtime-accent); animation: runtime-breathe 2.2s ease-in-out infinite; }
@@ -146,7 +146,7 @@ h1 { margin: 0; font-size: var(--font-size-display); line-height: 34px; letter-s
   .latency-breakdown strong { margin-top: 2px; font-size: var(--font-size-md); }
   .connections-summary-link { margin-top: 3px; }
   .connections-summary-link > strong { font-size: var(--font-size-display); line-height: 32px; }
-  .topology-inline { grid-template-columns: 24px 1fr auto; min-height: 43px; padding: 5px 7px; }
+  .connections-breakdown strong { font-size: var(--font-size-xl); line-height: 22px; }
   .total-labels span { font-size: var(--font-size-2xs); }
   .total-labels strong { font-size: var(--font-size-body); }
   .total-bar { height: 18px; margin-top: 3px; }

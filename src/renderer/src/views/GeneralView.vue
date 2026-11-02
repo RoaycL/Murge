@@ -145,13 +145,21 @@ onMounted(async () => {
             @click="startup.setEnabled(!startup.status.enabled)"
           />
         </label>
-        <div class="startup-behavior">
+        <label class="startup-behavior">
           <span>
-            <strong>开机后仅显示托盘图标</strong>
-            <span class="startup-detail">不会自动弹出主窗口；手动启动应用仍会正常显示。</span>
+            <strong>静默启动</strong>
+            <span class="startup-detail">开启后登录 Windows 时只在托盘运行，不弹出主窗口；关闭则自动打开主窗口。手动启动应用总会显示。</span>
           </span>
-          <span class="fixed-state">已启用</span>
-        </div>
+          <button
+            type="button"
+            class="switch"
+            :class="{ on: appSettings.settings.silentLaunch }"
+            :aria-checked="appSettings.settings.silentLaunch"
+            :disabled="appSettings.busy"
+            aria-label="静默启动"
+            @click="appSettings.set({ silentLaunch: !appSettings.settings.silentLaunch })"
+          />
+        </label>
         <label>
           <span>
             <strong>关闭窗口时最小化到托盘</strong>
@@ -264,10 +272,9 @@ onMounted(async () => {
 
 <style scoped>
 .delay-url-field{width:min(430px,60vw)!important;height:32px!important;padding:0 10px;border:1px solid var(--app-divider);border-radius:var(--radius-control);background:color-mix(in srgb,var(--app-surface) 88%,var(--app-bg));color:var(--app-text);font-size:var(--font-size-sm)}
-.startup-behavior{display:flex;align-items:center;justify-content:space-between;gap:var(--space-7);padding:10px 12px}
+.startup-behavior{gap:var(--space-7)}
 .startup-behavior span:first-child{display:flex;flex-direction:column;gap:var(--space-1)}
 .startup-detail{color:var(--app-muted);font-size:var(--font-size-xs);font-weight:var(--font-weight-regular)}
-.fixed-state{color:var(--app-accent);font-size:var(--font-size-sm);font-weight:var(--font-weight-semibold)}
 .backup-panel{padding:20px}
 .backup-intro strong{font-size:var(--font-size-body)}
 .backup-intro p{max-width:650px;margin:5px 0 18px;color:var(--app-muted);font-size:var(--font-size-xs);line-height:1.6}

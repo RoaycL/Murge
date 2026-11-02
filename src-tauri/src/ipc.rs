@@ -772,7 +772,9 @@ pub async fn dispatch(
                     .patch_config(&allow_lan_patch(allow_lan))
                     .await
                 {
-                    let _ = models.core.set(&previous, enhancements::coerce_core_settings);
+                    let _ = models
+                        .core
+                        .set(&previous, enhancements::coerce_core_settings);
                     return Err(error);
                 }
             }
@@ -3113,7 +3115,9 @@ mod tests {
             serde_json::json!({ "allow-lan": false, "bind-address": "127.0.0.1" })
         );
         assert!(mihomo::parse_config_patch(&allow_lan_patch(true)).is_ok());
-        assert!(mihomo::parse_config_patch(&serde_json::json!({ "bind-address": "0.0.0.0" })).is_err());
+        assert!(
+            mihomo::parse_config_patch(&serde_json::json!({ "bind-address": "0.0.0.0" })).is_err()
+        );
     }
 
     #[tokio::test]

@@ -680,7 +680,10 @@ mod tests {
             .iter()
             .map(|entry| entry["lan"] == true)
             .collect();
-        assert!(flags.windows(2).all(|pair| pair[0] || !pair[1]), "{entries}");
+        assert!(
+            flags.windows(2).all(|pair| pair[0] || !pair[1]),
+            "{entries}"
+        );
     }
 
     #[test]

@@ -75,7 +75,7 @@ export interface LanGatewayInterface {
   name: string
   role: 'lan' | 'tun'
   forwarding: boolean
-  /** Switched on by Murge, so it is switched off again when 网关模式 ends. */
+  /** Switched on by the app, so it is switched off again when 网关模式 ends. */
   managed: boolean
 }
 

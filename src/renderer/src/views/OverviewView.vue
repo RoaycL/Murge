@@ -49,7 +49,10 @@ const spPhaseLabel = computed(() => {
     case 'restore-failed':
       return '系统代理还原失败'
     case 'conflict':
-      return sp.value.conflictDetail ?? '系统代理状态与外部冲突'
+      // Another program (another proxy client, a VPN…) rewrote the WinINET
+      // proxy. The app never fights that on its own; switching on is the
+      // explicit take-over. The changed keys stay in the hover title.
+      return '已被其他程序接管，打开开关可重新接管'
     case 'unsupported':
       return sp.value.errorMessage ?? '仅 Windows 支持接管系统代理'
     default:
@@ -139,7 +142,7 @@ function openSettings(key: SettingKey): void {
             <button type="button" class="switch" :class="{ on: spEnabled }" :aria-checked="spEnabled" :disabled="spSwitchDisabled" aria-label="切换系统代理" @click.stop="toggleSystemProxy" />
           </div>
           <div class="setting-body">
-            <span class="setting-status"><i :class="{ active: spEnabled }" />{{ spPhaseLabel }}</span>
+            <span class="setting-status" :title="sp.phase === 'conflict' ? sp.conflictDetail ?? undefined : undefined"><i :class="{ active: spEnabled }" />{{ spPhaseLabel }}</span>
             <button type="button" class="setting-nav" aria-label="打开系统代理设置" @click="openSettings('system-proxy')"><AppIcon name="next" :size="14" /></button>
           </div>
           <p v-if="actionError" class="inline-error" role="alert">{{ actionError }}</p>

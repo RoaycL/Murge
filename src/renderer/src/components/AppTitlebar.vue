@@ -80,8 +80,11 @@ onBeforeUnmount(() => {
 .tauri-caption-button:focus-visible { outline-offset: -3px; }
 .tauri-caption-close:hover { background: #c42b1c; color: #fff; }
 .tauri-caption-close:active { background: #b02518; color: #fff; }
-/* Custom caption buttons float over the page, so drawers start below them
-   instead of tucking their top edge and header under min/max/close. */
-:global(body:has(.tauri-window-controls)) { --drawer-top: 42px; }
+/* Custom caption buttons float over the page. A floating drawer's top-right
+   corner would sit under min/max/close, so in this shell drawers dock to the
+   window's right edge (like a Windows side pane) and the caption buttons
+   become part of the drawer's top bar; the header starts below them. */
+:global(body:has(.tauri-window-controls) .detail-drawer) { top: 0; right: 0; bottom: 0; padding-top: 34px; border-width: 0 0 0 1px; border-radius: var(--radius-large) 0 0 var(--radius-large); }
+:global(body:has(.tauri-window-controls) .detail-drawer-header) { padding-top: 4px; }
 .tauri-titlebar-error { position: fixed; z-index: 100; right: 8px; top: 38px; padding: 6px 10px; color: var(--app-danger); background: var(--app-surface-solid); border-radius: var(--radius-sm); font-size: var(--font-size-xs); }
 </style>

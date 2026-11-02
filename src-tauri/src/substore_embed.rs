@@ -4,8 +4,8 @@
 //! The patch only takes effect inside an iframe (a tiny inline script adds the
 //! `murge-embed` class), so opening Sub-Store in a real browser keeps its own
 //! look. Embedded, the page background turns transparent so the frosted panel
-//! shows through, the top bar uses Murge's panel tint, and the root scrollbar
-//! is hidden.
+//! shows through, the top bar uses Murge's panel tint, and scrollbars
+//! are hidden.
 //!
 //! Sub-Store is a PWA: its service worker serves `index.html` from the
 //! precache. Patching the file alone would be invisible to anyone whose
@@ -18,7 +18,7 @@ use std::path::Path;
 
 /// Bump when the injected block changes, so already patched installs are
 /// rewritten and the service worker refreshes its cached index.html.
-const PATCH_VERSION: &str = "murge-embed-v1";
+const PATCH_VERSION: &str = "murge-embed-v2";
 const BLOCK_START: &str = "<!-- murge-embed:start -->";
 const BLOCK_END: &str = "<!-- murge-embed:end -->";
 
@@ -28,7 +28,8 @@ fn embed_block() -> String {
 <script>(function(){{var e;try{{e=window.top!==window.self}}catch(_){{e=true}}if(e)document.documentElement.classList.add('murge-embed')}})()</script>\
 <style>\
 html.murge-embed{{color-scheme:light dark;scrollbar-width:none;--nav-bar-color:rgba(251,252,254,.72)!important}}\
-html.murge-embed::-webkit-scrollbar{{display:none}}\
+html.murge-embed *{{scrollbar-width:none}}\
+html.murge-embed::-webkit-scrollbar,html.murge-embed *::-webkit-scrollbar{{display:none;width:0;height:0}}\
 @media (prefers-color-scheme: dark){{html.murge-embed{{--nav-bar-color:rgba(32,35,44,.72)!important}}}}\
 html.murge-embed,html.murge-embed body,html.murge-embed #app{{background:transparent!important}}\
 </style>{BLOCK_END}"
@@ -126,13 +127,13 @@ mod tests {
     fn bumps_index_revision_once() {
         let sw = r#"[{url:"index.js",revision:"aa"},{url:"index.html",revision:"c9aa"},{url:"x",revision:"1"}]"#;
         let patched = patch_service_worker(sw).expect("patched");
-        assert!(patched.contains(r#"{url:"index.html",revision:"c9aa+murge-embed-v1"}"#));
+        assert!(patched.contains(r#"{url:"index.html",revision:"c9aa+murge-embed-v2"}"#));
         assert!(patched.contains(r#"{url:"index.js",revision:"aa"}"#));
         assert_eq!(patch_service_worker(&patched), None);
         let older = sw.replace("c9aa", "c9aa+murge-embed-v0");
         assert!(patch_service_worker(&older)
             .unwrap()
-            .contains("c9aa+murge-embed-v1"));
+            .contains("c9aa+murge-embed-v2"));
     }
 
     #[test]

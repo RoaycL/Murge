@@ -30,6 +30,7 @@ const api: DesktopApi = {
     getProcessIcon: (path) => invoke(IPC.appGetProcessIcon, path),
     getCachedIcon: (cacheKey, url, refresh) => invoke(IPC.appGetCachedIcon, cacheKey, url, refresh),
     listNetworkInterfaces: () => invoke(IPC.appListNetworkInterfaces),
+    listLocalAddresses: () => invoke(IPC.appListLocalAddresses),
     onNavigate: (listener) => listen(IPC.appNavigateEvent, listener)
   },
   diagnostics: {

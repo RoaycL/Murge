@@ -162,7 +162,7 @@ describe('network drawer + resources UI contract', () => {
     expect(overview).toMatch(/openSettings\('sniffer'\)/)
     expect(overview).toMatch(/openSettings\('dns'\)/)
     expect(overview).toMatch(/@click\.stop="toggleSystemProxy"/)
-    expect(overview.match(/class="setting-nav"/g)).toHaveLength(4)
+    expect(overview.match(/class="setting-nav"/g)).toHaveLength(6)
     expect(overview).not.toMatch(/setting-card clickable/)
     expect(overview).not.toMatch(/<SurfaceCard[^>]+@click=/)
     expect(overview).toMatch(/\.setting-nav\s*\{[^}]*place-items:\s*center/)

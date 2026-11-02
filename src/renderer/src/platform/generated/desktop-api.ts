@@ -53,6 +53,7 @@ export function createDesktopApi(): DesktopApi {
       getProcessIcon: (path) => bridgeInvoke("app:get-process-icon", [path]),
       getCachedIcon: (cacheKey, url, refresh) => bridgeInvoke("app:get-cached-icon", [cacheKey, url, refresh]),
       listNetworkInterfaces: () => bridgeInvoke("app:list-network-interfaces", []),
+      listLocalAddresses: () => bridgeInvoke("app:list-local-addresses", []),
       onNavigate: (listener) => bridgeListen("app:navigate-event", listener),
     },
     diagnostics: {

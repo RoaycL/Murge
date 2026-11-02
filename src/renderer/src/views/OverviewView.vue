@@ -10,6 +10,9 @@ import { useSnifferEnhancementStore } from '../stores/sniffer-enhancement'
 import { useDnsEnhancementStore } from '../stores/dns-enhancement'
 import { TUN_DATA_PLANE_UNCONFIRMED, TUN_UI_COPY } from '@shared/tun'
 import { formatSystemProxyEndpoint } from '@shared/system-proxy'
+import { useCoreSettingsStore } from '../stores/core-settings'
+import { useLanStore } from '../stores/lan'
+import { lanAddresses } from '@shared/lan'
 
 const router = useRouter()
 const kernel = useKernelStore()
@@ -17,6 +20,8 @@ const systemProxy = useSystemProxyStore()
 const tun = useTunStore()
 const sniffer = useSnifferEnhancementStore()
 const dns = useDnsEnhancementStore()
+const core = useCoreSettingsStore()
+const lan = useLanStore()
 const actionError = ref('')
 const busy = computed(() => kernel.status.phase === 'starting' || kernel.status.phase === 'stopping')
 
@@ -24,6 +29,8 @@ const busy = computed(() => kernel.status.phase === 'starting' || kernel.status.
 onMounted(() => {
   void sniffer.refresh()
   void dns.refresh()
+  void core.refresh()
+  void lan.refresh()
 })
 
 const sp = computed(() => systemProxy.status)
@@ -113,11 +120,53 @@ async function toggleDns(): Promise<void> {
   await dns.save({ ...dns.enhancement, enabled: !dnsEnabled.value })
 }
 
+// 局域网设备接管 — the HTTP & SOCKS5 card is mihomo's allow-lan: the mixed
+// port (HTTP + SOCKS5 on one port) starts listening on every interface. The
+// backend applies the switch live (PATCH /configs re-creates the listeners),
+// so neither the kernel nor TUN restarts.
+const lanHosts = computed(() => lanAddresses(lan.addresses))
+const primaryLan = computed(() => lanHosts.value[0]?.address ?? null)
+const allowLan = computed(() => core.settings.allowLan)
+const allowLanBusy = computed(() => core.busy || !core.hydrated)
+const lanError = ref('')
+const lanStatus = computed(() => {
+  if (!core.hydrated) return '正在读取…'
+  if (!allowLan.value) return '未启用'
+  if (!primaryLan.value) return '已允许局域网连接 · 未检测到局域网地址'
+  return `代理监听在 ${primaryLan.value}:${core.settings.mixedPort}`
+})
+/** Every LAN address and listener, for the hover title. */
+const lanStatusDetail = computed(() => {
+  if (!allowLan.value || !lanHosts.value.length) return undefined
+  const ports = [`HTTP / SOCKS5 混合端口 ${core.settings.mixedPort}`]
+  if (core.settings.enabled) ports.push(`HTTP ${core.settings.httpPort}`, `SOCKS5 ${core.settings.socksPort}`)
+  return `${lanHosts.value.map((entry) => `${entry.name}：${entry.address}`).join('\n')}\n${ports.join(' · ')}`
+})
+async function toggleAllowLan(): Promise<void> {
+  if (allowLanBusy.value) return
+  lanError.value = ''
+  const saved = await core.save({ ...core.settings, allowLan: !allowLan.value })
+  if (!saved) lanError.value = core.lastError ?? '切换失败'
+  void lan.refresh()
+}
+
+// 网关模式 — mihomo has no DHCP server, so the app cannot hand out leases the way
+// Surge does. With TUN on and Windows IP forwarding enabled, a device whose
+// gateway is set to this PC by hand is routed into the TUN adapter, where
+// mihomo takes over its traffic (DNS included, via dns-hijack).
+const gatewayReady = computed(() => tunActive.value && Boolean(primaryLan.value))
+const gatewayStatus = computed(() => {
+  if (!tunActive.value) return '需先开启 TUN 模式'
+  return primaryLan.value ? `网关地址 ${primaryLan.value}` : 'TUN 已启用 · 未检测到局域网地址'
+})
+
 // 二级设置页：卡片点击直接跳转「更多」里对应的设置页（网络 / DNS 与嗅探），
 // 那里已有完整的面板与说明，概览不再重复承载抽屉表单。
 const SETTINGS_ROUTES = {
   'system-proxy': '/network',
   tun: '/network',
+  lan: '/kernel-settings',
+  gateway: '/network',
   sniffer: '/dns-sniffer',
   dns: '/dns-sniffer'
 } as const
@@ -161,6 +210,37 @@ function openSettings(key: SettingKey): void {
             <button type="button" class="setting-nav" aria-label="打开 TUN 模式设置" @click="openSettings('tun')"><AppIcon name="next" :size="14" /></button>
           </div>
           <p v-if="tun.actionError" class="inline-error" role="alert">{{ tun.actionError }}</p>
+        </SurfaceCard>
+      </div>
+    </section>
+    <section>
+      <h2>局域网设备接管</h2>
+      <div class="overview-grid">
+        <SurfaceCard class="setting-card">
+          <div class="setting-head">
+            <div>
+              <h3>HTTP 与 SOCKS5 代理</h3>
+              <p>允许局域网内的其他设备把本机用作标准的 HTTP 与 SOCKS5 代理服务器。</p>
+            </div>
+            <button type="button" class="switch" :class="{ on: allowLan }" :aria-checked="allowLan" :disabled="allowLanBusy" aria-label="切换局域网 HTTP 与 SOCKS5 代理" @click.stop="toggleAllowLan" />
+          </div>
+          <div class="setting-body">
+            <span class="setting-status" :title="lanStatusDetail"><i :class="{ active: allowLan && Boolean(primaryLan) }" />{{ lanStatus }}</span>
+            <button type="button" class="setting-nav" aria-label="打开局域网代理端口设置" @click="openSettings('lan')"><AppIcon name="next" :size="14" /></button>
+          </div>
+          <p v-if="lanError" class="inline-error" role="alert">{{ lanError }}</p>
+        </SurfaceCard>
+        <SurfaceCard class="setting-card">
+          <div class="setting-head">
+            <div>
+              <h3>网关模式</h3>
+              <p>把其他设备的网关指向本机，由 TUN 接管它们的全部流量。mihomo 不提供 DHCP 服务，需在设备上手动设置。</p>
+            </div>
+          </div>
+          <div class="setting-body">
+            <span class="setting-status"><i :class="{ active: gatewayReady }" />{{ gatewayStatus }}</span>
+            <button type="button" class="setting-nav" aria-label="查看网关模式设置方法" @click="openSettings('gateway')"><AppIcon name="next" :size="14" /></button>
+          </div>
         </SurfaceCard>
       </div>
     </section>

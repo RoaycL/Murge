@@ -15,10 +15,14 @@ export const useCoreSettingsStore = defineStore('core-settings', () => {
   const settings = ref<CoreSettings>({ ...EMPTY_CORE_SETTINGS })
   const busy = ref(false)
   const lastError = ref<string | null>(null)
+  /** True once the persisted model was read; quick switches wait for it so a
+   * toggle never saves the defaults over the user's settings. */
+  const hydrated = ref(false)
 
   async function refresh(): Promise<void> {
     try {
       settings.value = coerceCoreSettings(await window.desktop.core.get())
+      hydrated.value = true
       lastError.value = null
     } catch (error) {
       lastError.value = toProtocolError(error).message
@@ -30,6 +34,7 @@ export const useCoreSettingsStore = defineStore('core-settings', () => {
     busy.value = true
     try {
       settings.value = coerceCoreSettings(await window.desktop.core.set(input))
+      hydrated.value = true
       lastError.value = null
       return true
     } catch (error) {
@@ -54,5 +59,5 @@ export const useCoreSettingsStore = defineStore('core-settings', () => {
     }
   }
 
-  return { settings, busy, lastError, refresh, save, preview }
+  return { settings, busy, lastError, hydrated, refresh, save, preview }
 })

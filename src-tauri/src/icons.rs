@@ -14,6 +14,8 @@
 //! - `app:list-network-interfaces`: interface names with at least one
 //!   address, sanitized, byte-sorted (the TS `localeCompare` on ASCII
 //!   interface names matches).
+//! - `app:list-local-addresses`: this host's IPv4 addresses, LAN-reachable
+//!   ones flagged and listed first.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -567,6 +569,65 @@ pub fn list_network_interfaces() -> Value {
     serde_json::to_value(names).unwrap_or(Value::Array(Vec::new()))
 }
 
+/// Interface-name fragments of virtual adapters that other LAN devices cannot
+/// reach this PC through (Hyper-V / WSL switches, desktop hypervisors).
+const VIRTUAL_ADAPTER_PATTERNS: [&str; 4] = ["vethernet", "virtualbox", "vmware", "hyper-v"];
+
+/// The RFC 1918 private ranges a LAN client would dial.
+fn is_private_lan_ipv4(ip: std::net::Ipv4Addr) -> bool {
+    let [a, b, ..] = ip.octets();
+    a == 10 || (a == 172 && (16..=31).contains(&b)) || (a == 192 && b == 168)
+}
+
+/// One local IPv4 address. `lan` marks the ones other devices on the LAN can
+/// reach: an RFC 1918 address on a physical-looking adapter that is not the
+/// app's own TUN or a loopback/virtual switch.
+fn local_address_entry(name: &str, ip: std::net::Ipv4Addr) -> Option<Value> {
+    if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
+        return None;
+    }
+    if name.is_empty() || name.len() > 255 || name.chars().any(|c| c.is_control()) {
+        return None;
+    }
+    let lower = name.to_lowercase();
+    let lan = is_private_lan_ipv4(ip)
+        && !crate::network_detector::is_ignored_interface_name(name)
+        && !VIRTUAL_ADAPTER_PATTERNS
+            .iter()
+            .any(|pattern| lower.contains(pattern));
+    Some(serde_json::json!({ "name": name, "address": ip.to_string(), "lan": lan }))
+}
+
+/// `app:list-local-addresses` — every non-loopback IPv4 address of this host
+/// (the 设备 page tells this PC apart from other LAN devices), with the
+/// LAN-reachable ones first (the 局域网设备接管 card shows them as the
+/// address other devices dial).
+pub fn list_local_addresses() -> Value {
+    let mut entries: Vec<Value> = if_addrs::get_if_addrs()
+        .map(|interfaces| {
+            interfaces
+                .into_iter()
+                .filter_map(|interface| match interface.ip() {
+                    std::net::IpAddr::V4(ip) => local_address_entry(&interface.name, ip),
+                    std::net::IpAddr::V6(_) => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    entries.sort_by(|left, right| {
+        let key = |value: &Value| {
+            (
+                value["lan"].as_bool() != Some(true),
+                value["name"].as_str().unwrap_or_default().to_string(),
+                value["address"].as_str().unwrap_or_default().to_string(),
+            )
+        };
+        key(left).cmp(&key(right))
+    });
+    entries.dedup();
+    Value::Array(entries)
+}
+
 /// Shared desktop state handed to the dispatch (managed in app setup).
 pub struct DesktopServices {
     pub icon_cache: Arc<RemoteIconCache>,
@@ -582,11 +643,48 @@ impl DesktopServices {
     pub fn list_network_interfaces(&self) -> Value {
         list_network_interfaces()
     }
+
+    pub fn list_local_addresses(&self) -> Value {
+        list_local_addresses()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_addresses_mark_only_private_physical_adapters_as_lan() {
+        use std::net::Ipv4Addr;
+        let lan = |name: &str, ip: [u8; 4]| {
+            local_address_entry(name, Ipv4Addr::from(ip)).map(|entry| entry["lan"] == true)
+        };
+        assert_eq!(lan("WLAN", [192, 168, 1, 167]), Some(true));
+        assert_eq!(lan("以太网", [10, 0, 0, 8]), Some(true));
+        assert_eq!(lan("Ethernet", [172, 20, 1, 2]), Some(true));
+        assert_eq!(lan("Murge TUN", [198, 18, 0, 1]), Some(false));
+        assert_eq!(lan("Murge TUN", [192, 168, 9, 1]), Some(false));
+        assert_eq!(lan("vEthernet (WSL)", [172, 24, 16, 1]), Some(false));
+        assert_eq!(lan("WLAN", [169, 254, 3, 4]), Some(false));
+        assert_eq!(lan("WLAN", [100, 64, 0, 2]), Some(false));
+        assert_eq!(lan("Loopback Pseudo-Interface 1", [127, 0, 0, 1]), None);
+        assert_eq!(lan("bad\u{7}name", [192, 168, 1, 2]), None);
+    }
+
+    #[test]
+    fn local_addresses_list_lan_entries_first() {
+        let entries = list_local_addresses();
+        let flags: Vec<bool> = entries
+            .as_array()
+            .expect("address list is an array")
+            .iter()
+            .map(|entry| entry["lan"] == true)
+            .collect();
+        assert!(
+            flags.windows(2).all(|pair| pair[0] || !pair[1]),
+            "{entries}"
+        );
+    }
 
     #[test]
     fn network_interfaces_are_sanitized_and_sorted() {

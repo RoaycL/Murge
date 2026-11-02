@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useConnectionsStore } from "../stores/connections";
 import { groupConnectionsByDevice } from "../lib/connection-groups";
 import { formatBytes, formatRate, formatWallClock } from "../lib/format";
@@ -9,8 +9,21 @@ import AppSelect from "../components/AppSelect.vue";
 import EmptyState from "../components/EmptyState.vue";
 import EntityStatsPanel from "../components/EntityStatsPanel.vue";
 import type { MihomoConnection } from "@shared/mihomo-api";
+import { describeDevice, isThisHost } from "@shared/lan";
+import { useLanStore } from "../stores/lan";
+import { useCoreSettingsStore } from "../stores/core-settings";
+import { useRouter } from "vue-router";
 
 const store = useConnectionsStore();
+const lan = useLanStore();
+const core = useCoreSettingsStore();
+const router = useRouter();
+onMounted(() => {
+  void lan.refresh();
+  void core.refresh();
+});
+/** Other LAN devices only reach mihomo through allow-lan (proxy) or TUN (gateway). */
+const onlyThisHost = computed(() => groups.value.every((group) => isThisHost(group.label, lan.addresses)));
 const selectedKey = ref<string | null>(null);
 const closing = ref(false);
 const sort = ref<"address" | "traffic">("address");
@@ -43,19 +56,14 @@ function rowTotal(group: { key: string; upload: number; download: number }): str
   const total = totals.value.get(group.key);
   return formatBytes(total ? total.up + total.down : group.upload + group.download);
 }
-function isPrivateAddress(address: string): boolean {
-  return /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|f[cd][0-9a-f]{2}:|fe80:)/i.test(address);
-}
 /**
  * Mihomo reports only the source address and the inbound that accepted the
- * connection, so the kind is inferred from those two facts. There is no MAC,
- * vendor or DHCP lease information in the controller API.
+ * connection, so the kind is inferred from those two facts plus this PC's own
+ * addresses. There is no MAC, vendor or DHCP lease information in the
+ * controller API.
  */
 function deviceKind(address: string, connections: readonly MihomoConnection[]): string {
-  if (/^(127\.|::1$|::ffff:127\.)/.test(address)) return "本机 · 回环地址";
-  if (connections.some((item) => String(item.metadata.type ?? "").toLowerCase() === "tun")) return "本机 · TUN";
-  if (isPrivateAddress(address)) return "局域网设备";
-  return "其他地址";
+  return describeDevice(address, connections.map((item) => String(item.metadata.type ?? "")), lan.addresses);
 }
 function countBy(values: Array<string | undefined>): string {
   const counts = new Map<string, number>();
@@ -111,6 +119,10 @@ async function closeSelected(): Promise<void> {
         ><AppIcon name="next" :size="15" />
       </button>
       <EmptyState v-if="!groups.length" icon="devices" title="暂无活动设备" detail="本机或局域网地址产生连接后会显示在这里。" />
+      <p v-if="onlyThisHost && !core.settings.allowLan" class="device-lan-hint">
+        其他设备的流量经过本机内核后才会出现在这里。在概览开启「局域网设备接管」，再把手机等设备的代理或网关指向本机。
+        <button type="button" class="link-button" @click="router.push('/overview')">前往概览</button>
+      </p>
     </section>
     <DetailDrawer
       :open="Boolean(selected)"
@@ -140,4 +152,7 @@ async function closeSelected(): Promise<void> {
 <style scoped>
 .entity-empty-row{color:var(--app-muted)}
 .device-close-all{margin-top:20px}
+.device-lan-hint{margin:0;padding:14px 18px;border-top:1px solid var(--app-separator, var(--app-fill));color:var(--app-muted);font-size:var(--font-size-sm);line-height:1.55}
+.link-button{padding:0;border:0;background:none;color:var(--app-blue);font:inherit;cursor:pointer}
+.link-button:hover{text-decoration:underline}
 </style>

@@ -537,6 +537,20 @@ pub fn parse_config_patch(input: &Value) -> Result<Value, IpcError> {
                 })?;
                 parsed.insert(key.clone(), json!(flag));
             }
+            "bind-address" => {
+                // Only the two values the runtime builders ever write: the
+                // loopback default and every interface (allow-lan).
+                match value.as_str() {
+                    Some(address @ ("*" | "127.0.0.1")) => {
+                        parsed.insert(key.clone(), json!(address));
+                    }
+                    _ => {
+                        return Err(invalid(
+                            "invalid config patch at bind-address: Expected '*' | '127.0.0.1'",
+                        ))
+                    }
+                }
+            }
             other => {
                 return Err(invalid(format!(
                     "invalid config patch at {other}: Unrecognized key: \"{other}\""

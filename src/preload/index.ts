@@ -73,6 +73,7 @@ const api: DesktopApi = {
     healthCheckProxyProvider: (name) => invoke(IPC.mihomoHealthCheckProxyProvider, name),
     getRuleProviders: () => invoke(IPC.mihomoGetRuleProviders),
     refreshRuleProvider: (name) => invoke(IPC.mihomoRefreshRuleProvider, name),
+    upgradeGeo: () => invoke(IPC.mihomoUpgradeGeo),
     delayTest: (name, opts) => invoke(IPC.mihomoDelayTest, name, opts),
     groupMemberDelayTest: (group, name, opts) => invoke(IPC.mihomoGroupMemberDelayTest, group, name, opts),
     groupDelayTest: (name, opts) => invoke(IPC.mihomoGroupDelayTest, name, opts),

@@ -64,8 +64,8 @@ export interface AppSettings {
   /** Optional global HTTP(S) delay target; blank uses the safe built-in 204 URL. */
   delayTestUrl: string
   /**
-   * Deprecated compatibility field. Windows login launches are now always
-   * tray-only; manual launches remain visible.
+   * 静默启动: when true a Windows login launch stays in the tray; when false
+   * the main window opens after login. Manual launches are always visible.
    */
   silentLaunch: boolean
   /**
@@ -104,7 +104,7 @@ export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = Object.freeze({
   kernelSpecificVersion: '',
   delayTestUrlScope: 'group',
   delayTestUrl: '',
-  // Login launch is always tray-only. Verge keeps close-to-tray ON and its
+  // Login launch defaults to tray-only (静默启动). Verge keeps close-to-tray ON and its
   // proxy guard ON by default. Sub-Store ships
   // as a first-class configuration tool and prepares its assets by default.
   silentLaunch: true,
@@ -173,9 +173,10 @@ export function parseAppSettings(value: string | null): AppSettings {
         parsed.delayTestUrlScope === 'global' ? 'global' : DEFAULT_APP_SETTINGS.delayTestUrlScope,
       delayTestUrl:
         parseDelayTestUrl(parsed.delayTestUrl),
-      // Preserve the field on disk for schema compatibility while migrating
-      // every old visible-login preference to the tray-only contract.
-      silentLaunch: true,
+      silentLaunch:
+        typeof parsed.silentLaunch === 'boolean'
+          ? parsed.silentLaunch
+          : DEFAULT_APP_SETTINGS.silentLaunch,
       closeToTray:
         typeof parsed.closeToTray === 'boolean'
           ? parsed.closeToTray

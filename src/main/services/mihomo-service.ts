@@ -287,6 +287,10 @@ export class MihomoService implements MihomoGateway {
     return this.client.refreshRuleProvider(name)
   }
 
+  upgradeGeo(): Promise<void> {
+    return this.client.upgradeGeo()
+  }
+
   delayTest(name: string, opts?: { timeout?: number }): Promise<MihomoDelayResult> {
     return this.client.delayTest(name, opts)
   }

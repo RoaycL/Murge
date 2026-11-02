@@ -84,6 +84,7 @@ export const IPC = {
   mihomoHealthCheckProxyProvider: 'mihomo:health-check-proxy-provider',
   mihomoGetRuleProviders: 'mihomo:get-rule-providers',
   mihomoRefreshRuleProvider: 'mihomo:refresh-rule-provider',
+  mihomoUpgradeGeo: 'mihomo:upgrade-geo',
   mihomoDelayTest: 'mihomo:delay-test',
   mihomoGroupMemberDelayTest: 'mihomo:group-member-delay-test',
   mihomoGroupDelayTest: 'mihomo:group-delay-test',
@@ -235,6 +236,8 @@ export interface DesktopApi {
     healthCheckProxyProvider(name: string): Promise<void>
     getRuleProviders(): Promise<MihomoRuleProvidersResponse>
     refreshRuleProvider(name: string): Promise<void>
+    /** Ask the kernel to re-download every geo database (POST /upgrade/geo). */
+    upgradeGeo(): Promise<void>
     delayTest(name: string, opts?: { timeout?: number }): Promise<MihomoDelayResult>
     groupMemberDelayTest(group: string, name: string, opts?: { timeout?: number }): Promise<MihomoDelayResult>
     groupDelayTest(name: string, opts?: { timeout?: number }): Promise<MihomoDelayMap>

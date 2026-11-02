@@ -401,7 +401,7 @@ pub fn close_action(quitting: bool, close_to_tray: bool, tray_ready: bool) -> Cl
 
 /// Main-window wiring: close-to-tray and the hidden login launch. The window
 /// is created invisible (`visible: false` in tauri.conf.json) and shown here
-/// unless this is a `--hidden` launch.
+/// unless this is a `--hidden` login launch with 静默启动 on.
 pub fn wire_main_window(app: &tauri::AppHandle) {
     use tauri::Manager;
     let Some(window) = app.get_webview_window("main") else {
@@ -436,9 +436,19 @@ pub fn wire_main_window(app: &tauri::AppHandle) {
             }
         }
     });
-    if !launch_hidden() {
+    let silent_launch = app
+        .try_state::<std::sync::Arc<crate::settings::SettingsStore>>()
+        .map(|settings| settings.get().silent_launch)
+        .unwrap_or(true);
+    if show_on_launch(launch_hidden(), silent_launch) {
         let _ = window.show();
     }
+}
+
+/// A manual launch always shows the window. A login launch (`--hidden`)
+/// stays in the tray only while 静默启动 is on.
+pub fn show_on_launch(launch_hidden: bool, silent_launch: bool) -> bool {
+    !launch_hidden || !silent_launch
 }
 
 /// Proxy guard cadence (clash-verge-rev defaults to 30s; same as Electron).
@@ -502,6 +512,20 @@ mod tests {
 
     fn ok<T: Send + 'static>(value: T) -> BoxFuture<'static, T> {
         Box::pin(async move { value })
+    }
+
+    #[test]
+    fn login_launch_follows_silent_launch() {
+        assert!(show_on_launch(false, true), "manual launch always shows");
+        assert!(show_on_launch(false, false));
+        assert!(
+            !show_on_launch(true, true),
+            "静默启动 keeps login launch in the tray"
+        );
+        assert!(
+            show_on_launch(true, false),
+            "静默启动 off pops the window after login"
+        );
     }
 
     #[test]

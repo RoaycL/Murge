@@ -80,5 +80,8 @@ onBeforeUnmount(() => {
 .tauri-caption-button:focus-visible { outline-offset: -3px; }
 .tauri-caption-close:hover { background: #c42b1c; color: #fff; }
 .tauri-caption-close:active { background: #b02518; color: #fff; }
+/* Custom caption buttons float over the page, so drawers start below them
+   instead of tucking their top edge and header under min/max/close. */
+:global(body:has(.tauri-window-controls)) { --drawer-top: 42px; }
 .tauri-titlebar-error { position: fixed; z-index: 100; right: 8px; top: 38px; padding: 6px 10px; color: var(--app-danger); background: var(--app-surface-solid); border-radius: var(--radius-sm); font-size: var(--font-size-xs); }
 </style>

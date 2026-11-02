@@ -1,23 +1,28 @@
 //! OS login-item state (开机自启) — Rust port of `src/main/startup/*`
-//! (`service.ts` + `scheduled-task-adapter.ts` + the legacy login-item
-//! adapter), the `startup:get-status` / `startup:set-enabled` channels.
+//! (`service.ts` + `scheduled-task-adapter.ts`), the `startup:get-status` /
+//! `startup:set-enabled` channels.
 //!
-//! Windows auto-start goes through a per-user Scheduled Task (schtasks) with
-//! a logon delay and process priority; a legacy HKCU Run-key registration is
-//! kept as a fallback for machines where task creation is denied (enterprise
-//! policy, stripped SKUs). Read and write agree on the same `--hidden`
-//! argument convention: silent launches register the flag, loud launches
-//! register none. The service serializes operations (read-after-write
-//! ownership boundary) and reports divergence without pretending the
-//! requested value won.
+//! Windows auto-start goes through a per-user Scheduled Task that the
+//! elevated installer registers (`resources/startup/register-task.ps1`):
+//! disabled by default, with an ACL granting the signed-in user management
+//! rights. The GUI never creates or deletes that task; it only flips its
+//! enabled flag (`schtasks /change /enable|/disable`), which needs no UAC
+//! prompt. A per-user HKCU Run value is kept as the fallback for machines
+//! where the installer could not register the task, or where toggling it is
+//! denied (enterprise policy, stripped SKUs). The service serializes
+//! operations (read-after-write ownership boundary) and reports divergence
+//! without pretending the requested value won.
 
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
-/// The deterministic task name (`schtasks /tn` value) — `brand.appId`.
+/// The deterministic task name (`schtasks /tn` value) — `brand.appId`. Also
+/// the name of the HKCU Run fallback value.
 pub const SCHEDULED_TASK_NAME: &str = "io.murge.desktop";
-/// The legacy fallback registration key.
+/// The Run-key fallback registration key.
 pub const SCHEDULED_TASK_RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+/// The Run value older Electron builds registered (`electron.app.<productName>`).
+const LEGACY_RUN_VALUE: &str = "electron.app.Murge";
 const DEFAULT_TIMEOUT_MS: u64 = 8000;
 
 /// The serializable startup status (`StartupStatus`).
@@ -58,291 +63,114 @@ pub type CommandRunner = std::sync::Arc<
 >;
 
 // ---------------------------------------------------------------------------
-// Task XML (pure, byte-verbatim to the TS template)
+// Task XML (pure)
 // ---------------------------------------------------------------------------
 
-fn escape_xml(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
-
-fn unescape_xml(value: &str) -> String {
-    value
-        .replace("&apos;", "'")
-        .replace("&quot;", "\"")
-        .replace("&gt;", ">")
-        .replace("&lt;", "<")
-        .replace("&amp;", "&")
-}
-
-/// Logon-trigger task XML. Deliberately different from an HKCU Run entry:
-/// `Delay PT3S` starts the app after the login resource storm, `Priority 3`
-/// schedules above the background class, `LeastPrivilege` needs no elevation
-/// (the kernel's privileges live in the LocalSystem TUN service), and
-/// `ExecutionTimeLimit PT0S` stops Windows from killing the app after the
-/// default 72h task limit.
-pub fn build_task_xml(executable_path: &str, args: &[String]) -> String {
-    let arguments = if args.is_empty() {
-        String::new()
-    } else {
-        format!("<Arguments>{}</Arguments>", escape_xml(&args.join(" ")))
-    };
-    format!(
-        r#"<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <Triggers>
-    <LogonTrigger>
-      <Enabled>true</Enabled>
-      <Delay>PT3S</Delay>
-    </LogonTrigger>
-  </Triggers>
-  <Principals>
-    <Principal id="Author">
-      <LogonType>InteractiveToken</LogonType>
-      <RunLevel>LeastPrivilege</RunLevel>
-    </Principal>
-  </Principals>
-  <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
-    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
-    <AllowHardTerminate>false</AllowHardTerminate>
-    <StartWhenAvailable>false</StartWhenAvailable>
-    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
-    <IdleSettings>
-      <StopOnIdleEnd>false</StopOnIdleEnd>
-      <RestartOnIdle>false</RestartOnIdle>
-    </IdleSettings>
-    <AllowStartOnDemand>true</AllowStartOnDemand>
-    <Enabled>true</Enabled>
-    <Hidden>false</Hidden>
-    <RunOnlyIfIdle>false</RunOnlyIfIdle>
-    <WakeToRun>false</WakeToRun>
-    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
-    <Priority>3</Priority>
-  </Settings>
-  <Actions Context="Author">
-    <Exec>
-      <Command>"{}"</Command>
-      {}
-    </Exec>
-  </Actions>
-</Task>
-"#,
-        escape_xml(executable_path),
-        arguments
-    )
-}
-
-/// True when the task-level `<Settings><Enabled>` element is `true`.
+/// True when the task-level `<Settings><Enabled>` flag is on. Windows omits
+/// that element when it holds its default (`true`), so an absent element is
+/// enabled; `<IdleSettings>` has no `<Enabled>` child, so the first one
+/// inside `<Settings>` is the task-level flag.
 pub fn task_settings_enabled(task_xml: &str) -> bool {
-    let Some(settings_index) = task_xml.find("<Settings>") else {
+    let has_task_root = task_xml
+        .match_indices("<Task")
+        .any(|(index, _)| matches!(task_xml[index + 5..].chars().next(), Some(c) if c == '>' || c.is_whitespace()));
+    if !has_task_root {
         return false;
+    }
+    let Some(settings) = settings_body(task_xml) else {
+        return true;
     };
-    let tail = &task_xml[settings_index..];
-    // The first <Enabled> after <Settings> is the task-level flag.
-    let Some(match_start) = tail.find("<Enabled>") else {
-        return false;
+    let Some(start) = settings.find("<Enabled>") else {
+        return true;
     };
-    let value = &tail[match_start + "<Enabled>".len()..];
-    value.starts_with("true</Enabled>")
+    let tail = &settings[start + "<Enabled>".len()..];
+    let Some(end) = tail.find("</Enabled>") else {
+        return true;
+    };
+    matches!(tail[..end].trim(), "true" | "1")
 }
 
-/// Task arguments as registered (`--hidden` for silent launches, none else).
-pub fn task_arguments(task_xml: &str) -> Vec<String> {
-    let Some(start) = task_xml.find("<Arguments>") else {
-        return Vec::new();
-    };
-    let tail = &task_xml[start + "<Arguments>".len()..];
-    let Some(end) = tail.find("</Arguments>") else {
-        return Vec::new();
-    };
-    let raw = &tail[..end];
-    if raw.trim().is_empty() {
-        return Vec::new();
+/// The inner text of the `<Settings>` element (attributes allowed).
+fn settings_body(task_xml: &str) -> Option<&str> {
+    let mut search = 0;
+    while let Some(found) = task_xml[search..].find("<Settings") {
+        let open = search + found;
+        let after = &task_xml[open + "<Settings".len()..];
+        match after.chars().next() {
+            Some('>') | Some(' ') | Some('\t') | Some('\r') | Some('\n') => {
+                let body_start = open + "<Settings".len() + after.find('>')? + 1;
+                let body_end = body_start + task_xml[body_start..].find("</Settings>")?;
+                return Some(&task_xml[body_start..body_end]);
+            }
+            _ => search = open + "<Settings".len(),
+        }
     }
-    // Compare against the unescaped form: a compare against raw XML entities
-    // would never match and re-create the task on every startup.
-    unescape_xml(raw)
-        .split_whitespace()
-        .map(str::to_string)
-        .collect()
+    None
 }
 
 // ---------------------------------------------------------------------------
 // The scheduled-task adapter (the win32 ladder, runner-injectable)
 // ---------------------------------------------------------------------------
 
-/// The legacy login-item fallback: a plain HKCU Run value registered under the
-/// stable appId (the OS mechanism Electron's `setLoginItemSettings` used).
-pub struct LegacyRunKeyAdapter {
-    pub supported: bool,
-    runner: CommandRunner,
-    get_silent_launch: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
-}
-
-impl LegacyRunKeyAdapter {
-    fn run_value(&self, executable: &str) -> String {
-        if (self.get_silent_launch)() {
-            format!("\"{executable}\" --hidden")
-        } else {
-            format!("\"{executable}\"")
-        }
-    }
-
-    /// Existence check regardless of registered arguments.
-    pub async fn read_registered(&self, executable: &str) -> bool {
-        if !self.supported {
-            return false;
-        }
-        let Ok(result) = (self.runner)(
-            reg_command(),
-            vec![
-                "query".into(),
-                SCHEDULED_TASK_RUN_KEY.into(),
-                "/v".into(),
-                SCHEDULED_TASK_NAME.into(),
-            ],
-        )
-        .await
-        else {
-            return false;
-        };
-        if result.code != 0 {
-            return false;
-        }
-        let output = format!("{}\n{}", result.stdout, result.stderr).to_lowercase();
-        output.contains(&SCHEDULED_TASK_NAME.to_lowercase())
-            && output.contains(&executable.to_lowercase())
-    }
-
-    pub async fn write(&self, enabled: bool, executable: &str) -> Result<(), String> {
-        if !self.supported {
-            return Ok(());
-        }
-        if enabled {
-            (self.runner)(
-                reg_command(),
-                vec![
-                    "add".into(),
-                    SCHEDULED_TASK_RUN_KEY.into(),
-                    "/v".into(),
-                    SCHEDULED_TASK_NAME.into(),
-                    "/t".into(),
-                    "REG_SZ".into(),
-                    "/d".into(),
-                    self.run_value(executable),
-                    "/f".into(),
-                ],
-            )
-            .await?;
-            return Ok(());
-        }
-        // Disabling retires the stable appId value under this executable (the
-        // adapter only ever owns that one value name).
-        (self.runner)(
-            reg_command(),
-            vec![
-                "delete".into(),
-                SCHEDULED_TASK_RUN_KEY.into(),
-                "/v".into(),
-                SCHEDULED_TASK_NAME.into(),
-                "/f".into(),
-            ],
-        )
-        .await?;
-        Ok(())
-    }
-}
-
-/// Windows auto-start via a per-user Scheduled Task, with the legacy Run-key
-/// registration kept as a fallback. The `runner` and `legacy` are injectable;
-/// `supported` may be forced for off-Windows testing (the TS `options` shape).
+/// Windows auto-start via the installer-registered per-user Scheduled Task,
+/// with an HKCU Run value as the fallback. The `runner` is injectable;
+/// `supported` may be forced for off-Windows testing.
 pub struct ScheduledTaskStartupAdapter {
     pub supported: bool,
     runner: CommandRunner,
-    get_silent_launch: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
-    legacy: LegacyRunKeyAdapter,
+    executable: std::sync::Arc<dyn Fn() -> String + Send + Sync>,
 }
 
 impl ScheduledTaskStartupAdapter {
-    /// Production constructor: real `schtasks`/`reg` children, silent-launch
-    /// preference read live through app state.
-    pub fn for_app(app: tauri::AppHandle) -> Self {
-        use tauri::Manager;
-        Self::build(
-            true,
-            std::sync::Arc::new(|command: String, args: Vec<String>| {
+    /// Production constructor: real `schtasks`/`reg` children.
+    pub fn for_app(_app: tauri::AppHandle) -> Self {
+        ScheduledTaskStartupAdapter {
+            supported: cfg!(windows),
+            runner: std::sync::Arc::new(|command: String, args: Vec<String>| {
                 Box::pin(async move { run_child(&command, &args).await })
             }),
-            std::sync::Arc::new(move || {
-                app.try_state::<std::sync::Arc<crate::settings::SettingsStore>>()
-                    .map(|settings| settings.get().silent_launch)
-                    .unwrap_or(false)
-            }),
-        )
+            executable: std::sync::Arc::new(current_executable),
+        }
     }
 
-    /// Test constructor: force the supported flag, inject the runner.
+    /// Test constructor: force the supported flag, inject the runner. The
+    /// silent-launch provider is kept for call-site compatibility; every
+    /// registration launches `--hidden`, matching the installer's task.
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn with_runner(
         supported: bool,
         runner: CommandRunner,
-        get_silent_launch: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
-    ) -> Self {
-        Self::build(supported, runner, get_silent_launch)
-    }
-
-    fn build(
-        supported: bool,
-        runner: CommandRunner,
-        get_silent_launch: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
+        _get_silent_launch: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
     ) -> Self {
         ScheduledTaskStartupAdapter {
             supported,
-            legacy: LegacyRunKeyAdapter {
-                supported,
-                runner: runner.clone(),
-                get_silent_launch: get_silent_launch.clone(),
-            },
             runner,
-            get_silent_launch,
-        }
-    }
-
-    fn login_args(&self) -> Vec<String> {
-        if (self.get_silent_launch)() {
-            vec!["--hidden".to_string()]
-        } else {
-            Vec::new()
+            executable: std::sync::Arc::new(|| r"C:\Program Files\Murge\murge.exe".to_string()),
         }
     }
 
     fn executable(&self) -> String {
-        std::env::current_exe()
-            .map(|path| path.to_string_lossy().to_string())
-            .unwrap_or_else(|_| std::env::args().next().unwrap_or_default())
+        (self.executable)()
     }
 
-    /// `read()` is argument-insensitive: it reports what is registered.
+    /// The Run fallback command line (always hidden, like the task action).
+    fn run_value(&self) -> String {
+        format!("\"{}\" --hidden", self.executable())
+    }
+
+    /// `read()` is argument-insensitive: it reports what is registered. An
+    /// enabled task wins; otherwise a Run value may be the intentional
+    /// fallback for a task the GUI could not enable.
     pub async fn read(&self) -> bool {
         if !self.supported {
             return false;
         }
-        // A present task owns the registration: a task disabled in the Task
-        // Scheduler UI reports off even if a stale legacy entry lingers,
-        // matching what the user chose there.
-        if let Some(task_xml) = self.query_task_xml().await {
-            return task_settings_enabled(&task_xml);
+        if let Ok(Some(task_xml)) = self.query_task_xml(false).await {
+            if task_settings_enabled(&task_xml) {
+                return true;
+            }
         }
-        if self.has_stable_run_entry().await {
-            return true;
-        }
-        self.legacy.read_registered(&self.executable()).await
+        self.has_run_entry(SCHEDULED_TASK_NAME).await || self.has_run_entry(LEGACY_RUN_VALUE).await
     }
 
     pub async fn write(&self, enabled: bool) -> Result<(), String> {
@@ -352,88 +180,109 @@ impl ScheduledTaskStartupAdapter {
         if !enabled {
             return self.disable().await;
         }
-        if self.try_create_task().await {
-            // The task now owns the registration; drop any legacy Run-key
-            // entry so the app is not started twice at logon.
-            self.clear_run_fallbacks().await;
-            return Ok(());
+        if let Ok(Some(task_xml)) = self.query_task_xml(false).await {
+            if task_settings_enabled(&task_xml) {
+                self.clear_run_fallbacks().await;
+                return Ok(());
+            }
+            let toggled = (self.runner)(
+                schtasks_command(),
+                vec![
+                    "/change".into(),
+                    "/tn".into(),
+                    SCHEDULED_TASK_NAME.into(),
+                    "/enable".into(),
+                ],
+            )
+            .await;
+            if matches!(toggled, Ok(ref result) if result.code == 0) {
+                if let Ok(Some(updated)) = self.query_task_xml(false).await {
+                    if task_settings_enabled(&updated) {
+                        // The task now owns the registration; drop the Run
+                        // fallbacks so the app is not started twice at logon.
+                        self.clear_run_fallbacks().await;
+                        return Ok(());
+                    }
+                }
+            }
         }
-        // Scheduled-task creation was denied. Own one deterministic Run value
-        // and verify it directly instead of relying on argument-sensitive
-        // login-item lookup.
+        // The installer has not registered a task yet, or enabling it was
+        // denied. Keep a functional auto-start without a UAC prompt.
         if self.write_stable_run_entry().await {
             return Ok(());
         }
-        self.legacy.write(true, &self.executable()).await
+        Err("无法写入开机启动项，请检查启动项权限".to_string())
     }
 
-    /// Keep an existing login item enabled while replacing its launch arguments.
+    /// Maintain a working registration at startup: retire Run fallbacks once
+    /// an enabled task owns auto-start, and move a legacy Electron Run value
+    /// to the canonical one. Never touches the task definition — that is
+    /// the installer's responsibility.
     pub async fn rewrite_if_enabled(&self) -> Result<(), String> {
         if !self.supported {
             return Ok(());
         }
-        if let Some(task_xml) = self.query_task_xml().await {
-            // A present task owns the registration. A task disabled in the
-            // Task Scheduler UI means the user turned auto-start off there —
-            // leave it.
-            if !task_settings_enabled(&task_xml) {
-                return Ok(());
-            }
-            let current_args = task_arguments(&task_xml);
-            let desired_args = self.login_args();
-            if current_args == desired_args {
-                // Already current; retire a lingering legacy Run-key entry.
+        if let Ok(Some(task_xml)) = self.query_task_xml(false).await {
+            if task_settings_enabled(&task_xml) {
                 self.clear_run_fallbacks().await;
-                return Ok(());
             }
-            // Arguments moved (silent-launch toggle): recreate with desired args.
-            if !self.try_create_task().await {
-                return Err("无法更新开机启动计划任务，已保留原有注册".to_string());
-            }
-            self.clear_run_fallbacks().await;
             return Ok(());
         }
-        // Legacy-only registration (v0.9.x Run-key users): migrate to the
-        // task so future logins get the delayed, prioritised launch. The
-        // existence check MUST be argument-insensitive. A failed create keeps
-        // the Run key untouched — degrades to today's behaviour.
-        let stable_registered = self.has_stable_run_entry().await;
-        let legacy_registered =
-            stable_registered || self.legacy.read_registered(&self.executable()).await;
-        if !legacy_registered {
+        let stable_registered = self.has_run_entry(SCHEDULED_TASK_NAME).await;
+        if stable_registered || !self.has_run_entry(LEGACY_RUN_VALUE).await {
             return Ok(());
         }
-        if self.try_create_task().await {
-            self.clear_run_fallbacks().await;
-        } else if !stable_registered {
-            self.write_stable_run_entry().await;
-        }
+        self.write_stable_run_entry().await;
         Ok(())
     }
 
     async fn disable(&self) -> Result<(), String> {
-        let _ = (self.runner)(
-            schtasks_command(),
-            vec![
-                "/delete".into(),
-                "/tn".into(),
-                SCHEDULED_TASK_NAME.into(),
-                "/f".into(),
-            ],
-        )
-        .await;
+        let task_xml = self.query_task_xml(true).await?;
+        if let Some(task_xml) = task_xml {
+            if task_settings_enabled(&task_xml) {
+                let result = (self.runner)(
+                    schtasks_command(),
+                    vec![
+                        "/change".into(),
+                        "/tn".into(),
+                        SCHEDULED_TASK_NAME.into(),
+                        "/disable".into(),
+                    ],
+                )
+                .await
+                .map_err(|error| format!("无法禁用开机启动计划任务：{error}"))?;
+                if result.code != 0 {
+                    return Err(format!(
+                        "无法禁用开机启动计划任务：{}",
+                        first_non_empty(&result, "Windows 错误码")
+                    ));
+                }
+                match self.query_task_xml(true).await? {
+                    Some(updated) if !task_settings_enabled(&updated) => {}
+                    _ => return Err("无法禁用开机启动计划任务，请检查任务权限".to_string()),
+                }
+            }
+        }
         self.clear_run_fallbacks().await;
+        if self.has_run_entry(SCHEDULED_TASK_NAME).await
+            || self.has_run_entry(LEGACY_RUN_VALUE).await
+        {
+            return Err("无法清除开机启动注册表项，请检查启动项权限".to_string());
+        }
         Ok(())
     }
 
-    async fn has_stable_run_entry(&self) -> bool {
+    /// True when `value_name` exists under the Run key and points at this
+    /// executable. `reg.exe` prints in the console code page, so a non-ASCII
+    /// install path is matched by its (ASCII) file name instead.
+    async fn has_run_entry(&self, value_name: &str) -> bool {
         let Ok(result) = (self.runner)(
             reg_command(),
             vec![
                 "query".into(),
                 SCHEDULED_TASK_RUN_KEY.into(),
                 "/v".into(),
-                SCHEDULED_TASK_NAME.into(),
+                value_name.into(),
             ],
         )
         .await
@@ -444,8 +293,18 @@ impl ScheduledTaskStartupAdapter {
             return false;
         }
         let output = format!("{}\n{}", result.stdout, result.stderr).to_lowercase();
-        output.contains(&SCHEDULED_TASK_NAME.to_lowercase())
-            && output.contains(&self.executable().to_lowercase())
+        if !output.contains(&value_name.to_lowercase()) {
+            return false;
+        }
+        let executable = self.executable();
+        if executable.is_ascii() {
+            return output.contains(&executable.to_lowercase());
+        }
+        let file_name = std::path::Path::new(&executable)
+            .file_name()
+            .map(|name| name.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        !file_name.is_empty() && output.contains(&file_name)
     }
 
     async fn write_stable_run_entry(&self) -> bool {
@@ -457,95 +316,49 @@ impl ScheduledTaskStartupAdapter {
             "/t".to_string(),
             "REG_SZ".to_string(),
             "/d".to_string(),
-            format!("\"{}\"", self.executable()),
+            self.run_value(),
             "/f".to_string(),
         ];
-        // Prove direct registry writes work before touching a working legacy
-        // entry. Then retire every historical name and write the one
-        // canonical value again.
-        let Ok(probe) = (self.runner)(reg_command(), args.clone()).await else {
-            return false;
-        };
-        if probe.code != 0 {
-            return false;
-        }
-        let _ = self.legacy.write(false, &self.executable()).await;
         let Ok(result) = (self.runner)(reg_command(), args).await else {
             return false;
         };
-        if result.code == 0 && self.has_stable_run_entry().await {
-            return true;
+        if result.code != 0 || !self.has_run_entry(SCHEDULED_TASK_NAME).await {
+            return false;
         }
-        let _ = self.legacy.write(true, &self.executable()).await;
-        false
+        // The canonical value is in place; retire the Electron-era name so
+        // the app is not started twice.
+        self.delete_run_value(LEGACY_RUN_VALUE).await;
+        true
     }
 
     async fn clear_run_fallbacks(&self) {
+        self.delete_run_value(SCHEDULED_TASK_NAME).await;
+        self.delete_run_value(LEGACY_RUN_VALUE).await;
+    }
+
+    async fn delete_run_value(&self, value_name: &str) {
+        if !self.has_run_entry(value_name).await {
+            return;
+        }
         let _ = (self.runner)(
             reg_command(),
             vec![
                 "delete".into(),
                 SCHEDULED_TASK_RUN_KEY.into(),
                 "/v".into(),
-                SCHEDULED_TASK_NAME.into(),
+                value_name.into(),
                 "/f".into(),
             ],
         )
         .await;
-        let _ = self.legacy.write(false, &self.executable()).await;
     }
 
-    /// Create (or replace) the task. Returns false when creation was denied.
-    async fn try_create_task(&self) -> bool {
-        let staging = std::env::temp_dir().join(format!(
-            "murge-startup-{}-{}",
-            std::process::id(),
-            now_unique()
-        ));
-        if tokio::fs::create_dir_all(&staging).await.is_err() {
-            return false;
-        }
-        let task_file = staging.join("task.xml");
-        // The XML declares encoding="UTF-16" and MUST be written with a UTF-16
-        // BOM: without it schtasks parses the file as ANSI and rejects the
-        // task definition.
-        let mut bytes = vec![0xFE, 0xFF];
-        for unit in format!(
-            "\u{feff}{}",
-            build_task_xml(&self.executable(), &self.login_args())
-        )
-        .encode_utf16()
-        {
-            bytes.extend_from_slice(&unit.to_le_bytes());
-        }
-        if tokio::fs::write(&task_file, &bytes).await.is_err() {
-            return false;
-        }
-        let Ok(result) = (self.runner)(
-            schtasks_command(),
-            vec![
-                "/create".into(),
-                "/tn".into(),
-                SCHEDULED_TASK_NAME.into(),
-                "/xml".into(),
-                task_file.to_string_lossy().to_string(),
-                "/f".into(),
-            ],
-        )
-        .await
-        else {
-            return false;
-        };
-        // A resolved runner may still carry the child's non-zero exit
-        // (policy denial, XML rejected, ...) — only a zero exit registers.
-        let created = result.code == 0;
-        let _ = tokio::fs::remove_dir_all(&staging).await;
-        created
-    }
-
-    /// The registered task definition, or null when the task does not exist.
-    async fn query_task_xml(&self) -> Option<String> {
-        let Ok(result) = (self.runner)(
+    /// The registered task definition, `Ok(None)` when the task does not
+    /// exist. Non-strict reads treat every failure as absence; strict reads
+    /// (before a disable) only accept absence once the task list proves it,
+    /// because schtasks uses exit 1 for both a missing task and access denial.
+    async fn query_task_xml(&self, strict: bool) -> Result<Option<String>, String> {
+        let result = match (self.runner)(
             schtasks_command(),
             vec![
                 "/query".into(),
@@ -555,23 +368,59 @@ impl ScheduledTaskStartupAdapter {
             ],
         )
         .await
-        else {
-            return None;
+        {
+            Ok(result) => result,
+            Err(error) if strict => return Err(error),
+            Err(_) => return Ok(None),
         };
         if result.code != 0 {
-            return None;
+            if !strict {
+                return Ok(None);
+            }
+            if result.code != 1 {
+                return Err(first_non_empty(&result, "Windows 错误码"));
+            }
+            let listing = (self.runner)(
+                schtasks_command(),
+                vec!["/query".into(), "/fo".into(), "CSV".into(), "/nh".into()],
+            )
+            .await?;
+            let needle = format!("\\{}\"", SCHEDULED_TASK_NAME.to_lowercase());
+            if listing.code != 0 || listing.stdout.to_lowercase().contains(&needle) {
+                return Err(first_non_empty(&result, "无法读取开机启动计划任务"));
+            }
+            return Ok(None);
         }
-        result.stdout.contains("<?xml").then_some(result.stdout)
+        if result.stdout.contains("<?xml") || result.stdout.contains("<Task") {
+            return Ok(Some(result.stdout));
+        }
+        if strict {
+            return Err("Windows 返回的开机启动任务数据无效".to_string());
+        }
+        Ok(None)
     }
 }
 
-/// A collision-resistant staging-dir suffix (process id + nanos).
-fn now_unique() -> u128 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0)
+fn first_non_empty(result: &RunResult, fallback: &str) -> String {
+    let stderr = result.stderr.trim();
+    if !stderr.is_empty() {
+        return stderr.to_string();
+    }
+    let stdout = result.stdout.trim();
+    if !stdout.is_empty() {
+        return stdout.to_string();
+    }
+    if fallback == "Windows 错误码" {
+        format!("{fallback} {}", result.code)
+    } else {
+        fallback.to_string()
+    }
+}
+
+fn current_executable() -> String {
+    std::env::current_exe()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_else(|_| std::env::args().next().unwrap_or_default())
 }
 
 fn schtasks_command() -> String {
@@ -590,7 +439,24 @@ fn reg_command() -> String {
     }
 }
 
-/// The real child runner: 8s timeout, windows-hidden, 1 MiB output cap.
+/// Decode child output: UTF-16LE when it carries a BOM or looks like it
+/// (schtasks can emit the task XML as UTF-16), UTF-8 (lossy) otherwise.
+fn decode_output(bytes: &[u8]) -> String {
+    let looks_utf16 = bytes.starts_with(&[0xFF, 0xFE])
+        || (bytes.len() >= 4 && bytes[0] != 0 && bytes[1] == 0 && bytes[3] == 0);
+    if looks_utf16 {
+        let body = bytes.strip_prefix(&[0xFF, 0xFE][..]).unwrap_or(bytes);
+        let units: Vec<u16> = body
+            .chunks(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk.get(1).copied().unwrap_or(0)]))
+            .collect();
+        return String::from_utf16_lossy(&units);
+    }
+    let text = String::from_utf8_lossy(bytes);
+    text.strip_prefix('\u{feff}').unwrap_or(&text).to_string()
+}
+
+/// The real child runner: 8s timeout, windows-hidden.
 /// Preserve numeric child exits, but never turn transport failures into
 /// success — a spawn/timeout failure is an Err.
 async fn run_child(command: &str, args: &[String]) -> Result<RunResult, String> {
@@ -613,8 +479,8 @@ async fn run_child(command: &str, args: &[String]) -> Result<RunResult, String> 
     .map_err(|_| "ETIMEDOUT: child process timed out".to_string())?
     .map_err(|error| format!("EXEC_FAILED: {error}"))?;
     Ok(RunResult {
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        stdout: decode_output(&output.stdout),
+        stderr: decode_output(&output.stderr),
         code: output.status.code().unwrap_or(-1),
     })
 }
@@ -722,175 +588,270 @@ impl StartupService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::sync::Mutex as StdMutex;
 
-    type Log = Arc<StdMutex<Vec<String>>>;
+    /// A Windows-shaped task export: the installer registers it disabled, so
+    /// Windows writes `<Enabled>false</Enabled>`; when enabled the element is
+    /// omitted (its default).
+    fn installer_task_xml(enabled: bool) -> String {
+        let flag = if enabled {
+            ""
+        } else {
+            "\n    <Enabled>false</Enabled>"
+        };
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <UserId>S-1-5-21-1-2-3-1001</UserId>
+    </LogonTrigger>
+  </Triggers>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <IdleSettings>
+      <StopOnIdleEnd>true</StopOnIdleEnd>
+    </IdleSettings>{flag}
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>3</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>C:\Program Files\Murge\murge.exe</Command>
+      <Arguments>--hidden</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"#
+        )
+    }
 
-    fn recording_runner(
-        log: Log,
-        exit_code: Arc<AtomicI32>,
-        task_xml: Arc<StdMutex<Option<String>>>,
-        run_value: Arc<StdMutex<Option<String>>>,
-    ) -> CommandRunner {
-        std::sync::Arc::new(move |command: String, args: Vec<String>| {
-            let log = log.clone();
-            let exit_code = exit_code.clone();
-            let task_xml = task_xml.clone();
-            let run_value = run_value.clone();
+    #[derive(Default)]
+    struct FakeWindows {
+        /// None = no task; Some(enabled).
+        task: Option<bool>,
+        /// `schtasks /change` is denied (task without the user's ACL).
+        change_denied: bool,
+        run_values: std::collections::BTreeMap<String, String>,
+        log: Vec<String>,
+    }
+
+    fn fake_runner(state: Arc<StdMutex<FakeWindows>>) -> CommandRunner {
+        Arc::new(move |command: String, args: Vec<String>| {
+            let state = state.clone();
             Box::pin(async move {
+                let mut fake = state.lock().unwrap();
                 let key = format!("{command} {}", args.join(" "));
-                log.lock().unwrap().push(key.clone());
-                if key.contains("/query /tn") && key.contains("/xml") {
-                    if let Some(xml) = task_xml.lock().unwrap().clone() {
-                        return Ok(RunResult {
-                            stdout: xml,
-                            stderr: String::new(),
-                            code: 0,
-                        });
-                    }
-                    return Ok(RunResult {
+                fake.log.push(key.clone());
+                let ok = |stdout: String| {
+                    Ok(RunResult {
+                        stdout,
+                        stderr: String::new(),
+                        code: 0,
+                    })
+                };
+                let fail = |code| {
+                    Ok(RunResult {
                         stdout: String::new(),
-                        stderr: "INFO: No task".into(),
-                        code: 1,
-                    });
+                        stderr: "ERROR".into(),
+                        code,
+                    })
+                };
+                if key.contains("/query /tn") {
+                    return match fake.task {
+                        Some(enabled) => ok(installer_task_xml(enabled)),
+                        None => fail(1),
+                    };
                 }
-                if key.contains("/create /tn") {
-                    // Capture the task arguments the task registers with.
-                    if let Some(start) = args.iter().position(|a| a == "/xml") {
-                        let file = &args[start + 1];
-                        let bytes = tokio::fs::read(file).await.unwrap();
-                        let units: Vec<u16> = bytes
-                            .chunks(2)
-                            .map(|chunk| {
-                                u16::from_le_bytes([chunk[0], chunk.get(1).copied().unwrap_or(0)])
-                            })
-                            .collect();
-                        let content = String::from_utf16_lossy(&units);
-                        task_xml
-                            .lock()
-                            .unwrap()
-                            .replace(content.trim_start_matches('\u{feff}').to_string());
+                if key.contains("/query /fo CSV") {
+                    return ok("\"\\Other\",\"N/A\",\"Ready\"\n".into());
+                }
+                if key.contains("/change") {
+                    if fake.task.is_none() || fake.change_denied {
+                        return fail(1);
                     }
-                    return Ok(RunResult {
-                        stdout: "SUCCESS".into(),
-                        stderr: String::new(),
-                        code: exit_code.load(Ordering::SeqCst),
-                    });
+                    fake.task = Some(key.contains("/enable"));
+                    return ok("SUCCESS".into());
                 }
-                if key.contains("/delete /tn") {
-                    *task_xml.lock().unwrap() = None;
-                    return Ok(RunResult {
-                        stdout: "SUCCESS".into(),
-                        stderr: String::new(),
-                        code: 0,
-                    });
+                if key.contains("/create") || key.contains("/delete /tn") {
+                    panic!("the GUI must never create or delete the installer task: {key}");
                 }
-                if key.contains("query HKCU") {
-                    if let Some(value) = run_value.lock().unwrap().clone() {
-                        if value.contains(&SCHEDULED_TASK_NAME.to_lowercase()) {
-                            return Ok(RunResult {
-                                stdout: format!("{} REG_SZ {}", SCHEDULED_TASK_NAME, value),
-                                stderr: String::new(),
-                                code: 0,
-                            });
-                        }
-                    }
-                    return Ok(RunResult {
-                        stdout: "not found".into(),
-                        stderr: String::new(),
-                        code: 1,
-                    });
+                let value_name = args
+                    .iter()
+                    .position(|a| a == "/v")
+                    .map(|i| args[i + 1].clone());
+                if args.first().map(String::as_str) == Some("query") {
+                    let name = value_name.unwrap();
+                    return match fake.run_values.get(&name) {
+                        Some(data) => ok(format!(
+                            "\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\r\n    {name}    REG_SZ    {data}\r\n"
+                        )),
+                        None => fail(1),
+                    };
                 }
-                if key.contains("add HKCU") {
-                    if let Some(index) = args.iter().position(|a| a == "/d") {
-                        *run_value.lock().unwrap() = Some(args[index + 1].clone());
-                    }
-                    return Ok(RunResult {
-                        stdout: "SUCCESS".into(),
-                        stderr: String::new(),
-                        code: 0,
-                    });
+                if args.first().map(String::as_str) == Some("add") {
+                    let data = args
+                        .iter()
+                        .position(|a| a == "/d")
+                        .map(|i| args[i + 1].clone());
+                    fake.run_values.insert(value_name.unwrap(), data.unwrap());
+                    return ok("SUCCESS".into());
                 }
-                if key.contains("delete HKCU") {
-                    *run_value.lock().unwrap() = None;
-                    return Ok(RunResult {
-                        stdout: "SUCCESS".into(),
-                        stderr: String::new(),
-                        code: 0,
-                    });
+                if args.first().map(String::as_str) == Some("delete") {
+                    fake.run_values.remove(&value_name.unwrap());
+                    return ok("SUCCESS".into());
                 }
                 Ok(RunResult::default())
             })
         })
     }
 
+    fn service_for(state: &Arc<StdMutex<FakeWindows>>) -> StartupService {
+        StartupService::new(ScheduledTaskStartupAdapter::with_runner(
+            true,
+            fake_runner(state.clone()),
+            Arc::new(|| true),
+        ))
+    }
+
     #[test]
-    fn task_xml_helpers_match_the_ts_semantics() {
-        let xml = build_task_xml(
-            r"C:\Program Files\Murge\murge.exe",
-            &["--hidden".to_string()],
-        );
-        assert!(xml.contains("<Delay>PT3S</Delay>"));
-        assert!(xml.contains("<Priority>3</Priority>"));
-        assert!(xml.contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"));
-        assert!(xml.contains(r#"<Command>"C:\Program Files\Murge\murge.exe"</Command>"#));
-        assert!(xml.contains("<Arguments>--hidden</Arguments>"));
-        assert!(task_settings_enabled(&xml));
-        assert_eq!(task_arguments(&xml), vec!["--hidden".to_string()]);
-        // A disabled task reads off; empty arguments read empty.
-        let disabled = xml.replace("<Enabled>true</Enabled>", "<Enabled>false</Enabled>");
-        assert!(!task_settings_enabled(&disabled));
-        let no_args = build_task_xml("murge.exe", &[]);
-        assert!(!no_args.contains("<Arguments>"));
-        assert!(task_arguments(&no_args).is_empty());
-        // XML entities in the path survive a round trip through task_arguments.
-        let weird = build_task_xml(r"C:\a&b\murge.exe", &["x&y".to_string()]);
-        assert!(weird.contains("&amp;"));
-        assert_eq!(task_arguments(&weird), vec!["x&y".to_string()]);
+    fn task_enabled_flag_follows_windows_defaults() {
+        // Windows omits <Settings><Enabled> when the task is enabled.
+        assert!(task_settings_enabled(&installer_task_xml(true)));
+        // The trigger's <Enabled>true</Enabled> must not be mistaken for the
+        // task-level flag of a disabled task.
+        assert!(!task_settings_enabled(&installer_task_xml(false)));
+        let explicit = installer_task_xml(false).replace(">false<", ">true<");
+        assert!(task_settings_enabled(&explicit));
         assert!(!task_settings_enabled("no settings here"));
+        assert!(!task_settings_enabled(
+            "<Tasks><Settings></Settings></Tasks>"
+        ));
+    }
+
+    #[test]
+    fn utf16_child_output_is_decoded() {
+        let text = "<?xml version=\"1.0\"?><Task>";
+        let mut bytes = vec![0xFF, 0xFE];
+        for unit in text.encode_utf16() {
+            bytes.extend_from_slice(&unit.to_le_bytes());
+        }
+        assert_eq!(decode_output(&bytes), text);
+        let without_bom: Vec<u8> = bytes[2..].to_vec();
+        assert_eq!(decode_output(&without_bom), text);
+        assert_eq!(decode_output(text.as_bytes()), text);
     }
 
     #[tokio::test]
-    async fn service_reads_without_writing_and_confirms_writes() {
-        let adapter = ScheduledTaskStartupAdapter::with_runner(
-            true,
-            std::sync::Arc::new(|_command: String, _args: Vec<String>| {
-                Box::pin(async {
-                    Ok(RunResult {
-                        stdout: String::new(),
-                        stderr: String::new(),
-                        code: 1,
-                    })
-                })
-            }),
-            std::sync::Arc::new(|| false),
-        );
-        let service = StartupService::new(adapter);
-        // Disabled by default; a read performs no write.
-        let status = service.get_status().await;
-        assert_eq!(status["supported"], true);
-        assert_eq!(status["phase"], "idle");
-        assert_eq!(status["enabled"], false);
-        // An explicit set confirms the OS state after writing (fake confirms
-        // nothing here — the write ladder fails, so the error copy surfaces).
+    async fn enabling_flips_the_installer_task_and_confirms() {
+        // The reported bug: the installer registered a disabled task; turning
+        // the switch on must enable that task, not report "系统未确认".
+        let state = Arc::new(StdMutex::new(FakeWindows {
+            task: Some(false),
+            ..Default::default()
+        }));
+        let service = service_for(&state);
+        assert_eq!(service.get_status().await["enabled"], false);
         let status = service.set_enabled(true).await;
-        if status["phase"] == "error" {
-            assert!(status["errorMessage"].as_str().is_some());
-        } else {
-            assert_eq!(status["enabled"], true);
-        }
+        assert_eq!(status["phase"], "idle", "{status}");
+        assert_eq!(status["enabled"], true);
+        assert_eq!(state.lock().unwrap().task, Some(true));
+        assert!(state.lock().unwrap().run_values.is_empty());
+
+        let status = service.set_enabled(false).await;
+        assert_eq!(status["phase"], "idle", "{status}");
+        assert_eq!(status["enabled"], false);
+        assert_eq!(state.lock().unwrap().task, Some(false));
+    }
+
+    #[tokio::test]
+    async fn denied_task_toggle_falls_back_to_the_run_value() {
+        let state = Arc::new(StdMutex::new(FakeWindows {
+            task: Some(false),
+            change_denied: true,
+            ..Default::default()
+        }));
+        let service = service_for(&state);
+        let status = service.set_enabled(true).await;
+        assert_eq!(status["phase"], "idle", "{status}");
+        assert_eq!(status["enabled"], true);
+        assert_eq!(
+            state
+                .lock()
+                .unwrap()
+                .run_values
+                .get(SCHEDULED_TASK_NAME)
+                .map(String::as_str),
+            Some(r#""C:\Program Files\Murge\murge.exe" --hidden"#)
+        );
+        let status = service.set_enabled(false).await;
+        assert_eq!(status["enabled"], false, "{status}");
+        assert!(state.lock().unwrap().run_values.is_empty());
+    }
+
+    #[tokio::test]
+    async fn without_a_task_the_run_value_carries_auto_start() {
+        let state = Arc::new(StdMutex::new(FakeWindows::default()));
+        let service = service_for(&state);
+        let status = service.set_enabled(true).await;
+        assert_eq!(status["phase"], "idle", "{status}");
+        assert_eq!(status["enabled"], true);
+        let status = service.set_enabled(false).await;
+        assert_eq!(status["phase"], "idle", "{status}");
+        assert_eq!(status["enabled"], false);
+    }
+
+    #[tokio::test]
+    async fn maintenance_retires_fallbacks_and_migrates_electron_values() {
+        // An enabled task owns auto-start: Run fallbacks are retired.
+        let state = Arc::new(StdMutex::new(FakeWindows {
+            task: Some(true),
+            ..Default::default()
+        }));
+        state.lock().unwrap().run_values.insert(
+            SCHEDULED_TASK_NAME.into(),
+            r#""C:\Program Files\Murge\murge.exe" --hidden"#.into(),
+        );
+        let status = service_for(&state).refresh_registration().await;
+        assert_eq!(status["enabled"], true);
+        assert!(state.lock().unwrap().run_values.is_empty());
+
+        // No task, Electron-era value: moved to the canonical value.
+        let state = Arc::new(StdMutex::new(FakeWindows::default()));
+        state.lock().unwrap().run_values.insert(
+            LEGACY_RUN_VALUE.into(),
+            r#""C:\Program Files\Murge\murge.exe""#.into(),
+        );
+        let status = service_for(&state).refresh_registration().await;
+        assert_eq!(status["enabled"], true);
+        let values = state.lock().unwrap().run_values.clone();
+        assert!(values.contains_key(SCHEDULED_TASK_NAME));
+        assert!(!values.contains_key(LEGACY_RUN_VALUE));
+
+        // A disabled task with no Run values stays off and untouched.
+        let state = Arc::new(StdMutex::new(FakeWindows {
+            task: Some(false),
+            ..Default::default()
+        }));
+        let status = service_for(&state).refresh_registration().await;
+        assert_eq!(status["enabled"], false);
+        assert_eq!(state.lock().unwrap().task, Some(false));
     }
 
     #[tokio::test]
     async fn unsupported_platform_fails_closed_without_writing() {
+        let called = Arc::new(AtomicBool::new(false));
+        let called_in_runner = called.clone();
         let adapter = ScheduledTaskStartupAdapter::with_runner(
             false,
-            std::sync::Arc::new(|_command: String, _args: Vec<String>| {
+            Arc::new(move |_command: String, _args: Vec<String>| {
+                called_in_runner.store(true, Ordering::SeqCst);
                 Box::pin(async { Ok(RunResult::default()) })
             }),
-            std::sync::Arc::new(|| false),
+            Arc::new(|| false),
         );
         let service = StartupService::new(adapter);
         let status = service.set_enabled(true).await;
@@ -898,76 +859,6 @@ mod tests {
             status,
             json!({ "supported": false, "enabled": false, "phase": "unsupported", "errorMessage": Value::Null })
         );
-    }
-
-    #[tokio::test]
-    async fn task_owns_the_registration_and_the_ladder_degrades() {
-        let log: Log = Arc::new(StdMutex::new(Vec::new()));
-        let exit_code = Arc::new(AtomicI32::new(0));
-        let task_xml: Arc<StdMutex<Option<String>>> = Arc::new(StdMutex::new(None));
-        let run_value: Arc<StdMutex<Option<String>>> = Arc::new(StdMutex::new(None));
-        let runner = recording_runner(
-            log.clone(),
-            exit_code.clone(),
-            task_xml.clone(),
-            run_value.clone(),
-        );
-        let adapter =
-            ScheduledTaskStartupAdapter::with_runner(true, runner, std::sync::Arc::new(|| false));
-        // Nothing registered -> off.
-        assert!(!adapter.read().await);
-        // Enable: the task is created and owns the registration; legacy
-        // fallbacks are cleared.
-        adapter.write(true).await.unwrap();
-        assert!(task_xml.lock().unwrap().is_some());
-        assert!(!log
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|entry| entry.contains("add HKCU")));
-        // Read-back reports the task's enabled flag.
-        assert!(adapter.read().await);
-        // Disable: task deleted, fallbacks cleared.
-        adapter.write(false).await.unwrap();
-        assert!(log
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|entry| entry.contains("/delete /tn")));
-        assert!(!adapter.read().await);
-        // Task creation denied (non-zero exit): the stable Run value is used.
-        exit_code.store(1, Ordering::SeqCst);
-        adapter.write(true).await.unwrap();
-        assert!(run_value.lock().unwrap().is_some());
-        assert!(adapter.read().await);
-    }
-
-    #[tokio::test]
-    async fn rewrite_recreates_the_task_when_silent_launch_moves() {
-        let log: Log = Arc::new(StdMutex::new(Vec::new()));
-        let exit_code = Arc::new(AtomicI32::new(0));
-        let task_xml: Arc<StdMutex<Option<String>>> = Arc::new(StdMutex::new(None));
-        let run_value: Arc<StdMutex<Option<String>>> = Arc::new(StdMutex::new(None));
-        let silent = Arc::new(AtomicU64::new(0));
-        let silent_for_adapter = silent.clone();
-        let runner = recording_runner(log.clone(), exit_code, task_xml.clone(), run_value);
-        let adapter = ScheduledTaskStartupAdapter::with_runner(
-            true,
-            runner,
-            std::sync::Arc::new(move || silent_for_adapter.load(Ordering::SeqCst) == 1),
-        );
-        // Register loud, then move the preference to silent: the task is
-        // recreated with --hidden.
-        adapter.write(true).await.unwrap();
-        silent.store(1, Ordering::SeqCst);
-        adapter.rewrite_if_enabled().await.unwrap();
-        let xml = task_xml.lock().unwrap().clone().unwrap();
-        assert_eq!(task_arguments(&xml), vec!["--hidden".to_string()]);
-        // A task disabled in the Task Scheduler UI is left alone.
-        let disabled = xml.replace("<Enabled>true</Enabled>", "<Enabled>false</Enabled>");
-        *task_xml.lock().unwrap() = Some(disabled);
-        adapter.rewrite_if_enabled().await.unwrap();
-        let still = task_xml.lock().unwrap().clone().unwrap();
-        assert!(still.contains("<Enabled>false</Enabled>"));
+        assert!(!called.load(Ordering::SeqCst));
     }
 }

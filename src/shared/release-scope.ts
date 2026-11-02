@@ -29,8 +29,6 @@ export type RcSupportedRoute = (typeof RC_SUPPORTED_ROUTES)[number]
 // config page keeps the full lifecycle panel). It is therefore NOT listed here.
 export const RC_EXCLUDED_FEATURES = Object.freeze([
   { id: 'http-capture', reason: 'no completed mihomo transport and persistence contract' },
-  { id: 'https-decryption', reason: 'no certificate lifecycle or trusted interception implementation' },
-  { id: 'rewrite', reason: 'no completed rewrite backend' },
   { id: 'panel', reason: 'placeholder-only Surge-like page' },
   { id: 'automatic-updates', reason: 'release signer and update channel are not configured' }
 ] as const)

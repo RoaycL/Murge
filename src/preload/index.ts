@@ -150,6 +150,25 @@ const api: DesktopApi = {
     lastKnownGood: () => invoke(IPC.overridesLastKnownGood),
     resetToLastGood: () => invoke(IPC.overridesResetToLastGood)
   },
+  mitm: {
+    getState: () => invoke(IPC.mitmGetState),
+    setEnabled: (enabled) => invoke(IPC.mitmSetEnabled, enabled),
+    setRewriteEnabled: (enabled) => invoke(IPC.mitmSetRewriteEnabled, enabled),
+    setSkipVerify: (skip) => invoke(IPC.mitmSetSkipVerify, skip),
+    setHostnames: (hostnames) => invoke(IPC.mitmSetHostnames, hostnames),
+    setLocalModule: (content) => invoke(IPC.mitmSetLocalModule, content),
+    generateCa: () => invoke(IPC.mitmGenerateCa),
+    installCa: () => invoke(IPC.mitmInstallCa),
+    uninstallCa: () => invoke(IPC.mitmUninstallCa),
+    deleteCa: () => invoke(IPC.mitmDeleteCa),
+    exportCa: () => invoke(IPC.mitmExportCa),
+    addModule: (url) => invoke(IPC.mitmAddModule, url),
+    updateModule: (id) => invoke(IPC.mitmUpdateModule, id),
+    removeModule: (id) => invoke(IPC.mitmRemoveModule, id),
+    setModuleEnabled: (id, enabled) => invoke(IPC.mitmSetModuleEnabled, id, enabled),
+    recentRequests: () => invoke(IPC.mitmRecentRequests),
+    clearRequests: () => invoke(IPC.mitmClearRequests)
+  },
   dns: {
     get: () => invoke(IPC.dnsGet),
     set: (input) => invoke(IPC.dnsSet, input),

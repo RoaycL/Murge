@@ -162,7 +162,8 @@ pub fn resolve_enhanced_document(
     let (dns_text, _) = crate::inspection::apply_dns_to_document(&overridden, &dns);
     let sniffer = enhancements::coerce_sniffer_enhancement(&models.sniffer.get());
     let (text, _) = crate::inspection::apply_sniffer_to_document(&dns_text, &sniffer);
-    Ok(Some(text))
+    // HTTPS 解密 last: its rules must precede every profile/override rule.
+    Ok(Some(crate::mitm::apply_global(&text)))
 }
 
 /// `resolveOverriddenActiveDocument` — active profile → overrides ONLY (the

@@ -3,7 +3,6 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import AppIcon from './AppIcon.vue'
 import { useDialogFocus } from '../composables/use-dialog-focus'
 import { useUpdatesStore } from '../stores/updates'
-import type { UpdateProduct } from '@shared/updates'
 
 /**
  * Pops up once per offered update with its release notes, then follows the
@@ -13,7 +12,6 @@ import type { UpdateProduct } from '@shared/updates'
 const updates = useUpdatesStore()
 const dialog = ref<HTMLElement | null>(null)
 const DISMISSED_KEY = 'update-dialog-dismissed'
-const PRODUCT_LABELS: Record<UpdateProduct, string> = { electron: '稳定版', tauri: '实验版' }
 
 function readDismissed(): string | null {
   try { return window.localStorage.getItem(DISMISSED_KEY) } catch { return null }
@@ -35,10 +33,7 @@ const switching = computed<boolean>(() =>
   updates.state.availableProduct !== null && updates.state.availableProduct !== updates.state.currentProduct)
 
 const title = computed<string>(() => {
-  const version = updates.state.availableVersion ?? ''
-  const product = updates.state.availableProduct
-  if (switching.value && product) return `切换到${PRODUCT_LABELS[product]} v${version}`
-  return `发现新版本 v${version}`
+  return `发现新版本 v${updates.state.availableVersion ?? ''}`
 })
 
 /** Published notes are Markdown, or HTML from older feeds; shown as plain text. */
@@ -53,7 +48,7 @@ const statusLine = computed<string>(() => {
   switch (updates.state.phase) {
     case 'available': return '正在准备下载…'
     case 'downloading': return `正在下载 ${percent.value.toFixed(0)}%`
-    case 'downloaded': return switching.value ? '已下载并校验。安装会替换当前版本，配置和数据保留。' : '已下载并校验，退出应用时也会自动安装。'
+    case 'downloaded': return switching.value ? '已下载并校验。新版本更轻、更快，安装会替换当前版本，配置和数据保留。' : '已下载并校验，退出应用时也会自动安装。'
     default: return ''
   }
 })

@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   SignedManifestUpdaterDriver,
+  TAURI_STABLE_FEED,
   installerArgs,
   installerProduct,
   isNewerVersion,
@@ -482,6 +483,44 @@ describe('SignedManifestUpdaterDriver', () => {
     await h.settle()
     expect(h.events[1]).toMatchObject({ kind: 'available', version: '1.0.0', product: 'electron' })
     expect(h.requested).not.toContain(tauriUrl)
+  })
+
+  it('moves every user of the last Electron build to the Tauri 正式版 feed', async () => {
+    const key = makeKey()
+    const tauriName = 'App_1.0.0_x64-setup.exe'
+    const tauriUrl = `https://github.com/owner/repo/releases/download/tauri-v1.0.0/${tauriName}`
+    const tauriStable = `${repository}/releases/download/update-stable`
+    for (const channel of ['stable', 'experimental'] as const) {
+      const h = harness({
+        // The retired Electron channel still names this build; it is not read.
+        [`${direct}/latest.json`]: manifest(key.signFile(installer, `timestamp:1\tfile:${fileName}\tversion:1.0.0`)),
+        [`${tauriStable}/latest.json`]: () => Response.json({
+          version: '1.0.0',
+          platforms: { 'windows-x86_64': { url: tauriUrl, signature: key.signFile(installer, `timestamp:1\tfile:${tauriName}\tversion:1.0.0`) } }
+        }),
+        [tauriUrl]: asset()
+      }, { publicKey: key.publicKey, channel, fixedFeed: TAURI_STABLE_FEED })
+      h.driver.check()
+      await h.settle()
+      expect(h.requested).not.toContain(`${direct}/latest.json`)
+      expect(h.events[1]).toMatchObject({ kind: 'available', version: '1.0.0', product: 'tauri' })
+      h.driver.quitAndInstall()
+      h.driver.dispose()
+      expect(h.launched).toEqual([{ path: staged(tauriName), args: ['/P', '/R'] }])
+    }
+  })
+
+  it('refuses an Electron installer on the Tauri 正式版 feed', async () => {
+    const key = makeKey()
+    const tauriStable = `${repository}/releases/download/update-stable`
+    const h = harness({
+      [`${tauriStable}/latest.json`]: manifest(key.signFile(installer, `timestamp:1\tfile:${fileName}\tversion:1.0.0`)),
+      [assetUrl]: asset()
+    }, { publicKey: key.publicKey, fixedFeed: TAURI_STABLE_FEED })
+    h.driver.check()
+    await h.settle()
+    expect(h.requested).not.toContain(assetUrl)
+    expect(h.events.at(-1)).toMatchObject({ kind: 'error' })
   })
 
   it('refuses manifests that name an installer of neither build', async () => {

@@ -31,7 +31,9 @@ export class UpdateService implements UpdatesGateway {
       ...DEFAULT_UPDATE_STATE,
       currentVersion: driver.currentVersion,
       currentProduct: driver.product ?? 'electron',
-      channelsSupported: driver.supported && typeof driver.setChannel === 'function'
+      // The stable / experimental choice is retired: this last Electron
+      // build follows the Tauri 正式版 whichever channel the settings name.
+      channelsSupported: false
     }
     this.pollIntervalMs = options.pollIntervalMs ?? 10 * 60 * 1000
   }

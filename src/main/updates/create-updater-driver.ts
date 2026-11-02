@@ -6,7 +6,7 @@ import { app, net, Notification } from 'electron'
 import { brand } from '@shared/brand'
 import { ElectronUpdaterDriver } from './electron-updater-driver'
 import { elevationRequestScript, encodePowerShell, helperScriptFile, type InstallerHandoff } from './installer-handoff'
-import { SignedManifestUpdaterDriver } from './signed-manifest-driver'
+import { SignedManifestUpdaterDriver, TAURI_STABLE_FEED } from './signed-manifest-driver'
 import type { UpdaterDriver } from './updater-driver'
 import type { UpdateChannel } from '@shared/app-settings'
 
@@ -15,9 +15,10 @@ const GITHUB_PROXIES: readonly string[] = ['https://gh-proxy.org', 'https://ghfa
 
 /**
  * Pick the production update driver. With a release key pinned in
- * `brand.config.json` (`updatePublicKey`) the build follows the signed
- * release-channel manifests (stable = Electron, experimental = Tauri);
- * without one it keeps electron-updater.
+ * `brand.config.json` (`updatePublicKey`) the build follows the signed Tauri
+ * 正式版 manifest (`update-stable`) whatever channel the settings name: this
+ * is the last Electron build and it moves its users to Tauri. Without a key
+ * it keeps electron-updater.
  */
 export function createUpdaterDriver(onNotificationClick: () => void, channel: UpdateChannel): UpdaterDriver {
   const publicKey = brand.updatePublicKey?.trim() ?? ''
@@ -37,6 +38,8 @@ export function createUpdaterDriver(onNotificationClick: () => void, channel: Up
     repositoryUrl: `https://github.com/${owner}/${repo}`,
     mirrors: GITHUB_PROXIES,
     channel,
+    // This is the last Electron build: the Tauri build is the 正式版 now.
+    fixedFeed: TAURI_STABLE_FEED,
     fetch: (url, init) => net.fetch(url, { signal: init.signal, cache: 'no-store' }),
     downloadDir,
     writeFile: async (file, data) => {

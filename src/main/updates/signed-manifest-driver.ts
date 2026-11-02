@@ -86,7 +86,19 @@ export interface SignedManifestDeps {
   /** Begin the app's ordered quit flow. */
   requestQuit: () => void
   notify?: (title: string, body: string) => void
+  /**
+   * Follow this feed and build whatever the channel. The last Electron build
+   * sets it to the Tauri 正式版 feed (`update-stable`, maintained by the
+   * Tauri release workflow), so every user of this build moves to Tauri.
+   */
+  fixedFeed?: { tag: string; product: UpdateProduct }
 }
+
+/** The Tauri 正式版 feed the last Electron build moves its users to. */
+export const TAURI_STABLE_FEED: Readonly<{ tag: string; product: UpdateProduct }> = Object.freeze({
+  tag: 'update-stable',
+  product: 'tauri'
+})
 
 interface ManifestPlatform {
   url: string
@@ -189,7 +201,7 @@ export function routeDownloadUrl(downloadUrl: string, feedBase: string, directBa
   return `${prefix}/${downloadUrl}`
 }
 
-const PRODUCT_LABELS: Readonly<Record<UpdateProduct, string>> = { electron: '稳定版', tauri: '实验版' }
+const PRODUCT_LABELS: Readonly<Record<UpdateProduct, string>> = { electron: 'Electron 版', tauri: '新版' }
 
 function platformFileName(url: string): string {
   try {
@@ -301,6 +313,8 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
   }
 
   private directBase(): string {
+    const fixed = this.deps.fixedFeed
+    if (fixed) return `${this.deps.repositoryUrl.replace(/\/+$/, '')}/releases/download/${fixed.tag}`
     return channelFeedBase(this.deps.repositoryUrl, this.channel)
   }
 
@@ -343,8 +357,9 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
     }
     const product = installerProduct(platformFileName(platform.url))
     if (!product) throw new Error(`update manifest names an unexpected installer: ${platform.url}`)
-    if (product !== CHANNEL_PRODUCTS[this.channel]) {
-      throw new Error(`update manifest of the ${this.channel} channel names the other build: ${platform.url}`)
+    const expected = this.deps.fixedFeed?.product ?? CHANNEL_PRODUCTS[this.channel]
+    if (product !== expected) {
+      throw new Error(`update manifest of the ${this.deps.fixedFeed?.tag ?? `${this.channel} channel`} names another build: ${platform.url}`)
     }
     // Same build: only a newer release. Other build: a channel switch.
     if (product === this.product && !isNewerVersion(manifest.version, this.currentVersion)) return null
@@ -421,7 +436,7 @@ export class SignedManifestUpdaterDriver implements UpdaterDriver {
     const version = selected.manifest.version.replace(/^v/, '')
     this.emit({ kind: 'available', version, releaseNotes: selected.manifest.notes, product: selected.product })
     this.deps.notify?.(
-      selected.product === this.product ? `发现新版本 v${version}` : `正在切换到${PRODUCT_LABELS[selected.product]} v${version}`,
+      selected.product === this.product ? `发现新版本 v${version}` : `正在升级到${PRODUCT_LABELS[selected.product]} v${version}`,
       '正在后台下载，退出应用时自动安装。'
     )
     // electron-updater autoDownload parity.

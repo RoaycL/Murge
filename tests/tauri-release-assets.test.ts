@@ -24,7 +24,7 @@ describe('Tauri release assets', () => {
     expect(workflow).toContain('kind=(--prerelease --latest=false')
     expect(workflow).toContain('kind=(--latest ')
     expect(workflow).toContain('node scripts/release-feeds.mjs --version')
-    // The retired Electron channel belongs to release.yml on main.
+    // The retired Electron channel stays on the last Electron release.
     expect(workflow).not.toContain('gh release upload channel-stable')
     // The signing key is only handed to the publish job, never to the Windows builds.
     const build = workflow.slice(workflow.indexOf('\n  build:'), workflow.indexOf('\n  publish:'))

@@ -1,6 +1,6 @@
 name: Tauri release
 
-# Tag the tauri branch to publish a signed release:
+# Tag main to publish a signed release:
 #
 # - `tauri-vX.Y.Z` is a 正式版: a normal GitHub release (the repository's
 #   latest), announced on the `update-stable` feed, on `update-beta` unless a
@@ -10,9 +10,9 @@ name: Tauri release
 #   `update-beta` only ("包括 Beta 版本" in the app).
 #
 # Each feed is a fixed pre-release holding the signed manifest `latest.json`
-# (scripts/release-feeds.mjs decides which feeds move). Plain `vX.Y.Z` tags
-# stay with release.yml on main (the retired Electron build), whose last
-# release keeps `channel-stable` and moves its users to `update-stable`.
+# (scripts/release-feeds.mjs decides which feeds move). The retired Electron
+# build lives on the `electron-legacy` branch; its last release (v0.9.38)
+# holds `channel-stable` and moves its users to `update-stable`.
 #
 # workflow_dispatch builds, signs and verifies everything with the real key
 # without publishing (a dry run before tagging).
@@ -23,7 +23,7 @@ on:
       - 'tauri-v*'
   workflow_dispatch:
   pull_request:
-    branches: [tauri]
+    branches: [main]
     paths:
       - .github/workflows/tauri-release.yml
       - scripts/tauri-release-assets.mjs

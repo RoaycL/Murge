@@ -6,8 +6,8 @@
 // - `channel-experimental`: the retired experimental channel that Tauri
 //   builds up to 0.9.37 follow; it keeps receiving 正式版 so they upgrade.
 //
-// (`channel-stable`, the retired Electron channel, is left to release.yml on
-// main: it stays on the last Electron build, which moves its users here.)
+// (`channel-stable`, the retired Electron channel, stays on the last Electron
+// build, v0.9.38 from the electron-legacy branch, which moves its users here.)
 //
 // A Beta never reaches a stable feed (Tauri builds up to 0.9.37 cannot even
 // parse its version), and a 正式版 replaces the beta feed only when it is

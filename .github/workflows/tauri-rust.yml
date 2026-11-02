@@ -2,9 +2,9 @@ name: Tauri Rust
 
 on:
   push:
-    branches: [tauri]
+    branches: [main]
   pull_request:
-    branches: [tauri]
+    branches: [main]
   workflow_dispatch:
     inputs:
       source_ref:

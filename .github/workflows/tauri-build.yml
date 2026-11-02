@@ -2,9 +2,9 @@ name: Tauri Windows build
 
 on:
   push:
-    branches: [tauri]
+    branches: [main]
   pull_request:
-    branches: [tauri]
+    branches: [main]
   workflow_dispatch:
 
 permissions:

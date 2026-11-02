@@ -4,7 +4,7 @@ import { useConnectionsStore } from "../stores/connections";
 import { groupConnectionsByDevice } from "../lib/connection-groups";
 import { formatBytes, formatRate, formatWallClock } from "../lib/format";
 import AppIcon from "../components/AppIcon.vue";
-import DetailDrawer from "../components/DetailDrawer.vue";
+import OverflowMenu from "../components/OverflowMenu.vue";
 import AppSelect from "../components/AppSelect.vue";
 import EmptyState from "../components/EmptyState.vue";
 import EntityStatsPanel from "../components/EntityStatsPanel.vue";
@@ -26,7 +26,7 @@ const groups = computed(() => {
       )
     : rows;
 });
-// Keep the drawer open (with its history) after the device's last connection closes.
+// Keep the detail pane (with its history) up after the device's last connection closes.
 const selected = computed(() => {
   if (!selectedKey.value) return null;
   return groups.value.find((group) => group.key === selectedKey.value)
@@ -87,57 +87,60 @@ async function closeSelected(): Promise<void> {
   <div class="page-shell list-detail-page">
     <header class="page-toolbar">
       <div>
-        <h1>已发现设备</h1>
-        <small v-if="store.status !== 'live'" aria-live="polite">正在连接</small>
+        <h1>设备</h1>
+        <small aria-live="polite">{{ store.status === "live" ? `${groups.length} 个已发现设备` : "正在连接" }}</small>
       </div>
       <AppSelect v-model="sort" :options="SORT_OPTIONS" label="设备排序方式" />
     </header>
-    <section class="surface-card entity-list full-width-list">
-      <button
-        v-for="group in groups"
-        :key="group.key"
-        type="button"
-        class="entity-row wide"
-        :class="{ selected: selectedKey === group.key }"
-        :aria-pressed="selectedKey === group.key"
-        @click="selectedKey = group.key"
-      >
-        <i><AppIcon name="devices" :size="16" /></i
-        ><span
-          >{{ group.label }}<small>{{ deviceKind(group.label, group.connections) }}</small></span
-        ><strong
-          >{{ rowRate(group.key)
-          }}<small>总计 {{ rowTotal(group) }} · {{ group.connections.length }} 个连接</small></strong
-        ><AppIcon name="next" :size="15" />
-      </button>
-      <EmptyState v-if="!groups.length" icon="devices" title="暂无活动设备" detail="本机或局域网地址产生连接后会显示在这里。" />
-    </section>
-    <DetailDrawer
-      :open="Boolean(selected)"
-      :title="selected?.label ?? '设备详情'"
-      :subtitle="selected ? (selected.connections.length ? deviceKind(selected.label, selected.connections) : '当前没有活动连接') : ''"
-      @close="selectedKey = null"
-      ><div v-if="selected" class="entity-detail drawer-detail">
-        <EntityStatsPanel :stats="stats" :active-connections="selected.connections.length" :details="details" />
-        <h3>活动连接</h3>
-        <ul>
-          <li v-for="connection in selected.connections" :key="connection.id">
-            <span>{{ connection.metadata.process || "未知进程" }} → {{
-              connection.metadata.host ||
-              connection.metadata.destinationIP ||
-              "未知目标"
-            }}</span
-            ><small>↑ {{ formatBytes(connection.upload) }} ↓ {{ formatBytes(connection.download) }}</small>
-          </li>
-          <li v-if="!selected.connections.length" class="entity-empty-row">当前没有活动连接</li>
-        </ul>
-        <button v-if="selected.connections.length" type="button" class="danger-button device-close-all" :disabled="closing" @click="closeSelected">{{ closing ? '正在关闭…' : '关闭该地址的全部连接' }}</button>
-      </div></DetailDrawer
-    >
+    <div class="master-detail">
+      <section class="entity-list master-list" aria-label="设备列表">
+        <button
+          v-for="group in groups"
+          :key="group.key"
+          type="button"
+          class="entity-row"
+          :class="{ selected: selectedKey === group.key }"
+          :aria-pressed="selectedKey === group.key"
+          @click="selectedKey = group.key"
+        >
+          <i class="entity-row-icon"><AppIcon name="devices" :size="18" /></i>
+          <span>{{ group.label }}<small>{{ deviceKind(group.label, group.connections) }}</small></span>
+          <strong>{{ rowRate(group.key) }}<small>总计 {{ rowTotal(group) }}</small></strong>
+        </button>
+        <EmptyState v-if="!groups.length" icon="devices" title="暂无活动设备" detail="本机或局域网地址产生连接后会显示在这里。" />
+      </section>
+      <aside class="entity-pane" :class="{ empty: !selected }" aria-label="设备详情">
+        <template v-if="selected">
+          <header class="entity-pane-header">
+            <i class="entity-pane-icon"><AppIcon name="devices" :size="24" /></i>
+            <div><h2>{{ selected.label }}</h2><p>{{ selected.connections.length ? deviceKind(selected.label, selected.connections) : "当前没有活动连接" }}</p></div>
+            <OverflowMenu label="设备操作">
+              <button type="button" role="menuitem" class="danger" :disabled="closing || !selected.connections.length" @click="closeSelected">{{ closing ? "正在关闭…" : "关闭该地址的全部连接" }}</button>
+              <button type="button" role="menuitem" @click="selectedKey = null">取消选择</button>
+            </OverflowMenu>
+          </header>
+          <div class="entity-detail">
+            <EntityStatsPanel :stats="stats" :active-connections="selected.connections.length" :details="details" />
+            <h3>活动连接</h3>
+            <ul>
+              <li v-for="connection in selected.connections" :key="connection.id">
+                <span>{{ connection.metadata.process || "未知进程" }} → {{
+                  connection.metadata.host ||
+                  connection.metadata.destinationIP ||
+                  "未知目标"
+                }}</span
+                ><small>↑ {{ formatBytes(connection.upload) }} ↓ {{ formatBytes(connection.download) }}</small>
+              </li>
+              <li v-if="!selected.connections.length" class="entity-empty-row">当前没有活动连接</li>
+            </ul>
+          </div>
+        </template>
+        <p v-else class="entity-pane-placeholder">选择一个设备查看带宽、连接与流量统计</p>
+      </aside>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .entity-empty-row{color:var(--app-muted)}
-.device-close-all{margin-top:20px}
 </style>

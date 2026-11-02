@@ -143,7 +143,7 @@ function openSettings(key: SettingKey): void {
           </div>
           <div class="setting-body">
             <span class="setting-status" :title="sp.phase === 'conflict' ? sp.conflictDetail ?? undefined : undefined"><i :class="{ active: spEnabled }" />{{ spPhaseLabel }}</span>
-            <button type="button" class="setting-nav" aria-label="打开系统代理设置" @click="openSettings('system-proxy')"><AppIcon name="next" :size="14" /></button>
+            <button type="button" class="setting-nav" aria-label="打开系统代理设置" @click="openSettings('system-proxy')"><AppIcon name="more-horizontal" :size="16" /></button>
           </div>
           <p v-if="actionError" class="inline-error" role="alert">{{ actionError }}</p>
           <p v-else-if="spEnabled && sp.errorMessage" class="inline-error">{{ sp.errorMessage }}</p>
@@ -158,7 +158,7 @@ function openSettings(key: SettingKey): void {
           </div>
           <div class="setting-body">
             <span class="setting-status"><i :class="{ active: tunActive }" />{{ tunPhaseLabel }}</span>
-            <button type="button" class="setting-nav" aria-label="打开 TUN 模式设置" @click="openSettings('tun')"><AppIcon name="next" :size="14" /></button>
+            <button type="button" class="setting-nav" aria-label="打开 TUN 模式设置" @click="openSettings('tun')"><AppIcon name="more-horizontal" :size="16" /></button>
           </div>
           <p v-if="tun.actionError" class="inline-error" role="alert">{{ tun.actionError }}</p>
         </SurfaceCard>
@@ -177,7 +177,7 @@ function openSettings(key: SettingKey): void {
           </div>
           <div class="setting-body">
             <span class="setting-status"><i :class="{ active: snifferEnabled }" />{{ snifferBusy ? '正在应用…' : snifferEnabled ? '已启用' : '未启用' }}</span>
-            <button type="button" class="setting-nav" aria-label="打开嗅探覆写设置" @click="openSettings('sniffer')"><AppIcon name="next" :size="14" /></button>
+            <button type="button" class="setting-nav" aria-label="打开嗅探覆写设置" @click="openSettings('sniffer')"><AppIcon name="more-horizontal" :size="16" /></button>
           </div>
           <p v-if="sniffer.lastError" class="inline-error" role="alert">{{ sniffer.lastError }}</p>
         </SurfaceCard>
@@ -191,7 +191,7 @@ function openSettings(key: SettingKey): void {
           </div>
           <div class="setting-body">
             <span class="setting-status"><i :class="{ active: dnsEnabled }" />{{ dnsBusy ? '正在应用…' : dnsEnabled ? '已启用' : '未启用' }}</span>
-            <button type="button" class="setting-nav" aria-label="打开 DNS 覆写设置" @click="openSettings('dns')"><AppIcon name="next" :size="14" /></button>
+            <button type="button" class="setting-nav" aria-label="打开 DNS 覆写设置" @click="openSettings('dns')"><AppIcon name="more-horizontal" :size="16" /></button>
           </div>
           <p v-if="dns.lastError" class="inline-error" role="alert">{{ dns.lastError }}</p>
         </SurfaceCard>
@@ -207,7 +207,7 @@ function openSettings(key: SettingKey): void {
   justify-content: space-between;
   gap: var(--space-4);
   margin-top: auto;
-  min-height: 32px;
+  min-height: 22px;
 }
 .setting-status {
   display: inline-flex;
@@ -215,8 +215,8 @@ function openSettings(key: SettingKey): void {
   gap: var(--space-3);
   min-width: 0;
   overflow: hidden;
-  color: var(--app-muted);
-  font-size: var(--font-size-sm);
+  color: var(--app-text);
+  font-size: var(--font-size-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -224,19 +224,19 @@ function openSettings(key: SettingKey): void {
   display: grid;
   place-items: center;
   align-self: flex-end;
-  flex: 0 0 28px;
-  width: 28px;
-  height: 28px;
+  flex: 0 0 26px;
+  width: 26px;
+  height: 22px;
   margin: 0 -7px -7px 0;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--app-muted);
   cursor: pointer;
 }
 .setting-nav:hover { background: var(--app-fill); color: var(--app-text); }
 .setting-nav:focus-visible { outline: 2px solid var(--app-blue); outline-offset: 1px; }
-.setting-card { gap: var(--space-3); }
+.setting-card { gap: var(--space-2); }
 .inline-error { margin-top: 8px; color: var(--app-danger); font-size: var(--font-size-sm); }
 </style>

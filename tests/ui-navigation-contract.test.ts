@@ -27,13 +27,20 @@ describe('Surge-inspired UI navigation contract', () => {
     expect(processes).toContain('@click="saveRule"')
   })
 
-  it('uses overlay drawers instead of permanent master-detail columns', () => {
-    for (const view of ['ConnectionsView.vue', 'ProcessListView.vue', 'DeviceListView.vue']) {
+  it('shows processes and devices as a Surge-style list + detail pane, connections in a drawer', () => {
+    // 所有者要求（2026-11-02）：进程 / 设备对标 Surge，左侧列表 + 右侧常驻详情栏。
+    for (const view of ['ProcessListView.vue', 'DeviceListView.vue']) {
       const source = read(`src/renderer/src/views/${view}`)
-      expect(source).toContain('<DetailDrawer')
-      expect(source).not.toContain('list-detail-grid')
+      expect(source).toContain('class="master-detail"')
+      expect(source).toContain('class="entity-pane"')
+      expect(source).toContain('<EntityStatsPanel')
+      expect(source).toContain('<OverflowMenu')
     }
+    // 进程的「创建分流规则」仍在浮层抽屉里编辑，从详情栏的「…」菜单打开。
+    expect(read('src/renderer/src/views/ProcessListView.vue')).toContain('<DetailDrawer')
+    expect(read('src/renderer/src/views/ConnectionsView.vue')).toContain('<DetailDrawer')
     const css = read('src/renderer/src/styles/base.css')
+    expect(css).toMatch(/\.master-detail\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1\.05fr\) minmax\(260px, 1fr\)/)
     expect(css).toMatch(/\.detail-drawer\{[^}]*width:min\(372px,calc\(100vw - 40px\)\)/)
   })
 

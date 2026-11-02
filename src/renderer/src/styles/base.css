@@ -27,10 +27,11 @@ button:disabled { cursor: default; opacity: 0.55; }
 .app-content::-webkit-scrollbar-thumb { border-radius: var(--radius-sm); background: rgba(127, 127, 127, 0.35); border: 3px solid transparent; background-clip: content-box; }
 .app-content::-webkit-scrollbar-thumb:hover { background-color: rgba(127, 127, 127, 0.55); }
 .app-content::-webkit-scrollbar-track { background: transparent; }
-.page-shell { width: 100%; max-width: var(--content-max-width); min-width: 0; min-height: 100%; margin: 0 auto; padding: 45px 34px 30px; display: flex; flex-direction: column; }
-/* Surge 活动页使用比普通列表/表单页更宽的仪表盘：在 934px 基准窗口中，
-   主区左留白约 5px、右留白约 35px，得到约 689px 的双列卡片区域。 */
-.activity-view.page-shell { max-width: none; min-width: calc(2 * var(--card-min) + 15px); padding-left: 5px; padding-right: 35px; }
+/* 所有页面共用同一条左缘（--page-gutter）：与 Surge 一样标题和内容贴左排列，
+   活动页与其他页面的大标题在任何窗口宽度下都处在同一位置。 */
+.page-shell { width: 100%; max-width: var(--content-max-width); min-width: 0; min-height: 100%; margin: 0; padding: 45px var(--page-gutter) 30px; display: flex; flex-direction: column; }
+/* 活动页仪表盘不设最大宽度，随窗口伸展；左右留白与其他页面一致。 */
+.activity-view.page-shell { max-width: none; min-width: calc(2 * var(--card-min) + 15px + 2 * var(--page-gutter)); }
 h1 { margin: 0; font-size: var(--font-size-display); line-height: 34px; letter-spacing: -0.7px; font-weight: var(--font-weight-bold); }
 .surface-card { background: var(--app-surface); border: 1px solid var(--app-surface-border); border-radius: var(--radius-large); box-shadow: var(--app-shadow); overflow: hidden; }
 /* 与 Surge 一致：大标题与下方“网络/配置/出站模式”事实条之间留出明显间距。 */
@@ -149,39 +150,58 @@ h1 { margin: 0; font-size: var(--font-size-display); line-height: 34px; letter-s
   .total-labels strong { font-size: var(--font-size-body); }
   .total-bar { height: 18px; margin-top: 3px; }
 }
-.overview-view h1 { margin-bottom: 22px; }
-.overview-view section { margin-bottom: 29px; }
-.overview-view h2 { margin: 0 0 15px; color: var(--app-pink); font-size: var(--font-size-body); font-weight: var(--font-weight-semibold); }
+.overview-view h1 { margin-bottom: 18px; }
+.overview-view section { margin-bottom: 24px; }
+/* Surge 概览：分组标题依次使用粉、紫、蓝，新增分组自动轮换配色。 */
+.overview-view h2 { margin: 0 0 12px; color: var(--app-pink); font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); }
+.overview-view section:nth-of-type(3n + 2) h2 { color: var(--app-purple); }
+.overview-view section:nth-of-type(3n) h2 { color: var(--app-blue); }
 /* 恒两列：概览的网络接管在最小窗口下也必须保持两排卡片，
    auto-fill 会在窄窗口塌成一列，这里改为固定双列（小屏各占一半）。 */
 .overview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; }
-.overview-grid .surface-card { min-height: 137px; padding: 16px; display: flex; flex-direction: column; }
-.setting-head { display: flex; align-items: flex-start; gap: var(--space-5); min-height: 55px; }
+/* Surge 概览小卡片：约 2.8:1 的扁平比例，标题 13px、说明 11px，底部状态行 + 「…」。 */
+.overview-grid .surface-card { min-height: 118px; padding: 13px 16px 12px; border-radius: var(--radius-panel); display: flex; flex-direction: column; }
+.setting-head { display: flex; align-items: flex-start; gap: var(--space-5); min-height: 46px; }
 .setting-head > div { flex: 1; }
-.setting-head h3 { margin: 0 0 5px; font-size: var(--font-size-lg); font-weight: var(--font-weight-bold); }
-.setting-head p { margin: 0; color: var(--app-muted); font-size: var(--font-size-sm); line-height: 1.45; }
+.setting-head h3 { margin: 0 0 4px; font-size: var(--font-size-md); line-height: 20px; font-weight: var(--font-weight-semibold); }
+.setting-head p { margin: 0; color: var(--app-muted); font-size: var(--font-size-xs); line-height: 1.45; }
 .switch { position: relative; flex: 0 0 auto; width: 37px; height: 20px; padding: 0; border: 0; border-radius: var(--radius-md); background: #d6d9de; cursor: pointer; }
 .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: white; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18); transition: transform 150ms ease; }
 .switch.on { background: var(--app-purple); }
 .switch.on::after { transform: translateX(17px); }
 .switch:disabled { cursor: default; }
-.setting-status { display: flex; align-items: center; gap: var(--space-3); margin-top: auto; padding-top: 12px; font-size: var(--font-size-sm); }
-.setting-status i { width: 8px; height: 8px; border-radius: 50%; background: #a6abb4; }
-.setting-status i.active { background: var(--app-green); box-shadow: 0 0 0 4px rgba(49, 201, 90, 0.08); }
+.setting-status { display: flex; align-items: center; gap: var(--space-2); margin-top: auto; padding-top: 10px; font-size: var(--font-size-xs); }
+.setting-status i { flex: none; width: 7px; height: 7px; border-radius: 50%; background: #a6abb4; }
+.setting-status i.active { background: var(--app-green); }
 .placeholder-view p { margin-top: 18px; color: var(--app-muted); }
 .page-toolbar { display: flex; align-items: center; justify-content: space-between; width: 100%; margin-bottom: 24px; }
 .page-toolbar select, .settings-form-page select { height: 27px; padding: 0 10px; border: 0; border-radius: var(--radius-sm); background: var(--app-fill); }
-.list-detail-page { position: relative; }
-.list-detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 0.9fr); gap: 15px; flex: 1; min-height: 320px; }
-.entity-list { overflow: hidden; }
-.entity-row { display: grid; grid-template-columns: 34px 1fr auto; align-items: center; width: 100%; min-height: 47px; padding: 3px 8px; border: 0; border-radius: var(--radius-control); background: transparent; text-align: left; }
+/* 进程 / 设备：Surge 式左右双栏。左侧是不带卡片底的紧凑列表，右侧是常驻详情栏
+   （带宽 / 连接 / 详情 / 流量分区）；两栏各自滚动，页头固定。 */
+.list-detail-page.page-shell { height: 100%; max-width: none; padding-bottom: 18px; }
+.list-detail-page .page-toolbar { flex: none; margin-bottom: 16px; }
+.master-detail { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(260px, 1fr); gap: 22px; flex: 1; min-height: 0; }
+.master-list { display: flex; flex-direction: column; gap: 1px; min-height: 0; overflow-y: auto; padding-right: 2px; }
+.entity-row { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; column-gap: 10px; width: 100%; min-height: 46px; padding: 5px 10px 5px 8px; border: 0; border-radius: var(--radius-md); background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .entity-row:hover { background: var(--app-fill-subtle); }
 .entity-row.selected { background: var(--app-fill); }
-.entity-row > i { display: grid; place-items: center; width: 29px; height: 29px; border-radius: var(--radius-control); background: var(--app-fill); font-size: var(--font-size-2xs); font-style: normal; }
-.entity-row > span { font-size: var(--font-size-body); }
-.entity-row strong { text-align: right; font-size: var(--font-size-md); font-weight: var(--font-weight-regular); }
-.entity-row small { display: block; margin-top: 2px; color: var(--app-muted); font-size: var(--font-size-2xs); font-weight: var(--font-weight-regular); }
-.empty-detail { border: 1px dashed var(--app-divider); border-radius: var(--radius-md); background: rgba(255,255,255,.1); }
+.entity-row .entity-row-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: var(--radius-control); background: var(--app-fill-subtle); color: var(--app-muted); font-style: normal; overflow: hidden; }
+.entity-row .entity-row-icon img { width: 100%; height: 100%; object-fit: contain; }
+.entity-row > span { min-width: 0; overflow: hidden; font-size: var(--font-size-md); text-overflow: ellipsis; white-space: nowrap; }
+.entity-row strong { text-align: right; font-size: var(--font-size-md); font-weight: var(--font-weight-medium); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.entity-row small { display: block; margin-top: 1px; overflow: hidden; color: var(--app-muted); font-size: var(--font-size-2xs); font-weight: var(--font-weight-regular); text-overflow: ellipsis; white-space: nowrap; }
+.entity-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow-y: auto; padding-right: 2px; }
+.entity-pane.empty { align-items: center; justify-content: center; border: 1.5px dashed var(--app-divider); border-radius: var(--radius-panel); }
+.entity-pane-placeholder { max-width: 200px; margin: 0; color: var(--app-faint); font-size: var(--font-size-xs); text-align: center; line-height: 1.5; }
+.entity-pane-header { display: flex; align-items: center; gap: var(--space-5); margin-bottom: 14px; }
+.entity-pane-header > div { flex: 1; min-width: 0; }
+.entity-pane-header h2 { margin: 0; overflow: hidden; font-size: var(--font-size-title); line-height: 26px; font-weight: var(--font-weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
+.entity-pane-header p { margin: 2px 0 0; overflow: hidden; color: var(--app-muted); font-size: var(--font-size-2xs); text-overflow: ellipsis; white-space: nowrap; }
+.entity-pane-header .overflow-menu { align-self: flex-start; margin-top: 6px; }
+.entity-pane-header .entity-pane-icon { display: grid; place-items: center; flex: none; width: 46px; height: 46px; border-radius: var(--radius-card); background: var(--app-surface); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08); color: var(--app-muted); font-style: normal; overflow: hidden; }
+.entity-pane-header .entity-pane-icon img { width: 36px; height: 36px; object-fit: contain; }
+.entity-pane .entity-detail { padding: 0; overflow: visible; }
+.entity-pane .entity-detail > h3 { margin: 18px 0 4px; padding-bottom: 5px; border-bottom: 1px solid var(--app-divider); color: var(--app-green); font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); }
 .page-toolbar > div > small { display: block; margin-top: 2px; color: var(--app-muted); font-size: var(--font-size-2xs); }
 .entity-empty { padding: 30px 10px; color: var(--app-muted); font-size: var(--font-size-xs); text-align: center; }
 .entity-detail { padding: 16px; overflow: auto; }
@@ -371,7 +391,7 @@ h1 { margin: 0; font-size: var(--font-size-display); line-height: 34px; letter-s
 
 /* 完全流式布局（2026 年调整，替代原“固定卡片 + 留白”策略）：
    任何窗口宽度下仪表盘都保持规范的双列排布（卡片随列轨弹性伸缩），
-   不做单列降级；高于规范宽度时内容以 --content-max-width 居中。 */
+   不做单列降级；高于规范宽度时内容停在 --content-max-width，贴左对齐。 */
 .unsaved-indicator{display:inline-flex;align-items:center;justify-content:center;min-width:58px;min-height:32px;padding:0 12px;border:1px solid color-mix(in srgb,var(--app-warning) 38%,var(--app-divider));border-radius:var(--radius-control);background:color-mix(in srgb,var(--app-warning) 8%,transparent);color:var(--app-warning);font-size:var(--font-size-xs);font-weight:var(--font-weight-semibold);line-height:1;white-space:nowrap}
 .app-window,.app-frame,.app-sidebar,.app-content{user-select:none;-webkit-user-select:none}
 input,textarea,[contenteditable="true"],code,pre{user-select:text;-webkit-user-select:text}

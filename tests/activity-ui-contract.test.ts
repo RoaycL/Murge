@@ -50,12 +50,13 @@ describe('Activity fluid-layout UI contract', () => {
     expect(css).toMatch(/\.traffic-card\s*\{[^}]*aspect-ratio:\s*1 \/ 1/)
     // 卡片到达最小尺寸后网格不再压缩（与 848px 最小窗口互为兜底）。
     expect(css).toMatch(/\.dashboard-grid\s*\{[^}]*min-width:\s*calc\(2 \* var\(--card-min\) \+ 15px\)/)
-    expect(css).toMatch(/\.activity-view\.page-shell\s*\{[^}]*min-width:\s*calc\(2 \* var\(--card-min\) \+ 15px\)/)
+    expect(css).toMatch(/\.activity-view\.page-shell\s*\{[^}]*min-width:\s*calc\(2 \* var\(--card-min\) \+ 15px \+ 2 \* var\(--page-gutter\)\)/)
     expect(css).toMatch(/\.activity-view\.page-shell\s*\{[^}]*max-width:\s*none/)
-    expect(css).toMatch(/\.activity-view\.page-shell\s*\{[^}]*padding-left:\s*5px/)
-    expect(css).toMatch(/\.activity-view\.page-shell\s*\{[^}]*padding-right:\s*35px/)
+    // 所有者要求：活动页大标题与其他页面同一位置，左右留白共用 --page-gutter，不再单独覆盖。
+    expect(css).not.toMatch(/\.activity-view\.page-shell\s*\{[^}]*padding/)
+    expect(tokens).toMatch(/--page-gutter:\s*24px/)
     expect(css).toMatch(/\.page-shell\s*\{[^}]*max-width:\s*var\(--content-max-width\)/)
-    expect(css).toMatch(/\.page-shell\s*\{[^}]*margin:\s*0 auto/)
+    expect(css).toMatch(/\.page-shell\s*\{[^}]*margin:\s*0;[^}]*padding:\s*45px var\(--page-gutter\) 30px/)
     // 所有者要求：任何宽度下都保持规范的双列仪表盘，不做单列降级。
     expect(css).not.toMatch(/\.dashboard-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/)
   })

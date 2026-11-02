@@ -49,6 +49,10 @@ describe('network drawer + resources UI contract', () => {
     const view = await read('src/renderer/src/views/ResourcesView.vue')
     expect(view).toMatch(/role="table"/)
     expect(view).toMatch(/仅显示未就绪的项目/)
+    // 筛选开关与「全部更新」在表格上方的工具栏，开关与应用其它开关同款。
+    expect(view.indexOf('resource-table-toolbar')).toBeLessThan(view.indexOf('role="table"'))
+    expect(view).toMatch(/class="switch" :class="\{ on: onlyNotReady \}" role="switch"/)
+    expect(view).not.toMatch(/type="checkbox"|resource-table-footer/)
     expect(view).toMatch(/最后更新/)
     expect(view).not.toMatch(/完成/)
     expect(view).toMatch(/代理集合、规则集合与地理数据库/)
@@ -105,35 +109,38 @@ describe('network drawer + resources UI contract', () => {
     expect(serviceProtocol).not.toMatch(/operation: z\.literal\('provider-content'\)[\s\S]{0,300}\bpath:/)
   })
 
-  it('spins the refresh icon of the row currently updating, in both views', async () => {
-    const [base, resources, rules] = await Promise.all([
-      read('src/renderer/src/styles/base.css'),
+  it('animates the refresh glyph of the row currently updating, in both views', async () => {
+    const [indicator, resources, rules] = await Promise.all([
+      read('src/renderer/src/components/RefreshIndicator.vue'),
       read('src/renderer/src/views/ResourcesView.vue'),
       read('src/renderer/src/views/RulesView.vue')
     ])
-    // Shared spin animation (参考 clash-verge-rev: 1s linear infinite).
-    expect(base).toMatch(/@keyframes icon-spin/)
-    expect(base).toMatch(/icon-spin 1s linear infinite/)
-    // 外部资源: per-row refresh buttons spin while that row's op is refreshing.
-    expect(resources).toMatch(/spinning: providers\.opOf\(row\.name, row\.kind\)\.refreshing/)
-    // 规则页: per-row text buttons replaced by icon buttons with the same spin.
-    expect(rules).toMatch(/class="icon-control"/)
-    expect(rules).toMatch(/spinning: providers\.opOf\(provider\.name, 'rule'\)\.refreshing/)
+    // Shared indicator: orbiting comet arc while busy, drawn check / shake after.
+    expect(indicator).toMatch(/@keyframes ri-orbit/)
+    expect(indicator).toMatch(/@keyframes ri-breathe/)
+    expect(indicator).toMatch(/@keyframes ri-draw/)
+    expect(indicator).toMatch(/@keyframes ri-shake/)
+    expect(resources).toMatch(/<RefreshIndicator :busy="providers\.opOf\(row\.name, row\.kind\)\.refreshing"/)
+    expect(rules).toMatch(/class="icon-control refresh-control"/)
+    expect(rules).toMatch(/<RefreshIndicator :busy="providers\.opOf\(provider\.name, 'rule'\)\.refreshing"/)
   })
 
-  it('keeps batch buttons plain text labelled 全部更新 without icons', async () => {
-    const [resources, rules] = await Promise.all([
+  it('keeps batch buttons plain text labelled 全部更新 when idle', async () => {
+    const [resources, rules, button] = await Promise.all([
       read('src/renderer/src/views/ResourcesView.vue'),
-      read('src/renderer/src/views/RulesView.vue')
+      read('src/renderer/src/views/RulesView.vue'),
+      read('src/renderer/src/components/RefreshAllButton.vue')
     ])
-    // 外部资源: 页首 + 两个分区按钮统一为纯文本「全部更新」，不带图标。
-    expect(resources).toMatch(/'全部更新' \}/)
+    // 共用按钮：空闲时纯文本「全部更新」，仅在更新中 / 结果提示时出现图标。
+    expect(button).toMatch(/label: '全部更新'/)
+    expect(button).toMatch(/<RefreshIndicator v-if="busy \|\| outcome"/)
+    expect(resources).toMatch(/<RefreshAllButton :run="refreshAll"/)
+    expect(rules).toMatch(/<RefreshAllButton :run="providers\.refreshAllRuleProviders"/)
     expect(resources).not.toMatch(/refreshingProxy \? '更新中…' : '更新全部'/)
     expect(resources).not.toMatch(/'spin-icon': refreshingProxy/)
     expect(resources).not.toMatch(/'spin-icon': refreshingRule/)
     expect(resources).not.toMatch(/'spin-icon': refreshing /)
     // 规则页: 一键更新 → 全部更新，无图标。
-    expect(rules).toMatch(/refreshingAllRules \? '更新中…' : '全部更新'/)
     expect(rules).not.toMatch(/'spin-icon': refreshingAllRules/)
     expect(rules).not.toMatch(/一键更新/)
   })

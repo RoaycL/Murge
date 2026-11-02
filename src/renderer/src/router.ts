@@ -20,6 +20,8 @@ import SubStoreView from './views/SubStoreView.vue'
 import NetworkSettingsView from './views/NetworkSettingsView.vue'
 import DnsSnifferView from './views/DnsSnifferView.vue'
 import KernelSettingsView from './views/KernelSettingsView.vue'
+import MitmView from './views/MitmView.vue'
+import RewriteView from './views/RewriteView.vue'
 import { isRcSupportedRoute } from '@shared/release-scope'
 import { consumeNavigationBypass, hasUnsavedChanges, requestNavigation } from './composables/use-unsaved-changes'
 
@@ -37,6 +39,8 @@ export const router = createRouter({
     { path: '/substore', component: SubStoreView },
     { path: '/config', redirect: '/profiles' },
     { path: '/overrides', component: OverridesView },
+    { path: '/mitm', component: MitmView },
+    { path: '/rewrite', component: RewriteView },
     { path: '/resources', component: ResourcesView },
     { path: '/providers', component: ProviderSettingsView },
     { path: '/more', component: MoreView },

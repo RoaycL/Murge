@@ -64,6 +64,10 @@ pub async fn desktop_ipc(
     tun: State<'_, std::sync::Arc<crate::tun::TunCoordinator>>,
     updates: State<'_, std::sync::Arc<crate::updates::UpdateService>>,
 ) -> IpcResult {
+    if channel.starts_with("mitm:") {
+        return crate::mitm::dispatch(&channel, &payload, &kernel, &models, &profiles, &overrides)
+            .await;
+    }
     let startup_inner = startup.inner();
     dispatch(
         &channel,

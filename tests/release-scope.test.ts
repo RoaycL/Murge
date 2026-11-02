@@ -10,13 +10,13 @@ describe('release-candidate feature scope', () => {
   it('freezes a unique allowlist and rejects unsupported routes', () => {
     expect(new Set(RC_SUPPORTED_ROUTES).size).toBe(RC_SUPPORTED_ROUTES.length)
     expect(RC_SUPPORTED_ROUTES).toContain('/activity')
-    for (const route of ['/capture', '/decrypt', '/rewrite', '/panel']) {
+    for (const route of ['/capture', '/decrypt', '/panel']) {
       expect(isRcSupportedRoute(route)).toBe(false)
     }
     // TUN is an included feature and must NOT be treated as excluded. The still
     // incomplete feature set is what stays frozen.
     const excludedIds = RC_EXCLUDED_FEATURES.map(({ id }) => id)
-    for (const id of ['http-capture', 'https-decryption', 'rewrite', 'panel', 'automatic-updates']) {
+    for (const id of ['http-capture', 'panel', 'automatic-updates']) {
       expect(excludedIds).toContain(id)
     }
     expect(excludedIds).not.toContain('tun')
@@ -28,17 +28,25 @@ describe('release-candidate feature scope', () => {
       readFile(path.join(root, 'src/renderer/src/router.ts'), 'utf8'),
       readFile(path.join(root, 'src/renderer/src/views/OverviewView.vue'), 'utf8')
     ])
-    for (const route of ['/capture', '/decrypt', '/rewrite', '/panel']) {
+    for (const route of ['/capture', '/decrypt', '/panel']) {
       expect(sidebar).not.toContain(route)
       expect(router).not.toContain(`path: '${route}'`)
     }
     // TUN is surfaced as a switch on the Overview page.
     expect(overview).toContain('toggleTun')
     expect(overview).toContain('TUN 模式')
+    // HTTPS 解密 and 重写 shipped (docs/MITM_REWRITE.md) and are now real pages.
+    expect(sidebar).toContain("to: '/mitm'")
+    expect(sidebar).toContain("to: '/rewrite'")
+    expect(router).toContain("path: '/mitm'")
+    expect(router).toContain("path: '/rewrite'")
+    const excludedIds = RC_EXCLUDED_FEATURES.map(({ id }) => id)
+    expect(excludedIds).not.toContain('https-decryption')
+    expect(excludedIds).not.toContain('rewrite')
   })
 
   it('does not ship placeholder source for excluded RC pages', async () => {
-    for (const file of ['CaptureView.vue', 'DecryptView.vue', 'RewriteView.vue', 'PlaceholderView.vue']) {
+    for (const file of ['CaptureView.vue', 'DecryptView.vue', 'PlaceholderView.vue']) {
       await expect(access(path.join(root, 'src/renderer/src/views', file))).rejects.toMatchObject({ code: 'ENOENT' })
     }
   })

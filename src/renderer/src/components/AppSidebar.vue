@@ -27,6 +27,13 @@ const groups: Array<{ label: string; items: Array<{ to: string; label: string; i
     ]
   },
   {
+    label: 'HTTP',
+    items: [
+      { to: '/mitm', label: '解密', icon: 'mitm' },
+      { to: '/rewrite', label: '重写', icon: 'rewrite' }
+    ]
+  },
+  {
     label: '配置',
     items: [
       { to: '/profiles', label: '配置', icon: 'profiles' },

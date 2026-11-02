@@ -30,6 +30,7 @@ mod kernel;
 mod lifecycle;
 #[allow(dead_code)] // wired incrementally; the lint fires on staged-but-unwired items
 mod mihomo;
+mod mitm;
 mod net_validators;
 mod network_detector;
 mod network_metadata;
@@ -515,6 +516,22 @@ pub fn run() {
             app.manage(profiles);
             app.manage(std::sync::Arc::new(overrides));
             app.manage(std::sync::Arc::new(models));
+            // HTTPS 解密 engine (docs/MITM_REWRITE.md): bound before the first
+            // kernel config is composed; upstream legs re-enter the mixed port.
+            {
+                let handle_for_mitm = app.handle().clone();
+                mitm::initialize(
+                    paths.app_data_root.clone(),
+                    &paths::app_data_namespace(),
+                    std::sync::Arc::new(move || {
+                        let models = handle_for_mitm
+                            .try_state::<std::sync::Arc<crate::enhancements::ModelStores>>()?;
+                        let port = models.core.get()["mixedPort"].as_u64()?;
+                        let port = u16::try_from(port).ok().filter(|port| *port != 0)?;
+                        Some(std::net::SocketAddr::from(([127, 0, 0, 1], port)))
+                    }),
+                );
+            }
             app.manage(std::sync::Arc::new(usage));
             app.manage(std::sync::Arc::new(kernel));
             app.manage(std::sync::Arc::new(mihomo));

@@ -26,6 +26,7 @@ import type {
   OverrideLastKnownGood
 } from './overrides'
 import type { DnsEnhancement, DnsSnapshot } from './dns'
+import type { MitmRequestEntry, MitmState } from './mitm'
 import type { SnifferEnhancement, SnifferSnapshot } from './sniffer'
 import type { KernelStatus, OutboundMode, RuntimeSummary, TrafficSample } from './runtime'
 import type { SystemProxyStatus } from './system-proxy'
@@ -146,6 +147,23 @@ export const IPC = {
   overridesValidate: 'overrides:validate',
   overridesLastKnownGood: 'overrides:last-known-good',
   overridesResetToLastGood: 'overrides:reset-to-last-good',
+  mitmGetState: 'mitm:get-state',
+  mitmSetEnabled: 'mitm:set-enabled',
+  mitmSetRewriteEnabled: 'mitm:set-rewrite-enabled',
+  mitmSetSkipVerify: 'mitm:set-skip-verify',
+  mitmSetHostnames: 'mitm:set-hostnames',
+  mitmSetLocalModule: 'mitm:set-local-module',
+  mitmGenerateCa: 'mitm:generate-ca',
+  mitmInstallCa: 'mitm:install-ca',
+  mitmUninstallCa: 'mitm:uninstall-ca',
+  mitmDeleteCa: 'mitm:delete-ca',
+  mitmExportCa: 'mitm:export-ca',
+  mitmAddModule: 'mitm:add-module',
+  mitmUpdateModule: 'mitm:update-module',
+  mitmRemoveModule: 'mitm:remove-module',
+  mitmSetModuleEnabled: 'mitm:set-module-enabled',
+  mitmRecentRequests: 'mitm:recent-requests',
+  mitmClearRequests: 'mitm:clear-requests',
   dnsGet: 'dns:get',
   dnsSet: 'dns:set',
   dnsPreview: 'dns:preview',
@@ -327,6 +345,25 @@ export interface DesktopApi {
     validate(): Promise<OverrideValidation>
     lastKnownGood(): Promise<OverrideLastKnownGood | null>
     resetToLastGood(): Promise<OverridesSnapshot>
+  }
+  mitm: {
+    getState(): Promise<MitmState>
+    setEnabled(enabled: boolean): Promise<void>
+    setRewriteEnabled(enabled: boolean): Promise<void>
+    setSkipVerify(skip: boolean): Promise<void>
+    setHostnames(hostnames: string[]): Promise<void>
+    setLocalModule(content: string): Promise<void>
+    generateCa(): Promise<void>
+    installCa(): Promise<void>
+    uninstallCa(): Promise<void>
+    deleteCa(): Promise<void>
+    exportCa(): Promise<{ saved: boolean }>
+    addModule(url: string): Promise<void>
+    updateModule(id: string): Promise<void>
+    removeModule(id: string): Promise<void>
+    setModuleEnabled(id: string, enabled: boolean): Promise<void>
+    recentRequests(): Promise<MitmRequestEntry[]>
+    clearRequests(): Promise<void>
   }
   dns: {
     get(): Promise<DnsSnapshot>

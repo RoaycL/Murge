@@ -2,7 +2,7 @@
 import {
   Activity, AppWindow, ArrowDown, ArrowUp, Braces, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, Clipboard,
   Code2, Cpu, Database, Download, Ellipsis, Eye, Files, FilePlus2, Globe2, Info, Laptop, Layers,
-  LayoutDashboard, ListTree, Logs, Network, Palette, PanelRightClose, Pencil, Plus, RotateCw,
+  LayoutDashboard, ListTree, LockKeyhole, Logs, Network, Palette, PanelRightClose, Pencil, Plus, Replace, RotateCw,
   Route, Search, ServerCog, Settings2, ShieldCheck, SlidersHorizontal, Trash2,
   Upload, Wifi, X
 } from 'lucide-vue-next'
@@ -11,7 +11,7 @@ import SubStoreIcon from './SubStoreIcon.vue'
 
 export type AppIconName =
   | 'activity' | 'overview' | 'connections' | 'processes' | 'devices'
-  | 'policies' | 'rules' | 'profiles' | 'overrides' | 'resources'
+  | 'policies' | 'rules' | 'profiles' | 'overrides' | 'resources' | 'mitm' | 'rewrite'
   | 'more' | 'general' | 'network' | 'dns' | 'kernel' | 'appearance'
   | 'logs' | 'about' | 'search' | 'refresh' | 'add-file' | 'clipboard'
   | 'upload' | 'download' | 'delete' | 'close' | 'back' | 'next'
@@ -30,6 +30,8 @@ const icons: Record<AppIconName, Component> = {
   rules: ListTree,
   profiles: Files,
   overrides: Braces,
+  mitm: LockKeyhole,
+  rewrite: Replace,
   resources: Layers,
   more: Settings2,
   general: SlidersHorizontal,

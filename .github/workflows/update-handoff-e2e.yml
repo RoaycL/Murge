@@ -1,0 +1,65 @@
+name: Update hand-off (Windows)
+
+# Real-Windows check that the last Electron build hands its users to the
+# Tauri installer: install the released Electron build, run the bridge's
+# elevation request + wscript helper (src/main/updates/installer-handoff.ts)
+# with a Tauri setup, and require the installer to take over the install.
+# See tests/windows-update-handoff.e2e.test.ts.
+
+on:
+  workflow_dispatch:
+    inputs:
+      electron_tag:
+        description: Electron release to start from
+        default: v0.9.36
+        type: string
+      tauri_tag:
+        description: Tauri release whose installer takes over
+        default: tauri-v0.9.37
+        type: string
+  pull_request:
+    paths:
+      - .github/workflows/update-handoff-e2e.yml
+      - src/main/updates/**
+      - tests/windows-update-handoff.e2e.test.ts
+
+permissions:
+  contents: read
+
+jobs:
+  handoff:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ELECTRON_TAG: ${{ inputs.electron_tag || 'v0.9.36' }}
+      TAURI_TAG: ${{ inputs.tauri_tag || 'tauri-v0.9.37' }}
+    steps:
+      - name: Preserve repository LF line endings on Windows
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --include=dev --ignore-scripts
+      - name: Download the released installers
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force handoff-e2e/electron, handoff-e2e/tauri | Out-Null
+          gh release download $env:ELECTRON_TAG --repo $env:GITHUB_REPOSITORY --pattern '*-Setup-*-x64.exe' --dir handoff-e2e/electron
+          if ($LASTEXITCODE -ne 0) { throw "downloading $env:ELECTRON_TAG failed" }
+          gh release download $env:TAURI_TAG --repo $env:GITHUB_REPOSITORY --pattern '*_x64-setup.exe' --dir handoff-e2e/tauri
+          if ($LASTEXITCODE -ne 0) { throw "downloading $env:TAURI_TAG failed" }
+      - name: Electron → Tauri hand-off
+        env:
+          MURGE_RUN_HANDOFF_E2E: '1'
+          HANDOFF_E2E_DIR: ${{ github.workspace }}/handoff-e2e
+        run: npx vitest run tests/windows-update-handoff.e2e.test.ts
+      - name: Keep the hand-off trace
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-handoff-trace
+          path: handoff-e2e/work/
+          if-no-files-found: ignore

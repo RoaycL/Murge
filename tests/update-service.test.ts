@@ -74,14 +74,11 @@ describe('UpdateService', () => {
     expect(driver.checkCalls).toBe(1)
   })
 
-  it('offers release channels only when the driver can switch them', () => {
+  it('never offers the retired release channels', () => {
     expect(new UpdateService(new FakeUpdaterDriver()).getState().channelsSupported).toBe(false)
     const switching = new FakeUpdaterDriver()
     switching.setChannel = () => undefined
-    expect(new UpdateService(switching).getState().channelsSupported).toBe(true)
-    const unsupported = new FakeUpdaterDriver(false)
-    unsupported.setChannel = () => undefined
-    expect(new UpdateService(unsupported).getState().channelsSupported).toBe(false)
+    expect(new UpdateService(switching).getState().channelsSupported).toBe(false)
   })
 
   it('start() configures the driver and subscribes to its events', () => {

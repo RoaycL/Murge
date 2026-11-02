@@ -5,7 +5,6 @@ import type { BrandConfig } from '@shared/brand'
 import { downloadDiagnosticReport } from '../lib/diagnostic-export'
 import { useUpdatesStore } from '../stores/updates'
 import { useAppSettingsStore } from '../stores/app-settings'
-import type { UpdateChannel } from '@shared/app-settings'
 import BrandMark from '../components/BrandMark.vue'
 
 const brand = ref<BrandConfig | null>(null)
@@ -15,20 +14,6 @@ const error = ref<string | null>(null)
 
 const updates = useUpdatesStore()
 const appSettings = useAppSettingsStore()
-
-const CHANNELS: ReadonlyArray<{ value: UpdateChannel; label: string }> = [
-  { value: 'stable', label: '稳定版' },
-  { value: 'experimental', label: '实验版' }
-]
-
-const channelHelp = computed<string>(() => appSettings.settings.updateChannel === 'experimental'
-  ? '实验版是新的 Tauri 版本，更轻但仍在测试。切回稳定版会重新安装 Electron 版本，配置和数据保留。'
-  : '稳定版是当前的 Electron 版本。选择实验版会下载并安装 Tauri 版本，配置和数据保留，随时可以切回。')
-
-async function selectChannel(channel: UpdateChannel): Promise<void> {
-  if (channel === appSettings.settings.updateChannel) return
-  await appSettings.set({ updateChannel: channel })
-}
 
 // Vue registers lifecycle hooks synchronously during setup; registering
 // `onUnmounted` from inside an async `onMounted` callback (after an `await`)
@@ -81,7 +66,6 @@ async function exportDiagnostics(): Promise<void> {
 <template><div class="page-shell about-view"><h1>关于</h1>
   <section class="surface-card about-product"><div class="about-product-title"><BrandMark :size="38" /><strong>{{ brand?.productName ?? '—' }}</strong></div><span>版本 {{ info?.version ?? '—' }} · {{ info?.platform ?? '—' }} / {{ info?.arch ?? '—' }}</span><p>{{ brand?.description }}</p></section>
   <section><h2>更新</h2><div class="surface-card general-info">
-    <div v-if="updates.state.channelsSupported" class="update-row"><span><strong>更新通道</strong><small>{{ channelHelp }}</small></span><div class="segmented" role="group" aria-label="更新通道"><button v-for="channel in CHANNELS" :key="channel.value" type="button" :class="{ selected: appSettings.settings.updateChannel === channel.value }" :aria-pressed="appSettings.settings.updateChannel === channel.value" :disabled="appSettings.busy" @click="selectChannel(channel.value)">{{ channel.label }}</button></div></div>
     <p v-if="appSettings.errorMessage" class="inline-error">{{ appSettings.errorMessage }}</p>
     <div class="update-row"><span><strong>检查并安装更新</strong><small>发布新版本后会自动推送，也可在此手动检查。</small></span><button type="button" :disabled="busy || updates.state.phase === 'checking' || updates.state.phase === 'downloading'" @click="checkUpdates">检查更新</button></div>
     <p v-if="statusText" class="update-status" :class="statusClass">{{ statusText }}</p>

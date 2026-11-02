@@ -395,7 +395,59 @@ pub fn build_profile_kernel_config(document: &str, options: &Value) -> Result<St
         }
     }
 
+    assign_rule_provider_download_proxy(&mut config);
+
     Ok(override_apply::stringify_yaml(Value::Object(config)))
+}
+
+/// Mihomo downloads a provider over DIRECT unless the provider names a
+/// `proxy`. Remote rule sets usually live on GitHub/gist hosts that time out
+/// on a direct route, which surfaces as a 503 on every refresh. Give each
+/// remote rule provider without its own `proxy` the profile's first `select`
+/// group, so it is fetched the same way the user's traffic is routed.
+///
+/// Proxy providers are left alone: their nodes come from that very download,
+/// so routing it through a group built from them can leave nothing to dial on
+/// first start. An explicit `proxy` in the profile (or an override) wins.
+pub fn assign_rule_provider_download_proxy(
+    config: &mut serde_json::Map<String, Value>,
+) -> Option<String> {
+    let group = config
+        .get("proxy-groups")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|group| {
+            group["type"]
+                .as_str()
+                .map(str::to_ascii_lowercase)
+                .as_deref()
+                == Some("select")
+                && group["name"]
+                    .as_str()
+                    .is_some_and(|name| !name.trim().is_empty())
+        })?["name"]
+        .as_str()?
+        .to_string();
+    let providers = config
+        .get_mut("rule-providers")
+        .and_then(Value::as_object_mut)?;
+    for provider in providers.values_mut() {
+        let Some(provider) = provider.as_object_mut() else {
+            continue;
+        };
+        let is_http = provider
+            .get("type")
+            .and_then(Value::as_str)
+            .is_some_and(|kind| kind.eq_ignore_ascii_case("http"));
+        let has_proxy = provider
+            .get("proxy")
+            .and_then(Value::as_str)
+            .is_some_and(|name| !name.trim().is_empty());
+        if is_http && !has_proxy {
+            provider.insert("proxy".into(), json!(group));
+        }
+    }
+    Some(group)
 }
 
 #[cfg(test)]
@@ -604,5 +656,27 @@ mod tests {
         assert_eq!(inspection["profileName"], Value::Null);
         assert_eq!(inspection["sections"]["core"]["profileYaml"], "（未配置）");
         assert!(inspection["diagnostics"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn remote_rule_providers_download_through_first_select_group() {
+        let document = "proxies: []\nproxy-groups:\n  - name: 自动\n    type: url-test\n    proxies: [DIRECT]\n  - name: 节点选择\n    type: select\n    proxies: [DIRECT]\nproxy-providers:\n  sub:\n    type: http\n    url: https://example.com/sub\nrule-providers:\n  tg:\n    type: http\n    url: https://raw.githubusercontent.com/a/tg.list\n  pinned:\n    type: http\n    url: https://example.com/b.list\n    proxy: DIRECT\n  local:\n    type: file\n    path: ./x.list\nrules:\n  - MATCH,节点选择\n";
+        let effective = build_profile_kernel_config(document, &runtime()).unwrap();
+        let config = override_apply::parse_yaml_to_object(&effective).unwrap();
+        let rules = &config["rule-providers"];
+        assert_eq!(rules["tg"]["proxy"], json!("节点选择"));
+        assert_eq!(rules["pinned"]["proxy"], json!("DIRECT"));
+        assert!(rules["local"].get("proxy").is_none());
+        assert!(config["proxy-providers"]["sub"].get("proxy").is_none());
+    }
+
+    #[test]
+    fn rule_providers_stay_direct_without_a_select_group() {
+        let mut config = override_apply::parse_yaml_to_object(
+            "proxy-groups:\n  - name: auto\n    type: url-test\nrule-providers:\n  tg:\n    type: http\n    url: https://x/y.list\n",
+        )
+        .unwrap();
+        assert_eq!(assign_rule_provider_download_proxy(&mut config), None);
+        assert!(config["rule-providers"]["tg"].get("proxy").is_none());
     }
 }

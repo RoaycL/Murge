@@ -368,13 +368,12 @@ describe('providers store', () => {
     expect(result).toEqual({ updated: 1, failed: 0 })
   })
 
-  it('refreshAllRuleProviders also limits the batch to two concurrent pulls', async () => {
+  it('refreshAllRuleProviders pulls rule sets in parallel, bounded at six', async () => {
     getRuleProviders.mockResolvedValue({
-      providers: {
-        '规则集 A': { name: '规则集 A', type: 'Rule', behavior: 'rule', vehicleType: 'HTTP' },
-        '规则集 B': { name: '规则集 B', type: 'Rule', behavior: 'rule', vehicleType: 'HTTP' },
-        '规则集 C': { name: '规则集 C', type: 'Rule', behavior: 'rule', vehicleType: 'HTTP' }
-      }
+      providers: Object.fromEntries(Array.from({ length: 8 }, (_, index) => {
+        const name = `规则集 ${index}`
+        return [name, { name, type: 'Rule', behavior: 'rule', vehicleType: 'HTTP' }]
+      }))
     })
     let inflight = 0
     let maxInflight = 0
@@ -387,8 +386,8 @@ describe('providers store', () => {
     const store = useProvidersStore()
     await store.loadRuleProviders()
 
-    expect(await store.refreshAllRuleProviders()).toEqual({ updated: 3, failed: 0 })
-    expect(maxInflight).toBe(2)
+    expect(await store.refreshAllRuleProviders()).toEqual({ updated: 8, failed: 0 })
+    expect(maxInflight).toBe(6)
   })
 
   it('refreshAllProxyProviders uses bounded concurrency with failure isolation', async () => {

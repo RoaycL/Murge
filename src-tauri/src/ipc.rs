@@ -339,15 +339,17 @@ pub async fn dispatch(
             })?;
             let silent_launch_before = settings.get().silent_launch;
             let auto_check_update_before = settings.get().auto_check_update;
-            let update_channel_before = settings.get().update_channel;
+            let include_beta_before = settings.get().update_include_beta;
             let applied = settings.set(&patch);
             if applied.auto_check_update != auto_check_update_before {
                 updates.apply_polling(applied.auto_check_update);
             }
-            // A channel switch drops the old channel's update and checks the
-            // new one at once.
-            if applied.update_channel != update_channel_before {
-                updates.set_channel(&applied.update_channel).await;
+            // "包括 Beta 版本" moved: drop the other feed's offer and check
+            // the new one at once.
+            if applied.update_include_beta != include_beta_before {
+                updates
+                    .set_channel(crate::updates::update_channel(applied.update_include_beta))
+                    .await;
             }
             // The persisted silent-launch preference moved: the login item's
             // registered arguments must follow (the TS appSettings.onChange

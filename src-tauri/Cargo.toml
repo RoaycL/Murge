@@ -36,6 +36,7 @@ if-addrs = "0.13"
 flate2 = "1"
 crc32fast = "1"
 regex = "1"
+semver = "1"
 yaml-rust2 = "0.12"
 keyring = { version = "3", features = ["windows-native"] }
 # The mihomo external-controller REST client. rustls keeps the Linux/CI build

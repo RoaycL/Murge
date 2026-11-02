@@ -1,13 +1,18 @@
 name: Tauri release
 
-# Tag `tauri-vX.Y.Z` on the tauri branch to publish a signed Tauri build as a
-# GitHub *pre-release* and point the experimental update channel at it
-# (latest.json in the fixed `channel-experimental` pre-release). Plain
-# `vX.Y.Z` tags stay with release.yml (Electron), which maintains
-# `channel-stable`. Neither ever becomes GitHub's "latest" release, so
-# electron-updater clients older than the channel-aware build are unaffected.
-# Moving stable users to Tauri (the Phase 7 cutover) is then a matter of
-# publishing a Tauri manifest to `channel-stable`.
+# Tag the tauri branch to publish a signed release:
+#
+# - `tauri-vX.Y.Z` is a 正式版: a normal GitHub release (the repository's
+#   latest), announced on the `update-stable` feed, on `update-beta` unless a
+#   newer Beta is there, and on the retired `channel-experimental` feed that
+#   Tauri builds up to 0.9.37 still follow.
+# - `tauri-vX.Y.Z-beta.N` is a Beta: a GitHub pre-release announced on
+#   `update-beta` only ("包括 Beta 版本" in the app).
+#
+# Each feed is a fixed pre-release holding the signed manifest `latest.json`
+# (scripts/release-feeds.mjs decides which feeds move). Plain `vX.Y.Z` tags
+# stay with release.yml on main (the retired Electron build), whose last
+# release keeps `channel-stable` and moves its users to `update-stable`.
 #
 # workflow_dispatch builds, signs and verifies everything with the real key
 # without publishing (a dry run before tagging).
@@ -23,6 +28,7 @@ on:
       - .github/workflows/tauri-release.yml
       - scripts/tauri-release-assets.mjs
       - scripts/tauri-updater-manifest.mjs
+      - scripts/release-feeds.mjs
 
 permissions:
   contents: read
@@ -72,6 +78,7 @@ jobs:
       version: ${{ steps.check.outputs.version }}
       tag: ${{ steps.check.outputs.tag }}
       product: ${{ steps.check.outputs.product }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
       - name: Tag, package.json and Cargo versions must agree
@@ -87,6 +94,12 @@ jobs:
           if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "tauri-v$version" ]; then
             echo "tag $GITHUB_REF_NAME does not match tauri-v$version"; exit 1
           fi
+          # 正式版 x.y.z or Beta x.y.z-beta.N; anything else is refused.
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$'; then
+            echo "version $version is neither x.y.z nor x.y.z-beta.N"; exit 1
+          fi
+          case "$version" in *-*) prerelease=true ;; *) prerelease=false ;; esac
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=tauri-v$version" >> "$GITHUB_OUTPUT"
           # The bundler names installers after tauri.conf productName (brand-checked).
@@ -205,7 +218,7 @@ jobs:
           path: ${{ runner.temp }}/release/
           if-no-files-found: error
           retention-days: 30
-      - name: Publish the GitHub pre-release
+      - name: Publish the GitHub release
         if: github.event_name == 'push'
         shell: bash
         env:
@@ -213,28 +226,48 @@ jobs:
           TAG: ${{ needs.version.outputs.tag }}
           VERSION: ${{ needs.version.outputs.version }}
           PRODUCT: ${{ needs.version.outputs.product }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
         run: |
           set -euo pipefail
           if gh release view "$TAG" > /dev/null 2>&1; then
             echo "Refusing to overwrite the existing release $TAG"; exit 1
+          fi
+          if [ "$PRERELEASE" = true ]; then
+            kind=(--prerelease --latest=false --title "$PRODUCT $VERSION Beta")
+          else
+            kind=(--latest --title "$PRODUCT $VERSION")
           fi
           cd "$RUNNER_TEMP/release"
           gh release create "$TAG" \
             "${PRODUCT}_${VERSION}_x64-setup.exe" "${PRODUCT}_${VERSION}_x64-setup.exe.sig" \
             "${PRODUCT}_${VERSION}_arm64-setup.exe" "${PRODUCT}_${VERSION}_arm64-setup.exe.sig" \
             latest.json SHA256SUMS.txt \
-            --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease --latest=false \
-            --title "$PRODUCT $VERSION (Tauri preview)" --notes-file "$RUNNER_TEMP/notes.md"
-      - name: Point the experimental update channel at this release
+            --repo "$GITHUB_REPOSITORY" --verify-tag "${kind[@]}" --notes-file "$RUNNER_TEMP/notes.md"
+      - name: Point the update feeds at this release
         if: github.event_name == 'push'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
-          if ! gh release view channel-experimental --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release create channel-experimental --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --prerelease --latest=false --title 'Experimental update channel' \
-              --notes 'Maintained by the Tauri release workflow: latest.json here is the signed manifest the experimental update channel follows. Do not download from this release.'
+          ensure_feed() {
+            if ! gh release view "$1" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+              gh release create "$1" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+                --prerelease --latest=false --title "Update feed: $1" \
+                --notes 'Maintained by the Tauri release workflow: latest.json here is the signed manifest the in-app updater follows. Do not download from this release.'
+            fi
+          }
+          # The version the beta feed announces now: a 正式版 must not
+          # replace a newer Beta there.
+          beta_version=''
+          feed_dir="$RUNNER_TEMP/beta-feed"
+          mkdir -p "$feed_dir"
+          if gh release download update-beta --repo "$GITHUB_REPOSITORY" --pattern latest.json --dir "$feed_dir" --clobber 2> /dev/null; then
+            beta_version=$(node -p "require('$feed_dir/latest.json').version")
           fi
-          gh release upload channel-experimental "$RUNNER_TEMP/release/latest.json" --repo "$GITHUB_REPOSITORY" --clobber
+          for feed in $(node scripts/release-feeds.mjs --version "$VERSION" --beta-feed-version "$beta_version"); do
+            ensure_feed "$feed"
+            gh release upload "$feed" "$RUNNER_TEMP/release/latest.json" --repo "$GITHUB_REPOSITORY" --clobber
+            echo "moved $feed to $VERSION"
+          done

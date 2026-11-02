@@ -27,33 +27,13 @@ use crate::paths::AppPaths;
 
 pub const APP_SETTINGS_FILE: &str = "app-settings.json";
 
-/// Stamp the NSIS installer writes into the install directory on every
-/// install that is not this build's own self-update (`src-tauri/nsis/hooks.nsh`).
-/// Running the Tauri installer means this build was chosen, but each user's
-/// settings file may still say "stable": the Electron build writes its whole
-/// settings object on every change, channel included. Without the reset the
-/// first update check would download the Electron installer and the next quit
-/// would install it over this build.
-pub const INSTALLER_CHANNEL_RESET_FILE: &str = "update-channel-reset";
-
-/// Per-user record of the install stamp already applied (its modified time),
-/// so each user resets once per install and a later choice of "stable" stays.
-pub const INSTALLER_CHANNEL_RESET_SEEN_FILE: &str = "update-channel-reset-seen";
-
-fn modified_stamp(path: &Path) -> Option<String> {
-    let modified = fs::metadata(path).ok()?.modified().ok()?;
-    let nanos = modified.duration_since(UNIX_EPOCH).ok()?.as_nanos();
-    Some(nanos.to_string())
-}
-
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub auto_start_kernel: bool,
     pub auto_check_update: bool,
-    /// Release channel the updater follows: "stable" (the Electron build) or
-    /// "experimental" (this Tauri build).
-    pub update_channel: String,
+    /// "包括 Beta 版本": the updater also offers Beta releases.
+    pub update_include_beta: bool,
     pub system_proxy_desired: bool,
     pub tun_desired: bool,
     pub kernel_enabled: bool,
@@ -70,14 +50,11 @@ pub struct AppSettings {
 
 impl Default for AppSettings {
     fn default() -> Self {
-        // Byte-for-byte mirror of DEFAULT_APP_SETTINGS (@shared/app-settings.ts),
-        // except the update channel: a settings file without one belongs to a
-        // fresh install of this build, which must keep following its own
-        // (experimental) channel rather than switch to Electron.
+        // Byte-for-byte mirror of DEFAULT_APP_SETTINGS (@shared/app-settings.ts).
         AppSettings {
             auto_start_kernel: true,
             auto_check_update: true,
-            update_channel: "experimental".into(),
+            update_include_beta: false,
             system_proxy_desired: false,
             tun_desired: false,
             kernel_enabled: true,
@@ -122,13 +99,6 @@ fn is_valid_channel(value: Option<&serde_json::Value>) -> Option<String> {
     }
 }
 
-fn valid_update_channel(value: Option<&serde_json::Value>) -> Option<String> {
-    match value.and_then(|v| v.as_str()) {
-        Some(channel @ ("stable" | "experimental")) => Some(channel.to_string()),
-        _ => None,
-    }
-}
-
 fn is_valid_scope(value: Option<&serde_json::Value>) -> Option<String> {
     match value.and_then(|v| v.as_str()) {
         Some("global") => Some("global".into()),
@@ -156,8 +126,7 @@ pub fn parse_app_settings(document: &serde_json::Value) -> AppSettings {
     AppSettings {
         auto_start_kernel: boolean("autoStartKernel", defaults.auto_start_kernel),
         auto_check_update: boolean("autoCheckUpdate", defaults.auto_check_update),
-        update_channel: valid_update_channel(object.get("updateChannel"))
-            .unwrap_or_else(|| defaults.update_channel.clone()),
+        update_include_beta: boolean("updateIncludeBeta", defaults.update_include_beta),
         system_proxy_desired: boolean("systemProxyDesired", defaults.system_proxy_desired),
         tun_desired: boolean("tunDesired", defaults.tun_desired),
         kernel_enabled: true,
@@ -300,8 +269,7 @@ impl SettingsStore {
         let next = AppSettings {
             auto_start_kernel: boolean("autoStartKernel", current.auto_start_kernel),
             auto_check_update: boolean("autoCheckUpdate", current.auto_check_update),
-            update_channel: valid_update_channel(patch.get("updateChannel"))
-                .unwrap_or(current.update_channel),
+            update_include_beta: boolean("updateIncludeBeta", current.update_include_beta),
             system_proxy_desired: boolean("systemProxyDesired", current.system_proxy_desired),
             tun_desired: boolean("tunDesired", current.tun_desired),
             kernel_enabled: true,
@@ -331,85 +299,6 @@ impl SettingsStore {
             self.listeners.emit(&value);
         }
         next
-    }
-
-    /// Apply the installer's channel stamp in `install_dir` once per install
-    /// for this user: follow this build's (experimental) channel. Returns
-    /// true when a new stamp was applied. Call once at startup, before the
-    /// updater reads the channel. The stamp is recorded before the channel
-    /// changes and taken back if the change does not reach the disk, so
-    /// neither failure can repeat a reset over a later choice.
-    pub fn apply_installer_channel_reset(&self, install_dir: Option<&Path>) -> bool {
-        let (Some(root), Some(install_dir)) = (&self.app_data_root, install_dir) else {
-            return false;
-        };
-        let Some(stamp) = modified_stamp(&install_dir.join(INSTALLER_CHANNEL_RESET_FILE)) else {
-            return false;
-        };
-        let seen_path = root.join(INSTALLER_CHANNEL_RESET_SEEN_FILE);
-        match fs::read_to_string(&seen_path) {
-            Ok(seen) if seen == stamp => return false,
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            // Unreadable is not unseen: never undo a later choice of "stable"
-            // because of a transient read failure; try again next launch.
-            Err(error) => {
-                crate::diag!(
-                    "[app-settings] unable to read the installer channel stamp record: {error}"
-                );
-                return false;
-            }
-        }
-        // Decide from the file itself: a failed read falls back to defaults
-        // (already "experimental") and would record the stamp unapplied.
-        let Ok(persisted) = self.persisted_update_channel() else {
-            crate::diag!("[app-settings] settings unreadable; channel reset retried next launch");
-            return false;
-        };
-        // Record first: a reset whose record failed would repeat next launch
-        // and undo whatever the user picked in between. A first launch may
-        // find no app-data folder yet.
-        if let Err(error) = fs::create_dir_all(root).and_then(|()| fs::write(&seen_path, &stamp)) {
-            crate::diag!("[app-settings] unable to record the installer channel stamp: {error}");
-            return false;
-        }
-        if persisted != "experimental" {
-            self.set(&AppSettingsPatch(
-                serde_json::json!({ "updateChannel": "experimental" }),
-            ));
-            // set() only logs a failed write: read the file back. An unreadable
-            // file here says nothing about the write, so keep the record then.
-            if matches!(self.persisted_update_channel().as_deref(), Ok(channel) if channel != "experimental")
-            {
-                crate::diag!(
-                    "[app-settings] update channel reset not persisted; retrying next launch"
-                );
-                // Take the record back so the next launch retries.
-                let _ = fs::remove_file(&seen_path);
-                return false;
-            }
-        }
-        true
-    }
-
-    /// The update channel as stored on disk, the default when there is no
-    /// settings file yet; `Err` when the file exists but cannot be read.
-    fn persisted_update_channel(&self) -> Result<String, ()> {
-        let Some(path) = self.file_path() else {
-            return Ok(AppSettings::default().update_channel);
-        };
-        match fs::read_to_string(&path) {
-            Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
-                Ok(document) if document.is_object() => {
-                    Ok(parse_app_settings(&document).update_channel)
-                }
-                _ => Err(()),
-            },
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                Ok(AppSettings::default().update_channel)
-            }
-            Err(_) => Err(()),
-        }
     }
 
     /// Subscribe to every applied `set` (the TS `onChange`).
@@ -501,98 +390,28 @@ mod tests {
     }
 
     #[test]
-    fn update_channel_accepts_only_the_two_channels() {
+    fn beta_updates_are_opt_in() {
         let temp = TempDir::new().unwrap();
-        let store = store_in(&temp);
-        // A fresh Tauri install stays on its own channel.
-        assert_eq!(store.get().update_channel, "experimental");
-        let next = store.set(&AppSettingsPatch(
-            serde_json::json!({ "updateChannel": "stable" }),
-        ));
-        assert_eq!(next.update_channel, "stable");
-        let kept = store.set(&AppSettingsPatch(
-            serde_json::json!({ "updateChannel": "nightly" }),
-        ));
-        assert_eq!(kept.update_channel, "stable");
-        let raw = fs::read_to_string(temp.path().join(APP_SETTINGS_FILE)).unwrap();
-        assert!(raw.contains("\"updateChannel\": \"stable\""));
-    }
-
-    #[test]
-    fn installer_stamp_moves_an_electron_stable_channel_to_experimental() {
-        let temp = TempDir::new().unwrap();
-        let install = TempDir::new().unwrap();
-        // What Electron v0.9.31 leaves behind after any settings change.
+        // The retired channel setting of 0.9.x builds is dropped.
         fs::write(
             temp.path().join(APP_SETTINGS_FILE),
-            r#"{ "updateChannel": "stable", "closeToTray": false }"#,
+            r#"{ "updateChannel": "experimental", "closeToTray": false }"#,
         )
         .unwrap();
         let store = store_in(&temp);
-        assert!(
-            !store.apply_installer_channel_reset(Some(install.path())),
-            "no stamp, no change"
-        );
-        assert_eq!(store.get().update_channel, "stable");
-
-        let stamp = install.path().join(INSTALLER_CHANNEL_RESET_FILE);
-        fs::write(&stamp, "experimental").unwrap();
-        assert!(store.apply_installer_channel_reset(Some(install.path())));
-        assert_eq!(store.get().update_channel, "experimental");
+        assert!(!store.get().update_include_beta);
         assert!(!store.get().close_to_tray, "other settings are kept");
-        let raw = fs::read_to_string(temp.path().join(APP_SETTINGS_FILE)).unwrap();
-        assert!(raw.contains("\"updateChannel\": \"experimental\""));
-
-        // Applied once per stamp: a later choice of "stable" stays.
-        store.set(&AppSettingsPatch(
-            serde_json::json!({ "updateChannel": "stable" }),
+        let next = store.set(&AppSettingsPatch(
+            serde_json::json!({ "updateIncludeBeta": true }),
         ));
-        assert!(!store.apply_installer_channel_reset(Some(install.path())));
-        assert_eq!(store.get().update_channel, "stable");
-
-        // A user whose app-data folder does not exist yet records it too.
-        let fresh_root = TempDir::new().unwrap();
-        let fresh = SettingsStore::new(Some(fresh_root.path().join("io.murge.desktop")));
-        assert!(fresh.apply_installer_channel_reset(Some(install.path())));
-        assert!(!fresh.apply_installer_channel_reset(Some(install.path())));
-
-        // Another user of the same install still gets the reset once.
-        let other = TempDir::new().unwrap();
-        fs::write(
-            other.path().join(APP_SETTINGS_FILE),
-            r#"{ "updateChannel": "stable" }"#,
-        )
-        .unwrap();
-        let other_store = store_in(&other);
-        assert!(other_store.apply_installer_channel_reset(Some(install.path())));
-        assert_eq!(other_store.get().update_channel, "experimental");
-
-        // A new install (a rewritten stamp) applies again.
-        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
-        fs::File::options()
-            .write(true)
-            .open(&stamp)
-            .unwrap()
-            .set_modified(later)
-            .unwrap();
-        assert!(store.apply_installer_channel_reset(Some(install.path())));
-        assert_eq!(store.get().update_channel, "experimental");
-    }
-
-    #[test]
-    fn installer_stamp_waits_while_the_settings_file_is_unreadable() {
-        let temp = TempDir::new().unwrap();
-        let install = TempDir::new().unwrap();
-        fs::write(
-            install.path().join(INSTALLER_CHANNEL_RESET_FILE),
-            "experimental",
-        )
-        .unwrap();
-        // A directory where the file should be makes every read fail.
-        fs::create_dir(temp.path().join(APP_SETTINGS_FILE)).unwrap();
-        let store = store_in(&temp);
-        assert!(!store.apply_installer_channel_reset(Some(install.path())));
-        assert!(!temp.path().join(INSTALLER_CHANNEL_RESET_SEEN_FILE).exists());
+        assert!(next.update_include_beta);
+        let kept = store.set(&AppSettingsPatch(
+            serde_json::json!({ "updateIncludeBeta": "yes" }),
+        ));
+        assert!(kept.update_include_beta);
+        let raw = fs::read_to_string(temp.path().join(APP_SETTINGS_FILE)).unwrap();
+        assert!(raw.contains("\"updateIncludeBeta\": true"));
+        assert!(!raw.contains("updateChannel"));
     }
 
     #[test]

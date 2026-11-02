@@ -12,12 +12,13 @@
 //! (review item S1). `GatedUpdaterDriver` stays as the fail-closed fallback
 //! for dev runs and tests.
 //!
-//! Releases are announced on two channels, each a fixed GitHub release whose
-//! `latest.json` the release workflows rewrite: `channel-stable` (the
-//! Electron build) and `channel-experimental` (this build). An installer of
-//! this build must be newer; one of the Electron build is a switch back to
-//! stable and is taken whatever its version (same model as
-//! `src/main/updates/signed-manifest-driver.ts`).
+//! Releases are announced on two feeds, each a fixed GitHub release whose
+//! `latest.json` the release workflow rewrites: `update-stable` (正式版 only)
+//! and `update-beta` (the newest of 正式版 and Beta). "包括 Beta 版本" picks
+//! the beta feed. Every feed carries this build only, and an installer must
+//! be newer than the running version: there is no way back to the retired
+//! Electron build. (The retired `channel-stable` / `channel-experimental`
+//! feeds still carry the 正式版 for clients older than this scheme.)
 
 use crate::error::IpcError;
 use crate::events::{EventHub, EventListener};
@@ -83,7 +84,7 @@ pub struct UpdateState {
     pub progress: Option<UpdateProgress>,
     pub error: Option<String>,
     pub can_install: bool,
-    /// True when this build can follow the stable / experimental channels.
+    /// True when this build offers the "包括 Beta 版本" preference.
     pub channels_supported: bool,
 }
 
@@ -184,7 +185,7 @@ pub fn coerce_update_state(value: &Value) -> UpdateState {
 /// until the updater integration lands; it performs no I/O.
 pub trait UpdaterDriver: Send + Sync {
     fn current_version(&self) -> String;
-    /// Follow another release channel ("stable" | "experimental"). Drops any
+    /// Follow another release channel ("stable" | "beta"). Drops any
     /// offer or staged installer of the previous channel; the caller starts
     /// a fresh check. Drivers without channels ignore it.
     fn set_channel(&self, _channel: &str) {}
@@ -286,25 +287,21 @@ pub fn repository_base(repository_url: &str) -> Option<String> {
     Some(format!("https://github.com/{owner}/{repo}"))
 }
 
-/// The fixed release tag that carries a channel's manifest.
-pub fn channel_tag(channel: &str) -> &'static str {
-    if channel == "stable" {
-        "channel-stable"
+/// The channel the updater follows for the "包括 Beta 版本" preference.
+pub fn update_channel(include_beta: bool) -> &'static str {
+    if include_beta {
+        "beta"
     } else {
-        "channel-experimental"
+        "stable"
     }
 }
 
-/// The build each channel delivers. A manifest naming the other build is
-/// refused: manifests are unsigned, so a stale or hostile mirror could
-/// otherwise serve an old, validly signed installer of the other build, which
-/// would be taken as a channel switch at any version. Moving the stable
-/// channel to Tauri later takes a client release that changes this mapping.
-pub fn channel_product(channel: &str) -> &'static str {
-    if channel == "stable" {
-        "electron"
+/// The fixed release tag that carries a channel's manifest.
+pub fn channel_tag(channel: &str) -> &'static str {
+    if channel == "beta" {
+        "update-beta"
     } else {
-        "tauri"
+        "update-stable"
     }
 }
 
@@ -317,8 +314,8 @@ pub fn channel_feed_base(repository: &str, channel: &str) -> String {
 /// writes `<product>_<version>_<arch>-setup.exe`, electron-builder
 /// `<product>-Setup-<version>-<arch>.exe`.
 pub fn installer_product(file_name: &str) -> Option<&'static str> {
-    let tauri =
-        regex::Regex::new(r"_\d+\.\d+\.\d+_(?:x64|arm64)-setup\.exe$").expect("valid regex");
+    let tauri = regex::Regex::new(r"_\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?_(?:x64|arm64)-setup\.exe$")
+        .expect("valid regex");
     let electron =
         regex::Regex::new(r"-Setup-\d+\.\d+\.\d+-(?:x64|arm64)\.exe$").expect("valid regex");
     if tauri.is_match(file_name) {
@@ -374,21 +371,22 @@ fn percent_decode(raw: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Strict `x.y.z` (optional leading `v`, no pre-release) as a numeric triple.
-pub fn parse_stable_version(version: &str) -> Option<(u64, u64, u64)> {
-    let mut parts = version.trim().trim_start_matches('v').split('.');
-    let triple = (
-        parts.next()?.parse().ok()?,
-        parts.next()?.parse().ok()?,
-        parts.next()?.parse().ok()?,
-    );
-    parts.next().is_none().then_some(triple)
+/// `x.y.z` or a Beta `x.y.z-beta.N` (optional leading `v`, no build
+/// metadata), ordered by SemVer: `1.0.0-beta.2 < 1.0.0`.
+pub fn parse_release_version(version: &str) -> Option<semver::Version> {
+    let parsed = semver::Version::parse(version.trim().trim_start_matches('v')).ok()?;
+    parsed.build.is_empty().then_some(parsed)
+}
+
+/// True for a Beta (pre-release) version.
+pub fn is_prerelease_version(version: &str) -> bool {
+    parse_release_version(version).is_some_and(|parsed| !parsed.pre.is_empty())
 }
 
 pub fn is_newer_version(candidate: &str, current: &str) -> bool {
     match (
-        parse_stable_version(candidate),
-        parse_stable_version(current),
+        parse_release_version(candidate),
+        parse_release_version(current),
     ) {
         (Some(next), Some(now)) => next > now,
         _ => false,
@@ -895,7 +893,7 @@ struct TauriUpdaterInner {
     supported: bool,
     /// `https://github.com/<owner>/<repo>`.
     repository: String,
-    /// "stable" | "experimental".
+    /// "stable" | "beta" (see [`update_channel`]).
     channel: Mutex<String>,
     /// Bumped on a channel switch; work started before it is discarded.
     generation: std::sync::atomic::AtomicU64,
@@ -940,7 +938,7 @@ fn offer_key(update: &tauri_plugin_updater::Update) -> String {
 pub fn signed_fields_match(signature: &str, version: &str, file_name: &str) -> Result<(), String> {
     let fields = signed_fields(signature);
     let signed_version = fields.get("version").map(String::as_str);
-    if signed_version.and_then(parse_stable_version) != parse_stable_version(version) {
+    if signed_version.and_then(parse_release_version) != parse_release_version(version) {
         return Err(format!(
             "update manifest claims {version}, its signature names {}",
             signed_version.unwrap_or("(none)")
@@ -1039,9 +1037,8 @@ impl TauriUpdaterInner {
     }
 
     /// The build of a manifest's installer and whether it is an offer: it
-    /// must be the build of the followed channel, and an installer of this
-    /// build must be newer (and newer than one already staged); an Electron
-    /// installer on the stable channel is a switch back, at any version.
+    /// must be this build, newer than the running version (and than one
+    /// already staged), and a Beta only on the beta channel.
     fn offer_for(
         &self,
         update: &tauri_plugin_updater::Update,
@@ -1071,13 +1068,19 @@ impl TauriUpdaterInner {
             .lock()
             .expect("updater channel poisoned")
             .clone();
-        if product != channel_product(&channel) {
+        // Manifests are unsigned: a stale or hostile source could otherwise
+        // serve an old, validly signed installer of the retired Electron build.
+        if product != PRODUCT {
             return Err(format!(
-                "update manifest of the {channel} channel names the other build: {}",
+                "update manifest of the {channel} channel names another build: {}",
                 update.download_url
             ));
         }
-        if parse_stable_version(&update.version).is_none() {
+        if parse_release_version(&update.version).is_none() {
+            return Ok(None);
+        }
+        // The stable feed never carries a Beta; a source that does is ignored.
+        if channel != "beta" && is_prerelease_version(&update.version) {
             return Ok(None);
         }
         signed_fields_match(
@@ -1085,7 +1088,7 @@ impl TauriUpdaterInner {
             &update.version,
             &installer_file_name(&update.download_url),
         )?;
-        if product == PRODUCT && !is_newer_version(&update.version, &update.current_version) {
+        if !is_newer_version(&update.version, &update.current_version) {
             return Ok(None);
         }
         // Already downloaded and waiting for exit: nothing new to fetch.
@@ -2265,9 +2268,11 @@ mod tests {
     }
 
     #[test]
-    fn each_channel_delivers_one_build() {
-        assert_eq!(channel_product("stable"), "electron");
-        assert_eq!(channel_product("experimental"), "tauri");
+    fn the_beta_preference_picks_the_feed() {
+        assert_eq!(update_channel(false), "stable");
+        assert_eq!(update_channel(true), "beta");
+        assert_eq!(channel_tag("stable"), "update-stable");
+        assert_eq!(channel_tag("beta"), "update-beta");
         assert_eq!(electron_installer_args(true), ["--force-run"]);
         assert_eq!(electron_installer_args(false), ["/S"]);
         // A driver without channels does not offer the setting.
@@ -2292,17 +2297,17 @@ mod tests {
         assert!(repository_base(&brand.repository_url).is_some());
         assert_eq!(
             channel_feed_base("https://github.com/o/r", "stable"),
-            "https://github.com/o/r/releases/download/channel-stable"
+            "https://github.com/o/r/releases/download/update-stable"
         );
         assert_eq!(
-            channel_feed_base("https://github.com/o/r", "experimental"),
-            "https://github.com/o/r/releases/download/channel-experimental"
+            channel_feed_base("https://github.com/o/r", "beta"),
+            "https://github.com/o/r/releases/download/update-beta"
         );
     }
 
     #[test]
     fn feed_candidates_put_last_good_first_without_duplicates() {
-        let direct = "https://github.com/o/r/releases/download/channel-experimental";
+        let direct = "https://github.com/o/r/releases/download/update-stable";
         assert_eq!(
             feed_base_candidates(direct, None),
             vec![
@@ -2324,7 +2329,7 @@ mod tests {
 
     #[test]
     fn downloads_follow_the_manifest_source() {
-        let direct = "https://github.com/o/r/releases/download/channel-experimental";
+        let direct = "https://github.com/o/r/releases/download/update-stable";
         let asset = "https://github.com/o/r/releases/download/v1.0.0/App_1.0.0_x64-setup.exe";
         assert_eq!(route_download_url(asset, direct, direct), asset);
         assert_eq!(
@@ -2375,6 +2380,14 @@ mod tests {
             installer_product("App-Setup-0.9.31-arm64.exe"),
             Some("electron")
         );
+        assert_eq!(
+            installer_product("App_1.0.0-beta.2_x64-setup.exe"),
+            Some("tauri")
+        );
+        assert!(installer_matches_arch(
+            "App_1.0.0-beta.2_arm64-setup.exe",
+            "aarch64"
+        ));
         assert_eq!(installer_product("App-0.9.31.exe"), None);
         let url = url::Url::parse(
             "https://github.com/o/r/releases/download/v1/App%20X_1.0.0_x64-setup.exe",
@@ -2384,8 +2397,14 @@ mod tests {
         assert!(is_newer_version("1.0.0", "0.9.31"));
         assert!(is_newer_version("v0.10.0", "0.9.31"));
         assert!(!is_newer_version("0.9.31", "0.9.31"));
-        assert!(!is_newer_version("1.0.0-beta.1", "0.9.31"));
+        assert!(is_newer_version("1.0.0-beta.1", "0.9.31"));
+        assert!(is_newer_version("1.0.0", "1.0.0-beta.2"));
+        assert!(is_newer_version("1.0.0-beta.10", "1.0.0-beta.9"));
+        assert!(!is_newer_version("1.0.0-beta.1", "1.0.0"));
         assert!(!is_newer_version("1.0", "0.9.31"));
+        assert!(!is_newer_version("1.0.0+build.1", "0.9.31"));
+        assert!(is_prerelease_version("1.0.0-beta.1"));
+        assert!(!is_prerelease_version("1.0.0"));
     }
 
     #[test]
@@ -2471,7 +2490,7 @@ mod tests {
         assert_eq!(state["currentProduct"], "tauri");
         driver.emit(&UpdaterDriverEvent::Downloaded);
         assert!(service.get_state().can_install);
-        service.set_channel("experimental").await;
+        service.set_channel("beta").await;
         let state = service.get_state();
         assert_eq!(state.phase, "checking");
         assert!(!state.can_install);

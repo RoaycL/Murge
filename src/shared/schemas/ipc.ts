@@ -141,6 +141,7 @@ export function parseAppSettingsPatch(
   autoStartKernel?: boolean
   autoCheckUpdate?: boolean
   updateChannel?: 'stable' | 'experimental'
+  updateIncludeBeta?: boolean
   systemProxyDesired?: boolean
   tunDesired?: boolean
   kernelEnabled?: boolean
@@ -162,6 +163,7 @@ export function parseAppSettingsPatch(
     autoStartKernel?: boolean
     autoCheckUpdate?: boolean
     updateChannel?: 'stable' | 'experimental'
+    updateIncludeBeta?: boolean
     systemProxyDesired?: boolean
     tunDesired?: boolean
     kernelEnabled?: boolean
@@ -188,6 +190,10 @@ export function parseAppSettingsPatch(
       throw invalid('updateChannel must be "stable" or "experimental"')
     }
     patch.updateChannel = record.updateChannel
+  }
+  if ('updateIncludeBeta' in record) {
+    if (typeof record.updateIncludeBeta !== 'boolean') throw invalid('updateIncludeBeta must be a boolean')
+    patch.updateIncludeBeta = record.updateIncludeBeta
   }
   if ('systemProxyDesired' in record) {
     if (typeof record.systemProxyDesired !== 'boolean') throw invalid('systemProxyDesired must be a boolean')

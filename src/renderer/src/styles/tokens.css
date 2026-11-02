@@ -126,3 +126,24 @@
   --app-divider: rgba(255, 255, 255, 0.65);
   --app-sidebar-selected: #123e70;
 }
+
+/* 磨砂半透明窗口：Windows 11 上壳层给窗口挂了 Acrylic/Mica 背景
+   （src-tauri/src/window_backdrop.rs），这里只把窗口底和侧栏改成半透明着色，
+   卡片几乎不透明以保证可读性。不支持、关闭或高对比度时 data-frosted="false"，
+   沿用上面的不透明渐变。 */
+:root[data-frosted="true"] {
+  --frosted-sidebar: rgba(234, 239, 246, 0.42);
+  --frosted-content: rgba(242, 244, 249, 0.66);
+  --app-surface: rgba(255, 255, 255, 0.94);
+  --app-surface-border: rgba(255, 255, 255, 0.9);
+  --frame-radius: 8px;
+  --frame-border: rgba(255, 255, 255, 0.35);
+}
+
+:root[data-frosted="true"][data-theme="dark"] {
+  --frosted-sidebar: rgba(20, 23, 30, 0.46);
+  --frosted-content: rgba(26, 28, 36, 0.74);
+  --app-surface: rgba(39, 42, 51, 0.97);
+  --app-surface-border: rgba(255, 255, 255, 0.06);
+  --frame-border: rgba(255, 255, 255, 0.08);
+}

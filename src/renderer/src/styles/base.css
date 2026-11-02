@@ -375,3 +375,7 @@ h1 { margin: 0; font-size: var(--font-size-display); line-height: 34px; letter-s
 .unsaved-indicator{display:inline-flex;align-items:center;justify-content:center;min-width:58px;min-height:32px;padding:0 12px;border:1px solid color-mix(in srgb,var(--app-warning) 38%,var(--app-divider));border-radius:var(--radius-control);background:color-mix(in srgb,var(--app-warning) 8%,transparent);color:var(--app-warning);font-size:var(--font-size-xs);font-weight:var(--font-weight-semibold);line-height:1;white-space:nowrap}
 .app-window,.app-frame,.app-sidebar,.app-content{user-select:none;-webkit-user-select:none}
 input,textarea,[contenteditable="true"],code,pre{user-select:text;-webkit-user-select:text}
+/* 磨砂窗口：透明的页面底让系统背景透出来，侧栏最通透，内容区多一层着色。 */
+:root[data-frosted="true"] body { background: transparent; }
+:root[data-frosted="true"] .app-frame { background: var(--frosted-sidebar); box-shadow: none; }
+:root[data-frosted="true"] .app-content { background: var(--frosted-content); }

@@ -42,8 +42,8 @@ mod runtime_intent;
 mod session_events;
 mod tray;
 mod tray_view;
-mod yaml_value;
 mod window_backdrop;
+mod yaml_value;
 // Network metadata service: shared, cached, single-flight app state.
 use network_metadata::NetworkMetadataService;
 mod icons;

@@ -467,6 +467,12 @@ func (runtime *windowsRuntime) Start(profile string, _ string, version string) (
 	return command.Process.Pid, nil
 }
 
+// CorePath is the mihomo executable of the last started core (网关模式's
+// firewall rule allows exactly this program).
+func (runtime *windowsRuntime) CorePath() string {
+	return runtime.corePath
+}
+
 func (runtime *windowsRuntime) seedMRSProviderCache(corePath, target, behavior string) error {
 	var seed string
 	switch behavior {

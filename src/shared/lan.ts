@@ -85,6 +85,8 @@ export interface LanGatewayState {
   /** service: the TUN service applies it; elevated: a UAC prompt per switch. */
   mode: 'service' | 'elevated' | 'unsupported'
   tunPresent: boolean | null
+  /** The local-subnet inbound firewall rule for the running core is in place. */
+  firewall: boolean | null
   interfaces: LanGatewayInterface[]
   error: string | null
 }

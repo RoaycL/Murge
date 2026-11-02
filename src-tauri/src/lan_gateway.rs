@@ -28,6 +28,7 @@ fn state(enabled: bool, mode: &str, service: Option<&Value>, error: Option<Strin
         "enabled": enabled,
         "mode": mode,
         "tunPresent": service.and_then(|status| status["tunPresent"].as_bool()),
+        "firewall": service.and_then(|status| status["firewall"].as_bool()),
         "interfaces": service
             .and_then(|status| status["interfaces"].as_array().cloned())
             .unwrap_or_default(),

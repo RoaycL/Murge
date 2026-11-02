@@ -11,6 +11,17 @@ type fakeForwardingHost struct {
 	forwarding map[uint64]bool
 	failSet    map[uint64]bool
 	sets       []string
+	rule       string
+}
+
+func (host *fakeForwardingHost) AllowInbound(program string) error {
+	host.rule = program
+	return nil
+}
+
+func (host *fakeForwardingHost) RemoveInbound() error {
+	host.rule = ""
+	return nil
 }
 
 func newFakeForwardingHost(adapters ...netAdapter) *fakeForwardingHost {
@@ -61,7 +72,7 @@ var (
 func TestForwardingNeedsDesireDeviceAndAdapter(t *testing.T) {
 	host := newFakeForwardingHost(ethernet, wifiDown, hyperV)
 	keeper := newForwardingKeeper(host)
-	keeper.SetDevice("Murge TUN")
+	keeper.SetDevice("Murge TUN", `C:\\core.exe`)
 	if status := keeper.SetDesired(true); status.TunPresent || len(status.Interfaces) != 0 || len(host.sets) != 0 {
 		t.Fatalf("forwarding applied without a TUN adapter: %+v %v", status, host.sets)
 	}
@@ -79,7 +90,7 @@ func TestForwardingNeedsDesireDeviceAndAdapter(t *testing.T) {
 func TestForwardingReappliesToARecreatedAdapterAndRestores(t *testing.T) {
 	host := newFakeForwardingHost(ethernet, tunCard)
 	keeper := newForwardingKeeper(host)
-	keeper.SetDevice("murge tun")
+	keeper.SetDevice("murge tun", `C:\\core.exe`)
 	keeper.SetDesired(true)
 	// mihomo recreated the adapter: forwarding starts off again.
 	host.forwarding[9] = false
@@ -102,7 +113,7 @@ func TestForwardingNeverUndoesAManualSetting(t *testing.T) {
 	host := newFakeForwardingHost(ethernet, tunCard)
 	host.forwarding[1] = true // the user ran Set-NetIPInterface before
 	keeper := newForwardingKeeper(host)
-	keeper.SetDevice("Murge TUN")
+	keeper.SetDevice("Murge TUN", `C:\\core.exe`)
 	keeper.SetDesired(true)
 	keeper.SetDesired(false)
 	if !host.forwarding[1] {
@@ -116,15 +127,40 @@ func TestForwardingNeverUndoesAManualSetting(t *testing.T) {
 func TestForwardingClearDeviceRestoresButKeepsDesire(t *testing.T) {
 	host := newFakeForwardingHost(ethernet, tunCard)
 	keeper := newForwardingKeeper(host)
-	keeper.SetDevice("Murge TUN")
+	keeper.SetDevice("Murge TUN", `C:\\core.exe`)
 	keeper.SetDesired(true)
 	keeper.ClearDevice()
 	if host.forwarding[1] || host.forwarding[9] {
 		t.Fatalf("forwarding survived the stop: %v", host.forwarding)
 	}
-	keeper.SetDevice("Murge TUN")
+	keeper.SetDevice("Murge TUN", `C:\\core.exe`)
 	if !host.forwarding[1] || !host.forwarding[9] {
 		t.Fatal("next session did not re-apply the remembered 网关模式")
+	}
+}
+
+func TestForwardingFirewallRuleFollowsDesireAndCore(t *testing.T) {
+	host := newFakeForwardingHost(ethernet, tunCard)
+	keeper := newForwardingKeeper(host)
+	keeper.SetDevice("Murge TUN", `C:\\core.exe`)
+	if host.rule != "" {
+		t.Fatal("rule added before 网关模式 was wanted")
+	}
+	if status := keeper.SetDesired(true); !status.Firewall || host.rule != `C:\\core.exe` {
+		t.Fatalf("rule not added: %+v %q", status, host.rule)
+	}
+	keeper.SetDevice("Murge TUN", `C:\\versions\\core.exe`)
+	if host.rule != `C:\\versions\\core.exe` {
+		t.Fatalf("rule did not follow the new core: %q", host.rule)
+	}
+	keeper.ClearDevice()
+	if host.rule != "" {
+		t.Fatal("rule survived the core stop")
+	}
+	keeper.SetDevice("Murge TUN", `C:\\core.exe`)
+	keeper.SetDesired(false)
+	if host.rule != "" {
+		t.Fatal("rule survived switching 网关模式 off")
 	}
 }
 
@@ -132,7 +168,7 @@ func TestForwardingReportsFailures(t *testing.T) {
 	host := newFakeForwardingHost(ethernet, tunCard)
 	host.failSet[1] = true
 	keeper := newForwardingKeeper(host)
-	keeper.SetDevice("Murge TUN")
+	keeper.SetDevice("Murge TUN", `C:\\core.exe`)
 	status := keeper.SetDesired(true)
 	if status.Error == "" || status.Interfaces[0].Forwarding {
 		t.Fatalf("failure not reported: %+v", status)
@@ -147,7 +183,7 @@ func TestForwardingOperationRoundTrip(t *testing.T) {
 		t.Fatalf("expected failure without a keeper, got %+v", unsupported)
 	}
 	manager.forwarding = newForwardingKeeper(host)
-	manager.forwarding.SetDevice("Murge TUN")
+	manager.forwarding.SetDevice("Murge TUN", "")
 	response := manager.Handle(serviceRequest{ProtocolVersion: protocolVersion, RequestID: "2", Operation: "forwarding", Forwarding: "enable"})
 	if response.Outcome != "forwarding" || response.Content == nil || response.ContentFormat == nil || *response.ContentFormat != "json" {
 		t.Fatalf("unexpected response: %+v", response)

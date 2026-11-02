@@ -39,6 +39,10 @@ type forwardingHost interface {
 	Adapters() ([]netAdapter, error)
 	Forwarding(luid uint64) (bool, error)
 	SetForwarding(luid uint64, enabled bool) error
+	// AllowInbound (re)creates the one firewall rule that lets devices on the
+	// local subnet reach program; RemoveInbound deletes it.
+	AllowInbound(program string) error
+	RemoveInbound() error
 }
 
 type forwardingInterface struct {
@@ -53,6 +57,7 @@ type forwardingStatus struct {
 	Device     string                `json:"device"`
 	TunPresent bool                  `json:"tunPresent"`
 	Interfaces []forwardingInterface `json:"interfaces"`
+	Firewall   bool                  `json:"firewall"`
 	Error      string                `json:"error"`
 }
 
@@ -67,20 +72,26 @@ type forwardingKeeper struct {
 	lastErr string
 	targets []forwardingInterface
 	tun     bool
+	// program is the mihomo executable of the running core; firewall is the
+	// program the inbound rule currently allows ("" = no rule).
+	program  string
+	firewall string
 }
 
 func newForwardingKeeper(host forwardingHost) *forwardingKeeper {
 	return &forwardingKeeper{host: host, managed: map[uint64]string{}}
 }
 
-// SetDevice records the TUN adapter name of the profile that was just started.
-func (keeper *forwardingKeeper) SetDevice(device string) {
+// SetDevice records the TUN adapter name and the mihomo executable of the
+// profile that was just started.
+func (keeper *forwardingKeeper) SetDevice(device string, program string) {
 	if keeper == nil {
 		return
 	}
 	keeper.mu.Lock()
 	defer keeper.mu.Unlock()
 	keeper.device = device
+	keeper.program = program
 	keeper.ensureLocked()
 }
 
@@ -109,7 +120,7 @@ func (keeper *forwardingKeeper) Tick() {
 	}
 	keeper.mu.Lock()
 	defer keeper.mu.Unlock()
-	if !keeper.desired && len(keeper.managed) == 0 {
+	if !keeper.desired && len(keeper.managed) == 0 && keeper.firewall == "" {
 		return
 	}
 	keeper.ensureLocked()
@@ -125,7 +136,9 @@ func (keeper *forwardingKeeper) ClearDevice() {
 	keeper.mu.Lock()
 	defer keeper.mu.Unlock()
 	keeper.device = ""
+	keeper.program = ""
 	keeper.restoreLocked(nil)
+	keeper.syncFirewallLocked()
 	keeper.targets = nil
 	keeper.tun = false
 }
@@ -176,6 +189,7 @@ func (keeper *forwardingKeeper) ensureLocked() {
 		}
 	}
 	keeper.restoreLocked(wanted)
+	keeper.syncFirewallLocked()
 	luids := make([]uint64, 0, len(wanted))
 	for luid := range wanted {
 		luids = append(luids, luid)
@@ -210,6 +224,35 @@ func (keeper *forwardingKeeper) ensureLocked() {
 	}
 }
 
+// syncFirewallLocked keeps the inbound rule exactly while 网关模式 is wanted
+// and a core is running: forwarded devices reach mihomo from the LAN, which
+// Windows Firewall otherwise blocks on a network marked Public. The rule is
+// limited to the local subnet and to the running mihomo executable, so the
+// network does not need to be switched to Private.
+func (keeper *forwardingKeeper) syncFirewallLocked() {
+	want := ""
+	if keeper.desired && keeper.device != "" {
+		want = keeper.program
+	}
+	if want == keeper.firewall {
+		return
+	}
+	var err error
+	if want == "" {
+		err = keeper.host.RemoveInbound()
+	} else {
+		err = keeper.host.AllowInbound(want)
+	}
+	if err != nil {
+		if keeper.lastErr != "" {
+			keeper.lastErr += "; "
+		}
+		keeper.lastErr += "firewall: " + err.Error()
+		return
+	}
+	keeper.firewall = want
+}
+
 // restoreLocked switches forwarding back off on every managed adapter that is
 // not in keep. An adapter that has disappeared is simply forgotten.
 func (keeper *forwardingKeeper) restoreLocked(keep map[uint64]string) {
@@ -237,6 +280,7 @@ func (keeper *forwardingKeeper) statusLocked() forwardingStatus {
 		Device:     keeper.device,
 		TunPresent: keeper.tun,
 		Interfaces: interfaces,
+		Firewall:   keeper.firewall != "",
 		Error:      keeper.lastErr,
 	}
 }

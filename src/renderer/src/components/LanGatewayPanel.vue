@@ -71,7 +71,7 @@ async function copyText(text: string): Promise<void> {
       </li>
       <li>
         <strong>打开网关模式</strong>
-        <span>打开后会自动为 {{ forwardingTargets }} 开启 Windows 转发，TUN 网卡重建后自动重新开启；关闭开关或退出 {{ brand.shortName }} 时自动恢复。</span>
+        <span>打开后会自动为 {{ forwardingTargets }} 开启 Windows 转发，并添加一条只允许本地子网访问内核的防火墙规则，无需把网络改为「专用网络」。TUN 网卡重建后自动重新开启；关闭开关或退出 {{ brand.shortName }} 时自动恢复。</span>
         <button type="button" class="secondary-button" :disabled="lan.gatewayBusy" @click="toggleGateway">{{ lan.gatewayBusy ? '正在切换…' : gatewayEnabled ? '关闭网关模式' : '开启网关模式' }}</button>
         <span v-if="lan.gatewayError" class="gateway-error" role="alert">{{ lan.gatewayError }}</span>
       </li>
@@ -84,7 +84,6 @@ async function copyText(text: string): Promise<void> {
         <span>设备联网后会以它的局域网 IP 出现在「设备」页，类型为「局域网设备 · 网关」。</span>
       </li>
     </ol>
-    <p class="gateway-note">连不上时，请确认当前网络在 Windows 中是「专用网络」。</p>
     <details class="gateway-manual">
       <summary>自动开启失败时，可以管理员身份在 PowerShell 手动运行</summary>
       <code>{{ forwardingCommand }}</code>

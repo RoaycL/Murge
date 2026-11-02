@@ -87,7 +87,10 @@ func (service *windowsService) initialize() error {
 		return err
 	}
 	service.manager = newSessionManager(runtime, ownershipStoreFor(service.config.StateDirectory))
-	service.manager.forwarding = newForwardingKeeper(windowsForwardingHost{})
+	forwardingHost := &windowsForwardingHost{ruleName: service.config.ServiceName + " LAN gateway"}
+	// A crash may have left the previous run's rule behind.
+	_ = forwardingHost.RemoveInbound()
+	service.manager.forwarding = newForwardingKeeper(forwardingHost)
 	service.stopTicks = make(chan struct{})
 	go service.manager.forwarding.Run(service.stopTicks)
 	service.manager.Handle(serviceRequest{ProtocolVersion: protocolVersion, RequestID: "1", Operation: "reconcile"})

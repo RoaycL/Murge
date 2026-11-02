@@ -198,7 +198,11 @@ func (manager *sessionManager) start(request serviceRequest, response *serviceRe
 	}
 	manager.owned = &owned
 	manager.lastExit = ""
-	manager.forwarding.SetDevice(tunDeviceFromProfile(request.Profile))
+	program := ""
+	if core, ok := manager.runtime.(interface{ CorePath() string }); ok {
+		program = core.CorePath()
+	}
+	manager.forwarding.SetDevice(tunDeviceFromProfile(request.Profile), program)
 	response.Outcome = "running"
 	response.SessionID = &owned.SessionID
 	response.PID = &owned.PID

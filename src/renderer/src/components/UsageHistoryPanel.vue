@@ -159,7 +159,6 @@ async function confirmClear(): Promise<void> {
       <p v-else class="usage-empty">该时间范围内没有排名数据。</p>
       <section class="process-usage" aria-label="应用流量历史">
         <h3>应用流量</h3>
-        <p>按连接快照观察到的流量统计；连接结束前的最后一段、程序未上报的流量可能缺失，因此不与上方总量相等。仅在本机保存进程名。</p>
         <div v-for="item in store.processes?.entries.slice(0, 20) ?? []" :key="item.name" class="process-usage-row">
           <span>{{ item.name }}</span><strong>{{ formatBytes(item.total) }}</strong>
         </div>
@@ -177,6 +176,8 @@ async function confirmClear(): Promise<void> {
 <style scoped>
 .usage-card { min-width: 0; }
 .card-title-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
+.card-title-row .metric-label { flex: none; white-space: nowrap; }
+.card-title-row .segmented { flex: 0 1 auto; min-width: 0; }
 .usage-metric { display: flex; align-items: baseline; gap: var(--space-5); margin-top: 12px; }
 .usage-metric strong { font-size: var(--font-size-title); font-weight: var(--font-weight-bold); }
 .usage-metric strong span { margin-left: 3px; font-size: var(--font-size-sm); color: var(--app-muted); }

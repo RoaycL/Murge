@@ -190,7 +190,7 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
         <span role="cell" class="resource-path" :title="row.url || '未声明远程地址'"><span>{{ pathParts(row.url).head }}</span><span v-if="pathParts(row.url).tail">{{ pathParts(row.url).tail }}</span></span>
         <span role="cell" class="resource-status" :title="row.error ?? undefined"><i />{{ STATUS_TEXT[row.status] }}</span>
         <span role="cell" class="resource-actions">
-          <button class="icon-control" type="button" :aria-label="row.kind === 'proxy' ? '查看代理集合内容' : '查看规则集合内容'" title="查看内容" @click="viewingContent = { kind: row.kind, name: row.name }"><AppIcon name="code" :size="15" /></button>
+          <button class="icon-control" type="button" :aria-label="row.kind === 'proxy' ? '查看代理集合内容' : '查看规则集合内容'" title="查看内容" @click="viewingContent = { kind: row.kind, name: row.name }"><AppIcon name="eye" :size="15" /></button>
           <button class="icon-control refresh-control" type="button" :disabled="providers.opOf(row.name, row.kind).refreshing" :aria-label="providers.opOf(row.name, row.kind).refreshing ? '更新中' : row.kind === 'proxy' ? '更新代理集合' : '更新规则集合'" title="更新" @click="refreshRow(row)"><RefreshIndicator :busy="providers.opOf(row.name, row.kind).refreshing" :failed="Boolean(providers.opOf(row.name, row.kind).error)" :size="15" /></button>
         </span>
       </div>

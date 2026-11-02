@@ -90,6 +90,11 @@ export interface AppSettings {
    * mixed-port (HTTP_PROXY/HTTPS_PROXY env on the worker).
    */
   subStoreUseProxy: boolean
+  /**
+   * 网关模式: keep Windows IPv4 forwarding on for the LAN and TUN adapters
+   * (applied by the privileged TUN service while TUN is up).
+   */
+  lanGateway: boolean
 }
 
 export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = Object.freeze({
@@ -111,7 +116,8 @@ export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = Object.freeze({
   closeToTray: true,
   proxyGuard: true,
   subStoreEnabled: true,
-  subStoreUseProxy: false
+  subStoreUseProxy: false,
+  lanGateway: false
 })
 
 function parseDelayTestUrl(value: unknown): string {
@@ -192,7 +198,11 @@ export function parseAppSettings(value: string | null): AppSettings {
       subStoreUseProxy:
         typeof parsed.subStoreUseProxy === 'boolean'
           ? parsed.subStoreUseProxy
-          : DEFAULT_APP_SETTINGS.subStoreUseProxy
+          : DEFAULT_APP_SETTINGS.subStoreUseProxy,
+      lanGateway:
+        typeof parsed.lanGateway === 'boolean'
+          ? parsed.lanGateway
+          : DEFAULT_APP_SETTINGS.lanGateway
     }
   } catch {
     return { ...DEFAULT_APP_SETTINGS }

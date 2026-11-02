@@ -25,6 +25,7 @@ type windowsService struct {
 	manager   *sessionManager
 	listener  net.Listener
 	closeOnce sync.Once
+	stopTicks chan struct{}
 }
 
 func main() {
@@ -86,6 +87,12 @@ func (service *windowsService) initialize() error {
 		return err
 	}
 	service.manager = newSessionManager(runtime, ownershipStoreFor(service.config.StateDirectory))
+	forwardingHost := &windowsForwardingHost{ruleName: service.config.ServiceName + " LAN gateway"}
+	// A crash may have left the previous run's rule behind.
+	_ = forwardingHost.RemoveInbound()
+	service.manager.forwarding = newForwardingKeeper(forwardingHost)
+	service.stopTicks = make(chan struct{})
+	go service.manager.forwarding.Run(service.stopTicks)
 	service.manager.Handle(serviceRequest{ProtocolVersion: protocolVersion, RequestID: "1", Operation: "reconcile"})
 	pipePath := `\\.\pipe\` + service.config.PipeName
 	listener, err := winio.ListenPipe(pipePath, &winio.PipeConfig{
@@ -251,6 +258,11 @@ func (service *windowsService) shutdown() {
 		if service.manager == nil {
 			return
 		}
+		if service.stopTicks != nil {
+			close(service.stopTicks)
+		}
+		// Never leave the host forwarding after the service is gone.
+		defer service.manager.forwarding.ClearDevice()
 		status := service.manager.Handle(serviceRequest{ProtocolVersion: protocolVersion, RequestID: "18446744073709551614", Operation: "status"})
 		if status.SessionID != nil {
 			service.manager.Handle(serviceRequest{

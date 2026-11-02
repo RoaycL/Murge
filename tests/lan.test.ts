@@ -43,13 +43,20 @@ describe('局域网设备接管 UI contract', () => {
     expect(overview).toMatch(/代理监听在 \$\{primaryLan\.value\}:\$\{core\.settings\.mixedPort\}/)
     expect(overview).toMatch(/<h3>网关模式<\/h3>/)
     expect(overview).toMatch(/openSettings\('gateway'\)/)
+    // 网关模式 is a real switch now: forwarding is applied for the user.
+    expect(overview).toMatch(/@click\.stop="toggleGateway"/)
+    expect(overview).toMatch(/lan\.setGateway\(!gatewayEnabled\.value, gatewayDevice\.value\)/)
+    expect(overview).not.toMatch(/不提供 DHCP/)
   })
 
   it('hosts the gateway guide on the 网络 page', async () => {
     const network = await readFile('src/renderer/src/views/NetworkSettingsView.vue', 'utf8')
     const panel = await readFile('src/renderer/src/components/LanGatewayPanel.vue', 'utf8')
     expect(network).toMatch(/<LanGatewayPanel \/>/)
+    // The manual command stays only as a fallback behind the switch.
+    expect(panel).toMatch(/<details class="gateway-manual">/)
     expect(panel).toMatch(/Set-NetIPInterface/)
-    expect(panel).toMatch(/不提供 DHCP/)
+    expect(panel).toMatch(/lan\.setGateway\(/)
+    expect(panel).not.toMatch(/不提供 DHCP/)
   })
 })

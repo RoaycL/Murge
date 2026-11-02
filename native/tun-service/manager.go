@@ -39,6 +39,8 @@ type sessionManager struct {
 	conflict   bool
 	blocked    bool
 	lastExit   string
+	// forwarding keeps 网关模式 IPv4 forwarding; nil where the host has none.
+	forwarding *forwardingKeeper
 }
 
 func newSessionManager(runtime processRuntime, store ownershipStore) *sessionManager {
@@ -54,6 +56,12 @@ func (manager *sessionManager) Handle(request serviceRequest) serviceResponse {
 		defer manager.installMu.Unlock()
 		response := serviceResponse{ProtocolVersion: protocolVersion, RequestID: request.RequestID}
 		err := manager.install(request, &response)
+		manager.applyError(request, err, &response)
+		return response
+	}
+	if request.Operation == "forwarding" {
+		response := serviceResponse{ProtocolVersion: protocolVersion, RequestID: request.RequestID}
+		err := manager.applyForwarding(request, &response)
 		manager.applyError(request, err, &response)
 		return response
 	}
@@ -102,6 +110,34 @@ func (manager *sessionManager) applyError(request serviceRequest, err error, res
 			response.ValidationMessage = &message
 		}
 	}
+}
+
+// applyForwarding does not take the lifecycle mutex: the keeper has its own,
+// and switching forwarding never touches process ownership.
+func (manager *sessionManager) applyForwarding(request serviceRequest, response *serviceResponse) error {
+	if manager.forwarding == nil {
+		response.Outcome = "failed"
+		return errors.New("forwarding is unsupported on this host")
+	}
+	var status forwardingStatus
+	switch request.Forwarding {
+	case "enable":
+		status = manager.forwarding.SetDesired(true)
+	case "disable":
+		status = manager.forwarding.SetDesired(false)
+	case "lan-proxy-on":
+		status = manager.forwarding.SetLANProxy(true)
+	case "lan-proxy-off":
+		status = manager.forwarding.SetLANProxy(false)
+	default:
+		status = manager.forwarding.Status()
+	}
+	content := encodeForwardingStatus(status)
+	format := "json"
+	response.Outcome = "forwarding"
+	response.Content = &content
+	response.ContentFormat = &format
+	return nil
 }
 
 func (manager *sessionManager) validate(request serviceRequest, response *serviceResponse) error {
@@ -166,6 +202,11 @@ func (manager *sessionManager) start(request serviceRequest, response *serviceRe
 	}
 	manager.owned = &owned
 	manager.lastExit = ""
+	program := ""
+	if core, ok := manager.runtime.(interface{ CorePath() string }); ok {
+		program = core.CorePath()
+	}
+	manager.forwarding.SetDevice(tunDeviceFromProfile(request.Profile), program)
 	response.Outcome = "running"
 	response.SessionID = &owned.SessionID
 	response.PID = &owned.PID
@@ -211,6 +252,7 @@ func (manager *sessionManager) stop(request serviceRequest, response *serviceRes
 		return err
 	}
 	manager.owned = nil
+	manager.forwarding.ClearDevice()
 	response.Outcome = "stopped"
 	return nil
 }

@@ -39,7 +39,7 @@ import type { UsageWindow, UsageRanking, UsageHistorySnapshot, UsageRankingEntry
 import type { ProcessUsageSnapshot } from './process-usage'
 import type { NetworkMetadataProvider, NetworkMetadataSnapshot, NetworkMetadataState } from './network-metadata'
 import type { AppInfo } from './app-info'
-import type { LocalAddress } from './lan'
+import type { LanGatewayState, LocalAddress } from './lan'
 import type { AppSettings } from './app-settings'
 import type { UpdateState } from './updates'
 import type { DiagnosticReport } from './diagnostics'
@@ -53,6 +53,8 @@ export const IPC = {
   appGetCachedIcon: 'app:get-cached-icon',
   appListNetworkInterfaces: 'app:list-network-interfaces',
   appListLocalAddresses: 'app:list-local-addresses',
+  appGetLanGateway: 'lan-gateway:get-state',
+  appSetLanGateway: 'lan-gateway:set-enabled',
   diagnosticsCollect: 'diagnostics:collect',
   backupCreate: 'backup:create',
   backupPreview: 'backup:preview',
@@ -191,6 +193,10 @@ export interface DesktopApi {
     listNetworkInterfaces(): Promise<string[]>
     /** This host's IPv4 addresses; `lan` marks the ones other LAN devices can dial. */
     listLocalAddresses(): Promise<LocalAddress[]>
+    /** 网关模式: Windows IPv4 forwarding on the LAN and TUN adapters. */
+    getLanGateway(): Promise<LanGatewayState>
+    /** `device` is the TUN adapter name, used only by the UAC fallback. */
+    setLanGateway(enabled: boolean, device: string): Promise<LanGatewayState>
     /** Main-process requests such as notification clicks navigate an existing window. */
     onNavigate(listener: (path: string) => void): () => void
   }

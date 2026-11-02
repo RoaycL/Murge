@@ -705,7 +705,8 @@ export class FakeAppSettingsGateway implements AppSettingsGateway {
     closeToTray: true,
     proxyGuard: true,
     subStoreEnabled: true,
-    subStoreUseProxy: false
+    subStoreUseProxy: false,
+    lanGateway: false
   }
   setCalls: Array<Partial<AppSettings>> = []
   get(): Promise<AppSettings> { return Promise.resolve({ ...this.settings }) }

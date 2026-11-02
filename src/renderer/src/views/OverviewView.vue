@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 import AppIcon from '../components/AppIcon.vue'
 import { useRouter } from 'vue-router'
@@ -13,6 +13,8 @@ import { formatSystemProxyEndpoint } from '@shared/system-proxy'
 import { useCoreSettingsStore } from '../stores/core-settings'
 import { useLanStore } from '../stores/lan'
 import { lanAddresses } from '@shared/lan'
+import { brand } from '@shared/brand'
+import { useTunConfigStore } from '../stores/tun-config'
 
 const router = useRouter()
 const kernel = useKernelStore()
@@ -22,6 +24,7 @@ const sniffer = useSnifferEnhancementStore()
 const dns = useDnsEnhancementStore()
 const core = useCoreSettingsStore()
 const lan = useLanStore()
+const tunConfig = useTunConfigStore()
 const actionError = ref('')
 const busy = computed(() => kernel.status.phase === 'starting' || kernel.status.phase === 'stopping')
 
@@ -31,6 +34,8 @@ onMounted(() => {
   void dns.refresh()
   void core.refresh()
   void lan.refresh()
+  void lan.refreshGateway()
+  void tunConfig.refresh()
 })
 
 const sp = computed(() => systemProxy.status)
@@ -153,12 +158,30 @@ async function toggleAllowLan(): Promise<void> {
 // 网关模式 — mihomo has no DHCP server, so the app cannot hand out leases the way
 // Surge does. With TUN on and Windows IP forwarding enabled, a device whose
 // gateway is set to this PC by hand is routed into the TUN adapter, where
-// mihomo takes over its traffic (DNS included, via dns-hijack).
-const gatewayReady = computed(() => tunActive.value && Boolean(primaryLan.value))
+// mihomo takes over its traffic (DNS included, via dns-hijack). The switch
+// turns the forwarding on: the privileged TUN service applies it (and keeps it
+// across TUN adapter rebuilds); without the service a UAC prompt asks once.
+const gatewayEnabled = computed(() => lan.gateway?.enabled ?? false)
+const gatewayBusy = computed(() => lan.gatewayBusy)
+const gatewayDevice = computed(() => tunConfig.config.device === 'Mihomo' ? `${brand.shortName} TUN` : tunConfig.config.device)
+const gatewayReady = computed(() => gatewayEnabled.value && tunActive.value && Boolean(primaryLan.value))
 const gatewayStatus = computed(() => {
-  if (!tunActive.value) return '需先开启 TUN 模式'
+  if (!gatewayEnabled.value) return tunActive.value ? '未启用' : '未启用 · 需同时开启 TUN 模式'
+  if (!tunActive.value) return '已启用 · 等待 TUN 模式开启'
   return primaryLan.value ? `网关地址 ${primaryLan.value}` : 'TUN 已启用 · 未检测到局域网地址'
 })
+/** Which adapters forward right now, for the hover title. */
+const gatewayStatusDetail = computed(() => {
+  const interfaces = lan.gateway?.interfaces ?? []
+  if (!gatewayEnabled.value || !interfaces.length) return undefined
+  return interfaces.map((entry) => `${entry.name}：${entry.forwarding ? '已开启转发' : '未开启转发'}`).join('\n')
+})
+async function toggleGateway(): Promise<void> {
+  if (gatewayBusy.value) return
+  await lan.setGateway(!gatewayEnabled.value, gatewayDevice.value)
+}
+// The service applies forwarding a moment after the TUN adapter appears.
+watch(tunActive, () => { setTimeout(() => { void lan.refreshGateway() }, 4000) })
 
 // 二级设置页：卡片点击直接跳转「更多」里对应的设置页（网络 / DNS 与嗅探），
 // 那里已有完整的面板与说明，概览不再重复承载抽屉表单。
@@ -234,13 +257,15 @@ function openSettings(key: SettingKey): void {
           <div class="setting-head">
             <div>
               <h3>网关模式</h3>
-              <p>把其他设备的网关指向本机，由 TUN 接管它们的全部流量。mihomo 不提供 DHCP 服务，需在设备上手动设置。</p>
+              <p>把其他设备的网关指向本机，由 TUN 接管它们的全部流量。</p>
             </div>
+            <button type="button" class="switch" :class="{ on: gatewayEnabled }" :aria-checked="gatewayEnabled" :disabled="gatewayBusy" aria-label="切换网关模式" @click.stop="toggleGateway" />
           </div>
           <div class="setting-body">
-            <span class="setting-status"><i :class="{ active: gatewayReady }" />{{ gatewayStatus }}</span>
+            <span class="setting-status" :title="gatewayStatusDetail"><i :class="{ active: gatewayReady }" />{{ gatewayStatus }}</span>
             <button type="button" class="setting-nav" aria-label="查看网关模式设置方法" @click="openSettings('gateway')"><AppIcon name="next" :size="14" /></button>
           </div>
+          <p v-if="lan.gatewayError" class="inline-error" role="alert">{{ lan.gatewayError }}</p>
         </SurfaceCard>
       </div>
     </section>

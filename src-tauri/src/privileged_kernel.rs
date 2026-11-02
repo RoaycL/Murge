@@ -37,6 +37,9 @@ pub struct PrivilegedKernelOptions {
     /// The SCM start window absorbed by the service-call retries.
     pub service_retry_ms: u64,
     pub poll_ms: u64,
+    /// (网关模式, allow-lan), read after every start and handed to the
+    /// service (which forgets both when it restarts). None skips the sync.
+    pub lan_gateway: Option<Arc<dyn Fn() -> (bool, bool) + Send + Sync>>,
 }
 
 impl Default for PrivilegedKernelOptions {
@@ -46,6 +49,7 @@ impl Default for PrivilegedKernelOptions {
             ready_timeout_ms: 60_000,
             service_retry_ms: 10_000,
             poll_ms: 100,
+            lan_gateway: None,
         }
     }
 }
@@ -206,6 +210,10 @@ impl PrivilegedKernelGateway {
             "lastError": null
         });
         self.set_status(status.clone());
+        if let Some(lan_gateway) = &self.options.lan_gateway {
+            let (gateway, allow_lan) = lan_gateway();
+            crate::lan_gateway::sync_after_start(&self.client, gateway, allow_lan).await;
+        }
         Ok(status)
     }
 
@@ -572,6 +580,7 @@ mod tests {
                 ready_timeout_ms: 2_000,
                 service_retry_ms: 500,
                 poll_ms: 1,
+                lan_gateway: None,
             },
         );
         (Arc::new(gateway), probes)

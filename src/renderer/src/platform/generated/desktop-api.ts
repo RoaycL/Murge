@@ -54,6 +54,8 @@ export function createDesktopApi(): DesktopApi {
       getCachedIcon: (cacheKey, url, refresh) => bridgeInvoke("app:get-cached-icon", [cacheKey, url, refresh]),
       listNetworkInterfaces: () => bridgeInvoke("app:list-network-interfaces", []),
       listLocalAddresses: () => bridgeInvoke("app:list-local-addresses", []),
+      getLanGateway: () => bridgeInvoke("lan-gateway:get-state", []),
+      setLanGateway: (enabled, device) => bridgeInvoke("lan-gateway:set-enabled", [enabled, device]),
       onNavigate: (listener) => bridgeListen("app:navigate-event", listener),
     },
     diagnostics: {

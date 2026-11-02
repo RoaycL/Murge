@@ -363,6 +363,11 @@ pub fn validate_target(target: &Target) -> Result<(), IpcError> {
     Ok(())
 }
 
+/// Whether the observed registry has the WinINET proxy switched on.
+pub fn proxy_enable_on(observed: &RegistryState) -> bool {
+    observed.proxy_enable.exists && observed.proxy_enable.value.as_u64().unwrap_or(0) != 0
+}
+
 /// Shared recovery decision for enable, disable, init and kernel shutdown: the
 /// observed state matches what we wrote, matches our pre-enable snapshot, or
 /// still aims at our server value.
@@ -1505,6 +1510,14 @@ impl SystemProxyService {
             }
         };
         if !can_restore_backup(&observed, &backup) {
+            // Another tool rewrote the proxy and has since switched it off: the
+            // OS is not proxied, nobody's settings need protecting, and the old
+            // snapshot can never be restored safely. Drop the dead bundle
+            // instead of greeting every launch with a conflict.
+            if !proxy_enable_on(&observed) {
+                let _ = self.backup.delete().await;
+                return self.transition("disabled", SystemProxyStatus::default());
+            }
             return self.transition(
                 "conflict",
                 status_extra(
@@ -1575,20 +1588,23 @@ impl SystemProxyService {
             }
             // A stale bundle means the previous session ended inside the crash
             // window. The registry then shows one of three SELF-owned shapes —
-            // each a self-recovery, never an external edit to fight. What is
-            // genuinely EXTERNAL is a different proxy server (another tool's
-            // takeover) — that alone surfaces a conflict, fail-closed.
+            // each a self-recovery, never an external edit to fight.
+            //
+            // A different proxy server means another tool took over since. The
+            // passive paths (startup, the 30s guard, kernel stop) never fight
+            // that, but this is an explicit user enable: the stale bundle's
+            // snapshot is obsolete (restoring it would clobber the other tool),
+            // so drop it and take over from the CURRENT registry, which becomes
+            // the new pre-enable snapshot. Without this, a single takeover left
+            // the switch permanently stuck on "已被外部修改".
             if can_restore_backup(&observed, &backup) {
                 self.transition("restoring", SystemProxyStatus::default());
                 self.restore_backup_strict(&backup).await?;
             } else {
-                let detail = conflict_detail(&observed, &backup.written);
-                return Err(self.fail(
-                    "conflict",
-                    code::SYSTEM_PROXY_STATE_CONFLICT,
-                    CONFLICT_MSG,
-                    Some(detail),
-                ));
+                crate::diag!(
+                    "[system-proxy] user enable takes over from external state ({})",
+                    conflict_detail(&observed, &backup.written)
+                );
             }
         }
 
@@ -1722,7 +1738,20 @@ impl SystemProxyService {
                     self.transition("conflict", extra);
                     return Ok(policy.to_value());
                 }
-                let written = build_written_state(&backup.target, &observed, &policy);
+                // Merge the new policy over the PRE-ENABLE override (not the
+                // live one, which already holds our previous merge).
+                let written = build_written_state(&backup.target, &backup.previous, &policy);
+                // Record the new written state BEFORE applying it. Otherwise the
+                // bundle keeps the old ProxyOverride: the 30s guard would revert
+                // the edit, and the next bypass edit would flag our own write as
+                // an external modification.
+                let updated = SystemProxyBackup {
+                    written: written.clone(),
+                    ..backup
+                };
+                if self.backup.write(&backup_to_value(&updated)).await.is_err() {
+                    return Ok(policy.to_value());
+                }
                 // Best-effort live application: a failure leaves the disk
                 // policy authoritative for the next enable.
                 let _ = self.adapter.apply(&written).await;
@@ -3455,16 +3484,82 @@ mod tests {
             proxy_server: RegistryValue::string("10.0.0.1:3128"),
             proxy_override: RegistryValue::string("ours"),
         });
-        let error = service.enable().await.unwrap_err();
-        assert_eq!(
-            error.0,
-            "PROTOCOL_ERROR:SYSTEM_PROXY_STATE_CONFLICT::系统代理已被外部修改，未执行还原"
-        );
-        assert_eq!(service.get_status().phase, "conflict");
-        assert_eq!(
-            service.get_status().conflict_detail.as_deref(),
-            Some("注册表项被外部修改：ProxyServer")
-        );
+        // An explicit user enable takes over: the obsolete bundle is replaced
+        // and the foreign state becomes the new pre-enable snapshot, so a
+        // later disable hands the proxy back to the other tool.
+        let foreign = adapter.read().await.unwrap();
+        let status = service.enable().await.unwrap();
+        assert_eq!(status.phase, "enabled");
+        assert!(status.conflict_detail.is_none());
+        let fresh =
+            parse_system_proxy_backup(&service.backup.read().await.unwrap().unwrap()).unwrap();
+        assert!(matches_previous(&fresh.previous, &foreign));
+        assert!(is_owned(&adapter.read().await.unwrap(), &fresh.written));
+        service.disable().await.unwrap();
+        assert!(matches_previous(&adapter.read().await.unwrap(), &foreign));
+    }
+
+    #[tokio::test]
+    async fn init_drops_bundle_when_foreign_proxy_is_already_off() {
+        let (service, adapter) = test_service();
+        let target = Target {
+            host: SYSTEM_PROXY_LOOPBACK_HOST.to_string(),
+            port: 7890,
+        };
+        let bundle = SystemProxyBackup {
+            instance_id: "i".to_string(),
+            created_at: now_iso(),
+            target: target.clone(),
+            previous: RegistryState {
+                proxy_enable: RegistryValue::absent(),
+                proxy_server: RegistryValue::absent(),
+                proxy_override: RegistryValue::absent(),
+            },
+            written: owned_state(&target, "ours"),
+        };
+        service
+            .backup
+            .write(&backup_to_value(&bundle))
+            .await
+            .unwrap();
+        // Another client wrote its own server and then switched it off.
+        let foreign_off = RegistryState {
+            proxy_enable: RegistryValue::dword(0),
+            proxy_server: RegistryValue::string("127.0.0.1:7897"),
+            proxy_override: RegistryValue::string("theirs"),
+        };
+        adapter.set_registry(foreign_off.clone());
+        let status = service.init().await;
+        assert_eq!(status.phase, "disabled");
+        assert!(status.error_message.is_none());
+        assert!(status.conflict_detail.is_none());
+        assert!(service.backup.read().await.unwrap().is_none());
+        // The other tool's values are left exactly as they were.
+        assert!(matches_previous(
+            &adapter.read().await.unwrap(),
+            &foreign_off
+        ));
+    }
+
+    #[tokio::test]
+    async fn repeated_bypass_edits_are_not_flagged_as_external() {
+        let (service, adapter) = test_service();
+        service.enable().await.unwrap();
+        for entry in ["*.a", "*.b", "*.c"] {
+            service
+                .set_proxy_bypass(ProxyBypassPolicy {
+                    enabled: true,
+                    custom_entries: vec![entry.to_string()],
+                })
+                .await
+                .unwrap();
+            assert_eq!(service.get_status().phase, "enabled");
+        }
+        // The guard sees our own latest write, not a degradation to undo.
+        assert_eq!(service.verify_integrity().await, "ok");
+        let override_value = adapter.read().await.unwrap().proxy_override.value;
+        assert!(override_value.as_str().unwrap().contains("*.c"));
+        assert!(!override_value.as_str().unwrap().contains("*.b"));
     }
 
     #[tokio::test]

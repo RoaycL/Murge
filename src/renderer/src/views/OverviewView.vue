@@ -50,7 +50,7 @@ const spPhaseLabel = computed(() => {
       return '系统代理还原失败'
     case 'conflict':
       // Another program (another proxy client, a VPN…) rewrote the WinINET
-      // proxy. Murge never fights that on its own; switching on is the
+      // proxy. The app never fights that on its own; switching on is the
       // explicit take-over. The changed keys stay in the hover title.
       return '已被其他程序接管，打开开关可重新接管'
     case 'unsupported':

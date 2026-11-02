@@ -39,6 +39,7 @@ import type { UsageWindow, UsageRanking, UsageHistorySnapshot, UsageRankingEntry
 import type { ProcessUsageSnapshot } from './process-usage'
 import type { NetworkMetadataProvider, NetworkMetadataSnapshot, NetworkMetadataState } from './network-metadata'
 import type { AppInfo } from './app-info'
+import type { LocalAddress } from './lan'
 import type { AppSettings } from './app-settings'
 import type { UpdateState } from './updates'
 import type { DiagnosticReport } from './diagnostics'
@@ -51,6 +52,7 @@ export const IPC = {
   appGetProcessIcon: 'app:get-process-icon',
   appGetCachedIcon: 'app:get-cached-icon',
   appListNetworkInterfaces: 'app:list-network-interfaces',
+  appListLocalAddresses: 'app:list-local-addresses',
   diagnosticsCollect: 'diagnostics:collect',
   backupCreate: 'backup:create',
   backupPreview: 'backup:preview',
@@ -186,6 +188,8 @@ export interface DesktopApi {
     getCachedIcon(cacheKey: string, url?: string, refresh?: boolean): Promise<string | null>
     /** Active host interfaces available for mihomo `interface-name`. */
     listNetworkInterfaces(): Promise<string[]>
+    /** This host's IPv4 addresses; `lan` marks the ones other LAN devices can dial. */
+    listLocalAddresses(): Promise<LocalAddress[]>
     /** Main-process requests such as notification clicks navigate an existing window. */
     onNavigate(listener: (path: string) => void): () => void
   }

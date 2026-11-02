@@ -461,7 +461,18 @@ impl KernelConfigStore for StrictMihomoConfigStore {
     }
 }
 impl StrictMihomoConfigStore {
+    /// allow-lan is switched live from 概览, so a later restart must keep the
+    /// current choice rather than the value pinned when the supervisor was
+    /// built.
+    fn effective_allow_lan(&self) -> bool {
+        self.resolve_core
+            .as_ref()
+            .and_then(|resolve| resolve()["allowLan"].as_bool())
+            .unwrap_or(self.allow_lan)
+    }
+
     fn build_config_text(&self, secret: &str) -> Result<BuiltConfig, IpcError> {
+        let allow_lan = self.effective_allow_lan();
         if let Some(resolve) = &self.resolve_active_document {
             if let Some(document) = resolve() {
                 if !document.trim().is_empty() {
@@ -471,7 +482,7 @@ impl StrictMihomoConfigStore {
                         "socksPort": self.socks_port,
                         "controllerPort": self.controller_port,
                         "controllerHost": self.controller_host,
-                        "allowLan": self.allow_lan,
+                        "allowLan": allow_lan,
                         "controllerPanel": self.controller_panel,
                         "secret": secret
                     });
@@ -496,7 +507,7 @@ impl StrictMihomoConfigStore {
                 "socksPort": self.socks_port,
                 "controllerPort": self.controller_port,
                 "controllerHost": self.controller_host,
-                "allowLan": self.allow_lan,
+                "allowLan": allow_lan,
                 "controllerPanel": self.controller_panel,
                 "secret": secret
             }))?,

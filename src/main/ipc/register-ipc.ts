@@ -233,6 +233,17 @@ export function registerIpc({ kernel, kernelManager, mihomo, profiles, systemPro
       .filter((name) => name.length > 0 && name.length <= 255 && !/[\x00-\x1f\x7f]/.test(name))
       .sort((left, right) => left.localeCompare(right))
   ])
+  entries.push([IPC.appListLocalAddresses, async () => {
+    const lan = (name: string, address: string): boolean =>
+      /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(address)
+      && !/^(lo|lo0)$|docker|utun|tun|veth|mihomo|meta|vmnet|vethernet|virtualbox|vmware|hyper-v/i.test(name)
+    return Object.entries(networkInterfaces())
+      .flatMap(([name, addresses]) => (addresses ?? [])
+        .filter((item) => item.family === 'IPv4' && !item.internal)
+        .map((item) => ({ name, address: item.address, lan: lan(name, item.address) })))
+      .filter((item) => item.name.length > 0 && item.name.length <= 255 && !/[\x00-\x1f\x7f]/.test(item.name))
+      .sort((left, right) => Number(right.lan) - Number(left.lan) || left.name.localeCompare(right.name))
+  }])
   for (const [channel, handler] of entries) {
     ipcMain.handle(channel, wrapHandler(handler))
   }

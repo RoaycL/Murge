@@ -176,6 +176,7 @@ pub async fn dispatch(
                 .await)
         }
         "app:list-network-interfaces" => Ok(desktop.list_network_interfaces()),
+        "app:list-local-addresses" => Ok(desktop.list_local_addresses()),
         // Network (egress) metadata — Phase 3C slice 13. State lives on the
         // app handle (cached, single-flight); the payload tail carries the
         // per-call argument.
@@ -754,8 +755,28 @@ pub async fn dispatch(
             })?;
             // Plain persist: the TS core gateway is NOT live-wrapped; the
             // controlled keys fold into the runtime document on the next
-            // materialization/reload.
-            models.core.set(input, enhancements::coerce_core_settings)
+            // materialization/reload. The one exception is allow-lan (the
+            // 概览 局域网设备接管 switch), which mihomo applies live through
+            // PATCH /configs: its listeners are re-created on the new bind
+            // address without dropping the running core or TUN.
+            let previous = enhancements::coerce_core_settings(&models.core.get());
+            let next = models.core.set(input, enhancements::coerce_core_settings)?;
+            let allow_lan = next["allowLan"].as_bool() == Some(true);
+            let changed = previous["allowLan"].as_bool() != Some(allow_lan);
+            let running = matches!(
+                crate::kernel::KernelStatusSource::kernel_status(kernel)["phase"].as_str(),
+                Some("running") | Some("starting")
+            );
+            if changed && running {
+                if let Err(error) = controller_client(models)?
+                    .patch_config(&allow_lan_patch(allow_lan))
+                    .await
+                {
+                    let _ = models.core.set(&previous, enhancements::coerce_core_settings);
+                    return Err(error);
+                }
+            }
+            Ok(next)
         }
         "core-settings:preview" => {
             let input = arg(payload, 0).cloned().unwrap_or(Value::Null);
@@ -1127,6 +1148,16 @@ pub(crate) async fn resolve_mixed_port(
         ));
     }
     Ok(port as u16)
+}
+
+/// The live PATCH body for the allow-lan switch: mihomo only listens on every
+/// interface when allow-lan is on AND bind-address is `*` (the same pair the
+/// runtime config builders write).
+fn allow_lan_patch(allow_lan: bool) -> Value {
+    serde_json::json!({
+        "allow-lan": allow_lan,
+        "bind-address": if allow_lan { "*" } else { "127.0.0.1" }
+    })
 }
 
 fn controller_client(models: &enhancements::ModelStores) -> Result<mihomo::MihomoClient, IpcError> {
@@ -3006,6 +3037,83 @@ mod tests {
         // model must roll back to the pre-set value.
         assert!(result.is_err());
         assert_eq!(f.models.dns.get(), before);
+    }
+
+    #[tokio::test]
+    async fn core_settings_set_patches_allow_lan_live_and_rolls_back_on_failure() {
+        let mut f = fixtures();
+        macro_rules! set_core {
+            ($input:expr) => {
+                dispatch(
+                    "core-settings:set",
+                    &serde_json::json!([$input]),
+                    &f.paths,
+                    &f.settings,
+                    &f.profiles,
+                    &f.overrides,
+                    &f.models,
+                    &f.usage,
+                    &f.kernel,
+                    &f.mihomo,
+                    &f.desktop,
+                    &f.metadata,
+                    &f.startup,
+                    &f.substore,
+                    &f.system_proxy,
+                    &f.tun,
+                    &f.updates,
+                )
+                .await
+            };
+        }
+        // No kernel running: allow-lan is only persisted.
+        let mut core = enhancements::coerce_core_settings(&f.models.core.get());
+        core["allowLan"] = serde_json::json!(true);
+        let result = set_core!(core.clone()).unwrap();
+        assert_eq!(result["allowLan"], true);
+
+        // A running kernel whose controller is dead: the live PATCH fails and
+        // the persisted switch rolls back.
+        core["controllerPort"] = serde_json::json!(1);
+        f.models
+            .core
+            .set(&core, enhancements::coerce_core_settings)
+            .unwrap();
+        let harness = crate::kernel_process::tests::create_harness();
+        crate::kernel_process::tests::start_to_running(&harness).await;
+        f.kernel = kernel::KernelServices {
+            supervisor: harness.supervisor.clone(),
+            manager: std::sync::Arc::new(kernel::KernelManagerService::new()),
+            ready: None,
+            privileged: None,
+            tun: std::sync::OnceLock::new(),
+        };
+        let before = f.models.core.get();
+        let mut off = core.clone();
+        off["allowLan"] = serde_json::json!(false);
+        assert!(set_core!(off).is_err());
+        assert_eq!(f.models.core.get(), before);
+
+        // Other core keys stay a plain persist even with a running kernel.
+        let mut log_level = core.clone();
+        log_level["logLevel"] = serde_json::json!("debug");
+        let result = set_core!(log_level).unwrap();
+        assert_eq!(result["logLevel"], "debug");
+        assert_eq!(result["allowLan"], true);
+    }
+
+    #[test]
+    fn allow_lan_patch_pairs_the_bind_address() {
+        assert_eq!(
+            allow_lan_patch(true),
+            serde_json::json!({ "allow-lan": true, "bind-address": "*" })
+        );
+        assert_eq!(
+            allow_lan_patch(false),
+            serde_json::json!({ "allow-lan": false, "bind-address": "127.0.0.1" })
+        );
+        assert!(mihomo::parse_config_patch(&allow_lan_patch(true)).is_ok());
+        assert!(mihomo::parse_config_patch(&serde_json::json!({ "bind-address": "0.0.0.0" })).is_err());
     }
 
     #[tokio::test]

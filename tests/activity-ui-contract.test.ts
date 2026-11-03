@@ -139,7 +139,7 @@ describe('Activity fluid-layout UI contract', () => {
     expect(css).toMatch(/\.detail-drawer button\s*\{[^}]*white-space:\s*nowrap/)
     expect(usage).toMatch(/onMounted\(\(\) => \{[\s\S]*void store\.refresh\(\)[\s\S]*timer = setInterval/)
     expect(usage).not.toMatch(/onMounted\(async \(\) => \{[\s\S]*await store\.refresh/)
-    expect(activity).toContain('当前连接总计')
+    expect(activity).toContain('启动以来总计')
     expect(activity).not.toContain("totalScope")
   })
 

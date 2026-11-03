@@ -88,8 +88,8 @@ const activeCount = computed(() => connections.summary?.totalConnections ?? 0)
 const processCount = computed(() => connections.summary?.distinctProcesses ?? 0)
 const deviceCount = computed(() => connections.summary?.distinctDevices ?? 0)
 const hostCount = computed(() => connections.summary?.distinctHosts ?? 0)
-const directBytes = computed(() => connections.summary?.directDownload ?? 0)
-const proxyBytes = computed(() => connections.summary?.proxyDownload ?? 0)
+const directBytes = computed(() => connections.summary?.directBytes ?? 0)
+const proxyBytes = computed(() => connections.summary?.proxyBytes ?? 0)
 
 // 全部/仅代理 scope lives in the store so every ranking slot stays consistent.
 const rankScope = computed(() => connections.rankScope)
@@ -213,13 +213,13 @@ const chartBars = computed<number[]>(() => {
             <ProcessIcon v-if="rankDimension === 'process'" class="rank-process-icon" :path="item.iconPath" :name="item.name" :size="12" />
             <span v-else class="rank-icon"><CachedRemoteIcon v-if="rankDimension === 'policy' && policyIcons[item.name]" :src="policyIcons[item.name]" :cache-key="`policy:${item.name}`" /><template v-else>{{ item.name.slice(0, 2) }}</template></span>
             <div><span>{{ item.name }}</span><i><b :style="{ width: `${item.width}%` }" /></i></div>
-            <strong>{{ formatBytes(item.download) }}</strong>
+            <strong>{{ formatBytes(item.bytes) }}</strong>
           </div>
         </div>
       </SurfaceCard>
 
       <SurfaceCard class="total-card">
-        <div class="card-title-row"><span class="metric-label">当前连接总计</span><button type="button" class="quiet-button" @click="summaryDrawer = 'usage'">查看历史</button></div>
+        <div class="card-title-row"><span class="metric-label">启动以来总计</span><button type="button" class="quiet-button" @click="summaryDrawer = 'usage'">查看历史</button></div>
         <div class="large-metric">{{ total.value }}<span>{{ total.unit }}</span></div>
         <div class="total-labels"><div><span>DIRECT</span><strong>{{ direct.value }} {{ direct.unit }}</strong></div><div><span>代理</span><strong>{{ proxy.value }} {{ proxy.unit }}</strong></div></div>
         <button type="button" class="total-bar total-history-link" aria-label="查看用量历史" @click="summaryDrawer = 'usage'"><i :style="{ width: `${directPct}%` }" /><i :style="{ width: `${100 - directPct}%` }" /></button>

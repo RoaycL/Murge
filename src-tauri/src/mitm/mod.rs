@@ -933,6 +933,27 @@ impl MitmService {
                 })
             })
             .collect();
+        // 「N 条规则生效中」 drill-down: every active rule per kind with its source.
+        let mut active_rules: serde_json::Map<String, Value> = serde_json::Map::new();
+        let mut collect = |parsed: &rules::ParsedModule, source: &str| {
+            for (section, lines) in rules::describe(parsed, |url| self.load_script(url).is_some()) {
+                let entry = active_rules
+                    .entry(section.to_string())
+                    .or_insert_with(|| Value::Array(Vec::new()));
+                if let Value::Array(items) = entry {
+                    items.extend(
+                        lines
+                            .into_iter()
+                            .map(|text| json!({ "text": text, "source": source })),
+                    );
+                }
+            }
+        };
+        collect(&local, "本地");
+        for module in settings.modules.iter().filter(|module| module.enabled) {
+            let parsed = rules::parse_module_with(&module.content, &module.arguments);
+            collect(&parsed, &module.name);
+        }
         let trusted = *self.trusted.lock().expect("trusted");
         let ca = self.shared.ca().map(|ca| {
             json!({
@@ -962,6 +983,7 @@ impl MitmService {
             "engine": { "running": port.is_some(), "port": port },
             "active": self.inactive_reason().is_none(),
             "inactiveReason": self.inactive_reason(),
+            "activeRules": active_rules,
             "summary": {
                 "hostnames": rules.hostnames,
                 "urlRewrites": rules.url_rewrites.len(),

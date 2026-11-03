@@ -57,6 +57,8 @@ export interface MitmState {
   engine: { running: boolean; port: number | null }
   active: boolean
   inactiveReason: string | null
+  /** Every active rule per section ([URL Rewrite] …), with where it came from. */
+  activeRules?: Record<string, MitmActiveRule[]>
   summary: {
     hostnames: string[]
     urlRewrites: number
@@ -70,6 +72,13 @@ export interface MitmState {
     /** Keys held in the scripts' $persistentStore. */
     scriptStoreKeys: number
   }
+}
+
+export interface MitmActiveRule {
+  /** Surge-style one-line form of the rule. */
+  text: string
+  /** 「本地」 or the module's name. */
+  source: string
 }
 
 export interface MitmRequestEntry {

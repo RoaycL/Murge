@@ -99,6 +99,13 @@ useUnsavedChanges('rewrite-section', '重写规则', sectionDirty)
 useDialogFocus(sectionOpen, sectionDialog, () => closeSection())
 useDialogFocus(localOpen, localDialog, () => closeLocal())
 
+// 「N 条规则生效中」→ 查看具体生效的规则（含模块来源）。
+const viewingKind = ref<RuleKind | null>(null)
+const viewDialog = ref<HTMLElement | null>(null)
+const viewOpen = computed(() => !!viewingKind.value)
+const viewingRules = computed(() => (viewingKind.value ? state.value.activeRules?.[viewingKind.value.section] ?? [] : []))
+useDialogFocus(viewOpen, viewDialog, () => { viewingKind.value = null })
+
 function openLocal(): void {
   syncLocal()
   localOpen.value = true
@@ -263,7 +270,7 @@ onMounted(async () => {
         <h3>{{ kind.title }}</h3>
         <p>{{ kind.description }}</p>
         <footer>
-          <span>{{ kind.count }} 条规则生效中</span>
+          <button type="button" class="rewrite-kind-count" :disabled="!kind.count" :aria-label="`查看${kind.count}条生效中的${kind.title}规则`" @click="viewingKind = kind">{{ kind.count }} 条规则生效中<AppIcon v-if="kind.count" name="next" :size="12" /></button>
           <button type="button" class="rewrite-kind-edit" :disabled="!!store.busy" @click="openSection(kind)">编辑{{ kind.noun }}规则…</button>
         </footer>
       </SurfaceCard>
@@ -340,6 +347,27 @@ onMounted(async () => {
       </div>
     </Teleport>
     <Teleport to="body">
+      <div v-if="viewingKind" class="modal-shade" role="presentation" @click.self="viewingKind = null">
+        <section ref="viewDialog" class="rewrite-section-modal" role="dialog" aria-modal="true" :aria-label="`生效中的${viewingKind.title}规则`">
+          <header>
+            <div>
+              <h2>{{ viewingKind.title }} · {{ viewingRules.length }} 条生效中</h2>
+              <p>包括本地规则和已启用模块中的规则。</p>
+            </div>
+            <button type="button" class="icon-control" aria-label="关闭" @click="viewingKind = null"><AppIcon name="close" /></button>
+          </header>
+          <ol v-if="viewingRules.length" class="rewrite-active-list">
+            <li v-for="(rule, index) in viewingRules" :key="index"><code>{{ rule.text }}</code><span>{{ rule.source }}</span></li>
+          </ol>
+          <p v-else class="rewrite-hint">没有生效中的规则。</p>
+          <footer>
+            <button type="button" class="surge-button" @click="viewingKind = null">关闭</button>
+            <button type="button" class="surge-button primary" @click="openSection(viewingKind); viewingKind = null">编辑本地规则…</button>
+          </footer>
+        </section>
+      </div>
+    </Teleport>
+    <Teleport to="body">
       <div v-if="localOpen" class="modal-shade" role="presentation" @click.self="closeLocal">
         <section ref="localDialog" class="rewrite-section-modal" role="dialog" aria-modal="true" aria-label="全部本地规则">
           <header>
@@ -377,6 +405,15 @@ onMounted(async () => {
 .rewrite-kind h3 { margin: 0 0 7px; font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); }
 .rewrite-kind p { display: -webkit-box; flex: 1; margin: 0; overflow: hidden; color: var(--app-muted); font-size: var(--font-size-xs); line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .rewrite-kind footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); }
+.rewrite-kind-count { display: inline-flex; align-items: center; gap: 2px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.rewrite-kind-count:hover:not(:disabled) { color: var(--app-blue); }
+.rewrite-kind-count:disabled { cursor: default; }
+.rewrite-kind-count svg { color: var(--app-muted); }
+.rewrite-active-list { display: grid; gap: 0; max-height: min(52vh, 420px); margin: 0; padding: 0; overflow: auto; list-style: none; border: 1px solid var(--app-divider); border-radius: var(--radius-control); }
+.rewrite-active-list li { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 10px; border-top: 1px solid var(--app-divider); }
+.rewrite-active-list li:first-child { border-top: 0; }
+.rewrite-active-list code { min-width: 0; overflow-wrap: anywhere; font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; user-select: text; }
+.rewrite-active-list span { flex: 0 0 auto; max-width: 40%; overflow: hidden; color: var(--app-muted); font-size: var(--font-size-xs); text-overflow: ellipsis; white-space: nowrap; }
 .rewrite-kind-edit { min-height: 22px; padding: 0 8px; overflow: hidden; border: 1px solid var(--app-divider); border-radius: 6px; color: inherit; background: var(--app-surface-solid); font-size: var(--font-size-sm); text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .rewrite-kind-edit:hover:not(:disabled) { background: var(--app-fill); }
 .rewrite-kind-edit:disabled { opacity: 0.55; cursor: default; }

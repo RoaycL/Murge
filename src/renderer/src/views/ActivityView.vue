@@ -60,7 +60,11 @@ onMounted(() => {
   void policies.load()
   void policies.syncMode()
   void networkMeta.init()
-  latency.init()
+  // On a cold app start this page mounts before the kernel is up, so a probe
+  // here could only fail (controller unreachable) and the card stayed at "—"
+  // until the next minute tick or a manual refresh. Probe now only if the
+  // kernel is already running; otherwise the phase watcher below does it.
+  if (kernel.status.phase === 'running') latency.init()
   // Keep the card honest without hammering the controller: one sample a minute
   // plus the manual refresh button.
   latencyTimer = window.setInterval(() => void latency.probe(), LATENCY_REFRESH_MS)
@@ -70,6 +74,7 @@ onMounted(() => {
 // groups, the active profile and possibly the mode; reload what this page shows.
 watch(() => kernel.status.phase, (phase, previous) => {
   if (phase !== 'running' || previous === 'running') return
+  void latency.probeAfterKernelStart()
   void runtime.refresh()
   void policies.load()
   void policies.syncMode()

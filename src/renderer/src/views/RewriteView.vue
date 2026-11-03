@@ -298,7 +298,6 @@ onMounted(async () => {
                 <small>{{ module.ruleCount }} 条规则<template v-if="module.scripts">（含 {{ module.scripts }} 个脚本）</template> · {{ module.hostnames.length }} 个主机名 · 更新于 {{ formatDate(module.updatedAt) }}</small>
                 <small v-if="module.error" class="rewrite-error">上次更新失败：{{ module.error }}</small>
                 <span class="rewrite-module-links">
-                  <button v-if="module.arguments.length" type="button" class="rewrite-link" @click="openArguments(module)">{{ module.arguments.length }} 个参数</button>
                   <button v-if="module.warnings.length" type="button" class="rewrite-link" @click="expanded = expanded === module.id ? null : module.id">{{ module.warnings.length }} 条未生效的内容</button>
                 </span>
               </div>

@@ -9,8 +9,7 @@
 //! iteration trap (`RuntimeLimits::set_loop_iteration_limit`) plus the
 //! default recursion/stack limits; the TS bound is wall-clock 2000 ms per
 //! `runInContext`. Both abort a runaway script with an error; the wall-clock
-//! vs iteration-count difference is documented in
-//! docs/tauri/phase3/README.md.
+//! vs iteration-count difference is intentional.
 //!
 //! Error copy: the Chinese prefixes are byte-exact
 //! (`JS 覆写脚本执行失败：` / `JS 覆写 main(config) 执行失败：` /

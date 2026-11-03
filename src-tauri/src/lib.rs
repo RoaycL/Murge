@@ -9,7 +9,7 @@
 //! Security model: the webview never receives filesystem, shell or registry
 //! access. Everything privileged stays in Rust (and, for the privileged core,
 //! in the existing LocalSystem Go service — the renderer never calls it
-//! directly, see docs/TAURI_MIGRATION_PLAN.md Phase 3D).
+//! directly).
 
 mod app_info;
 mod backup;

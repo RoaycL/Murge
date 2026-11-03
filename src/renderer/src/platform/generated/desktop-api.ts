@@ -4,7 +4,7 @@
 // Source of truth: src/preload/index.ts (method surface) + src/shared/ipc.ts
 // (wire channel names). The Tauri shell renders window.desktop over
 // commands/events with the identical contract, so renderer code cannot
-// tell the shells apart (docs/tauri/phase2/README.md).
+// tell the shells apart.
 import { invoke as tauriInvoke } from '@tauri-apps/api/core'
 import { listen as tauriListen } from '@tauri-apps/api/event'
 import { decodeProtocolError } from '@shared/protocol-errors'

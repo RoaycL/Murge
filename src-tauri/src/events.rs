@@ -10,7 +10,7 @@
 //! Renderer delivery uses Tauri's global `emit` (broadcast), which matches the
 //! TS "send to every open renderer window" fan-out for the single-window shell.
 //!
-//! Milestone staging (documented in docs/tauri/phase3/README.md): the streams
+//! Milestone staging: the streams
 //! bind the core-settings controller endpoint exactly like the REST client;
 //! the `logSink` (file log capture) lands with the Phase 4 logging slice.
 

@@ -8,7 +8,7 @@
  * so this file stays the only platform-aware module in the renderer.
  *
  * The `DesktopApi` interface lives in `@shared/ipc` and is the behavior spec
- * for both shells (see docs/tauri/phase0/IPC_INVENTORY.md).
+ * for both shells.
  */
 
 /** The subset of shell facts the renderer is allowed to know. */

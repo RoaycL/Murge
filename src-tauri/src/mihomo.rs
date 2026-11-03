@@ -12,7 +12,7 @@
 //! 504 -> UPSTREAM_TIMEOUT, 503 -> UPSTREAM_TEST_FAILED, other non-2xx ->
 //! UPSTREAM_HTTP_ERROR, invalid JSON -> INVALID_UPSTREAM).
 //!
-//! Known differences (documented in docs/tauri/phase3/README.md):
+//! Known differences:
 //! - the controller endpoint is read from the coerced core-settings model
 //!   (Electron production wires the kernel's materialized config; the Rust
 //!   shell rebinds at the Phase 3D kernel slice);

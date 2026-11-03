@@ -4,7 +4,7 @@
 //! `main/kernel/kernel-manager-service.ts` (state materialization), plus the
 //! runtime summary composition (main/ipc/register-ipc.ts).
 //!
-//! Milestone staging (documented in docs/tauri/phase3/README.md): the
+//! Milestone staging: the
 //! version manager now carries the full TS install surface — GitHub release
 //! metadata, per-version artifact workspaces, sidecar-cached asset specs,
 //! apply-with-verify + rollback — with `specificVersionsSupported` true (the

@@ -19,8 +19,11 @@ describe('Surge-inspired UI navigation contract', () => {
     expect(sidebar).toMatch(/to: '\/devices'[^\n]*defaultHidden: true/)
     expect(sidebar).toMatch(/to: '\/substore'[^\n]*defaultHidden: true/)
     const more = read('src/renderer/src/views/MoreView.vue')
-    expect(more).toContain("to: '/devices'")
-    expect(more).toContain("to: '/substore'")
+    // 不在侧栏的页面（默认设备与 Sub-Store）列在「更多」的「已从侧边栏隐藏」里。
+    expect(more).toContain('sidebarLayout.hidden')
+    expect(more).toContain('已从侧边栏隐藏')
+    expect(more).toMatch(/devices: '[^']+'/)
+    expect(more).toMatch(/substore: '[^']+'/)
     expect(sidebar).not.toMatch(/icon:\s*'[⌁⌘▣▤⑂☷]'/)
   })
 

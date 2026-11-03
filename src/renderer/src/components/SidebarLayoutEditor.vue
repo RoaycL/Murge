@@ -6,11 +6,18 @@ import { SIDEBAR_GROUPS, sidebarItem, type SidebarGroupId, type SidebarItemId } 
 
 const store = useSidebarLayoutStore()
 
-const sections = computed(() => SIDEBAR_GROUPS.map((group) => ({
+const sections = computed(() => SIDEBAR_GROUPS.map((group, order) => ({
   id: group.id,
   label: group.settingsLabel,
+  order,
   rows: store.layout[group.id].map((entry) => ({ ...sidebarItem(entry.id), visible: entry.visible }))
 })))
+// 两列各自从上往下紧挨着排（客户端/HTTP 在左，代理/配置 在右），标题不强求对齐；
+// 窄窗口时合成一列，按原分组顺序排列。
+const columns = computed(() => [
+  sections.value.filter((section) => section.order % 2 === 0),
+  sections.value.filter((section) => section.order % 2 === 1)
+])
 
 // 拖动只在当前分组内重排：指针越过相邻行的一半时交换位置，被拖动的行跟随指针平移。
 interface DragState { group: SidebarGroupId; id: SidebarItemId; index: number; originY: number; rowHeight: number; pointerId: number }
@@ -74,7 +81,8 @@ function rowStyle(id: SidebarItemId): Record<string, string> | undefined {
 
 <template>
   <div class="sidebar-layout-editor" :class="{ dragging: Boolean(drag) }">
-    <div v-for="section in sections" :key="section.id" class="layout-group">
+    <div v-for="(column, columnIndex) in columns" :key="columnIndex" class="layout-column">
+    <div v-for="section in column" :key="section.id" class="layout-group" :style="{ order: section.order }">
       <h3>{{ section.label }}</h3>
       <ol class="surface-card layout-list" :aria-label="`${section.label}分组`">
         <li
@@ -111,11 +119,17 @@ function rowStyle(id: SidebarItemId): Record<string, string> | undefined {
         </li>
       </ol>
     </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.sidebar-layout-editor { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 16px 15px; }
+.sidebar-layout-editor { display: flex; align-items: flex-start; gap: 15px; }
+.layout-column { display: flex; flex: 1 1 0; min-width: 0; flex-direction: column; gap: 16px; }
+@media (max-width: 860px) {
+  .sidebar-layout-editor { flex-direction: column; align-items: stretch; gap: 16px; }
+  .layout-column { display: contents; }
+}
 .layout-group h3 { margin: 0 0 7px 2px; color: var(--app-muted); font-size: var(--font-size-sm); font-weight: var(--font-weight-regular); }
 .layout-list { margin: 0; padding: 0; list-style: none; border-radius: var(--radius-md); }
 .layout-row { position: relative; display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 14px 0 6px; border-bottom: 1px solid var(--app-divider); background: transparent; transition: background-color 120ms ease, box-shadow 120ms ease; }

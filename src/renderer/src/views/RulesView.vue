@@ -119,8 +119,8 @@ watch(() => kernel.status.phase, (phase, previous) => {
           <tr v-for="row in rules.visibleRows" :key="row.index">
             <td>{{ row.index }}</td>
             <td>{{ row.type }}</td>
-            <td>{{ row.payload }}</td>
-            <td>{{ row.proxy }}</td>
+            <td :title="row.payload">{{ row.payload }}</td>
+            <td :title="row.proxy">{{ row.proxy }}</td>
             <td>{{ formatHits(row) }}</td>
             <td class="rule-action-cell">
               <span v-if="ruleOrigin(row) === 'local'" class="rule-origin">本地</span>
@@ -166,7 +166,6 @@ watch(() => kernel.status.phase, (phase, previous) => {
 <style scoped>
 .rules-counters { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-5); margin-bottom: 10px; color: var(--app-muted); font-size: var(--font-size-xs); }
 .rules-hint { text-align: right; }
-.rule-action-head { width: 64px; }
 .rule-action-cell { text-align: right; white-space: nowrap; }
 .rule-origin { padding: 1px 6px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--app-blue) 14%, transparent); color: var(--app-blue); font-size: var(--font-size-2xs); }
 .rule-origin.managed { background: var(--app-fill); color: var(--app-muted); }

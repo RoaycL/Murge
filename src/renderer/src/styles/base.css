@@ -247,15 +247,18 @@ h1 { margin: 0; font-size: var(--font-size-display); line-height: 34px; letter-s
 .rules-header p { margin: 2px 0 0; color: var(--app-muted); font-size: var(--font-size-xs); }
 .rules-header input { width: 245px; height: 27px; padding: 0 12px; border: 1px solid var(--app-divider); border-radius: var(--radius-card); background: rgba(255,255,255,.24); }
 .table-frame { width: 100%; overflow: hidden; border: 1px solid var(--app-divider); border-radius: var(--radius-sm); }
-.rules-view table { width: 100%; border-collapse: collapse; table-layout: auto; font-size: var(--font-size-xs); }
+/* 规则表用固定布局：ID/类型/策略/使用计数/来源列定宽，「值」占剩余宽度并以省略号截断。
+   之前三列各 33.33% 再加上其他列，总宽超过 100%，长规则把表格撑出 .table-frame 后被裁掉右侧。 */
+.rules-view.page-shell { max-width: none; }
+.rules-view table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: var(--font-size-xs); }
 .rules-view th, .rules-view td { height: 27px; padding: 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-top: 1px solid var(--app-divider); text-align: left; }
 .rules-view th { border-top: 0; font-weight: var(--font-weight-medium); }
-/* Auto layout: ID/使用计数 take only what they need (fit content); 类型/值/策略 split the rest equally. */
-.rules-view th:first-child, .rules-view td:first-child { width: 1%; white-space: nowrap; }
-.rules-view th:nth-child(2), .rules-view td:nth-child(2) { width: 33.33%; }
-.rules-view th:nth-child(3), .rules-view td:nth-child(3) { width: 33.33%; }
-.rules-view th:nth-child(4), .rules-view td:nth-child(4) { width: 33.33%; }
-.rules-view th:last-child, .rules-view td:last-child { width: 1%; text-align: right; white-space: nowrap; }
+.rules-view th:nth-child(1) { width: 52px; }
+.rules-view th:nth-child(2) { width: 120px; }
+.rules-view th:nth-child(4) { width: 150px; }
+.rules-view th:nth-child(5) { width: 76px; }
+.rules-view th:nth-child(6) { width: 64px; }
+.rules-view th:last-child, .rules-view td:last-child { text-align: right; }
 .toggle-title { display: flex; align-items: center; gap: 15px; }
 .page-description { max-width: 680px; margin: 2px 0 22px; color: var(--app-muted); font-size: var(--font-size-xs); }
 .form-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 24px; }

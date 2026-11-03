@@ -136,6 +136,28 @@ fn arg(payload: &Value, index: usize) -> Option<&Value> {
     payload.get(index)
 }
 
+/// Suggested file name for `logs:save-text`: a bare `.txt`/`.json` name with
+/// no directory parts, so the renderer cannot steer the default location.
+fn save_text_file_name(raw: Option<&str>) -> String {
+    let base = raw
+        .unwrap_or_default()
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| !matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|') && !c.is_control())
+        .collect::<String>();
+    let base = base.trim().trim_matches('.').to_string();
+    let lower = base.to_ascii_lowercase();
+    if base.is_empty() {
+        "murge-logs.txt".to_string()
+    } else if lower.ends_with(".txt") || lower.ends_with(".json") {
+        base
+    } else {
+        format!("{base}.txt")
+    }
+}
+
 fn string_arg(payload: &Value, index: usize) -> Option<String> {
     arg(payload, index)
         .and_then(Value::as_str)
@@ -186,6 +208,40 @@ pub async fn dispatch(
             crate::tray::open_file_manager(&log_directory(_paths))
                 .map_err(IpcError::invalid_argument)?;
             Ok(Value::Null)
+        }
+        "logs:save-text" => {
+            // WebView2 ignores `<a download>` on blob URLs inside the Tauri
+            // shell, so renderer text exports (日志 / 诊断) go through a
+            // native save dialog instead.
+            let name = save_text_file_name(string_arg(payload, 0).as_deref());
+            let contents = string_arg(payload, 1).unwrap_or_default();
+            let extension = name
+                .rsplit('.')
+                .next()
+                .unwrap_or("txt")
+                .to_ascii_lowercase();
+            let (filter, title) = if extension == "json" {
+                ("JSON", "导出诊断")
+            } else {
+                ("文本", "导出日志")
+            };
+            let choice = rfd::AsyncFileDialog::new()
+                .set_title(title)
+                .set_file_name(&name)
+                .add_filter(filter, &[extension.as_str()])
+                .save_file()
+                .await;
+            match choice {
+                Some(handle) => {
+                    std::fs::write(handle.path(), contents.as_bytes()).map_err(|error| {
+                        IpcError::invalid_argument(format!("保存失败：{error}"))
+                    })?;
+                    Ok(
+                        serde_json::json!({ "saved": true, "path": handle.path().to_string_lossy() }),
+                    )
+                }
+                None => Ok(serde_json::json!({ "saved": false })),
+            }
         }
         "logs:export-bundle" => {
             // Flush pending writes so the bundle includes the latest lines.
@@ -1441,6 +1497,23 @@ mod tests {
     use crate::settings::SettingsStore;
     use std::sync::Arc;
     use tempfile::TempDir;
+
+    #[test]
+    fn save_text_file_name_strips_directories_and_keeps_text_extensions() {
+        assert_eq!(
+            save_text_file_name(Some("mihomo-logs-1.txt")),
+            "mihomo-logs-1.txt"
+        );
+        assert_eq!(
+            save_text_file_name(Some("murge-diagnostics.json")),
+            "murge-diagnostics.json"
+        );
+        assert_eq!(save_text_file_name(Some("..\\..\\evil.txt")), "evil.txt");
+        assert_eq!(save_text_file_name(Some("C:/Windows/x.exe")), "x.exe.txt");
+        assert_eq!(save_text_file_name(Some("a:b?.txt")), "ab.txt");
+        assert_eq!(save_text_file_name(None), "murge-logs.txt");
+        assert_eq!(save_text_file_name(Some("...")), "murge-logs.txt");
+    }
 
     struct Fixture {
         _temp: TempDir,

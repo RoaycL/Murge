@@ -1,0 +1,132 @@
+#!/usr/bin/env node
+/**
+ * Generate `resources/licenses/rust-crates.txt`: the license notices of every
+ * Rust crate in `src-tauri/Cargo.lock`. The crates are statically linked into
+ * the application executable, so their notices ship with the installer.
+ *
+ * The list is a superset (it also names build- and test-only crates), which
+ * keeps it independent of target-specific dependency resolution.
+ *
+ * Run after any Cargo.lock change:
+ *   (cd src-tauri && cargo fetch --locked) && npm run notices:rust
+ * `tests/rust-notices.test.ts` fails when the file is out of date.
+ */
+import { readFile, readdir, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join, resolve } from 'node:path'
+
+const root = resolve(import.meta.dirname, '..')
+const lockPath = resolve(root, 'src-tauri/Cargo.lock')
+const outPath = resolve(root, 'resources/licenses/rust-crates.txt')
+
+/** Registry packages of a Cargo.lock, sorted by name then version. */
+export function parseLockPackages(lock) {
+  const packages = []
+  for (const block of lock.replace(/\r\n?/g, '\n').split('[[package]]').slice(1)) {
+    const name = block.match(/^name = "([^"]+)"$/m)?.[1]
+    const version = block.match(/^version = "([^"]+)"$/m)?.[1]
+    const source = block.match(/^source = "([^"]+)"$/m)?.[1]
+    if (name && version && source?.startsWith('registry+')) packages.push({ name, version })
+  }
+  return packages.sort((a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version, 'en', { numeric: true }))
+}
+
+const MIT_TEXT = `MIT License
+
+Copyright (c) the authors of the crate (see the crate's repository)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.`
+
+async function registrySourceDirs() {
+  const base = join(process.env.CARGO_HOME || join(homedir(), '.cargo'), 'registry', 'src')
+  if (!existsSync(base)) throw new Error(`cargo registry not found at ${base}; run cargo fetch first`)
+  return (await readdir(base)).map((entry) => join(base, entry))
+}
+
+function manifestField(manifest, field) {
+  const packageSection = manifest.split(/^\[(?!package\])/m)[0]
+  return packageSection.match(new RegExp(`^${field}\\s*=\\s*"([^"]*)"`, 'm'))?.[1]
+}
+
+async function main() {
+  const packages = parseLockPackages(await readFile(lockPath, 'utf8'))
+  const sources = await registrySourceDirs()
+  const groups = new Map() // license text -> crate labels
+  const rows = []
+  const missingSource = []
+  for (const { name, version } of packages) {
+    const dir = sources.map((source) => join(source, `${name}-${version}`)).find((candidate) => existsSync(candidate))
+    if (!dir) {
+      missingSource.push(`${name} ${version}`)
+      continue
+    }
+    const manifest = (await readFile(join(dir, 'Cargo.toml'), 'utf8')).replace(/\r\n?/g, '\n')
+    const license = manifestField(manifest, 'license') ?? manifestField(manifest, 'license-file') ?? 'see repository'
+    const repository = manifestField(manifest, 'repository') ?? ''
+    rows.push(`${name} ${version} | ${license}${repository ? ` | ${repository}` : ''}`)
+    const files = (await readdir(dir))
+      .filter((file) => /^(licen[cs]e|copying|notice|copyright)/i.test(file))
+      .sort()
+    const label = `${name} ${version}`
+    if (files.length === 0) {
+      const key = `(no license file in the published crate; license: ${license})`
+      groups.set(key, [...(groups.get(key) ?? []), label])
+      continue
+    }
+    for (const file of files) {
+      const text = (await readFile(join(dir, file), 'utf8')).replace(/\r\n?/g, '\n').trim()
+      if (!text) continue
+      groups.set(text, [...(groups.get(text) ?? []), label])
+    }
+  }
+  if (missingSource.length > 0) {
+    throw new Error(`crate sources missing (run \`cargo fetch --locked\` in src-tauri):\n${missingSource.join('\n')}`)
+  }
+
+  const lines = [
+    'Rust crates used by the Murge application executable',
+    '',
+    'Generated by scripts/generate-rust-notices.mjs from src-tauri/Cargo.lock.',
+    'The list is a superset: it also names crates used only to build or test.',
+    'Each license text below is reproduced verbatim from the published crate,',
+    'followed by the crates that ship that exact text.',
+    '',
+    '== Crates (name version | license | repository) ==',
+    '',
+    ...rows,
+    ''
+  ]
+  for (const [text, crates] of groups) {
+    lines.push('='.repeat(78), `Applies to: ${crates.join(', ')}`, '-'.repeat(78), text, '')
+  }
+  // Crates published without a license file still name an SPDX license.
+  // Reproduce the standard texts for the common ones; the copyright holders
+  // are the authors listed in each crate's repository.
+  const apache = [...groups.keys()].find((text) => /^\s*Apache License\s+Version 2\.0, January 2004/.test(text))
+  lines.push('='.repeat(78), 'Standard texts for crates published without a license file', '-'.repeat(78))
+  lines.push(MIT_TEXT, '')
+  if (apache) lines.push(apache, '')
+  await writeFile(outPath, lines.join('\n'))
+  console.log(`[rust-notices] ${rows.length} crates, ${groups.size} distinct license texts -> ${outPath}`)
+}
+
+if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('generate-rust-notices.mjs')) {
+  await main()
+}

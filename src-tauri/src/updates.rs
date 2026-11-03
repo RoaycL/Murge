@@ -418,18 +418,6 @@ pub fn signed_fields(signature: &str) -> std::collections::HashMap<String, Strin
         .collect()
 }
 
-/// Explicit restart/install shows the installer; background quit stays silent.
-/// Relaunch the app
-/// (`--force-run`) only for "重启并安装", not for an install on quit.
-/// (`--updated` is not passed: this is a takeover, not an in-place upgrade.)
-pub fn electron_installer_args(restart: bool) -> &'static [&'static str] {
-    if restart {
-        &["--force-run"]
-    } else {
-        &["/S"]
-    }
-}
-
 /// Ordered, de-duplicated feed bases: last-known-good first, then direct, then
 /// the prefix mirrors.
 pub fn feed_base_candidates(direct: &str, last_good: Option<&str>) -> Vec<String> {
@@ -581,10 +569,6 @@ impl ProgressMeter {
 struct ReadyUpdate {
     update: tauri_plugin_updater::Update,
     bytes: Vec<u8>,
-    /// "tauri" (installed by the updater plugin) or "electron" (a switch back
-    /// to the stable build, launched by [`launch_electron_installer`]).
-    product: &'static str,
-    file_name: String,
 }
 
 /// The verified installer, installed from `RunEvent::Exit` (electron-updater's
@@ -615,13 +599,6 @@ pub fn install_ready_update_on_exit() {
         return;
     };
     let restart = RESTART_AFTER_INSTALL.load(std::sync::atomic::Ordering::SeqCst);
-    if ready.product == "electron" {
-        if let Err(error) = launch_electron_installer(&ready.file_name, &ready.bytes, restart) {
-            crate::diag!("[updates] launching the stable installer failed: {error}");
-            crate::file_log::flush_diagnostics_blocking();
-        }
-        return;
-    }
     let update = ready.update.restart_after_install(restart);
     if let Err(error) = update.install(&ready.bytes) {
         crate::diag!("[updates] launching the installer failed: {error}");
@@ -629,11 +606,6 @@ pub fn install_ready_update_on_exit() {
         crate::file_log::flush_diagnostics_blocking();
     }
 }
-
-/// How long the elevated helper waits for this process to finish exiting.
-pub const PARENT_EXIT_TIMEOUT_SECONDS: u32 = 120;
-/// How long the exit waits for the user to answer the administrator prompt.
-const ELEVATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
 /// A PowerShell single-quoted string literal. PowerShell also reads the
 /// typographic single quotes as delimiters, so each of them is doubled too.
@@ -658,228 +630,6 @@ pub fn encode_powershell(script: &str) -> String {
     use base64::Engine;
     let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     base64::engine::general_purpose::STANDARD.encode(bytes)
-}
-
-/// A JScript string literal (JSON, with the ES5 line separators escaped).
-pub fn js_literal(value: &str) -> String {
-    serde_json::to_string(value)
-        .unwrap_or_else(|_| "\"\"".to_string())
-        .replace('\u{2028}', "\\u2028")
-        .replace('\u{2029}', "\\u2029")
-}
-
-/// One argument of a Windows command line (CommandLineToArgvW rules).
-pub fn windows_arg(value: &str) -> String {
-    if !value.is_empty() && !value.chars().any(|c| c.is_whitespace() || c == '"') {
-        return value.to_string();
-    }
-    let mut quoted = String::from("\"");
-    let mut backslashes = 0;
-    for character in value.chars() {
-        match character {
-            '\\' => backslashes += 1,
-            '"' => {
-                quoted.push_str(&"\\".repeat(backslashes * 2 + 1));
-                quoted.push('"');
-                backslashes = 0;
-            }
-            other => {
-                quoted.push_str(&"\\".repeat(backslashes));
-                quoted.push(other);
-                backslashes = 0;
-            }
-        }
-    }
-    quoted.push_str(&"\\".repeat(backslashes * 2));
-    quoted.push('"');
-    quoted
-}
-
-/// Script of the elevated helper, run by `wscript.exe`: wait for Murge to
-/// exit, then run the installer (already elevated, so no second prompt) with
-/// a visible window. `wscript.exe` is a GUI program: an elevated PowerShell
-/// gets a console window of its own that `-WindowStyle Hidden` does not
-/// reliably hide (Windows Terminal as the default terminal ignores it), and
-/// it stayed up for the whole install. Values are embedded as literals: an
-/// elevated process does not inherit this process's environment.
-pub fn elevated_helper_script(
-    installer: &str,
-    args: &[&str],
-    parent_pid: u32,
-    trace: &str,
-    failure: &str,
-) -> String {
-    let command_line = std::iter::once(installer)
-        .chain(args.iter().copied())
-        .map(windows_arg)
-        .collect::<Vec<_>>()
-        .join(" ");
-    let timeout = PARENT_EXIT_TIMEOUT_SECONDS;
-    [
-        format!("var trace = {};", js_literal(trace)),
-        format!("var failure = {};", js_literal(failure)),
-        "var fso = new ActiveXObject('Scripting.FileSystemObject');".to_string(),
-        "function log(line) {".to_string(),
-        "  try { var file = fso.OpenTextFile(trace, 8, true); file.WriteLine(line); file.Close(); } catch (e) {}".to_string(),
-        "}".to_string(),
-        "function fail(message) {".to_string(),
-        "  var stream = new ActiveXObject('ADODB.Stream');".to_string(),
-        "  stream.Type = 2; stream.Charset = 'utf-8'; stream.Open();".to_string(),
-        "  stream.WriteText(message); stream.SaveToFile(failure, 2); stream.Close();".to_string(),
-        "}".to_string(),
-        "function running() {".to_string(),
-        format!("  return GetObject('winmgmts:root\\\\cimv2').ExecQuery('SELECT ProcessId FROM Win32_Process WHERE ProcessId = {parent_pid}').Count > 0;"),
-        "}".to_string(),
-        "try {".to_string(),
-        "  log('Elevated helper started');".to_string(),
-        format!("  var deadline = new Date().getTime() + {};", u64::from(timeout) * 1000),
-        "  while (running()) {".to_string(),
-        format!("    if (new Date().getTime() > deadline) throw new Error('the app did not exit within {timeout} seconds');"),
-        "    WScript.Sleep(250);".to_string(),
-        "  }".to_string(),
-        "  log('Starting installer');".to_string(),
-        format!("  var code = new ActiveXObject('WScript.Shell').Run({}, 1, true);", js_literal(&command_line)),
-        "  log('Installer exit code: ' + code);".to_string(),
-        "  if (code !== 0) throw new Error('Installer exited with code ' + code);".to_string(),
-        "} catch (e) {".to_string(),
-        "  try { fail(e.message || String(e)); } catch (ignored) {}".to_string(),
-        "}".to_string(),
-    ]
-    .join("\r\n")
-}
-
-/// The helper file's bytes: UTF-16LE with a BOM, which WSH reads as Unicode.
-pub fn helper_script_file(script: &str) -> Vec<u8> {
-    std::iter::once(0xFEFF_u16)
-        .chain(script.encode_utf16())
-        .flat_map(u16::to_le_bytes)
-        .collect()
-}
-
-/// Script run while Murge still exists: request elevation and start the
-/// elevated helper. Exits 0 once it runs, 1 when elevation was refused.
-/// `Start-Process` joins `-ArgumentList` with spaces, so the helper path
-/// carries its own quotes.
-pub fn elevation_request_script(
-    helper_file: &str,
-    wscript: &str,
-    trace: &str,
-    failure: &str,
-) -> String {
-    let helper_args = ["//B", "//NoLogo", "//E:jscript", &windows_arg(helper_file)]
-        .iter()
-        .map(|arg| ps_literal(arg))
-        .collect::<Vec<_>>()
-        .join(",");
-    let trace = ps_literal(trace);
-    [
-        "try {".to_string(),
-        format!("  Set-Content -LiteralPath {trace} -Value 'Requesting elevation' -ErrorAction SilentlyContinue"),
-        format!(
-            "  $null = Start-Process -FilePath {} -ArgumentList {helper_args} -Verb RunAs -ErrorAction Stop",
-            ps_literal(wscript)
-        ),
-        format!("  Add-Content -LiteralPath {trace} -Value 'Elevated helper launched' -ErrorAction SilentlyContinue"),
-        "  exit 0".to_string(),
-        "} catch {".to_string(),
-        format!(
-            "  Set-Content -LiteralPath {} -Value ('Elevation failed: ' + $_.Exception.Message) -Encoding UTF8",
-            ps_literal(failure)
-        ),
-        "  exit 1".to_string(),
-        "}".to_string(),
-    ]
-    .join("\n")
-}
-
-/// Folder the switch-back installer and its diagnostics live in.
-fn update_temp_dir() -> std::path::PathBuf {
-    std::env::temp_dir().join("murge-update")
-}
-
-/// Write the verified Electron installer to a temp folder and hand it to
-/// Windows. A non-elevated child of this process does not reliably outlive
-/// it (a login task tears its whole process tree down), so — while Murge
-/// still runs — a short-lived hidden PowerShell asks for elevation and starts
-/// an elevated `wscript.exe` helper (no console window), which Windows
-/// creates outside this process tree. That
-/// helper waits for Murge to exit and runs the installer. This blocks the
-/// exit while the UAC prompt is up. The Electron installer removes this
-/// installation first (keeping service, data and the startup task).
-fn launch_electron_installer(file_name: &str, bytes: &[u8], restart: bool) -> Result<(), String> {
-    let dir = update_temp_dir();
-    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-    let path = dir.join(file_name);
-    std::fs::write(&path, bytes).map_err(|error| error.to_string())?;
-    let trace = dir.join("install-trace.txt");
-    let failure = dir.join("install-failure.txt");
-    let helper_file = dir.join("install-helper.js");
-    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
-    let system32 = std::path::Path::new(&system_root).join("System32");
-    let powershell = system32
-        .join("WindowsPowerShell")
-        .join("v1.0")
-        .join("powershell.exe");
-    let wscript = system32.join("wscript.exe");
-    let helper = elevated_helper_script(
-        &path.to_string_lossy(),
-        electron_installer_args(restart),
-        std::process::id(),
-        &trace.to_string_lossy(),
-        &failure.to_string_lossy(),
-    );
-    std::fs::write(&helper_file, helper_script_file(&helper)).map_err(|error| error.to_string())?;
-    let request = elevation_request_script(
-        &helper_file.to_string_lossy(),
-        &wscript.to_string_lossy(),
-        &trace.to_string_lossy(),
-        &failure.to_string_lossy(),
-    );
-    let mut process = std::process::Command::new(&powershell);
-    process
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-WindowStyle",
-            "Hidden",
-            "-EncodedCommand",
-            &encode_powershell(&request),
-        ])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        process.creation_flags(CREATE_NO_WINDOW);
-    }
-    let mut child = process.spawn().map_err(|error| error.to_string())?;
-    let deadline = std::time::Instant::now() + ELEVATION_TIMEOUT;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) if status.success() => {
-                crate::diag!("[updates] elevated installer helper started");
-                return Ok(());
-            }
-            Ok(Some(status)) => {
-                return Err(format!(
-                    "elevation was refused or failed ({status}); see {}",
-                    failure.display()
-                ))
-            }
-            Ok(None) if std::time::Instant::now() >= deadline => {
-                let _ = child.kill();
-                let reason = "no answer to the administrator prompt";
-                let _ = std::fs::write(&failure, reason);
-                return Err(reason.to_string());
-            }
-            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
-            Err(error) => return Err(error.to_string()),
-        }
-    }
 }
 
 /// Production driver: signed Tauri updater over GitHub Releases + mirrors.
@@ -956,15 +706,6 @@ pub fn signed_fields_match(signature: &str, version: &str, file_name: &str) -> R
 
 impl TauriUpdaterDriver {
     pub fn new(app: tauri::AppHandle, channel: &str) -> Self {
-        let failure_file = update_temp_dir().join("install-failure.txt");
-        if let Ok(reason) = std::fs::read_to_string(&failure_file) {
-            crate::diag!(
-                "[updates] previous installer launch failed: {}",
-                reason.trim()
-            );
-            // Logged once; a stale file would repeat the line on every launch.
-            let _ = std::fs::remove_file(&failure_file);
-        }
         let repository = crate::brand::load_brand()
             .ok()
             .and_then(|brand| repository_base(&brand.repository_url));
@@ -1094,8 +835,7 @@ impl TauriUpdaterInner {
         // Already downloaded and waiting for exit: nothing new to fetch.
         let staged = READY_UPDATE.lock().expect("ready update poisoned");
         if let Some(ready) = staged.as_ref() {
-            if ready.product == product && !is_newer_version(&update.version, &ready.update.version)
-            {
+            if !is_newer_version(&update.version, &ready.update.version) {
                 return Ok(None);
             }
         }
@@ -1253,7 +993,7 @@ impl TauriUpdaterInner {
     /// that names another version or file, rejects the offer.
     async fn download_offer(self: &Arc<Self>) -> DownloadOutcome {
         let generation = self.generation();
-        let Some((update, base, product)) = self
+        let Some((update, base, _product)) = self
             .available
             .lock()
             .expect("updater available poisoned")
@@ -1316,12 +1056,7 @@ impl TauriUpdaterInner {
                     if generation != self.generation() {
                         return DownloadOutcome::Superseded;
                     }
-                    *staged = Some(ReadyUpdate {
-                        update,
-                        bytes,
-                        product,
-                        file_name,
-                    });
+                    *staged = Some(ReadyUpdate { update, bytes });
                     self.emit(UpdaterDriverEvent::Downloaded);
                     return DownloadOutcome::Staged;
                 }
@@ -2222,49 +1957,9 @@ mod tests {
     }
 
     #[test]
-    fn installer_hand_off_elevates_before_exit_and_runs_installer_visibly() {
+    fn powershell_literals_double_every_single_quote() {
         assert_eq!(ps_literal("a'b"), "'a''b'");
         assert_eq!(ps_literal("O\u{2019}Neil"), "'O\u{2019}\u{2019}Neil'");
-        assert_eq!(
-            js_literal("C:\\a \"b\"\u{2028}"),
-            "\"C:\\\\a \\\"b\\\"\\u2028\""
-        );
-        assert_eq!(windows_arg("/S"), "/S");
-        assert_eq!(
-            windows_arg("C:\\Program Files\\x.exe"),
-            "\"C:\\Program Files\\x.exe\""
-        );
-        assert_eq!(
-            windows_arg("C:\\dir with space\\"),
-            "\"C:\\dir with space\\\\\""
-        );
-        assert_eq!(windows_arg(""), "\"\"");
-        let installer = "C:\\Users\\O'Neil Lee\\Temp\\Murge-Setup-0.9.34-x64.exe";
-        let helper = elevated_helper_script(
-            installer,
-            &["--force-run"],
-            4242,
-            "C:\\t\\install-trace.txt",
-            "C:\\t\\install-failure.txt",
-        );
-        assert!(helper.contains("WHERE ProcessId = 4242"));
-        assert!(helper.contains(&format!(
-            "Run({}, 1, true)",
-            js_literal(&format!("\"{installer}\" --force-run"))
-        )));
-        assert!(!helper.contains("RunAs"));
-        assert!(!helper.to_lowercase().contains("powershell"));
-        let file = helper_script_file("用户");
-        assert_eq!(&file[..2], &[0xFF, 0xFE]);
-        let request = elevation_request_script(
-            "C:\\Users\\O'Neil Lee\\Temp\\install-helper.js",
-            "C:\\Windows\\System32\\wscript.exe",
-            "C:\\t\\install-trace.txt",
-            "C:\\t\\install-failure.txt",
-        );
-        assert!(request.contains("-FilePath 'C:\\Windows\\System32\\wscript.exe'"));
-        assert!(request.contains("-Verb RunAs"));
-        assert!(request.contains("'\"C:\\Users\\O''Neil Lee\\Temp\\install-helper.js\"'"));
     }
 
     #[test]
@@ -2273,8 +1968,6 @@ mod tests {
         assert_eq!(update_channel(true), "beta");
         assert_eq!(channel_tag("stable"), "update-stable");
         assert_eq!(channel_tag("beta"), "update-beta");
-        assert_eq!(electron_installer_args(true), ["--force-run"]);
-        assert_eq!(electron_installer_args(false), ["/S"]);
         // A driver without channels does not offer the setting.
         let service = UpdateService::new(FakeDriver::new(true));
         assert!(!service.get_state().channels_supported);

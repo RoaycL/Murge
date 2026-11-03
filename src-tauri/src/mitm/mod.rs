@@ -952,10 +952,54 @@ impl MitmService {
             }
         };
         collect(&local, "本地");
+        // 外部资源: every script the active modules download, with its source.
+        let mut script_resources: Vec<(String, String, Vec<String>)> = Vec::new();
+        let mut note_scripts = |parsed: &rules::ParsedModule, source: &str| {
+            for script in &parsed.scripts {
+                match script_resources
+                    .iter_mut()
+                    .find(|(url, _, _)| *url == script.script_url)
+                {
+                    Some((_, _, sources)) => {
+                        if !sources.iter().any(|s| s == source) {
+                            sources.push(source.to_string());
+                        }
+                    }
+                    None => script_resources.push((
+                        script.script_url.clone(),
+                        script.name.clone(),
+                        vec![source.to_string()],
+                    )),
+                }
+            }
+        };
+        note_scripts(&local, "本地");
         for module in settings.modules.iter().filter(|module| module.enabled) {
             let parsed = rules::parse_module_with(&module.content, &module.arguments);
             collect(&parsed, &module.name);
+            note_scripts(&parsed, &module.name);
         }
+        let script_errors = self.script_errors.lock().expect("errors").clone();
+        let scripts_json: Vec<Value> = script_resources
+            .into_iter()
+            .map(|(url, name, sources)| {
+                let updated_at = self
+                    .script_file(&url)
+                    .and_then(|path| std::fs::metadata(path).ok())
+                    .and_then(|meta| meta.modified().ok())
+                    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|elapsed| elapsed.as_millis() as u64);
+                let cached = self.load_script(&url).is_some();
+                json!({
+                    "url": url,
+                    "name": name,
+                    "sources": sources,
+                    "cached": cached,
+                    "updatedAt": updated_at,
+                    "error": script_errors.get(&url),
+                })
+            })
+            .collect();
         let trusted = *self.trusted.lock().expect("trusted");
         let ca = self.shared.ca().map(|ca| {
             json!({
@@ -986,6 +1030,7 @@ impl MitmService {
             "active": self.inactive_reason().is_none(),
             "inactiveReason": self.inactive_reason(),
             "activeRules": active_rules,
+            "scriptResources": scripts_json,
             "summary": {
                 "hostnames": rules.hostnames,
                 "urlRewrites": rules.url_rewrites.len(),
@@ -1169,6 +1214,14 @@ pub async fn dispatch(
             .add_module(&string_arg(payload, 0, channel)?)
             .await
             .map(|_| Value::Null),
+        "mitm:update-script" => {
+            let url = string_arg(payload, 0, channel)?;
+            service.ensure_scripts(&[url.clone()]).await;
+            match service.script_errors.lock().expect("errors").get(&url) {
+                Some(error) => Err(IpcError::invalid_argument(format!("更新脚本失败：{error}"))),
+                None => Ok(Value::Null),
+            }
+        }
         "mitm:update-module" => service
             .update_module(&string_arg(payload, 0, channel)?)
             .await

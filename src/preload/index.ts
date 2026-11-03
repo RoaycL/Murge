@@ -166,6 +166,7 @@ const api: DesktopApi = {
     exportCa: () => invoke(IPC.mitmExportCa),
     addModule: (url) => invoke(IPC.mitmAddModule, url),
     updateModule: (id) => invoke(IPC.mitmUpdateModule, id),
+    updateScript: (url) => invoke(IPC.mitmUpdateScript, url),
     removeModule: (id) => invoke(IPC.mitmRemoveModule, id),
     setModuleEnabled: (id, enabled) => invoke(IPC.mitmSetModuleEnabled, id, enabled),
     setModuleArguments: (id, args) => invoke(IPC.mitmSetModuleArguments, id, args),

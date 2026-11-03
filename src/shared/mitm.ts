@@ -100,6 +100,8 @@ export interface MitmState {
   inactiveReason: string | null
   /** Every active rule per section ([URL Rewrite] …), with where it came from. */
   activeRules?: Record<string, MitmActiveRule[]>
+  /** Scripts the active modules download (shown in 外部资源). */
+  scriptResources?: MitmScriptResource[]
   summary: {
     hostnames: string[]
     urlRewrites: number
@@ -113,6 +115,17 @@ export interface MitmState {
     /** Keys held in the scripts' $persistentStore. */
     scriptStoreKeys: number
   }
+}
+
+export interface MitmScriptResource {
+  url: string
+  name: string
+  /** 「本地」 and/or module names that reference it. */
+  sources: string[]
+  cached: boolean
+  /** Download time (ms), null when never downloaded. */
+  updatedAt: number | null
+  error: string | null
 }
 
 export interface MitmActiveRule {

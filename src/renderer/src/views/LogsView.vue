@@ -8,7 +8,7 @@ import { formatWallClock } from '../lib/format'
 import AppSelect from '../components/AppSelect.vue'
 import EmptyState from '../components/EmptyState.vue'
 import AppIcon from '../components/AppIcon.vue'
-import { downloadDiagnosticReport } from '../lib/diagnostic-export'
+import { downloadDiagnosticReport, exportStamp, saveTextFile } from '../lib/diagnostic-export'
 import { useToast } from '../composables/use-toast'
 
 type LogSource = 'core' | 'app'
@@ -23,6 +23,7 @@ const { visibleEntries: appVisibleEntries, modules: appModules, lastError: appEr
 const source = ref<LogSource>('core')
 const exportingDiagnostics = ref(false)
 const exportingBundle = ref(false)
+const exportingLogs = ref(false)
 const LEVEL_OPTIONS = [
   { value: 'all', label: '全部级别' }, { value: 'debug', label: 'debug' },
   { value: 'info', label: 'info' }, { value: 'warning', label: 'warning' }, { value: 'error', label: 'error' }
@@ -52,24 +53,20 @@ const statusLabel = computed(() => {
   return status.value === 'live' ? '实时' : status.value === 'loading' ? '连接中' : '已断开'
 })
 
-function download(text: string, name: string): void {
-  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = name
-  anchor.click()
-  URL.revokeObjectURL(url)
-}
-
-function exportLogs(): void {
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-  if (source.value === 'core') {
-    download(serializeLogs(visibleEntries.value), `mihomo-logs-${stamp}.txt`)
-    return
+async function exportLogs(): Promise<void> {
+  if (exportingLogs.value) return
+  exportingLogs.value = true
+  try {
+    const stamp = exportStamp()
+    const result = source.value === 'core'
+      ? await saveTextFile(`mihomo-logs-${stamp}.txt`, serializeLogs(visibleEntries.value))
+      : await saveTextFile(`murge-app-logs-${stamp}.txt`, serializeLogs(appVisibleEntries.value.map((entry) => ({ ...entry, message: `[${entry.module}] ${entry.message}` }))))
+    if (result.saved) toast.success('日志已导出', result.path)
+  } catch (error) {
+    toast.error('日志导出失败', error instanceof Error ? error.message : undefined)
+  } finally {
+    exportingLogs.value = false
   }
-  const lines = appVisibleEntries.value.map((entry) => ({ ...entry, message: `[${entry.module}] ${entry.message}` }))
-  download(serializeLogs(lines), `murge-app-logs-${stamp}.txt`)
 }
 
 function clearLogs(): void {
@@ -81,9 +78,10 @@ async function exportDiagnostics(): Promise<void> {
   if (exportingDiagnostics.value) return
   exportingDiagnostics.value = true
   try {
-    await downloadDiagnosticReport()
-  } catch {
-    toast.error('诊断报告生成失败', '请稍后重试。')
+    const result = await downloadDiagnosticReport()
+    if (result.saved) toast.success('诊断报告已导出', result.path)
+  } catch (error) {
+    toast.error('诊断报告导出失败', error instanceof Error ? error.message : '请稍后重试。')
   } finally {
     exportingDiagnostics.value = false
   }
@@ -138,7 +136,7 @@ onBeforeUnmount(stopPolling)
           <button type="button" :class="{ selected: source === 'app' }" :aria-pressed="source === 'app'" @click="source = 'app'">应用</button>
         </div>
         <button type="button" @click="clearLogs">清空</button>
-        <button type="button" :disabled="!shownCount" @click="exportLogs">导出</button>
+        <button type="button" :disabled="!shownCount || exportingLogs" @click="exportLogs">{{ exportingLogs ? '导出中…' : '导出' }}</button>
       </div>
     </header>
     <section class="troubleshoot-bar surface-card" aria-label="问题排查">

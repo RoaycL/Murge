@@ -30,7 +30,8 @@ export const api: DesktopApi = {
   logs: {
     readApp: () => invoke(IPC.logsReadApp),
     openFolder: () => invoke(IPC.logsOpenFolder),
-    exportBundle: () => invoke(IPC.logsExportBundle)
+    exportBundle: () => invoke(IPC.logsExportBundle),
+    saveText: (fileName, contents) => invoke(IPC.logsSaveText, fileName, contents)
   },
   backup: {
     create: (password) => invoke(IPC.backupCreate, password),

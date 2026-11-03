@@ -61,6 +61,7 @@ export const IPC = {
   logsReadApp: 'logs:read-app',
   logsOpenFolder: 'logs:open-folder',
   logsExportBundle: 'logs:export-bundle',
+  logsSaveText: 'logs:save-text',
   backupCreate: 'backup:create',
   backupPreview: 'backup:preview',
   backupRestore: 'backup:restore',
@@ -241,6 +242,8 @@ export interface DesktopApi {
     openFolder(): Promise<void>
     /** Zip recent logs + the diagnostic report behind a save dialog. */
     exportBundle(): Promise<LogBundleResult>
+    /** Save renderer-built text (日志 / 诊断) behind a native save dialog. */
+    saveText(fileName: string, contents: string): Promise<LogBundleResult>
   }
   backup: {
     create(password: string): Promise<ConfigBackupResult>

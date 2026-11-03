@@ -443,3 +443,11 @@ input,textarea,[contenteditable="true"],code,pre{user-select:text;-webkit-user-s
 .surge-link { padding: 0; border: 0; color: var(--app-blue); background: transparent; font-size: inherit; text-decoration: none; cursor: pointer; }
 .surge-link:disabled { opacity: 0.5; cursor: default; }
 .surge-warn { color: var(--app-warning) !important; }
+/* 外观 › 侧边栏布局；更多 › 已从侧边栏隐藏 */
+.sidebar-layout-section .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.sidebar-layout-section .section-heading h2 { margin: 0; }
+.sidebar-layout-section .secondary-button:disabled { opacity: .45; cursor: default; }
+.sidebar-layout-section .section-hint { margin: 0 0 14px; color: var(--app-muted); font-size: var(--font-size-2xs); line-height: 1.5; }
+.more-hidden-pages { margin-top: 28px; }
+.more-hidden-pages h2 { margin: 0; color: var(--app-pink); font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); }
+.more-hidden-pages .settings-menu { padding-top: 12px; }

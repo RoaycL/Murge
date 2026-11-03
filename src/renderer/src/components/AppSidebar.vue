@@ -1,46 +1,18 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { BrandConfig } from '@shared/brand'
-import AppIcon, { type AppIconName } from './AppIcon.vue'
+import AppIcon from './AppIcon.vue'
 import AppTitlebar from './AppTitlebar.vue'
 import { detectShell } from '../platform/desktop-contract'
+import { useSidebarLayoutStore } from '../stores/sidebar-layout'
 
 const isTauri = detectShell().kind === 'tauri'
 
 defineProps<{ brand: BrandConfig }>()
 
-const groups: Array<{ label: string; items: Array<{ to: string; label: string; icon: AppIconName; iconSize?: number }> }> = [
-  {
-    label: '',
-    items: [
-      { to: '/activity', label: '活动', icon: 'activity' },
-      { to: '/overview', label: '概览', icon: 'overview' },
-      { to: '/connections', label: '连接', icon: 'connections' },
-      { to: '/processes', label: '进程', icon: 'processes' }
-    ]
-  },
-  {
-    label: '代理',
-    items: [
-      { to: '/policies', label: '策略', icon: 'policies' },
-      { to: '/rules', label: '规则', icon: 'rules' }
-    ]
-  },
-  {
-    label: 'HTTP',
-    items: [
-      { to: '/mitm', label: '解密', icon: 'mitm' },
-      { to: '/rewrite', label: '重写', icon: 'rewrite' }
-    ]
-  },
-  {
-    label: '配置',
-    items: [
-      { to: '/profiles', label: '配置', icon: 'profiles' },
-      { to: '/overrides', label: '覆写', icon: 'overrides' },
-      { to: '/resources', label: '外部资源', icon: 'resources' }
-    ]
-  }
-]
+// 侧栏条目、分组与默认顺序见 lib/sidebar-layout.ts；用户在「外观 › 侧边栏布局」里调整。
+const sidebarLayout = useSidebarLayoutStore()
+const groups = computed(() => sidebarLayout.groups)
 </script>
 
 <template>
@@ -48,10 +20,10 @@ const groups: Array<{ label: string; items: Array<{ to: string; label: string; i
     <div class="window-drag-region" :data-tauri-drag-region="isTauri ? '' : undefined" />
     <AppTitlebar v-if="isTauri" />
     <nav class="sidebar-nav" aria-label="主导航">
-      <section v-for="group in groups" :key="group.label || 'primary'" class="nav-section">
+      <section v-for="group in groups" :key="group.id" class="nav-section">
         <h2 v-if="group.label" class="nav-section-title">{{ group.label }}</h2>
         <RouterLink v-for="item in group.items" :key="item.to" :to="item.to" class="nav-link">
-          <span class="nav-icon"><AppIcon :name="item.icon" :size="item.iconSize" /></span>
+          <span class="nav-icon"><AppIcon :name="item.icon" /></span>
           <span>{{ item.label }}</span>
         </RouterLink>
       </section>

@@ -131,6 +131,14 @@ const TUN_DEFAULT_FAKE_IP_FILTER: [&str; 6] = [
     "+.market.xiaomi.com",
 ];
 
+/// The fake-ip filter Murge fills in when a profile omits one.
+pub fn default_fake_ip_filter() -> Vec<String> {
+    TUN_DEFAULT_FAKE_IP_FILTER
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
 fn invalid(message: impl Into<String>) -> IpcError {
     IpcError::code(code::INVALID_ARGUMENT, message.into())
 }
@@ -1106,6 +1114,7 @@ pub fn generate_proxied_tun_config(options: &Value) -> Result<String, IpcError> 
         }
     };
     exclude_literal_proxy_servers(&mut data, &mut tun_block);
+    crate::local_edits::extend_tun_excludes(&mut tun_block);
     data.insert("tun".into(), Value::Object(tun_block.clone()));
 
     // DNS takeover follows clash-party's `controlDns=false` default: the

@@ -53,4 +53,17 @@ describe('EntityTrafficTracker', () => {
     tracker.observe(many, t0 + 26 * 60 * MIN)
     expect(tracker.totals('process').size).toBe(ENTITY_TRAFFIC_MAX_ENTITIES)
   })
+
+  it('tracks the concrete node (first chain hop) with its peak rate', () => {
+    const tracker = new EntityTrafficTracker(t0)
+    const viaNode = (id: string, up: number, down: number): MihomoConnection => ({ ...conn(id, up, down), chains: ['Snell 家宽', 'Proxy'] })
+    tracker.observe([viaNode('a', 0, 0)], t0)
+    tracker.observe([viaNode('a', 500, 4000)], t0 + 1000)
+    tracker.observe([viaNode('a', 600, 4100)], t0 + 2000)
+    const stats = tracker.stats('node', 'Snell 家宽', t0 + 2000)!
+    expect(stats.windows.find((row) => row.key === 'start')).toMatchObject({ up: 600, down: 4100 })
+    expect(stats.rate).toEqual({ up: 100, down: 100 })
+    expect(stats.peak).toEqual({ up: 500, down: 4000 })
+    expect(tracker.stats('node', 'Proxy')).toBeNull()
+  })
 })

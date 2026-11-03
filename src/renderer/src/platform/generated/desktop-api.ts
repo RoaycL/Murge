@@ -174,6 +174,10 @@ export function createDesktopApi(): DesktopApi {
       lastKnownGood: () => bridgeInvoke("overrides:last-known-good", []),
       resetToLastGood: () => bridgeInvoke("overrides:reset-to-last-good", []),
     },
+    local: {
+      getState: () => bridgeInvoke("local:get-state", []),
+      save: (settings) => bridgeInvoke("local:save", [settings]),
+    },
     mitm: {
       getState: () => bridgeInvoke("mitm:get-state", []),
       setEnabled: (enabled) => bridgeInvoke("mitm:set-enabled", [enabled]),

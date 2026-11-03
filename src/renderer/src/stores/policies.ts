@@ -27,7 +27,7 @@ function isSelectableGroup(proxy: MihomoProxy | null | undefined): boolean {
 }
 
 /** Map a thrown value onto the visible delay state. */
-function classifyDelayError(value: unknown): DelayStatus {
+export function classifyDelayError(value: unknown): DelayStatus {
   const code = toProtocolError(value).code
   if (code === ProtocolErrorCode.UPSTREAM_TIMEOUT) return 'timeout'
   // 503 (probe failed / node unreachable) and "controller not reachable" are

@@ -139,6 +139,10 @@ export const api: DesktopApi = {
     lastKnownGood: () => invoke(IPC.overridesLastKnownGood),
     resetToLastGood: () => invoke(IPC.overridesResetToLastGood)
   },
+  local: {
+    getState: () => invoke(IPC.localGetState),
+    save: (settings) => invoke(IPC.localSave, settings)
+  },
   mitm: {
     getState: () => invoke(IPC.mitmGetState),
     setEnabled: (enabled) => invoke(IPC.mitmSetEnabled, enabled),

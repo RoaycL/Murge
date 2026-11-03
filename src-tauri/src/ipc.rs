@@ -64,6 +64,12 @@ pub async fn desktop_ipc(
     tun: State<'_, std::sync::Arc<crate::tun::TunCoordinator>>,
     updates: State<'_, std::sync::Arc<crate::updates::UpdateService>>,
 ) -> IpcResult {
+    if channel.starts_with("local:") {
+        return crate::local_edits::dispatch(
+            &channel, &payload, &kernel, &models, &profiles, &overrides,
+        )
+        .await;
+    }
     if channel.starts_with("mitm:") {
         return crate::mitm::dispatch(&channel, &payload, &kernel, &models, &profiles, &overrides)
             .await;

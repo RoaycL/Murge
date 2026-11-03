@@ -27,6 +27,7 @@ import type {
 } from './overrides'
 import type { DnsEnhancement, DnsSnapshot } from './dns'
 import type { MitmRequestEntry, MitmState } from './mitm'
+import type { LocalSettings, LocalState } from './local'
 import type { SnifferEnhancement, SnifferSnapshot } from './sniffer'
 import type { KernelStatus, OutboundMode, RuntimeSummary, TrafficSample } from './runtime'
 import type { SystemProxyStatus } from './system-proxy'
@@ -147,6 +148,8 @@ export const IPC = {
   overridesValidate: 'overrides:validate',
   overridesLastKnownGood: 'overrides:last-known-good',
   overridesResetToLastGood: 'overrides:reset-to-last-good',
+  localGetState: 'local:get-state',
+  localSave: 'local:save',
   mitmGetState: 'mitm:get-state',
   mitmSetEnabled: 'mitm:set-enabled',
   mitmSetRewriteEnabled: 'mitm:set-rewrite-enabled',
@@ -350,6 +353,11 @@ export interface DesktopApi {
     validate(): Promise<OverrideValidation>
     lastKnownGood(): Promise<OverrideLastKnownGood | null>
     resetToLastGood(): Promise<OverridesSnapshot>
+  }
+  /** 本地节点与规则 (src-tauri/src/local_edits.rs). */
+  local: {
+    getState(): Promise<LocalState>
+    save(settings: LocalSettings): Promise<LocalState>
   }
   mitm: {
     getState(): Promise<MitmState>

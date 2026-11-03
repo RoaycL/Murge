@@ -53,6 +53,7 @@ mod kernel_config_validation;
 mod kernel_process;
 mod lan_gateway;
 mod live_config;
+mod local_edits;
 mod mihomo_artifact;
 mod privileged_kernel;
 mod profile_auto_update;
@@ -521,6 +522,7 @@ pub fn run() {
             // kernel config is composed; upstream legs re-enter the mixed port.
             {
                 let handle_for_mitm = app.handle().clone();
+                local_edits::initialize(paths.app_data_root.clone());
                 mitm::initialize(
                     paths.app_data_root.clone(),
                     &paths::app_data_namespace(),

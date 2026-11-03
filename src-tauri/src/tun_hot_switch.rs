@@ -232,6 +232,7 @@ where
             // settings clears it on the running core (hot-switch-adapter.ts).
             next.entry("route-address").or_insert(json!([]));
             next.entry("route-exclude-address").or_insert(json!([]));
+            crate::local_edits::extend_tun_excludes(&mut next);
             // Previous runtime-only fields carry over (the TS spread of the
             // rebuilt block over the previous one).
             if let Some(previous_object) = previous.as_object() {

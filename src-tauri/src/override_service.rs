@@ -278,7 +278,21 @@ impl OverrideService {
         let effective = self.effective_overrides(&state, profile_id);
         let result = apply_overrides_to_document(base_document, &effective);
         self.maybe_capture_last_good(&mut state, &result.text);
-        Ok(result.text)
+        // 本地节点与规则 sit on top of every override.
+        Ok(crate::local_edits::apply_global(&result.text, profile_id))
+    }
+
+    /// The overrides alone, without the local layer (the base the 本地节点与
+    /// 规则 editor diffs against).
+    pub fn apply_overrides_only(
+        &self,
+        base_document: &str,
+        profile_id: Option<&str>,
+    ) -> Result<String, IpcError> {
+        let mut state = self.guard();
+        self.ensure_loaded(&mut state);
+        let effective = self.effective_overrides(&state, profile_id);
+        Ok(apply_overrides_to_document(base_document, &effective).text)
     }
 
     /// Redacted preview of what the effective override set does to the active

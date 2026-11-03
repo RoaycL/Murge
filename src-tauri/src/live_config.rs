@@ -162,7 +162,9 @@ pub fn resolve_enhanced_document(
     let (dns_text, _) = crate::inspection::apply_dns_to_document(&overridden, &dns);
     let sniffer = enhancements::coerce_sniffer_enhancement(&models.sniffer.get());
     let (text, _) = crate::inspection::apply_sniffer_to_document(&dns_text, &sniffer);
-    // HTTPS 解密 last: its rules must precede every profile/override rule.
+    // Tailscale DNS / coexistence after DNS enhancement (which may replace
+    // the dns block); HTTPS 解密 last: its rules must precede every rule.
+    let text = crate::local_edits::apply_runtime_global(&text);
     Ok(Some(crate::mitm::apply_global(&text)))
 }
 

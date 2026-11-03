@@ -47,7 +47,10 @@ pub fn is_backup_path(path: &str) -> bool {
     if ROOT_FILES.contains(&path)
         || matches!(
             path,
-            "substore/root.json" | "substore/sub-store.json" | "mitm/mitm.json"
+            "substore/root.json"
+                | "substore/sub-store.json"
+                | "mitm/mitm.json"
+                | "local/local.json"
         )
     {
         return true;
@@ -289,6 +292,7 @@ mod tests {
         }
         assert!(is_backup_path("substore/root.json"));
         assert!(is_backup_path("mitm/mitm.json"));
+        assert!(is_backup_path("local/local.json"));
         assert!(!is_backup_path("mitm/ca.json"));
         assert!(!is_backup_path("mitm/ca.key"));
         assert!(is_backup_path("substore/sub-store.json"));

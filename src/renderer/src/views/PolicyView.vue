@@ -5,6 +5,7 @@ import { useKernelStore } from '../stores/kernel'
 import AppIcon from '../components/AppIcon.vue'
 import DetailDrawer from '../components/DetailDrawer.vue'
 import CachedRemoteIcon from '../components/CachedRemoteIcon.vue'
+import LocalNodesSection from '../components/LocalNodesSection.vue'
 
 const policies = usePoliciesStore()
 const kernel = useKernelStore()
@@ -67,8 +68,19 @@ function groupSummary(group: Parameters<typeof policies.groupSelectedMember>[0])
   return policies.groupSelectedMember(group) || (policies.isSelectableGroup(group) ? '未选择' : '内核自动')
 }
 
+/**
+ * A Tailscale node without an exit node only reaches the tailnet, so the
+ * HTTP latency test through it always fails; that is not a broken node.
+ */
+function isTailscaleNode(name: string): boolean {
+  return policies.nodeByMember[name]?.type === 'Tailscale'
+}
+
 function latencyLabel(name: string): { text: string; kind: string } {
   const state = policies.nodeState(name)
+  if (isTailscaleNode(name) && (state.status === 'timeout' || state.status === 'unavailable' || state.status === 'error')) {
+    return { text: '仅 tailnet', kind: 'idle' }
+  }
   switch (state.status) {
     case 'testing':
       return { text: '测试中…', kind: 'testing' }
@@ -92,6 +104,9 @@ function isUnavailable(name: string): boolean {
 
 function delayTitle(name: string): string {
   const state = policies.nodeState(name)
+  if (isTailscaleNode(name) && state.status !== 'ok' && state.status !== 'idle' && state.status !== 'testing') {
+    return '延迟测试访问的是公网地址；没有设置出口节点的 Tailscale 节点只能访问 tailnet，测不出延迟不代表不可用'
+  }
   if (state.error) return state.error
   return state.url ? `测试地址：${state.url}` : '测试此节点'
 }
@@ -116,6 +131,11 @@ async function init(): Promise<void> {
   await kernel.refresh()
   if (kernel.status.phase !== 'running') return
   await Promise.all([policies.load(), policies.syncMode()])
+}
+
+/** A local node change hot-reloads the core; re-read the groups. */
+function onLocalChanged(): void {
+  if (kernel.status.phase === 'running') void policies.load()
 }
 
 onMounted(() => {
@@ -161,6 +181,8 @@ watch(() => kernel.status.phase, (phase, previous) => {
     </template>
 
     <div v-if="policies.panelError" class="panel-error">{{ policies.panelError }}</div>
+
+    <LocalNodesSection @changed="onLocalChanged" />
 
     <DetailDrawer :open="groupDrawerOpen && Boolean(policies.selectedGroup)" :title="policies.selectedGroup" :subtitle="drawerSubtitle" :icon="policies.currentGroup?.icon" :icon-cache-key="`policy:${policies.selectedGroup}`" @close="groupDrawerOpen = false">
       <div class="node-caption"><span>节点列表</span><button type="button" :disabled="policies.groupDelayStatus === 'testing'" @click="policies.testAll()">{{ policies.groupDelayStatus === 'testing' ? '测试中…' : '测试当前组' }}</button></div>

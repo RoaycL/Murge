@@ -176,7 +176,7 @@ describe('network drawer + resources UI contract', () => {
     expect(overview).toMatch(/\{ \.\.\.dns\.enhancement, enabled: !dnsEnabled\.value \}/)
   })
 
-  it('gives default-downloaded Sub-Store its own page in the configuration group', async () => {
+  it('gives default-downloaded Sub-Store its own page under 更多', async () => {
     const [resources, subStoreView, sidebar, subStoreIcon, settings, main, shared, service, store] = await Promise.all([
       read('src/renderer/src/views/ResourcesView.vue'),
       read('src/renderer/src/views/SubStoreView.vue'),
@@ -190,7 +190,9 @@ describe('network drawer + resources UI contract', () => {
       read('src/renderer/src/stores/substore.ts')
     ])
     expect(resources).not.toMatch(/Sub-Store|subStore/)
-    expect(sidebar).toMatch(/label: '配置'[\s\S]*to: '\/profiles'[\s\S]*to: '\/overrides'[\s\S]*to: '\/resources'[\s\S]*to: '\/substore', label: 'Sub-Store'/)
+    expect(sidebar).toMatch(/label: '配置'[\s\S]*to: '\/profiles'[\s\S]*to: '\/overrides'[\s\S]*to: '\/resources'/)
+    expect(sidebar).not.toContain("to: '/substore'")
+    expect(await read('src/renderer/src/views/MoreView.vue')).toMatch(/label: 'Sub-Store'[^\n]*to: '\/substore', icon: 'substore'/)
     // Optical sizing: the wide Lucide resource glyph is slightly reduced;
     // Sub-Store's official artwork is cropped to remove its oversized SVG inset.
     expect(sidebar).toMatch(/to: '\/resources', label: '外部资源', icon: 'resources' \}/)

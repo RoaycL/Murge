@@ -4,6 +4,8 @@ import AppIcon, { type AppIconName } from '../components/AppIcon.vue'
 
 const router = useRouter()
 const items: Array<{ label: string; description: string; to: string; icon: AppIconName }> = [
+  { label: '设备', description: '局域网接管的设备与流量', to: '/devices', icon: 'devices' },
+  { label: 'Sub-Store', description: '订阅管理与转换', to: '/substore', icon: 'substore' },
   { label: '通用', description: '启动、窗口、代理守护与延迟测试', to: '/general', icon: 'general' },
   { label: '网络', description: 'TUN、监听地址与代理绕过', to: '/network', icon: 'network' },
   { label: 'DNS 与嗅探', description: '解析模式、服务器与域名嗅探', to: '/dns-sniffer', icon: 'dns' },

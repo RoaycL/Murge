@@ -218,13 +218,30 @@ pub struct TrayDeps {
     /// cannot drift from the renderer's gateway semantics.
     pub tun_desired: Box<dyn Fn(bool) -> BoxFuture<'static, Result<Value, IpcError>> + Send + Sync>,
     pub on_check_update: Box<dyn Fn() + Send + Sync>,
+    /// Rewrite/MITM modules as `(id, name, enabled)` (the 模块 submenu).
+    pub list_modules: Box<dyn Fn() -> Vec<TrayModule> + Send + Sync>,
+    /// `mitm:set-module-enabled` through the same arm the 重写 page uses (it
+    /// hot-reloads a running kernel when the injected config changes).
+    pub set_module_enabled: SetModuleCallback,
     /// Called after the tray switched the outbound mode, so open windows can follow.
     pub on_mode_changed: Box<dyn Fn(&str) + Send + Sync>,
     pub show_window: Box<dyn Fn() + Send + Sync>,
-    pub quit: Box<dyn Fn() + Send + Sync>,
+    /// Start the ordered quit. Resolves `true` while the app is still on its
+    /// way out, `false` when the quit was cancelled (owned proxy could not
+    /// be restored) and the tray must return to its normal menu.
+    pub quit: Box<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync>,
+    /// 强制退出: skip the ordered flow that is still in flight.
+    pub force_quit: Box<dyn Fn() + Send + Sync>,
     pub open_directory: OpenDirectoryCallback,
     pub copy_text: Box<dyn Fn(&str) + Send + Sync>,
     pub on_error: Box<dyn Fn(&str) + Send + Sync>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrayModule {
+    pub id: String,
+    pub name: String,
+    pub enabled: bool,
 }
 
 #[derive(Default)]
@@ -240,10 +257,16 @@ pub(crate) struct TrayState {
     group_order: Vec<String>,
     profiles: Vec<Value>,
     connections: Value,
+    modules: Vec<TrayModule>,
     network_latency_ms: Option<u64>,
     active_profile_stamp: String,
     busy: bool,
     disposed: bool,
+    /// A quit is running: the menu collapses to its progress + 强制退出.
+    quitting: bool,
+    /// The last quit was cancelled (owned system proxy not restored): say so
+    /// next to 退出 and offer 强制退出, instead of a silent no-op.
+    quit_blocked: bool,
 }
 
 pub struct TrayController {
@@ -282,6 +305,7 @@ impl TrayController {
             .and_then(|profiles| profiles.as_array().cloned())
             .unwrap_or_default();
         let group_order = (self.deps.resolve_group_order)();
+        let modules = (self.deps.list_modules)();
 
         let mut config = None;
         let mut proxies = None;
@@ -310,6 +334,7 @@ impl TrayController {
         state.tun_phase = tun["phase"].as_str().unwrap_or("unsupported").to_string();
         state.tun_supported = tun["supported"].as_bool().unwrap_or(false);
         state.profiles = profiles;
+        state.modules = modules;
         state.group_order = group_order;
 
         let active = state
@@ -407,7 +432,10 @@ impl TrayController {
         match id {
             "show" => (self.deps.show_window)(),
             "check-update" => (self.deps.on_check_update)(),
-            "quit" => (self.deps.quit)(),
+            // Never behind the busy guard or a kernel round-trip: quitting
+            // must work exactly when everything else is stuck.
+            "quit" => self.quit().await,
+            "force-quit" => (self.deps.force_quit)(),
             _ => {
                 if let Some(mode) = id.strip_prefix("outbound-mode:") {
                     let mode = mode.to_string();
@@ -451,6 +479,12 @@ impl TrayController {
                 } else if id == "update-all-profiles" {
                     self.act(|this| Box::pin(async move { this.update_all_profiles().await }))
                         .await;
+                } else if let Some(module_id) = id.strip_prefix("module:") {
+                    let module_id = module_id.to_string();
+                    self.act(move |this| {
+                        Box::pin(async move { this.toggle_module(&module_id).await })
+                    })
+                    .await;
                 } else if let Some(directory) = id.strip_prefix("open-directory:") {
                     if let Err(error) = (self.deps.open_directory)(directory) {
                         (self.deps.on_error)(&error);
@@ -461,6 +495,25 @@ impl TrayController {
     }
 
     // -- actions ------------------------------------------------------------
+
+    async fn quit(&self) {
+        {
+            let mut state = self.state.lock().await;
+            if state.quitting {
+                return;
+            }
+            state.quitting = true;
+            state.quit_blocked = false;
+            self.render_locked(&mut state);
+        }
+        let still_quitting = (self.deps.quit)().await;
+        if !still_quitting {
+            let mut state = self.state.lock().await;
+            state.quitting = false;
+            state.quit_blocked = true;
+            self.render_locked(&mut state);
+        }
+    }
 
     /// The TS `act()`: busy-guarded, then action + authoritative refresh.
     async fn act<F>(&self, action: F)
@@ -597,6 +650,19 @@ impl TrayController {
 
     async fn update_profile(&self, id: &str) {
         if let Err(error) = (self.deps.profiles_arm)("profiles:update-from-source", id).await {
+            (self.deps.on_error)(&error.extract_message());
+        }
+    }
+
+    async fn toggle_module(&self, id: &str) {
+        // Re-read the authoritative list: the menu may be a stale snapshot.
+        let Some(module) = (self.deps.list_modules)()
+            .into_iter()
+            .find(|module| module.id == id)
+        else {
+            return;
+        };
+        if let Err(error) = (self.deps.set_module_enabled)(id, !module.enabled).await {
             (self.deps.on_error)(&error.extract_message());
         }
     }
@@ -798,6 +864,30 @@ fn configuration_menu(state: &TrayState, transition: bool) -> TrayMenuItem {
     TrayMenuItem::submenu("configuration", "配置", true, children)
 }
 
+/// 模块: every rewrite/MITM module as a toggle (Surge's Modules menu).
+fn module_menu(state: &TrayState) -> TrayMenuItem {
+    let enabled = state.modules.iter().filter(|module| module.enabled).count();
+    let label = if state.modules.is_empty() {
+        "模块".to_string()
+    } else {
+        format!("模块 · {enabled}/{} 已启用", state.modules.len())
+    };
+    let children = state
+        .modules
+        .iter()
+        .map(|module| {
+            TrayMenuItem::stateful(
+                &format!("module:{}", module.id),
+                &module.name,
+                !state.busy,
+                module.enabled,
+                false,
+            )
+        })
+        .collect();
+    TrayMenuItem::submenu("modules", &label, !state.modules.is_empty(), children)
+}
+
 fn directory_menu() -> TrayMenuItem {
     TrayMenuItem::submenu(
         "open-directory",
@@ -823,6 +913,13 @@ pub(crate) fn tooltip_text(product: &str, phase: &str) -> String {
 /// The pure menu tree — everything the TS `render()` composes, independent of
 /// any service, so the whole tree is unit-testable on state alone.
 pub(crate) fn render_menu(product: &str, state: &TrayState) -> Vec<TrayMenuItem> {
+    if state.quitting {
+        return vec![
+            TrayMenuItem::normal("quitting", &format!("正在退出 {product}…"), false),
+            TrayMenuItem::separator(),
+            TrayMenuItem::normal("force-quit", "强制退出", true),
+        ];
+    }
     let phase = state.status_phase.clone();
     let transition = phase == "starting" || phase == "stopping" || state.busy;
     let system_proxy_busy =
@@ -869,9 +966,18 @@ pub(crate) fn render_menu(product: &str, state: &TrayState) -> Vec<TrayMenuItem>
     ));
     menu.push(TrayMenuItem::separator());
     menu.push(configuration_menu(state, transition));
+    menu.push(module_menu(state));
     menu.push(directory_menu());
     menu.push(TrayMenuItem::normal("check-update", "检查更新", true));
     menu.push(TrayMenuItem::separator());
+    if state.quit_blocked {
+        menu.push(TrayMenuItem::normal(
+            "quit-blocked",
+            "系统代理未能恢复，已取消退出",
+            false,
+        ));
+        menu.push(TrayMenuItem::normal("force-quit", "强制退出", true));
+    }
     menu.push(TrayMenuItem::normal(
         "quit",
         &format!("退出 {product}"),
@@ -1052,10 +1158,21 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
         .clone();
     let paths: crate::paths::AppPaths = app.state::<crate::paths::AppPaths>().inner().clone();
 
-    let view: Arc<dyn TrayView> = Arc::new(crate::tray_view::NativeTrayView::create(
+    let native_view = Arc::new(crate::tray_view::NativeTrayView::create(
         app.clone(),
         Some(tray_icon_root(&app)),
     )?);
+    let view: Arc<dyn TrayView> = native_view.clone();
+    // The frosted popup (Windows). Absent or still loading = native menu.
+    let popup = crate::tray_popup::TrayPopup::create(&app);
+    if let Some(popup) = &popup {
+        native_view.attach_popup(popup.clone());
+        let native_view = native_view.clone();
+        popup.set_on_ready(Box::new(move || native_view.detach_native_menu()));
+        if let Some(slot) = app.try_state::<crate::tray_popup::PopupSlot>() {
+            *slot.0.lock().expect("popup slot") = Some(popup.clone());
+        }
+    }
 
     let deps = TrayDeps {
         product_name: crate::brand::load_brand()
@@ -1289,6 +1406,46 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
                 let _ = tauri::Emitter::emit(&app, "mihomo:mode-changed-event", mode);
             })
         },
+        list_modules: Box::new(|| {
+            crate::mitm::global()
+                .map(|service| {
+                    service
+                        .settings()
+                        .modules
+                        .iter()
+                        .map(|module| TrayModule {
+                            id: module.id.clone(),
+                            name: module.name.clone(),
+                            enabled: module.enabled,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        }),
+        set_module_enabled: {
+            let kernel = kernel.clone();
+            let models = models.clone();
+            let profiles = profiles.clone();
+            let overrides = overrides.clone();
+            Box::new(move |id, enabled| {
+                let kernel = kernel.clone();
+                let models = models.clone();
+                let profiles = profiles.clone();
+                let overrides = overrides.clone();
+                let id = id.to_string();
+                Box::pin(async move {
+                    crate::mitm::dispatch(
+                        "mitm:set-module-enabled",
+                        &serde_json::json!([id, enabled]),
+                        &kernel,
+                        &models,
+                        &profiles,
+                        &overrides,
+                    )
+                    .await
+                })
+            })
+        },
         on_check_update: {
             let updates = updates.clone();
             Box::new(move || {
@@ -1308,8 +1465,23 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
             let app = app.clone();
             Box::new(move || {
                 let app = app.clone();
+                Box::pin(async move {
+                    // Its own task: the shutdown must not depend on this
+                    // menu-dispatch future being polled to completion.
+                    let _ = tauri::async_runtime::spawn(async move {
+                        crate::lifecycle::begin_application_shutdown(app, false).await;
+                    })
+                    .await;
+                    crate::lifecycle::is_quitting()
+                })
+            })
+        },
+        force_quit: {
+            let app = app.clone();
+            Box::new(move || {
+                let app = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    crate::lifecycle::begin_application_shutdown(app, false).await;
+                    crate::lifecycle::force_quit_requested(app).await;
                 });
             })
         },
@@ -1349,6 +1521,15 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
     };
 
     let controller = Arc::new(TrayController::new(deps, view.clone()));
+    if let Some(popup) = &popup {
+        let controller = controller.clone();
+        popup.set_dispatch(Arc::new(move |id: String| {
+            let controller = controller.clone();
+            tauri::async_runtime::spawn(async move {
+                controller.handle_menu(&id).await;
+            });
+        }));
+    }
 
     // Menu events -> actions (muda: ONE id dispatcher; Electron: per-item
     // click closures).
@@ -1425,8 +1606,22 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
     {
         let refresher = refresher.clone();
         let app_for_activate = app.clone();
+        let popup = popup.clone();
         app.on_tray_icon_event(move |_app, event| match event {
             tauri::tray::TrayIconEvent::Enter { .. } => refresher.trigger(),
+            // Only once the popup page is live; before that the native menu
+            // is attached and the OS shows it on its own.
+            tauri::tray::TrayIconEvent::Click {
+                button: tauri::tray::MouseButton::Right,
+                button_state: tauri::tray::MouseButtonState::Up,
+                position,
+                ..
+            } => {
+                if let Some(popup) = popup.as_ref().filter(|popup| popup.is_ready()) {
+                    refresher.trigger();
+                    popup.toggle((position.x, position.y));
+                }
+            }
             tauri::tray::TrayIconEvent::Click {
                 button: tauri::tray::MouseButton::Left,
                 button_state: tauri::tray::MouseButtonState::Up,
@@ -1454,6 +1649,9 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
 
 type SelectProxyCallback =
     Box<dyn Fn(&str, &str) -> BoxFuture<'static, Result<Value, IpcError>> + Send + Sync>;
+
+type SetModuleCallback =
+    Box<dyn Fn(&str, bool) -> BoxFuture<'static, Result<Value, IpcError>> + Send + Sync>;
 
 type OpenDirectoryCallback = Box<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
 
@@ -1716,6 +1914,106 @@ mod tests {
             .expect("the outbound-mode submenu always renders")
             .2;
         assert!(!item, "outbound-mode disabled while stopping");
+    }
+
+    #[test]
+    fn quit_stays_enabled_when_the_kernel_failed_or_hangs() {
+        for phase in ["failed", "starting", "stopping"] {
+            let mut state = state();
+            state.status_phase = phase.to_string();
+            state.busy = true;
+            let quit = labels_of(&state)
+                .into_iter()
+                .find(|(label, _, _)| label == "退出 Murge")
+                .expect("quit always renders");
+            assert!(quit.2, "退出 must stay enabled while the kernel is {phase}");
+        }
+    }
+
+    #[test]
+    fn a_running_quit_collapses_the_menu_to_progress_and_force_quit() {
+        let mut state = state();
+        state.status_phase = "failed".to_string();
+        state.quitting = true;
+        let menu = render_menu("Murge", &state);
+        let ids: Vec<&str> = menu.iter().map(|item| item.id.as_str()).collect();
+        assert_eq!(ids, vec!["quitting", "", "force-quit"]);
+        assert!(!menu[0].enabled);
+        assert_eq!(menu[0].label, "正在退出 Murge…");
+        assert!(menu[2].enabled);
+    }
+
+    #[test]
+    fn a_cancelled_quit_explains_itself_and_offers_force_quit() {
+        let mut state = state();
+        state.quit_blocked = true;
+        let labels = labels_of(&state);
+        let at = |needle: &str| {
+            labels
+                .iter()
+                .position(|(label, _, _)| label == needle)
+                .unwrap_or_else(|| panic!("missing {needle}"))
+        };
+        assert!(!labels[at("系统代理未能恢复，已取消退出")].2);
+        assert!(labels[at("强制退出")].2);
+        assert!(at("强制退出") < at("退出 Murge"));
+        assert!(!labels_of(&self::state())
+            .iter()
+            .any(|(label, _, _)| label == "强制退出"));
+    }
+
+    #[test]
+    fn modules_render_as_toggles_with_an_enabled_count() {
+        let mut state = state();
+        let empty = render_menu("Murge", &state);
+        let modules = empty
+            .iter()
+            .find(|item| item.id == "modules")
+            .expect("模块 row");
+        assert!(!modules.enabled, "no modules: the row is shown but inert");
+        state.modules = vec![
+            TrayModule {
+                id: "a".into(),
+                name: "去广告".into(),
+                enabled: true,
+            },
+            TrayModule {
+                id: "b".into(),
+                name: "BoxJS".into(),
+                enabled: false,
+            },
+        ];
+        let menu = render_menu("Murge", &state);
+        let modules = menu.iter().find(|item| item.id == "modules").unwrap();
+        assert_eq!(modules.label, "模块 · 1/2 已启用");
+        assert!(modules.enabled);
+        let rows: Vec<(&str, &str, bool, MenuKind)> = modules
+            .children
+            .iter()
+            .map(|item| {
+                (
+                    item.id.as_str(),
+                    item.label.as_str(),
+                    item.checked,
+                    item.kind,
+                )
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                ("module:a", "去广告", true, MenuKind::Checkbox),
+                ("module:b", "BoxJS", false, MenuKind::Checkbox),
+            ]
+        );
+        state.busy = true;
+        assert!(render_menu("Murge", &state)
+            .iter()
+            .find(|item| item.id == "modules")
+            .unwrap()
+            .children
+            .iter()
+            .all(|item| !item.enabled));
     }
 
     #[test]

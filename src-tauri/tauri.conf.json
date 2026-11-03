@@ -41,7 +41,8 @@
       "devCsp": null,
       "dangerousDisableAssetCspModification": ["style-src"],
       "capabilities": [
-        "main-window"
+        "main-window",
+        "tray-menu"
       ]
     }
   },

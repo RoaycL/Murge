@@ -13,7 +13,7 @@
 //!   without them (icons are decorative).
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIcon;
@@ -21,6 +21,7 @@ use tauri::AppHandle;
 use tauri::Manager;
 
 use crate::tray::{MenuKind, TrayMenuItem, TrayView};
+use crate::tray_popup::TrayPopup;
 
 /// Which built-in asset the accent maps to.
 fn icon_file(accent: &str, dark: bool) -> &'static str {
@@ -45,6 +46,11 @@ pub struct NativeTrayView {
     icon_root: Mutex<Option<PathBuf>>,
     dark: Mutex<bool>,
     accent: Mutex<String>,
+    /// The frosted popup (Windows). While it is absent or not ready yet, the
+    /// native menu stays attached so the tray is never menu-less.
+    popup: Mutex<Option<Arc<TrayPopup>>>,
+    tooltip: Mutex<String>,
+    items: Mutex<Vec<TrayMenuItem>>,
 }
 
 impl NativeTrayView {
@@ -58,6 +64,9 @@ impl NativeTrayView {
             icon_root: Mutex::new(icon_root),
             dark: Mutex::new(dark),
             accent: Mutex::new(accent.to_string()),
+            popup: Mutex::new(None),
+            tooltip: Mutex::new("Murge".to_string()),
+            items: Mutex::new(Vec::new()),
         };
         let (icon, _dark, _accent) = view.current_icon();
         let mut builder = tauri::tray::TrayIconBuilder::with_id("main")
@@ -104,6 +113,40 @@ impl NativeTrayView {
         }
     }
 
+    pub(crate) fn attach_popup(&self, popup: Arc<TrayPopup>) {
+        *self.popup.lock().expect("popup mutex") = Some(popup);
+    }
+
+    fn popup(&self) -> Option<Arc<TrayPopup>> {
+        self.popup.lock().expect("popup mutex").clone()
+    }
+
+    /// The popup page is live: right click opens it instead of the native
+    /// menu (a native menu stays attached until this point).
+    pub(crate) fn detach_native_menu(&self) {
+        if let Some(tray) = tray_guard(self).as_ref() {
+            let _ = tray.set_menu(None::<Menu<tauri::Wry>>);
+        }
+        self.push_popup_model();
+    }
+
+    /// Re-send the snapshot (menu, status line, accent, theme) to the popup.
+    fn push_popup_model(&self) {
+        let Some(popup) = self.popup() else {
+            return;
+        };
+        let tooltip = self.tooltip.lock().expect("tooltip mutex").clone();
+        let (title, status) = tooltip
+            .split_once(" · ")
+            .map(|(title, status)| (title.to_string(), status.to_string()))
+            .unwrap_or_else(|| (tooltip.clone(), String::new()));
+        let accent = self.accent.lock().expect("accent mutex").clone();
+        let dark = *self.dark.lock().expect("dark mutex");
+        let items = self.items.lock().expect("items mutex").clone();
+        let model = crate::tray_popup::model_json(&title, &status, &accent, dark, &items);
+        popup.update(model, &items);
+    }
+
     /// Repaint only when the accent or theme actually moved (the cadence
     /// would otherwise re-upload the HICON every tick).
     fn appearance_changed(&self, accent: &str, dark: bool) -> bool {
@@ -140,25 +183,37 @@ fn tray_guard(view: &NativeTrayView) -> std::sync::MutexGuard<'_, Option<TrayIco
 
 impl TrayView for NativeTrayView {
     fn set_tooltip(&self, value: &str) {
+        *self.tooltip.lock().expect("tooltip mutex") = value.to_string();
         if let Some(tray) = tray_guard(self).as_ref() {
             let _ = tray.set_tooltip(Some(value));
         }
     }
 
     fn set_menu(&self, items: Vec<TrayMenuItem>) {
-        let guard = tray_guard(self);
-        let Some(tray) = guard.as_ref() else {
+        *self.items.lock().expect("items mutex") = items.clone();
+        let popup_ready = self.popup().map(|popup| popup.is_ready()).unwrap_or(false);
+        if popup_ready {
+            self.push_popup_model();
             return;
-        };
-        // A failed rebuild preserves the previous menu and the tray.
-        if let Ok(menu) = build_menu(&self.app, &items) {
-            let _ = tray.set_menu(Some(menu));
         }
+        {
+            let guard = tray_guard(self);
+            let Some(tray) = guard.as_ref() else {
+                return;
+            };
+            // A failed rebuild preserves the previous menu and the tray.
+            if let Ok(menu) = build_menu(&self.app, &items) {
+                let _ = tray.set_menu(Some(menu));
+            }
+        }
+        // Keep a loading page current too.
+        self.push_popup_model();
     }
 
     fn set_runtime_appearance(&self, accent: &str, dark: bool) {
         if self.appearance_changed(accent, dark) {
             NativeTrayView::set_runtime_appearance(self, accent, dark);
+            self.push_popup_model();
         }
     }
 }

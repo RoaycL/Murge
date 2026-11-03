@@ -44,6 +44,7 @@ mod paths;
 mod runtime_intent;
 mod session_events;
 mod tray;
+mod tray_popup;
 mod tray_view;
 mod window_backdrop;
 mod yaml_value;
@@ -910,6 +911,7 @@ pub fn run() {
             // exact dependency set the TS tray adapter wired. Initialization
             // never gates startup (the TS `trayReady` contract): a headless
             // session (or a failed tray) logs and continues tray-less.
+            app.manage(tray_popup::PopupSlot::default());
             match tray::wire_tray(app.handle().clone()) {
                 Ok(()) => lifecycle::set_tray_ready(true),
                 Err(error) => crate::diag!("[tray] initialization failed (continuing tray-less): {error}"),
@@ -924,7 +926,13 @@ pub fn run() {
             startup_timeline::setup_complete();
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![ipc::desktop_ipc])
+        .invoke_handler(tauri::generate_handler![
+            ipc::desktop_ipc,
+            tray_popup::tray_menu_ready,
+            tray_popup::tray_menu_activate,
+            tray_popup::tray_menu_resize,
+            tray_popup::tray_menu_dismiss
+        ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
@@ -1041,6 +1049,8 @@ fn compose_privileged_kernel(
                         .unwrap_or(false);
                     (gateway, allow_lan)
                 })),
+                // A start must not outlive a quit (it holds the runtime gate).
+                abort: std::sync::Arc::new(lifecycle::is_quitting),
                 ..Default::default()
             },
         ),

@@ -347,8 +347,10 @@ impl TrayPopup {
     }
 
     /// A row was picked: close first (instant feedback), then run it.
-    pub(crate) fn activate(&self, id: String) {
-        self.hide();
+    pub(crate) fn activate(&self, id: String, keep_open: bool) {
+        if !keep_open {
+            self.hide();
+        }
         let dispatch = self.dispatch.lock().expect("popup dispatch").clone();
         if let Some(dispatch) = dispatch {
             dispatch(id);
@@ -392,8 +394,11 @@ pub(crate) fn tray_menu_activate(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, PopupSlot>,
     id: String,
+    keep_open: Option<bool>,
 ) -> Result<(), String> {
-    popup_for(&window, &state)?.activate(id);
+    // Module toggles keep the page open so several can be flipped in a row.
+    let keep_open = keep_open.unwrap_or(false) && id.starts_with("module:");
+    popup_for(&window, &state)?.activate(id, keep_open);
     Ok(())
 }
 

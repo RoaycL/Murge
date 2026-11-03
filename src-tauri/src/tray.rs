@@ -218,6 +218,11 @@ pub struct TrayDeps {
     /// cannot drift from the renderer's gateway semantics.
     pub tun_desired: Box<dyn Fn(bool) -> BoxFuture<'static, Result<Value, IpcError>> + Send + Sync>,
     pub on_check_update: Box<dyn Fn() + Send + Sync>,
+    /// Rewrite/MITM modules as `(id, name, enabled)` (the 模块 submenu).
+    pub list_modules: Box<dyn Fn() -> Vec<TrayModule> + Send + Sync>,
+    /// `mitm:set-module-enabled` through the same arm the 重写 page uses (it
+    /// hot-reloads a running kernel when the injected config changes).
+    pub set_module_enabled: SetModuleCallback,
     /// Called after the tray switched the outbound mode, so open windows can follow.
     pub on_mode_changed: Box<dyn Fn(&str) + Send + Sync>,
     pub show_window: Box<dyn Fn() + Send + Sync>,
@@ -230,6 +235,13 @@ pub struct TrayDeps {
     pub open_directory: OpenDirectoryCallback,
     pub copy_text: Box<dyn Fn(&str) + Send + Sync>,
     pub on_error: Box<dyn Fn(&str) + Send + Sync>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrayModule {
+    pub id: String,
+    pub name: String,
+    pub enabled: bool,
 }
 
 #[derive(Default)]
@@ -245,6 +257,7 @@ pub(crate) struct TrayState {
     group_order: Vec<String>,
     profiles: Vec<Value>,
     connections: Value,
+    modules: Vec<TrayModule>,
     network_latency_ms: Option<u64>,
     active_profile_stamp: String,
     busy: bool,
@@ -292,6 +305,7 @@ impl TrayController {
             .and_then(|profiles| profiles.as_array().cloned())
             .unwrap_or_default();
         let group_order = (self.deps.resolve_group_order)();
+        let modules = (self.deps.list_modules)();
 
         let mut config = None;
         let mut proxies = None;
@@ -320,6 +334,7 @@ impl TrayController {
         state.tun_phase = tun["phase"].as_str().unwrap_or("unsupported").to_string();
         state.tun_supported = tun["supported"].as_bool().unwrap_or(false);
         state.profiles = profiles;
+        state.modules = modules;
         state.group_order = group_order;
 
         let active = state
@@ -464,6 +479,12 @@ impl TrayController {
                 } else if id == "update-all-profiles" {
                     self.act(|this| Box::pin(async move { this.update_all_profiles().await }))
                         .await;
+                } else if let Some(module_id) = id.strip_prefix("module:") {
+                    let module_id = module_id.to_string();
+                    self.act(move |this| {
+                        Box::pin(async move { this.toggle_module(&module_id).await })
+                    })
+                    .await;
                 } else if let Some(directory) = id.strip_prefix("open-directory:") {
                     if let Err(error) = (self.deps.open_directory)(directory) {
                         (self.deps.on_error)(&error);
@@ -629,6 +650,19 @@ impl TrayController {
 
     async fn update_profile(&self, id: &str) {
         if let Err(error) = (self.deps.profiles_arm)("profiles:update-from-source", id).await {
+            (self.deps.on_error)(&error.extract_message());
+        }
+    }
+
+    async fn toggle_module(&self, id: &str) {
+        // Re-read the authoritative list: the menu may be a stale snapshot.
+        let Some(module) = (self.deps.list_modules)()
+            .into_iter()
+            .find(|module| module.id == id)
+        else {
+            return;
+        };
+        if let Err(error) = (self.deps.set_module_enabled)(id, !module.enabled).await {
             (self.deps.on_error)(&error.extract_message());
         }
     }
@@ -830,6 +864,30 @@ fn configuration_menu(state: &TrayState, transition: bool) -> TrayMenuItem {
     TrayMenuItem::submenu("configuration", "配置", true, children)
 }
 
+/// 模块: every rewrite/MITM module as a toggle (Surge's Modules menu).
+fn module_menu(state: &TrayState) -> TrayMenuItem {
+    let enabled = state.modules.iter().filter(|module| module.enabled).count();
+    let label = if state.modules.is_empty() {
+        "模块".to_string()
+    } else {
+        format!("模块 · {enabled}/{} 已启用", state.modules.len())
+    };
+    let children = state
+        .modules
+        .iter()
+        .map(|module| {
+            TrayMenuItem::stateful(
+                &format!("module:{}", module.id),
+                &module.name,
+                !state.busy,
+                module.enabled,
+                false,
+            )
+        })
+        .collect();
+    TrayMenuItem::submenu("modules", &label, !state.modules.is_empty(), children)
+}
+
 fn directory_menu() -> TrayMenuItem {
     TrayMenuItem::submenu(
         "open-directory",
@@ -908,6 +966,7 @@ pub(crate) fn render_menu(product: &str, state: &TrayState) -> Vec<TrayMenuItem>
     ));
     menu.push(TrayMenuItem::separator());
     menu.push(configuration_menu(state, transition));
+    menu.push(module_menu(state));
     menu.push(directory_menu());
     menu.push(TrayMenuItem::normal("check-update", "检查更新", true));
     menu.push(TrayMenuItem::separator());
@@ -1347,6 +1406,46 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
                 let _ = tauri::Emitter::emit(&app, "mihomo:mode-changed-event", mode);
             })
         },
+        list_modules: Box::new(|| {
+            crate::mitm::global()
+                .map(|service| {
+                    service
+                        .settings()
+                        .modules
+                        .iter()
+                        .map(|module| TrayModule {
+                            id: module.id.clone(),
+                            name: module.name.clone(),
+                            enabled: module.enabled,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        }),
+        set_module_enabled: {
+            let kernel = kernel.clone();
+            let models = models.clone();
+            let profiles = profiles.clone();
+            let overrides = overrides.clone();
+            Box::new(move |id, enabled| {
+                let kernel = kernel.clone();
+                let models = models.clone();
+                let profiles = profiles.clone();
+                let overrides = overrides.clone();
+                let id = id.to_string();
+                Box::pin(async move {
+                    crate::mitm::dispatch(
+                        "mitm:set-module-enabled",
+                        &serde_json::json!([id, enabled]),
+                        &kernel,
+                        &models,
+                        &profiles,
+                        &overrides,
+                    )
+                    .await
+                })
+            })
+        },
         on_check_update: {
             let updates = updates.clone();
             Box::new(move || {
@@ -1550,6 +1649,9 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
 
 type SelectProxyCallback =
     Box<dyn Fn(&str, &str) -> BoxFuture<'static, Result<Value, IpcError>> + Send + Sync>;
+
+type SetModuleCallback =
+    Box<dyn Fn(&str, bool) -> BoxFuture<'static, Result<Value, IpcError>> + Send + Sync>;
 
 type OpenDirectoryCallback = Box<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
 
@@ -1858,6 +1960,60 @@ mod tests {
         assert!(!labels_of(&self::state())
             .iter()
             .any(|(label, _, _)| label == "强制退出"));
+    }
+
+    #[test]
+    fn modules_render_as_toggles_with_an_enabled_count() {
+        let mut state = state();
+        let empty = render_menu("Murge", &state);
+        let modules = empty
+            .iter()
+            .find(|item| item.id == "modules")
+            .expect("模块 row");
+        assert!(!modules.enabled, "no modules: the row is shown but inert");
+        state.modules = vec![
+            TrayModule {
+                id: "a".into(),
+                name: "去广告".into(),
+                enabled: true,
+            },
+            TrayModule {
+                id: "b".into(),
+                name: "BoxJS".into(),
+                enabled: false,
+            },
+        ];
+        let menu = render_menu("Murge", &state);
+        let modules = menu.iter().find(|item| item.id == "modules").unwrap();
+        assert_eq!(modules.label, "模块 · 1/2 已启用");
+        assert!(modules.enabled);
+        let rows: Vec<(&str, &str, bool, MenuKind)> = modules
+            .children
+            .iter()
+            .map(|item| {
+                (
+                    item.id.as_str(),
+                    item.label.as_str(),
+                    item.checked,
+                    item.kind,
+                )
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                ("module:a", "去广告", true, MenuKind::Checkbox),
+                ("module:b", "BoxJS", false, MenuKind::Checkbox),
+            ]
+        );
+        state.busy = true;
+        assert!(render_menu("Murge", &state)
+            .iter()
+            .find(|item| item.id == "modules")
+            .unwrap()
+            .children
+            .iter()
+            .all(|item| !item.enabled));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, toRef, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue'
 import AppIcon from '../components/AppIcon.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
@@ -252,10 +252,17 @@ async function saveLocal(): Promise<void> {
   }
 }
 
+// Modules can also be toggled from the tray menu: re-read when the window
+// comes back to the foreground.
+const refreshOnFocus = () => { void store.refresh() }
+
 onMounted(async () => {
+  window.addEventListener('focus', refreshOnFocus)
   await store.refresh()
   syncLocal()
 })
+
+onBeforeUnmount(() => window.removeEventListener('focus', refreshOnFocus))
 </script>
 
 <template>

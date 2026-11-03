@@ -34,7 +34,7 @@ export const PANEL_PADDING = 6
 
 export type RowIcon =
   | 'window' | 'mode' | 'group' | 'pulse' | 'process' | 'proxy' | 'tun' | 'terminal'
-  | 'profile' | 'folder' | 'update' | 'quit' | 'warning' | null
+  | 'profile' | 'module' | 'folder' | 'update' | 'quit' | 'warning' | null
 
 /** `出站模式 · 规则` → label + trailing detail. */
 export function splitLabel(label: string): { text: string; detail: string } {
@@ -55,6 +55,7 @@ export function iconFor(item: TrayItem): RowIcon {
   if (id === 'tun') return 'tun'
   if (id === 'copy-terminal-proxy') return 'terminal'
   if (id === 'configuration') return 'profile'
+  if (id === 'modules') return 'module'
   if (id === 'open-directory') return 'folder'
   if (id === 'check-update') return 'update'
   if (id === 'quit' || id === 'force-quit') return 'quit'
@@ -62,9 +63,9 @@ export function iconFor(item: TrayItem): RowIcon {
   return null
 }
 
-/** Toggles render as switches on the root page. */
+/** Toggles render as switches: system proxy, TUN and every module. */
 export function isSwitch(item: TrayItem): boolean {
-  return item.kind === 'checkbox' && (item.id === 'system-proxy' || item.id === 'tun')
+  return item.kind === 'checkbox' && (item.id === 'system-proxy' || item.id === 'tun' || item.id.startsWith('module:'))
 }
 
 /** The outbound mode renders inline as a segmented control. */

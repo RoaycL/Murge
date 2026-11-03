@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import {
   Activity, AppWindow, Check, ChevronLeft, ChevronRight, CircleAlert, Cpu, Download, Files, FolderOpen, Globe2,
-  Layers, Power, Route, ShieldCheck, Terminal
+  Layers, Power, Puzzle, Route, ShieldCheck, Terminal
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import {
@@ -24,7 +24,7 @@ const parent = computed(() => trail.value[trail.value.length - 1] ?? null)
 
 const icons: Record<Exclude<RowIcon, null>, Component> = {
   window: AppWindow, mode: Route, group: Layers, pulse: Activity, process: Cpu, proxy: Globe2, tun: ShieldCheck,
-  terminal: Terminal, profile: Files, folder: FolderOpen, update: Download, quit: Power, warning: CircleAlert
+  terminal: Terminal, profile: Files, module: Puzzle, folder: FolderOpen, update: Download, quit: Power, warning: CircleAlert
 }
 
 function rowIcon(item: TrayItem): Component | null {
@@ -38,6 +38,12 @@ function activate(item: TrayItem): void {
   if (item.kind === 'submenu') {
     path.value = [...path.value, item.id]
     focusedId.value = null
+    return
+  }
+  if (item.id.startsWith('module:')) {
+    // Stay open and flip at once; the next snapshot confirms the real state.
+    item.checked = !item.checked
+    void invoke('tray_menu_activate', { id: item.id, keepOpen: true })
     return
   }
   void invoke('tray_menu_activate', { id: item.id })
@@ -181,8 +187,8 @@ onBeforeUnmount(() => {
           @click="activate(item)"
         >
           <component :is="rowIcon(item)" v-if="rowIcon(item)" class="icon" :size="15" :stroke-width="1.9" />
-          <span v-else-if="path.length > 0" class="check">
-            <Check v-if="item.checked && (item.kind === 'radio' || item.kind === 'checkbox')" :size="14" :stroke-width="2.6" />
+          <span v-else-if="path.length > 0 && !isSwitch(item)" class="check">
+            <Check v-if="item.checked && !isSwitch(item) && (item.kind === 'radio' || item.kind === 'checkbox')" :size="14" :stroke-width="2.6" />
           </span>
           <span class="text">{{ splitLabel(item.label).text }}</span>
           <span v-if="splitLabel(item.label).detail" class="detail">{{ splitLabel(item.label).detail }}</span>
@@ -390,6 +396,7 @@ html, body {
 }
 .switch.on { background: var(--tm-proxy); }
 .switch.on.switch-tun { background: var(--tm-tun); }
+.row.plain .switch.on { background: var(--tm-highlight); }
 .switch.on::after { transform: translateX(12px); }
 .row.focused:not(.disabled) .switch:not(.on) { background: rgba(255, 255, 255, 0.35); }
 .row.focused:not(.disabled) .switch.on { box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.85); }

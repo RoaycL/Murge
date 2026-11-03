@@ -33,10 +33,23 @@ export const useLatencyStore = defineStore('latency', () => {
     }
   }
 
+  /**
+   * Right after the kernel comes up, proxy groups and node DNS can still be
+   * warming, so the first sample may come back without a proxy number. Retry
+   * once after a short pause instead of leaving "—" for a whole minute.
+   */
+  async function probeAfterKernelStart(retryDelayMs = 3000): Promise<void> {
+    await probe()
+    if (proxyMs.value != null) return
+    const seq = probeSeq
+    await new Promise((resolve) => setTimeout(resolve, retryDelayMs))
+    if (seq === probeSeq) await probe() // skip if something newer already probed
+  }
+
   /** Auto-probe once when the card first mounts; the button re-probes after. */
   function init(): void {
     if (state.value === 'idle') void probe()
   }
 
-  return { state, gatewayMs, dnsMs, proxyMs, proxyNode, probe, init }
+  return { state, gatewayMs, dnsMs, proxyMs, proxyNode, probe, probeAfterKernelStart, init }
 })

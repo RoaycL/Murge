@@ -238,10 +238,11 @@ describe('connections store', () => {
     expect(summary?.totalConnections).toBe(3)
     expect(summary?.distinctProcesses).toBe(2)
     expect(summary?.distinctDevices).toBe(2)
-    expect(summary?.directDownload).toBe(150)
-    expect(summary?.proxyDownload).toBe(200)
+    // Upload + download, since start.
+    expect(summary?.directBytes).toBe(165)
+    expect(summary?.proxyBytes).toBe(220)
     expect(summary?.topProcesses[0]?.name).toBe('Browser')
-    expect(summary?.topProcesses[0]?.download).toBe(200)
+    expect(summary?.topProcesses[0]?.bytes).toBe(220)
     expect(summary?.topProcesses[0]?.iconPath).toBe('C:\\Browser.exe')
     expect(summary?.topProcesses[1]?.name).toBe('curl')
     expect(store.status).toBe('live')
@@ -294,6 +295,23 @@ describe('connections store', () => {
     expect(store.visibleConnections.map((connection) => connection.id)).toEqual(['c2'])
     store.select('c2')
     expect(store.selectedConnection?.metadata.process).toBe('Browser')
+    store.disconnect()
+  })
+
+  it('keeps counting traffic of connections after they close', () => {
+    const store = useConnectionsStore()
+    mihomo.getConnections.mockResolvedValue(snapshot)
+    store.connect()
+    emitConnections(store, snapshot)
+    // c2 grows, then closes; c1 keeps growing.
+    const grown = snapshot.connections.map((c) => (c.id === 'c2' ? { ...c, download: 300 } : c))
+    emitConnections(store, { ...snapshot, connections: grown })
+    emitConnections(store, { ...snapshot, connections: grown.filter((c) => c.id !== 'c2').map((c) => (c.id === 'c1' ? { ...c, download: 130 } : c)) })
+    expect(store.summary?.proxyBytes).toBe(320)
+    expect(store.summary?.directBytes).toBe(195)
+    expect(store.topProcesses.map((r) => [r.name, r.bytes])).toEqual([['Browser', 320], ['curl', 195]])
+    store.setRankScope('proxy')
+    expect(store.topProcesses.map((r) => r.name)).toEqual(['Browser'])
     store.disconnect()
   })
 
@@ -420,7 +438,7 @@ describe('activity ranking scope', () => {
     expect(store.rankScope).toBe('all')
     // 域名: b.com (200) ahead of a.com (150).
     expect(store.topHosts[0]?.name).toBe('b.com')
-    expect(store.topHosts[0]?.download).toBe(200)
+    expect(store.topHosts[0]?.bytes).toBe(200)
     expect(store.topHosts[1]?.name).toBe('a.com')
     // 策略显示实际链路入口，而不是 GeoIP/MATCH 规则匹配器。
     expect(store.topPolicies[0]?.name).toBe('Proxy')

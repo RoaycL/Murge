@@ -121,6 +121,8 @@ pub struct ScriptRule {
     pub max_size: usize,
     pub timeout: std::time::Duration,
     pub argument: String,
+    /// Loon: `$argument` is an object built from the `k=v&…` string.
+    pub argument_object: bool,
     /// Filled from the script cache after compiling.
     pub code: Option<std::sync::Arc<str>>,
     /// Came from Quantumult X syntax: also expose `$task` / `$prefs` / `$notify`.
@@ -153,6 +155,10 @@ pub struct ParsedModule {
     pub providers: Vec<(String, &'static str, String)>,
     /// `#!arguments` declarations: (name, default).
     pub arguments: Vec<(String, String)>,
+    /// Control type / choices / labels for each argument (Loon `[Argument]`).
+    pub argument_meta: Vec<super::normalize::ArgumentMeta>,
+    /// `#!arguments-desc` (or the Loon tags/descs), newlines restored.
+    pub arguments_desc: String,
     pub warnings: Vec<String>,
 }
 
@@ -342,16 +348,20 @@ pub fn parse_module_with(
     text: &str,
     overrides: &std::collections::BTreeMap<String, String>,
 ) -> ParsedModule {
-    let arguments = super::compat::declared_arguments(text);
+    // Loon / Stash / Egern / spaced Surge metadata → plain Surge text first.
+    let normalized = super::normalize::normalize(text);
+    let arguments = normalized.arguments.clone();
     let substituted;
     let text = if arguments.is_empty() {
-        text
+        normalized.text.as_str()
     } else {
-        substituted = super::compat::substitute_arguments(text, &arguments, overrides);
+        substituted = super::compat::substitute_arguments(&normalized.text, &arguments, overrides);
         substituted.as_str()
     };
     let mut module = ParsedModule {
         arguments,
+        argument_meta: normalized.meta.clone(),
+        arguments_desc: normalized.arguments_desc.clone(),
         ..Default::default()
     };
     let mut section = Section::None;
@@ -473,6 +483,7 @@ const SCRIPT_KEYS: &[&str] = &[
     "max-size",
     "timeout",
     "argument",
+    super::normalize::ARGUMENT_OBJECT_KEY,
     "debug",
     "script-update-interval",
     "engine",
@@ -571,6 +582,7 @@ pub(super) fn script_from_params(
         max_size,
         timeout: std::time::Duration::from_secs_f64(timeout),
         argument: get("argument").unwrap_or_default().to_string(),
+        argument_object: get(super::normalize::ARGUMENT_OBJECT_KEY).is_some_and(truthy),
         code: None,
         qx: false,
     }))
@@ -1506,5 +1518,127 @@ http-response ^https?:\/\/(.+\.)?boxjs\.(com|net) script-path=https://raw.github
         assert!(validate_hostname_pattern("a.com:0").is_err());
         assert!(validate_hostname_pattern("a.com:443").is_ok());
         assert!(validate_hostname_pattern("-a.com").is_ok());
+    }
+}
+
+fn phase_label(phase: Phase) -> &'static str {
+    match phase {
+        Phase::Request => "http-request",
+        Phase::Response => "http-response",
+    }
+}
+
+/// Per-kind one-line descriptions of a parsed module, in the page's card
+/// order (URL / Header / Map Local / Body / Script / Rule). `script_loaded`
+/// mirrors the summary count, which only counts scripts whose code is cached.
+pub fn describe(
+    parsed: &ParsedModule,
+    script_loaded: impl Fn(&str) -> bool,
+) -> [(&'static str, Vec<String>); 6] {
+    let urls = parsed
+        .url_rewrites
+        .iter()
+        .map(|rule| {
+            let action = match &rule.action {
+                UrlAction::Redirect(code) => code.to_string(),
+                UrlAction::Reject(kind) => kind.label().to_string(),
+                UrlAction::Header => "header".to_string(),
+            };
+            let replacement = if rule.replacement.is_empty() {
+                "-"
+            } else {
+                rule.replacement.as_str()
+            };
+            format!("{} {} {}", rule.pattern.as_str(), replacement, action)
+        })
+        .collect();
+    let headers = parsed
+        .header_rewrites
+        .iter()
+        .map(|rule| {
+            let op = match &rule.op {
+                HeaderOp::Add(name, value) => format!("header-add {name} {value}"),
+                HeaderOp::Del(name) => format!("header-del {name}"),
+                HeaderOp::Replace(name, value) => format!("header-replace {name} {value}"),
+                HeaderOp::ReplaceRegex(name, regex, value) => {
+                    format!("header-replace-regex {name} {} {value}", regex.as_str())
+                }
+            };
+            format!("{} {} {op}", phase_label(rule.phase), rule.pattern.as_str())
+        })
+        .collect();
+    let maps = parsed
+        .map_locals
+        .iter()
+        .map(|rule| {
+            format!(
+                "{} status-code={} data-type={}",
+                rule.pattern.as_str(),
+                rule.status,
+                rule.content_type
+            )
+        })
+        .collect();
+    let bodies = parsed
+        .body_rewrites
+        .iter()
+        .map(|rule| {
+            let mut parts = vec![
+                phase_label(rule.phase).to_string(),
+                rule.pattern.as_str().to_string(),
+            ];
+            if let Some(jq) = &rule.jq {
+                parts.push(format!("jq '{jq}'"));
+            }
+            for (regex, replacement) in &rule.pairs {
+                parts.push(format!("\"{}\" \"{}\"", regex.as_str(), replacement));
+            }
+            parts.join(" ")
+        })
+        .collect();
+    let scripts = parsed
+        .scripts
+        .iter()
+        .filter(|script| script_loaded(&script.script_url))
+        .map(|script| {
+            format!(
+                "{} = type={},pattern={},script-path={}",
+                script.name,
+                phase_label(script.phase),
+                script.pattern.as_str(),
+                script.script_url
+            )
+        })
+        .collect();
+    [
+        ("URL Rewrite", urls),
+        ("Header Rewrite", headers),
+        ("Map Local", maps),
+        ("Body Rewrite", bodies),
+        ("Script", scripts),
+        ("Rule", parsed.rules.clone()),
+    ]
+}
+
+#[cfg(test)]
+mod describe_tests {
+    use super::*;
+
+    #[test]
+    fn describes_each_kind_as_one_line() {
+        let parsed = parse_module(
+            "[URL Rewrite]\n^https?://ad\\.example\\.com - reject\n[Header Rewrite]\nhttp-request ^https://api\\.example\\.com header-del Cookie\n[Rule]\nDOMAIN,api.example.com,DIRECT\n",
+        );
+        let kinds = describe(&parsed, |_| true);
+        assert_eq!(kinds[0].0, "URL Rewrite");
+        assert_eq!(
+            kinds[0].1,
+            vec!["^https?://ad\\.example\\.com - reject".to_string()]
+        );
+        assert_eq!(
+            kinds[1].1,
+            vec!["http-request ^https://api\\.example\\.com header-del Cookie".to_string()]
+        );
+        assert_eq!(kinds[5].1.len(), 1);
     }
 }

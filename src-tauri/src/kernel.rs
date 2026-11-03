@@ -781,9 +781,19 @@ impl Default for KernelServices {
 /// slices land: mode `rule`, brand default profile name when nothing is
 /// active, all ownership flags false, no external IP probe.
 pub fn build_runtime_summary(active_profile_name: Option<&str>) -> Value {
+    build_runtime_summary_with_network(
+        active_profile_name,
+        &crate::network_name::detect_display_name(),
+    )
+}
+
+pub fn build_runtime_summary_with_network(
+    active_profile_name: Option<&str>,
+    network_name: &str,
+) -> Value {
     let profile_name = active_profile_name.unwrap_or("Murge Default");
     json!({
-        "networkName": "Ethernet",
+        "networkName": network_name,
         "profileName": profile_name,
         "mode": "rule",
         "externalIp": null,
@@ -1161,10 +1171,10 @@ mod tests {
 
     #[test]
     fn runtime_summary_uses_active_profile_or_brand_default() {
-        let summary = build_runtime_summary(Some("Home"));
+        let summary = build_runtime_summary_with_network(Some("Home"), "以太网");
         assert_eq!(summary["profileName"], "Home");
         assert_eq!(summary["mode"], "rule");
-        assert_eq!(summary["networkName"], "Ethernet");
+        assert_eq!(summary["networkName"], "以太网");
         assert_eq!(summary["systemProxyEnabled"], false);
         assert_eq!(summary["tunEnabled"], false);
         assert_eq!(summary["externalIp"], Value::Null);

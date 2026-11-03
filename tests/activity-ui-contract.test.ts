@@ -139,7 +139,7 @@ describe('Activity fluid-layout UI contract', () => {
     expect(css).toMatch(/\.detail-drawer button\s*\{[^}]*white-space:\s*nowrap/)
     expect(usage).toMatch(/onMounted\(\(\) => \{[\s\S]*void store\.refresh\(\)[\s\S]*timer = setInterval/)
     expect(usage).not.toMatch(/onMounted\(async \(\) => \{[\s\S]*await store\.refresh/)
-    expect(activity).toContain('当前连接总计')
+    expect(activity).toContain('<span class="metric-label">总计</span>')
     expect(activity).not.toContain("totalScope")
   })
 
@@ -170,7 +170,7 @@ describe('Activity fluid-layout UI contract', () => {
   it('lays kernel versions out as an adaptive multi-column chip grid', async () => {
     const modal = await read('src/renderer/src/components/KernelVersionModal.vue')
 
-    expect(modal).toMatch(/grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(min\(220px,\s*100%\),\s*1fr\)\)/)
+    expect(modal).toMatch(/grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(min\(124px,\s*100%\),\s*1fr\)\)/)
     expect(modal).not.toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)/)
   })
 })

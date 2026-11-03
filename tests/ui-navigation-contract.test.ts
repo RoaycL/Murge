@@ -8,12 +8,17 @@ const read = (path: string): string => readFileSync(resolve(root, path), 'utf8')
 describe('Surge-inspired UI navigation contract', () => {
   it('keeps feature areas separate and gives every sidebar destination a semantic icon', () => {
     const sidebar = read('src/renderer/src/components/AppSidebar.vue')
-    for (const route of ['/activity', '/overview', '/connections', '/processes', '/policies', '/rules', '/profiles', '/substore', '/overrides', '/resources']) {
+    for (const route of ['/activity', '/overview', '/connections', '/processes', '/policies', '/rules', '/profiles', '/overrides', '/resources']) {
       expect(sidebar).toContain(`to: '${route}'`)
     }
     expect(sidebar).toContain('<AppIcon :name="item.icon"')
     expect(sidebar).not.toContain("label: '客户端'")
-    expect(sidebar).toContain("to: '/devices'")
+    // 设备与 Sub-Store 收进「更多」，侧栏只保留常用入口。
+    expect(sidebar).not.toContain("to: '/devices'")
+    expect(sidebar).not.toContain("to: '/substore'")
+    const more = read('src/renderer/src/views/MoreView.vue')
+    expect(more).toContain("to: '/devices'")
+    expect(more).toContain("to: '/substore'")
     expect(sidebar).not.toMatch(/icon:\s*'[⌁⌘▣▤⑂☷]'/)
   })
 

@@ -10,16 +10,18 @@ button:disabled { cursor: default; opacity: 0.55; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .app-window { position: relative; width: 100%; height: 100%; overflow: hidden; }
 .app-frame { display: grid; grid-template-columns: var(--sidebar-width) 1fr; width: 100%; height: 100%; border-radius: var(--frame-radius); border: 1px solid var(--frame-border); background: linear-gradient(135deg, var(--app-background-start), var(--app-background-end)); box-shadow: var(--frame-shadow); overflow: hidden; }
-.app-sidebar { position: relative; height: 100%; padding: 54px 10px 12px; }
+.app-sidebar { position: relative; display: flex; flex-direction: column; height: 100%; min-height: 0; padding: 54px 10px 11px; }
 .window-drag-region { position: absolute; inset: 0 0 auto; height: 42px; -webkit-app-region: drag; }
-.sidebar-nav { display: flex; flex-direction: column; gap: 0; }
+/* 导航区占满剩余高度；放不下时在区域内滚动（隐藏滚动条），更多栏始终固定在底部不被遮挡。 */
+.sidebar-nav { display: flex; flex-direction: column; gap: 0; flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; -ms-overflow-style: none; }
+.sidebar-nav::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .nav-section { margin: 0 0 4px; }
 .nav-section-title { margin: 13px 7px 5px; font-size: var(--font-size-sm); line-height: 16px; color: var(--app-muted); font-weight: var(--font-weight-regular); }
 .nav-link { display: flex; align-items: center; gap: var(--space-4); width: 100%; height: 38px; padding: 0 10px; border: 0; border-radius: var(--radius-md); color: inherit; background: transparent; text-decoration: none; text-align: left; }
 .nav-link:hover { background: var(--app-fill-subtle); }
 .nav-link.router-link-active { background: var(--app-sidebar-selected); box-shadow: 0 9px 22px rgba(39, 45, 58, 0.07); }
 .nav-icon { display: grid; place-items: center; flex: 0 0 18px; width: 18px; height: 18px; color: var(--app-muted); }
-.sidebar-footer { position: absolute; left: 10px; right: 10px; bottom: 11px; padding-top: 9px; border-top: 1px solid var(--app-divider); }
+.sidebar-footer { position: relative; flex: 0 0 auto; margin-top: 4px; padding-top: 9px; border-top: 1px solid var(--app-divider); }
 .sidebar-button { cursor: pointer; }
 /* Surge 式叠加层：内容区是浮在窗口底色（侧栏）之上的圆角面板，上/右/下留出窄边，
    形成「窗口底 → 内容面板 → 卡片」三层。窗口控制按钮叠在面板右上角。 */
@@ -329,6 +331,8 @@ h1 { margin: 0; font-size: var(--font-size-display); line-height: 34px; letter-s
 .process-icon{display:grid;width:44px;height:44px;place-items:center;border-radius:var(--radius-md);background:color-mix(in srgb,var(--app-blue) 11%,var(--app-surface));color:var(--app-blue)}
 .process-icon img{width:100%;height:100%;object-fit:contain;border-radius:var(--radius-control)}
 .runtime-mode-picker .app-select{width:max-content;min-width:0;margin-top:3px}
+.runtime-profile-picker{min-width:0}.runtime-profile-picker .app-select{max-width:100%}.runtime-profile-picker .app-select-trigger>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.runtime-ip{min-width:0}.runtime-ip .runtime-detail-label{font-size:var(--font-size-xs);color:var(--app-muted);gap:2px}.runtime-ip-value{display:block;min-width:0;max-width:100%;margin-top:3px;padding:0;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer}.runtime-ip-value strong{display:block;margin-top:0}.runtime-ip-value:hover strong{color:var(--app-blue)}
 .kernel-version-card{display:flex;align-items:center;justify-content:space-between;gap:var(--space-7);margin-top:18px;padding:16px}.kernel-version-card>div:first-child{display:grid;gap:var(--space-1)}.kernel-version-card span,.kernel-version-card small{color:var(--app-muted);font-size:var(--font-size-xs)}.kernel-version-card strong{font-size:var(--font-size-lg)}.kernel-version-actions{display:flex;align-items:center;gap:var(--space-3)}
 .profile-edit-modal{width:min(760px,calc(100vw - 40px));max-height:calc(100vh - 48px);overflow:auto;padding:20px;border:1px solid var(--app-divider);border-radius:var(--radius-card);background:var(--app-popover);-webkit-backdrop-filter:var(--app-popover-filter);backdrop-filter:var(--app-popover-filter);box-shadow:var(--app-shadow);display:grid;gap:var(--space-6)}.profile-edit-modal>header,.profile-edit-modal>footer{display:flex;align-items:center;justify-content:space-between;gap:var(--space-5)}.profile-edit-modal h2,.profile-edit-modal p{margin:0}.profile-edit-modal header p{margin-top:4px;color:var(--app-muted);font-size:var(--font-size-xs)}.profile-edit-modal footer{justify-content:flex-end}.profile-document-editor{min-height:52vh;resize:vertical;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;user-select:text}
 .connection-identity{min-width:0}.connection-identity strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--font-size-md)}.connection-identity strong i{color:var(--app-muted);font-style:normal;font-weight:var(--font-weight-regular)}.connection-identity small{display:flex;gap:var(--space-2);margin-top:8px}.connection-identity small b.connection-mitm{border-color:var(--app-blue);color:var(--app-blue)}.connection-identity small b{max-width:210px;padding:3px 7px;border:1px solid var(--app-divider);border-radius:var(--radius-sm);overflow:hidden;color:var(--app-muted);font-size:var(--font-size-2xs);font-weight:var(--font-weight-medium);text-overflow:ellipsis;white-space:nowrap}

@@ -55,7 +55,7 @@ describe('network drawer + resources UI contract', () => {
     expect(view).not.toMatch(/type="checkbox"|resource-table-footer/)
     expect(view).toMatch(/最后更新/)
     expect(view).not.toMatch(/完成/)
-    expect(view).toMatch(/代理集合、规则集合与地理数据库/)
+    expect(view).toMatch(/代理集合、规则集合、重写模块与脚本，以及地理数据库/)
     expect(view).not.toMatch(/Sub-Store|subStore/)
     expect(view).toMatch(/代理集合/)
     expect(view).toMatch(/规则集合/)
@@ -120,7 +120,8 @@ describe('network drawer + resources UI contract', () => {
     expect(indicator).toMatch(/@keyframes ri-breathe/)
     expect(indicator).toMatch(/@keyframes ri-draw/)
     expect(indicator).toMatch(/@keyframes ri-shake/)
-    expect(resources).toMatch(/<RefreshIndicator :busy="providers\.opOf\(row\.name, row\.kind\)\.refreshing"/)
+    expect(resources).toMatch(/<RefreshIndicator :busy="rowRefreshing\(row\)"/)
+    expect(resources).toMatch(/providers\.opOf\(row\.name, row\.kind\)\.refreshing/)
     expect(rules).toMatch(/class="icon-control refresh-control"/)
     expect(rules).toMatch(/<RefreshIndicator :busy="providers\.opOf\(provider\.name, 'rule'\)\.refreshing"/)
   })
@@ -176,7 +177,7 @@ describe('network drawer + resources UI contract', () => {
     expect(overview).toMatch(/\{ \.\.\.dns\.enhancement, enabled: !dnsEnabled\.value \}/)
   })
 
-  it('gives default-downloaded Sub-Store its own page in the configuration group', async () => {
+  it('gives default-downloaded Sub-Store its own page under 更多', async () => {
     const [resources, subStoreView, sidebar, subStoreIcon, settings, main, shared, service, store] = await Promise.all([
       read('src/renderer/src/views/ResourcesView.vue'),
       read('src/renderer/src/views/SubStoreView.vue'),
@@ -190,7 +191,9 @@ describe('network drawer + resources UI contract', () => {
       read('src/renderer/src/stores/substore.ts')
     ])
     expect(resources).not.toMatch(/Sub-Store|subStore/)
-    expect(sidebar).toMatch(/label: '配置'[\s\S]*to: '\/profiles'[\s\S]*to: '\/overrides'[\s\S]*to: '\/resources'[\s\S]*to: '\/substore', label: 'Sub-Store'/)
+    expect(sidebar).toMatch(/label: '配置'[\s\S]*to: '\/profiles'[\s\S]*to: '\/overrides'[\s\S]*to: '\/resources'/)
+    expect(sidebar).not.toContain("to: '/substore'")
+    expect(await read('src/renderer/src/views/MoreView.vue')).toMatch(/label: 'Sub-Store'[^\n]*to: '\/substore', icon: 'substore'/)
     // Optical sizing: the wide Lucide resource glyph is slightly reduced;
     // Sub-Store's official artwork is cropped to remove its oversized SVG inset.
     expect(sidebar).toMatch(/to: '\/resources', label: '外部资源', icon: 'resources' \}/)

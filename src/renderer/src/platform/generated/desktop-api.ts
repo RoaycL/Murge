@@ -190,6 +190,7 @@ export function createDesktopApi(): DesktopApi {
       exportCa: () => bridgeInvoke("mitm:export-ca", []),
       addModule: (url) => bridgeInvoke("mitm:add-module", [url]),
       updateModule: (id) => bridgeInvoke("mitm:update-module", [id]),
+      updateScript: (url) => bridgeInvoke("mitm:update-script", [url]),
       removeModule: (id) => bridgeInvoke("mitm:remove-module", [id]),
       setModuleEnabled: (id, enabled) => bridgeInvoke("mitm:set-module-enabled", [id, enabled]),
       setModuleArguments: (id, args) => bridgeInvoke("mitm:set-module-arguments", [id, args]),

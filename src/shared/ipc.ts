@@ -162,6 +162,7 @@ export const IPC = {
   mitmExportCa: 'mitm:export-ca',
   mitmAddModule: 'mitm:add-module',
   mitmUpdateModule: 'mitm:update-module',
+  mitmUpdateScript: 'mitm:update-script',
   mitmRemoveModule: 'mitm:remove-module',
   mitmSetModuleEnabled: 'mitm:set-module-enabled',
   mitmSetModuleArguments: 'mitm:set-module-arguments',
@@ -366,6 +367,8 @@ export interface DesktopApi {
     exportCa(): Promise<{ saved: boolean }>
     addModule(url: string): Promise<void>
     updateModule(id: string): Promise<void>
+    /** Re-download one module script (外部资源). */
+    updateScript(url: string): Promise<void>
     removeModule(id: string): Promise<void>
     setModuleEnabled(id: string, enabled: boolean): Promise<void>
     setModuleArguments(id: string, args: Record<string, string>): Promise<void>

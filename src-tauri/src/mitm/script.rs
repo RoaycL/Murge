@@ -62,6 +62,8 @@ pub struct ScriptCall {
     pub code: Arc<str>,
     pub kind: ScriptKind,
     pub argument: String,
+    /// Loon-style: expose `$argument` as an object.
+    pub argument_object: bool,
     pub timeout: Duration,
     pub binary: bool,
     /// Expose the Quantumult X globals as well.
@@ -323,6 +325,7 @@ fn execute(
         "name": call.name,
         "type": call.kind.label(),
         "argument": call.argument,
+        "argumentObject": call.argument_object,
         "binary": call.binary,
         "qx": call.qx,
         "id": format!("{:x}", rand::random::<u64>()),
@@ -919,6 +922,7 @@ mod tests {
             code: Arc::from(code),
             kind,
             argument: "a=1&b=2".into(),
+            argument_object: false,
             timeout: Duration::from_secs(5),
             binary,
             qx: false,

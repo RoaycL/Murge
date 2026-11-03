@@ -34,6 +34,7 @@ mod mitm;
 mod net_validators;
 mod network_detector;
 mod network_metadata;
+mod network_name;
 mod notifications;
 mod override_apply;
 mod override_model;

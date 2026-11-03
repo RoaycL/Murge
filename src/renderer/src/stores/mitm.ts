@@ -75,6 +75,7 @@ export const useMitmStore = defineStore('mitm', () => {
     exportCa: () => run('export-ca', () => api().exportCa()),
     addModule: (url: string) => run('add-module', () => api().addModule(url)),
     updateModule: (id: string) => run(`update-${id}`, () => api().updateModule(id)),
+    updateScript: (url: string) => run(`script-${url}`, () => api().updateScript(url)),
     removeModule: (id: string) => run(`remove-${id}`, () => api().removeModule(id)),
     setModuleEnabled: (id: string, enabled: boolean) => run(`toggle-${id}`, () => api().setModuleEnabled(id, enabled)),
     setModuleArguments: (id: string, args: Record<string, string>) => run(`arguments-${id}`, () => api().setModuleArguments(id, args)),

@@ -464,11 +464,7 @@ pub fn substitute_arguments(
 
 /// The declared arguments of a module text (empty when none).
 pub fn declared_arguments(text: &str) -> Vec<(String, String)> {
-    text.lines()
-        .map(str::trim)
-        .find_map(|line| line.strip_prefix("#!arguments="))
-        .map(parse_arguments)
-        .unwrap_or_default()
+    super::normalize::normalize(text).arguments
 }
 
 #[cfg(test)]

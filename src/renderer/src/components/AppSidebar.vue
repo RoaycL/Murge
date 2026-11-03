@@ -15,8 +15,7 @@ const groups: Array<{ label: string; items: Array<{ to: string; label: string; i
       { to: '/activity', label: '活动', icon: 'activity' },
       { to: '/overview', label: '概览', icon: 'overview' },
       { to: '/connections', label: '连接', icon: 'connections' },
-      { to: '/processes', label: '进程', icon: 'processes' },
-      { to: '/devices', label: '设备', icon: 'devices' }
+      { to: '/processes', label: '进程', icon: 'processes' }
     ]
   },
   {
@@ -38,8 +37,7 @@ const groups: Array<{ label: string; items: Array<{ to: string; label: string; i
     items: [
       { to: '/profiles', label: '配置', icon: 'profiles' },
       { to: '/overrides', label: '覆写', icon: 'overrides' },
-      { to: '/resources', label: '外部资源', icon: 'resources' },
-      { to: '/substore', label: 'Sub-Store', icon: 'substore' }
+      { to: '/resources', label: '外部资源', icon: 'resources' }
     ]
   }
 ]

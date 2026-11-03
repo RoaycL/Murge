@@ -1504,6 +1504,7 @@ fn script_call(
         code: rule.code.clone().unwrap_or_else(|| Arc::from("")),
         kind,
         argument: rule.argument.clone(),
+        argument_object: rule.argument_object,
         timeout: rule.timeout,
         binary: rule.binary,
         qx: rule.qx,

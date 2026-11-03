@@ -6,12 +6,14 @@ import { toProtocolError } from '@shared/protocol-errors'
 import { connectionChainHops } from '@shared/connection-chain'
 import { EntityTrafficTracker, type EntityKind, type EntityTrafficStats } from '../lib/entity-traffic'
 import { deviceKeyOf } from '../lib/connection-groups'
+import { CumulativeTraffic, type TrafficDimension } from '../lib/cumulative-traffic'
 
 export type ConnectionsStreamStatus = 'loading' | 'live' | 'disconnected' | 'error'
 
 export interface ProcessRank {
   name: string
-  download: number
+  /** Upload + download since the app started, including closed connections. */
+  bytes: number
   width: number
   iconPath?: string
 }
@@ -30,8 +32,10 @@ export interface ConnectionsSummary {
   downloadTotal: number
   uploadTotal: number
   memory: number
-  directDownload: number
-  proxyDownload: number
+  /** Since-start upload + download through DIRECT, including closed connections. */
+  directBytes: number
+  /** Since-start upload + download through a proxy, including closed connections. */
+  proxyBytes: number
   topProcesses: ProcessRank[]
 }
 
@@ -75,57 +79,44 @@ export const useConnectionsStore = defineStore('connections', () => {
     return !connection.chains.includes('DIRECT')
   }
 
-  const connections = computed<MihomoConnection[]>(() => snapshot.value?.connections ?? [])
-  const scopeFilter = computed<(connection: MihomoConnection) => boolean>(() =>
-    rankScope.value === 'proxy' ? isProxyConnection : () => true
-  )
 
-  function buildRank(
-    rows: MihomoConnection[],
-    filter: (connection: MihomoConnection) => boolean,
-    keyFn: (connection: MihomoConnection) => string,
-    iconPathFn?: (connection: MihomoConnection) => string | undefined
-  ): ProcessRank[] {
-    const map = new Map<string, { download: number; iconPath?: string }>()
-    for (const connection of rows) {
-      if (!filter(connection)) continue
-      const key = keyFn(connection)
-      if (!key) continue
-      const current = map.get(key)
-      map.set(key, {
-        download: (current?.download ?? 0) + connection.download,
-        iconPath: current?.iconPath ?? iconPathFn?.(connection)
-      })
-    }
-    const ranked = Array.from(map.entries())
-      .map(([name, value]) => ({ name, ...value }))
-      .sort((a, b) => b.download - a.download)
-    const max = Math.max(ranked[0]?.download ?? 0, 1)
-    return ranked.map(({ name, download, iconPath }) => ({
+  const hostKey = (c: MihomoConnection): string => c.metadata.host || c.metadata.destinationIP || '未知目标'
+  // The policy ranking is the concrete outer policy group selected by mihomo,
+  // not the rule matcher type (GeoIP/RuleSet/Match). This matches the connection
+  // drawer's user-facing chain and lets the Activity row reuse the group's icon.
+  const policyKey = (c: MihomoConnection): string => connectionChainHops(c.chains)[0] || c.rule || 'DIRECT'
+  // Since-start totals: the live snapshot alone forgets a connection's bytes as
+  // soon as it closes, which made the Activity totals look far too small.
+  const cumulative = new CumulativeTraffic({
+    process: (c) => c.metadata.process ?? 'unknown',
+    host: hostKey,
+    policy: policyKey,
+    iconPath: (c) => c.metadata.processPath,
+    isProxy: isProxyConnection
+  })
+  const cumulativeVersion = ref(0)
+
+  function buildRank(dimension: TrafficDimension): ProcessRank[] {
+    void cumulativeVersion.value
+    const proxyOnly = rankScope.value === 'proxy'
+    const ranked = Array.from(cumulative.rows(dimension).entries())
+      .filter(([, bucket]) => !proxyOnly || bucket.proxied)
+      .map(([name, bucket]) => ({ name, bytes: proxyOnly ? bucket.proxy : bucket.all, iconPath: bucket.iconPath }))
+      .sort((a, b) => b.bytes - a.bytes)
+    const max = Math.max(ranked[0]?.bytes ?? 0, 1)
+    return ranked.map(({ name, bytes, iconPath }) => ({
       name,
-      download,
-      width: Math.round((download / max) * 100),
+      bytes,
+      width: Math.round((bytes / max) * 100),
       ...(iconPath ? { iconPath } : {})
     }))
   }
 
   // Activity breakdown slots; each reacts to the 全部/仅代理 scope so toggling it
   // consistently filters whichever dimension the user is viewing.
-  const topProcesses = computed(() => buildRank(
-    connections.value,
-    scopeFilter.value,
-    (c) => c.metadata.process ?? 'unknown',
-    (c) => c.metadata.processPath
-  ))
-  const topHosts = computed(() => buildRank(connections.value, scopeFilter.value, (c) => c.metadata.host || c.metadata.destinationIP || '未知目标'))
-  // The policy ranking is the concrete outer policy group selected by mihomo,
-  // not the rule matcher type (GeoIP/RuleSet/Match). This matches the connection
-  // drawer's user-facing chain and lets the Activity row reuse the group's icon.
-  const topPolicies = computed(() => buildRank(
-    connections.value,
-    scopeFilter.value,
-    (c) => connectionChainHops(c.chains)[0] || c.rule || 'DIRECT'
-  ))
+  const topProcesses = computed(() => buildRank('process'))
+  const topHosts = computed(() => buildRank('host'))
+  const topPolicies = computed(() => buildRank('policy'))
 
   const summary = computed<ConnectionsSummary | null>(() => {
     const snap = snapshot.value
@@ -133,16 +124,13 @@ export const useConnectionsStore = defineStore('connections', () => {
     const processes = new Set<string>()
     const devices = new Set<string>()
     const hosts = new Set<string>()
-    let directDownload = 0
-    let proxyDownload = 0
+    void cumulativeVersion.value
     for (const connection of snap.connections) {
       processes.add(connection.metadata.process ?? 'unknown')
       // Same identity as the 设备 page so the Activity card and the list agree.
       devices.add(deviceKeyOf(connection))
       const host = connection.metadata.host || connection.metadata.destinationIP
       if (host) hosts.add(host)
-      if (connection.chains.includes('DIRECT')) directDownload += connection.download
-      else proxyDownload += connection.download
     }
     return {
       totalConnections: snap.connections.length,
@@ -152,8 +140,8 @@ export const useConnectionsStore = defineStore('connections', () => {
       downloadTotal: snap.downloadTotal,
       uploadTotal: snap.uploadTotal,
       memory: snap.memory,
-      directDownload,
-      proxyDownload,
+      directBytes: cumulative.direct,
+      proxyBytes: cumulative.proxy,
       topProcesses: topProcesses.value
     }
   })
@@ -203,6 +191,8 @@ export const useConnectionsStore = defineStore('connections', () => {
       .sort((left, right) => Date.parse(right.closedAt ?? '') - Date.parse(left.closedAt ?? ''))
       .slice(0, 500)
     snapshot.value = snap
+    cumulative.observe(snap.connections)
+    cumulativeVersion.value += 1
     entityTraffic.observe(snap.connections)
     entityTrafficVersion.value += 1
     // Any valid snapshot proves the stream is alive; recover from loading or

@@ -175,7 +175,7 @@ const chartBars = computed<number[]>(() => {
     <section class="dashboard-grid">
       <SurfaceCard class="latency-card">
         <div class="card-title-row">
-          <span class="metric-label latency-label">INTERNET 延迟<button type="button" class="latency-refresh refresh-control" :disabled="latency.state === 'probing'" aria-label="重新测速" @click="latency.probe()"><RefreshIndicator :busy="latency.state === 'probing'" :failed="latency.state === 'error'" :size="12" /></button></span>
+          <span class="metric-label latency-label">网络延迟<button type="button" class="latency-refresh refresh-control" :disabled="latency.state === 'probing'" aria-label="重新测速" @click="latency.probe()"><RefreshIndicator :busy="latency.state === 'probing'" :failed="latency.state === 'error'" :size="12" /></button></span>
           <button type="button" class="quiet-button" @click="openNetworkDiagnostics">{{ diagnosisButtonLabel }}</button>
         </div>
         <div class="large-metric" :class="{ 'metric-dimmed': headlineText === '—' }">{{ headlineText }}<span>ms</span></div>
@@ -241,18 +241,26 @@ const chartBars = computed<number[]>(() => {
 .latency-label {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 4px;
+  line-height: 16px;
 }
 .latency-refresh {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
   margin: 0;
-  padding: 2px;
+  padding: 0;
+  line-height: 0;
   border: 0;
   background: transparent;
   color: var(--app-muted);
   cursor: pointer;
+}
+.latency-refresh :deep(svg) {
+  display: block;
 }
 .latency-refresh:hover:not(:disabled) {
   color: var(--app-text);

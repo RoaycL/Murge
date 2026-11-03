@@ -19,43 +19,72 @@ Murge 是一款基于 Tauri + Vue 3 构建的现代化 Mihomo 图形客户端，
 
 欢迎加入 [Telegram 交流群](https://t.me/murgeapp)，分享使用体验、交流配置和讨论新功能。Bug 与功能请求建议同时提交 Issues，方便跟踪处理进度。
 
+## 宣传视频
+
+点击下图观看约 40 秒的功能演示。
+
+<a href="docs/media/murge-promo.mp4">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/media/promo-poster-dark.webp">
+  <img alt="Murge 宣传视频" src="docs/media/promo-poster-light.webp">
+</picture>
+</a>
+
 ## 界面预览
 
 ### 活动
 
 查看网络延迟、实时上传下载速率、活动连接与应用流量。
 
-![活动页面](docs/screenshots/activity.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/activity-dark.webp">
+  <img alt="活动页面" src="docs/screenshots/activity-light.webp">
+</picture>
 
 ### 概览
 
 集中管理系统代理、TUN 模式、嗅探覆写和 DNS 覆写。
 
-![概览页面](docs/screenshots/overview.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/overview-dark.webp">
+  <img alt="概览页面" src="docs/screenshots/overview-light.webp">
+</picture>
 
 ### 连接
 
 查看活动与已关闭连接，按进程、域名、IP 或策略搜索，检查连接路径。
 
-![连接页面](docs/screenshots/connections.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/connections-dark.webp">
+  <img alt="连接页面" src="docs/screenshots/connections-light.webp">
+</picture>
 
 ### 进程
 
 按应用查看流量、连接数和程序路径。
 
-![进程页面](docs/screenshots/processes.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/processes-dark.webp">
+  <img alt="进程页面" src="docs/screenshots/processes-light.webp">
+</picture>
 
 ### 策略
 
 切换出站模式，查看策略组及当前选中的节点。
 
-![策略页面](docs/screenshots/policies.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/policies-dark.webp">
+  <img alt="策略页面" src="docs/screenshots/policies-light.webp">
+</picture>
 
 ### 节点选择
 
 展开策略组，查看节点延迟并切换节点。
 
-![策略组节点选择](docs/screenshots/policy-nodes.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/policy-nodes-dark.webp">
+  <img alt="策略组节点选择" src="docs/screenshots/policy-nodes-light.webp">
+</picture>
 
 ## 特性
 

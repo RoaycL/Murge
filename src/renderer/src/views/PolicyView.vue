@@ -2,10 +2,16 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { usePoliciesStore, POLICY_MODE_OPTIONS, type PolicyMode } from '../stores/policies'
 import { useKernelStore } from '../stores/kernel'
+import { useLocalStore } from '../stores/local'
 import AppIcon from '../components/AppIcon.vue'
 import DetailDrawer from '../components/DetailDrawer.vue'
 import CachedRemoteIcon from '../components/CachedRemoteIcon.vue'
 import LocalNodesSection from '../components/LocalNodesSection.vue'
+import GroupWizardModal from '../components/GroupWizardModal.vue'
+import PopoverMenu from '../components/PopoverMenu.vue'
+import ConfirmModal from '../components/ConfirmModal.vue'
+import { useToast } from '../composables/use-toast'
+import { plainClone, type LocalGroup } from '@shared/local'
 import { latencyLabel as nodeLatencyLabel, latencyTitle, type LatencyLabel } from '../lib/node-latency'
 
 const policies = usePoliciesStore()
@@ -77,8 +83,92 @@ function isTailscaleNode(name: string): boolean {
   return policies.nodeByMember[name]?.type === 'Tailscale'
 }
 
+const localStore = useLocalStore()
+/** Local Tailscale nodes are tested by the local store (control server when there is no exit node). */
+const localTailscale = computed(() => new Set(localStore.settings.nodes.filter((node) => String(node.config.type).toLowerCase() === 'tailscale').map((node) => node.config.name)))
+
+function memberState(name: string) {
+  return localTailscale.value.has(name) ? localStore.delayOf(name) : policies.nodeState(name)
+}
+
+function testMember(name: string): void {
+  if (localTailscale.value.has(name)) void localStore.testNode(name)
+  else void policies.testNode(name)
+}
+
+// ------------------------------------------------------- local policy groups
+const toast = useToast()
+const wizardOpen = ref(false)
+const wizardGroup = ref<LocalGroup | null>(null)
+const groupMenu = ref<LocalGroup | null>(null)
+const groupMenuAt = ref({ x: 0, y: 0 })
+const removingGroup = ref<LocalGroup | null>(null)
+const BUILTIN_POLICIES = ['DIRECT', 'REJECT', 'REJECT-DROP', 'PASS', 'COMPATIBLE', 'GLOBAL']
+
+const localGroupOf = (name: string): LocalGroup | null => localStore.settings.groups?.find((group) => group.config.name === name) ?? null
+const wizardPolicies = computed(() => {
+  const groupNames = new Set(localStore.state.groups.map((group) => group.name))
+  const proxies = Object.keys(policies.proxies?.proxies ?? {}).filter((name) => !groupNames.has(name) && !BUILTIN_POLICIES.includes(name))
+  const local = localStore.settings.nodes.filter((node) => node.enabled).map((node) => node.config.name)
+  const managed = new Set(localStore.state.managedProxies)
+  return [...new Set(['DIRECT', 'REJECT', ...localStore.state.groups.map((group) => group.name), ...local, ...proxies])].filter((name) => !managed.has(name))
+})
+const wizardGroups = computed(() => localStore.state.groups.filter((group) => !group.local).map((group) => group.name))
+const wizardTaken = computed(() => {
+  const own = wizardGroup.value?.config.name
+  const names = [...Object.keys(policies.proxies?.proxies ?? {}), ...localStore.state.groups.map((group) => group.name), ...localStore.settings.nodes.map((node) => node.config.name), ...BUILTIN_POLICIES]
+  return names.filter((name) => name !== own)
+})
+
+function addGroup(): void {
+  wizardGroup.value = null
+  wizardOpen.value = true
+}
+
+function editGroup(group: LocalGroup): void {
+  wizardGroup.value = plainClone(group)
+  wizardOpen.value = true
+}
+
+function onGroupContext(event: MouseEvent, name: string): void {
+  const group = localGroupOf(name)
+  if (!group) return
+  event.preventDefault()
+  groupMenu.value = group
+  groupMenuAt.value = { x: event.clientX, y: event.clientY }
+}
+
+async function saveGroup(group: LocalGroup): Promise<void> {
+  const message = await localStore.upsertGroup(group)
+  if (message) {
+    toast.error('保存失败', message)
+    return
+  }
+  toast.success(group.id ? '已保存' : `已添加策略组「${group.config.name}」`)
+  wizardOpen.value = false
+  onLocalChanged()
+}
+
+async function confirmRemoveGroup(): Promise<void> {
+  const group = removingGroup.value
+  if (!group) return
+  const message = await localStore.removeGroup(group.id)
+  if (message) {
+    toast.error('删除失败', message)
+    return
+  }
+  removingGroup.value = null
+  toast.success('已删除')
+  onLocalChanged()
+}
+
+function testGroup(): void {
+  for (const member of policies.groupMembers) if (localTailscale.value.has(member)) void localStore.testNode(member)
+  void policies.testAll()
+}
+
 function latencyLabel(name: string): LatencyLabel {
-  return nodeLatencyLabel(policies.nodeState(name), isTailscaleNode(name))
+  return nodeLatencyLabel(memberState(name), isTailscaleNode(name) && !localTailscale.value.has(name))
 }
 
 function isUnavailable(name: string): boolean {
@@ -87,7 +177,7 @@ function isUnavailable(name: string): boolean {
 }
 
 function delayTitle(name: string): string {
-  return latencyTitle(policies.nodeState(name), isTailscaleNode(name))
+  return latencyTitle(memberState(name), isTailscaleNode(name) && !localTailscale.value.has(name))
 }
 
 const drawerSubtitle = computed(() => {
@@ -155,7 +245,8 @@ watch(() => kernel.status.phase, (phase, previous) => {
     <template v-else>
       <div class="section-caption"><span>策略组</span></div>
       <div class="policy-group-grid">
-        <button v-for="group in policies.groups" :key="group.name" type="button" :class="{ selected: policies.selectedGroup === group.name, 'has-icon': Boolean(group.icon) }" @click="openGroup(group.name)"><CachedRemoteIcon v-if="group.icon" class="group-icon" :src="group.icon" :cache-key="`policy:${group.name}`" /><small>{{ displayType(group.type) }}</small><strong>{{ group.name }}</strong><span>{{ groupSummary(group) }}</span><AppIcon name="next" :size="14" /></button>
+        <button v-for="group in policies.groups" :key="group.name" type="button" :class="{ selected: policies.selectedGroup === group.name, 'has-icon': Boolean(group.icon) }" @click="openGroup(group.name)" @contextmenu="onGroupContext($event, group.name)"><CachedRemoteIcon v-if="group.icon" class="group-icon" :src="group.icon" :cache-key="`policy:${group.name}`" /><small>{{ displayType(group.type) }}</small><strong>{{ group.name }}</strong><span>{{ groupSummary(group) }}</span><AppIcon name="next" :size="14" /></button>
+        <button type="button" class="policy-group-add" :disabled="localStore.busy" aria-label="新建策略组" title="新建策略组" @click="addGroup"><span aria-hidden="true">+</span></button>
       </div>
     </template>
 
@@ -163,10 +254,19 @@ watch(() => kernel.status.phase, (phase, previous) => {
 
     <LocalNodesSection @changed="onLocalChanged" />
 
+    <GroupWizardModal :open="wizardOpen" :group="wizardGroup" :policies="wizardPolicies" :groups="wizardGroups" :taken-names="wizardTaken" :busy="localStore.busy" @close="wizardOpen = false" @save="saveGroup" />
+    <PopoverMenu :open="!!groupMenu" :x="groupMenuAt.x" :y="groupMenuAt.y" :label="groupMenu?.config.name" @close="groupMenu = null">
+      <template v-if="groupMenu">
+        <button type="button" class="popover-item" role="menuitem" :disabled="localStore.busy" @click="editGroup(groupMenu)">编辑策略组…</button>
+        <button type="button" class="popover-item danger" role="menuitem" :disabled="localStore.busy" @click="removingGroup = groupMenu">删除策略组…</button>
+      </template>
+    </PopoverMenu>
+    <ConfirmModal :open="!!removingGroup" title="删除策略组" :description="`删除「${removingGroup?.config.name ?? ''}」？引用它的规则和策略组会自动跳过它。`" :busy="localStore.busy" @close="removingGroup = null" @confirm="confirmRemoveGroup" />
+
     <DetailDrawer :open="groupDrawerOpen && Boolean(policies.selectedGroup)" :title="policies.selectedGroup" :subtitle="drawerSubtitle" :icon="policies.currentGroup?.icon" :icon-cache-key="`policy:${policies.selectedGroup}`" @close="groupDrawerOpen = false">
-      <div class="node-caption"><span>节点列表</span><button type="button" :disabled="policies.groupDelayStatus === 'testing'" @click="policies.testAll()">{{ policies.groupDelayStatus === 'testing' ? '测试中…' : '测试当前组' }}</button></div>
+      <div class="node-caption"><span>节点列表</span><button type="button" :disabled="policies.groupDelayStatus === 'testing'" @click="testGroup">{{ policies.groupDelayStatus === 'testing' ? '测试中…' : '测试当前组' }}</button></div>
       <div class="drawer-body-grid">
-        <div class="node-grid"><div v-for="member in policies.groupMembers" :key="member" class="node-card" :class="{ selected: policies.selectedMember === member, unavailable: isUnavailable(member) }"><button type="button" class="node-select" :disabled="!policies.isSelectableGroup(policies.currentGroup)" @click="onCardClick(member)"><small v-if="isNestedGroup(member)">{{ displayType(policies.nodeByMember[member]?.type) }}</small><strong>{{ member }}</strong><span v-if="nodeTags(member).length" class="node-tags"><i v-for="tag in nodeTags(member)" :key="tag">{{ tag }}</i></span></button><button type="button" class="node-delay" :class="latencyLabel(member).kind" :title="delayTitle(member)" :disabled="policies.nodeState(member).status === 'testing'" @click="policies.testNode(member)">{{ latencyLabel(member).text }}</button></div></div>
+        <div class="node-grid"><div v-for="member in policies.groupMembers" :key="member" class="node-card" :class="{ selected: policies.selectedMember === member, unavailable: isUnavailable(member) }"><button type="button" class="node-select" :disabled="!policies.isSelectableGroup(policies.currentGroup)" @click="onCardClick(member)"><small v-if="isNestedGroup(member)">{{ displayType(policies.nodeByMember[member]?.type) }}</small><strong>{{ member }}</strong><span v-if="nodeTags(member).length" class="node-tags"><i v-for="tag in nodeTags(member)" :key="tag">{{ tag }}</i></span></button><button type="button" class="node-delay" :class="latencyLabel(member).kind" :title="delayTitle(member)" :disabled="memberState(member).status === 'testing'" @click="testMember(member)">{{ latencyLabel(member).text }}</button></div></div>
       </div>
       <div v-if="policies.panelError" class="panel-error drawer-panel-error">{{ policies.panelError }}</div>
     </DetailDrawer>
@@ -184,6 +284,10 @@ watch(() => kernel.status.phase, (phase, previous) => {
 .policy-group-grid span { grid-column: 1; grid-row: 3; align-self: end; overflow: hidden; color: var(--app-muted); font-size: var(--font-size-2xs); text-overflow: ellipsis; white-space: nowrap; }
 .group-icon { grid-column: 2; grid-row: 1 / 3; align-self: start; justify-self: end; width: 26px; height: 26px; border-radius: var(--radius-sm); object-fit: contain; }
 .policy-group-grid svg { grid-column: 2; grid-row: 1 / 4; align-self: center; justify-self: end; color: var(--app-muted); }
+.policy-group-grid .policy-group-add { display: flex; align-items: center; justify-content: center; border: 1px dashed var(--app-divider); background: transparent; color: var(--app-muted); font-size: 22px; font-weight: 300; }
+.policy-group-grid .policy-group-add:hover { border-color: color-mix(in srgb, var(--app-blue) 48%, var(--app-divider)); background: transparent; color: var(--app-text); }
+.policy-group-grid .policy-group-add:disabled { opacity: 0.5; }
+.policy-group-grid .policy-group-add span { align-self: center; color: inherit; font-size: 22px; line-height: 1; }
 .policy-group-grid button.has-icon > svg { grid-row: 3; align-self: end; }
 .node-caption{display:flex;justify-content:space-between;align-items:center;margin:4px 0 12px;color:var(--app-pink);font-size:var(--font-size-sm)}.node-caption button{border:0;background:transparent;color:var(--app-muted);font-size:var(--font-size-xs)}
 .drawer-panel-error{margin-top:12px}

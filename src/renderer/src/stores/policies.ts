@@ -11,6 +11,10 @@ export interface DelayNodeState {
   delay: number | null
   url?: string
   error?: string
+  /** Local Tailscale nodes without an exit node measure their control server. */
+  kind?: 'proxy' | 'control'
+  /** The proxy the control server was reached through. */
+  via?: string
 }
 
 export type PolicyGroupType = 'Selector' | 'URLTest' | 'Fallback' | 'LoadBalance'

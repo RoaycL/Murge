@@ -150,6 +150,7 @@ export const IPC = {
   overridesResetToLastGood: 'overrides:reset-to-last-good',
   localGetState: 'local:get-state',
   localSave: 'local:save',
+  localNodeDelay: 'local:node-delay',
   mitmGetState: 'mitm:get-state',
   mitmSetEnabled: 'mitm:set-enabled',
   mitmSetRewriteEnabled: 'mitm:set-rewrite-enabled',
@@ -358,6 +359,8 @@ export interface DesktopApi {
   local: {
     getState(): Promise<LocalState>
     save(settings: LocalSettings): Promise<LocalState>
+    /** Latency of a local node; a Tailscale node without an exit node measures its control server. */
+    nodeDelay(name: string): Promise<MihomoDelayResult & { kind: 'proxy' | 'control'; via: string }>
   }
   mitm: {
     getState(): Promise<MitmState>

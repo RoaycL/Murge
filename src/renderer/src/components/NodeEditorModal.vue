@@ -4,6 +4,7 @@ import AppSelect from './AppSelect.vue'
 import { useDialogFocus } from '../composables/use-dialog-focus'
 import { isTailscaleDnsSafeName, plainClone, type LocalNode, type ProxyConfig } from '@shared/local'
 import { configToYaml, parseNodeText, type NodeEditorStart } from '../lib/local-node-form'
+import { nameFromFileName } from '@shared/wireguard-conf'
 import {
   PROTOCOLS,
   applyField,
@@ -199,13 +200,41 @@ function showForm(): void {
     return
   }
   try {
-    const { configs } = parseNodeText(text.value)
+    const { configs } = parseNodeText(text.value, '', { allowEmptyName: true })
     if (configs.length !== 1) throw new Error('内容里有多个节点，请直接保存，或只保留一个再切换到表单')
     const spec = formSpecOf(configs[0]!)
     if (!spec) throw new Error(`${configs[0]!.type} 的这份配置没有表单，请直接编辑内容`)
     load(configs[0]!, spec)
     portText.value = null
     mode.value = 'form'
+  } catch (problem) {
+    error.value = problem instanceof Error ? problem.message : String(problem)
+  }
+}
+
+const fileInput = ref<HTMLInputElement | null>(null)
+
+/** Loads a WireGuard .conf, Surge lines or mihomo YAML from a file. */
+async function importFile(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  error.value = null
+  notice.value = null
+  try {
+    const content = await file.text()
+    const { configs, warnings } = parseNodeText(content, nameFromFileName(file.name))
+    const spec = configs.length === 1 ? formSpecOf(configs[0]!) : null
+    if (spec) {
+      load(configs[0]!, spec)
+      portText.value = null
+      mode.value = 'form'
+    } else {
+      text.value = configs.length === 1 ? configToYaml(configs[0]!) : content
+      mode.value = 'text'
+    }
+    notice.value = warnings.length ? warnings.join('；') : `已导入「${file.name}」`
   } catch (problem) {
     error.value = problem instanceof Error ? problem.message : String(problem)
   }
@@ -351,6 +380,10 @@ const TEXT_PLACEHOLDER = `支持以下任一种内容，可以一次粘贴多个
         </form>
 
         <footer class="node-modal-foot">
+          <template v-if="isNew">
+            <button type="button" class="surge-button" :disabled="busy" @click="fileInput?.click()">从文件导入…</button>
+            <input ref="fileInput" type="file" accept=".conf,.txt,.yaml,.yml,text/plain" hidden @change="importFile" />
+          </template>
           <p v-if="error" class="nf-error" role="alert">{{ error }}</p>
           <p v-else-if="notice" class="nf-hint">{{ notice }}</p>
           <span class="spacer" />

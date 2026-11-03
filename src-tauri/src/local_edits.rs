@@ -102,6 +102,56 @@ impl LocalNode {
     }
 }
 
+/// An external policy list of a local group: a proxy-provider URL.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GroupProvider {
+    pub url: String,
+    /// Update interval in seconds; 0 keeps the cached copy until updated by hand.
+    pub interval: u64,
+}
+
+/// A policy group created in the app, appended after the subscription's.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LocalGroup {
+    pub id: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// The mihomo proxy-group map (`name`, `type`, `proxies`,
+    /// `include-all-proxies`, `filter`, `url`, `interval`, ...).
+    pub config: Value,
+    /// Also contain the members of these groups (flattened when composed).
+    pub include_groups: Vec<String>,
+    /// External policy lists, each composed as an http proxy-provider.
+    pub providers: Vec<GroupProvider>,
+}
+
+impl Default for LocalGroup {
+    fn default() -> Self {
+        LocalGroup {
+            id: String::new(),
+            enabled: true,
+            config: Value::Null,
+            include_groups: Vec::new(),
+            providers: Vec::new(),
+        }
+    }
+}
+
+impl LocalGroup {
+    pub fn name(&self) -> &str {
+        self.config
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+    }
+}
+
+/// mihomo group types a local group can have.
+const GROUP_TYPES: [&str; 4] = ["select", "url-test", "fallback", "load-balance"];
+const GROUP_LIMIT: usize = 128;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct LocalRule {
@@ -146,6 +196,8 @@ pub struct RuleEdit {
 #[serde(rename_all = "camelCase", default)]
 pub struct LocalSettings {
     pub nodes: Vec<LocalNode>,
+    /// Policy groups created in the app.
+    pub groups: Vec<LocalGroup>,
     pub rules: Vec<LocalRule>,
     /// Subscription rule edits, by profile id.
     pub profile_edits: BTreeMap<String, Vec<RuleEdit>>,
@@ -158,6 +210,7 @@ impl Default for LocalSettings {
     fn default() -> Self {
         LocalSettings {
             nodes: Vec::new(),
+            groups: Vec::new(),
             rules: Vec::new(),
             profile_edits: BTreeMap::new(),
             tailscale_coexist: true,
@@ -265,6 +318,8 @@ pub struct ApplyReport {
     pub skipped_nodes: Vec<String>,
     /// Ids of local rules skipped (unknown policy / invalid).
     pub skipped_rules: Vec<String>,
+    /// Ids of local groups skipped (name collision / no members).
+    pub skipped_groups: Vec<String>,
 }
 
 fn names_of(config: &Map<String, Value>, section: &str) -> Vec<String> {
@@ -369,6 +424,9 @@ pub fn apply_to_config(
     if !added.is_empty() {
         config.insert("proxies".into(), Value::Array(proxies));
     }
+
+    // 1b. Local policy groups, after the subscription's.
+    append_local_groups(config, settings, &mut taken, &mut report);
 
     // 2. Group membership.
     if let Some(groups) = config.get_mut("proxy-groups").and_then(Value::as_array_mut) {
@@ -493,6 +551,193 @@ pub fn apply_to_config(
         config.insert("rules".into(), Value::Array(rules));
     }
     report
+}
+
+fn safe_id(id: &str) -> String {
+    id.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .take(40)
+        .collect()
+}
+
+fn group_members(group: &Map<String, Value>, key: &str) -> Vec<String> {
+    group
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn push_unique(list: &mut Vec<String>, value: &str) {
+    if !value.is_empty() && !list.iter().any(|item| item == value) {
+        list.push(value.to_string());
+    }
+}
+
+/// Compose the enabled local groups into `proxy-groups` (and their external
+/// lists into `proxy-providers`). `taken` holds every proxy and group name,
+/// and receives the names of the groups added.
+fn append_local_groups(
+    config: &mut Map<String, Value>,
+    settings: &LocalSettings,
+    taken: &mut HashSet<String>,
+    report: &mut ApplyReport,
+) {
+    let enabled: Vec<&LocalGroup> = settings.groups.iter().filter(|g| g.enabled).collect();
+    if enabled.is_empty() {
+        return;
+    }
+    let existing: Vec<Map<String, Value>> = config
+        .get("proxy-groups")
+        .and_then(Value::as_array)
+        .map(|list| list.iter().filter_map(|g| g.as_object().cloned()).collect())
+        .unwrap_or_default();
+    // Local groups may nest each other, so their names count as members too.
+    let local_names: HashSet<String> = enabled
+        .iter()
+        .map(|group| group.name().trim().to_string())
+        .filter(|name| !name.is_empty() && !taken.contains(name))
+        .collect();
+    let mut providers = config
+        .get("proxy-providers")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let mut composed: Vec<Value> = Vec::new();
+    for group in enabled {
+        let name = group.name().trim().to_string();
+        let Some(map) = group.config.as_object() else {
+            report.skipped_groups.push(group.id.clone());
+            continue;
+        };
+        let kind = map
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if name.is_empty() || !GROUP_TYPES.contains(&kind.as_str()) {
+            report.skipped_groups.push(group.id.clone());
+            report
+                .warnings
+                .push("本地策略组缺少名称或类型，已跳过".into());
+            continue;
+        }
+        if taken.contains(&name) {
+            report.skipped_groups.push(group.id.clone());
+            report.warnings.push(format!(
+                "本地策略组「{name}」与订阅中的节点或策略组重名，已跳过"
+            ));
+            continue;
+        }
+        let mut map = map.clone();
+        map.insert("name".into(), json!(name));
+        map.insert("type".into(), json!(kind));
+        let mut members: Vec<String> = Vec::new();
+        for member in group_members(&map, "proxies") {
+            if member != name && (taken.contains(&member) || local_names.contains(&member)) {
+                push_unique(&mut members, &member);
+            }
+        }
+        let mut uses = group_members(&map, "use");
+        for source in &group.include_groups {
+            let Some(other) = existing
+                .iter()
+                .find(|g| g.get("name").and_then(Value::as_str) == Some(source.as_str()))
+            else {
+                continue;
+            };
+            for member in group_members(other, "proxies") {
+                if member != name {
+                    push_unique(&mut members, &member);
+                }
+            }
+            for provider in group_members(other, "use") {
+                push_unique(&mut uses, &provider);
+            }
+            let all = ["include-all-proxies", "include-all"]
+                .iter()
+                .any(|key| other.get(*key).and_then(Value::as_bool) == Some(true));
+            if all {
+                map.insert("include-all-proxies".into(), json!(true));
+            }
+        }
+        for (index, provider) in group.providers.iter().enumerate() {
+            let url = provider.url.trim();
+            let lower = url.to_ascii_lowercase();
+            if !(lower.starts_with("https://") || lower.starts_with("http://")) {
+                report
+                    .warnings
+                    .push(format!("本地策略组「{name}」的外部策略地址无效，已忽略"));
+                continue;
+            }
+            let key = format!("local-{}-{index}", safe_id(&group.id));
+            let mut entry = json!({
+                "type": "http",
+                "url": url,
+                "path": format!("./proxy_providers/{key}.yaml"),
+                "health-check": {
+                    "enable": true,
+                    "url": "https://www.gstatic.com/generate_204",
+                    "interval": 600,
+                },
+            });
+            if provider.interval > 0 {
+                entry["interval"] = json!(provider.interval);
+            }
+            providers.insert(key.clone(), entry);
+            push_unique(&mut uses, &key);
+        }
+        let include_all = ["include-all-proxies", "include-all"]
+            .iter()
+            .any(|key| map.get(*key).and_then(Value::as_bool) == Some(true));
+        if members.is_empty() && uses.is_empty() && !include_all {
+            report.skipped_groups.push(group.id.clone());
+            report
+                .warnings
+                .push(format!("本地策略组「{name}」没有可用的成员，已跳过"));
+            continue;
+        }
+        if members.is_empty() {
+            map.remove("proxies");
+        } else {
+            map.insert("proxies".into(), json!(members));
+        }
+        if uses.is_empty() {
+            map.remove("use");
+        } else {
+            map.insert("use".into(), json!(uses));
+        }
+        let blank_filter = map
+            .get("filter")
+            .and_then(Value::as_str)
+            .is_some_and(|filter| filter.trim().is_empty());
+        if blank_filter {
+            map.remove("filter");
+        }
+        composed.push(Value::Object(map));
+    }
+    for group in &composed {
+        if let Some(name) = group.get("name").and_then(Value::as_str) {
+            taken.insert(name.to_string());
+        }
+    }
+    if !providers.is_empty() {
+        config.insert("proxy-providers".into(), Value::Object(providers));
+    }
+    if !composed.is_empty() {
+        let mut groups = config
+            .get("proxy-groups")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        groups.extend(composed);
+        config.insert("proxy-groups".into(), Value::Array(groups));
+    }
 }
 
 /// Pure document form of [`apply_to_config`]. An unparseable document is
@@ -766,6 +1011,30 @@ fn validate_settings(settings: &LocalSettings) -> Result<(), IpcError> {
             )));
         }
     }
+    if settings.groups.len() > GROUP_LIMIT {
+        return Err(IpcError::invalid_argument("本地策略组数量超出上限"));
+    }
+    let mut group_names = HashSet::new();
+    for group in &settings.groups {
+        let Some(map) = group.config.as_object() else {
+            return Err(IpcError::invalid_argument("本地策略组配置必须是对象"));
+        };
+        let name = group.name().trim();
+        if name.is_empty() {
+            return Err(IpcError::invalid_argument("本地策略组缺少名称"));
+        }
+        let kind = map.get("type").and_then(Value::as_str).unwrap_or_default();
+        if !GROUP_TYPES.contains(&kind.to_ascii_lowercase().as_str()) {
+            return Err(IpcError::invalid_argument(format!(
+                "本地策略组「{name}」的类型「{kind}」不受支持"
+            )));
+        }
+        if names.contains(name) || !group_names.insert(name.to_string()) {
+            return Err(IpcError::invalid_argument(format!(
+                "本地策略组「{name}」重名"
+            )));
+        }
+    }
     for rule in &settings.rules {
         if rule.rule.contains('\n') {
             return Err(IpcError::invalid_argument("本地规则不能包含换行"));
@@ -791,6 +1060,11 @@ fn fill_ids(settings: &mut LocalSettings) {
     for node in &mut settings.nodes {
         if node.id.trim().is_empty() {
             node.id = uuid::Uuid::new_v4().to_string();
+        }
+    }
+    for group in &mut settings.groups {
+        if group.id.trim().is_empty() {
+            group.id = uuid::Uuid::new_v4().to_string();
         }
     }
     for rule in &mut settings.rules {
@@ -868,6 +1142,9 @@ impl LocalService {
         let mut profile = Value::Null;
         if let Some((document, profile_id, profile_name)) = active {
             if let Some(mut config) = parse_yaml_to_object(document) {
+                report = apply_to_config(&mut config, &settings, profile_id);
+                let local: HashSet<&str> =
+                    settings.groups.iter().map(|g| g.name().trim()).collect();
                 for entry in config
                     .get("proxy-groups")
                     .and_then(Value::as_array)
@@ -878,17 +1155,20 @@ impl LocalService {
                         groups.push(json!({
                             "name": name,
                             "type": entry.get("type").and_then(Value::as_str).unwrap_or_default(),
+                            "local": local.contains(name),
                         }));
                         targets.push(name.to_string());
                     }
                 }
-                report = apply_to_config(&mut config, &settings, profile_id);
                 targets.extend(names_of(&config, "proxies"));
             }
             profile = json!({ "id": profile_id, "name": profile_name });
         } else {
             for node in settings.nodes.iter().filter(|node| node.enabled) {
                 targets.push(node.name().to_string());
+            }
+            for group in settings.groups.iter().filter(|group| group.enabled) {
+                targets.push(group.name().to_string());
             }
         }
         let mut seen = HashSet::new();
@@ -902,6 +1182,7 @@ impl LocalService {
             "staleEdits": report.stale_edits,
             "skippedNodes": report.skipped_nodes,
             "skippedRules": report.skipped_rules,
+            "skippedGroups": report.skipped_groups,
             "managedProxies": [crate::mitm::PROXY_NAME, TAILSCALE_DIRECT_NAME],
             "tailscale": {
                 "detected": adapter.is_some(),
@@ -930,6 +1211,58 @@ fn active_document(
         .apply_overrides_only(&document, (!id.is_empty()).then_some(id.as_str()))
         .unwrap_or(document);
     Some((overridden, id, name))
+}
+
+/// The public control server of Tailscale, probed when a node sets none.
+const TAILSCALE_CONTROL_URL: &str = "https://controlplane.tailscale.com";
+
+/// What a latency test of a local node measures.
+///
+/// A Tailscale node without an exit node only reaches the tailnet, so a
+/// public test URL through it always fails. Like Surge, it is measured as
+/// the round trip to its control server instead, over the path the node
+/// itself uses to reach it (its `dialer-proxy`, or DIRECT).
+#[derive(Debug, PartialEq, Eq)]
+struct DelayProbe {
+    /// The proxy or group the controller tests.
+    target: String,
+    /// `None` uses the default test URL.
+    url: Option<String>,
+    /// `"control"` when the control server is measured.
+    kind: &'static str,
+}
+
+fn delay_probe(config: &Value) -> DelayProbe {
+    let name = config["name"].as_str().unwrap_or_default().to_string();
+    let text = |key: &str| {
+        config[key]
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    let kind = config["type"]
+        .as_str()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if kind != "tailscale" || text("exit-node").is_some() {
+        return DelayProbe {
+            target: name,
+            url: None,
+            kind: "proxy",
+        };
+    }
+    let control = text("control-url")
+        .filter(|url| {
+            let lower = url.to_ascii_lowercase();
+            lower.starts_with("https://") || lower.starts_with("http://")
+        })
+        .unwrap_or_else(|| TAILSCALE_CONTROL_URL.to_string());
+    DelayProbe {
+        target: text("dialer-proxy").unwrap_or_else(|| "DIRECT".to_string()),
+        url: Some(control),
+        kind: "control",
+    }
 }
 
 /// `local:*` channels.
@@ -968,6 +1301,28 @@ pub async fn dispatch(
                 }
             }
             Ok(snapshot(&service))
+        }
+        "local:node-delay" => {
+            let name = payload
+                .get(0)
+                .and_then(Value::as_str)
+                .ok_or_else(|| IpcError::invalid_argument("节点名称缺失"))?;
+            let settings = service.settings();
+            let node = settings
+                .nodes
+                .iter()
+                .find(|node| node.config["name"].as_str() == Some(name))
+                .ok_or_else(|| {
+                    IpcError::invalid_argument(format!("没有名为「{name}」的本地节点"))
+                })?;
+            let probe = delay_probe(&node.config);
+            let client = crate::ipc::controller_client(models)?;
+            let mut result = client
+                .delay_test(&probe.target, probe.url.as_deref(), 10_000)
+                .await?;
+            result["kind"] = json!(probe.kind);
+            result["via"] = json!(probe.target);
+            Ok(result)
         }
         _ => Err(IpcError::unsupported_channel(channel)),
     }
@@ -1061,6 +1416,91 @@ mod tests {
         let (config, report) = apply(&settings, None);
         assert_eq!(config["proxies"].as_array().unwrap().len(), 1);
         assert_eq!(report.skipped_nodes, vec!["id-HK", "id-Proxy"]);
+    }
+
+    #[test]
+    fn local_groups_are_appended_with_members_includes_and_providers() {
+        let settings = LocalSettings {
+            nodes: vec![node("WG", "wireguard", &["Mine"])],
+            groups: vec![
+                LocalGroup {
+                    id: "g1".into(),
+                    config: json!({"name": "Mine", "type": "url-test", "proxies": ["HK", "Missing"], "filter": ""}),
+                    include_groups: vec!["Auto".into()],
+                    providers: vec![GroupProvider {
+                        url: "https://example.com/list.yaml".into(),
+                        interval: 3600,
+                    }],
+                    ..LocalGroup::default()
+                },
+                LocalGroup {
+                    id: "g2".into(),
+                    config: json!({"name": "Proxy", "type": "select", "proxies": ["HK"]}),
+                    ..LocalGroup::default()
+                },
+                LocalGroup {
+                    id: "g3".into(),
+                    config: json!({"name": "Empty", "type": "select", "proxies": []}),
+                    ..LocalGroup::default()
+                },
+            ],
+            rules: vec![rule("DOMAIN,a.com,Mine")],
+            ..LocalSettings::default()
+        };
+        let (config, report) = apply(&settings, None);
+        let groups = config["proxy-groups"].as_array().unwrap();
+        assert_eq!(groups.len(), 3);
+        let mine = &groups[2];
+        assert_eq!(mine["name"], "Mine");
+        assert_eq!(mine["proxies"], json!(["HK", "WG"]));
+        assert_eq!(mine["use"], json!(["sub", "local-g1-0"]));
+        assert!(mine.get("filter").is_none());
+        assert_eq!(config["proxy-providers"]["local-g1-0"]["interval"], 3600);
+        assert_eq!(
+            report.skipped_groups,
+            vec!["g2".to_string(), "g3".to_string()]
+        );
+        assert_eq!(rules_of(&config)[0], "DOMAIN,a.com,Mine");
+    }
+
+    #[test]
+    fn save_rejects_unknown_group_types() {
+        let mut settings = LocalSettings::default();
+        settings.groups.push(LocalGroup {
+            config: json!({"name": "S", "type": "smart", "proxies": ["DIRECT"]}),
+            ..LocalGroup::default()
+        });
+        assert!(validate_settings(&settings).is_err());
+        settings.groups[0].config["type"] = json!("fallback");
+        assert!(validate_settings(&settings).is_ok());
+    }
+
+    #[test]
+    fn delay_probe_measures_control_server_without_exit_node() {
+        let probe = delay_probe(&json!({"name": "TS", "type": "tailscale"}));
+        assert_eq!(probe.target, "DIRECT");
+        assert_eq!(probe.url.as_deref(), Some(TAILSCALE_CONTROL_URL));
+        assert_eq!(probe.kind, "control");
+
+        let probe = delay_probe(
+            &json!({"name": "TS", "type": "tailscale", "control-url": "https://hs.example.com", "dialer-proxy": "Proxy"}),
+        );
+        assert_eq!(probe.target, "Proxy");
+        assert_eq!(probe.url.as_deref(), Some("https://hs.example.com"));
+
+        let probe = delay_probe(&json!({"name": "TS", "type": "tailscale", "exit-node": "nas"}));
+        assert_eq!(
+            probe,
+            DelayProbe {
+                target: "TS".into(),
+                url: None,
+                kind: "proxy"
+            }
+        );
+
+        let probe = delay_probe(&json!({"name": "WG", "type": "wireguard"}));
+        assert_eq!(probe.target, "WG");
+        assert!(probe.url.is_none());
     }
 
     #[test]

@@ -141,7 +141,8 @@ export const api: DesktopApi = {
   },
   local: {
     getState: () => invoke(IPC.localGetState),
-    save: (settings) => invoke(IPC.localSave, settings)
+    save: (settings) => invoke(IPC.localSave, settings),
+    nodeDelay: (name) => invoke(IPC.localNodeDelay, name)
   },
   mitm: {
     getState: () => invoke(IPC.mitmGetState),

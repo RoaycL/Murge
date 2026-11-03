@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import AppIcon from './AppIcon.vue'
-const props = defineProps<{ path?: string; name?: string; size?: number }>()
+import BrandIcon from './BrandIcon.vue'
+import { processBrand, type BrandIconName } from '../lib/brand-icons'
+/** `brand` overrides the process icon, e.g. for connections through a Tailscale node. */
+const props = defineProps<{ path?: string; name?: string; size?: number; brand?: BrandIconName | null }>()
+const shownBrand = computed(() => props.brand ?? processBrand(props.name, props.path))
 const source = ref<string | null>(null)
 let generation = 0
 const load = async (): Promise<void> => {
@@ -17,4 +21,4 @@ const load = async (): Promise<void> => {
 onMounted(load)
 watch(() => props.path, load)
 </script>
-<template><span class="process-icon"><img v-if="source" :src="source" :alt="`${name || '进程'}图标`" /><AppIcon v-else name="processes" :size="size ?? 22" /></span></template>
+<template><span class="process-icon"><BrandIcon v-if="shownBrand" :name="shownBrand" :size="size ?? 22" /><img v-else-if="source" :src="source" :alt="`${name || '进程'}图标`" /><AppIcon v-else name="processes" :size="size ?? 22" /></span></template>

@@ -177,6 +177,7 @@ export function createDesktopApi(): DesktopApi {
     local: {
       getState: () => bridgeInvoke("local:get-state", []),
       save: (settings) => bridgeInvoke("local:save", [settings]),
+      nodeDelay: (name) => bridgeInvoke("local:node-delay", [name]),
     },
     mitm: {
       getState: () => bridgeInvoke("mitm:get-state", []),

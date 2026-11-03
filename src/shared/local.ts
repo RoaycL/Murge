@@ -38,8 +38,30 @@ export interface RuleEdit {
   replacement?: string | null
 }
 
+/** An external policy list (proxy-provider URL) of a local group. */
+export interface GroupProvider {
+  url: string
+  /** Seconds; 0 = only when updated by hand. */
+  interval: number
+}
+
+export type LocalGroupType = 'select' | 'url-test' | 'fallback' | 'load-balance'
+
+/** A policy group created in the app, appended after the subscription's. */
+export interface LocalGroup {
+  id: string
+  enabled: boolean
+  /** The mihomo proxy-group map (`name`, `type`, `proxies`, `include-all-proxies`, `filter`, ...). */
+  config: Record<string, unknown> & { name: string; type: LocalGroupType }
+  /** Also contain the members of these groups. */
+  includeGroups: string[]
+  providers: GroupProvider[]
+}
+
 export interface LocalSettings {
   nodes: LocalNode[]
+  /** Policy groups created in the app. */
+  groups: LocalGroup[]
   rules: LocalRule[]
   /** Subscription rule edits, by profile id. */
   profileEdits: Record<string, RuleEdit[]>
@@ -52,12 +74,13 @@ export interface LocalState {
   profile: { id: string | null; name: string | null } | null
   /** Policies a rule may target in the active subscription. */
   targets: string[]
-  /** Policy groups of the active subscription. */
-  groups: Array<{ name: string; type: string }>
+  /** Policy groups of the active subscription, then the local ones (`local`). */
+  groups: Array<{ name: string; type: string; local?: boolean }>
   warnings: string[]
   staleEdits: string[]
   skippedNodes: string[]
   skippedRules: string[]
+  skippedGroups?: string[]
   tailscale: { detected: boolean; interface: string | null; active: boolean }
   /** Names of proxies the app injects itself. */
   managedProxies: string[]
@@ -65,6 +88,7 @@ export interface LocalState {
 
 export const EMPTY_LOCAL_SETTINGS: LocalSettings = {
   nodes: [],
+  groups: [],
   rules: [],
   profileEdits: {},
   tailscaleCoexist: true

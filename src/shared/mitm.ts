@@ -27,6 +27,10 @@ export interface MitmModuleInfo {
   warnings: string[]
   /** `#!arguments` declared by the module, with the user's current value. */
   arguments: MitmModuleArgument[]
+  /** The module's `#!arguments-desc` text (may be empty). */
+  argumentsDesc: string
+  /** `[Script]` entries (http-request / http-response). */
+  scripts: number
 }
 
 export interface MitmModuleArgument {
@@ -41,7 +45,9 @@ export interface MitmState {
     rewriteEnabled: boolean
     skipServerCertVerify: boolean
     http2: boolean
+    blockQuic: boolean
     hostnames: string[]
+    disabledHostnames: string[]
     localModule: string
   }
   modules: MitmModuleInfo[]
@@ -59,6 +65,10 @@ export interface MitmState {
     mapLocals: number
     /** Module [Rule] lines handed to Mihomo. */
     rules: number
+    /** Scripts downloaded and active. */
+    scripts: number
+    /** Keys held in the scripts' $persistentStore. */
+    scriptStoreKeys: number
   }
 }
 
@@ -72,10 +82,12 @@ export interface MitmRequestEntry {
   actions: string[]
   durationMs: number
   error: string | null
+  /** console.log output of the scripts that ran. */
+  scriptLogs: string[]
 }
 
 export const EMPTY_MITM_STATE: MitmState = {
-  settings: { enabled: false, rewriteEnabled: true, skipServerCertVerify: false, http2: true, hostnames: [], localModule: '' },
+  settings: { enabled: false, rewriteEnabled: true, skipServerCertVerify: false, http2: true, blockQuic: true, hostnames: [], disabledHostnames: [], localModule: '' },
   modules: [],
   localWarnings: [],
   ca: null,
@@ -83,7 +95,7 @@ export const EMPTY_MITM_STATE: MitmState = {
   engine: { running: false, port: null },
   active: false,
   inactiveReason: null,
-  summary: { hostnames: [], urlRewrites: 0, headerRewrites: 0, bodyRewrites: 0, mapLocals: 0, rules: 0 }
+  summary: { hostnames: [], urlRewrites: 0, headerRewrites: 0, bodyRewrites: 0, mapLocals: 0, rules: 0, scripts: 0, scriptStoreKeys: 0 }
 }
 
 /** Human labels for the pipeline actions recorded per request. */
@@ -102,4 +114,69 @@ export const MITM_ACTION_LABELS: Record<string, string> = {
   'header-rewrite': '改写请求头/响应头',
   'body-rewrite': '改写正文',
   websocket: 'WebSocket'
+}
+
+/** Label for one recorded action, including per-script ones (`script:名字`). */
+export function mitmActionLabel(action: string): string {
+  if (action.startsWith('script:')) return `脚本 ${action.slice(7)}`
+  if (action.startsWith('script-pass:')) return `脚本 ${action.slice(12)}（未修改）`
+  if (action.startsWith('script-error:')) return `脚本 ${action.slice(13)} 出错`
+  return MITM_ACTION_LABELS[action] ?? action
+}
+
+const SECTION_HEADER = /^\s*\[([^\]]+)\]\s*$/
+
+/** The body of every `[name]` section of a module text (case-insensitive), joined. */
+export function moduleSection(text: string, name: string): string {
+  const wanted = name.toLowerCase()
+  const blocks: string[][] = []
+  let current: string[] | null = null
+  for (const line of text.split(/\r?\n/)) {
+    const header = SECTION_HEADER.exec(line)
+    if (header) {
+      current = header[1].trim().toLowerCase() === wanted ? [] : null
+      if (current) blocks.push(current)
+      continue
+    }
+    current?.push(line)
+  }
+  return blocks
+    .map((block) => block.join('\n').trim())
+    .filter(Boolean)
+    .join('\n')
+}
+
+/**
+ * Replace the `[name]` section(s) of a module text with `body`. The first
+ * occurrence keeps its place, later duplicates are dropped, and a missing
+ * section is appended. An empty body removes the section.
+ */
+export function replaceModuleSection(text: string, name: string, body: string): string {
+  const wanted = name.toLowerCase()
+  const lines = text ? text.split(/\r?\n/) : []
+  const bodyLines = body.split(/\r?\n/)
+  while (bodyLines.length && !bodyLines[bodyLines.length - 1].trim()) bodyLines.pop()
+  const replacement = bodyLines.length ? [`[${name}]`, ...bodyLines, ''] : []
+  const out: string[] = []
+  let inside = false
+  let placed = false
+  for (const line of lines) {
+    const header = SECTION_HEADER.exec(line)
+    if (header) {
+      inside = header[1].trim().toLowerCase() === wanted
+      if (inside) {
+        if (!placed) out.push(...replacement)
+        placed = true
+        continue
+      }
+    }
+    if (!inside) out.push(line)
+  }
+  if (!placed && replacement.length) {
+    while (out.length && !out[out.length - 1].trim()) out.pop()
+    if (out.length) out.push('')
+    out.push(...replacement)
+  }
+  while (out.length && !out[out.length - 1].trim()) out.pop()
+  return out.length ? `${out.join('\n')}\n` : ''
 }

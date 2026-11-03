@@ -35,6 +35,7 @@ use tokio::net::{TcpListener, TcpSocket, TcpStream};
 
 use super::ca::CaAuthority;
 use super::rules::{apply_body_rules, apply_header_rules, CompiledRules, Phase, UrlAction};
+use super::script;
 
 /// The loopback source every upstream leg binds to; the injected mihomo rules
 /// skip it (`NOT SRC-IP-CIDR,127.0.0.2/32`).
@@ -85,6 +86,8 @@ pub struct LogEntry {
     pub actions: Vec<String>,
     pub duration_ms: u64,
     pub error: Option<String>,
+    /// `console.log` output of the scripts that ran, prefixed by script.
+    pub script_logs: Vec<String>,
 }
 
 #[derive(Default)]
@@ -141,6 +144,10 @@ pub struct EngineShared {
     pub upstream: UpstreamResolver,
     pub source_ip: IpAddr,
     pub log: RequestLog,
+    /// `$persistentStore`, shared by every script.
+    pub script_store: Arc<script::PersistentStore>,
+    /// Shows `$notification.post` toasts (set by the app).
+    pub notifier: Arc<Mutex<Option<script::Notifier>>>,
     verified_client: Arc<rustls::ClientConfig>,
     unverified_client: Arc<rustls::ClientConfig>,
 }
@@ -159,6 +166,8 @@ impl EngineShared {
             upstream,
             source_ip: IpAddr::V4(UPSTREAM_SOURCE_IP),
             log: RequestLog::default(),
+            script_store: Arc::new(script::PersistentStore::default()),
+            notifier: Arc::new(Mutex::new(None)),
             verified_client: Arc::new(client_config(false)),
             unverified_client: Arc::new(client_config(true)),
         }
@@ -518,7 +527,7 @@ async fn handle_client(shared: Arc<EngineShared>, stream: TcpStream) -> std::io:
         && !is_tls
         && looks_http
         && rules.has_rewrites()
-        && rules.hosts.covers_host(&named_host)
+        && rules.routes_plain_http(&named_host)
     {
         let ctx = Arc::new(ConnCtx::new(shared, "http", host, port));
         return serve_http(ctx, client).await;
@@ -675,6 +684,7 @@ where
                 error: Some(format!(
                     "客户端拒绝了解密证书（证书未信任或应用启用了证书锁定）：{error}"
                 )),
+                script_logs: Vec::new(),
             });
             return Ok(());
         }
@@ -882,7 +892,14 @@ fn set_body_headers(headers: &mut hyper::HeaderMap, length: usize, drop_encoding
     );
 }
 
-async fn handle_request(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Response<Body> {
+fn handle_request(
+    ctx: Arc<ConnCtx>,
+    req: Request<Incoming>,
+) -> Pin<Box<dyn std::future::Future<Output = Response<Body>> + Send>> {
+    Box::pin(handle_request_inner(ctx, req))
+}
+
+async fn handle_request_inner(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Response<Body> {
     let started = Instant::now();
     let shared = ctx.shared.clone();
     let rules = shared.rules();
@@ -920,6 +937,7 @@ async fn handle_request(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Respon
         actions: Vec::new(),
         duration_ms: 0,
         error: None,
+        script_logs: Vec::new(),
     };
     let finish = |mut entry: LogEntry, response: Response<Body>| {
         entry.status = Some(response.status().as_u16());
@@ -998,8 +1016,10 @@ async fn handle_request(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Respon
     if apply_header_rules(req.headers_mut(), rules.header_rules(Phase::Request, &url)) {
         entry.actions.push("header-rewrite".into());
     }
-    let response_body_rules = rules.body_rules(Phase::Response, &url);
-    if !response_body_rules.is_empty() {
+    let request_scripts = owned(rules.script_rules(Phase::Request, &url));
+    let mut response_scripts = owned(rules.script_rules(Phase::Response, &url));
+    let mut response_body_rules = rules.body_rules(Phase::Response, &url);
+    if !response_body_rules.is_empty() || response_scripts.iter().any(|s| s.requires_body) {
         req.headers_mut().insert(
             hyper::header::ACCEPT_ENCODING,
             hyper::header::HeaderValue::from_static("identity"),
@@ -1013,15 +1033,105 @@ async fn handle_request(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Respon
     for name in ["proxy-connection", "proxy-authorization"] {
         parts.headers.remove(name);
     }
+    let mut request_body = BodyState::Stream(incoming.map_err(|e| Box::new(e) as BoxError).boxed());
+
+    // --- Request scripts ---
+    if !request_scripts.is_empty() {
+        let host = script_host(&shared);
+        if request_scripts.iter().any(|s| s.requires_body) {
+            request_body = match request_body.gather(SCRIPT_MAX_BODY).await {
+                Ok(body) => body,
+                Err(message) => {
+                    entry.error = Some(message.clone());
+                    return finish(entry, error_response(StatusCode::BAD_REQUEST, &message));
+                }
+            };
+        }
+        let mut message = script::HttpMessage {
+            url: url.clone(),
+            method: parts.method.to_string(),
+            status: 0,
+            headers: header_pairs(&parts.headers, parts.version),
+            body: request_body.bytes().map(|b| b.to_vec()),
+        };
+        let mut body_changed = false;
+        for rule in &request_scripts {
+            let body = if rule.requires_body {
+                match &message.body {
+                    Some(body) if body.len() <= rule.max_size => Some(body.clone()),
+                    Some(_) => continue,
+                    None if request_body.is_stream() => continue,
+                    None => Some(Vec::new()),
+                }
+            } else {
+                None
+            };
+            let call = script_call(rule, script::ScriptKind::Request, &message, body, None);
+            let report = script::run(host.clone(), call).await;
+            record_script(&mut entry, &rule.name, &report);
+            if let script::ScriptOutcome::Done(done) = report.outcome {
+                if done.abort {
+                    return finish(
+                        entry,
+                        error_response(StatusCode::FORBIDDEN, "脚本拒绝了请求"),
+                    );
+                }
+                if let Some(answer) = done.response {
+                    return finish(entry, scripted_response(*answer));
+                }
+                if let Some(next) = done.url {
+                    message.url = next;
+                }
+                if let Some(method) = done.method {
+                    message.method = method;
+                }
+                if let Some(headers) = done.headers {
+                    message.headers = headers;
+                }
+                if let Some(body) = done.body {
+                    message.body = Some(body);
+                    body_changed = true;
+                }
+            }
+        }
+        if message.url != url {
+            if let Some((next, next_path)) = parse_url(&message.url) {
+                scheme = next.scheme;
+                target_host = next.host;
+                target_port = next.port;
+                path = next_path;
+                url = message.url.clone();
+                response_scripts = owned(rules.script_rules(Phase::Response, &url));
+                response_body_rules = rules.body_rules(Phase::Response, &url);
+            }
+        }
+        if let Ok(method) = hyper::Method::from_bytes(message.method.as_bytes()) {
+            parts.method = method;
+        }
+        replace_headers(&mut parts.headers, &message.headers);
+        if let Ok(value) =
+            hyper::header::HeaderValue::from_str(&authority_for(&target_host, target_port, &scheme))
+        {
+            parts.headers.insert(hyper::header::HOST, value);
+        }
+        if body_changed {
+            request_body = BodyState::Full(Bytes::from(message.body.take().unwrap_or_default()));
+        }
+        if let BodyState::Full(bytes) = &request_body {
+            set_body_headers(&mut parts.headers, bytes.len(), body_changed);
+        }
+    }
+
     let request_body_rules = rules.body_rules(Phase::Request, &url);
-    let body: Body = if !request_body_rules.is_empty()
+    if !request_body_rules.is_empty()
         && is_textual(
             parts
                 .headers
                 .get(hyper::header::CONTENT_TYPE)
                 .and_then(|v| v.to_str().ok()),
-        ) {
-        let bytes = match collect_limited(incoming).await {
+        )
+    {
+        let bytes = match request_body.collect().await {
             Ok(bytes) => bytes,
             Err(message) => {
                 entry.error = Some(message.clone());
@@ -1041,10 +1151,9 @@ async fn handle_request(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Respon
             entry.actions.push("body-rewrite".into());
             set_body_headers(&mut parts.headers, next.len(), true);
         }
-        full(next)
-    } else {
-        incoming.map_err(|e| Box::new(e) as BoxError).boxed()
-    };
+        request_body = BodyState::Full(next);
+    }
+    let body = request_body.into_body();
     parts.uri = match path.parse() {
         Ok(uri) => uri,
         Err(_) => {
@@ -1059,6 +1168,13 @@ async fn handle_request(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Respon
             parts.headers.insert(hyper::header::HOST, value);
         }
     }
+    let request_snapshot = (!response_scripts.is_empty()).then(|| script::HttpMessage {
+        url: url.clone(),
+        method: parts.method.to_string(),
+        status: 0,
+        headers: header_pairs(&parts.headers, parts.version),
+        body: None,
+    });
     let upstream_req = Request::from_parts(parts, body);
     entry.url = url.clone();
     entry.host = target_host.clone();
@@ -1101,43 +1217,426 @@ async fn handle_request(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Respon
     ) {
         entry.actions.push("header-rewrite".into());
     }
+    let mut response_body =
+        BodyState::Stream(incoming.map_err(|e| Box::new(e) as BoxError).boxed());
+    // The body handed to scripts / body rules, already content-decoded.
+    let mut decoded: Option<Vec<u8>> = None;
+    let mut body_dirty = false;
+
+    // --- Response scripts ---
+    if let Some(request_snapshot) = request_snapshot {
+        let host = script_host(&shared);
+        let largest = response_scripts
+            .iter()
+            .filter(|s| s.requires_body)
+            .map(|s| s.max_size)
+            .max();
+        if let Some(largest) = largest {
+            if declared_length(&parts.headers).is_none_or(|length| length <= largest) {
+                response_body = match response_body.gather(largest).await {
+                    Ok(body) => body,
+                    Err(message) => {
+                        entry.error = Some(message.clone());
+                        return finish(entry, error_response(StatusCode::BAD_GATEWAY, &message));
+                    }
+                };
+                if let Some(bytes) = response_body.bytes() {
+                    let encoding = parts
+                        .headers
+                        .get(hyper::header::CONTENT_ENCODING)
+                        .and_then(|v| v.to_str().ok());
+                    decoded = decode_body(bytes, encoding);
+                }
+            }
+        }
+        let mut message = script::HttpMessage {
+            url: url.clone(),
+            method: request_snapshot.method.clone(),
+            status: parts.status.as_u16(),
+            headers: header_pairs(&parts.headers, parts.version),
+            body: None,
+        };
+        for rule in &response_scripts {
+            let body = if rule.requires_body {
+                match &decoded {
+                    Some(body) if body.len() <= rule.max_size => Some(body.clone()),
+                    _ => continue,
+                }
+            } else {
+                None
+            };
+            let call = script_call(
+                rule,
+                script::ScriptKind::Response,
+                &request_snapshot,
+                None,
+                Some((&message, body)),
+            );
+            let report = script::run(host.clone(), call).await;
+            record_script(&mut entry, &rule.name, &report);
+            if let script::ScriptOutcome::Done(done) = report.outcome {
+                if done.abort {
+                    return finish(
+                        entry,
+                        error_response(StatusCode::FORBIDDEN, "脚本拒绝了响应"),
+                    );
+                }
+                if let Some(status) = done.status {
+                    message.status = status;
+                }
+                if let Some(headers) = done.headers {
+                    message.headers = headers;
+                }
+                if let Some(body) = done.body {
+                    decoded = Some(body);
+                    body_dirty = true;
+                }
+            }
+        }
+        if let Ok(status) = StatusCode::from_u16(message.status) {
+            parts.status = status;
+        }
+        replace_headers(&mut parts.headers, &message.headers);
+    }
+
+    // --- Response body rules ---
     let content_type = parts
         .headers
         .get(hyper::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok());
-    let declared_length = parts
-        .headers
-        .get(hyper::header::CONTENT_LENGTH)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<usize>().ok());
-    let body: Body = if !response_body_rules.is_empty()
-        && is_textual(content_type)
-        && declared_length.is_none_or(|length| length <= BODY_LIMIT)
-    {
-        match collect_limited(incoming).await {
-            Ok(bytes) => {
+    if !response_body_rules.is_empty() && is_textual(content_type) {
+        if decoded.is_none()
+            && response_body.is_stream()
+            && declared_length(&parts.headers).is_none_or(|length| length <= BODY_LIMIT)
+        {
+            response_body = match response_body.gather(BODY_LIMIT).await {
+                Ok(body) => body,
+                Err(message) => {
+                    entry.error = Some(message.clone());
+                    return finish(entry, error_response(StatusCode::BAD_GATEWAY, &message));
+                }
+            };
+            if let Some(bytes) = response_body.bytes() {
                 let encoding = parts
                     .headers
                     .get(hyper::header::CONTENT_ENCODING)
-                    .and_then(|v| v.to_str().ok())
-                    .map(str::to_string);
-                let (next, changed) =
-                    rewrite_text(bytes, encoding.as_deref(), &response_body_rules);
-                if changed {
-                    entry.actions.push("body-rewrite".into());
-                    set_body_headers(&mut parts.headers, next.len(), true);
-                }
-                full(next)
-            }
-            Err(message) => {
-                entry.error = Some(message.clone());
-                return finish(entry, error_response(StatusCode::BAD_GATEWAY, &message));
+                    .and_then(|v| v.to_str().ok());
+                decoded = decode_body(bytes, encoding);
             }
         }
-    } else {
-        incoming.map_err(|e| Box::new(e) as BoxError).boxed()
+        if let Some(text) = decoded.as_ref().and_then(|d| std::str::from_utf8(d).ok()) {
+            if let Some(next) = apply_body_rules(text, &response_body_rules) {
+                entry.actions.push("body-rewrite".into());
+                decoded = Some(next.into_bytes());
+                body_dirty = true;
+            }
+        }
+    }
+    let body = match (body_dirty, decoded) {
+        (true, Some(bytes)) => {
+            set_body_headers(&mut parts.headers, bytes.len(), true);
+            full(bytes)
+        }
+        _ => {
+            if let BodyState::Full(bytes) = &response_body {
+                // Scripts may have rewritten Content-Length; the original
+                // (still encoded) bytes go out unchanged.
+                set_body_headers(&mut parts.headers, bytes.len(), false);
+            }
+            response_body.into_body()
+        }
     };
     finish(entry, Response::from_parts(parts, body))
+}
+
+fn owned(rules: Vec<&super::rules::ScriptRule>) -> Vec<super::rules::ScriptRule> {
+    rules.into_iter().cloned().collect()
+}
+
+fn declared_length(headers: &hyper::HeaderMap) -> Option<usize> {
+    headers
+        .get(hyper::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<usize>().ok())
+}
+
+/// A body either still streaming from the peer or fully read.
+enum BodyState {
+    Stream(Body),
+    Full(Bytes),
+}
+
+impl BodyState {
+    fn is_stream(&self) -> bool {
+        matches!(self, BodyState::Stream(_))
+    }
+
+    fn bytes(&self) -> Option<&Bytes> {
+        match self {
+            BodyState::Full(bytes) => Some(bytes),
+            BodyState::Stream(_) => None,
+        }
+    }
+
+    /// Read up to `limit` bytes; a longer body keeps streaming (the bytes
+    /// already read are replayed in front of the rest).
+    fn gather(
+        self,
+        limit: usize,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<BodyState, String>> + Send>> {
+        Box::pin(self.gather_inner(limit))
+    }
+
+    async fn gather_inner(self, limit: usize) -> Result<BodyState, String> {
+        let mut body = match self {
+            BodyState::Stream(body) => body,
+            full => return Ok(full),
+        };
+        let mut buffer = bytes::BytesMut::new();
+        while let Some(frame) = body.frame().await {
+            let frame = frame.map_err(|error| format!("读取正文失败：{error}"))?;
+            let Ok(data) = frame.into_data() else {
+                continue;
+            };
+            buffer.extend_from_slice(&data);
+            if buffer.len() > limit {
+                let prefix = buffer.freeze();
+                let head = futures_util::stream::once(async move {
+                    Ok::<_, BoxError>(hyper::body::Frame::data(prefix))
+                });
+                let rest = http_body_util::BodyStream::new(body);
+                use futures_util::StreamExt as _;
+                return Ok(BodyState::Stream(BodyExt::boxed(
+                    http_body_util::StreamBody::new(head.chain(rest)),
+                )));
+            }
+        }
+        Ok(BodyState::Full(buffer.freeze()))
+    }
+
+    fn collect(self) -> Pin<Box<dyn std::future::Future<Output = Result<Bytes, String>> + Send>> {
+        Box::pin(async move {
+            match self.gather_inner(BODY_LIMIT).await? {
+                BodyState::Full(bytes) => Ok(bytes),
+                BodyState::Stream(_) => Err("正文过大".into()),
+            }
+        })
+    }
+
+    fn into_body(self) -> Body {
+        match self {
+            BodyState::Full(bytes) => full(bytes),
+            BodyState::Stream(body) => body,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Scripts
+// ---------------------------------------------------------------------------
+
+const SCRIPT_MAX_BODY: usize = super::rules::SCRIPT_MAX_BODY;
+
+/// Header list as scripts see it: HTTP/1 names in canonical Title-Case (what
+/// browsers send and what Surge scripts index by), HTTP/2 names lowercase.
+fn header_pairs(headers: &hyper::HeaderMap, version: hyper::Version) -> Vec<(String, String)> {
+    let title = !matches!(version, hyper::Version::HTTP_2 | hyper::Version::HTTP_3);
+    headers
+        .iter()
+        .filter_map(|(name, value)| {
+            let value = value.to_str().ok()?.to_string();
+            let name = if title {
+                name.as_str()
+                    .split('-')
+                    .map(|part| {
+                        let mut chars = part.chars();
+                        match chars.next() {
+                            Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+                            None => String::new(),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("-")
+            } else {
+                name.as_str().to_string()
+            };
+            Some((name, value))
+        })
+        .collect()
+}
+
+fn replace_headers(target: &mut hyper::HeaderMap, headers: &[(String, String)]) {
+    let mut next = hyper::HeaderMap::new();
+    for (name, value) in headers {
+        if let (Ok(name), Ok(value)) = (
+            hyper::header::HeaderName::from_bytes(name.as_bytes()),
+            hyper::header::HeaderValue::from_str(value),
+        ) {
+            next.append(name, value);
+        }
+    }
+    *target = next;
+}
+
+fn script_host(shared: &Arc<EngineShared>) -> script::ScriptHost {
+    let fetch_shared = shared.clone();
+    script::ScriptHost {
+        store: shared.script_store.clone(),
+        fetcher: Arc::new(move |call| {
+            let shared = fetch_shared.clone();
+            Box::pin(async move { script_fetch(shared, call).await })
+        }),
+        notifier: shared.notifier.clone(),
+    }
+}
+
+fn script_call(
+    rule: &super::rules::ScriptRule,
+    kind: script::ScriptKind,
+    request: &script::HttpMessage,
+    request_body: Option<Vec<u8>>,
+    response: Option<(&script::HttpMessage, Option<Vec<u8>>)>,
+) -> script::ScriptCall {
+    let mut request = request.clone();
+    request.body = request_body;
+    script::ScriptCall {
+        name: rule.name.clone(),
+        code: rule.code.clone().unwrap_or_else(|| Arc::from("")),
+        kind,
+        argument: rule.argument.clone(),
+        timeout: rule.timeout,
+        binary: rule.binary,
+        qx: rule.qx,
+        request,
+        response: response.map(|(message, body)| script::HttpMessage {
+            body,
+            ..message.clone()
+        }),
+    }
+}
+
+fn record_script(entry: &mut LogEntry, name: &str, report: &script::ScriptReport) {
+    entry
+        .script_logs
+        .push(format!("{name}：{} ms", report.elapsed.as_millis()));
+    for line in report.logs.iter().take(20) {
+        if entry.script_logs.len() >= 60 {
+            break;
+        }
+        entry.script_logs.push(format!("{name}：{line}"));
+    }
+    match &report.outcome {
+        script::ScriptOutcome::Done(_) => entry.actions.push(format!("script:{name}")),
+        script::ScriptOutcome::Unchanged => entry.actions.push(format!("script-pass:{name}")),
+        script::ScriptOutcome::Failed(message) => {
+            entry.actions.push(format!("script-error:{name}"));
+            if entry.error.is_none() {
+                entry.error = Some(format!("脚本 {name}：{message}"));
+            }
+        }
+    }
+}
+
+fn scripted_response(answer: script::ScriptDone) -> Response<Body> {
+    let body = answer.body.unwrap_or_default();
+    let mut response = Response::new(full(Bytes::new()));
+    *response.status_mut() = answer
+        .status
+        .and_then(|code| StatusCode::from_u16(code).ok())
+        .unwrap_or(StatusCode::OK);
+    if let Some(headers) = &answer.headers {
+        replace_headers(response.headers_mut(), headers);
+    }
+    set_body_headers(response.headers_mut(), body.len(), true);
+    *response.body_mut() = full(body);
+    response
+}
+
+/// `$httpClient`: back through mihomo from the loop-exempt source, like
+/// every other upstream leg, so the user's rules pick the exit.
+async fn script_fetch(
+    shared: Arc<EngineShared>,
+    call: script::HttpCall,
+) -> Result<script::HttpReply, String> {
+    let mut url = call.url.clone();
+    let mut method = call.method.clone();
+    let mut body = call.body.clone();
+    for _ in 0..6 {
+        let (target, path) = parse_url(&url).ok_or_else(|| format!("URL 无效：{url}"))?;
+        let scheme: &'static str = if target.scheme == "https" {
+            "https"
+        } else {
+            "http"
+        };
+        let ctx = ConnCtx::new(shared.clone(), scheme, target.host.clone(), target.port);
+        let mut request = Request::new(full(Bytes::from(body.clone().unwrap_or_default())));
+        *request.method_mut() =
+            hyper::Method::from_bytes(method.as_bytes()).map_err(|_| "请求方法无效".to_string())?;
+        *request.uri_mut() = path.parse().map_err(|_| format!("URL 无效：{url}"))?;
+        for (name, value) in &call.headers {
+            if name.eq_ignore_ascii_case("content-length") || name.eq_ignore_ascii_case("host") {
+                continue;
+            }
+            if let (Ok(name), Ok(value)) = (
+                hyper::header::HeaderName::from_bytes(name.as_bytes()),
+                hyper::header::HeaderValue::from_str(value),
+            ) {
+                request.headers_mut().append(name, value);
+            }
+        }
+        if let Ok(value) = hyper::header::HeaderValue::from_str(&authority_for(
+            &target.host,
+            target.port,
+            &target.scheme,
+        )) {
+            request.headers_mut().insert(hyper::header::HOST, value);
+        }
+        if let Some(bytes) = &body {
+            request.headers_mut().insert(
+                hyper::header::CONTENT_LENGTH,
+                hyper::header::HeaderValue::from(bytes.len()),
+            );
+        }
+        let response = send_upstream(&ctx, &target, request).await?;
+        let status = response.status();
+        if call.follow_redirects && status.is_redirection() {
+            if let Some(location) = response
+                .headers()
+                .get(hyper::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+            {
+                let next = url::Url::parse(&url)
+                    .and_then(|base| base.join(location))
+                    .map_err(|_| format!("重定向地址无效：{location}"))?;
+                url = next.to_string();
+                if matches!(status.as_u16(), 301..=303) && method != "HEAD" {
+                    method = "GET".into();
+                    body = None;
+                }
+                continue;
+            }
+        }
+        let (parts, incoming) = response.into_parts();
+        let bytes = collect_limited(incoming).await?;
+        let encoding = parts
+            .headers
+            .get(hyper::header::CONTENT_ENCODING)
+            .and_then(|v| v.to_str().ok());
+        let (bytes, decoded) = match decode_body(&bytes, encoding) {
+            Some(decoded) if encoding.is_some() => (decoded, true),
+            _ => (bytes.to_vec(), false),
+        };
+        let headers = header_pairs(&parts.headers, parts.version)
+            .into_iter()
+            .filter(|(name, _)| !(decoded && name.eq_ignore_ascii_case("content-encoding")))
+            .collect();
+        return Ok(script::HttpReply {
+            status: status.as_u16(),
+            headers,
+            body: bytes,
+        });
+    }
+    Err("重定向次数过多".into())
 }
 
 /// Connection-specific headers that must not cross into HTTP/2.
@@ -1150,7 +1649,15 @@ const HOP_HEADERS: [&str; 6] = [
     "te",
 ];
 
-async fn send_upstream(
+fn send_upstream<'a>(
+    ctx: &'a ConnCtx,
+    target: &'a Target,
+    req: Request<Body>,
+) -> Pin<Box<dyn std::future::Future<Output = Result<Response<Incoming>, String>> + Send + 'a>> {
+    Box::pin(send_upstream_inner(ctx, target, req))
+}
+
+async fn send_upstream_inner(
     ctx: &ConnCtx,
     target: &Target,
     mut req: Request<Body>,
@@ -1604,6 +2111,106 @@ http-response ^https://origin\.test/api "\"vip\":false" "\"vip\":true"
         assert!(log.iter().any(|e| e.actions.contains(&"302".to_string())));
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn scripts_rewrite_answer_and_fetch() {
+        let (mitm_ca, _) = CaAuthority::generate("Murge Test MITM").unwrap();
+        let mitm_ca = Arc::new(mitm_ca);
+        let (origin_ca, _) = CaAuthority::generate("Origin Test CA").unwrap();
+        let origin_addr = origin(Arc::new(origin_ca)).await;
+        let sources = Arc::new(Mutex::new(Vec::new()));
+        let upstream = fake_mihomo(origin_addr, sources.clone()).await;
+        let shared = Arc::new(EngineShared::new(Arc::new(move || Some(upstream))));
+        shared.enabled.store(true, Ordering::Relaxed);
+        shared.skip_verify.store(true, Ordering::Relaxed);
+        *shared.ca.write().unwrap() = Some(mitm_ca.clone());
+        let module = r#"
+[General]
+force-http-engine-hosts = %APPEND% virtual.test
+[Script]
+vip = type=http-response,pattern=^https://origin\.test/api,requires-body=1,max-size=-1,script-path=https://s.test/vip.js,argument=level=9
+fake = type=http-request,pattern=^https://origin\.test/fake,script-path=https://s.test/fake.js
+virtual = type=http-request,pattern=^http://virtual\.test/,script-path=https://s.test/virtual.js
+"#;
+        let mut rules = CompiledRules::build(
+            &["origin.test".into()],
+            &[ModuleSource::plain(module)],
+            true,
+        );
+        let missing = rules.attach_scripts(|url| {
+            Some(Arc::from(match url {
+                "https://s.test/vip.js" => r#"
+                    const body = JSON.parse($response.body)
+                    body.vip = true
+                    body.arg = $argument
+                    $done({ body: JSON.stringify(body), headers: { ...$response.headers, 'X-Script': 'vip' } })
+                "#,
+                "https://s.test/fake.js" => r#"
+                    $httpClient.get({ url: 'https://origin.test/api/raw', headers: { 'X-Added': 'from-script' } }, (error, response, data) => {
+                      $done({ response: { status: 200, headers: { 'Content-Type': 'text/plain' }, body: `${response.status} ${response.headers['X-Seen']} ${data}` } })
+                    })
+                "#,
+                "https://s.test/virtual.js" => r#"$done({ response: { status: 200, body: 'virtual ' + $request.url } })"#,
+                _ => return None,
+            }))
+        });
+        assert!(missing.is_empty());
+        *shared.rules.write().unwrap() = Arc::new(rules);
+        let (listener, port) = bind().unwrap();
+        tokio::spawn(serve(shared.clone(), listener));
+
+        // Response script: JSON body + headers rewritten.
+        let stream = connect_through(port, &shared.password, "origin.test").await;
+        let mut sender = tls_client(stream, &mitm_ca, "origin.test").await.unwrap();
+        let response = sender
+            .send_request(get("/api/me", "origin.test"))
+            .await
+            .unwrap();
+        assert_eq!(response.headers()["x-script"], "vip");
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&body[..], br#"{"vip":true,"arg":"level=9"}"#);
+
+        // Request script answering after its own $httpClient call (which
+        // goes back through mihomo, skipping the response script? no: the
+        // script's request is a plain upstream leg, not re-decrypted).
+        sender.ready().await.unwrap();
+        let response = sender
+            .send_request(get("/fake", "origin.test"))
+            .await
+            .unwrap();
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&body[..], br#"200 from-script {"vip":false}"#);
+
+        // force-http-engine-hosts: a script-served virtual host over plain HTTP.
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let auth = base64::engine::general_purpose::STANDARD
+            .encode(format!("{PROXY_USER}:{}", shared.password));
+        stream
+            .write_all(format!("CONNECT virtual.test:80 HTTP/1.1\r\nHost: virtual.test:80\r\nProxy-Authorization: Basic {auth}\r\n\r\n").as_bytes())
+            .await
+            .unwrap();
+        let (lines, _, stream) = read_head(stream).await.unwrap();
+        assert!(lines[0].contains(" 200 "));
+        let mut sender = handshake(stream).await.unwrap();
+        let response = sender
+            .send_request(get("/page?x=1", "virtual.test"))
+            .await
+            .unwrap();
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&body[..], b"virtual http://virtual.test/page?x=1");
+
+        assert!(sources
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|ip| *ip == IpAddr::V4(UPSTREAM_SOURCE_IP)));
+        let log = shared.log.list();
+        assert!(
+            log.iter()
+                .any(|e| e.actions.contains(&"script:vip".to_string())),
+            "{log:?}"
+        );
+    }
+
     #[tokio::test]
     async fn rejects_unauthenticated_and_non_connect_clients() {
         let shared = Arc::new(EngineShared::new(Arc::new(|| None)));
@@ -1701,12 +2308,20 @@ mod e2e {
         shared.enabled.store(true, Ordering::Relaxed);
         shared.skip_verify.store(true, Ordering::Relaxed);
         *shared.ca.write().unwrap() = Some(mitm_ca.clone());
-        let module = "[Body Rewrite]\nhttp-response ^https://origin\\.test \"\\\"vip\\\":false\" \"\\\"vip\\\":true\"\n";
-        *shared.rules.write().unwrap() = Arc::new(CompiledRules::build(
+        let module = "[Body Rewrite]\nhttp-response ^https://origin\\.test \"\\\"vip\\\":false\" \"\\\"vip\\\":true\"\n[Script]\nfetch = type=http-response,pattern=^https://origin\\.test,requires-body=1,script-path=https://s.test/fetch.js\n".to_string();
+        let origin_port = origin_addr.port();
+        let mut rules = CompiledRules::build(
             &["origin.test:*".into()],
-            &[ModuleSource::plain(module)],
+            &[ModuleSource::plain(&module)],
             true,
-        ));
+        );
+        // The script's own request re-enters mihomo from 127.0.0.2 and must
+        // go DIRECT, not back into the engine.
+        let script = format!(
+            "$httpClient.get('https://origin.test:{origin_port}/raw', (e, r, d) => $done({{ body: $response.body.replace('}}', ',\"fetched\":' + (e || d) + '}}') }}))"
+        );
+        rules.attach_scripts(|_| Some(Arc::from(script.as_str())));
+        *shared.rules.write().unwrap() = Arc::new(rules);
         let (listener, port) = bind().unwrap();
         tokio::spawn(serve(shared.clone(), listener));
 
@@ -1715,7 +2330,8 @@ mod e2e {
         );
         let filters = shared.rules().hosts.mihomo_filters();
         let config =
-            crate::mitm::inject_into_document(&base, &filters, port, &shared.password).unwrap();
+            crate::mitm::inject_into_document(&base, &filters, port, &shared.password, true)
+                .unwrap();
         std::fs::write(dir.path().join("config.yaml"), &config).unwrap();
         let mut child = std::process::Command::new(binary)
             .arg("-d")
@@ -1752,7 +2368,11 @@ mod e2e {
         let body = body
             .unwrap_or_else(|_| Err("timed out".into()))
             .unwrap_or_else(|error| panic!("{error}\n{config}\n{log}"));
-        assert_eq!(&body[..], br#"{"vip":true}"#, "{config}\n{log}");
+        assert_eq!(
+            &body[..],
+            br#"{"vip":true,"fetched":{"vip":true}}"#,
+            "{config}\n{log}"
+        );
         assert!(log.contains("Murge-MITM"), "{log}");
         eprintln!("{config}\n{log}");
     }

@@ -531,6 +531,27 @@ pub fn run() {
                         Some(std::net::SocketAddr::from(([127, 0, 0, 1], port)))
                     }),
                 );
+                if let Some(service) = mitm::global() {
+                    let toast_app = app.handle().clone();
+                    *service.shared.notifier.lock().expect("notifier") =
+                        Some(std::sync::Arc::new(move |note: mitm::script::Notification| {
+                            let title = if note.title.is_empty() {
+                                note.script.clone()
+                            } else {
+                                note.title.clone()
+                            };
+                            let body = [note.subtitle.as_str(), note.body.as_str()]
+                                .iter()
+                                .filter(|part| !part.is_empty())
+                                .copied()
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            let url = Some(note.url.clone()).filter(|url| {
+                                url.starts_with("https://") || url.starts_with("http://")
+                            });
+                            crate::notifications::show_script_toast(&toast_app, title, body, url);
+                        }));
+                }
             }
             app.manage(std::sync::Arc::new(usage));
             app.manage(std::sync::Arc::new(kernel));

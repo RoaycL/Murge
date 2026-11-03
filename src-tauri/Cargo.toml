@@ -77,6 +77,7 @@ jaq-core = "2"
 jaq-std = { version = "2", default-features = false, features = ["format", "math", "regex", "time"] }
 jaq-json = "1"
 hifijson = "0.2"
+rquickjs = { version = "0.14", features = ["array-buffer"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -112,6 +112,46 @@ fn show(app: &tauri::AppHandle, toast: UpdateToast) {
     let _ = open_about;
 }
 
+/// A `$notification.post` from an HTTPS-decryption script. Clicking opens
+/// the script's `open-url` when it gave one.
+#[cfg(windows)]
+pub fn show_script_toast(app: &tauri::AppHandle, title: String, body: String, url: Option<String>) {
+    use tauri_winrt_notification::Toast;
+    let dev_build = tauri::utils::platform::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf()))
+        .map(|dir| dir.ends_with("target/debug") || dir.ends_with("target/release"))
+        .unwrap_or(false);
+    let app_id = if dev_build {
+        Toast::POWERSHELL_APP_ID.to_string()
+    } else {
+        app.config().identifier.clone()
+    };
+    std::thread::spawn(move || {
+        let result = Toast::new(&app_id)
+            .title(&title)
+            .text1(&body)
+            .on_activated(move |_| {
+                if let Some(url) = &url {
+                    let _ = std::process::Command::new("rundll32")
+                        .args(["url.dll,FileProtocolHandler", url])
+                        .spawn();
+                }
+                Ok(())
+            })
+            .show();
+        if let Err(error) = result {
+            crate::diag!("[notifications] script toast failed: {error}");
+        }
+    });
+}
+
+#[cfg(not(windows))]
+pub fn show_script_toast(app: &tauri::AppHandle, title: String, body: String, url: Option<String>) {
+    let _ = (app, url);
+    crate::diag!("[notifications] {title}: {body}");
+}
+
 /// Subscribe the notifier to the update service (call once at startup).
 pub fn start(app: &tauri::AppHandle) {
     use tauri::Manager;

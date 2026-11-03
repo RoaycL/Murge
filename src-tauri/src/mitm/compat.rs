@@ -226,6 +226,7 @@ pub enum RewriteItem {
     Header(HeaderRewrite),
     Body(BodyRewrite),
     Map(MapLocal),
+    Script(super::rules::ScriptRule),
 }
 
 fn reject_kind(token: &str) -> Option<RejectKind> {
@@ -385,7 +386,32 @@ pub fn parse_compat_rewrite(line: &str) -> Result<RewriteItem, String> {
                 headers: Vec::new(),
             }))
         }
-        a if a.starts_with("script") => Err("暂不支持脚本".into()),
+        // QX: `regex url script-response-body https://…/a.js`.
+        a if a.starts_with("script-") => {
+            let (phase, requires_body) = match a {
+                "script-request-header" => (Phase::Request, false),
+                "script-request-body" => (Phase::Request, true),
+                "script-response-header" => (Phase::Response, false),
+                "script-response-body" => (Phase::Response, true),
+                "script-echo-response" | "script-analyze-echo-response" => (Phase::Request, true),
+                other => return Err(format!("不支持的操作 {other}")),
+            };
+            let url = first()?;
+            let mut params = vec![("script-path".to_string(), url.clone())];
+            if requires_body {
+                params.push(("requires-body".into(), "true".into()));
+                params.push(("max-size".into(), "-1".into()));
+            }
+            let mut rule = super::rules::script_from_params(
+                super::rules::script_name_from_url(&url),
+                phase,
+                &args[0],
+                &params,
+            )?
+            .ok_or("脚本已禁用")?;
+            rule.qx = true;
+            Ok(RewriteItem::Script(rule))
+        }
         "echo-response" => Err("暂不支持 echo-response".into()),
         other => Err(format!("不支持的操作 {other}")),
     }
@@ -552,6 +578,15 @@ mod tests {
         };
         assert_eq!(rule.body, b"{}");
         assert!(parse_compat_rewrite("^x url script-response-body a.js").is_err());
+        let RewriteItem::Script(rule) = parse_compat_rewrite(
+            "^https://a\\.com/api url script-response-body https://s.com/x.js",
+        )
+        .unwrap() else {
+            panic!()
+        };
+        assert!(rule.requires_body && rule.qx);
+        assert_eq!(rule.name, "x.js");
+        assert!(matches!(rule.phase, Phase::Response));
     }
 
     #[test]

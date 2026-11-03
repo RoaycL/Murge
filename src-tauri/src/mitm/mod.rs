@@ -1216,7 +1216,7 @@ pub async fn dispatch(
             .map(|_| Value::Null),
         "mitm:update-script" => {
             let url = string_arg(payload, 0, channel)?;
-            service.ensure_scripts(&[url.clone()]).await;
+            service.ensure_scripts(std::slice::from_ref(&url)).await;
             match service.script_errors.lock().expect("errors").get(&url) {
                 Some(error) => Err(IpcError::invalid_argument(format!("更新脚本失败：{error}"))),
                 None => Ok(Value::Null),

@@ -1,6 +1,5 @@
 ﻿; Installer hooks for the Tauri NSIS bundle (bundle.windows.nsis.installerHooks).
 ;
-; Installer hooks for the Tauri NSIS bundle.
 ; The bundler !includes this file at the top of its installer.nsi and inserts the
 ; four NSIS_HOOK_* macros into the install and uninstall sections. Tauri defines
 ; PRODUCTNAME, MAINBINARYNAME, BUNDLEID, INSTALLMODE and the $UpdateMode and

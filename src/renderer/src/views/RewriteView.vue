@@ -3,11 +3,12 @@ import { computed, onMounted, ref, toRef, watch } from 'vue'
 import AppIcon from '../components/AppIcon.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
+import DetailDrawer from '../components/DetailDrawer.vue'
 import { useMitmStore } from '../stores/mitm'
 import { useToast } from '../composables/use-toast'
 import { useUnsavedChanges } from '../composables/use-unsaved-changes'
 import { useDialogFocus } from '../composables/use-dialog-focus'
-import { moduleSection, replaceModuleSection, type MitmModuleInfo } from '@shared/mitm'
+import { moduleSection, moduleSections, replaceModuleSection, type MitmModuleInfo } from '@shared/mitm'
 
 const store = useMitmStore()
 const toast = useToast()
@@ -98,6 +99,11 @@ const sectionDirty = computed(() => sectionOpen.value && sectionText.value !== s
 useUnsavedChanges('rewrite-section', '重写规则', sectionDirty)
 useDialogFocus(sectionOpen, sectionDialog, () => closeSection())
 useDialogFocus(localOpen, localDialog, () => closeLocal())
+
+// 模块小眼睛：抽屉里按段展示模块内容（与 Surge 的模块详情一致）。
+const viewingModuleId = ref<string | null>(null)
+const viewingModule = computed(() => state.value.modules.find((module) => module.id === viewingModuleId.value) ?? null)
+const viewingModuleParts = computed(() => moduleSections(viewingModule.value?.content ?? ''))
 
 // 「N 条规则生效中」→ 查看具体生效的规则（含模块来源）。
 const viewingKind = ref<RuleKind | null>(null)
@@ -200,11 +206,9 @@ async function toggleModule(module: MitmModuleInfo): Promise<void> {
   if (error) toast.error('切换失败', error)
 }
 
+const editingArgsModule = computed(() => state.value.modules.find((module) => module.id === editingArgs.value) ?? null)
+
 function openArguments(module: MitmModuleInfo): void {
-  if (editingArgs.value === module.id) {
-    editingArgs.value = null
-    return
-  }
   argDraft.value = Object.fromEntries(module.arguments.map((arg) => [arg.name, arg.value]))
   editingArgs.value = module.id
 }
@@ -299,22 +303,13 @@ onMounted(async () => {
                 </span>
               </div>
               <div class="rewrite-module-actions">
+                <button type="button" class="icon-control rewrite-module-view" :aria-label="`查看 ${module.name}`" title="查看模块内容" @click="viewingModuleId = module.id"><AppIcon name="eye" :size="16" /></button>
+                <button v-if="module.arguments.length" type="button" class="rewrite-secondary" :disabled="!!store.busy" @click="openArguments(module)">编辑参数</button>
                 <button v-if="module.url" type="button" class="rewrite-secondary" :disabled="!!store.busy" @click="updateModule(module)">{{ store.busy === `update-${module.id}` ? '更新中…' : '更新' }}</button>
                 <button type="button" class="rewrite-danger" :disabled="!!store.busy" @click="removing = module">删除</button>
                 <button type="button" class="switch" :class="{ on: module.enabled }" role="switch" :aria-checked="module.enabled" :aria-label="`启用 ${module.name}`" :disabled="!!store.busy" @click="toggleModule(module)" />
               </div>
             </div>
-            <form v-if="editingArgs === module.id" class="rewrite-arguments" @submit.prevent="saveArguments(module)">
-              <p v-if="module.argumentsDesc" class="rewrite-arguments-desc">{{ module.argumentsDesc }}</p>
-              <label v-for="arg in module.arguments" :key="arg.name">
-                <span>{{ arg.name }}</span>
-                <input v-model="argDraft[arg.name]" type="text" spellcheck="false" :placeholder="arg.default" />
-              </label>
-              <div class="rewrite-actions">
-                <button type="button" class="rewrite-secondary" @click="resetArguments(module)">恢复默认</button>
-                <button type="submit" class="rewrite-primary" :disabled="!!store.busy">{{ store.busy === `arguments-${module.id}` ? '保存中…' : '保存参数' }}</button>
-              </div>
-            </form>
             <ul v-if="expanded === module.id" class="rewrite-warnings">
               <li v-for="warning in module.warnings" :key="warning">{{ warning }}</li>
             </ul>
@@ -389,6 +384,35 @@ onMounted(async () => {
         </section>
       </div>
     </Teleport>
+    <DetailDrawer :open="!!editingArgsModule" :title="editingArgsModule?.name ?? ''" subtitle="模块参数" @close="editingArgs = null">
+      <form v-if="editingArgsModule" class="module-args" @submit.prevent="saveArguments(editingArgsModule)">
+        <div class="module-viewer-card module-args-card">
+          <label v-for="arg in editingArgsModule.arguments" :key="arg.name">
+            <span>{{ arg.name }}</span>
+            <input v-model="argDraft[arg.name]" type="text" spellcheck="false" :placeholder="arg.default" />
+          </label>
+        </div>
+        <p v-if="editingArgsModule.argumentsDesc" class="module-args-desc">{{ editingArgsModule.argumentsDesc }}</p>
+        <div class="rewrite-actions">
+          <button type="button" class="rewrite-secondary" @click="resetArguments(editingArgsModule)">恢复默认</button>
+          <button type="submit" class="rewrite-primary" :disabled="!!store.busy">{{ store.busy === `arguments-${editingArgsModule.id}` ? '保存中…' : '保存参数' }}</button>
+        </div>
+      </form>
+    </DetailDrawer>
+    <DetailDrawer :open="!!viewingModule" :title="viewingModule?.name ?? ''" subtitle="模块内容" @close="viewingModuleId = null">
+      <div v-if="viewingModule" class="module-viewer">
+        <dl class="module-viewer-card">
+          <div><dt>模块名称</dt><dd>{{ viewingModule.name }}</dd></div>
+          <div v-if="viewingModule.description || viewingModuleParts.meta.desc"><dt>模块描述</dt><dd>{{ viewingModule.description || viewingModuleParts.meta.desc }}</dd></div>
+          <div v-if="viewingModule.url"><dt>URL</dt><dd class="module-viewer-url">{{ viewingModule.url }}</dd></div>
+        </dl>
+        <section v-for="section in viewingModuleParts.sections" :key="section.name" class="module-viewer-section">
+          <h3>{{ section.name }}</h3>
+          <pre :class="{ mitm: section.name.toLowerCase() === 'mitm' }">{{ section.body }}</pre>
+        </section>
+        <p v-if="!viewingModuleParts.sections.length" class="rewrite-hint">模块没有可显示的内容。</p>
+      </div>
+    </DetailDrawer>
     <ConfirmModal :open="clearingStore" title="清除脚本数据？" description="会删除所有脚本通过 $persistentStore 保存的数据，例如 BoxJs 的设置和各脚本的登录信息。" confirm-label="清除" :busy="!!store.busy" @close="clearingStore = false" @confirm="clearStore" />
     <ConfirmModal :open="!!removing" title="删除模块？" :description="`将删除「${removing?.name ?? ''}」及其规则。`" confirm-label="删除" :busy="!!store.busy" @close="removing = null" @confirm="confirmRemove" />
   </div>
@@ -405,6 +429,23 @@ onMounted(async () => {
 .rewrite-kind h3 { margin: 0 0 7px; font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); }
 .rewrite-kind p { display: -webkit-box; flex: 1; margin: 0; overflow: hidden; color: var(--app-muted); font-size: var(--font-size-xs); line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .rewrite-kind footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); }
+.module-viewer { display: grid; gap: 18px; }
+.module-args { display: grid; gap: 14px; }
+.module-args-card label { display: grid; grid-template-columns: minmax(90px, 42%) 1fr; align-items: center; gap: 12px; padding: 9px 0; border-top: 1px solid var(--app-divider); font-size: var(--font-size-sm); }
+.module-args-card label:first-child { border-top: 0; }
+.module-args-card label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.module-args-card input { min-width: 0; height: 28px; padding: 0; border: 0; background: transparent; color: var(--app-muted); font-size: var(--font-size-sm); text-align: right; }
+.module-args-card input:focus { outline: none; color: var(--app-text); }
+.module-args-card label:focus-within { box-shadow: inset 0 -2px 0 var(--app-blue); }
+.module-args-desc { margin: 0 4px; color: var(--app-muted); font-size: var(--font-size-xs); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.module-viewer-card { display: grid; margin: 0; padding: 0 14px; border-radius: var(--radius-panel); background: var(--app-surface-solid); }
+.module-viewer-card > div { padding: 11px 0; border-top: 1px solid var(--app-divider); }
+.module-viewer-card > div:first-child { border-top: 0; }
+.module-viewer-card dt { font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+.module-viewer-card dd { margin: 4px 0 0; color: var(--app-muted); font-size: var(--font-size-xs); line-height: 1.5; overflow-wrap: anywhere; user-select: text; }
+.module-viewer-section h3 { margin: 0 0 7px 4px; color: var(--app-muted); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+.module-viewer-section pre { margin: 0; padding: 12px 14px; border-radius: var(--radius-panel); background: var(--app-surface-solid); font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.module-viewer-section pre.mitm { color: var(--app-danger); }
 .rewrite-kind-count { display: inline-flex; align-items: center; gap: 2px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .rewrite-kind-count:hover:not(:disabled) { color: var(--app-blue); }
 .rewrite-kind-count:disabled { cursor: default; }

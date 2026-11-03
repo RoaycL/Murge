@@ -31,6 +31,39 @@ export interface MitmModuleInfo {
   argumentsDesc: string
   /** `[Script]` entries (http-request / http-response). */
   scripts: number
+  /** The module's raw text (shown in the module viewer). */
+  content?: string
+}
+
+/** A module text split into its `#!` metadata and `[Section]` bodies, for display. */
+export function moduleSections(text: string): { meta: Record<string, string>; sections: Array<{ name: string; body: string }> } {
+  const meta: Record<string, string> = {}
+  const sections: Array<{ name: string; body: string }> = []
+  let current: { name: string; lines: string[] } | null = null
+  const flush = (): void => {
+    if (!current) return
+    const body = current.lines.join('\n').trim()
+    if (body) sections.push({ name: current.name, body })
+  }
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trimEnd()
+    const header = SECTION_HEADER.exec(line)
+    if (header) {
+      flush()
+      current = { name: header[1].trim(), lines: [] }
+      continue
+    }
+    if (!current) {
+      const metaLine = /^#!([\w-]+)\s*=\s*(.*)$/.exec(line.trim())
+      if (metaLine) meta[metaLine[1]] = metaLine[2]
+      continue
+    }
+    // Comments stay out of the viewer, like Surge's module sheet.
+    if (/^\s*(#|;|\/\/)/.test(line)) continue
+    current.lines.push(line)
+  }
+  flush()
+  return { meta, sections }
 }
 
 export interface MitmModuleArgument {

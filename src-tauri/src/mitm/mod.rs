@@ -930,6 +930,8 @@ impl MitmService {
                     "arguments": arguments,
                     "argumentsDesc": arguments_desc,
                     "scripts": parsed.scripts.len(),
+                    // Raw text for the module viewer drawer.
+                    "content": module.content,
                 })
             })
             .collect();

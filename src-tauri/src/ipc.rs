@@ -1185,7 +1185,9 @@ fn allow_lan_patch(allow_lan: bool) -> Value {
     })
 }
 
-fn controller_client(models: &enhancements::ModelStores) -> Result<mihomo::MihomoClient, IpcError> {
+pub(crate) fn controller_client(
+    models: &enhancements::ModelStores,
+) -> Result<mihomo::MihomoClient, IpcError> {
     let core = enhancements::coerce_core_settings(&models.core.get());
     mihomo::MihomoClient::new(
         core["controllerPort"].as_i64().unwrap_or(9090),

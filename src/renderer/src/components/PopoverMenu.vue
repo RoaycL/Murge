@@ -72,10 +72,16 @@ onBeforeUnmount(() => listen(false))
 
 <style>
 .popover-shade { position: fixed; z-index: 2990; inset: 0; }
-.popover-menu { position: fixed; z-index: 3000; display: grid; min-width: 220px; max-width: min(340px, calc(100vw - 16px)); padding: 5px; border: 1px solid color-mix(in srgb, var(--app-divider) 84%, white 16%); border-radius: var(--radius-panel); color: var(--app-text); background: var(--app-popover); -webkit-backdrop-filter: var(--app-popover-filter); backdrop-filter: var(--app-popover-filter); box-shadow: 0 18px 38px rgba(0, 0, 0, 0.3); font-size: var(--font-size-sm); }
-.popover-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 10px; border: 0; border-radius: 6px; background: transparent; color: inherit; font-size: var(--font-size-sm); text-align: left; cursor: default; }
-.popover-item:hover:not(:disabled), .popover-item:focus-visible { outline: none; color: var(--app-on-accent); background: var(--app-blue); }
+.popover-menu { position: fixed; z-index: 3000; display: grid; min-width: 220px; max-width: min(340px, calc(100vw - 16px)); padding: 5px; border: 1px solid var(--glass-edge); border-radius: 12px; color: var(--app-text); background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-filter); backdrop-filter: var(--glass-filter); box-shadow: var(--glass-shadow); font-size: var(--font-size-sm); animation: popover-in 0.12s ease-out; }
+.popover-flyout { z-index: 3001; min-width: 250px; }
+@keyframes popover-in { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .popover-menu { animation: none; } }
+.popover-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 24px; padding: 4px 10px; border: 0; border-radius: 6px; background: transparent; color: inherit; font-size: var(--font-size-sm); text-align: left; cursor: default; }
+.popover-item:hover:not(:disabled), .popover-item:focus-visible, .popover-item.active { outline: none; color: var(--app-on-accent); background: var(--app-blue); }
 .popover-item:disabled { opacity: 0.45; }
 .popover-item.danger:not(:hover):not(:focus-visible) { color: var(--app-danger); }
-.popover-sep { height: 1px; margin: 4px 6px; background: var(--app-divider); }
+.popover-sub i { font-size: 15px; font-style: normal; line-height: 1; opacity: 0.7; }
+.popover-sep { height: 1px; margin: 4px 10px; background: var(--app-divider); }
+.popover-section { padding: 6px 10px 2px; color: var(--app-muted); font-size: var(--font-size-2xs); font-weight: 600; }
+.popover-info { display: block; overflow: hidden; padding: 2px 10px; color: var(--app-muted); font-size: var(--font-size-sm); text-overflow: ellipsis; white-space: nowrap; }
 </style>

@@ -14,19 +14,25 @@ export function configToYaml(config: Record<string, unknown>): string {
   return stringifyYaml(config, { lineWidth: 0 }).trimEnd() + '\n'
 }
 
-function asProxy(value: unknown, index: number): ProxyConfig {
+export interface ParseOptions {
+  /** Accept a missing or empty `name` (switching a half-filled draft back to the form). */
+  allowEmptyName?: boolean
+}
+
+function asProxy(value: unknown, index: number, options: ParseOptions = {}): ProxyConfig {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`第 ${index + 1} 个节点不是键值对象`)
   const config = value as Record<string, unknown>
-  if (typeof config.name !== 'string' || !config.name.trim()) throw new Error(`第 ${index + 1} 个节点缺少 name`)
-  if (typeof config.type !== 'string' || !config.type.trim()) throw new Error(`节点「${config.name}」缺少 type`)
-  return { ...config, name: config.name.trim(), type: config.type.trim() } as ProxyConfig
+  const name = config.name === undefined || config.name === null ? '' : String(config.name).trim()
+  if (!name && !options.allowEmptyName) throw new Error(`第 ${index + 1} 个节点缺少 name`)
+  if (typeof config.type !== 'string' || !config.type.trim()) throw new Error(`节点「${name || index + 1}」缺少 type`)
+  return { ...config, name, type: config.type.trim() } as ProxyConfig
 }
 
 /**
  * Parse pasted mihomo YAML: one proxy map, a list of them, or a document
  * with a `proxies:` list.
  */
-export function parseProxiesYaml(text: string): ProxyConfig[] {
+export function parseProxiesYaml(text: string, options: ParseOptions = {}): ProxyConfig[] {
   let value: unknown
   try {
     value = parseYaml(text)
@@ -38,7 +44,7 @@ export function parseProxiesYaml(text: string): ProxyConfig[] {
   }
   const items = Array.isArray(value) ? value : [value]
   if (!items.length) throw new Error('没有找到节点')
-  return items.map(asProxy)
+  return items.map((item, index) => asProxy(item, index, options))
 }
 
 /** One-line summary for the node list. */
@@ -63,7 +69,7 @@ export interface ParsedNodes {
  * Pasted node content in any supported shape: WireGuard (wg-quick or Surge
  * [WireGuard] section), share links / Surge proxy lines, or mihomo YAML.
  */
-export function parseNodeText(text: string, fallbackName = '新节点'): ParsedNodes {
+export function parseNodeText(text: string, fallbackName = '新节点', options: ParseOptions = {}): ParsedNodes {
   if (!text.trim()) throw new Error('内容为空')
   if (/^\s*\[(Interface|WireGuard\s[^\]]+)\]/im.test(text)) {
     const result = parseWireGuardText(text, fallbackName)
@@ -71,5 +77,5 @@ export function parseNodeText(text: string, fallbackName = '新节点'): ParsedN
   }
   const lines = parseProxyLines(text)
   if (lines) return { configs: lines as ProxyConfig[], warnings: [] }
-  return { configs: parseProxiesYaml(text), warnings: [] }
+  return { configs: parseProxiesYaml(text, options), warnings: [] }
 }

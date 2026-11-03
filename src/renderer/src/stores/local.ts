@@ -14,6 +14,7 @@ import {
   type RuleEdit
 } from '@shared/local'
 import { toProtocolError } from '@shared/protocol-errors'
+import { classifyDelayError, type DelayNodeState } from './policies'
 
 /**
  * 本地节点与规则. The Rust service owns the semantics; every change sends the
@@ -170,6 +171,48 @@ export const useLocalStore = defineStore('local', () => {
     return save(next)
   }
 
+  /** Latency of local nodes, by proxy name (not tied to a policy group). */
+  const delays = ref<Record<string, DelayNodeState>>({})
+  const delayGeneration = new Map<string, number>()
+
+  function delayOf(name: string): DelayNodeState {
+    return delays.value[name] ?? { status: 'idle', delay: null }
+  }
+
+  async function testNode(name: string): Promise<void> {
+    const generation = (delayGeneration.get(name) ?? 0) + 1
+    delayGeneration.set(name, generation)
+    const set = (value: DelayNodeState): void => {
+      if (delayGeneration.get(name) === generation) delays.value = { ...delays.value, [name]: value }
+    }
+    set({ status: 'testing', delay: null })
+    try {
+      const result = await window.desktop.mihomo.delayTest(name, { timeout: 10000 })
+      set(Number.isFinite(result.delay) && result.delay > 0 ? { status: 'ok', delay: result.delay, url: result.url } : { status: 'unavailable', delay: null })
+    } catch (error) {
+      set({ status: classifyDelayError(error), delay: null, error: toProtocolError(error).message })
+    }
+  }
+
+  async function testAll(): Promise<void> {
+    const names = settings.value.nodes.filter((node) => node.enabled && !state.value.skippedNodes.includes(node.id)).map((node) => node.config.name)
+    await Promise.all(names.map((name) => testNode(name)))
+  }
+
+  /** A copy of a node under the first free "<name> 副本" name. */
+  function duplicateNode(id: string): Promise<string | null> {
+    const source = settings.value.nodes.find((node) => node.id === id)
+    if (!source) return Promise.resolve(null)
+    const taken = new Set(settings.value.nodes.map((node) => node.config.name))
+    let name = `${source.config.name} 副本`
+    for (let i = 2; taken.has(name); i++) name = `${source.config.name} 副本 ${i}`
+    const copy = plainClone(source)
+    const next = clone()
+    const index = next.nodes.findIndex((node) => node.id === id)
+    next.nodes.splice(index + 1, 0, { ...copy, id: newLocalId(), config: { ...copy.config, name } })
+    return save(next)
+  }
+
   function setTailscaleCoexist(enabled: boolean): Promise<string | null> {
     const next = clone()
     next.tailscaleCoexist = enabled
@@ -189,6 +232,11 @@ export const useLocalStore = defineStore('local', () => {
     refresh,
     save,
     upsertNode,
+    duplicateNode,
+    delays,
+    delayOf,
+    testNode,
+    testAll,
     addNodes,
     removeNode,
     setNodeEnabled,

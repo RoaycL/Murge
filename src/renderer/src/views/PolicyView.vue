@@ -6,6 +6,7 @@ import AppIcon from '../components/AppIcon.vue'
 import DetailDrawer from '../components/DetailDrawer.vue'
 import CachedRemoteIcon from '../components/CachedRemoteIcon.vue'
 import LocalNodesSection from '../components/LocalNodesSection.vue'
+import { latencyLabel as nodeLatencyLabel, latencyTitle, type LatencyLabel } from '../lib/node-latency'
 
 const policies = usePoliciesStore()
 const kernel = useKernelStore()
@@ -76,25 +77,8 @@ function isTailscaleNode(name: string): boolean {
   return policies.nodeByMember[name]?.type === 'Tailscale'
 }
 
-function latencyLabel(name: string): { text: string; kind: string } {
-  const state = policies.nodeState(name)
-  if (isTailscaleNode(name) && (state.status === 'timeout' || state.status === 'unavailable' || state.status === 'error')) {
-    return { text: '仅 tailnet', kind: 'idle' }
-  }
-  switch (state.status) {
-    case 'testing':
-      return { text: '测试中…', kind: 'testing' }
-    case 'ok':
-      return { text: `${state.delay} ms`, kind: 'ok' }
-    case 'timeout':
-      return { text: '超时', kind: 'timeout' }
-    case 'unavailable':
-      return { text: '不可用', kind: 'timeout' }
-    case 'error':
-      return { text: '失败', kind: 'timeout' }
-    default:
-      return { text: '选择测试', kind: 'idle' }
-  }
+function latencyLabel(name: string): LatencyLabel {
+  return nodeLatencyLabel(policies.nodeState(name), isTailscaleNode(name))
 }
 
 function isUnavailable(name: string): boolean {
@@ -103,12 +87,7 @@ function isUnavailable(name: string): boolean {
 }
 
 function delayTitle(name: string): string {
-  const state = policies.nodeState(name)
-  if (isTailscaleNode(name) && state.status !== 'ok' && state.status !== 'idle' && state.status !== 'testing') {
-    return '延迟测试访问的是公网地址；没有设置出口节点的 Tailscale 节点只能访问 tailnet，测不出延迟不代表不可用'
-  }
-  if (state.error) return state.error
-  return state.url ? `测试地址：${state.url}` : '测试此节点'
+  return latencyTitle(policies.nodeState(name), isTailscaleNode(name))
 }
 
 const drawerSubtitle = computed(() => {

@@ -2,7 +2,7 @@ import type { MihomoConnection } from '@shared/mihomo-api'
 import { deviceKeyOf, processKeyOf } from './connection-groups'
 
 /**
- * Per-process / per-device traffic history derived from the live
+ * Per-process / per-device / per-node traffic history derived from the live
  * `/connections` stream.
  *
  * Mihomo only reports cumulative bytes for connections that are still open, so
@@ -13,7 +13,8 @@ import { deviceKeyOf, processKeyOf } from './connection-groups'
  * and {@link ENTITY_TRAFFIC_MAX_HOSTS} hosts per entity.
  */
 
-export type EntityKind = 'process' | 'device'
+/** `node`: the concrete outbound (first entry of `chains`). */
+export type EntityKind = 'process' | 'device' | 'node'
 
 export const ENTITY_TRAFFIC_BUCKET_MS = 60_000
 export const ENTITY_TRAFFIC_RETENTION_MS = 24 * 60 * 60_000
@@ -27,6 +28,8 @@ export interface EntityTrafficWindow { key: string; label: string; up: number; d
 export interface EntityTrafficStats {
   /** Current bandwidth in bytes per second, measured between the last two snapshots. */
   rate: TrafficPair
+  /** Highest bandwidth seen since the app started, bytes per second. */
+  peak: TrafficPair
   /** Distinct connections observed for this entity since the app started. */
   totalConnections: number
   /** Host with the most transferred bytes since start, or null before any traffic. */
@@ -42,6 +45,7 @@ interface EntityRecord {
   buckets: Bucket[]
   total: TrafficPair
   rate: TrafficPair
+  peak: TrafficPair
   connections: number
   hosts: Map<string, number>
   firstSeen: number
@@ -72,7 +76,7 @@ function hostOf(connection: MihomoConnection): string {
 }
 
 export class EntityTrafficTracker {
-  private readonly records: Record<EntityKind, Map<string, EntityRecord>> = { process: new Map(), device: new Map() }
+  private readonly records: Record<EntityKind, Map<string, EntityRecord>> = { process: new Map(), device: new Map(), node: new Map() }
   private previousBytes = new Map<string, TrafficPair>()
   private seenIds = new Set<string>()
   private lastObservedAt: number | null = null
@@ -89,7 +93,7 @@ export class EntityTrafficTracker {
    */
   observe(connections: readonly MihomoConnection[], now = Date.now()): void {
     const elapsed = this.lastObservedAt == null ? 0 : Math.max(0, now - this.lastObservedAt)
-    const deltas: Record<EntityKind, Map<string, TrafficPair>> = { process: new Map(), device: new Map() }
+    const deltas: Record<EntityKind, Map<string, TrafficPair>> = { process: new Map(), device: new Map(), node: new Map() }
     const nextBytes = new Map<string, TrafficPair>()
     const nextSeen = new Set<string>()
 
@@ -103,7 +107,9 @@ export class EntityTrafficTracker {
       const down = previous ? Math.max(0, download - previous.down) : download
       const isNew = !this.seenIds.has(connection.id)
       const host = hostOf(connection)
-      for (const [kind, key] of [['process', processKeyOf(connection)], ['device', deviceKeyOf(connection)]] as const) {
+      const entities: Array<readonly [EntityKind, string]> = [['process', processKeyOf(connection)], ['device', deviceKeyOf(connection)]]
+      if (connection.chains[0]) entities.push(['node', connection.chains[0]])
+      for (const [kind, key] of entities) {
         const record = this.ensure(kind, key, now)
         record.lastSeen = now
         if (isNew) record.connections += 1
@@ -120,12 +126,13 @@ export class EntityTrafficTracker {
 
     // Rates: bytes moved since the last snapshot over the elapsed time. The very
     // first snapshot has no interval, so it reports zero instead of a spike.
-    for (const kind of ['process', 'device'] as const) {
+    for (const kind of ['process', 'device', 'node'] as const) {
       for (const [key, record] of this.records[kind]) {
         const delta = deltas[kind].get(key)
         record.rate = delta && elapsed > 0
           ? { up: (delta.up * 1000) / elapsed, down: (delta.down * 1000) / elapsed }
           : { up: 0, down: 0 }
+        record.peak = { up: Math.max(record.peak.up, record.rate.up), down: Math.max(record.peak.down, record.rate.down) }
       }
       this.prune(kind, now)
     }
@@ -151,6 +158,7 @@ export class EntityTrafficTracker {
     })
     return {
       rate: { ...record.rate },
+      peak: { ...record.peak },
       totalConnections: record.connections,
       topHost,
       firstSeen: record.firstSeen,
@@ -169,7 +177,7 @@ export class EntityTrafficTracker {
   private ensure(kind: EntityKind, key: string, now: number): EntityRecord {
     let record = this.records[kind].get(key)
     if (!record) {
-      record = { buckets: [], total: { up: 0, down: 0 }, rate: { up: 0, down: 0 }, connections: 0, hosts: new Map(), firstSeen: now, lastSeen: now }
+      record = { buckets: [], total: { up: 0, down: 0 }, rate: { up: 0, down: 0 }, peak: { up: 0, down: 0 }, connections: 0, hosts: new Map(), firstSeen: now, lastSeen: now }
       this.records[kind].set(key, record)
     }
     return record

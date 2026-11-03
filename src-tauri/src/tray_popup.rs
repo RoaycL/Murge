@@ -148,7 +148,7 @@ pub(crate) struct TrayPopup {
     hidden_at: Mutex<Option<Instant>>,
     dispatch: Mutex<Option<Dispatch>>,
     /// Called once the page reports ready (detach the native menu).
-    on_ready: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
+    on_ready: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl TrayPopup {
@@ -227,7 +227,7 @@ impl TrayPopup {
     }
 
     pub(crate) fn set_on_ready(&self, on_ready: Box<dyn Fn() + Send + Sync>) {
-        *self.on_ready.lock().expect("popup on_ready") = Some(on_ready);
+        *self.on_ready.lock().expect("popup on_ready") = Some(Arc::from(on_ready));
     }
 
     /// Store and push the latest menu snapshot.
@@ -238,9 +238,15 @@ impl TrayPopup {
             // The DWM backdrop tint follows the window theme; only touch it
             // when it moved (every render would re-send WM messages).
             let dark = model["theme"] == "dark";
-            let mut last = self.theme.lock().expect("popup theme");
-            if *last != Some(dark) {
+            // Never hold a lock across a window call: those wait for the
+            // main thread, which may itself be waiting on this lock.
+            let changed = {
+                let mut last = self.theme.lock().expect("popup theme");
+                let changed = *last != Some(dark);
                 *last = Some(dark);
+                changed
+            };
+            if changed {
                 let theme = if dark {
                     tauri::Theme::Dark
                 } else {
@@ -248,7 +254,6 @@ impl TrayPopup {
                 };
                 let _ = window.set_theme(Some(theme));
             }
-            drop(last);
             let _ = tauri::Emitter::emit_to(
                 &self.app,
                 tauri::EventTarget::webview_window(POPUP_LABEL),
@@ -261,7 +266,8 @@ impl TrayPopup {
     /// The page loaded: hand it the snapshot and take over the right click.
     pub(crate) fn mark_ready(&self) -> Value {
         if !self.ready.swap(true, Ordering::SeqCst) {
-            if let Some(on_ready) = self.on_ready.lock().expect("popup on_ready").as_ref() {
+            let on_ready = self.on_ready.lock().expect("popup on_ready").clone();
+            if let Some(on_ready) = on_ready {
                 on_ready();
             }
         }
@@ -382,7 +388,7 @@ fn popup_for(
 pub(crate) struct PopupSlot(pub(crate) Mutex<Option<Arc<TrayPopup>>>);
 
 #[tauri::command]
-pub(crate) fn tray_menu_ready(
+pub(crate) async fn tray_menu_ready(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, PopupSlot>,
 ) -> Result<Value, String> {
@@ -390,7 +396,7 @@ pub(crate) fn tray_menu_ready(
 }
 
 #[tauri::command]
-pub(crate) fn tray_menu_activate(
+pub(crate) async fn tray_menu_activate(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, PopupSlot>,
     id: String,
@@ -403,7 +409,7 @@ pub(crate) fn tray_menu_activate(
 }
 
 #[tauri::command]
-pub(crate) fn tray_menu_resize(
+pub(crate) async fn tray_menu_resize(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, PopupSlot>,
     height: f64,
@@ -416,7 +422,7 @@ pub(crate) fn tray_menu_resize(
 }
 
 #[tauri::command]
-pub(crate) fn tray_menu_dismiss(
+pub(crate) async fn tray_menu_dismiss(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, PopupSlot>,
 ) -> Result<(), String> {

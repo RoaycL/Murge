@@ -27,6 +27,11 @@ export const api: DesktopApi = {
   diagnostics: {
     collect: () => invoke(IPC.diagnosticsCollect)
   },
+  logs: {
+    readApp: () => invoke(IPC.logsReadApp),
+    openFolder: () => invoke(IPC.logsOpenFolder),
+    exportBundle: () => invoke(IPC.logsExportBundle)
+  },
   backup: {
     create: (password) => invoke(IPC.backupCreate, password),
     preview: (password) => invoke(IPC.backupPreview, password),

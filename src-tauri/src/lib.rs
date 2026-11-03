@@ -28,6 +28,7 @@ mod ipc;
 mod js_sandbox;
 mod kernel;
 mod lifecycle;
+mod log_files;
 #[allow(dead_code)] // wired incrementally; the lint fires on staged-but-unwired items
 mod mihomo;
 mod mitm;

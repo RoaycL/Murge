@@ -453,16 +453,22 @@ fn install<'js>(
             "log",
             Function::new(ctx.clone(), move |level: String, text: String| {
                 let mut s = state.borrow_mut();
+                // The per-run cap also bounds what reaches the app log, so a
+                // chatty script cannot flood the file.
                 if s.logs.len() < LOG_LIMIT {
                     let text: String = text.chars().take(2000).collect();
+                    let file_level = match level.as_str() {
+                        "error" => crate::file_log::FileLogLevel::Error,
+                        "warn" => crate::file_log::FileLogLevel::Warn,
+                        "debug" => crate::file_log::FileLogLevel::Debug,
+                        _ => crate::file_log::FileLogLevel::Info,
+                    };
+                    crate::file_log::app_log(file_level, "script", &format!("{name}：{text}"));
                     s.logs.push(if level == "log" || level == "info" {
                         text
                     } else {
                         format!("[{level}] {text}")
                     });
-                }
-                if level == "error" {
-                    crate::diag!("[mitm] 脚本 {name}：{text}");
                 }
             })?,
         )?;
@@ -679,6 +685,11 @@ fn drain_jobs(
             // An unhandled rejection in one promise does not end the script.
             let mut s = state.borrow_mut();
             if s.logs.len() < LOG_LIMIT {
+                crate::file_log::app_log(
+                    crate::file_log::FileLogLevel::Error,
+                    "script",
+                    &format!("未处理的 Promise 拒绝：{message}"),
+                );
                 s.logs.push(format!("[error] {message}"));
             }
         }

@@ -44,7 +44,7 @@ import type { AppInfo } from './app-info'
 import type { LanGatewayState, LocalAddress } from './lan'
 import type { AppSettings } from './app-settings'
 import type { UpdateState } from './updates'
-import type { DiagnosticReport } from './diagnostics'
+import type { AppLogSnapshot, DiagnosticReport, LogBundleResult } from './diagnostics'
 import type { ConfigBackupPreview, ConfigBackupResult } from './config-backup'
 import type { WebDavBackupTarget } from './webdav-backup'
 
@@ -58,6 +58,9 @@ export const IPC = {
   appGetLanGateway: 'lan-gateway:get-state',
   appSetLanGateway: 'lan-gateway:set-enabled',
   diagnosticsCollect: 'diagnostics:collect',
+  logsReadApp: 'logs:read-app',
+  logsOpenFolder: 'logs:open-folder',
+  logsExportBundle: 'logs:export-bundle',
   backupCreate: 'backup:create',
   backupPreview: 'backup:preview',
   backupRestore: 'backup:restore',
@@ -229,6 +232,14 @@ export interface DesktopApi {
   diagnostics: {
     /** User-triggered, local-only report with no raw logs or configuration. */
     collect(): Promise<DiagnosticReport>
+  }
+  logs: {
+    /** The newest app-log entries (re-redacted) and the module names seen. */
+    readApp(): Promise<AppLogSnapshot>
+    /** Open the log directory in the system file manager. */
+    openFolder(): Promise<void>
+    /** Zip recent logs + the diagnostic report behind a save dialog. */
+    exportBundle(): Promise<LogBundleResult>
   }
   backup: {
     create(password: string): Promise<ConfigBackupResult>

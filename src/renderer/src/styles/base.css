@@ -296,7 +296,16 @@ h1 { margin: 0; font-size: var(--font-size-display); line-height: 34px; letter-s
 .diagnostic-export-copy strong { font-size: var(--font-size-md); font-weight: var(--font-weight-bold); }
 .diagnostic-export-copy p { margin: 3px 0 0; color: var(--app-muted); font-size: var(--font-size-2xs); line-height: 1.5; }
 .diagnostic-export-card button { flex: 0 0 auto; white-space: nowrap; }
-@media (max-width: 620px) { .diagnostic-export-card { flex-wrap: wrap; } .diagnostic-export-card button { margin-left: 48px; } }
+.diagnostic-export-buttons { display: flex; flex: 0 0 auto; gap: var(--space-3); }
+.diagnostic-export-card .primary-tint { border-color: transparent; color: var(--app-on-accent); background: var(--app-blue); }
+@media (max-width: 760px) { .diagnostic-export-card { flex-wrap: wrap; } .diagnostic-export-buttons { margin-left: 48px; } }
+.logs-actions { align-items: center; }
+.logs-source button { width: 52px; }
+.logs-actions .logs-source button { height: 20px; padding: 0; background: transparent; }
+.logs-actions .logs-source button.selected { background: var(--app-control-selected); }
+.log-row.app-log-row { grid-template-columns: 132px 62px 76px 1fr; }
+.log-module { justify-self: start; max-width: 70px; height: 18px; padding: 0 6px; overflow: hidden; border: 0; border-radius: var(--radius-sm); color: var(--app-muted); background: var(--app-fill); font-size: var(--font-size-2xs); text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.log-module:hover { color: inherit; }
 .logs-toolbar { display: flex; gap: var(--space-4); width: 100%; margin: 17px 0 12px; }
 .logs-toolbar input { flex: 1; height: 29px; padding: 0 12px; border: 1px solid var(--app-divider); border-radius: var(--radius-control); background: rgba(255,255,255,.24); color: inherit; }
 .logs-toolbar select { width: 112px; height: 29px; padding: 0 8px; border: 0; border-radius: var(--radius-control); background: var(--app-fill); color: inherit; }

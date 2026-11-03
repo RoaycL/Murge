@@ -269,6 +269,11 @@ pub fn initialize(app_data_root: Option<PathBuf>, namespace: &str, upstream: Ups
     match engine::bind() {
         Ok((listener, port)) => {
             *service.port.lock().expect("port") = Some(port);
+            crate::file_log::app_log(
+                crate::file_log::FileLogLevel::Info,
+                "mitm",
+                &format!("解密引擎已就绪，监听 127.0.0.1:{port}"),
+            );
             let shared = service.shared.clone();
             tauri::async_runtime::spawn(engine::serve(shared, listener));
         }

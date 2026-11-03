@@ -7,7 +7,9 @@ export function redactLogText(input: string): string {
   text = text.replace(/([?&])([^=&\s]+)=([^&\s]*)/g, (match, separator: string, key: string) =>
     SENSITIVE_KEY.test(key) ? `${separator}${key}=[REDACTED]` : match
   )
-  text = text.replace(/\b((?:authorization|cookie)|[\w-]*(?:token|secret|password|api[_-]?key)[\w-]*)\s*[:=]\s*([^&\s,;]+)/gi, '$1=[REDACTED]')
+  text = text.replace(/\b((?:authorization|cookie)|[\w-]*(?:token|secret|password|api[_-]?key|private[_-]?key|pre[_-]?shared[_-]?key|auth[_-]?key)[\w-]*)\s*[:=]\s*([^&\s,;]+)/gi, '$1=[REDACTED]')
+  // Tailscale auth / API keys (`tskey-auth-…`, `tskey-api-…`) appear without a key name.
+  text = text.replace(/\btskey-[A-Za-z0-9-]+/g, 'tskey-[REDACTED]')
   text = text.replace(/\b(https?:\/\/)([^/@\s]+)@/gi, '$1[REDACTED]@')
   // Generated mihomo controller secrets are fixed-width lowercase hex. Mask
   // them even when an upstream error omitted the key name.

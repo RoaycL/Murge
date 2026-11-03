@@ -71,8 +71,22 @@ pub async fn set_enabled(
     let action = if enabled { "enable" } else { "disable" };
     let service_error = match &kernel.privileged {
         Some(privileged) => match privileged.client().forwarding(action).await {
-            Ok(status) => return Ok(state(enabled, "service", Some(&status), None)),
-            Err(error) => Some(error.extract_message()),
+            Ok(status) => {
+                crate::file_log::app_log(
+                    crate::file_log::FileLogLevel::Info,
+                    "lan-gateway",
+                    &format!(
+                        "网关模式已{}（特权服务）",
+                        if enabled { "开启" } else { "关闭" }
+                    ),
+                );
+                return Ok(state(enabled, "service", Some(&status), None));
+            }
+            Err(error) => {
+                let message = error.extract_message();
+                crate::diag!("[lan-gateway] 特权服务切换失败，改用提权：{message}");
+                Some(message)
+            }
         },
         None => None,
     };
@@ -87,8 +101,19 @@ pub async fn set_enabled(
     }
     // The service is missing or refused: ask for elevation once.
     match run_elevated(&forwarding_script(&device, enabled)).await {
-        Ok(()) => Ok(state(enabled, "elevated", None, None)),
+        Ok(()) => {
+            crate::file_log::app_log(
+                crate::file_log::FileLogLevel::Info,
+                "lan-gateway",
+                &format!(
+                    "网关模式已{}（提权）",
+                    if enabled { "开启" } else { "关闭" }
+                ),
+            );
+            Ok(state(enabled, "elevated", None, None))
+        }
         Err(message) => {
+            crate::diag!("[lan-gateway] 网关模式切换失败：{message}");
             // Nothing changed on the host, so the switch must not claim it did.
             persist(!enabled);
             Ok(state(!enabled, "elevated", None, Some(message)))

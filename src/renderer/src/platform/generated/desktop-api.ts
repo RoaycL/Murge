@@ -61,6 +61,11 @@ export function createDesktopApi(): DesktopApi {
     diagnostics: {
       collect: () => bridgeInvoke("diagnostics:collect", []),
     },
+    logs: {
+      readApp: () => bridgeInvoke("logs:read-app", []),
+      openFolder: () => bridgeInvoke("logs:open-folder", []),
+      exportBundle: () => bridgeInvoke("logs:export-bundle", []),
+    },
     backup: {
       create: (password) => bridgeInvoke("backup:create", [password]),
       preview: (password) => bridgeInvoke("backup:preview", [password]),

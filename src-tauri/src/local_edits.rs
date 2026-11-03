@@ -149,7 +149,22 @@ impl LocalGroup {
 }
 
 /// mihomo group types a local group can have.
-const GROUP_TYPES: [&str; 4] = ["select", "url-test", "fallback", "load-balance"];
+const GROUP_TYPES: [&str; 5] = ["select", "url-test", "fallback", "load-balance", "smart"];
+
+/// Whether the selected kernel is the Smart fork, the only one that knows
+/// `type: smart` groups. Read from the app settings next to `local/`.
+fn smart_kernel() -> bool {
+    global()
+        .and_then(|service| service.dir.clone())
+        .and_then(|dir| dir.parent().map(|root| root.to_path_buf()))
+        .map(|root| {
+            crate::settings::SettingsStore::new(Some(root))
+                .get()
+                .kernel_channel
+                == "smart"
+        })
+        .unwrap_or(false)
+}
 const GROUP_LIMIT: usize = 128;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -608,6 +623,7 @@ fn append_local_groups(
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
+    let smart = smart_kernel();
     let mut composed: Vec<Value> = Vec::new();
     for group in enabled {
         let name = group.name().trim().to_string();
@@ -625,6 +641,13 @@ fn append_local_groups(
             report
                 .warnings
                 .push("本地策略组缺少名称或类型，已跳过".into());
+            continue;
+        }
+        if kind == "smart" && !smart {
+            report.skipped_groups.push(group.id.clone());
+            report.warnings.push(format!(
+                "本地策略组「{name}」是 Smart 类型，需要切换到 Smart 内核才会生效"
+            ));
             continue;
         }
         if taken.contains(&name) {
@@ -1467,10 +1490,16 @@ mod tests {
     fn save_rejects_unknown_group_types() {
         let mut settings = LocalSettings::default();
         settings.groups.push(LocalGroup {
-            config: json!({"name": "S", "type": "smart", "proxies": ["DIRECT"]}),
+            config: json!({"name": "S", "type": "subnet", "proxies": ["DIRECT"]}),
             ..LocalGroup::default()
         });
         assert!(validate_settings(&settings).is_err());
+        settings.groups[0].config["type"] = json!("smart");
+        assert!(validate_settings(&settings).is_ok());
+        // Without the Smart kernel a smart group is skipped, not composed.
+        let (config, report) = apply(&settings, None);
+        assert_eq!(config["proxy-groups"].as_array().unwrap().len(), 2);
+        assert_eq!(report.skipped_groups.len(), 1);
         settings.groups[0].config["type"] = json!("fallback");
         assert!(validate_settings(&settings).is_ok());
     }

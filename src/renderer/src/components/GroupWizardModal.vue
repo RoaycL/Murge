@@ -19,6 +19,8 @@ const props = defineProps<{
   /** Proxy and group names a new group may not reuse. */
   takenNames: string[]
   busy: boolean
+  /** The Smart kernel is selected, so `type: smart` groups work. */
+  smart?: boolean
 }>()
 const emit = defineEmits<{ close: []; save: [group: LocalGroup] }>()
 
@@ -30,27 +32,28 @@ useDialogFocus(toRef(props, 'open'), dialog, () => {
 })
 
 interface TypeOption {
-  id: LocalGroupType | 'smart' | 'subnet'
+  id: LocalGroupType
   label: string
   description: string
   disabled?: string
 }
 
-const TYPES: TypeOption[] = [
+const SMART: TypeOption = { id: 'smart', label: 'Smart 策略组', description: '由 Smart 内核根据网络情况和历史表现，自动从子策略中选择合适的策略。' }
+const BASE_TYPES: TypeOption[] = [
   { id: 'select', label: '手动选择策略组', description: '在策略视图或托盘菜单中选择将使用哪个策略。' },
-  { id: 'smart', label: 'Smart 策略组', description: '根据网络情况和历史表现自动选择子策略。', disabled: '当前 mihomo 内核不支持此类型。' },
   { id: 'url-test', label: '自动测试策略组', description: '通过对测试 URL 进行延迟测试来自动选择将使用哪个策略。' },
   { id: 'fallback', label: 'Fallback 策略组', description: '根据优先级自动选择可用策略。可用性通过访问测试 URL（类似自动测试组）进行测试。' },
-  { id: 'subnet', label: 'Subnet 策略组', description: '根据当前网络选择策略。', disabled: '这是 Surge 专有的类型，mihomo 不支持。' },
   { id: 'load-balance', label: '负载均衡策略组', description: '把连接分散到多个子策略，并测试子策略的可用性。' }
 ]
+/** Smart is offered only with the Smart kernel (or when editing a Smart group). */
+const TYPES = computed<TypeOption[]>(() => (props.smart || props.group?.config.type === 'smart' ? [BASE_TYPES[0]!, SMART, ...BASE_TYPES.slice(1)] : BASE_TYPES))
 const SUBTITLES = ['选择策略组类型', '选择包含的策略', '设置名称和选项']
 const groupPicker = ref<{ x: number; y: number } | null>(null)
 function openGroupPicker(event: MouseEvent): void {
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
   groupPicker.value = { x: rect.left, y: rect.bottom + 4 }
 }
-const TYPE_LABELS: Record<LocalGroupType, string> = { select: '手动选择', 'url-test': '自动测试', fallback: 'Fallback', 'load-balance': '负载均衡' }
+const TYPE_LABELS: Record<LocalGroupType, string> = { smart: 'Smart', select: '手动选择', 'url-test': '自动测试', fallback: 'Fallback', 'load-balance': '负载均衡' }
 
 const STRATEGIES = [
   { value: 'consistent-hashing', label: '一致性哈希（同一目标走同一策略）' },

@@ -45,7 +45,8 @@ export interface GroupProvider {
   interval: number
 }
 
-export type LocalGroupType = 'select' | 'url-test' | 'fallback' | 'load-balance'
+/** `smart` needs the Smart kernel; the backend skips it on other kernels. */
+export type LocalGroupType = 'select' | 'smart' | 'url-test' | 'fallback' | 'load-balance'
 
 /** A policy group created in the app, appended after the subscription's. */
 export interface LocalGroup {

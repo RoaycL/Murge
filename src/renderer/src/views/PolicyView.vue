@@ -4,6 +4,7 @@ import { usePoliciesStore, POLICY_MODE_OPTIONS, type PolicyMode } from '../store
 import { useKernelStore } from '../stores/kernel'
 import { useLocalStore } from '../stores/local'
 import { useConnectionsStore } from '../stores/connections'
+import { useKernelManagerStore } from '../stores/kernel-manager'
 import { formatBytes } from '../lib/format'
 import AppIcon from '../components/AppIcon.vue'
 import DetailDrawer from '../components/DetailDrawer.vue'
@@ -138,12 +139,16 @@ const wizardTaken = computed(() => {
   return names.filter((name) => name !== own)
 })
 
+const kernelManager = useKernelManagerStore()
+
 function addGroup(): void {
+  void kernelManager.refresh()
   wizardGroup.value = null
   wizardOpen.value = true
 }
 
 function editGroup(group: LocalGroup): void {
+  void kernelManager.refresh()
   wizardGroup.value = plainClone(group)
   wizardOpen.value = true
 }
@@ -275,7 +280,7 @@ watch(() => kernel.status.phase, (phase, previous) => {
 
     <LocalNodesSection @changed="onLocalChanged" />
 
-    <GroupWizardModal :open="wizardOpen" :group="wizardGroup" :policies="wizardPolicies" :groups="wizardGroups" :taken-names="wizardTaken" :busy="localStore.busy" @close="wizardOpen = false" @save="saveGroup" />
+    <GroupWizardModal :open="wizardOpen" :group="wizardGroup" :policies="wizardPolicies" :groups="wizardGroups" :taken-names="wizardTaken" :busy="localStore.busy" :smart="kernelManager.state.smartEnabled" @close="wizardOpen = false" @save="saveGroup" />
     <PopoverMenu :open="!!groupMenu" :x="groupMenuAt.x" :y="groupMenuAt.y" :label="groupMenu?.name" @close="groupMenu = null">
       <template v-if="groupMenu">
         <div class="group-menu-head" @click.stop>

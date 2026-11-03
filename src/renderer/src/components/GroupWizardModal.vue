@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, toRef, watch } from 'vue'
 import AppSelect from './AppSelect.vue'
+import PopoverMenu from './PopoverMenu.vue'
 import { useDialogFocus } from '../composables/use-dialog-focus'
 import { plainClone, type LocalGroup, type LocalGroupType } from '@shared/local'
 
@@ -23,7 +24,9 @@ const emit = defineEmits<{ close: []; save: [group: LocalGroup] }>()
 
 const dialog = ref<HTMLElement | null>(null)
 useDialogFocus(toRef(props, 'open'), dialog, () => {
-  if (!props.busy) emit('close')
+  // Escape first closes the 选择策略组 popover, then the wizard.
+  if (groupPicker.value) groupPicker.value = null
+  else if (!props.busy) emit('close')
 })
 
 interface TypeOption {
@@ -34,22 +37,21 @@ interface TypeOption {
 }
 
 const TYPES: TypeOption[] = [
-  { id: 'select', label: '手动选择', description: '手动选择一个策略' },
-  { id: 'smart', label: 'Smart', description: '根据网络情况和历史表现自动选择', disabled: 'mihomo 内核暂不支持' },
-  { id: 'url-test', label: '自动测试', description: '自动选择延迟最低的策略' },
-  { id: 'fallback', label: 'Fallback', description: '按顺序选择第一个可用的策略' },
-  { id: 'subnet', label: 'Subnet', description: '根据所在网络选择策略', disabled: 'Surge 专有，mihomo 不支持' },
-  { id: 'load-balance', label: '负载均衡', description: '把请求分散到多个策略' }
+  { id: 'select', label: '手动选择策略组', description: '在策略视图或托盘菜单中选择将使用哪个策略。' },
+  { id: 'smart', label: 'Smart 策略组', description: '根据网络情况和历史表现自动选择子策略。', disabled: '当前 mihomo 内核不支持此类型。' },
+  { id: 'url-test', label: '自动测试策略组', description: '通过对测试 URL 进行延迟测试来自动选择将使用哪个策略。' },
+  { id: 'fallback', label: 'Fallback 策略组', description: '根据优先级自动选择可用策略。可用性通过访问测试 URL（类似自动测试组）进行测试。' },
+  { id: 'subnet', label: 'Subnet 策略组', description: '根据当前网络选择策略。', disabled: '这是 Surge 专有的类型，mihomo 不支持。' },
+  { id: 'load-balance', label: '负载均衡策略组', description: '把连接分散到多个子策略，并测试子策略的可用性。' }
 ]
+const SUBTITLES = ['选择策略组类型', '选择包含的策略', '设置名称和选项']
+const groupPicker = ref<{ x: number; y: number } | null>(null)
+function openGroupPicker(event: MouseEvent): void {
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  groupPicker.value = { x: rect.left, y: rect.bottom + 4 }
+}
 const TYPE_LABELS: Record<LocalGroupType, string> = { select: '手动选择', 'url-test': '自动测试', fallback: 'Fallback', 'load-balance': '负载均衡' }
 
-const INTERVALS = [
-  { value: '0', label: '不自动更新' },
-  { value: '3600', label: '每 1 小时' },
-  { value: '21600', label: '每 6 小时' },
-  { value: '43200', label: '每 12 小时' },
-  { value: '86400', label: '每 24 小时' }
-]
 const STRATEGIES = [
   { value: 'consistent-hashing', label: '一致性哈希（同一目标走同一策略）' },
   { value: 'round-robin', label: '轮询' },
@@ -63,6 +65,7 @@ const search = ref('')
 const useProvider = ref(false)
 const providerUrl = ref('')
 const providerInterval = ref('86400')
+const providerAuto = ref(true)
 const includeAll = ref(false)
 const useIncludeGroups = ref(false)
 const includeGroups = ref<string[]>([])
@@ -102,7 +105,8 @@ watch(
     const provider = group?.providers?.[0]
     useProvider.value = Boolean(provider)
     providerUrl.value = provider?.url ?? ''
-    providerInterval.value = String(provider?.interval ?? 86400)
+    providerInterval.value = String(provider?.interval || 86400)
+    providerAuto.value = provider ? provider.interval > 0 : true
     includeAll.value = config['include-all-proxies'] === true
     includeGroups.value = [...(group?.includeGroups ?? [])]
     useIncludeGroups.value = includeGroups.value.length > 0
@@ -121,7 +125,6 @@ watch(
 function pickType(option: TypeOption): void {
   if (option.disabled) return
   type.value = option.id as LocalGroupType
-  step.value = 2
 }
 
 function toggle(list: string[], item: string): string[] {
@@ -142,6 +145,10 @@ function membersProblem(): string | null {
 }
 
 function next(): void {
+  if (step.value === 1) {
+    step.value = 2
+    return
+  }
   error.value = membersProblem()
   if (!error.value) step.value = 3
 }
@@ -194,7 +201,7 @@ function submit(): void {
       enabled: props.group?.enabled ?? true,
       config: config as LocalGroup['config'],
       includeGroups: useIncludeGroups.value ? [...includeGroups.value] : [],
-      providers: useProvider.value && providerUrl.value.trim() ? [{ url: providerUrl.value.trim(), interval: Number(providerInterval.value) || 0 }] : []
+      providers: useProvider.value && providerUrl.value.trim() ? [{ url: providerUrl.value.trim(), interval: providerAuto.value ? positive(providerInterval.value, '自动更新间隔') || 86400 : 0 }] : []
     })
   } catch (problem) {
     error.value = problem instanceof Error ? problem.message : String(problem)
@@ -205,137 +212,175 @@ function submit(): void {
 <template>
   <Teleport to="body">
     <div v-if="open" class="modal-shade group-wizard-shade" role="presentation" @click.self="!busy && emit('close')">
-      <section ref="dialog" class="group-wizard" role="dialog" aria-modal="true" :aria-label="title">
+      <section ref="dialog" class="group-wizard" :class="`step-${step}`" role="dialog" aria-modal="true" :aria-label="title">
         <header class="gw-head">
-          <h2>{{ title }}</h2>
-          <ol class="gw-steps" aria-label="步骤">
-            <li :class="{ on: step === 1, done: step > 1 }">类型</li>
-            <li :class="{ on: step === 2, done: step > 2 }">策略</li>
-            <li :class="{ on: step === 3 }">名称与选项</li>
-          </ol>
+          <h2>{{ isNew ? '策略组' : title }}</h2>
+          <p>{{ SUBTITLES[step - 1] }}</p>
         </header>
 
         <div class="gw-body">
-          <div v-if="step === 1" class="gw-types">
-            <p class="gw-lead">选择策略组的类型</p>
-            <button v-for="option in TYPES" :key="option.id" type="button" class="gw-type" :class="{ selected: type === option.id }" :disabled="Boolean(option.disabled)" :title="option.disabled" @click="pickType(option)">
-              <strong>{{ option.label }}</strong>
-              <small>{{ option.disabled ?? option.description }}</small>
+          <div v-if="step === 1" class="gw-types" role="radiogroup" aria-label="策略组类型">
+            <button v-for="option in TYPES" :key="option.id" type="button" role="radio" class="gw-type" :aria-checked="type === option.id" :disabled="Boolean(option.disabled)" @click="pickType(option)" @dblclick="!option.disabled && next()">
+              <i class="gw-radio" :class="{ on: type === option.id }" aria-hidden="true" />
+              <span><strong>{{ option.label }}</strong><small>{{ option.disabled ?? option.description }}</small></span>
             </button>
           </div>
 
           <div v-else-if="step === 2" class="gw-members">
             <section class="gw-list">
-              <h3>选择包含的策略 <small>{{ members.length ? `已选 ${members.length} 个` : '' }}</small></h3>
-              <input v-model="search" class="gw-input" type="search" placeholder="搜索" aria-label="搜索策略" />
-              <div class="gw-checks">
-                <label v-for="item in choices" :key="item" class="surge-check"><input type="checkbox" :checked="members.includes(item)" @change="members = toggle(members, item)" /><span>{{ item }}</span></label>
-                <p v-if="!choices.length" class="gw-hint">{{ props.policies.length ? '没有匹配的策略' : '启动内核后可以选择策略' }}</p>
+              <div class="gw-list-head">
+                <h3>选择子策略</h3>
+                <input v-model="search" class="gw-input gw-search" type="search" placeholder="搜索" aria-label="搜索策略" />
               </div>
-            </section>
-            <section class="gw-options">
-              <div class="gw-option">
-                <label class="surge-check"><input v-model="useProvider" type="checkbox" />同时包含外部策略</label>
-                <template v-if="useProvider">
-                  <input v-model="providerUrl" class="gw-input" type="url" spellcheck="false" placeholder="https://example.com/nodes.yaml" aria-label="外部策略地址" />
-                  <div class="gw-inline"><span>自动更新间隔</span><AppSelect v-model="providerInterval" :options="INTERVALS" label="自动更新间隔" /></div>
-                </template>
-              </div>
-              <div class="gw-option">
-                <label class="surge-check"><input v-model="includeAll" type="checkbox" />同时包含所有代理策略</label>
-                <small>订阅和本地的全部节点，不含策略组</small>
-              </div>
-              <div class="gw-option">
-                <label class="surge-check"><input v-model="useIncludeGroups" type="checkbox" />同时包含其他策略组的策略</label>
-                <div v-if="useIncludeGroups" class="gw-checks gw-checks-small">
-                  <label v-for="item in groupChoices" :key="item" class="surge-check"><input type="checkbox" :checked="includeGroups.includes(item)" @change="includeGroups = toggle(includeGroups, item)" /><span>{{ item }}</span></label>
-                  <p v-if="!groupChoices.length" class="gw-hint">没有可选的策略组</p>
+              <div class="gw-table" role="group" aria-label="子策略">
+                <div class="gw-table-head"><span />策略<small v-if="members.length">已选 {{ members.length }}</small></div>
+                <div class="gw-table-body">
+                  <label v-for="item in choices" :key="item" class="gw-table-row" :class="{ on: members.includes(item) }">
+                    <input type="checkbox" :checked="members.includes(item)" @change="members = toggle(members, item)" />
+                    <span>{{ item }}</span>
+                  </label>
+                  <p v-if="!choices.length" class="gw-hint">{{ props.policies.length ? '没有匹配的策略' : '启动内核后可以选择策略' }}</p>
                 </div>
               </div>
-              <div class="gw-option">
-                <label class="surge-check"><input v-model="useFilter" type="checkbox" />包含过滤</label>
-                <template v-if="useFilter">
-                  <input v-model="filter" class="gw-input" type="text" spellcheck="false" placeholder="正则，例如 (?i)港|hk" aria-label="过滤正则" />
-                  <small>只保留名称匹配的节点（作用于外部策略和“所有代理策略”）</small>
-                </template>
+            </section>
+            <div class="gw-divider" aria-hidden="true" />
+            <section class="gw-options">
+              <div class="gw-card">
+                <div class="gw-row">
+                  <span class="gw-label"><b>同时包含外部策略</b><small>使用由代理服务商提供的代理列表（mihomo proxy-provider 格式），按下面的间隔自动更新。</small></span>
+                  <button type="button" class="switch" :class="{ on: useProvider }" role="switch" :aria-checked="useProvider" aria-label="同时包含外部策略" @click="useProvider = !useProvider" />
+                </div>
+                <div class="gw-row" :class="{ off: !useProvider }">
+                  <span class="gw-label"><b>路径</b></span>
+                  <input v-model="providerUrl" class="gw-input gw-wide" type="url" spellcheck="false" placeholder="URL" aria-label="外部策略地址" :disabled="!useProvider" />
+                </div>
+                <div class="gw-row" :class="{ off: !useProvider }">
+                  <span class="gw-label"><b>自动更新间隔（秒）</b></span>
+                  <span class="gw-pair">
+                    <input v-model="providerInterval" class="gw-input gw-number" type="text" inputmode="numeric" aria-label="自动更新间隔" :disabled="!useProvider || !providerAuto" />
+                    <button type="button" class="switch" :class="{ on: providerAuto }" role="switch" :aria-checked="providerAuto" aria-label="自动更新" :disabled="!useProvider" @click="providerAuto = !providerAuto" />
+                  </span>
+                </div>
+              </div>
+              <div class="gw-card">
+                <div class="gw-row">
+                  <span class="gw-label"><b>同时包含所有代理策略</b><small>订阅和本地的全部节点，不含策略组。</small></span>
+                  <button type="button" class="switch" :class="{ on: includeAll }" role="switch" :aria-checked="includeAll" aria-label="同时包含所有代理策略" @click="includeAll = !includeAll" />
+                </div>
+                <div class="gw-row">
+                  <span class="gw-label"><b>同时包含其他策略组的策略</b><small>{{ useIncludeGroups && includeGroups.length ? `已选：${includeGroups.join('、')}` : '将其他策略组中的子策略复制到该策略组。' }}</small></span>
+                  <span class="gw-pair">
+                    <button type="button" class="surge-button gw-small" :disabled="!useIncludeGroups" @click="openGroupPicker">选择策略组…</button>
+                    <button type="button" class="switch" :class="{ on: useIncludeGroups }" role="switch" :aria-checked="useIncludeGroups" aria-label="同时包含其他策略组的策略" @click="useIncludeGroups = !useIncludeGroups" />
+                  </span>
+                </div>
+              </div>
+              <div class="gw-card">
+                <div class="gw-row">
+                  <span class="gw-label"><b>包含过滤</b><small>使用正则表达式进行过滤，仅包含部分子策略，该选项对上面三个选项均有效。</small></span>
+                  <input v-model="filter" class="gw-input gw-filter" type="text" spellcheck="false" placeholder="正则表达式（可选）" aria-label="过滤正则" @input="useFilter = Boolean(filter.trim())" />
+                </div>
               </div>
             </section>
           </div>
 
           <div v-else class="gw-final">
-            <section class="gw-card">
-              <label class="gw-row"><span>名称</span><input v-model="name" class="gw-input" type="text" spellcheck="false" placeholder="必填" /></label>
-              <div class="gw-row"><span>类型</span><b>{{ TYPE_LABELS[type] }}</b></div>
-              <label class="gw-row"><span>图标<small>可选，图片地址</small></span><input v-model="icon" class="gw-input" type="url" spellcheck="false" placeholder="https://…" /></label>
-            </section>
-            <section v-if="tests" class="gw-card">
-              <label class="gw-row"><span>测试地址<small>留空使用内核默认</small></span><input v-model="testUrl" class="gw-input" type="url" spellcheck="false" placeholder="https://www.gstatic.com/generate_204" /></label>
-              <label class="gw-row"><span>测试间隔（秒）</span><input v-model="interval" class="gw-input" type="text" inputmode="numeric" /></label>
-              <label v-if="type === 'url-test'" class="gw-row"><span>容差（毫秒）<small>延迟差小于它时不切换</small></span><input v-model="tolerance" class="gw-input" type="text" inputmode="numeric" placeholder="50" /></label>
-              <div v-if="type === 'load-balance'" class="gw-row"><span>分配方式</span><AppSelect v-model="strategy" :options="STRATEGIES" label="分配方式" /></div>
-            </section>
+            <div class="gw-card">
+              <label class="gw-row"><span class="gw-label"><b>名称</b></span><input v-model="name" class="gw-input gw-wide" type="text" spellcheck="false" placeholder="必填" /></label>
+              <div class="gw-row"><span class="gw-label"><b>类型</b></span><span class="gw-value">{{ TYPE_LABELS[type] }}</span></div>
+              <label class="gw-row"><span class="gw-label"><b>图标</b><small>可选，图片地址</small></span><input v-model="icon" class="gw-input gw-wide" type="url" spellcheck="false" placeholder="https://…" /></label>
+            </div>
+            <div v-if="tests" class="gw-card">
+              <label class="gw-row"><span class="gw-label"><b>测试 URL</b><small>留空使用内核默认</small></span><input v-model="testUrl" class="gw-input gw-wide" type="url" spellcheck="false" placeholder="https://www.gstatic.com/generate_204" /></label>
+              <label class="gw-row"><span class="gw-label"><b>测试间隔（秒）</b></span><input v-model="interval" class="gw-input gw-number" type="text" inputmode="numeric" /></label>
+              <label v-if="type === 'url-test'" class="gw-row"><span class="gw-label"><b>容差（毫秒）</b><small>延迟差小于它时不切换</small></span><input v-model="tolerance" class="gw-input gw-number" type="text" inputmode="numeric" placeholder="50" /></label>
+              <div v-if="type === 'load-balance'" class="gw-row"><span class="gw-label"><b>分配方式</b></span><span class="gw-select"><AppSelect v-model="strategy" :options="STRATEGIES" label="分配方式" /></span></div>
+            </div>
           </div>
         </div>
 
         <footer class="gw-foot">
+          <button type="button" class="surge-button" :disabled="busy" @click="emit('close')">取消</button>
           <p v-if="error" class="gw-error" role="alert">{{ error }}</p>
           <span class="spacer" />
-          <button type="button" class="surge-button" :disabled="busy" @click="emit('close')">取消</button>
-          <button v-if="step > 1 && (isNew || step > 2)" type="button" class="surge-button" :disabled="busy" @click="step--; error = null">上一步</button>
-          <button v-if="step === 2" type="button" class="surge-button primary" @click="next">下一步</button>
-          <button v-if="step === 3" type="button" class="surge-button primary" :disabled="busy" @click="submit">{{ busy ? '保存中…' : '完成' }}</button>
+          <button v-if="step > 1 && (isNew || step > 2)" type="button" class="surge-button" :disabled="busy" @click="step--; error = null">返回</button>
+          <button v-if="step < 3" type="button" class="surge-button primary" @click="next">下一步</button>
+          <button v-else type="button" class="surge-button primary" :disabled="busy" @click="submit">{{ busy ? '保存中…' : '完成' }}</button>
         </footer>
       </section>
     </div>
+    <PopoverMenu :open="!!groupPicker" :x="groupPicker?.x ?? 0" :y="groupPicker?.y ?? 0" label="选择策略组" @close="groupPicker = null">
+      <div class="gw-picker" @click.stop>
+        <label v-for="item in groupChoices" :key="item" class="popover-item gw-picker-item"><span>{{ item }}</span><input type="checkbox" :checked="includeGroups.includes(item)" @change="includeGroups = toggle(includeGroups, item)" /></label>
+        <p v-if="!groupChoices.length" class="gw-hint">没有可选的策略组</p>
+      </div>
+    </PopoverMenu>
   </Teleport>
 </template>
 
 <style scoped>
-.group-wizard-shade { z-index: 72; }
-.group-wizard { display: flex; flex-direction: column; width: min(820px, calc(100vw - 40px)); height: min(600px, calc(100vh - 48px)); overflow: hidden; border: 1px solid var(--app-divider); border-radius: var(--radius-large); color: var(--app-text); background: var(--app-popover); -webkit-backdrop-filter: var(--app-popover-filter); backdrop-filter: var(--app-popover-filter); box-shadow: 0 22px 70px rgba(0, 0, 0, 0.3); }
-.gw-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px 14px; border-bottom: 1px solid var(--app-divider); }
-.gw-head h2 { overflow: hidden; margin: 0; font-size: var(--font-size-title); text-overflow: ellipsis; white-space: nowrap; }
-.gw-steps { display: flex; flex: none; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: var(--font-size-xs); }
-.gw-steps li { padding: 2px 10px; border-radius: 999px; color: var(--app-muted); background: var(--app-fill); }
-.gw-steps li.on { color: var(--app-on-accent); background: var(--app-blue); }
-.gw-steps li.done { color: var(--app-text); }
-.gw-body { flex: 1; min-height: 0; overflow: auto; padding: 18px 20px; }
-.gw-lead { margin: 0 0 12px 4px; color: var(--app-muted); font-size: var(--font-size-sm); }
-.gw-types { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.gw-types .gw-lead { grid-column: 1 / -1; margin-bottom: 0; }
-.gw-type { display: grid; gap: 6px; min-height: 92px; padding: 14px; border: 1px solid transparent; border-radius: var(--radius-md); background: var(--app-surface-solid); color: inherit; text-align: left; align-content: start; }
-.gw-type strong { font-size: var(--font-size-body); }
+.group-wizard-shade { z-index: 72; background: rgba(9, 11, 15, 0.28); }
+.group-wizard { display: flex; flex-direction: column; width: min(700px, calc(100vw - 40px)); max-height: calc(100vh - 48px); overflow: hidden; border: 1px solid var(--glass-edge); border-radius: 14px; color: var(--app-text); background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-filter); backdrop-filter: var(--glass-filter); box-shadow: var(--glass-shadow); }
+.group-wizard.step-2 { width: min(860px, calc(100vw - 40px)); height: min(620px, calc(100vh - 48px)); }
+.gw-head { padding: 16px 24px 12px; border-bottom: 1px solid var(--app-divider); }
+.gw-head h2 { overflow: hidden; margin: 0; font-size: var(--font-size-body); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.gw-head p { margin: 3px 0 0; color: var(--app-muted); font-size: var(--font-size-2xs); }
+.gw-body { flex: 1; min-height: 0; overflow: auto; padding: 16px 20px; }
+.gw-types { display: grid; gap: 4px; padding: 4px 6px; }
+.gw-type { display: flex; align-items: flex-start; gap: 10px; padding: 7px 8px; border: 0; border-radius: 8px; background: transparent; color: inherit; text-align: left; }
+.gw-type:hover:not(:disabled) { background: color-mix(in srgb, var(--app-text) 5%, transparent); }
+.gw-type span { display: grid; gap: 3px; }
+.gw-type strong { font-size: var(--font-size-sm); font-weight: 600; }
 .gw-type small { color: var(--app-muted); font-size: var(--font-size-xs); line-height: 1.45; }
-.gw-type:hover:not(:disabled), .gw-type.selected { border-color: color-mix(in srgb, var(--app-blue) 55%, var(--app-divider)); background: color-mix(in srgb, var(--app-blue) 8%, var(--app-surface-solid)); }
-.gw-type:disabled { opacity: 0.5; }
-.gw-members { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; height: 100%; }
-.gw-list { display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: 8px; min-height: 0; }
-.gw-list h3 { display: flex; justify-content: space-between; margin: 0 4px; font-size: var(--font-size-sm); }
-.gw-list h3 small { color: var(--app-muted); font-weight: 400; }
-.gw-checks { display: grid; align-content: start; gap: 2px; min-height: 0; overflow: auto; padding: 6px 10px; border-radius: var(--radius-panel); background: var(--app-surface-solid); font-size: var(--font-size-sm); }
-.gw-checks .surge-check { min-width: 0; padding: 4px 0; }
-.gw-checks .surge-check span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gw-checks-small { max-height: 150px; background: color-mix(in srgb, var(--app-surface-solid) 60%, var(--app-bg)); }
-.gw-options { display: grid; align-content: start; gap: 10px; min-height: 0; overflow: auto; }
-.gw-option { display: grid; gap: 8px; padding: 12px 14px; border-radius: var(--radius-panel); background: var(--app-surface-solid); font-size: var(--font-size-sm); }
-.gw-option small { color: var(--app-muted); font-size: var(--font-size-2xs); }
-.gw-inline { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; color: var(--app-muted); font-size: var(--font-size-xs); }
-.gw-input { width: 100%; min-width: 0; height: 28px; padding: 0 9px; border: 1px solid var(--app-divider); border-radius: var(--radius-control); background: color-mix(in srgb, var(--app-surface-solid) 70%, var(--app-bg)); color: var(--app-text); font-size: var(--font-size-sm); }
+.gw-type:disabled { cursor: default; }
+.gw-type:disabled strong { color: var(--app-muted); }
+.gw-radio { flex: none; width: 15px; height: 15px; margin-top: 1px; border-radius: 50%; background: color-mix(in srgb, var(--app-text) 12%, transparent); box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--app-text) 22%, transparent); }
+.gw-radio.on { background: var(--app-blue); box-shadow: inset 0 0 0 4.5px var(--app-blue), inset 0 0 0 15px #fff; }
+.gw-members { display: grid; grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr); gap: 18px; height: 100%; min-height: 0; }
+.gw-divider { background: var(--app-divider); }
+.gw-list { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 8px; min-height: 0; }
+.gw-list-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.gw-list h3 { margin: 0; font-size: var(--font-size-sm); font-weight: 600; }
+.gw-search { max-width: 160px; height: 24px; }
+.gw-table { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; overflow: hidden; border: 1px solid var(--app-divider); border-radius: 6px; background: var(--app-surface-solid); }
+.gw-table-head { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; height: 26px; padding-right: 10px; border-bottom: 1px solid var(--app-divider); color: var(--app-muted); font-size: var(--font-size-2xs); font-weight: 600; }
+.gw-table-head small { font-weight: 400; }
+.gw-table-body { min-height: 0; overflow: auto; }
+.gw-table-row { display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: center; height: 24px; font-size: var(--font-size-sm); }
+.gw-table-row:nth-child(even) { background: color-mix(in srgb, var(--app-text) 4%, transparent); }
+.gw-table-row.on { background: color-mix(in srgb, var(--app-blue) 12%, transparent); }
+.gw-table-row input { justify-self: center; margin: 0; accent-color: var(--app-blue); }
+.gw-table-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gw-options, .gw-final { display: grid; align-content: start; gap: 14px; min-height: 0; overflow: auto; }
+.gw-final { max-width: 560px; margin: 0 auto; width: 100%; }
+.gw-card { display: grid; padding: 0 14px; border-radius: 10px; background: color-mix(in srgb, var(--app-text) 4.5%, transparent); }
+.gw-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 40px; padding: 8px 0; border-top: 1px solid var(--app-divider); font-size: var(--font-size-sm); }
+.gw-row:first-child { border-top: 0; }
+.gw-card .switch:not(.on) { background: color-mix(in srgb, var(--app-text) 20%, transparent); box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--app-text) 14%, transparent); }
+.gw-card .switch:disabled { opacity: 0.5; cursor: default; }
+.gw-row.off .gw-label { opacity: 0.55; }
+.gw-label { display: grid; gap: 3px; min-width: 0; }
+.gw-label b { font-weight: 600; }
+.gw-label small { color: var(--app-muted); font-size: var(--font-size-2xs); line-height: 1.45; }
+.gw-pair { display: flex; flex: none; align-items: center; gap: 10px; }
+.gw-value { color: var(--app-muted); }
+.gw-select { flex: 0 1 260px; min-width: 0; }
+.gw-input { min-width: 0; height: 26px; padding: 0 8px; border: 1px solid var(--app-divider); border-radius: 6px; background: var(--app-surface-solid); color: var(--app-text); font-size: var(--font-size-sm); }
 .gw-input::placeholder { color: var(--app-faint); }
 .gw-input:focus { outline: none; border-color: var(--app-blue); box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-blue) 22%, transparent); }
-.gw-final { display: grid; align-content: start; gap: 16px; max-width: 560px; margin: 0 auto; }
-.gw-card { display: grid; padding: 0 14px; border-radius: var(--radius-panel); background: var(--app-surface-solid); }
-.gw-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); align-items: center; gap: 12px; min-height: 42px; padding: 6px 0; border-top: 1px solid var(--app-divider); font-size: var(--font-size-sm); }
-.gw-row:first-child { border-top: 0; }
-.gw-row > span { display: grid; gap: 2px; }
-.gw-row small { color: var(--app-muted); font-size: var(--font-size-2xs); }
-.gw-row b { font-weight: 500; }
-.gw-hint { margin: 4px 0; color: var(--app-muted); font-size: var(--font-size-xs); }
-.gw-error { margin: 0; overflow: hidden; color: var(--app-danger); font-size: var(--font-size-xs); text-overflow: ellipsis; }
+.gw-input:disabled { opacity: 0.55; }
+.gw-wide { flex: 0 1 260px; width: 260px; }
+.gw-number { width: 72px; text-align: right; }
+.gw-filter { flex: 0 0 180px; width: 180px; }
+.gw-small { height: 24px; padding: 0 10px; font-size: var(--font-size-xs); white-space: nowrap; }
+.gw-hint { margin: 8px 10px; color: var(--app-muted); font-size: var(--font-size-xs); }
+.gw-error { margin: 0; overflow: hidden; color: var(--app-danger); font-size: var(--font-size-xs); text-overflow: ellipsis; white-space: nowrap; }
 .gw-foot { display: flex; align-items: center; gap: var(--space-3); padding: 12px 20px; border-top: 1px solid var(--app-divider); }
 .gw-foot .spacer { flex: 1; }
+.gw-picker { display: grid; max-height: 260px; overflow: auto; }
+.gw-picker-item input { margin: 0; accent-color: var(--app-blue); }
 @media (max-width: 700px) {
-  .gw-types { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .gw-members { grid-template-columns: minmax(0, 1fr); }
+  .gw-divider { display: none; }
 }
 </style>

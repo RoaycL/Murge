@@ -3,6 +3,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { usePoliciesStore, POLICY_MODE_OPTIONS, type PolicyMode } from '../stores/policies'
 import { useKernelStore } from '../stores/kernel'
 import { useLocalStore } from '../stores/local'
+import { useConnectionsStore } from '../stores/connections'
+import { formatBytes } from '../lib/format'
 import AppIcon from '../components/AppIcon.vue'
 import DetailDrawer from '../components/DetailDrawer.vue'
 import CachedRemoteIcon from '../components/CachedRemoteIcon.vue'
@@ -100,7 +102,23 @@ function testMember(name: string): void {
 const toast = useToast()
 const wizardOpen = ref(false)
 const wizardGroup = ref<LocalGroup | null>(null)
-const groupMenu = ref<LocalGroup | null>(null)
+const connections = useConnectionsStore()
+/** The group card that was right-clicked (any group; `local` when created in the app). */
+const groupMenu = ref<{ name: string; type: string; current: string; local: LocalGroup | null } | null>(null)
+const groupMenuStats = computed(() => {
+  const name = groupMenu.value?.name
+  if (!name) return null
+  let count = 0
+  let up = 0
+  let down = 0
+  for (const connection of connections.snapshot?.connections ?? []) {
+    if (!connection.chains.includes(name)) continue
+    count++
+    up += connection.upload
+    down += connection.download
+  }
+  return { count, total: formatBytes(up + down), up: formatBytes(up), down: formatBytes(down) }
+})
 const groupMenuAt = ref({ x: 0, y: 0 })
 const removingGroup = ref<LocalGroup | null>(null)
 const BUILTIN_POLICIES = ['DIRECT', 'REJECT', 'REJECT-DROP', 'PASS', 'COMPATIBLE', 'GLOBAL']
@@ -130,12 +148,15 @@ function editGroup(group: LocalGroup): void {
   wizardOpen.value = true
 }
 
-function onGroupContext(event: MouseEvent, name: string): void {
-  const group = localGroupOf(name)
-  if (!group) return
+function onGroupContext(event: MouseEvent, group: (typeof policies.groups)[number]): void {
   event.preventDefault()
-  groupMenu.value = group
+  groupMenu.value = { name: group.name, type: displayType(group.type), current: groupSummary(group), local: localGroupOf(group.name) }
   groupMenuAt.value = { x: event.clientX, y: event.clientY }
+}
+
+function testGroupFromMenu(name: string): void {
+  openGroup(name)
+  testGroup()
 }
 
 async function saveGroup(group: LocalGroup): Promise<void> {
@@ -245,7 +266,7 @@ watch(() => kernel.status.phase, (phase, previous) => {
     <template v-else>
       <div class="section-caption"><span>策略组</span></div>
       <div class="policy-group-grid">
-        <button v-for="group in policies.groups" :key="group.name" type="button" :class="{ selected: policies.selectedGroup === group.name, 'has-icon': Boolean(group.icon) }" @click="openGroup(group.name)" @contextmenu="onGroupContext($event, group.name)"><CachedRemoteIcon v-if="group.icon" class="group-icon" :src="group.icon" :cache-key="`policy:${group.name}`" /><small>{{ displayType(group.type) }}</small><strong>{{ group.name }}</strong><span>{{ groupSummary(group) }}</span><AppIcon name="next" :size="14" /></button>
+        <button v-for="group in policies.groups" :key="group.name" type="button" :class="{ selected: policies.selectedGroup === group.name, 'has-icon': Boolean(group.icon) }" @click="openGroup(group.name)" @contextmenu="onGroupContext($event, group)"><CachedRemoteIcon v-if="group.icon" class="group-icon" :src="group.icon" :cache-key="`policy:${group.name}`" /><small>{{ displayType(group.type) }}</small><strong>{{ group.name }}</strong><span>{{ groupSummary(group) }}</span><AppIcon name="next" :size="14" /></button>
         <button type="button" class="policy-group-add" :disabled="localStore.busy" aria-label="新建策略组" title="新建策略组" @click="addGroup"><span aria-hidden="true">+</span></button>
       </div>
     </template>
@@ -255,10 +276,29 @@ watch(() => kernel.status.phase, (phase, previous) => {
     <LocalNodesSection @changed="onLocalChanged" />
 
     <GroupWizardModal :open="wizardOpen" :group="wizardGroup" :policies="wizardPolicies" :groups="wizardGroups" :taken-names="wizardTaken" :busy="localStore.busy" @close="wizardOpen = false" @save="saveGroup" />
-    <PopoverMenu :open="!!groupMenu" :x="groupMenuAt.x" :y="groupMenuAt.y" :label="groupMenu?.config.name" @close="groupMenu = null">
+    <PopoverMenu :open="!!groupMenu" :x="groupMenuAt.x" :y="groupMenuAt.y" :label="groupMenu?.name" @close="groupMenu = null">
       <template v-if="groupMenu">
-        <button type="button" class="popover-item" role="menuitem" :disabled="localStore.busy" @click="editGroup(groupMenu)">编辑策略组…</button>
-        <button type="button" class="popover-item danger" role="menuitem" :disabled="localStore.busy" @click="removingGroup = groupMenu">删除策略组…</button>
+        <div class="group-menu-head" @click.stop>
+          <strong>{{ groupMenu.name }}</strong>
+          <small>{{ groupMenu.type }}<template v-if="groupMenu.local"> · 本地</template><template v-if="groupMenu.current"> · 当前 {{ groupMenu.current }}</template></small>
+          <div v-if="groupMenuStats" class="group-menu-stats">
+            <span><small>活跃连接</small><b>{{ groupMenuStats.count }}</b></span>
+            <span><small>上传</small><b>{{ groupMenuStats.up }}</b></span>
+            <span><small>下载</small><b>{{ groupMenuStats.down }}</b></span>
+          </div>
+        </div>
+        <div class="popover-sep" />
+        <button type="button" class="popover-item" role="menuitem" @click="openGroup(groupMenu.name)">查看策略…</button>
+        <button type="button" class="popover-item" role="menuitem" @click="testGroupFromMenu(groupMenu.name)">测试策略组延迟</button>
+        <template v-if="groupMenu.local">
+          <div class="popover-sep" />
+          <button type="button" class="popover-item" role="menuitem" :disabled="localStore.busy" @click="editGroup(groupMenu.local)">编辑策略组…</button>
+          <button type="button" class="popover-item danger" role="menuitem" :disabled="localStore.busy" @click="removingGroup = groupMenu.local">删除策略组…</button>
+        </template>
+        <template v-else>
+          <div class="popover-sep" />
+          <button type="button" class="popover-item" role="menuitem" :disabled="localStore.busy" @click="addGroup">新建策略组…</button>
+        </template>
       </template>
     </PopoverMenu>
     <ConfirmModal :open="!!removingGroup" title="删除策略组" :description="`删除「${removingGroup?.config.name ?? ''}」？引用它的规则和策略组会自动跳过它。`" :busy="localStore.busy" @close="removingGroup = null" @confirm="confirmRemoveGroup" />
@@ -284,10 +324,17 @@ watch(() => kernel.status.phase, (phase, previous) => {
 .policy-group-grid span { grid-column: 1; grid-row: 3; align-self: end; overflow: hidden; color: var(--app-muted); font-size: var(--font-size-2xs); text-overflow: ellipsis; white-space: nowrap; }
 .group-icon { grid-column: 2; grid-row: 1 / 3; align-self: start; justify-self: end; width: 26px; height: 26px; border-radius: var(--radius-sm); object-fit: contain; }
 .policy-group-grid svg { grid-column: 2; grid-row: 1 / 4; align-self: center; justify-self: end; color: var(--app-muted); }
+.group-menu-head { display: grid; gap: 3px; padding: 8px 10px 6px; }
+.group-menu-head > strong { overflow: hidden; font-size: var(--font-size-body); text-overflow: ellipsis; white-space: nowrap; }
+.group-menu-head > small { overflow: hidden; color: var(--app-muted); font-size: var(--font-size-2xs); text-overflow: ellipsis; white-space: nowrap; }
+.group-menu-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 6px; }
+.group-menu-stats span { display: grid; gap: 1px; }
+.group-menu-stats small { color: var(--app-muted); font-size: var(--font-size-2xs); }
+.group-menu-stats b { font-size: var(--font-size-body); font-weight: 600; font-variant-numeric: tabular-nums; }
 .policy-group-grid .policy-group-add { display: flex; align-items: center; justify-content: center; border: 1px dashed var(--app-divider); background: transparent; color: var(--app-muted); font-size: 22px; font-weight: 300; }
 .policy-group-grid .policy-group-add:hover { border-color: color-mix(in srgb, var(--app-blue) 48%, var(--app-divider)); background: transparent; color: var(--app-text); }
 .policy-group-grid .policy-group-add:disabled { opacity: 0.5; }
-.policy-group-grid .policy-group-add span { align-self: center; color: inherit; font-size: 22px; line-height: 1; }
+.policy-group-grid .policy-group-add span { display: grid; align-self: center; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: color-mix(in srgb, var(--app-text) 16%, transparent); color: var(--app-surface-solid); font-size: 17px; font-weight: 500; line-height: 1; }
 .policy-group-grid button.has-icon > svg { grid-row: 3; align-self: end; }
 .node-caption{display:flex;justify-content:space-between;align-items:center;margin:4px 0 12px;color:var(--app-pink);font-size:var(--font-size-sm)}.node-caption button{border:0;background:transparent;color:var(--app-muted);font-size:var(--font-size-xs)}
 .drawer-panel-error{margin-top:12px}

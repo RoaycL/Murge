@@ -397,7 +397,7 @@ const TEXT_PLACEHOLDER = `支持以下任一种内容，可以一次粘贴多个
 
 <style scoped>
 .node-modal-shade { z-index: 72; }
-.node-modal { display: flex; flex-direction: column; width: min(920px, calc(100vw - 40px)); height: min(720px, calc(100vh - 48px)); overflow: hidden; border: 1px solid var(--app-divider); border-radius: var(--radius-large); color: var(--app-text); background: var(--app-popover); -webkit-backdrop-filter: var(--app-popover-filter); backdrop-filter: var(--app-popover-filter); box-shadow: 0 22px 70px rgba(0, 0, 0, 0.3); }
+.node-modal { display: flex; flex-direction: column; width: min(920px, calc(100vw - 40px)); height: min(720px, calc(100vh - 48px)); overflow: hidden; border: 1px solid var(--glass-edge); border-radius: 14px; color: var(--app-text); background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-filter); backdrop-filter: var(--glass-filter); box-shadow: var(--glass-shadow); }
 .node-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px 14px; border-bottom: 1px solid var(--app-divider); }
 .node-modal-head h2 { margin: 0; font-size: var(--font-size-title); }
 .node-mode { display: inline-flex; padding: 2px; border-radius: var(--radius-control); background: var(--app-fill); }

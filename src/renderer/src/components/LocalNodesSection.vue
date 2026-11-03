@@ -8,6 +8,7 @@ import NodeEditorModal from './NodeEditorModal.vue'
 import ConfirmModal from './ConfirmModal.vue'
 import SurfaceCard from './SurfaceCard.vue'
 import PopoverMenu from './PopoverMenu.vue'
+import PopoverSubmenu from './PopoverSubmenu.vue'
 import { latencyLabel, latencyTitle } from '../lib/node-latency'
 import { formatBytes, formatRate } from '../lib/format'
 import { nodeSummary, type NodeEditorStart } from '../lib/local-node-form'
@@ -93,7 +94,7 @@ const contextInfo = computed(() => {
   if (!node) return []
   const kind = String(node.config.type).toLowerCase()
   if (kind !== 'tailscale' && kind !== 'wireguard') return []
-  const status = !node.enabled ? '已停用' : skipped.value.has(node.id) ? '重名，未生效' : running.value ? '运行中' : '内核未运行'
+  const status = !node.enabled ? '已停用' : skipped.value.has(node.id) ? '重名，未生效' : running.value ? '就绪' : '内核未运行'
   return nodeInfoSections(node.config as Record<string, unknown>, { status, connections: connections.snapshot?.connections ?? [] })
 })
 
@@ -208,18 +209,24 @@ onMounted(() => {
             <small>↓ {{ contextStats.peakDown.value }} {{ contextStats.peakDown.unit }}</small>
           </div>
           <small v-else class="context-none">启动以来还没有经过这个节点的流量</small>
-          <dl v-for="section in contextInfo" :key="section.title" class="context-info">
-            <dt>{{ section.title }}</dt>
-            <div v-for="row in section.rows" :key="row.label"><span>{{ row.label }}</span><b :title="row.value">{{ row.value }}</b></div>
-          </dl>
         </div>
         <div class="popover-sep" />
-        <button type="button" class="popover-item" role="menuitem" :disabled="local.busy" @click="edit(contextNode)">编辑节点…</button>
+        <template v-if="contextInfo.length">
+          <PopoverSubmenu :label="typeLabel(contextNode)">
+            <template v-for="(section, index) in contextInfo" :key="section.title">
+              <div v-if="index" class="popover-sep" />
+              <div class="popover-section">{{ section.title }}</div>
+              <span v-for="row in section.rows" :key="row.label" class="popover-info" :title="`${row.label}：${row.value}`">{{ row.label }}：{{ row.value }}</span>
+            </template>
+          </PopoverSubmenu>
+          <div class="popover-sep" />
+        </template>
+        <button type="button" class="popover-item" role="menuitem" :disabled="local.busy" @click="edit(contextNode)">编辑代理…</button>
         <button type="button" class="popover-item" role="menuitem" :disabled="local.busy" @click="duplicate(contextNode)">创建副本</button>
         <button type="button" class="popover-item" role="menuitem" :disabled="local.busy" @click="toggle(contextNode)">{{ contextNode.enabled ? '停用' : '启用' }}</button>
-        <button type="button" class="popover-item danger" role="menuitem" :disabled="local.busy" @click="removing = contextNode">删除节点…</button>
+        <button type="button" class="popover-item danger" role="menuitem" :disabled="local.busy" @click="removing = contextNode">删除代理…</button>
         <div class="popover-sep" />
-        <button type="button" class="popover-item" role="menuitem" :disabled="!canTest(contextNode)" @click="test(contextNode)">测试延迟</button>
+        <button type="button" class="popover-item" role="menuitem" :disabled="!canTest(contextNode)" @click="test(contextNode)">测试代理延迟</button>
       </template>
     </PopoverMenu>
 
@@ -263,6 +270,8 @@ onMounted(() => {
 .local-card-delay.idle { color: var(--app-faint); font-weight: var(--font-weight-regular); }
 .local-card-add { align-items: center; justify-content: center; border: 1px dashed var(--app-divider); background: transparent; color: var(--app-muted); font-size: 22px; font-weight: 300; }
 .local-card-add:disabled { opacity: 0.5; }
+.local-card-add span { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: color-mix(in srgb, var(--app-text) 16%, transparent); color: var(--app-surface-solid); font-size: 17px; font-weight: 500; line-height: 1; }
+.local-card-add:hover { border-color: color-mix(in srgb, var(--app-blue) 48%, var(--app-divider)); background: transparent; }
 .local-empty { margin-top: 10px; padding: 2px 4px; }
 .context-head { display: grid; gap: 4px; padding: 8px 10px 6px; }
 .context-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -276,9 +285,4 @@ onMounted(() => {
 .context-stats .context-peak-label { margin-top: 4px; }
 .context-stats .context-peak-label ~ small { margin-top: 4px; font-variant-numeric: tabular-nums; }
 .context-none { margin-top: 4px; }
-.context-info { display: grid; gap: 2px; margin: 8px 0 0; }
-.context-info dt { color: var(--app-muted); font-size: var(--font-size-2xs); font-weight: 600; }
-.context-info div { display: flex; justify-content: space-between; gap: 14px; font-size: var(--font-size-xs); }
-.context-info span { flex: none; color: var(--app-muted); }
-.context-info b { overflow: hidden; font-weight: 500; text-align: right; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 </style>

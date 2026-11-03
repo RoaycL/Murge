@@ -4,6 +4,18 @@
 
 ## 本次更新
 
+- 新增「本地节点」和「本地规则」，参照 Surge / Loon 的配置分离：保存在订阅之外，更新或切换订阅都不会丢失。
+  - 策略页「本地节点」以卡片显示，点击编辑，右键可查看延迟和启动以来的流量、创建副本、停用、删除、测试延迟。
+  - 新的「增加代理」窗口按协议切换字段，必填 / 可选分开标注；支持 HTTP(S)、SOCKS5(-TLS)、SSH、Snell、Shadowsocks、VMess、VLESS（含 REALITY）、Trojan、AnyTLS、TUIC v5、Hysteria 2、WireGuard、Tailscale 和绑定网络接口，可设置跳板代理、网络接口、IP 版本、TFO / MPTCP / 多路复用，并加入现有策略组。
+  - 「文本」方式可直接粘贴 mihomo YAML、分享链接（ss / vmess / vless / trojan / hysteria2 / tuic / anytls 等）、Surge 代理行或 WireGuard 配置，一次添加多个节点；也可以导入 WireGuard .conf 文件。
+  - Tailscale 节点：自动添加 *.ts.net 和 tailnet 网段规则，并通过它解析 MagicDNS；没有出口节点时延迟显示「仅 tailnet」。
+  - 检测到官方 Tailscale 客户端时，增强模式会把 tailnet 流量和 MagicDNS 交还给它，两者可以同时使用（可关闭）。
+- 规则页：
+  - 「本地规则」排在订阅规则之前，可排序、停用；指向不存在策略的规则会被跳过并提示。
+  - 订阅自带的规则可以停用、改用其他策略或整条替换，修改按订阅分别保存；订阅里找不到对应规则时标为「已失效」。
+
+## 此前 Beta 已包含
+
 - 侧边栏：「设备」和「Sub-Store」移入「更多」页；「更多」始终固定在底部，窗口较矮时导航区可滚动（不显示滚动条）。
 - 「更多」页顺序调整为 通用、外观、网络、DNS 与嗅探、内核、设备、Sub-Store、日志、关于。
 - 活动页：
@@ -18,9 +30,6 @@
   - 支持 Surge、Loon、Stash、Egern、Quantumult X 五种格式的模块 / 插件（已用 DualSubs 验证）。
 - 外部资源：新增「模块」「脚本」分类，可单独更新重写模块和其中引用的脚本；空列表提示居中显示。
 - 选择内核版本的弹窗布局更紧凑。
-
-## 此前 Beta 已包含
-
 - 新增「解密」和「重写 & 映射」（侧栏 HTTP 分组），界面对齐 Surge：
   - HTTPS 解密：一键生成本机专属根证书并安装到系统，只解密「MitM 主机名」列表里的域名（支持通配符、排除、指定端口），每个主机名可单独勾选停用；可选「跳过服务端证书验证」「自动屏蔽 QUIC」「MitM over HTTP/2」。
   - 重写 & 映射：URL 重定向、Header 重写、Mock（Map Local）、Body 重写（支持正则和 jq）、脚本、分流规则，卡片显示生效规则数（含模块）并可直接编辑。

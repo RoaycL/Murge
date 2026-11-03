@@ -9,7 +9,7 @@
 
 </div>
 
-Murge 是一款基于 Electron + Vue 3 构建的现代化 Mihomo 图形客户端，专注于提供简洁、高效的代理管理体验。
+Murge 是一款基于 Tauri + Vue 3 构建的现代化 Mihomo 图形客户端，专注于提供简洁、高效的代理管理体验。
 
 ## 项目近况与反馈
 
@@ -84,7 +84,7 @@ Murge 是一款基于 Electron + Vue 3 构建的现代化 Mihomo 图形客户端
 ## 技术栈
 
 - **前端**：Vue 3 + TypeScript + Vite
-- **后端**：Electron + Node.js
+- **后端**：Tauri 2（Rust），特权 TUN 服务使用 Go
 - **内核**：[Mihomo](https://github.com/MetaCubeX/mihomo)（Clash Meta）
 
 ## 开发
@@ -93,14 +93,14 @@ Murge 是一款基于 Electron + Vue 3 构建的现代化 Mihomo 图形客户端
 # 安装依赖
 npm install
 
-# 启动开发服务器
-npm run dev
+# 启动开发版（Tauri）
+npm run tauri:dev
 
-# 构建
-npm run build
+# 运行测试
+npm test
 
-# 打包 Windows 安装包
-npm run package:win
+# 打包 Windows 安装包（x64 + arm64）
+npm run package:tauri
 ```
 
 ## 许可证

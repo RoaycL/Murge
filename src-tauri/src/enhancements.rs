@@ -16,8 +16,8 @@
 //! - Migrations ride the load path: core-settings v2 with the v0.9.0
 //!   mixed/http default-swap tuple fix; TUN legacy 9000 MTU -> 1500.
 //!
-//! Preview text formatting follows the Rust YAML emitter (documented in
-//! docs/tauri/phase3/README.md — semantically neutral for mihomo).
+//! Preview text formatting follows the Rust YAML emitter (semantically
+//! neutral for mihomo).
 
 use std::fs;
 use std::path::PathBuf;

@@ -95,7 +95,7 @@ fn main() {
 }
 `)
   execFileSync('rustc', ['--edition=2021', probeSource, '-o', probeExecutable], { timeout: 60_000, stdio: ['ignore', 'pipe', 'pipe'] })
-  const fixtureResult = execFileSync(probeExecutable, [process.env.MURGE_KERNEL_FIXTURE_COMMAND || process.execPath, resolve('src/main/testing/kernel-fixture.mjs'), process.env.RUNNER_TEMP, win32.toNamespacedPath(process.env.RUNNER_TEMP)], { encoding: 'utf8', timeout: 30_000 })
+  const fixtureResult = execFileSync(probeExecutable, [process.env.MURGE_KERNEL_FIXTURE_COMMAND || process.execPath, resolve('tests/fixtures/kernel-fixture.mjs'), process.env.RUNNER_TEMP, win32.toNamespacedPath(process.env.RUNNER_TEMP)], { encoding: 'utf8', timeout: 30_000 })
   await writeFile(resolve(output, 'fixture-probe.txt'), fixtureResult)
   console.log(fixtureResult)
 }

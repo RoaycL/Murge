@@ -26,18 +26,14 @@ copyright owners and license terms are retained exactly as published upstream.
 | vue                | `licenses/vue.txt`           | 3.x     | MIT     |
 | vue-router         | `licenses/vue-router.txt`    | 4.x     | MIT     |
 | pinia              | `licenses/pinia.txt`         | 3.x     | MIT     |
-| @vueuse/core       | `licenses/vueuse-core.txt`   | 13.x    | MIT     |
 | zod                | `licenses/zod.txt`           | 3.x     | MIT     |
-| ws                 | `licenses/ws.txt`            | 8.x     | MIT     |
 | yaml               | `licenses/yaml.txt`          | 2.x     | ISC     |
 
-## Electron runtime
+## Application shell
 
-Electron is distributed with the packaged application and is licensed under the
-MIT License (reproduced at `licenses/electron.txt`). Electron also bundles
-Chromium and Node.js. The licenses for those bundled components and their full
-notices are printed in the official Electron distribution and are the
-responsibility of the Electron project.
+The desktop shell is built with Tauri 2 and Rust crates that are statically
+linked into the application executable. The web view is the Microsoft Edge
+WebView2 runtime provided by Windows; it is not redistributed by the installer.
 
 ## Privileged Windows service
 
@@ -49,15 +45,6 @@ retained notices are installed with the application:
 | github.com/Microsoft/go-winio | `licenses/go-winio.txt` | 0.6.2 | MIT |
 | golang.org/x/sys | `licenses/go-x-sys.txt` | 0.47.0 | BSD-3-Clause |
 | gopkg.in/yaml.v3 | `licenses/go-yaml-v3.txt` | 3.0.1 | MIT / Apache-2.0 |
-
-## Build-tooling dependencies
-
-The packaging toolchain (`electron-vite`, `@electron-toolkit/utils`,
-`@electron-toolkit/preload`) is MIT-licensed and, where it is linked into the
-application runtime, its notice is retained at
-`licenses/electron-toolkit-utils.txt` and `licenses/electron-toolkit-preload.txt`.
-`electron-builder` is used only to produce the installer and is not shipped as
-part of the application runtime.
 
 ## mihomo (proxy core)
 

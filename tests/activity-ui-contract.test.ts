@@ -24,17 +24,15 @@ describe('Activity fluid-layout UI contract', () => {
 
   it('opens on the 934x672 reference viewport while allowing a smaller fluid minimum', async () => {
     const [main, tokens, css] = await Promise.all([
-      // Phase 1: window geometry lives in the window adapter, not the entry.
-      read('src/main/electron/window-adapter.ts'),
+      read('src-tauri/tauri.conf.json'),
       read('src/renderer/src/styles/tokens.css'),
       read('src/renderer/src/styles/base.css')
     ])
 
-    expect(main).toMatch(/width:\s*934,\s*\n\s*height:\s*672,\s*\n\s*useContentSize:\s*true/)
+    const [window] = JSON.parse(main).app.windows
+    expect(window).toMatchObject({ width: 934, height: 672 })
     // 最小窗口锁在 280px 列宽；Surge 横卡比例修正后 640px 高即可完整展示。
-    expect(main).toMatch(/minWidth:\s*848,\s*\n\s*minHeight:\s*640,/)
-    expect(main).toMatch(/titleBarStyle:\s*'hidden'/)
-    expect(main).toMatch(/titleBarOverlay:\s*\{[^}]*height:\s*34/s)
+    expect(window).toMatchObject({ minWidth: 848, minHeight: 640, decorations: false })
     expect(tokens).toMatch(/--sidebar-width:\s*190px/)
     expect(css).toMatch(/\.app-window\s*\{[^}]*height:\s*100%;\s*overflow:\s*hidden;/)
     expect(css).not.toMatch(/\.app-window\s*\{[^}]*padding:/)

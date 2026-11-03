@@ -185,7 +185,7 @@ async function smoke(kind, executable, args = []) {
   const debugPort = await port()
   const env = { ...process.env, APPDATA: isolated, WEBVIEW2_USER_DATA_FOLDER: resolve(isolated, 'webview'),
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort} --remote-debugging-address=127.0.0.1` }
-  const child = spawn(executable, kind === 'electron' ? [...args, `--remote-debugging-port=${debugPort}`, '--no-kernel-autostart'] : args, { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] })
+  const child = spawn(executable, args, { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] })
   let exit, cdp, log = ''
   child.once('exit', (code, signal) => { exit = { code, signal } })
   child.on('error', (error) => { exit = { error: error.message } })
@@ -311,7 +311,6 @@ try {
   assert.ok(['debug', 'release'].includes(profile), 'Unsupported Tauri build profile')
   const executable = resolve(root, 'src-tauri/target/x86_64-pc-windows-msvc', profile, `${brand.executableName}.exe`)
   const evidence = [await smoke('tauri', executable)]
-  if (process.argv.includes('--compare-electron')) evidence.push(await smoke('electron', require('electron'), [root]))
   await writeFile(resolve(output, 'result.json'), JSON.stringify({ sourceCommit, workflowCommit: process.env.GITHUB_SHA, evidence }, null, 2) + '\n')
   console.log('TAURI_GUI_SMOKE=PASS')
 } catch (error) {

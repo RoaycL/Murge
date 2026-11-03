@@ -12,13 +12,8 @@ const EXPECTED_LICENSES = [
   'vue.txt',
   'vue-router.txt',
   'pinia.txt',
-  'vueuse-core.txt',
   'zod.txt',
-  'ws.txt',
   'yaml.txt',
-  'electron.txt',
-  'electron-toolkit-utils.txt',
-  'electron-toolkit-preload.txt',
   'go-winio.txt',
   'go-x-sys.txt',
   'go-yaml-v3.txt'

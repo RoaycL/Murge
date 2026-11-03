@@ -7,7 +7,6 @@ dist/
 *.tsbuildinfo
 .env
 .env.*
-!.env.example
 resources/bin/mihomo*.exe
 resources/bin/mihomo*
 resources/bin/*/*.zip

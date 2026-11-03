@@ -1,7 +1,7 @@
 // GENERATED FILE — do not edit by hand.
 // Regenerate with `npm run tauri:bridge`.
 //
-// Source of truth: src/preload/index.ts (method surface) + src/shared/ipc.ts
+// Source of truth: src/bridge/desktop-surface.ts (method surface) + src/shared/ipc.ts
 // (wire channel names). The Tauri shell renders window.desktop over
 // commands/events with the identical contract, so renderer code cannot
 // tell the shells apart.
@@ -11,8 +11,8 @@ import { decodeProtocolError } from '@shared/protocol-errors'
 import type { DesktopApi } from '@shared/ipc'
 
 /**
- * Thin invoke wrapper with the exact error semantics of the Electron
- * preload: Tauri command rejections arrive as the raw ProtocolError wire
+ * Thin invoke wrapper. Tauri command rejections arrive as the raw
+ * ProtocolError wire
  * string (`PROTOCOL_ERROR:<CODE>::<message>`), decode them so the renderer
  * can branch on a stable error code.
  */
@@ -27,7 +27,7 @@ async function bridgeInvoke<T>(channel: string, args: unknown[]): Promise<T> {
 }
 
 /**
- * Event subscription with the preload's synchronous-unsubscribe contract.
+ * Event subscription with a synchronous-unsubscribe contract.
  * Tauri listen resolves asynchronously; a listener disposed before
  * resolution unregisters immediately once it lands.
  */

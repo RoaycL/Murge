@@ -1,29 +1,18 @@
-import { contextBridge, ipcRenderer } from 'electron'
 import { IPC, type DesktopApi } from '@shared/ipc'
-import { decodeProtocolError } from '@shared/protocol-errors'
 
 /**
- * Thin invoke wrapper. `ipcRenderer.invoke` rejects with a generic Error whose
- * message may carry an encoded ProtocolError; decode it so the renderer can
- * branch on a stable error code.
+ * `window.desktop` method surface: which IPC channel each DesktopApi method
+ * maps to. This file is never bundled; `npm run tauri:bridge`
+ * (scripts/generate-tauri-bridge.mjs) parses it together with
+ * `src/shared/ipc.ts` and emits
+ * `src/renderer/src/platform/generated/desktop-api.ts`, which renders the
+ * calls over Tauri commands/events. Keep one method per line in the
+ * `name: (args) => invoke(IPC.key, args)` / `listen(IPC.key, listener)` shape.
  */
-async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
-  try {
-    return (await ipcRenderer.invoke(channel, ...args)) as T
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    const decoded = decodeProtocolError(message)
-    throw decoded ?? error
-  }
-}
+declare function invoke<T>(channel: string, ...args: unknown[]): Promise<T>
+declare function listen<T>(channel: string, listener: (value: T) => void): () => void
 
-function listen<T>(channel: string, listener: (value: T) => void): () => void {
-  const handler = (_event: Electron.IpcRendererEvent, value: T): void => listener(value)
-  ipcRenderer.on(channel, handler)
-  return () => ipcRenderer.removeListener(channel, handler)
-}
-
-const api: DesktopApi = {
+export const api: DesktopApi = {
   app: {
     getBrand: () => invoke(IPC.appGetBrand),
     getInfo: () => invoke(IPC.appGetInfo),
@@ -227,5 +216,3 @@ const api: DesktopApi = {
     resolveAll: (force) => invoke(IPC.networkMetadataResolveAll, force)
   }
 }
-
-contextBridge.exposeInMainWorld('desktop', api)

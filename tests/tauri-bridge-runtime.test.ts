@@ -59,7 +59,7 @@ describe('Tauri bridge runtime behavior', () => {
     const temporary = await mkdtemp(resolve(tmpdir(), 'murge-bridge-crlf-'))
     const generated = 'src/renderer/src/platform/generated/desktop-api.ts'
     try {
-      for (const path of ['scripts/generate-tauri-bridge.mjs', 'src/preload/index.ts', 'src/shared/ipc.ts']) {
+      for (const path of ['scripts/generate-tauri-bridge.mjs', 'src/bridge/desktop-surface.ts', 'src/shared/ipc.ts']) {
         const content = await readFile(resolve(root, path), 'utf8')
         await mkdir(dirname(resolve(temporary, path)), { recursive: true })
         await writeFile(resolve(temporary, path), content.replace(/\r?\n/g, '\r\n'))

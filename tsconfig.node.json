@@ -12,12 +12,12 @@
     "skipLibCheck": true,
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true,
-    "types": ["node", "electron-vite/node"]
+    "types": ["node"]
   },
   "include": [
-    "electron.vite.config.ts",
-    "src/main/**/*.ts",
-    "src/preload/**/*.ts",
+    "vite.renderer.config.ts",
+    "vitest.config.ts",
+    "src/bridge/**/*.ts",
     "src/shared/**/*.ts"
   ]
 }

@@ -260,7 +260,7 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
 .resource-actions { display: inline-flex; justify-content: flex-end; gap: var(--space-1); }
 .resource-actions .icon-control { width: 26px; height: 26px; border-color: transparent; background: transparent; color: var(--app-muted); }
 .resource-actions .icon-control:hover:not(:disabled) { background: var(--app-fill); color: var(--app-text); }
-.resource-actions .resource-table-empty { margin: 0; padding: 22px 14px; color: var(--app-muted); font-size: var(--font-size-xs); text-align: center; }
+.resource-table-empty { margin: 0; padding: 26px 14px; color: var(--app-muted); font-size: var(--font-size-sm); line-height: 20px; text-align: center; }
 .resource-only-pending { display: inline-flex; align-items: center; gap: var(--space-3); color: var(--app-muted); font-size: var(--font-size-xs); cursor: pointer; user-select: none; }
 .resource-only-pending em { margin-left: 5px; padding: 0 6px; border-radius: 999px; background: color-mix(in srgb, var(--app-danger) 12%, transparent); color: var(--app-danger); font-style: normal; font-variant-numeric: tabular-nums; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

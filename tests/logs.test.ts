@@ -14,6 +14,14 @@ describe('renderer log safety', () => {
     expect(value).toContain('mode=rule')
   })
 
+  it('redacts WireGuard and Tailscale keys', () => {
+    expect(redactLogText('private-key: aGVsbG8gd29ybGQ=')).toBe('private-key=[REDACTED]')
+    expect(redactLogText('pre-shared-key=abc= mtu=1408')).toBe('pre-shared-key=[REDACTED] mtu=1408')
+    expect(redactLogText('login with tskey-auth-kAbCd1CNTRL-xyz789 failed')).toBe('login with tskey-[REDACTED] failed')
+    expect(redactLogText('auth-key: foo')).toBe('auth-key=[REDACTED]')
+    expect(redactLogText('public-key: keep')).toBe('public-key: keep')
+  })
+
   it('normalizes alternate message and level fields before retention', () => {
     expect(normalizeLogMessage({ level: 'warn', message: 'token=hidden' }, 7, new Date('2026-01-01T00:00:00Z'))).toEqual({
       id: 7,

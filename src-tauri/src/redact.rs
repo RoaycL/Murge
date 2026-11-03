@@ -308,10 +308,14 @@ pub fn redact_log_text(input: &str) -> String {
 
     // 3. Key/value pairs whose key looks secret-bearing.
     let kv = regex::Regex::new(
-        r"(?i)\b((?:authorization|cookie)|[\w-]*(?:token|secret|password|api[_-]?key)[\w-]*)\s*[:=]\s*([^&\s,;]+)",
+        r"(?i)\b((?:authorization|cookie)|[\w-]*(?:token|secret|password|api[_-]?key|private[_-]?key|pre[_-]?shared[_-]?key|auth[_-]?key)[\w-]*)\s*[:=]\s*([^&\s,;]+)",
     )
     .expect("kv regex compiles");
     let text = kv.replace_all(&text, "${1}=[REDACTED]").to_string();
+
+    // 3b. Tailscale auth / API keys appear without a key name.
+    let tskey = regex::Regex::new(r"\btskey-[A-Za-z0-9-]+").expect("tskey regex compiles");
+    let text = tskey.replace_all(&text, "tskey-[REDACTED]").to_string();
 
     // 4. Inline userinfo (`https://user:pass@host`).
     let userinfo =
@@ -359,6 +363,24 @@ mod log_redaction_tests {
         assert_eq!(redact_log_text("cookie: session=xyz"), "cookie=[REDACTED]");
         assert_eq!(redact_log_text("x-api-key: ABC"), "x-api-key=[REDACTED]");
         assert_eq!(redact_log_text("color: blue"), "color: blue");
+    }
+
+    #[test]
+    fn log_text_masks_wireguard_and_tailscale_keys() {
+        assert_eq!(
+            redact_log_text("private-key: aGVsbG8gd29ybGQgaGVsbG8gd29ybGQgaGVsbG8gd28="),
+            "private-key=[REDACTED]"
+        );
+        assert_eq!(
+            redact_log_text("pre-shared-key=abc= mtu=1408"),
+            "pre-shared-key=[REDACTED] mtu=1408"
+        );
+        assert_eq!(
+            redact_log_text("login with tskey-auth-kAbCd1CNTRL-xyz789 failed"),
+            "login with tskey-[REDACTED] failed"
+        );
+        assert_eq!(redact_log_text("auth-key: foo"), "auth-key=[REDACTED]");
+        assert_eq!(redact_log_text("public-key: keep"), "public-key: keep");
     }
 
     #[test]

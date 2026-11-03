@@ -65,6 +65,27 @@ pub fn diagnostic(line: &str) {
     }
 }
 
+/// Write one line to the app log under `module` at `level`, without the
+/// stderr copy. For high-volume sources (script `console.*`) whose lines are
+/// user content rather than runtime faults.
+pub fn app_log(level: FileLogLevel, module: &str, message: &str) {
+    if let Some(service) = DIAGNOSTIC_LOG.get() {
+        service.write_app(level, message, module);
+    }
+}
+
+/// The installed app log service (to flush before reading files back).
+pub fn installed_service() -> Option<Arc<FileLogService>> {
+    DIAGNOSTIC_LOG.get().cloned()
+}
+
+/// The directory the installed app log writes to.
+pub fn log_directory() -> Option<PathBuf> {
+    DIAGNOSTIC_LOG
+        .get()
+        .map(|service| service.directory.clone())
+}
+
 /// True once [`install_diagnostic_log`] ran (setup has started).
 pub fn diagnostic_log_installed() -> bool {
     DIAGNOSTIC_LOG.get().is_some()

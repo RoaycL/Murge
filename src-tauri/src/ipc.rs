@@ -116,6 +116,15 @@ fn json_envelope(key: &str, model: Value) -> Value {
     Value::Object(object)
 }
 
+/// The app log directory: the installed log service's, else the stable
+/// `<app data>/logs` (dev without a data root falls back to a temp path).
+fn log_directory(paths: &AppPaths) -> std::path::PathBuf {
+    crate::file_log::log_directory().unwrap_or_else(|| match &paths.app_data_root {
+        Some(root) => root.join("logs"),
+        None => std::env::temp_dir().join("murge-dev-logs"),
+    })
+}
+
 fn arg(payload: &Value, index: usize) -> Option<&Value> {
     payload.get(index)
 }
@@ -157,6 +166,56 @@ pub async fn dispatch(
                 crate::diagnostics::collect(_paths, settings, models, kernel, system_proxy, tun)
                     .await,
             )
+        }
+        "logs:read-app" => {
+            let dir = log_directory(_paths);
+            Ok(
+                tokio::task::spawn_blocking(move || crate::log_files::read_app_entries(&dir))
+                    .await
+                    .unwrap_or_else(|_| serde_json::json!({"entries": [], "modules": []})),
+            )
+        }
+        "logs:open-folder" => {
+            crate::tray::open_file_manager(&log_directory(_paths))
+                .map_err(IpcError::invalid_argument)?;
+            Ok(Value::Null)
+        }
+        "logs:export-bundle" => {
+            // Flush pending writes so the bundle includes the latest lines.
+            if let Some(service) = crate::file_log::installed_service() {
+                service.flush().await;
+            }
+            let report =
+                crate::diagnostics::collect(_paths, settings, models, kernel, system_proxy, tun)
+                    .await;
+            let dir = log_directory(_paths);
+            let generated = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+            let bytes = tokio::task::spawn_blocking(move || {
+                crate::log_files::build_bundle(&dir, &report, &generated)
+            })
+            .await
+            .map_err(|_| IpcError::invalid_argument("日志包生成失败"))?
+            .map_err(|error| IpcError::invalid_argument(format!("日志包生成失败：{error}")))?;
+            let choice = rfd::AsyncFileDialog::new()
+                .set_title("导出日志包")
+                .set_file_name(format!(
+                    "murge-logs-{}.zip",
+                    chrono::Local::now().format("%Y%m%d-%H%M%S")
+                ))
+                .add_filter("ZIP", &["zip"])
+                .save_file()
+                .await;
+            match choice {
+                Some(handle) => {
+                    std::fs::write(handle.path(), &bytes).map_err(|error| {
+                        IpcError::invalid_argument(format!("保存失败：{error}"))
+                    })?;
+                    Ok(
+                        serde_json::json!({ "saved": true, "path": handle.path().to_string_lossy() }),
+                    )
+                }
+                None => Ok(serde_json::json!({ "saved": false })),
+            }
         }
         "backup:create" => crate::backup::create(_paths, payload).await,
         "backup:preview" => crate::backup::local_preview(_paths, payload).await,

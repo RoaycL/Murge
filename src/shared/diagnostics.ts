@@ -57,3 +57,13 @@ export interface DiagnosticReport {
   collectionWarnings: DiagnosticCollectionWarning[]
   privacy: 'No raw logs, configuration, subscription URLs, controller secrets, domains or destinations are included.'
 }
+
+/** One parsed line of the app log (`[ISO] [LEVEL] [module] message`). */
+export interface AppLogEntry {
+  time: string
+  level: 'debug' | 'info' | 'warning' | 'error'
+  module: string
+  message: string
+}
+export interface AppLogSnapshot { entries: AppLogEntry[]; modules: string[] }
+export interface LogBundleResult { saved: boolean; path?: string }

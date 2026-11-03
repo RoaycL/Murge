@@ -290,13 +290,25 @@ h1 { margin: 0; font-size: var(--font-size-display); line-height: 34px; letter-s
 .logs-header p { margin: 2px 0 0; color: var(--app-muted); font-size: var(--font-size-xs); }
 .logs-actions { display: flex; gap: var(--space-3); }
 .logs-actions button { height: 28px; padding: 0 12px; border: 0; border-radius: var(--radius-sm); background: var(--app-fill); cursor: pointer; }
-.diagnostic-export-card { display: flex; align-items: center; gap: var(--space-6); margin-top: 18px; padding: 14px 16px; }
-.diagnostic-export-symbol { display: grid; flex: 0 0 35px; place-items: center; width: 35px; height: 35px; border-radius: var(--radius-md); color: var(--app-purple); background: color-mix(in srgb, var(--app-purple) 11%, transparent); }
-.diagnostic-export-copy { flex: 1; min-width: 0; }
-.diagnostic-export-copy strong { font-size: var(--font-size-md); font-weight: var(--font-weight-bold); }
-.diagnostic-export-copy p { margin: 3px 0 0; color: var(--app-muted); font-size: var(--font-size-2xs); line-height: 1.5; }
-.diagnostic-export-card button { flex: 0 0 auto; white-space: nowrap; }
-@media (max-width: 620px) { .diagnostic-export-card { flex-wrap: wrap; } .diagnostic-export-card button { margin-left: 48px; } }
+.troubleshoot-bar { display: flex; align-items: center; gap: var(--space-4); width: 100%; margin-top: 16px; padding: 8px 8px 8px 14px; border-radius: var(--radius-control); }
+.troubleshoot-copy { display: flex; flex: 1; align-items: baseline; gap: var(--space-3); min-width: 0; }
+.troubleshoot-copy strong { flex: 0 0 auto; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold, 600); }
+.troubleshoot-copy span { overflow: hidden; color: var(--app-muted); font-size: var(--font-size-2xs); text-overflow: ellipsis; white-space: nowrap; }
+.troubleshoot-actions { display: flex; flex: 0 0 auto; gap: var(--space-2); }
+.troubleshoot-button { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border: 1px solid var(--app-divider); border-radius: var(--radius-control); color: inherit; background: transparent; font-size: var(--font-size-xs); cursor: pointer; }
+.troubleshoot-button:hover:not(:disabled) { background: var(--app-fill); }
+.troubleshoot-button:disabled { opacity: .55; cursor: default; }
+.troubleshoot-button svg { color: var(--app-muted); }
+.troubleshoot-button.accent { border-color: color-mix(in srgb, var(--app-blue) 45%, transparent); color: var(--app-blue); }
+.troubleshoot-button.accent svg { color: currentColor; }
+@media (max-width: 820px) { .troubleshoot-copy span { display: none; } }
+.logs-actions { align-items: center; }
+.logs-source button { width: 52px; }
+.logs-actions .logs-source button { height: 20px; padding: 0; background: transparent; }
+.logs-actions .logs-source button.selected { background: var(--app-control-selected); }
+.log-row.app-log-row { grid-template-columns: 132px 62px 76px 1fr; }
+.log-module { justify-self: start; max-width: 70px; height: 18px; padding: 0 6px; overflow: hidden; border: 0; border-radius: var(--radius-sm); color: var(--app-muted); background: var(--app-fill); font-size: var(--font-size-2xs); text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.log-module:hover { color: inherit; }
 .logs-toolbar { display: flex; gap: var(--space-4); width: 100%; margin: 17px 0 12px; }
 .logs-toolbar input { flex: 1; height: 29px; padding: 0 12px; border: 1px solid var(--app-divider); border-radius: var(--radius-control); background: rgba(255,255,255,.24); color: inherit; }
 .logs-toolbar select { width: 112px; height: 29px; padding: 0 8px; border: 0; border-radius: var(--radius-control); background: var(--app-fill); color: inherit; }

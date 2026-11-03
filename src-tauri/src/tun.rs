@@ -613,6 +613,20 @@ impl TunCoordinator {
                 .as_deref()
                 .filter(|detail| DETAIL_CODE_PREFIX_OK(detail)),
         );
+        if from != next.phase {
+            let level = match next.phase.as_str() {
+                "failed" | "restore-failed" | "conflict" => crate::file_log::FileLogLevel::Warn,
+                _ => crate::file_log::FileLogLevel::Info,
+            };
+            let mut line = format!("增强模式 {from} → {}", next.phase);
+            if let Some(error) = error_message {
+                line.push_str(&format!("：{error}"));
+            }
+            if let Some(detail) = next.conflict_detail.as_deref() {
+                line.push_str(&format!("（{detail}）"));
+            }
+            crate::file_log::app_log(level, "tun", &line);
+        }
         let value = serde_json::to_value(&next).expect("tun status serializes");
         self.inner.listeners.emit(&value);
     }

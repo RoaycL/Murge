@@ -923,7 +923,7 @@ fn tray_icon_root(app: &tauri::AppHandle) -> std::path::PathBuf {
     }
 }
 
-fn open_file_manager(target: &std::path::Path) -> Result<(), String> {
+pub(crate) fn open_file_manager(target: &std::path::Path) -> Result<(), String> {
     std::fs::create_dir_all(target).map_err(|error| error.to_string())?;
     #[cfg(target_os = "windows")]
     let program = "explorer";

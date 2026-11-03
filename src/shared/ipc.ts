@@ -152,6 +152,7 @@ export const IPC = {
   mitmSetRewriteEnabled: 'mitm:set-rewrite-enabled',
   mitmSetSkipVerify: 'mitm:set-skip-verify',
   mitmSetHttp2: 'mitm:set-http2',
+  mitmSetBlockQuic: 'mitm:set-block-quic',
   mitmSetHostnames: 'mitm:set-hostnames',
   mitmSetLocalModule: 'mitm:set-local-module',
   mitmGenerateCa: 'mitm:generate-ca',
@@ -355,7 +356,8 @@ export interface DesktopApi {
     setRewriteEnabled(enabled: boolean): Promise<void>
     setSkipVerify(skip: boolean): Promise<void>
     setHttp2(enabled: boolean): Promise<void>
-    setHostnames(hostnames: string[]): Promise<void>
+    setBlockQuic(enabled: boolean): Promise<void>
+    setHostnames(hostnames: string[], disabled?: string[]): Promise<void>
     setLocalModule(content: string): Promise<void>
     generateCa(): Promise<void>
     installCa(): Promise<void>

@@ -2330,7 +2330,8 @@ mod e2e {
         );
         let filters = shared.rules().hosts.mihomo_filters();
         let config =
-            crate::mitm::inject_into_document(&base, &filters, port, &shared.password).unwrap();
+            crate::mitm::inject_into_document(&base, &filters, port, &shared.password, true)
+                .unwrap();
         std::fs::write(dir.path().join("config.yaml"), &config).unwrap();
         let mut child = std::process::Command::new(binary)
             .arg("-d")

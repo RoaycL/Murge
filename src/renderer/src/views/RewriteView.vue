@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, toRef, watch } from 'vue'
 import AppIcon from '../components/AppIcon.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import { useMitmStore } from '../stores/mitm'
 import { useToast } from '../composables/use-toast'
 import { useUnsavedChanges } from '../composables/use-unsaved-changes'
-import type { MitmModuleInfo } from '@shared/mitm'
+import { useDialogFocus } from '../composables/use-dialog-focus'
+import { moduleSection, replaceModuleSection, type MitmModuleInfo } from '@shared/mitm'
 
 const store = useMitmStore()
 const toast = useToast()
@@ -23,15 +24,103 @@ const state = computed(() => store.state)
 const localDirty = computed(() => store.loaded && localText.value !== localBaseline.value)
 useUnsavedChanges('rewrite-local-module', '本地重写规则', localDirty)
 
-const summaryItems = computed(() => [
-  { label: 'URL 重写', value: state.value.summary.urlRewrites },
-  { label: '请求头/响应头', value: state.value.summary.headerRewrites },
-  { label: '正文改写', value: state.value.summary.bodyRewrites },
-  { label: '本地映射', value: state.value.summary.mapLocals },
-  { label: '分流规则', value: state.value.summary.rules },
-  { label: '脚本', value: state.value.summary.scripts },
-  { label: '解密主机名', value: state.value.summary.hostnames.length }
-])
+interface RuleKind {
+  section: string
+  title: string
+  noun: string
+  description: string
+  count: number
+  example: string
+}
+
+const ruleKinds = computed<RuleKind[]>(() => {
+  const summary = state.value.summary
+  return [
+    {
+      section: 'URL Rewrite',
+      title: 'URL 重定向',
+      noun: ' URL 重定向',
+      description: '将请求重定向到另一个 URL，或直接拒绝请求，常用于去广告。',
+      count: summary.urlRewrites,
+      example: '^https?://ad\\.example\\.com - reject\n^https?://old\\.example\\.com/(.*) https://new.example.com/$1 302'
+    },
+    {
+      section: 'Header Rewrite',
+      title: 'Header 重写',
+      noun: ' Header 重写',
+      description: '添加、删除或替换 HTTP 请求头与响应头。',
+      count: summary.headerRewrites,
+      example: 'http-request ^https://api\\.example\\.com header-del Cookie\nhttp-response ^https://api\\.example\\.com header-add X-Debug 1'
+    },
+    {
+      section: 'Map Local',
+      title: 'Mock',
+      noun: ' Mock ',
+      description: '不访问服务器，直接用指定的数据回应请求（Map Local）。',
+      count: summary.mapLocals,
+      example: '^https://api\\.example\\.com/ads data-type=json data="{}"\n^https://api\\.example\\.com/empty data-type=text data="" status-code=204'
+    },
+    {
+      section: 'Body Rewrite',
+      title: 'Body 重写',
+      noun: ' Body 重写',
+      description: '用正则替换或 jq 表达式修改请求体与响应体。',
+      count: summary.bodyRewrites,
+      example: 'http-response ^https://api\\.example\\.com/user "\\"vip\\":false" "\\"vip\\":true"\nhttp-response-jq ^https://api\\.example\\.com/feed \'del(.ads)\''
+    },
+    {
+      section: 'Script',
+      title: '脚本',
+      noun: '脚本',
+      description: '用 JavaScript 处理请求与响应，兼容 Surge、Loon、Quantumult X 脚本。',
+      count: summary.scripts,
+      example: 'demo = type=http-response,pattern=^https://api\\.example\\.com/feed,requires-body=1,script-path=https://example.com/demo.js'
+    },
+    {
+      section: 'Rule',
+      title: '分流规则',
+      noun: '分流',
+      description: '随重写一起生效的分流规则，只能使用 DIRECT 或 REJECT 策略，不需要解密。',
+      count: summary.rules,
+      example: 'DOMAIN-SUFFIX,ads.example.com,REJECT\nDOMAIN,api.example.com,DIRECT'
+    }
+  ]
+})
+
+const editingKind = ref<RuleKind | null>(null)
+const sectionText = ref('')
+const sectionBaseline = ref('')
+const sectionDialog = ref<HTMLElement | null>(null)
+const sectionOpen = computed(() => !!editingKind.value)
+const sectionDirty = computed(() => sectionOpen.value && sectionText.value !== sectionBaseline.value)
+useUnsavedChanges('rewrite-section', '重写规则', sectionDirty)
+useDialogFocus(sectionOpen, sectionDialog, () => closeSection())
+
+function openSection(kind: RuleKind): void {
+  const text = moduleSection(localText.value, kind.section)
+  sectionText.value = text
+  sectionBaseline.value = text
+  editingKind.value = kind
+}
+
+function closeSection(): void {
+  if (store.busy) return
+  editingKind.value = null
+}
+
+async function saveSection(): Promise<void> {
+  const kind = editingKind.value
+  if (!kind) return
+  const next = replaceModuleSection(localText.value, kind.section, sectionText.value)
+  const error = await store.setLocalModule(next)
+  if (error) {
+    toast.error('保存失败', error)
+    return
+  }
+  syncLocal()
+  editingKind.value = null
+  toast.success(`${kind.title}规则已保存`)
+}
 
 const LOCAL_PLACEHOLDER = `# Surge 模块语法
 [MITM]
@@ -144,31 +233,25 @@ onMounted(async () => {
 
 <template>
   <div class="page-shell feature-page rewrite-view">
-    <header class="feature-header">
-      <div>
-        <h1>重写</h1>
-        <p>按 Surge 模块语法重定向、拒绝或修改 HTTP 请求与响应。HTTPS 请求需要先在「解密」页开启解密。</p>
+    <header class="rewrite-title">
+      <div class="rewrite-title-row">
+        <h1>重写 &amp; 映射</h1>
+        <button type="button" class="switch" :class="{ on: state.settings.rewriteEnabled }" role="switch" :aria-checked="state.settings.rewriteEnabled" aria-label="启用重写" :disabled="!!store.busy" @click="toggleRewrite" />
       </div>
-      <AppIcon name="rewrite" :size="25" />
+      <p>按 Surge 模块语法重定向、修改或直接回应 HTTP 请求。HTTPS 请求需要先在「解密」页开启解密。<RouterLink v-if="!state.active" to="/mitm" class="rewrite-link">解密未生效：{{ state.inactiveReason }}</RouterLink></p>
     </header>
 
     <p v-if="store.lastError" class="inline-error" role="alert">{{ store.lastError }}</p>
 
-    <section>
-      <h2>重写</h2>
-      <SurfaceCard class="rewrite-card">
-        <div class="setting-head">
-          <div>
-            <h3>启用重写</h3>
-            <p>关闭后只保留解密，所有重写规则都不执行。<RouterLink v-if="!state.active" to="/mitm" class="rewrite-link">解密未生效：{{ state.inactiveReason }}</RouterLink></p>
-          </div>
-          <button type="button" class="switch" :class="{ on: state.settings.rewriteEnabled }" role="switch" :aria-checked="state.settings.rewriteEnabled" aria-label="启用重写" :disabled="!!store.busy" @click="toggleRewrite" />
-        </div>
-        <div class="rewrite-summary">
-          <div v-for="item in summaryItems" :key="item.label"><strong>{{ item.value }}</strong><span>{{ item.label }}</span></div>
-        </div>
+    <div class="rewrite-kinds" :class="{ off: !state.settings.rewriteEnabled }">
+      <SurfaceCard v-for="kind in ruleKinds" :key="kind.section" class="rewrite-kind">
+        <h3>{{ kind.title }}</h3>
+        <p>{{ kind.description }}</p>
+        <span class="rewrite-kind-count" :class="{ zero: !kind.count }">{{ kind.count }} 条规则生效中</span>
+        <button type="button" class="rewrite-kind-edit" :disabled="!!store.busy" @click="openSection(kind)">编辑{{ kind.noun }}规则…</button>
       </SurfaceCard>
-    </section>
+    </div>
+    <p class="rewrite-hint rewrite-kinds-note">以上计数包含了模块中的规则。<template v-if="state.summary.hostnames.length">当前共解密 {{ state.summary.hostnames.length }} 个主机名，可在<RouterLink to="/mitm" class="rewrite-link">解密</RouterLink>页查看。</template></p>
 
     <section>
       <h2>模块</h2>
@@ -221,7 +304,7 @@ onMounted(async () => {
     </section>
 
     <section>
-      <h2>本地规则</h2>
+      <h2>全部本地规则</h2>
       <SurfaceCard class="rewrite-card">
         <p class="rewrite-hint">支持 [MITM]、[URL Rewrite]、[Header Rewrite]、[Body Rewrite]、[Map Local]、[Rule]，也能识别 Loon 的 [Rewrite] 和 Quantumult X 的 [rewrite_local]。[Body Rewrite] 支持 jq 写法（http-response-jq）。[Script] 支持 http-request / http-response 脚本，定时脚本暂不支持。[Rule] 只能使用 DIRECT 或 REJECT 策略。</p>
         <textarea v-model="localText" class="rewrite-editor" spellcheck="false" :placeholder="LOCAL_PLACEHOLDER" />
@@ -236,6 +319,25 @@ onMounted(async () => {
       </SurfaceCard>
     </section>
 
+    <Teleport to="body">
+      <div v-if="editingKind" class="modal-shade" role="presentation" @click.self="closeSection">
+        <section ref="sectionDialog" class="rewrite-section-modal" role="dialog" aria-modal="true" :aria-label="`编辑${editingKind.title}规则`">
+          <header>
+            <div>
+              <h2>{{ editingKind.title }}</h2>
+              <p>本地规则中的 [{{ editingKind.section }}] 段，每行一条。模块里的规则请在模块中修改。</p>
+            </div>
+            <button type="button" class="icon-control" aria-label="关闭" :disabled="!!store.busy" @click="closeSection"><AppIcon name="close" /></button>
+          </header>
+          <textarea v-model="sectionText" class="rewrite-editor" spellcheck="false" :placeholder="editingKind.example" />
+          <footer>
+            <span v-if="sectionDirty" class="unsaved-indicator">未保存</span>
+            <button type="button" class="rewrite-secondary" :disabled="!!store.busy" @click="closeSection">取消</button>
+            <button type="button" class="rewrite-primary" :disabled="!!store.busy || !sectionDirty" @click="saveSection">{{ store.busy === 'local-module' ? '保存中…' : '保存' }}</button>
+          </footer>
+        </section>
+      </div>
+    </Teleport>
     <ConfirmModal :open="clearingStore" title="清除脚本数据？" description="会删除所有脚本通过 $persistentStore 保存的数据，例如 BoxJs 的设置和各脚本的登录信息。" confirm-label="清除" :busy="!!store.busy" @close="clearingStore = false" @confirm="clearStore" />
     <ConfirmModal :open="!!removing" title="删除模块？" :description="`将删除「${removing?.name ?? ''}」及其规则。`" confirm-label="删除" :busy="!!store.busy" @close="removing = null" @confirm="confirmRemove" />
   </div>
@@ -247,10 +349,27 @@ onMounted(async () => {
 .rewrite-card { display: grid; gap: var(--space-4); padding: 14px 16px; border-radius: var(--radius-md); }
 .rewrite-hint { margin: 0; color: var(--app-muted); font-size: var(--font-size-xs); line-height: 1.5; }
 .rewrite-link { display: inline; margin-left: 6px; padding: 0; border: 0; background: transparent; color: var(--app-blue); font-size: inherit; text-decoration: none; cursor: pointer; }
-.rewrite-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: var(--space-3); padding-top: 12px; border-top: 1px solid var(--app-divider); }
-.rewrite-summary div { display: grid; gap: 2px; }
-.rewrite-summary strong { font-size: var(--font-size-xl); font-weight: var(--font-weight-semibold); }
-.rewrite-summary span { color: var(--app-muted); font-size: var(--font-size-2xs); }
+.rewrite-title-row { display: flex; align-items: center; gap: var(--space-4); }
+.rewrite-title h1 { margin: 0; font-size: var(--font-size-2xl, 22px); font-weight: var(--font-weight-semibold); }
+.rewrite-title p { margin: 6px 0 0; color: var(--app-muted); font-size: var(--font-size-sm); line-height: 1.5; }
+.rewrite-kinds { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 20px; transition: opacity 0.15s; }
+.rewrite-kinds.off { opacity: 0.55; }
+@media (max-width: 760px) { .rewrite-kinds { grid-template-columns: minmax(0, 1fr); } }
+.rewrite-kind { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-radius: var(--radius-md); }
+.rewrite-kind h3 { margin: 0; font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); }
+.rewrite-kind p { flex: 1; margin: 0; color: var(--app-muted); font-size: var(--font-size-xs); line-height: 1.5; }
+.rewrite-kind-count { margin-top: 4px; color: var(--app-green); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); }
+.rewrite-kind-count.zero { color: var(--app-muted); font-weight: normal; }
+.rewrite-kind-edit { align-self: flex-start; min-height: 28px; margin-top: 4px; padding: 0 12px; border: 1px solid var(--app-divider); border-radius: var(--radius-control); background: var(--app-surface-solid); color: inherit; font-size: var(--font-size-sm); cursor: pointer; }
+.rewrite-kind-edit:hover:not(:disabled) { background: var(--app-fill); }
+.rewrite-kind-edit:disabled { opacity: 0.55; cursor: default; }
+.rewrite-kinds-note { margin-top: 10px; }
+.rewrite-section-modal { display: grid; gap: 14px; width: min(680px, calc(100vw - 48px)); padding: 20px; border: 1px solid var(--app-divider); border-radius: var(--radius-panel); color: var(--app-text); background: var(--app-popover); -webkit-backdrop-filter: var(--app-popover-filter); backdrop-filter: var(--app-popover-filter); box-shadow: 0 22px 70px rgba(0, 0, 0, 0.28); }
+.rewrite-section-modal header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); }
+.rewrite-section-modal h2 { margin: 0; font-size: var(--font-size-title); }
+.rewrite-section-modal header p { margin: 6px 0 0; color: var(--app-muted); font-size: var(--font-size-xs); line-height: 1.5; }
+.rewrite-section-modal footer { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-3); }
+.rewrite-section-modal .rewrite-editor { min-height: 300px; }
 .rewrite-add { display: flex; gap: var(--space-3); }
 .rewrite-add input {
   flex: 1;

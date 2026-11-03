@@ -57,7 +57,7 @@
 2. 组合配置时（`resolve_enhanced_document` 最后一步）注入：
    - 代理 `Murge-MITM`：`type: http, server: 127.0.0.1, port: <端口>, username/password: <随机口令>`。
    - 规则，**插在最前面**，每个解密主机一组：
-     - `AND,((NETWORK,UDP),(DST-PORT,443),(DOMAIN-SUFFIX,x)),REJECT`（禁 QUIC，迫使回落 TCP）
+     - `AND,((NETWORK,UDP),(DST-PORT,443),(DOMAIN-SUFFIX,x)),REJECT`（禁 QUIC，迫使回落 TCP；「自动屏蔽 QUIC」选项，默认开启）
      - `AND,((NETWORK,TCP),(DOMAIN-SUFFIX,x),(NOT,((SRC-IP-CIDR,127.0.0.2/32)))),Murge-MITM`
 3. 引擎解密后，从源地址 **127.0.0.2** 连回 Mihomo 的 `mixed-port` 发 CONNECT。`SRC-IP-CIDR,127.0.0.2/32` 让这条回流跳过解密规则，继续走用户原本的规则和策略组。这就是**防回环**的关键，而且不需要额外 listener，提权服务也不用改。
 4. Mihomo 有时会把已解析的 IP 而不是域名放进 CONNECT（例如命中 `hosts`）。这时引擎改用 TLS ClientHello 里的 SNI（明文 HTTP 用 Host 头）判断是否解密。

@@ -64,7 +64,9 @@ export const useMitmStore = defineStore('mitm', () => {
     setRewriteEnabled: (enabled: boolean) => run('rewrite', () => api().setRewriteEnabled(enabled)),
     setSkipVerify: (skip: boolean) => run('skip-verify', () => api().setSkipVerify(skip)),
     setHttp2: (enabled: boolean) => run('http2', () => api().setHttp2(enabled)),
-    setHostnames: (hostnames: string[]) => run('hostnames', () => api().setHostnames(hostnames)),
+    setBlockQuic: (enabled: boolean) => run('quic', () => api().setBlockQuic(enabled)),
+    setHostnames: (hostnames: string[], disabled?: string[]) =>
+      run('hostnames', () => api().setHostnames(hostnames, disabled)),
     setLocalModule: (content: string) => run('local-module', () => api().setLocalModule(content)),
     generateCa: () => run('generate-ca', () => api().generateCa()),
     installCa: () => run('install-ca', () => api().installCa()),

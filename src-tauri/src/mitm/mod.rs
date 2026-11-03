@@ -83,7 +83,12 @@ pub struct MitmSettings {
     /// Negotiate HTTP/2 with clients and origins (Surge `h2 = true`).
     #[serde(default = "default_true")]
     pub http2: bool,
+    /// Reject QUIC (UDP 443) to MITM hosts so clients fall back to TCP.
+    #[serde(default = "default_true")]
+    pub block_quic: bool,
     pub hostnames: Vec<String>,
+    /// Hostnames kept in the list but unticked (not decrypted).
+    pub disabled_hostnames: Vec<String>,
     /// The user's own module (Surge syntax), edited on the 重写 page.
     pub local_module: String,
     pub modules: Vec<RewriteModule>,
@@ -96,7 +101,9 @@ impl Default for MitmSettings {
             rewrite_enabled: true,
             skip_server_cert_verify: false,
             http2: true,
+            block_quic: true,
             hostnames: Vec::new(),
+            disabled_hostnames: Vec::new(),
             local_module: String::new(),
             modules: Vec::new(),
         }
@@ -159,6 +166,7 @@ pub fn inject_into_document(
     filters: &[(String, String)],
     port: u16,
     password: &str,
+    block_quic: bool,
 ) -> Option<String> {
     if filters.is_empty() {
         return None;
@@ -166,10 +174,12 @@ pub fn inject_into_document(
     let mut config = crate::override_apply::parse_yaml_to_object(document)?;
     let source = format!("{}/32", engine::UPSTREAM_SOURCE_IP);
     let mut injected: Vec<Value> = Vec::new();
-    for (kind, value) in filters {
-        injected.push(json!(format!(
-            "AND,((NETWORK,UDP),(DST-PORT,443),({kind},{value})),REJECT"
-        )));
+    if block_quic {
+        for (kind, value) in filters {
+            injected.push(json!(format!(
+                "AND,((NETWORK,UDP),(DST-PORT,443),({kind},{value})),REJECT"
+            )));
+        }
     }
     for (kind, value) in filters {
         injected.push(json!(format!(
@@ -374,8 +384,13 @@ impl MitmService {
                 arguments: Some(&module.arguments),
             });
         }
-        let mut compiled =
-            CompiledRules::build(&settings.hostnames, &sources, settings.rewrite_enabled);
+        let hostnames: Vec<String> = settings
+            .hostnames
+            .iter()
+            .filter(|host| !settings.disabled_hostnames.contains(host))
+            .cloned()
+            .collect();
+        let mut compiled = CompiledRules::build(&hostnames, &sources, settings.rewrite_enabled);
         let missing = compiled.attach_scripts(|url| self.load_script(url));
         *self.missing_scripts.lock().expect("missing") = missing;
         *self.shared.rules.write().expect("rules") = Arc::new(compiled);
@@ -502,7 +517,8 @@ impl MitmService {
         if self.inactive_reason().is_some() {
             return module_part;
         }
-        format!("{:?}|{module_part}", rules.routing_filters())
+        let quic = self.settings().block_quic;
+        format!("{:?}|{quic}|{module_part}", rules.routing_filters())
     }
 
     /// Module `[Rule]` lines work without decryption; the MITM rules, when
@@ -518,7 +534,13 @@ impl MitmService {
             return text;
         };
         let filters = rules.routing_filters();
-        if let Some(next) = inject_into_document(&text, &filters, port, &self.shared.password) {
+        if let Some(next) = inject_into_document(
+            &text,
+            &filters,
+            port,
+            &self.shared.password,
+            self.settings().block_quic,
+        ) {
             text = next;
         }
         text
@@ -614,6 +636,13 @@ impl MitmService {
         })
     }
 
+    pub fn set_block_quic(&self, enabled: bool) -> Result<(), IpcError> {
+        self.update(|s| {
+            s.block_quic = enabled;
+            Ok(())
+        })
+    }
+
     pub fn set_http2(&self, enabled: bool) -> Result<(), IpcError> {
         self.update(|s| {
             s.http2 = enabled;
@@ -643,7 +672,13 @@ impl MitmService {
         })
     }
 
-    pub fn set_hostnames(&self, hostnames: Vec<String>) -> Result<(), IpcError> {
+    /// Replace the hostname list. `disabled` (when given) is the unticked
+    /// subset; omitted, the previous unticked entries that remain are kept.
+    pub fn set_hostnames(
+        &self,
+        hostnames: Vec<String>,
+        disabled: Option<Vec<String>>,
+    ) -> Result<(), IpcError> {
         let mut cleaned: Vec<String> = Vec::new();
         for host in hostnames {
             let host = host.trim().to_ascii_lowercase();
@@ -657,6 +692,18 @@ impl MitmService {
             }
         }
         self.update(|s| {
+            let disabled: Vec<String> = disabled
+                .map(|list| {
+                    list.into_iter()
+                        .map(|h| h.trim().to_ascii_lowercase())
+                        .collect()
+                })
+                .unwrap_or_else(|| s.disabled_hostnames.clone());
+            s.disabled_hostnames = cleaned
+                .iter()
+                .filter(|host| disabled.contains(host))
+                .cloned()
+                .collect();
             s.hostnames = cleaned;
             Ok(())
         })
@@ -903,7 +950,9 @@ impl MitmService {
                 "rewriteEnabled": settings.rewrite_enabled,
                 "skipServerCertVerify": settings.skip_server_cert_verify,
                 "http2": settings.http2,
+                "blockQuic": settings.block_quic,
                 "hostnames": settings.hostnames,
+                "disabledHostnames": settings.disabled_hostnames,
                 "localModule": settings.local_module,
             },
             "modules": modules,
@@ -1003,6 +1052,9 @@ pub async fn dispatch(
         "mitm:set-rewrite-enabled" => service
             .set_rewrite_enabled(bool_arg(payload, 0, channel)?)
             .map(|_| Value::Null),
+        "mitm:set-block-quic" => service
+            .set_block_quic(bool_arg(payload, 0, channel)?)
+            .map(|_| Value::Null),
         "mitm:set-http2" => service
             .set_http2(bool_arg(payload, 0, channel)?)
             .map(|_| Value::Null),
@@ -1033,7 +1085,13 @@ pub async fn dispatch(
                 .filter_map(Value::as_str)
                 .map(str::to_string)
                 .collect();
-            service.set_hostnames(hosts).map(|_| Value::Null)
+            let disabled = payload.get(1).and_then(Value::as_array).map(|list| {
+                list.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            });
+            service.set_hostnames(hosts, disabled).map(|_| Value::Null)
         }
         "mitm:set-local-module" => service
             .set_local_module(string_arg(payload, 0, channel)?)
@@ -1173,6 +1231,7 @@ mod tests {
             &[("DOMAIN-SUFFIX".into(), "example.com".into())],
             40000,
             "pw",
+            true,
         )
         .unwrap();
         let config = crate::override_apply::parse_yaml_to_object(&text).unwrap();
@@ -1192,11 +1251,11 @@ mod tests {
         assert_eq!(proxies[1]["port"], 40000);
         assert_eq!(proxies[1]["password"], "pw");
         // Re-injection replaces the proxy instead of duplicating it.
-        let again =
-            inject_into_document(&text, &[("DOMAIN".into(), "a.com".into())], 1, "x").unwrap();
+        let again = inject_into_document(&text, &[("DOMAIN".into(), "a.com".into())], 1, "x", true)
+            .unwrap();
         let config = crate::override_apply::parse_yaml_to_object(&again).unwrap();
         assert_eq!(config["proxies"].as_array().unwrap().len(), 2);
-        assert!(inject_into_document(DOC, &[], 1, "x").is_none());
+        assert!(inject_into_document(DOC, &[], 1, "x", true).is_none());
     }
 
     #[test]
@@ -1213,9 +1272,12 @@ mod tests {
         assert_eq!(service.inactive_reason(), Some("根证书尚未被系统信任"));
         service.install_ca().unwrap();
         assert_eq!(service.inactive_reason(), Some("没有需要解密的主机名"));
-        assert!(service.set_hostnames(vec!["*".into()]).is_err());
+        assert!(service.set_hostnames(vec!["*".into()], None).is_err());
         service
-            .set_hostnames(vec!["API.example.com".into(), "api.example.com".into()])
+            .set_hostnames(
+                vec!["API.example.com".into(), "api.example.com".into()],
+                None,
+            )
             .unwrap();
         assert_eq!(service.settings().hostnames, vec!["api.example.com"]);
         assert_eq!(service.inactive_reason(), None);
@@ -1223,6 +1285,31 @@ mod tests {
         assert!(text.contains("Murge-MITM"), "{text}");
         assert!(text.contains("(DOMAIN,api.example.com)"), "{text}");
         assert!(!service.injection_signature().is_empty());
+        assert!(text.contains("NETWORK,UDP"), "{text}");
+
+        // Turning QUIC blocking off drops the UDP rejects only.
+        let signature = service.injection_signature();
+        service.set_block_quic(false).unwrap();
+        assert_ne!(signature, service.injection_signature());
+        let text = service.apply_to_document(DOC);
+        assert!(!text.contains("NETWORK,UDP"), "{text}");
+        assert!(text.contains("Murge-MITM"), "{text}");
+        service.set_block_quic(true).unwrap();
+
+        // An unticked hostname stays listed but is not decrypted.
+        service
+            .set_hostnames(
+                vec!["api.example.com".into(), "b.example.com".into()],
+                Some(vec!["B.example.com".into()]),
+            )
+            .unwrap();
+        assert_eq!(service.settings().disabled_hostnames, vec!["b.example.com"]);
+        let text = service.apply_to_document(DOC);
+        assert!(!text.contains("b.example.com"), "{text}");
+        service
+            .set_hostnames(vec!["api.example.com".into()], None)
+            .unwrap();
+        assert!(service.settings().disabled_hostnames.is_empty());
 
         // Settings and CA persist across instances.
         let reopened = self::service(dir.path());

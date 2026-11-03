@@ -23,6 +23,9 @@ import { useSystemProxyStore } from '../stores/system-proxy'
 import { useTunStore } from '../stores/tun'
 import { useKernelStore } from '../stores/kernel'
 import { resolveRuntimeAccent } from '@shared/runtime-accent'
+import { networkMetadataMaskIpMiddle } from '@shared/network-metadata'
+import { useProfilesStore } from '../stores/profiles'
+import { useToast } from '../composables/use-toast'
 
 const traffic = useTrafficStore()
 const connections = useConnectionsStore()
@@ -60,6 +63,7 @@ onMounted(() => {
   void policies.load()
   void policies.syncMode()
   void networkMeta.init()
+  void profilesStore.load().catch(() => undefined)
   // On a cold app start this page mounts before the kernel is up, so a probe
   // here could only fail (controller unreachable) and the card stayed at "—"
   // until the next minute tick or a manual refresh. Probe now only if the
@@ -75,12 +79,14 @@ onMounted(() => {
 watch(() => kernel.status.phase, (phase, previous) => {
   if (phase !== 'running' || previous === 'running') return
   void latency.probeAfterKernelStart()
+  void profilesStore.load().catch(() => undefined)
   void runtime.refresh()
   void policies.load()
   void policies.syncMode()
 })
 
 onUnmounted(() => {
+  if (ipRevealTimer != null) window.clearTimeout(ipRevealTimer)
   if (latencyTimer != null) {
     window.clearInterval(latencyTimer)
     latencyTimer = null
@@ -130,17 +136,52 @@ const modeOptions = [
   { value: 'direct', label: '直接连接' }
 ]
 const modePicker = ref<HTMLElement | null>(null)
-// 与 Surge 一致：可切换的标签（出站模式）后面带小箭头，点标签也能展开菜单。
-function toggleModePicker(): void {
-  modePicker.value?.querySelector<HTMLButtonElement>('.app-select-trigger')?.click()
+const profilePicker = ref<HTMLElement | null>(null)
+// 与 Surge 一致：可切换的标签（出站模式、配置）后面带小箭头，点标签也能展开菜单。
+function openPicker(host: HTMLElement | null): void {
+  host?.querySelector<HTMLButtonElement>('.app-select-trigger')?.click()
 }
+function toggleModePicker(): void {
+  openPicker(modePicker.value)
+}
+
+// 配置：与出站模式一样可直接切换当前配置。
+const profilesStore = useProfilesStore()
+const toast = useToast()
+const profileOptions = computed(() => profilesStore.ordered.map((meta) => ({ value: meta.id, label: meta.name })))
+const profileName = computed(() => runtime.summary?.profileName ?? profilesStore.active?.name ?? brand.defaultProfileName)
+const selectedProfile = computed({
+  get: () => profilesStore.active?.id ?? '',
+  set: (id: string) => {
+    if (!id || id === profilesStore.active?.id) return
+    void profilesStore.activate(id)
+      .then(() => {
+        toast.success('配置已启用')
+        return runtime.refresh()
+      })
+      .catch(() => toast.error('无法启用配置', profilesStore.lastError ?? undefined))
+  }
+})
 const selectedMode = computed({
   get: () => policies.mode,
   set: (value: string) => {
     void policies.setMode(value as 'rule' | 'global' | 'direct').then(() => runtime.refresh())
   }
 })
-const externalIpText = computed(() => networkMeta.ipText)
+// 外部 IP 默认隐藏中间部分；点击数值显示完整地址，10 秒后自动重新隐藏，
+// 避免截图或共享屏幕时一直暴露。
+const ipRevealed = ref(false)
+let ipRevealTimer: number | null = null
+function toggleIpReveal(): void {
+  ipRevealed.value = !ipRevealed.value
+  if (ipRevealTimer != null) window.clearTimeout(ipRevealTimer)
+  ipRevealTimer = ipRevealed.value ? window.setTimeout(() => { ipRevealed.value = false; ipRevealTimer = null }, 10_000) : null
+}
+const externalIpText = computed(() => {
+  const ip = networkMeta.metadata?.ip
+  if (!ip) return networkMeta.ipText
+  return ipRevealed.value ? ip : networkMetadataMaskIpMiddle(ip)
+})
 
 const connStatus = computed(() => connections.status)
 const connDotClass = computed(() => {
@@ -172,9 +213,10 @@ const chartBars = computed<number[]>(() => {
 
     <section class="runtime-context" aria-label="运行上下文">
       <div><span>网络</span><strong>{{ runtime.summary?.networkName ?? '以太网' }}</strong></div>
-      <div><span>配置</span><strong>{{ runtime.summary?.profileName ?? brand.defaultProfileName }}</strong></div>
+      <div v-if="profilesStore.active" ref="profilePicker" class="runtime-mode-picker runtime-profile-picker"><span class="runtime-detail-label" @pointerdown.stop @click="openPicker(profilePicker)">配置<AppIcon name="chevron-down" :size="12" /></span><AppSelect v-model="selectedProfile" :options="profileOptions" :label="`配置：${profileName}`" plain /></div>
+      <div v-else><span>配置</span><strong>{{ profileName }}</strong></div>
       <div ref="modePicker" class="runtime-mode-picker"><span class="runtime-detail-label" @pointerdown.stop @click="toggleModePicker">出站模式<AppIcon name="chevron-down" :size="12" /></span><AppSelect v-model="selectedMode" :options="modeOptions" :label="`出站模式：${modeLabel}`" plain /></div>
-      <button type="button" class="runtime-detail-link" aria-label="查看网络信息" @click="summaryDrawer = 'network'"><span class="runtime-detail-label">外部 IP<AppIcon name="chevron-down" :size="12" /></span><strong>{{ externalIpText }}</strong></button>
+      <div class="runtime-ip"><button type="button" class="runtime-detail-label runtime-detail-link" aria-label="查看网络信息" @click="summaryDrawer = 'network'">外部 IP<AppIcon name="chevron-down" :size="12" /></button><button type="button" class="runtime-ip-value" :aria-pressed="ipRevealed" :aria-label="ipRevealed ? '隐藏外部 IP' : '显示完整外部 IP'" :title="ipRevealed ? '点击隐藏' : '点击显示完整 IP'" @click="toggleIpReveal"><strong>{{ externalIpText }}</strong></button></div>
     </section>
 
     <section class="dashboard-grid">
@@ -224,7 +266,7 @@ const chartBars = computed<number[]>(() => {
       </SurfaceCard>
 
       <SurfaceCard class="total-card">
-        <div class="card-title-row"><span class="metric-label">启动以来总计</span><button type="button" class="quiet-button" @click="summaryDrawer = 'usage'">查看历史</button></div>
+        <div class="card-title-row"><span class="metric-label">总计</span><button type="button" class="quiet-button" @click="summaryDrawer = 'usage'">查看历史</button></div>
         <div class="large-metric">{{ total.value }}<span>{{ total.unit }}</span></div>
         <div class="total-labels"><div><span>DIRECT</span><strong>{{ direct.value }} {{ direct.unit }}</strong></div><div><span>代理</span><strong>{{ proxy.value }} {{ proxy.unit }}</strong></div></div>
         <button type="button" class="total-bar total-history-link" aria-label="查看用量历史" @click="summaryDrawer = 'usage'"><i :style="{ width: `${directPct}%` }" /><i :style="{ width: `${100 - directPct}%` }" /></button>

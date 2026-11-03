@@ -198,6 +198,19 @@ export function networkMetadataMaskIp(ip: string): string {
   return parts.join(':')
 }
 
+/**
+ * Header-style mask that hides the middle of the address (keeps the first and
+ * last group so the user can still tell two exits apart at a glance):
+ * 140.245.75.231 → 140.•••.•••.231, 2001:db8:1:2::5 → 2001:•••:5.
+ */
+export function networkMetadataMaskIpMiddle(ip: string): string {
+  const v4 = ip.match(/^(\d{1,3})\.\d{1,3}\.\d{1,3}\.(\d{1,3})$/)
+  if (v4) return `${v4[1]}.•••.•••.${v4[2]}`
+  const parts = ip.split(':').filter(Boolean)
+  if (ip.includes(':') && parts.length >= 2) return `${parts[0]}:•••:${parts[parts.length - 1]}`
+  return ip
+}
+
 /** A compact, human-readable single line for display. */
 export function networkMetadataDisplayText(metadata: NetworkMetadata): string {
   const geo = [metadata.country, metadata.city].filter(Boolean).join(' · ')

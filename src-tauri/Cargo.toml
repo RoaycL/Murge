@@ -100,6 +100,11 @@ windows = { version = "0.58", features = [
     # RtlGetVersion: the real Windows build picks the window backdrop.
     "Wdk_System_SystemServices",
     "Win32_System_SystemInformation",
+    # 活动页「网络」: primary adapter type + Wi-Fi SSID.
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock",
+    "Win32_NetworkManagement_WiFi",
 ] }
 png = "0.17"
 # Updater toasts with a click handler (notify-rust has none on Windows).

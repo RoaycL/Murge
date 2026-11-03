@@ -24,7 +24,7 @@ export interface TrayModel {
   items: TrayItem[]
 }
 
-export const EMPTY_MODEL: TrayModel = { title: 'Murge', status: '', accent: 'idle', theme: 'light', items: [] }
+export const EMPTY_MODEL: TrayModel = { title: '', status: '', accent: 'idle', theme: 'light', items: [] }
 
 /** Row metrics, mirrored by `tray_popup.rs` (logical px). */
 export const ROW_HEIGHT = 30
@@ -105,7 +105,7 @@ export function normalizeModel(value: unknown): TrayModel {
   if (!value || typeof value !== 'object') return EMPTY_MODEL
   const raw = value as Partial<TrayModel>
   return {
-    title: typeof raw.title === 'string' ? raw.title : 'Murge',
+    title: typeof raw.title === 'string' ? raw.title : '',
     status: typeof raw.status === 'string' ? raw.status : '',
     accent: typeof raw.accent === 'string' ? raw.accent : 'idle',
     theme: raw.theme === 'dark' ? 'dark' : 'light',

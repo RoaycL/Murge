@@ -141,16 +141,15 @@ onBeforeUnmount(stopPolling)
         <button type="button" :disabled="!shownCount" @click="exportLogs">导出</button>
       </div>
     </header>
-    <section class="diagnostic-export-card surface-card" aria-label="问题排查">
-      <div class="diagnostic-export-symbol"><AppIcon name="kernel" :size="19" /></div>
-      <div class="diagnostic-export-copy">
+    <section class="troubleshoot-bar surface-card" aria-label="问题排查">
+      <div class="troubleshoot-copy">
         <strong>问题排查</strong>
-        <p>日志包含最近 3 天的应用、内核与 Sub-Store 日志和运行诊断。导出时会再次脱敏订阅凭据、Token、密码以及 WireGuard / Tailscale 密钥，但仍包含访问的域名，请只发给信任的人。</p>
+        <span title="包含最近 3 天的应用、内核与 Sub-Store 日志和运行诊断；订阅凭据、Token、密码及 WireGuard / Tailscale 密钥已脱敏，但仍包含访问的域名。">最近 3 天日志与运行诊断，导出时自动脱敏</span>
       </div>
-      <div class="diagnostic-export-buttons">
-        <button type="button" class="secondary-button" @click="openFolder"><AppIcon name="folder" :size="15" />日志文件夹</button>
-        <button type="button" class="secondary-button" :disabled="exportingDiagnostics" @click="exportDiagnostics">{{ exportingDiagnostics ? '生成中…' : '导出诊断' }}</button>
-        <button type="button" class="secondary-button primary-tint" :disabled="exportingBundle" @click="exportBundle"><AppIcon name="archive" :size="15" />{{ exportingBundle ? '打包中…' : '导出日志包' }}</button>
+      <div class="troubleshoot-actions">
+        <button type="button" class="troubleshoot-button" @click="openFolder"><AppIcon name="folder" :size="14" />日志文件夹</button>
+        <button type="button" class="troubleshoot-button" :disabled="exportingDiagnostics" @click="exportDiagnostics"><AppIcon name="kernel" :size="14" />{{ exportingDiagnostics ? '生成中…' : '导出诊断' }}</button>
+        <button type="button" class="troubleshoot-button accent" :disabled="exportingBundle" @click="exportBundle"><AppIcon name="archive" :size="14" />{{ exportingBundle ? '打包中…' : '导出日志包' }}</button>
       </div>
     </section>
     <div class="logs-toolbar">

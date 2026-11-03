@@ -7,18 +7,23 @@ const read = (path: string): string => readFileSync(resolve(root, path), 'utf8')
 
 describe('Surge-inspired UI navigation contract', () => {
   it('keeps feature areas separate and gives every sidebar destination a semantic icon', () => {
-    const sidebar = read('src/renderer/src/components/AppSidebar.vue')
+    const sidebar = read('src/renderer/src/lib/sidebar-layout.ts')
+    const sidebarView = read('src/renderer/src/components/AppSidebar.vue')
     for (const route of ['/activity', '/overview', '/connections', '/processes', '/policies', '/rules', '/profiles', '/overrides', '/resources']) {
       expect(sidebar).toContain(`to: '${route}'`)
     }
-    expect(sidebar).toContain('<AppIcon :name="item.icon"')
-    expect(sidebar).not.toContain("label: '客户端'")
-    // 设备与 Sub-Store 收进「更多」，侧栏只保留常用入口。
-    expect(sidebar).not.toContain("to: '/devices'")
-    expect(sidebar).not.toContain("to: '/substore'")
+    expect(sidebarView).toContain('<AppIcon :name="item.icon"')
+    // 侧栏第一组不显示标题（「客户端」只出现在外观设置里）。
+    expect(sidebar).toMatch(/id: 'client',\s*label: '',/)
+    // 设备与 Sub-Store 默认收进「更多」，用户可在外观里放回侧栏。
+    expect(sidebar).toMatch(/to: '\/devices'[^\n]*defaultHidden: true/)
+    expect(sidebar).toMatch(/to: '\/substore'[^\n]*defaultHidden: true/)
     const more = read('src/renderer/src/views/MoreView.vue')
-    expect(more).toContain("to: '/devices'")
-    expect(more).toContain("to: '/substore'")
+    // 不在侧栏的页面（默认设备与 Sub-Store）列在「更多」的「已从侧边栏隐藏」里。
+    expect(more).toContain('sidebarLayout.hidden')
+    expect(more).toContain('已从侧边栏隐藏')
+    expect(more).toMatch(/devices: '[^']+'/)
+    expect(more).toMatch(/substore: '[^']+'/)
     expect(sidebar).not.toMatch(/icon:\s*'[⌁⌘▣▤⑂☷]'/)
   })
 

@@ -170,7 +170,7 @@ describe('network drawer + resources UI contract', () => {
     const [resources, subStoreView, sidebar, subStoreIcon, settings, shared, store] = await Promise.all([
       read('src/renderer/src/views/ResourcesView.vue'),
       read('src/renderer/src/views/SubStoreView.vue'),
-      read('src/renderer/src/components/AppSidebar.vue'),
+      read('src/renderer/src/lib/sidebar-layout.ts'),
       read('src/renderer/src/components/SubStoreIcon.vue'),
       read('src/shared/app-settings.ts'),
       read('src/shared/substore.ts'),
@@ -178,8 +178,9 @@ describe('network drawer + resources UI contract', () => {
     ])
     expect(resources).not.toMatch(/Sub-Store|subStore/)
     expect(sidebar).toMatch(/label: '配置'[\s\S]*to: '\/profiles'[\s\S]*to: '\/overrides'[\s\S]*to: '\/resources'/)
-    expect(sidebar).not.toContain("to: '/substore'")
-    expect(await read('src/renderer/src/views/MoreView.vue')).toMatch(/label: 'Sub-Store'[^\n]*to: '\/substore', icon: 'substore'/)
+    expect(sidebar).toMatch(/to: '\/substore'[^\n]*defaultHidden: true/)
+    expect(sidebar).toMatch(/id: 'substore', to: '\/substore', label: 'Sub-Store', icon: 'substore'/)
+    expect(await read('src/renderer/src/views/MoreView.vue')).toMatch(/substore: '订阅管理与转换'/)
     // Optical sizing: the wide Lucide resource glyph is slightly reduced;
     // Sub-Store's official artwork is cropped to remove its oversized SVG inset.
     expect(sidebar).toMatch(/to: '\/resources', label: '外部资源', icon: 'resources' \}/)

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   Activity, AppWindow, ArrowDown, ArrowUp, Braces, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, Clipboard,
-  Code2, Cpu, Database, Download, Ellipsis, Eye, FileArchive, FileBadge, Files, FilePlus2, FolderOpen, Globe2, Info, Laptop, Layers,
+  Code2, Cpu, Database, Download, Ellipsis, Eye, FileArchive, FileBadge, Files, FilePlus2, FolderOpen, Globe2, GripVertical, Info, Laptop, Layers,
   LayoutDashboard, ListTree, LockKeyhole, Logs, Network, Palette, PanelRightClose, Pencil, Plus, Replace, RotateCw,
   Route, Search, ServerCog, Settings2, ShieldCheck, SlidersHorizontal, Trash2,
   Upload, Wifi, X
@@ -16,7 +16,7 @@ export type AppIconName =
   | 'logs' | 'about' | 'search' | 'refresh' | 'add-file' | 'clipboard'
   | 'upload' | 'download' | 'delete' | 'close' | 'back' | 'next'
   | 'drawer-close' | 'server' | 'security' | 'code' | 'database' | 'substore' | 'more-horizontal'
-  | 'chevron-down' | 'check' | 'edit' | 'add' | 'move-up' | 'move-down' | 'success' | 'error' | 'eye' | 'certificate' | 'folder' | 'archive'
+  | 'chevron-down' | 'check' | 'edit' | 'add' | 'move-up' | 'move-down' | 'success' | 'error' | 'eye' | 'certificate' | 'folder' | 'archive' | 'grip'
 
 defineProps<{ name: AppIconName; size?: number; strokeWidth?: number }>()
 
@@ -69,7 +69,8 @@ const icons: Record<AppIconName, Component> = {
   eye: Eye,
   certificate: FileBadge,
   folder: FolderOpen,
-  archive: FileArchive
+  archive: FileArchive,
+  grip: GripVertical
 }
 </script>
 

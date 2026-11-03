@@ -63,6 +63,7 @@ export const useMitmStore = defineStore('mitm', () => {
     setEnabled: (enabled: boolean) => run('enabled', () => api().setEnabled(enabled)),
     setRewriteEnabled: (enabled: boolean) => run('rewrite', () => api().setRewriteEnabled(enabled)),
     setSkipVerify: (skip: boolean) => run('skip-verify', () => api().setSkipVerify(skip)),
+    setHttp2: (enabled: boolean) => run('http2', () => api().setHttp2(enabled)),
     setHostnames: (hostnames: string[]) => run('hostnames', () => api().setHostnames(hostnames)),
     setLocalModule: (content: string) => run('local-module', () => api().setLocalModule(content)),
     generateCa: () => run('generate-ca', () => api().generateCa()),
@@ -74,6 +75,7 @@ export const useMitmStore = defineStore('mitm', () => {
     updateModule: (id: string) => run(`update-${id}`, () => api().updateModule(id)),
     removeModule: (id: string) => run(`remove-${id}`, () => api().removeModule(id)),
     setModuleEnabled: (id: string, enabled: boolean) => run(`toggle-${id}`, () => api().setModuleEnabled(id, enabled)),
+    setModuleArguments: (id: string, args: Record<string, string>) => run(`arguments-${id}`, () => api().setModuleArguments(id, args)),
     clearRequests: async () => {
       await run('clear', () => api().clearRequests())
       await refreshRequests()

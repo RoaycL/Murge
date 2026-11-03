@@ -133,6 +133,8 @@ pub struct EngineShared {
     pub password: String,
     pub enabled: AtomicBool,
     pub skip_verify: AtomicBool,
+    /// Offer HTTP/2 to clients and origins.
+    pub http2: AtomicBool,
     pub rules: RwLock<Arc<CompiledRules>>,
     pub ca: RwLock<Option<Arc<CaAuthority>>>,
     /// mihomo's mixed port (read per connection: the port can change).
@@ -151,6 +153,7 @@ impl EngineShared {
             password: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(password),
             enabled: AtomicBool::new(false),
             skip_verify: AtomicBool::new(false),
+            http2: AtomicBool::new(true),
             rules: RwLock::new(Arc::new(CompiledRules::default())),
             ca: RwLock::new(None),
             upstream,
@@ -169,12 +172,18 @@ impl EngineShared {
         self.ca.read().expect("ca").clone()
     }
 
-    fn client_tls(&self) -> Arc<rustls::ClientConfig> {
-        if self.skip_verify.load(Ordering::Relaxed) {
-            self.unverified_client.clone()
+    fn client_tls(&self, allow_h2: bool) -> Arc<rustls::ClientConfig> {
+        let base = if self.skip_verify.load(Ordering::Relaxed) {
+            &self.unverified_client
         } else {
-            self.verified_client.clone()
+            &self.verified_client
+        };
+        if !allow_h2 || !self.http2.load(Ordering::Relaxed) {
+            return base.clone();
         }
+        let mut config = (**base).clone();
+        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        Arc::new(config)
     }
 }
 
@@ -644,7 +653,11 @@ where
             ca,
             fallback_host: host.clone(),
         }));
-    config.alpn_protocols = vec![b"http/1.1".to_vec()];
+    config.alpn_protocols = if shared.http2.load(Ordering::Relaxed) {
+        vec![b"h2".to_vec(), b"http/1.1".to_vec()]
+    } else {
+        vec![b"http/1.1".to_vec()]
+    };
     let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
     let started = Instant::now();
     let tls = match acceptor.accept(client).await {
@@ -667,7 +680,11 @@ where
         }
     };
     let sni = tls.get_ref().1.server_name().map(str::to_string);
+    let h2 = tls.get_ref().1.alpn_protocol() == Some(b"h2");
     let ctx = Arc::new(ConnCtx::new(shared, "https", sni.unwrap_or(host), port));
+    if h2 {
+        return serve_h2(ctx, tls).await;
+    }
     serve_http(ctx, tls).await
 }
 
@@ -680,8 +697,15 @@ struct ConnCtx {
     scheme: &'static str,
     host: String,
     port: u16,
-    /// One kept-alive upstream per client connection (keyed by target).
-    upstream: tokio::sync::Mutex<Option<(String, hyper::client::conn::http1::SendRequest<Body>)>>,
+    /// Kept-alive upstreams for this client connection, keyed by target. An
+    /// HTTP/1.1 sender is checked out while a request runs; an HTTP/2 sender
+    /// is shared by every stream.
+    upstream: Mutex<Vec<(String, Upstream)>>,
+}
+
+enum Upstream {
+    H1(hyper::client::conn::http1::SendRequest<Body>),
+    H2(hyper::client::conn::http2::SendRequest<Body>),
 }
 
 impl ConnCtx {
@@ -691,7 +715,7 @@ impl ConnCtx {
             scheme,
             host,
             port,
-            upstream: tokio::sync::Mutex::new(None),
+            upstream: Mutex::new(Vec::new()),
         }
     }
 }
@@ -708,6 +732,20 @@ where
         .preserve_header_case(true)
         .serve_connection(TokioIo::new(io), service)
         .with_upgrades()
+        .await
+        .map_err(std::io::Error::other)
+}
+
+async fn serve_h2<S>(ctx: Arc<ConnCtx>, io: S) -> std::io::Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let service = hyper::service::service_fn(move |req| {
+        let ctx = ctx.clone();
+        async move { Ok::<_, Infallible>(handle_request(ctx, req).await) }
+    });
+    hyper::server::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::new())
+        .serve_connection(TokioIo::new(io), service)
         .await
         .map_err(std::io::Error::other)
 }
@@ -852,7 +890,8 @@ async fn handle_request(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Respon
         .headers()
         .get(hyper::header::HOST)
         .and_then(|value| value.to_str().ok())
-        .map(str::to_string);
+        .map(str::to_string)
+        .or_else(|| req.uri().authority().map(|a| a.as_str().to_string()));
     let (mut target_host, mut target_port) = host_header
         .as_deref()
         .and_then(|value| split_authority(value, default_port(ctx.scheme)))
@@ -1101,51 +1140,140 @@ async fn handle_request(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Respon
     finish(entry, Response::from_parts(parts, body))
 }
 
+/// Connection-specific headers that must not cross into HTTP/2.
+const HOP_HEADERS: [&str; 6] = [
+    "connection",
+    "keep-alive",
+    "proxy-connection",
+    "transfer-encoding",
+    "upgrade",
+    "te",
+];
+
 async fn send_upstream(
     ctx: &ConnCtx,
     target: &Target,
-    req: Request<Body>,
+    mut req: Request<Body>,
 ) -> Result<Response<Incoming>, String> {
     let key = format!(
         "{}://{}",
         target.scheme,
         format_authority(&target.host, target.port)
     );
-    let mut slot = ctx.upstream.lock().await;
-    let reusable = match slot.take() {
-        Some((existing_key, mut sender)) if existing_key == key => {
-            sender.ready().await.ok().map(|_| sender)
+    let wants_upgrade = req.headers().contains_key(hyper::header::UPGRADE);
+    // Check out a pooled sender: HTTP/2 is cloned, HTTP/1.1 is taken.
+    let pooled = {
+        let mut pool = ctx.upstream.lock().expect("upstream pool");
+        pool.retain(|(_, upstream)| match upstream {
+            Upstream::H1(sender) => !sender.is_closed(),
+            Upstream::H2(sender) => !sender.is_closed(),
+        });
+        let h2 = (!wants_upgrade)
+            .then(|| {
+                pool.iter().find_map(|(k, upstream)| match upstream {
+                    Upstream::H2(sender) if *k == key => Some(sender.clone()),
+                    _ => None,
+                })
+            })
+            .flatten();
+        match h2 {
+            Some(sender) => Some(Upstream::H2(sender)),
+            None => pool
+                .iter()
+                .position(|(k, upstream)| *k == key && matches!(upstream, Upstream::H1(_)))
+                .map(|index| pool.swap_remove(index).1),
         }
-        _ => None,
     };
-    let mut sender = match reusable {
-        Some(sender) => sender,
-        None => open_upstream(&ctx.shared, target).await?,
+    let upstream = match pooled {
+        Some(Upstream::H1(mut sender)) => match sender.ready().await {
+            Ok(()) => Upstream::H1(sender),
+            Err(_) => open_upstream(&ctx.shared, target, !wants_upgrade).await?,
+        },
+        Some(upstream) => upstream,
+        None => {
+            let opened = open_upstream(&ctx.shared, target, !wants_upgrade).await?;
+            if let Upstream::H2(sender) = &opened {
+                ctx.upstream
+                    .lock()
+                    .expect("upstream pool")
+                    .push((key.clone(), Upstream::H2(sender.clone())));
+            }
+            opened
+        }
     };
-    let result = sender.send_request(req).await;
-    *slot = Some((key, sender));
-    result.map_err(|error| format!("上游请求失败：{error}"))
+    match upstream {
+        Upstream::H1(mut sender) => {
+            let result = sender.send_request(req).await;
+            if !wants_upgrade {
+                ctx.upstream
+                    .lock()
+                    .expect("upstream pool")
+                    .push((key, Upstream::H1(sender)));
+            }
+            result.map_err(|error| format!("上游请求失败：{error}"))
+        }
+        Upstream::H2(mut sender) => {
+            let path = req
+                .uri()
+                .path_and_query()
+                .map(|pq| pq.as_str().to_string())
+                .unwrap_or_else(|| "/".into());
+            let absolute = format!(
+                "{}://{}{path}",
+                target.scheme,
+                authority_for(&target.host, target.port, &target.scheme)
+            );
+            *req.uri_mut() = absolute.parse().map_err(|_| "URL 无效".to_string())?;
+            req.headers_mut().remove(hyper::header::HOST);
+            for name in HOP_HEADERS {
+                req.headers_mut().remove(name);
+            }
+            sender
+                .send_request(req)
+                .await
+                .map_err(|error| format!("上游请求失败：{error}"))
+        }
+    }
 }
 
 async fn open_upstream(
     shared: &EngineShared,
     target: &Target,
-) -> Result<hyper::client::conn::http1::SendRequest<Body>, String> {
+    allow_h2: bool,
+) -> Result<Upstream, String> {
     let stream = dial_upstream(shared, &target.host, target.port)
         .await
         .map_err(|error| format!("连接上游失败：{error}"))?;
     if target.scheme == "https" {
-        let connector = tokio_rustls::TlsConnector::from(shared.client_tls());
+        let connector = tokio_rustls::TlsConnector::from(shared.client_tls(allow_h2));
         let name = rustls::pki_types::ServerName::try_from(target.host.clone())
             .map_err(|_| format!("主机名无效：{}", target.host))?;
         let tls = tokio::time::timeout(CONNECT_TIMEOUT, connector.connect(name, stream))
             .await
             .map_err(|_| "源站 TLS 握手超时".to_string())?
             .map_err(|error| format!("源站 TLS 握手失败：{error}"))?;
-        handshake(tls).await
+        if tls.get_ref().1.alpn_protocol() == Some(b"h2") {
+            return handshake_h2(tls).await.map(Upstream::H2);
+        }
+        handshake(tls).await.map(Upstream::H1)
     } else {
-        handshake(stream).await
+        handshake(stream).await.map(Upstream::H1)
     }
+}
+
+async fn handshake_h2<S>(io: S) -> Result<hyper::client::conn::http2::SendRequest<Body>, String>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let (sender, connection) =
+        hyper::client::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::new())
+            .handshake(TokioIo::new(io))
+            .await
+            .map_err(|error| format!("上游 HTTP/2 握手失败：{error}"))?;
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    Ok(sender)
 }
 
 async fn handshake<S>(io: S) -> Result<hyper::client::conn::http1::SendRequest<Body>, String>
@@ -1178,7 +1306,7 @@ mod tests {
                 ca: origin_ca,
                 fallback_host: "origin.test".into(),
             }));
-        config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
         let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -1218,11 +1346,20 @@ mod tests {
                                 .unwrap_or_default();
                             let response = Response::builder()
                                 .header("content-type", "application/json")
+                                .header("x-origin-version", format!("{:?}", req.version()))
                                 .header("x-seen", seen)
                                 .body(full(r#"{"vip":false}"#))
                                 .unwrap();
                             Ok::<_, Infallible>(response)
                         });
+                    if tls.get_ref().1.alpn_protocol() == Some(b"h2") {
+                        let _ = hyper::server::conn::http2::Builder::new(
+                            hyper_util::rt::TokioExecutor::new(),
+                        )
+                        .serve_connection(TokioIo::new(tls), service)
+                        .await;
+                        return;
+                    }
                     let _ = hyper::server::conn::http1::Builder::new()
                         .serve_connection(TokioIo::new(tls), service)
                         .with_upgrades()
@@ -1291,6 +1428,26 @@ mod tests {
         handshake(tls).await
     }
 
+    async fn h2_client(
+        stream: TcpStream,
+        root: &CaAuthority,
+        host: &str,
+    ) -> hyper::client::conn::http2::SendRequest<Body> {
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(root.ca_der().clone()).unwrap();
+        let mut config = rustls::ClientConfig::builder_with_provider(provider())
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        config.alpn_protocols = vec![b"h2".to_vec()];
+        let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
+        let name = rustls::pki_types::ServerName::try_from(host.to_string()).unwrap();
+        let tls = connector.connect(name, stream).await.unwrap();
+        assert_eq!(tls.get_ref().1.alpn_protocol(), Some(&b"h2"[..]));
+        handshake_h2(tls).await.unwrap()
+    }
+
     pub(super) fn get(path: &str, host: &str) -> Request<Body> {
         Request::builder()
             .uri(path)
@@ -1325,7 +1482,7 @@ http-response ^https://origin\.test/api "\"vip\":false" "\"vip\":true"
 "#;
         *shared.rules.write().unwrap() = Arc::new(CompiledRules::build(
             &["origin.test".into()],
-            &[ModuleSource { content: module }],
+            &[ModuleSource::plain(module)],
             true,
         ));
         let (listener, port) = bind().unwrap();
@@ -1342,6 +1499,8 @@ http-response ^https://origin\.test/api "\"vip\":false" "\"vip\":true"
             .unwrap();
         assert_eq!(response.headers()["x-murge"], "1");
         assert_eq!(response.headers()["x-seen"], "yes");
+        // An HTTP/1.1 client still gets an HTTP/2 upstream when the origin offers it.
+        assert_eq!(response.headers()["x-origin-version"], "HTTP/2.0");
         let body = response.into_body().collect().await.unwrap().to_bytes();
         assert_eq!(&body[..], br#"{"vip":true}"#);
 
@@ -1363,6 +1522,37 @@ http-response ^https://origin\.test/api "\"vip\":false" "\"vip\":true"
             .unwrap();
         let body = response.into_body().collect().await.unwrap().to_bytes();
         assert_eq!(&body[..], b"{}");
+
+        // An HTTP/2 client: concurrent streams over one decrypted connection.
+        let stream = connect_through(port, &shared.password, "origin.test").await;
+        let sender = h2_client(stream, &mitm_ca, "origin.test").await;
+        let mut tasks = Vec::new();
+        for _ in 0..4 {
+            let mut sender = sender.clone();
+            tasks.push(tokio::spawn(async move {
+                let request = Request::builder()
+                    .uri("https://origin.test/api/me")
+                    .body(full(Bytes::new()))
+                    .unwrap();
+                let response = sender.send_request(request).await.unwrap();
+                assert_eq!(response.headers()["x-murge"], "1");
+                response.into_body().collect().await.unwrap().to_bytes()
+            }));
+        }
+        for task in tasks {
+            assert_eq!(&task.await.unwrap()[..], br#"{"vip":true}"#);
+        }
+
+        // HTTP/2 off: the engine and the origin fall back to HTTP/1.1.
+        shared.http2.store(false, Ordering::Relaxed);
+        let stream = connect_through(port, &shared.password, "origin.test").await;
+        let mut sender = tls_client(stream, &mitm_ca, "origin.test").await.unwrap();
+        let response = sender
+            .send_request(get("/api/me", "origin.test"))
+            .await
+            .unwrap();
+        assert_eq!(response.headers()["x-origin-version"], "HTTP/1.1");
+        shared.http2.store(true, Ordering::Relaxed);
 
         // WebSocket-style upgrade is spliced through.
         let stream = connect_through(port, &shared.password, "origin.test").await;
@@ -1514,7 +1704,7 @@ mod e2e {
         let module = "[Body Rewrite]\nhttp-response ^https://origin\\.test \"\\\"vip\\\":false\" \"\\\"vip\\\":true\"\n";
         *shared.rules.write().unwrap() = Arc::new(CompiledRules::build(
             &["origin.test:*".into()],
-            &[ModuleSource { content: module }],
+            &[ModuleSource::plain(module)],
             true,
         ));
         let (listener, port) = bind().unwrap();

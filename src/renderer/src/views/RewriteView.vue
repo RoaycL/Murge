@@ -15,6 +15,8 @@ const localText = ref('')
 const localBaseline = ref('')
 const removing = ref<MitmModuleInfo | null>(null)
 const expanded = ref<string | null>(null)
+const editingArgs = ref<string | null>(null)
+const argDraft = ref<Record<string, string>>({})
 
 const state = computed(() => store.state)
 const localDirty = computed(() => store.loaded && localText.value !== localBaseline.value)
@@ -25,6 +27,7 @@ const summaryItems = computed(() => [
   { label: '请求头/响应头', value: state.value.summary.headerRewrites },
   { label: '正文改写', value: state.value.summary.bodyRewrites },
   { label: '本地映射', value: state.value.summary.mapLocals },
+  { label: '分流规则', value: state.value.summary.rules },
   { label: '解密主机名', value: state.value.summary.hostnames.length }
 ])
 
@@ -84,6 +87,28 @@ async function toggleModule(module: MitmModuleInfo): Promise<void> {
   if (error) toast.error('切换失败', error)
 }
 
+function openArguments(module: MitmModuleInfo): void {
+  if (editingArgs.value === module.id) {
+    editingArgs.value = null
+    return
+  }
+  argDraft.value = Object.fromEntries(module.arguments.map((arg) => [arg.name, arg.value]))
+  editingArgs.value = module.id
+}
+
+async function saveArguments(module: MitmModuleInfo): Promise<void> {
+  const error = await store.setModuleArguments(module.id, { ...argDraft.value })
+  if (error) toast.error('保存参数失败', error)
+  else {
+    editingArgs.value = null
+    toast.success('参数已保存')
+  }
+}
+
+function resetArguments(module: MitmModuleInfo): void {
+  argDraft.value = Object.fromEntries(module.arguments.map((arg) => [arg.name, arg.default]))
+}
+
 async function confirmRemove(): Promise<void> {
   const target = removing.value
   removing.value = null
@@ -139,10 +164,10 @@ onMounted(async () => {
       <h2>模块</h2>
       <SurfaceCard class="rewrite-card">
         <form class="rewrite-add" @submit.prevent="addModule">
-          <input v-model="moduleUrl" type="url" placeholder="模块链接（.sgmodule）" aria-label="模块链接" spellcheck="false" />
+          <input v-model="moduleUrl" type="url" placeholder="模块链接（.sgmodule / .plugin / .snippet）" aria-label="模块链接" spellcheck="false" />
           <button type="submit" class="rewrite-primary" :disabled="!!store.busy || !moduleUrl.trim()">{{ store.busy === 'add-module' ? '下载中…' : '添加' }}</button>
         </form>
-        <p v-if="!state.modules.length" class="rewrite-hint">还没有模块。可以粘贴 Surge 模块链接，模块里的 [MITM] 主机名会自动加入解密列表。</p>
+        <p v-if="!state.modules.length" class="rewrite-hint">还没有模块。可以粘贴 Surge 模块、Loon 插件或 Quantumult X 重写链接，模块里的 MITM 主机名会自动加入解密列表。</p>
         <ul v-else class="rewrite-modules">
           <li v-for="module in state.modules" :key="module.id">
             <div class="rewrite-module-row">
@@ -151,7 +176,10 @@ onMounted(async () => {
                 <small v-if="module.description">{{ module.description }}</small>
                 <small>{{ module.ruleCount }} 条规则 · {{ module.hostnames.length }} 个主机名 · 更新于 {{ formatDate(module.updatedAt) }}</small>
                 <small v-if="module.error" class="rewrite-error">上次更新失败：{{ module.error }}</small>
-                <button v-if="module.warnings.length" type="button" class="rewrite-link" @click="expanded = expanded === module.id ? null : module.id">{{ module.warnings.length }} 条未生效的内容</button>
+                <span class="rewrite-module-links">
+                  <button v-if="module.arguments.length" type="button" class="rewrite-link" @click="openArguments(module)">{{ module.arguments.length }} 个参数</button>
+                  <button v-if="module.warnings.length" type="button" class="rewrite-link" @click="expanded = expanded === module.id ? null : module.id">{{ module.warnings.length }} 条未生效的内容</button>
+                </span>
               </div>
               <div class="rewrite-module-actions">
                 <button v-if="module.url" type="button" class="rewrite-secondary" :disabled="!!store.busy" @click="updateModule(module)">{{ store.busy === `update-${module.id}` ? '更新中…' : '更新' }}</button>
@@ -159,6 +187,16 @@ onMounted(async () => {
                 <button type="button" class="switch" :class="{ on: module.enabled }" role="switch" :aria-checked="module.enabled" :aria-label="`启用 ${module.name}`" :disabled="!!store.busy" @click="toggleModule(module)" />
               </div>
             </div>
+            <form v-if="editingArgs === module.id" class="rewrite-arguments" @submit.prevent="saveArguments(module)">
+              <label v-for="arg in module.arguments" :key="arg.name">
+                <span>{{ arg.name }}</span>
+                <input v-model="argDraft[arg.name]" type="text" spellcheck="false" :placeholder="arg.default" />
+              </label>
+              <div class="rewrite-actions">
+                <button type="button" class="rewrite-secondary" @click="resetArguments(module)">恢复默认</button>
+                <button type="submit" class="rewrite-primary" :disabled="!!store.busy">{{ store.busy === `arguments-${module.id}` ? '保存中…' : '保存参数' }}</button>
+              </div>
+            </form>
             <ul v-if="expanded === module.id" class="rewrite-warnings">
               <li v-for="warning in module.warnings" :key="warning">{{ warning }}</li>
             </ul>
@@ -170,7 +208,7 @@ onMounted(async () => {
     <section>
       <h2>本地规则</h2>
       <SurfaceCard class="rewrite-card">
-        <p class="rewrite-hint">支持 [MITM]、[URL Rewrite]、[Header Rewrite]、[Body Rewrite]、[Map Local]。脚本（[Script]）暂不支持。</p>
+        <p class="rewrite-hint">支持 [MITM]、[URL Rewrite]、[Header Rewrite]、[Body Rewrite]、[Map Local]、[Rule]，也能识别 Loon 的 [Rewrite] 和 Quantumult X 的 [rewrite_local]。[Rule] 只能使用 DIRECT 或 REJECT 策略。脚本（[Script]）暂不支持。</p>
         <textarea v-model="localText" class="rewrite-editor" spellcheck="false" :placeholder="LOCAL_PLACEHOLDER" />
         <ul v-if="state.localWarnings.length" class="rewrite-warnings">
           <li v-for="warning in state.localWarnings" :key="warning">{{ warning }}</li>
@@ -215,7 +253,12 @@ onMounted(async () => {
 .rewrite-module-text { flex: 1; min-width: 0; display: grid; gap: 2px; }
 .rewrite-module-text strong { font-size: var(--font-size-md); }
 .rewrite-module-text small { color: var(--app-muted); font-size: var(--font-size-2xs); overflow-wrap: anywhere; }
+.rewrite-module-links { display: flex; flex-wrap: wrap; gap: var(--space-3); }
 .rewrite-module-text .rewrite-link { justify-self: start; margin: 0; font-size: var(--font-size-2xs); }
+.rewrite-arguments { display: grid; gap: var(--space-3); margin-top: 8px; padding: 10px 12px; border-radius: var(--radius-control); background: var(--app-fill-subtle); }
+.rewrite-arguments label { display: grid; grid-template-columns: minmax(90px, 160px) 1fr; align-items: center; gap: var(--space-3); font-size: var(--font-size-xs); }
+.rewrite-arguments label span { overflow: hidden; color: var(--app-muted); text-overflow: ellipsis; white-space: nowrap; }
+.rewrite-arguments input { min-width: 0; height: 28px; padding: 0 8px; border: 1px solid var(--app-divider); border-radius: var(--radius-control); background: var(--app-surface-solid); color: inherit; font-size: var(--font-size-sm); }
 .rewrite-module-actions { flex: none; display: flex; align-items: center; gap: var(--space-3); }
 .rewrite-error { color: var(--app-danger) !important; }
 .rewrite-warnings { margin: 6px 0 0; padding: 8px 10px 8px 26px; border-radius: var(--radius-control); background: var(--app-fill-subtle); color: var(--app-muted); font-size: var(--font-size-2xs); line-height: 1.6; }

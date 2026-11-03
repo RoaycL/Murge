@@ -155,6 +155,7 @@ const api: DesktopApi = {
     setEnabled: (enabled) => invoke(IPC.mitmSetEnabled, enabled),
     setRewriteEnabled: (enabled) => invoke(IPC.mitmSetRewriteEnabled, enabled),
     setSkipVerify: (skip) => invoke(IPC.mitmSetSkipVerify, skip),
+    setHttp2: (enabled) => invoke(IPC.mitmSetHttp2, enabled),
     setHostnames: (hostnames) => invoke(IPC.mitmSetHostnames, hostnames),
     setLocalModule: (content) => invoke(IPC.mitmSetLocalModule, content),
     generateCa: () => invoke(IPC.mitmGenerateCa),
@@ -166,6 +167,7 @@ const api: DesktopApi = {
     updateModule: (id) => invoke(IPC.mitmUpdateModule, id),
     removeModule: (id) => invoke(IPC.mitmRemoveModule, id),
     setModuleEnabled: (id, enabled) => invoke(IPC.mitmSetModuleEnabled, id, enabled),
+    setModuleArguments: (id, args) => invoke(IPC.mitmSetModuleArguments, id, args),
     recentRequests: () => invoke(IPC.mitmRecentRequests),
     clearRequests: () => invoke(IPC.mitmClearRequests)
   },

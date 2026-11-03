@@ -1,6 +1,6 @@
 # HTTPS 解密（MITM）与重写 设计方案
 
-状态：M1 已实现（2026-11-02）。本文是功能规划，也是后续实现的约束。
+状态：M1 已实现（2026-11-02），M2 已实现（2026-11-03，CA 二维码除外）。本文是功能规划，也是后续实现的约束。
 
 ## 1. 目标与非目标
 
@@ -29,7 +29,7 @@
 | `[Body Rewrite]` `http-request/http-response regex 正则 替换 ...` | 改体 | 支持文本体，大小上限 8 MB |
 | `[Map Local]` `regex data-type=... data=... status-code=... header=...` | 直接返回本地内容 | 支持内联 `text/json/base64/tiny-gif` |
 | `[Script]` | JS 脚本 | M3 |
-| `[Rule]` | 规则 | M2（转为 mihomo 规则） |
+| `[Rule]` | 规则 | M2：转为 mihomo 规则，只允许 DIRECT / REJECT 系策略；`RULE-SET` / `DOMAIN-SET` 链接转成 `rule-providers`；`URL-REGEX` + REJECT 交给解密引擎 |
 
 `reject` 一族的返回：`reject` → 404 空体；`reject-200` → 200 空体；`reject-img` → 1×1 GIF；`reject-dict` → `{}`；`reject-array` → `[]`。
 
@@ -79,7 +79,7 @@
 
 ### 3.4 协议细节
 
-- 客户端侧 ALPN 只提供 `http/1.1`，浏览器会自动降级；源站侧同样走 HTTP/1.1。HTTP/2 解密放在 M2。
+- M2 起客户端侧和源站侧 ALPN 都提供 `h2, http/1.1`，两侧各自协商：浏览器 h2 + 源站 h1、或反过来都能工作。源站 h2 连接在同一客户端连接的多个流之间共享；WebSocket 等 Upgrade 请求始终走 HTTP/1.1。「解密」页可以关闭 HTTP/2（设置项 `http2`，默认开）。
 - WebSocket：`Upgrade` 请求照常改写请求头后转发，收到 101 后双向拷贝。
 - 证书：CA 用 ECDSA P-256，有效期 10 年；叶子证书共享一把 P-256 密钥，按主机名签发并缓存（上限 1024 个），有效期 1 年，`SAN` 写入主机名。
 - 源站证书校验：默认用 webpki 根证书校验；`skip-server-cert-verify` 打开时跳过。
@@ -98,7 +98,7 @@
 
 - 默认关闭；必须同时满足：解密开关打开、CA 已生成、已被信任、至少一个主机名。
 - 只解密列出的主机名，不支持裸 `*`（拒绝保存）；`*.com` 这类顶级后缀给出警告。
-- 每台机器一张独立 CA，私钥不离开本机、永不进备份。M1 的配置备份暂不包含解密与重写设置，M2 再把规则加入备份。
+- 每台机器一张独立 CA，私钥不离开本机、永不进备份。M2 起配置备份包含 `mitm/mitm.json`（开关、主机名、本地规则、模块及其参数），不包含 `mitm/ca.json` 和私钥；恢复到另一台机器后需要重新生成并安装 CA。
 - 引擎只监听回环地址，只接受带每次启动随机口令的 CONNECT。
 - 证书钉扎的应用（银行、部分游戏、Windows Update、Microsoft 登录等）解密会失败：页面提示「只添加需要的主机」，出错主机可一键加入排除。
 - 关闭解密时立刻撤下注入的规则（热重载），引擎停止接受新连接。
@@ -111,7 +111,8 @@
 - 远程模块：URL 订阅，记录名称（`#!name`）、描述（`#!desc`）、启用状态、更新时间；可手动更新。
 - 设置文件 `app-data/mitm/mitm.json`：`enabled`、`rewriteEnabled`、`skipServerCertVerify`、`hostnames`（解密页里直接维护的主机名）、`modules[]`。
 - 解析后的不支持行（如 `[Script]`、`#!arguments`）显示为警告，不阻断其它规则。
-- Loon 插件 / QX 重写片段的兼容放在 M2（语法相近，主要是 `url reject-200` 这类写法）。
+- M2 兼容 Loon 插件 `[Rewrite]`（`正则 动作 参数`）和 QX `[rewrite_local]`（`正则 url 动作 参数`）：reject 系、30x、header、header-add/del/replace（含 request-/response- 前缀）、request/response-body-replace-regex、QX `response-body A response-body B`、Loon mock-response-body；script 和 echo-response 提示不支持。`[filter_local]` 按 `[Rule]` 处理，`[Argument]` / `[Plugin]` / `[general_local]` 忽略。
+- 模块参数 `#!arguments=key:默认值,...`：正文里的 `{{{key}}}` 在解析前替换；「重写」页每个模块可以编辑参数，只保存模块声明过的键。
 
 ## 7. 界面
 
@@ -123,14 +124,14 @@
 ## 8. 里程碑
 
 - **M1（本 PR）**：CA 生成 / 信任 / 移除；MITM 引擎（HTTP/1.1、WebSocket、透传、回连防回环）；规则注入与热重载；URL / Header / Body Rewrite、Map Local（内联）；Surge 模块导入（本地 + URL）；两个页面；最近请求列表；单元测试。
-- **M2**：HTTP/2；`[Rule]` 段转 mihomo 规则；Loon / QX 语法；「连接」页标记「已解密」；导出 CA 二维码；模块参数 `#!arguments`。
+- **M2（已完成，CA 二维码待做）**：HTTP/2；`[Rule]` 段转 mihomo 规则；Loon / QX 语法；「连接」页标记「已解密」；导出 CA 二维码；模块参数 `#!arguments`。
 - **M3**：脚本（复用现有 `boa_engine` 沙箱，兼容 `$request/$response/$done/$httpClient` 子集）。
 
 ## 9. 测试
 
 - 单元：模块解析（各段、旧语法、引号参数、警告）；主机名匹配（通配、排除、端口）；重写执行（302/307/reject 族、header 各操作、body 多组替换、Map Local）；配置注入（规则顺序、口令、无 CA / 关闭时不注入）；CA 生成与叶子签发（用 rustls 校验链）。
 - 集成（Rust tokio 测试，Linux CI 可跑）：起一个本地 TLS 源站 + 假的上游 CONNECT 代理，经引擎请求，校验解密、重写、透传、WebSocket，以及所有回流都来自 127.0.0.2。
-- 真实内核（手动）：`MURGE_E2E_MIHOMO=/path/to/mihomo cargo test --lib mitm::engine::e2e`，用注入后的配置启动 Mihomo，确认规则命中 `Murge-MITM`、回流命中原有规则（不回环）、响应体被改写。M1 已用 Mihomo v1.19.30 跑通。
+- 真实内核（手动）：`MURGE_E2E_MIHOMO=/path/to/mihomo cargo test --lib mitm::engine::e2e`，用注入后的配置启动 Mihomo，确认规则命中 `Murge-MITM`、回流命中原有规则（不回环）、响应体被改写。M1、M2 已用 Mihomo v1.19.30 跑通。
 - Windows 实机（Roayc）：证书安装弹窗与信任状态；Edge / Chrome 访问被解密站点无证书警告；系统代理与 TUN 两种模式；关闭后规则撤除。
 
 ## 10. 待 Roayc 确认的问题

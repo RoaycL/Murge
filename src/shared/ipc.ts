@@ -151,6 +151,7 @@ export const IPC = {
   mitmSetEnabled: 'mitm:set-enabled',
   mitmSetRewriteEnabled: 'mitm:set-rewrite-enabled',
   mitmSetSkipVerify: 'mitm:set-skip-verify',
+  mitmSetHttp2: 'mitm:set-http2',
   mitmSetHostnames: 'mitm:set-hostnames',
   mitmSetLocalModule: 'mitm:set-local-module',
   mitmGenerateCa: 'mitm:generate-ca',
@@ -162,6 +163,7 @@ export const IPC = {
   mitmUpdateModule: 'mitm:update-module',
   mitmRemoveModule: 'mitm:remove-module',
   mitmSetModuleEnabled: 'mitm:set-module-enabled',
+  mitmSetModuleArguments: 'mitm:set-module-arguments',
   mitmRecentRequests: 'mitm:recent-requests',
   mitmClearRequests: 'mitm:clear-requests',
   dnsGet: 'dns:get',
@@ -351,6 +353,7 @@ export interface DesktopApi {
     setEnabled(enabled: boolean): Promise<void>
     setRewriteEnabled(enabled: boolean): Promise<void>
     setSkipVerify(skip: boolean): Promise<void>
+    setHttp2(enabled: boolean): Promise<void>
     setHostnames(hostnames: string[]): Promise<void>
     setLocalModule(content: string): Promise<void>
     generateCa(): Promise<void>
@@ -362,6 +365,7 @@ export interface DesktopApi {
     updateModule(id: string): Promise<void>
     removeModule(id: string): Promise<void>
     setModuleEnabled(id: string, enabled: boolean): Promise<void>
+    setModuleArguments(id: string, args: Record<string, string>): Promise<void>
     recentRequests(): Promise<MitmRequestEntry[]>
     clearRequests(): Promise<void>
   }

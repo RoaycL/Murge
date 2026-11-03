@@ -112,6 +112,7 @@ pub fn list(root: &Path, sources: bool) -> Result<BTreeSet<String>> {
     }
     add(root, "substore/root.json", &mut files)?;
     add(root, "substore/sub-store.json", &mut files)?;
+    add(root, "mitm/mitm.json", &mut files)?;
     fn walk(root: &Path, dir: &str, depth: usize, files: &mut BTreeSet<String>) -> Result<()> {
         if depth >= 6 {
             return Ok(());

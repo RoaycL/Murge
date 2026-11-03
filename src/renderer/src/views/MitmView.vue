@@ -66,6 +66,10 @@ async function toggleEnabled(): Promise<void> {
   await report(store.setEnabled(next), next ? 'HTTPS 解密已开启' : 'HTTPS 解密已关闭', '切换失败')
 }
 
+async function toggleHttp2(): Promise<void> {
+  await report(store.setHttp2(!state.value.settings.http2), '已保存', '保存失败')
+}
+
 async function toggleSkipVerify(): Promise<void> {
   await report(store.setSkipVerify(!state.value.settings.skipServerCertVerify), '已保存', '保存失败')
 }
@@ -142,6 +146,13 @@ onBeforeUnmount(() => {
             <p :class="{ 'mitm-ok': state.active }">{{ statusText }}</p>
           </div>
           <button type="button" class="switch" :class="{ on: state.settings.enabled }" role="switch" :aria-checked="state.settings.enabled" aria-label="启用 HTTPS 解密" :disabled="!!store.busy" @click="toggleEnabled" />
+        </div>
+        <div class="setting-head mitm-divided">
+          <div>
+            <h3>HTTP/2</h3>
+            <p>与浏览器和源站协商 HTTP/2。遇到个别网站解密后异常时可以关闭，改用 HTTP/1.1。</p>
+          </div>
+          <button type="button" class="switch" :class="{ on: state.settings.http2 }" role="switch" :aria-checked="state.settings.http2" aria-label="HTTP/2" :disabled="!!store.busy" @click="toggleHttp2" />
         </div>
         <div class="setting-head mitm-divided">
           <div>

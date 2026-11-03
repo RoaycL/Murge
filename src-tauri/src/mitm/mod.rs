@@ -8,6 +8,7 @@
 //! process-wide service, the kernel-config injection and the `mitm:*` IPC.
 
 pub mod ca;
+pub mod compat;
 pub mod engine;
 pub mod rules;
 
@@ -24,6 +25,7 @@ use ca::{CaAuthority, KeyVault, TrustStore};
 use engine::{EngineShared, UpstreamResolver};
 use rules::{CompiledRules, ModuleSource};
 
+/// The 连接 page marks connections whose chain ends in `-MITM`; keep the suffix.
 pub const PROXY_NAME: &str = "Murge-MITM";
 const SETTINGS_FILE: &str = "mitm.json";
 const MODULE_SIZE_LIMIT: usize = 2 * 1024 * 1024;
@@ -45,6 +47,8 @@ pub struct RewriteModule {
     pub enabled: bool,
     pub updated_at: u64,
     pub error: Option<String>,
+    /// `#!arguments` overrides chosen by the user.
+    pub arguments: std::collections::BTreeMap<String, String>,
 }
 
 impl Default for RewriteModule {
@@ -58,6 +62,7 @@ impl Default for RewriteModule {
             enabled: true,
             updated_at: 0,
             error: None,
+            arguments: Default::default(),
         }
     }
 }
@@ -69,6 +74,9 @@ pub struct MitmSettings {
     #[serde(default = "default_true")]
     pub rewrite_enabled: bool,
     pub skip_server_cert_verify: bool,
+    /// Negotiate HTTP/2 with clients and origins (Surge `h2 = true`).
+    #[serde(default = "default_true")]
+    pub http2: bool,
     pub hostnames: Vec<String>,
     /// The user's own module (Surge syntax), edited on the 重写 page.
     pub local_module: String,
@@ -81,6 +89,7 @@ impl Default for MitmSettings {
             enabled: false,
             rewrite_enabled: true,
             skip_server_cert_verify: false,
+            http2: true,
             hostnames: Vec::new(),
             local_module: String::new(),
             modules: Vec::new(),
@@ -93,6 +102,49 @@ fn now_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// Module `[Rule]` lines (prepended) and their rule providers. Pure.
+pub fn inject_module_rules(
+    document: &str,
+    rules: &[String],
+    providers: &[(String, &'static str, String)],
+) -> Option<String> {
+    if rules.is_empty() {
+        return None;
+    }
+    let mut config = crate::override_apply::parse_yaml_to_object(document)?;
+    let mut merged: Vec<Value> = rules.iter().map(|rule| json!(rule)).collect();
+    merged.extend(
+        config
+            .get("rules")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default(),
+    );
+    config.insert("rules".into(), Value::Array(merged));
+    if !providers.is_empty() {
+        let mut map = config
+            .get("rule-providers")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        for (name, behavior, url) in providers {
+            map.insert(
+                name.clone(),
+                json!({
+                    "type": "http",
+                    "behavior": behavior,
+                    "format": "text",
+                    "url": url,
+                    "path": format!("./rule-providers/{name}.txt"),
+                    "interval": 86400,
+                }),
+            );
+        }
+        config.insert("rule-providers".into(), Value::Object(map));
+    }
+    Some(crate::override_apply::stringify_yaml(Value::Object(config)))
 }
 
 /// The injected rules + proxy, given the decision inputs. Pure, for tests.
@@ -289,12 +341,11 @@ impl MitmService {
 
     fn recompile(&self) {
         let settings = self.settings();
-        let mut sources = vec![ModuleSource {
-            content: &settings.local_module,
-        }];
+        let mut sources = vec![ModuleSource::plain(&settings.local_module)];
         for module in settings.modules.iter().filter(|m| m.enabled) {
             sources.push(ModuleSource {
                 content: &module.content,
+                arguments: Some(&module.arguments),
             });
         }
         let compiled =
@@ -306,6 +357,7 @@ impl MitmService {
         self.shared
             .skip_verify
             .store(settings.skip_server_cert_verify, Ordering::Relaxed);
+        self.shared.http2.store(settings.http2, Ordering::Relaxed);
     }
 
     pub fn refresh_trust(&self) -> Option<bool> {
@@ -338,22 +390,31 @@ impl MitmService {
 
     /// A stable signature of everything the kernel config depends on.
     pub fn injection_signature(&self) -> String {
+        let rules = self.shared.rules();
+        let module_part = format!("{:?}|{:?}", rules.mihomo_rules, rules.providers);
         if self.inactive_reason().is_some() {
-            return String::new();
+            return module_part;
         }
-        format!("{:?}", self.shared.rules().hosts.mihomo_filters())
+        format!("{:?}|{module_part}", rules.hosts.mihomo_filters())
     }
 
+    /// Module `[Rule]` lines work without decryption; the MITM rules, when
+    /// active, go in front of them.
     pub fn apply_to_document(&self, document: &str) -> String {
+        let rules = self.shared.rules();
+        let mut text = inject_module_rules(document, &rules.mihomo_rules, &rules.providers)
+            .unwrap_or_else(|| document.to_string());
         if self.inactive_reason().is_some() {
-            return document.to_string();
+            return text;
         }
         let Some(port) = *self.port.lock().expect("port") else {
-            return document.to_string();
+            return text;
         };
-        let filters = self.shared.rules().hosts.mihomo_filters();
-        inject_into_document(document, &filters, port, &self.shared.password)
-            .unwrap_or_else(|| document.to_string())
+        let filters = rules.hosts.mihomo_filters();
+        if let Some(next) = inject_into_document(&text, &filters, port, &self.shared.password) {
+            text = next;
+        }
+        text
     }
 
     // --- CA lifecycle ---
@@ -442,6 +503,35 @@ impl MitmService {
     pub fn set_skip_verify(&self, skip: bool) -> Result<(), IpcError> {
         self.update(|s| {
             s.skip_server_cert_verify = skip;
+            Ok(())
+        })
+    }
+
+    pub fn set_http2(&self, enabled: bool) -> Result<(), IpcError> {
+        self.update(|s| {
+            s.http2 = enabled;
+            Ok(())
+        })
+    }
+
+    pub fn set_module_arguments(
+        &self,
+        id: &str,
+        arguments: std::collections::BTreeMap<String, String>,
+    ) -> Result<(), IpcError> {
+        self.update(|s| {
+            let module = s
+                .modules
+                .iter_mut()
+                .find(|m| m.id == id)
+                .ok_or_else(|| IpcError::not_found("模块不存在"))?;
+            let declared = compat::declared_arguments(&module.content);
+            module.arguments = arguments
+                .into_iter()
+                .filter(|(key, value)| {
+                    declared.iter().any(|(name, _)| name == key) && value.len() <= 4096
+                })
+                .collect();
             Ok(())
         })
     }
@@ -559,6 +649,7 @@ impl MitmService {
             enabled: true,
             updated_at: now_ms(),
             error: None,
+            arguments: Default::default(),
         }
     }
 
@@ -614,6 +705,7 @@ impl MitmService {
                             content.clone(),
                         );
                         next.enabled = target.enabled;
+                        next.arguments = std::mem::take(&mut target.arguments);
                         *target = next;
                     }
                     Err(message) => target.error = Some(message.clone()),
@@ -636,7 +728,18 @@ impl MitmService {
             .modules
             .iter()
             .map(|module| {
-                let parsed = rules::parse_module(&module.content);
+                let parsed = rules::parse_module_with(&module.content, &module.arguments);
+                let arguments: Vec<Value> = parsed
+                    .arguments
+                    .iter()
+                    .map(|(name, default)| {
+                        json!({
+                            "name": name,
+                            "default": default,
+                            "value": module.arguments.get(name).unwrap_or(default),
+                        })
+                    })
+                    .collect();
                 json!({
                     "id": module.id,
                     "name": module.name,
@@ -648,6 +751,7 @@ impl MitmService {
                     "ruleCount": parsed.rule_count(),
                     "hostnames": parsed.hostnames,
                     "warnings": parsed.warnings,
+                    "arguments": arguments,
                 })
             })
             .collect();
@@ -667,6 +771,7 @@ impl MitmService {
                 "enabled": settings.enabled,
                 "rewriteEnabled": settings.rewrite_enabled,
                 "skipServerCertVerify": settings.skip_server_cert_verify,
+                "http2": settings.http2,
                 "hostnames": settings.hostnames,
                 "localModule": settings.local_module,
             },
@@ -683,6 +788,7 @@ impl MitmService {
                 "headerRewrites": rules.header_rewrites.len(),
                 "bodyRewrites": rules.body_rewrites.len(),
                 "mapLocals": rules.map_locals.len(),
+                "rules": rules.mihomo_rules.len(),
             },
         })
     }
@@ -741,6 +847,24 @@ pub async fn dispatch(
         "mitm:set-rewrite-enabled" => service
             .set_rewrite_enabled(bool_arg(payload, 0, channel)?)
             .map(|_| Value::Null),
+        "mitm:set-http2" => service
+            .set_http2(bool_arg(payload, 0, channel)?)
+            .map(|_| Value::Null),
+        "mitm:set-module-arguments" => {
+            let id = string_arg(payload, 0, channel)?;
+            let arguments = payload
+                .get(1)
+                .and_then(Value::as_object)
+                .ok_or_else(|| {
+                    IpcError::invalid_argument("mitm:set-module-arguments requires an object")
+                })?
+                .iter()
+                .filter_map(|(key, value)| value.as_str().map(|v| (key.clone(), v.to_string())))
+                .collect();
+            service
+                .set_module_arguments(&id, arguments)
+                .map(|_| Value::Null)
+        }
         "mitm:set-skip-verify" => service
             .set_skip_verify(bool_arg(payload, 0, channel)?)
             .map(|_| Value::Null),
@@ -941,6 +1065,79 @@ mod tests {
         service.delete_ca().unwrap();
         assert!(service.shared.ca().is_none());
         assert!(!dir.path().join("mitm").join("ca.key").exists());
+    }
+
+    #[test]
+    fn module_rules_inject_without_decryption() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = service(dir.path());
+        service
+            .set_local_module(
+                "[Rule]\nDOMAIN-SUFFIX,ads.example.com,REJECT-TINYGIF\nRULE-SET,https://lists.example.com/ad.list,REJECT\nDOMAIN,x.com,MyProxy\n".into(),
+            )
+            .unwrap();
+        // Decryption is off, the rules still apply.
+        assert!(service.inactive_reason().is_some());
+        let text = service.apply_to_document(DOC);
+        let config = crate::override_apply::parse_yaml_to_object(&text).unwrap();
+        let rules = config["rules"].as_array().unwrap();
+        assert_eq!(rules[0], "DOMAIN-SUFFIX,ads.example.com,REJECT");
+        assert!(rules[1]
+            .as_str()
+            .unwrap()
+            .starts_with("RULE-SET,murge-module-"));
+        assert_eq!(rules[2], "MATCH,A");
+        let providers = config["rule-providers"].as_object().unwrap();
+        let provider = providers.values().next().unwrap();
+        assert_eq!(provider["behavior"], "classical");
+        assert_eq!(provider["format"], "text");
+        assert_eq!(service.snapshot()["summary"]["rules"], 2);
+        assert!(service.snapshot()["localWarnings"][0]
+            .as_str()
+            .unwrap()
+            .contains("MyProxy"));
+        // Turning rewriting off drops the module rules too.
+        let before = service.injection_signature();
+        service.set_rewrite_enabled(false).unwrap();
+        assert_ne!(before, service.injection_signature());
+        assert_eq!(service.apply_to_document(DOC), DOC);
+    }
+
+    #[test]
+    fn module_arguments_override_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = service(dir.path());
+        let content =
+            "#!arguments=target:ads.example.com\n[Rule]\nDOMAIN,{{{target}}},REJECT\n".to_string();
+        service
+            .update(|s| {
+                s.modules
+                    .push(MitmService::module_from_content("m1".into(), None, content));
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(
+            service.shared.rules().mihomo_rules,
+            vec!["DOMAIN,ads.example.com,REJECT"]
+        );
+        let mut overrides = std::collections::BTreeMap::new();
+        overrides.insert("target".to_string(), "track.example.com".to_string());
+        overrides.insert("unknown".to_string(), "x".to_string());
+        service.set_module_arguments("m1", overrides).unwrap();
+        assert_eq!(service.settings().modules[0].arguments.len(), 1);
+        assert_eq!(
+            service.shared.rules().mihomo_rules,
+            vec!["DOMAIN,track.example.com,REJECT"]
+        );
+        let snapshot = service.snapshot();
+        assert_eq!(
+            snapshot["modules"][0]["arguments"][0]["value"],
+            "track.example.com"
+        );
+        assert_eq!(
+            snapshot["modules"][0]["arguments"][0]["default"],
+            "ads.example.com"
+        );
     }
 
     #[test]

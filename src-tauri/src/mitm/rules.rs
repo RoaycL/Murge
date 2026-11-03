@@ -116,6 +116,12 @@ pub struct ParsedModule {
     pub header_rewrites: Vec<HeaderRewrite>,
     pub body_rewrites: Vec<BodyRewrite>,
     pub map_locals: Vec<MapLocal>,
+    /// `[Rule]` lines converted to mihomo rules.
+    pub rules: Vec<String>,
+    /// Rule providers those rules reference: (name, behavior, url).
+    pub providers: Vec<(String, &'static str, String)>,
+    /// `#!arguments` declarations: (name, default).
+    pub arguments: Vec<(String, String)>,
     pub warnings: Vec<String>,
 }
 
@@ -125,6 +131,41 @@ impl ParsedModule {
             + self.header_rewrites.len()
             + self.body_rewrites.len()
             + self.map_locals.len()
+            + self.rules.len()
+    }
+
+    fn push_rewrite(&mut self, item: super::compat::RewriteItem) {
+        use super::compat::RewriteItem;
+        match item {
+            RewriteItem::Url(rule) => self.url_rewrites.push(rule),
+            RewriteItem::Header(rule) => self.header_rewrites.push(rule),
+            RewriteItem::Body(rule) => self.body_rewrites.push(rule),
+            RewriteItem::Map(rule) => self.map_locals.push(rule),
+        }
+    }
+
+    fn push_rule(&mut self, line: &str) -> Result<(), String> {
+        use super::compat::RuleItem;
+        match super::compat::convert_rule(line)? {
+            RuleItem::Plain(rule) => self.rules.push(rule),
+            RuleItem::Provider {
+                name,
+                behavior,
+                url,
+                rule,
+            } => {
+                if !self
+                    .providers
+                    .iter()
+                    .any(|(existing, _, _)| *existing == name)
+                {
+                    self.providers.push((name, behavior, url));
+                }
+                self.rules.push(rule);
+            }
+            RuleItem::UrlReject(rule) => self.url_rewrites.push(rule),
+        }
+        Ok(())
     }
 }
 
@@ -209,7 +250,7 @@ pub fn to_rust_replacement(input: &str) -> String {
     out
 }
 
-fn compile(pattern: &str) -> Result<Regex, String> {
+pub(super) fn compile(pattern: &str) -> Result<Regex, String> {
     if pattern.len() > MAX_PATTERN_LEN {
         return Err("正则过长".into());
     }
@@ -248,13 +289,36 @@ enum Section {
     HeaderRewrite,
     BodyRewrite,
     MapLocal,
+    Rule,
+    /// Loon `[Rewrite]` / Quantumult X `[rewrite_local]`.
+    Compat,
     Ignored,
     Unsupported,
 }
 
-/// Parse a Surge module (`.sgmodule`) or a bare rewrite snippet.
+/// Parse a Surge module (`.sgmodule`), Loon plugin, or Quantumult X snippet
+/// with the declared argument defaults.
 pub fn parse_module(text: &str) -> ParsedModule {
-    let mut module = ParsedModule::default();
+    parse_module_with(text, &std::collections::BTreeMap::new())
+}
+
+/// Parse with per-module `#!arguments` overrides applied first.
+pub fn parse_module_with(
+    text: &str,
+    overrides: &std::collections::BTreeMap<String, String>,
+) -> ParsedModule {
+    let arguments = super::compat::declared_arguments(text);
+    let substituted;
+    let text = if arguments.is_empty() {
+        text
+    } else {
+        substituted = super::compat::substitute_arguments(text, &arguments, overrides);
+        substituted.as_str()
+    };
+    let mut module = ParsedModule {
+        arguments,
+        ..Default::default()
+    };
     let mut section = Section::None;
     let mut warned_sections: Vec<String> = Vec::new();
     for (index, raw) in text.lines().enumerate() {
@@ -284,7 +348,9 @@ pub fn parse_module(text: &str) -> ParsedModule {
                 "header rewrite" => Section::HeaderRewrite,
                 "body rewrite" => Section::BodyRewrite,
                 "map local" => Section::MapLocal,
-                "general" | "host" => Section::Ignored,
+                "rule" | "filter_local" => Section::Rule,
+                "rewrite" | "rewrite_local" => Section::Compat,
+                "general" | "host" | "argument" | "plugin" | "general_local" => Section::Ignored,
                 _ => {
                     if !warned_sections.contains(&name) {
                         module
@@ -309,8 +375,19 @@ pub fn parse_module(text: &str) -> ParsedModule {
                 parse_body_rewrite(line).map(|rule| module.body_rewrites.push(rule))
             }
             Section::MapLocal => parse_map_local(line).map(|rule| module.map_locals.push(rule)),
+            Section::Rule => module.push_rule(line),
+            Section::Compat => {
+                super::compat::parse_compat_rewrite(line).map(|item| module.push_rewrite(item))
+            }
             Section::Ignored | Section::Unsupported => Ok(()),
-            Section::None => Err("不在任何段内".to_string()),
+            // A bare Quantumult X snippet: `hostname = …` plus rewrite lines.
+            Section::None => {
+                if line.starts_with("hostname") && line.contains('=') {
+                    parse_mitm_line(line, &mut module)
+                } else {
+                    super::compat::parse_compat_rewrite(line).map(|item| module.push_rewrite(item))
+                }
+            }
         };
         if let Err(message) = result {
             module
@@ -683,10 +760,22 @@ pub struct CompiledRules {
     pub header_rewrites: Vec<HeaderRewrite>,
     pub body_rewrites: Vec<BodyRewrite>,
     pub map_locals: Vec<MapLocal>,
+    pub mihomo_rules: Vec<String>,
+    pub providers: Vec<(String, &'static str, String)>,
 }
 
 pub struct ModuleSource<'a> {
     pub content: &'a str,
+    pub arguments: Option<&'a std::collections::BTreeMap<String, String>>,
+}
+
+impl<'a> ModuleSource<'a> {
+    pub fn plain(content: &'a str) -> Self {
+        ModuleSource {
+            content,
+            arguments: None,
+        }
+    }
 }
 
 impl CompiledRules {
@@ -706,7 +795,10 @@ impl CompiledRules {
             ..Default::default()
         };
         for module in modules {
-            let parsed = parse_module(module.content);
+            let parsed = match module.arguments {
+                Some(arguments) => parse_module_with(module.content, arguments),
+                None => parse_module(module.content),
+            };
             for host in parsed.hostnames {
                 if !hostnames.contains(&host) {
                     hostnames.push(host);
@@ -717,6 +809,16 @@ impl CompiledRules {
                 rules.header_rewrites.extend(parsed.header_rewrites);
                 rules.body_rewrites.extend(parsed.body_rewrites);
                 rules.map_locals.extend(parsed.map_locals);
+                for rule in parsed.rules {
+                    if !rules.mihomo_rules.contains(&rule) {
+                        rules.mihomo_rules.push(rule);
+                    }
+                }
+                for provider in parsed.providers {
+                    if !rules.providers.iter().any(|p| p.0 == provider.0) {
+                        rules.providers.push(provider);
+                    }
+                }
             }
         }
         rules.hosts = HostMatcher::new(&hostnames);
@@ -929,6 +1031,7 @@ hostname = %APPEND% api.example.com, *.example.com, -safe.example.com, *
         assert!(warnings.contains("不支持的类型 nope"), "{warnings}");
         assert!(warnings.contains("jq"), "{warnings}");
         assert!(warnings.contains("[Script]"), "{warnings}");
+        assert!(module.rules.is_empty());
         assert!(warnings.contains("不支持解密所有主机"), "{warnings}");
     }
 
@@ -966,8 +1069,7 @@ hostname = %APPEND% api.example.com, *.example.com, -safe.example.com, *
 
     #[test]
     fn compiled_rules_apply_url_header_and_body_rewrites() {
-        let rules =
-            CompiledRules::build(&["x.com".into()], &[ModuleSource { content: MODULE }], true);
+        let rules = CompiledRules::build(&["x.com".into()], &[ModuleSource::plain(MODULE)], true);
         assert!(rules.hosts.should_decrypt("x.com", 443));
         assert!(rules.hosts.should_decrypt("api.example.com", 443));
         let (rule, target) = rules
@@ -1006,7 +1108,7 @@ hostname = %APPEND% api.example.com, *.example.com, -safe.example.com, *
             .find_map_local("https://api.example.com/ads?x")
             .is_some());
 
-        let disabled = CompiledRules::build(&[], &[ModuleSource { content: MODULE }], false);
+        let disabled = CompiledRules::build(&[], &[ModuleSource::plain(MODULE)], false);
         assert!(disabled
             .find_url_rewrite("https://ad.example.com/x")
             .is_none());

@@ -400,3 +400,30 @@ input,textarea,[contenteditable="true"],code,pre{user-select:text;-webkit-user-s
 /* 全局不显示滚动条（和 Surge 一致）：所有页面、列表与编辑器仍可用滚轮、触控板、键盘滚动。 */
 *, *::before, *::after { scrollbar-width: none; }
 *::-webkit-scrollbar { display: none; width: 0; height: 0; }
+/* Surge 风格的功能页（解密、重写 & 映射）：大标题旁的开关、无卡片的分区标题 + 细分隔线、灰色按钮、勾选项。 */
+.surge-title-row { display: flex; align-items: center; gap: 14px; }
+.surge-title h1 { margin: 0; font-size: 26px; font-weight: var(--font-weight-semibold); line-height: 1.2; }
+.surge-title > p { margin: 8px 0 0; color: var(--app-muted); font-size: var(--font-size-xs); line-height: 1.5; }
+.surge-title > p.surge-warn { margin-top: 4px; }
+.switch.surge-switch { width: 52px; height: 28px; border-radius: 14px; }
+.switch.surge-switch::after { top: 3px; left: 3px; width: 22px; height: 22px; }
+.switch.surge-switch.on::after { transform: translateX(24px); }
+.surge-section h2 { margin: 0 0 12px; padding-bottom: 4px; border-bottom: 1px solid var(--app-divider); font-size: var(--font-size-md); font-weight: var(--font-weight-medium); }
+.surge-section h2.tone-orange { color: var(--app-warning); }
+.surge-section h2.tone-green { color: var(--app-green); }
+.surge-section h2.tone-blue { color: var(--app-blue); }
+.surge-section h2.tone-pink { color: var(--app-pink); }
+.surge-button { min-height: 24px; padding: 0 12px; border: 0; border-radius: 5px; color: inherit; background: var(--app-fill); font-size: var(--font-size-md); white-space: nowrap; cursor: pointer; }
+.surge-button:hover:not(:disabled) { background: var(--app-fill-strong); }
+.surge-button:disabled { opacity: 0.5; cursor: default; }
+.surge-button.danger { color: var(--app-danger); }
+.surge-button.primary { color: var(--app-on-accent); background: var(--app-blue); }
+.surge-button.compact { min-height: 22px; padding: 0 10px; font-size: var(--font-size-xs); }
+.surge-check { display: grid; grid-template-columns: 14px minmax(0, 1fr); column-gap: 8px; row-gap: 3px; align-items: center; margin-bottom: 12px; cursor: pointer; }
+.surge-check input { width: 14px; height: 14px; margin: 0; accent-color: var(--app-blue); }
+.surge-check span { font-size: var(--font-size-md); }
+.surge-check small { grid-column: 2; color: var(--app-muted); font-size: var(--font-size-xs); line-height: 1.5; }
+.surge-hint { margin: 0; color: var(--app-muted); font-size: var(--font-size-xs); line-height: 1.55; }
+.surge-link { padding: 0; border: 0; color: var(--app-blue); background: transparent; font-size: inherit; text-decoration: none; cursor: pointer; }
+.surge-link:disabled { opacity: 0.5; cursor: default; }
+.surge-warn { color: var(--app-warning) !important; }

@@ -71,7 +71,11 @@ onMounted(() => {
   if (kernel.status.phase === 'running') latency.init()
   // Keep the card honest without hammering the controller: one sample a minute
   // plus the manual refresh button.
-  latencyTimer = window.setInterval(() => void latency.probe(), LATENCY_REFRESH_MS)
+  latencyTimer = window.setInterval(() => {
+    void latency.probe()
+    // Also picks up a network switch (网线 ↔ Wi-Fi) for the 网络 label.
+    void runtime.refresh()
+  }, LATENCY_REFRESH_MS)
 })
 
 // A kernel restart (crash recovery, profile switch from the tray) replaces the

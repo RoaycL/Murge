@@ -14,6 +14,9 @@ const EXPECTED_LICENSES = [
   'pinia.txt',
   'zod.txt',
   'yaml.txt',
+  'lucide-vue-next.txt',
+  'tauri-apps-api.txt',
+  'rust-crates.txt',
   'go-winio.txt',
   'go-x-sys.txt',
   'go-yaml-v3.txt'

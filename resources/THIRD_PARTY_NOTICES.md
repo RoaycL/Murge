@@ -14,7 +14,8 @@ individual license texts.
 ## Runtime dependencies
 
 The following libraries are bundled inside the application runtime. All are
-MIT-licensed except `yaml`, which is ISC-licensed (both permissive). The full
+MIT-licensed except `yaml` and `lucide-vue-next` (ISC) and `@tauri-apps/api`
+(MIT or Apache-2.0); all are permissive. The full
 upstream copyright notices and license texts are shipped
 alongside the application in the `licenses/` resource directory (one file per
 package) and are the authoritative copies for preserving notices.
@@ -27,13 +28,18 @@ copyright owners and license terms are retained exactly as published upstream.
 | vue-router         | `licenses/vue-router.txt`    | 4.x     | MIT     |
 | pinia              | `licenses/pinia.txt`         | 3.x     | MIT     |
 | zod                | `licenses/zod.txt`           | 3.x     | MIT     |
+| lucide-vue-next    | `licenses/lucide-vue-next.txt` | 0.468.x | ISC   |
+| @tauri-apps/api    | `licenses/tauri-apps-api.txt` | 2.x    | MIT OR Apache-2.0 |
 | yaml               | `licenses/yaml.txt`          | 2.x     | ISC     |
 
 ## Application shell
 
 The desktop shell is built with Tauri 2 and Rust crates that are statically
-linked into the application executable. The web view is the Microsoft Edge
-WebView2 runtime provided by Windows; it is not redistributed by the installer.
+linked into the application executable. Every crate, its version, its declared
+license and the verbatim license texts from the published crates are listed in
+`licenses/rust-crates.txt` (generated from `src-tauri/Cargo.lock`). The web view
+is the Microsoft Edge WebView2 runtime provided by Windows; it is not
+redistributed by the installer.
 
 ## Privileged Windows service
 

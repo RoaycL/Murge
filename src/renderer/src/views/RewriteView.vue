@@ -444,6 +444,7 @@ onMounted(async () => {
 }
 .rewrite-primary { background: var(--app-blue); color: var(--app-on-accent); }
 .rewrite-secondary { background: var(--app-fill); color: inherit; }
-.rewrite-danger { background: transparent; color: var(--app-danger); }
+.rewrite-danger { background: color-mix(in srgb, var(--app-danger) 10%, transparent); color: var(--app-danger); }
+.rewrite-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--app-danger) 16%, transparent); }
 .rewrite-primary:disabled, .rewrite-secondary:disabled, .rewrite-danger:disabled { opacity: 0.55; cursor: default; }
 </style>

@@ -100,7 +100,7 @@ Murge 是一款基于 Tauri + Vue 3 构建的现代化 Mihomo 图形客户端，
 
 目前支持 Windows 10 / 11 的 x64 与 arm64。安装包会在需要时自动安装 Microsoft Edge WebView2 运行时。
 
-> **macOS 用户**：Murge 不提供 macOS 版本。如需 macOS 客户端，请使用 [Surge](https://nssurge.com) —— Murge 的 UI 设计即参考自此项目。
+> **macOS 用户**：Murge 不提供 macOS 版本。如需 macOS 客户端，请使用 [Surge](https://nssurge.com) 
 
 网络异常时的恢复方法见 [网络恢复](docs/NETWORK_RECOVERY.md)。
 

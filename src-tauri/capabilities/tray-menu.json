@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "tray-menu",
+  "description": "The frosted tray popup. It only listens for menu snapshots and calls the four tray_menu_* commands (which reject every other window); the desktop bridge refuses this window.",
+  "windows": ["tray-menu"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}

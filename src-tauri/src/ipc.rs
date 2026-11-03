@@ -46,6 +46,7 @@ use crate::lifecycle::runtime_update_guard;
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // Tauri injects each managed state independently.
 pub async fn desktop_ipc(
+    webview: tauri::Webview,
     channel: String,
     payload: Value,
     paths: State<'_, AppPaths>,
@@ -64,6 +65,12 @@ pub async fn desktop_ipc(
     tun: State<'_, std::sync::Arc<crate::tun::TunCoordinator>>,
     updates: State<'_, std::sync::Arc<crate::updates::UpdateService>>,
 ) -> IpcResult {
+    // The tray popup is a menu surface only; it never reaches the gateway.
+    if webview.label() == crate::tray_popup::POPUP_LABEL {
+        return Err(IpcError::internal(
+            "desktop bridge is not available to the tray popup",
+        ));
+    }
     if channel.starts_with("local:") {
         return crate::local_edits::dispatch(
             &channel, &payload, &kernel, &models, &profiles, &overrides,

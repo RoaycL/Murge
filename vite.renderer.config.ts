@@ -28,6 +28,13 @@ export default defineConfig({
   },
   build: {
     outDir: resolve('out/renderer'),
-    emptyOutDir: true
+    emptyOutDir: true,
+    rollupOptions: {
+      // The tray popup is its own tiny page: it must not boot the whole app.
+      input: {
+        main: resolve('src/renderer/index.html'),
+        'tray-menu': resolve('src/renderer/tray-menu.html')
+      }
+    }
   }
 })

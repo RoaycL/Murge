@@ -22,6 +22,18 @@ use crate::error::IpcError;
 
 const MAX_QUIT_RESTORE_ATTEMPTS: u32 = 3;
 const QUIT_RESTORE_RETRY_DELAY_MS: u64 = 250;
+/// How long the quit waits for an in-flight runtime mutation (typically a
+/// kernel start that never becomes ready) before tearing down anyway.
+const QUIT_DRAIN_TIMEOUT_MS: u64 = 5_000;
+/// The whole ordered restore → stop → dispose flow. A wedged step (a service
+/// pipe or controller that never answers while the kernel is broken) must not
+/// turn 退出 into a silent no-op: past this the app exits regardless.
+const QUIT_FLOW_TIMEOUT_MS: u64 = 20_000;
+/// Budget of each best-effort step on the forced path.
+const FORCED_STEP_TIMEOUT_MS: u64 = 2_000;
+/// After a forced `AppHandle::exit`, the process terminates itself if the
+/// event loop did not get there first.
+const FORCED_EXIT_GRACE_MS: u64 = 5_000;
 
 /// The `state.shutdownPromise` idempotency flag: concurrent quit signals join
 /// the flow already in flight instead of interleaving with it.
@@ -80,6 +92,8 @@ pub fn set_tray_ready(ready: bool) {
 pub enum QuitFlowResult {
     RestoreFailed,
     Quitting,
+    /// The flow did not finish within its budget (a step hung).
+    TimedOut,
 }
 
 type StopKernelCallback =
@@ -116,6 +130,23 @@ pub async fn run_quit_flow(deps: QuitFlowDeps) -> QuitFlowResult {
         dispose().await;
     }
     QuitFlowResult::Quitting
+}
+
+/// [`run_quit_flow`] under a hard deadline. A confirmed restore failure still
+/// blocks the quit (the user can retry); a step that never answers does not.
+pub async fn run_bounded_quit_flow(
+    deps: QuitFlowDeps,
+    timeout: std::time::Duration,
+) -> QuitFlowResult {
+    tokio::time::timeout(timeout, run_quit_flow(deps))
+        .await
+        .unwrap_or(QuitFlowResult::TimedOut)
+}
+
+/// Acquire-and-release the runtime gate, waiting at most `timeout`. Returns
+/// false when a holder (a hung kernel start) outlived the wait.
+async fn drain_gate(gate: &tokio::sync::Mutex<()>, timeout: std::time::Duration) -> bool {
+    tokio::time::timeout(timeout, gate.lock()).await.is_ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -240,6 +271,7 @@ async fn begin_application_shutdown_inner(
     if SHUTDOWN_IN_FLIGHT.swap(true, Ordering::SeqCst) {
         return Err(IpcError::internal("应用正在退出，请稍后重试"));
     }
+    crate::diag!("[lifecycle] shutdown requested (session_ending={session_ending})");
     if restart_after_shutdown {
         crate::updates::cancel_install_on_exit();
     }
@@ -257,38 +289,72 @@ async fn begin_application_shutdown_inner(
     // holding the boundary). Each flow step re-acquires the gate separately —
     // holding it across the whole flow would deadlock against the restore
     // step's own acquisition.
-    drop(crate::kernel::RUNTIME_UPDATE.lock().await);
-    let result = run_quit_flow(QuitFlowDeps {
-        restore: {
-            let app = app.clone();
-            Box::new(move || Box::pin(async move { restore_network_before_quit(&app).await }))
+    //
+    // Bounded: the fence above makes a kernel start abandon its ready wait,
+    // but a holder that still does not let go (a wedged service pipe) must
+    // not swallow the quit. The restore step's own acquisition is covered by
+    // the flow deadline below.
+    if !drain_gate(
+        &crate::kernel::RUNTIME_UPDATE,
+        std::time::Duration::from_millis(QUIT_DRAIN_TIMEOUT_MS),
+    )
+    .await
+    {
+        crate::diag!("[lifecycle] runtime gate still held after the drain window; continuing");
+    }
+    if !restart_after_shutdown {
+        // Immediate feedback: the window goes away while teardown runs. A
+        // cancelled quit (restore failed) reveals it again below.
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.hide();
+        }
+    }
+    let result = run_bounded_quit_flow(
+        QuitFlowDeps {
+            restore: {
+                let app = app.clone();
+                Box::new(move || Box::pin(async move { restore_network_before_quit(&app).await }))
+            },
+            stop_kernel: {
+                let app = app.clone();
+                Some(Box::new(move || {
+                    Box::pin(async move {
+                        // Inside the same mode queue as the restore step, so a
+                        // queued renderer transition cannot interleave.
+                        let _gate = crate::kernel::RUNTIME_UPDATE.lock().await;
+                        if let Some(kernel) =
+                            app.try_state::<std::sync::Arc<crate::kernel::KernelServices>>()
+                        {
+                            return kernel.stop().await;
+                        }
+                        Ok(serde_json::Value::Null)
+                    })
+                }))
+            },
+            dispose: {
+                let app = app.clone();
+                Some(Box::new(move || {
+                    Box::pin(async move { dispose_services(&app).await })
+                }))
+            },
         },
-        stop_kernel: {
-            let app = app.clone();
-            Some(Box::new(move || {
-                Box::pin(async move {
-                    // Inside the same mode queue as the restore step, so a
-                    // queued renderer transition cannot interleave.
-                    let _gate = crate::kernel::RUNTIME_UPDATE.lock().await;
-                    if let Some(kernel) =
-                        app.try_state::<std::sync::Arc<crate::kernel::KernelServices>>()
-                    {
-                        return kernel.stop().await;
-                    }
-                    Ok(serde_json::Value::Null)
-                })
-            }))
-        },
-        dispose: {
-            let app = app.clone();
-            Some(Box::new(move || {
-                Box::pin(async move { dispose_services(&app).await })
-            }))
-        },
-    });
+        std::time::Duration::from_millis(QUIT_FLOW_TIMEOUT_MS),
+    );
 
     let result = result.await;
     match result {
+        QuitFlowResult::TimedOut => {
+            crate::diag!(
+                "[lifecycle] shutdown did not finish within {QUIT_FLOW_TIMEOUT_MS}ms; forcing exit"
+            );
+            if restart_after_shutdown {
+                // A restart must not relaunch onto a half-torn-down runtime;
+                // forcing the exit is the safe end state either way.
+                crate::updates::cancel_install_on_exit();
+            }
+            force_exit(&app).await;
+            Ok(())
+        }
         QuitFlowResult::RestoreFailed => {
             if session_ending {
                 // The host may terminate the process immediately. Preserve the
@@ -332,6 +398,53 @@ async fn begin_application_shutdown_inner(
             Ok(())
         }
     }
+}
+
+/// The forced path (flow deadline passed, or the user picked 强制退出 while a
+/// quit hung): one bounded, gate-free attempt to put the owned system proxy
+/// back, a bounded log flush, then exit — with a process-level backstop in
+/// case the event loop itself is wedged. Anything left behind (proxy backup,
+/// TUN journal) is restored by the next launch's startup recovery.
+pub async fn force_exit(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    IS_QUITTING.fetch_or(ORDINARY_QUIT, Ordering::SeqCst);
+    let step = std::time::Duration::from_millis(FORCED_STEP_TIMEOUT_MS);
+    if let Some(proxy) = app.try_state::<std::sync::Arc<crate::system_proxy::SystemProxyService>>()
+    {
+        let proxy = proxy.inner().clone();
+        match tokio::time::timeout(step, proxy.restore_before_kernel_unavailable()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => crate::diag!(
+                "[lifecycle] forced exit: system proxy restore failed: {}",
+                error.extract_message()
+            ),
+            Err(_) => crate::diag!("[lifecycle] forced exit: system proxy restore timed out"),
+        }
+    }
+    let _ = tokio::time::timeout(step, flush_logs(app)).await;
+    arm_exit_backstop(std::time::Duration::from_millis(FORCED_EXIT_GRACE_MS));
+    app.exit(0);
+}
+
+/// A plain OS thread (not a runtime task, which a stuck runtime could starve)
+/// that ends the process if the orderly `exit` never completed.
+fn arm_exit_backstop(grace: std::time::Duration) {
+    static ARMED: AtomicBool = AtomicBool::new(false);
+    if ARMED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let _ = std::thread::Builder::new()
+        .name("murge-exit-backstop".to_string())
+        .spawn(move || {
+            std::thread::sleep(grace);
+            std::process::exit(0);
+        });
+}
+
+/// The tray's 强制退出 entry: skip the ordered flow still in flight.
+pub async fn force_quit_requested(app: tauri::AppHandle) {
+    crate::diag!("[lifecycle] force quit requested from the tray");
+    force_exit(&app).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -629,6 +742,65 @@ mod tests {
         });
         assert!(matches!(result.await, QuitFlowResult::Quitting));
         assert!(*disposed.lock().await);
+    }
+
+    #[tokio::test]
+    async fn a_hung_kernel_stop_cannot_swallow_the_quit() {
+        // The kernel failed to start and its service never answers the stop:
+        // the bounded flow must still come back (and the caller exits).
+        let result = run_bounded_quit_flow(
+            QuitFlowDeps {
+                restore: Box::new(|| ok(true)),
+                stop_kernel: Some(Box::new(|| Box::pin(std::future::pending()))),
+                dispose: None,
+            },
+            std::time::Duration::from_millis(50),
+        );
+        assert!(matches!(result.await, QuitFlowResult::TimedOut));
+    }
+
+    #[tokio::test]
+    async fn a_hung_restore_times_out_instead_of_blocking_forever() {
+        let result = run_bounded_quit_flow(
+            QuitFlowDeps {
+                restore: Box::new(|| Box::pin(std::future::pending())),
+                stop_kernel: None,
+                dispose: None,
+            },
+            std::time::Duration::from_millis(50),
+        );
+        assert!(matches!(result.await, QuitFlowResult::TimedOut));
+    }
+
+    #[tokio::test]
+    async fn the_bounded_flow_keeps_the_restore_failed_and_success_outcomes() {
+        let failed = run_bounded_quit_flow(
+            QuitFlowDeps {
+                restore: Box::new(|| ok(false)),
+                stop_kernel: None,
+                dispose: None,
+            },
+            std::time::Duration::from_secs(5),
+        );
+        assert!(matches!(failed.await, QuitFlowResult::RestoreFailed));
+        let quitting = run_bounded_quit_flow(
+            QuitFlowDeps {
+                restore: Box::new(|| ok(true)),
+                stop_kernel: None,
+                dispose: None,
+            },
+            std::time::Duration::from_secs(5),
+        );
+        assert!(matches!(quitting.await, QuitFlowResult::Quitting));
+    }
+
+    #[tokio::test]
+    async fn the_gate_drain_gives_up_on_a_holder_that_never_releases() {
+        let gate = tokio::sync::Mutex::new(());
+        let held = gate.lock().await;
+        assert!(!drain_gate(&gate, std::time::Duration::from_millis(50)).await);
+        drop(held);
+        assert!(drain_gate(&gate, std::time::Duration::from_millis(50)).await);
     }
 
     #[tokio::test]

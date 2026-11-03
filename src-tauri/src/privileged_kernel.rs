@@ -40,6 +40,15 @@ pub struct PrivilegedKernelOptions {
     /// (网关模式, allow-lan), read after every start and handed to the
     /// service (which forgets both when it restarts). None skips the sync.
     pub lan_gateway: Option<Arc<dyn Fn() -> (bool, bool) + Send + Sync>>,
+    /// Polled by every wait loop of a start. True abandons the start (the app
+    /// is quitting): a core that never becomes ready must not hold the start
+    /// queue — and the runtime gate the quit flow drains — for the whole
+    /// ready window.
+    pub abort: Arc<dyn Fn() -> bool + Send + Sync>,
+}
+
+fn start_aborted() -> IpcError {
+    IpcError::internal("应用正在退出，已取消内核启动")
 }
 
 impl Default for PrivilegedKernelOptions {
@@ -50,6 +59,7 @@ impl Default for PrivilegedKernelOptions {
             service_retry_ms: 10_000,
             poll_ms: 100,
             lan_gateway: None,
+            abort: Arc::new(|| false),
         }
     }
 }
@@ -279,6 +289,9 @@ impl PrivilegedKernelGateway {
         let deadline = Instant::now() + Duration::from_millis(self.options.ready_timeout_ms);
         let mut last_failure = "controller did not respond".to_string();
         while Instant::now() < deadline {
+            if (self.options.abort)() {
+                return Err(start_aborted());
+            }
             match (self.readiness)().await {
                 Ok(version) => return Ok(version),
                 Err(error) => last_failure = error.extract_message(),
@@ -318,6 +331,9 @@ impl PrivilegedKernelGateway {
                     if error.parts().0 == code::UPSTREAM_UNREACHABLE
                         && Instant::now() < deadline =>
                 {
+                    if (self.options.abort)() {
+                        return Err(start_aborted());
+                    }
                     tokio::time::sleep(Duration::from_millis(150)).await;
                 }
                 Err(error) => return Err(error),
@@ -341,6 +357,9 @@ impl PrivilegedKernelGateway {
                     if error.parts().0 == code::UPSTREAM_UNREACHABLE
                         && Instant::now() < deadline =>
                 {
+                    if (self.options.abort)() {
+                        return Err(start_aborted());
+                    }
                     if let Ok(reconciled) = self.client.reconcile().await {
                         if reconciled.outcome == "running" {
                             if let Some(owned) = self.client.get_owned_session() {
@@ -581,6 +600,7 @@ mod tests {
                 service_retry_ms: 500,
                 poll_ms: 1,
                 lan_gateway: None,
+                abort: Arc::new(|| false),
             },
         );
         (Arc::new(gateway), probes)
@@ -694,6 +714,58 @@ mod tests {
         );
         let error = gateway.start().await.unwrap_err();
         assert_eq!(error.parts().0, code::ARTIFACT_HASH_MISMATCH);
+    }
+
+    #[tokio::test]
+    async fn a_quit_abandons_a_start_whose_controller_never_becomes_ready() {
+        // The broken-kernel case: the service runs the core, the controller
+        // never answers. Without the abort the start holds its queue (and
+        // the runtime gate the quit drains) for the whole 60s ready window.
+        let transport = ScriptedTransport::default();
+        transport.push(|request| Ok(reply(request, "stopped", None, None))); // stale reconcile
+        running(&transport); // start
+        for _ in 0..64 {
+            transport.push(move |request| Ok(reply(request, "running", Some(SESSION), Some(321))));
+        }
+        let quitting = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = quitting.clone();
+        let polls = Arc::new(AtomicUsize::new(0));
+        let counter = polls.clone();
+        let gateway = PrivilegedKernelGateway::new(
+            Arc::new(TunServiceClient::new(Box::new(transport))),
+            Arc::new(|| Ok("mixed-port: 7890\n".to_string())),
+            Arc::new(move || {
+                // The user picks 退出 while the core is still not ready.
+                if counter.fetch_add(1, Ordering::SeqCst) == 2 {
+                    flag.store(true, Ordering::SeqCst);
+                }
+                Box::pin(async {
+                    Err(IpcError::code(
+                        code::UPSTREAM_UNREACHABLE,
+                        "controller unreachable",
+                    ))
+                })
+            }),
+            Arc::new(|| true),
+            Arc::new(|| ("stable".to_string(), None)),
+            PrivilegedKernelOptions {
+                ready_timeout_ms: 60_000,
+                poll_ms: 1,
+                abort: {
+                    let quitting = quitting.clone();
+                    Arc::new(move || quitting.load(Ordering::SeqCst))
+                },
+                ..PrivilegedKernelOptions::default()
+            },
+        );
+        let started = Instant::now();
+        let error = gateway.start().await.unwrap_err();
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "start must not wait out the ready window"
+        );
+        assert!(error.extract_message().contains("正在退出"));
+        assert_eq!(gateway.get_status()["phase"], "failed");
     }
 
     #[tokio::test]

@@ -894,7 +894,7 @@ fn bundled_archive_transport(
 /// The dev/fixture resolver (`resolvers.ts` FixtureKernelResolver): resolves a
 /// harmless fixture command that opens NO socket, so lifecycle behaviour can
 /// be proven without ever executing a real kernel. The fixture path defaults
-/// to the shared `src/main/testing/kernel-fixture.mjs` script; the command
+/// to the shared `tests/fixtures/kernel-fixture.mjs` script; the command
 /// defaults to `node` on PATH (override `MURGE_KERNEL_FIXTURE_COMMAND`).
 pub struct FixtureKernelBinaryResolver {
     pub command: String,
@@ -909,7 +909,7 @@ impl Default for FixtureKernelBinaryResolver {
         FixtureKernelBinaryResolver {
             command: std::env::var("MURGE_KERNEL_FIXTURE_COMMAND")
                 .unwrap_or_else(|_| "node".to_string()),
-            fixture_path: manifest.join("../src/main/testing/kernel-fixture.mjs"),
+            fixture_path: manifest.join("../tests/fixtures/kernel-fixture.mjs"),
             extra_args: Vec::new(),
             version: None,
         }

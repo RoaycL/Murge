@@ -25,10 +25,10 @@ describe('network drawer + resources UI contract', () => {
     expect(panel).toMatch(/unlock-region/)
   })
 
-  it('exposes the unlock IPC surface end to end (shared map → preload → DesktopApi)', async () => {
+  it('exposes the unlock IPC surface end to end (shared map → bridge surface → DesktopApi)', async () => {
     const [shared, preload] = await Promise.all([
       read('src/shared/ipc.ts'),
-      read('src/preload/index.ts')
+      read('src/bridge/desktop-surface.ts')
     ])
     expect(shared).toMatch(/unlockTestAll: 'network:unlock-test-all'/)
     expect(shared).toMatch(/unlockTestOne: 'network:unlock-test-one'/)
@@ -37,12 +37,6 @@ describe('network drawer + resources UI contract', () => {
     expect(preload).toMatch(/unlock: \{/)
     expect(preload).toMatch(/testAll: \(\) => invoke\(IPC\.unlockTestAll\)/)
     expect(preload).toMatch(/testOne: \(name\) => invoke\(IPC\.unlockTestOne, name\)/)
-  })
-
-  it('fails unlock probes closed when no live mixed port exists', async () => {
-    const service = await read('src/main/services/service-unlock-service.ts')
-    expect(service).toMatch(/UPSTREAM_UNREACHABLE/)
-    expect(service).not.toMatch(/setProxy\([^)]*mode:\s*'system'/s)
   })
 
   it('lists remote 集合 in one table with type filter, 仅显示未就绪 and per-row 配置查看', async () => {
@@ -72,10 +66,10 @@ describe('network drawer + resources UI contract', () => {
     expect(view).toMatch(/providers\.loadProviderCatalog\(\)/)
   })
 
-  it('wires the provider catalog IPC through preload and the store', async () => {
+  it('wires the provider catalog IPC through the bridge surface and the store', async () => {
     const [shared, preload, store] = await Promise.all([
       read('src/shared/ipc.ts'),
-      read('src/preload/index.ts'),
+      read('src/bridge/desktop-surface.ts'),
       read('src/renderer/src/stores/providers.ts')
     ])
     expect(shared).toMatch(/profilesGetActiveProviderCatalog: 'profiles:get-active-provider-catalog'/)
@@ -89,13 +83,11 @@ describe('network drawer + resources UI contract', () => {
   })
 
   it('opens actual provider contents through the restricted service-backed IPC', async () => {
-    const [view, modal, shared, preload, handlers, serviceProtocol] = await Promise.all([
+    const [view, modal, shared, preload] = await Promise.all([
       read('src/renderer/src/views/ResourcesView.vue'),
       read('src/renderer/src/components/ProviderContentModal.vue'),
       read('src/shared/ipc.ts'),
-      read('src/preload/index.ts'),
-      read('src/main/ipc/handlers.ts'),
-      read('src/main/tun/service-protocol.ts')
+      read('src/bridge/desktop-surface.ts')
     ])
     expect(view).toMatch(/查看代理集合内容/)
     expect(view).toMatch(/查看规则集合内容/)
@@ -104,9 +96,6 @@ describe('network drawer + resources UI contract', () => {
     expect(modal).toMatch(/getProviderContent\(kind, name\)/)
     expect(shared).toMatch(/profilesGetProviderContent: 'profiles:get-provider-content'/)
     expect(preload).toMatch(/getProviderContent: \(kind, name\) => invoke\(IPC\.profilesGetProviderContent, kind, name\)/)
-    expect(handlers).toMatch(/resolveProviderContent\(rawKind, name\)/)
-    expect(serviceProtocol).toMatch(/operation: z\.literal\('provider-content'\)/)
-    expect(serviceProtocol).not.toMatch(/operation: z\.literal\('provider-content'\)[\s\S]{0,300}\bpath:/)
   })
 
   it('animates the refresh glyph of the row currently updating, in both views', async () => {
@@ -178,16 +167,13 @@ describe('network drawer + resources UI contract', () => {
   })
 
   it('gives default-downloaded Sub-Store its own page under 更多', async () => {
-    const [resources, subStoreView, sidebar, subStoreIcon, settings, main, shared, service, store] = await Promise.all([
+    const [resources, subStoreView, sidebar, subStoreIcon, settings, shared, store] = await Promise.all([
       read('src/renderer/src/views/ResourcesView.vue'),
       read('src/renderer/src/views/SubStoreView.vue'),
       read('src/renderer/src/components/AppSidebar.vue'),
       read('src/renderer/src/components/SubStoreIcon.vue'),
       read('src/shared/app-settings.ts'),
-      // Phase 1: the Sub-Store launch wiring lives in the when-ready module.
-      read('src/main/electron/when-ready.ts'),
       read('src/shared/substore.ts'),
-      read('src/main/substore/service.ts'),
       read('src/renderer/src/stores/substore.ts')
     ])
     expect(resources).not.toMatch(/Sub-Store|subStore/)
@@ -199,7 +185,6 @@ describe('network drawer + resources UI contract', () => {
     expect(sidebar).toMatch(/to: '\/resources', label: '外部资源', icon: 'resources' \}/)
     expect(subStoreIcon).toMatch(/viewBox="14 14 80 80"/)
     expect(settings).toMatch(/subStoreEnabled:\s*true/)
-    expect(main).toMatch(/subStoreService\.ensureRunning\(\)/)
     expect(subStoreView).toMatch(/subStoreMergedUrl/)
     expect(subStoreView).toMatch(/<iframe/)
     expect(subStoreView).toMatch(/subStore.checkUpdate/)
@@ -207,36 +192,21 @@ describe('network drawer + resources UI contract', () => {
     // 共享契约：merge 模式单端口 + 固定官方下载源；服务层绑定 loopback。
     expect(shared).toMatch(/sub-store-org\/Sub-Store/)
     expect(shared).toMatch(/subStoreMergedUrl/)
-    expect(service).toMatch(/SUB_STORE_BACKEND_MERGE: '1'/)
-    expect(service).toMatch(/SUB_STORE_BACKEND_API_HOST: '127\.0\.0\.1'/)
-    expect(service).toMatch(/SUB_STORE_FRONTEND_BACKEND_PATH: '\/'/)
-    // 主进程服务：单 flight 启动 + 意外退出监控 + 关闭时终止。
-    expect(service).toMatch(/this\.starting/)
-    expect(service).toMatch(/onUnexpectedExit/)
-    expect(service).toMatch(/async openExternal/)
     expect(store).toMatch(/ensureRunning/)
   })
 
   it('keeps general settings backed by real persisted preferences', async () => {
-    const [shared, service, general] = await Promise.all([
+    const [shared, general] = await Promise.all([
       read('src/shared/app-settings.ts'),
-      read('src/main/app-settings/service.ts'),
       read('src/renderer/src/views/GeneralView.vue')
     ])
     // 三个后台行为都是持久化字段；通用页按产品要求只呈现启动/托盘项。
     for (const key of ['silentLaunch', 'closeToTray', 'proxyGuard']) {
       expect(shared).toMatch(new RegExp(`${key}: boolean`))
-      expect(service).toMatch(new RegExp(`${key}`))
     }
     expect(general).toMatch(/静默启动/)
     expect(general).toMatch(/silentLaunch: !appSettings\.settings\.silentLaunch/)
     expect(general).toMatch(/closeToTray/)
     expect(general).not.toMatch(/网络守护|系统代理守护|<small>/)
-    // 三个行为真正接进主进程: 登录项参数、窗口关闭、守护定时器。
-    await expect(read('src/main/startup/electron-adapter.ts')).resolves.toMatch(/getSilentLaunch/)
-    // Phase 1: the close-to-tray + proxy-guard settings consumers moved to the
-    // window adapter and when-ready module.
-    await expect(read('src/main/electron/window-adapter.ts')).resolves.toMatch(/cachedAppSettings\.closeToTray/)
-    await expect(read('src/main/electron/when-ready.ts')).resolves.toMatch(/cachedAppSettings\.proxyGuard/)
   })
 })

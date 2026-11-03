@@ -1,6 +1,5 @@
 // Build the per-machine NSIS installers for the Tauri shell, one per arch.
 //
-// The Tauri counterpart of `electron-builder.config.mjs` + `npm run package:win`.
 // tauri.conf.json cannot vary resources by arch, so this script verifies the
 // prepared per-arch inputs and passes them to `tauri build` as a config
 // overlay. Installed layout matches the Electron build (everything under

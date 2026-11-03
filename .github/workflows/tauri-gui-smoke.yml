@@ -69,8 +69,6 @@ jobs:
       - name: Check generated bridge is unchanged
         run: git diff --exit-code -- src/renderer/src/platform/generated/desktop-api.ts
       # Run source branding checks before restoring Rust-generated JSON files.
-      - name: Prepare Electron comparison executable and renderer
-        run: npx install-electron --no
       - run: npm run build
       - uses: Swatinem/rust-cache@v2
         with:
@@ -86,11 +84,6 @@ jobs:
       - name: Prepare test-only WebView2 inspection settings
         run: node "${{ inputs.source_ref != '' && 'ci-harness/' || '' }}scripts/ci-tauri-gui-config.mjs"
       - run: npm run tauri:build -- --debug --no-bundle --target x86_64-pc-windows-msvc --features tauri/devtools --config "$env:RUNNER_TEMP/tauri-gui-config.json"
-      # Both shells emit out/renderer. Tauri has now embedded its assets;
-      # restore Electron's file://-relative renderer for the comparison app.
-      # Source branding/type checks already passed before Rust cache restore.
-      - name: Restore Electron comparison assets after the Tauri renderer build
-        run: npx electron-vite build
       - name: Prepare a normal user integrity session for WebView2 inspection
         # Hosted Windows runs elevated. WebView2 ignores the CDP environment
         # switch in elevated apps; Tauri's own Windows e2e workflow uses gsudo
@@ -108,7 +101,7 @@ jobs:
       - name: Verify native window, live renderer IPC, stability and normal exit
         env:
           MURGE_TAURI_BUILD_PROFILE: debug
-        run: gsudo.exe --integrity Medium node "${{ inputs.source_ref != '' && 'ci-harness/' || '' }}scripts/ci-tauri-gui-smoke.mjs" --compare-electron
+        run: gsudo.exe --integrity Medium node "${{ inputs.source_ref != '' && 'ci-harness/' || '' }}scripts/ci-tauri-gui-smoke.mjs"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

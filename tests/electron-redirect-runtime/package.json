@@ -1,6 +1,0 @@
-{
-  "name": "murge-electron-redirect-probe",
-  "version": "1.0.0",
-  "private": true,
-  "main": "probe.cjs"
-}

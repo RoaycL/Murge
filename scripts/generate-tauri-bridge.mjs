@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Generate the Tauri desktop bridge from the Electron preload.
+ * Generate the Tauri desktop bridge from the desktop API surface.
  *
- * Single source of truth: `src/preload/index.ts` defines the `window.desktop`
+ * Single source of truth: `src/bridge/desktop-surface.ts` defines the `window.desktop`
  * method surface and `src/shared/ipc.ts` defines the wire channel names. This
  * script parses BOTH and emits
  * `src/renderer/src/platform/generated/desktop-api.ts`, a typed
@@ -10,27 +10,27 @@
  * same contract (including ProtocolError decoding).
  *
  * The generated file is committed; `tests/phase2-bridge-parity.test.ts`
- * regenerates it in-memory and fails when it is stale, so the two shells can
+ * regenerates it in-memory and fails when it is stale, so the bridge can
  * never drift silently.
  */
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { resolve, dirname } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
-const preloadPath = resolve(root, 'src/preload/index.ts')
+const surfacePath = resolve(root, 'src/bridge/desktop-surface.ts')
 const ipcPath = resolve(root, 'src/shared/ipc.ts')
 const outPath = resolve(root, 'src/renderer/src/platform/generated/desktop-api.ts')
 
-const preload = (await readFile(preloadPath, 'utf8')).replace(/\r\n?/g, '\n')
+const surface = (await readFile(surfacePath, 'utf8')).replace(/\r\n?/g, '\n')
 
-// --- Parse the preload api surface -----------------------------------------
-const apiStart = preload.indexOf('const api: DesktopApi = {')
-if (apiStart === -1) throw new Error('preload: api block not found')
+// --- Parse the api surface --------------------------------------------------
+const apiStart = surface.indexOf('export const api: DesktopApi = {')
+if (apiStart === -1) throw new Error('desktop surface: api block not found')
 
 let depth = 0
 let apiEnd = -1
-for (let i = preload.indexOf('{', apiStart); i < preload.length; i++) {
-  const ch = preload[i]
+for (let i = surface.indexOf('{', apiStart); i < surface.length; i++) {
+  const ch = surface[i]
   if (ch === '{') depth++
   else if (ch === '}') {
     depth--
@@ -40,12 +40,12 @@ for (let i = preload.indexOf('{', apiStart); i < preload.length; i++) {
     }
   }
 }
-if (apiEnd === -1) throw new Error('preload: unbalanced api block')
-const apiBody = preload.slice(preload.indexOf('{', apiStart), apiEnd + 1)
+if (apiEnd === -1) throw new Error('desktop surface: unbalanced api block')
+const apiBody = surface.slice(surface.indexOf('{', apiStart), apiEnd + 1)
 
 // Walk namespaces (two-space indent `name: {`) and method lines (four-space).
 // Preprocessing first normalizes `},  next: {` joins onto their own line (the
-// preload contains one such line).
+// surface contains one such line).
 const normalizedBody = apiBody.replace(/\},\s*(\w+): \{/g, '},\n  $1: {')
 const namespaces = []
 let current = null
@@ -78,7 +78,7 @@ for (const rawLine of normalizedBody.split('\n')) {
     continue
   }
 }
-if (namespaces.length === 0) throw new Error('preload: no namespaces parsed')
+if (namespaces.length === 0) throw new Error('desktop surface: no namespaces parsed')
 
 // --- Parse the IPC channel map ----------------------------------------------
 const ipcSource = (await readFile(ipcPath, 'utf8')).replace(/\r\n?/g, '\n')
@@ -95,7 +95,7 @@ for (const ns of namespaces) {
   }
 }
 if (missing.length > 0) {
-  throw new Error(`preload references channels missing from src/shared/ipc.ts:\n${missing.join('\n')}`)
+  throw new Error(`desktop surface references channels missing from src/shared/ipc.ts:\n${missing.join('\n')}`)
 }
 
 // --- Emit -------------------------------------------------------------------
@@ -103,18 +103,18 @@ const lines = []
 lines.push('// GENERATED FILE — do not edit by hand.')
 lines.push('// Regenerate with `npm run tauri:bridge`.')
 lines.push('//')
-lines.push('// Source of truth: src/preload/index.ts (method surface) + src/shared/ipc.ts')
+lines.push('// Source of truth: src/bridge/desktop-surface.ts (method surface) + src/shared/ipc.ts')
 lines.push('// (wire channel names). The Tauri shell renders window.desktop over')
 lines.push('// commands/events with the identical contract, so renderer code cannot')
-lines.push('// tell the shells apart (docs/tauri/phase2/README.md).')
+lines.push('// tell the shells apart.')
 lines.push("import { invoke as tauriInvoke } from '@tauri-apps/api/core'")
 lines.push("import { listen as tauriListen } from '@tauri-apps/api/event'")
 lines.push("import { decodeProtocolError } from '@shared/protocol-errors'")
 lines.push("import type { DesktopApi } from '@shared/ipc'")
 lines.push('')
 lines.push('/**')
-lines.push(' * Thin invoke wrapper with the exact error semantics of the Electron')
-lines.push(' * preload: Tauri command rejections arrive as the raw ProtocolError wire')
+lines.push(' * Thin invoke wrapper. Tauri command rejections arrive as the raw')
+lines.push(' * ProtocolError wire')
 lines.push(' * string (`PROTOCOL_ERROR:<CODE>::<message>`), decode them so the renderer')
 lines.push(' * can branch on a stable error code.')
 lines.push(' */')
@@ -129,7 +129,7 @@ lines.push('  }')
 lines.push('}')
 lines.push('')
 lines.push('/**')
-lines.push(' * Event subscription with the preload\'s synchronous-unsubscribe contract.')
+lines.push(' * Event subscription with a synchronous-unsubscribe contract.')
 lines.push(' * Tauri listen resolves asynchronously; a listener disposed before')
 lines.push(' * resolution unregisters immediately once it lands.')
 lines.push(' */')

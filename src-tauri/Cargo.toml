@@ -5,8 +5,8 @@ description = "A desktop network client powered by mihomo."
 edition = "2021"
 rust-version = "1.82"
 
-# Murge is dual-shelled during the migration: the Electron entry lives in
-# src/main/, the Tauri shell lives here. The crate name follows
+# The Tauri shell (Rust backend) lives here; the Vue UI is in src/renderer/.
+# The crate name follows
 # brand.config.json `executableName` so the packaged binary keeps the same
 # on-disk identity.
 [lib]

@@ -10,6 +10,7 @@
 pub mod ca;
 pub mod compat;
 pub mod engine;
+pub mod jq;
 pub mod rules;
 
 use std::path::{Path, PathBuf};

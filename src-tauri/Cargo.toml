@@ -73,6 +73,10 @@ rfd = "0.15"
 # Release manifests carry NSIS .exe payloads; ZIP extraction is unused.
 # Keep TLS/proxy support while excluding vulnerable optional zip 4.x.
 tauri-plugin-updater = { version = "~2.12", default-features = false, features = ["rustls-tls", "system-proxy"] }
+jaq-core = "2"
+jaq-std = { version = "2", default-features = false, features = ["format", "math", "regex", "time"] }
+jaq-json = "1"
+hifijson = "0.2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

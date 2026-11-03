@@ -112,6 +112,7 @@
 - 设置文件 `app-data/mitm/mitm.json`：`enabled`、`rewriteEnabled`、`skipServerCertVerify`、`hostnames`（解密页里直接维护的主机名）、`modules[]`。
 - 解析后的不支持行（如 `[Script]`、`#!arguments`）显示为警告，不阻断其它规则。
 - M2 兼容 Loon 插件 `[Rewrite]`（`正则 动作 参数`）和 QX `[rewrite_local]`（`正则 url 动作 参数`）：reject 系、30x、header、header-add/del/replace（含 request-/response- 前缀）、request/response-body-replace-regex、QX `response-body A response-body B`、Loon mock-response-body；script 和 echo-response 提示不支持。`[filter_local]` 按 `[Rule]` 处理，`[Argument]` / `[Plugin]` / `[general_local]` 忽略。
+- jq 正文改写：Surge `http-request-jq` / `http-response-jq`（内联表达式，单引号或双引号包住）和 Loon `request/response-body-json-jq`，用纯 Rust 的 jaq 执行，只对 JSON 正文生效，取第一个输出；解析失败、运行出错或没有输出时保留原文。`jq-path=` 外部文件暂不支持。jaq 删除键后可能改变键的顺序，不影响 JSON 语义。表达式由模块作者提供，死循环表达式会占住一个工作线程，这一点和 Surge 一样依赖模块可信。
 - 模块参数 `#!arguments=key:默认值,...`：正文里的 `{{{key}}}` 在解析前替换；「重写」页每个模块可以编辑参数，只保存模块声明过的键。
 
 ## 7. 界面

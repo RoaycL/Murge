@@ -44,6 +44,7 @@ http-request ^https://api\\.example\\.com header-del Cookie
 
 [Body Rewrite]
 http-response ^https://api\\.example\\.com/user "\\"vip\\":false" "\\"vip\\":true"
+http-response-jq ^https://api\\.example\\.com/feed 'del(.ads)'
 
 [Map Local]
 ^https://api\\.example\\.com/ads data-type=json data="{}"`
@@ -208,7 +209,7 @@ onMounted(async () => {
     <section>
       <h2>本地规则</h2>
       <SurfaceCard class="rewrite-card">
-        <p class="rewrite-hint">支持 [MITM]、[URL Rewrite]、[Header Rewrite]、[Body Rewrite]、[Map Local]、[Rule]，也能识别 Loon 的 [Rewrite] 和 Quantumult X 的 [rewrite_local]。[Rule] 只能使用 DIRECT 或 REJECT 策略。脚本（[Script]）暂不支持。</p>
+        <p class="rewrite-hint">支持 [MITM]、[URL Rewrite]、[Header Rewrite]、[Body Rewrite]、[Map Local]、[Rule]，也能识别 Loon 的 [Rewrite] 和 Quantumult X 的 [rewrite_local]。[Body Rewrite] 支持 jq 写法（http-response-jq）。[Rule] 只能使用 DIRECT 或 REJECT 策略。脚本（[Script]）暂不支持。</p>
         <textarea v-model="localText" class="rewrite-editor" spellcheck="false" :placeholder="LOCAL_PLACEHOLDER" />
         <ul v-if="state.localWarnings.length" class="rewrite-warnings">
           <li v-for="warning in state.localWarnings" :key="warning">{{ warning }}</li>

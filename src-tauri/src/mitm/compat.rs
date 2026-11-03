@@ -264,6 +264,23 @@ pub fn parse_compat_rewrite(line: &str) -> Result<RewriteItem, String> {
         }));
     }
     let first = || rest.first().cloned().ok_or_else(|| "缺少参数".to_string());
+    // Loon: `regex response-body-json-jq 'filter'` (raw text keeps quotes).
+    if let Some(kind) = action.strip_suffix("-body-json-jq") {
+        let phase = match kind {
+            "response" => Phase::Response,
+            "request" => Phase::Request,
+            _ => return Err(format!("不支持的操作 {action}")),
+        };
+        let skip = if args[1] == "url" { 3 } else { 2 };
+        let code = super::jq::unquote(super::jq::tail_after_tokens(line, skip));
+        super::jq::validate(&code)?;
+        return Ok(RewriteItem::Body(BodyRewrite {
+            phase,
+            pattern,
+            pairs: Vec::new(),
+            jq: Some(code),
+        }));
+    }
     match action.as_str() {
         "302" | "307" | "301" | "308" => Ok(RewriteItem::Url(UrlRewrite {
             pattern,
@@ -319,6 +336,7 @@ pub fn parse_compat_rewrite(line: &str) -> Result<RewriteItem, String> {
                 },
                 pattern,
                 pairs,
+                jq: None,
             }))
         }
         // QX: `url response-body A response-body B`.
@@ -335,6 +353,7 @@ pub fn parse_compat_rewrite(line: &str) -> Result<RewriteItem, String> {
                 phase,
                 pattern,
                 pairs: vec![(compile(&rest[0])?, to_rust_replacement(&rest[2]))],
+                jq: None,
             }))
         }
         // Loon: `regex mock-response-body data-type=json data="…" status-code=200`.
@@ -429,6 +448,21 @@ pub fn declared_arguments(text: &str) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loon_and_qx_json_jq_rewrites() {
+        for line in [
+            r#"^https://a\.com/v1 response-body-json-jq 'del(.ad)'"#,
+            r#"^https://a\.com/v1 url response-body-json-jq 'del(.ad)'"#,
+        ] {
+            let RewriteItem::Body(rule) = parse_compat_rewrite(line).unwrap() else {
+                panic!("{line}");
+            };
+            assert!(matches!(rule.phase, Phase::Response));
+            assert_eq!(rule.jq.as_deref(), Some("del(.ad)"));
+        }
+        assert!(parse_compat_rewrite(r#"^https://a response-body-json-jq 'del(.a'"#).is_err());
+    }
 
     #[test]
     fn converts_surge_loon_and_qx_rules() {

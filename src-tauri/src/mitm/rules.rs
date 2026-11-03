@@ -95,6 +95,8 @@ pub struct BodyRewrite {
     pub phase: Phase,
     pub pattern: Regex,
     pub pairs: Vec<(Regex, String)>,
+    /// A jq filter applied to JSON bodies before the regex pairs.
+    pub jq: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -534,10 +536,24 @@ fn parse_header_rewrite(line: &str) -> Result<HeaderRewrite, String> {
 
 fn parse_body_rewrite(line: &str) -> Result<BodyRewrite, String> {
     let args = split_args(line);
-    let Some(phase) = args.first().and_then(|t| parse_phase(t)) else {
-        if args.first().is_some_and(|t| t.ends_with("-jq")) {
-            return Err("暂不支持 jq 改写".into());
+    if let Some(kind) = args.first().and_then(|t| t.strip_suffix("-jq")) {
+        let phase =
+            parse_phase(kind).ok_or("第一个参数应为 http-request-jq 或 http-response-jq")?;
+        let pattern = compile(args.get(1).ok_or("缺少 URL 正则")?)?;
+        let raw = super::jq::tail_after_tokens(line, 2);
+        if raw.starts_with("jq-path=") {
+            return Err("暂不支持 jq-path（请改用内联 jq 表达式）".into());
         }
+        let code = super::jq::unquote(raw);
+        super::jq::validate(&code)?;
+        return Ok(BodyRewrite {
+            phase,
+            pattern,
+            pairs: Vec::new(),
+            jq: Some(code),
+        });
+    }
+    let Some(phase) = args.first().and_then(|t| parse_phase(t)) else {
         return Err("第一个参数应为 http-request 或 http-response".into());
     };
     if args.len() < 4 || (args.len() - 2) % 2 != 0 {
@@ -552,6 +568,7 @@ fn parse_body_rewrite(line: &str) -> Result<BodyRewrite, String> {
         phase,
         pattern,
         pairs,
+        jq: None,
     })
 }
 
@@ -947,6 +964,11 @@ pub fn apply_header_rules<'a>(
 pub fn apply_body_rules(body: &str, rules: &[&BodyRewrite]) -> Option<String> {
     let mut text = body.to_string();
     for rule in rules {
+        if let Some(code) = &rule.jq {
+            if let Some(next) = super::jq::apply(code, &text) {
+                text = next;
+            }
+        }
         for (re, replacement) in &rule.pairs {
             text = re.replace_all(&text, replacement.as_str()).into_owned();
         }
@@ -957,6 +979,22 @@ pub fn apply_body_rules(body: &str, rules: &[&BodyRewrite]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn surge_jq_body_rewrite_applies_to_json() {
+        let module = parse_module(
+            "[Body Rewrite]\nhttp-response-jq ^https://api\\.example\\.com/feed 'del(.ads) | .items |= map(select(.type != \"ad\"))'\nhttp-request-jq ^https://api\\.example\\.com 'del(.a'\n",
+        );
+        assert_eq!(module.body_rewrites.len(), 1, "{:?}", module.warnings);
+        assert!(module.warnings.iter().any(|w| w.contains("jq")));
+        let rule = &module.body_rewrites[0];
+        let out = apply_body_rules(
+            r#"{"ads":[1],"items":[{"type":"ad"},{"type":"post"}]}"#,
+            &[rule],
+        );
+        assert_eq!(out.as_deref(), Some(r#"{"items":[{"type":"post"}]}"#));
+        assert!(apply_body_rules("<html>", &[rule]).is_none());
+    }
 
     #[test]
     fn split_args_honors_quotes() {
@@ -992,7 +1030,7 @@ http-request ^https://api\.example\.com header-add X-Test 1
 http-response ^https://api\.example\.com header-replace-regex Set-Cookie "Secure" "Insecure"
 [Body Rewrite]
 http-response ^https://api\.example\.com/v1 "\"vip\":false" "\"vip\":true"
-http-response-jq ^https://x .
+http-response-jq ^https://x jq-path="https://x/a.jq"
 [Map Local]
 ^https://api\.example\.com/ads data-type=json data="{\"ads\":[]}" status-code=200 header="X-A:1|Content-Type:application/json; charset=utf-8"
 [Script]

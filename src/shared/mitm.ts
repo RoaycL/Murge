@@ -25,6 +25,14 @@ export interface MitmModuleInfo {
   ruleCount: number
   hostnames: string[]
   warnings: string[]
+  /** `#!arguments` declared by the module, with the user's current value. */
+  arguments: MitmModuleArgument[]
+}
+
+export interface MitmModuleArgument {
+  name: string
+  default: string
+  value: string
 }
 
 export interface MitmState {
@@ -32,6 +40,7 @@ export interface MitmState {
     enabled: boolean
     rewriteEnabled: boolean
     skipServerCertVerify: boolean
+    http2: boolean
     hostnames: string[]
     localModule: string
   }
@@ -48,6 +57,8 @@ export interface MitmState {
     headerRewrites: number
     bodyRewrites: number
     mapLocals: number
+    /** Module [Rule] lines handed to Mihomo. */
+    rules: number
   }
 }
 
@@ -64,7 +75,7 @@ export interface MitmRequestEntry {
 }
 
 export const EMPTY_MITM_STATE: MitmState = {
-  settings: { enabled: false, rewriteEnabled: true, skipServerCertVerify: false, hostnames: [], localModule: '' },
+  settings: { enabled: false, rewriteEnabled: true, skipServerCertVerify: false, http2: true, hostnames: [], localModule: '' },
   modules: [],
   localWarnings: [],
   ca: null,
@@ -72,7 +83,7 @@ export const EMPTY_MITM_STATE: MitmState = {
   engine: { running: false, port: null },
   active: false,
   inactiveReason: null,
-  summary: { hostnames: [], urlRewrites: 0, headerRewrites: 0, bodyRewrites: 0, mapLocals: 0 }
+  summary: { hostnames: [], urlRewrites: 0, headerRewrites: 0, bodyRewrites: 0, mapLocals: 0, rules: 0 }
 }
 
 /** Human labels for the pipeline actions recorded per request. */

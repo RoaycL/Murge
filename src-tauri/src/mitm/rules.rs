@@ -95,6 +95,8 @@ pub struct BodyRewrite {
     pub phase: Phase,
     pub pattern: Regex,
     pub pairs: Vec<(Regex, String)>,
+    /// A jq filter applied to JSON bodies before the regex pairs.
+    pub jq: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -116,6 +118,12 @@ pub struct ParsedModule {
     pub header_rewrites: Vec<HeaderRewrite>,
     pub body_rewrites: Vec<BodyRewrite>,
     pub map_locals: Vec<MapLocal>,
+    /// `[Rule]` lines converted to mihomo rules.
+    pub rules: Vec<String>,
+    /// Rule providers those rules reference: (name, behavior, url).
+    pub providers: Vec<(String, &'static str, String)>,
+    /// `#!arguments` declarations: (name, default).
+    pub arguments: Vec<(String, String)>,
     pub warnings: Vec<String>,
 }
 
@@ -125,6 +133,41 @@ impl ParsedModule {
             + self.header_rewrites.len()
             + self.body_rewrites.len()
             + self.map_locals.len()
+            + self.rules.len()
+    }
+
+    fn push_rewrite(&mut self, item: super::compat::RewriteItem) {
+        use super::compat::RewriteItem;
+        match item {
+            RewriteItem::Url(rule) => self.url_rewrites.push(rule),
+            RewriteItem::Header(rule) => self.header_rewrites.push(rule),
+            RewriteItem::Body(rule) => self.body_rewrites.push(rule),
+            RewriteItem::Map(rule) => self.map_locals.push(rule),
+        }
+    }
+
+    fn push_rule(&mut self, line: &str) -> Result<(), String> {
+        use super::compat::RuleItem;
+        match super::compat::convert_rule(line)? {
+            RuleItem::Plain(rule) => self.rules.push(rule),
+            RuleItem::Provider {
+                name,
+                behavior,
+                url,
+                rule,
+            } => {
+                if !self
+                    .providers
+                    .iter()
+                    .any(|(existing, _, _)| *existing == name)
+                {
+                    self.providers.push((name, behavior, url));
+                }
+                self.rules.push(rule);
+            }
+            RuleItem::UrlReject(rule) => self.url_rewrites.push(rule),
+        }
+        Ok(())
     }
 }
 
@@ -209,7 +252,7 @@ pub fn to_rust_replacement(input: &str) -> String {
     out
 }
 
-fn compile(pattern: &str) -> Result<Regex, String> {
+pub(super) fn compile(pattern: &str) -> Result<Regex, String> {
     if pattern.len() > MAX_PATTERN_LEN {
         return Err("正则过长".into());
     }
@@ -248,13 +291,36 @@ enum Section {
     HeaderRewrite,
     BodyRewrite,
     MapLocal,
+    Rule,
+    /// Loon `[Rewrite]` / Quantumult X `[rewrite_local]`.
+    Compat,
     Ignored,
     Unsupported,
 }
 
-/// Parse a Surge module (`.sgmodule`) or a bare rewrite snippet.
+/// Parse a Surge module (`.sgmodule`), Loon plugin, or Quantumult X snippet
+/// with the declared argument defaults.
 pub fn parse_module(text: &str) -> ParsedModule {
-    let mut module = ParsedModule::default();
+    parse_module_with(text, &std::collections::BTreeMap::new())
+}
+
+/// Parse with per-module `#!arguments` overrides applied first.
+pub fn parse_module_with(
+    text: &str,
+    overrides: &std::collections::BTreeMap<String, String>,
+) -> ParsedModule {
+    let arguments = super::compat::declared_arguments(text);
+    let substituted;
+    let text = if arguments.is_empty() {
+        text
+    } else {
+        substituted = super::compat::substitute_arguments(text, &arguments, overrides);
+        substituted.as_str()
+    };
+    let mut module = ParsedModule {
+        arguments,
+        ..Default::default()
+    };
     let mut section = Section::None;
     let mut warned_sections: Vec<String> = Vec::new();
     for (index, raw) in text.lines().enumerate() {
@@ -284,7 +350,9 @@ pub fn parse_module(text: &str) -> ParsedModule {
                 "header rewrite" => Section::HeaderRewrite,
                 "body rewrite" => Section::BodyRewrite,
                 "map local" => Section::MapLocal,
-                "general" | "host" => Section::Ignored,
+                "rule" | "filter_local" => Section::Rule,
+                "rewrite" | "rewrite_local" => Section::Compat,
+                "general" | "host" | "argument" | "plugin" | "general_local" => Section::Ignored,
                 _ => {
                     if !warned_sections.contains(&name) {
                         module
@@ -309,8 +377,19 @@ pub fn parse_module(text: &str) -> ParsedModule {
                 parse_body_rewrite(line).map(|rule| module.body_rewrites.push(rule))
             }
             Section::MapLocal => parse_map_local(line).map(|rule| module.map_locals.push(rule)),
+            Section::Rule => module.push_rule(line),
+            Section::Compat => {
+                super::compat::parse_compat_rewrite(line).map(|item| module.push_rewrite(item))
+            }
             Section::Ignored | Section::Unsupported => Ok(()),
-            Section::None => Err("不在任何段内".to_string()),
+            // A bare Quantumult X snippet: `hostname = …` plus rewrite lines.
+            Section::None => {
+                if line.starts_with("hostname") && line.contains('=') {
+                    parse_mitm_line(line, &mut module)
+                } else {
+                    super::compat::parse_compat_rewrite(line).map(|item| module.push_rewrite(item))
+                }
+            }
         };
         if let Err(message) = result {
             module
@@ -457,10 +536,24 @@ fn parse_header_rewrite(line: &str) -> Result<HeaderRewrite, String> {
 
 fn parse_body_rewrite(line: &str) -> Result<BodyRewrite, String> {
     let args = split_args(line);
-    let Some(phase) = args.first().and_then(|t| parse_phase(t)) else {
-        if args.first().is_some_and(|t| t.ends_with("-jq")) {
-            return Err("暂不支持 jq 改写".into());
+    if let Some(kind) = args.first().and_then(|t| t.strip_suffix("-jq")) {
+        let phase =
+            parse_phase(kind).ok_or("第一个参数应为 http-request-jq 或 http-response-jq")?;
+        let pattern = compile(args.get(1).ok_or("缺少 URL 正则")?)?;
+        let raw = super::jq::tail_after_tokens(line, 2);
+        if raw.starts_with("jq-path=") {
+            return Err("暂不支持 jq-path（请改用内联 jq 表达式）".into());
         }
+        let code = super::jq::unquote(raw);
+        super::jq::validate(&code)?;
+        return Ok(BodyRewrite {
+            phase,
+            pattern,
+            pairs: Vec::new(),
+            jq: Some(code),
+        });
+    }
+    let Some(phase) = args.first().and_then(|t| parse_phase(t)) else {
         return Err("第一个参数应为 http-request 或 http-response".into());
     };
     if args.len() < 4 || (args.len() - 2) % 2 != 0 {
@@ -475,6 +568,7 @@ fn parse_body_rewrite(line: &str) -> Result<BodyRewrite, String> {
         phase,
         pattern,
         pairs,
+        jq: None,
     })
 }
 
@@ -683,10 +777,22 @@ pub struct CompiledRules {
     pub header_rewrites: Vec<HeaderRewrite>,
     pub body_rewrites: Vec<BodyRewrite>,
     pub map_locals: Vec<MapLocal>,
+    pub mihomo_rules: Vec<String>,
+    pub providers: Vec<(String, &'static str, String)>,
 }
 
 pub struct ModuleSource<'a> {
     pub content: &'a str,
+    pub arguments: Option<&'a std::collections::BTreeMap<String, String>>,
+}
+
+impl<'a> ModuleSource<'a> {
+    pub fn plain(content: &'a str) -> Self {
+        ModuleSource {
+            content,
+            arguments: None,
+        }
+    }
 }
 
 impl CompiledRules {
@@ -706,7 +812,10 @@ impl CompiledRules {
             ..Default::default()
         };
         for module in modules {
-            let parsed = parse_module(module.content);
+            let parsed = match module.arguments {
+                Some(arguments) => parse_module_with(module.content, arguments),
+                None => parse_module(module.content),
+            };
             for host in parsed.hostnames {
                 if !hostnames.contains(&host) {
                     hostnames.push(host);
@@ -717,6 +826,16 @@ impl CompiledRules {
                 rules.header_rewrites.extend(parsed.header_rewrites);
                 rules.body_rewrites.extend(parsed.body_rewrites);
                 rules.map_locals.extend(parsed.map_locals);
+                for rule in parsed.rules {
+                    if !rules.mihomo_rules.contains(&rule) {
+                        rules.mihomo_rules.push(rule);
+                    }
+                }
+                for provider in parsed.providers {
+                    if !rules.providers.iter().any(|p| p.0 == provider.0) {
+                        rules.providers.push(provider);
+                    }
+                }
             }
         }
         rules.hosts = HostMatcher::new(&hostnames);
@@ -845,6 +964,11 @@ pub fn apply_header_rules<'a>(
 pub fn apply_body_rules(body: &str, rules: &[&BodyRewrite]) -> Option<String> {
     let mut text = body.to_string();
     for rule in rules {
+        if let Some(code) = &rule.jq {
+            if let Some(next) = super::jq::apply(code, &text) {
+                text = next;
+            }
+        }
         for (re, replacement) in &rule.pairs {
             text = re.replace_all(&text, replacement.as_str()).into_owned();
         }
@@ -855,6 +979,22 @@ pub fn apply_body_rules(body: &str, rules: &[&BodyRewrite]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn surge_jq_body_rewrite_applies_to_json() {
+        let module = parse_module(
+            "[Body Rewrite]\nhttp-response-jq ^https://api\\.example\\.com/feed 'del(.ads) | .items |= map(select(.type != \"ad\"))'\nhttp-request-jq ^https://api\\.example\\.com 'del(.a'\n",
+        );
+        assert_eq!(module.body_rewrites.len(), 1, "{:?}", module.warnings);
+        assert!(module.warnings.iter().any(|w| w.contains("jq")));
+        let rule = &module.body_rewrites[0];
+        let out = apply_body_rules(
+            r#"{"ads":[1],"items":[{"type":"ad"},{"type":"post"}]}"#,
+            &[rule],
+        );
+        assert_eq!(out.as_deref(), Some(r#"{"items":[{"type":"post"}]}"#));
+        assert!(apply_body_rules("<html>", &[rule]).is_none());
+    }
 
     #[test]
     fn split_args_honors_quotes() {
@@ -890,7 +1030,7 @@ http-request ^https://api\.example\.com header-add X-Test 1
 http-response ^https://api\.example\.com header-replace-regex Set-Cookie "Secure" "Insecure"
 [Body Rewrite]
 http-response ^https://api\.example\.com/v1 "\"vip\":false" "\"vip\":true"
-http-response-jq ^https://x .
+http-response-jq ^https://x jq-path="https://x/a.jq"
 [Map Local]
 ^https://api\.example\.com/ads data-type=json data="{\"ads\":[]}" status-code=200 header="X-A:1|Content-Type:application/json; charset=utf-8"
 [Script]
@@ -929,6 +1069,7 @@ hostname = %APPEND% api.example.com, *.example.com, -safe.example.com, *
         assert!(warnings.contains("不支持的类型 nope"), "{warnings}");
         assert!(warnings.contains("jq"), "{warnings}");
         assert!(warnings.contains("[Script]"), "{warnings}");
+        assert!(module.rules.is_empty());
         assert!(warnings.contains("不支持解密所有主机"), "{warnings}");
     }
 
@@ -966,8 +1107,7 @@ hostname = %APPEND% api.example.com, *.example.com, -safe.example.com, *
 
     #[test]
     fn compiled_rules_apply_url_header_and_body_rewrites() {
-        let rules =
-            CompiledRules::build(&["x.com".into()], &[ModuleSource { content: MODULE }], true);
+        let rules = CompiledRules::build(&["x.com".into()], &[ModuleSource::plain(MODULE)], true);
         assert!(rules.hosts.should_decrypt("x.com", 443));
         assert!(rules.hosts.should_decrypt("api.example.com", 443));
         let (rule, target) = rules
@@ -1006,7 +1146,7 @@ hostname = %APPEND% api.example.com, *.example.com, -safe.example.com, *
             .find_map_local("https://api.example.com/ads?x")
             .is_some());
 
-        let disabled = CompiledRules::build(&[], &[ModuleSource { content: MODULE }], false);
+        let disabled = CompiledRules::build(&[], &[ModuleSource::plain(MODULE)], false);
         assert!(disabled
             .find_url_rewrite("https://ad.example.com/x")
             .is_none());

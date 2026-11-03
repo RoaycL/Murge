@@ -902,6 +902,7 @@ impl LocalService {
             "staleEdits": report.stale_edits,
             "skippedNodes": report.skipped_nodes,
             "skippedRules": report.skipped_rules,
+            "managedProxies": [crate::mitm::PROXY_NAME, TAILSCALE_DIRECT_NAME],
             "tailscale": {
                 "detected": adapter.is_some(),
                 "interface": adapter,

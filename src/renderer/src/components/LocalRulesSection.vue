@@ -5,7 +5,7 @@ import { useToast } from '../composables/use-toast'
 import SurfaceCard from './SurfaceCard.vue'
 import AppIcon from './AppIcon.vue'
 import LocalRuleDrawer, { type SubscriptionRuleRef } from './LocalRuleDrawer.vue'
-import { MANAGED_PROXY_NAMES, RULE_TYPE_KEYWORDS, plainClone, type LocalRule, type RuleEdit } from '@shared/local'
+import { RULE_TYPE_KEYWORDS, isManagedProxy, plainClone, type LocalRule, type RuleEdit } from '@shared/local'
 
 const emit = defineEmits<{ changed: [] }>()
 const local = useLocalStore()
@@ -20,7 +20,7 @@ const rules = computed(() => local.settings.rules)
 const edits = computed(() => local.profileEdits)
 const stale = computed(() => new Set(local.state.staleEdits))
 const skipped = computed(() => new Set(local.state.skippedRules))
-const targets = computed(() => local.state.targets.filter((name) => !MANAGED_PROXY_NAMES.has(name)))
+const targets = computed(() => local.state.targets.filter((name) => !isManagedProxy(local.state, name)))
 
 function keyword(type: string): string {
   return RULE_TYPE_KEYWORDS[type] ?? type.toUpperCase()

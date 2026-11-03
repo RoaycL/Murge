@@ -59,6 +59,8 @@ export interface LocalState {
   skippedNodes: string[]
   skippedRules: string[]
   tailscale: { detected: boolean; interface: string | null; active: boolean }
+  /** Names of proxies the app injects itself. */
+  managedProxies: string[]
 }
 
 export const EMPTY_LOCAL_SETTINGS: LocalSettings = {
@@ -77,11 +79,17 @@ export const EMPTY_LOCAL_STATE: LocalState = {
   staleEdits: [],
   skippedNodes: [],
   skippedRules: [],
-  tailscale: { detected: false, interface: null, active: false }
+  tailscale: { detected: false, interface: null, active: false },
+  managedProxies: []
 }
 
-/** Injected by Murge itself; never offered as a user target. */
-export const MANAGED_PROXY_NAMES = new Set(['Murge-MITM', 'Murge-Tailscale'])
+/**
+ * Proxies the app injects itself (HTTPS 解密, Tailscale 共存); never offered
+ * as a user target. The Rust service reports the names in `managedProxies`.
+ */
+export function isManagedProxy(state: Pick<LocalState, 'managedProxies'>, name: string): boolean {
+  return state.managedProxies.includes(name)
+}
 
 /**
  * Controller rule type (`/rules` → `type`) to config keyword. Logic and

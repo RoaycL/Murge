@@ -178,7 +178,7 @@ function submit(): void {
           <label class="node-form-toggle"><span>自动添加 tailnet 规则<small>*.ts.net、100.64.0.0/10、fd7a:115c:a1e0::/48 走此节点，MagicDNS 也经由它解析</small></span><button type="button" class="switch" :class="{ on: tailnetRules }" role="switch" :aria-checked="tailnetRules" aria-label="自动添加 tailnet 规则" @click="tailnetRules = !tailnetRules" /></label>
         </div>
         <p v-if="tsNameWarning" class="node-form-error">{{ tsNameWarning }}</p>
-        <p class="node-form-hint">Murge 会作为一台设备加入你的 tailnet，只负责出站：可以访问 tailnet 里的设备、子网路由和出口节点，其他设备不能通过它访问这台电脑。没有填 Auth Key 时，首次启动的登录链接会出现在“日志”页。</p>
+        <p class="node-form-hint">这台电脑会作为一台设备加入你的 tailnet，只负责出站：可以访问 tailnet 里的设备、子网路由和出口节点，其他设备不能通过它访问这台电脑。没有填 Auth Key 时，首次启动的登录链接会出现在“日志”页。</p>
       </template>
 
       <template v-else>

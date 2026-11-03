@@ -8,7 +8,7 @@ import RefreshAllButton from '../components/RefreshAllButton.vue'
 import RefreshIndicator from '../components/RefreshIndicator.vue'
 import LocalRulesSection from '../components/LocalRulesSection.vue'
 import { useLocalStore } from '../stores/local'
-import { MANAGED_PROXY_NAMES, RULE_TYPE_KEYWORDS, ruleIdentity } from '@shared/local'
+import { RULE_TYPE_KEYWORDS, isManagedProxy, ruleIdentity } from '@shared/local'
 import type { MihomoRule } from '@shared/mihomo-api'
 
 const rules = useRulesStore()
@@ -19,7 +19,7 @@ const localSection = ref<InstanceType<typeof LocalRulesSection> | null>(null)
 
 /** Where a runtime rule came from, for the 来源 column and its action. */
 function ruleOrigin(row: MihomoRule): 'local' | 'edited' | 'managed' | 'subscription' | 'fixed' {
-  if (MANAGED_PROXY_NAMES.has(row.proxy)) return 'managed'
+  if (isManagedProxy(local.state, row.proxy)) return 'managed'
   const identity = ruleIdentity(row.type, row.payload, row.proxy)
   if (local.localRuleIdentities.has(identity)) return 'local'
   if (local.editedIdentities.has(identity)) return 'edited'
@@ -124,7 +124,7 @@ watch(() => kernel.status.phase, (phase, previous) => {
             <td>{{ formatHits(row) }}</td>
             <td class="rule-action-cell">
               <span v-if="ruleOrigin(row) === 'local'" class="rule-origin">本地</span>
-              <span v-else-if="ruleOrigin(row) === 'managed'" class="rule-origin managed" title="Murge 自动添加（Tailscale 共存 / HTTPS 解密）">自动</span>
+              <span v-else-if="ruleOrigin(row) === 'managed'" class="rule-origin managed" title="自动添加（Tailscale 共存 / HTTPS 解密）">自动</span>
               <button v-else-if="ruleOrigin(row) === 'edited'" type="button" class="rule-edit-button edited" :disabled="local.busy" @click="editRow(row)">已修改</button>
               <button v-else-if="ruleOrigin(row) === 'subscription'" type="button" class="rule-edit-button" :disabled="local.busy" @click="editRow(row)">修改</button>
             </td>

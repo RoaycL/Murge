@@ -35,6 +35,10 @@ export function latencyTitle(state: DelayNodeState, tailscale: boolean): string 
   if (tailscale && state.status !== 'ok' && state.status !== 'idle' && state.status !== 'testing') {
     return '延迟测试访问的是公网地址；没有设置出口节点的 Tailscale 节点只能访问 tailnet，测不出延迟不代表不可用'
   }
+  if (state.kind === 'control') {
+    const head = state.status === 'ok' ? '没有出口节点，测的是到控制服务器的往返时间' : '没有出口节点，测的是控制服务器，连不上时节点无法登录'
+    return `${head}（${state.url ?? ''}，经 ${state.via ?? 'DIRECT'}）${state.error ? `：${state.error}` : ''}`
+  }
   if (state.error) return state.error
   return state.url ? `测试地址：${state.url}` : '测试此节点'
 }

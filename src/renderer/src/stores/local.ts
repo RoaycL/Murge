@@ -7,6 +7,7 @@ import {
   ruleIdentity,
   parseRuleLine,
   tailnetRulesFor,
+  type LocalGroup,
   type LocalNode,
   type LocalRule,
   type LocalSettings,
@@ -98,6 +99,22 @@ export const useLocalStore = defineStore('local', () => {
     return save(next)
   }
 
+  function upsertGroup(group: LocalGroup): Promise<string | null> {
+    const next = clone()
+    next.groups ??= []
+    const draft = { ...group, id: group.id || newLocalId() }
+    const index = next.groups.findIndex((item) => item.id === draft.id)
+    if (index >= 0) next.groups[index] = draft
+    else next.groups.push(draft)
+    return save(next)
+  }
+
+  function removeGroup(id: string): Promise<string | null> {
+    const next = clone()
+    next.groups = (next.groups ?? []).filter((group) => group.id !== id)
+    return save(next)
+  }
+
   function addNodes(nodes: LocalNode[]): Promise<string | null> {
     const next = clone()
     next.nodes.push(...nodes.map((node) => ({ ...node, id: node.id || newLocalId() })))
@@ -179,6 +196,12 @@ export const useLocalStore = defineStore('local', () => {
     return delays.value[name] ?? { status: 'idle', delay: null }
   }
 
+  /** A Tailscale node without an exit node is measured at its control server. */
+  function measuresControl(name: string): boolean {
+    const node = settings.value.nodes.find((item) => item.config.name === name)
+    return !!node && String(node.config.type).toLowerCase() === 'tailscale' && !String(node.config['exit-node'] ?? '').trim()
+  }
+
   async function testNode(name: string): Promise<void> {
     const generation = (delayGeneration.get(name) ?? 0) + 1
     delayGeneration.set(name, generation)
@@ -187,10 +210,10 @@ export const useLocalStore = defineStore('local', () => {
     }
     set({ status: 'testing', delay: null })
     try {
-      const result = await window.desktop.mihomo.delayTest(name, { timeout: 10000 })
-      set(Number.isFinite(result.delay) && result.delay > 0 ? { status: 'ok', delay: result.delay, url: result.url } : { status: 'unavailable', delay: null })
+      const result = await window.desktop.local.nodeDelay(name)
+      set(Number.isFinite(result.delay) && result.delay > 0 ? { status: 'ok', delay: result.delay, url: result.url, kind: result.kind, via: result.via } : { status: 'unavailable', delay: null, kind: result.kind, via: result.via })
     } catch (error) {
-      set({ status: classifyDelayError(error), delay: null, error: toProtocolError(error).message })
+      set({ status: classifyDelayError(error), delay: null, error: toProtocolError(error).message, kind: measuresControl(name) ? 'control' : 'proxy' })
     }
   }
 
@@ -232,6 +255,8 @@ export const useLocalStore = defineStore('local', () => {
     refresh,
     save,
     upsertNode,
+    upsertGroup,
+    removeGroup,
     duplicateNode,
     delays,
     delayOf,

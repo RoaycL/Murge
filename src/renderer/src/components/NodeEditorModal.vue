@@ -4,6 +4,7 @@ import AppSelect from './AppSelect.vue'
 import { useDialogFocus } from '../composables/use-dialog-focus'
 import { isTailscaleDnsSafeName, plainClone, type LocalNode, type ProxyConfig } from '@shared/local'
 import { configToYaml, parseNodeText, type NodeEditorStart } from '../lib/local-node-form'
+import { nameFromFileName } from '@shared/wireguard-conf'
 import {
   PROTOCOLS,
   applyField,
@@ -199,13 +200,41 @@ function showForm(): void {
     return
   }
   try {
-    const { configs } = parseNodeText(text.value)
+    const { configs } = parseNodeText(text.value, '', { allowEmptyName: true })
     if (configs.length !== 1) throw new Error('内容里有多个节点，请直接保存，或只保留一个再切换到表单')
     const spec = formSpecOf(configs[0]!)
     if (!spec) throw new Error(`${configs[0]!.type} 的这份配置没有表单，请直接编辑内容`)
     load(configs[0]!, spec)
     portText.value = null
     mode.value = 'form'
+  } catch (problem) {
+    error.value = problem instanceof Error ? problem.message : String(problem)
+  }
+}
+
+const fileInput = ref<HTMLInputElement | null>(null)
+
+/** Loads a WireGuard .conf, Surge lines or mihomo YAML from a file. */
+async function importFile(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  error.value = null
+  notice.value = null
+  try {
+    const content = await file.text()
+    const { configs, warnings } = parseNodeText(content, nameFromFileName(file.name))
+    const spec = configs.length === 1 ? formSpecOf(configs[0]!) : null
+    if (spec) {
+      load(configs[0]!, spec)
+      portText.value = null
+      mode.value = 'form'
+    } else {
+      text.value = configs.length === 1 ? configToYaml(configs[0]!) : content
+      mode.value = 'text'
+    }
+    notice.value = warnings.length ? warnings.join('；') : `已导入「${file.name}」`
   } catch (problem) {
     error.value = problem instanceof Error ? problem.message : String(problem)
   }
@@ -270,7 +299,10 @@ const TEXT_PLACEHOLDER = `支持以下任一种内容，可以一次粘贴多个
     <div v-if="open" class="modal-shade node-modal-shade" role="presentation" @click.self="!busy && emit('close')">
       <section ref="dialog" class="node-modal" role="dialog" aria-modal="true" :aria-label="title">
         <header class="node-modal-head">
-          <h2>{{ title }}</h2>
+          <div>
+            <h2>{{ title }}</h2>
+            <p>{{ mode === 'form' ? '按协议填写，必填项留空会提示' : '粘贴 mihomo YAML、分享链接、Surge 代理行或 WireGuard 配置' }}</p>
+          </div>
           <div class="node-mode" role="tablist" aria-label="编辑方式">
             <button type="button" role="tab" :aria-selected="mode === 'form'" :class="{ on: mode === 'form' }" @click="showForm">表单</button>
             <button type="button" role="tab" :aria-selected="mode === 'text'" :class="{ on: mode === 'text' }" @click="showText">文本</button>
@@ -351,6 +383,10 @@ const TEXT_PLACEHOLDER = `支持以下任一种内容，可以一次粘贴多个
         </form>
 
         <footer class="node-modal-foot">
+          <template v-if="isNew">
+            <button type="button" class="surge-button" :disabled="busy" @click="fileInput?.click()">从文件导入…</button>
+            <input ref="fileInput" type="file" accept=".conf,.txt,.yaml,.yml,text/plain" hidden @change="importFile" />
+          </template>
           <p v-if="error" class="nf-error" role="alert">{{ error }}</p>
           <p v-else-if="notice" class="nf-hint">{{ notice }}</p>
           <span class="spacer" />
@@ -364,18 +400,20 @@ const TEXT_PLACEHOLDER = `支持以下任一种内容，可以一次粘贴多个
 
 <style scoped>
 .node-modal-shade { z-index: 72; }
-.node-modal { display: flex; flex-direction: column; width: min(920px, calc(100vw - 40px)); height: min(720px, calc(100vh - 48px)); overflow: hidden; border: 1px solid var(--app-divider); border-radius: var(--radius-large); color: var(--app-text); background: var(--app-popover); -webkit-backdrop-filter: var(--app-popover-filter); backdrop-filter: var(--app-popover-filter); box-shadow: 0 22px 70px rgba(0, 0, 0, 0.3); }
-.node-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px 14px; border-bottom: 1px solid var(--app-divider); }
-.node-modal-head h2 { margin: 0; font-size: var(--font-size-title); }
-.node-mode { display: inline-flex; padding: 2px; border-radius: var(--radius-control); background: var(--app-fill); }
-.node-mode button { min-width: 56px; height: 24px; padding: 0 12px; border: 0; border-radius: calc(var(--radius-control) - 2px); background: transparent; color: var(--app-muted); font-size: var(--font-size-xs); }
-.node-mode button.on { color: var(--app-text); background: var(--app-surface-solid); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
-.node-modal-body { flex: 1; min-height: 0; overflow: auto; padding: 16px 16px 20px; }
+.node-modal { display: flex; flex-direction: column; width: min(920px, calc(100vw - 40px)); height: min(720px, calc(100vh - 48px)); overflow: hidden; border: 1px solid var(--glass-edge); border-radius: 14px; color: var(--app-text); background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-filter); backdrop-filter: var(--glass-filter); box-shadow: var(--glass-shadow); }
+.node-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px 12px; border-bottom: 1px solid var(--app-divider); }
+.node-modal-head h2 { margin: 0; font-size: var(--font-size-body); font-weight: 650; }
+.node-modal-head p { margin: 3px 0 0; color: var(--app-muted); font-size: var(--font-size-2xs); }
+.node-mode { display: inline-flex; padding: 2px; border-radius: 7px; background: color-mix(in srgb, var(--app-text) 8%, transparent); box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--app-text) 8%, transparent); }
+.node-mode button { min-width: 56px; height: 22px; padding: 0 12px; border: 0; border-radius: 5px; background: transparent; color: var(--app-muted); font-size: var(--font-size-xs); }
+.node-mode button.on { color: var(--app-text); background: var(--app-surface-solid); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14), 0 0 0 0.5px rgba(0, 0, 0, 0.06); }
+.node-modal-body { flex: 1; min-height: 0; overflow: auto; padding: 16px 20px 20px; }
 .nf-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; align-items: start; }
 .nf-column { display: grid; gap: 16px; min-width: 0; }
-.nf-section h3 { margin: 0 0 6px 8px; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
-.nf-card { display: grid; padding: 0 14px; border-radius: var(--radius-panel); background: var(--app-surface-solid); }
-.nf-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); align-items: center; gap: 12px; min-height: 40px; padding: 6px 0; border-top: 1px solid var(--app-divider); font-size: var(--font-size-sm); }
+.nf-section h3 { margin: 0 0 6px 4px; color: var(--app-muted); font-size: var(--font-size-2xs); font-weight: 600; letter-spacing: 0.02em; }
+.nf-card { display: grid; padding: 0 14px; border-radius: 10px; background: color-mix(in srgb, var(--app-text) 4.5%, transparent); box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--app-text) 6%, transparent); }
+.nf-card .switch:not(.on) { background: color-mix(in srgb, var(--app-text) 20%, transparent); box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--app-text) 14%, transparent); }
+.nf-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); align-items: center; gap: 12px; min-height: 38px; padding: 6px 0; border-top: 1px solid var(--app-divider); font-size: var(--font-size-sm); }
 .nf-row:first-child { border-top: 0; }
 .nf-row.tall { align-items: start; }
 .nf-row:has(> .switch) { grid-template-columns: minmax(0, 1fr) auto; }
@@ -383,20 +421,21 @@ const TEXT_PLACEHOLDER = `支持以下任一种内容，可以一次粘贴多个
 .nf-label small { color: var(--app-muted); font-size: var(--font-size-2xs); line-height: 1.4; }
 .nf-control { min-width: 0; }
 .nf-control :deep(.app-select) { min-width: 0; }
-.nf-control :deep(.app-select-trigger) { min-height: 28px; }
-.nf-input { width: 100%; min-width: 0; height: 28px; padding: 0 9px; border: 1px solid var(--app-divider); border-radius: var(--radius-control); background: color-mix(in srgb, var(--app-surface-solid) 70%, var(--app-bg)); color: var(--app-text); font-size: var(--font-size-sm); }
+.nf-control :deep(.app-select-trigger) { min-height: 26px; border-radius: 6px; }
+.nf-input { width: 100%; min-width: 0; height: 26px; padding: 0 8px; border: 1px solid color-mix(in srgb, var(--app-text) 12%, transparent); border-radius: 6px; background: var(--app-surface-solid); color: var(--app-text); font-size: var(--font-size-sm); box-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.05); transition: border-color 0.12s, box-shadow 0.12s; }
 .nf-input::placeholder { color: var(--app-faint); }
 .nf-input:focus { outline: none; border-color: var(--app-blue); box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-blue) 22%, transparent); }
 .nf-area { height: auto; min-height: 64px; padding: 6px 9px; font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; resize: vertical; }
 .nf-endpoint { display: grid; grid-template-columns: minmax(0, 1fr) auto 74px; align-items: center; gap: 6px; }
 .nf-endpoint i { color: var(--app-muted); font-style: normal; }
 .nf-groups { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 11px 14px; font-size: var(--font-size-sm); }
+.nf-groups .surge-check input { accent-color: var(--app-blue); }
 .nf-text { display: grid; gap: 10px; height: 100%; grid-template-rows: minmax(220px, 1fr) auto auto; }
-.nf-text-area { height: 100%; min-height: 220px; padding: 12px 14px; font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; resize: none; }
+.nf-text-area { height: 100%; min-height: 220px; padding: 12px 14px; border-radius: 10px; font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; resize: none; }
 .nf-hint { margin: 0 6px; color: var(--app-muted); font-size: var(--font-size-xs); line-height: 1.5; }
 .nf-warning { margin: 0 6px; color: var(--app-warning, #d97706); font-size: var(--font-size-xs); line-height: 1.5; }
 .nf-error { margin: 0; color: var(--app-danger); font-size: var(--font-size-xs); line-height: 1.5; }
-.node-modal-foot { display: flex; align-items: center; gap: var(--space-3); padding: 12px 20px; border-top: 1px solid var(--app-divider); }
+.node-modal-foot { display: flex; align-items: center; gap: var(--space-3); padding: 12px 20px; border-top: 1px solid var(--app-divider); background: color-mix(in srgb, var(--app-text) 2%, transparent); }
 .node-modal-foot p { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .node-modal-foot .spacer { flex: 1; }
 @media (max-width: 760px) {

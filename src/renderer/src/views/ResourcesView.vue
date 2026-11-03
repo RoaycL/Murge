@@ -25,6 +25,15 @@ const moduleScripts = computed(() => mitm.state.scriptResources ?? [])
 const total = computed(() => providers.remoteProxyProviders.length + providers.remoteRuleProviders.length + remoteModules.value.length + moduleScripts.value.length)
 
 type ResourceKind = 'proxy' | 'rule' | 'module' | 'script'
+/** `…/rule-parser.js` → `rule-parser.js` for scripts declared without a name. */
+function scriptFileName(url: string): string {
+  try {
+    return decodeURIComponent(new URL(url).pathname.split('/').filter(Boolean).pop() ?? url)
+  } catch {
+    return url
+  }
+}
+
 const KIND_TEXT: Record<ResourceKind, string> = { proxy: '代理集合', rule: '规则集合', module: '模块', script: '脚本' }
 type ResourceStatus = 'ready' | 'updating' | 'failed' | 'pending'
 interface ResourceRow {
@@ -75,7 +84,7 @@ const rows = computed<ResourceRow[]>(() => [
     error: module.error
   })),
   ...moduleScripts.value.map((script) => ({
-    key: `script\0${script.url}`, kind: 'script' as const, name: script.name,
+    key: `script\0${script.url}`, kind: 'script' as const, name: script.name || scriptFileName(script.url),
     count: script.sources.join('、'), updatedAt: script.updatedAt ? new Date(script.updatedAt).toISOString() : undefined,
     url: script.url,
     status: (mitm.busy === `script-${script.url}` ? 'updating' : script.error ? 'failed' : script.cached ? 'ready' : 'pending') as ResourceStatus,
@@ -236,7 +245,7 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
       </div>
       <div v-for="row in visibleRows" :key="row.key" class="resource-tr" role="row" :class="`status-${row.status}`">
         <span role="cell" class="resource-kind">{{ KIND_TEXT[row.kind] }}</span>
-        <span v-if="row.kind === 'module' || row.kind === 'script'" role="cell" class="resource-name" :title="row.error ?? row.name"><strong>{{ row.name }}</strong><small>{{ row.count }}</small></span>
+        <span v-if="row.kind === 'module' || row.kind === 'script'" role="cell" class="resource-name" :title="row.error ?? `${row.name}${row.count ? ` · ${row.count}` : ''}`"><strong>{{ row.name }}</strong><small>{{ row.count }}</small></span>
         <button v-else role="cell" type="button" class="resource-name" :aria-label="row.kind === 'proxy' ? '查看代理集合配置' : '查看规则集合配置'" :title="row.error ?? row.name" @click="viewing = { kind: row.kind as 'proxy' | 'rule', name: row.name }"><strong>{{ row.name }}</strong><small>{{ row.count }}</small></button>
         <span role="cell" class="resource-updated" :title="row.kind === 'module' || row.kind === 'script' ? (row.updatedAt ?? undefined) : updatedAtText(row.kind === 'proxy' ? providers.proxyProviders[row.name] ?? null : providers.ruleProviders[row.name] ?? null)">{{ relativeTime(row.updatedAt) }}</span>
         <span role="cell" class="resource-path" :title="row.url || '未声明远程地址'"><span>{{ pathParts(row.url).head }}</span><span v-if="pathParts(row.url).tail">{{ pathParts(row.url).tail }}</span></span>
@@ -293,9 +302,10 @@ function subscriptionText(provider: MihomoProxyProvider | null): string {
 .resource-tr:not(.resource-th):hover { background: var(--app-fill-subtle); }
 .resource-th { min-height: 30px; color: var(--app-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); }
 .resource-kind { color: var(--app-muted); font-size: var(--font-size-xs); white-space: nowrap; }
-.resource-name { display: flex; align-items: baseline; gap: var(--space-3); min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
-.resource-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--font-weight-medium); }
-.resource-name small { flex: none; color: var(--app-muted); font-size: var(--font-size-2xs); }
+.resource-name { display: flex; align-items: baseline; gap: var(--space-3); min-width: 0; overflow: hidden; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-size: var(--font-size-sm); text-align: left; cursor: pointer; }
+span.resource-name { cursor: default; }
+.resource-name strong { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: inherit; font-weight: var(--font-weight-medium); }
+.resource-name small { flex: 0 10 auto; min-width: 0; overflow: hidden; color: var(--app-muted); font-size: var(--font-size-2xs); text-overflow: ellipsis; white-space: nowrap; }
 .resource-name:hover strong { color: var(--app-accent); }
 .resource-updated { color: var(--app-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .resource-path { display: flex; min-width: 0; color: var(--app-muted); font-size: var(--font-size-xs); white-space: nowrap; }

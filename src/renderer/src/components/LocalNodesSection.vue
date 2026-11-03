@@ -8,10 +8,11 @@ import NodeEditorModal from './NodeEditorModal.vue'
 import ConfirmModal from './ConfirmModal.vue'
 import SurfaceCard from './SurfaceCard.vue'
 import PopoverMenu from './PopoverMenu.vue'
+import PopoverSubmenu from './PopoverSubmenu.vue'
 import { latencyLabel, latencyTitle } from '../lib/node-latency'
 import { formatBytes, formatRate } from '../lib/format'
 import { nodeSummary, type NodeEditorStart } from '../lib/local-node-form'
-import { nameFromFileName, parseWireGuardText } from '@shared/wireguard-conf'
+import { nodeInfoSections } from '../lib/local-node-info'
 import { plainClone, type LocalNode } from '@shared/local'
 
 const emit = defineEmits<{ changed: [] }>()
@@ -24,11 +25,8 @@ const editing = ref<LocalNode | null>(null)
 const editorStart = ref<NodeEditorStart>({ mode: 'form', protocol: 'ss' })
 const editorOpen = ref(false)
 const removing = ref<LocalNode | null>(null)
-const menuOpen = ref(false)
-const menuAt = ref({ x: 0, y: 0 })
 const contextNode = ref<LocalNode | null>(null)
 const contextAt = ref({ x: 0, y: 0 })
-const fileInput = ref<HTMLInputElement | null>(null)
 
 const nodes = computed(() => local.settings.nodes)
 const skipped = computed(() => new Set(local.state.skippedNodes))
@@ -64,7 +62,7 @@ function cardStatus(node: LocalNode): { text: string; kind: string; title: strin
   if (skipped.value.has(node.id)) return { text: '重名，未生效', kind: 'timeout', title: '与订阅中的节点或策略组重名' }
   if (!running.value) return { text: '内核未运行', kind: 'idle', title: '启动内核后可以测试延迟' }
   const state = local.delayOf(node.config.name)
-  return { ...latencyLabel(state, isTailscale(node), '点击测试'), title: latencyTitle(state, isTailscale(node)) }
+  return { ...latencyLabel(state, false, '点击测试'), title: latencyTitle(state, false) }
 }
 
 const canTest = (node: LocalNode): boolean => running.value && node.enabled && !skipped.value.has(node.id) && local.delayOf(node.config.name).status !== 'testing'
@@ -91,15 +89,18 @@ const contextDelay = computed(() => {
   return state.status === 'ok' ? `${state.delay} ms` : null
 })
 
+const contextInfo = computed(() => {
+  const node = contextNode.value
+  if (!node) return []
+  const kind = String(node.config.type).toLowerCase()
+  if (kind !== 'tailscale' && kind !== 'wireguard') return []
+  const status = !node.enabled ? '已停用' : skipped.value.has(node.id) ? '重名，未生效' : running.value ? '就绪' : '内核未运行'
+  return nodeInfoSections(node.config as Record<string, unknown>, { status, connections: connections.snapshot?.connections ?? [] })
+})
+
 function openContext(event: MouseEvent, node: LocalNode): void {
   contextNode.value = node
   contextAt.value = { x: event.clientX, y: event.clientY }
-}
-
-function openAddMenu(event: MouseEvent): void {
-  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
-  menuAt.value = { x: rect.left, y: rect.bottom + 6 }
-  menuOpen.value = true
 }
 
 async function duplicate(node: LocalNode): Promise<void> {
@@ -107,7 +108,6 @@ async function duplicate(node: LocalNode): Promise<void> {
 }
 
 function openEditor(start: NodeEditorStart, node: LocalNode | null = null): void {
-  menuOpen.value = false
   editorStart.value = start
   editing.value = node ? plainClone(node) : null
   editorOpen.value = true
@@ -147,31 +147,6 @@ async function confirmRemove(): Promise<void> {
   if (await finish(await local.removeNode(node.id), '已删除')) removing.value = null
 }
 
-function pickFile(): void {
-  menuOpen.value = false
-  fileInput.value?.click()
-}
-
-async function importFile(event: Event): Promise<void> {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  input.value = ''
-  if (!file) return
-  if (file.size > 256 * 1024) {
-    toast.error('导入失败', '文件过大，WireGuard 配置通常只有几百字节')
-    return
-  }
-  try {
-    const result = parseWireGuardText(await file.text(), nameFromFileName(file.name))
-    let name = result.config.name
-    for (let i = 2; nodes.value.some((node) => node.config.name === name); i++) name = `${result.config.name} ${i}`
-    openEditor({ mode: 'form', protocol: 'wireguard' }, { id: '', enabled: true, config: { ...result.config, name }, groups: [], tailnetRules: true })
-    if (result.warnings.length) toast.info('已读取配置，请检查后保存', result.warnings.join('；'))
-  } catch (error) {
-    toast.error('导入失败', error instanceof Error ? error.message : String(error))
-  }
-}
-
 async function setCoexist(): Promise<void> {
   await finish(await local.setTailscaleCoexist(!local.settings.tailscaleCoexist), local.settings.tailscaleCoexist ? '已关闭' : '已开启')
 }
@@ -186,7 +161,6 @@ onMounted(() => {
     <div class="section-caption local-nodes-caption">
       <span>本地节点</span>
       <button v-if="nodes.length" type="button" class="local-test-all" :disabled="!running" @click="local.testAll()">测试全部</button>
-      <input ref="fileInput" type="file" accept=".conf,.txt,text/plain" hidden @change="importFile" />
     </div>
 
     <SurfaceCard v-if="ts.detected" class="local-ts-card">
@@ -212,20 +186,11 @@ onMounted(() => {
         </button>
         <button type="button" class="local-card-delay" :class="cardStatus(node).kind" :title="cardStatus(node).title" :disabled="!canTest(node)" @click="test(node)">{{ cardStatus(node).text }}</button>
       </div>
-      <button type="button" class="local-card local-card-add" :disabled="local.busy" aria-haspopup="menu" :aria-expanded="menuOpen" aria-label="添加本地节点" @click="openAddMenu">
+      <button type="button" class="local-card local-card-add" :disabled="local.busy" aria-label="添加本地节点" title="添加本地节点" @click="openEditor({ mode: 'form', protocol: 'ss' })">
         <span aria-hidden="true">+</span>
       </button>
     </div>
     <p v-if="!nodes.length" class="surge-hint local-empty">本地节点保存在订阅之外，更新或切换订阅都不会丢失。可以添加 WireGuard、Tailscale，或粘贴任意 mihomo 节点，并把它们加入现有的策略组。</p>
-
-    <PopoverMenu :open="menuOpen" :x="menuAt.x" :y="menuAt.y" label="添加本地节点" @close="menuOpen = false">
-      <button type="button" class="popover-item" role="menuitem" @click="openEditor({ mode: 'form', protocol: 'ss' })">新建节点…</button>
-      <button type="button" class="popover-item" role="menuitem" @click="openEditor({ mode: 'form', protocol: 'wireguard' })">WireGuard…</button>
-      <button type="button" class="popover-item" role="menuitem" @click="openEditor({ mode: 'form', protocol: 'tailscale' })">Tailscale…</button>
-      <div class="popover-sep" />
-      <button type="button" class="popover-item" role="menuitem" @click="openEditor({ mode: 'text' })">粘贴节点内容…</button>
-      <button type="button" class="popover-item" role="menuitem" @click="pickFile">导入 WireGuard 配置文件…</button>
-    </PopoverMenu>
 
     <PopoverMenu :open="!!contextNode" :x="contextAt.x" :y="contextAt.y" :label="contextNode?.config.name" @close="contextNode = null">
       <template v-if="contextNode">
@@ -246,12 +211,22 @@ onMounted(() => {
           <small v-else class="context-none">启动以来还没有经过这个节点的流量</small>
         </div>
         <div class="popover-sep" />
-        <button type="button" class="popover-item" role="menuitem" :disabled="local.busy" @click="edit(contextNode)">编辑节点…</button>
+        <template v-if="contextInfo.length">
+          <PopoverSubmenu :label="typeLabel(contextNode)">
+            <template v-for="(section, index) in contextInfo" :key="section.title">
+              <div v-if="index" class="popover-sep" />
+              <div class="popover-section">{{ section.title }}</div>
+              <span v-for="row in section.rows" :key="row.label" class="popover-info" :title="`${row.label}：${row.value}`">{{ row.label }}：{{ row.value }}</span>
+            </template>
+          </PopoverSubmenu>
+          <div class="popover-sep" />
+        </template>
+        <button type="button" class="popover-item" role="menuitem" :disabled="local.busy" @click="edit(contextNode)">编辑代理…</button>
         <button type="button" class="popover-item" role="menuitem" :disabled="local.busy" @click="duplicate(contextNode)">创建副本</button>
         <button type="button" class="popover-item" role="menuitem" :disabled="local.busy" @click="toggle(contextNode)">{{ contextNode.enabled ? '停用' : '启用' }}</button>
-        <button type="button" class="popover-item danger" role="menuitem" :disabled="local.busy" @click="removing = contextNode">删除节点…</button>
+        <button type="button" class="popover-item danger" role="menuitem" :disabled="local.busy" @click="removing = contextNode">删除代理…</button>
         <div class="popover-sep" />
-        <button type="button" class="popover-item" role="menuitem" :disabled="!canTest(contextNode)" @click="test(contextNode)">测试延迟</button>
+        <button type="button" class="popover-item" role="menuitem" :disabled="!canTest(contextNode)" @click="test(contextNode)">测试代理延迟</button>
       </template>
     </PopoverMenu>
 
@@ -295,6 +270,8 @@ onMounted(() => {
 .local-card-delay.idle { color: var(--app-faint); font-weight: var(--font-weight-regular); }
 .local-card-add { align-items: center; justify-content: center; border: 1px dashed var(--app-divider); background: transparent; color: var(--app-muted); font-size: 22px; font-weight: 300; }
 .local-card-add:disabled { opacity: 0.5; }
+.local-card-add span { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: color-mix(in srgb, var(--app-text) 16%, transparent); color: var(--app-surface-solid); font-size: 17px; font-weight: 500; line-height: 1; }
+.local-card-add:hover { border-color: color-mix(in srgb, var(--app-blue) 48%, var(--app-divider)); background: transparent; }
 .local-empty { margin-top: 10px; padding: 2px 4px; }
 .context-head { display: grid; gap: 4px; padding: 8px 10px 6px; }
 .context-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

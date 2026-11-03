@@ -253,3 +253,35 @@ describe('rule helpers', () => {
     expect(isTailscaleDnsSafeName('my tailnet')).toBe(false)
   })
 })
+
+describe('node text round trip', () => {
+  it('switches text back to the form while the name is still empty', async () => {
+    const { parseNodeText } = await import('../src/renderer/src/lib/local-node-form')
+    expect(() => parseNodeText('name: ""\ntype: ss\nserver: 1.2.3.4\nport: 8388\ncipher: aes-128-gcm\npassword: x', '')).toThrow()
+    const { configs } = parseNodeText('name: ""\ntype: ss\nserver: 1.2.3.4\nport: 8388\ncipher: aes-128-gcm\npassword: x', '', { allowEmptyName: true })
+    expect(configs[0]).toMatchObject({ type: 'ss', server: '1.2.3.4' })
+  })
+})
+
+describe('Tailscale / WireGuard node info', () => {
+  it('lists Surge-style sections and counts connections by network', async () => {
+    const { nodeInfoSections } = await import('../src/renderer/src/lib/local-node-info')
+    const connection = (network: string, exit: string) => ({ id: network + exit, metadata: { network }, upload: 0, download: 0, start: '', chains: [exit, 'Proxy'], rule: '', rulePayload: '' })
+    const sections = nodeInfoSections({ name: 'TS', type: 'tailscale', hostname: 'pc', 'exit-node': 'nas' }, { status: '运行中', connections: [connection('tcp', 'TS'), connection('udp', 'TS'), connection('tcp', 'HK')] })
+    expect(sections.map((section) => section.title)).toEqual(['连接', '设备', '活动', '路由'])
+    expect(sections[2]!.rows).toEqual([{ label: '活跃 TCP 连接', value: '1' }, { label: '活跃 UDP 连接', value: '1' }])
+    expect(sections[3]!.rows[0]).toEqual({ label: 'Exit Node', value: 'nas' })
+    const wg = nodeInfoSections({ name: 'WG', type: 'wireguard', server: '1.2.3.4', port: 51820, ip: '10.0.0.2/32' }, { status: '运行中', connections: [] })
+    expect(wg[0]!.rows).toContainEqual({ label: '服务器', value: '1.2.3.4:51820' })
+    expect(wg[1]!.rows[0]).toEqual({ label: 'IPv4', value: '10.0.0.2/32' })
+  })
+
+  it('maps processes and proxy types to built-in marks', async () => {
+    const { processBrand, proxyTypeBrand } = await import('../src/renderer/src/lib/brand-icons')
+    expect(processBrand('tailscaled.exe')).toBe('tailscale')
+    expect(processBrand(undefined, 'C:\\Program Files\\WireGuard\\wireguard.exe')).toBe('wireguard')
+    expect(processBrand('chrome.exe')).toBeNull()
+    expect(proxyTypeBrand('Tailscale')).toBe('tailscale')
+    expect(proxyTypeBrand('WireGuard')).toBe('wireguard')
+  })
+})

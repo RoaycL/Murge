@@ -4,13 +4,13 @@ import { useLocalStore } from '../stores/local'
 import { useToast } from '../composables/use-toast'
 import { useKernelStore } from '../stores/kernel'
 import { useConnectionsStore } from '../stores/connections'
-import LocalNodeDrawer from './LocalNodeDrawer.vue'
+import NodeEditorModal from './NodeEditorModal.vue'
 import ConfirmModal from './ConfirmModal.vue'
 import SurfaceCard from './SurfaceCard.vue'
 import PopoverMenu from './PopoverMenu.vue'
 import { latencyLabel, latencyTitle } from '../lib/node-latency'
 import { formatBytes, formatRate } from '../lib/format'
-import { nodeSummary, type NodeEditorKind } from '../lib/local-node-form'
+import { nodeSummary, type NodeEditorStart } from '../lib/local-node-form'
 import { nameFromFileName, parseWireGuardText } from '@shared/wireguard-conf'
 import { plainClone, type LocalNode } from '@shared/local'
 
@@ -21,7 +21,7 @@ const connections = useConnectionsStore()
 const toast = useToast()
 
 const editing = ref<LocalNode | null>(null)
-const editorKind = ref<NodeEditorKind>('wireguard')
+const editorStart = ref<NodeEditorStart>({ mode: 'form', protocol: 'ss' })
 const editorOpen = ref(false)
 const removing = ref<LocalNode | null>(null)
 const menuOpen = ref(false)
@@ -106,16 +106,15 @@ async function duplicate(node: LocalNode): Promise<void> {
   await finish(await local.duplicateNode(node.id), '已创建副本')
 }
 
-function openEditor(kind: NodeEditorKind, node: LocalNode | null = null): void {
+function openEditor(start: NodeEditorStart, node: LocalNode | null = null): void {
   menuOpen.value = false
-  editorKind.value = kind
+  editorStart.value = start
   editing.value = node ? plainClone(node) : null
   editorOpen.value = true
 }
 
 function edit(node: LocalNode): void {
-  const type = String(node.config.type).toLowerCase()
-  openEditor(type === 'tailscale' ? 'tailscale' : type === 'wireguard' ? 'wireguard' : 'yaml', node)
+  openEditor({ mode: 'form', protocol: '' }, node)
 }
 
 async function finish(message: string | null, success: string): Promise<boolean> {
@@ -166,7 +165,7 @@ async function importFile(event: Event): Promise<void> {
     const result = parseWireGuardText(await file.text(), nameFromFileName(file.name))
     let name = result.config.name
     for (let i = 2; nodes.value.some((node) => node.config.name === name); i++) name = `${result.config.name} ${i}`
-    openEditor('wireguard', { id: '', enabled: true, config: { ...result.config, name }, groups: [], tailnetRules: true })
+    openEditor({ mode: 'form', protocol: 'wireguard' }, { id: '', enabled: true, config: { ...result.config, name }, groups: [], tailnetRules: true })
     if (result.warnings.length) toast.info('已读取配置，请检查后保存', result.warnings.join('；'))
   } catch (error) {
     toast.error('导入失败', error instanceof Error ? error.message : String(error))
@@ -220,10 +219,12 @@ onMounted(() => {
     <p v-if="!nodes.length" class="surge-hint local-empty">本地节点保存在订阅之外，更新或切换订阅都不会丢失。可以添加 WireGuard、Tailscale，或粘贴任意 mihomo 节点，并把它们加入现有的策略组。</p>
 
     <PopoverMenu :open="menuOpen" :x="menuAt.x" :y="menuAt.y" label="添加本地节点" @close="menuOpen = false">
-      <button type="button" class="popover-item" role="menuitem" @click="openEditor('wireguard')">WireGuard</button>
+      <button type="button" class="popover-item" role="menuitem" @click="openEditor({ mode: 'form', protocol: 'ss' })">新建节点…</button>
+      <button type="button" class="popover-item" role="menuitem" @click="openEditor({ mode: 'form', protocol: 'wireguard' })">WireGuard…</button>
+      <button type="button" class="popover-item" role="menuitem" @click="openEditor({ mode: 'form', protocol: 'tailscale' })">Tailscale…</button>
+      <div class="popover-sep" />
+      <button type="button" class="popover-item" role="menuitem" @click="openEditor({ mode: 'text' })">粘贴节点内容…</button>
       <button type="button" class="popover-item" role="menuitem" @click="pickFile">导入 WireGuard 配置文件…</button>
-      <button type="button" class="popover-item" role="menuitem" @click="openEditor('tailscale')">Tailscale</button>
-      <button type="button" class="popover-item" role="menuitem" @click="openEditor('yaml')">粘贴节点（mihomo YAML）</button>
     </PopoverMenu>
 
     <PopoverMenu :open="!!contextNode" :x="contextAt.x" :y="contextAt.y" :label="contextNode?.config.name" @close="contextNode = null">
@@ -254,15 +255,14 @@ onMounted(() => {
       </template>
     </PopoverMenu>
 
-    <LocalNodeDrawer
+    <NodeEditorModal
       :open="editorOpen"
       :node="editing"
-      :kind="editorKind"
+      :start="editorStart"
       :groups="local.state.groups"
       :targets="local.state.targets"
       :taken-names="takenNames"
       :busy="local.busy"
-      :error="null"
       @close="editorOpen = false"
       @save="save"
       @save-many="saveMany"

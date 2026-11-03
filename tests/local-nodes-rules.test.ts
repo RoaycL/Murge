@@ -1,16 +1,23 @@
 import { describe, expect, it } from 'vitest'
 import { nameFromFileName, parseEndpoint, parseWireGuardText } from '@shared/wireguard-conf'
 import { formatRuleLine, isTailscaleDnsSafeName, parseRuleLine, ruleIdentity, splitRuleLine, tailnetRulesFor } from '@shared/local'
+import { nodeSummary, parseNodeText, parseProxiesYaml } from '@renderer/lib/local-node-form'
 import {
-  nodeSummary,
-  parseProxiesYaml,
-  tailscaleConfigFrom,
-  tailscaleFormFrom,
-  emptyTailscaleForm,
-  wireGuardConfigFrom,
-  wireGuardFormFrom,
-  wireGuardNeedsYaml
-} from '@renderer/lib/local-node-form'
+  PROTOCOLS,
+  applyField,
+  commonSections,
+  fieldText,
+  getPath,
+  newConfig,
+  protocolById,
+  protocolOf,
+  setPath,
+  switchProtocol,
+  validateConfig,
+  visibleSections,
+  type FieldSpec
+} from '@renderer/lib/proxy-schema'
+import { parseShareLink, parseSurgeLine } from '@shared/proxy-import'
 
 const WG_QUICK = `[Interface]
 # home server
@@ -76,7 +83,6 @@ AllowedIPs = 10.0.2.0/24
       { server: '203.0.113.9', port: 443, 'public-key': 'p2', 'allowed-ips': ['10.0.2.0/24'] }
     ])
     expect(config.server).toBeUndefined()
-    expect(wireGuardNeedsYaml(config)).toBe(true)
   })
 
   it('reads Surge [WireGuard] sections including WARP client-id', () => {
@@ -110,29 +116,111 @@ peer = (public-key = pub, allowed-ips = "0.0.0.0/0, ::/0", endpoint = engage.clo
   })
 })
 
-describe('node editor forms', () => {
-  it('round-trips WireGuard and keeps unmanaged keys', () => {
-    const { config } = parseWireGuardText(WG_QUICK, 'home')
-    const base = { ...config, 'refresh-server-ip-interval': 60 }
-    const form = wireGuardFormFrom(base)
-    expect(form.dns).toBe('1.1.1.1, 8.8.8.8')
-    form.dns = ''
-    form.reserved = '1/2/3'
-    const next = wireGuardConfigFrom(form, base)
-    expect(next['refresh-server-ip-interval']).toBe(60)
-    expect(next.dns).toBeUndefined()
-    expect(next['remote-dns-resolve']).toBeUndefined()
-    expect(next.reserved).toEqual([1, 2, 3])
-    expect(() => wireGuardConfigFrom({ ...form, port: '0' })).toThrow('端口')
+describe('node editor schema', () => {
+  const sectionsOf = (id: string) => {
+    const spec = protocolById(id)!
+    return [...spec.sections, ...commonSections(spec, [{ value: '', label: '不使用' }])]
+  }
+  const field = (id: string, key: string): FieldSpec => sectionsOf(id).flatMap((section) => section.fields).find((item) => item.key === key)!
+
+  it('maps configs to editor protocols', () => {
+    expect(protocolOf({ type: 'http', tls: true })?.id).toBe('https')
+    expect(protocolOf({ type: 'socks5' })?.id).toBe('socks5')
+    expect(protocolOf({ type: 'Shadowsocks' })?.id).toBe('ss')
+    expect(protocolOf({ type: 'hysteria2' })?.id).toBe('hysteria2')
+    expect(protocolOf({ type: 'mieru' })).toBeNull()
+    expect(new Set(PROTOCOLS.map((spec) => spec.id)).size).toBe(PROTOCOLS.length)
   })
 
-  it('builds Tailscale configs', () => {
-    const form = { ...emptyTailscaleForm(), authKey: 'tskey-auth-x', controlUrl: 'https://hs.example.com', exitNode: 'office' }
-    const config = tailscaleConfigFrom(form)
-    expect(config).toMatchObject({ name: 'Tailscale', type: 'tailscale', 'auth-key': 'tskey-auth-x', 'control-url': 'https://hs.example.com', 'exit-node': 'office', 'accept-routes': true, 'exit-node-allow-lan-access': true, udp: true })
-    expect(tailscaleFormFrom(config).exitNode).toBe('office')
-    expect(nodeSummary(config)).toBe('hs.example.com · 出口节点 office')
-    expect(() => tailscaleConfigFrom({ ...form, hostname: 'bad name' })).toThrow('设备名')
+  it('edits dotted keys and prunes emptied objects', () => {
+    const config: Record<string, unknown> = { name: 'a' }
+    setPath(config, 'ws-opts.headers.Host', 'cdn.example.com')
+    expect(getPath(config, 'ws-opts.headers.Host')).toBe('cdn.example.com')
+    setPath(config, 'ws-opts.headers.Host', undefined)
+    expect(config['ws-opts']).toBeUndefined()
+  })
+
+  it('applies typed field input and keeps unknown keys', () => {
+    const config: Record<string, unknown> = { ...newConfig(protocolById('wireguard')!), name: 'wg', 'refresh-server-ip-interval': 60 }
+    applyField(field('wireguard', 'reserved'), config, '1/2/3')
+    applyField(field('wireguard', 'allowed-ips'), config, '10.0.0.0/8, 192.168.0.0/16')
+    applyField(field('wireguard', 'mtu'), config, '1380')
+    expect(config).toMatchObject({ reserved: [1, 2, 3], 'allowed-ips': ['10.0.0.0/8', '192.168.0.0/16'], mtu: 1380, 'refresh-server-ip-interval': 60 })
+    expect(fieldText(field('wireguard', 'reserved'), config)).toBe('1/2/3')
+    expect(() => applyField(field('wireguard', 'reserved'), config, '1/2')).toThrow('Reserved')
+    const snell: Record<string, unknown> = newConfig(protocolById('snell')!)
+    applyField(field('snell', 'version'), snell, '2')
+    expect(snell.version).toBe(2)
+    applyField(field('snell', 'udp'), snell, false)
+    expect(snell.udp).toBeUndefined()
+  })
+
+  it('switches protocol keeping endpoint and outbound basics', () => {
+    const next = switchProtocol({ name: 'n', type: 'ss', server: 's', port: 8388, cipher: 'aes-128-gcm', password: 'p', 'dialer-proxy': 'Relay' }, protocolById('trojan')!)
+    expect(next).toEqual({ name: 'n', type: 'trojan', server: 's', port: 8388, 'dialer-proxy': 'Relay', udp: true })
+    expect(switchProtocol(next, protocolById('tailscale')!)).toMatchObject({ name: 'n', type: 'tailscale', 'accept-routes': true })
+    expect(switchProtocol(next, protocolById('tailscale')!).server).toBeUndefined()
+  })
+
+  it('validates required and numeric fields of visible sections only', () => {
+    const spec = protocolById('vmess')!
+    const config: Record<string, unknown> = { ...newConfig(spec), name: 'v', server: 'h', port: 443 }
+    expect(() => validateConfig(spec, config, sectionsOf('vmess'))).toThrow('UUID')
+    config.uuid = 'id'
+    config.alterId = 'x'
+    expect(() => validateConfig(spec, config, sectionsOf('vmess'))).toThrow('Alter ID')
+    config.alterId = 0
+    expect(validateConfig(spec, config, sectionsOf('vmess'))).toMatchObject({ type: 'vmess', uuid: 'id' })
+    expect(() => validateConfig(spec, { ...config, port: 70000 }, sectionsOf('vmess'))).toThrow('端口')
+    const hy2 = protocolById('hysteria2')!
+    expect(validateConfig(hy2, { name: 'h', type: 'hysteria2', server: 'h', ports: '2000-3000', password: 'p' }, sectionsOf('hysteria2')).ports).toBe('2000-3000')
+  })
+
+  it('shows transport and TLS fields only when they apply', () => {
+    const titles = (config: Record<string, unknown>) => visibleSections(sectionsOf('vmess'), config).flatMap((section) => section.fields.map((item) => item.key))
+    const base = { type: 'vmess', network: 'tcp' }
+    expect(titles(base)).not.toContain('ws-opts.path')
+    expect(titles({ ...base, network: 'ws' })).toContain('ws-opts.path')
+    expect(titles(base)).not.toContain('servername')
+    expect(titles({ ...base, tls: true })).toContain('servername')
+  })
+
+  it('summarizes Tailscale nodes', () => {
+    expect(nodeSummary({ type: 'tailscale', 'control-url': 'https://hs.example.com', 'exit-node': 'office' })).toBe('hs.example.com · 出口节点 office')
+  })
+})
+
+describe('pasted node import', () => {
+  it('parses share links', () => {
+    const ss = parseShareLink('ss://' + btoa('aes-256-gcm:pa:ss') + '@1.2.3.4:8388?plugin=obfs-local%3Bobfs%3Dhttp%3Bobfs-host%3Dexample.com#%E9%A6%99%E6%B8%AF')
+    expect(ss).toMatchObject({ name: '香港', type: 'ss', server: '1.2.3.4', port: 8388, cipher: 'aes-256-gcm', password: 'pa:ss', plugin: 'obfs', 'plugin-opts': { mode: 'http', host: 'example.com' } })
+    const vmess = parseShareLink('vmess://' + btoa(JSON.stringify({ v: '2', ps: 'JP', add: 'jp.example.com', port: '443', id: 'uuid', aid: '0', net: 'ws', host: 'cdn.example.com', path: '/ray', tls: 'tls', sni: 'jp.example.com' })))
+    expect(vmess).toMatchObject({ name: 'JP', type: 'vmess', port: 443, uuid: 'uuid', alterId: 0, network: 'ws', tls: true, servername: 'jp.example.com', 'ws-opts': { path: '/ray', headers: { Host: 'cdn.example.com' } } })
+    const vless = parseShareLink('vless://uuid@1.2.3.4:443?security=reality&sni=www.apple.com&fp=chrome&pbk=PUB&sid=ab&flow=xtls-rprx-vision&type=tcp#R')
+    expect(vless).toMatchObject({ type: 'vless', tls: true, flow: 'xtls-rprx-vision', servername: 'www.apple.com', 'client-fingerprint': 'chrome', 'reality-opts': { 'public-key': 'PUB', 'short-id': 'ab' } })
+    expect(parseShareLink('hy2://secret@[2001:db8::1]:443?sni=a.com&obfs=salamander&obfs-password=o&insecure=1&mport=20000-30000#H')).toMatchObject({ type: 'hysteria2', server: '2001:db8::1', password: 'secret', ports: '20000-30000', obfs: 'salamander', 'skip-cert-verify': true })
+    expect(parseShareLink('tuic://u:p@t.example.com:443?congestion_control=bbr&alpn=h3#T')).toMatchObject({ type: 'tuic', uuid: 'u', password: 'p', 'congestion-controller': 'bbr', alpn: ['h3'] })
+    expect(parseShareLink('trojan://pw@t.example.com:443?sni=s.com&type=grpc&serviceName=svc#Tr')).toMatchObject({ type: 'trojan', sni: 's.com', network: 'grpc', 'grpc-opts': { 'grpc-service-name': 'svc' } })
+    expect(parseShareLink('socks5://u:p@10.0.0.1:1080#S')).toMatchObject({ type: 'socks5', username: 'u', password: 'p', port: 1080 })
+    expect(() => parseShareLink('wat://x')).toThrow('不支持')
+  })
+
+  it('parses Surge proxy lines', () => {
+    expect(parseSurgeLine('家宽 = snell, 1.2.3.4, 6160, psk=abc, version=3, obfs=http, obfs-host=bing.com, tfo=true')).toEqual({
+      name: '家宽', type: 'snell', server: '1.2.3.4', port: 6160, psk: 'abc', version: 3, 'obfs-opts': { mode: 'http', host: 'bing.com' }, udp: true, tfo: true
+    })
+    expect(parseSurgeLine('H = https, h.example.com, 443, user, pass, skip-cert-verify=true')).toMatchObject({ type: 'http', tls: true, username: 'user', password: 'pass', 'skip-cert-verify': true })
+    expect(parseSurgeLine('V = vmess, v.example.com, 443, username=uuid, ws=true, ws-path=/w, ws-headers=Host:cdn.com, tls=true, underlying-proxy=Relay')).toMatchObject({ uuid: 'uuid', alterId: 0, network: 'ws', 'ws-opts': { path: '/w', headers: { Host: 'cdn.com' } }, tls: true, 'dialer-proxy': 'Relay' })
+    expect(parseSurgeLine('Y = hysteria2, y.example.com, 443, password=p, download-bandwidth=100, port-hopping="5000-6000;7000"')).toMatchObject({ type: 'hysteria2', down: '100 Mbps', ports: '5000-6000,7000' })
+    expect(() => parseSurgeLine('S = snell, 1.2.3.4, 1, psk=a, version=4')).toThrow('v1-v3')
+  })
+
+  it('detects the content shape', () => {
+    expect(parseNodeText('a = trojan, t.com, 443, password=x\nb = anytls, a.com, 443, password=y').configs.map((c) => c.type)).toEqual(['trojan', 'anytls'])
+    expect(parseNodeText('{name: y, type: ss, server: s, port: 1}').configs[0]!.name).toBe('y')
+    expect(parseNodeText(WG_QUICK, 'home').configs[0]!.type).toBe('wireguard')
+    const blob = btoa('trojan://x@t.com:443#A\ntrojan://y@u.com:443#B')
+    expect(parseNodeText(blob).configs).toHaveLength(2)
   })
 
   it('parses pasted proxies in every common shape', () => {

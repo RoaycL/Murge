@@ -123,8 +123,8 @@ async function confirmInstall(): Promise<void> {
 .km-modal {
   display: flex;
   flex-direction: column;
-  width: min(920px, calc(100vw - 40px));
-  max-height: min(82vh, 720px);
+  width: min(600px, calc(100vw - 40px));
+  max-height: min(78vh, 600px);
   background: var(--app-popover); -webkit-backdrop-filter: var(--app-popover-filter); backdrop-filter: var(--app-popover-filter);
   border: 1px solid var(--app-divider);
   border-radius: var(--radius-card);
@@ -157,26 +157,33 @@ async function confirmInstall(): Promise<void> {
 .km-hint { margin: 12px 0 0; color: var(--app-muted); font-size: var(--font-size-xs); }
 .km-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
-  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fill, minmax(min(124px, 100%), 1fr));
+  grid-auto-rows: 34px;
+  gap: 6px;
+  min-height: 0;
   margin: 12px 0 0;
-  padding: 0;
+  padding: 0 2px 2px 0;
   list-style: none;
   overflow-y: auto;
 }
 .km-list button {
   display: flex;
-  min-height: 48px;
+  width: 100%;
+  height: 100%;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 10px;
+  gap: 6px;
+  padding: 0 10px;
   border: 1px solid var(--app-divider);
   border-radius: var(--radius-control);
   background: transparent;
   color: inherit;
   font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
   text-align: left;
+  cursor: pointer;
 }
+.km-list button:hover:not(:disabled):not(.selected) { background: var(--app-fill-subtle); }
 .km-list button.selected { border-color: var(--app-blue); background: rgba(21, 135, 248, 0.08); }
 .km-list button:disabled { opacity: 0.6; }
 .km-list em { color: var(--app-muted); font-size: var(--font-size-2xs); font-style: normal; }
@@ -197,6 +204,6 @@ async function confirmInstall(): Promise<void> {
   .km-modal { width: calc(100vw - 20px); max-height: calc(100vh - 20px); padding: 14px; }
   .km-toolbar { align-items: stretch; }
   .km-refresh { flex: 0 0 auto; }
-  .km-list { grid-template-columns: 1fr; }
+  .km-list { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); }
 }
 </style>

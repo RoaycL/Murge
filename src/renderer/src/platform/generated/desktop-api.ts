@@ -192,6 +192,7 @@ export function createDesktopApi(): DesktopApi {
       removeModule: (id) => bridgeInvoke("mitm:remove-module", [id]),
       setModuleEnabled: (id, enabled) => bridgeInvoke("mitm:set-module-enabled", [id, enabled]),
       setModuleArguments: (id, args) => bridgeInvoke("mitm:set-module-arguments", [id, args]),
+      clearScriptStore: () => bridgeInvoke("mitm:clear-script-store", []),
       recentRequests: () => bridgeInvoke("mitm:recent-requests", []),
       clearRequests: () => bridgeInvoke("mitm:clear-requests", []),
     },

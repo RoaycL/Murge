@@ -27,6 +27,10 @@ export interface MitmModuleInfo {
   warnings: string[]
   /** `#!arguments` declared by the module, with the user's current value. */
   arguments: MitmModuleArgument[]
+  /** The module's `#!arguments-desc` text (may be empty). */
+  argumentsDesc: string
+  /** `[Script]` entries (http-request / http-response). */
+  scripts: number
 }
 
 export interface MitmModuleArgument {
@@ -59,6 +63,10 @@ export interface MitmState {
     mapLocals: number
     /** Module [Rule] lines handed to Mihomo. */
     rules: number
+    /** Scripts downloaded and active. */
+    scripts: number
+    /** Keys held in the scripts' $persistentStore. */
+    scriptStoreKeys: number
   }
 }
 
@@ -72,6 +80,8 @@ export interface MitmRequestEntry {
   actions: string[]
   durationMs: number
   error: string | null
+  /** console.log output of the scripts that ran. */
+  scriptLogs: string[]
 }
 
 export const EMPTY_MITM_STATE: MitmState = {
@@ -83,7 +93,7 @@ export const EMPTY_MITM_STATE: MitmState = {
   engine: { running: false, port: null },
   active: false,
   inactiveReason: null,
-  summary: { hostnames: [], urlRewrites: 0, headerRewrites: 0, bodyRewrites: 0, mapLocals: 0, rules: 0 }
+  summary: { hostnames: [], urlRewrites: 0, headerRewrites: 0, bodyRewrites: 0, mapLocals: 0, rules: 0, scripts: 0, scriptStoreKeys: 0 }
 }
 
 /** Human labels for the pipeline actions recorded per request. */
@@ -102,4 +112,12 @@ export const MITM_ACTION_LABELS: Record<string, string> = {
   'header-rewrite': '改写请求头/响应头',
   'body-rewrite': '改写正文',
   websocket: 'WebSocket'
+}
+
+/** Label for one recorded action, including per-script ones (`script:名字`). */
+export function mitmActionLabel(action: string): string {
+  if (action.startsWith('script:')) return `脚本 ${action.slice(7)}`
+  if (action.startsWith('script-pass:')) return `脚本 ${action.slice(12)}（未修改）`
+  if (action.startsWith('script-error:')) return `脚本 ${action.slice(13)} 出错`
+  return MITM_ACTION_LABELS[action] ?? action
 }

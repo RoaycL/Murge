@@ -168,6 +168,7 @@ const api: DesktopApi = {
     removeModule: (id) => invoke(IPC.mitmRemoveModule, id),
     setModuleEnabled: (id, enabled) => invoke(IPC.mitmSetModuleEnabled, id, enabled),
     setModuleArguments: (id, args) => invoke(IPC.mitmSetModuleArguments, id, args),
+    clearScriptStore: () => invoke(IPC.mitmClearScriptStore),
     recentRequests: () => invoke(IPC.mitmRecentRequests),
     clearRequests: () => invoke(IPC.mitmClearRequests)
   },

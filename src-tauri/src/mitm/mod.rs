@@ -12,6 +12,9 @@ pub mod compat;
 pub mod engine;
 pub mod jq;
 pub mod rules;
+pub mod script;
+#[cfg(test)]
+mod script_live;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -31,6 +34,8 @@ pub const PROXY_NAME: &str = "Murge-MITM";
 const SETTINGS_FILE: &str = "mitm.json";
 const MODULE_SIZE_LIMIT: usize = 2 * 1024 * 1024;
 const MODULE_LIMIT: usize = 64;
+const SCRIPT_SIZE_LIMIT: usize = 8 * 1024 * 1024;
+const SCRIPT_STORE_FILE: &str = "script-store.json";
 
 fn default_true() -> bool {
     true
@@ -208,6 +213,11 @@ pub struct MitmService {
     trust: Box<dyn TrustStore>,
     trusted: Mutex<Option<bool>>,
     module_lock: tokio::sync::Mutex<()>,
+    /// Downloaded `script-path` code, by URL (mirrors `<dir>/scripts/`).
+    script_cache: Mutex<std::collections::HashMap<String, Arc<str>>>,
+    /// Last download error per script URL.
+    script_errors: Mutex<std::collections::HashMap<String, String>>,
+    missing_scripts: Mutex<Vec<String>>,
 }
 
 static SERVICE: OnceCell<Arc<MitmService>> = OnceCell::new();
@@ -257,6 +267,12 @@ pub fn initialize(app_data_root: Option<PathBuf>, namespace: &str, upstream: Ups
     std::thread::spawn(move || {
         checker.refresh_trust();
     });
+    // Scripts referenced by modules saved before they were downloaded.
+    let downloader = service.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        downloader.ensure_scripts(&[]).await;
+    });
     let _ = SERVICE.set(service);
 }
 
@@ -273,15 +289,24 @@ impl MitmService {
             .and_then(|dir| std::fs::read_to_string(settings_path(dir)).ok())
             .and_then(|text| serde_json::from_str::<MitmSettings>(&text).ok())
             .unwrap_or_default();
+        let mut shared = EngineShared::new(upstream);
+        if let Some(dir) = &dir {
+            shared.script_store = Arc::new(script::PersistentStore::open(Some(
+                dir.join(SCRIPT_STORE_FILE),
+            )));
+        }
         let service = MitmService {
             dir,
             settings: Mutex::new(settings),
-            shared: Arc::new(EngineShared::new(upstream)),
+            shared: Arc::new(shared),
             port: Mutex::new(None),
             vault,
             trust,
             trusted: Mutex::new(None),
             module_lock: tokio::sync::Mutex::new(()),
+            script_cache: Mutex::new(Default::default()),
+            script_errors: Mutex::new(Default::default()),
+            missing_scripts: Mutex::new(Vec::new()),
         };
         service.load_ca();
         service.recompile();
@@ -349,8 +374,10 @@ impl MitmService {
                 arguments: Some(&module.arguments),
             });
         }
-        let compiled =
+        let mut compiled =
             CompiledRules::build(&settings.hostnames, &sources, settings.rewrite_enabled);
+        let missing = compiled.attach_scripts(|url| self.load_script(url));
+        *self.missing_scripts.lock().expect("missing") = missing;
         *self.shared.rules.write().expect("rules") = Arc::new(compiled);
         self.shared
             .enabled
@@ -359,6 +386,85 @@ impl MitmService {
             .skip_verify
             .store(settings.skip_server_cert_verify, Ordering::Relaxed);
         self.shared.http2.store(settings.http2, Ordering::Relaxed);
+    }
+
+    fn script_file(&self, url: &str) -> Option<PathBuf> {
+        use sha2::Digest;
+        let digest = sha2::Sha256::digest(url.as_bytes());
+        let name: String = digest[..12].iter().map(|b| format!("{b:02x}")).collect();
+        self.dir
+            .as_ref()
+            .map(|dir| dir.join("scripts").join(format!("{name}.js")))
+    }
+
+    fn load_script(&self, url: &str) -> Option<Arc<str>> {
+        if let Some(code) = self.script_cache.lock().expect("scripts").get(url) {
+            return Some(code.clone());
+        }
+        let text = std::fs::read_to_string(self.script_file(url)?).ok()?;
+        let code: Arc<str> = Arc::from(text);
+        self.script_cache
+            .lock()
+            .expect("scripts")
+            .insert(url.to_string(), code.clone());
+        Some(code)
+    }
+
+    fn store_script(&self, url: &str, text: String) {
+        if let Some(path) = self.script_file(url) {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let tmp = path.with_extension(format!("{}.tmp", now_ms()));
+            if std::fs::write(&tmp, &text).is_ok() {
+                let _ = std::fs::rename(&tmp, &path);
+            }
+        }
+        self.script_cache
+            .lock()
+            .expect("scripts")
+            .insert(url.to_string(), Arc::from(text));
+    }
+
+    /// Download the scripts the enabled modules reference but do not have
+    /// yet, plus `refresh` (re-downloaded even when cached). Returns the
+    /// number of scripts fetched.
+    pub async fn ensure_scripts(&self, refresh: &[String]) -> usize {
+        let mut wanted: Vec<String> = self.missing_scripts.lock().expect("missing").clone();
+        for url in refresh {
+            if !wanted.contains(url) {
+                wanted.push(url.clone());
+            }
+        }
+        let mut fetched = 0;
+        for url in wanted {
+            match self.fetch_text(&url, SCRIPT_SIZE_LIMIT).await {
+                Ok(text) => {
+                    self.store_script(&url, text);
+                    self.script_errors.lock().expect("errors").remove(&url);
+                    fetched += 1;
+                }
+                Err(message) => {
+                    self.script_errors
+                        .lock()
+                        .expect("errors")
+                        .insert(url.clone(), message);
+                }
+            }
+        }
+        if fetched > 0 {
+            self.recompile();
+        }
+        fetched
+    }
+
+    /// Script URLs one module references.
+    fn module_script_urls(&self, module: &RewriteModule) -> Vec<String> {
+        rules::parse_module_with(&module.content, &module.arguments)
+            .scripts
+            .into_iter()
+            .map(|script| script.script_url)
+            .collect()
     }
 
     pub fn refresh_trust(&self) -> Option<bool> {
@@ -396,7 +502,7 @@ impl MitmService {
         if self.inactive_reason().is_some() {
             return module_part;
         }
-        format!("{:?}|{module_part}", rules.hosts.mihomo_filters())
+        format!("{:?}|{module_part}", rules.routing_filters())
     }
 
     /// Module `[Rule]` lines work without decryption; the MITM rules, when
@@ -411,7 +517,7 @@ impl MitmService {
         let Some(port) = *self.port.lock().expect("port") else {
             return text;
         };
-        let filters = rules.hosts.mihomo_filters();
+        let filters = rules.routing_filters();
         if let Some(next) = inject_into_document(&text, &filters, port, &self.shared.password) {
             text = next;
         }
@@ -590,6 +696,10 @@ impl MitmService {
     }
 
     async fn fetch_module(&self, url: &str) -> Result<String, String> {
+        self.fetch_text(url, MODULE_SIZE_LIMIT).await
+    }
+
+    async fn fetch_text(&self, url: &str, limit: usize) -> Result<String, String> {
         let parsed = url::Url::parse(url).map_err(|_| "URL 无效".to_string())?;
         if !matches!(parsed.scheme(), "http" | "https") {
             return Err("只支持 http/https 链接".into());
@@ -615,16 +725,15 @@ impl MitmService {
                 Ok(response) if response.status().is_success() => {
                     if response
                         .content_length()
-                        .is_some_and(|length| length as usize > MODULE_SIZE_LIMIT)
+                        .is_some_and(|length| length as usize > limit)
                     {
-                        return Err("模块过大".into());
+                        return Err("文件过大".into());
                     }
                     let bytes = response.bytes().await.map_err(|e| e.to_string())?;
-                    if bytes.len() > MODULE_SIZE_LIMIT {
-                        return Err("模块过大".into());
+                    if bytes.len() > limit {
+                        return Err("文件过大".into());
                     }
-                    return String::from_utf8(bytes.to_vec())
-                        .map_err(|_| "模块不是 UTF-8 文本".into());
+                    return String::from_utf8(bytes.to_vec()).map_err(|_| "不是 UTF-8 文本".into());
                 }
                 Ok(response) => last_error = format!("HTTP {}", response.status().as_u16()),
                 Err(error) => last_error = error.to_string(),
@@ -681,7 +790,9 @@ impl MitmService {
         self.update(|s| {
             s.modules.push(module);
             Ok(())
-        })
+        })?;
+        self.ensure_scripts(&[]).await;
+        Ok(())
     }
 
     pub async fn update_module(&self, id: &str) -> Result<(), IpcError> {
@@ -714,6 +825,14 @@ impl MitmService {
             }
             Ok(())
         })?;
+        if fetched.is_ok() {
+            // 更新 re-downloads the module's scripts too.
+            let refreshed = self.settings().modules.into_iter().find(|m| m.id == id);
+            let urls = refreshed
+                .map(|module| self.module_script_urls(&module))
+                .unwrap_or_default();
+            self.ensure_scripts(&urls).await;
+        }
         fetched
             .map(|_| ())
             .map_err(|message| IpcError::invalid_argument(format!("更新模块失败：{message}")))
@@ -724,12 +843,21 @@ impl MitmService {
     pub fn snapshot(&self) -> Value {
         let settings = self.settings();
         let rules = self.shared.rules();
-        let local = rules::parse_module(&settings.local_module);
+        let mut local = rules::parse_module(&settings.local_module);
+        self.script_warnings(&local.scripts, &mut local.warnings);
         let modules: Vec<Value> = settings
             .modules
             .iter()
             .map(|module| {
-                let parsed = rules::parse_module_with(&module.content, &module.arguments);
+                let mut parsed = rules::parse_module_with(&module.content, &module.arguments);
+                self.script_warnings(&parsed.scripts, &mut parsed.warnings);
+                let arguments_desc = module
+                    .content
+                    .lines()
+                    .map(str::trim)
+                    .find_map(|line| line.strip_prefix("#!arguments-desc="))
+                    .map(|text| text.replace("\\n", "\n"))
+                    .unwrap_or_default();
                 let arguments: Vec<Value> = parsed
                     .arguments
                     .iter()
@@ -753,6 +881,8 @@ impl MitmService {
                     "hostnames": parsed.hostnames,
                     "warnings": parsed.warnings,
                     "arguments": arguments,
+                    "argumentsDesc": arguments_desc,
+                    "scripts": parsed.scripts.len(),
                 })
             })
             .collect();
@@ -790,8 +920,33 @@ impl MitmService {
                 "bodyRewrites": rules.body_rewrites.len(),
                 "mapLocals": rules.map_locals.len(),
                 "rules": rules.mihomo_rules.len(),
+                "scripts": rules.scripts.iter().filter(|s| s.code.is_some()).count(),
+                "scriptStoreKeys": self.shared.script_store.len(),
             },
         })
+    }
+}
+
+impl MitmService {
+    fn script_warnings(&self, scripts: &[rules::ScriptRule], warnings: &mut Vec<String>) {
+        let errors = self.script_errors.lock().expect("errors").clone();
+        let mut seen: Vec<&str> = Vec::new();
+        for script in scripts {
+            if seen.contains(&script.script_url.as_str()) {
+                continue;
+            }
+            seen.push(&script.script_url);
+            if self.load_script(&script.script_url).is_none() {
+                warnings.push(match errors.get(&script.script_url) {
+                    Some(error) => format!("脚本 {} 下载失败：{error}", script.name),
+                    None => format!("脚本 {} 尚未下载", script.name),
+                });
+            }
+        }
+    }
+
+    pub fn clear_script_store(&self) {
+        self.shared.script_store.clear();
     }
 }
 
@@ -945,6 +1100,10 @@ pub async fn dispatch(
                 bool_arg(payload, 1, channel)?,
             )
             .map(|_| Value::Null),
+        "mitm:clear-script-store" => {
+            service.clear_script_store();
+            Ok(Value::Null)
+        }
         "mitm:recent-requests" => serde_json::to_value(service.shared.log.list())
             .map_err(|e| IpcError::internal(e.to_string())),
         "mitm:clear-requests" => {
@@ -953,6 +1112,15 @@ pub async fn dispatch(
         }
         _ => Err(IpcError::unsupported_channel(channel)),
     };
+    if result.is_ok()
+        && !matches!(
+            channel,
+            "mitm:get-state" | "mitm:recent-requests" | "mitm:clear-requests"
+        )
+        && !service.missing_scripts.lock().expect("missing").is_empty()
+    {
+        service.ensure_scripts(&[]).await;
+    }
     let after = service.injection_signature();
     if before != after {
         // A failed hot reload must not hide the saved change; the next kernel

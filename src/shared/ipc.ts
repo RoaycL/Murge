@@ -164,6 +164,7 @@ export const IPC = {
   mitmRemoveModule: 'mitm:remove-module',
   mitmSetModuleEnabled: 'mitm:set-module-enabled',
   mitmSetModuleArguments: 'mitm:set-module-arguments',
+  mitmClearScriptStore: 'mitm:clear-script-store',
   mitmRecentRequests: 'mitm:recent-requests',
   mitmClearRequests: 'mitm:clear-requests',
   dnsGet: 'dns:get',
@@ -366,6 +367,7 @@ export interface DesktopApi {
     removeModule(id: string): Promise<void>
     setModuleEnabled(id: string, enabled: boolean): Promise<void>
     setModuleArguments(id: string, args: Record<string, string>): Promise<void>
+    clearScriptStore(): Promise<void>
     recentRequests(): Promise<MitmRequestEntry[]>
     clearRequests(): Promise<void>
   }

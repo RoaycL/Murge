@@ -28,7 +28,7 @@
 | `[Header Rewrite]` `http-request/http-response regex header-add/del/replace/replace-regex` | 改头 | 支持（含旧语法） |
 | `[Body Rewrite]` `http-request/http-response regex 正则 替换 ...` | 改体 | 支持文本体，大小上限 8 MB |
 | `[Map Local]` `regex data-type=... data=... status-code=... header=...` | 直接返回本地内容 | 支持内联 `text/json/base64/tiny-gif` |
-| `[Script]` | JS 脚本 | M3 |
+| `[Script]` | JS 脚本 | M3：`type=http-request` / `http-response`，见 §6.1 |
 | `[Rule]` | 规则 | M2：转为 mihomo 规则，只允许 DIRECT / REJECT 系策略；`RULE-SET` / `DOMAIN-SET` 链接转成 `rule-providers`；`URL-REGEX` + REJECT 交给解密引擎 |
 
 `reject` 一族的返回：`reject` → 404 空体；`reject-200` → 200 空体；`reject-img` → 1×1 GIF；`reject-dict` → `{}`；`reject-array` → `[]`。
@@ -110,10 +110,23 @@
 - 本地模块：一个文本编辑框，内容就是一个 `.sgmodule`（可写 `[MITM]`、`[URL Rewrite]`、`[Header Rewrite]`、`[Body Rewrite]`、`[Map Local]`）。
 - 远程模块：URL 订阅，记录名称（`#!name`）、描述（`#!desc`）、启用状态、更新时间；可手动更新。
 - 设置文件 `app-data/mitm/mitm.json`：`enabled`、`rewriteEnabled`、`skipServerCertVerify`、`hostnames`（解密页里直接维护的主机名）、`modules[]`。
-- 解析后的不支持行（如 `[Script]`、`#!arguments`）显示为警告，不阻断其它规则。
+- 解析后的不支持行（如定时脚本）显示为警告，不阻断其它规则。
 - M2 兼容 Loon 插件 `[Rewrite]`（`正则 动作 参数`）和 QX `[rewrite_local]`（`正则 url 动作 参数`）：reject 系、30x、header、header-add/del/replace（含 request-/response- 前缀）、request/response-body-replace-regex、QX `response-body A response-body B`、Loon mock-response-body；script 和 echo-response 提示不支持。`[filter_local]` 按 `[Rule]` 处理，`[Argument]` / `[Plugin]` / `[general_local]` 忽略。
 - jq 正文改写：Surge `http-request-jq` / `http-response-jq`（内联表达式，单引号或双引号包住）和 Loon `request/response-body-json-jq`，用纯 Rust 的 jaq 执行，只对 JSON 正文生效，取第一个输出；解析失败、运行出错或没有输出时保留原文。`jq-path=` 外部文件暂不支持。jaq 删除键后可能改变键的顺序，不影响 JSON 语义。表达式由模块作者提供，死循环表达式会占住一个工作线程，这一点和 Surge 一样依赖模块可信。
 - 模块参数 `#!arguments=key:默认值,...`：正文里的 `{{{key}}}` 在解析前替换；「重写」页每个模块可以编辑参数，只保存模块声明过的键。
+
+### 6.1 脚本（M3）
+
+- 语法：Surge `name = type=http-response,pattern=…,script-path=…,requires-body=1,binary-body-mode=1,max-size=-1,timeout=…,argument=…`；Loon `[Script]` 的 `http-response ^regex script-path=…, requires-body=true, tag=…`；QX `[rewrite_local]` 的 `regex url script-response-body URL`（以及 request-body / request-header / response-header / echo-response）。`type=cron`、`generic`、`event`、`dns`、`rule` 显示为警告。`engine=` 忽略（统一用 QuickJS）。`enable=false` 的条目跳过。
+- `[General] force-http-engine-hosts`：这些主机的明文 HTTP 也交给解密引擎（不解密 TLS），BoxJs（boxjs.com）、Script Hub（script.hub）这类由脚本直接应答的虚拟域名靠它工作。
+- 下载：`script-path` 在添加 / 更新模块、保存本地规则、启动 5 秒后下载，缓存在 `<app-data>/mitm/scripts/<sha256 前 12 字节>.js`；「更新」模块会重新下载它的脚本。未下载或下载失败的脚本不执行，并在模块警告里显示。
+- 运行：每次执行新建一个 QuickJS 运行时（256 MB 内存上限），跑在阻塞线程上；超时（默认 10 秒，最多 300 秒）由中断回调强制结束。脚本之间不共享全局变量。
+- 接口：`$request`、`$response`（文本模式 body 是字符串，`binary-body-mode` 下是 `Uint8Array`，另有 `bodyBytes`）、`$done`（url / method / status / headers / body / bodyBytes / response / abort）、`$httpClient.get/post/put/delete/head/options/patch`（经 127.0.0.2 回到 Mihomo，按用户规则出站，跟随重定向，自动解 gzip）、`$persistentStore`（`<app-data>/mitm/script-store.json`，单值 8 MB、总量 64 MB）、`$notification.post`（Windows 通知，点击打开 http(s) `open-url`）、`$argument`、`$script`、`$environment`（伪装为 Surge 5，`system: macOS`）、`$utils.ungzip`、`console`、`setTimeout/setInterval`、`TextEncoder/TextDecoder`、`atob/btoa`、`URL/URLSearchParams`。请求头和响应头对象不区分大小写。来自 QX 语法的脚本另外有 `$task.fetch`、`$prefs`、`$notify`。
+- 顺序：请求阶段 URL 重写 → 本地映射 → 请求头重写 → 请求脚本 → 请求正文改写；响应阶段 响应头重写 → 响应脚本 → 响应正文改写。请求脚本 `$done({ response })` 直接应答，不访问源站。
+- 正文：`requires-body` 的脚本读取不超过 `max-size`（默认 128 KB，`-1` 为 8 MB）的正文，超出时跳过该脚本，正文照常流式转发。需要响应正文时请求的 `Accept-Encoding` 改为 `identity`，gzip / deflate 会先解压。
+- 记录：「最近解密的请求」显示每个脚本的执行结果（已修改 / 未修改 / 出错）和 `console.log` 输出。
+- `$persistentStore` 可能保存登录信息，不进配置备份；「重写」页可以清除。
+- 实测（2026-11-03）：BoxJs 页面与 `/query/boxdata` 接口、Script Hub 首页与模块转换（Surge → Loon）都能跑通；YouTube Enhance 的四个脚本能加载并对未知正文放行（没有真实 iOS App 的 protobuf 响应可测，该模块本身也标注只适用于 iOS）。命令：`MURGE_LIVE_SCRIPTS=<脚本目录> cargo test --lib mitm::script_live -- --nocapture`。
 
 ## 7. 界面
 
@@ -126,7 +139,7 @@
 
 - **M1（本 PR）**：CA 生成 / 信任 / 移除；MITM 引擎（HTTP/1.1、WebSocket、透传、回连防回环）；规则注入与热重载；URL / Header / Body Rewrite、Map Local（内联）；Surge 模块导入（本地 + URL）；两个页面；最近请求列表；单元测试。
 - **M2（已完成，CA 二维码待做）**：HTTP/2；`[Rule]` 段转 mihomo 规则；Loon / QX 语法；「连接」页标记「已解密」；导出 CA 二维码；模块参数 `#!arguments`。
-- **M3**：脚本（复用现有 `boa_engine` 沙箱，兼容 `$request/$response/$done/$httpClient` 子集）。
+- **M3（已实现）**：脚本，见 §6.1。引擎改用 QuickJS（rquickjs），不用现有的 boa：YouTube 一类脚本要在每个响应上解析大段 protobuf，boa 太慢。
 
 ## 9. 测试
 

@@ -6,7 +6,7 @@ import ConfirmModal from '../components/ConfirmModal.vue'
 import { useMitmStore } from '../stores/mitm'
 import { useToast } from '../composables/use-toast'
 import { useUnsavedChanges } from '../composables/use-unsaved-changes'
-import { MITM_ACTION_LABELS } from '@shared/mitm'
+import { mitmActionLabel } from '@shared/mitm'
 
 const store = useMitmStore()
 const toast = useToast()
@@ -223,8 +223,12 @@ onBeforeUnmount(() => {
             <div class="mitm-request-meta">
               <span>{{ formatTime(entry.time) }}</span>
               <span>{{ entry.durationMs }} ms</span>
-              <span v-for="action in entry.actions" :key="action" class="mitm-tag">{{ MITM_ACTION_LABELS[action] ?? action }}</span>
+              <span v-for="action in entry.actions" :key="action" class="mitm-tag" :class="{ 'mitm-tag-error': action.startsWith('script-error:') }">{{ mitmActionLabel(action) }}</span>
             </div>
+            <details v-if="entry.scriptLogs?.length" class="mitm-script-logs">
+              <summary>脚本日志（{{ entry.scriptLogs.length }}）</summary>
+              <pre>{{ entry.scriptLogs.join('\n') }}</pre>
+            </details>
             <p v-if="entry.error" class="mitm-error">
               {{ entry.error }}
               <button v-if="entry.method === 'TLS'" type="button" class="mitm-link" @click="excludeHost(entry.host)">不再解密 {{ entry.host }}</button>
@@ -290,6 +294,10 @@ onBeforeUnmount(() => {
 .mitm-status { flex: none; color: var(--app-muted); }
 .mitm-request-meta { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: 3px; padding-left: 52px; color: var(--app-muted); font-size: var(--font-size-2xs); }
 .mitm-tag { padding: 0 6px; border-radius: var(--radius-sm); background: var(--app-fill); color: var(--app-blue); }
+.mitm-tag-error { color: var(--app-danger); }
+.mitm-script-logs { margin: 4px 0 0 52px; color: var(--app-muted); font-size: var(--font-size-2xs); }
+.mitm-script-logs summary { cursor: pointer; }
+.mitm-script-logs pre { max-height: 220px; margin: 4px 0 0; padding: 6px 8px; overflow: auto; border-radius: var(--radius-control); background: var(--app-fill-subtle); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .mitm-error { margin: 4px 0 0 52px; color: var(--app-danger); font-size: var(--font-size-2xs); overflow-wrap: anywhere; }
 .mitm-link { margin-left: 6px; padding: 0; border: 0; background: transparent; color: var(--app-blue); font-size: inherit; cursor: pointer; }
 </style>

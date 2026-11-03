@@ -76,6 +76,7 @@ export const useMitmStore = defineStore('mitm', () => {
     removeModule: (id: string) => run(`remove-${id}`, () => api().removeModule(id)),
     setModuleEnabled: (id: string, enabled: boolean) => run(`toggle-${id}`, () => api().setModuleEnabled(id, enabled)),
     setModuleArguments: (id: string, args: Record<string, string>) => run(`arguments-${id}`, () => api().setModuleArguments(id, args)),
+    clearScriptStore: () => run('clear-script-store', () => api().clearScriptStore()),
     clearRequests: async () => {
       await run('clear', () => api().clearRequests())
       await refreshRequests()

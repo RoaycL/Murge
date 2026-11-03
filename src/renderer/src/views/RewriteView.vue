@@ -17,6 +17,7 @@ const removing = ref<MitmModuleInfo | null>(null)
 const expanded = ref<string | null>(null)
 const editingArgs = ref<string | null>(null)
 const argDraft = ref<Record<string, string>>({})
+const clearingStore = ref(false)
 
 const state = computed(() => store.state)
 const localDirty = computed(() => store.loaded && localText.value !== localBaseline.value)
@@ -28,6 +29,7 @@ const summaryItems = computed(() => [
   { label: '正文改写', value: state.value.summary.bodyRewrites },
   { label: '本地映射', value: state.value.summary.mapLocals },
   { label: '分流规则', value: state.value.summary.rules },
+  { label: '脚本', value: state.value.summary.scripts },
   { label: '解密主机名', value: state.value.summary.hostnames.length }
 ])
 
@@ -110,6 +112,13 @@ function resetArguments(module: MitmModuleInfo): void {
   argDraft.value = Object.fromEntries(module.arguments.map((arg) => [arg.name, arg.default]))
 }
 
+async function clearStore(): Promise<void> {
+  clearingStore.value = false
+  const error = await store.clearScriptStore()
+  if (error) toast.error('清除失败', error)
+  else toast.success('脚本数据已清除')
+}
+
 async function confirmRemove(): Promise<void> {
   const target = removing.value
   removing.value = null
@@ -175,7 +184,7 @@ onMounted(async () => {
               <div class="rewrite-module-text">
                 <strong>{{ module.name }}</strong>
                 <small v-if="module.description">{{ module.description }}</small>
-                <small>{{ module.ruleCount }} 条规则 · {{ module.hostnames.length }} 个主机名 · 更新于 {{ formatDate(module.updatedAt) }}</small>
+                <small>{{ module.ruleCount }} 条规则<template v-if="module.scripts">（含 {{ module.scripts }} 个脚本）</template> · {{ module.hostnames.length }} 个主机名 · 更新于 {{ formatDate(module.updatedAt) }}</small>
                 <small v-if="module.error" class="rewrite-error">上次更新失败：{{ module.error }}</small>
                 <span class="rewrite-module-links">
                   <button v-if="module.arguments.length" type="button" class="rewrite-link" @click="openArguments(module)">{{ module.arguments.length }} 个参数</button>
@@ -189,6 +198,7 @@ onMounted(async () => {
               </div>
             </div>
             <form v-if="editingArgs === module.id" class="rewrite-arguments" @submit.prevent="saveArguments(module)">
+              <p v-if="module.argumentsDesc" class="rewrite-arguments-desc">{{ module.argumentsDesc }}</p>
               <label v-for="arg in module.arguments" :key="arg.name">
                 <span>{{ arg.name }}</span>
                 <input v-model="argDraft[arg.name]" type="text" spellcheck="false" :placeholder="arg.default" />
@@ -203,13 +213,17 @@ onMounted(async () => {
             </ul>
           </li>
         </ul>
+        <div v-if="state.summary.scriptStoreKeys" class="rewrite-store">
+          <span>脚本保存了 {{ state.summary.scriptStoreKeys }} 项数据（$persistentStore）</span>
+          <button type="button" class="rewrite-danger" :disabled="!!store.busy" @click="clearingStore = true">清除</button>
+        </div>
       </SurfaceCard>
     </section>
 
     <section>
       <h2>本地规则</h2>
       <SurfaceCard class="rewrite-card">
-        <p class="rewrite-hint">支持 [MITM]、[URL Rewrite]、[Header Rewrite]、[Body Rewrite]、[Map Local]、[Rule]，也能识别 Loon 的 [Rewrite] 和 Quantumult X 的 [rewrite_local]。[Body Rewrite] 支持 jq 写法（http-response-jq）。[Rule] 只能使用 DIRECT 或 REJECT 策略。脚本（[Script]）暂不支持。</p>
+        <p class="rewrite-hint">支持 [MITM]、[URL Rewrite]、[Header Rewrite]、[Body Rewrite]、[Map Local]、[Rule]，也能识别 Loon 的 [Rewrite] 和 Quantumult X 的 [rewrite_local]。[Body Rewrite] 支持 jq 写法（http-response-jq）。[Script] 支持 http-request / http-response 脚本，定时脚本暂不支持。[Rule] 只能使用 DIRECT 或 REJECT 策略。</p>
         <textarea v-model="localText" class="rewrite-editor" spellcheck="false" :placeholder="LOCAL_PLACEHOLDER" />
         <ul v-if="state.localWarnings.length" class="rewrite-warnings">
           <li v-for="warning in state.localWarnings" :key="warning">{{ warning }}</li>
@@ -222,6 +236,7 @@ onMounted(async () => {
       </SurfaceCard>
     </section>
 
+    <ConfirmModal :open="clearingStore" title="清除脚本数据？" description="会删除所有脚本通过 $persistentStore 保存的数据，例如 BoxJs 的设置和各脚本的登录信息。" confirm-label="清除" :busy="!!store.busy" @close="clearingStore = false" @confirm="clearStore" />
     <ConfirmModal :open="!!removing" title="删除模块？" :description="`将删除「${removing?.name ?? ''}」及其规则。`" confirm-label="删除" :busy="!!store.busy" @close="removing = null" @confirm="confirmRemove" />
   </div>
 </template>
@@ -257,6 +272,8 @@ onMounted(async () => {
 .rewrite-module-links { display: flex; flex-wrap: wrap; gap: var(--space-3); }
 .rewrite-module-text .rewrite-link { justify-self: start; margin: 0; font-size: var(--font-size-2xs); }
 .rewrite-arguments { display: grid; gap: var(--space-3); margin-top: 8px; padding: 10px 12px; border-radius: var(--radius-control); background: var(--app-fill-subtle); }
+.rewrite-arguments-desc { margin: 0; color: var(--app-muted); font-size: var(--font-size-2xs); line-height: 1.5; white-space: pre-wrap; }
+.rewrite-store { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding-top: 10px; border-top: 1px solid var(--app-divider); color: var(--app-muted); font-size: var(--font-size-xs); }
 .rewrite-arguments label { display: grid; grid-template-columns: minmax(90px, 160px) 1fr; align-items: center; gap: var(--space-3); font-size: var(--font-size-xs); }
 .rewrite-arguments label span { overflow: hidden; color: var(--app-muted); text-overflow: ellipsis; white-space: nowrap; }
 .rewrite-arguments input { min-width: 0; height: 28px; padding: 0 8px; border: 1px solid var(--app-divider); border-radius: var(--radius-control); background: var(--app-surface-solid); color: inherit; font-size: var(--font-size-sm); }

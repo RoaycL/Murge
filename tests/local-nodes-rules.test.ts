@@ -172,6 +172,8 @@ describe('node editor schema', () => {
     config.alterId = 0
     expect(validateConfig(spec, config, sectionsOf('vmess'))).toMatchObject({ type: 'vmess', uuid: 'id' })
     expect(() => validateConfig(spec, { ...config, port: 70000 }, sectionsOf('vmess'))).toThrow('端口')
+    const wg = protocolById('wireguard')!
+    expect(() => validateConfig(wg, { ...newConfig(wg), name: 'w', server: 's', 'private-key': 'k', 'public-key': 'p' }, sectionsOf('wireguard'))).toThrow('隧道地址')
     const hy2 = protocolById('hysteria2')!
     expect(validateConfig(hy2, { name: 'h', type: 'hysteria2', server: 'h', ports: '2000-3000', password: 'p' }, sectionsOf('hysteria2')).ports).toBe('2000-3000')
   })

@@ -283,7 +283,7 @@ export const PROTOCOLS: ProtocolSpec[] = [
         secret('pre-shared-key', '预共享密钥')
       ] },
       { title: '隧道', column: 'left', fields: [
-        text('ip', '隧道 IPv4', { placeholder: '例如 10.0.0.2/32' }),
+        text('ip', '隧道 IPv4', { placeholder: '例如 10.0.0.2/32', hint: 'IPv4 和 IPv6 至少填一个' }),
         text('ipv6', '隧道 IPv6'),
         list('allowed-ips', '允许的 IP', { placeholder: '0.0.0.0/0, ::/0', hint: '只填内网段时，这个节点只能访问这些地址' }),
         list('dns', '隧道内 DNS', { placeholder: '可选，例如 1.1.1.1' }),
@@ -523,6 +523,7 @@ export function validateConfig(spec: ProtocolSpec, config: Record<string, unknow
       }
     }
   }
+  if (spec.id === 'wireguard' && !Array.isArray(config.peers) && isBlank(config.ip) && isBlank(config.ipv6)) throw new Error('请至少填写一个隧道地址（IPv4 或 IPv6）')
   const out: Record<string, unknown> = { ...config, name, type: spec.type }
   if (typeof out.server === 'string') out.server = out.server.trim()
   return out as ProxyConfig

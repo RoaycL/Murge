@@ -198,7 +198,8 @@ async function smoke(kind, executable, args = []) {
     const target = await waitFor(async () => {
       const response = await fetch(`http://127.0.0.1:${debugPort}/json/list`, { signal: AbortSignal.timeout(2000) })
       const targets = await response.json()
-      return targets.find((t) => t.type === 'page' && t.webSocketDebuggerUrl && !t.url.startsWith('devtools:'))
+      // The hidden tray popup (tray-menu.html) is a second page target; drive the main window.
+      return targets.find((t) => t.type === 'page' && t.webSocketDebuggerUrl && !t.url.startsWith('devtools:') && !t.url.includes('tray-menu.html'))
     }, alive)
     cdp = await connect(target.webSocketDebuggerUrl)
     await cdp.send('Runtime.enable')

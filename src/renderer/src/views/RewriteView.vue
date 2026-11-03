@@ -4,6 +4,7 @@ import AppIcon from '../components/AppIcon.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import DetailDrawer from '../components/DetailDrawer.vue'
+import AppSelect from '../components/AppSelect.vue'
 import { useMitmStore } from '../stores/mitm'
 import { useToast } from '../composables/use-toast'
 import { useUnsavedChanges } from '../composables/use-unsaved-changes'
@@ -285,7 +286,7 @@ onMounted(async () => {
       <h2 class="tone-pink">模块</h2>
       <SurfaceCard class="rewrite-card">
         <form class="rewrite-add" @submit.prevent="addModule">
-          <input v-model="moduleUrl" type="url" placeholder="模块链接（.sgmodule / .plugin / .snippet）" aria-label="模块链接" spellcheck="false" />
+          <input v-model="moduleUrl" type="url" placeholder="模块链接（Surge / Loon / Stash / Egern / Quantumult X）" aria-label="模块链接" spellcheck="false" />
           <button type="submit" class="rewrite-primary" :disabled="!!store.busy || !moduleUrl.trim()">{{ store.busy === 'add-module' ? '下载中…' : '添加' }}</button>
         </form>
         <p v-if="!state.modules.length" class="rewrite-hint">还没有模块。可以粘贴 Surge 模块、Loon 插件或 Quantumult X 重写链接，模块里的 MITM 主机名会自动加入解密列表。</p>
@@ -386,9 +387,11 @@ onMounted(async () => {
     <DetailDrawer :open="!!editingArgsModule" :title="editingArgsModule?.name ?? ''" subtitle="模块参数" @close="editingArgs = null">
       <form v-if="editingArgsModule" class="module-args" @submit.prevent="saveArguments(editingArgsModule)">
         <div class="module-viewer-card module-args-card">
-          <label v-for="arg in editingArgsModule.arguments" :key="arg.name">
-            <span>{{ arg.name }}</span>
-            <input v-model="argDraft[arg.name]" type="text" spellcheck="false" :placeholder="arg.default" />
+          <label v-for="arg in editingArgsModule.arguments" :key="arg.name" :title="arg.desc || undefined">
+            <span><b>{{ arg.name }}</b><small v-if="arg.tag">{{ arg.tag }}</small></span>
+            <button v-if="arg.kind === 'switch'" type="button" class="switch" :class="{ on: argDraft[arg.name] === 'true' }" role="switch" :aria-checked="argDraft[arg.name] === 'true'" :aria-label="arg.name" @click="argDraft[arg.name] = argDraft[arg.name] === 'true' ? 'false' : 'true'" />
+            <AppSelect v-else-if="arg.kind === 'select' && arg.options?.length" :model-value="argDraft[arg.name] ?? arg.default" :options="arg.options.map((option) => ({ value: option, label: option }))" :label="arg.name" plain class="module-args-select" @update:model-value="(value: string) => (argDraft[arg.name] = value)" />
+            <input v-else v-model="argDraft[arg.name]" type="text" spellcheck="false" :placeholder="arg.default" />
           </label>
         </div>
         <p v-if="editingArgsModule.argumentsDesc" class="module-args-desc">{{ editingArgsModule.argumentsDesc }}</p>
@@ -432,7 +435,12 @@ onMounted(async () => {
 .module-args { display: grid; gap: 14px; }
 .module-args-card label { display: grid; grid-template-columns: minmax(90px, 42%) 1fr; align-items: center; gap: 12px; padding: 9px 0; border-top: 1px solid var(--app-divider); font-size: var(--font-size-sm); }
 .module-args-card label:first-child { border-top: 0; }
-.module-args-card label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.module-args-card label > span { display: grid; min-width: 0; }
+.module-args-card label > span b { overflow: hidden; font-weight: var(--font-weight-regular); text-overflow: ellipsis; white-space: nowrap; }
+.module-args-card label > span small { overflow: hidden; color: var(--app-muted); font-size: var(--font-size-2xs); text-overflow: ellipsis; white-space: nowrap; }
+.module-args-card .switch { justify-self: end; }
+.module-args-card .module-args-select { justify-self: end; width: max-content; max-width: 100%; }
+.module-args-card .module-args-select :deep(.app-select-trigger) { font-size: var(--font-size-sm); font-weight: var(--font-weight-regular); color: var(--app-muted); }
 .module-args-card input { min-width: 0; height: 28px; padding: 0; border: 0; background: transparent; color: var(--app-muted); font-size: var(--font-size-sm); text-align: right; }
 .module-args-card input:focus { outline: none; color: var(--app-text); }
 .module-args-card label:focus-within { box-shadow: inset 0 -2px 0 var(--app-blue); }

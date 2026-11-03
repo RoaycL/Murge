@@ -7,6 +7,19 @@
   const input = JSON.parse(H.input())
   const define = (name, value) =>
     Object.defineProperty(globalThis, name, { value, writable: true, configurable: true })
+  // `A="x"&B=true` → { A: 'x', B: true } (Loon object arguments).
+  const argumentObject = (text) => {
+    const out = {}
+    for (const part of String(text || '').split('&')) {
+      if (!part) continue
+      const eq = part.indexOf('=')
+      const key = eq < 0 ? part : part.slice(0, eq)
+      let value = eq < 0 ? '' : part.slice(eq + 1)
+      if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1)
+      out[key] = value === 'true' ? true : value === 'false' ? false : value
+    }
+    return out
+  }
 
   // --- console / timers ---------------------------------------------------
   const show = (v) => {
@@ -225,7 +238,8 @@
     }, H.responseBody()))
   }
 
-  define('$argument', input.argument)
+  // Loon plugins pass `argument=[{A},{B}]`, which scripts see as an object.
+  define('$argument', input.argumentObject ? argumentObject(input.argument) : input.argument)
   define('$script', { name: input.name, type: input.type, startTime: new Date(), sessionIndex: 0 })
   define('$environment', Object.freeze({
     'surge-version': '5.20.0',

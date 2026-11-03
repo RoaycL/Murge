@@ -11,6 +11,7 @@ pub mod ca;
 pub mod compat;
 pub mod engine;
 pub mod jq;
+pub mod normalize;
 pub mod rules;
 pub mod script;
 #[cfg(test)]
@@ -898,21 +899,20 @@ impl MitmService {
             .map(|module| {
                 let mut parsed = rules::parse_module_with(&module.content, &module.arguments);
                 self.script_warnings(&parsed.scripts, &mut parsed.warnings);
-                let arguments_desc = module
-                    .content
-                    .lines()
-                    .map(str::trim)
-                    .find_map(|line| line.strip_prefix("#!arguments-desc="))
-                    .map(|text| text.replace("\\n", "\n"))
-                    .unwrap_or_default();
+                let arguments_desc = parsed.arguments_desc.clone();
                 let arguments: Vec<Value> = parsed
                     .arguments
                     .iter()
                     .map(|(name, default)| {
+                        let meta = parsed.argument_meta.iter().find(|meta| &meta.name == name);
                         json!({
                             "name": name,
                             "default": default,
                             "value": module.arguments.get(name).unwrap_or(default),
+                            "kind": meta.map(|m| m.kind.as_str()).unwrap_or("input"),
+                            "options": meta.map(|m| m.options.clone()).unwrap_or_default(),
+                            "tag": meta.map(|m| m.tag.as_str()).unwrap_or(""),
+                            "desc": meta.map(|m| m.desc.as_str()).unwrap_or(""),
                         })
                     })
                     .collect();

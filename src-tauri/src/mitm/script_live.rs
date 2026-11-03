@@ -75,6 +75,7 @@ fn request(url: &str, kind: ScriptKind, name: &str, code: Arc<str>) -> ScriptCal
         code,
         kind,
         argument: String::new(),
+        argument_object: false,
         timeout: Duration::from_secs(120),
         binary: false,
         qx: false,

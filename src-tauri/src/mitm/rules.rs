@@ -121,6 +121,8 @@ pub struct ScriptRule {
     pub max_size: usize,
     pub timeout: std::time::Duration,
     pub argument: String,
+    /// Loon: `$argument` is an object built from the `k=v&…` string.
+    pub argument_object: bool,
     /// Filled from the script cache after compiling.
     pub code: Option<std::sync::Arc<str>>,
     /// Came from Quantumult X syntax: also expose `$task` / `$prefs` / `$notify`.
@@ -153,6 +155,10 @@ pub struct ParsedModule {
     pub providers: Vec<(String, &'static str, String)>,
     /// `#!arguments` declarations: (name, default).
     pub arguments: Vec<(String, String)>,
+    /// Control type / choices / labels for each argument (Loon `[Argument]`).
+    pub argument_meta: Vec<super::normalize::ArgumentMeta>,
+    /// `#!arguments-desc` (or the Loon tags/descs), newlines restored.
+    pub arguments_desc: String,
     pub warnings: Vec<String>,
 }
 
@@ -342,16 +348,20 @@ pub fn parse_module_with(
     text: &str,
     overrides: &std::collections::BTreeMap<String, String>,
 ) -> ParsedModule {
-    let arguments = super::compat::declared_arguments(text);
+    // Loon / Stash / Egern / spaced Surge metadata → plain Surge text first.
+    let normalized = super::normalize::normalize(text);
+    let arguments = normalized.arguments.clone();
     let substituted;
     let text = if arguments.is_empty() {
-        text
+        normalized.text.as_str()
     } else {
-        substituted = super::compat::substitute_arguments(text, &arguments, overrides);
+        substituted = super::compat::substitute_arguments(&normalized.text, &arguments, overrides);
         substituted.as_str()
     };
     let mut module = ParsedModule {
         arguments,
+        argument_meta: normalized.meta.clone(),
+        arguments_desc: normalized.arguments_desc.clone(),
         ..Default::default()
     };
     let mut section = Section::None;
@@ -473,6 +483,7 @@ const SCRIPT_KEYS: &[&str] = &[
     "max-size",
     "timeout",
     "argument",
+    super::normalize::ARGUMENT_OBJECT_KEY,
     "debug",
     "script-update-interval",
     "engine",
@@ -571,6 +582,7 @@ pub(super) fn script_from_params(
         max_size,
         timeout: std::time::Duration::from_secs_f64(timeout),
         argument: get("argument").unwrap_or_default().to_string(),
+        argument_object: get(super::normalize::ARGUMENT_OBJECT_KEY).is_some_and(truthy),
         code: None,
         qx: false,
     }))

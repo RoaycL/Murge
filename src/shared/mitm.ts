@@ -70,6 +70,14 @@ export interface MitmModuleArgument {
   name: string
   default: string
   value: string
+  /** Control: free text, a choice list (Loon `select`) or a toggle. */
+  kind?: 'input' | 'select' | 'switch'
+  /** Choices of a `select`. */
+  options?: string[]
+  /** Short label (Loon `tag=`). */
+  tag?: string
+  /** Help text (Loon `desc=`). */
+  desc?: string
 }
 
 export interface MitmState {

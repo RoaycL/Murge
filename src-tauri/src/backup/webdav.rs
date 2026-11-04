@@ -46,18 +46,35 @@ fn status(code: u16, expected: &[u16]) -> Result<()> {
     Err(match code {
         401 | 403 => "WebDAV 认证失败或没有权限".into(),
         404 => "WebDAV 备份文件不存在".into(),
+        409 => "WebDAV 上级文件夹不存在且无法自动创建".into(),
         300..=399 => "WebDAV 服务要求重定向，请填写最终 HTTPS 文件地址".into(),
         _ => format!("WebDAV 请求失败（HTTP {code}）"),
     })
 }
 
-async fn request(target: Target, body: Option<Vec<u8>>) -> Result<reqwest::Response> {
-    let client = reqwest::Client::builder()
+fn client() -> Result<reqwest::Client> {
+    reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(30))
         .build()
-        .map_err(|_| "WebDAV 网络连接失败或超时")?;
-    let mut request = if let Some(bytes) = body {
+        .map_err(|_| "WebDAV 网络连接失败或超时".into())
+}
+
+async fn send(target: &Target, request: reqwest::RequestBuilder) -> Result<reqwest::Response> {
+    let mut request = request.header("Cache-Control", "no-store");
+    if !target.username.is_empty() {
+        request = request.basic_auth(&target.username, Some(&target.password));
+    }
+    // Never stringify reqwest errors: they can contain the complete URL.
+    request
+        .send()
+        .await
+        .map_err(|_| "WebDAV 网络连接失败或超时".into())
+}
+
+async fn request(target: &Target, body: Option<Vec<u8>>) -> Result<reqwest::Response> {
+    let client = client()?;
+    let request = if let Some(bytes) = body {
         if bytes.len() > MAX_ARCHIVE {
             return Err("备份文件超过上限".into());
         }
@@ -67,25 +84,54 @@ async fn request(target: Target, body: Option<Vec<u8>>) -> Result<reqwest::Respo
             .body(bytes)
     } else {
         client.get(&target.url)
+    };
+    send(target, request).await
+}
+
+/// Parent collection URLs of the file, outermost first, each ending in `/`.
+fn parent_collections(file_url: &str) -> Vec<String> {
+    let Ok(url) = url::Url::parse(file_url) else {
+        return Vec::new();
+    };
+    let segments: Vec<&str> = url.path().split('/').filter(|s| !s.is_empty()).collect();
+    let mut out = Vec::new();
+    let mut path = String::from("/");
+    for segment in segments.iter().take(segments.len().saturating_sub(1)) {
+        path.push_str(segment);
+        path.push('/');
+        let mut dir = url.clone();
+        dir.set_path(&path);
+        out.push(dir.to_string());
     }
-    .header("Cache-Control", "no-store");
-    if !target.username.is_empty() {
-        request = request.basic_auth(target.username, Some(target.password));
+    out
+}
+
+/// Creates missing parent folders. 405 means the collection already exists.
+async fn create_parents(target: &Target) -> Result<()> {
+    let client = client()?;
+    let method = reqwest::Method::from_bytes(b"MKCOL").map_err(|_| "WebDAV 参数无效")?;
+    for dir in parent_collections(&target.url) {
+        let response = send(target, client.request(method.clone(), &dir)).await?;
+        status(response.status().as_u16(), &[200, 201, 204, 405])?;
     }
-    // Never stringify reqwest errors: they can contain the complete URL.
-    request
-        .send()
-        .await
-        .map_err(|_| "WebDAV 网络连接失败或超时".into())
+    Ok(())
 }
 
 pub async fn upload(target: &Value, archive: Vec<u8>) -> Result<()> {
-    let response = request(validate(target)?, Some(archive)).await?;
-    status(response.status().as_u16(), &[200, 201, 204])
+    let target = validate(target)?;
+    let response = request(&target, Some(archive.clone())).await?;
+    let code = response.status().as_u16();
+    if code == 409 {
+        // Many servers (Nextcloud, Jianguoyun, Synology) reject PUT into a missing folder.
+        create_parents(&target).await?;
+        let response = request(&target, Some(archive)).await?;
+        return status(response.status().as_u16(), &[200, 201, 204]);
+    }
+    status(code, &[200, 201, 204])
 }
 
 pub async fn download(target: &Value) -> Result<Vec<u8>> {
-    let mut response = request(validate(target)?, None).await?;
+    let mut response = request(&validate(target)?, None).await?;
     status(response.status().as_u16(), &[200])?;
     if response
         .content_length()
@@ -141,6 +187,17 @@ mod tests {
             status(500, &[200]).unwrap_err(),
             "WebDAV 请求失败（HTTP 500）"
         );
+    }
+    #[test]
+    fn lists_parent_collections_for_mkcol() {
+        assert_eq!(
+            parent_collections("https://dav.example.com/dav/Murge/murge.murge-backup"),
+            vec![
+                "https://dav.example.com/dav/".to_string(),
+                "https://dav.example.com/dav/Murge/".to_string()
+            ]
+        );
+        assert!(parent_collections("https://dav.example.com/a.murge-backup").is_empty());
     }
     #[tokio::test]
     async fn upload_and_preview_validate_in_rust_before_network_access() {

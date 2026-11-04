@@ -3,7 +3,9 @@ import { computed, onMounted, ref } from 'vue'
 import { useStartupStore } from '../stores/startup'
 import { useAppSettingsStore } from '../stores/app-settings'
 import AppSelect from '../components/AppSelect.vue'
+import AppIcon from '../components/AppIcon.vue'
 import type { ConfigBackupPreview } from '@shared/config-backup'
+import { composeWebDavFileUrl, defaultWebDavFilePath, type WebDavBackupTarget } from '@shared/webdav-backup'
 
 const startup = useStartupStore()
 const appSettings = useAppSettingsStore()
@@ -17,9 +19,15 @@ const backupError = ref('')
 const backupNotice = ref('')
 const backupPreview = ref<ConfigBackupPreview | null>(null)
 const restoreConfirmed = ref(false)
-const webdavUrl = ref('')
+const webdavAddress = ref('')
+const webdavDefaultPath = ref(defaultWebDavFilePath(''))
+const webdavFilePath = ref(webdavDefaultPath.value)
 const webdavUsername = ref('')
 const webdavPassword = ref('')
+const webdavPassphrase = ref('')
+const webdavPasswordVisible = ref(false)
+const webdavPassphraseVisible = ref(false)
+const webdavFileUrl = computed(() => composeWebDavFileUrl(webdavAddress.value, webdavFilePath.value, webdavDefaultPath.value))
 const delayScopeOptions = [
   { value: 'group', label: '跟随策略组' },
   { value: 'global', label: '始终使用全局地址' }
@@ -75,21 +83,21 @@ async function previewBackup(): Promise<void> {
   finally { backupBusy.value = false }
 }
 
-function webdavTarget(): { url: string; username: string; password: string } {
-  return { url: webdavUrl.value.trim(), username: webdavUsername.value.trim(), password: webdavPassword.value }
+function webdavTarget(): WebDavBackupTarget {
+  return { url: webdavFileUrl.value, username: webdavUsername.value.trim(), password: webdavPassword.value }
 }
 
 async function uploadWebDav(): Promise<void> {
   if (backupBusy.value) return
   backupError.value = ''; backupNotice.value = ''
-  if (backupPassword.value.length < 8 || backupPassword.value !== backupConfirm.value) {
-    backupError.value = '请设置至少 8 位备份密码，并确认两次输入一致。'; return
+  if (webdavPassphrase.value.length < 8) {
+    backupError.value = '请为 WebDAV 备份设置至少 8 位加密口令，恢复时需要输入同一口令。'; return
   }
   backupBusy.value = true
   try {
-    await window.desktop.backup.webdavUpload(webdavTarget(), backupPassword.value)
+    await window.desktop.backup.webdavUpload(webdavTarget(), webdavPassphrase.value)
     backupNotice.value = '加密备份已上传到 WebDAV。'
-    backupPassword.value = ''; backupConfirm.value = ''; webdavPassword.value = ''
+    webdavPassword.value = ''; webdavPassphrase.value = ''
   } catch (error) { backupError.value = error instanceof Error ? error.message : 'WebDAV 上传失败' }
   finally { backupBusy.value = false }
 }
@@ -97,11 +105,11 @@ async function uploadWebDav(): Promise<void> {
 async function previewWebDav(): Promise<void> {
   if (backupBusy.value) return
   backupError.value = ''; backupNotice.value = ''; backupPreview.value = null; restoreConfirmed.value = false
-  if (!restorePassword.value) { backupError.value = '请先输入备份密码。'; return }
+  if (!webdavPassphrase.value) { backupError.value = '请输入上传这份 WebDAV 备份时设置的加密口令。'; return }
   backupBusy.value = true
   try {
-    backupPreview.value = await window.desktop.backup.webdavPreview(webdavTarget(), restorePassword.value)
-    webdavPassword.value = ''
+    backupPreview.value = await window.desktop.backup.webdavPreview(webdavTarget(), webdavPassphrase.value)
+    webdavPassword.value = ''; webdavPassphrase.value = ''
   } catch (error) { backupError.value = error instanceof Error ? error.message : 'WebDAV 下载失败' }
   finally { backupBusy.value = false }
 }
@@ -119,6 +127,11 @@ async function restoreBackup(): Promise<void> {
 
 onMounted(async () => {
   void startup.refresh()
+  void window.desktop.app.getBrand().then((brand) => {
+    const previous = webdavDefaultPath.value
+    webdavDefaultPath.value = defaultWebDavFilePath(brand.productName)
+    if (webdavFilePath.value === previous) webdavFilePath.value = webdavDefaultPath.value
+  }).catch(() => undefined)
   await appSettings.refresh()
   delayUrl.value = appSettings.settings.delayTestUrl
 })
@@ -206,23 +219,29 @@ onMounted(async () => {
         <div class="backup-intro"><strong>加密备份</strong><p>包含配置、订阅及 Sub-Store 用户数据，不包含日志和缓存。备份密码只用于本次操作；忘记密码将无法恢复。</p></div>
         <div class="backup-grid">
           <div class="backup-action">
-            <strong>创建备份</strong>
+            <strong>保存到本地文件</strong>
             <input v-model="backupPassword" type="password" autocomplete="new-password" placeholder="设置至少 8 位备份密码" aria-label="设置备份密码" />
             <input v-model="backupConfirm" type="password" autocomplete="new-password" placeholder="再次输入密码" aria-label="确认备份密码" />
             <button type="button" :disabled="backupBusy" @click="createBackup">保存加密备份…</button>
           </div>
           <div class="backup-action">
-            <strong>从备份恢复</strong>
+            <strong>从本地文件恢复</strong>
             <input v-model="restorePassword" type="password" autocomplete="off" placeholder="输入备份密码" aria-label="备份恢复密码" />
             <button type="button" :disabled="backupBusy" @click="previewBackup">选择文件并预览</button>
           </div>
         </div>
         <div class="webdav-backup">
           <strong>WebDAV 备份</strong>
-          <p>填写远端 .murge-backup 文件的完整 HTTPS 地址。只上传加密备份；WebDAV 账号和密码不会保存。上传将覆盖同名远端文件。</p>
-          <input v-model="webdavUrl" type="url" spellcheck="false" placeholder="https://dav.example.com/backups/backup.murge-backup" aria-label="WebDAV 备份文件地址" />
-          <div class="webdav-credentials"><input v-model="webdavUsername" autocomplete="username" placeholder="WebDAV 用户名" aria-label="WebDAV 用户名" /><input v-model="webdavPassword" type="password" autocomplete="off" placeholder="WebDAV 密码" aria-label="WebDAV 密码" /></div>
-          <div class="webdav-actions"><button type="button" :disabled="backupBusy || !webdavUrl.trim()" @click="uploadWebDav">上传加密备份</button><button type="button" :disabled="backupBusy || !webdavUrl.trim()" @click="previewWebDav">下载并预览恢复</button></div>
+          <p>把加密备份上传到 WebDAV 网盘，或从网盘下载并恢复。加密口令与上方本地备份的密码互不相关；WebDAV 账号、密码和口令都不会保存。</p>
+          <div class="webdav-form">
+            <label class="webdav-field wide"><span>WebDAV 地址</span><input v-model="webdavAddress" type="url" spellcheck="false" autocomplete="off" placeholder="https://dav.example.com/dav" /></label>
+            <label class="webdav-field"><span>用户名</span><input v-model="webdavUsername" spellcheck="false" autocomplete="username" placeholder="WebDAV 用户名" /></label>
+            <label class="webdav-field"><span>密码</span><span class="webdav-secret"><input v-model="webdavPassword" :type="webdavPasswordVisible ? 'text' : 'password'" autocomplete="off" placeholder="WebDAV 密码或应用密码" /><button type="button" class="webdav-eye" :class="{ active: webdavPasswordVisible }" :aria-label="webdavPasswordVisible ? '隐藏 WebDAV 密码' : '显示 WebDAV 密码'" @click.prevent="webdavPasswordVisible = !webdavPasswordVisible"><AppIcon name="eye" :size="16" /></button></span></label>
+            <label class="webdav-field"><span>文件路径</span><input v-model="webdavFilePath" spellcheck="false" autocomplete="off" :placeholder="webdavDefaultPath" /></label>
+            <label class="webdav-field"><span>加密口令（至少 8 位，恢复时需要）</span><span class="webdav-secret"><input v-model="webdavPassphrase" :type="webdavPassphraseVisible ? 'text' : 'password'" autocomplete="new-password" placeholder="设置或输入加密口令" /><button type="button" class="webdav-eye" :class="{ active: webdavPassphraseVisible }" :aria-label="webdavPassphraseVisible ? '隐藏加密口令' : '显示加密口令'" @click.prevent="webdavPassphraseVisible = !webdavPassphraseVisible"><AppIcon name="eye" :size="16" /></button></span></label>
+          </div>
+          <p v-if="webdavFileUrl" class="webdav-target">远端文件：<code>{{ webdavFileUrl }}</code>。上传将覆盖同名文件。</p>
+          <div class="webdav-actions"><button type="button" :disabled="backupBusy || !webdavFileUrl" @click="uploadWebDav">上传加密备份</button><button type="button" :disabled="backupBusy || !webdavFileUrl" @click="previewWebDav">下载并预览恢复</button></div>
         </div>
         <div v-if="backupPreview" class="backup-preview" :class="{ incompatible: !backupPreview.compatible }">
           <strong>恢复前预览</strong>
@@ -293,10 +312,19 @@ onMounted(async () => {
 .webdav-backup>strong{font-size:var(--font-size-md)}
 .webdav-backup p{margin:0;color:var(--app-muted);font-size:var(--font-size-xs);line-height:1.5}
 .webdav-backup input{min-width:0;width:100%;height:35px;padding:0 11px;border:1px solid var(--app-divider);border-radius:var(--radius-control);background:var(--app-surface);color:var(--app-text)}
-.webdav-credentials{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-4)}
+.webdav-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-5) var(--space-6)}
+.webdav-field{display:grid;gap:6px;min-width:0}
+.webdav-field.wide{grid-column:1/-1}
+.webdav-field>span:first-child{color:var(--app-muted);font-size:var(--font-size-xs)}
+.webdav-secret{position:relative;display:block;min-width:0}
+.webdav-secret input{padding-right:40px}
+.webdav-eye{position:absolute;top:50%;right:4px;width:28px;height:28px;transform:translateY(-50%);display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:var(--radius-sm);background:transparent;color:var(--app-muted);cursor:pointer}
+.webdav-eye:hover,.webdav-eye.active{color:var(--app-text);background:color-mix(in srgb,var(--app-text) 8%,transparent)}
+.webdav-backup .webdav-target{overflow-wrap:anywhere}
+.webdav-target code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--app-text)}
 .webdav-actions{display:flex;gap:var(--space-4);flex-wrap:wrap}
 .webdav-actions button{padding:8px 13px;border:0;border-radius:var(--radius-control);background:var(--app-accent);color:var(--app-on-accent);cursor:pointer}
 .webdav-actions button:disabled{opacity:.5;cursor:not-allowed}
 .backup-panel>.backup-preview{margin-top:16px}
-@media(max-width:760px){.backup-grid{grid-template-columns:1fr}}
+@media(max-width:760px){.backup-grid,.webdav-form{grid-template-columns:1fr}}
 </style>

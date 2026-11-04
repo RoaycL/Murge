@@ -150,14 +150,27 @@ pub fn resolve_enhanced_document(
     }
     let document = profile["document"].as_str().unwrap_or_default().to_string();
     let profile_id = profile["meta"]["id"].as_str().unwrap_or_default();
-    let overridden = overrides.apply_for_profile(
+    compose_profile_document(
         &document,
-        if profile_id.is_empty() {
-            None
-        } else {
-            Some(profile_id)
-        },
-    )?;
+        (!profile_id.is_empty()).then_some(profile_id),
+        overrides,
+        models,
+    )
+    .map(Some)
+}
+
+/// One profile document as the core loads it: overrides (which also apply
+/// the local nodes/rules/groups and per-profile rule edits), DNS + sniffer
+/// enhancement, the Tailscale runtime layer and HTTPS 解密 / module rules.
+/// Shared by the live reload and the `mihomo -t` gate, so the gate checks
+/// exactly what a reload would hand the core.
+pub fn compose_profile_document(
+    document: &str,
+    profile_id: Option<&str>,
+    overrides: &OverrideService,
+    models: &enhancements::ModelStores,
+) -> Result<String, IpcError> {
+    let overridden = overrides.apply_for_profile(document, profile_id)?;
     let dns = enhancements::coerce_dns_enhancement(&models.dns.get());
     let (dns_text, _) = crate::inspection::apply_dns_to_document(&overridden, &dns);
     let sniffer = enhancements::coerce_sniffer_enhancement(&models.sniffer.get());
@@ -165,7 +178,30 @@ pub fn resolve_enhanced_document(
     // Tailscale DNS / coexistence after DNS enhancement (which may replace
     // the dns block); HTTPS 解密 last: its rules must precede every rule.
     let text = crate::local_edits::apply_runtime_global(&text);
-    Ok(Some(crate::mitm::apply_global(&text)))
+    Ok(crate::mitm::apply_global(&text))
+}
+
+/// Hot-apply a change to a layer composed on top of every profile (local
+/// nodes / rules / groups, HTTPS 解密 / rewrite modules) that is already
+/// saved and already passed the `mihomo -t` gate. A failed reload keeps the
+/// saved change (the next kernel start composes the same document) but is
+/// logged and handed back so the page can say the core still runs the old
+/// config. `Ok` when no core is running.
+pub async fn reload_saved_layer(
+    kernel: &crate::kernel::KernelServices,
+    models: &enhancements::ModelStores,
+    profiles: &Arc<ProfilesService>,
+    overrides: &OverrideService,
+) -> Result<(), String> {
+    let result = match LiveConfigReloader::from_ipc(kernel, models, profiles, overrides) {
+        Ok(reloader) => reloader.reload_if_running().await.map(|_| ()),
+        Err(error) => Err(error),
+    };
+    result.map_err(|error| {
+        let message = format!("已保存，但内核暂未应用新配置：{}", error.extract_message());
+        crate::diag!("[live-config] {message}");
+        message
+    })
 }
 
 /// `resolveOverriddenActiveDocument` — active profile → overrides ONLY (the
@@ -849,18 +885,18 @@ pub fn build_service_profile(
     }
 }
 
-/// The document the profile semantic gate hands to the service's `mihomo -t`
-/// (the TS `setSemanticValidator` composition): DNS + sniffer enhancement,
-/// then the privileged TUN composition with TUN on, so the check covers the
-/// strictest shape the core will ever load for this document.
+/// The document the profile semantic gate hands to `mihomo -t`: the full
+/// live composition (`compose_profile_document`: overrides, local nodes /
+/// rules / groups, DNS + sniffer, Tailscale, HTTPS 解密), then the
+/// privileged TUN composition with TUN on, so the check covers the strictest
+/// shape the core will ever load for this document.
 pub fn build_validation_profile(
     document: &str,
+    profile_id: Option<&str>,
+    overrides: &OverrideService,
     models: &enhancements::ModelStores,
 ) -> Result<String, IpcError> {
-    let dns = enhancements::coerce_dns_enhancement(&models.dns.get());
-    let (dns_text, _) = crate::inspection::apply_dns_to_document(document, &dns);
-    let sniffer = enhancements::coerce_sniffer_enhancement(&models.sniffer.get());
-    let (enhanced, _) = crate::inspection::apply_sniffer_to_document(&dns_text, &sniffer);
+    let enhanced = compose_profile_document(document, profile_id, overrides, models)?;
     let core = enhancements::coerce_core_settings(&models.core.get());
     let mut options = LiveConfigRuntime::from_core(&core).builder_options();
     if let Some(map) = options.as_object_mut() {

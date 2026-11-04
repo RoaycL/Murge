@@ -414,7 +414,7 @@ pub fn run() {
                     let validate_handle = app.handle().clone();
                     let selection = version_selection.clone();
                     let workspace = kernel_workspace.clone();
-                    profiles.set_semantic_validator(std::sync::Arc::new(move |document| {
+                    profiles.set_semantic_validator(std::sync::Arc::new(move |document, profile_id: Option<String>| {
                         let resolver = resolver.clone();
                         let service_client = service_client.clone();
                         let handle = validate_handle.clone();
@@ -426,7 +426,17 @@ pub fn run() {
                                 .ok_or_else(|| error::IpcError::internal("配置校验服务未就绪"))?
                                 .inner()
                                 .clone();
-                            let effective = live_config::build_validation_profile(&document, &models)?;
+                            let overrides = handle
+                                .try_state::<std::sync::Arc<override_service::OverrideService>>()
+                                .ok_or_else(|| error::IpcError::internal("配置校验服务未就绪"))?
+                                .inner()
+                                .clone();
+                            let effective = live_config::build_validation_profile(
+                                &document,
+                                profile_id.as_deref(),
+                                &overrides,
+                                &models,
+                            )?;
                             let (channel, specific) = selection();
                             let version = match channel.as_str() {
                                 "specific" => specific,

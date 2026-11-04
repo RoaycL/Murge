@@ -15,6 +15,7 @@ import {
   type RuleEdit
 } from '@shared/local'
 import { toProtocolError } from '@shared/protocol-errors'
+import { useToast } from '../composables/use-toast'
 import { classifyDelayError, type DelayNodeState } from './policies'
 
 /**
@@ -78,6 +79,9 @@ export const useLocalStore = defineStore('local', () => {
     try {
       state.value = await window.desktop.local.save(plainClone(next))
       lastError.value = null
+      // Saved and accepted by the core check, but the running core has not
+      // switched to it yet: say so instead of a silent success.
+      if (state.value.reloadError) useToast().info('内核暂未应用新配置', state.value.reloadError)
       return null
     } catch (error) {
       const message = toProtocolError(error).message

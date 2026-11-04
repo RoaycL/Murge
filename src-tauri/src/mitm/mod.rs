@@ -381,6 +381,14 @@ impl MitmService {
         Ok(())
     }
 
+    /// Put back a settings snapshot taken before a change the core rejected.
+    fn restore_settings(&self, settings: MitmSettings) -> Result<(), IpcError> {
+        self.update(|next| {
+            *next = settings;
+            Ok(())
+        })
+    }
+
     fn recompile(&self) {
         let settings = self.settings();
         let mut sources = vec![ModuleSource::plain(&settings.local_module)];
@@ -1114,6 +1122,7 @@ pub async fn dispatch(
 ) -> Result<Value, IpcError> {
     let service = global().ok_or_else(|| IpcError::unsupported("解密服务未启动"))?;
     let before = service.injection_signature();
+    let settings_before = service.settings();
     let result: Result<Value, IpcError> = match channel {
         "mitm:get-state" => {
             let checker = service.clone();
@@ -1263,13 +1272,27 @@ pub async fn dispatch(
     }
     let after = service.injection_signature();
     if before != after {
-        // A failed hot reload must not hide the saved change; the next kernel
-        // start composes the same document anyway.
-        if let Ok(reloader) =
-            crate::live_config::LiveConfigReloader::from_ipc(kernel, models, profiles, overrides)
-        {
-            let _ = reloader.reload_if_running().await;
+        // Serialize with profile switches / subscription updates, so the
+        // check sees the profile the reload will apply.
+        let _gate = crate::lifecycle::runtime_update_guard().await?;
+        // A settings change (module, rewrite, hostnames, switches) must pass
+        // `mihomo -t` together with the active profile before it goes live;
+        // a rejection puts the previous settings back. CA lifecycle changes
+        // only toggle the app's own routing rules and skip the check.
+        if result.is_ok() && service.settings() != settings_before {
+            if let Err(error) = profiles.check_active_semantics().await {
+                if let Err(restore) = service.restore_settings(settings_before) {
+                    crate::diag!(
+                        "[mitm] restoring settings after a rejected change failed: {}",
+                        restore.extract_message()
+                    );
+                }
+                return Err(error);
+            }
         }
+        // A failed hot reload keeps the saved change (the next kernel start
+        // composes the same document) and is logged by the helper.
+        let _ = crate::live_config::reload_saved_layer(kernel, models, profiles, overrides).await;
     }
     result
 }

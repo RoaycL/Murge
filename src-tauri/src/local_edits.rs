@@ -1314,16 +1314,33 @@ pub async fn dispatch(
             let next: LocalSettings =
                 serde_json::from_value(payload.get(0).cloned().unwrap_or(Value::Null))
                     .map_err(|e| IpcError::invalid_argument(format!("本地设置格式错误：{e}")))?;
-            if service.save(next)? {
-                // A failed hot reload must not hide the saved change; the
-                // next kernel start composes the same document anyway.
-                if let Ok(reloader) = crate::live_config::LiveConfigReloader::from_ipc(
-                    kernel, models, profiles, overrides,
-                ) {
-                    let _ = reloader.reload_if_running().await;
-                }
+            // Serialize with profile switches / subscription updates: the
+            // check below must see the profile the reload will apply.
+            let _gate = crate::lifecycle::runtime_update_guard().await?;
+            let previous = service.settings();
+            if !service.save(next)? {
+                return Ok(snapshot(&service));
             }
-            Ok(snapshot(&service))
+            // Ask the core before the change goes live: the active profile
+            // with the new local layer must pass `mihomo -t`. A rejection
+            // puts the previous settings back, so nothing the core refuses is
+            // ever kept (a later profile switch would otherwise fail on it).
+            if let Err(error) = profiles.check_active_semantics().await {
+                if let Err(restore) = service.save(previous) {
+                    crate::diag!(
+                        "[local] restoring settings after a rejected save failed: {}",
+                        restore.extract_message()
+                    );
+                }
+                return Err(error);
+            }
+            let mut state = snapshot(&service);
+            if let Err(message) =
+                crate::live_config::reload_saved_layer(kernel, models, profiles, overrides).await
+            {
+                state["reloadError"] = json!(message);
+            }
+            Ok(state)
         }
         "local:node-delay" => {
             let name = payload

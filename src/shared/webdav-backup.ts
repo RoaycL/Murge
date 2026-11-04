@@ -6,7 +6,11 @@ export interface WebDavBackupTarget {
 }
 
 export const WEBDAV_BACKUP_EXTENSION = '.murge-backup'
-export const WEBDAV_DEFAULT_FILE_PATH = 'Murge/murge.murge-backup'
+/** Default remote path, e.g. `<Product>/<product>.murge-backup`. */
+export function defaultWebDavFilePath(productName: string): string {
+  const name = productName.trim().replace(/[\\/:*?"<>|#%]+/g, '') || 'backup'
+  return `${name}/${name.toLowerCase().replace(/\s+/g, '-')}${WEBDAV_BACKUP_EXTENSION}`
+}
 
 function encodeSegment(segment: string): string {
   let decoded = segment
@@ -21,12 +25,12 @@ function encodeSegment(segment: string): string {
  * already a full `.murge-backup` URL it is used unchanged. Validation (HTTPS,
  * no credentials, no query or fragment) stays in the Rust backend.
  */
-export function composeWebDavFileUrl(address: string, filePath: string): string {
+export function composeWebDavFileUrl(address: string, filePath: string, defaultPath = defaultWebDavFilePath('')): string {
   const base = address.trim()
   if (!base) return ''
   if (base.toLowerCase().split(/[?#]/)[0].endsWith(WEBDAV_BACKUP_EXTENSION)) return base
-  let path = (filePath.trim() || WEBDAV_DEFAULT_FILE_PATH).replace(/\\/g, '/')
-  if (path.endsWith('/')) path += WEBDAV_DEFAULT_FILE_PATH.split('/').pop()
+  let path = (filePath.trim() || defaultPath).replace(/\\/g, '/')
+  if (path.endsWith('/')) path += defaultPath.split('/').pop()
   if (!path.toLowerCase().endsWith(WEBDAV_BACKUP_EXTENSION)) path += WEBDAV_BACKUP_EXTENSION
   const segments = path.split('/').filter((segment) => segment && segment !== '.')
   return `${base.replace(/\/+$/, '')}/${segments.map(encodeSegment).join('/')}`

@@ -1,18 +1,25 @@
 import { describe, expect, it } from 'vitest'
-import { composeWebDavFileUrl, WEBDAV_DEFAULT_FILE_PATH } from '../src/shared/webdav-backup'
+import { composeWebDavFileUrl, defaultWebDavFilePath } from '../src/shared/webdav-backup'
+
+const DEFAULT = defaultWebDavFilePath('Demo App')
 
 describe('composeWebDavFileUrl', () => {
+  it('derives the default path from the product name', () => {
+    expect(DEFAULT).toBe('Demo App/demo-app.murge-backup')
+    expect(defaultWebDavFilePath('')).toBe('backup/backup.murge-backup')
+  })
+
   it('joins server address and file path into one .murge-backup URL', () => {
-    expect(composeWebDavFileUrl('https://dav.example.com', WEBDAV_DEFAULT_FILE_PATH))
-      .toBe('https://dav.example.com/Murge/murge.murge-backup')
+    expect(composeWebDavFileUrl('https://dav.example.com', DEFAULT))
+      .toBe('https://dav.example.com/Demo%20App/demo-app.murge-backup')
     expect(composeWebDavFileUrl(' https://dav.example.com/dav/ ', '/backups/home.murge-backup'))
       .toBe('https://dav.example.com/dav/backups/home.murge-backup')
   })
 
   it('fills in the default name and extension', () => {
-    expect(composeWebDavFileUrl('https://dav.example.com', '')).toBe('https://dav.example.com/Murge/murge.murge-backup')
-    expect(composeWebDavFileUrl('https://dav.example.com', 'Murge/')).toBe('https://dav.example.com/Murge/murge.murge-backup')
-    expect(composeWebDavFileUrl('https://dav.example.com', 'Murge\\home')).toBe('https://dav.example.com/Murge/home.murge-backup')
+    expect(composeWebDavFileUrl('https://dav.example.com', '', DEFAULT)).toBe('https://dav.example.com/Demo%20App/demo-app.murge-backup')
+    expect(composeWebDavFileUrl('https://dav.example.com', 'Demo/', DEFAULT)).toBe('https://dav.example.com/Demo/demo-app.murge-backup')
+    expect(composeWebDavFileUrl('https://dav.example.com', 'Demo\\home')).toBe('https://dav.example.com/Demo/home.murge-backup')
   })
 
   it('encodes path segments so they cannot inject a query or fragment', () => {
@@ -24,6 +31,6 @@ describe('composeWebDavFileUrl', () => {
   it('keeps a full file URL pasted into the address and returns empty without an address', () => {
     expect(composeWebDavFileUrl('https://dav.example.com/x/old.murge-backup', 'ignored'))
       .toBe('https://dav.example.com/x/old.murge-backup')
-    expect(composeWebDavFileUrl('  ', 'Murge/a')).toBe('')
+    expect(composeWebDavFileUrl('  ', 'x/a')).toBe('')
   })
 })

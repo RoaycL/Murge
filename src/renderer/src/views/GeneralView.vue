@@ -5,7 +5,7 @@ import { useAppSettingsStore } from '../stores/app-settings'
 import AppSelect from '../components/AppSelect.vue'
 import AppIcon from '../components/AppIcon.vue'
 import type { ConfigBackupPreview } from '@shared/config-backup'
-import { composeWebDavFileUrl, WEBDAV_DEFAULT_FILE_PATH, type WebDavBackupTarget } from '@shared/webdav-backup'
+import { composeWebDavFileUrl, defaultWebDavFilePath, type WebDavBackupTarget } from '@shared/webdav-backup'
 
 const startup = useStartupStore()
 const appSettings = useAppSettingsStore()
@@ -20,13 +20,14 @@ const backupNotice = ref('')
 const backupPreview = ref<ConfigBackupPreview | null>(null)
 const restoreConfirmed = ref(false)
 const webdavAddress = ref('')
-const webdavFilePath = ref(WEBDAV_DEFAULT_FILE_PATH)
+const webdavDefaultPath = ref(defaultWebDavFilePath(''))
+const webdavFilePath = ref(webdavDefaultPath.value)
 const webdavUsername = ref('')
 const webdavPassword = ref('')
 const webdavPassphrase = ref('')
 const webdavPasswordVisible = ref(false)
 const webdavPassphraseVisible = ref(false)
-const webdavFileUrl = computed(() => composeWebDavFileUrl(webdavAddress.value, webdavFilePath.value))
+const webdavFileUrl = computed(() => composeWebDavFileUrl(webdavAddress.value, webdavFilePath.value, webdavDefaultPath.value))
 const delayScopeOptions = [
   { value: 'group', label: '跟随策略组' },
   { value: 'global', label: '始终使用全局地址' }
@@ -126,6 +127,11 @@ async function restoreBackup(): Promise<void> {
 
 onMounted(async () => {
   void startup.refresh()
+  void window.desktop.app.getBrand().then((brand) => {
+    const previous = webdavDefaultPath.value
+    webdavDefaultPath.value = defaultWebDavFilePath(brand.productName)
+    if (webdavFilePath.value === previous) webdavFilePath.value = webdavDefaultPath.value
+  }).catch(() => undefined)
   await appSettings.refresh()
   delayUrl.value = appSettings.settings.delayTestUrl
 })
@@ -231,7 +237,7 @@ onMounted(async () => {
             <label class="webdav-field wide"><span>WebDAV 地址</span><input v-model="webdavAddress" type="url" spellcheck="false" autocomplete="off" placeholder="https://dav.example.com/dav" /></label>
             <label class="webdav-field"><span>用户名</span><input v-model="webdavUsername" spellcheck="false" autocomplete="username" placeholder="WebDAV 用户名" /></label>
             <label class="webdav-field"><span>密码</span><span class="webdav-secret"><input v-model="webdavPassword" :type="webdavPasswordVisible ? 'text' : 'password'" autocomplete="off" placeholder="WebDAV 密码或应用密码" /><button type="button" class="webdav-eye" :class="{ active: webdavPasswordVisible }" :aria-label="webdavPasswordVisible ? '隐藏 WebDAV 密码' : '显示 WebDAV 密码'" @click.prevent="webdavPasswordVisible = !webdavPasswordVisible"><AppIcon name="eye" :size="16" /></button></span></label>
-            <label class="webdav-field"><span>文件路径</span><input v-model="webdavFilePath" spellcheck="false" autocomplete="off" :placeholder="WEBDAV_DEFAULT_FILE_PATH" /></label>
+            <label class="webdav-field"><span>文件路径</span><input v-model="webdavFilePath" spellcheck="false" autocomplete="off" :placeholder="webdavDefaultPath" /></label>
             <label class="webdav-field"><span>加密口令（至少 8 位，恢复时需要）</span><span class="webdav-secret"><input v-model="webdavPassphrase" :type="webdavPassphraseVisible ? 'text' : 'password'" autocomplete="new-password" placeholder="设置或输入加密口令" /><button type="button" class="webdav-eye" :class="{ active: webdavPassphraseVisible }" :aria-label="webdavPassphraseVisible ? '隐藏加密口令' : '显示加密口令'" @click.prevent="webdavPassphraseVisible = !webdavPassphraseVisible"><AppIcon name="eye" :size="16" /></button></span></label>
           </div>
           <p v-if="webdavFileUrl" class="webdav-target">远端文件：<code>{{ webdavFileUrl }}</code>。上传将覆盖同名文件。</p>

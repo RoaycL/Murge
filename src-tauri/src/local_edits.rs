@@ -1550,7 +1550,10 @@ mod tests {
             ..LocalSettings::default()
         };
         let (config, report) = apply(&settings, None);
-        assert_eq!(config["proxy-groups"][0]["proxies"], json!(["HK", "WG", "WG2"]));
+        assert_eq!(
+            config["proxy-groups"][0]["proxies"],
+            json!(["HK", "WG", "WG2"])
+        );
         assert_eq!(
             report.missing_groups,
             BTreeMap::from([("id-WG".to_string(), vec!["Streaming".to_string()])])

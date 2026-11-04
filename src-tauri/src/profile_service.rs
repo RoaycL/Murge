@@ -542,8 +542,8 @@ mod tests {
     #[tokio::test]
     async fn active_check_hands_the_gate_the_active_profile_and_its_id() {
         let (_temp, service) = service();
-        let seen: std::sync::Arc<std::sync::Mutex<Vec<(String, Option<String>)>>> =
-            Default::default();
+        type Calls = std::sync::Mutex<Vec<(String, Option<String>)>>;
+        let seen: std::sync::Arc<Calls> = Default::default();
         let record = seen.clone();
         service.set_semantic_validator(std::sync::Arc::new(
             move |document: String, id: Option<String>| {

@@ -30,6 +30,8 @@ const contextAt = ref({ x: 0, y: 0 })
 
 const nodes = computed(() => local.settings.nodes)
 const skipped = computed(() => new Set(local.state.skippedNodes))
+const missingGroups = (node: LocalNode): string[] => (node.enabled && local.state.missingGroups?.[node.id]) || []
+const missingTitle = (node: LocalNode): string => `当前配置中没有策略组「${missingGroups(node).join('」「')}」，节点暂未加入。切换到有这些组的配置后会自动加入。`
 const takenNames = computed(() => nodes.value.filter((node) => node.id !== editing.value?.id).map((node) => node.config.name))
 const ts = computed(() => local.state.tailscale)
 
@@ -181,7 +183,7 @@ onMounted(() => {
         @contextmenu.prevent="openContext($event, node)"
       >
         <button type="button" class="local-card-main" :title="`${node.config.name} · ${nodeSummary(node.config)}`" :aria-label="`编辑 ${node.config.name}`" @click="edit(node)">
-          <small>{{ typeLabel(node) }}</small>
+          <small>{{ typeLabel(node) }}<span v-if="missingGroups(node).length" class="local-card-missing" :title="missingTitle(node)"> · 缺 {{ missingGroups(node).length }} 个策略组</span></small>
           <strong>{{ node.config.name }}</strong>
         </button>
         <button type="button" class="local-card-delay" :class="cardStatus(node).kind" :title="cardStatus(node).title" :disabled="!canTest(node)" @click="test(node)">{{ cardStatus(node).text }}</button>
@@ -262,6 +264,7 @@ onMounted(() => {
 .local-card-main, .local-card-delay { min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
 .local-card-main { display: flex; flex: 1; flex-direction: column; align-items: stretch; cursor: default; }
 .local-card-main small { color: var(--app-muted); font-size: var(--font-size-2xs); }
+.local-card-missing { color: var(--app-warning); }
 .local-card-main strong { display: -webkit-box; overflow: hidden; margin-top: 2px; font-size: var(--font-size-sm); line-height: 1.35; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .local-card-delay { align-self: flex-start; color: var(--app-latency-good); font-size: var(--font-size-2xs); font-weight: var(--font-weight-semibold, 600); }
 .local-card-delay:disabled { cursor: default; opacity: 1; }

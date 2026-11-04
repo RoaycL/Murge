@@ -53,6 +53,8 @@ const config = ref<Record<string, unknown>>({})
 const protocol = ref<ProtocolSpec | null>(null)
 const text = ref('')
 const groups = ref<string[]>([])
+/** Memberships kept for other configs: groups this config does not have. */
+const absentGroups = computed(() => props.groups.length ? groups.value.filter((name) => !props.groups.some((group) => group.name === name)) : [])
 const tailnetRules = ref(true)
 const drafts = ref<Record<string, string>>({})
 const error = ref<string | null>(null)
@@ -369,6 +371,7 @@ const TEXT_PLACEHOLDER = `支持以下任一种内容，可以一次粘贴多个
                   <label v-for="group in props.groups" :key="group.name" class="surge-check"><input type="checkbox" :checked="groups.includes(group.name)" @change="toggleGroup(group.name)" />{{ group.name }}</label>
                 </div>
                 <p v-else class="nf-hint">启动内核或选择订阅后可以选择策略组。</p>
+                <p v-if="absentGroups.length" class="nf-hint nf-absent">当前配置中没有策略组「{{ absentGroups.join('」「') }}」。设置会保留，切换到有这些组的配置后自动加入。</p>
               </section>
             </div>
           </div>
@@ -379,6 +382,7 @@ const TEXT_PLACEHOLDER = `支持以下任一种内容，可以一次粘贴多个
             <div v-if="props.groups.length" class="nf-card nf-groups">
               <label v-for="group in props.groups" :key="group.name" class="surge-check"><input type="checkbox" :checked="groups.includes(group.name)" @change="toggleGroup(group.name)" />{{ group.name }}</label>
             </div>
+            <p v-if="absentGroups.length" class="nf-hint nf-absent">当前配置中没有策略组「{{ absentGroups.join('」「') }}」。设置会保留，切换到有这些组的配置后自动加入。</p>
           </div>
         </form>
 
@@ -433,6 +437,7 @@ const TEXT_PLACEHOLDER = `支持以下任一种内容，可以一次粘贴多个
 .nf-text { display: grid; gap: 10px; height: 100%; grid-template-rows: minmax(220px, 1fr) auto auto; }
 .nf-text-area { height: 100%; min-height: 220px; padding: 12px 14px; border-radius: 10px; font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; resize: none; }
 .nf-hint { margin: 0 6px; color: var(--app-muted); font-size: var(--font-size-xs); line-height: 1.5; }
+.nf-absent { color: var(--app-warning); }
 .nf-warning { margin: 0 6px; color: var(--app-warning, #d97706); font-size: var(--font-size-xs); line-height: 1.5; }
 .nf-error { margin: 0; color: var(--app-danger); font-size: var(--font-size-xs); line-height: 1.5; }
 .node-modal-foot { display: flex; align-items: center; gap: var(--space-3); padding: 12px 20px; border-top: 1px solid var(--app-divider); background: color-mix(in srgb, var(--app-text) 2%, transparent); }

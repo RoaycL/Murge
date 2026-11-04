@@ -82,6 +82,8 @@ export interface LocalState {
   skippedNodes: string[]
   skippedRules: string[]
   skippedGroups?: string[]
+  /** Per local node id: groups it should join that the active config lacks. */
+  missingGroups?: Record<string, string[]>
   tailscale: { detected: boolean; interface: string | null; active: boolean }
   /** Names of proxies the app injects itself. */
   managedProxies: string[]

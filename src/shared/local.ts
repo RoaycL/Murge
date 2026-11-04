@@ -85,6 +85,8 @@ export interface LocalState {
   tailscale: { detected: boolean; interface: string | null; active: boolean }
   /** Names of proxies the app injects itself. */
   managedProxies: string[]
+  /** Set by a save that passed the core check but the running core did not apply yet. */
+  reloadError?: string
 }
 
 export const EMPTY_LOCAL_SETTINGS: LocalSettings = {

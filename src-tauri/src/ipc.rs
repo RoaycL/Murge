@@ -516,7 +516,7 @@ pub async fn dispatch(
                 IpcError::invalid_argument("profiles:import requires a request object")
             })?;
             if let Some(document) = request.get("document").and_then(Value::as_str) {
-                profiles.check_semantics(document).await?;
+                profiles.check_semantics(document, None).await?;
             }
             let previous_active = active_profile_id(profiles)?;
             let meta = profiles.import(request)?;
@@ -592,7 +592,7 @@ pub async fn dispatch(
             let _gate = runtime_update_guard().await?;
             let id = required_string(payload, 0, "profiles:activate id")?;
             if let Some(document) = profiles.get(&id)?["document"].as_str() {
-                profiles.check_semantics(document).await?;
+                profiles.check_semantics(document, Some(&id)).await?;
             }
             let previous_active = active_profile_id(profiles)?;
             let meta = profiles.activate(&id)?;
@@ -662,7 +662,7 @@ pub async fn dispatch(
                 .collect();
             let id = required_string(payload, 0, "profiles:edit-document id")?;
             profiles
-                .check_semantics(&profiles.preview_edit(&id, &edits)?)
+                .check_semantics(&profiles.preview_edit(&id, &edits)?, Some(&id))
                 .await?;
             let previous_active = active_profile_id(profiles)?;
             let previous_document = profiles.get(&id)?["document"]
@@ -704,7 +704,7 @@ pub async fn dispatch(
             let _gate = runtime_update_guard().await?;
             let id = required_string(payload, 0, "profiles:replace-document id")?;
             profiles
-                .check_semantics(&string_arg(payload, 1).unwrap_or_default())
+                .check_semantics(&string_arg(payload, 1).unwrap_or_default(), Some(&id))
                 .await?;
             let previous_active = active_profile_id(profiles)?;
             let previous_document = profiles.get(&id)?["document"]
@@ -743,7 +743,7 @@ pub async fn dispatch(
         "profiles:validate" => {
             let document = string_arg(payload, 0).unwrap_or_default();
             let mut result = profiles.validate(&document)?;
-            if let Some(message) = profiles.semantic_error(&document).await? {
+            if let Some(message) = profiles.semantic_error(&document, None).await? {
                 result["ok"] = Value::Bool(false);
                 if let Some(issues) = result["issues"].as_array_mut() {
                     issues.push(serde_json::json!({ "severity": "error", "message": message }));
@@ -2617,7 +2617,7 @@ mod tests {
     async fn a_document_the_core_rejects_is_never_imported() {
         let f = fixtures();
         f.profiles
-            .set_semantic_validator(Arc::new(|_document: String| {
+            .set_semantic_validator(Arc::new(|_document: String, _id: Option<String>| {
                 Box::pin(async { Err(IpcError::invalid_argument("proxy group [A] not found")) })
             }));
         let call = |channel: &'static str, payload: Value| {

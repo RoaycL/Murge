@@ -67,8 +67,12 @@ describe('CI gate: version-only changes', () => {
   it('accepts the real repository version files as bumpable', () => {
     for (const path of ['package.json', 'package-lock.json']) {
       const text = read(path)
-      const version = JSON.parse(text).version
-      expect(onlyVersionChanged(path, text, bumpJson(text, version, '99.0.0'))).toBe(true)
+      // Bump only the app's own version fields: a dependency can share the
+      // app version (package-lock has packages at 1.0.0 since the 1.0.0 bump).
+      const json = JSON.parse(text)
+      json.version = '99.0.0'
+      if (json.packages?.['']) json.packages[''].version = '99.0.0'
+      expect(onlyVersionChanged(path, text, JSON.stringify(json, null, 2) + '\n')).toBe(true)
     }
     const cargo = read('src-tauri/Cargo.toml')
     const version = /^version = "([^"]+)"/m.exec(cargo)![1]

@@ -335,6 +335,8 @@ pub struct ApplyReport {
     pub skipped_rules: Vec<String>,
     /// Ids of local groups skipped (name collision / no members).
     pub skipped_groups: Vec<String>,
+    /// Per local node id: the groups it should join that this config lacks.
+    pub missing_groups: BTreeMap<String, Vec<String>>,
 }
 
 fn names_of(config: &Map<String, Value>, section: &str) -> Vec<String> {
@@ -444,6 +446,18 @@ pub fn apply_to_config(
     append_local_groups(config, settings, &mut taken, &mut report);
 
     // 2. Group membership.
+    let present: HashSet<String> = names_of(config, "proxy-groups").into_iter().collect();
+    for node in &added {
+        let missing: Vec<String> = node
+            .groups
+            .iter()
+            .filter(|group| !present.contains(group.as_str()))
+            .cloned()
+            .collect();
+        if !missing.is_empty() {
+            report.missing_groups.insert(node.id.clone(), missing);
+        }
+    }
     if let Some(groups) = config.get_mut("proxy-groups").and_then(Value::as_array_mut) {
         for group in groups.iter_mut() {
             let Some(group) = group.as_object_mut() else {
@@ -771,6 +785,7 @@ pub fn apply_to_document(
     profile_id: Option<&str>,
 ) -> (String, ApplyReport) {
     if settings.nodes.is_empty()
+        && settings.groups.is_empty()
         && settings.rules.is_empty()
         && profile_id
             .and_then(|id| settings.profile_edits.get(id))
@@ -1206,6 +1221,7 @@ impl LocalService {
             "skippedNodes": report.skipped_nodes,
             "skippedRules": report.skipped_rules,
             "skippedGroups": report.skipped_groups,
+            "missingGroups": report.missing_groups,
             "managedProxies": [crate::mitm::PROXY_NAME, TAILSCALE_DIRECT_NAME],
             "tailscale": {
                 "detected": adapter.is_some(),
@@ -1501,6 +1517,44 @@ mod tests {
             vec!["g2".to_string(), "g3".to_string()]
         );
         assert_eq!(rules_of(&config)[0], "DOMAIN,a.com,Mine");
+    }
+
+    #[test]
+    fn local_groups_alone_reach_the_document() {
+        let settings = LocalSettings {
+            groups: vec![LocalGroup {
+                id: "g1".into(),
+                config: json!({"name": "Mine", "type": "select", "proxies": ["HK"]}),
+                ..LocalGroup::default()
+            }],
+            ..LocalSettings::default()
+        };
+        let (document, _) = apply_to_document(DOC, &settings, None);
+        let config = parse_yaml_to_object(&document).unwrap();
+        let names: Vec<_> = config["proxy-groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|g| g["name"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(names, vec!["Proxy", "Auto", "Mine"]);
+    }
+
+    #[test]
+    fn nodes_report_groups_the_config_lacks() {
+        let settings = LocalSettings {
+            nodes: vec![
+                node("WG", "wireguard", &["Proxy", "Streaming"]),
+                node("WG2", "wireguard", &["Proxy"]),
+            ],
+            ..LocalSettings::default()
+        };
+        let (config, report) = apply(&settings, None);
+        assert_eq!(config["proxy-groups"][0]["proxies"], json!(["HK", "WG", "WG2"]));
+        assert_eq!(
+            report.missing_groups,
+            BTreeMap::from([("id-WG".to_string(), vec!["Streaming".to_string()])])
+        );
     }
 
     #[test]

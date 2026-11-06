@@ -27,6 +27,70 @@ use crate::paths::AppPaths;
 
 pub const APP_SETTINGS_FILE: &str = "app-settings.json";
 
+/// One 按 Wi-Fi 切换配置 rule.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WifiProfileRule {
+    pub ssid: String,
+    pub profile_id: String,
+}
+
+/// SSID lists: trimmed, non-empty, at most 32 bytes (802.11), deduplicated,
+/// at most 64 entries. Anything that is not an array keeps `fallback`.
+pub fn parse_ssid_list(value: Option<&serde_json::Value>, fallback: &[String]) -> Vec<String> {
+    let Some(items) = value.and_then(|v| v.as_array()) else {
+        return fallback.to_vec();
+    };
+    let mut out: Vec<String> = Vec::new();
+    for item in items {
+        let Some(text) = item.as_str().map(str::trim) else {
+            continue;
+        };
+        if text.is_empty() || text.len() > 32 || out.iter().any(|seen| seen == text) {
+            continue;
+        }
+        out.push(text.to_string());
+        if out.len() == 64 {
+            break;
+        }
+    }
+    out
+}
+
+/// 按 Wi-Fi 切换配置 rules: one per SSID (first wins), both fields required.
+pub fn parse_wifi_profile_rules(
+    value: Option<&serde_json::Value>,
+    fallback: &[WifiProfileRule],
+) -> Vec<WifiProfileRule> {
+    let Some(items) = value.and_then(|v| v.as_array()) else {
+        return fallback.to_vec();
+    };
+    let mut out: Vec<WifiProfileRule> = Vec::new();
+    for item in items {
+        let ssid = item["ssid"].as_str().map(str::trim).unwrap_or_default();
+        let profile_id = item["profileId"]
+            .as_str()
+            .map(str::trim)
+            .unwrap_or_default();
+        if ssid.is_empty()
+            || ssid.len() > 32
+            || profile_id.is_empty()
+            || profile_id.len() > 128
+            || out.iter().any(|rule| rule.ssid == ssid)
+        {
+            continue;
+        }
+        out.push(WifiProfileRule {
+            ssid: ssid.to_string(),
+            profile_id: profile_id.to_string(),
+        });
+        if out.len() == 64 {
+            break;
+        }
+    }
+    out
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -47,6 +111,10 @@ pub struct AppSettings {
     /// 切换节点时断开旧连接: close connections through a switched group (and
     /// all of them on a mode switch) so they reconnect over the new node.
     pub auto_close_connections: bool,
+    /// 在这些 Wi-Fi 下自动切换到直连 (Mihomo Party `pauseSSID`).
+    pub wifi_direct_ssids: Vec<String>,
+    /// 按 Wi-Fi 切换配置 (Mihomo Party `ssidProfileMap`): first match wins.
+    pub wifi_profile_rules: Vec<WifiProfileRule>,
     pub sub_store_enabled: bool,
     pub sub_store_use_proxy: bool,
     /// 网关模式: keep Windows IPv4 forwarding on for the LAN and TUN adapters.
@@ -72,6 +140,8 @@ impl Default for AppSettings {
             close_to_tray: true,
             proxy_guard: true,
             auto_close_connections: true,
+            wifi_direct_ssids: Vec::new(),
+            wifi_profile_rules: Vec::new(),
             sub_store_enabled: true,
             sub_store_use_proxy: false,
             lan_gateway: false,
@@ -149,6 +219,14 @@ pub fn parse_app_settings(document: &serde_json::Value) -> AppSettings {
         close_to_tray: boolean("closeToTray", defaults.close_to_tray),
         proxy_guard: boolean("proxyGuard", defaults.proxy_guard),
         auto_close_connections: boolean("autoCloseConnections", defaults.auto_close_connections),
+        wifi_direct_ssids: parse_ssid_list(
+            object.get("wifiDirectSsids"),
+            &defaults.wifi_direct_ssids,
+        ),
+        wifi_profile_rules: parse_wifi_profile_rules(
+            object.get("wifiProfileRules"),
+            &defaults.wifi_profile_rules,
+        ),
         sub_store_enabled: boolean("subStoreEnabled", defaults.sub_store_enabled),
         sub_store_use_proxy: boolean("subStoreUseProxy", defaults.sub_store_use_proxy),
         lan_gateway: boolean("lanGateway", defaults.lan_gateway),
@@ -297,6 +375,14 @@ impl SettingsStore {
             close_to_tray: boolean("closeToTray", current.close_to_tray),
             proxy_guard: boolean("proxyGuard", current.proxy_guard),
             auto_close_connections: boolean("autoCloseConnections", current.auto_close_connections),
+            wifi_direct_ssids: parse_ssid_list(
+                patch.get("wifiDirectSsids"),
+                &current.wifi_direct_ssids,
+            ),
+            wifi_profile_rules: parse_wifi_profile_rules(
+                patch.get("wifiProfileRules"),
+                &current.wifi_profile_rules,
+            ),
             sub_store_enabled: boolean("subStoreEnabled", current.sub_store_enabled),
             sub_store_use_proxy: boolean("subStoreUseProxy", current.sub_store_use_proxy),
             lan_gateway: boolean("lanGateway", current.lan_gateway),
@@ -343,6 +429,44 @@ impl SettingsStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wifi_rule_lists_are_cleaned() {
+        let long = "x".repeat(33);
+        let ssids = parse_ssid_list(
+            Some(&serde_json::json!([
+                " Office ", "", "Office", 3, long, "Cafe"
+            ])),
+            &[],
+        );
+        assert_eq!(ssids, vec!["Office", "Cafe"]);
+        assert_eq!(
+            parse_ssid_list(Some(&serde_json::json!("bad")), &ssids),
+            ssids
+        );
+        let rules = parse_wifi_profile_rules(
+            Some(&serde_json::json!([
+                {"ssid": "Office", "profileId": "p1"},
+                {"ssid": "Office", "profileId": "p2"},
+                {"ssid": "Home"},
+                {"ssid": "Lab", "profileId": "p3"}
+            ])),
+            &[],
+        );
+        assert_eq!(
+            rules,
+            vec![
+                WifiProfileRule {
+                    ssid: "Office".into(),
+                    profile_id: "p1".into()
+                },
+                WifiProfileRule {
+                    ssid: "Lab".into(),
+                    profile_id: "p3".into()
+                },
+            ]
+        );
+    }
     use tempfile::TempDir;
 
     fn store_in(temp: &TempDir) -> SettingsStore {

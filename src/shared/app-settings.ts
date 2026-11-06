@@ -15,6 +15,43 @@ export type UpdateChannel = 'stable' | 'experimental'
  * choice before the window exists).
  */
 
+/** One 按 Wi-Fi 切换配置 rule. */
+export interface WifiProfileRule {
+  ssid: string
+  profileId: string
+}
+
+/** SSIDs: trimmed, 1–32 bytes, unique, at most 64 (mirrors the Rust store). */
+export function parseSsidList(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const out: string[] = []
+  for (const item of value) {
+    if (typeof item !== 'string') continue
+    const text = item.trim()
+    if (!text || new TextEncoder().encode(text).length > 32 || out.includes(text)) continue
+    out.push(text)
+    if (out.length === 64) break
+  }
+  return out
+}
+
+/** One rule per SSID (first wins), both fields required (mirrors the Rust store). */
+export function parseWifiProfileRules(value: unknown): WifiProfileRule[] {
+  if (!Array.isArray(value)) return []
+  const out: WifiProfileRule[] = []
+  for (const item of value) {
+    if (typeof item !== 'object' || item === null) continue
+    const record = item as Record<string, unknown>
+    const ssid = typeof record.ssid === 'string' ? record.ssid.trim() : ''
+    const profileId = typeof record.profileId === 'string' ? record.profileId.trim() : ''
+    if (!ssid || new TextEncoder().encode(ssid).length > 32 || !profileId || profileId.length > 128) continue
+    if (out.some((rule) => rule.ssid === ssid)) continue
+    out.push({ ssid, profileId })
+    if (out.length === 64) break
+  }
+  return out
+}
+
 export interface AppSettings {
   /**
    * Deprecated compatibility field. The kernel now always follows the app,
@@ -88,6 +125,10 @@ export interface AppSettings {
    * long-lived connection otherwise stays pinned to the old (possibly dead) one.
    */
   autoCloseConnections: boolean
+  /** 在这些 Wi-Fi 下自动切换到直连 (Mihomo Party `pauseSSID`); leaving restores the previous mode. */
+  wifiDirectSsids: string[]
+  /** 按 Wi-Fi 切换配置 (Mihomo Party `ssidProfileMap`); leaving restores the previous profile. */
+  wifiProfileRules: WifiProfileRule[]
   /**
    * Sub-Store lifecycle switch. It defaults on because Sub-Store is a first-class
    * configuration tool; verified assets are downloaded in the background.
@@ -124,6 +165,8 @@ export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = Object.freeze({
   closeToTray: true,
   proxyGuard: true,
   autoCloseConnections: true,
+  wifiDirectSsids: [],
+  wifiProfileRules: [],
   subStoreEnabled: true,
   subStoreUseProxy: false,
   lanGateway: false
@@ -204,6 +247,8 @@ export function parseAppSettings(value: string | null): AppSettings {
         typeof parsed.autoCloseConnections === 'boolean'
           ? parsed.autoCloseConnections
           : DEFAULT_APP_SETTINGS.autoCloseConnections,
+      wifiDirectSsids: parseSsidList(parsed.wifiDirectSsids),
+      wifiProfileRules: parseWifiProfileRules(parsed.wifiProfileRules),
       subStoreEnabled:
         typeof parsed.subStoreEnabled === 'boolean'
           ? parsed.subStoreEnabled

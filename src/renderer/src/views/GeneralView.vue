@@ -2,6 +2,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { useStartupStore } from '../stores/startup'
 import { useAppSettingsStore } from '../stores/app-settings'
+import { useProfilesStore } from '../stores/profiles'
+import { useRuntimeStore } from '../stores/runtime'
 import AppSelect from '../components/AppSelect.vue'
 import AppIcon from '../components/AppIcon.vue'
 import type { ConfigBackupPreview } from '@shared/config-backup'
@@ -9,6 +11,44 @@ import { composeWebDavFileUrl, defaultWebDavFilePath, type WebDavBackupTarget } 
 
 const startup = useStartupStore()
 const appSettings = useAppSettingsStore()
+const profilesStore = useProfilesStore()
+const runtime = useRuntimeStore()
+const newDirectSsid = ref('')
+const newRuleSsid = ref('')
+const newRuleProfile = ref('')
+const GENERIC_NETWORK_NAMES = new Set(['以太网', 'Wi-Fi', '蜂窝网络', '无网络'])
+/** The current Wi-Fi name when the summary shows one (generic labels mean unknown). */
+const currentSsid = computed(() => {
+  const name = runtime.summary?.networkName?.trim() ?? ''
+  return name && !GENERIC_NETWORK_NAMES.has(name) ? name : ''
+})
+const profileOptions = computed(() => profilesStore.ordered.map((meta) => ({ value: meta.id, label: meta.name })))
+function profileName(id: string): string {
+  return profilesStore.profiles.find((meta) => meta.id === id)?.name ?? '已删除的配置'
+}
+function addDirectSsid(value: string): void {
+  const ssid = value.trim()
+  if (!ssid || appSettings.settings.wifiDirectSsids.includes(ssid)) return
+  void appSettings.set({ wifiDirectSsids: [...appSettings.settings.wifiDirectSsids, ssid] })
+  newDirectSsid.value = ''
+}
+function removeDirectSsid(ssid: string): void {
+  void appSettings.set({ wifiDirectSsids: appSettings.settings.wifiDirectSsids.filter((item) => item !== ssid) })
+}
+function addProfileRule(): void {
+  const ssid = newRuleSsid.value.trim()
+  const profileId = newRuleProfile.value || profileOptions.value[0]?.value || ''
+  if (!ssid || !profileId) return
+  const rules = appSettings.settings.wifiProfileRules.filter((rule) => rule.ssid !== ssid)
+  void appSettings.set({ wifiProfileRules: [...rules, { ssid, profileId }] })
+  newRuleSsid.value = ''
+}
+function setRuleProfile(ssid: string, profileId: string): void {
+  void appSettings.set({ wifiProfileRules: appSettings.settings.wifiProfileRules.map((rule) => (rule.ssid === ssid ? { ssid, profileId } : rule)) })
+}
+function removeProfileRule(ssid: string): void {
+  void appSettings.set({ wifiProfileRules: appSettings.settings.wifiProfileRules.filter((rule) => rule.ssid !== ssid) })
+}
 const delayUrl = ref('')
 const delayUrlError = ref<string | null>(null)
 const backupPassword = ref('')
@@ -127,6 +167,8 @@ async function restoreBackup(): Promise<void> {
 
 onMounted(async () => {
   void startup.refresh()
+  if (!profilesStore.profiles.length) void profilesStore.load()
+  if (!runtime.summary) void runtime.refresh()
   void window.desktop.app.getBrand().then((brand) => {
     const previous = webdavDefaultPath.value
     webdavDefaultPath.value = defaultWebDavFilePath(brand.productName)
@@ -280,6 +322,44 @@ onMounted(async () => {
     </section>
 
     <section>
+      <h2>Wi-Fi 规则</h2>
+      <div class="surface-card wifi-rules">
+        <div class="wifi-rule-block">
+          <span class="wifi-rule-title">
+            <strong>在这些 Wi-Fi 下使用直连</strong>
+            <span class="startup-detail">连上列表里的 Wi-Fi 后自动切换到直连模式，离开后恢复原来的模式。适合公司或家里不需要代理的网络。</span>
+          </span>
+          <div v-if="appSettings.settings.wifiDirectSsids.length" class="wifi-chips">
+            <span v-for="ssid in appSettings.settings.wifiDirectSsids" :key="ssid" class="wifi-chip">{{ ssid }}<button type="button" :aria-label="`移除 ${ssid}`" :disabled="appSettings.busy" @click="removeDirectSsid(ssid)"><AppIcon name="close" :size="12" /></button></span>
+          </div>
+          <div class="wifi-add">
+            <input v-model="newDirectSsid" spellcheck="false" maxlength="32" placeholder="Wi-Fi 名称" aria-label="直连 Wi-Fi 名称" @keydown.enter.prevent="addDirectSsid(newDirectSsid)" />
+            <button type="button" class="secondary-button" :disabled="appSettings.busy || !newDirectSsid.trim()" @click="addDirectSsid(newDirectSsid)">添加</button>
+            <button v-if="currentSsid && !appSettings.settings.wifiDirectSsids.includes(currentSsid)" type="button" class="secondary-button" :disabled="appSettings.busy" @click="addDirectSsid(currentSsid)">添加当前 Wi-Fi「{{ currentSsid }}」</button>
+          </div>
+        </div>
+        <div class="wifi-rule-block">
+          <span class="wifi-rule-title">
+            <strong>按 Wi-Fi 切换配置</strong>
+            <span class="startup-detail">连上指定的 Wi-Fi 后自动切换到对应的配置，离开后切回原来的配置。期间手动换过配置时不会再切回。</span>
+          </span>
+          <div v-for="rule in appSettings.settings.wifiProfileRules" :key="rule.ssid" class="wifi-rule-row">
+            <strong>{{ rule.ssid }}</strong>
+            <AppSelect v-if="profileOptions.some((option) => option.value === rule.profileId)" :model-value="rule.profileId" :options="profileOptions" :label="`${rule.ssid} 使用的配置`" @update:model-value="(value: string) => setRuleProfile(rule.ssid, value)" />
+            <span v-else class="startup-detail">{{ profileName(rule.profileId) }}</span>
+            <button type="button" class="wifi-remove" :aria-label="`删除 ${rule.ssid} 的规则`" :disabled="appSettings.busy" @click="removeProfileRule(rule.ssid)"><AppIcon name="close" :size="15" /></button>
+          </div>
+          <div v-if="profileOptions.length" class="wifi-add">
+            <input v-model="newRuleSsid" spellcheck="false" maxlength="32" :placeholder="currentSsid || 'Wi-Fi 名称'" aria-label="切换配置的 Wi-Fi 名称" @keydown.enter.prevent="addProfileRule" />
+            <AppSelect :model-value="newRuleProfile || profileOptions[0]?.value || ''" :options="profileOptions" label="切换到的配置" @update:model-value="(value: string) => (newRuleProfile = value)" />
+            <button type="button" class="secondary-button" :disabled="appSettings.busy || !newRuleSsid.trim()" @click="addProfileRule">添加</button>
+          </div>
+        </div>
+        <p class="startup-detail">Windows 11 需要在「设置 → 隐私和安全性 → 位置」里允许桌面应用访问位置，应用才能读到 Wi-Fi 名称；读不到时这些规则不会生效。</p>
+      </div>
+    </section>
+
+    <section>
       <h2>延迟测试</h2>
       <div class="surface-card preference-list delay-preferences">
         <label>
@@ -315,6 +395,18 @@ onMounted(async () => {
 .startup-behavior{gap:var(--space-7)}
 .startup-behavior span:first-child{display:flex;flex-direction:column;gap:var(--space-1)}
 .startup-detail{color:var(--app-muted);font-size:var(--font-size-xs);font-weight:var(--font-weight-regular)}
+.wifi-rules{display:grid;gap:var(--space-6);padding:16px 20px}
+.wifi-rule-block{display:grid;gap:var(--space-4)}
+.wifi-rule-title{display:flex;flex-direction:column;gap:var(--space-1)}
+.wifi-chips{display:flex;flex-wrap:wrap;gap:var(--space-3)}
+.wifi-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 6px 4px 10px;border-radius:999px;background:color-mix(in srgb,var(--app-accent) 12%,var(--app-surface));font-size:var(--font-size-sm)}
+.wifi-chip button{display:inline-flex;border:0;background:transparent;color:var(--app-muted);cursor:pointer;padding:2px}
+.wifi-add,.wifi-rule-row{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-4)}
+.wifi-rule-row>strong{min-width:120px;font-size:var(--font-size-sm)}
+.wifi-add input{width:min(220px,50vw);height:32px;padding:0 10px;border:1px solid var(--app-divider);border-radius:var(--radius-control);background:color-mix(in srgb,var(--app-surface) 88%,var(--app-bg));color:var(--app-text);font-size:var(--font-size-sm)}
+.wifi-rules>p{margin:0}
+.wifi-remove{display:grid;width:28px;height:28px;place-items:center;padding:0;border:0;border-radius:var(--radius-control);background:transparent;color:var(--app-warning);cursor:pointer}
+.wifi-remove:hover{background:var(--app-fill)}
 .backup-panel{padding:20px}
 .backup-intro strong{font-size:var(--font-size-body)}
 .backup-intro p{max-width:650px;margin:5px 0 18px;color:var(--app-muted);font-size:var(--font-size-xs);line-height:1.6}

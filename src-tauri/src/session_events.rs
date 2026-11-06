@@ -36,6 +36,7 @@ pub fn on_resume(app: tauri::AppHandle) {
             detector.probe_now().await;
         }
         crate::runtime_intent::wake(&app);
+        crate::network_watch::repair_after_resume(app);
     });
 }
 

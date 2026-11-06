@@ -612,6 +612,7 @@ pub fn start_desktop_integration(app: &tauri::AppHandle) {
     wire_main_window(app);
     crate::runtime_intent::spawn_startup_recovery(app.clone());
     crate::network_detector::start(app.clone());
+    crate::network_watch::start(app.clone());
     start_proxy_guard(app.clone());
     crate::session_events::install(app.clone());
     crate::notifications::start(app);

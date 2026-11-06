@@ -53,6 +53,10 @@ pub struct AdapterInfo {
     pub metric: u32,
     /// `{GUID}` adapter name, used to match the WLAN interface.
     pub adapter_id: String,
+    /// First default-gateway address as text (empty when unknown). Part of
+    /// the network identity: a new Wi-Fi on the same adapter usually brings a
+    /// new gateway even when the SSID cannot be read.
+    pub gateway: String,
 }
 
 fn is_virtual(adapter: &AdapterInfo) -> bool {
@@ -98,6 +102,62 @@ pub fn detect_display_name() -> String {
     detect().display_name()
 }
 
+/// Which network the machine is on, for change detection: the primary
+/// adapter plus its gateway, and the SSID when it is Wi-Fi and readable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkSnapshot {
+    pub identity: String,
+    pub wifi: bool,
+    pub ssid: Option<String>,
+}
+
+impl NetworkSnapshot {
+    /// Same network? An SSID that could be read once and not the next time
+    /// (WLAN query hiccup) is not a change.
+    pub fn same_network(&self, other: &NetworkSnapshot) -> bool {
+        self.identity == other.identity
+            && match (&self.ssid, &other.ssid) {
+                (Some(left), Some(right)) => left == right,
+                _ => true,
+            }
+    }
+}
+
+pub fn snapshot_of(
+    adapters: &[AdapterInfo],
+    ssid: impl FnOnce(&str) -> Option<String>,
+) -> Option<NetworkSnapshot> {
+    let primary = pick_primary(adapters)?;
+    let wifi = primary.if_type == IF_TYPE_IEEE80211;
+    Some(NetworkSnapshot {
+        identity: format!("{}|{}", primary.adapter_id, primary.gateway),
+        wifi,
+        ssid: if wifi {
+            ssid(&primary.adapter_id)
+        } else {
+            None
+        },
+    })
+}
+
+/// The primary network now; `None` when offline.
+pub fn snapshot() -> Option<NetworkSnapshot> {
+    snapshot_of(&platform::adapters(), platform::wifi_ssid)
+}
+
+/// Whether an up adapter with this name exists (the TUN device check after a
+/// resume; Windows names the wintun adapter after `tun.device`).
+pub fn adapter_present(name: &str) -> bool {
+    let wanted = name.trim().to_lowercase();
+    if wanted.is_empty() {
+        return true;
+    }
+    platform::adapters().iter().any(|adapter| {
+        adapter.friendly_name.to_lowercase() == wanted
+            || adapter.description.to_lowercase() == wanted
+    })
+}
+
 #[cfg(windows)]
 mod platform {
     use super::AdapterInfo;
@@ -105,6 +165,7 @@ mod platform {
     use windows::Win32::NetworkManagement::IpHelper::{
         GetAdaptersAddresses, GAA_FLAG_INCLUDE_GATEWAYS, GAA_FLAG_SKIP_ANYCAST,
         GAA_FLAG_SKIP_DNS_SERVER, GAA_FLAG_SKIP_MULTICAST, IP_ADAPTER_ADDRESSES_LH,
+        IP_ADAPTER_GATEWAY_ADDRESS_LH,
     };
     use windows::Win32::NetworkManagement::Ndis::IfOperStatusUp;
     use windows::Win32::NetworkManagement::WiFi::{
@@ -112,7 +173,9 @@ mod platform {
         WlanEnumInterfaces, WlanFreeMemory, WlanOpenHandle, WlanQueryInterface,
         WLAN_CONNECTION_ATTRIBUTES, WLAN_INTERFACE_INFO_LIST,
     };
-    use windows::Win32::Networking::WinSock::AF_UNSPEC;
+    use windows::Win32::Networking::WinSock::{
+        AF_INET, AF_INET6, AF_UNSPEC, SOCKADDR_IN, SOCKADDR_IN6,
+    };
 
     pub fn adapters() -> Vec<AdapterInfo> {
         let flags = GAA_FLAG_INCLUDE_GATEWAYS
@@ -150,6 +213,7 @@ mod platform {
             let friendly_name = unsafe { adapter.FriendlyName.to_string() }.unwrap_or_default();
             let description = unsafe { adapter.Description.to_string() }.unwrap_or_default();
             let adapter_id = unsafe { adapter.AdapterName.to_string() }.unwrap_or_default();
+            let gateway = unsafe { gateway_text(adapter.FirstGatewayAddress) };
             out.push(AdapterInfo {
                 if_type: adapter.IfType,
                 friendly_name,
@@ -158,10 +222,36 @@ mod platform {
                 is_up: adapter.OperStatus == IfOperStatusUp,
                 metric: adapter.Ipv4Metric,
                 adapter_id,
+                gateway,
             });
             cursor = adapter.Next;
         }
         out
+    }
+
+    /// The first gateway's address as text; empty when absent or unparsable.
+    ///
+    /// # Safety
+    /// `first` comes from a live `GetAdaptersAddresses` buffer.
+    unsafe fn gateway_text(first: *mut IP_ADAPTER_GATEWAY_ADDRESS_LH) -> String {
+        if first.is_null() {
+            return String::new();
+        }
+        let sockaddr = (*first).Address.lpSockaddr;
+        if sockaddr.is_null() {
+            return String::new();
+        }
+        match (*sockaddr).sa_family {
+            AF_INET => {
+                let v4 = &*(sockaddr as *const SOCKADDR_IN);
+                std::net::Ipv4Addr::from(u32::from_be(v4.sin_addr.S_un.S_addr)).to_string()
+            }
+            AF_INET6 => {
+                let v6 = &*(sockaddr as *const SOCKADDR_IN6);
+                std::net::Ipv6Addr::from(v6.sin6_addr.u.Byte).to_string()
+            }
+            _ => String::new(),
+        }
     }
 
     fn guid_text(guid: &windows::core::GUID) -> String {
@@ -254,6 +344,7 @@ mod platform {
                     is_up: true,
                     metric: 0,
                     adapter_id: name,
+                    gateway: String::new(),
                 }
             })
             .collect()
@@ -277,7 +368,29 @@ mod tests {
             is_up: true,
             metric,
             adapter_id: format!("{{{name}}}"),
+            gateway: "192.168.1.1".to_string(),
         }
+    }
+
+    #[test]
+    fn snapshot_tracks_adapter_gateway_and_ssid() {
+        let wifi = vec![adapter(IF_TYPE_IEEE80211, "WLAN", "Intel", 1)];
+        let home = snapshot_of(&wifi, |_| Some("Home".into())).unwrap();
+        assert!(home.wifi);
+        assert_eq!(home.ssid.as_deref(), Some("Home"));
+        let office = snapshot_of(&wifi, |_| Some("Office".into())).unwrap();
+        assert!(!home.same_network(&office));
+        // An SSID read that failed once is not a network change.
+        let unreadable = snapshot_of(&wifi, |_| None).unwrap();
+        assert!(home.same_network(&unreadable));
+        let mut moved = wifi.clone();
+        moved[0].gateway = "10.0.0.1".into();
+        assert!(!unreadable.same_network(&snapshot_of(&moved, |_| None).unwrap()));
+        let wired = vec![adapter(IF_TYPE_ETHERNET_CSMACD, "以太网", "Realtek", 1)];
+        let ethernet = snapshot_of(&wired, |_| Some("ignored".into())).unwrap();
+        assert!(!ethernet.wifi);
+        assert_eq!(ethernet.ssid, None);
+        assert!(snapshot_of(&[], |_| None).is_none());
     }
 
     #[test]

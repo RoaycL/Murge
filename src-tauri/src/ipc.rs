@@ -611,6 +611,13 @@ pub async fn dispatch(
                 restore_active(profiles, &previous_active);
             }
             result?;
+            // 切换节点时断开旧连接 also covers a profile switch: a hot reload
+            // keeps the old connections on the old profile's nodes.
+            if previous_active.as_deref() != Some(id.as_str()) {
+                if let Ok(client) = controller_client(models) {
+                    let _ = client.close_all_connections().await;
+                }
+            }
             Ok(meta)
         }
         "profiles:delete" => {
@@ -1136,7 +1143,14 @@ pub async fn dispatch(
         "mihomo:get-config" => Ok(controller_client(models)?.get_config().await?),
         "mihomo:patch-config" => {
             let patch = mihomo::parse_config_patch(arg(payload, 0).unwrap_or(&Value::Null))?;
-            Ok(controller_client(models)?.patch_config(&patch).await?)
+            let client = controller_client(models)?;
+            let applied = client.patch_config(&patch).await?;
+            // 切换节点时断开旧连接 also covers the outbound mode: every
+            // connection was routed under the old mode.
+            if mihomo::patch_changes_mode(&patch) {
+                let _ = client.close_all_connections().await;
+            }
+            Ok(applied)
         }
         "mihomo:get-proxies" => Ok(controller_client(models)?.get_proxies().await?),
         "mihomo:select-proxy" => {
@@ -1163,6 +1177,7 @@ pub async fn dispatch(
                 profile_id,
                 &group,
                 &name,
+                true,
             )
             .await?)
         }

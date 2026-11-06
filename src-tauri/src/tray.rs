@@ -549,6 +549,8 @@ impl TrayController {
                 .await
                 .is_ok()
             {
+                // Every connection was routed under the old mode.
+                let _ = client.close_all_connections().await;
                 (self.deps.on_mode_changed)(mode);
             }
         }
@@ -569,7 +571,7 @@ impl TrayController {
             let _ = self
                 .deps
                 .mihomo
-                .select_proxy(&client, profile_id, group, member)
+                .select_proxy_with(&client, profile_id, group, member, true)
                 .await;
         }
     }

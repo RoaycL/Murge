@@ -44,6 +44,9 @@ pub struct AppSettings {
     pub silent_launch: bool,
     pub close_to_tray: bool,
     pub proxy_guard: bool,
+    /// 切换节点时断开旧连接: close connections through a switched group (and
+    /// all of them on a mode switch) so they reconnect over the new node.
+    pub auto_close_connections: bool,
     pub sub_store_enabled: bool,
     pub sub_store_use_proxy: bool,
     /// 网关模式: keep Windows IPv4 forwarding on for the LAN and TUN adapters.
@@ -68,6 +71,7 @@ impl Default for AppSettings {
             silent_launch: true,
             close_to_tray: true,
             proxy_guard: true,
+            auto_close_connections: true,
             sub_store_enabled: true,
             sub_store_use_proxy: false,
             lan_gateway: false,
@@ -144,6 +148,7 @@ pub fn parse_app_settings(document: &serde_json::Value) -> AppSettings {
         silent_launch: boolean("silentLaunch", defaults.silent_launch),
         close_to_tray: boolean("closeToTray", defaults.close_to_tray),
         proxy_guard: boolean("proxyGuard", defaults.proxy_guard),
+        auto_close_connections: boolean("autoCloseConnections", defaults.auto_close_connections),
         sub_store_enabled: boolean("subStoreEnabled", defaults.sub_store_enabled),
         sub_store_use_proxy: boolean("subStoreUseProxy", defaults.sub_store_use_proxy),
         lan_gateway: boolean("lanGateway", defaults.lan_gateway),
@@ -291,6 +296,7 @@ impl SettingsStore {
             silent_launch: boolean("silentLaunch", current.silent_launch),
             close_to_tray: boolean("closeToTray", current.close_to_tray),
             proxy_guard: boolean("proxyGuard", current.proxy_guard),
+            auto_close_connections: boolean("autoCloseConnections", current.auto_close_connections),
             sub_store_enabled: boolean("subStoreEnabled", current.sub_store_enabled),
             sub_store_use_proxy: boolean("subStoreUseProxy", current.sub_store_use_proxy),
             lan_gateway: boolean("lanGateway", current.lan_gateway),

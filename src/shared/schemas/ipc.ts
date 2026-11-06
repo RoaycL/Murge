@@ -152,6 +152,7 @@ export function parseAppSettingsPatch(
   silentLaunch?: boolean
   closeToTray?: boolean
   proxyGuard?: boolean
+  autoCloseConnections?: boolean
   subStoreEnabled?: boolean
   subStoreUseProxy?: boolean
 } {
@@ -174,6 +175,7 @@ export function parseAppSettingsPatch(
     silentLaunch?: boolean
     closeToTray?: boolean
     proxyGuard?: boolean
+    autoCloseConnections?: boolean
     subStoreEnabled?: boolean
     subStoreUseProxy?: boolean
   } = {}
@@ -238,7 +240,7 @@ export function parseAppSettingsPatch(
     }
     patch.delayTestUrl = value
   }
-  for (const key of ['silentLaunch', 'closeToTray', 'proxyGuard', 'subStoreEnabled', 'subStoreUseProxy'] as const) {
+  for (const key of ['silentLaunch', 'closeToTray', 'proxyGuard', 'autoCloseConnections', 'subStoreEnabled', 'subStoreUseProxy'] as const) {
     if (key in record) {
       if (typeof record[key] !== 'boolean') throw invalid(`${key} must be a boolean`)
       patch[key] = record[key]

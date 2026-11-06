@@ -81,6 +81,14 @@ export interface AppSettings {
    */
   proxyGuard: boolean
   /**
+   * 切换节点时断开旧连接 (Mihomo Party / Clash Verge Rev `autoCloseConnection`):
+   * after a policy-group switch, close the live connections whose chain runs
+   * through that group; after an outbound-mode switch, close every connection.
+   * mihomo itself never moves an established connection to the new node, so a
+   * long-lived connection otherwise stays pinned to the old (possibly dead) one.
+   */
+  autoCloseConnections: boolean
+  /**
    * Sub-Store lifecycle switch. It defaults on because Sub-Store is a first-class
    * configuration tool; verified assets are downloaded in the background.
    */
@@ -115,6 +123,7 @@ export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = Object.freeze({
   silentLaunch: true,
   closeToTray: true,
   proxyGuard: true,
+  autoCloseConnections: true,
   subStoreEnabled: true,
   subStoreUseProxy: false,
   lanGateway: false
@@ -191,6 +200,10 @@ export function parseAppSettings(value: string | null): AppSettings {
         typeof parsed.proxyGuard === 'boolean'
           ? parsed.proxyGuard
           : DEFAULT_APP_SETTINGS.proxyGuard,
+      autoCloseConnections:
+        typeof parsed.autoCloseConnections === 'boolean'
+          ? parsed.autoCloseConnections
+          : DEFAULT_APP_SETTINGS.autoCloseConnections,
       subStoreEnabled:
         typeof parsed.subStoreEnabled === 'boolean'
           ? parsed.subStoreEnabled

@@ -259,6 +259,27 @@ onMounted(async () => {
     </section>
 
     <section>
+      <h2>连接</h2>
+      <div class="surface-card preference-list">
+        <label class="startup-behavior">
+          <span>
+            <strong>切换节点时断开旧连接</strong>
+            <span class="startup-detail">切换策略组的节点后，关闭仍经过这个策略组的连接；切换出站模式后关闭全部连接。应用会自动用新节点重新连接，避免长连接卡在旧节点上没有响应。</span>
+          </span>
+          <button
+            type="button"
+            class="switch"
+            :class="{ on: appSettings.settings.autoCloseConnections }"
+            :aria-checked="appSettings.settings.autoCloseConnections"
+            :disabled="appSettings.busy"
+            aria-label="切换节点时断开旧连接"
+            @click="appSettings.set({ autoCloseConnections: !appSettings.settings.autoCloseConnections })"
+          />
+        </label>
+      </div>
+    </section>
+
+    <section>
       <h2>延迟测试</h2>
       <div class="surface-card preference-list delay-preferences">
         <label>

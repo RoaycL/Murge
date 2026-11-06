@@ -1222,6 +1222,78 @@ impl MihomoClient {
         .await?;
         Ok(Value::Null)
     }
+
+    /// The member a group currently routes through (`GET /proxies/{group}`
+    /// `now`), or `None` when it cannot be read.
+    pub async fn current_member(&self, group: &str) -> Option<String> {
+        let raw = self
+            .request(
+                "GET",
+                &format!("/proxies/{}", encode_uri_component(group)),
+                None,
+                DEFAULT_TIMEOUT_MS,
+                false,
+            )
+            .await
+            .ok()??;
+        raw.get("now").and_then(Value::as_str).map(str::to_string)
+    }
+
+    /// `DELETE /connections` — close every live connection.
+    pub async fn close_all_connections(&self) -> Result<Value, IpcError> {
+        self.request("DELETE", "/connections", None, DEFAULT_TIMEOUT_MS, false)
+            .await?;
+        Ok(Value::Null)
+    }
+
+    /// Close the live connections whose chain runs through `group`, so they
+    /// reconnect over the group's new member. mihomo never re-routes an
+    /// established connection after a switch: without this a long-lived one
+    /// (WebSocket, push channel, game session) stays on the old node, which
+    /// looks like a hang once that node is gone. Best-effort per connection;
+    /// returns how many were closed.
+    pub async fn close_connections_through(&self, group: &str) -> Result<usize, IpcError> {
+        let raw = self
+            .request("GET", "/connections", None, DEFAULT_TIMEOUT_MS, false)
+            .await?
+            .unwrap_or(Value::Null);
+        let ids = connection_ids_through(&raw, group);
+        let mut closed = 0usize;
+        for chunk in ids.chunks(16) {
+            let results =
+                futures_util::future::join_all(chunk.iter().map(|id| self.close_connection(id)))
+                    .await;
+            closed += results.iter().filter(|result| result.is_ok()).count();
+        }
+        Ok(closed)
+    }
+}
+
+/// Ids of the connections in a raw `/connections` snapshot whose `chains`
+/// contain `group` (mihomo lists the chain node-first, rule target last).
+pub fn connection_ids_through(snapshot: &Value, group: &str) -> Vec<String> {
+    snapshot
+        .get("connections")
+        .and_then(Value::as_array)
+        .map(|connections| {
+            connections
+                .iter()
+                .filter(|connection| {
+                    connection
+                        .get("chains")
+                        .and_then(Value::as_array)
+                        .is_some_and(|chains| chains.iter().any(|hop| hop.as_str() == Some(group)))
+                })
+                .filter_map(|connection| connection.get("id").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// True when a `PATCH /configs` body switches the outbound mode.
+pub fn patch_changes_mode(patch: &Value) -> bool {
+    patch.get("mode").and_then(Value::as_str).is_some()
 }
 
 // ---------------------------------------------------------------------------
@@ -1582,12 +1654,36 @@ impl MihomoServices {
         group: &str,
         name: &str,
     ) -> Result<Value, IpcError> {
+        self.select_proxy_with(client, active_profile_id, group, name, false)
+            .await
+    }
+
+    /// [`Self::select_proxy`], optionally closing the connections that still
+    /// run through `group` once the switch was accepted (切换节点时断开旧连接).
+    pub async fn select_proxy_with(
+        &self,
+        client: &MihomoClient,
+        active_profile_id: Option<String>,
+        group: &str,
+        name: &str,
+        close_stale: bool,
+    ) -> Result<Value, IpcError> {
         let _exclusive = self.mutation.lock().await;
+        let previous = if close_stale {
+            client.current_member(group).await
+        } else {
+            None
+        };
         client.select_proxy(group, name).await?;
         if let Some(profile_id) = active_profile_id {
             // Storage remains best-effort: a cache failure never invalidates
             // an accepted controller switch.
             let _ = self.selections.set(&profile_id, group, name);
+        }
+        // Re-selecting the current member changes nothing, so nothing is
+        // closed. A failed cleanup never fails the accepted switch.
+        if close_stale && previous.as_deref() != Some(name) {
+            let _ = client.close_connections_through(group).await;
         }
         Ok(Value::Null)
     }
@@ -1680,8 +1776,11 @@ pub async fn select_proxy_gateway(
     profile_id: Option<String>,
     group: &str,
     name: &str,
+    close_stale: bool,
 ) -> Result<Value, IpcError> {
-    services.select_proxy(client, profile_id, group, name).await
+    services
+        .select_proxy_with(client, profile_id, group, name, close_stale)
+        .await
 }
 
 /// The service-layer member test (MihomoService::groupMemberDelayTest port).
@@ -2316,6 +2415,71 @@ mod tests {
             json!({"香港": "Node-A"}),
             "unattributed pick not recorded"
         );
+    }
+
+    #[test]
+    fn connection_ids_through_matches_any_hop_of_the_chain() {
+        let snapshot = json!({"connections": [
+            {"id": "a", "chains": ["Node-A", "香港", "Proxy"]},
+            {"id": "b", "chains": ["DIRECT"]},
+            {"id": "c", "chains": ["Node-B", "日本"]},
+            {"id": "d"},
+        ]});
+        assert_eq!(connection_ids_through(&snapshot, "香港"), vec!["a"]);
+        assert_eq!(connection_ids_through(&snapshot, "Proxy"), vec!["a"]);
+        assert!(connection_ids_through(&snapshot, "美国").is_empty());
+        assert!(connection_ids_through(&Value::Null, "香港").is_empty());
+        assert!(patch_changes_mode(&json!({"mode": "global"})));
+        assert!(!patch_changes_mode(&json!({"log-level": "info"})));
+    }
+
+    #[tokio::test]
+    async fn select_proxy_with_close_stale_closes_only_the_group_connections() {
+        let deleted = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = deleted.clone();
+        let server = MockServer::start("s3cret", move |method, path, _body| {
+            match (method, path) {
+            ("GET", p) if p.starts_with("/proxies/%E9%A6%99%E6%B8%AF") => {
+                (200, r#"{"name":"香港","type":"Selector","now":"Node-A"}"#.to_string())
+            }
+            ("PUT", p) if p.starts_with("/proxies/%E9%A6%99%E6%B8%AF") => (204, String::new()),
+            ("GET", p) if p.starts_with("/connections") => (
+                200,
+                r#"{"connections":[{"id":"a","chains":["Node-A","香港"]},{"id":"b","chains":["DIRECT"]}]}"#
+                    .to_string(),
+            ),
+            ("DELETE", p) if p.starts_with("/connections/") => {
+                seen.lock().unwrap().push(p.trim_start_matches("/connections/").to_string());
+                (204, String::new())
+            }
+            _ => (404, String::new()),
+        }
+        });
+        let services = MihomoServices::new(None);
+        let client = client(server.port);
+        // Re-selecting the current member closes nothing.
+        services
+            .select_proxy_with(&client, None, "香港", "Node-A", true)
+            .await
+            .unwrap();
+        assert!(deleted.lock().unwrap().is_empty());
+        // Off: the switch happens, nothing is closed.
+        services
+            .select_proxy_with(&client, None, "香港", "Node-B", false)
+            .await
+            .unwrap();
+        assert!(deleted.lock().unwrap().is_empty());
+        services
+            .select_proxy_with(&client, None, "香港", "Node-B", true)
+            .await
+            .unwrap();
+        let closed: Vec<String> = deleted
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|id| id.split('?').next().unwrap_or_default().to_string())
+            .collect();
+        assert_eq!(closed, vec!["a"]);
     }
 
     #[tokio::test]

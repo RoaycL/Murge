@@ -226,6 +226,8 @@ pub struct TrayDeps {
     /// Called after the tray switched the outbound mode, so open windows can follow.
     pub on_mode_changed: Box<dyn Fn(&str) + Send + Sync>,
     pub show_window: Box<dyn Fn() + Send + Sync>,
+    /// Live read of the 切换节点时断开旧连接 preference.
+    pub auto_close_connections: Box<dyn Fn() -> bool + Send + Sync>,
     /// Start the ordered quit. Resolves `true` while the app is still on its
     /// way out, `false` when the quit was cancelled (owned proxy could not
     /// be restored) and the tray must return to its normal menu.
@@ -549,6 +551,9 @@ impl TrayController {
                 .await
                 .is_ok()
             {
+                if (self.deps.auto_close_connections)() {
+                    let _ = client.close_all_connections().await;
+                }
                 (self.deps.on_mode_changed)(mode);
             }
         }
@@ -569,7 +574,13 @@ impl TrayController {
             let _ = self
                 .deps
                 .mihomo
-                .select_proxy(&client, profile_id, group, member)
+                .select_proxy_with(
+                    &client,
+                    profile_id,
+                    group,
+                    member,
+                    (self.deps.auto_close_connections)(),
+                )
                 .await;
         }
     }
@@ -1455,6 +1466,14 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
                         crate::diag!("[updates] tray check failed: {}", error.extract_message());
                     }
                 });
+            })
+        },
+        auto_close_connections: {
+            let app = app.clone();
+            Box::new(move || {
+                app.try_state::<Arc<crate::settings::SettingsStore>>()
+                    .map(|settings| settings.get().auto_close_connections)
+                    .unwrap_or(true)
             })
         },
         show_window: {

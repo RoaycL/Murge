@@ -1136,7 +1136,14 @@ pub async fn dispatch(
         "mihomo:get-config" => Ok(controller_client(models)?.get_config().await?),
         "mihomo:patch-config" => {
             let patch = mihomo::parse_config_patch(arg(payload, 0).unwrap_or(&Value::Null))?;
-            Ok(controller_client(models)?.patch_config(&patch).await?)
+            let client = controller_client(models)?;
+            let applied = client.patch_config(&patch).await?;
+            // 切换节点时断开旧连接 also covers the outbound mode: every
+            // connection was routed under the old mode.
+            if mihomo::patch_changes_mode(&patch) && settings.get().auto_close_connections {
+                let _ = client.close_all_connections().await;
+            }
+            Ok(applied)
         }
         "mihomo:get-proxies" => Ok(controller_client(models)?.get_proxies().await?),
         "mihomo:select-proxy" => {
@@ -1163,6 +1170,7 @@ pub async fn dispatch(
                 profile_id,
                 &group,
                 &name,
+                settings.get().auto_close_connections,
             )
             .await?)
         }

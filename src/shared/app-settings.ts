@@ -125,6 +125,8 @@ export interface AppSettings {
    * long-lived connection otherwise stays pinned to the old (possibly dead) one.
    */
   autoCloseConnections: boolean
+  /** Wi-Fi 规则总开关: off ignores both rule lists below (they are kept). */
+  wifiRulesEnabled: boolean
   /** 在这些 Wi-Fi 下自动切换到直连 (Mihomo Party `pauseSSID`); leaving restores the previous mode. */
   wifiDirectSsids: string[]
   /** 按 Wi-Fi 切换配置 (Mihomo Party `ssidProfileMap`); leaving restores the previous profile. */
@@ -165,6 +167,7 @@ export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = Object.freeze({
   closeToTray: true,
   proxyGuard: true,
   autoCloseConnections: true,
+  wifiRulesEnabled: true,
   wifiDirectSsids: [],
   wifiProfileRules: [],
   subStoreEnabled: true,
@@ -247,6 +250,10 @@ export function parseAppSettings(value: string | null): AppSettings {
         typeof parsed.autoCloseConnections === 'boolean'
           ? parsed.autoCloseConnections
           : DEFAULT_APP_SETTINGS.autoCloseConnections,
+      wifiRulesEnabled:
+        typeof parsed.wifiRulesEnabled === 'boolean'
+          ? parsed.wifiRulesEnabled
+          : DEFAULT_APP_SETTINGS.wifiRulesEnabled,
       wifiDirectSsids: parseSsidList(parsed.wifiDirectSsids),
       wifiProfileRules: parseWifiProfileRules(parsed.wifiProfileRules),
       subStoreEnabled:

@@ -73,6 +73,8 @@ pub struct WifiRuleState {
     pub mode_before: Option<String>,
     /// The profile before the rules switched profile.
     pub profile_before: Option<String>,
+    /// The rule settings the last evaluation used; an edit re-evaluates.
+    pub rules_key: String,
 }
 
 impl WifiRuleState {
@@ -207,15 +209,25 @@ async fn apply_wifi_rules(
         return;
     }
     let ssid = snapshot.ssid.clone();
-    if state.evaluated.as_ref() == Some(&ssid) {
+    let mut current = settings(app);
+    if !current.wifi_rules_enabled {
+        // Off: no rule applies, so whatever the rules changed is put back.
+        current.wifi_direct_ssids.clear();
+        current.wifi_profile_rules.clear();
+    }
+    let rules_key = format!(
+        "{:?}|{:?}",
+        current.wifi_direct_ssids, current.wifi_profile_rules
+    );
+    if state.evaluated.as_ref() == Some(&ssid) && state.rules_key == rules_key {
         return;
     }
-    let current = settings(app);
     if current.wifi_direct_ssids.is_empty()
         && current.wifi_profile_rules.is_empty()
         && !state.holds_something()
     {
         state.evaluated = Some(ssid);
+        state.rules_key = rules_key;
         return;
     }
     if !kernel_running(app) {
@@ -241,6 +253,7 @@ async fn apply_wifi_rules(
         &current.wifi_profile_rules,
     );
     *state = next;
+    state.rules_key = rules_key;
     for action in actions {
         match action {
             WifiAction::SetMode(mode) => {

@@ -324,7 +324,22 @@ onMounted(async () => {
     <section>
       <h2>Wi-Fi 规则</h2>
       <div class="surface-card wifi-rules">
-        <div class="wifi-rule-block">
+        <label class="startup-behavior wifi-master">
+          <span>
+            <strong>启用 Wi-Fi 规则</strong>
+            <span class="startup-detail">关闭后下面的规则都不生效（规则会保留）；由规则切换过的模式和配置会恢复原样。</span>
+          </span>
+          <button
+            type="button"
+            class="switch"
+            :class="{ on: appSettings.settings.wifiRulesEnabled }"
+            :aria-checked="appSettings.settings.wifiRulesEnabled"
+            :disabled="appSettings.busy"
+            aria-label="启用 Wi-Fi 规则"
+            @click="appSettings.set({ wifiRulesEnabled: !appSettings.settings.wifiRulesEnabled })"
+          />
+        </label>
+        <div class="wifi-rule-block" :class="{ off: !appSettings.settings.wifiRulesEnabled }">
           <span class="wifi-rule-title">
             <strong>在这些 Wi-Fi 下使用直连</strong>
             <span class="startup-detail">连上列表里的 Wi-Fi 后自动切换到直连模式，离开后恢复原来的模式。适合公司或家里不需要代理的网络。</span>
@@ -338,7 +353,7 @@ onMounted(async () => {
             <button v-if="currentSsid && !appSettings.settings.wifiDirectSsids.includes(currentSsid)" type="button" class="secondary-button" :disabled="appSettings.busy" @click="addDirectSsid(currentSsid)">添加当前 Wi-Fi「{{ currentSsid }}」</button>
           </div>
         </div>
-        <div class="wifi-rule-block">
+        <div class="wifi-rule-block" :class="{ off: !appSettings.settings.wifiRulesEnabled }">
           <span class="wifi-rule-title">
             <strong>按 Wi-Fi 切换配置</strong>
             <span class="startup-detail">连上指定的 Wi-Fi 后自动切换到对应的配置，离开后切回原来的配置。期间手动换过配置时不会再切回。</span>
@@ -397,6 +412,8 @@ onMounted(async () => {
 .startup-detail{color:var(--app-muted);font-size:var(--font-size-xs);font-weight:var(--font-weight-regular)}
 .wifi-rules{display:grid;gap:var(--space-6);padding:16px 20px}
 .wifi-rule-block{display:grid;gap:var(--space-4)}
+.wifi-rule-block.off{opacity:.5}
+.wifi-master{display:flex;align-items:center;justify-content:space-between}
 .wifi-rule-title{display:flex;flex-direction:column;gap:var(--space-1)}
 .wifi-chips{display:flex;flex-wrap:wrap;gap:var(--space-3)}
 .wifi-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 6px 4px 10px;border-radius:999px;background:color-mix(in srgb,var(--app-accent) 12%,var(--app-surface));font-size:var(--font-size-sm)}

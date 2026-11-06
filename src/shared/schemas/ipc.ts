@@ -155,6 +155,7 @@ export function parseAppSettingsPatch(
   closeToTray?: boolean
   proxyGuard?: boolean
   autoCloseConnections?: boolean
+  wifiRulesEnabled?: boolean
   wifiDirectSsids?: string[]
   wifiProfileRules?: WifiProfileRule[]
   subStoreEnabled?: boolean
@@ -180,7 +181,8 @@ export function parseAppSettingsPatch(
     closeToTray?: boolean
     proxyGuard?: boolean
     autoCloseConnections?: boolean
-    wifiDirectSsids?: string[]
+    wifiRulesEnabled?: boolean
+  wifiDirectSsids?: string[]
     wifiProfileRules?: WifiProfileRule[]
     subStoreEnabled?: boolean
     subStoreUseProxy?: boolean
@@ -254,7 +256,7 @@ export function parseAppSettingsPatch(
     if (!Array.isArray(record.wifiProfileRules)) throw invalid('wifiProfileRules must be an array')
     patch.wifiProfileRules = parseWifiProfileRules(record.wifiProfileRules)
   }
-  for (const key of ['silentLaunch', 'closeToTray', 'proxyGuard', 'autoCloseConnections', 'subStoreEnabled', 'subStoreUseProxy'] as const) {
+  for (const key of ['silentLaunch', 'closeToTray', 'proxyGuard', 'autoCloseConnections', 'wifiRulesEnabled', 'subStoreEnabled', 'subStoreUseProxy'] as const) {
     if (key in record) {
       if (typeof record[key] !== 'boolean') throw invalid(`${key} must be a boolean`)
       patch[key] = record[key]

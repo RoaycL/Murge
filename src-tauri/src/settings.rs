@@ -111,6 +111,8 @@ pub struct AppSettings {
     /// 切换节点时断开旧连接: close connections through a switched group (and
     /// all of them on a mode switch) so they reconnect over the new node.
     pub auto_close_connections: bool,
+    /// Wi-Fi 规则总开关: off ignores both rule lists (they are kept).
+    pub wifi_rules_enabled: bool,
     /// 在这些 Wi-Fi 下自动切换到直连 (Mihomo Party `pauseSSID`).
     pub wifi_direct_ssids: Vec<String>,
     /// 按 Wi-Fi 切换配置 (Mihomo Party `ssidProfileMap`): first match wins.
@@ -140,6 +142,7 @@ impl Default for AppSettings {
             close_to_tray: true,
             proxy_guard: true,
             auto_close_connections: true,
+            wifi_rules_enabled: true,
             wifi_direct_ssids: Vec::new(),
             wifi_profile_rules: Vec::new(),
             sub_store_enabled: true,
@@ -219,6 +222,7 @@ pub fn parse_app_settings(document: &serde_json::Value) -> AppSettings {
         close_to_tray: boolean("closeToTray", defaults.close_to_tray),
         proxy_guard: boolean("proxyGuard", defaults.proxy_guard),
         auto_close_connections: boolean("autoCloseConnections", defaults.auto_close_connections),
+        wifi_rules_enabled: boolean("wifiRulesEnabled", defaults.wifi_rules_enabled),
         wifi_direct_ssids: parse_ssid_list(
             object.get("wifiDirectSsids"),
             &defaults.wifi_direct_ssids,
@@ -375,6 +379,7 @@ impl SettingsStore {
             close_to_tray: boolean("closeToTray", current.close_to_tray),
             proxy_guard: boolean("proxyGuard", current.proxy_guard),
             auto_close_connections: boolean("autoCloseConnections", current.auto_close_connections),
+            wifi_rules_enabled: boolean("wifiRulesEnabled", current.wifi_rules_enabled),
             wifi_direct_ssids: parse_ssid_list(
                 patch.get("wifiDirectSsids"),
                 &current.wifi_direct_ssids,

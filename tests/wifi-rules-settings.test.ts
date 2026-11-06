@@ -22,6 +22,7 @@ describe('Wi-Fi rule settings', () => {
     expect(settings.wifiDirectSsids).toEqual([])
     expect(settings.wifiProfileRules).toEqual([])
     expect(settings.autoCloseConnections).toBe(true)
+    expect(settings.wifiRulesEnabled).toBe(true)
   })
 
   it('validates the patch shape', () => {

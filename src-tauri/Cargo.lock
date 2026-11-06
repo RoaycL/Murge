@@ -3020,7 +3020,7 @@ checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 
 [[package]]
 name = "murge"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "aes-gcm",
  "arboard",

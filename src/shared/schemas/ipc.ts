@@ -14,8 +14,6 @@ import type { GeodataSettings } from '../geodata'
 import { DEFAULT_GEOX_URLS } from '../geodata'
 import type { ProxyBypassPolicy } from '../proxy-bypass'
 import { MAX_CUSTOM_BYPASS_ENTRIES, MAX_CUSTOM_BYPASS_ENTRY_LENGTH } from '../proxy-bypass'
-import type { WifiProfileRule } from '../app-settings'
-import { parseSsidList, parseWifiProfileRules } from '../app-settings'
 import type { UsageWindow, UsageRanking } from '../usage'
 import { USAGE_MAX_BUCKETS } from '../usage'
 import type { NetworkMetadataProviderId } from '../network-metadata'
@@ -154,10 +152,6 @@ export function parseAppSettingsPatch(
   silentLaunch?: boolean
   closeToTray?: boolean
   proxyGuard?: boolean
-  autoCloseConnections?: boolean
-  wifiRulesEnabled?: boolean
-  wifiDirectSsids?: string[]
-  wifiProfileRules?: WifiProfileRule[]
   subStoreEnabled?: boolean
   subStoreUseProxy?: boolean
 } {
@@ -180,10 +174,6 @@ export function parseAppSettingsPatch(
     silentLaunch?: boolean
     closeToTray?: boolean
     proxyGuard?: boolean
-    autoCloseConnections?: boolean
-    wifiRulesEnabled?: boolean
-  wifiDirectSsids?: string[]
-    wifiProfileRules?: WifiProfileRule[]
     subStoreEnabled?: boolean
     subStoreUseProxy?: boolean
   } = {}
@@ -248,15 +238,7 @@ export function parseAppSettingsPatch(
     }
     patch.delayTestUrl = value
   }
-  if ('wifiDirectSsids' in record) {
-    if (!Array.isArray(record.wifiDirectSsids)) throw invalid('wifiDirectSsids must be an array')
-    patch.wifiDirectSsids = parseSsidList(record.wifiDirectSsids)
-  }
-  if ('wifiProfileRules' in record) {
-    if (!Array.isArray(record.wifiProfileRules)) throw invalid('wifiProfileRules must be an array')
-    patch.wifiProfileRules = parseWifiProfileRules(record.wifiProfileRules)
-  }
-  for (const key of ['silentLaunch', 'closeToTray', 'proxyGuard', 'autoCloseConnections', 'wifiRulesEnabled', 'subStoreEnabled', 'subStoreUseProxy'] as const) {
+  for (const key of ['silentLaunch', 'closeToTray', 'proxyGuard', 'subStoreEnabled', 'subStoreUseProxy'] as const) {
     if (key in record) {
       if (typeof record[key] !== 'boolean') throw invalid(`${key} must be a boolean`)
       patch[key] = record[key]

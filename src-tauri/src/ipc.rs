@@ -104,51 +104,6 @@ pub async fn desktop_ipc(
     .await
 }
 
-/// Run one bridge channel from Rust (background watchers), with the same
-/// gates and side effects as a renderer call.
-pub async fn dispatch_from_app(
-    app: &tauri::AppHandle,
-    channel: &str,
-    payload: &Value,
-) -> IpcResult {
-    use tauri::Manager;
-    let paths = app.state::<AppPaths>();
-    let settings = app.state::<Arc<crate::settings::SettingsStore>>();
-    let profiles = app.state::<Arc<ProfilesService>>();
-    let overrides = app.state::<Arc<crate::override_service::OverrideService>>();
-    let models = app.state::<Arc<crate::enhancements::ModelStores>>();
-    let usage = app.state::<Arc<crate::usage::UsageHistoryService>>();
-    let kernel = app.state::<Arc<crate::kernel::KernelServices>>();
-    let mihomo = app.state::<Arc<crate::mihomo::MihomoServices>>();
-    let desktop = app.state::<Arc<crate::icons::DesktopServices>>();
-    let metadata = app.state::<Arc<crate::network_metadata::NetworkMetadataService>>();
-    let startup = app.state::<Arc<crate::startup::StartupService>>();
-    let substore = app.state::<Arc<crate::substore::SubStoreService>>();
-    let system_proxy = app.state::<Arc<crate::system_proxy::SystemProxyService>>();
-    let tun = app.state::<Arc<crate::tun::TunCoordinator>>();
-    let updates = app.state::<Arc<crate::updates::UpdateService>>();
-    dispatch(
-        channel,
-        payload,
-        &paths,
-        &settings,
-        &profiles,
-        &overrides,
-        &models,
-        &usage,
-        &kernel,
-        &mihomo,
-        &desktop,
-        &metadata,
-        startup.inner(),
-        &substore,
-        &system_proxy,
-        &tun,
-        &updates,
-    )
-    .await
-}
-
 /// Payload arrays arrive as a JSON array; positional access mirrors the
 /// preload's argument order.
 /// get() goes through the model coercion so a corrupt file can never leak an
@@ -658,9 +613,7 @@ pub async fn dispatch(
             result?;
             // 切换节点时断开旧连接 also covers a profile switch: a hot reload
             // keeps the old connections on the old profile's nodes.
-            if previous_active.as_deref() != Some(id.as_str())
-                && settings.get().auto_close_connections
-            {
+            if previous_active.as_deref() != Some(id.as_str()) {
                 if let Ok(client) = controller_client(models) {
                     let _ = client.close_all_connections().await;
                 }
@@ -1194,7 +1147,7 @@ pub async fn dispatch(
             let applied = client.patch_config(&patch).await?;
             // 切换节点时断开旧连接 also covers the outbound mode: every
             // connection was routed under the old mode.
-            if mihomo::patch_changes_mode(&patch) && settings.get().auto_close_connections {
+            if mihomo::patch_changes_mode(&patch) {
                 let _ = client.close_all_connections().await;
             }
             Ok(applied)
@@ -1224,7 +1177,7 @@ pub async fn dispatch(
                 profile_id,
                 &group,
                 &name,
-                settings.get().auto_close_connections,
+                true,
             )
             .await?)
         }

@@ -6,9 +6,6 @@
 //!   (FlClash `handleResetNetwork`), so the DNS cache is flushed and every
 //!   connection is closed. A real outage is already handled by the watchdog,
 //!   which restarts the kernel.
-//! - **Wi-Fi rules** (Mihomo Party `pauseSSID` / `ssidProfileMap`): on the
-//!   listed SSIDs switch to 直连 or to a profile, and put things back on
-//!   leaving.
 //! - **Resume repair** (Mihomo Party `sys/resume.ts`): after sleep, with TUN
 //!   on, routes and DNS hijack can be gone while the core still answers. The
 //!   TUN adapter missing → full kernel restart (which brings TUN back);
@@ -18,10 +15,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::json;
-
 use crate::network_name::NetworkSnapshot;
-use crate::settings::WifiProfileRule;
 
 const POLL: Duration = Duration::from_secs(5);
 const RESUME_SETTLE: Duration = Duration::from_secs(3);
@@ -58,83 +52,6 @@ impl ChangeTracker {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WifiAction {
-    SetMode(String),
-    ActivateProfile(String),
-}
-
-/// What the Wi-Fi rules changed and how to put it back.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct WifiRuleState {
-    /// The SSID the rules were last evaluated for (`Some(None)` = not on Wi-Fi).
-    pub evaluated: Option<Option<String>>,
-    /// The mode before the rules switched to direct.
-    pub mode_before: Option<String>,
-    /// The profile before the rules switched profile.
-    pub profile_before: Option<String>,
-    /// The rule settings the last evaluation used; an edit re-evaluates.
-    pub rules_key: String,
-}
-
-impl WifiRuleState {
-    fn holds_something(&self) -> bool {
-        self.mode_before.is_some() || self.profile_before.is_some()
-    }
-}
-
-/// Plan the actions for arriving on `ssid` (`None` = not on Wi-Fi).
-/// A mode or profile the user changed by hand in the meantime is left alone.
-pub fn plan_wifi(
-    state: &WifiRuleState,
-    ssid: Option<&str>,
-    mode: &str,
-    active_profile: Option<&str>,
-    direct: &[String],
-    rules: &[WifiProfileRule],
-) -> (Vec<WifiAction>, WifiRuleState) {
-    let mut actions = Vec::new();
-    let mut next = state.clone();
-    next.evaluated = Some(ssid.map(str::to_string));
-
-    let on_direct = ssid.is_some_and(|ssid| direct.iter().any(|item| item == ssid));
-    if on_direct {
-        if state.mode_before.is_none() && mode != "direct" {
-            actions.push(WifiAction::SetMode("direct".into()));
-            next.mode_before = Some(mode.to_string());
-        }
-    } else if let Some(before) = &state.mode_before {
-        if mode == "direct" {
-            actions.push(WifiAction::SetMode(before.clone()));
-        }
-        next.mode_before = None;
-    }
-
-    let rule = ssid.and_then(|ssid| rules.iter().find(|rule| rule.ssid == ssid));
-    match rule {
-        Some(rule) => {
-            if active_profile != Some(rule.profile_id.as_str()) {
-                actions.push(WifiAction::ActivateProfile(rule.profile_id.clone()));
-                if state.profile_before.is_none() {
-                    next.profile_before = active_profile.map(str::to_string);
-                }
-            }
-        }
-        None => {
-            if let Some(before) = &state.profile_before {
-                let switched_by_rule = rules
-                    .iter()
-                    .any(|rule| Some(rule.profile_id.as_str()) == active_profile);
-                if active_profile != Some(before.as_str()) && switched_by_rule {
-                    actions.push(WifiAction::ActivateProfile(before.clone()));
-                }
-                next.profile_before = None;
-            }
-        }
-    }
-    (actions, next)
-}
-
 // ---------------------------------------------------------------------------
 // Live wiring
 // ---------------------------------------------------------------------------
@@ -150,13 +67,6 @@ fn controller(app: &tauri::AppHandle) -> Option<crate::mihomo::MihomoClient> {
     use tauri::Manager;
     let models = app.try_state::<Arc<crate::enhancements::ModelStores>>()?;
     crate::ipc::controller_client(&models).ok()
-}
-
-fn settings(app: &tauri::AppHandle) -> crate::settings::AppSettings {
-    use tauri::Manager;
-    app.try_state::<Arc<crate::settings::SettingsStore>>()
-        .map(|settings| settings.get())
-        .unwrap_or_default()
 }
 
 async fn read_snapshot() -> Option<NetworkSnapshot> {
@@ -175,7 +85,6 @@ async fn reset_connections(client: &crate::mihomo::MihomoClient) {
 pub fn start(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut tracker = ChangeTracker::default();
-        let mut wifi = WifiRuleState::default();
         loop {
             if crate::lifecycle::is_quitting() {
                 return;
@@ -189,98 +98,9 @@ pub fn start(app: tauri::AppHandle) {
                     reset_connections(&client).await;
                 }
             }
-            if let Some(snapshot) = &snapshot {
-                apply_wifi_rules(&app, snapshot, &mut wifi).await;
-            }
             tokio::time::sleep(POLL).await;
         }
     });
-}
-
-async fn apply_wifi_rules(
-    app: &tauri::AppHandle,
-    snapshot: &NetworkSnapshot,
-    state: &mut WifiRuleState,
-) {
-    use tauri::Manager;
-    // Wi-Fi whose SSID cannot be read (Windows 24H2 without location
-    // permission): unknown, so nothing changes.
-    if snapshot.wifi && snapshot.ssid.is_none() {
-        return;
-    }
-    let ssid = snapshot.ssid.clone();
-    let mut current = settings(app);
-    if !current.wifi_rules_enabled {
-        // Off: no rule applies, so whatever the rules changed is put back.
-        current.wifi_direct_ssids.clear();
-        current.wifi_profile_rules.clear();
-    }
-    let rules_key = format!(
-        "{:?}|{:?}",
-        current.wifi_direct_ssids, current.wifi_profile_rules
-    );
-    if state.evaluated.as_ref() == Some(&ssid) && state.rules_key == rules_key {
-        return;
-    }
-    if current.wifi_direct_ssids.is_empty()
-        && current.wifi_profile_rules.is_empty()
-        && !state.holds_something()
-    {
-        state.evaluated = Some(ssid);
-        state.rules_key = rules_key;
-        return;
-    }
-    if !kernel_running(app) {
-        return; // retried on the next tick once the kernel runs
-    }
-    let Some(client) = controller(app) else {
-        return;
-    };
-    let Ok(config) = client.get_config().await else {
-        return;
-    };
-    let mode = config["mode"].as_str().unwrap_or("rule").to_string();
-    let active = app
-        .try_state::<Arc<crate::profile_service::ProfilesService>>()
-        .and_then(|profiles| profiles.get_active().ok())
-        .and_then(|profile| profile["meta"]["id"].as_str().map(str::to_string));
-    let (actions, next) = plan_wifi(
-        state,
-        ssid.as_deref(),
-        &mode,
-        active.as_deref(),
-        &current.wifi_direct_ssids,
-        &current.wifi_profile_rules,
-    );
-    *state = next;
-    state.rules_key = rules_key;
-    for action in actions {
-        match action {
-            WifiAction::SetMode(mode) => {
-                crate::diag!("[network-watch] Wi-Fi rule: mode -> {mode}");
-                let result = crate::ipc::dispatch_from_app(
-                    app,
-                    "mihomo:patch-config",
-                    &json!([{ "mode": mode }]),
-                )
-                .await;
-                if result.is_ok() {
-                    let _ = tauri::Emitter::emit(app, "mihomo:mode-changed-event", mode.as_str());
-                }
-            }
-            WifiAction::ActivateProfile(id) => {
-                crate::diag!("[network-watch] Wi-Fi rule: activate profile {id}");
-                if let Err(error) =
-                    crate::ipc::dispatch_from_app(app, "profiles:activate", &json!([id])).await
-                {
-                    crate::diag!(
-                        "[network-watch] Wi-Fi rule profile switch failed: {}",
-                        error.extract_message()
-                    );
-                }
-            }
-        }
-    }
 }
 
 /// After a system resume: wait for the network, then repair TUN.
@@ -410,96 +230,5 @@ mod tests {
         };
         assert!(tracker.observe(Some(&wired)));
         assert!(!tracker.observe(Some(&wired)));
-    }
-
-    fn rule(ssid: &str, profile: &str) -> WifiProfileRule {
-        WifiProfileRule {
-            ssid: ssid.into(),
-            profile_id: profile.into(),
-        }
-    }
-
-    #[test]
-    fn direct_ssid_switches_to_direct_and_restores_the_previous_mode() {
-        let direct = vec!["Office".to_string()];
-        let (actions, state) = plan_wifi(
-            &WifiRuleState::default(),
-            Some("Office"),
-            "global",
-            None,
-            &direct,
-            &[],
-        );
-        assert_eq!(actions, vec![WifiAction::SetMode("direct".into())]);
-        assert_eq!(state.mode_before.as_deref(), Some("global"));
-        let (actions, state) = plan_wifi(&state, Some("Home"), "direct", None, &direct, &[]);
-        assert_eq!(actions, vec![WifiAction::SetMode("global".into())]);
-        assert_eq!(state.mode_before, None);
-        // Already direct by hand: nothing to switch, nothing to restore.
-        let (actions, state) = plan_wifi(
-            &WifiRuleState::default(),
-            Some("Office"),
-            "direct",
-            None,
-            &direct,
-            &[],
-        );
-        assert!(actions.is_empty());
-        let (actions, _) = plan_wifi(&state, None, "direct", None, &direct, &[]);
-        assert!(actions.is_empty());
-    }
-
-    #[test]
-    fn a_mode_changed_by_hand_is_not_overwritten_on_leaving() {
-        let direct = vec!["Office".to_string()];
-        let (_, state) = plan_wifi(
-            &WifiRuleState::default(),
-            Some("Office"),
-            "rule",
-            None,
-            &direct,
-            &[],
-        );
-        let (actions, state) = plan_wifi(&state, Some("Home"), "global", None, &direct, &[]);
-        assert!(actions.is_empty());
-        assert_eq!(state.mode_before, None);
-    }
-
-    #[test]
-    fn profile_rules_switch_and_restore_the_original_profile() {
-        let rules = vec![rule("Office", "work"), rule("Lab", "lab")];
-        let (actions, state) = plan_wifi(
-            &WifiRuleState::default(),
-            Some("Office"),
-            "rule",
-            Some("home"),
-            &[],
-            &rules,
-        );
-        assert_eq!(actions, vec![WifiAction::ActivateProfile("work".into())]);
-        assert_eq!(state.profile_before.as_deref(), Some("home"));
-        // Another mapped network keeps the original profile to come back to.
-        let (actions, state) = plan_wifi(&state, Some("Lab"), "rule", Some("work"), &[], &rules);
-        assert_eq!(actions, vec![WifiAction::ActivateProfile("lab".into())]);
-        assert_eq!(state.profile_before.as_deref(), Some("home"));
-        let (actions, state) = plan_wifi(&state, None, "rule", Some("lab"), &[], &rules);
-        assert_eq!(actions, vec![WifiAction::ActivateProfile("home".into())]);
-        assert_eq!(state.profile_before, None);
-    }
-
-    #[test]
-    fn a_profile_picked_by_hand_is_kept_on_leaving() {
-        let rules = vec![rule("Office", "work")];
-        let (_, state) = plan_wifi(
-            &WifiRuleState::default(),
-            Some("Office"),
-            "rule",
-            Some("home"),
-            &[],
-            &rules,
-        );
-        let (actions, state) = plan_wifi(&state, Some("Home"), "rule", Some("other"), &[], &rules);
-        assert!(actions.is_empty());
-        assert_eq!(state.profile_before, None);
     }
 }

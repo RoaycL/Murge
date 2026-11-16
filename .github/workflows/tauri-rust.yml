@@ -78,7 +78,11 @@ jobs:
       - run: npm run tauri:bridge
       - name: Check generated bridge is unchanged
         run: git diff --exit-code -- src/renderer/src/platform/generated/desktop-api.ts
-      - run: npm run kernel:prepare
+      - name: Prepare the pinned kernel
+        # Unauthenticated GitHub API calls from shared runners hit HTTP 403.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm run kernel:prepare
       - name: Prepare pinned native assets and absolute Node fixture path
         run: node "${{ inputs.source_ref != '' && 'ci-harness/' || '' }}scripts/ci-tauri-prepare.mjs"
       - uses: Swatinem/rust-cache@v2

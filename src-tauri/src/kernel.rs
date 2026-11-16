@@ -689,7 +689,6 @@ impl KernelServices {
     /// valid 64-hex secret (seeded once at startup like the TS composition);
     /// the strict store validates it before any directory is created.
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     pub fn for_real_kernel(
         workspace_dir: std::path::PathBuf,
         bundled_archive_dir: Option<std::path::PathBuf>,

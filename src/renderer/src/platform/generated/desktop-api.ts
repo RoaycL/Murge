@@ -161,6 +161,10 @@ export function createDesktopApi(): DesktopApi {
       get: () => bridgeInvoke("app-settings:get", []),
       set: (patch) => bridgeInvoke("app-settings:set", [patch]),
     },
+    uiStyle: {
+      get: () => bridgeInvoke("ui-style:get", []),
+      set: (patch) => bridgeInvoke("ui-style:set", [patch]),
+    },
     subStore: {
       getState: () => bridgeInvoke("substore:get-state", []),
       ensureRunning: () => bridgeInvoke("substore:ensure-running", []),

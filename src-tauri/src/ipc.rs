@@ -472,6 +472,20 @@ pub async fn dispatch(
             Ok(metadata.resolve_all(force).await)
         }
         "app:get-info" => Ok(app_info::app_info(env!("CARGO_PKG_VERSION"))),
+        // 自定义界面样式 (ui-style.json, part of the configuration backup).
+        "ui-style:get" => Ok(serde_json::to_value(
+            crate::ui_style::store(_paths.app_data_root.as_deref()).get(),
+        )
+        .expect("ui style serializes")),
+        "ui-style:set" => {
+            let patch = arg(payload, 0).and_then(Value::as_object).ok_or_else(|| {
+                IpcError::invalid_argument("ui-style:set payload must be a JSON object")
+            })?;
+            let saved = crate::ui_style::store(_paths.app_data_root.as_deref())
+                .set(patch)
+                .map_err(IpcError::invalid_argument)?;
+            Ok(serde_json::to_value(saved).expect("ui style serializes"))
+        }
         "app-settings:get" => Ok(serde_json::to_value(settings.get()).expect("settings serialize")),
         "app-settings:set" => {
             // The bridge sends positional args; the patch is args[0].

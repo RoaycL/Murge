@@ -24,6 +24,7 @@ pub const ROOT_FILES: &[&str] = &[
     "overrides.json",
     "proxy-selections.json",
     "proxy-bypass-policy.json",
+    "ui-style.json",
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

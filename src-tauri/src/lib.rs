@@ -49,6 +49,7 @@ mod session_events;
 mod tray;
 mod tray_popup;
 mod tray_view;
+mod ui_style;
 mod window_backdrop;
 mod window_state;
 mod yaml_value;

@@ -212,7 +212,11 @@ async function smoke(kind, executable, args = []) {
     const viewport = await evaluate(`({width: innerWidth, height: innerHeight, devicePixelRatio})`)
     const identity = await evaluate(`window.desktop.app.getBrand().then(({appId}) => appId)`)
     assert.equal(identity, brand.appId, 'Real renderer-to-backend IPC must work')
-    await evaluate(`window.desktop.appSettings.set({closeToTray:false})`)
+    // The selectors below use the Chinese labels; GitHub's runners have an English UI
+    // language, so pin the interface language before driving the window.
+    await evaluate(`window.desktop.appSettings.set({closeToTray:false, language:'zh-CN'}).then(() => { setTimeout(() => location.reload(), 0); return true })`)
+    await pause(1000)
+    await waitFor(() => evaluate(`document.documentElement.lang === 'zh-CN' && Boolean(document.querySelector('#app .app-frame .sidebar-nav a[href="#/activity"]'))`), alive)
     for (const theme of ['light', 'dark']) {
       await evaluate(`document.documentElement.dataset.theme = '${theme}'`)
       await pause(500)

@@ -1,6 +1,7 @@
 import { computed, ref, watchEffect } from 'vue'
 import { defineStore } from 'pinia'
 import { DEFAULT_UI_STYLE, isDefaultUiStyle, normalizeCustomCss, parseUiStyle, uiStyleVariablesCss, type UiStyle } from '@shared/ui-style'
+import { t } from '@shared/i18n'
 import { useToast } from '../composables/use-toast'
 
 /** 渲染进程缓存：只用来在 IPC 返回前就套上样式，避免启动时闪一下默认外观。 */
@@ -95,7 +96,7 @@ export const useUiStyleStore = defineStore('ui-style', () => {
     } catch (error) {
       saved.value = previous
       writeCache(previous)
-      toast.error('界面样式没有保存', error instanceof Error ? error.message : String(error))
+      toast.error(t('uiStyle.toastNotSaved'), error instanceof Error ? error.message : String(error))
       return false
     } finally {
       saving.value = false
@@ -142,7 +143,7 @@ export const useUiStyleStore = defineStore('ui-style', () => {
       trialRemaining.value -= 1
       if (trialRemaining.value <= 0) {
         revertTrial()
-        toast.info('已还原自定义 CSS', '没有在倒计时内确认，已恢复到之前的样式。')
+        toast.info(t('uiStyle.toastReverted'), t('uiStyle.toastRevertedDetail'))
       }
     }, 1000)
   }
@@ -152,7 +153,7 @@ export const useUiStyleStore = defineStore('ui-style', () => {
     if (css === null) return
     stopTimer()
     trialCss.value = null
-    if (await persist({ customCss: css, customCssEnabled: true })) toast.success('已保存自定义 CSS')
+    if (await persist({ customCss: css, customCssEnabled: true })) toast.success(t('uiStyle.toastSaved'))
   }
 
   function revertTrial(): void {
@@ -165,9 +166,9 @@ export const useUiStyleStore = defineStore('ui-style', () => {
     suspended.value = !suspended.value
     if (suspended.value) {
       revertTrial()
-      toast.info('已临时停用自定义 CSS', `本次运行内有效，再按 ${SAFE_MODE_SHORTCUT} 恢复。`)
+      toast.info(t('uiStyle.toastSuspended'), t('uiStyle.toastSuspendedDetail', [SAFE_MODE_SHORTCUT]))
     } else {
-      toast.info('已恢复自定义 CSS')
+      toast.info(t('uiStyle.toastResumed'))
     }
   }
 
@@ -186,7 +187,7 @@ export const useUiStyleStore = defineStore('ui-style', () => {
   async function resetAll(): Promise<void> {
     revertTrial()
     suspended.value = false
-    if (await persist({ ...DEFAULT_UI_STYLE })) toast.success('已恢复默认样式')
+    if (await persist({ ...DEFAULT_UI_STYLE })) toast.success(t('uiStyle.toastReset'))
   }
 
   return {

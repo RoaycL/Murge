@@ -4,10 +4,18 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import SurfaceCard from './SurfaceCard.vue'
 import { useUsageHistoryStore } from '../stores/usage-history'
 import type { UsageBucket, UsageRanking, UsageWindow } from '@shared/usage'
+import { PROCESS_USAGE_OTHER, PROCESS_USAGE_UNKNOWN } from '@shared/process-usage'
 import { formatBytes, formatBytesParts } from '../lib/format'
 import ConfirmModal from './ConfirmModal.vue'
 import AppIcon from './AppIcon.vue'
 import { useToast } from '../composables/use-toast'
+
+/** The shell stores its two catch-all buckets under fixed names; show them in the interface language. */
+function processName(name: string): string {
+  if (name === PROCESS_USAGE_OTHER) return t('usage.otherProcesses')
+  if (name === PROCESS_USAGE_UNKNOWN) return t('common.unknownProcess')
+  return name
+}
 
 const store = useUsageHistoryStore()
 const toast = useToast()
@@ -161,7 +169,7 @@ async function confirmClear(): Promise<void> {
       <section class="process-usage" :aria-label="t('usage.appLabel')">
         <h3>{{ t('usage.appTraffic') }}</h3>
         <div v-for="item in store.processes?.entries.slice(0, 20) ?? []" :key="item.name" class="process-usage-row">
-          <span>{{ item.name }}</span><strong>{{ formatBytes(item.total) }}</strong>
+          <span>{{ processName(item.name) }}</span><strong>{{ formatBytes(item.total) }}</strong>
         </div>
         <p v-if="!store.processes?.entries.length" class="usage-empty">{{ t('usage.noAppTraffic') }}</p>
       </section>

@@ -19,6 +19,8 @@ export const useAppSettingsStore = defineStore('app-settings', () => {
   async function refresh(): Promise<void> {
     try {
       settings.value = await window.desktop.appSettings.get()
+      // Not left to the watcher: an unchanged "system" must still replace the language cached from the last run.
+      applyLanguageSetting(settings.value.language)
       errorMessage.value = null
     } catch (error) {
       errorMessage.value = toProtocolError(error).message

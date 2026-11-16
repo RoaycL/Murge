@@ -1,12 +1,12 @@
-name: Tauri release
+name: Release
 
 # Tag main to publish a signed release:
 #
-# - `tauri-vX.Y.Z` is a 正式版: a normal GitHub release (the repository's
+# - `vX.Y.Z` is a 正式版: a normal GitHub release (the repository's
 #   latest), announced on the `update-stable` feed, on `update-beta` unless a
 #   newer Beta is there, and on the retired `channel-experimental` feed that
 #   Tauri builds up to 0.9.37 still follow.
-# - `tauri-vX.Y.Z-beta.N` is a Beta: a GitHub pre-release announced on
+# - `vX.Y.Z-beta.N` is a Beta: a GitHub pre-release announced on
 #   `update-beta` only ("包括 Beta 版本" in the app).
 #
 # Each feed is a fixed pre-release holding the signed manifest `latest.json`
@@ -20,7 +20,7 @@ name: Tauri release
 on:
   push:
     tags:
-      - 'tauri-v*'
+      - 'v*'
   workflow_dispatch:
   pull_request:
     branches: [main]
@@ -62,12 +62,12 @@ jobs:
           for arch in x64 arm64; do head -c 4096 /dev/urandom > "$work/dist/${product}_${version}_${arch}-setup.exe"; done
           printf -- '- dry run notes\n' > "$work/notes.md"
           TAURI_SIGNING_PRIVATE_KEY="$(cat "$work/keys/throwaway.key")" TAURI_SIGNING_PRIVATE_KEY_PASSWORD='' \
-            node scripts/tauri-release-assets.mjs --version "$version" --tag "tauri-v$version" --dir "$work/dist" \
+            node scripts/tauri-release-assets.mjs --version "$version" --tag "v$version" --dir "$work/dist" \
             --notes-file "$work/notes.md" --pubkey "$(cat "$work/keys/throwaway.key.pub")"
           node -e "const m=require('$work/dist/latest.json'); if (Object.keys(m.platforms).sort().join()!=='windows-aarch64,windows-x86_64' || m.notes!=='- dry run notes\n') process.exit(1)"
           # The real pinned key must reject the throwaway signatures.
           if TAURI_SIGNING_PRIVATE_KEY="$(cat "$work/keys/throwaway.key")" TAURI_SIGNING_PRIVATE_KEY_PASSWORD='' \
-            node scripts/tauri-release-assets.mjs --version "$version" --tag "tauri-v$version" --dir "$work/dist"; then
+            node scripts/tauri-release-assets.mjs --version "$version" --tag "v$version" --dir "$work/dist"; then
             echo 'pinned public key accepted a foreign signature'; exit 1
           fi
 
@@ -95,8 +95,8 @@ jobs:
           if [ "$cargo_version" != "$version" ]; then
             echo "src-tauri/Cargo.toml version $cargo_version != package.json $version"; exit 1
           fi
-          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "tauri-v$version" ]; then
-            echo "tag $GITHUB_REF_NAME does not match tauri-v$version"; exit 1
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match v$version"; exit 1
           fi
           # 正式版 x.y.z or Beta x.y.z-beta.N; anything else is refused.
           if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$'; then
@@ -105,7 +105,7 @@ jobs:
           case "$version" in *-*) prerelease=true ;; *) prerelease=false ;; esac
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=tauri-v$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
           # The bundler names installers after tauri.conf productName (brand-checked).
           echo "product=$(node -p "require('./src-tauri/tauri.conf.json').productName")" >> "$GITHUB_OUTPUT"
       # CI (typecheck + unit tests + Go tests) and the Windows build (Windows
@@ -272,7 +272,7 @@ jobs:
             if ! gh release view "$1" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
               gh release create "$1" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
                 --prerelease --latest=false --title "Update feed: $1" \
-                --notes 'Maintained by the Tauri release workflow: latest.json here is the signed manifest the in-app updater follows. Do not download from this release.'
+                --notes 'Maintained by the release workflow: latest.json here is the signed manifest the in-app updater follows. Do not download from this release.'
             fi
           }
           # The version the beta feed announces now: a 正式版 must not

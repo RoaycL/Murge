@@ -140,6 +140,9 @@ pub fn merge(current: &UiStyle, patch: &Map<String, Value>) -> UiStyle {
 pub struct UiStyleStore {
     path: Option<PathBuf>,
     memory: Mutex<UiStyle>,
+    /// Held across the read-merge-write of `set`, so two patches arriving
+    /// together cannot overwrite each other.
+    write: Mutex<()>,
 }
 
 impl UiStyleStore {
@@ -147,6 +150,7 @@ impl UiStyleStore {
         UiStyleStore {
             path: app_data_root.map(|root| root.join(UI_STYLE_FILE)),
             memory: Mutex::new(UiStyle::default()),
+            write: Mutex::new(()),
         }
     }
 
@@ -162,6 +166,7 @@ impl UiStyleStore {
     }
 
     pub fn set(&self, patch: &Map<String, Value>) -> Result<UiStyle, String> {
+        let _guard = self.write.lock().expect("ui style write lock");
         let next = merge(&self.get(), patch);
         match &self.path {
             Some(path) => write_atomic(path, &next)?,

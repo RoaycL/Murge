@@ -132,7 +132,7 @@ const example = t('uiStyle.cssPlaceholder')
       <dl>
         <template v-for="variable in UI_STYLE_VARIABLES" :key="variable.name"><dt><code>{{ variable.name }}</code></dt><dd>{{ variable.detail }}</dd></template>
       </dl>
-      <p>{{ t('uiStyle.rootAttrs') }} <code>data-theme="light|dark"</code>、<code>data-frosted</code>、<code>data-contrast</code> {{ t('uiStyle.rootAttrsHint') }} <code>:root[data-theme="dark"] { … }</code>。</p>
+      <p>{{ t('uiStyle.rootAttrs') }} <code>data-theme="light|dark"</code>{{ t('common.listSeparator') }}<code>data-frosted</code>{{ t('common.listSeparator') }}<code>data-contrast</code> {{ t('uiStyle.rootAttrsHint') }} <code>:root[data-theme="dark"] { … }</code>{{ t('uiStyle.rootAttrsEnd') }}</p>
     </details>
     </template>
   </section>

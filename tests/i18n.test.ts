@@ -1,6 +1,8 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
+import { useAppSettingsStore } from '../src/renderer/src/stores/app-settings'
 import {
   DEFAULT_LOCALE, LOCALES, LOCALE_NAMES, format, isLanguageSetting, locale, matchLocale, resolveLocale, setLocale, systemLocale, t, translate
 } from '@shared/i18n'
@@ -85,6 +87,19 @@ describe('message lookup', () => {
   })
 })
 
+describe('language setting on load', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('replaces a language left over from the last run even when the setting is still "system"', async () => {
+    vi.stubGlobal('window', { desktop: { appSettings: { get: async () => ({ ...DEFAULT_APP_SETTINGS, language: 'system' }) } } })
+    vi.stubGlobal('navigator', { languages: ['zh-CN'], language: 'zh-CN' })
+    setActivePinia(createPinia())
+    setLocale('en')
+    await useAppSettingsStore().refresh()
+    expect(locale.value).toBe('zh-CN')
+  })
+})
+
 describe('renderer source', () => {
   const files = [...sourceFiles(resolve(root, 'src/renderer/src')), ...sourceFiles(resolve(root, 'src/shared'))]
   const messages = readJson('src/shared/i18n/locales/zh-CN.json')
@@ -100,7 +115,9 @@ describe('renderer source', () => {
     const offenders: string[] = []
     for (const file of files) {
       const relative = file.slice(root.length + 1).replaceAll('\\', '/')
-      const [body] = readFileSync(file, 'utf8').split(/<style[\s>]/)
+      const text = readFileSync(file, 'utf8')
+      // Only a component has a style block to leave out; a script is checked to its last line.
+      const body = file.endsWith('.vue') ? text.split(/^<style[\s>]/m)[0] : text
       stripComments(body).split('\n').forEach((line) => {
         const rest = (allowed[relative] ?? []).reduce((text, pattern) => text.replace(pattern, ''), line)
         if (/\p{Script=Han}/u.test(rest)) offenders.push(`${relative}: ${line.trim().slice(0, 80)}`)

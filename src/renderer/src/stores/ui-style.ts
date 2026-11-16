@@ -152,7 +152,7 @@ export const useUiStyleStore = defineStore('ui-style', () => {
     if (css === null) return
     stopTimer()
     trialCss.value = null
-    if (await persist({ customCss: css, customCssEnabled: css.trim().length > 0 })) toast.success('已保存自定义 CSS')
+    if (await persist({ customCss: css, customCssEnabled: true })) toast.success('已保存自定义 CSS')
   }
 
   function revertTrial(): void {
@@ -174,6 +174,8 @@ export const useUiStyleStore = defineStore('ui-style', () => {
   function setCustomCssEnabled(enabled: boolean): void {
     // 关闭总是安全的，直接保存；重新打开要走一遍试用，防止旧 CSS 把界面弄坏。
     if (!enabled) { revertTrial(); void persist({ customCssEnabled: false }); return }
+    // 还没写过 CSS 时没什么可试用的，直接打开，编辑框随之出现。
+    if (!saved.value.customCss.trim()) { void persist({ customCssEnabled: true }); return }
     tryCustomCss(saved.value.customCss)
   }
 

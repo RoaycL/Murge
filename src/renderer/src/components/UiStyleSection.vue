@@ -61,6 +61,8 @@ async function importFile(event: Event): Promise<void> {
 
 function toggleCss(): void {
   if (suspended.value) { store.toggleSuspended(); return }
+  // 关掉时丢弃没应用的草稿；重新打开时编辑框显示之前保存的 CSS。
+  if (cssEnabled.value) cssDraft.value = saved.value.customCss
   store.setCustomCssEnabled(!cssEnabled.value)
 }
 
@@ -116,6 +118,7 @@ const example = `/* 例：换一种背景渐变，卡片圆角更大 */
         <button type="button" class="switch" :class="{ on: cssEnabled }" :aria-checked="cssEnabled" aria-label="启用自定义 CSS" @click="toggleCss" />
       </label>
     </div>
+    <template v-if="cssEnabled">
     <div class="surface-card css-editor-card">
       <textarea v-model="cssDraft" class="css-editor" spellcheck="false" autocapitalize="off" autocomplete="off" :maxlength="MAX_CUSTOM_CSS_LENGTH" :placeholder="example" aria-label="自定义 CSS" @keydown="onEditorKeydown" />
       <div class="css-editor-actions">
@@ -134,6 +137,7 @@ const example = `/* 例：换一种背景渐变，卡片圆角更大 */
       </dl>
       <p>页面根元素带有 <code>data-theme="light|dark"</code>、<code>data-frosted</code>、<code>data-contrast</code> 属性，可以按主题分别写规则，例如 <code>:root[data-theme="dark"] { … }</code>。</p>
     </details>
+    </template>
   </section>
 </template>
 

@@ -10,7 +10,7 @@
 // or an unbound signature fails the release before anything is published.
 //
 // Usage:
-//   node scripts/tauri-release-assets.mjs --version 0.9.31 --tag tauri-v0.9.31 \
+//   node scripts/tauri-release-assets.mjs --version 0.9.31 --tag v1.0.3 \
 //     --dir <folder with <product>_0.9.31_x64-setup.exe and <product>_0.9.31_arm64-setup.exe> \
 //     [--notes-file <release notes, shown in the update dialog>] \
 //     [--pubkey <base64>]   # dry runs with a throwaway key only

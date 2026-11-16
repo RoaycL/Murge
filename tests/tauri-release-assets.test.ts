@@ -19,8 +19,8 @@ describe('Tauri release assets', () => {
     expect(() => selectInstallers([...both, 'App_1.2.2_x64-setup.exe'], 'App', '1.2.3')).toThrow(/unexpected installers/)
   })
 
-  it('publishes 正式版 as the latest release and Beta as a pre-release from tauri-v tags', () => {
-    expect(workflow).toMatch(/tags:\s*\n\s*- 'tauri-v\*'/)
+  it('publishes 正式版 as the latest release and Beta as a pre-release from v tags', () => {
+    expect(workflow).toMatch(/tags:\s*\n\s*- 'v\*'/)
     expect(workflow).toContain('kind=(--prerelease --latest=false')
     expect(workflow).toContain('kind=(--latest ')
     expect(workflow).toContain('node scripts/release-feeds.mjs --version')

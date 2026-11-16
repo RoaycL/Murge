@@ -49,6 +49,7 @@ mod tray;
 mod tray_popup;
 mod tray_view;
 mod window_backdrop;
+mod window_state;
 mod yaml_value;
 // Network metadata service: shared, cached, single-flight app state.
 use network_metadata::NetworkMetadataService;

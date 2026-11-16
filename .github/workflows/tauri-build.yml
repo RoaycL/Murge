@@ -83,6 +83,9 @@ jobs:
           go-version: '1.25.x'
           cache-dependency-path: native/tun-service/go.sum
       - name: Prepare pinned kernel and native service resources
+        # Unauthenticated GitHub API calls from shared runners hit HTTP 403.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           npm run kernel:prepare
           npm run tun-service:build

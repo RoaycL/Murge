@@ -8,8 +8,8 @@ Murge 正式版是 Tauri 版本，发布都在 `main` 分支上打标签。旧�
 
 | 标签 | GitHub Release | 更新源 |
 | --- | --- | --- |
-| `tauri-vX.Y.Z`（正式版） | 普通 Release，标为 latest | `update-stable`；`update-beta`（除非那里已有更新的 Beta）；`channel-experimental`（给 0.9.37 及更早的 Tauri 版本） |
-| `tauri-vX.Y.Z-beta.N`（Beta） | 预发布 | 只更新 `update-beta` |
+| `vX.Y.Z`（正式版） | 普通 Release，标为 latest | `update-stable`；`update-beta`（除非那里已有更新的 Beta）；`channel-experimental`（给 0.9.37 及更早的 Tauri 版本） |
+| `vX.Y.Z-beta.N`（Beta） | 预发布 | 只更新 `update-beta` |
 
 - 应用里“包括 Beta 版本”关闭时只看 `update-stable`，打开时看 `update-beta`。只会升级到更高版本：从 Beta 关掉开关后，要等下一个更高的正式版。
 - `package.json` 与 `src-tauri/Cargo.toml` 的版本必须一致，且只能是 `X.Y.Z` 或 `X.Y.Z-beta.N`。

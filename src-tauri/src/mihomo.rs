@@ -831,7 +831,7 @@ impl ProxySelectionStore {
 /// back as HTTP 502. The registry bypass list does not save us either:
 /// `127.*` is not an IP/CIDR pattern reqwest understands.
 pub fn local_client_builder() -> reqwest::ClientBuilder {
-    reqwest::Client::builder().no_proxy()
+    crate::outbound::direct_builder()
 }
 
 #[derive(Clone)]
@@ -1994,6 +1994,19 @@ mod tests {
 
             let version = client(controller.port).get_version().await.unwrap();
             assert_eq!(version["version"], "v1.19.30");
+            assert_eq!(proxy_hits.load(Ordering::SeqCst), before);
+
+            // The "direct" route of direct-then-proxy fetches is direct too.
+            let status = crate::outbound::direct_builder()
+                .build()
+                .unwrap()
+                .get(format!("http://127.0.0.1:{}/version", controller.port))
+                .header("Authorization", "Bearer s3cret")
+                .send()
+                .await
+                .unwrap()
+                .status();
+            assert_eq!(status.as_u16(), 200);
             assert_eq!(proxy_hits.load(Ordering::SeqCst), before);
         });
     }

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import AppIcon from './AppIcon.vue'
 import { useDialogFocus } from '../composables/use-dialog-focus'
@@ -13,7 +14,7 @@ import type { UpdateProduct } from '@shared/updates'
 const updates = useUpdatesStore()
 const dialog = ref<HTMLElement | null>(null)
 const DISMISSED_KEY = 'update-dialog-dismissed'
-const PRODUCT_LABELS: Record<UpdateProduct, string> = { electron: '稳定版', tauri: '实验版' }
+const PRODUCT_LABELS: Record<UpdateProduct, string> = { electron: t('updateDialog.stable'), tauri: t('updateDialog.experimental') }
 
 function readDismissed(): string | null {
   try { return window.localStorage.getItem(DISMISSED_KEY) } catch { return null }
@@ -37,8 +38,8 @@ const switching = computed<boolean>(() =>
 const title = computed<string>(() => {
   const version = updates.state.availableVersion ?? ''
   const product = updates.state.availableProduct
-  if (switching.value && product) return `切换到${PRODUCT_LABELS[product]} v${version}`
-  return `发现新版本 v${version}`
+  if (switching.value && product) return t('updateDialog.switchTo', [PRODUCT_LABELS[product], version])
+  return t('common.updateFound', [version])
 })
 
 /** Published notes are Markdown, or HTML from older feeds; shown as plain text. */
@@ -51,9 +52,9 @@ const percent = computed<number>(() => updates.state.progress?.percent ?? 0)
 
 const statusLine = computed<string>(() => {
   switch (updates.state.phase) {
-    case 'available': return '正在准备下载…'
-    case 'downloading': return `正在下载 ${percent.value.toFixed(0)}%`
-    case 'downloaded': return switching.value ? '已下载并校验。安装会替换当前版本，配置和数据保留。' : '已下载并校验，退出应用时也会自动安装。'
+    case 'available': return t('updateDialog.preparing')
+    case 'downloading': return t('updateDialog.progress', [percent.value.toFixed(0)])
+    case 'downloaded': return switching.value ? t('updateDialog.verifiedSwitch') : t('updateDialog.verified')
     default: return ''
   }
 })
@@ -82,16 +83,16 @@ onUnmounted(() => {
       <section ref="dialog" class="confirm-modal update-dialog" role="dialog" aria-modal="true" :aria-label="title">
         <header>
           <h2>{{ title }}</h2>
-          <button type="button" class="icon-control" aria-label="关闭" @click="later"><AppIcon name="close" /></button>
+          <button type="button" class="icon-control" :aria-label="t('common.close')" @click="later"><AppIcon name="close" /></button>
         </header>
-        <small class="update-dialog-version">当前版本 v{{ updates.state.currentVersion ?? '—' }}</small>
-        <div class="update-dialog-notes" tabindex="0" aria-label="更新内容">{{ notes || '本次发布未附更新说明。' }}</div>
+        <small class="update-dialog-version">{{ t('updateDialog.current', [updates.state.currentVersion ?? '—']) }}</small>
+        <div class="update-dialog-notes" tabindex="0" :aria-label="t('updateDialog.notesLabel')">{{ notes || t('updateDialog.noNotes') }}</div>
         <div v-if="updates.state.phase === 'downloading'" class="update-dialog-bar"><div :style="{ width: `${percent}%` }"></div></div>
         <p class="update-dialog-status">{{ statusLine }}</p>
         <footer>
-          <button type="button" class="secondary-button" @click="later">稍后</button>
+          <button type="button" class="secondary-button" @click="later">{{ t('updateDialog.later') }}</button>
           <button type="button" class="primary-button" :disabled="!updates.state.canInstall" @click="updates.install()">
-            {{ updates.state.canInstall ? '重启并安装' : '下载中…' }}
+            {{ updates.state.canInstall ? t('common.restartInstall') : t('updateDialog.downloading') }}
           </button>
         </footer>
       </section>

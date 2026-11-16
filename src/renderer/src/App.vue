@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 import AppSidebar from './components/AppSidebar.vue'
@@ -17,6 +18,8 @@ import { useTrafficStore } from './stores/traffic'
 import { useConnectionsStore } from './stores/connections'
 import { approveNavigation, cancelNavigation, pendingNavigation, unsavedLabels } from './composables/use-unsaved-changes'
 import { router } from './router'
+import { useAppSettingsStore } from './stores/app-settings'
+import { locale } from '@shared/i18n'
 
 const brand = ref<BrandConfig>(fallbackBrand)
 const route = useRoute()
@@ -35,6 +38,7 @@ const uiStyle = useUiStyleStore()
 const tun = useTunStore()
 const traffic = useTrafficStore()
 const connections = useConnectionsStore()
+const appSettings = useAppSettingsStore()
 let unsubscribeNavigation: (() => void) | null = null
 
 function discardAndNavigate(): void {
@@ -44,6 +48,7 @@ function discardAndNavigate(): void {
 
 onMounted(async () => {
   unsubscribeNavigation = window.desktop.app.onNavigate((path) => { void router.push(path) })
+  void appSettings.refresh()
   appearance.connect()
   void uiStyle.connect()
   kernel.connect()
@@ -70,7 +75,8 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="app-window">
-    <div class="app-frame" :data-surface="contentSurface" :data-scrollbar="contentScrollbar">
+    <!-- Keyed on the language: a switch redraws every view, including text read once at setup. -->
+    <div :key="locale" class="app-frame" :data-surface="contentSurface" :data-scrollbar="contentScrollbar">
       <AppSidebar :brand="brand" />
       <main class="app-content">
         <RouterView />
@@ -78,7 +84,7 @@ onBeforeUnmount(() => {
       <ToastHost />
       <UiStyleTrialBar />
       <UpdateDialog />
-      <ConfirmModal :open="Boolean(pendingNavigation)" title="放弃未保存的修改？" :description="`${unsavedLabels.join('、') || '当前页面'}包含尚未保存的修改，离开后将无法恢复。`" confirm-label="放弃并离开" @close="cancelNavigation" @confirm="discardAndNavigate" />
+      <ConfirmModal :open="Boolean(pendingNavigation)" :title="t('app.unsavedTitle')" :description="t('app.unsavedDescription', [unsavedLabels.join(t('common.listSeparator')) || t('app.currentPage')])" :confirm-label="t('app.discardAndLeave')" @close="cancelNavigation" @confirm="discardAndNavigate" />
     </div>
   </div>
 </template>

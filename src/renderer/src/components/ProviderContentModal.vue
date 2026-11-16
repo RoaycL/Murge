@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, ref, toRef, watch } from 'vue'
 import type { ProfileProviderContent } from '@shared/profiles'
 import AppIcon from './AppIcon.vue'
@@ -20,8 +21,8 @@ let loadRevision = 0
 useDialogFocus(toRef(props, 'open'), dialog, () => emit('close'))
 
 const subtitle = computed(() => {
-  if (!result.value) return props.kind === 'proxy' ? '代理集合内容' : '规则集合内容'
-  const source = result.value.source === 'inline' ? '内联配置' : 'mihomo 实际缓存'
+  if (!result.value) return props.kind === 'proxy' ? t('providerContent.proxyTitle') : t('providerContent.ruleTitle')
+  const source = result.value.source === 'inline' ? t('providerContent.inline') : t('providerContent.cache')
   return `${source} · ${result.value.format.toUpperCase()}`
 })
 
@@ -38,7 +39,7 @@ watch(
       const value = await window.desktop.profiles.getProviderContent(kind, name)
       if (revision === loadRevision) result.value = value
     } catch (reason) {
-      if (revision === loadRevision) error.value = reason instanceof Error ? reason.message : '读取外部资源失败'
+      if (revision === loadRevision) error.value = reason instanceof Error ? reason.message : t('providerContent.readFailed')
     } finally {
       if (revision === loadRevision) loading.value = false
     }
@@ -57,7 +58,7 @@ async function copyContent(): Promise<void> {
 <template>
   <Teleport to="body">
     <div v-if="open" class="provider-content-backdrop" @click.self="emit('close')">
-      <section ref="dialog" class="provider-content-modal" role="dialog" aria-modal="true" :aria-label="`${name} 资源内容`">
+      <section ref="dialog" class="provider-content-modal" role="dialog" aria-modal="true" :aria-label="t('providerContent.label', [name])">
         <header>
           <div class="provider-content-heading">
             <h2>{{ name }}</h2>
@@ -65,13 +66,13 @@ async function copyContent(): Promise<void> {
           </div>
           <div class="provider-content-actions">
             <button v-if="result" type="button" class="secondary-button compact" @click="copyContent">
-              <AppIcon name="clipboard" :size="15" />{{ copied ? '已复制' : '复制' }}
+              <AppIcon name="clipboard" :size="15" />{{ copied ? t('common.copied') : t('common.copy') }}
             </button>
-            <button type="button" class="icon-control" aria-label="关闭资源内容" @click="emit('close')"><AppIcon name="close" /></button>
+            <button type="button" class="icon-control" :aria-label="t('providerContent.close')" @click="emit('close')"><AppIcon name="close" /></button>
           </div>
         </header>
         <div class="provider-content-body">
-          <p v-if="loading" class="provider-content-state">正在读取实际缓存…</p>
+          <p v-if="loading" class="provider-content-state">{{ t('providerContent.reading') }}</p>
           <div v-else-if="error" class="provider-content-error" role="alert">
             <AppIcon name="error" :size="18" /><span>{{ error }}</span>
           </div>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed } from 'vue'
 import SurfaceCard from './SurfaceCard.vue'
 import { useConnectionsStore } from '../stores/connections'
@@ -12,8 +13,8 @@ const summary = computed(() => buildTopology(connections.snapshot?.connections ?
 
 const totals = computed(() => {
   const value = summary.value
-  const parts = [`${value.proxiedCount} 代理`, `${value.directCount} 直连`]
-  if (value.unknownChainCount > 0) parts.push(`${value.unknownChainCount} 未知`)
+  const parts = [t('topology.proxyCount', [value.proxiedCount]), t('topology.directCount', [value.directCount])]
+  if (value.unknownChainCount > 0) parts.push(t('topology.unknownCount', [value.unknownChainCount]))
   return parts.join(' · ')
 })
 
@@ -32,22 +33,22 @@ function hopClass(name: string): string {
 <template>
   <SurfaceCard class="topology-card">
     <div class="card-title-row">
-      <span class="metric-label">路由拓扑<em class="status">{{ totals }}</em></span>
-      <span class="topology-total">{{ summary.totalConnections }} 条连接</span>
+      <span class="metric-label">{{ t('topology.title') }}<em class="status">{{ totals }}</em></span>
+      <span class="topology-total">{{ t('topology.connectionCount', [summary.totalConnections]) }}</span>
     </div>
 
     <p v-if="incompleteNote" class="inline-note" role="note">{{ incompleteNote }}</p>
-    <p v-if="!summary.totalConnections" class="topology-empty">暂无连接数据，流量产生后这里会显示路由拓扑。</p>
+    <p v-if="!summary.totalConnections" class="topology-empty">{{ t('topology.empty') }}</p>
 
     <template v-else>
       <div class="topology-section">
-        <span class="topology-heading">路由路径</span>
+        <span class="topology-heading">{{ t('topology.paths') }}</span>
         <div v-if="summary.paths.length" class="path-list">
           <div v-for="path in summary.paths" :key="path.id" class="path-row">
             <div class="path-meta">
               <span v-if="pathRuleLabel(path.rule, path.rulePayload)" class="rule-chip">{{ pathRuleLabel(path.rule, path.rulePayload) }}</span>
               <span class="path-bytes">{{ formatBytes(path.bytes) }}</span>
-              <span class="path-count">{{ path.connections }} 条</span>
+              <span class="path-count">{{ t('topology.pathCount', [path.connections]) }}</span>
             </div>
             <div class="path-hops">
               <template v-for="(hop, index) in path.hops" :key="`${path.id}-${index}`">
@@ -57,11 +58,11 @@ function hopClass(name: string): string {
             </div>
           </div>
         </div>
-        <p v-else class="topology-empty">当前连接未提供可用路由链。</p>
+        <p v-else class="topology-empty">{{ t('topology.noPaths') }}</p>
       </div>
 
       <div class="topology-section">
-        <span class="topology-heading">跳点分布<span class="heading-hint">（按流量）</span></span>
+        <span class="topology-heading">{{ t('topology.hops') }}<span class="heading-hint">{{ t('topology.byTraffic') }}</span></span>
         <div v-if="summary.nodes.length" class="node-list">
           <div v-for="node in summary.nodes" :key="node.name" class="node-row">
             <span class="node-name">{{ topologyHopLabel(node) }}</span>
@@ -69,7 +70,7 @@ function hopClass(name: string): string {
             <strong>{{ formatBytes(node.download + node.upload) }}</strong>
           </div>
         </div>
-        <p v-else class="topology-empty">当前连接未提供可用跳点。</p>
+        <p v-else class="topology-empty">{{ t('topology.noHops') }}</p>
       </div>
     </template>
   </SurfaceCard>

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { inlineMessages } from './helpers/localized-source'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
@@ -6,7 +7,7 @@ import path from 'node:path'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 async function view(name: string): Promise<string> {
-  return readFile(path.join(root, 'src/renderer/src/views', name), 'utf8')
+  return inlineMessages(await readFile(path.join(root, 'src/renderer/src/views', name), 'utf8'))
 }
 
 describe('frozen RC accessibility contracts', () => {

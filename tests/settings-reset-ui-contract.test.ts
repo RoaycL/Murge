@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import { inlineMessages } from './helpers/localized-source'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-const read = (name: string): string => readFileSync(
+const read = (name: string): string => inlineMessages(readFileSync(
   resolve(process.cwd(), 'src/renderer/src/components', name),
   'utf8'
-)
+))
 
 describe('settings reset UI contract', () => {
   it('persists defaults behind confirmation in every settings panel that exposes reset', () => {

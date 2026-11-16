@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted } from 'vue'
 import OverridesPanel from '../components/OverridesPanel.vue'
 import AppIcon from '../components/AppIcon.vue'
@@ -9,4 +10,4 @@ const activeProfileId = computed(() => profiles.profiles.find((entry) => entry.a
 onMounted(() => void profiles.load())
 </script>
 
-<template><div class="page-shell feature-page"><header class="feature-header"><div><h1>覆写</h1><p>按顺序在配置启动前应用 YAML、脚本与规则增强。</p></div><AppIcon name="overrides" :size="25" /></header><OverridesPanel :active-profile-id="activeProfileId" /></div></template>
+<template><div class="page-shell feature-page"><header class="feature-header"><div><h1>{{ t('nav.overrides') }}</h1><p>{{ t('overridesView.intro') }}</p></div><AppIcon name="overrides" :size="25" /></header><OverridesPanel :active-profile-id="activeProfileId" /></div></template>

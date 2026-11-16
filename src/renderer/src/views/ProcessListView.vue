@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted, ref } from "vue";
 import { useConnectionsStore } from "../stores/connections";
 import { useOverridesStore } from "../stores/overrides";
@@ -25,12 +26,12 @@ const savingRule = ref(false);
 const ruleError = ref("");
 const lastCreated = ref<{ id: string; rule: string } | null>(null);
 const matchOptions = computed(() => [
-  { value: "path", label: "完整路径 · 仅匹配这个程序", disabled: !processPath.value },
-  { value: "name", label: "进程名 · 匹配同名程序" },
+  { value: "path", label: t('processes.matchPath'), disabled: !processPath.value },
+  { value: "name", label: t('processes.matchName') },
 ]);
 const SORT_OPTIONS = [
-  { value: "traffic", label: "按流量排序" },
-  { value: "name", label: "按名称排序" },
+  { value: "traffic", label: t('common.sortTraffic') },
+  { value: "name", label: t('processes.sortName') },
 ] as const;
 const groups = computed(() => {
   const rows = groupConnectionsByProcess(store.snapshot?.connections ?? []);
@@ -70,21 +71,21 @@ const details = computed(() => {
   if (!group) return [];
   const connections = group.connections;
   return [
-    { label: "进程名", value: group.label },
-    { label: "路径", value: processPath.value || "—" },
-    { label: "网络", value: countBy(connections.map((item) => item.metadata.network?.toUpperCase())) },
-    { label: "入站", value: countBy(connections.map((item) => item.metadata.type)) },
-    { label: "来源设备", value: [...new Set(connections.map((item) => item.metadata.sourceIP).filter(Boolean))].join(", ") || "—" },
-    { label: "最高流量主机名", value: stats.value?.topHost ?? "—" },
-    { label: "首次出现", value: stats.value ? formatWallClock(new Date(stats.value.firstSeen)) : "—" },
+    { label: t('processes.processName'), value: group.label },
+    { label: t('groupWizard.path'), value: processPath.value || "—" },
+    { label: t('activity.network'), value: countBy(connections.map((item) => item.metadata.network?.toUpperCase())) },
+    { label: t('devices.inbound'), value: countBy(connections.map((item) => item.metadata.type)) },
+    { label: t('processes.sourceDevice'), value: [...new Set(connections.map((item) => item.metadata.sourceIP).filter(Boolean))].join(", ") || "—" },
+    { label: t('devices.topHost'), value: stats.value?.topHost ?? "—" },
+    { label: t('devices.firstSeen'), value: stats.value ? formatWallClock(new Date(stats.value.firstSeen)) : "—" },
   ];
 });
 const targetOptions = computed(() => [
-  { value: "DIRECT", label: "直连 · DIRECT" },
+  { value: "DIRECT", label: t('connRule.directOption') },
   ...policies.groups.filter((group) => group.name !== "DIRECT" && !/[\r\n,]/.test(group.name)).map((group) => ({ value: group.name, label: group.name })),
 ]);
 const draft = computed(() => {
-  if (!selected.value || selected.value.label === "未知进程") return null;
+  if (!selected.value || selected.value.label === t('common.unknownProcess')) return null;
   try {
     return buildProcessRuleOverride({
       processName: selected.value.label,
@@ -113,11 +114,11 @@ async function saveRule(): Promise<void> {
     if (overrides.lastError) throw new Error(overrides.lastError);
     const before = new Set(overrides.items.map((item) => item.id));
     const saved = await overrides.create(draft.value);
-    if (!saved) throw new Error(overrides.lastError ?? "保存失败");
+    if (!saved) throw new Error(overrides.lastError ?? t('common.saveFailed'));
     const created = overrides.items.find((item) => !before.has(item.id));
     if (created) lastCreated.value = { id: created.id, rule: draft.value.rule };
   } catch (error) {
-    ruleError.value = error instanceof Error ? error.message : "保存失败";
+    ruleError.value = error instanceof Error ? error.message : t('common.saveFailed');
   } finally { savingRule.value = false; }
 }
 
@@ -126,7 +127,7 @@ async function undoRule(): Promise<void> {
   savingRule.value = true;
   const removed = await overrides.remove(lastCreated.value.id);
   if (removed) lastCreated.value = null;
-  else ruleError.value = overrides.lastError ?? "撤销失败";
+  else ruleError.value = overrides.lastError ?? t('connRule.undoFailed');
   savingRule.value = false;
 }
 
@@ -139,18 +140,18 @@ onMounted(() => {
   <div class="page-shell list-detail-page">
     <header class="page-toolbar">
       <div>
-        <h1>进程</h1>
+        <h1>{{ t('nav.processes') }}</h1>
         <small aria-live="polite">{{
           store.status === "live"
-            ? `${groups.length} 个活动进程 · 点击查看详情`
-            : "正在连接"
+            ? t('processes.summaryTitle', [groups.length])
+            : t('processes.connectedNow')
         }}</small>
       </div>
-      <AppSelect v-model="sort" :options="SORT_OPTIONS" label="进程排序方式" />
+      <AppSelect v-model="sort" :options="SORT_OPTIONS" :label="t('processes.sortLabel')" />
     </header>
     <div v-if="lastCreated" class="process-rule-notice surface-card" role="status">
-      <span><strong>分流规则已保存</strong><small>{{ lastCreated.rule }} · 下次重载配置后生效</small></span>
-      <button type="button" :disabled="savingRule" @click="undoRule">撤销</button>
+      <span><strong>{{ t('processes.ruleSaved') }}</strong><small>{{ t('processes.ruleSavedHint', [lastCreated.rule]) }}</small></span>
+      <button type="button" :disabled="savingRule" @click="undoRule">{{ t('common.undo') }}</button>
     </div>
     <p v-if="ruleError" class="inline-error" role="alert">{{ ruleError }}</p>
     <section class="surface-card entity-list full-width-list">
@@ -168,37 +169,37 @@ onMounted(() => {
           >{{ group.label }}<small>{{ group.subtitle }}</small></span
         ><strong
           >{{ rowRate(group.key)
-          }}<small>总计 {{ rowTotal(group) }} · {{ group.connections.length }} 个连接</small></strong
+          }}<small>{{ t('common.totalConnections', [rowTotal(group), group.connections.length]) }}</small></strong
         ><AppIcon name="next" :size="15" />
       </button>
-      <EmptyState v-if="!groups.length" icon="processes" title="暂无活动进程" detail="产生网络连接的进程会自动汇总到这里。" />
+      <EmptyState v-if="!groups.length" icon="processes" :title="t('processes.emptyTitle')" :detail="t('processes.emptyDetail')" />
     </section>
     <DetailDrawer
       :open="Boolean(selected)"
-      :title="selected?.label ?? '进程详情'"
+      :title="selected?.label ?? t('processes.detailTitle')"
       :subtitle="selected?.subtitle"
       @close="selectedKey = null"
       ><div v-if="selected" class="entity-detail drawer-detail">
         <EntityStatsPanel :stats="stats" :active-connections="selected.connections.length" :details="details" />
-        <h3>活动连接</h3>
+        <h3>{{ t('common.activeConnections') }}</h3>
         <ul>
           <li v-for="connection in selected.connections" :key="connection.id">
             <span>{{
               connection.metadata.host ||
               connection.metadata.destinationIP ||
-              "未知目标"
+              t('diagnosis.unknownTarget')
             }}</span
             ><small>{{ formatConnectionChain(connection.chains) }} · ↑ {{ formatBytes(connection.upload) }} ↓ {{ formatBytes(connection.download) }}</small>
           </li>
-          <li v-if="!selected.connections.length" class="entity-empty-row">当前没有活动连接</li>
+          <li v-if="!selected.connections.length" class="entity-empty-row">{{ t('devices.noActive') }}</li>
         </ul>
-        <section class="process-rule-editor" aria-label="为进程创建分流规则">
-          <h3>创建分流规则</h3>
-          <p>生成全局覆写，规则置于订阅规则之前；不会修改订阅文件。保存后可在「覆写」中编辑或删除。</p>
-          <label>匹配方式<AppSelect v-model="match" :options="matchOptions" label="进程规则匹配方式" /></label>
-          <label>出站策略<AppSelect v-model="target" :options="targetOptions" label="进程出站策略" /></label>
-          <div class="process-rule-preview"><span>保存前预览</span><code>{{ draft?.rule ?? '当前进程信息不足，无法生成规则' }}</code></div>
-          <button type="button" class="process-rule-save" :disabled="!draft || savingRule || !targetOptions.some((option) => option.value === target)" @click="saveRule">{{ savingRule ? '保存中…' : '保存规则' }}</button>
+        <section class="process-rule-editor" :aria-label="t('processes.createRuleLabel')">
+          <h3>{{ t('processes.createRule') }}</h3>
+          <p>{{ t('processes.createRuleHint') }}</p>
+          <label>{{ t('processes.matchBy') }}<AppSelect v-model="match" :options="matchOptions" :label="t('processes.matchByLabel')" /></label>
+          <label>{{ t('connRule.outbound') }}<AppSelect v-model="target" :options="targetOptions" :label="t('processes.outboundLabel')" /></label>
+          <div class="process-rule-preview"><span>{{ t('connRule.preview') }}</span><code>{{ draft?.rule ?? t('processes.insufficient') }}</code></div>
+          <button type="button" class="process-rule-save" :disabled="!draft || savingRule || !targetOptions.some((option) => option.value === target)" @click="saveRule">{{ savingRule ? t('common.saving') : t('connRule.saveRule') }}</button>
         </section>
       </div></DetailDrawer
     >

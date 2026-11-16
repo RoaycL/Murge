@@ -1,3 +1,4 @@
+import { t } from '@shared/i18n'
 import { TUN_DATA_PLANE_UNCONFIRMED, type TunStatus } from '@shared/tun'
 
 /**
@@ -49,14 +50,14 @@ export function tunLifecycleGating(status: TunStatus, busy: boolean): TunLifecyc
       (phase === 'active' && status.errorMessage === TUN_DATA_PLANE_UNCONFIRMED)
     ) && (status.errorMessage != null || status.conflictDetail != null),
     showUnsupported: !supported,
-    enableLabel: phase === 'failed' || phase === 'restore-failed' ? '重试启用' : '启用'
+    enableLabel: phase === 'failed' || phase === 'restore-failed' ? t('tunStatus.retryEnable') : t('common.enable')
   }
 }
 
 /** The richest user-facing detail: a conflict detail wins over a plain error. */
 export function tunLifecycleDetail(status: TunStatus): string | null {
   if (status.errorMessage === TUN_DATA_PLANE_UNCONFIRMED) {
-    return 'TUN 已开启，但暂未通过外部连通性探测；受限网络也可能出现此提示。'
+    return t('tunStatus.unverifiedHint')
   }
   return status.conflictDetail ?? status.errorMessage
 }

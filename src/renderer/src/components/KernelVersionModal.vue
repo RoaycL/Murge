@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted, ref } from 'vue'
 import { useKernelManagerStore } from '../stores/kernel-manager'
 
@@ -45,11 +46,11 @@ async function confirmInstall(): Promise<void> {
 
 <template>
   <div class="km-backdrop" @click.self="emit('close')">
-    <div class="km-modal" role="dialog" aria-modal="true" aria-label="选择特定版本">
+    <div class="km-modal" role="dialog" aria-modal="true" :aria-label="t('kernelVersion.title')">
       <header class="km-head">
-        <h2>选择特定版本</h2>
-        <p v-if="state.specificVersionsSupported">从 mihomo 官方版本中选择。下载、摘要校验、安装和运行版本回读全部成功后才会切换。</p>
-        <p v-else>当前 Windows 安全服务使用随应用安装的稳定内核。更新应用时会同步更新内核版本。</p>
+        <h2>{{ t('kernelVersion.title') }}</h2>
+        <p v-if="state.specificVersionsSupported">{{ t('kernelVersion.intro') }}</p>
+        <p v-else>{{ t('kernelVersion.serviceNote') }}</p>
       </header>
 
       <div v-if="state.specificVersionsSupported" class="km-toolbar">
@@ -57,8 +58,8 @@ async function confirmInstall(): Promise<void> {
           v-model="search"
           class="km-search"
           type="search"
-          placeholder="搜索版本..."
-          aria-label="搜索版本"
+          :placeholder="t('kernelVersion.searchPlaceholder')"
+          :aria-label="t('kernelVersion.searchLabel')"
         />
         <button
           type="button"
@@ -66,15 +67,15 @@ async function confirmInstall(): Promise<void> {
           :disabled="state.versionsLoading"
           @click="refresh"
         >
-          {{ state.versionsLoading ? '刷新中…' : '刷新' }}
+          {{ state.versionsLoading ? t('kernelVersion.refreshing') : t('common.refresh') }}
         </button>
       </div>
 
-      <p v-if="!state.specificVersionsSupported" class="km-hint">当前版本：{{ state.effectiveVersion || state.stableVersion || '内置稳定版' }}</p>
+      <p v-if="!state.specificVersionsSupported" class="km-hint">{{ t('kernelVersion.current', [state.effectiveVersion || state.stableVersion || t('kernelVersion.builtinStable')]) }}</p>
       <p v-else-if="state.error" class="inline-error">{{ state.error }}</p>
-      <p v-else-if="state.versionsLoading" class="km-hint">正在获取版本列表…</p>
+      <p v-else-if="state.versionsLoading" class="km-hint">{{ t('kernelVersion.loading') }}</p>
       <p v-else-if="!filteredVersions.length" class="km-hint">
-        {{ search ? '没有匹配的版本' : '暂无可用版本' }}
+        {{ search ? t('kernelVersion.noMatch') : t('kernelVersion.noVersions') }}
       </p>
 
       <ul v-else-if="state.specificVersionsSupported" class="km-list">
@@ -86,15 +87,15 @@ async function confirmInstall(): Promise<void> {
             @click="selectVersion(version)"
           >
             <span>{{ version }}</span>
-            <em v-if="state.installing === version">安装中…</em>
-            <em v-else-if="state.effectiveVersion === version">当前</em>
+            <em v-if="state.installing === version">{{ t('kernelVersion.installing') }}</em>
+            <em v-else-if="state.effectiveVersion === version">{{ t('kernelVersion.currentBadge') }}</em>
           </button>
         </li>
       </ul>
 
       <footer class="km-actions">
         <button type="button" class="km-cancel" :disabled="installing" @click="emit('close')">
-          取消
+          {{ t('common.cancel') }}
         </button>
         <button
           v-if="state.specificVersionsSupported"
@@ -103,7 +104,7 @@ async function confirmInstall(): Promise<void> {
           :disabled="!selected || installing || selectedIsCurrent"
           @click="confirmInstall"
         >
-          {{ installing ? '安装中…' : '安装版本' }}
+          {{ installing ? t('kernelVersion.installing') : t('kernelVersion.install') }}
         </button>
       </footer>
     </div>

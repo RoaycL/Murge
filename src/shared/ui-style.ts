@@ -6,6 +6,7 @@
  * `src-tauri/src/ui_style.rs`，规则与这里逐字段一致。
  */
 
+import { t } from './i18n'
 export type UiFontScale = 'small' | 'default' | 'large' | 'larger'
 
 export interface UiStyle {
@@ -57,14 +58,14 @@ export const BASE_FONT_SIZES: Readonly<Record<string, number>> = Object.freeze({
 
 /** 预设强调色，取自 Windows / macOS 的系统强调色。 */
 export const ACCENT_PRESETS: ReadonlyArray<{ value: string; label: string }> = Object.freeze([
-  { value: '', label: '默认蓝' },
-  { value: '#8e5af7', label: '紫色' },
-  { value: '#e5508f', label: '粉色' },
-  { value: '#e0443e', label: '红色' },
-  { value: '#f2862e', label: '橙色' },
-  { value: '#e8b21c', label: '黄色' },
-  { value: '#3fb34f', label: '绿色' },
-  { value: '#8c8c91', label: '石墨' }
+  { value: '', get label() { return t('uiStyle.accentDefault') } },
+  { value: '#8e5af7', get label() { return t('uiStyle.accentPurple') } },
+  { value: '#e5508f', get label() { return t('uiStyle.accentPink') } },
+  { value: '#e0443e', get label() { return t('uiStyle.accentRed') } },
+  { value: '#f2862e', get label() { return t('uiStyle.accentOrange') } },
+  { value: '#e8b21c', get label() { return t('uiStyle.accentYellow') } },
+  { value: '#3fb34f', get label() { return t('uiStyle.accentGreen') } },
+  { value: '#8c8c91', get label() { return t('uiStyle.accentGraphite') } }
 ])
 
 /** 字体输入框的候选项，都是 Windows 自带或常见的字体。 */
@@ -82,24 +83,24 @@ export const FONT_SUGGESTIONS: readonly string[] = Object.freeze([
  * 可以在自定义 CSS 里覆盖的变量。名字是稳定接口：重命名或删除前要在更新日志里说明。
  */
 export const UI_STYLE_VARIABLES: ReadonlyArray<{ name: string; detail: string }> = Object.freeze([
-  { name: '--app-font', detail: '全局字体' },
-  { name: '--app-accent', detail: '强调色（按钮、开关、选中项）' },
-  { name: '--app-on-accent', detail: '强调色上的文字颜色' },
-  { name: '--app-text', detail: '正文文字' },
-  { name: '--app-muted', detail: '次要文字' },
-  { name: '--app-pink', detail: '页面小标题' },
-  { name: '--app-danger', detail: '错误、危险操作' },
-  { name: '--app-warning', detail: '警告' },
-  { name: '--app-background-start', detail: '窗口渐变背景起点' },
-  { name: '--app-background-end', detail: '窗口渐变背景终点' },
-  { name: '--content-panel', detail: '右侧内容面板底色' },
-  { name: '--app-surface', detail: '卡片底色' },
-  { name: '--app-divider', detail: '分隔线' },
-  { name: '--app-sidebar-selected', detail: '侧边栏选中项' },
-  { name: '--glass-bg', detail: '右键菜单、弹窗的玻璃底色' },
-  { name: '--radius-card', detail: '卡片圆角' },
-  { name: '--radius-control', detail: '按钮、输入框圆角' },
-  { name: '--font-size-body', detail: '正文字号（其余 --font-size-* 同理）' }
+  { name: '--app-font', get detail() { return t('uiStyle.varFont') } },
+  { name: '--app-accent', get detail() { return t('uiStyle.varAccent') } },
+  { name: '--app-on-accent', get detail() { return t('uiStyle.varAccentText') } },
+  { name: '--app-text', get detail() { return t('uiStyle.varText') } },
+  { name: '--app-muted', get detail() { return t('uiStyle.varTextSecondary') } },
+  { name: '--app-pink', get detail() { return t('uiStyle.varSectionTitle') } },
+  { name: '--app-danger', get detail() { return t('uiStyle.varDanger') } },
+  { name: '--app-warning', get detail() { return t('uiStyle.varWarning') } },
+  { name: '--app-background-start', get detail() { return t('uiStyle.varBgStart') } },
+  { name: '--app-background-end', get detail() { return t('uiStyle.varBgEnd') } },
+  { name: '--content-panel', get detail() { return t('uiStyle.varPanel') } },
+  { name: '--app-surface', get detail() { return t('uiStyle.varCard') } },
+  { name: '--app-divider', get detail() { return t('uiStyle.varDivider') } },
+  { name: '--app-sidebar-selected', get detail() { return t('uiStyle.varSidebarSelected') } },
+  { name: '--glass-bg', get detail() { return t('uiStyle.varGlass') } },
+  { name: '--radius-card', get detail() { return t('uiStyle.varRadiusCard') } },
+  { name: '--radius-control', get detail() { return t('uiStyle.varRadiusControl') } },
+  { name: '--font-size-body', get detail() { return t('uiStyle.varFontSize') } }
 ])
 
 const HEX_COLOR = /^#[0-9a-f]{6}$/

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import SurfaceCard from './SurfaceCard.vue'
 import { useUsageHistoryStore } from '../stores/usage-history'
@@ -13,17 +14,17 @@ const toast = useToast()
 const clearOpen = ref(false)
 
 const WINDOWS: Array<{ value: UsageWindow; label: string }> = [
-  { value: '1h', label: '1 小时' },
-  { value: '24h', label: '24 小时' },
-  { value: '7d', label: '7 天' },
-  { value: '30d', label: '30 天' }
+  { value: '1h', label: t('usage.hour1') },
+  { value: '24h', label: t('usage.hour24') },
+  { value: '7d', label: t('usage.day7') },
+  { value: '30d', label: t('usage.day30') }
 ]
 
 const RANKINGS: Array<{ value: UsageRanking; label: string }> = [
-  { value: 'total', label: '总计' },
-  { value: 'down', label: '下载' },
-  { value: 'up', label: '上传' },
-  { value: 'count', label: '连接数' }
+  { value: 'total', label: t('stats.total') },
+  { value: 'down', label: t('common.download') },
+  { value: 'up', label: t('common.upload') },
+  { value: 'count', label: t('usage.connectionCount') }
 ]
 
 let timer: ReturnType<typeof setInterval> | null = null
@@ -94,16 +95,16 @@ function timeLabel(bucketStart: number): string {
 
 async function confirmClear(): Promise<void> {
   const ok = await store.clear()
-  if (ok) { clearOpen.value = false; toast.success('使用记录已清空') }
-  else toast.error('无法清空使用记录', store.lastError ?? undefined)
+  if (ok) { clearOpen.value = false; toast.success(t('usage.cleared')) }
+  else toast.error(t('usage.clearFailed'), store.lastError ?? undefined)
 }
 </script>
 
 <template>
   <SurfaceCard class="usage-card">
     <div class="card-title-row">
-      <span class="metric-label">使用历史</span>
-      <div class="segmented" role="group" aria-label="使用历史时间范围">
+      <span class="metric-label">{{ t('usage.title') }}</span>
+      <div class="segmented" role="group" :aria-label="t('usage.rangeLabel')">
         <button
           v-for="entry in WINDOWS"
           :key="entry.value"
@@ -118,15 +119,15 @@ async function confirmClear(): Promise<void> {
     </div>
 
     <p v-if="store.lastError" class="inline-error" role="alert">{{ store.lastError }}</p>
-    <p v-else-if="!hasData" class="usage-empty">暂无使用数据，开始使用后这里会显示分桶用量。</p>
+    <p v-else-if="!hasData" class="usage-empty">{{ t('usage.empty') }}</p>
 
     <template v-else>
       <div class="usage-metric">
         <strong>{{ totalText.value }}<span>{{ totalText.unit }}</span></strong>
-        <em>{{ windowLabel }} · {{ store.ranking === 'count' ? '连接数' : '总流量' }} {{ rankingValueText }}</em>
+        <em>{{ windowLabel }} · {{ store.ranking === 'count' ? t('usage.connectionCount') : t('usage.totalTraffic') }} {{ rankingValueText }}</em>
       </div>
 
-      <div class="usage-chart" role="img" :aria-label="`${windowLabel}流量柱状图`">
+      <div class="usage-chart" role="img" :aria-label="t('usage.chartLabel', [windowLabel])">
         <i
           v-for="bar in bars"
           :key="bar.step"
@@ -135,7 +136,7 @@ async function confirmClear(): Promise<void> {
         />
       </div>
 
-      <div class="rank-tabs" role="group" aria-label="使用历史排行维度">
+      <div class="rank-tabs" role="group" :aria-label="t('usage.rankingLabel')">
         <button
           v-for="entry in RANKINGS"
           :key="entry.value"
@@ -153,23 +154,23 @@ async function confirmClear(): Promise<void> {
           <span class="rank-index">#{{ item.rank }}</span>
           <div class="rank-bar"><i :style="{ width: `${Math.min(100, (item.value / (store.ranked[0]?.value || 1)) * 100)}%` }" /></div>
           <span class="rank-time">{{ timeLabel(item.bucketStart) }}</span>
-          <strong>{{ store.ranking === 'count' ? `${item.count} 个` : formatBytes(item.value) }}</strong>
+          <strong>{{ store.ranking === 'count' ? t('usage.countUnit', [item.count]) : formatBytes(item.value) }}</strong>
         </div>
       </div>
-      <p v-else class="usage-empty">该时间范围内没有排名数据。</p>
-      <section class="process-usage" aria-label="应用流量历史">
-        <h3>应用流量</h3>
+      <p v-else class="usage-empty">{{ t('usage.noRanking') }}</p>
+      <section class="process-usage" :aria-label="t('usage.appLabel')">
+        <h3>{{ t('usage.appTraffic') }}</h3>
         <div v-for="item in store.processes?.entries.slice(0, 20) ?? []" :key="item.name" class="process-usage-row">
           <span>{{ item.name }}</span><strong>{{ formatBytes(item.total) }}</strong>
         </div>
-        <p v-if="!store.processes?.entries.length" class="usage-empty">该时间范围内暂无应用流量记录。</p>
+        <p v-if="!store.processes?.entries.length" class="usage-empty">{{ t('usage.noAppTraffic') }}</p>
       </section>
     </template>
 
     <footer class="usage-footer">
-      <button type="button" class="usage-clear" :disabled="store.busy" @click="clearOpen = true"><AppIcon name="delete" :size="14" />清空记录</button>
+      <button type="button" class="usage-clear" :disabled="store.busy" @click="clearOpen = true"><AppIcon name="delete" :size="14" />{{ t('usage.clear') }}</button>
     </footer>
-    <ConfirmModal :open="clearOpen" title="清空使用记录？" description="这会永久删除全部聚合流量和应用流量历史，此操作不可撤销。" confirm-label="确认清空" :busy="store.busy" @close="clearOpen = false" @confirm="confirmClear" />
+    <ConfirmModal :open="clearOpen" :title="t('usage.clearTitle')" :description="t('usage.clearDescription')" :confirm-label="t('usage.clearConfirm')" :busy="store.busy" @close="clearOpen = false" @confirm="confirmClear" />
   </SurfaceCard>
 </template>
 

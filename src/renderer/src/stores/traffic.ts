@@ -1,3 +1,4 @@
+import { t } from '@shared/i18n'
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { TrafficSample } from '@shared/runtime'
@@ -29,7 +30,7 @@ export const useTrafficStore = defineStore('traffic', () => {
       // no close/error event surfaced. Only override loading/live so a genuine
       // parse error is not masked by silence.
       if (status.value === 'loading' || status.value === 'live') {
-        lastError.value = '未收到流量数据'
+        lastError.value = t('trafficStore.noData')
         status.value = 'disconnected'
       }
     }, 5000)

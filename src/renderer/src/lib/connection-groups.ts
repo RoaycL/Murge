@@ -1,3 +1,4 @@
+import { t } from '@shared/i18n'
 import type { MihomoConnection } from '@shared/mihomo-api'
 
 export interface ConnectionGroup {
@@ -26,7 +27,7 @@ function groupConnections(
 }
 
 function processLabelOf(connection: MihomoConnection): string {
-  return connection.metadata.process?.trim() || '未知进程'
+  return connection.metadata.process?.trim() || t('common.unknownProcess')
 }
 
 /** Stable identity of a process row; shared with the per-process traffic history. */
@@ -36,13 +37,13 @@ export function processKeyOf(connection: MihomoConnection): string {
 
 /** Stable identity of a device row (its source address); shared with the traffic history. */
 export function deviceKeyOf(connection: MihomoConnection): string {
-  return connection.metadata.sourceIP?.trim() || '未知地址'
+  return connection.metadata.sourceIP?.trim() || t('connGroups.unknownAddress')
 }
 
 export function groupConnectionsByProcess(connections: readonly MihomoConnection[]): ConnectionGroup[] {
   return groupConnections(connections, (connection) => {
     const label = processLabelOf(connection)
-    const subtitle = connection.metadata.processPath?.trim() || `${connection.metadata.network || '未知网络'} · ${connection.metadata.type || '连接'}`
+    const subtitle = connection.metadata.processPath?.trim() || `${connection.metadata.network || t('connGroups.unknownNetwork')} · ${connection.metadata.type || t('common.connection')}`
     return { key: processKeyOf(connection), label, subtitle }
   })
 }
@@ -50,6 +51,6 @@ export function groupConnectionsByProcess(connections: readonly MihomoConnection
 export function groupConnectionsByDevice(connections: readonly MihomoConnection[]): ConnectionGroup[] {
   return groupConnections(connections, (connection) => {
     const address = deviceKeyOf(connection)
-    return { key: address, label: address, subtitle: connection.metadata.sourcePort ? `源端口 ${connection.metadata.sourcePort}` : '本地客户端' }
+    return { key: address, label: address, subtitle: connection.metadata.sourcePort ? t('connGroups.sourcePort', [connection.metadata.sourcePort]) : t('connGroups.localClient') }
   })
 }

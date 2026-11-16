@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted } from 'vue'
 import { useAppSettingsStore } from '../stores/app-settings'
 import { useSubStoreStore } from '../stores/substore'
@@ -18,7 +19,7 @@ const subStoreOrigin = computed(() =>
     : null
 )
 const proxyLabel = computed(() =>
-  subStore.state.useProxy ? '订阅更新：走内核代理' : '订阅更新：直连'
+  subStore.state.useProxy ? t('subStore.viaProxy') : t('subStore.direct')
 )
 const errorText = computed(() => subStore.errorMessage ?? subStore.state.error)
 
@@ -47,7 +48,7 @@ onMounted(() => void initialize())
     <header class="feature-header substore-header">
       <div>
         <h1>Sub-Store</h1>
-        <p>订阅转换、合并与配置链接管理。</p>
+        <p>{{ t('subStore.intro') }}</p>
       </div>
       <span class="substore-actions">
         <button type="button" class="quiet-button" :disabled="subStore.busy" @click="toggleProxy">
@@ -57,11 +58,11 @@ onMounted(() => void initialize())
           type="button"
           class="quiet-button"
           :disabled="!subStoreUrl || subStore.busy"
-          title="在系统浏览器中打开 Sub-Store"
+          :title="t('subStore.openTitle')"
           @click="subStoreOrigin && subStore.openExternal(subStoreUrl ?? subStoreOrigin)"
-        >在浏览器中打开</button>
+        >{{ t('subStore.openInBrowser') }}</button>
         <button type="button" class="quiet-button" :disabled="subStore.busy" @click="subStore.checkUpdate()">
-          {{ subStore.busy ? '处理中…' : '检查更新' }}
+          {{ subStore.busy ? t('common.processing') : t('common.checkUpdate') }}
         </button>
       </span>
     </header>

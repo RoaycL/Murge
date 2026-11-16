@@ -45,7 +45,7 @@ function writeCache(style: UiStyle): void {
   } catch { /* 缓存失败只影响启动时的第一帧 */ }
 }
 
-/** 找到或创建 head 末尾的 <style>，保证它排在所有内置样式之后。 */
+/** Finds or creates the <style> at the end of head so it comes after every built-in style. */
 function styleElement(id: string): HTMLStyleElement {
   let element = document.getElementById(id) as HTMLStyleElement | null
   if (!element) {

@@ -29,12 +29,12 @@ pub fn toast_for_state(state: &Value) -> Option<UpdateToast> {
         .filter(|version| !version.is_empty())?;
     let (title, body) = match phase {
         "available" => (
-            format!("发现新版本 v{version}"),
-            "正在后台下载，退出应用时自动安装。".to_string(),
+            crate::i18n::tf("notify.updateAvailableTitle", &[version]),
+            crate::i18n::t("notify.updateAvailableBody").to_string(),
         ),
         "downloaded" => (
-            format!("新版本 v{version} 已就绪"),
-            "退出应用时自动安装，或点击“重启并安装”立即更新。".to_string(),
+            crate::i18n::tf("notify.updateReadyTitle", &[version]),
+            crate::i18n::t("notify.updateReadyBody").to_string(),
         ),
         _ => return None,
     };

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useCoreSettingsStore } from '../stores/core-settings'
 import type { CoreSettings } from '@shared/core-settings'
@@ -42,13 +43,13 @@ const INTERFACE_OPTIONS = computed(() => {
   const names = new Set(networkInterfaces.value)
   if (form.interfaceName) names.add(form.interfaceName)
   return [
-    { value: '', label: '自动选择' },
+    { value: '', label: t('core.autoSelect') },
     ...[...names].map((name) => ({ value: name, label: name }))
   ]
 })
 const CONTROLLER_HOST_OPTIONS = [
-  { value: '127.0.0.1', label: '127.0.0.1（仅本机）' },
-  { value: '0.0.0.0', label: '0.0.0.0（所有网卡）' }
+  { value: '127.0.0.1', label: t('core.bindLocal') },
+  { value: '0.0.0.0', label: t('core.bindAll') }
 ]
 
 function syncFromConfig(value: CoreSettings): void {
@@ -73,8 +74,8 @@ function syncFromConfig(value: CoreSettings): void {
 
 async function save(): Promise<void> {
   const ok = await store.save({ ...form })
-  if (ok) { syncFromConfig(store.settings); toast.success('内核设置已保存') }
-  else toast.error('内核设置保存失败', store.lastError ?? undefined)
+  if (ok) { syncFromConfig(store.settings); toast.success(t('core.saved')) }
+  else toast.error(t('core.saveFailed'), store.lastError ?? undefined)
 }
 
 async function preview(): Promise<void> {
@@ -93,12 +94,12 @@ async function confirmReset(): Promise<void> {
   if (ok) {
     syncFromConfig(store.settings)
     resetOpen.value = false
-    toast.success('内核设置已恢复默认')
-  } else toast.error('内核设置重置失败', store.lastError ?? undefined)
+    toast.success(t('core.resetDone'))
+  } else toast.error(t('core.resetFailed'), store.lastError ?? undefined)
 }
 
 const dirty = computed(() => hydrated.value && JSON.stringify({ ...form }) !== JSON.stringify(store.settings))
-useUnsavedChanges('core-settings', '内核设置', dirty)
+useUnsavedChanges('core-settings', t('core.name'), dirty)
 
 watch(
   () => store.settings,
@@ -118,91 +119,91 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="core-panel" aria-label="mihomo 核心设置">
+  <section class="core-panel" :aria-label="t('core.label')">
     <header class="core-head">
       <div>
-        <h2 class="core-title">内核运行设置</h2>
+        <h2 class="core-title">{{ t('core.title') }}</h2>
         <p class="core-subtitle">
-          管理日志级别、IPv6、并发连接、延迟计算、进程识别、出站网卡和监听端口。启用后会覆盖配置文件中的对应设置。
+          {{ t('core.intro') }}
         </p>
       </div>
       <div v-if="dirty" class="core-head-actions">
-        <button type="button" class="core-reset" @click="restoreSaved">撤销更改</button>
-        <button type="button" class="core-reset" @click="requestReset">恢复默认</button>
+        <button type="button" class="core-reset" @click="restoreSaved">{{ t('common.revertChanges') }}</button>
+        <button type="button" class="core-reset" @click="requestReset">{{ t('common.restoreDefaults') }}</button>
       </div>
     </header>
 
     <p v-if="store.lastError" class="inline-error" role="alert">{{ store.lastError }}</p>
 
     <p v-if="!form.enabled" class="core-hint">
-      当前未启用，将使用配置文件中的内核设置。
+      {{ t('core.disabledHint') }}
     </p>
 
     <div class="core-body">
       <fieldset class="core-group listener-group">
-        <legend>监听与控制器</legend>
-        <p class="listener-note">监听端口与控制器设置在下次重启应用后生效。端口请直接输入 1024–65535 之间且互不重复的数值。</p>
+        <legend>{{ t('core.listenTitle') }}</legend>
+        <p class="listener-note">{{ t('core.listenHint') }}</p>
         <div class="listener-list">
           <label class="listener-row">
-            <span><b>混合端口</b><small>系统代理与应用内部统一使用</small></span>
+            <span><b>{{ t('core.mixedPort') }}</b><small>{{ t('core.mixedPortHint') }}</small></span>
             <input v-model.number="form.mixedPort" class="core-input port-input" type="text" inputmode="numeric" pattern="[0-9]*" aria-label="mixed-port" />
           </label>
           <label class="listener-row">
-            <span><b>SOCKS 端口</b><small>独立 SOCKS5 入口</small></span>
+            <span><b>{{ t('core.socksPort') }}</b><small>{{ t('core.socksPortHint') }}</small></span>
             <input v-model.number="form.socksPort" class="core-input port-input" type="text" inputmode="numeric" pattern="[0-9]*" aria-label="socks-port" />
           </label>
           <label class="listener-row">
-            <span><b>HTTP 端口</b><small>独立 HTTP 代理入口</small></span>
+            <span><b>{{ t('core.httpPort') }}</b><small>{{ t('core.httpPortHint') }}</small></span>
             <input v-model.number="form.httpPort" class="core-input port-input" type="text" inputmode="numeric" pattern="[0-9]*" aria-label="http-port" />
           </label>
           <label class="listener-row">
-            <span><b>控制器监听</b><small>选择仅本机或所有网卡，再填写监听端口</small></span>
-            <span class="controller-address"><AppSelect v-model="form.controllerHost" :options="CONTROLLER_HOST_OPTIONS" label="控制器监听地址" /><input v-model.number="form.controllerPort" class="core-input port-input" type="text" inputmode="numeric" pattern="[0-9]*" aria-label="controller-port" /></span>
+            <span><b>{{ t('core.controllerListen') }}</b><small>{{ t('core.controllerListenHint') }}</small></span>
+            <span class="controller-address"><AppSelect v-model="form.controllerHost" :options="CONTROLLER_HOST_OPTIONS" :label="t('core.controllerAddressLabel')" /><input v-model.number="form.controllerPort" class="core-input port-input" type="text" inputmode="numeric" pattern="[0-9]*" aria-label="controller-port" /></span>
           </label>
           <label class="listener-row">
-            <span><b>访问密钥</b><small>64 位小写十六进制字符；留空后下次启动会自动生成</small></span>
-            <span class="secret-field"><input v-model.trim="form.controllerSecret" class="core-input secret-input" :type="secretVisible ? 'text' : 'password'" autocomplete="off" aria-label="访问密钥" /><button type="button" class="secret-eye" :aria-label="secretVisible ? '隐藏访问密钥' : '查看访问密钥'" @click.prevent="secretVisible = !secretVisible"><AppIcon name="eye" :size="16" /></button></span>
+            <span><b>{{ t('core.secret') }}</b><small>{{ t('core.secretHint') }}</small></span>
+            <span class="secret-field"><input v-model.trim="form.controllerSecret" class="core-input secret-input" :type="secretVisible ? 'text' : 'password'" autocomplete="off" :aria-label="t('core.secret')" /><button type="button" class="secret-eye" :aria-label="secretVisible ? t('core.hideSecret') : t('core.showSecret')" @click.prevent="secretVisible = !secretVisible"><AppIcon name="eye" :size="16" /></button></span>
           </label>
           <label class="listener-row">
-            <span><b>控制器面板</b><small>由 mihomo 下载并托管 MetaCubeXD 面板</small></span>
-            <span class="core-switch small"><input v-model="form.controllerPanel" type="checkbox" aria-label="启用控制器面板" /><span class="core-switch-track" /></span>
+            <span><b>{{ t('core.dashboard') }}</b><small>{{ t('core.dashboardHint') }}</small></span>
+            <span class="core-switch small"><input v-model="form.controllerPanel" type="checkbox" :aria-label="t('core.dashboardLabel')" /><span class="core-switch-track" /></span>
           </label>
           <label class="listener-row">
-            <span><b>允许局域网连接</b><small>允许局域网设备使用 HTTP、SOCKS 与混合端口</small></span>
-            <span class="core-switch small"><input v-model="form.allowLan" type="checkbox" aria-label="允许局域网连接" /><span class="core-switch-track" /></span>
+            <span><b>{{ t('core.allowLan') }}</b><small>{{ t('core.allowLanHint') }}</small></span>
+            <span class="core-switch small"><input v-model="form.allowLan" type="checkbox" :aria-label="t('core.allowLan')" /><span class="core-switch-track" /></span>
           </label>
         </div>
       </fieldset>
 
       <fieldset class="core-group">
-        <legend>启用</legend>
+        <legend>{{ t('common.enable') }}</legend>
         <label class="core-switch inline">
-          <input v-model="form.enabled" type="checkbox" aria-label="启用核心设置覆盖" />
+          <input v-model="form.enabled" type="checkbox" :aria-label="t('core.enableLabel')" />
           <span class="core-switch-track" />
-          <span class="core-label">启用后覆盖配置文件的同名核心参数</span>
+          <span class="core-label">{{ t('core.enableHint') }}</span>
         </label>
       </fieldset>
 
       <fieldset class="core-group">
-        <legend>运行参数</legend>
+        <legend>{{ t('core.runtimeTitle') }}</legend>
         <div class="core-grid">
           <label class="core-field">
-            <span class="core-label">日志级别</span>
-            <AppSelect v-model="form.logLevel" :options="LOG_LEVEL_OPTIONS" label="日志级别" />
+            <span class="core-label">{{ t('core.logLevel') }}</span>
+            <AppSelect v-model="form.logLevel" :options="LOG_LEVEL_OPTIONS" :label="t('core.logLevel')" />
           </label>
           <label class="core-field">
-            <span class="core-label">进程识别模式</span>
-            <AppSelect v-model="form.findProcessMode" :options="FIND_PROCESS_OPTIONS" label="进程查找模式" />
+            <span class="core-label">{{ t('core.processMode') }}</span>
+            <AppSelect v-model="form.findProcessMode" :options="FIND_PROCESS_OPTIONS" :label="t('core.processModeLabel')" />
           </label>
           <label class="core-field">
-            <span class="core-label">出站网卡（留空自动选择）</span>
-            <AppSelect v-model="form.interfaceName" :options="INTERFACE_OPTIONS" label="指定出站接口" />
+            <span class="core-label">{{ t('core.interfaceName') }}</span>
+            <AppSelect v-model="form.interfaceName" :options="INTERFACE_OPTIONS" :label="t('core.interfaceLabel')" />
           </label>
         </div>
       </fieldset>
 
       <fieldset class="core-group">
-        <legend>特性开关</legend>
+        <legend>{{ t('core.featureTitle') }}</legend>
         <div class="core-grid">
           <label class="core-switch small">
             <input v-model="form.ipv6" type="checkbox" aria-label="ipv6" />
@@ -212,39 +213,39 @@ onMounted(async () => {
           <label class="core-switch small">
             <input v-model="form.tcpConcurrent" type="checkbox" aria-label="tcp-concurrent" />
             <span class="core-switch-track" />
-            <span class="core-label">TCP 并发</span>
+            <span class="core-label">{{ t('core.tcpConcurrent') }}</span>
           </label>
           <label class="core-switch small">
             <input v-model="form.unifiedDelay" type="checkbox" aria-label="unified-delay" />
             <span class="core-switch-track" />
-            <span class="core-label">使用 1-RTT 延迟测试</span>
+            <span class="core-label">{{ t('core.unifiedDelay') }}</span>
           </label>
           <label class="core-switch small">
             <input v-model="form.storeSelected" type="checkbox" aria-label="store-selected" />
             <span class="core-switch-track" />
-            <span class="core-label">存储选择节点</span>
+            <span class="core-label">{{ t('core.storeSelected') }}</span>
           </label>
           <label class="core-switch small">
             <input v-model="form.storeFakeIp" type="checkbox" aria-label="store-fake-ip" />
             <span class="core-switch-track" />
-            <span class="core-label">存储 FakeIP</span>
+            <span class="core-label">{{ t('core.storeFakeIp') }}</span>
           </label>
         </div>
       </fieldset>
 
       <div class="core-actions">
-        <button type="button" class="core-preview" @click="preview">预览配置</button>
-        <span v-if="dirty" class="unsaved-indicator">未保存</span><button type="button" class="core-save" :disabled="store.busy || !dirty" @click="save">{{ store.busy ? '保存中…' : '保存' }}</button>
+        <button type="button" class="core-preview" @click="preview">{{ t('common.previewConfig') }}</button>
+        <span v-if="dirty" class="unsaved-indicator">{{ t('common.unsaved') }}</span><button type="button" class="core-save" :disabled="store.busy || !dirty" @click="save">{{ store.busy ? t('common.saving') : t('common.save') }}</button>
       </div>
 
       <div v-if="previewOpen" class="core-preview">
         <div class="core-preview-head">
-          <span>将应用的内核运行配置</span>
-          <button type="button" class="core-icon" aria-label="关闭预览" @click="previewOpen = false"><AppIcon name="close" :size="15" /></button>
+          <span>{{ t('core.previewTitle') }}</span>
+          <button type="button" class="core-icon" :aria-label="t('common.closePreview')" @click="previewOpen = false"><AppIcon name="close" :size="15" /></button>
         </div>
-        <pre class="core-preview-body">{{ previewYaml || '（空）' }}</pre>
+        <pre class="core-preview-body">{{ previewYaml || t('common.emptyParen') }}</pre>
       </div>
-      <ConfirmModal :open="resetOpen" title="恢复默认内核设置？" description="当前内核设置与默认值不同。确认后将保存默认设置；监听端口等需要重启应用后生效。" confirm-label="恢复默认" :busy="store.busy" @close="resetOpen = false" @confirm="confirmReset" />
+      <ConfirmModal :open="resetOpen" :title="t('core.resetTitle')" :description="t('core.resetDescription')" :confirm-label="t('common.restoreDefaults')" :busy="store.busy" @close="resetOpen = false" @confirm="confirmReset" />
     </div>
   </section>
 </template>

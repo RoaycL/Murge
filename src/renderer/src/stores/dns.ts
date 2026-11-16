@@ -1,3 +1,4 @@
+import { t } from '@shared/i18n'
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { MihomoDnsQueryResult, MihomoDnsQueryType } from '@shared/mihomo-api'
@@ -22,7 +23,7 @@ export const useDnsStore = defineStore('dns', () => {
     try {
       if (kind === 'dns') await window.desktop.mihomo.flushDnsCache()
       else await window.desktop.mihomo.flushFakeIpCache()
-      message.value = kind === 'dns' ? 'DNS 缓存已清除' : 'Fake-IP 缓存已清除'
+      message.value = kind === 'dns' ? t('dnsStore.dnsFlushed') : t('dnsStore.fakeIpFlushed')
     } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) }
     finally { busy.value = false }
   }

@@ -1,3 +1,4 @@
+import { t } from './i18n'
 import { stringify } from 'yaml'
 import type { OverrideInput } from './overrides'
 
@@ -14,12 +15,12 @@ export function normalizeRuleDomain(value: string): string | null {
 
 export function buildDomainRuleOverride(input: { host: string; match: DomainRuleMatch; target: string }): OverrideInput & { rule: string } {
   const domain = normalizeRuleDomain(input.host)
-  if (!domain) throw new Error('这条连接没有可用的域名')
+  if (!domain) throw new Error(t('rule.noDomain'))
   const target = input.target.trim()
-  if (!target || /[\r\n,]/.test(target)) throw new Error('请选择有效的策略组')
+  if (!target || /[\r\n,]/.test(target)) throw new Error(t('rule.pickGroup'))
   const rule = `${input.match === 'suffix' ? 'DOMAIN-SUFFIX' : 'DOMAIN'},${domain},${target}`
   return {
-    name: `域名分流 · ${domain}`,
+    name: t('rule.domainRuleName', [domain]),
     kind: 'yaml', scope: 'global', profileId: null,
     content: stringify({ '+rules': [rule] }), rule
   }

@@ -13,6 +13,7 @@
  * explicitly labeled rather than silently dropped.
  */
 
+import { t } from './i18n'
 export type TopologyHopKind = 'direct' | 'node' | 'unknown'
 
 import { connectionChainHops } from './connection-chain'
@@ -175,13 +176,13 @@ export function topologyPathLabel(path: TopologyPath): string {
 
 /** A short human label for one hop. */
 export function topologyHopLabel(hop: TopologyHop): string {
-  if (hop.kind === 'direct') return '直连'
-  if (hop.kind === 'unknown') return '未知'
-  return hop.isExit ? `${hop.name} · 出口` : hop.isEntry ? `${hop.name} · 入口` : hop.name
+  if (hop.kind === 'direct') return t('common.direct')
+  if (hop.kind === 'unknown') return t('common.unknown')
+  return hop.isExit ? t('topology.exitHop', [hop.name]) : hop.isEntry ? t('topology.entryHop', [hop.name]) : hop.name
 }
 
 /** A user-facing note when mihomo reported incomplete chains, else null. */
 export function topologyIncompleteText(summary: TopologySummary): string | null {
   if (!summary.hasIncomplete) return null
-  return 'mihomo 未为部分连接返回完整链路，已标记为未知；拓扑仅反映当前实时连接。'
+  return t('topology.partialNote')
 }

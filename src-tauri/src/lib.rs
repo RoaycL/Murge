@@ -21,6 +21,7 @@ mod enhancements;
 mod error;
 mod events;
 mod file_log;
+mod i18n;
 mod inspection;
 mod installer_cli;
 mod internet_latency;
@@ -145,6 +146,7 @@ pub fn run() {
             // Recovery is infallible at the startup boundary; failures are logged.
             let _ = backup::initialize(app.handle().clone(), &paths);
             let store = settings::SettingsStore::for_environment(&paths);
+            i18n::apply_setting(&store.get().language);
             startup_timeline::mark("settings-ready");
             let profiles = std::sync::Arc::new(match &paths.profile_root {
                 Some(root) => profile_service::ProfilesService::for_paths(

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { ref, watch } from 'vue'
 import type { MihomoConnection, MihomoDnsQueryResult } from '@shared/mihomo-api'
 import { connectionChainHops } from '@shared/connection-chain'
@@ -36,14 +37,14 @@ async function inspect(): Promise<void> {
   if (current !== generation) return
   const first = results[0]
   if (first?.status === 'fulfilled') latency.value = first.value as Latency
-  else error.value = '网络探测未完成，请检查内核状态后重试。'
+  else error.value = t('diagnosis.probeIncomplete')
   if (results[1]?.status === 'fulfilled') directMs.value = results[1].value.delay
   if (results[2]?.status === 'fulfilled') tun.value = results[2].value as TunStatus
   if (results[3]?.status === 'fulfilled') systemProxy.value = results[3].value as SystemProxyStatus
   if (results.length === 6) {
     dns.value = (['A', 'AAAA'] as const).map((type, index) => {
       const outcome = results[index + 4]
-      return { type, result: outcome?.status === 'fulfilled' ? outcome.value as MihomoDnsQueryResult : null, error: outcome?.status === 'rejected' ? '查询失败' : '' }
+      return { type, result: outcome?.status === 'fulfilled' ? outcome.value as MihomoDnsQueryResult : null, error: outcome?.status === 'rejected' ? t('diagnosis.queryFailed') : '' }
     })
   }
   running.value = false
@@ -51,30 +52,30 @@ async function inspect(): Promise<void> {
 </script>
 
 <template>
-  <section class="connection-diagnosis" aria-label="连接路径诊断">
-    <h3>为什么走这条线路</h3>
-    <p>以下是这条连接建立时由内核记录的路径；切换节点不会改写已有连接。</p>
+  <section class="connection-diagnosis" :aria-label="t('diagnosis.label')">
+    <h3>{{ t('diagnosis.title') }}</h3>
+    <p>{{ t('diagnosis.intro') }}</p>
     <ol>
-      <li><span>目标</span><strong>{{ connection.metadata.host || connection.metadata.destinationIP || '未知目标' }}</strong></li>
-      <li><span>命中规则</span><strong>{{ connection.rule || '未知' }} {{ connection.rulePayload }}</strong></li>
-      <li><span>实际策略链</span><strong>{{ route().length ? route().join(' → ') : 'DIRECT' }}</strong></li>
+      <li><span>{{ t('diagnosis.target') }}</span><strong>{{ connection.metadata.host || connection.metadata.destinationIP || t('diagnosis.unknownTarget') }}</strong></li>
+      <li><span>{{ t('diagnosis.matchedRule') }}</span><strong>{{ connection.rule || t('common.unknown') }} {{ connection.rulePayload }}</strong></li>
+      <li><span>{{ t('diagnosis.policyChain') }}</span><strong>{{ route().length ? route().join(' → ') : 'DIRECT' }}</strong></li>
     </ol>
-    <button type="button" :disabled="running" @click="inspect">{{ running ? '检查中…' : '检查当前网络' }}</button>
+    <button type="button" :disabled="running" @click="inspect">{{ running ? t('diagnosis.checking') : t('diagnosis.checkNetwork') }}</button>
     <p v-if="error" class="inline-error" role="alert">{{ error }}</p>
     <div v-if="latency || directMs !== null" class="connection-diagnosis-result" role="status">
-      <span>默认网关 {{ latency?.gatewayMs == null ? '未测得' : `${latency.gatewayMs} ms` }}</span>
-      <span>DNS {{ latency?.dnsMs == null ? '未测得' : `${latency.dnsMs} ms` }}</span>
-      <span>内核 DIRECT 出站 {{ directMs === null ? '未测得' : `${directMs} ms` }}</span>
-      <span>当前默认策略节点 {{ latency?.proxyNode ?? '无' }} · {{ latency?.proxyMs == null ? '未测得' : `${latency.proxyMs} ms` }}</span>
+      <span>{{ t('diagnosis.gateway', [latency?.gatewayMs == null ? t('diagnosis.notMeasured') : `${latency.gatewayMs} ms`]) }}</span>
+      <span>DNS {{ latency?.dnsMs == null ? t('diagnosis.notMeasured') : `${latency.dnsMs} ms` }}</span>
+      <span>{{ t('diagnosis.direct', [directMs === null ? t('diagnosis.notMeasured') : `${directMs} ms`]) }}</span>
+      <span>{{ t('diagnosis.defaultNode', [latency?.proxyNode ?? t('common.none'), latency?.proxyMs == null ? t('diagnosis.notMeasured') : `${latency.proxyMs} ms`]) }}</span>
     </div>
     <div v-if="tun || systemProxy" class="connection-diagnosis-result">
-      <span>TUN：{{ tun ? (tun.phase === 'active' ? '已启用' : '未启用或未就绪') : '状态未知' }}</span>
-      <span>系统代理：{{ systemProxy ? (systemProxy.phase === 'enabled' ? '已启用' : '未启用或未就绪') : '状态未知' }}</span>
+      <span>{{ t('common.labelValue', ['TUN', tun ? (tun.phase === 'active' ? t('common.enabled') : t('diagnosis.notEnabledOrReady')) : t('diagnosis.statusUnknown')]) }}</span>
+      <span>{{ t('diagnosis.systemProxy', [systemProxy ? (systemProxy.phase === 'enabled' ? t('common.enabled') : t('diagnosis.notEnabledOrReady')) : t('diagnosis.statusUnknown')]) }}</span>
     </div>
     <div v-for="entry in dns" :key="entry.type" class="connection-diagnosis-result">
-      <span>{{ entry.type }}：{{ entry.error || entry.result?.Answer?.map((record) => record.data).join('、') || '无回答' }}</span>
+      <span>{{ t('common.labelValue', [entry.type, entry.error || entry.result?.Answer?.map((record) => record.data).join(t('common.listSeparator')) || t('diagnosis.noAnswer')]) }}</span>
     </div>
-    <p v-if="latency || tun || systemProxy">网络探测是当前时刻的参考值；默认策略节点的延迟不一定是这条连接所用节点。网关只代表第一跳；DIRECT 是内核的直连出站探测，启用 TUN 时仍可能经过系统虚拟网卡，不能单凭这些数值归因运营商或证明单条连接的实际出口。</p>
+    <p v-if="latency || tun || systemProxy">{{ t('diagnosis.disclaimer') }}</p>
   </section>
 </template>
 

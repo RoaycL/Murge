@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { storeToRefs } from 'pinia'
 import { useUiStyleStore } from '../stores/ui-style'
 
@@ -8,10 +9,10 @@ const { trialCss, trialRemaining, suspended } = storeToRefs(store)
 
 <template>
   <Teleport to="body">
-    <div v-if="trialCss !== null && !suspended" id="ui-style-trial-bar" class="ui-style-trial-bar" role="alertdialog" aria-live="assertive" aria-label="确认自定义 CSS">
-      <span><strong>保留这个样式吗？</strong>{{ trialRemaining }} 秒后自动还原，按 Esc 立即还原。</span>
-      <button type="button" class="trial-revert" @click="store.revertTrial()">还原</button>
-      <button type="button" class="trial-keep" @click="store.keepTrial()">保留</button>
+    <div v-if="trialCss !== null && !suspended" id="ui-style-trial-bar" class="ui-style-trial-bar" role="alertdialog" aria-live="assertive" :aria-label="t('uiStyle.confirmCss')">
+      <span><strong>{{ t('uiStyle.keepStyle') }}</strong>{{ t('uiStyle.trialRemaining', [trialRemaining]) }}</span>
+      <button type="button" class="trial-revert" @click="store.revertTrial()">{{ t('uiStyle.revert') }}</button>
+      <button type="button" class="trial-keep" @click="store.keepTrial()">{{ t('uiStyle.keep') }}</button>
     </div>
   </Teleport>
 </template>

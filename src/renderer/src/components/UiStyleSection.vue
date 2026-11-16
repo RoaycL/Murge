@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ACCENT_PRESETS, FONT_SUGGESTIONS, MAX_CUSTOM_CSS_LENGTH, UI_STYLE_VARIABLES, normalizeAccent, normalizeFontFamily, type UiFontScale } from '@shared/ui-style'
@@ -11,10 +12,10 @@ const toast = useToast()
 const { saved, suspended, trialCss } = storeToRefs(store)
 
 const fontScales: Array<{ value: UiFontScale; label: string }> = [
-  { value: 'small', label: '小' },
-  { value: 'default', label: '标准' },
-  { value: 'large', label: '大' },
-  { value: 'larger', label: '特大' }
+  { value: 'small', label: t('uiStyle.scaleSmall') },
+  { value: 'default', label: t('uiStyle.scaleDefault') },
+  { value: 'large', label: t('uiStyle.scaleLarge') },
+  { value: 'larger', label: t('uiStyle.scaleLarger') }
 ]
 
 const customAccent = computed(() => saved.value.accent && !ACCENT_PRESETS.some((preset) => preset.value === saved.value.accent) ? saved.value.accent : '')
@@ -25,7 +26,7 @@ function pickCustomAccent(event: Event): void {
 
 const fontDraft = ref(saved.value.fontFamily)
 watch(() => saved.value.fontFamily, (value) => { fontDraft.value = value })
-const fontError = computed(() => fontDraft.value.trim() && !normalizeFontFamily(fontDraft.value) ? '字体名里不能有 ; { } < > \\ 或 url( ，引号要成对。' : '')
+const fontError = computed(() => fontDraft.value.trim() && !normalizeFontFamily(fontDraft.value) ? t('uiStyle.fontInvalid') : '')
 function commitFont(): void {
   if (fontError.value) return
   const value = normalizeFontFamily(fontDraft.value)
@@ -35,7 +36,7 @@ function commitFont(): void {
 const cssDraft = ref(saved.value.customCss)
 watch(() => saved.value.customCss, (value) => { cssDraft.value = value })
 const cssDirty = computed(() => cssDraft.value !== saved.value.customCss)
-useUnsavedChanges('ui-style-css', '自定义 CSS', cssDirty)
+useUnsavedChanges('ui-style-css', t('uiStyle.customCss'), cssDirty)
 const cssEnabled = computed(() => trialCss.value !== null || (saved.value.customCssEnabled && !suspended.value))
 
 function onEditorKeydown(event: KeyboardEvent): void {
@@ -53,9 +54,9 @@ async function importFile(event: Event): Promise<void> {
   const file = input.files?.[0]
   input.value = ''
   if (!file) return
-  if (file.size > MAX_CUSTOM_CSS_LENGTH * 4) { toast.error('文件太大', '自定义 CSS 最多 64 KB。'); return }
+  if (file.size > MAX_CUSTOM_CSS_LENGTH * 4) { toast.error(t('uiStyle.fileTooLarge'), t('uiStyle.cssLimit')); return }
   const text = await file.text()
-  if (text.length > MAX_CUSTOM_CSS_LENGTH) { toast.error('文件太大', '自定义 CSS 最多 64 KB。'); return }
+  if (text.length > MAX_CUSTOM_CSS_LENGTH) { toast.error(t('uiStyle.fileTooLarge'), t('uiStyle.cssLimit')); return }
   cssDraft.value = text
 }
 
@@ -66,40 +67,36 @@ function toggleCss(): void {
   store.setCustomCssEnabled(!cssEnabled.value)
 }
 
-const example = `/* 例：换一种背景渐变，卡片圆角更大 */
-:root {
-  --app-background-start: #f3efe6;
-  --radius-card: 16px;
-}`
+const example = t('uiStyle.cssPlaceholder')
 </script>
 
 <template>
   <section class="ui-style-section">
     <div class="section-heading">
-      <h2>样式</h2>
-      <button type="button" class="secondary-button" :disabled="store.isDefault" @click="store.resetAll()">恢复默认</button>
+      <h2>{{ t('uiStyle.title') }}</h2>
+      <button type="button" class="secondary-button" :disabled="store.isDefault" @click="store.resetAll()">{{ t('common.restoreDefaults') }}</button>
     </div>
     <div class="surface-card preference-list ui-style-list">
       <div class="ui-style-row">
-        <span><strong>强调色</strong><small>按钮、开关和选中项的颜色。</small></span>
-        <div class="accent-swatches" role="radiogroup" aria-label="强调色">
+        <span><strong>{{ t('uiStyle.accent') }}</strong><small>{{ t('uiStyle.accentHint') }}</small></span>
+        <div class="accent-swatches" role="radiogroup" :aria-label="t('uiStyle.accent')">
           <button v-for="preset in ACCENT_PRESETS" :key="preset.value || 'default'" type="button" role="radio" class="accent-swatch" :class="{ selected: saved.accent === preset.value }" :aria-checked="saved.accent === preset.value" :aria-label="preset.label" :title="preset.label" :style="{ '--swatch': preset.value || '#1587f8' }" @click="store.setAccent(preset.value)" />
-          <div class="accent-swatch accent-custom" :class="{ selected: Boolean(customAccent) }" title="自定义颜色" :style="customAccent ? { '--swatch': customAccent } : undefined">
-            <input type="color" aria-label="自定义强调色" :value="customAccent || saved.accent || '#1587f8'" @change="pickCustomAccent" />
+          <div class="accent-swatch accent-custom" :class="{ selected: Boolean(customAccent) }" :title="t('uiStyle.customColor')" :style="customAccent ? { '--swatch': customAccent } : undefined">
+            <input type="color" :aria-label="t('uiStyle.customAccent')" :value="customAccent || saved.accent || '#1587f8'" @change="pickCustomAccent" />
           </div>
         </div>
       </div>
       <div class="ui-style-row">
-        <span><strong>字体</strong><small>填写已安装的字体名，多个用逗号分隔；留空使用系统默认字体。</small></span>
+        <span><strong>{{ t('uiStyle.font') }}</strong><small>{{ t('uiStyle.fontHint') }}</small></span>
         <div class="font-field">
-          <input v-model="fontDraft" type="text" list="ui-style-fonts" spellcheck="false" placeholder="系统默认" aria-label="字体" :aria-invalid="Boolean(fontError)" @change="commitFont" @keydown.enter="commitFont" />
+          <input v-model="fontDraft" type="text" list="ui-style-fonts" spellcheck="false" :placeholder="t('uiStyle.systemDefault')" :aria-label="t('uiStyle.font')" :aria-invalid="Boolean(fontError)" @change="commitFont" @keydown.enter="commitFont" />
           <datalist id="ui-style-fonts"><option v-for="font in FONT_SUGGESTIONS" :key="font" :value="font" /></datalist>
         </div>
       </div>
       <p v-if="fontError" class="inline-error font-error">{{ fontError }}</p>
       <div class="ui-style-row">
-        <span><strong>字号</strong><small>按比例调整界面上所有文字的大小。</small></span>
-        <div class="segmented font-scale" role="radiogroup" aria-label="字号">
+        <span><strong>{{ t('uiStyle.fontSize') }}</strong><small>{{ t('uiStyle.fontSizeHint') }}</small></span>
+        <div class="segmented font-scale" role="radiogroup" :aria-label="t('uiStyle.fontSize')">
           <button v-for="scale in fontScales" :key="scale.value" type="button" role="radio" :aria-checked="saved.fontScale === scale.value" :class="{ selected: saved.fontScale === scale.value }" @click="store.setFontScale(scale.value)">{{ scale.label }}</button>
         </div>
       </div>
@@ -107,35 +104,35 @@ const example = `/* 例：换一种背景渐变，卡片圆角更大 */
   </section>
 
   <section class="ui-style-section custom-css-section">
-    <h2>自定义 CSS</h2>
+    <h2>{{ t('uiStyle.customCss') }}</h2>
     <div class="surface-card preference-list">
       <label>
         <span>
-          <strong>启用自定义 CSS</strong>
-          <small v-if="suspended">已临时停用（{{ SAFE_MODE_SHORTCUT }}），重启或再按一次恢复。</small>
-          <small v-else>界面出问题时按 {{ SAFE_MODE_SHORTCUT }} 可立即停用。</small>
+          <strong>{{ t('uiStyle.enableCss') }}</strong>
+          <small v-if="suspended">{{ t('uiStyle.suspended', [SAFE_MODE_SHORTCUT]) }}</small>
+          <small v-else>{{ t('uiStyle.safeModeHint', [SAFE_MODE_SHORTCUT]) }}</small>
         </span>
-        <button type="button" class="switch" :class="{ on: cssEnabled }" :aria-checked="cssEnabled" aria-label="启用自定义 CSS" @click="toggleCss" />
+        <button type="button" class="switch" :class="{ on: cssEnabled }" :aria-checked="cssEnabled" :aria-label="t('uiStyle.enableCss')" @click="toggleCss" />
       </label>
     </div>
     <template v-if="cssEnabled">
     <div class="surface-card css-editor-card">
-      <textarea v-model="cssDraft" class="css-editor" spellcheck="false" autocapitalize="off" autocomplete="off" :maxlength="MAX_CUSTOM_CSS_LENGTH" :placeholder="example" aria-label="自定义 CSS" @keydown="onEditorKeydown" />
+      <textarea v-model="cssDraft" class="css-editor" spellcheck="false" autocapitalize="off" autocomplete="off" :maxlength="MAX_CUSTOM_CSS_LENGTH" :placeholder="example" :aria-label="t('uiStyle.customCss')" @keydown="onEditorKeydown" />
       <div class="css-editor-actions">
         <small>{{ cssDraft.length.toLocaleString() }} / {{ MAX_CUSTOM_CSS_LENGTH.toLocaleString() }}</small>
         <input ref="fileInput" type="file" accept=".css,text/css" hidden @change="importFile" />
-        <button type="button" class="secondary-button" @click="fileInput?.click()">导入文件</button>
-        <button type="button" class="secondary-button" :disabled="!cssDirty" @click="cssDraft = saved.customCss">撤销修改</button>
-        <button type="button" class="primary-button" :disabled="!cssDraft.trim() && !saved.customCss" @click="store.tryCustomCss(cssDraft)">应用</button>
+        <button type="button" class="secondary-button" @click="fileInput?.click()">{{ t('uiStyle.importFile') }}</button>
+        <button type="button" class="secondary-button" :disabled="!cssDirty" @click="cssDraft = saved.customCss">{{ t('uiStyle.undoChanges') }}</button>
+        <button type="button" class="primary-button" :disabled="!cssDraft.trim() && !saved.customCss" @click="store.tryCustomCss(cssDraft)">{{ t('uiStyle.apply') }}</button>
       </div>
     </div>
-    <p class="section-hint">应用后会先试用 15 秒，点「保留」才会保存；没确认就自动还原。为了安全，CSS 不能加载网络上的字体或图片，只能用本机已安装的字体。</p>
+    <p class="section-hint">{{ t('uiStyle.trialHint') }}</p>
     <details class="css-variables">
-      <summary>可覆盖的变量</summary>
+      <summary>{{ t('uiStyle.variables') }}</summary>
       <dl>
         <template v-for="variable in UI_STYLE_VARIABLES" :key="variable.name"><dt><code>{{ variable.name }}</code></dt><dd>{{ variable.detail }}</dd></template>
       </dl>
-      <p>页面根元素带有 <code>data-theme="light|dark"</code>、<code>data-frosted</code>、<code>data-contrast</code> 属性，可以按主题分别写规则，例如 <code>:root[data-theme="dark"] { … }</code>。</p>
+      <p>{{ t('uiStyle.rootAttrs') }} <code>data-theme="light|dark"</code>、<code>data-frosted</code>、<code>data-contrast</code> {{ t('uiStyle.rootAttrsHint') }} <code>:root[data-theme="dark"] { … }</code>。</p>
     </details>
     </template>
   </section>

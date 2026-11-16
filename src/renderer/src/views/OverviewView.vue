@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted, ref, watch } from 'vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 import AppIcon from '../components/AppIcon.vue'
@@ -51,24 +52,24 @@ const spSwitchDisabled = computed(() => spBusy.value || !sp.value.supported)
 const spPhaseLabel = computed(() => {
   switch (sp.value.phase) {
     case 'enabled':
-      return `已启用 · ${formatSystemProxyEndpoint(sp.value)}`
+      return t('overview.enabledWith', [formatSystemProxyEndpoint(sp.value)])
     case 'enabling':
-      return '正在启用系统代理…'
+      return t('overview.proxyEnabling')
     case 'disabled':
-      return sp.value.errorMessage ?? '未启用'
+      return sp.value.errorMessage ?? t('common.notEnabled')
     case 'restoring':
-      return '正在还原系统代理…'
+      return t('overview.proxyRestoring')
     case 'restore-failed':
-      return '系统代理还原失败'
+      return t('overview.proxyRestoreFailed')
     case 'conflict':
       // Another program (another proxy client, a VPN…) rewrote the WinINET
       // proxy. The app never fights that on its own; switching on is the
       // explicit take-over. The changed keys stay in the hover title.
-      return '已被其他程序接管，打开开关可重新接管'
+      return t('overview.proxyConflict')
     case 'unsupported':
-      return sp.value.errorMessage ?? '仅 Windows 支持接管系统代理'
+      return sp.value.errorMessage ?? t('overview.proxyUnsupported')
     default:
-      return '未知状态'
+      return t('overview.unknownState')
   }
 })
 
@@ -98,9 +99,9 @@ const tunActive = computed(() => tun.status.phase === 'active')
 const tunBusy = computed(() => tun.busy || tun.status.phase === 'starting' || tun.status.phase === 'restoring')
 const tunSwitchDisabled = computed(() => tunBusy.value || !tun.status.supported)
 const tunPhaseLabel = computed(() => {
-  if (!tun.status.supported) return '当前平台不支持 TUN（需打包后的 Windows 版本）'
+  if (!tun.status.supported) return t('overview.tunUnsupported')
   if (tun.status.phase === 'active' && tun.status.errorMessage === TUN_DATA_PLANE_UNCONFIRMED) {
-    return 'TUN 已启用（连通性未确认）'
+    return t('overview.tunUnverified')
   }
   return TUN_UI_COPY[tun.status.phase] ?? tun.status.phase
 })
@@ -135,23 +136,23 @@ const allowLan = computed(() => core.settings.allowLan)
 const allowLanBusy = computed(() => core.busy || !core.hydrated)
 const lanError = ref('')
 const lanStatus = computed(() => {
-  if (!core.hydrated) return '正在读取…'
-  if (!allowLan.value) return '未启用'
-  if (!primaryLan.value) return '已允许局域网连接 · 未检测到局域网地址'
-  return `代理监听在 ${primaryLan.value}:${core.settings.mixedPort}`
+  if (!core.hydrated) return t('common.reading')
+  if (!allowLan.value) return t('common.notEnabled')
+  if (!primaryLan.value) return t('overview.lanNoAddress')
+  return t('overview.lanListening', [primaryLan.value, core.settings.mixedPort])
 })
 /** Every LAN address and listener, for the hover title. */
 const lanStatusDetail = computed(() => {
   if (!allowLan.value || !lanHosts.value.length) return undefined
-  const ports = [`HTTP / SOCKS5 混合端口 ${core.settings.mixedPort}`]
+  const ports = [t('overview.mixedPort', [core.settings.mixedPort])]
   if (core.settings.enabled) ports.push(`HTTP ${core.settings.httpPort}`, `SOCKS5 ${core.settings.socksPort}`)
-  return `${lanHosts.value.map((entry) => `${entry.name}：${entry.address}`).join('\n')}\n${ports.join(' · ')}`
+  return `${lanHosts.value.map((entry) => t('common.labelValue', [entry.name, entry.address])).join('\n')}\n${ports.join(' · ')}`
 })
 async function toggleAllowLan(): Promise<void> {
   if (allowLanBusy.value) return
   lanError.value = ''
   const saved = await core.save({ ...core.settings, allowLan: !allowLan.value })
-  if (!saved) lanError.value = core.lastError ?? '切换失败'
+  if (!saved) lanError.value = core.lastError ?? t('common.switchFailed')
   void lan.refresh()
 }
 
@@ -166,15 +167,15 @@ const gatewayBusy = computed(() => lan.gatewayBusy)
 const gatewayDevice = computed(() => tunConfig.config.device === 'Mihomo' ? `${brand.shortName} TUN` : tunConfig.config.device)
 const gatewayReady = computed(() => gatewayEnabled.value && tunActive.value && Boolean(primaryLan.value))
 const gatewayStatus = computed(() => {
-  if (!gatewayEnabled.value) return tunActive.value ? '未启用' : '未启用 · 需同时开启 TUN 模式'
-  if (!tunActive.value) return '已启用 · 等待 TUN 模式开启'
-  return primaryLan.value ? `网关地址 ${primaryLan.value}` : 'TUN 已启用 · 未检测到局域网地址'
+  if (!gatewayEnabled.value) return tunActive.value ? t('common.notEnabled') : t('overview.gatewayNeedTun')
+  if (!tunActive.value) return t('overview.gatewayWaitingTun')
+  return primaryLan.value ? t('lanGateway.gatewayAddress', [primaryLan.value]) : t('overview.gatewayNoAddress')
 })
 /** Which adapters forward right now, for the hover title. */
 const gatewayStatusDetail = computed(() => {
   const interfaces = lan.gateway?.interfaces ?? []
   if (!gatewayEnabled.value || !interfaces.length) return undefined
-  return interfaces.map((entry) => `${entry.name}：${entry.forwarding ? '已开启转发' : '未开启转发'}`).join('\n')
+  return interfaces.map((entry) => t('common.labelValue', [entry.name, entry.forwarding ? t('overview.forwardingOn') : t('overview.forwardingOff')])).join('\n')
 })
 async function toggleGateway(): Promise<void> {
   if (gatewayBusy.value) return
@@ -201,21 +202,21 @@ function openSettings(key: SettingKey): void {
 
 <template>
   <div class="page-shell overview-view">
-    <h1>概览</h1>
+    <h1>{{ t('overview.title') }}</h1>
     <section>
-      <h2>网络管理</h2>
+      <h2>{{ t('overview.networkTitle') }}</h2>
       <div class="overview-grid">
         <SurfaceCard class="setting-card">
           <div class="setting-head">
             <div>
-              <h3>系统代理</h3>
-              <p>将系统 HTTP 代理指向内核 mixed-port。</p>
+              <h3>{{ t('common.systemProxy') }}</h3>
+              <p>{{ t('overview.systemProxyHint') }}</p>
             </div>
-            <button type="button" class="switch" :class="{ on: spEnabled }" :aria-checked="spEnabled" :disabled="spSwitchDisabled" aria-label="切换系统代理" @click.stop="toggleSystemProxy" />
+            <button type="button" class="switch" :class="{ on: spEnabled }" :aria-checked="spEnabled" :disabled="spSwitchDisabled" :aria-label="t('overview.toggleSystemProxy')" @click.stop="toggleSystemProxy" />
           </div>
           <div class="setting-body">
             <span class="setting-status" :title="sp.phase === 'conflict' ? sp.conflictDetail ?? undefined : undefined"><i :class="{ active: spEnabled }" />{{ spPhaseLabel }}</span>
-            <button type="button" class="setting-nav" aria-label="打开系统代理设置" @click="openSettings('system-proxy')"><AppIcon name="more-horizontal" :size="16" /></button>
+            <button type="button" class="setting-nav" :aria-label="t('overview.openSystemProxy')" @click="openSettings('system-proxy')"><AppIcon name="more-horizontal" :size="16" /></button>
           </div>
           <p v-if="actionError" class="inline-error" role="alert">{{ actionError }}</p>
           <p v-else-if="spEnabled && sp.errorMessage" class="inline-error">{{ sp.errorMessage }}</p>
@@ -223,80 +224,80 @@ function openSettings(key: SettingKey): void {
         <SurfaceCard class="setting-card">
           <div class="setting-head">
             <div>
-              <h3>TUN 模式</h3>
-              <p>虚拟网卡接管全部流量，由系统服务负责运行。</p>
+              <h3>{{ t('common.tunMode') }}</h3>
+              <p>{{ t('overview.tunHint') }}</p>
             </div>
-            <button type="button" class="switch" :class="{ on: tunActive }" :aria-checked="tunActive" :disabled="tunSwitchDisabled" aria-label="切换 TUN 模式" @click.stop="toggleTun" />
+            <button type="button" class="switch" :class="{ on: tunActive }" :aria-checked="tunActive" :disabled="tunSwitchDisabled" :aria-label="t('overview.toggleTun')" @click.stop="toggleTun" />
           </div>
           <div class="setting-body">
             <span class="setting-status"><i :class="{ active: tunActive }" />{{ tunPhaseLabel }}</span>
-            <button type="button" class="setting-nav" aria-label="打开 TUN 模式设置" @click="openSettings('tun')"><AppIcon name="more-horizontal" :size="16" /></button>
+            <button type="button" class="setting-nav" :aria-label="t('overview.openTun')" @click="openSettings('tun')"><AppIcon name="more-horizontal" :size="16" /></button>
           </div>
           <p v-if="tun.actionError" class="inline-error" role="alert">{{ tun.actionError }}</p>
         </SurfaceCard>
       </div>
     </section>
     <section>
-      <h2>局域网设备接管</h2>
+      <h2>{{ t('overview.lanTitle') }}</h2>
       <div class="overview-grid">
         <SurfaceCard class="setting-card">
           <div class="setting-head">
             <div>
-              <h3>HTTP 与 SOCKS5 代理</h3>
-              <p>允许局域网内的其他设备把本机用作标准的 HTTP 与 SOCKS5 代理服务器。</p>
+              <h3>{{ t('overview.lanProxy') }}</h3>
+              <p>{{ t('overview.lanProxyHint') }}</p>
             </div>
-            <button type="button" class="switch" :class="{ on: allowLan }" :aria-checked="allowLan" :disabled="allowLanBusy" aria-label="切换局域网 HTTP 与 SOCKS5 代理" @click.stop="toggleAllowLan" />
+            <button type="button" class="switch" :class="{ on: allowLan }" :aria-checked="allowLan" :disabled="allowLanBusy" :aria-label="t('overview.toggleLanProxy')" @click.stop="toggleAllowLan" />
           </div>
           <div class="setting-body">
             <span class="setting-status" :title="lanStatusDetail"><i :class="{ active: allowLan && Boolean(primaryLan) }" />{{ lanStatus }}</span>
-            <button type="button" class="setting-nav" aria-label="打开局域网代理端口设置" @click="openSettings('lan')"><AppIcon name="next" :size="14" /></button>
+            <button type="button" class="setting-nav" :aria-label="t('overview.openLanProxy')" @click="openSettings('lan')"><AppIcon name="next" :size="14" /></button>
           </div>
           <p v-if="lanError" class="inline-error" role="alert">{{ lanError }}</p>
         </SurfaceCard>
         <SurfaceCard class="setting-card">
           <div class="setting-head">
             <div>
-              <h3>网关模式</h3>
-              <p>把其他设备的网关指向本机，由 TUN 接管它们的全部流量。</p>
+              <h3>{{ t('lanGateway.title') }}</h3>
+              <p>{{ t('overview.gatewayHint') }}</p>
             </div>
-            <button type="button" class="switch" :class="{ on: gatewayEnabled }" :aria-checked="gatewayEnabled" :disabled="gatewayBusy" aria-label="切换网关模式" @click.stop="toggleGateway" />
+            <button type="button" class="switch" :class="{ on: gatewayEnabled }" :aria-checked="gatewayEnabled" :disabled="gatewayBusy" :aria-label="t('overview.toggleGateway')" @click.stop="toggleGateway" />
           </div>
           <div class="setting-body">
             <span class="setting-status" :title="gatewayStatusDetail"><i :class="{ active: gatewayReady }" />{{ gatewayStatus }}</span>
-            <button type="button" class="setting-nav" aria-label="查看网关模式设置方法" @click="openSettings('gateway')"><AppIcon name="next" :size="14" /></button>
+            <button type="button" class="setting-nav" :aria-label="t('overview.openGateway')" @click="openSettings('gateway')"><AppIcon name="next" :size="14" /></button>
           </div>
           <p v-if="lan.gatewayError" class="inline-error" role="alert">{{ lan.gatewayError }}</p>
         </SurfaceCard>
       </div>
     </section>
     <section>
-      <h2>覆写</h2>
+      <h2>{{ t('overview.overridesTitle') }}</h2>
       <div class="overview-grid">
         <SurfaceCard class="setting-card">
           <div class="setting-head">
             <div>
-              <h3>嗅探覆写</h3>
-              <p>域名嗅探、端口与跳过/强制域名规则。</p>
+              <h3>{{ t('overview.sniffer') }}</h3>
+              <p>{{ t('overview.snifferHint') }}</p>
             </div>
-            <button type="button" class="switch" :class="{ on: snifferEnabled }" :aria-checked="snifferEnabled" :disabled="snifferBusy" aria-label="切换嗅探覆写" @click.stop="toggleSniffer" />
+            <button type="button" class="switch" :class="{ on: snifferEnabled }" :aria-checked="snifferEnabled" :disabled="snifferBusy" :aria-label="t('overview.toggleSniffer')" @click.stop="toggleSniffer" />
           </div>
           <div class="setting-body">
-            <span class="setting-status"><i :class="{ active: snifferEnabled }" />{{ snifferBusy ? '正在应用…' : snifferEnabled ? '已启用' : '未启用' }}</span>
-            <button type="button" class="setting-nav" aria-label="打开嗅探覆写设置" @click="openSettings('sniffer')"><AppIcon name="more-horizontal" :size="16" /></button>
+            <span class="setting-status"><i :class="{ active: snifferEnabled }" />{{ snifferBusy ? t('overview.applying') : snifferEnabled ? t('common.enabled') : t('common.notEnabled') }}</span>
+            <button type="button" class="setting-nav" :aria-label="t('overview.openSniffer')" @click="openSettings('sniffer')"><AppIcon name="more-horizontal" :size="16" /></button>
           </div>
           <p v-if="sniffer.lastError" class="inline-error" role="alert">{{ sniffer.lastError }}</p>
         </SurfaceCard>
         <SurfaceCard class="setting-card">
           <div class="setting-head">
             <div>
-              <h3>DNS 覆写</h3>
-              <p>Fake-IP、解析服务器与分流策略。</p>
+              <h3>{{ t('overview.dns') }}</h3>
+              <p>{{ t('overview.dnsHint') }}</p>
             </div>
-            <button type="button" class="switch" :class="{ on: dnsEnabled }" :aria-checked="dnsEnabled" :disabled="dnsBusy" aria-label="切换 DNS 覆写" @click.stop="toggleDns" />
+            <button type="button" class="switch" :class="{ on: dnsEnabled }" :aria-checked="dnsEnabled" :disabled="dnsBusy" :aria-label="t('overview.toggleDns')" @click.stop="toggleDns" />
           </div>
           <div class="setting-body">
-            <span class="setting-status"><i :class="{ active: dnsEnabled }" />{{ dnsBusy ? '正在应用…' : dnsEnabled ? '已启用' : '未启用' }}</span>
-            <button type="button" class="setting-nav" aria-label="打开 DNS 覆写设置" @click="openSettings('dns')"><AppIcon name="more-horizontal" :size="16" /></button>
+            <span class="setting-status"><i :class="{ active: dnsEnabled }" />{{ dnsBusy ? t('overview.applying') : dnsEnabled ? t('common.enabled') : t('common.notEnabled') }}</span>
+            <button type="button" class="setting-nav" :aria-label="t('overview.openDns')" @click="openSettings('dns')"><AppIcon name="more-horizontal" :size="16" /></button>
           </div>
           <p v-if="dns.lastError" class="inline-error" role="alert">{{ dns.lastError }}</p>
         </SurfaceCard>

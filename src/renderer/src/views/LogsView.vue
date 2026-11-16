@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useLogsStore } from '../stores/logs'
@@ -25,11 +26,11 @@ const exportingDiagnostics = ref(false)
 const exportingBundle = ref(false)
 const exportingLogs = ref(false)
 const LEVEL_OPTIONS = [
-  { value: 'all', label: '全部级别' }, { value: 'debug', label: 'debug' },
+  { value: 'all', label: t('logs.allLevels') }, { value: 'debug', label: 'debug' },
   { value: 'info', label: 'info' }, { value: 'warning', label: 'warning' }, { value: 'error', label: 'error' }
 ] as const
 const moduleOptions = computed(() => [
-  { value: 'all', label: '全部模块' },
+  { value: 'all', label: t('logs.allScopes') },
   ...appModules.value.map((value) => ({ value, label: appLogModuleLabel(value) }))
 ])
 
@@ -49,8 +50,8 @@ const moduleModel = computed({ get: () => appStore.module, set: (value: string) 
 const shownCount = computed(() => source.value === 'core' ? visibleEntries.value.length : appVisibleEntries.value.length)
 const filtered = computed(() => Boolean(searchModel.value) || levelModel.value !== 'all' || (source.value === 'app' && appStore.module !== 'all'))
 const statusLabel = computed(() => {
-  if (source.value === 'app') return appError.value ? '读取失败' : '应用日志'
-  return status.value === 'live' ? '实时' : status.value === 'loading' ? '连接中' : '已断开'
+  if (source.value === 'app') return appError.value ? t('logs.readFailed') : t('logs.appLogs')
+  return status.value === 'live' ? t('logs.live') : status.value === 'loading' ? t('common.connecting') : t('common.disconnected')
 })
 
 async function exportLogs(): Promise<void> {
@@ -61,9 +62,9 @@ async function exportLogs(): Promise<void> {
     const result = source.value === 'core'
       ? await saveTextFile(`mihomo-logs-${stamp}.txt`, serializeLogs(visibleEntries.value))
       : await saveTextFile(`murge-app-logs-${stamp}.txt`, serializeLogs(appVisibleEntries.value.map((entry) => ({ ...entry, message: `[${entry.module}] ${entry.message}` }))))
-    if (result.saved) toast.success('日志已导出', result.path)
+    if (result.saved) toast.success(t('logs.exported'), result.path)
   } catch (error) {
-    toast.error('日志导出失败', error instanceof Error ? error.message : undefined)
+    toast.error(t('logs.exportFailed'), error instanceof Error ? error.message : undefined)
   } finally {
     exportingLogs.value = false
   }
@@ -79,9 +80,9 @@ async function exportDiagnostics(): Promise<void> {
   exportingDiagnostics.value = true
   try {
     const result = await downloadDiagnosticReport()
-    if (result.saved) toast.success('诊断报告已导出', result.path)
+    if (result.saved) toast.success(t('logs.diagExported'), result.path)
   } catch (error) {
-    toast.error('诊断报告导出失败', error instanceof Error ? error.message : '请稍后重试。')
+    toast.error(t('logs.diagExportFailed'), error instanceof Error ? error.message : t('logs.retryLater'))
   } finally {
     exportingDiagnostics.value = false
   }
@@ -92,9 +93,9 @@ async function exportBundle(): Promise<void> {
   exportingBundle.value = true
   try {
     const result = await window.desktop.logs.exportBundle()
-    if (result.saved) toast.success('日志包已导出', result.path)
+    if (result.saved) toast.success(t('logs.bundleExported'), result.path)
   } catch (error) {
-    toast.error('日志包导出失败', error instanceof Error ? error.message : undefined)
+    toast.error(t('logs.bundleExportFailed'), error instanceof Error ? error.message : undefined)
   } finally {
     exportingBundle.value = false
   }
@@ -104,7 +105,7 @@ async function openFolder(): Promise<void> {
   try {
     await window.desktop.logs.openFolder()
   } catch (error) {
-    toast.error('无法打开日志文件夹', error instanceof Error ? error.message : undefined)
+    toast.error(t('logs.openFolderFailed'), error instanceof Error ? error.message : undefined)
   }
 }
 
@@ -129,37 +130,37 @@ onBeforeUnmount(stopPolling)
 <template>
   <div class="page-shell logs-view">
     <header class="logs-header">
-      <div><h1>日志</h1><p>{{ statusLabel }} · {{ shownCount }} 条</p></div>
+      <div><h1>{{ t('logs.title') }}</h1><p>{{ t('logs.summary', [statusLabel, shownCount]) }}</p></div>
       <div class="logs-actions">
-        <div class="segmented logs-source" role="group" aria-label="日志来源">
-          <button type="button" :class="{ selected: source === 'core' }" :aria-pressed="source === 'core'" @click="source = 'core'">内核</button>
-          <button type="button" :class="{ selected: source === 'app' }" :aria-pressed="source === 'app'" @click="source = 'app'">应用</button>
+        <div class="segmented logs-source" role="group" :aria-label="t('logs.sourceLabel')">
+          <button type="button" :class="{ selected: source === 'core' }" :aria-pressed="source === 'core'" @click="source = 'core'">{{ t('logs.core') }}</button>
+          <button type="button" :class="{ selected: source === 'app' }" :aria-pressed="source === 'app'" @click="source = 'app'">{{ t('logs.app') }}</button>
         </div>
-        <button type="button" @click="clearLogs">清空</button>
-        <button type="button" :disabled="!shownCount || exportingLogs" @click="exportLogs">{{ exportingLogs ? '导出中…' : '导出' }}</button>
+        <button type="button" @click="clearLogs">{{ t('common.clear') }}</button>
+        <button type="button" :disabled="!shownCount || exportingLogs" @click="exportLogs">{{ exportingLogs ? t('logs.exporting') : t('logs.export') }}</button>
       </div>
     </header>
-    <section class="troubleshoot-bar surface-card" aria-label="问题排查">
+    <section class="troubleshoot-bar surface-card" :aria-label="t('logs.troubleshooting')">
       <div class="troubleshoot-copy">
-        <strong>问题排查</strong>
-        <span title="包含最近 3 天的应用、内核与 Sub-Store 日志和运行诊断；订阅凭据、Token、密码及 WireGuard / Tailscale 密钥已脱敏，但仍包含访问的域名。">最近 3 天日志与运行诊断，导出时自动脱敏</span>
+        <strong>{{ t('logs.troubleshooting') }}</strong>
+        <span :title="t('logs.bundleTitle')">{{ t('logs.bundleHint') }}</span>
       </div>
       <div class="troubleshoot-actions">
-        <button type="button" class="troubleshoot-button" @click="openFolder"><AppIcon name="folder" :size="14" />日志文件夹</button>
-        <button type="button" class="troubleshoot-button" :disabled="exportingDiagnostics" @click="exportDiagnostics"><AppIcon name="kernel" :size="14" />{{ exportingDiagnostics ? '生成中…' : '导出诊断' }}</button>
-        <button type="button" class="troubleshoot-button accent" :disabled="exportingBundle" @click="exportBundle"><AppIcon name="archive" :size="14" />{{ exportingBundle ? '打包中…' : '导出日志包' }}</button>
+        <button type="button" class="troubleshoot-button" @click="openFolder"><AppIcon name="folder" :size="14" />{{ t('logs.folder') }}</button>
+        <button type="button" class="troubleshoot-button" :disabled="exportingDiagnostics" @click="exportDiagnostics"><AppIcon name="kernel" :size="14" />{{ exportingDiagnostics ? t('overrides.generating') : t('logs.exportDiag') }}</button>
+        <button type="button" class="troubleshoot-button accent" :disabled="exportingBundle" @click="exportBundle"><AppIcon name="archive" :size="14" />{{ exportingBundle ? t('logs.packing') : t('logs.exportBundle') }}</button>
       </div>
     </section>
     <div class="logs-toolbar">
-      <input v-model="searchModel" type="search" placeholder="筛选日志" aria-label="筛选日志" />
-      <AppSelect v-if="source === 'app'" v-model="moduleModel" :options="moduleOptions" label="模块" />
-      <AppSelect v-model="levelModel" :options="LEVEL_OPTIONS" label="日志级别" />
+      <input v-model="searchModel" type="search" :placeholder="t('logs.filter')" :aria-label="t('logs.filter')" />
+      <AppSelect v-if="source === 'app'" v-model="moduleModel" :options="moduleOptions" :label="t('logs.scope')" />
+      <AppSelect v-model="levelModel" :options="LEVEL_OPTIONS" :label="t('core.logLevel')" />
     </div>
     <p v-if="source === 'core' && lastError" class="inline-error">{{ lastError }}</p>
     <p v-if="source === 'app' && appError" class="inline-error">{{ appError }}</p>
     <section v-if="source === 'core'" class="surface-card logs-panel" aria-live="polite">
-      <EmptyState v-if="!visibleEntries.length && status !== 'loading'" icon="logs" :title="filtered ? '没有匹配的日志' : '暂无运行日志'" :detail="filtered ? '请调整筛选条件或日志级别。' : '内核运行后，实时日志会显示在这里。'" />
-      <div v-else-if="!visibleEntries.length" class="logs-empty">正在等待日志…</div>
+      <EmptyState v-if="!visibleEntries.length && status !== 'loading'" icon="logs" :title="filtered ? t('logs.noMatch') : t('logs.noCoreLogs')" :detail="filtered ? t('logs.adjustCore') : t('logs.coreHint')" />
+      <div v-else-if="!visibleEntries.length" class="logs-empty">{{ t('logs.waiting') }}</div>
       <div v-for="entry in visibleEntries" :key="entry.id" class="log-row">
         <time>{{ formatWallClock(entry.time) }}</time>
         <span class="log-level" :class="`level-${entry.level}`">{{ entry.level }}</span>
@@ -167,11 +168,11 @@ onBeforeUnmount(stopPolling)
       </div>
     </section>
     <section v-else class="surface-card logs-panel" aria-live="polite">
-      <EmptyState v-if="!appVisibleEntries.length" icon="logs" :title="filtered ? '没有匹配的日志' : '暂无应用日志'" :detail="filtered ? '请调整筛选条件、模块或日志级别。' : 'MITM、脚本、增强模式、配置更新等模块的记录会显示在这里。'" />
+      <EmptyState v-if="!appVisibleEntries.length" icon="logs" :title="filtered ? t('logs.noMatch') : t('logs.noAppLogs')" :detail="filtered ? t('logs.adjustApp') : t('logs.appHint')" />
       <div v-for="entry in appVisibleEntries" :key="entry.id" class="log-row app-log-row">
         <time>{{ formatWallClock(entry.time) }}</time>
         <span class="log-level" :class="`level-${entry.level}`">{{ entry.level }}</span>
-        <button type="button" class="log-module" :title="`只看「${appLogModuleLabel(entry.module)}」`" @click="moduleModel = entry.module">{{ appLogModuleLabel(entry.module) }}</button>
+        <button type="button" class="log-module" :title="t('logs.onlyScope', [appLogModuleLabel(entry.module)])" @click="moduleModel = entry.module">{{ appLogModuleLabel(entry.module) }}</button>
         <code>{{ entry.message }}</code>
       </div>
     </section>

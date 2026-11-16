@@ -1,3 +1,4 @@
+import { t } from '@shared/i18n'
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
 import { EMPTY_MITM_STATE, type MitmRequestEntry, type MitmState } from '@shared/mitm'
@@ -34,7 +35,7 @@ export const useMitmStore = defineStore('mitm', () => {
 
   /** Run one mutation; returns the error message (null on success). */
   async function run(label: string, action: () => Promise<unknown>): Promise<string | null> {
-    if (busy.value) return '正在处理上一个操作'
+    if (busy.value) return t('common.busyPrevious')
     busy.value = label
     try {
       await action()

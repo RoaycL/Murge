@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, ref, watch } from 'vue'
 import DetailDrawer from './DetailDrawer.vue'
 import AppSelect from './AppSelect.vue'
@@ -59,8 +60,8 @@ const subscriptionLine = computed(() => {
   return subscriptionKeyword.value === 'MATCH' ? `MATCH,${sub.proxy}` : `${subscriptionKeyword.value},${sub.payload},${sub.proxy}`
 })
 const title = computed(() => {
-  if (props.mode === 'subscription') return '修改订阅规则'
-  return props.rule?.id ? '编辑本地规则' : '添加本地规则'
+  if (props.mode === 'subscription') return t('localRule.titleSubscription')
+  return props.rule?.id ? t('localRule.titleEdit') : t('localRule.titleAdd')
 })
 
 watch(
@@ -90,11 +91,11 @@ watch(
 function buildLocalLine(): string {
   if (raw.value) {
     const text = line.value.trim()
-    if (!parseRuleLine(text)) throw new Error('格式应为 类型,值,策略（MATCH 为 MATCH,策略）')
+    if (!parseRuleLine(text)) throw new Error(t('localRule.formatWithMatch'))
     return text
   }
-  if (type.value !== 'MATCH' && !payload.value.trim()) throw new Error('请填写匹配的值')
-  if (!target.value) throw new Error('请选择策略')
+  if (type.value !== 'MATCH' && !payload.value.trim()) throw new Error(t('localRule.valueRequired'))
+  if (!target.value) throw new Error(t('localRule.policyRequired'))
   return formatRuleLine({ type: type.value, payload: payload.value, target: target.value, noResolve: noResolve.value })
 }
 
@@ -128,12 +129,12 @@ function submit(): void {
     if (!sub) return
     const base = { id: sub.edit?.id, ruleType: sub.type, payload: sub.payload, target: sub.proxy, action: action.value }
     if (action.value === 'retarget') {
-      if (!target.value) throw new Error('请选择策略')
-      if (target.value === sub.proxy) throw new Error('策略没有变化')
+      if (!target.value) throw new Error(t('localRule.policyRequired'))
+      if (target.value === sub.proxy) throw new Error(t('localRule.policyUnchanged'))
       emit('saveEdit', { ...base, newTarget: target.value, replacement: null })
     } else if (action.value === 'replace') {
       const text = line.value.trim()
-      if (!parseRuleLine(text)) throw new Error('格式应为 类型,值,策略')
+      if (!parseRuleLine(text)) throw new Error(t('localRule.format'))
       emit('saveEdit', { ...base, newTarget: null, replacement: text })
     } else {
       emit('saveEdit', { ...base, newTarget: null, replacement: null })
@@ -144,48 +145,48 @@ function submit(): void {
 }
 
 const ACTIONS: Array<{ value: RuleEditAction; label: string }> = [
-  { value: 'retarget', label: '改用其他策略' },
-  { value: 'disable', label: '停用这条规则' },
-  { value: 'replace', label: '替换为其他规则' }
+  { value: 'retarget', label: t('localRule.modePolicy') },
+  { value: 'disable', label: t('localRule.modeDisable') },
+  { value: 'replace', label: t('localRule.modeReplace') }
 ]
 </script>
 
 <template>
-  <DetailDrawer :open="open" :title="title" :subtitle="mode === 'subscription' ? '修改保存在本地，订阅更新后继续生效' : '本地规则排在订阅规则之前'" @close="emit('close')">
+  <DetailDrawer :open="open" :title="title" :subtitle="mode === 'subscription' ? t('localRule.hintSubscription') : t('localRule.hintLocal')" @close="emit('close')">
     <form class="rule-editor" @submit.prevent="submit">
       <template v-if="mode === 'subscription' && subscription">
         <div class="rule-original">
-          <small>订阅中的规则</small>
+          <small>{{ t('localRule.originalRule') }}</small>
           <code>{{ subscriptionLine }}</code>
         </div>
-        <div class="rule-actions-list" role="radiogroup" aria-label="修改方式">
+        <div class="rule-actions-list" role="radiogroup" :aria-label="t('localRule.modeLabel')">
           <label v-for="item in ACTIONS" :key="item.value" class="surge-check"><input v-model="action" type="radio" :value="item.value" />{{ item.label }}</label>
         </div>
         <div v-if="action === 'retarget'" class="rule-form-card">
-          <label><span>策略</span><span class="rule-form-select"><AppSelect :model-value="target" :options="targetOptions" label="策略" plain @update:model-value="(value: string) => (target = value)" /></span></label>
+          <label><span>{{ t('common.policy') }}</span><span class="rule-form-select"><AppSelect :model-value="target" :options="targetOptions" :label="t('common.policy')" plain @update:model-value="(value: string) => (target = value)" /></span></label>
         </div>
-        <textarea v-else-if="action === 'replace'" v-model="line" class="rule-line" rows="2" spellcheck="false" aria-label="替换后的规则" />
-        <p class="rule-hint">按“类型 + 值 + 原策略”匹配。订阅以后删掉或改了这条规则，这项修改会标记为“已失效”。</p>
+        <textarea v-else-if="action === 'replace'" v-model="line" class="rule-line" rows="2" spellcheck="false" :aria-label="t('localRule.replacementLabel')" />
+        <p class="rule-hint">{{ t('localRule.matchHint') }}</p>
       </template>
 
       <template v-else>
         <div v-if="!raw" class="rule-form-card">
-          <label><span>类型</span><span class="rule-form-select"><AppSelect :model-value="type" :options="typeOptions" label="类型" plain @update:model-value="(value: string) => (type = value)" /></span></label>
-          <label v-if="type !== 'MATCH'"><span>值</span><input v-model="payload" type="text" spellcheck="false" :placeholder="type.startsWith('IP') || type === 'SRC-IP-CIDR' ? '192.168.1.0/24' : type === 'RULE-SET' ? '规则集名称' : 'example.com'" /></label>
-          <label><span>策略</span><span class="rule-form-select"><AppSelect :model-value="target" :options="targetOptions" label="策略" plain @update:model-value="(value: string) => (target = value)" /></span></label>
-          <label v-if="IP_RULE_TYPES.has(type)" class="rule-form-toggle"><span>不解析域名（no-resolve）</span><button type="button" class="switch" :class="{ on: noResolve }" role="switch" :aria-checked="noResolve" aria-label="不解析域名" @click="noResolve = !noResolve" /></label>
+          <label><span>{{ t('common.type') }}</span><span class="rule-form-select"><AppSelect :model-value="type" :options="typeOptions" :label="t('common.type')" plain @update:model-value="(value: string) => (type = value)" /></span></label>
+          <label v-if="type !== 'MATCH'"><span>{{ t('localRule.value') }}</span><input v-model="payload" type="text" spellcheck="false" :placeholder="type.startsWith('IP') || type === 'SRC-IP-CIDR' ? '192.168.1.0/24' : type === 'RULE-SET' ? t('localRule.ruleSetName') : 'example.com'" /></label>
+          <label><span>{{ t('common.policy') }}</span><span class="rule-form-select"><AppSelect :model-value="target" :options="targetOptions" :label="t('common.policy')" plain @update:model-value="(value: string) => (target = value)" /></span></label>
+          <label v-if="IP_RULE_TYPES.has(type)" class="rule-form-toggle"><span>{{ t('localRule.noResolve') }}</span><button type="button" class="switch" :class="{ on: noResolve }" role="switch" :aria-checked="noResolve" :aria-label="t('localRule.noResolveLabel')" @click="noResolve = !noResolve" /></label>
         </div>
-        <textarea v-else v-model="line" class="rule-line" rows="2" spellcheck="false" placeholder="AND,((DOMAIN-SUFFIX,example.com),(NETWORK,UDP)),REJECT" aria-label="规则" />
-        <p class="rule-hint">策略可以是订阅里的策略组、节点，也可以是本地节点。切换订阅后，策略不存在的本地规则会暂时跳过。</p>
+        <textarea v-else v-model="line" class="rule-line" rows="2" spellcheck="false" placeholder="AND,((DOMAIN-SUFFIX,example.com),(NETWORK,UDP)),REJECT" :aria-label="t('common.rule')" />
+        <p class="rule-hint">{{ t('localRule.policyHint') }}</p>
       </template>
 
       <p v-if="formError" class="rule-error" role="alert">{{ formError }}</p>
       <div class="rule-editor-actions">
-        <button v-if="mode === 'local'" type="button" class="surge-button" @click="toggleRaw">{{ raw ? '使用表单' : '直接输入规则' }}</button>
-        <button v-else-if="subscription?.edit" type="button" class="surge-button danger" :disabled="busy" @click="emit('removeEdit', subscription.edit.id)">恢复原规则</button>
+        <button v-if="mode === 'local'" type="button" class="surge-button" @click="toggleRaw">{{ raw ? t('localRule.useForm') : t('localRule.useText') }}</button>
+        <button v-else-if="subscription?.edit" type="button" class="surge-button danger" :disabled="busy" @click="emit('removeEdit', subscription.edit.id)">{{ t('localRule.restoreOriginal') }}</button>
         <span class="spacer" />
-        <button type="button" class="surge-button" :disabled="busy" @click="emit('close')">取消</button>
-        <button type="submit" class="surge-button primary" :disabled="busy">{{ busy ? '保存中…' : '保存' }}</button>
+        <button type="button" class="surge-button" :disabled="busy" @click="emit('close')">{{ t('common.cancel') }}</button>
+        <button type="submit" class="surge-button primary" :disabled="busy">{{ busy ? t('common.saving') : t('common.save') }}</button>
       </div>
     </form>
   </DetailDrawer>

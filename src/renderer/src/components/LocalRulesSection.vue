@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted, ref } from 'vue'
 import { useLocalStore } from '../stores/local'
 import { useToast } from '../composables/use-toast'
@@ -28,9 +29,9 @@ function keyword(type: string): string {
 
 function describeEdit(edit: RuleEdit): { from: string; to: string } {
   const from = keyword(edit.ruleType) === 'MATCH' ? `MATCH,${edit.target}` : `${keyword(edit.ruleType)},${edit.payload},${edit.target}`
-  if (edit.action === 'disable') return { from, to: '已停用' }
-  if (edit.action === 'retarget') return { from, to: `改用 ${edit.newTarget ?? ''}` }
-  return { from, to: `替换为 ${edit.replacement ?? ''}` }
+  if (edit.action === 'disable') return { from, to: t('common.disabled') }
+  if (edit.action === 'retarget') return { from, to: t('localRules.usePolicy', [edit.newTarget ?? '']) }
+  return { from, to: t('localRules.replaceWith', [edit.replacement ?? '']) }
 }
 
 function openLocal(rule: LocalRule | null = null): void {
@@ -43,7 +44,7 @@ function openLocal(rule: LocalRule | null = null): void {
 /** Called by the rules table for a subscription rule row. */
 function editSubscriptionRule(row: { type: string; payload: string; proxy: string }, edit?: RuleEdit): void {
   if (!local.profileId) {
-    toast.error('无法修改', '当前没有活动的订阅')
+    toast.error(t('localRules.cannotModify'), t('common.noActiveSubscription'))
     return
   }
   drawerMode.value = 'subscription'
@@ -56,7 +57,7 @@ function editSubscriptionRule(row: { type: string; payload: string; proxy: strin
 
 async function done(message: string | null, success: string): Promise<boolean> {
   if (message) {
-    toast.error('保存失败', message)
+    toast.error(t('common.saveFailed'), message)
     return false
   }
   toast.success(success)
@@ -65,28 +66,28 @@ async function done(message: string | null, success: string): Promise<boolean> {
 }
 
 async function saveLocal(rule: LocalRule): Promise<void> {
-  if (await done(await local.upsertRule(rule), rule.id ? '已保存' : '已添加规则')) drawerOpen.value = false
+  if (await done(await local.upsertRule(rule), rule.id ? t('common.saved') : t('localRules.added'))) drawerOpen.value = false
 }
 
 async function saveEdit(edit: Omit<RuleEdit, 'id'> & { id?: string }): Promise<void> {
-  if (await done(await local.setEdit(edit), '已修改')) drawerOpen.value = false
+  if (await done(await local.setEdit(edit), t('localRules.modified'))) drawerOpen.value = false
 }
 
 async function removeEdit(id: string): Promise<void> {
-  if (await done(await local.removeEdit(id), '已恢复原规则')) drawerOpen.value = false
+  if (await done(await local.removeEdit(id), t('localRules.restored'))) drawerOpen.value = false
 }
 
 async function toggleRule(rule: LocalRule): Promise<void> {
-  await done(await local.setRuleEnabled(rule.id, !rule.enabled), rule.enabled ? '已停用' : '已启用')
+  await done(await local.setRuleEnabled(rule.id, !rule.enabled), rule.enabled ? t('common.disabled') : t('common.enabled'))
 }
 
 async function removeRule(rule: LocalRule): Promise<void> {
-  await done(await local.removeRule(rule.id), '已删除')
+  await done(await local.removeRule(rule.id), t('common.deleted'))
 }
 
 async function move(rule: LocalRule, offset: -1 | 1): Promise<void> {
   const message = await local.moveRule(rule.id, offset)
-  if (message) toast.error('移动失败', message)
+  if (message) toast.error(t('localRules.moveFailed'), message)
   else emit('changed')
 }
 
@@ -100,37 +101,37 @@ onMounted(() => {
 <template>
   <section class="local-rules">
     <header class="section-caption local-rules-caption">
-      <span>本地规则</span>
-      <button type="button" class="surge-button compact" :disabled="local.busy" @click="openLocal()">添加规则</button>
+      <span>{{ t('localRules.title') }}</span>
+      <button type="button" class="surge-button compact" :disabled="local.busy" @click="openLocal()">{{ t('localRules.add') }}</button>
     </header>
     <SurfaceCard v-if="rules.length" class="local-rule-list">
       <div v-for="(rule, index) in rules" :key="rule.id" class="local-rule-row" :class="{ off: !rule.enabled }">
         <code>{{ rule.rule }}</code>
-        <small v-if="rule.enabled && skipped.has(rule.id)" class="local-rule-error">策略不存在，已跳过</small>
+        <small v-if="rule.enabled && skipped.has(rule.id)" class="local-rule-error">{{ t('localRules.policyMissing') }}</small>
         <div class="local-rule-actions">
-          <button type="button" class="icon-control" :disabled="local.busy || index === 0" aria-label="上移" title="上移" @click="move(rule, -1)"><AppIcon name="move-up" :size="14" /></button>
-          <button type="button" class="icon-control" :disabled="local.busy || index === rules.length - 1" aria-label="下移" title="下移" @click="move(rule, 1)"><AppIcon name="move-down" :size="14" /></button>
-          <button type="button" class="surge-button compact" :disabled="local.busy" @click="openLocal(rule)">编辑</button>
-          <button type="button" class="surge-button compact danger" :disabled="local.busy" @click="removeRule(rule)">删除</button>
-          <button type="button" class="switch" :class="{ on: rule.enabled }" role="switch" :aria-checked="rule.enabled" :aria-label="`启用 ${rule.rule}`" :disabled="local.busy" @click="toggleRule(rule)" />
+          <button type="button" class="icon-control" :disabled="local.busy || index === 0" :aria-label="t('common.moveUp')" :title="t('common.moveUp')" @click="move(rule, -1)"><AppIcon name="move-up" :size="14" /></button>
+          <button type="button" class="icon-control" :disabled="local.busy || index === rules.length - 1" :aria-label="t('common.moveDown')" :title="t('common.moveDown')" @click="move(rule, 1)"><AppIcon name="move-down" :size="14" /></button>
+          <button type="button" class="surge-button compact" :disabled="local.busy" @click="openLocal(rule)">{{ t('common.edit') }}</button>
+          <button type="button" class="surge-button compact danger" :disabled="local.busy" @click="removeRule(rule)">{{ t('common.delete') }}</button>
+          <button type="button" class="switch" :class="{ on: rule.enabled }" role="switch" :aria-checked="rule.enabled" :aria-label="t('localRules.enable', [rule.rule])" :disabled="local.busy" @click="toggleRule(rule)" />
         </div>
       </div>
     </SurfaceCard>
-    <p v-else class="surge-hint local-rules-empty">本地规则保存在订阅之外，排在所有订阅规则之前，更新订阅不会丢失。也可以在下方规则列表里点“修改”，停用或改写订阅自带的规则。</p>
+    <p v-else class="surge-hint local-rules-empty">{{ t('localRules.empty') }}</p>
 
     <template v-if="edits.length">
       <header class="section-caption local-rules-caption edits-caption">
-        <span>已修改的订阅规则<small v-if="local.state.profile?.name"> · {{ local.state.profile.name }}</small></span>
+        <span>{{ t('localRules.modifiedTitle') }}<small v-if="local.state.profile?.name"> · {{ local.state.profile.name }}</small></span>
       </header>
       <SurfaceCard class="local-rule-list">
         <div v-for="edit in edits" :key="edit.id" class="local-rule-row">
           <div class="local-edit-text">
             <code>{{ describeEdit(edit).from }}</code>
-            <small>{{ describeEdit(edit).to }}<b v-if="stale.has(edit.id)" class="local-rule-error"> · 已失效（订阅中找不到这条规则）</b></small>
+            <small>{{ describeEdit(edit).to }}<b v-if="stale.has(edit.id)" class="local-rule-error"> {{ t('localRules.stale') }}</b></small>
           </div>
           <div class="local-rule-actions">
-            <button type="button" class="surge-button compact" :disabled="local.busy" @click="editSubscriptionRule({ type: edit.ruleType, payload: edit.payload, proxy: edit.target }, edit)">编辑</button>
-            <button type="button" class="surge-button compact danger" :disabled="local.busy" @click="removeEdit(edit.id)">恢复</button>
+            <button type="button" class="surge-button compact" :disabled="local.busy" @click="editSubscriptionRule({ type: edit.ruleType, payload: edit.payload, proxy: edit.target }, edit)">{{ t('common.edit') }}</button>
+            <button type="button" class="surge-button compact danger" :disabled="local.busy" @click="removeEdit(edit.id)">{{ t('common.restore') }}</button>
           </div>
         </div>
       </SurfaceCard>

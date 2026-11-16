@@ -17,6 +17,7 @@
  */
 
 /** How an override body is interpreted. */
+import { t } from './i18n'
 export type OverrideKind = 'yaml' | 'js'
 
 /** Where an override applies. */
@@ -81,7 +82,7 @@ export function coerceOverrideItem(input: unknown): OverrideItem {
   }
   return {
     id: typeof source.id === 'string' ? source.id : '',
-    name: typeof source.name === 'string' ? source.name : '未命名覆写',
+    name: typeof source.name === 'string' ? source.name : t('overrides.unnamed'),
     kind,
     enabled: typeof source.enabled === 'boolean' ? source.enabled : true,
     scope,

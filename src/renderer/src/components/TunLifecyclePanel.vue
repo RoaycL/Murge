@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed } from 'vue'
 import { useTunStore } from '../stores/tun'
 import { useProfilesStore } from '../stores/profiles'
@@ -12,7 +13,7 @@ const phase = computed(() => tun.status.phase)
 const gating = computed(() => tunLifecycleGating(tun.status, tun.busy))
 const phaseLabel = computed(() => (
   phase.value === 'active' && tun.status.errorMessage === TUN_DATA_PLANE_UNCONFIRMED
-    ? '已启用 · 连通性未确认'
+    ? t('tunStatus.activeUnverified')
     : TUN_UI_COPY[phase.value]
 ))
 const detail = computed(() => tunLifecycleDetail(tun.status))
@@ -24,12 +25,12 @@ const activeProfileName = computed(() => profiles.active?.name ?? null)
 </script>
 
 <template>
-  <section class="tunlife-panel" aria-label="TUN 状态">
+  <section class="tunlife-panel" :aria-label="t('tunStatus.title')">
     <header class="tunlife-head">
       <div>
-        <h2 class="tunlife-title">TUN 状态</h2>
+        <h2 class="tunlife-title">{{ t('tunStatus.title') }}</h2>
         <p class="tunlife-subtitle">
-          启用后会通过虚拟网卡接管全部流量，包括不遵循系统代理设置的程序。TUN 使用当前配置的节点与分流规则，并可与系统代理同时开启；切换时由同一个内核完成网络接管与恢复。
+          {{ t('tunStatus.intro') }}
         </p>
       </div>
       <div class="tunlife-status" :class="{ active: gating.active }">
@@ -39,24 +40,24 @@ const activeProfileName = computed(() => profiles.active?.name ?? null)
     </header>
 
     <p v-if="tun.actionError" class="inline-error" role="alert">{{ tun.actionError }}</p>
-    <p v-if="gating.showConflict" class="inline-error" role="alert">检测到网络配置被外部修改：{{ detail }}</p>
+    <p v-if="gating.showConflict" class="inline-error" role="alert">{{ t('tunStatus.externalChange', [detail]) }}</p>
     <p v-if="gating.showError" class="inline-error" role="alert">{{ detail }}</p>
     <p v-if="gating.showUnsupported" class="tunlife-note">
-      当前平台不支持 TUN（需要在受支持的 Windows 构建上启用），相关配置编辑仍会保存在本地。
+      {{ t('tunStatus.unsupported') }}
     </p>
     <p v-else-if="activeProfileName" class="tunlife-note">
-      TUN 将使用订阅 <strong>{{ activeProfileName }}</strong> 的节点与规则。
+      {{ t('tunStatus.usesProfileA') }} <strong>{{ activeProfileName }}</strong>{{ t('tunStatus.usesProfileB') }}
     </p>
     <p v-else class="tunlife-note tunlife-warn">
-      当前未激活任何订阅，TUN 将以<strong>直连模式</strong>运行——会接管流量但不走任何代理。如需代理，请先导入并激活一个订阅。
+      {{ t('tunStatus.noProfileA') }}<strong>{{ t('tunStatus.directMode') }}</strong>{{ t('tunStatus.noProfileB') }}
     </p>
 
     <div class="tunlife-actions">
       <button type="button" class="tunlife-enable" :disabled="!gating.canEnable" :aria-label="gating.enableLabel" @click="tun.enable()">
-        {{ gating.busyPhase ? '处理中…' : gating.enableLabel }}
+        {{ gating.busyPhase ? t('common.processing') : gating.enableLabel }}
       </button>
-      <button type="button" class="tunlife-disable" :disabled="!gating.canDisable" :aria-label="'禁用 TUN'" @click="tun.disable()">
-        {{ phase === 'restoring' ? '恢复中…' : '禁用' }}
+      <button type="button" class="tunlife-disable" :disabled="!gating.canDisable" :aria-label="t('tunStatus.disableTun')" @click="tun.disable()">
+        {{ phase === 'restoring' ? t('tunStatus.restoring') : t('common.turnOff') }}
       </button>
     </div>
   </section>

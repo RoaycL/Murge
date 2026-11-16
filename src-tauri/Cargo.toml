@@ -85,6 +85,8 @@ libc = "0.2"
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
     "Win32_Foundation",
+    # GetUserDefaultUILanguage: the "follow system" interface language.
+    "Win32_Globalization",
     "Win32_Storage_FileSystem",
     "Win32_System_Threading",
     # SHGetFileInfoW needs COM initialized on the calling thread.

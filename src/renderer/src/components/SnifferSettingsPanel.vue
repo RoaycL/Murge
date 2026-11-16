@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useSnifferEnhancementStore } from '../stores/sniffer-enhancement'
 import type { SnifferEnhancement } from '@shared/sniffer'
@@ -88,8 +89,8 @@ function syncAndAccept(value: SnifferEnhancement): void {
 
 async function save(): Promise<void> {
   const ok = await store.save(buildInput())
-  if (ok) { syncAndAccept(store.enhancement); toast.success('嗅探设置已保存') }
-  else toast.error('嗅探设置保存失败', store.lastError ?? undefined)
+  if (ok) { syncAndAccept(store.enhancement); toast.success(t('sniffer.saved')) }
+  else toast.error(t('sniffer.saveFailed'), store.lastError ?? undefined)
 }
 
 async function preview(): Promise<void> {
@@ -107,12 +108,12 @@ async function confirmReset(): Promise<void> {
   if (ok) {
     syncAndAccept(store.enhancement)
     resetOpen.value = false
-    toast.success('嗅探设置已恢复默认并生效')
-  } else toast.error('嗅探设置重置失败', store.lastError ?? undefined)
+    toast.success(t('sniffer.resetDone'))
+  } else toast.error(t('sniffer.resetFailed'), store.lastError ?? undefined)
 }
 
 const dirty = computed(() => hydrated.value && JSON.stringify(buildInput()) !== savedBaseline.value)
-useUnsavedChanges('sniffer-enhancement', '嗅探设置', dirty)
+useUnsavedChanges('sniffer-enhancement', t('sniffer.name'), dirty)
 
 watch(
   () => store.enhancement,
@@ -128,15 +129,15 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="sniffer-panel" aria-label="域名嗅探增强">
+  <section class="sniffer-panel" :aria-label="t('sniffer.title')">
     <header class="sniffer-head">
       <div>
-        <h2 class="sniffer-title">域名嗅探增强</h2>
+        <h2 class="sniffer-title">{{ t('sniffer.title') }}</h2>
         <p class="sniffer-subtitle">
-          为所有订阅统一配置内核嗅探：识别连接域名、覆盖目标地址并设置跳过或强制嗅探规则，无需改动订阅文件；保存后立即应用。
+          {{ t('sniffer.intro') }}
         </p>
       </div>
-      <div v-if="dirty" class="sniffer-head-actions"><button type="button" class="sniffer-reset" @click="restoreSaved">撤销更改</button><button type="button" class="sniffer-reset" @click="requestReset">恢复默认</button></div>
+      <div v-if="dirty" class="sniffer-head-actions"><button type="button" class="sniffer-reset" @click="restoreSaved">{{ t('common.revertChanges') }}</button><button type="button" class="sniffer-reset" @click="requestReset">{{ t('common.restoreDefaults') }}</button></div>
     </header>
 
     <p v-if="store.lastError" class="inline-error" role="alert">{{ store.lastError }}</p>
@@ -144,36 +145,36 @@ onMounted(async () => {
     <div class="sniffer-body">
       <div class="sniffer-row">
         <label class="sniffer-switch">
-          <input v-model="form.enabled" type="checkbox" aria-label="启用域名嗅探增强" />
+          <input v-model="form.enabled" type="checkbox" :aria-label="t('sniffer.enableLabel')" />
           <span class="sniffer-switch-track" />
-          <span class="sniffer-label">启用</span>
+          <span class="sniffer-label">{{ t('common.enable') }}</span>
         </label>
       </div>
 
       <fieldset class="sniffer-group">
-        <legend>行为</legend>
+        <legend>{{ t('sniffer.behavior') }}</legend>
         <div class="sniffer-grid">
           <label class="sniffer-switch small">
-            <input v-model="form.overrideDestination" type="checkbox" aria-label="覆盖目标地址" />
+            <input v-model="form.overrideDestination" type="checkbox" :aria-label="t('sniffer.overrideDestination')" />
             <span class="sniffer-switch-track" />
-            <span class="sniffer-label">覆盖目标地址</span>
+            <span class="sniffer-label">{{ t('sniffer.overrideDestination') }}</span>
           </label>
           <label class="sniffer-switch small">
-            <input v-model="form.forceDnsMapping" type="checkbox" aria-label="强制 DNS 映射" />
+            <input v-model="form.forceDnsMapping" type="checkbox" :aria-label="t('sniffer.forceDnsMappingLabel')" />
             <span class="sniffer-switch-track" />
-            <span class="sniffer-label">强制使用 DNS 映射</span>
+            <span class="sniffer-label">{{ t('sniffer.forceDnsMapping') }}</span>
           </label>
           <label class="sniffer-switch small">
-            <input v-model="form.parsePureIp" type="checkbox" aria-label="解析纯 IP 流" />
+            <input v-model="form.parsePureIp" type="checkbox" :aria-label="t('sniffer.parsePureIpLabel')" />
             <span class="sniffer-switch-track" />
-            <span class="sniffer-label">解析纯 IP 流量</span>
+            <span class="sniffer-label">{{ t('sniffer.parsePureIp') }}</span>
           </label>
         </div>
       </fieldset>
 
       <fieldset class="sniffer-group">
-        <legend>端口范围</legend>
-        <p class="sniffer-group-hint">每行填写一个端口、端口范围或 *；留空表示不嗅探该协议。</p>
+        <legend>{{ t('sniffer.portRanges') }}</legend>
+        <p class="sniffer-group-hint">{{ t('sniffer.portRangesHint') }}</p>
         <div class="sniffer-grid">
           <label class="sniffer-field">
             <span class="sniffer-label">HTTP</span>
@@ -191,48 +192,48 @@ onMounted(async () => {
       </fieldset>
 
       <fieldset class="sniffer-group">
-        <legend>域名</legend>
-        <p class="sniffer-group-hint">每行填写一条规则，支持域名、通配符以及 geosite:/geoip: 规则。</p>
+        <legend>{{ t('sniffer.domains') }}</legend>
+        <p class="sniffer-group-hint">{{ t('dns.fakeIpFilterHint') }}</p>
         <div class="sniffer-grid">
           <label class="sniffer-field">
-            <span class="sniffer-label">跳过嗅探的域名</span>
+            <span class="sniffer-label">{{ t('sniffer.skipDomain') }}</span>
             <textarea v-model="skipDomainText" class="sniffer-textarea" spellcheck="false" placeholder="*.apple.com&#10;Mijia Cloud" />
           </label>
           <label class="sniffer-field">
-            <span class="sniffer-label">强制嗅探的域名</span>
+            <span class="sniffer-label">{{ t('sniffer.forceDomain') }}</span>
             <textarea v-model="forceDomainText" class="sniffer-textarea" spellcheck="false" placeholder="dns.alidns.com" />
           </label>
         </div>
       </fieldset>
 
       <fieldset class="sniffer-group">
-        <legend>地址</legend>
-        <p class="sniffer-group-hint">每行填写一个 IP 地址或 CIDR 网段。</p>
+        <legend>{{ t('sniffer.addresses') }}</legend>
+        <p class="sniffer-group-hint">{{ t('sniffer.addressesHint') }}</p>
         <div class="sniffer-grid">
           <label class="sniffer-field">
-            <span class="sniffer-label">跳过的源地址</span>
+            <span class="sniffer-label">{{ t('sniffer.skipSrc') }}</span>
             <textarea v-model="skipSrcText" class="sniffer-textarea" spellcheck="false" placeholder="127.0.0.1/8&#10;::1/128" />
           </label>
           <label class="sniffer-field">
-            <span class="sniffer-label">跳过的目标地址</span>
+            <span class="sniffer-label">{{ t('sniffer.skipDst') }}</span>
             <textarea v-model="skipDstText" class="sniffer-textarea" spellcheck="false" placeholder="127.0.0.1/8&#10;::1/128" />
           </label>
         </div>
       </fieldset>
 
       <div class="sniffer-actions">
-        <button type="button" class="sniffer-preview" @click="preview">预览配置</button>
-        <span v-if="dirty" class="unsaved-indicator">未保存</span><button type="button" class="sniffer-save" :disabled="store.busy || !dirty" @click="save">{{ store.busy ? '保存中…' : '保存' }}</button>
+        <button type="button" class="sniffer-preview" @click="preview">{{ t('common.previewConfig') }}</button>
+        <span v-if="dirty" class="unsaved-indicator">{{ t('common.unsaved') }}</span><button type="button" class="sniffer-save" :disabled="store.busy || !dirty" @click="save">{{ store.busy ? t('common.saving') : t('common.save') }}</button>
       </div>
 
       <div v-if="previewOpen" class="sniffer-preview">
         <div class="sniffer-preview-head">
-          <span>生效的内核嗅探配置</span>
-          <button type="button" class="sniffer-icon" aria-label="关闭预览" @click="previewOpen = false"><AppIcon name="close" :size="15" /></button>
+          <span>{{ t('sniffer.previewTitle') }}</span>
+          <button type="button" class="sniffer-icon" :aria-label="t('common.closePreview')" @click="previewOpen = false"><AppIcon name="close" :size="15" /></button>
         </div>
-        <pre class="sniffer-preview-body">{{ previewYaml || '（空）' }}</pre>
+        <pre class="sniffer-preview-body">{{ previewYaml || t('common.emptyParen') }}</pre>
       </div>
-      <ConfirmModal :open="resetOpen" title="恢复默认嗅探设置？" description="当前嗅探设置与默认值不同。确认后将保存默认设置，并立即应用到正在运行的内核。" confirm-label="恢复默认" :busy="store.busy" @close="resetOpen = false" @confirm="confirmReset" />
+      <ConfirmModal :open="resetOpen" :title="t('sniffer.resetTitle')" :description="t('sniffer.resetDescription')" :confirm-label="t('common.restoreDefaults')" :busy="store.busy" @close="resetOpen = false" @confirm="confirmReset" />
     </div>
   </section>
 </template>

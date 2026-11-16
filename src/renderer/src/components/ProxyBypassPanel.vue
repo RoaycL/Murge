@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useProxyBypassStore } from '../stores/proxy-bypass'
 import { useSystemProxyStore } from '../stores/system-proxy'
@@ -44,9 +45,9 @@ async function save(): Promise<void> {
   if (ok) {
     syncFromPolicy(store.policy)
     await systemProxy.refresh()
-    toast.success('代理绕过设置已保存')
+    toast.success(t('bypass.saved'))
   }
-  else toast.error('代理绕过设置保存失败', store.lastError ?? undefined)
+  else toast.error(t('bypass.saveFailed'), store.lastError ?? undefined)
 }
 
 async function preview(): Promise<void> {
@@ -66,12 +67,12 @@ async function confirmReset(): Promise<void> {
     await systemProxy.refresh()
     previewOpen.value = false
     resetOpen.value = false
-    toast.success('代理绕过设置已恢复默认并生效')
-  } else toast.error('代理绕过设置重置失败', store.lastError ?? undefined)
+    toast.success(t('bypass.resetDone'))
+  } else toast.error(t('bypass.resetFailed'), store.lastError ?? undefined)
 }
 
 const dirty = computed(() => hydrated.value && JSON.stringify({ enabled: form.enabled, customEntries: parseEntries() }) !== JSON.stringify(store.policy))
-useUnsavedChanges('proxy-bypass', '代理绕过设置', dirty)
+useUnsavedChanges('proxy-bypass', t('bypass.name'), dirty)
 
 watch(
   () => store.policy,
@@ -87,65 +88,65 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="pb-panel" aria-label="系统代理绕过设置">
+  <section class="pb-panel" :aria-label="t('bypass.label')">
     <header class="pb-head">
       <div>
-        <h2 class="pb-title">系统代理绕过策略</h2>
+        <h2 class="pb-title">{{ t('bypass.title') }}</h2>
         <p class="pb-subtitle">
-          设置不经过系统代理的域名和地址。启用后会与内置的本地及私有地址合并；关闭时保留系统原有列表，停用系统代理后会恢复修改前的设置。
+          {{ t('bypass.intro') }}
         </p>
       </div>
-      <div v-if="dirty" class="pb-head-actions"><button type="button" class="pb-reset" @click="restoreSaved">撤销更改</button><button type="button" class="pb-reset" @click="requestReset">恢复默认</button></div>
+      <div v-if="dirty" class="pb-head-actions"><button type="button" class="pb-reset" @click="restoreSaved">{{ t('common.revertChanges') }}</button><button type="button" class="pb-reset" @click="requestReset">{{ t('common.restoreDefaults') }}</button></div>
     </header>
 
     <p v-if="store.lastError" class="inline-error" role="alert">{{ store.lastError }}</p>
 
-    <p v-if="!form.enabled" class="pb-hint">当前未启用，系统代理启用时会保留系统原有的绕过列表（不会被覆盖）。</p>
+    <p v-if="!form.enabled" class="pb-hint">{{ t('bypass.disabledHint') }}</p>
 
     <div class="pb-body">
       <fieldset class="pb-group">
-        <legend>启用</legend>
+        <legend>{{ t('common.enable') }}</legend>
         <label class="pb-switch inline">
-          <input v-model="form.enabled" type="checkbox" aria-label="启用绕过策略" />
+          <input v-model="form.enabled" type="checkbox" :aria-label="t('bypass.enableLabel')" />
           <span class="pb-switch-track" />
-          <span class="pb-label">启用后以自定义绕过列表为准（与内置本地绕过项合并）</span>
+          <span class="pb-label">{{ t('bypass.enableHint') }}</span>
         </label>
       </fieldset>
 
       <fieldset class="pb-group">
-        <legend>自定义绕过项</legend>
+        <legend>{{ t('bypass.custom') }}</legend>
         <label class="pb-field">
-          <span class="pb-label">每行一个（例如 *.example.com、10.*、localhost）</span>
+          <span class="pb-label">{{ t('bypass.customHint') }}</span>
           <textarea
             v-model="entryText"
             class="pb-textarea"
             rows="4"
             spellcheck="false"
-            placeholder="填入需要绕过代理的域名/地址，一行一个"
-            aria-label="自定义绕过项"
+            :placeholder="t('bypass.customPlaceholder')"
+            :aria-label="t('bypass.custom')"
           />
         </label>
-        <p class="pb-note">当前 {{ parseEntries().length }} 项（上限 {{ MAX_CUSTOM_BYPASS_ENTRIES }}）。</p>
+        <p class="pb-note">{{ t('bypass.count', [parseEntries().length, MAX_CUSTOM_BYPASS_ENTRIES]) }}</p>
       </fieldset>
 
       <div class="pb-current" v-if="systemProxyEnabled">
-        <span class="pb-label">系统代理当前状态</span>
-        <span class="pb-effective" aria-label="当前生效的系统代理绕过列表">{{ effectiveOverride || '（未报告）' }}</span>
+        <span class="pb-label">{{ t('bypass.currentState') }}</span>
+        <span class="pb-effective" :aria-label="t('bypass.currentLabel')">{{ effectiveOverride || t('bypass.notReported') }}</span>
       </div>
 
       <div class="pb-actions">
-        <button type="button" class="pb-preview" @click="preview">预览绕过列表</button>
-        <span v-if="dirty" class="unsaved-indicator">未保存</span><button type="button" class="pb-save" :disabled="store.busy || !dirty" @click="save">{{ store.busy ? '保存中…' : '保存' }}</button>
+        <button type="button" class="pb-preview" @click="preview">{{ t('bypass.preview') }}</button>
+        <span v-if="dirty" class="unsaved-indicator">{{ t('common.unsaved') }}</span><button type="button" class="pb-save" :disabled="store.busy || !dirty" @click="save">{{ store.busy ? t('common.saving') : t('common.save') }}</button>
       </div>
 
       <div v-if="previewOpen" class="pb-preview">
         <div class="pb-preview-head">
-          <span>将应用的系统代理绕过列表</span>
-          <button type="button" class="pb-icon" aria-label="关闭预览" @click="previewOpen = false"><AppIcon name="close" :size="15" /></button>
+          <span>{{ t('bypass.previewTitle') }}</span>
+          <button type="button" class="pb-icon" :aria-label="t('common.closePreview')" @click="previewOpen = false"><AppIcon name="close" :size="15" /></button>
         </div>
-        <pre class="pb-preview-body">{{ previewValue || '（空）' }}</pre>
+        <pre class="pb-preview-body">{{ previewValue || t('common.emptyParen') }}</pre>
       </div>
-      <ConfirmModal :open="resetOpen" title="恢复默认代理绕过设置？" description="当前代理绕过设置与默认值不同。确认后将保存默认设置；系统代理已启用时会立即重新应用。" confirm-label="恢复默认" :busy="store.busy" @close="resetOpen = false" @confirm="confirmReset" />
+      <ConfirmModal :open="resetOpen" :title="t('bypass.resetTitle')" :description="t('bypass.resetDescription')" :confirm-label="t('common.restoreDefaults')" :busy="store.busy" @close="resetOpen = false" @confirm="confirmReset" />
     </div>
   </section>
 </template>

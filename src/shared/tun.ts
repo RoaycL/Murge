@@ -1,4 +1,5 @@
 /** Renderer-visible Phase 9 TUN lifecycle. No type in this file performs I/O. */
+import { t } from './i18n'
 export type TunPhase =
   | 'configured'
   | 'starting'
@@ -69,14 +70,14 @@ export const TUN_IPC = {
 } as const
 
 export const TUN_UI_COPY: Readonly<Record<TunPhase, string>> = {
-  configured: '未启用',
-  starting: '正在启动…',
-  active: '已启用',
-  restoring: '正在恢复网络设置…',
-  failed: '启用失败，可重试',
+  get configured() { return t('common.notEnabled') },
+  get starting() { return t('tunPhase.starting') },
+  get active() { return t('common.enabled') },
+  get restoring() { return t('tunPhase.restoring') },
+  get failed() { return t('tunPhase.failed') },
   // Conflict is recoverable: toggling off re-runs the restore path, which
   // reconciles with the service first (the only way a latched conflict clears).
-  conflict: '状态冲突：请先关闭以重新对齐服务状态',
-  unsupported: '当前平台不支持 TUN',
-  'restore-failed': '网络设置恢复失败，可重试关闭'
+  get conflict() { return t('tunPhase.conflict') },
+  get unsupported() { return t('tunPhase.unsupported') },
+  get 'restore-failed'() { return t('tunPhase.restoreFailed') }
 }

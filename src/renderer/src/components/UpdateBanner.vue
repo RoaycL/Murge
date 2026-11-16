@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useUpdatesStore } from '../stores/updates'
 
@@ -11,9 +12,9 @@ const visible = computed(() => {
 
 const title = computed<string>(() => {
   switch (updates.state.phase) {
-    case 'available': return `发现新版本 v${updates.state.availableVersion ?? ''}`
-    case 'downloading': return `正在下载更新 v${updates.state.availableVersion ?? ''}…`
-    case 'downloaded': return `新版本 v${updates.state.availableVersion ?? ''} 已就绪`
+    case 'available': return t('common.updateFound', [updates.state.availableVersion ?? ''])
+    case 'downloading': return t('updateBanner.downloading', [updates.state.availableVersion ?? ''])
+    case 'downloaded': return t('updateBanner.ready', [updates.state.availableVersion ?? ''])
     default: return ''
   }
 })
@@ -35,8 +36,8 @@ const progressLabel = computed<string | null>(() => {
 
 const body = computed<string>(() => {
   switch (updates.state.phase) {
-    case 'available': return '正在后台下载，退出应用时自动安装。'
-    case 'downloaded': return '退出应用时自动安装，或点击右侧按钮立即安装。'
+    case 'available': return t('updateBanner.downloadingHint')
+    case 'downloaded': return t('updateBanner.readyHint')
     default: return ''
   }
 })
@@ -61,7 +62,7 @@ onUnmounted(() => {
       <div v-if="updates.state.phase === 'downloading' && updates.state.progress" class="update-banner-bar">
         <div class="update-banner-bar-fill" :style="{ width: `${updates.state.progress.percent}%` }"></div>
       </div>
-      <button v-else-if="updates.state.canInstall" type="button" @click="updates.install()">重启并安装</button>
+      <button v-else-if="updates.state.canInstall" type="button" @click="updates.install()">{{ t('common.restartInstall') }}</button>
     </div>
   </div>
 </template>

@@ -1,3 +1,4 @@
+import { t } from '@shared/i18n'
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { AppLogEntry } from '@shared/diagnostics'
@@ -8,27 +9,27 @@ export interface DisplayAppLogEntry extends AppLogEntry { id: number }
 
 /** Friendly names for the app-log module tags; unknown tags show as-is. */
 export const APP_LOG_MODULE_LABELS: Record<string, string> = {
-  startup: '启动',
-  runtime: '运行时',
-  kernel: '内核',
-  tun: '增强模式',
-  'system-proxy': '系统代理',
-  'lan-gateway': '网关模式',
+  get startup() { return t('logScope.startup') },
+  get runtime() { return t('logScope.runtime') },
+  get kernel() { return t('logScope.kernel') },
+  get tun() { return t('logScope.enhanced') },
+  get 'system-proxy'() { return t('logScope.systemProxy') },
+  get 'lan-gateway'() { return t('logScope.gateway') },
   mitm: 'MITM',
-  script: '脚本',
-  rewrite: '重写',
-  profiles: '配置',
+  get script() { return t('logScope.script') },
+  get rewrite() { return t('logScope.rewrite') },
+  get profiles() { return t('logScope.config') },
   substore: 'Sub-Store',
-  updates: '更新',
-  backup: '备份',
-  'app-settings': '设置',
-  'usage-history': '用量',
-  notifications: '通知',
-  'session-events': '会话',
-  'session-end': '会话',
-  tray: '托盘',
-  window: '窗口',
-  local: '本地节点'
+  get updates() { return t('logScope.update') },
+  get backup() { return t('logScope.backup') },
+  get 'app-settings'() { return t('logScope.settings') },
+  get 'usage-history'() { return t('logScope.usage') },
+  get notifications() { return t('logScope.notification') },
+  get 'session-events'() { return t('logScope.session') },
+  get 'session-end'() { return t('logScope.session') },
+  get tray() { return t('logScope.tray') },
+  get window() { return t('logScope.window') },
+  get local() { return t('logScope.localNodes') }
 }
 
 export function appLogModuleLabel(module: string): string {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted, ref } from 'vue'
 import { useLocalStore } from '../stores/local'
 import { useToast } from '../composables/use-toast'
@@ -31,7 +32,7 @@ const contextAt = ref({ x: 0, y: 0 })
 const nodes = computed(() => local.settings.nodes)
 const skipped = computed(() => new Set(local.state.skippedNodes))
 const missingGroups = (node: LocalNode): string[] => (node.enabled && local.state.missingGroups?.[node.id]) || []
-const missingTitle = (node: LocalNode): string => `当前配置中没有策略组「${missingGroups(node).join('」「')}」，节点暂未加入。切换到有这些组的配置后会自动加入。`
+const missingTitle = (node: LocalNode): string => t('localNodes.missingGroups', [missingGroups(node).join(t('common.quoteJoin'))])
 const takenNames = computed(() => nodes.value.filter((node) => node.id !== editing.value?.id).map((node) => node.config.name))
 const ts = computed(() => local.state.tailscale)
 
@@ -60,11 +61,11 @@ const isTailscale = (node: LocalNode): boolean => String(node.config.type).toLow
 
 /** What the bottom line of a card says: latency, or why it is not running. */
 function cardStatus(node: LocalNode): { text: string; kind: string; title: string } {
-  if (!node.enabled) return { text: '已停用', kind: 'idle', title: '右键启用' }
-  if (skipped.value.has(node.id)) return { text: '重名，未生效', kind: 'timeout', title: '与订阅中的节点或策略组重名' }
-  if (!running.value) return { text: '内核未运行', kind: 'idle', title: '启动内核后可以测试延迟' }
+  if (!node.enabled) return { text: t('common.disabled'), kind: 'idle', title: t('localNodes.rightClickEnable') }
+  if (skipped.value.has(node.id)) return { text: t('localNodes.duplicate'), kind: 'timeout', title: t('localNodes.duplicateHint') }
+  if (!running.value) return { text: t('common.coreNotRunning'), kind: 'idle', title: t('localNodes.startCoreToTest') }
   const state = local.delayOf(node.config.name)
-  return { ...latencyLabel(state, false, '点击测试'), title: latencyTitle(state, false) }
+  return { ...latencyLabel(state, false, t('localNodes.clickToTest')), title: latencyTitle(state, false) }
 }
 
 const canTest = (node: LocalNode): boolean => running.value && node.enabled && !skipped.value.has(node.id) && local.delayOf(node.config.name).status !== 'testing'
@@ -96,7 +97,7 @@ const contextInfo = computed(() => {
   if (!node) return []
   const kind = String(node.config.type).toLowerCase()
   if (kind !== 'tailscale' && kind !== 'wireguard') return []
-  const status = !node.enabled ? '已停用' : skipped.value.has(node.id) ? '重名，未生效' : running.value ? '就绪' : '内核未运行'
+  const status = !node.enabled ? t('common.disabled') : skipped.value.has(node.id) ? t('localNodes.duplicate') : running.value ? t('localNodes.ready') : t('common.coreNotRunning')
   return nodeInfoSections(node.config as Record<string, unknown>, { status, connections: connections.snapshot?.connections ?? [] })
 })
 
@@ -106,7 +107,7 @@ function openContext(event: MouseEvent, node: LocalNode): void {
 }
 
 async function duplicate(node: LocalNode): Promise<void> {
-  await finish(await local.duplicateNode(node.id), '已创建副本')
+  await finish(await local.duplicateNode(node.id), t('localNodes.duplicated'))
 }
 
 function openEditor(start: NodeEditorStart, node: LocalNode | null = null): void {
@@ -121,7 +122,7 @@ function edit(node: LocalNode): void {
 
 async function finish(message: string | null, success: string): Promise<boolean> {
   if (message) {
-    toast.error('保存失败', message)
+    toast.error(t('common.saveFailed'), message)
     return false
   }
   toast.success(success)
@@ -130,27 +131,27 @@ async function finish(message: string | null, success: string): Promise<boolean>
 }
 
 async function save(node: LocalNode): Promise<void> {
-  const ok = await finish(await local.upsertNode(node), node.id ? '已保存' : `已添加「${node.config.name}」`)
+  const ok = await finish(await local.upsertNode(node), node.id ? t('common.saved') : t('localNodes.added', [node.config.name]))
   if (ok) editorOpen.value = false
 }
 
 async function saveMany(list: LocalNode[]): Promise<void> {
-  const ok = await finish(await local.addNodes(list), `已添加 ${list.length} 个节点`)
+  const ok = await finish(await local.addNodes(list), t('localNodes.addedCount', [list.length]))
   if (ok) editorOpen.value = false
 }
 
 async function toggle(node: LocalNode): Promise<void> {
-  await finish(await local.setNodeEnabled(node.id, !node.enabled), node.enabled ? '已停用' : '已启用')
+  await finish(await local.setNodeEnabled(node.id, !node.enabled), node.enabled ? t('common.disabled') : t('common.enabled'))
 }
 
 async function confirmRemove(): Promise<void> {
   const node = removing.value
   if (!node) return
-  if (await finish(await local.removeNode(node.id), '已删除')) removing.value = null
+  if (await finish(await local.removeNode(node.id), t('common.deleted'))) removing.value = null
 }
 
 async function setCoexist(): Promise<void> {
-  await finish(await local.setTailscaleCoexist(!local.settings.tailscaleCoexist), local.settings.tailscaleCoexist ? '已关闭' : '已开启')
+  await finish(await local.setTailscaleCoexist(!local.settings.tailscaleCoexist), local.settings.tailscaleCoexist ? t('common.turnedOff') : t('common.turnedOn'))
 }
 
 onMounted(() => {
@@ -161,17 +162,17 @@ onMounted(() => {
 <template>
   <section class="local-nodes">
     <div class="section-caption local-nodes-caption">
-      <span>本地节点</span>
-      <button v-if="nodes.length" type="button" class="local-test-all" :disabled="!running" @click="local.testAll()">测试全部</button>
+      <span>{{ t('localNodes.title') }}</span>
+      <button v-if="nodes.length" type="button" class="local-test-all" :disabled="!running" @click="local.testAll()">{{ t('common.testAll') }}</button>
     </div>
 
     <SurfaceCard v-if="ts.detected" class="local-ts-card">
       <div class="local-ts-text">
-        <strong>检测到 Tailscale 客户端</strong>
-        <small v-if="local.settings.tailscaleCoexist">tailnet 地址（100.64.0.0/10）和 *.ts.net 交给网卡「{{ ts.interface }}」处理，增强模式不会截走它们。</small>
-        <small v-else>已关闭共存：开启增强模式后，tailnet 和 MagicDNS 可能无法访问。</small>
+        <strong>{{ t('localNodes.tailscaleDetected') }}</strong>
+        <small v-if="local.settings.tailscaleCoexist">{{ t('localNodes.tailscaleOn', [ts.interface]) }}</small>
+        <small v-else>{{ t('localNodes.tailscaleOff') }}</small>
       </div>
-      <button type="button" class="switch" :class="{ on: local.settings.tailscaleCoexist }" role="switch" :aria-checked="local.settings.tailscaleCoexist" aria-label="与 Tailscale 客户端共存" :disabled="local.busy" @click="setCoexist" />
+      <button type="button" class="switch" :class="{ on: local.settings.tailscaleCoexist }" role="switch" :aria-checked="local.settings.tailscaleCoexist" :aria-label="t('localNodes.tailscaleLabel')" :disabled="local.busy" @click="setCoexist" />
     </SurfaceCard>
 
     <div class="local-grid">
@@ -182,17 +183,17 @@ onMounted(() => {
         :class="{ off: !node.enabled, broken: node.enabled && skipped.has(node.id), menu: contextNode?.id === node.id }"
         @contextmenu.prevent="openContext($event, node)"
       >
-        <button type="button" class="local-card-main" :title="`${node.config.name} · ${nodeSummary(node.config)}`" :aria-label="`编辑 ${node.config.name}`" @click="edit(node)">
-          <small>{{ typeLabel(node) }}<span v-if="missingGroups(node).length" class="local-card-missing" :title="missingTitle(node)"> · 缺 {{ missingGroups(node).length }} 个策略组</span></small>
+        <button type="button" class="local-card-main" :title="`${node.config.name} · ${nodeSummary(node.config)}`" :aria-label="t('localNodes.edit', [node.config.name])" @click="edit(node)">
+          <small>{{ typeLabel(node) }}<span v-if="missingGroups(node).length" class="local-card-missing" :title="missingTitle(node)"> {{ t('localNodes.missingCount', [missingGroups(node).length]) }}</span></small>
           <strong>{{ node.config.name }}</strong>
         </button>
         <button type="button" class="local-card-delay" :class="cardStatus(node).kind" :title="cardStatus(node).title" :disabled="!canTest(node)" @click="test(node)">{{ cardStatus(node).text }}</button>
       </div>
-      <button type="button" class="local-card local-card-add" :disabled="local.busy" aria-label="添加本地节点" title="添加本地节点" @click="openEditor({ mode: 'form', protocol: 'ss' })">
+      <button type="button" class="local-card local-card-add" :disabled="local.busy" :aria-label="t('localNodes.addLabel')" :title="t('localNodes.addLabel')" @click="openEditor({ mode: 'form', protocol: 'ss' })">
         <span aria-hidden="true">+</span>
       </button>
     </div>
-    <p v-if="!nodes.length" class="surge-hint local-empty">本地节点保存在订阅之外，更新或切换订阅都不会丢失。可以添加 WireGuard、Tailscale，或粘贴任意 mihomo 节点，并把它们加入现有的策略组。</p>
+    <p v-if="!nodes.length" class="surge-hint local-empty">{{ t('localNodes.empty') }}</p>
 
     <PopoverMenu :open="!!contextNode" :x="contextAt.x" :y="contextAt.y" :label="contextNode?.config.name" @close="contextNode = null">
       <template v-if="contextNode">
@@ -203,14 +204,14 @@ onMounted(() => {
           </div>
           <small>{{ typeLabel(contextNode) }} · {{ nodeSummary(contextNode.config) }}</small>
           <div v-if="contextStats" class="context-stats">
-            <span><small>总计</small><b>{{ contextStats.total }}</b></span>
-            <span><small>上传</small><b>{{ contextStats.up }}</b></span>
-            <span><small>下载</small><b>{{ contextStats.down }}</b></span>
-            <small class="context-peak-label">最高速度</small>
+            <span><small>{{ t('stats.total') }}</small><b>{{ contextStats.total }}</b></span>
+            <span><small>{{ t('common.upload') }}</small><b>{{ contextStats.up }}</b></span>
+            <span><small>{{ t('common.download') }}</small><b>{{ contextStats.down }}</b></span>
+            <small class="context-peak-label">{{ t('localNodes.peakSpeed') }}</small>
             <small>↑ {{ contextStats.peakUp.value }} {{ contextStats.peakUp.unit }}</small>
             <small>↓ {{ contextStats.peakDown.value }} {{ contextStats.peakDown.unit }}</small>
           </div>
-          <small v-else class="context-none">启动以来还没有经过这个节点的流量</small>
+          <small v-else class="context-none">{{ t('localNodes.noTraffic') }}</small>
         </div>
         <div class="popover-sep" />
         <template v-if="contextInfo.length">
@@ -218,17 +219,17 @@ onMounted(() => {
             <template v-for="(section, index) in contextInfo" :key="section.title">
               <div v-if="index" class="popover-sep" />
               <div class="popover-section">{{ section.title }}</div>
-              <span v-for="row in section.rows" :key="row.label" class="popover-info" :title="`${row.label}：${row.value}`">{{ row.label }}：{{ row.value }}</span>
+              <span v-for="row in section.rows" :key="row.label" class="popover-info" :title="t('common.labelValue', [row.label, row.value])">{{ t('common.labelValue', [row.label, row.value]) }}</span>
             </template>
           </PopoverSubmenu>
           <div class="popover-sep" />
         </template>
-        <button type="button" class="popover-item" role="menuitem" :disabled="local.busy" @click="edit(contextNode)">编辑代理…</button>
-        <button type="button" class="popover-item" role="menuitem" :disabled="local.busy" @click="duplicate(contextNode)">创建副本</button>
-        <button type="button" class="popover-item" role="menuitem" :disabled="local.busy" @click="toggle(contextNode)">{{ contextNode.enabled ? '停用' : '启用' }}</button>
-        <button type="button" class="popover-item danger" role="menuitem" :disabled="local.busy" @click="removing = contextNode">删除代理…</button>
+        <button type="button" class="popover-item" role="menuitem" :disabled="local.busy" @click="edit(contextNode)">{{ t('localNodes.editProxy') }}</button>
+        <button type="button" class="popover-item" role="menuitem" :disabled="local.busy" @click="duplicate(contextNode)">{{ t('localNodes.duplicate2') }}</button>
+        <button type="button" class="popover-item" role="menuitem" :disabled="local.busy" @click="toggle(contextNode)">{{ contextNode.enabled ? t('common.disable') : t('common.enable') }}</button>
+        <button type="button" class="popover-item danger" role="menuitem" :disabled="local.busy" @click="removing = contextNode">{{ t('localNodes.deleteProxy') }}</button>
         <div class="popover-sep" />
-        <button type="button" class="popover-item" role="menuitem" :disabled="!canTest(contextNode)" @click="test(contextNode)">测试代理延迟</button>
+        <button type="button" class="popover-item" role="menuitem" :disabled="!canTest(contextNode)" @click="test(contextNode)">{{ t('localNodes.testLatency') }}</button>
       </template>
     </PopoverMenu>
 
@@ -244,7 +245,7 @@ onMounted(() => {
       @save="save"
       @save-many="saveMany"
     />
-    <ConfirmModal :open="!!removing" title="删除本地节点" :description="`删除「${removing?.config.name ?? ''}」？引用它的本地规则会自动跳过。`" :busy="local.busy" @close="removing = null" @confirm="confirmRemove" />
+    <ConfirmModal :open="!!removing" :title="t('localNodes.deleteTitle')" :description="t('localNodes.confirmDelete', [removing?.config.name ?? ''])" :busy="local.busy" @close="removing = null" @confirm="confirmRemove" />
   </section>
 </template>
 

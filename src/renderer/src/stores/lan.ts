@@ -1,3 +1,4 @@
+import { t } from '@shared/i18n'
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { LanGatewayState, LocalAddress } from '@shared/lan'
@@ -44,7 +45,7 @@ export const useLanStore = defineStore('lan', () => {
       gateway.value = next
       gatewayError.value = next.error ?? ''
     } catch (error) {
-      gatewayError.value = error instanceof Error ? error.message : '切换失败'
+      gatewayError.value = error instanceof Error ? error.message : t('lanStore.switchFailed')
     } finally {
       gatewayBusy.value = false
     }

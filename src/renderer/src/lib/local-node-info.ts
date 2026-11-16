@@ -1,3 +1,4 @@
+import { t } from '@shared/i18n'
 import type { MihomoConnection } from '@shared/mihomo-api'
 
 export interface InfoRow {
@@ -19,7 +20,7 @@ export interface NodeRuntime {
 
 const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : typeof value === 'number' ? String(value) : '')
 const list = (value: unknown): string => (Array.isArray(value) ? value.map(text).filter(Boolean).join(', ') : text(value))
-const onOff = (value: unknown, fallback: boolean): string => ((value === undefined ? fallback : value === true) ? '开启' : '关闭')
+const onOff = (value: unknown, fallback: boolean): string => ((value === undefined ? fallback : value === true) ? t('common.on') : t('common.off'))
 
 /** Active TCP and UDP connections whose chain ends at `name`. */
 export function activeCounts(name: string, connections: readonly MihomoConnection[]): { tcp: number; udp: number } {
@@ -48,15 +49,15 @@ export function nodeInfoSections(config: Record<string, unknown>, runtime: NodeR
   const name = text(config.name)
   const counts = activeCounts(name, runtime.connections)
   const dialer = text(config['dialer-proxy']) || 'DIRECT'
-  const activity: InfoSection = { title: '活动', rows: rows([['活跃 TCP 连接', String(counts.tcp)], ['活跃 UDP 连接', String(counts.udp)]]) }
+  const activity: InfoSection = { title: t('nav.activity'), rows: rows([[t('nodeInfo.activeTcp'), String(counts.tcp)], [t('nodeInfo.activeUdp'), String(counts.udp)]]) }
 
   if (kind === 'tailscale') {
     const exitNode = text(config['exit-node'])
     return [
-      { title: '连接', rows: rows([['状态', runtime.status], ['控制服务器', text(config['control-url']) || 'controlplane.tailscale.com'], ['跳板策略', dialer]]) },
-      { title: '设备', rows: rows([['设备名', text(config.hostname)], ['登录方式', text(config['auth-key']) ? 'Auth Key' : '登录链接（见“日志”页）'], ['临时设备', onOff(config.ephemeral, false)]]) },
+      { title: t('common.connection'), rows: rows([[t('common.status'), runtime.status], [t('nodeInfo.controlServer'), text(config['control-url']) || 'controlplane.tailscale.com'], [t('nodeInfo.dialerProxy'), dialer]]) },
+      { title: t('nodeInfo.device'), rows: rows([[t('nodeInfo.deviceName'), text(config.hostname)], [t('nodeInfo.loginMethod'), text(config['auth-key']) ? 'Auth Key' : t('nodeInfo.loginLink')], [t('nodeInfo.ephemeral'), onOff(config.ephemeral, false)]]) },
       activity,
-      { title: '路由', rows: rows([['Exit Node', exitNode || '未使用'], ['子网路由', onOff(config['accept-routes'], true)], ...(exitNode ? ([['局域网访问', onOff(config['exit-node-allow-lan-access'], true)]] as Array<[string, string]>) : [])]) }
+      { title: t('nodeInfo.routes'), rows: rows([['Exit Node', exitNode || t('nodeInfo.unused')], [t('nodeInfo.subnetRoutes'), onOff(config['accept-routes'], true)], ...(exitNode ? ([[t('nodeInfo.lanAccess'), onOff(config['exit-node-allow-lan-access'], true)]] as Array<[string, string]>) : [])]) }
     ]
   }
 
@@ -66,10 +67,10 @@ export function nodeInfoSections(config: Record<string, unknown>, runtime: NodeR
     const port = text(peer.port)
     const peers = Array.isArray(config.peers) ? config.peers.length : 1
     return [
-      { title: '连接', rows: rows([['状态', runtime.status], ['服务器', server ? (port ? `${server}:${port}` : server) : ''], ['Peer 数量', peers > 1 ? String(peers) : ''], ['跳板策略', dialer]]) },
-      { title: '地址', rows: rows([['IPv4', text(config.ip)], ['IPv6', text(config.ipv6)], ['DNS', list(config.dns)], ['MTU', text(config.mtu)]]) },
+      { title: t('common.connection'), rows: rows([[t('common.status'), runtime.status], [t('nodeInfo.server'), server ? (port ? `${server}:${port}` : server) : ''], [t('nodeInfo.peerCount'), peers > 1 ? String(peers) : ''], [t('nodeInfo.dialerProxy'), dialer]]) },
+      { title: t('common.address'), rows: rows([['IPv4', text(config.ip)], ['IPv6', text(config.ipv6)], ['DNS', list(config.dns)], ['MTU', text(config.mtu)]]) },
       activity,
-      { title: '路由', rows: rows([['Allowed IPs', list(peer['allowed-ips']) || '0.0.0.0/0, ::/0'], ['Keepalive', text(config['persistent-keepalive']) ? `${text(config['persistent-keepalive'])} 秒` : ''], ['远端 DNS 解析', onOff(config['remote-dns-resolve'], false)]]) }
+      { title: t('nodeInfo.routes'), rows: rows([['Allowed IPs', list(peer['allowed-ips']) || '0.0.0.0/0, ::/0'], ['Keepalive', text(config['persistent-keepalive']) ? t('nodeInfo.seconds', [text(config['persistent-keepalive'])]) : ''], [t('nodeInfo.remoteDns'), onOff(config['remote-dns-resolve'], false)]]) }
     ]
   }
 

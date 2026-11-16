@@ -1,3 +1,4 @@
+import { t } from '@shared/i18n'
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { MihomoProxiesResponse, MihomoProxy, MihomoProxyProvider } from '@shared/mihomo-api'
@@ -271,7 +272,7 @@ export const usePoliciesStore = defineStore('policies', () => {
       if (submitError) {
         panelError.value = submitError
       } else if (target !== null && confirmed !== null && confirmed !== target) {
-        panelError.value = `模式切换未生效：controller 当前为 "${confirmed}"，期望 "${target}"`
+        panelError.value = t('policyStore.modeNotApplied', [confirmed, target])
       }
     } catch (error) {
       panelError.value = submitError ?? toProtocolError(error).message
@@ -282,7 +283,7 @@ export const usePoliciesStore = defineStore('policies', () => {
     const group = selectedGroup.value
     if (!group) return Promise.resolve()
     if (!isSelectableGroup(currentGroup.value)) {
-      panelError.value = `${currentGroup.value?.type ?? '当前'} 策略组由内核自动选择，不支持手动固定节点`
+      panelError.value = t('policyStore.groupNotSelectable', [currentGroup.value?.type ?? t('policyStore.currentGroup')])
       return Promise.resolve()
     }
     if (member === selectedMember.value) return Promise.resolve()
@@ -338,7 +339,7 @@ export const usePoliciesStore = defineStore('policies', () => {
       if (submitError) {
         panelError.value = submitError
       } else if (confirmed !== null && confirmed !== target) {
-        panelError.value = `选择未生效：controller 当前为 "${confirmed}"，期望 "${target}"`
+        panelError.value = t('policyStore.selectNotApplied', [confirmed, target])
       }
     } catch (error) {
       panelError.value = submitError ?? toProtocolError(error).message
@@ -432,7 +433,7 @@ export const usePoliciesStore = defineStore('policies', () => {
     if (selectedGroup.value === group && groupDelayGeneration.get(group) === batchGeneration) {
       if (measured === 0 && members.length > 0) {
         groupDelayStatus.value = 'error'
-        panelError.value = '测速失败：所有节点均无有效延迟'
+        panelError.value = t('policyStore.testAllFailed')
       } else {
         groupDelayStatus.value = 'ok'
       }

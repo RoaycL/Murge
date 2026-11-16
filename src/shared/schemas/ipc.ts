@@ -1,3 +1,4 @@
+import { t } from '../i18n'
 import { z } from 'zod'
 import type { MihomoConfigSnapshot, MihomoDnsQueryType } from '../mihomo-api'
 import type { UnlockServiceName } from '../unlock'
@@ -370,15 +371,15 @@ export function parseDnsQuery(name: unknown, type: unknown): { name: string; typ
 }
 
 const serverListSchema = z
-  .array(z.string().refine(isValidNameserver, '无效的 DNS 服务器 URI'))
+  .array(z.string().refine(isValidNameserver, () => ({ message: t('validation.nameserver') })))
   .max(64)
 const defaultServerListSchema = z
-  .array(z.string().refine(isValidDefaultNameserver, 'default-nameserver 必须使用 IP 地址'))
+  .array(z.string().refine(isValidDefaultNameserver, () => ({ message: t('validation.defaultNameserver') })))
   .max(64)
 const domainOrRuleSchema = z
   .string()
-  .refine(isValidDomainOrRule, '必须是域名、*. 通配符或 geosite/geoip 规则')
-const ipSchema = z.string().refine(isValidIp, '必须是有效的 IPv4 或 IPv6 地址')
+  .refine(isValidDomainOrRule, () => ({ message: t('validation.domainOrRule') }))
+const ipSchema = z.string().refine(isValidIp, () => ({ message: t('validation.ip') }))
 
 const dnsEnhancementSchema = z
   .object({
@@ -386,7 +387,7 @@ const dnsEnhancementSchema = z
     enhancedMode: z.enum(['fake-ip', 'redir-host']),
     ipv6: z.boolean(),
     respectRules: z.boolean(),
-    fakeIpRange: z.string().refine(isValidCidr, '必须是有效的 CIDR 范围'),
+    fakeIpRange: z.string().refine(isValidCidr, () => ({ message: t('validation.cidrRange') })),
     fakeIpFilterMode: z.enum(['blacklist', 'whitelist']),
     fakeIpFilter: z.array(domainOrRuleSchema),
     useHosts: z.boolean(),
@@ -404,7 +405,7 @@ const dnsEnhancementSchema = z
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['proxyServerNameserver'],
-        message: '启用 respect-rules 时必须配置 proxy-server-nameserver'
+        message: t('validation.respectRules')
       })
     }
   })
@@ -426,8 +427,8 @@ export function parseDnsEnhancement(input: unknown): DnsEnhancement {
   return parsed.data
 }
 
-const portTokenSchema = z.string().refine(isValidPortToken, '端口必须是 1-65535、范围 (如 8080-8880) 或 *')
-const addressOrCidrSchema = z.string().refine(isValidAddressOrCidr, '必须是有效的 IP 或 CIDR')
+const portTokenSchema = z.string().refine(isValidPortToken, () => ({ message: t('validation.portToken') }))
+const addressOrCidrSchema = z.string().refine(isValidAddressOrCidr, () => ({ message: t('validation.ipOrCidr') }))
 
 const snifferEnhancementSchema = z
   .object({
@@ -464,13 +465,13 @@ export function parseSnifferEnhancement(input: unknown): SnifferEnhancement {
   return parsed.data
 }
 
-const dnsHijackEntrySchema = z.string().refine(isValidDnsHijackEntry, '必须是 any、IP、主机:端口 或 [IPv6]:端口')
-const routeCidrSchema = z.string().refine(isValidTunRouteAddress, '必须是有效的 IP 或 CIDR')
+const dnsHijackEntrySchema = z.string().refine(isValidDnsHijackEntry, () => ({ message: t('validation.dnsHijack') }))
+const routeCidrSchema = z.string().refine(isValidTunRouteAddress, () => ({ message: t('validation.ipOrCidr') }))
 
 const tunConfigSchema = z
   .object({
     stack: z.enum(['mixed', 'system', 'gvisor']),
-    device: z.string().refine(isValidTunDevice, 'TUN 设备名包含非法字符或长度'),
+    device: z.string().refine(isValidTunDevice, () => ({ message: t('validation.tunDevice') })),
     mtu: z.number().int().min(576).max(65535),
     strictRoute: z.boolean(),
     autoRoute: z.boolean(),
@@ -508,13 +509,13 @@ const coreSettingsSchema = z
     storeSelected: z.boolean(),
     storeFakeIp: z.boolean(),
     findProcessMode: z.enum(['off', 'strict', 'always']),
-    interfaceName: z.string().trim().max(255).refine((value) => !/[\x00-\x1f\x7f]/.test(value), 'interface-name 包含非法控制字符'),
+    interfaceName: z.string().trim().max(255).refine((value) => !/[\x00-\x1f\x7f]/.test(value), () => ({ message: t('validation.interfaceName') })),
     mixedPort: z.number().int().min(1024).max(65535),
     socksPort: z.number().int().min(1024).max(65535),
     httpPort: z.number().int().min(1024).max(65535),
     controllerHost: z.enum(['127.0.0.1', '0.0.0.0']),
     controllerPort: z.number().int().min(1024).max(65535),
-    controllerSecret: z.string().regex(/^(?:|[0-9a-f]{64})$/, '访问密钥必须留空或填写 64 位小写十六进制字符'),
+    controllerSecret: z.string().refine((value) => /^(?:|[0-9a-f]{64})$/.test(value), () => ({ message: t('validation.controllerSecret') })),
     controllerPanel: z.boolean(),
     allowLan: z.boolean()
   })
@@ -522,7 +523,7 @@ const coreSettingsSchema = z
   .superRefine((value, context) => {
     const ports = [value.mixedPort, value.socksPort, value.httpPort, value.controllerPort]
     if (new Set(ports).size !== ports.length) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: '启用的监听端口不能重复', path: ['mixedPort'] })
+      context.addIssue({ code: z.ZodIssueCode.custom, message: t('validation.duplicatePorts'), path: ['mixedPort'] })
     }
   })
 

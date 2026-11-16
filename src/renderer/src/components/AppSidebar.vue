@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed } from 'vue'
 import type { BrandConfig } from '@shared/brand'
 import AppIcon from './AppIcon.vue'
@@ -19,7 +20,7 @@ const groups = computed(() => sidebarLayout.groups)
   <aside class="app-sidebar">
     <div class="window-drag-region" :data-tauri-drag-region="isTauri ? '' : undefined" />
     <AppTitlebar v-if="isTauri" />
-    <nav class="sidebar-nav" aria-label="主导航">
+    <nav class="sidebar-nav" :aria-label="t('sidebar.mainNav')">
       <section v-for="group in groups" :key="group.id" class="nav-section">
         <h2 v-if="group.label" class="nav-section-title">{{ group.label }}</h2>
         <RouterLink v-for="item in group.items" :key="item.to" :to="item.to" class="nav-link">
@@ -29,7 +30,7 @@ const groups = computed(() => sidebarLayout.groups)
       </section>
     </nav>
     <div class="sidebar-footer">
-      <RouterLink to="/more" class="nav-link"><span class="nav-icon"><AppIcon name="more" /></span><span>更多</span></RouterLink>
+      <RouterLink to="/more" class="nav-link"><span class="nav-icon"><AppIcon name="more" /></span><span>{{ t('common.more') }}</span></RouterLink>
       <span class="visually-hidden">{{ brand.productName }}</span>
     </div>
   </aside>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted, ref, watch } from 'vue'
 import AppIcon from './AppIcon.vue'
 import BrandIcon from './BrandIcon.vue'
@@ -21,4 +22,4 @@ const load = async (): Promise<void> => {
 onMounted(load)
 watch(() => props.path, load)
 </script>
-<template><span class="process-icon"><BrandIcon v-if="shownBrand" :name="shownBrand" :size="size ?? 22" /><img v-else-if="source" :src="source" :alt="`${name || '进程'}图标`" /><AppIcon v-else name="processes" :size="size ?? 22" /></span></template>
+<template><span class="process-icon"><BrandIcon v-if="shownBrand" :name="shownBrand" :size="size ?? 22" /><img v-else-if="source" :src="source" :alt="t('processIcon.alt', [name || t('common.process')])" /><AppIcon v-else name="processes" :size="size ?? 22" /></span></template>

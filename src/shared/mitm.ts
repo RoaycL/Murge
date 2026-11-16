@@ -3,6 +3,7 @@
  * these are the renderer-facing snapshot shapes of the `mitm:*` channels.
  */
 
+import { t } from './i18n'
 export interface MitmCaInfo {
   commonName: string
   /** SHA-256, colon-separated uppercase hex. */
@@ -163,27 +164,27 @@ export const EMPTY_MITM_STATE: MitmState = {
 
 /** Human labels for the pipeline actions recorded per request. */
 export const MITM_ACTION_LABELS: Record<string, string> = {
-  '301': '301 重定向',
-  '302': '302 重定向',
-  '307': '307 重定向',
-  '308': '308 重定向',
-  reject: '拒绝',
-  'reject-200': '拒绝 (200)',
-  'reject-img': '拒绝 (图片)',
-  'reject-dict': '拒绝 ({})',
-  'reject-array': '拒绝 ([])',
-  header: 'URL 改写',
-  'map-local': '本地映射',
-  'header-rewrite': '改写请求头/响应头',
-  'body-rewrite': '改写正文',
+  get '301'() { return t('mitmAction.r301') },
+  get '302'() { return t('mitmAction.r302') },
+  get '307'() { return t('mitmAction.r307') },
+  get '308'() { return t('mitmAction.r308') },
+  get reject() { return t('mitmAction.reject') },
+  get 'reject-200'() { return t('mitmAction.reject200') },
+  get 'reject-img'() { return t('mitmAction.rejectImg') },
+  get 'reject-dict'() { return t('mitmAction.rejectDict') },
+  get 'reject-array'() { return t('mitmAction.rejectArray') },
+  get header() { return t('mitmAction.urlRewrite') },
+  get 'map-local'() { return t('mitmAction.mapLocal') },
+  get 'header-rewrite'() { return t('mitmAction.headerRewrite') },
+  get 'body-rewrite'() { return t('mitmAction.bodyRewrite') },
   websocket: 'WebSocket'
 }
 
 /** Label for one recorded action, including per-script ones (`script:名字`). */
 export function mitmActionLabel(action: string): string {
-  if (action.startsWith('script:')) return `脚本 ${action.slice(7)}`
-  if (action.startsWith('script-pass:')) return `脚本 ${action.slice(12)}（未修改）`
-  if (action.startsWith('script-error:')) return `脚本 ${action.slice(13)} 出错`
+  if (action.startsWith('script:')) return t('mitmAction.script', [action.slice(7)])
+  if (action.startsWith('script-pass:')) return t('mitmAction.scriptPass', [action.slice(12)])
+  if (action.startsWith('script-error:')) return t('mitmAction.scriptError', [action.slice(13)])
   return MITM_ACTION_LABELS[action] ?? action
 }
 

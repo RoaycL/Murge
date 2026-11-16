@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted, ref } from 'vue'
 import { useLanStore } from '../stores/lan'
 import { useTunStore } from '../stores/tun'
@@ -33,8 +34,8 @@ const forwardingCommand = computed(() => `Set-NetIPInterface -InterfaceAlias "${
 
 const gatewayEnabled = computed(() => lan.gateway?.enabled ?? false)
 const forwardingTargets = computed(() => {
-  const names = (lan.gateway?.interfaces ?? []).map((entry) => `「${entry.name}」`)
-  return names.length ? names.join('、') : `「${lanAdapter.value}」和「${tunDevice.value}」`
+  const names = (lan.gateway?.interfaces ?? []).map((entry) => t('common.quoted', [entry.name]))
+  return names.length ? names.join(t('common.listSeparator')) : t('lanGateway.adapterPair', [lanAdapter.value, tunDevice.value])
 })
 function toggleGateway(): void {
   void lan.setGateway(!gatewayEnabled.value, tunDevice.value)
@@ -53,41 +54,41 @@ async function copyText(text: string): Promise<void> {
 </script>
 
 <template>
-  <section class="gateway-panel" aria-label="网关模式">
+  <section class="gateway-panel" :aria-label="t('lanGateway.title')">
     <header class="gateway-head">
       <div>
-        <h2>网关模式</h2>
-        <p>让局域网内的手机、电视、游戏机等设备把网关指向本机，由 TUN 接管它们的全部流量。</p>
+        <h2>{{ t('lanGateway.title') }}</h2>
+        <p>{{ t('lanGateway.intro') }}</p>
       </div>
       <div class="gateway-status" :class="{ active: gatewayEnabled && tunActive && primaryLan }">
         <i />
-        <span>{{ !gatewayEnabled ? '未启用' : !tunActive ? '需先开启 TUN 模式' : primaryLan ? `网关地址 ${primaryLan}` : '未检测到局域网地址' }}</span>
+        <span>{{ !gatewayEnabled ? t('common.notEnabled') : !tunActive ? t('lanGateway.needTun') : primaryLan ? t('lanGateway.gatewayAddress', [primaryLan]) : t('lanGateway.noLanAddress') }}</span>
       </div>
     </header>
     <ol>
       <li>
-        <strong>开启 TUN 模式</strong>
-        <span>{{ tunActive ? '已开启。' : '在概览打开「TUN 模式」开关。' }}</span>
+        <strong>{{ t('lanGateway.stepTun') }}</strong>
+        <span>{{ tunActive ? t('lanGateway.tunOn') : t('lanGateway.tunOffHint') }}</span>
       </li>
       <li>
-        <strong>打开网关模式</strong>
-        <span>打开后会自动为 {{ forwardingTargets }} 开启 Windows 转发，并添加一条只允许本地子网访问内核的防火墙规则，无需把网络改为「专用网络」。TUN 网卡重建后自动重新开启；关闭开关或退出 {{ brand.shortName }} 时自动恢复。</span>
-        <button type="button" class="secondary-button" :disabled="lan.gatewayBusy" @click="toggleGateway">{{ lan.gatewayBusy ? '正在切换…' : gatewayEnabled ? '关闭网关模式' : '开启网关模式' }}</button>
+        <strong>{{ t('lanGateway.stepGateway') }}</strong>
+        <span>{{ t('lanGateway.stepGatewayHint', [forwardingTargets, brand.shortName]) }}</span>
+        <button type="button" class="secondary-button" :disabled="lan.gatewayBusy" @click="toggleGateway">{{ lan.gatewayBusy ? t('lanGateway.switching') : gatewayEnabled ? t('lanGateway.turnOffLabel') : t('lanGateway.turnOnLabel') }}</button>
         <span v-if="lan.gatewayError" class="gateway-error" role="alert">{{ lan.gatewayError }}</span>
       </li>
       <li>
-        <strong>在设备上手动设置网络</strong>
-        <span>把 IPv4 改为手动：IP 地址与本机同一网段且未被占用，子网掩码与本机一致，<b>路由器 / 网关</b>填 <b>{{ primaryLan ?? '本机局域网 IP' }}</b>，DNS 填任意公共 DNS（如 223.5.5.5），查询会被 TUN 劫持后交给内核解析。</span>
+        <strong>{{ t('lanGateway.stepDevice') }}</strong>
+        <span>{{ t('lanGateway.stepDeviceA') }}<b>{{ t('lanGateway.routerGateway') }}</b>{{ t('lanGateway.stepDeviceB') }} <b>{{ primaryLan ?? t('lanGateway.thisLanIp') }}</b>{{ t('lanGateway.stepDeviceC') }}</span>
       </li>
       <li>
-        <strong>确认生效</strong>
-        <span>设备联网后会以它的局域网 IP 出现在「设备」页，类型为「局域网设备 · 网关」。</span>
+        <strong>{{ t('lanGateway.stepVerify') }}</strong>
+        <span>{{ t('lanGateway.stepVerifyHint') }}</span>
       </li>
     </ol>
     <details class="gateway-manual">
-      <summary>自动开启失败时，可以管理员身份在 PowerShell 手动运行</summary>
+      <summary>{{ t('lanGateway.manualHint') }}</summary>
       <code>{{ forwardingCommand }}</code>
-      <button type="button" class="secondary-button" @click="copyText(forwardingCommand)">{{ copied === forwardingCommand ? '已复制' : '复制命令' }}</button>
+      <button type="button" class="secondary-button" @click="copyText(forwardingCommand)">{{ copied === forwardingCommand ? t('common.copied') : t('lanGateway.copyCommand') }}</button>
     </details>
   </section>
 </template>

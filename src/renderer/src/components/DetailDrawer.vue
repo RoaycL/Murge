@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import AppIcon from './AppIcon.vue'
 import CachedRemoteIcon from './CachedRemoteIcon.vue'
 import { toRef, ref } from 'vue'
@@ -14,13 +15,13 @@ useDialogFocus(toRef(props, 'open'), drawer, () => emit('close'))
 <template>
   <Teleport to="body">
     <Transition name="drawer-fade">
-      <button v-if="open" type="button" class="detail-drawer-shade" aria-label="关闭详情" @click="$emit('close')" />
+      <button v-if="open" type="button" class="detail-drawer-shade" :aria-label="t('common.closeDetails')" @click="$emit('close')" />
     </Transition>
     <Transition name="drawer-slide">
       <aside v-if="open" ref="drawer" class="detail-drawer" aria-modal="true" role="dialog" :aria-label="title">
         <header class="detail-drawer-header">
           <div class="detail-drawer-heading" :class="{ 'with-icon': icon }"><CachedRemoteIcon v-if="icon" class="detail-drawer-icon" :src="icon" :cache-key="iconCacheKey" /><div><h2>{{ title }}</h2><p v-if="subtitle">{{ subtitle }}</p></div></div>
-          <div class="detail-drawer-actions"><slot name="actions" /><button type="button" class="icon-control" aria-label="关闭详情" @click="$emit('close')"><AppIcon name="drawer-close" /></button></div>
+          <div class="detail-drawer-actions"><slot name="actions" /><button type="button" class="icon-control" :aria-label="t('common.closeDetails')" @click="$emit('close')"><AppIcon name="drawer-close" /></button></div>
         </header>
         <div class="detail-drawer-body"><slot /></div>
         <footer v-if="$slots.footer" class="detail-drawer-footer"><slot name="footer" /></footer>

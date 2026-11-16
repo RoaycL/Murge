@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import type { AppInfo } from '@shared/app-info'
 import type { BrandConfig } from '@shared/brand'
@@ -47,13 +48,13 @@ onUnmounted(() => {
 
 const statusText = computed<string | null>(() => {
   switch (updates.state.phase) {
-    case 'idle': return '尚未检查更新。'
-    case 'checking': return '正在检查更新…'
-    case 'available': return `发现新版本 ${updates.state.availableVersion ?? ''}，正在准备下载。`
-    case 'downloading': return `正在下载更新${updates.state.availableVersion ? ` ${updates.state.availableVersion}` : ''}…`
-    case 'downloaded': return `新版本 ${updates.state.availableVersion ?? ''} 已就绪，重启应用后生效。`
-    case 'not-available': return '已是最新版本。'
-    case 'error': return updates.state.error ?? '检查更新失败。'
+    case 'idle': return t('about.notChecked')
+    case 'checking': return t('about.checking')
+    case 'available': return t('about.available', [updates.state.availableVersion ?? ''])
+    case 'downloading': return t('about.downloading', [updates.state.availableVersion ? ` ${updates.state.availableVersion}` : ''])
+    case 'downloaded': return t('about.ready', [updates.state.availableVersion ?? ''])
+    case 'not-available': return t('about.upToDate')
+    case 'error': return updates.state.error ?? t('about.checkFailed')
     default: return null
   }
 })
@@ -74,21 +75,21 @@ async function exportDiagnostics(): Promise<void> {
 }
 </script>
 
-<template><div class="page-shell about-view"><h1>关于</h1>
-  <section class="surface-card about-product"><div class="about-product-title"><BrandMark :size="38" /><strong>{{ brand?.productName ?? '—' }}</strong></div><span>版本 {{ info?.version ?? '—' }} · {{ info?.platform ?? '—' }} / {{ info?.arch ?? '—' }}</span><p>{{ brand?.description }}</p></section>
-  <section><h2>更新</h2><div class="surface-card general-info">
-    <div class="update-row"><span><strong>检查并安装更新</strong><small>发布新版本后会自动推送，也可在此手动检查。</small></span><button type="button" :disabled="busy || updates.state.phase === 'checking' || updates.state.phase === 'downloading'" @click="checkUpdates">检查更新</button></div>
-    <div v-if="updates.state.channelsSupported" class="update-row"><span><strong>包括 Beta 版本</strong><small>Beta 版本会更早提供新功能，但可能不够稳定。关闭后会等待下一个更高的正式版。</small></span><button type="button" class="switch" :class="{ on: appSettings.settings.updateIncludeBeta }" role="switch" :aria-checked="appSettings.settings.updateIncludeBeta" :disabled="appSettings.busy" aria-label="包括 Beta 版本" @click="toggleBeta" /></div>
+<template><div class="page-shell about-view"><h1>{{ t('about.title') }}</h1>
+  <section class="surface-card about-product"><div class="about-product-title"><BrandMark :size="38" /><strong>{{ brand?.productName ?? '—' }}</strong></div><span>{{ t('about.versionLine', [info?.version ?? '—', info?.platform ?? '—', info?.arch ?? '—']) }}</span><p>{{ brand?.description }}</p></section>
+  <section><h2>{{ t('about.update') }}</h2><div class="surface-card general-info">
+    <div class="update-row"><span><strong>{{ t('about.checkInstall') }}</strong><small>{{ t('about.checkInstallHint') }}</small></span><button type="button" :disabled="busy || updates.state.phase === 'checking' || updates.state.phase === 'downloading'" @click="checkUpdates">{{ t('common.checkUpdate') }}</button></div>
+    <div v-if="updates.state.channelsSupported" class="update-row"><span><strong>{{ t('about.includeBeta') }}</strong><small>{{ t('about.includeBetaHint') }}</small></span><button type="button" class="switch" :class="{ on: appSettings.settings.updateIncludeBeta }" role="switch" :aria-checked="appSettings.settings.updateIncludeBeta" :disabled="appSettings.busy" :aria-label="t('about.includeBeta')" @click="toggleBeta" /></div>
     <p v-if="appSettings.errorMessage" class="inline-error">{{ appSettings.errorMessage }}</p>
     <p v-if="statusText" class="update-status" :class="statusClass">{{ statusText }}</p>
-    <div v-if="updates.state.canInstall" class="update-row"><span><strong>已就绪</strong></span><button type="button" @click="updates.install">重启并安装</button></div>
+    <div v-if="updates.state.canInstall" class="update-row"><span><strong>{{ t('about.readyLabel') }}</strong></span><button type="button" @click="updates.install">{{ t('common.restartInstall') }}</button></div>
     <p v-if="error" class="inline-error">{{ error }}</p>
   </div></section>
-  <section><h2>支持</h2><div class="surface-card preference-list">
-    <a v-if="brand?.repositoryUrl" :href="brand.repositoryUrl" rel="noreferrer" @click.prevent="openLink(brand.repositoryUrl)"><span><strong>源代码仓库</strong><small>{{ brand.repositoryUrl }}</small></span><b>打开</b></a>
-    <a v-if="brand?.supportUrl" :href="brand.supportUrl" rel="noreferrer" @click.prevent="openLink(brand.supportUrl)"><span><strong>问题与支持</strong><small>{{ brand.supportUrl }}</small></span><b>打开</b></a>
+  <section><h2>{{ t('about.support') }}</h2><div class="surface-card preference-list">
+    <a v-if="brand?.repositoryUrl" :href="brand.repositoryUrl" rel="noreferrer" @click.prevent="openLink(brand.repositoryUrl)"><span><strong>{{ t('about.repository') }}</strong><small>{{ brand.repositoryUrl }}</small></span><b>{{ t('common.open') }}</b></a>
+    <a v-if="brand?.supportUrl" :href="brand.supportUrl" rel="noreferrer" @click.prevent="openLink(brand.supportUrl)"><span><strong>{{ t('about.issues') }}</strong><small>{{ brand.supportUrl }}</small></span><b>{{ t('common.open') }}</b></a>
   </div></section>
-  <section><h2>诊断</h2><div class="surface-card general-info"><p>导出启动耗时、运行与系统状态、端口归属和错误类别；不会包含原始日志、配置、订阅、控制器地址、密钥或用户路径。文件仅保存在本机。</p><button type="button" :disabled="busy" @click="exportDiagnostics">导出诊断报告</button></div><p v-if="error" class="inline-error">{{ error }}</p></section>
+  <section><h2>{{ t('about.diagnostics') }}</h2><div class="surface-card general-info"><p>{{ t('about.diagnosticsHint') }}</p><button type="button" :disabled="busy" @click="exportDiagnostics">{{ t('about.exportDiagnostics') }}</button></div><p v-if="error" class="inline-error">{{ error }}</p></section>
   <small class="about-copyright">{{ brand?.copyright }}</small>
 </div></template>
 

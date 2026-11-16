@@ -1,3 +1,4 @@
+import { t } from '@shared/i18n'
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { providerDisplayName } from '@shared/network-metadata'
@@ -49,7 +50,7 @@ export const useNetworkMetadataStore = defineStore('network-metadata', () => {
       rows.value = toRows(await window.desktop.networkMetadata.resolveAll(force))
     } catch {
       // Keep the previous rows but leave an actionable retry path visible.
-      refreshError.value = '查询失败，请重试'
+      refreshError.value = t('netMeta.queryFailed')
     } finally {
       busy.value = false
     }

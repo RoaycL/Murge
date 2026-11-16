@@ -1103,7 +1103,9 @@ impl SubStoreService {
             if std::time::Instant::now() > deadline {
                 return Err("Sub-Store 启动超时".into());
             }
-            let healthy = reqwest::Client::new()
+            let healthy = crate::mihomo::local_client_builder()
+                .build()
+                .unwrap_or_default()
                 .get(&url)
                 .timeout(Duration::from_millis(2000))
                 .send()

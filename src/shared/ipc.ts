@@ -28,6 +28,7 @@ import type {
 import type { DnsEnhancement, DnsSnapshot } from './dns'
 import type { MitmRequestEntry, MitmState } from './mitm'
 import type { LocalSettings, LocalState } from './local'
+import type { UiStyle } from './ui-style'
 import type { SnifferEnhancement, SnifferSnapshot } from './sniffer'
 import type { KernelStatus, OutboundMode, RuntimeSummary, TrafficSample } from './runtime'
 import type { SystemProxyStatus } from './system-proxy'
@@ -137,6 +138,8 @@ export const IPC = {
   startupSetEnabled: 'startup:set-enabled',
   appSettingsGet: 'app-settings:get',
   appSettingsSet: 'app-settings:set',
+  uiStyleGet: 'ui-style:get',
+  uiStyleSet: 'ui-style:set',
   subStoreGetState: 'substore:get-state',
   subStoreEnsureRunning: 'substore:ensure-running',
   subStoreStop: 'substore:stop',
@@ -349,6 +352,11 @@ export interface DesktopApi {
   appSettings: {
     get(): Promise<AppSettings>
     set(patch: Partial<AppSettings>): Promise<AppSettings>
+  }
+  /** 自定义界面样式（字体、强调色、字号、自定义 CSS）。 */
+  uiStyle: {
+    get(): Promise<UiStyle>
+    set(patch: Partial<UiStyle>): Promise<UiStyle>
   }
   subStore: {
     getState(): Promise<SubStoreState>

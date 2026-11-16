@@ -1,3 +1,4 @@
+import { t } from '@shared/i18n'
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import {
@@ -74,14 +75,14 @@ export const useLocalStore = defineStore('local', () => {
 
   /** Save the next settings; returns the error message (null on success). */
   async function save(next: LocalSettings): Promise<string | null> {
-    if (busy.value) return '正在处理上一个操作'
+    if (busy.value) return t('common.busyPrevious')
     busy.value = true
     try {
       state.value = await window.desktop.local.save(plainClone(next))
       lastError.value = null
       // Saved and accepted by the core check, but the running core has not
       // switched to it yet: say so instead of a silent success.
-      if (state.value.reloadError) useToast().info('内核暂未应用新配置', state.value.reloadError)
+      if (state.value.reloadError) useToast().info(t('localStore.notApplied'), state.value.reloadError)
       return null
     } catch (error) {
       const message = toProtocolError(error).message
@@ -173,7 +174,7 @@ export const useLocalStore = defineStore('local', () => {
   /** Add or replace the edit for one subscription rule of the active profile. */
   function setEdit(edit: Omit<RuleEdit, 'id'> & { id?: string }): Promise<string | null> {
     const id = profileId.value
-    if (!id) return Promise.resolve('当前没有活动的订阅')
+    if (!id) return Promise.resolve(t('common.noActiveSubscription'))
     const next = clone()
     const list = (next.profileEdits[id] ?? []).filter(
       (item) => item.id !== edit.id && ruleIdentity(item.ruleType, item.payload, item.target) !== ruleIdentity(edit.ruleType, edit.payload, edit.target)
@@ -231,8 +232,8 @@ export const useLocalStore = defineStore('local', () => {
     const source = settings.value.nodes.find((node) => node.id === id)
     if (!source) return Promise.resolve(null)
     const taken = new Set(settings.value.nodes.map((node) => node.config.name))
-    let name = `${source.config.name} 副本`
-    for (let i = 2; taken.has(name); i++) name = `${source.config.name} 副本 ${i}`
+    let name = t('localStore.copyName', [source.config.name])
+    for (let i = 2; taken.has(name); i++) name = t('localStore.copyNameN', [source.config.name, i])
     const copy = plainClone(source)
     const next = clone()
     const index = next.nodes.findIndex((node) => node.id === id)

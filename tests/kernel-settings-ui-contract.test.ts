@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises'
+import { inlineMessages } from './helpers/localized-source'
 import { describe, expect, it } from 'vitest'
 
-const read = (path: string): Promise<string> => readFile(new URL(`../${path}`, import.meta.url), 'utf8')
+const read = async (path: string): Promise<string> => inlineMessages(await readFile(new URL(`../${path}`, import.meta.url), 'utf8'))
 
 describe('kernel and refresh UI contract', () => {
   it('keeps the kernel app-owned and exposes stable, preview, Smart and specific choices', async () => {

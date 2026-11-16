@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { locale, t } from '@shared/i18n'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useDialogFocus } from '../composables/use-dialog-focus'
 import AppIcon from '../components/AppIcon.vue'
@@ -24,7 +25,7 @@ const ca = computed(() => state.value.ca)
 const settings = computed(() => state.value.settings)
 const disabledSet = computed(() => new Set(settings.value.disabledHostnames ?? []))
 const addDirty = computed(() => adding.value && newHost.value.trim() !== '')
-useUnsavedChanges('mitm-hostnames', '解密主机名', addDirty)
+useUnsavedChanges('mitm-hostnames', t('mitm.hostnames'), addDirty)
 useDialogFocus(requestsOpen, requestsDialog, () => { requestsOpen.value = false })
 
 /** Hostnames contributed by enabled modules (read-only here). */
@@ -36,18 +37,18 @@ const moduleHostnames = computed(() => {
 /** Shown only when the switch is on but decryption cannot run yet. */
 const inactiveText = computed(() => {
   if (!settings.value.enabled || state.value.active) return null
-  return state.value.inactiveReason ?? '解密未生效'
+  return state.value.inactiveReason ?? t('mitm.notActive')
 })
 
 const caStatus = computed(() => {
-  if (!ca.value) return '尚未生成 CA 证书'
-  if (ca.value.trusted === true) return 'CA 证书已被系统信任'
-  if (ca.value.trusted === false) return 'CA 证书尚未被系统信任'
-  return '无法检测 CA 证书的信任状态'
+  if (!ca.value) return t('mitm.noCa')
+  if (ca.value.trusted === true) return t('mitm.caTrusted')
+  if (ca.value.trusted === false) return t('mitm.caUntrusted')
+  return t('mitm.caUnknown')
 })
 
 function formatTime(ms: number): string {
-  return new Date(ms).toLocaleTimeString()
+  return new Date(ms).toLocaleTimeString(locale.value)
 }
 
 async function report(promise: Promise<string | null>, success: string, failure: string): Promise<boolean> {
@@ -59,34 +60,34 @@ async function report(promise: Promise<string | null>, success: string, failure:
 
 async function toggleEnabled(): Promise<void> {
   const next = !settings.value.enabled
-  await report(store.setEnabled(next), next ? 'HTTPS 解密已开启' : 'HTTPS 解密已关闭', '切换失败')
+  await report(store.setEnabled(next), next ? t('mitm.turnedOn') : t('mitm.turnedOff'), t('common.switchFailed'))
 }
 
 async function toggleHttp2(): Promise<void> {
-  await report(store.setHttp2(!settings.value.http2), '已保存', '保存失败')
+  await report(store.setHttp2(!settings.value.http2), t('common.saved'), t('common.saveFailed'))
 }
 
 async function toggleBlockQuic(): Promise<void> {
-  await report(store.setBlockQuic(!settings.value.blockQuic), '已保存', '保存失败')
+  await report(store.setBlockQuic(!settings.value.blockQuic), t('common.saved'), t('common.saveFailed'))
 }
 
 async function toggleSkipVerify(): Promise<void> {
-  await report(store.setSkipVerify(!settings.value.skipServerCertVerify), '已保存', '保存失败')
+  await report(store.setSkipVerify(!settings.value.skipServerCertVerify), t('common.saved'), t('common.saveFailed'))
 }
 
 function saveList(hosts: string[], disabled: string[], success: string): Promise<boolean> {
-  return report(store.setHostnames(hosts, disabled.filter((host) => hosts.includes(host))), success, '主机名保存失败')
+  return report(store.setHostnames(hosts, disabled.filter((host) => hosts.includes(host))), success, t('mitm.hostSaveFailed'))
 }
 
 async function toggleHost(host: string): Promise<void> {
   const disabled = new Set(disabledSet.value)
   if (disabled.has(host)) disabled.delete(host)
   else disabled.add(host)
-  await saveList(settings.value.hostnames, [...disabled], disabled.has(host) ? `已停用 ${host}` : `已启用 ${host}`)
+  await saveList(settings.value.hostnames, [...disabled], disabled.has(host) ? t('mitm.disabledName', [host]) : t('mitm.enabledName', [host]))
 }
 
 async function removeHost(host: string): Promise<void> {
-  await saveList(settings.value.hostnames.filter((item) => item !== host), [...disabledSet.value], `已删除 ${host}`)
+  await saveList(settings.value.hostnames.filter((item) => item !== host), [...disabledSet.value], t('mitm.deletedName', [host]))
 }
 
 async function startAdd(): Promise<void> {
@@ -109,12 +110,12 @@ async function confirmAdd(): Promise<void> {
   }
   const hosts = [...settings.value.hostnames]
   for (const entry of entries) if (!hosts.includes(entry)) hosts.push(entry)
-  if (await saveList(hosts, [...disabledSet.value], entries.length > 1 ? `已添加 ${entries.length} 个主机名` : `已添加 ${entries[0]}`)) cancelAdd()
+  if (await saveList(hosts, [...disabledSet.value], entries.length > 1 ? t('mitm.addedCount', [entries.length]) : t('mitm.addedName', [entries[0]]))) cancelAdd()
 }
 
 async function generate(): Promise<void> {
   regenerateOpen.value = false
-  await report(store.generateCa(), '根证书已生成', '生成失败')
+  await report(store.generateCa(), t('mitm.caGenerated'), t('mitm.generateFailed'))
 }
 
 function requestGenerate(): void {
@@ -123,27 +124,27 @@ function requestGenerate(): void {
 }
 
 async function install(): Promise<void> {
-  await report(store.installCa(), '根证书已信任', '安装失败')
+  await report(store.installCa(), t('mitm.caInstalled'), t('mitm.installFailed'))
 }
 
 async function uninstall(): Promise<void> {
-  await report(store.uninstallCa(), '已移除系统信任', '移除失败')
+  await report(store.uninstallCa(), t('mitm.trustRemoved'), t('mitm.removeFailed'))
 }
 
 async function remove(): Promise<void> {
   deleteOpen.value = false
-  await report(store.deleteCa(), '根证书已删除', '删除失败')
+  await report(store.deleteCa(), t('mitm.caDeleted'), t('common.deleteFailed'))
 }
 
 async function exportCa(): Promise<void> {
   const error = await store.exportCa()
-  if (error) toast.error('导出失败', error)
+  if (error) toast.error(t('mitm.exportFailed'), error)
 }
 
 async function excludeHost(host: string): Promise<void> {
   const exclusion = `-${host}`
   if (settings.value.hostnames.includes(exclusion)) return
-  await saveList([...settings.value.hostnames, exclusion], [...disabledSet.value], `已排除 ${host}`)
+  await saveList([...settings.value.hostnames, exclusion], [...disabledSet.value], t('mitm.excluded', [host]))
 }
 
 onMounted(async () => {
@@ -161,10 +162,10 @@ onBeforeUnmount(() => {
   <div class="page-shell feature-page mitm-view">
     <header class="surge-title">
       <div class="surge-title-row">
-        <h1>HTTPS 解密</h1>
-        <button type="button" class="switch surge-switch" :class="{ on: settings.enabled }" role="switch" :aria-checked="settings.enabled" aria-label="启用 HTTPS 解密" :disabled="!!store.busy" @click="toggleEnabled" />
+        <h1>{{ t('common.httpsDecryption') }}</h1>
+        <button type="button" class="switch surge-switch" :class="{ on: settings.enabled }" role="switch" :aria-checked="settings.enabled" :aria-label="t('mitm.enableLabel')" :disabled="!!store.busy" @click="toggleEnabled" />
       </div>
-      <p>通过中间人攻击（MitM, man-in-the-middle）的方式解密 HTTPS 流量。</p>
+      <p>{{ t('mitm.intro') }}</p>
       <p v-if="inactiveText" class="surge-warn">{{ inactiveText }}</p>
     </header>
 
@@ -173,7 +174,7 @@ onBeforeUnmount(() => {
     <div class="mitm-columns">
       <div class="mitm-left">
         <section class="surge-section">
-          <h2 class="tone-orange">CA 证书</h2>
+          <h2 class="tone-orange">{{ t('mitm.ca') }}</h2>
           <div class="mitm-ca">
             <svg class="mitm-ca-icon" viewBox="0 0 40 46" aria-hidden="true">
               <defs>
@@ -190,40 +191,40 @@ onBeforeUnmount(() => {
               <circle cx="28" cy="32" r="4.6" fill="none" stroke="#fff" stroke-width="1.2" opacity=".75" />
             </svg>
             <div class="mitm-ca-text">
-              <strong :title="ca?.fingerprint ? `SHA-256 ${ca.fingerprint}` : undefined">{{ ca ? ca.commonName : '尚未生成 CA 证书' }}</strong>
-              <small :class="{ 'surge-warn': ca?.trusted === false }">{{ ca ? caStatus : '解密前需要先生成一张本机专属的根证书' }}</small>
+              <strong :title="ca?.fingerprint ? `SHA-256 ${ca.fingerprint}` : undefined">{{ ca ? ca.commonName : t('mitm.noCa') }}</strong>
+              <small :class="{ 'surge-warn': ca?.trusted === false }">{{ ca ? caStatus : t('mitm.needCa') }}</small>
             </div>
           </div>
           <div class="mitm-ops">
-            <span>操作：</span>
+            <span>{{ t('mitm.actions') }}</span>
             <div class="mitm-ops-stack">
-              <button type="button" class="surge-button" :disabled="!!store.busy" @click="requestGenerate">{{ store.busy === 'generate-ca' ? '生成中…' : '生成新证书' }}</button>
+              <button type="button" class="surge-button" :disabled="!!store.busy" @click="requestGenerate">{{ store.busy === 'generate-ca' ? t('overrides.generating') : t('mitm.generateNew') }}</button>
               <template v-if="ca && state.trustSupported">
-                <button v-if="ca.trusted !== true" type="button" class="surge-button" :disabled="!!store.busy" @click="install">{{ store.busy === 'install-ca' ? '等待确认…' : '将证书安装到系统' }}</button>
-                <button v-else type="button" class="surge-button" :disabled="!!store.busy" @click="uninstall">从系统中移除证书</button>
+                <button v-if="ca.trusted !== true" type="button" class="surge-button" :disabled="!!store.busy" @click="install">{{ store.busy === 'install-ca' ? t('mitm.waitingConfirm') : t('mitm.installToSystem') }}</button>
+                <button v-else type="button" class="surge-button" :disabled="!!store.busy" @click="uninstall">{{ t('mitm.removeFromSystem') }}</button>
               </template>
-              <button type="button" class="surge-button" :disabled="!!store.busy || !ca" @click="exportCa">导出证书</button>
-              <button type="button" class="surge-button danger" :disabled="!!store.busy || !ca" @click="deleteOpen = true">删除证书</button>
+              <button type="button" class="surge-button" :disabled="!!store.busy || !ca" @click="exportCa">{{ t('mitm.exportCert') }}</button>
+              <button type="button" class="surge-button danger" :disabled="!!store.busy || !ca" @click="deleteOpen = true">{{ t('mitm.deleteCert') }}</button>
             </div>
           </div>
         </section>
 
         <section class="surge-section">
-          <h2 class="tone-green">选项</h2>
+          <h2 class="tone-green">{{ t('mitm.options') }}</h2>
           <label class="surge-check">
             <input type="checkbox" :checked="settings.skipServerCertVerify" :disabled="!!store.busy" @change="toggleSkipVerify" />
-            <span>进行 MitM 时跳过服务端证书验证</span>
-            <small>即使服务器证书无效也允许连接。</small>
+            <span>{{ t('mitm.skipVerify') }}</span>
+            <small>{{ t('mitm.skipVerifyHint') }}</small>
           </label>
           <label class="surge-check">
             <input type="checkbox" :checked="settings.blockQuic" :disabled="!!store.busy" @change="toggleBlockQuic" />
-            <span>自动屏蔽 QUIC</span>
-            <small>当 QUIC 连接（即 HTTP/3）命中 MITM 主机名列表时，自动阻止该 QUIC 连接，使得连接回退至 HTTP/2 或 HTTP/1.1，以使得其可被 MITM。</small>
+            <span>{{ t('mitm.blockQuic') }}</span>
+            <small>{{ t('mitm.blockQuicHint') }}</small>
           </label>
           <label class="surge-check">
             <input type="checkbox" :checked="settings.http2" :disabled="!!store.busy" @change="toggleHttp2" />
             <span>MitM over HTTP/2</span>
-            <small>使用 HTTP/2 协议进行 MITM 解密，可在高并发下优化性能。</small>
+            <small>{{ t('mitm.h2Hint') }}</small>
           </label>
         </section>
       </div>
@@ -231,48 +232,48 @@ onBeforeUnmount(() => {
       <div class="mitm-right">
         <div class="mitm-hostbox">
           <header>
-            <span>MitM 主机名</span>
-            <button type="button" class="mitm-plus" aria-label="添加主机名" title="添加主机名" :disabled="!!store.busy" @click="startAdd"><AppIcon name="add" :size="11" :stroke-width="3" /></button>
+            <span>{{ t('mitm.hostList') }}</span>
+            <button type="button" class="mitm-plus" :aria-label="t('mitm.addHost')" :title="t('mitm.addHost')" :disabled="!!store.busy" @click="startAdd"><AppIcon name="add" :size="11" :stroke-width="3" /></button>
           </header>
           <ul>
             <li v-for="host in settings.hostnames" :key="host" :class="{ off: disabledSet.has(host) }">
               <label>
-                <input type="checkbox" :checked="!disabledSet.has(host)" :disabled="!!store.busy" :aria-label="`解密 ${host}`" @change="toggleHost(host)" />
+                <input type="checkbox" :checked="!disabledSet.has(host)" :disabled="!!store.busy" :aria-label="t('mitm.decryptHost', [host])" @change="toggleHost(host)" />
                 <span>{{ host }}</span>
               </label>
-              <button type="button" class="mitm-row-delete" :aria-label="`删除 ${host}`" title="删除" :disabled="!!store.busy" @click="removeHost(host)"><AppIcon name="close" :size="12" /></button>
+              <button type="button" class="mitm-row-delete" :aria-label="t('mitm.deleteHost', [host])" :title="t('common.delete')" :disabled="!!store.busy" @click="removeHost(host)"><AppIcon name="close" :size="12" /></button>
             </li>
-            <li v-for="host in moduleHostnames" :key="`module:${host}`" class="from-module" title="来自模块，在「重写」页的模块中管理">
+            <li v-for="host in moduleHostnames" :key="`module:${host}`" class="from-module" :title="t('mitm.fromModuleTitle')">
               <label>
-                <input type="checkbox" checked disabled :aria-label="`${host}（来自模块）`" />
+                <input type="checkbox" checked disabled :aria-label="t('mitm.fromModule', [host])" />
                 <span>{{ host }}</span>
               </label>
-              <small>模块</small>
+              <small>{{ t('common.module') }}</small>
             </li>
             <li v-if="adding" class="mitm-row-new">
-              <input ref="newHostInput" v-model="newHost" spellcheck="false" placeholder="example.com，可用空格分隔多个" @keydown.enter.prevent="confirmAdd" @keydown.esc.prevent="cancelAdd" @blur="confirmAdd" />
+              <input ref="newHostInput" v-model="newHost" spellcheck="false" :placeholder="t('mitm.hostPlaceholder')" @keydown.enter.prevent="confirmAdd" @keydown.esc.prevent="cancelAdd" @blur="confirmAdd" />
             </li>
           </ul>
         </div>
-        <p class="surge-hint">只有该列表中的域名才会被解密，允许使用通配符。部分应用有严格的安全策略，仅允许特定的 CA 证书，无法使用 MitM 进行解密。</p>
+        <p class="surge-hint">{{ t('mitm.hostHint') }}</p>
       </div>
     </div>
 
     <p class="surge-hint mitm-footer">
-      <button type="button" class="surge-link" @click="requestsOpen = true">最近解密的请求<template v-if="store.requests.length">（{{ store.requests.length }}）</template>…</button>
+      <button type="button" class="surge-link" @click="requestsOpen = true">{{ t('mitm.recent') }}<template v-if="store.requests.length">{{ t('common.paren', [store.requests.length]) }}</template>…</button>
     </p>
 
     <Teleport to="body">
       <div v-if="requestsOpen" class="modal-shade" role="presentation" @click.self="requestsOpen = false">
-        <section ref="requestsDialog" class="mitm-requests-modal" role="dialog" aria-modal="true" aria-label="最近解密的请求">
+        <section ref="requestsDialog" class="mitm-requests-modal" role="dialog" aria-modal="true" :aria-label="t('mitm.recent')">
           <header>
-            <h2>最近解密的请求</h2>
+            <h2>{{ t('mitm.recent') }}</h2>
             <div>
-              <button type="button" class="surge-button compact" :disabled="!store.requests.length" @click="store.clearRequests">清空</button>
-              <button type="button" class="icon-control" aria-label="关闭" @click="requestsOpen = false"><AppIcon name="close" /></button>
+              <button type="button" class="surge-button compact" :disabled="!store.requests.length" @click="store.clearRequests">{{ t('common.clear') }}</button>
+              <button type="button" class="icon-control" :aria-label="t('common.close')" @click="requestsOpen = false"><AppIcon name="close" /></button>
             </div>
           </header>
-          <p v-if="!store.requests.length" class="entity-empty">还没有经过解密或重写的请求。</p>
+          <p v-if="!store.requests.length" class="entity-empty">{{ t('mitm.noRecent') }}</p>
           <ul v-else class="mitm-requests">
             <li v-for="entry in store.requests" :key="entry.id" :class="{ failed: !!entry.error }">
               <div class="mitm-request-line">
@@ -286,12 +287,12 @@ onBeforeUnmount(() => {
                 <span v-for="action in entry.actions" :key="action" class="mitm-tag" :class="{ 'mitm-tag-error': action.startsWith('script-error:') }">{{ mitmActionLabel(action) }}</span>
               </div>
               <details v-if="entry.scriptLogs?.length" class="mitm-script-logs">
-                <summary>脚本日志（{{ entry.scriptLogs.length }}）</summary>
+                <summary>{{ t('mitm.scriptLog', [entry.scriptLogs.length]) }}</summary>
                 <pre>{{ entry.scriptLogs.join('\n') }}</pre>
               </details>
               <p v-if="entry.error" class="mitm-error">
                 {{ entry.error }}
-                <button v-if="entry.method === 'TLS'" type="button" class="surge-link" @click="excludeHost(entry.host)">不再解密 {{ entry.host }}</button>
+                <button v-if="entry.method === 'TLS'" type="button" class="surge-link" @click="excludeHost(entry.host)">{{ t('mitm.stopDecrypt', [entry.host]) }}</button>
               </p>
             </li>
           </ul>
@@ -299,8 +300,8 @@ onBeforeUnmount(() => {
       </div>
     </Teleport>
 
-    <ConfirmModal :open="regenerateOpen" title="生成新证书？" description="旧证书会从系统中移除，已导出到其它设备的旧证书也会失效。生成后需要重新安装到系统。" confirm-label="生成新证书" :busy="!!store.busy" @close="regenerateOpen = false" @confirm="generate" />
-    <ConfirmModal :open="deleteOpen" title="删除根证书？" description="将从系统中移除并删除证书与私钥，HTTPS 解密随即停止。" confirm-label="删除" :busy="!!store.busy" @close="deleteOpen = false" @confirm="remove" />
+    <ConfirmModal :open="regenerateOpen" :title="t('mitm.regenerateTitle')" :description="t('mitm.regenerateDescription')" :confirm-label="t('mitm.generateNew')" :busy="!!store.busy" @close="regenerateOpen = false" @confirm="generate" />
+    <ConfirmModal :open="deleteOpen" :title="t('mitm.deleteTitle')" :description="t('mitm.deleteDescription')" :confirm-label="t('common.delete')" :busy="!!store.busy" @close="deleteOpen = false" @confirm="remove" />
   </div>
 </template>
 

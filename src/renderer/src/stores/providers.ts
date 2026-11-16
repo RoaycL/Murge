@@ -1,3 +1,4 @@
+import { t } from '@shared/i18n'
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type {
@@ -57,7 +58,7 @@ export function isRemoteResource(provider: { vehicleType?: string; type?: string
 function refreshFailureMessage(error: unknown): string {
   const err = toProtocolError(error)
   if (err.code === ProtocolErrorCode.UPSTREAM_TEST_FAILED) {
-    return '更新失败：无法连接源地址（HTTP 503）'
+    return t('providerStore.refreshUnreachable')
   }
   return err.message
 }

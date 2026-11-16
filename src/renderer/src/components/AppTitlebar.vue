@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { UnlistenFn } from '@tauri-apps/api/event'
@@ -17,7 +18,7 @@ async function control(action: 'minimize' | 'maximize' | 'close'): Promise<void>
     else if (action === 'minimize') await getCurrentWindow().minimize()
     else await getCurrentWindow().toggleMaximize()
   } catch {
-    error.value = '窗口操作失败，请重试'
+    error.value = t('titlebar.actionFailed')
   }
 }
 
@@ -34,7 +35,7 @@ onMounted(async () => {
     retain(await current.onResized(async () => { maximized.value = await current.isMaximized() }))
     maximized.value = await current.isMaximized()
   } catch {
-    error.value = '窗口状态读取失败，请重试'
+    error.value = t('titlebar.stateFailed')
   }
 })
 
@@ -49,15 +50,15 @@ onBeforeUnmount(() => {
     <div class="tauri-titlebar">
       <!-- Tauri handles dragging and double-click maximize on this region. -->
       <div class="tauri-titlebar-drag" data-tauri-drag-region aria-hidden="true" />
-      <div class="tauri-window-controls" aria-label="窗口控制">
-        <button type="button" class="tauri-caption-button" aria-label="最小化" title="最小化" @click="control('minimize')">
+      <div class="tauri-window-controls" :aria-label="t('titlebar.controls')">
+        <button type="button" class="tauri-caption-button" :aria-label="t('titlebar.minimize')" :title="t('titlebar.minimize')" @click="control('minimize')">
           <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5.5h10" /></svg>
         </button>
-        <button type="button" class="tauri-caption-button" :aria-label="maximized ? '还原' : '最大化'" :title="maximized ? '还原' : '最大化'" @click="control('maximize')">
+        <button type="button" class="tauri-caption-button" :aria-label="maximized ? t('titlebar.restore') : t('titlebar.maximize')" :title="maximized ? t('titlebar.restore') : t('titlebar.maximize')" @click="control('maximize')">
           <svg v-if="maximized" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2.5 2.5v-2h7v7h-2M.5 2.5h7v7h-7z" /></svg>
           <svg v-else width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M.5.5h9v9h-9z" /></svg>
         </button>
-        <button type="button" class="tauri-caption-button tauri-caption-close" aria-label="关闭" title="关闭" @click="control('close')">
+        <button type="button" class="tauri-caption-button tauri-caption-close" :aria-label="t('common.close')" :title="t('common.close')" @click="control('close')">
           <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="m.5.5 9 9m0-9-9 9" /></svg>
         </button>
       </div>

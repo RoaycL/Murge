@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+import { inlineMessages } from './helpers/localized-source'
 import { describe, expect, it } from 'vitest'
 import { describeDevice, isThisHost, lanAddresses, type LocalAddress } from '../src/shared/lan'
 
@@ -34,7 +35,7 @@ describe('局域网设备 helpers', () => {
 
 describe('局域网设备接管 UI contract', () => {
   it('puts the allow-lan switch and gateway card on 概览', async () => {
-    const overview = await readFile('src/renderer/src/views/OverviewView.vue', 'utf8')
+    const overview = inlineMessages(await readFile('src/renderer/src/views/OverviewView.vue', 'utf8'))
     expect(overview).toMatch(/<h2>局域网设备接管<\/h2>/)
     expect(overview).toMatch(/<h3>HTTP 与 SOCKS5 代理<\/h3>/)
     expect(overview).toMatch(/@click\.stop="toggleAllowLan"/)
@@ -50,8 +51,8 @@ describe('局域网设备接管 UI contract', () => {
   })
 
   it('hosts the gateway guide on the 网络 page', async () => {
-    const network = await readFile('src/renderer/src/views/NetworkSettingsView.vue', 'utf8')
-    const panel = await readFile('src/renderer/src/components/LanGatewayPanel.vue', 'utf8')
+    const network = inlineMessages(await readFile('src/renderer/src/views/NetworkSettingsView.vue', 'utf8'))
+    const panel = inlineMessages(await readFile('src/renderer/src/components/LanGatewayPanel.vue', 'utf8'))
     expect(network).toMatch(/<LanGatewayPanel \/>/)
     // The manual command stays only as a fallback behind the switch.
     expect(panel).toMatch(/<details class="gateway-manual">/)

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import AppSelect from './AppSelect.vue'
 import AppIcon from './AppIcon.vue'
@@ -123,8 +124,8 @@ function syncAndAccept(value: DnsEnhancement): void {
 
 async function save(): Promise<void> {
   const ok = await store.save(buildInput())
-  if (ok) { syncAndAccept(store.enhancement); toast.success('DNS 设置已保存') }
-  else toast.error('DNS 设置保存失败', store.lastError ?? undefined)
+  if (ok) { syncAndAccept(store.enhancement); toast.success(t('dns.saved')) }
+  else toast.error(t('dns.saveFailed'), store.lastError ?? undefined)
 }
 
 async function preview(): Promise<void> {
@@ -142,12 +143,12 @@ async function confirmReset(): Promise<void> {
   if (ok) {
     syncAndAccept(store.enhancement)
     resetOpen.value = false
-    toast.success('DNS 设置已恢复默认并生效')
-  } else toast.error('DNS 设置重置失败', store.lastError ?? undefined)
+    toast.success(t('dns.resetDone'))
+  } else toast.error(t('dns.resetFailed'), store.lastError ?? undefined)
 }
 
 const dirty = computed(() => hydrated.value && JSON.stringify(buildInput()) !== savedBaseline.value)
-useUnsavedChanges('dns-enhancement', 'DNS 设置', dirty)
+useUnsavedChanges('dns-enhancement', t('dns.name'), dirty)
 
 watch(
   () => store.enhancement,
@@ -163,15 +164,15 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="dns-panel" aria-label="DNS 增强">
+  <section class="dns-panel" :aria-label="t('dns.title')">
     <header class="dns-head">
       <div>
-        <h2 class="dns-title">DNS 增强</h2>
+        <h2 class="dns-title">{{ t('dns.title') }}</h2>
         <p class="dns-subtitle">
-          为所有订阅统一配置内核 DNS：解析模式、虚拟 IP 范围、服务器与域名分流，无需改动订阅文件；保存后立即应用。
+          {{ t('dns.intro') }}
         </p>
       </div>
-      <div v-if="dirty" class="dns-head-actions"><button type="button" class="dns-reset" @click="restoreSaved">撤销更改</button><button type="button" class="dns-reset" @click="requestReset">恢复默认</button></div>
+      <div v-if="dirty" class="dns-head-actions"><button type="button" class="dns-reset" @click="restoreSaved">{{ t('common.revertChanges') }}</button><button type="button" class="dns-reset" @click="requestReset">{{ t('common.restoreDefaults') }}</button></div>
     </header>
 
     <p v-if="store.lastError" class="inline-error" role="alert">{{ store.lastError }}</p>
@@ -179,109 +180,109 @@ onMounted(async () => {
     <div class="dns-body">
       <div class="dns-row">
         <label class="dns-switch">
-          <input v-model="form.enabled" type="checkbox" aria-label="启用 DNS 增强" />
+          <input v-model="form.enabled" type="checkbox" :aria-label="t('dns.enableLabel')" />
           <span class="dns-switch-track" />
-          <span class="dns-label">启用</span>
+          <span class="dns-label">{{ t('common.enable') }}</span>
         </label>
       </div>
 
       <fieldset class="dns-group">
-        <legend>基础</legend>
+        <legend>{{ t('dns.basic') }}</legend>
         <div class="dns-grid">
           <label class="dns-field">
-            <span class="dns-label">增强模式</span>
-            <AppSelect v-model="form.enhancedMode" :options="[{ value: 'fake-ip', label: '虚拟 IP' }, { value: 'redir-host', label: '真实地址' }]" label="DNS 增强模式" />
+            <span class="dns-label">{{ t('dns.enhancedMode') }}</span>
+            <AppSelect v-model="form.enhancedMode" :options="[{ value: 'fake-ip', label: t('dns.fakeIp') }, { value: 'redir-host', label: t('dns.realIp') }]" :label="t('dns.enhancedModeLabel')" />
           </label>
           <label v-if="form.enhancedMode === 'fake-ip'" class="dns-field">
-            <span class="dns-label">虚拟 IP 地址范围</span>
+            <span class="dns-label">{{ t('dns.fakeIpRange') }}</span>
             <input v-model="form.fakeIpRange" class="dns-input" spellcheck="false" placeholder="198.18.0.1/16" />
           </label>
           <label v-if="form.enhancedMode === 'fake-ip'" class="dns-field">
-            <span class="dns-label">虚拟 IP 过滤模式</span>
-            <AppSelect v-model="form.fakeIpFilterMode" :options="[{ value: 'blacklist', label: '排除匹配项' }, { value: 'whitelist', label: '仅包含匹配项' }]" label="虚拟 IP 过滤模式" />
+            <span class="dns-label">{{ t('dns.fakeIpFilterMode') }}</span>
+            <AppSelect v-model="form.fakeIpFilterMode" :options="[{ value: 'blacklist', label: t('dns.blacklist') }, { value: 'whitelist', label: t('dns.whitelist') }]" :label="t('dns.fakeIpFilterMode')" />
           </label>
           <label class="dns-switch small">
-            <input v-model="form.ipv6" type="checkbox" aria-label="启用 IPv6" />
+            <input v-model="form.ipv6" type="checkbox" :aria-label="t('dns.enableIpv6')" />
             <span class="dns-switch-track" />
             <span class="dns-label">IPv6</span>
           </label>
           <label class="dns-switch small">
-            <input v-model="form.respectRules" type="checkbox" aria-label="遵循规则" />
+            <input v-model="form.respectRules" type="checkbox" :aria-label="t('dns.respectRules')" />
             <span class="dns-switch-track" />
-            <span class="dns-label">遵循规则</span>
+            <span class="dns-label">{{ t('dns.respectRules') }}</span>
           </label>
           <label class="dns-switch small">
-            <input v-model="form.useHosts" type="checkbox" aria-label="使用静态域名映射" />
+            <input v-model="form.useHosts" type="checkbox" :aria-label="t('dns.useHosts')" />
             <span class="dns-switch-track" />
-            <span class="dns-label">使用静态域名映射</span>
+            <span class="dns-label">{{ t('dns.useHosts') }}</span>
           </label>
         </div>
       </fieldset>
 
       <fieldset v-if="form.enhancedMode === 'fake-ip'" class="dns-group">
-        <legend>虚拟 IP 过滤</legend>
-        <p class="dns-group-hint">每行填写一条规则，支持域名、通配符以及 geosite:/geoip: 规则。</p>
+        <legend>{{ t('dns.fakeIpFilter') }}</legend>
+        <p class="dns-group-hint">{{ t('dns.fakeIpFilterHint') }}</p>
         <label class="dns-field">
-          <span class="dns-label">过滤规则</span>
+          <span class="dns-label">{{ t('dns.filterRules') }}</span>
           <textarea v-model="fakeIpFilterText" class="dns-textarea" spellcheck="false" placeholder="*.lan&#10;*.local&#10;local" />
         </label>
       </fieldset>
 
       <fieldset class="dns-group">
-        <legend>DNS 服务器</legend>
-        <p class="dns-group-hint">下列输入框均每行填写一个服务器地址；可使用 IP、DoH、DoT、QUIC 或 DHCP 地址。</p>
+        <legend>{{ t('dns.servers') }}</legend>
+        <p class="dns-group-hint">{{ t('dns.serversHint') }}</p>
         <div class="dns-grid">
           <label class="dns-field">
-            <span class="dns-label">默认解析服务器</span>
+            <span class="dns-label">{{ t('dns.defaultNameserver') }}</span>
             <textarea v-model="defaultNsText" class="dns-textarea" spellcheck="false" placeholder="tls://223.5.5.5" />
           </label>
           <label class="dns-field">
-            <span class="dns-label">常规解析服务器</span>
+            <span class="dns-label">{{ t('dns.nameserver') }}</span>
             <textarea v-model="nameserverText" class="dns-textarea" spellcheck="false" placeholder="https://doh.pub/dns-query" />
           </label>
           <label class="dns-field">
-            <span class="dns-label">备用解析服务器</span>
-            <textarea v-model="fallbackText" class="dns-textarea" spellcheck="false" placeholder="留空则不启用备用解析" />
+            <span class="dns-label">{{ t('dns.fallback') }}</span>
+            <textarea v-model="fallbackText" class="dns-textarea" spellcheck="false" :placeholder="t('dns.fallbackPlaceholder')" />
           </label>
           <label class="dns-field">
-            <span class="dns-label">代理节点解析服务器（可选）</span>
+            <span class="dns-label">{{ t('dns.proxyServerNameserver') }}</span>
             <textarea v-model="proxyNsText" class="dns-textarea" spellcheck="false" />
           </label>
           <label class="dns-field">
-            <span class="dns-label">直连解析服务器（可选）</span>
+            <span class="dns-label">{{ t('dns.directNameserver') }}</span>
             <textarea v-model="directNsText" class="dns-textarea" spellcheck="false" />
           </label>
         </div>
       </fieldset>
 
       <fieldset class="dns-group">
-        <legend>映射</legend>
-        <p class="dns-group-hint">每行填写一组“匹配内容 目标值”，内容与目标值之间使用空格分隔。</p>
+        <legend>{{ t('dns.mapping') }}</legend>
+        <p class="dns-group-hint">{{ t('dns.mappingHint') }}</p>
         <div class="dns-grid">
           <label class="dns-field">
-            <span class="dns-label">静态域名映射（域名 IP）</span>
+            <span class="dns-label">{{ t('dns.hosts') }}</span>
             <textarea v-model="hostsText" class="dns-textarea" spellcheck="false" placeholder="example.com 1.2.3.4" />
           </label>
           <label class="dns-field">
-            <span class="dns-label">域名分流策略（域名规则 服务器）</span>
+            <span class="dns-label">{{ t('dns.nameserverPolicy') }}</span>
             <textarea v-model="policyText" class="dns-textarea" spellcheck="false" placeholder="geosite:cn 1.1.1.1" />
           </label>
         </div>
       </fieldset>
 
       <div class="dns-actions">
-        <button type="button" class="dns-preview" @click="preview">预览配置</button>
-        <span v-if="dirty" class="unsaved-indicator">未保存</span><button type="button" class="dns-save" :disabled="store.busy || !dirty" @click="save">{{ store.busy ? '保存中…' : '保存' }}</button>
+        <button type="button" class="dns-preview" @click="preview">{{ t('common.previewConfig') }}</button>
+        <span v-if="dirty" class="unsaved-indicator">{{ t('common.unsaved') }}</span><button type="button" class="dns-save" :disabled="store.busy || !dirty" @click="save">{{ store.busy ? t('common.saving') : t('common.save') }}</button>
       </div>
 
       <div v-if="previewOpen" class="dns-preview">
         <div class="dns-preview-head">
-          <span>生效的内核 DNS 配置（敏感信息已隐藏）</span>
-          <button type="button" class="dns-icon" aria-label="关闭预览" @click="previewOpen = false"><AppIcon name="close" :size="15" /></button>
+          <span>{{ t('dns.previewTitle') }}</span>
+          <button type="button" class="dns-icon" :aria-label="t('common.closePreview')" @click="previewOpen = false"><AppIcon name="close" :size="15" /></button>
         </div>
-        <pre class="dns-preview-body">{{ previewYaml || '（空）' }}</pre>
+        <pre class="dns-preview-body">{{ previewYaml || t('common.emptyParen') }}</pre>
       </div>
-      <ConfirmModal :open="resetOpen" title="恢复默认 DNS 设置？" description="当前 DNS 设置与默认值不同。确认后将保存默认设置，并立即应用到正在运行的内核。" confirm-label="恢复默认" :busy="store.busy" @close="resetOpen = false" @confirm="confirmReset" />
+      <ConfirmModal :open="resetOpen" :title="t('dns.resetTitle')" :description="t('dns.resetDescription')" :confirm-label="t('common.restoreDefaults')" :busy="store.busy" @close="resetOpen = false" @confirm="confirmReset" />
     </div>
   </section>
 </template>

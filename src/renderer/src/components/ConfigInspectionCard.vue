@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { onMounted, ref } from 'vue'
 import type { ActiveProfileConfigInspection, ProfileConfigSection } from '@shared/profiles'
 import RefreshIndicator from './RefreshIndicator.vue'
@@ -25,26 +26,26 @@ onMounted(() => void refresh())
 </script>
 
 <template>
-  <section class="inspection-card surface-card" :aria-label="`${title}配置来源`">
+  <section class="inspection-card surface-card" :aria-label="t('inspection.sourceLabel', [title])">
     <header>
-      <div><h3>{{ title }}当前生效配置</h3><p>{{ inspection?.profileName ? `活动配置：${inspection.profileName}` : '当前没有活动配置' }}</p></div>
-      <button type="button" class="inspection-refresh refresh-control" :disabled="loading" aria-label="刷新生效配置" @click="refresh"><RefreshIndicator :busy="loading" :size="14" /></button>
+      <div><h3>{{ t('inspection.effectiveTitle', [title]) }}</h3><p>{{ inspection?.profileName ? t('inspection.activeProfile', [inspection.profileName]) : t('inspection.noActiveProfile') }}</p></div>
+      <button type="button" class="inspection-refresh refresh-control" :disabled="loading" :aria-label="t('inspection.refresh')" @click="refresh"><RefreshIndicator :busy="loading" :size="14" /></button>
     </header>
     <p v-if="error" class="inspection-error">{{ error }}</p>
     <template v-else-if="inspection">
-      <ul v-if="inspection.diagnostics.length" class="inspection-warnings" aria-label="配置兼容性提示">
+      <ul v-if="inspection.diagnostics.length" class="inspection-warnings" :aria-label="t('inspection.compatLabel')">
         <li v-for="issue in inspection.diagnostics" :key="`${issue.line ?? 0}:${issue.message}`">
-          <b>兼容性提示</b><span>{{ issue.line ? `第 ${issue.line} 行：` : '' }}{{ issue.message }}</span>
+          <b>{{ t('inspection.compatTitle') }}</b><span>{{ issue.line ? t('inspection.lineNumber', [issue.line]) : '' }}{{ issue.message }}</span>
         </li>
       </ul>
-      <div v-if="inspection.sections[section].managedKeys.length" class="managed-row"><b>应用接管</b><span v-for="key in inspection.sections[section].managedKeys" :key="key">{{ key }}</span></div>
+      <div v-if="inspection.sections[section].managedKeys.length" class="managed-row"><b>{{ t('inspection.managedByApp') }}</b><span v-for="key in inspection.sections[section].managedKeys" :key="key">{{ key }}</span></div>
       <p v-for="note in inspection.sections[section].notes" :key="note" class="inspection-note">{{ note }}</p>
       <div class="inspection-columns">
-        <details><summary>配置文件值</summary><pre>{{ inspection.sections[section].profileYaml }}</pre></details>
-        <details><summary>当前实际生效值</summary><pre>{{ inspection.sections[section].effectiveYaml }}</pre></details>
+        <details><summary>{{ t('inspection.profileValue') }}</summary><pre>{{ inspection.sections[section].profileYaml }}</pre></details>
+        <details><summary>{{ t('inspection.effectiveValue') }}</summary><pre>{{ inspection.sections[section].effectiveYaml }}</pre></details>
       </div>
     </template>
-    <p v-else class="inspection-note">{{ loading ? '正在读取…' : '暂无数据' }}</p>
+    <p v-else class="inspection-note">{{ loading ? t('common.reading') : t('common.noData') }}</p>
   </section>
 </template>
 

@@ -2,6 +2,7 @@
  * Text helpers for the 本地节点 editor: YAML round-trips, pasted-content
  * import and the one-line node summary. The form itself is lib/proxy-schema.
  */
+import { t } from '@shared/i18n'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import type { ProxyConfig } from '@shared/local'
 import { parseProxyLines } from '@shared/proxy-import'
@@ -20,11 +21,11 @@ export interface ParseOptions {
 }
 
 function asProxy(value: unknown, index: number, options: ParseOptions = {}): ProxyConfig {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`第 ${index + 1} 个节点不是键值对象`)
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(t('nodeForm.notObject', [index + 1]))
   const config = value as Record<string, unknown>
   const name = config.name === undefined || config.name === null ? '' : String(config.name).trim()
-  if (!name && !options.allowEmptyName) throw new Error(`第 ${index + 1} 个节点缺少 name`)
-  if (typeof config.type !== 'string' || !config.type.trim()) throw new Error(`节点「${name || index + 1}」缺少 type`)
+  if (!name && !options.allowEmptyName) throw new Error(t('nodeForm.missingName', [index + 1]))
+  if (typeof config.type !== 'string' || !config.type.trim()) throw new Error(t('nodeForm.missingType', [name || index + 1]))
   return { ...config, name, type: config.type.trim() } as ProxyConfig
 }
 
@@ -37,13 +38,13 @@ export function parseProxiesYaml(text: string, options: ParseOptions = {}): Prox
   try {
     value = parseYaml(text)
   } catch (error) {
-    throw new Error(`YAML 格式错误：${error instanceof Error ? error.message.split('\n')[0] : String(error)}`)
+    throw new Error(t('nodeForm.yamlError', [error instanceof Error ? error.message.split('\n')[0] : String(error)]))
   }
   if (value && typeof value === 'object' && !Array.isArray(value) && Array.isArray((value as { proxies?: unknown }).proxies)) {
     value = (value as { proxies: unknown[] }).proxies
   }
   const items = Array.isArray(value) ? value : [value]
-  if (!items.length) throw new Error('没有找到节点')
+  if (!items.length) throw new Error(t('nodeForm.noNodes'))
   return items.map((item, index) => asProxy(item, index, options))
 }
 
@@ -51,11 +52,11 @@ export function parseProxiesYaml(text: string, options: ParseOptions = {}): Prox
 export function nodeSummary(config: Record<string, unknown>): string {
   const type = String(config.type ?? '').toLowerCase()
   if (type === 'tailscale') {
-    const control = typeof config['control-url'] === 'string' && config['control-url'] ? String(config['control-url']).replace(/^https?:\/\//, '') : 'Tailscale 官方控制服务器'
-    const exit = config['exit-node'] ? ` · 出口节点 ${String(config['exit-node'])}` : ''
+    const control = typeof config['control-url'] === 'string' && config['control-url'] ? String(config['control-url']).replace(/^https?:\/\//, '') : t('nodeForm.tailscaleOfficial')
+    const exit = config['exit-node'] ? t('nodeForm.exitNode', [String(config['exit-node'])]) : ''
     return `${control}${exit}`
   }
-  if (Array.isArray(config.peers)) return `${config.peers.length} 个 Peer`
+  if (Array.isArray(config.peers)) return t('nodeForm.peerCount', [config.peers.length])
   if (config.server) return `${String(config.server)}${config.port ? `:${String(config.port)}` : ''}`
   return ''
 }
@@ -69,8 +70,8 @@ export interface ParsedNodes {
  * Pasted node content in any supported shape: WireGuard (wg-quick or Surge
  * [WireGuard] section), share links / Surge proxy lines, or mihomo YAML.
  */
-export function parseNodeText(text: string, fallbackName = '新节点', options: ParseOptions = {}): ParsedNodes {
-  if (!text.trim()) throw new Error('内容为空')
+export function parseNodeText(text: string, fallbackName = t('nodeForm.newNode'), options: ParseOptions = {}): ParsedNodes {
+  if (!text.trim()) throw new Error(t('nodeForm.emptyContent'))
   if (/^\s*\[(Interface|WireGuard\s[^\]]+)\]/im.test(text)) {
     const result = parseWireGuardText(text, fallbackName)
     return { configs: [result.config as ProxyConfig], warnings: result.warnings }

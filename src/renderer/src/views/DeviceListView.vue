@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted, ref } from "vue";
 import { useConnectionsStore } from "../stores/connections";
 import { groupConnectionsByDevice } from "../lib/connection-groups";
@@ -28,8 +29,8 @@ const selectedKey = ref<string | null>(null);
 const closing = ref(false);
 const sort = ref<"address" | "traffic">("address");
 const SORT_OPTIONS = [
-  { value: "address", label: "按 IP 排序" },
-  { value: "traffic", label: "按流量排序" },
+  { value: "address", label: t('devices.sortIp') },
+  { value: "traffic", label: t('devices.sortTraffic') },
 ] as const;
 const groups = computed(() => {
   const rows = groupConnectionsByDevice(store.snapshot?.connections ?? []);
@@ -43,7 +44,7 @@ const groups = computed(() => {
 const selected = computed(() => {
   if (!selectedKey.value) return null;
   return groups.value.find((group) => group.key === selectedKey.value)
-    ?? { key: selectedKey.value, label: selectedKey.value, subtitle: "当前没有活动连接", upload: 0, download: 0, connections: [] as MihomoConnection[] };
+    ?? { key: selectedKey.value, label: selectedKey.value, subtitle: t('devices.noActive'), upload: 0, download: 0, connections: [] as MihomoConnection[] };
 });
 const stats = computed(() => (selectedKey.value ? store.entityStats("device", selectedKey.value) : null));
 const totals = computed(() => store.entityTotals("device"));
@@ -76,12 +77,12 @@ const details = computed(() => {
   const connections = group.connections;
   const processes = [...new Set(connections.map((item) => item.metadata.process?.trim()).filter(Boolean))];
   return [
-    { label: "IP 地址", value: group.label },
-    { label: "类型", value: connections.length ? deviceKind(group.label, connections) : "—" },
-    { label: "入站", value: countBy(connections.map((item) => item.metadata.type)) },
-    { label: "进程", value: processes.length ? `${processes.length} 个 · ${processes.slice(0, 3).join(", ")}${processes.length > 3 ? " 等" : ""}` : "—" },
-    { label: "最高流量主机名", value: stats.value?.topHost ?? "—" },
-    { label: "首次出现", value: stats.value ? formatWallClock(new Date(stats.value.firstSeen)) : "—" },
+    { label: t('devices.ipAddress'), value: group.label },
+    { label: t('common.type'), value: connections.length ? deviceKind(group.label, connections) : "—" },
+    { label: t('devices.inbound'), value: countBy(connections.map((item) => item.metadata.type)) },
+    { label: t('common.process'), value: processes.length ? t('devices.processSummary', [processes.length, processes.slice(0, 3).join(", "), processes.length > 3 ? t('devices.andMore') : ""]) : "—" },
+    { label: t('devices.topHost'), value: stats.value?.topHost ?? "—" },
+    { label: t('devices.firstSeen'), value: stats.value ? formatWallClock(new Date(stats.value.firstSeen)) : "—" },
   ];
 });
 async function closeSelected(): Promise<void> {
@@ -95,10 +96,10 @@ async function closeSelected(): Promise<void> {
   <div class="page-shell list-detail-page">
     <header class="page-toolbar">
       <div>
-        <h1>已发现设备</h1>
-        <small v-if="store.status !== 'live'" aria-live="polite">正在连接</small>
+        <h1>{{ t('devices.discovered') }}</h1>
+        <small v-if="store.status !== 'live'" aria-live="polite">{{ t('devices.connecting') }}</small>
       </div>
-      <AppSelect v-model="sort" :options="SORT_OPTIONS" label="设备排序方式" />
+      <AppSelect v-model="sort" :options="SORT_OPTIONS" :label="t('devices.sortLabel')" />
     </header>
     <section class="surface-card entity-list full-width-list">
       <button
@@ -115,35 +116,35 @@ async function closeSelected(): Promise<void> {
           >{{ group.label }}<small>{{ deviceKind(group.label, group.connections) }}</small></span
         ><strong
           >{{ rowRate(group.key)
-          }}<small>总计 {{ rowTotal(group) }} · {{ group.connections.length }} 个连接</small></strong
+          }}<small>{{ t('devices.summary', [rowTotal(group), group.connections.length]) }}</small></strong
         ><AppIcon name="next" :size="15" />
       </button>
-      <EmptyState v-if="!groups.length" icon="devices" title="暂无活动设备" detail="本机或局域网地址产生连接后会显示在这里。" />
+      <EmptyState v-if="!groups.length" icon="devices" :title="t('devices.emptyTitle')" :detail="t('devices.emptyDetail')" />
       <p v-if="onlyThisHost && !core.settings.allowLan" class="device-lan-hint">
-        其他设备的流量经过本机内核后才会出现在这里。在概览开启「局域网设备接管」，再把手机等设备的代理或网关指向本机。
-        <button type="button" class="link-button" @click="router.push('/overview')">前往概览</button>
+        {{ t('devices.lanHint') }}
+        <button type="button" class="link-button" @click="router.push('/overview')">{{ t('devices.goOverview') }}</button>
       </p>
     </section>
     <DetailDrawer
       :open="Boolean(selected)"
-      :title="selected?.label ?? '设备详情'"
-      :subtitle="selected ? (selected.connections.length ? deviceKind(selected.label, selected.connections) : '当前没有活动连接') : ''"
+      :title="selected?.label ?? t('devices.detailTitle')"
+      :subtitle="selected ? (selected.connections.length ? deviceKind(selected.label, selected.connections) : t('devices.noActive')) : ''"
       @close="selectedKey = null"
       ><div v-if="selected" class="entity-detail drawer-detail">
         <EntityStatsPanel :stats="stats" :active-connections="selected.connections.length" :details="details" />
-        <h3>活动连接</h3>
+        <h3>{{ t('common.activeConnections') }}</h3>
         <ul>
           <li v-for="connection in selected.connections" :key="connection.id">
-            <span>{{ connection.metadata.process || "未知进程" }} → {{
+            <span>{{ connection.metadata.process || t('common.unknownProcess') }} → {{
               connection.metadata.host ||
               connection.metadata.destinationIP ||
-              "未知目标"
+              t('diagnosis.unknownTarget')
             }}</span
             ><small>↑ {{ formatBytes(connection.upload) }} ↓ {{ formatBytes(connection.download) }}</small>
           </li>
-          <li v-if="!selected.connections.length" class="entity-empty-row">当前没有活动连接</li>
+          <li v-if="!selected.connections.length" class="entity-empty-row">{{ t('devices.noActive') }}</li>
         </ul>
-        <button v-if="selected.connections.length" type="button" class="danger-button device-close-all" :disabled="closing" @click="closeSelected">{{ closing ? '正在关闭…' : '关闭该地址的全部连接' }}</button>
+        <button v-if="selected.connections.length" type="button" class="danger-button device-close-all" :disabled="closing" @click="closeSelected">{{ closing ? t('devices.closing') : t('devices.closeAll') }}</button>
       </div></DetailDrawer
     >
   </div>

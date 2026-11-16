@@ -8,6 +8,7 @@
  * specific version can never smuggle in an unverified payload.
  */
 
+import { t } from './i18n'
 export type KernelVersionChannel = 'stable' | 'preview' | 'smart' | 'specific'
 
 /**
@@ -68,7 +69,7 @@ export function coerceKernelManagerState(value: unknown): KernelManagerState {
   const effectiveVersion =
     typeof o.effectiveVersion === 'string' && o.effectiveVersion.trim().length > 0
       ? o.effectiveVersion
-      : channel === 'specific' ? specificVersion : channel === 'preview' ? '预览版' : channel === 'smart' ? 'Smart' : stableVersion
+      : channel === 'specific' ? specificVersion : channel === 'preview' ? t('kernel.previewChannel') : channel === 'smart' ? 'Smart' : stableVersion
   return {
     enabled: true,
     smartEnabled: channel === 'smart',

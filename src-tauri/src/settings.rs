@@ -48,6 +48,8 @@ pub struct AppSettings {
     pub sub_store_use_proxy: bool,
     /// 网关模式: keep Windows IPv4 forwarding on for the LAN and TUN adapters.
     pub lan_gateway: bool,
+    /// Interface language: "system" (follow Windows), "zh-CN" or "en".
+    pub language: String,
 }
 
 impl Default for AppSettings {
@@ -71,6 +73,7 @@ impl Default for AppSettings {
             sub_store_enabled: true,
             sub_store_use_proxy: false,
             lan_gateway: false,
+            language: "system".into(),
         }
     }
 }
@@ -98,6 +101,13 @@ fn is_valid_channel(value: Option<&serde_json::Value>) -> Option<String> {
         Some("stable") | Some("preview") | Some("smart") | Some("specific") => {
             value.map(|v| v.as_str().unwrap_or_default().to_string())
         }
+        _ => None,
+    }
+}
+
+fn is_valid_language(value: Option<&serde_json::Value>) -> Option<String> {
+    match value.and_then(|v| v.as_str()) {
+        Some(language @ ("system" | "zh-CN" | "en")) => Some(language.to_string()),
         _ => None,
     }
 }
@@ -147,6 +157,8 @@ pub fn parse_app_settings(document: &serde_json::Value) -> AppSettings {
         sub_store_enabled: boolean("subStoreEnabled", defaults.sub_store_enabled),
         sub_store_use_proxy: boolean("subStoreUseProxy", defaults.sub_store_use_proxy),
         lan_gateway: boolean("lanGateway", defaults.lan_gateway),
+        language: is_valid_language(object.get("language"))
+            .unwrap_or_else(|| defaults.language.clone()),
     }
 }
 
@@ -294,6 +306,7 @@ impl SettingsStore {
             sub_store_enabled: boolean("subStoreEnabled", current.sub_store_enabled),
             sub_store_use_proxy: boolean("subStoreUseProxy", current.sub_store_use_proxy),
             lan_gateway: boolean("lanGateway", current.lan_gateway),
+            language: is_valid_language(patch.get("language")).unwrap_or(current.language),
         };
         self.write_to_disk(&next);
         state.cached = Some(next.clone());
@@ -392,6 +405,23 @@ mod tests {
         assert!(next.kernel_enabled, "kernelEnabled is migrated to true");
         assert_eq!(next.delay_test_url_scope, "group");
         assert!(!next.proxy_guard);
+    }
+
+    #[test]
+    fn language_defaults_to_system_and_accepts_only_shipped_locales() {
+        let temp = TempDir::new().unwrap();
+        let store = store_in(&temp);
+        assert_eq!(store.get().language, "system");
+        let next = store.set(&AppSettingsPatch(serde_json::json!({ "language": "en" })));
+        assert_eq!(next.language, "en");
+        let kept = store.set(&AppSettingsPatch(serde_json::json!({ "language": "fr" })));
+        assert_eq!(kept.language, "en");
+        let raw = fs::read_to_string(temp.path().join(APP_SETTINGS_FILE)).unwrap();
+        assert!(raw.contains("\"language\": \"en\""));
+        assert_eq!(
+            parse_app_settings(&serde_json::json!({ "language": "klingon" })).language,
+            "system"
+        );
     }
 
     #[test]

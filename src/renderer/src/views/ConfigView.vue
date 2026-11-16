@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted, ref } from 'vue'
 import { useProfilesStore } from '../stores/profiles'
 import type { ValidationResult } from '@shared/profiles'
@@ -37,9 +38,9 @@ const savingEdit = ref(false)
 const menuAnchor = ref<{ id: string; top: number; left: number } | null>(null)
 
 const SOURCE_BADGE: Record<string, string> = {
-  url: '远程',
-  file: '本地',
-  manual: '手动'
+  url: t('profiles.sourceRemote'),
+  file: t('profiles.sourceLocal'),
+  manual: t('profiles.sourceManual')
 }
 
 const CARD_PALETTE = ['--app-blue', '--app-pink', '--app-green', '--app-cyan', '--app-purple']
@@ -62,18 +63,18 @@ function relativeTime(value: number | string): string {
   // seconds-vs-ms mixup) would render as e.g. "2055 年前". Treat them as absent.
   if (Number.isNaN(ms) || ms <= 0) return '—'
   const diff = Date.now() - ms
-  if (diff < 0) return '刚刚'
+  if (diff < 0) return t('common.justNow')
   const min = Math.floor(diff / 60000)
-  if (min < 1) return '刚刚'
-  if (min < 60) return `${min} 分钟前`
+  if (min < 1) return t('common.justNow')
+  if (min < 60) return t('common.minutesAgo', [min])
   const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr} 小时前`
+  if (hr < 24) return t('common.hoursAgo', [hr])
   const day = Math.floor(hr / 24)
-  if (day < 30) return `${day} 天前`
+  if (day < 30) return t('profiles.daysAgo', [day])
   const mo = Math.floor(day / 30)
-  if (mo < 12) return `${mo} 个月前`
+  if (mo < 12) return t('profiles.monthsAgo', [mo])
   const yr = Math.floor(mo / 12)
-  return `${yr} 年前`
+  return t('profiles.yearsAgo', [yr])
 }
 
 function toggleMenu(id: string, event: MouseEvent): void {
@@ -100,9 +101,9 @@ async function importFromUrl(): Promise<void> {
     // its path can carry a token and would render as an overlong profile name.
     await profilesStore.importFromUrl(importName.value.trim(), url.value.trim(), false)
     showAddDialog.value = false
-    toast.success('远程配置已添加', '选中该配置后才会启用')
+    toast.success(t('profiles.remoteAdded'), t('profiles.selectToEnable'))
   } catch {
-    toast.error('远程配置导入失败', profilesStore.lastError ?? undefined)
+    toast.error(t('profiles.remoteFailed'), profilesStore.lastError ?? undefined)
   } finally {
     importing.value = false
   }
@@ -138,9 +139,9 @@ async function importLocalFile(): Promise<void> {
     localFile.value = null
     if (localFileInput.value) localFileInput.value.value = ''
     showAddDialog.value = false
-    toast.success('本地配置已添加', '选中该配置后才会启用')
+    toast.success(t('profiles.localAdded'), t('profiles.selectToEnable'))
   } catch {
-    toast.error('本地配置导入失败', profilesStore.lastError ?? undefined)
+    toast.error(t('profiles.localFailed'), profilesStore.lastError ?? undefined)
   } finally {
     importing.value = false
   }
@@ -151,7 +152,7 @@ async function importManual(): Promise<void> {
   importing.value = true
   try {
     await profilesStore.importProfile({
-      name: importName.value.trim() || '手动配置',
+      name: importName.value.trim() || t('profiles.manualName'),
       document: document.value,
       source: { type: 'manual' },
       activate: false
@@ -159,9 +160,9 @@ async function importManual(): Promise<void> {
     document.value = ''
     validation.value = null
     showAddDialog.value = false
-    toast.success('手动配置已添加', '选中该配置后才会启用')
+    toast.success(t('profiles.manualAdded'), t('profiles.selectToEnable'))
   } catch {
-    toast.error('手动配置导入失败', profilesStore.lastError ?? undefined)
+    toast.error(t('profiles.manualFailed'), profilesStore.lastError ?? undefined)
   } finally {
     importing.value = false
   }
@@ -174,9 +175,9 @@ async function previewValidation(): Promise<void> {
 async function activate(id: string): Promise<void> {
   try {
     await profilesStore.activate(id)
-    toast.success('配置已启用')
+    toast.success(t('common.profileActivated'))
   } catch {
-    toast.error('无法启用配置', profilesStore.lastError ?? undefined)
+    toast.error(t('common.profileActivateFailed'), profilesStore.lastError ?? undefined)
   }
 }
 
@@ -198,11 +199,11 @@ async function cardRefresh(id: string): Promise<void> {
   try {
     await profilesStore.updateFromSource(id)
     toast.success(
-      '配置已更新',
-      meta.active ? '运行中的配置已自动重新加载' : '已保存到配置库，未改变当前运行配置'
+      t('profiles.updated'),
+      meta.active ? t('profiles.reloadedAuto') : t('profiles.savedToLibrary')
     )
   } catch {
-    toast.error('配置更新失败', profilesStore.lastError ?? undefined)
+    toast.error(t('profiles.updateFailed'), profilesStore.lastError ?? undefined)
   } finally {
     updatingId.value = null
   }
@@ -213,7 +214,7 @@ async function remove(id: string): Promise<boolean> {
     await profilesStore.remove(id)
     return true
   } catch {
-    toast.error('无法删除配置', profilesStore.lastError ?? undefined)
+    toast.error(t('profiles.deleteFailed'), profilesStore.lastError ?? undefined)
     return false
   } finally {
     closeMenu()
@@ -226,7 +227,7 @@ async function confirmRemove(): Promise<void> {
   if (!await remove(id)) return
   if (selectedProfileId.value === id) selectedProfileId.value = null
   pendingDeleteId.value = null
-  toast.success('配置已删除')
+  toast.success(t('profiles.deleted'))
 }
 
 function openRename(id: string): void {
@@ -244,9 +245,9 @@ async function confirmRename(): Promise<void> {
   try {
     await profilesStore.rename(id, name)
     pendingRenameId.value = null
-    toast.success('配置已重命名')
+    toast.success(t('profiles.renamed'))
   } catch {
-    toast.error('无法重命名配置', profilesStore.lastError ?? undefined)
+    toast.error(t('profiles.renameFailed'), profilesStore.lastError ?? undefined)
   }
 }
 
@@ -263,15 +264,15 @@ async function saveEditor(): Promise<void> {
   const id = editingId.value
   if (!id) return
   const result = await profilesStore.validate(editingDocument.value)
-  if (!result.ok) { toast.error('配置校验失败', result.issues.map((i) => i.message).join('；')); return }
+  if (!result.ok) { toast.error(t('profiles.validateFailed'), result.issues.map((i) => i.message).join(t('common.semicolon'))); return }
   savingEdit.value = true
   try {
     const meta = profilesStore.profiles.find((item) => item.id === id)
     if (meta?.source.type === 'url' && editingUrl.value.trim()) await profilesStore.setSourceUrl(id, editingUrl.value.trim())
     await profilesStore.replaceDocument(id, editingDocument.value)
     editingId.value = null
-    toast.success('配置已保存', meta?.active ? '运行中的配置已重新加载' : undefined)
-  } catch { toast.error('配置保存失败', profilesStore.lastError ?? undefined) }
+    toast.success(t('profiles.saved'), meta?.active ? t('profiles.reloaded') : undefined)
+  } catch { toast.error(t('profiles.saveFailed'), profilesStore.lastError ?? undefined) }
   finally { savingEdit.value = false }
 }
 
@@ -285,31 +286,31 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
 <template>
   <div class="page-shell config-view">
     <header class="config-header">
-      <div><h1>配置</h1></div>
-      <button type="button" class="primary-button add-profile-button" @click="showAddDialog = true"><AppIcon name="add-file" :size="16" />添加配置</button>
+      <div><h1>{{ t('profiles.title') }}</h1></div>
+      <button type="button" class="primary-button add-profile-button" @click="showAddDialog = true"><AppIcon name="add-file" :size="16" />{{ t('profiles.add') }}</button>
     </header>
 
     <p v-if="profilesStore.lastError" class="inline-error" role="alert">{{ profilesStore.lastError }}</p>
 
     <Teleport to="body">
       <div v-if="showAddDialog" class="modal-shade" @click.self="showAddDialog = false">
-        <section class="profile-import-modal" role="dialog" aria-modal="true" aria-label="添加配置">
-          <header><div><h2>添加配置</h2><p>导入后加入配置列表；在列表中选中后才会设为当前配置并加载到内核。</p></div><button type="button" class="icon-control" aria-label="关闭" @click="showAddDialog = false"><AppIcon name="close" /></button></header>
-          <div class="profile-source-tabs" role="tablist"><button type="button" :class="{ selected: importSource === 'url' }" @click="importSource = 'url'"><AppIcon name="resources" :size="16" />远程 URL</button><button type="button" :class="{ selected: importSource === 'file' }" @click="importSource = 'file'"><AppIcon name="profiles" :size="16" />本地文件</button><button type="button" :class="{ selected: importSource === 'manual' }" @click="importSource = 'manual'"><AppIcon name="code" :size="16" />手动编辑</button></div>
-          <label class="modal-field"><span>显示名称</span><input v-model="importName" class="field" aria-label="配置显示名称" placeholder="可选，留空时自动生成" /></label>
-          <template v-if="importSource === 'url'"><label class="modal-field"><span>订阅地址</span><div class="field-with-action"><input ref="urlInput" v-model="url" class="field" aria-label="订阅地址" placeholder="https://example.com/subscription" @keyup.enter="importFromUrl" /><button type="button" class="icon-control" aria-label="粘贴订阅地址" @click="pasteUrl"><AppIcon name="clipboard" :size="16" /></button></div></label></template>
-          <label v-else-if="importSource === 'file'" class="modal-field"><span>本地 mihomo 配置</span><input ref="localFileInput" class="field file-input" type="file" accept=".yaml,.yml,text/yaml,application/yaml" aria-label="本地 mihomo 配置文件" @change="selectLocalFile" /></label>
-          <label v-else class="modal-field"><span>配置 YAML</span><textarea v-model="document" class="field document" aria-label="mihomo 配置 YAML" spellcheck="false" placeholder="粘贴 mihomo 配置 YAML…" /></label>
-          <p v-if="validation && !validation.ok" class="inline-error" role="alert">{{ validation.issues.map((issue) => issue.message).join('；') }}</p><template v-else-if="validation?.ok"><p class="inline-ok">配置有效</p><ul v-if="validation.issues.length" class="validation-warnings"><li v-for="(issue, index) in validation.issues" :key="index">第 {{ issue.line ?? '—' }} 行：{{ issue.message }}</li></ul></template>
-          <footer><button type="button" class="secondary-button" @click="showAddDialog = false">取消</button><button v-if="importSource === 'manual'" type="button" class="secondary-button" :disabled="!document.trim()" @click="previewValidation">校验</button><button type="button" class="primary-button" :disabled="importing || (importSource === 'url' ? !url.trim() : importSource === 'file' ? !localFile : !document.trim())" @click="importSource === 'url' ? importFromUrl() : importSource === 'file' ? importLocalFile() : importManual()">{{ importing ? '导入中…' : '验证并添加' }}</button></footer>
+        <section class="profile-import-modal" role="dialog" aria-modal="true" :aria-label="t('profiles.add')">
+          <header><div><h2>{{ t('profiles.add') }}</h2><p>{{ t('profiles.addHint') }}</p></div><button type="button" class="icon-control" :aria-label="t('common.close')" @click="showAddDialog = false"><AppIcon name="close" /></button></header>
+          <div class="profile-source-tabs" role="tablist"><button type="button" :class="{ selected: importSource === 'url' }" @click="importSource = 'url'"><AppIcon name="resources" :size="16" />{{ t('profiles.remoteUrl') }}</button><button type="button" :class="{ selected: importSource === 'file' }" @click="importSource = 'file'"><AppIcon name="profiles" :size="16" />{{ t('profiles.localFile') }}</button><button type="button" :class="{ selected: importSource === 'manual' }" @click="importSource = 'manual'"><AppIcon name="code" :size="16" />{{ t('profiles.manualEdit') }}</button></div>
+          <label class="modal-field"><span>{{ t('profiles.displayName') }}</span><input v-model="importName" class="field" :aria-label="t('profiles.displayNameLabel')" :placeholder="t('profiles.displayNamePlaceholder')" /></label>
+          <template v-if="importSource === 'url'"><label class="modal-field"><span>{{ t('profiles.subscriptionUrl') }}</span><div class="field-with-action"><input ref="urlInput" v-model="url" class="field" :aria-label="t('profiles.subscriptionUrl')" placeholder="https://example.com/subscription" @keyup.enter="importFromUrl" /><button type="button" class="icon-control" :aria-label="t('profiles.pasteUrl')" @click="pasteUrl"><AppIcon name="clipboard" :size="16" /></button></div></label></template>
+          <label v-else-if="importSource === 'file'" class="modal-field"><span>{{ t('profiles.localConfig') }}</span><input ref="localFileInput" class="field file-input" type="file" accept=".yaml,.yml,text/yaml,application/yaml" :aria-label="t('profiles.localConfigLabel')" @change="selectLocalFile" /></label>
+          <label v-else class="modal-field"><span>{{ t('profiles.yaml') }}</span><textarea v-model="document" class="field document" :aria-label="t('profiles.yamlLabel')" spellcheck="false" :placeholder="t('profiles.yamlPlaceholder')" /></label>
+          <p v-if="validation && !validation.ok" class="inline-error" role="alert">{{ validation.issues.map((issue) => issue.message).join(t('common.semicolon')) }}</p><template v-else-if="validation?.ok"><p class="inline-ok">{{ t('profiles.valid') }}</p><ul v-if="validation.issues.length" class="validation-warnings"><li v-for="(issue, index) in validation.issues" :key="index">{{ t('profiles.lineError', [issue.line ?? '—', issue.message]) }}</li></ul></template>
+          <footer><button type="button" class="secondary-button" @click="showAddDialog = false">{{ t('common.cancel') }}</button><button v-if="importSource === 'manual'" type="button" class="secondary-button" :disabled="!document.trim()" @click="previewValidation">{{ t('overrides.validate') }}</button><button type="button" class="primary-button" :disabled="importing || (importSource === 'url' ? !url.trim() : importSource === 'file' ? !localFile : !document.trim())" @click="importSource === 'url' ? importFromUrl() : importSource === 'file' ? importLocalFile() : importManual()">{{ importing ? t('profiles.importing') : t('profiles.validateAndAdd') }}</button></footer>
         </section>
       </div>
     </Teleport>
 
     <div v-if="profilesStore.status === 'loading' || profilesStore.status === 'idle'" class="empty-state">
-      <p>正在加载配置…</p>
+      <p>{{ t('profiles.loading') }}</p>
     </div>
-    <EmptyState v-else-if="profilesStore.ordered.length === 0" icon="profiles" title="还没有配置文件" detail="添加远程订阅、本地 YAML，或手动创建一份 mihomo 配置。" action-label="添加配置" @action="showAddDialog = true" />
+    <EmptyState v-else-if="profilesStore.ordered.length === 0" icon="profiles" :title="t('profiles.emptyTitle')" :detail="t('profiles.emptyDetail')" :action-label="t('profiles.add')" @action="showAddDialog = true" />
     <div v-else class="profiles-grid">
       <article
         v-for="meta in profilesStore.ordered"
@@ -318,7 +319,7 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
         :class="{ active: meta.active }"
         tabindex="0"
         role="button"
-        :aria-label="`查看配置 ${meta.name}`"
+        :aria-label="t('profiles.viewLabel', [meta.name])"
         @click="selectedProfileId = meta.id"
         @keyup.enter="selectedProfileId = meta.id"
         @keyup.space.prevent="selectedProfileId = meta.id"
@@ -329,23 +330,23 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
             <button
               type="button"
               class="icon-button small refresh-control"
-              :aria-label="meta.source.type === 'url' ? '更新订阅配置' : '重新应用该配置'"
-              :title="meta.source.type === 'url' ? '更新订阅配置' : '重新应用'"
+              :aria-label="meta.source.type === 'url' ? t('profiles.updateSubscription') : t('profiles.reapplyLabel')"
+              :title="meta.source.type === 'url' ? t('profiles.updateSubscription') : t('profiles.reapply')"
               :disabled="updatingId === meta.id"
               @click.stop="cardRefresh(meta.id)"
             ><RefreshIndicator :busy="updatingId === meta.id" :size="15" /></button>
             <button
               type="button"
               class="icon-button small"
-              aria-label="更多操作"
-              title="更多"
+              :aria-label="t('profiles.moreActions')"
+              :title="t('common.more')"
               @click.stop="toggleMenu(meta.id, $event)"
             ><AppIcon name="more-horizontal" :size="16" /></button>
           </div>
         </div>
         <div class="card-bottom">
           <span class="pill-badge">{{ sourceBadge(meta.source.type) }}</span>
-          <span v-if="meta.active" class="pill-badge active-badge">使用中</span>
+          <span v-if="meta.active" class="pill-badge active-badge">{{ t('profiles.inUse') }}</span>
           <span class="card-time">{{ relativeTime(meta.updatedAt) }}</span>
         </div>
       </article>
@@ -356,21 +357,21 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
     <div v-if="menuAnchor" class="card-menu" role="menu" :style="{ top: `${menuAnchor.top}px`, left: `${menuAnchor.left}px` }" @click.stop>
       <template v-for="meta in profilesStore.ordered" :key="meta.id">
         <template v-if="meta.id === menuAnchor.id">
-          <button v-if="!meta.active" type="button" role="menuitem" @click="activate(meta.id); closeMenu()">使用</button>
-          <button type="button" role="menuitem" @click="openEditor(meta.id)">编辑配置</button>
-          <button type="button" role="menuitem" @click="openRename(meta.id)">重命名</button>
-          <button type="button" role="menuitem" class="danger" @click="pendingDeleteId = meta.id; closeMenu()">删除</button>
+          <button v-if="!meta.active" type="button" role="menuitem" @click="activate(meta.id); closeMenu()">{{ t('profiles.use') }}</button>
+          <button type="button" role="menuitem" @click="openEditor(meta.id)">{{ t('profiles.edit') }}</button>
+          <button type="button" role="menuitem" @click="openRename(meta.id)">{{ t('profiles.rename') }}</button>
+          <button type="button" role="menuitem" class="danger" @click="pendingDeleteId = meta.id; closeMenu()">{{ t('common.delete') }}</button>
         </template>
       </template>
     </div>
 
-    <DetailDrawer :open="Boolean(selectedProfile)" :title="selectedProfile?.name ?? '配置详情'" :subtitle="selectedProfile ? `${sourceBadge(selectedProfile.source.type)} · ${relativeTime(selectedProfile.updatedAt)}` : ''" @close="selectedProfileId = null">
-      <div v-if="selectedProfile" class="entity-detail drawer-detail"><dl><div><dt>来源</dt><dd>{{ sourceBadge(selectedProfile.source.type) }}</dd></div><div><dt>更新时间</dt><dd>{{ relativeTime(selectedProfile.updatedAt) }}</dd></div><div><dt>状态</dt><dd>{{ selectedProfile.active ? '使用中' : '未启用' }}</dd></div></dl></div>
-      <template #footer><button type="button" class="secondary-button" @click="selectedProfile && openEditor(selectedProfile.id)"><AppIcon name="code" :size="15" />编辑配置</button><button type="button" class="danger-button" :disabled="selectedProfile?.active" @click="selectedProfile && (pendingDeleteId = selectedProfile.id)"><AppIcon name="delete" :size="15" />删除</button><button type="button" class="primary-button" :disabled="selectedProfile?.active" @click="selectedProfile && activate(selectedProfile.id)">{{ selectedProfile?.active ? '正在使用' : '使用此配置' }}</button></template>
+    <DetailDrawer :open="Boolean(selectedProfile)" :title="selectedProfile?.name ?? t('profiles.details')" :subtitle="selectedProfile ? `${sourceBadge(selectedProfile.source.type)} · ${relativeTime(selectedProfile.updatedAt)}` : ''" @close="selectedProfileId = null">
+      <div v-if="selectedProfile" class="entity-detail drawer-detail"><dl><div><dt>{{ t('profiles.source') }}</dt><dd>{{ sourceBadge(selectedProfile.source.type) }}</dd></div><div><dt>{{ t('profiles.updatedAt') }}</dt><dd>{{ relativeTime(selectedProfile.updatedAt) }}</dd></div><div><dt>{{ t('common.status') }}</dt><dd>{{ selectedProfile.active ? t('profiles.inUse') : t('profiles.notInUse') }}</dd></div></dl></div>
+      <template #footer><button type="button" class="secondary-button" @click="selectedProfile && openEditor(selectedProfile.id)"><AppIcon name="code" :size="15" />{{ t('profiles.edit') }}</button><button type="button" class="danger-button" :disabled="selectedProfile?.active" @click="selectedProfile && (pendingDeleteId = selectedProfile.id)"><AppIcon name="delete" :size="15" />{{ t('common.delete') }}</button><button type="button" class="primary-button" :disabled="selectedProfile?.active" @click="selectedProfile && activate(selectedProfile.id)">{{ selectedProfile?.active ? t('profiles.inUseNow') : t('profiles.useThis') }}</button></template>
     </DetailDrawer>
-    <ConfirmModal :open="Boolean(pendingDeleteId)" title="删除此配置？" description="这会移除本地配置记录；当前正在使用的配置不能删除，远程订阅源不会受到影响。" @close="pendingDeleteId = null" @confirm="confirmRemove" />
-    <Teleport to="body"><div v-if="pendingRenameId" class="modal-shade" @click.self="pendingRenameId = null"><section class="rename-modal" role="dialog" aria-modal="true" aria-label="重命名配置"><header><h2>重命名配置</h2><button type="button" class="icon-control" aria-label="关闭" @click="pendingRenameId = null"><AppIcon name="close" /></button></header><input v-model="renameValue" class="field" autofocus aria-label="配置名称" @keyup.enter="confirmRename" /><footer><button type="button" class="secondary-button" @click="pendingRenameId = null">取消</button><button type="button" class="primary-button" :disabled="!renameValue.trim()" @click="confirmRename">保存</button></footer></section></div></Teleport>
-    <Teleport to="body"><div v-if="editingId" class="modal-shade" @click.self="editingId = null"><section class="profile-edit-modal" role="dialog" aria-modal="true" aria-label="编辑配置"><header><div><h2>编辑配置</h2><p>保存前会校验 YAML；正在使用的配置会自动重新加载。</p></div><button type="button" class="icon-control" aria-label="关闭" @click="editingId = null"><AppIcon name="close" /></button></header><label v-if="profilesStore.profiles.find(i => i.id === editingId)?.source.type === 'url'" class="modal-field"><span>订阅地址</span><input v-model="editingUrl" class="field" aria-label="订阅地址（完整）" /></label><label class="modal-field editor-field"><span>配置 YAML</span><textarea v-model="editingDocument" class="field document profile-document-editor" spellcheck="false" aria-label="编辑配置 YAML" /></label><footer><button type="button" class="secondary-button" @click="editingId = null">取消</button><button type="button" class="primary-button" :disabled="savingEdit || !editingDocument.trim()" @click="saveEditor">{{ savingEdit ? '保存中…' : '校验并保存' }}</button></footer></section></div></Teleport>
+    <ConfirmModal :open="Boolean(pendingDeleteId)" :title="t('profiles.deleteTitle')" :description="t('profiles.deleteDescription')" @close="pendingDeleteId = null" @confirm="confirmRemove" />
+    <Teleport to="body"><div v-if="pendingRenameId" class="modal-shade" @click.self="pendingRenameId = null"><section class="rename-modal" role="dialog" aria-modal="true" :aria-label="t('profiles.renameTitle')"><header><h2>{{ t('profiles.renameTitle') }}</h2><button type="button" class="icon-control" :aria-label="t('common.close')" @click="pendingRenameId = null"><AppIcon name="close" /></button></header><input v-model="renameValue" class="field" autofocus :aria-label="t('profiles.nameLabel')" @keyup.enter="confirmRename" /><footer><button type="button" class="secondary-button" @click="pendingRenameId = null">{{ t('common.cancel') }}</button><button type="button" class="primary-button" :disabled="!renameValue.trim()" @click="confirmRename">{{ t('common.save') }}</button></footer></section></div></Teleport>
+    <Teleport to="body"><div v-if="editingId" class="modal-shade" @click.self="editingId = null"><section class="profile-edit-modal" role="dialog" aria-modal="true" :aria-label="t('profiles.edit')"><header><div><h2>{{ t('profiles.edit') }}</h2><p>{{ t('profiles.editHint') }}</p></div><button type="button" class="icon-control" :aria-label="t('common.close')" @click="editingId = null"><AppIcon name="close" /></button></header><label v-if="profilesStore.profiles.find(i => i.id === editingId)?.source.type === 'url'" class="modal-field"><span>{{ t('profiles.subscriptionUrl') }}</span><input v-model="editingUrl" class="field" :aria-label="t('profiles.subscriptionUrlFull')" /></label><label class="modal-field editor-field"><span>{{ t('profiles.yaml') }}</span><textarea v-model="editingDocument" class="field document profile-document-editor" spellcheck="false" :aria-label="t('profiles.editYamlLabel')" /></label><footer><button type="button" class="secondary-button" @click="editingId = null">{{ t('common.cancel') }}</button><button type="button" class="primary-button" :disabled="savingEdit || !editingDocument.trim()" @click="saveEditor">{{ savingEdit ? t('common.saving') : t('profiles.validateAndSave') }}</button></footer></section></div></Teleport>
 
   </div>
 </template>

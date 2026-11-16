@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useTunConfigStore } from '../stores/tun-config'
 import { EMPTY_TUN_CONFIG, type TunConfigModel } from '@shared/tun-config'
@@ -64,8 +65,8 @@ function buildInput(): TunConfigModel {
 
 async function save(): Promise<void> {
   const ok = await store.save(buildInput())
-  if (ok) { syncFromConfig(store.config); toast.success('TUN 配置已保存', '下次启用 TUN 时应用') }
-  else toast.error('TUN 配置保存失败', store.lastError ?? undefined)
+  if (ok) { syncFromConfig(store.config); toast.success(t('tunConfig.saved'), t('tunConfig.appliesNext')) }
+  else toast.error(t('tunConfig.saveFailed'), store.lastError ?? undefined)
 }
 
 async function preview(): Promise<void> {
@@ -83,12 +84,12 @@ async function confirmReset(): Promise<void> {
   if (ok) {
     syncFromConfig(store.config)
     resetOpen.value = false
-    toast.success('TUN 设置已恢复默认', '下次启用 TUN 时应用')
-  } else toast.error('TUN 设置重置失败', store.lastError ?? undefined)
+    toast.success(t('tunConfig.resetDone'), t('tunConfig.appliesNext'))
+  } else toast.error(t('tunConfig.resetFailed'), store.lastError ?? undefined)
 }
 
 const dirty = computed(() => hydrated.value && JSON.stringify(buildInput()) !== JSON.stringify(store.config))
-useUnsavedChanges('tun-config', 'TUN 配置', dirty)
+useUnsavedChanges('tun-config', t('tunConfig.name'), dirty)
 
 watch(
   () => store.config,
@@ -104,96 +105,96 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="tun-panel" aria-label="TUN 设置">
+  <section class="tun-panel" :aria-label="t('tunConfig.title')">
     <header class="tun-head">
       <div>
-        <h2 class="tun-title">TUN 设置</h2>
+        <h2 class="tun-title">{{ t('tunConfig.title') }}</h2>
         <p class="tun-subtitle">
-          设置虚拟网卡的协议栈、设备名称、最大传输单元、自动路由和 DNS 劫持。保存后会在下次启用 TUN 时使用。
+          {{ t('tunConfig.intro') }}
         </p>
       </div>
-      <div v-if="dirty" class="tun-head-actions"><button type="button" class="tun-reset" @click="restoreSaved">撤销更改</button><button type="button" class="tun-reset" @click="requestReset">恢复默认</button></div>
+      <div v-if="dirty" class="tun-head-actions"><button type="button" class="tun-reset" @click="restoreSaved">{{ t('common.revertChanges') }}</button><button type="button" class="tun-reset" @click="requestReset">{{ t('common.restoreDefaults') }}</button></div>
     </header>
 
     <p v-if="store.lastError" class="inline-error" role="alert">{{ store.lastError }}</p>
 
     <div class="tun-body">
       <fieldset class="tun-group">
-        <legend>栈与设备</legend>
+        <legend>{{ t('tunConfig.stackTitle') }}</legend>
         <div class="tun-grid">
           <label class="tun-field">
-            <span class="tun-label">协议栈</span>
-            <AppSelect v-model="form.stack" :options="STACK_OPTIONS" label="TUN 栈" />
+            <span class="tun-label">{{ t('tunConfig.stack') }}</span>
+            <AppSelect v-model="form.stack" :options="STACK_OPTIONS" :label="t('tunConfig.stackLabel')" />
           </label>
           <label class="tun-field">
-            <span class="tun-label">设备名称</span>
+            <span class="tun-label">{{ t('tunConfig.device') }}</span>
             <input v-model="form.device" class="tun-input" spellcheck="false" placeholder="Mihomo" />
           </label>
           <label class="tun-field">
-            <span class="tun-label">最大传输单元（576-65535）</span>
+            <span class="tun-label">{{ t('tunConfig.mtu') }}</span>
             <input v-model.number="form.mtu" class="tun-input" type="number" min="576" max="65535" />
           </label>
         </div>
       </fieldset>
 
       <fieldset class="tun-group">
-        <legend>路由行为</legend>
+        <legend>{{ t('tunConfig.routing') }}</legend>
         <div class="tun-grid">
           <label class="tun-switch small">
             <input v-model="form.autoRoute" type="checkbox" aria-label="auto-route" />
             <span class="tun-switch-track" />
-            <span class="tun-label">自动设置路由</span>
+            <span class="tun-label">{{ t('tunConfig.autoRoute') }}</span>
           </label>
           <label class="tun-switch small">
             <input v-model="form.autoDetectInterface" type="checkbox" aria-label="auto-detect-interface" />
             <span class="tun-switch-track" />
-            <span class="tun-label">自动检测出口网卡</span>
+            <span class="tun-label">{{ t('tunConfig.autoDetect') }}</span>
           </label>
           <label class="tun-switch small">
             <input v-model="form.strictRoute" type="checkbox" aria-label="strict-route" />
             <span class="tun-switch-track" />
-            <span class="tun-label">严格路由</span>
+            <span class="tun-label">{{ t('tunConfig.strictRoute') }}</span>
           </label>
         </div>
       </fieldset>
 
       <fieldset class="tun-group">
-        <legend>DNS 劫持</legend>
+        <legend>{{ t('tunConfig.dnsHijack') }}</legend>
         <div class="tun-grid">
           <label class="tun-field">
-            <span class="tun-label">劫持地址（每行一个：any、主机:端口、IP 或 [IPv6]:端口）</span>
+            <span class="tun-label">{{ t('tunConfig.dnsHijackHint') }}</span>
             <textarea v-model="dnsHijackText" class="tun-textarea" spellcheck="false" placeholder="any:53" />
           </label>
         </div>
       </fieldset>
 
       <fieldset class="tun-group">
-        <legend>路由地址</legend>
+        <legend>{{ t('tunConfig.routeAddresses') }}</legend>
         <div class="tun-grid">
           <label class="tun-field">
-            <span class="tun-label">接管地址（每行一个 IP 或 CIDR）</span>
+            <span class="tun-label">{{ t('tunConfig.routeInclude') }}</span>
             <textarea v-model="routeAddressText" class="tun-textarea" spellcheck="false" placeholder="192.168.0.0/16" />
           </label>
           <label class="tun-field">
-            <span class="tun-label">排除地址（每行一个 IP 或 CIDR）</span>
+            <span class="tun-label">{{ t('tunConfig.routeExclude') }}</span>
             <textarea v-model="routeExcludeAddressText" class="tun-textarea" spellcheck="false" placeholder="10.0.0.0/8" />
           </label>
         </div>
       </fieldset>
 
       <div class="tun-actions">
-        <button type="button" class="tun-preview" @click="preview">预览配置</button>
-        <span v-if="dirty" class="unsaved-indicator">未保存</span><button type="button" class="tun-save" :disabled="store.busy || !dirty" @click="save">{{ store.busy ? '保存中…' : '保存' }}</button>
+        <button type="button" class="tun-preview" @click="preview">{{ t('common.previewConfig') }}</button>
+        <span v-if="dirty" class="unsaved-indicator">{{ t('common.unsaved') }}</span><button type="button" class="tun-save" :disabled="store.busy || !dirty" @click="save">{{ store.busy ? t('common.saving') : t('common.save') }}</button>
       </div>
 
       <div v-if="previewOpen" class="tun-preview">
         <div class="tun-preview-head">
-          <span>启用 TUN 时生效的 mihomo 配置</span>
-          <button type="button" class="tun-icon" aria-label="关闭预览" @click="previewOpen = false"><AppIcon name="close" :size="15" /></button>
+          <span>{{ t('tunConfig.previewTitle') }}</span>
+          <button type="button" class="tun-icon" :aria-label="t('common.closePreview')" @click="previewOpen = false"><AppIcon name="close" :size="15" /></button>
         </div>
-        <pre class="tun-preview-body">{{ previewYaml || '（空）' }}</pre>
+        <pre class="tun-preview-body">{{ previewYaml || t('common.emptyParen') }}</pre>
       </div>
-      <ConfirmModal :open="resetOpen" title="恢复默认 TUN 设置？" description="当前 TUN 设置与默认值不同。确认后将保存默认设置，并在下次启用 TUN 时使用。" confirm-label="恢复默认" :busy="store.busy" @close="resetOpen = false" @confirm="confirmReset" />
+      <ConfirmModal :open="resetOpen" :title="t('tunConfig.resetTitle')" :description="t('tunConfig.resetDescription')" :confirm-label="t('common.restoreDefaults')" :busy="store.busy" @close="resetOpen = false" @confirm="confirmReset" />
     </div>
   </section>
 </template>

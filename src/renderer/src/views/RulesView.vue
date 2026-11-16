@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { locale, t } from '@shared/i18n'
 import { onMounted, ref, watch } from 'vue'
 import { useRulesStore, type RulesSortKey } from '../stores/rules'
 import { useProvidersStore } from '../stores/providers'
@@ -38,10 +39,10 @@ function onLocalChanged(): void {
 
 const COLUMNS: Array<{ key: RulesSortKey | null; label: string; className?: string }> = [
   { key: null, label: 'ID' },
-  { key: 'type', label: '类型' },
-  { key: 'payload', label: '值' },
-  { key: 'proxy', label: '策略' },
-  { key: 'hits', label: '使用计数' },
+  { key: 'type', label: t('common.type') },
+  { key: 'payload', label: t('localRule.value') },
+  { key: 'proxy', label: t('common.policy') },
+  { key: 'hits', label: t('rules.hitCount') },
   { key: null, label: '', className: 'rule-action-head' }
 ]
 
@@ -55,7 +56,7 @@ function formatUpdatedAt(value?: string): string {
   if (!value) return '—'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '—'
-  return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+  return date.toLocaleDateString(locale.value, { month: 'short', day: 'numeric' })
 }
 
 async function init(): Promise<void> {
@@ -78,32 +79,32 @@ watch(() => kernel.status.phase, (phase, previous) => {
   <div class="page-shell rules-view">
     <header class="rules-header">
       <div>
-        <h1>规则</h1>
+        <h1>{{ t('nav.rules') }}</h1>
       </div>
-      <input :value="rules.search" aria-label="搜索规则" placeholder="搜索规则" @input="rules.setSearch(($event.target as HTMLInputElement).value)">
+      <input :value="rules.search" :aria-label="t('rules.search')" :placeholder="t('rules.search')" @input="rules.setSearch(($event.target as HTMLInputElement).value)">
     </header>
 
     <LocalRulesSection ref="localSection" @changed="onLocalChanged" />
 
     <div v-if="rules.status === 'ready'" class="rules-counters">
-      <span>共 {{ rules.summary.total }} 条规则<span v-if="rules.summary.totalHits !== null"> · 命中 {{ rules.summary.totalHits }} 次</span></span>
-      <span class="rules-hint">规则将按照从上至下的顺序进行测试。</span>
+      <span>{{ t('rules.total', [rules.summary.total]) }}<span v-if="rules.summary.totalHits !== null"> {{ t('rules.hits', [rules.summary.totalHits]) }}</span></span>
+      <span class="rules-hint">{{ t('rules.orderNote') }}</span>
     </div>
 
     <div v-if="kernel.status.phase !== 'running'" class="empty-state">
-      <p>内核尚未运行</p>
-      <span>请先在“概览”中启动内核，规则将在 Controller 就绪后自动载入。</span>
+      <p>{{ t('common.coreNotStarted') }}</p>
+      <span>{{ t('rules.startHint') }}</span>
     </div>
 
     <div v-else-if="rules.status === 'error'" class="empty-state">
-      <p>无法读取规则</p>
+      <p>{{ t('rules.loadFailed') }}</p>
       <span>{{ rules.lastError }}</span>
-      <button type="button" @click="init">重试</button>
+      <button type="button" @click="init">{{ t('common.retry') }}</button>
     </div>
 
     <div v-else-if="rules.status === 'ready' && rules.visibleRows.length === 0" class="empty-state">
-      <p>{{ rules.search ? '没有匹配的规则' : '暂无规则' }}</p>
-      <span v-if="rules.search">请调整搜索条件。</span>
+      <p>{{ rules.search ? t('rules.noMatch') : t('rules.empty') }}</p>
+      <span v-if="rules.search">{{ t('rules.adjustSearch') }}</span>
     </div>
 
     <div v-else class="table-frame">
@@ -123,10 +124,10 @@ watch(() => kernel.status.phase, (phase, previous) => {
             <td :title="row.proxy">{{ row.proxy }}</td>
             <td>{{ formatHits(row) }}</td>
             <td class="rule-action-cell">
-              <span v-if="ruleOrigin(row) === 'local'" class="rule-origin">本地</span>
-              <span v-else-if="ruleOrigin(row) === 'managed'" class="rule-origin managed" title="自动添加（Tailscale 共存 / HTTPS 解密）">自动</span>
-              <button v-else-if="ruleOrigin(row) === 'edited'" type="button" class="rule-edit-button edited" :disabled="local.busy" @click="editRow(row)">已修改</button>
-              <button v-else-if="ruleOrigin(row) === 'subscription'" type="button" class="rule-edit-button" :disabled="local.busy" @click="editRow(row)">修改</button>
+              <span v-if="ruleOrigin(row) === 'local'" class="rule-origin">{{ t('common.local') }}</span>
+              <span v-else-if="ruleOrigin(row) === 'managed'" class="rule-origin managed" :title="t('rules.autoTitle')">{{ t('rules.auto') }}</span>
+              <button v-else-if="ruleOrigin(row) === 'edited'" type="button" class="rule-edit-button edited" :disabled="local.busy" @click="editRow(row)">{{ t('localRules.modified') }}</button>
+              <button v-else-if="ruleOrigin(row) === 'subscription'" type="button" class="rule-edit-button" :disabled="local.busy" @click="editRow(row)">{{ t('rules.modify') }}</button>
             </td>
           </tr>
         </tbody>
@@ -135,14 +136,14 @@ watch(() => kernel.status.phase, (phase, previous) => {
 
     <section v-if="providers.orderedRuleProviders.length" class="provider-section">
       <header class="section-caption rules-provider-caption">
-        <span>规则集</span>
+        <span>{{ t('rules.ruleSet') }}</span>
         <RefreshAllButton :run="providers.refreshAllRuleProviders" :disabled="providers.batchRefreshing || !providers.remoteRuleProviders.length || kernel.status.phase !== 'running'" />
       </header>
       <div class="provider-list surface-card">
         <div v-for="provider in providers.orderedRuleProviders" :key="provider.name" class="provider-row">
           <div class="provider-info">
             <strong>{{ provider.name }}</strong>
-            <small>{{ provider.behavior || 'rule' }} · {{ provider.ruleCount ?? 0 }} 条规则 · {{ formatUpdatedAt(provider.updatedAt) }}</small>
+            <small>{{ t('rules.ruleSetMeta', [provider.behavior || 'rule', provider.ruleCount ?? 0, formatUpdatedAt(provider.updatedAt)]) }}</small>
           </div>
           <div v-if="providers.opOf(provider.name, 'rule').error" class="provider-error">
             {{ providers.opOf(provider.name, 'rule').error }}
@@ -152,8 +153,8 @@ watch(() => kernel.status.phase, (phase, previous) => {
               type="button"
               class="icon-control refresh-control"
               :disabled="providers.opOf(provider.name, 'rule').refreshing"
-              :aria-label="providers.opOf(provider.name, 'rule').refreshing ? '更新中' : '更新规则集'"
-              title="更新"
+              :aria-label="providers.opOf(provider.name, 'rule').refreshing ? t('geodata.updating') : t('rules.updateRuleSet')"
+              :title="t('common.update')"
               @click="providers.refreshRuleProvider(provider.name)"
             ><RefreshIndicator :busy="providers.opOf(provider.name, 'rule').refreshing" :failed="Boolean(providers.opOf(provider.name, 'rule').error)" :size="16" /></button>
           </div>

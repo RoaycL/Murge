@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted, ref } from 'vue'
 import { useProfilesStore } from '../stores/profiles'
 import type { ConfigEdit } from '@shared/profiles'
@@ -11,9 +12,9 @@ const mixedPort = ref('')
 const saving = ref(false)
 
 const MODE_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: 'rule', label: '规则判定' },
-  { value: 'global', label: '全局代理' },
-  { value: 'direct', label: '直接连接' }
+  { value: 'rule', label: t('common.modeRule') },
+  { value: 'global', label: t('common.modeGlobal') },
+  { value: 'direct', label: t('common.modeDirect') }
 ]
 
 const activeId = computed(() => profilesStore.currentId)
@@ -58,16 +59,16 @@ onMounted(() => {
 
 <template>
   <div class="page-shell provider-settings">
-    <h1>代理设置</h1>
+    <h1>{{ t('providerSettings.title') }}</h1>
 
-    <p v-if="!activeMeta" class="inline-note">请先在「配置」页导入并启用一个配置文件。</p>
+    <p v-if="!activeMeta" class="inline-note">{{ t('providerSettings.needProfile') }}</p>
     <template v-else>
-      <p class="inline-note">当前配置文件：{{ activeMeta.name }}</p>
+      <p class="inline-note">{{ t('providerSettings.currentProfile', [activeMeta.name]) }}</p>
 
       <p v-if="profilesStore.lastError" class="inline-error" role="alert">{{ profilesStore.lastError }}</p>
 
-      <section class="section-caption"><span>运行模式</span></section>
-      <div class="mode-selector import-card" role="tablist" aria-label="运行模式">
+      <section class="section-caption"><span>{{ t('providerSettings.mode') }}</span></section>
+      <div class="mode-selector import-card" role="tablist" :aria-label="t('providerSettings.mode')">
         <button
           v-for="option in MODE_OPTIONS"
           :key="option.value"
@@ -77,15 +78,15 @@ onMounted(() => {
         >{{ option.label }}</button>
       </div>
 
-      <section class="section-caption"><span>监听端口</span></section>
+      <section class="section-caption"><span>{{ t('providerSettings.listenPort') }}</span></section>
       <div class="import-card">
-        <input v-model="mixedPort" class="field" aria-label="mixed-port" placeholder="mixed-port，例如 7890" />
+        <input v-model="mixedPort" class="field" aria-label="mixed-port" :placeholder="t('providerSettings.portPlaceholder')" />
         <div class="import-row">
-          <button type="button" @click="save" :disabled="saving">保存</button>
+          <button type="button" @click="save" :disabled="saving">{{ t('common.save') }}</button>
         </div>
       </div>
 
-      <p class="inline-note">未知配置字段与注释会被原样保留。</p>
+      <p class="inline-note">{{ t('providerSettings.preserveNote') }}</p>
     </template>
   </div>
 </template>

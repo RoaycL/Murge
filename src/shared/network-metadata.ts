@@ -11,6 +11,7 @@
  */
 
 /** The privacy-explicit providers this build ships. */
+import { t } from './i18n'
 export type NetworkMetadataProviderId = 'ipwhois' | 'ipapi' | 'ipinfo'
 
 /** The serializable description of one provider (no function fields). */
@@ -96,7 +97,7 @@ const PROVIDER_DEFS: readonly ProviderDef[] = [
   {
     id: 'ipwhois',
     label: 'ipwho.is',
-    description: '免密钥、无日志的出口 IP + 地理元数据源',
+    get description() { return t('netMetaSource.ipSb') },
     endpoint: 'http://ipwho.is/',
     kind: 'ip-geo',
     parse: (body) => {
@@ -114,7 +115,7 @@ const PROVIDER_DEFS: readonly ProviderDef[] = [
   {
     id: 'ipapi',
     label: 'ip-api.com',
-    description: '免密钥的出口 IP + 国家/城市/ASN 元数据源（按需查询）',
+    get description() { return t('netMetaSource.onDemand') },
     endpoint: 'http://ip-api.com/json/',
     kind: 'ip-geo',
     parse: (body) => {
@@ -131,7 +132,7 @@ const PROVIDER_DEFS: readonly ProviderDef[] = [
   {
     id: 'ipinfo',
     label: 'ipinfo.io',
-    description: '免密钥的出口 IP + 国家/城市/ASN（no-log）元数据源',
+    get description() { return t('netMetaSource.noLog') },
     endpoint: 'http://ipinfo.io/json',
     kind: 'ip-geo',
     parse: (body) => {

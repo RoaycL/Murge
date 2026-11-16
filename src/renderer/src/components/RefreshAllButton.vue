@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onUnmounted, ref } from 'vue'
 import RefreshIndicator from './RefreshIndicator.vue'
 
@@ -12,16 +13,16 @@ const props = withDefaults(defineProps<{
   run: () => Promise<{ updated: number; failed: number }>
   disabled?: boolean
   label?: string
-}>(), { disabled: false, label: '全部更新' })
+}>(), { disabled: false })
 
 const busy = ref(false)
 const outcome = ref<{ updated: number; failed: number } | null>(null)
 let settle: number | null = null
 
 const text = computed(() => {
-  if (busy.value) return '更新中…'
-  if (outcome.value) return outcome.value.failed ? `${outcome.value.failed} 项失败` : '已全部更新'
-  return props.label
+  if (busy.value) return t('common.updating')
+  if (outcome.value) return outcome.value.failed ? t('refreshAll.failedCount', [outcome.value.failed]) : t('refreshAll.allUpdated')
+  return props.label ?? t('refreshAll.updateAll')
 })
 
 async function onClick(): Promise<void> {

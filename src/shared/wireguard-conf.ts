@@ -3,6 +3,7 @@
  * WireGuard server/app exports, incl. AmneziaWG fields) and Surge's
  * `[WireGuard name]` sections, converted to a mihomo `type: wireguard` proxy.
  */
+import { t } from './i18n'
 import type { ProxyConfig } from './local'
 
 export interface WireGuardImport {
@@ -88,11 +89,11 @@ function applyInterfaceAddresses(config: Record<string, unknown>, addresses: str
 }
 
 function finish(config: Record<string, unknown>, peers: PeerDraft[], warnings: string[], name: string): WireGuardImport {
-  if (!config['private-key']) throw new Error('缺少 PrivateKey（本机私钥）')
-  if (!config.ip && !config.ipv6) throw new Error('缺少 Address（隧道内地址）')
+  if (!config['private-key']) throw new Error(t('wireguard.noPrivateKey'))
+  if (!config.ip && !config.ipv6) throw new Error(t('wireguard.noAddress'))
   const usable = peers.filter((peer) => peer['public-key'] && peer.server && peer.port)
-  if (usable.length === 0) throw new Error('缺少可用的 [Peer]：需要 PublicKey 和 Endpoint')
-  if (usable.length < peers.length) warnings.push('已跳过缺少 PublicKey 或 Endpoint 的 Peer')
+  if (usable.length === 0) throw new Error(t('wireguard.noPeer'))
+  if (usable.length < peers.length) warnings.push(t('wireguard.peerSkipped'))
   const keepalive = usable.map((peer) => peer.keepalive).find((value) => typeof value === 'number' && value > 0)
   if (keepalive) config['persistent-keepalive'] = keepalive
   const out: Record<string, unknown> = { name, type: 'wireguard', ...config }
@@ -143,7 +144,7 @@ export function parseWgQuickConf(text: string, name = 'WireGuard'): WireGuardImp
         peers.push(peer)
       } else {
         section = null
-        warnings.push(`已忽略未知段落 [${header[1]}]`)
+        warnings.push(t('wireguard.sectionIgnored', [header[1]]))
       }
       continue
     }
@@ -160,14 +161,14 @@ export function parseWgQuickConf(text: string, name = 'WireGuard'): WireGuardImp
           config['remote-dns-resolve'] = true
           config.dns = servers
         }
-        if (splitList(value).length > servers.length) warnings.push('DNS 中的搜索域已忽略')
+        if (splitList(value).length > servers.length) warnings.push(t('wireguard.searchDomainIgnored'))
       } else if (key === 'mtu') {
         const mtu = Number(value)
         if (Number.isInteger(mtu) && mtu >= 576 && mtu <= 9000) config.mtu = mtu
       } else if (key in AMNEZIA_KEYS) {
         amnezia[AMNEZIA_KEYS[key]] = AMNEZIA_NUMERIC.has(key) ? Number(value) : value
       } else if (IGNORED_INTERFACE_KEYS.has(key)) {
-        warnings.push(`已忽略 ${line.slice(0, eq).trim()}（仅系统 WireGuard 客户端使用）`)
+        warnings.push(t('wireguard.keyIgnored', [line.slice(0, eq).trim()]))
       }
     } else if (peer) {
       if (key === 'publickey') peer['public-key'] = value
@@ -176,7 +177,7 @@ export function parseWgQuickConf(text: string, name = 'WireGuard'): WireGuardImp
       else if (key === 'endpoint') {
         const endpoint = parseEndpoint(value)
         if (endpoint) Object.assign(peer, endpoint)
-        else warnings.push(`无法识别 Endpoint「${value}」`)
+        else warnings.push(t('wireguard.endpointInvalid', [value]))
       } else if (key === 'persistentkeepalive') {
         const seconds = Number(value)
         if (Number.isInteger(seconds) && seconds > 0) peer.keepalive = seconds
@@ -248,7 +249,7 @@ export function parseSurgeWireGuard(text: string, fallbackName = 'WireGuard'): W
 export function parseWireGuardText(text: string, fallbackName = 'WireGuard'): WireGuardImport {
   if (/^\s*\[Interface\]/im.test(text)) return parseWgQuickConf(text, fallbackName)
   if (/^\s*\[WireGuard\s+/im.test(text) || /^\s*private-key\s*=/im.test(text)) return parseSurgeWireGuard(text, fallbackName)
-  throw new Error('无法识别的 WireGuard 配置：需要 wg-quick 的 [Interface]/[Peer]，或 Surge 的 [WireGuard 名称] 段落')
+  throw new Error(t('wireguard.unrecognized'))
 }
 
 /** A node name from an imported file name (`home.conf` → `home`). */

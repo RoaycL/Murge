@@ -1,3 +1,4 @@
+import { t } from '@shared/i18n'
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { MihomoConnectionsSnapshot, MihomoStreamError } from '@shared/mihomo-api'
@@ -69,7 +70,7 @@ export const useConnectionsStore = defineStore('connections', () => {
       // no close/error event surfaced. Only override loading/live so a genuine
       // parse error is not masked by silence.
       if (status.value === 'loading' || status.value === 'live') {
-        lastError.value = '未收到连接数据'
+        lastError.value = t('connStore.noData')
         status.value = 'disconnected'
       }
     }, 5000)
@@ -80,7 +81,7 @@ export const useConnectionsStore = defineStore('connections', () => {
   }
 
 
-  const hostKey = (c: MihomoConnection): string => c.metadata.host || c.metadata.destinationIP || '未知目标'
+  const hostKey = (c: MihomoConnection): string => c.metadata.host || c.metadata.destinationIP || t('diagnosis.unknownTarget')
   // The policy ranking is the concrete outer policy group selected by mihomo,
   // not the rule matcher type (GeoIP/RuleSet/Match). This matches the connection
   // drawer's user-facing chain and lets the Activity row reuse the group's icon.
@@ -243,7 +244,7 @@ export const useConnectionsStore = defineStore('connections', () => {
       const confirmed = await window.desktop.mihomo.getConnections()
       accept(confirmed)
       if (confirmed.connections.some((connection) => connection.id === id)) {
-        actionError.value = '控制器未确认连接已关闭'
+        actionError.value = t('connStore.closeUnconfirmed')
         return false
       }
       return true
@@ -270,7 +271,7 @@ export const useConnectionsStore = defineStore('connections', () => {
         if (await close(id)) closed += 1
         else failed += 1
       }
-      if (failed > 0) actionError.value = `${failed} 条连接未能关闭`
+      if (failed > 0) actionError.value = t('connStore.closeFailedCount', [failed])
       return { closed, failed }
     } finally {
       closingMany.value = false

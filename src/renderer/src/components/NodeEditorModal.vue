@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, ref, toRef, watch } from 'vue'
 import AppSelect from './AppSelect.vue'
 import { useDialogFocus } from '../composables/use-dialog-focus'
@@ -6,7 +7,7 @@ import { isTailscaleDnsSafeName, plainClone, type LocalNode, type ProxyConfig } 
 import { configToYaml, parseNodeText, type NodeEditorStart } from '../lib/local-node-form'
 import { nameFromFileName } from '@shared/wireguard-conf'
 import {
-  PROTOCOLS,
+  protocols,
   applyField,
   commonSections,
   fieldBool,
@@ -61,11 +62,11 @@ const error = ref<string | null>(null)
 const notice = ref<string | null>(null)
 
 const isNew = computed(() => !props.node?.id)
-const title = computed(() => (isNew.value ? '增加代理' : '编辑代理'))
-const protocolOptions = PROTOCOLS.map((spec) => ({ value: spec.id, label: spec.label }))
+const title = computed(() => (isNew.value ? t('nodeEditor.addTitle') : t('nodeEditor.editTitle')))
+const protocolOptions = protocols().map((spec) => ({ value: spec.id, label: spec.label }))
 const RESERVED_TARGETS = ['DIRECT', 'REJECT', 'REJECT-DROP', 'PASS', 'COMPATIBLE']
 const dialerOptions = computed(() => [
-  { value: '', label: '不使用' },
+  { value: '', label: t('nodeEditor.notUsed') },
   ...props.targets.filter((name) => !RESERVED_TARGETS.includes(name) && name !== String(config.value.name ?? '').trim()).map((name) => ({ value: name, label: name }))
 ])
 
@@ -79,7 +80,7 @@ const shown = computed(() => {
 const tsNameWarning = computed(() => {
   if (protocol.value?.id !== 'tailscale' || !tailnetRules.value) return null
   const name = String(config.value.name ?? '').trim()
-  return name && !isTailscaleDnsSafeName(name) ? '名称含空格或 / ? # @ : 等字符，MagicDNS 无法使用此节点解析 *.ts.net。' : null
+  return name && !isTailscaleDnsSafeName(name) ? t('nodeEditor.tailscaleNameWarning') : null
 })
 
 /** The form protocol, or null when the config needs the text view. */
@@ -109,9 +110,9 @@ watch(
       load(current, spec)
       text.value = configToYaml(current)
       mode.value = props.start.mode === 'text' || !spec ? 'text' : 'form'
-      if (!spec) notice.value = Array.isArray(current.peers) ? '多 Peer 的 WireGuard 配置请直接编辑内容。' : `${String(current.type)} 协议没有表单，请直接编辑内容。`
+      if (!spec) notice.value = Array.isArray(current.peers) ? t('nodeEditor.multiPeer') : t('nodeEditor.noFormForProtocol', [String(current.type)])
     } else {
-      const spec = protocolById(props.start.mode === 'form' ? props.start.protocol : 'ss') ?? PROTOCOLS[0]!
+      const spec = protocolById(props.start.mode === 'form' ? props.start.protocol : 'ss') ?? protocols()[0]!
       load(newConfig(spec), spec)
       text.value = ''
       mode.value = props.start.mode
@@ -203,9 +204,9 @@ function showForm(): void {
   }
   try {
     const { configs } = parseNodeText(text.value, '', { allowEmptyName: true })
-    if (configs.length !== 1) throw new Error('内容里有多个节点，请直接保存，或只保留一个再切换到表单')
+    if (configs.length !== 1) throw new Error(t('nodeEditor.multipleNodes'))
     const spec = formSpecOf(configs[0]!)
-    if (!spec) throw new Error(`${configs[0]!.type} 的这份配置没有表单，请直接编辑内容`)
+    if (!spec) throw new Error(t('nodeEditor.noFormForConfig', [configs[0]!.type]))
     load(configs[0]!, spec)
     portText.value = null
     mode.value = 'form'
@@ -236,7 +237,7 @@ async function importFile(event: Event): Promise<void> {
       text.value = configs.length === 1 ? configToYaml(configs[0]!) : content
       mode.value = 'text'
     }
-    notice.value = warnings.length ? warnings.join('；') : `已导入「${file.name}」`
+    notice.value = warnings.length ? warnings.join(t('common.semicolon')) : t('nodeEditor.imported', [file.name])
   } catch (problem) {
     error.value = problem instanceof Error ? problem.message : String(problem)
   }
@@ -245,7 +246,7 @@ async function importFile(event: Event): Promise<void> {
 // ---------------------------------------------------------------- save
 
 function assertFreeName(config: ProxyConfig): void {
-  if (props.takenNames.includes(config.name)) throw new Error(`已有名为「${config.name}」的本地节点`)
+  if (props.takenNames.includes(config.name)) throw new Error(t('nodeEditor.nameExists', [config.name]))
 }
 
 function submit(): void {
@@ -254,11 +255,11 @@ function submit(): void {
     if (mode.value === 'text') {
       const { configs, warnings } = parseNodeText(text.value)
       if (configs.length > 1) {
-        if (!isNew.value) throw new Error('编辑已有节点时只能包含一个节点')
+        if (!isNew.value) throw new Error(t('nodeEditor.singleOnly'))
         const seen = new Set<string>()
         for (const item of configs) {
           assertFreeName(item)
-          if (seen.has(item.name)) throw new Error(`内容里有两个节点都叫「${item.name}」`)
+          if (seen.has(item.name)) throw new Error(t('nodeEditor.duplicateInText', [item.name]))
           seen.add(item.name)
         }
         emit('saveMany', configs.map((item) => ({ id: '', enabled: true, config: item, groups: [...groups.value], tailnetRules: true })))
@@ -268,11 +269,11 @@ function submit(): void {
       const spec = formSpecOf(single)
       const checked = spec ? validateConfig(spec, single, [...spec.sections, ...commonSections(spec, dialerOptions.value)]) : single
       assertFreeName(checked)
-      if (warnings.length) notice.value = warnings.join('；')
+      if (warnings.length) notice.value = warnings.join(t('common.semicolon'))
       emitSave(checked)
       return
     }
-    if (!protocol.value) throw new Error('请选择协议')
+    if (!protocol.value) throw new Error(t('nodeEditor.protocolRequired'))
     const checked = validateConfig(protocol.value, config.value, allSections.value)
     assertFreeName(checked)
     emitSave(checked)
@@ -289,11 +290,7 @@ function toggleGroup(name: string): void {
   groups.value = groups.value.includes(name) ? groups.value.filter((item) => item !== name) : [...groups.value, name]
 }
 
-const TEXT_PLACEHOLDER = `支持以下任一种内容，可以一次粘贴多个节点：
-· mihomo YAML（单个节点、列表或带 proxies: 的片段）
-· 分享链接：ss:// vmess:// vless:// trojan:// hysteria2:// tuic:// anytls://
-· Surge 代理行：香港 = snell, 1.2.3.4, 443, psk=xxx, version=3
-· WireGuard 配置（wg-quick .conf 或 Surge [WireGuard] 段落）`
+const TEXT_PLACEHOLDER = t('nodeEditor.textHelp')
 </script>
 
 <template>
@@ -303,11 +300,11 @@ const TEXT_PLACEHOLDER = `支持以下任一种内容，可以一次粘贴多个
         <header class="node-modal-head">
           <div>
             <h2>{{ title }}</h2>
-            <p>{{ mode === 'form' ? '按协议填写，必填项留空会提示' : '粘贴 mihomo YAML、分享链接、Surge 代理行或 WireGuard 配置' }}</p>
+            <p>{{ mode === 'form' ? t('nodeEditor.formHint') : t('nodeEditor.textHint') }}</p>
           </div>
-          <div class="node-mode" role="tablist" aria-label="编辑方式">
-            <button type="button" role="tab" :aria-selected="mode === 'form'" :class="{ on: mode === 'form' }" @click="showForm">表单</button>
-            <button type="button" role="tab" :aria-selected="mode === 'text'" :class="{ on: mode === 'text' }" @click="showText">文本</button>
+          <div class="node-mode" role="tablist" :aria-label="t('nodeEditor.modeLabel')">
+            <button type="button" role="tab" :aria-selected="mode === 'form'" :class="{ on: mode === 'form' }" @click="showForm">{{ t('nodeEditor.form') }}</button>
+            <button type="button" role="tab" :aria-selected="mode === 'text'" :class="{ on: mode === 'text' }" @click="showText">{{ t('nodeEditor.text') }}</button>
           </div>
         </header>
 
@@ -315,21 +312,21 @@ const TEXT_PLACEHOLDER = `支持以下任一种内容，可以一次粘贴多个
           <div v-if="mode === 'form' && protocol" class="nf-columns">
             <div class="nf-column">
               <section class="nf-section">
-                <h3>基本信息</h3>
+                <h3>{{ t('nodeEditor.basics') }}</h3>
                 <div class="nf-card">
-                  <label class="nf-row"><span class="nf-label">名称</span><input class="nf-input" :value="String(config.name ?? '')" type="text" spellcheck="false" placeholder="必填" @input="setName(($event.target as HTMLInputElement).value)" /></label>
-                  <div class="nf-row"><span class="nf-label">协议</span><span class="nf-control"><AppSelect :model-value="protocol.id" :options="protocolOptions" label="协议" @update:model-value="changeProtocol" /></span></div>
+                  <label class="nf-row"><span class="nf-label">{{ t('common.name') }}</span><input class="nf-input" :value="String(config.name ?? '')" type="text" spellcheck="false" :placeholder="t('common.required')" @input="setName(($event.target as HTMLInputElement).value)" /></label>
+                  <div class="nf-row"><span class="nf-label">{{ t('nodeEditor.protocol') }}</span><span class="nf-control"><AppSelect :model-value="protocol.id" :options="protocolOptions" :label="t('nodeEditor.protocol')" @update:model-value="changeProtocol" /></span></div>
                 </div>
               </section>
               <section v-if="protocol.endpoint" class="nf-section">
-                <h3>服务器信息</h3>
+                <h3>{{ t('nodeEditor.serverInfo') }}</h3>
                 <div class="nf-card">
                   <div class="nf-row">
-                    <span class="nf-label">服务器地址</span>
+                    <span class="nf-label">{{ t('nodeEditor.serverAddress') }}</span>
                     <span class="nf-endpoint">
-                      <input class="nf-input" :value="String(config.server ?? '')" type="text" spellcheck="false" placeholder="地址" aria-label="服务器地址" @input="setServer(($event.target as HTMLInputElement).value)" />
+                      <input class="nf-input" :value="String(config.server ?? '')" type="text" spellcheck="false" :placeholder="t('nodeEditor.address')" :aria-label="t('nodeEditor.serverAddress')" @input="setServer(($event.target as HTMLInputElement).value)" />
                       <i>:</i>
-                      <input class="nf-input nf-port" :value="portText ?? (config.port === undefined ? '' : String(config.port))" type="text" inputmode="numeric" placeholder="端口" aria-label="端口" @input="setPort(($event.target as HTMLInputElement).value)" />
+                      <input class="nf-input nf-port" :value="portText ?? (config.port === undefined ? '' : String(config.port))" type="text" inputmode="numeric" :placeholder="t('common.port')" :aria-label="t('common.port')" @input="setPort(($event.target as HTMLInputElement).value)" />
                     </span>
                   </div>
                 </div>
@@ -366,36 +363,36 @@ const TEXT_PLACEHOLDER = `支持以下任一种内容，可以一次粘贴多个
                 </div>
               </section>
               <section class="nf-section">
-                <h3>加入策略组</h3>
+                <h3>{{ t('nodeEditor.joinGroups') }}</h3>
                 <div v-if="props.groups.length" class="nf-card nf-groups">
                   <label v-for="group in props.groups" :key="group.name" class="surge-check"><input type="checkbox" :checked="groups.includes(group.name)" @change="toggleGroup(group.name)" />{{ group.name }}</label>
                 </div>
-                <p v-else class="nf-hint">启动内核或选择订阅后可以选择策略组。</p>
-                <p v-if="absentGroups.length" class="nf-hint nf-absent">当前配置中没有策略组「{{ absentGroups.join('」「') }}」。设置会保留，切换到有这些组的配置后自动加入。</p>
+                <p v-else class="nf-hint">{{ t('nodeEditor.groupsUnavailable') }}</p>
+                <p v-if="absentGroups.length" class="nf-hint nf-absent">{{ t('nodeEditor.groupsMissing', [absentGroups.join(t('common.quoteJoin'))]) }}</p>
               </section>
             </div>
           </div>
 
           <div v-else class="nf-text">
-            <textarea v-model="text" class="nf-input nf-text-area" spellcheck="false" :placeholder="TEXT_PLACEHOLDER" aria-label="节点内容" />
-            <p class="nf-hint">mihomo 的 proxies 格式支持内核的全部协议和参数。<template v-if="isNew">粘贴多个节点会一次全部添加，并加入下面勾选的策略组。</template></p>
+            <textarea v-model="text" class="nf-input nf-text-area" spellcheck="false" :placeholder="TEXT_PLACEHOLDER" :aria-label="t('nodeEditor.contentLabel')" />
+            <p class="nf-hint">{{ t('nodeEditor.textNoteA') }}<template v-if="isNew">{{ t('nodeEditor.textNoteB') }}</template></p>
             <div v-if="props.groups.length" class="nf-card nf-groups">
               <label v-for="group in props.groups" :key="group.name" class="surge-check"><input type="checkbox" :checked="groups.includes(group.name)" @change="toggleGroup(group.name)" />{{ group.name }}</label>
             </div>
-            <p v-if="absentGroups.length" class="nf-hint nf-absent">当前配置中没有策略组「{{ absentGroups.join('」「') }}」。设置会保留，切换到有这些组的配置后自动加入。</p>
+            <p v-if="absentGroups.length" class="nf-hint nf-absent">{{ t('nodeEditor.groupsMissing', [absentGroups.join(t('common.quoteJoin'))]) }}</p>
           </div>
         </form>
 
         <footer class="node-modal-foot">
           <template v-if="isNew">
-            <button type="button" class="surge-button" :disabled="busy" @click="fileInput?.click()">从文件导入…</button>
+            <button type="button" class="surge-button" :disabled="busy" @click="fileInput?.click()">{{ t('nodeEditor.importFile') }}</button>
             <input ref="fileInput" type="file" accept=".conf,.txt,.yaml,.yml,text/plain" hidden @change="importFile" />
           </template>
           <p v-if="error" class="nf-error" role="alert">{{ error }}</p>
           <p v-else-if="notice" class="nf-hint">{{ notice }}</p>
           <span class="spacer" />
-          <button type="button" class="surge-button" :disabled="busy" @click="emit('close')">取消</button>
-          <button type="submit" form="node-editor-form" class="surge-button primary" :disabled="busy">{{ busy ? '保存中…' : '完成' }}</button>
+          <button type="button" class="surge-button" :disabled="busy" @click="emit('close')">{{ t('common.cancel') }}</button>
+          <button type="submit" form="node-editor-form" class="surge-button primary" :disabled="busy">{{ busy ? t('common.saving') : t('common.done') }}</button>
         </footer>
       </section>
     </div>

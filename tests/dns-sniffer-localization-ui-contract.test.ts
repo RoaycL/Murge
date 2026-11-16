@@ -1,8 +1,9 @@
 import { readFile } from 'node:fs/promises'
+import { inlineMessages } from './helpers/localized-source'
 import { describe, expect, it } from 'vitest'
 
 async function read(path: string): Promise<string> {
-  return readFile(new URL(`../${path}`, import.meta.url), 'utf8')
+  return inlineMessages(await readFile(new URL(`../${path}`, import.meta.url), 'utf8'))
 }
 
 describe('DNS and sniffer localization UI contract', () => {

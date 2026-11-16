@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import { inlineMessages } from './helpers/localized-source'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-const read = (path: string): string => readFileSync(resolve(process.cwd(), path), 'utf8')
+const read = (path: string): string => inlineMessages(readFileSync(resolve(process.cwd(), path), 'utf8'))
 
 describe('log / diagnostic export goes through the native save dialog', () => {
   it('never relies on <a download> blob links, which WebView2 ignores in the Tauri shell', () => {

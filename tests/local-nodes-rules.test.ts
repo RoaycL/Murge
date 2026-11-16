@@ -3,7 +3,7 @@ import { nameFromFileName, parseEndpoint, parseWireGuardText } from '@shared/wir
 import { formatRuleLine, isTailscaleDnsSafeName, parseRuleLine, ruleIdentity, splitRuleLine, tailnetRulesFor } from '@shared/local'
 import { nodeSummary, parseNodeText, parseProxiesYaml } from '@renderer/lib/local-node-form'
 import {
-  PROTOCOLS,
+  protocols,
   applyField,
   commonSections,
   fieldText,
@@ -129,7 +129,7 @@ describe('node editor schema', () => {
     expect(protocolOf({ type: 'Shadowsocks' })?.id).toBe('ss')
     expect(protocolOf({ type: 'hysteria2' })?.id).toBe('hysteria2')
     expect(protocolOf({ type: 'mieru' })).toBeNull()
-    expect(new Set(PROTOCOLS.map((spec) => spec.id)).size).toBe(PROTOCOLS.length)
+    expect(new Set(protocols().map((spec) => spec.id)).size).toBe(protocols().length)
   })
 
   it('edits dotted keys and prunes emptied objects', () => {

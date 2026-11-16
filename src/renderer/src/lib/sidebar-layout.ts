@@ -1,3 +1,4 @@
+import { t } from '@shared/i18n'
 import type { AppIconName } from '../components/AppIcon.vue'
 
 /**
@@ -37,22 +38,22 @@ export const SIDEBAR_GROUPS: readonly SidebarGroupDefinition[] = Object.freeze([
   {
     id: 'client',
     label: '',
-    settingsLabel: '客户端',
+    get settingsLabel() { return t('nav.sectionClient') },
     items: [
-      { id: 'activity', to: '/activity', label: '活动', icon: 'activity' },
-      { id: 'overview', to: '/overview', label: '概览', icon: 'overview' },
-      { id: 'connections', to: '/connections', label: '连接', icon: 'connections' },
-      { id: 'processes', to: '/processes', label: '进程', icon: 'processes' },
-      { id: 'devices', to: '/devices', label: '设备', icon: 'devices', defaultHidden: true }
+      { id: 'activity', to: '/activity', get label() { return t('nav.activity') }, icon: 'activity' },
+      { id: 'overview', to: '/overview', get label() { return t('nav.overview') }, icon: 'overview' },
+      { id: 'connections', to: '/connections', get label() { return t('nav.connections') }, icon: 'connections' },
+      { id: 'processes', to: '/processes', get label() { return t('nav.processes') }, icon: 'processes' },
+      { id: 'devices', to: '/devices', get label() { return t('nav.devices') }, icon: 'devices', defaultHidden: true }
     ]
   },
   {
     id: 'proxy',
-    label: '代理',
-    settingsLabel: '代理',
+    get label() { return t('nav.sectionProxy') },
+    get settingsLabel() { return t('nav.sectionProxy') },
     items: [
-      { id: 'policies', to: '/policies', label: '策略', icon: 'policies' },
-      { id: 'rules', to: '/rules', label: '规则', icon: 'rules' }
+      { id: 'policies', to: '/policies', get label() { return t('nav.policy') }, icon: 'policies' },
+      { id: 'rules', to: '/rules', get label() { return t('nav.rules') }, icon: 'rules' }
     ]
   },
   {
@@ -60,18 +61,18 @@ export const SIDEBAR_GROUPS: readonly SidebarGroupDefinition[] = Object.freeze([
     label: 'HTTP',
     settingsLabel: 'HTTP',
     items: [
-      { id: 'mitm', to: '/mitm', label: '解密', icon: 'mitm' },
-      { id: 'rewrite', to: '/rewrite', label: '重写', icon: 'rewrite' }
+      { id: 'mitm', to: '/mitm', get label() { return t('nav.mitm') }, icon: 'mitm' },
+      { id: 'rewrite', to: '/rewrite', get label() { return t('nav.rewrite') }, icon: 'rewrite' }
     ]
   },
   {
     id: 'config',
-    label: '配置',
-    settingsLabel: '配置',
+    get label() { return t('nav.sectionConfig') },
+    get settingsLabel() { return t('nav.sectionConfig') },
     items: [
-      { id: 'profiles', to: '/profiles', label: '配置', icon: 'profiles' },
-      { id: 'overrides', to: '/overrides', label: '覆写', icon: 'overrides' },
-      { id: 'resources', to: '/resources', label: '外部资源', icon: 'resources' },
+      { id: 'profiles', to: '/profiles', get label() { return t('nav.profiles') }, icon: 'profiles' },
+      { id: 'overrides', to: '/overrides', get label() { return t('nav.overrides') }, icon: 'overrides' },
+      { id: 'resources', to: '/resources', get label() { return t('nav.resources') }, icon: 'resources' },
       { id: 'substore', to: '/substore', label: 'Sub-Store', icon: 'substore', defaultHidden: true }
     ]
   }

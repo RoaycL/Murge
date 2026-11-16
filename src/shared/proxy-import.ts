@@ -5,6 +5,7 @@
  * WireGuard files are handled by the callers.
  */
 
+import { t } from './i18n'
 export type ImportedProxy = Record<string, unknown> & { name: string; type: string }
 
 function decodeBase64(value: string): string {
@@ -21,9 +22,9 @@ function splitList(value: string | null | undefined): string[] {
   return (value ?? '').split(',').map((item) => item.trim()).filter(Boolean)
 }
 
-function portOf(value: string | number | undefined, label = '端口'): number {
+function portOf(value: string | number | undefined, label = t('common.port')): number {
   const port = Number(value)
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`${label}无效：${String(value ?? '')}`)
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(t('import.invalidValue', [label, String(value ?? '')]))
   return port
 }
 
@@ -112,7 +113,7 @@ function parseSs(link: string): ImportedProxy {
     const body = link.slice('ss://'.length).split('#')[0]!.split('?')[0]!
     const decoded = decodeBase64(decodeURIComponent(body))
     const match = /^([^:]+):(.*)@(.+):(\d+)$/.exec(decoded)
-    if (!match) throw new Error('无法解析 ss:// 链接')
+    if (!match) throw new Error(t('import.ssInvalid'))
     cipher = match[1]!
     password = match[2]!
     server = match[3]!.replace(/^\[|\]$/g, '')
@@ -151,7 +152,7 @@ function parseVmess(link: string): ImportedProxy {
   try {
     json = JSON.parse(decodeBase64(body)) as Record<string, unknown>
   } catch {
-    throw new Error('无法解析 vmess:// 链接（应为 base64 JSON）')
+    throw new Error(t('import.vmessInvalid'))
   }
   const str = (key: string): string => (json[key] === undefined || json[key] === null ? '' : String(json[key]))
   const proxy: ImportedProxy = {
@@ -294,7 +295,7 @@ export function parseShareLink(line: string): ImportedProxy {
     case 'https':
       return parseUserPass(link, 'http', true)
     default:
-      throw new Error(`不支持的链接类型：${scheme || link.slice(0, 12)}`)
+      throw new Error(t('import.unsupportedScheme', [scheme || link.slice(0, 12)]))
   }
 }
 
@@ -338,7 +339,7 @@ export function parseSurgeLine(line: string): ImportedProxy {
     else positional.push(unquote(field))
   }
   const server = positional[0] ?? ''
-  const port = portOf(positional[1], `「${name}」的端口`)
+  const port = portOf(positional[1], t('import.portOf', [name]))
   const proxy: ImportedProxy = { name, type: kind, server, port }
   const tlsCommon = (sniKey: 'sni' | 'servername'): void => {
     if (params.sni && params.sni !== 'off') proxy[sniKey] = params.sni
@@ -392,7 +393,7 @@ export function parseSurgeLine(line: string): ImportedProxy {
     case 'snell': {
       proxy.psk = params.psk ?? ''
       const version = Number(params.version ?? 1)
-      if (version > 3) throw new Error(`「${name}」是 Snell v${version}，当前内核只支持 v1-v3`)
+      if (version > 3) throw new Error(t('import.snellVersion', [name, version]))
       proxy.version = version
       if (params.obfs) proxy['obfs-opts'] = { mode: params.obfs, ...(params['obfs-host'] ? { host: params['obfs-host'] } : {}) }
       if (version >= 3) proxy.udp = true
@@ -434,9 +435,9 @@ export function parseSurgeLine(line: string): ImportedProxy {
       proxy.udp = true
       break
     case 'wireguard':
-      throw new Error(`「${name}」是 WireGuard，请连同 [WireGuard ${params['section-name'] ?? '…'}] 段落一起粘贴`)
+      throw new Error(t('import.wireguardSection', [name, params['section-name'] ?? '…']))
     default:
-      throw new Error(`「${name}」的类型 ${kind} 暂不支持`)
+      throw new Error(t('import.unsupportedType', [name, kind]))
   }
   if (truthy(params.tfo)) proxy.tfo = true
   if (params.interface) proxy['interface-name'] = params.interface

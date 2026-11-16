@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import AppIcon from './AppIcon.vue'
 import { useToast } from '../composables/use-toast'
 
@@ -12,7 +13,7 @@ const toast = useToast()
         <section v-for="message in toast.messages.value" :key="message.id" class="toast-item" :class="message.tone" role="status">
           <AppIcon :name="message.tone === 'success' ? 'success' : message.tone === 'error' ? 'error' : 'about'" :size="18" />
           <div><strong>{{ message.title }}</strong><p v-if="message.detail">{{ message.detail }}</p></div>
-          <button type="button" aria-label="关闭通知" @click="toast.dismiss(message.id)"><AppIcon name="close" :size="14" /></button>
+          <button type="button" :aria-label="t('toast.close')" @click="toast.dismiss(message.id)"><AppIcon name="close" :size="14" /></button>
         </section>
       </TransitionGroup>
     </div>

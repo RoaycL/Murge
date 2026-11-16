@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, nextTick, ref } from 'vue'
 import AppIcon from './AppIcon.vue'
 import { useSidebarLayoutStore } from '../stores/sidebar-layout'
@@ -84,7 +85,7 @@ function rowStyle(id: SidebarItemId): Record<string, string> | undefined {
     <div v-for="(column, columnIndex) in columns" :key="columnIndex" class="layout-column">
     <div v-for="section in column" :key="section.id" class="layout-group" :style="{ order: section.order }">
       <h3>{{ section.label }}</h3>
-      <ol class="surface-card layout-list" :aria-label="`${section.label}分组`">
+      <ol class="surface-card layout-list" :aria-label="t('sidebarLayout.sectionLabel', [section.label])">
         <li
           v-for="(row, index) in section.rows"
           :key="row.id"
@@ -96,8 +97,8 @@ function rowStyle(id: SidebarItemId): Record<string, string> | undefined {
           <button
             type="button"
             class="layout-handle"
-            :aria-label="`拖动调整「${row.label}」的位置，或用上下方向键移动`"
-            title="拖动排序"
+            :aria-label="t('sidebarLayout.dragLabel', [row.label])"
+            :title="t('sidebarLayout.dragTitle')"
             @pointerdown="onPointerDown($event, section.id, row.id, index)"
             @pointermove="onPointerMove"
             @pointerup="onPointerUp"
@@ -106,14 +107,14 @@ function rowStyle(id: SidebarItemId): Record<string, string> | undefined {
           ><AppIcon name="grip" :size="15" /></button>
           <span class="layout-icon"><AppIcon :name="row.icon" :size="16" /></span>
           <strong>{{ row.label }}</strong>
-          <small v-if="!row.visible">在「更多」中</small>
+          <small v-if="!row.visible">{{ t('sidebarLayout.inMore') }}</small>
           <button
             type="button"
             class="switch"
             :class="{ on: row.visible }"
             role="switch"
             :aria-checked="row.visible"
-            :aria-label="`在侧边栏显示${row.label}`"
+            :aria-label="t('sidebarLayout.showLabel', [row.label])"
             @click="store.setVisible(row.id, !row.visible)"
           />
         </li>

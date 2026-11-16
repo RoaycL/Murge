@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { locale, t } from '@shared/i18n'
 import { computed, onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue'
 import AppIcon from '../components/AppIcon.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
@@ -26,7 +27,7 @@ const localDialog = ref<HTMLElement | null>(null)
 
 const state = computed(() => store.state)
 const localDirty = computed(() => store.loaded && localText.value !== localBaseline.value)
-useUnsavedChanges('rewrite-local-module', '本地重写规则', localDirty)
+useUnsavedChanges('rewrite-local-module', t('rewrite.localRules'), localDirty)
 
 interface RuleKind {
   section: string
@@ -42,17 +43,17 @@ const ruleKinds = computed<RuleKind[]>(() => {
   return [
     {
       section: 'URL Rewrite',
-      title: 'URL 重定向',
-      noun: ' URL 重定向',
-      description: '重定向 HTTP 请求。此功能也称为 Map Remote。可以用跳转、直接改写和拒绝 3 种方法重写请求的 URL。',
+      title: t('rewrite.urlTitle'),
+      noun: t('rewrite.urlNoun'),
+      description: t('rewrite.urlDesc'),
       count: summary.urlRewrites,
       example: '^https?://ad\\.example\\.com - reject\n^https?://old\\.example\\.com/(.*) https://new.example.com/$1 302'
     },
     {
       section: 'Header Rewrite',
-      title: 'Header 重写',
-      noun: ' Header 重写',
-      description: '可以修改发送到服务器的 HTTP Header，以及修改返回响应的 Header。',
+      title: t('rewrite.headerTitle'),
+      noun: t('rewrite.headerNoun'),
+      description: t('rewrite.headerDesc'),
       count: summary.headerRewrites,
       example: 'http-request ^https://api\\.example\\.com header-del Cookie\nhttp-response ^https://api\\.example\\.com header-add X-Debug 1'
     },
@@ -60,31 +61,31 @@ const ruleKinds = computed<RuleKind[]>(() => {
       section: 'Map Local',
       title: 'Mock',
       noun: ' Mock ',
-      description: '您可以模拟 API 服务器并返回静态响应。此功能也可称为 Map Local 或 API Mocking。如果你想动态返回响应，请使用脚本。',
+      description: t('rewrite.mapLocalDesc'),
       count: summary.mapLocals,
       example: '^https://api\\.example\\.com/ads data-type=json data="{}"\n^https://api\\.example\\.com/empty data-type=text data="" status-code=204'
     },
     {
       section: 'Body Rewrite',
-      title: 'Body 重写',
-      noun: ' Body 重写',
-      description: '可以重写 HTTP 请求或响应的 Body，用正则表达式或 jq 替换原始内容。如果你需要进行更灵活的修改，请使用脚本。',
+      title: t('rewrite.bodyTitle'),
+      noun: t('rewrite.bodyNoun'),
+      description: t('rewrite.bodyDesc'),
       count: summary.bodyRewrites,
       example: 'http-response ^https://api\\.example\\.com/user "\\"vip\\":false" "\\"vip\\":true"\nhttp-response-jq ^https://api\\.example\\.com/feed \'del(.ads)\''
     },
     {
       section: 'Script',
-      title: '脚本',
-      noun: '脚本',
-      description: '使用 JavaScript 脚本处理 HTTP 请求与响应，兼容 Surge、Loon 和 Quantumult X 的脚本。',
+      title: t('common.script'),
+      noun: t('rewrite.scriptNoun'),
+      description: t('rewrite.scriptDesc'),
       count: summary.scripts,
       example: 'demo = type=http-response,pattern=^https://api\\.example\\.com/feed,requires-body=1,script-path=https://example.com/demo.js'
     },
     {
       section: 'Rule',
-      title: '分流规则',
-      noun: '分流',
-      description: '随模块一起生效的分流规则，只能使用 DIRECT 或 REJECT 策略，不需要解密。',
+      title: t('rewrite.ruleTitle'),
+      noun: t('rewrite.ruleNoun'),
+      description: t('rewrite.ruleDesc'),
       count: summary.rules,
       example: 'DOMAIN-SUFFIX,ads.example.com,REJECT\nDOMAIN,api.example.com,DIRECT'
     }
@@ -97,7 +98,7 @@ const sectionBaseline = ref('')
 const sectionDialog = ref<HTMLElement | null>(null)
 const sectionOpen = computed(() => !!editingKind.value)
 const sectionDirty = computed(() => sectionOpen.value && sectionText.value !== sectionBaseline.value)
-useUnsavedChanges('rewrite-section', '重写规则', sectionDirty)
+useUnsavedChanges('rewrite-section', t('rewrite.rewriteRules'), sectionDirty)
 useDialogFocus(sectionOpen, sectionDialog, () => closeSection())
 useDialogFocus(localOpen, localDialog, () => closeLocal())
 
@@ -142,15 +143,15 @@ async function saveSection(): Promise<void> {
   const next = replaceModuleSection(localText.value, kind.section, sectionText.value)
   const error = await store.setLocalModule(next)
   if (error) {
-    toast.error('保存失败', error)
+    toast.error(t('common.saveFailed'), error)
     return
   }
   syncLocal()
   editingKind.value = null
-  toast.success(`${kind.title}规则已保存`)
+  toast.success(t('rewrite.kindSaved', [kind.title]))
 }
 
-const LOCAL_PLACEHOLDER = `# Surge 模块语法
+const LOCAL_PLACEHOLDER = `# ${t('rewrite.sampleComment')}
 [MITM]
 hostname = %APPEND% api.example.com
 
@@ -176,35 +177,35 @@ function syncLocal(): void {
 watch(() => state.value.settings.localModule, () => { if (!localDirty.value) syncLocal() })
 
 function formatDate(ms: number): string {
-  return ms ? new Date(ms).toLocaleString() : '—'
+  return ms ? new Date(ms).toLocaleString(locale.value) : '—'
 }
 
 async function toggleRewrite(): Promise<void> {
   const next = !state.value.settings.rewriteEnabled
   const error = await store.setRewriteEnabled(next)
-  if (error) toast.error('切换失败', error)
+  if (error) toast.error(t('common.switchFailed'), error)
 }
 
 async function addModule(): Promise<void> {
   const url = moduleUrl.value.trim()
   if (!url) return
   const error = await store.addModule(url)
-  if (error) toast.error('添加模块失败', error)
+  if (error) toast.error(t('rewrite.addModuleFailed'), error)
   else {
     moduleUrl.value = ''
-    toast.success('模块已添加')
+    toast.success(t('rewrite.moduleAdded'))
   }
 }
 
 async function updateModule(module: MitmModuleInfo): Promise<void> {
   const error = await store.updateModule(module.id)
-  if (error) toast.error('更新失败', error)
-  else toast.success(`${module.name} 已更新`)
+  if (error) toast.error(t('common.updateFailed'), error)
+  else toast.success(t('rewrite.updatedName', [module.name]))
 }
 
 async function toggleModule(module: MitmModuleInfo): Promise<void> {
   const error = await store.setModuleEnabled(module.id, !module.enabled)
-  if (error) toast.error('切换失败', error)
+  if (error) toast.error(t('common.switchFailed'), error)
 }
 
 const editingArgsModule = computed(() => state.value.modules.find((module) => module.id === editingArgs.value) ?? null)
@@ -216,10 +217,10 @@ function openArguments(module: MitmModuleInfo): void {
 
 async function saveArguments(module: MitmModuleInfo): Promise<void> {
   const error = await store.setModuleArguments(module.id, { ...argDraft.value })
-  if (error) toast.error('保存参数失败', error)
+  if (error) toast.error(t('rewrite.argsSaveFailed'), error)
   else {
     editingArgs.value = null
-    toast.success('参数已保存')
+    toast.success(t('rewrite.argsSaved'))
   }
 }
 
@@ -230,8 +231,8 @@ function resetArguments(module: MitmModuleInfo): void {
 async function clearStore(): Promise<void> {
   clearingStore.value = false
   const error = await store.clearScriptStore()
-  if (error) toast.error('清除失败', error)
-  else toast.success('脚本数据已清除')
+  if (error) toast.error(t('rewrite.clearFailed'), error)
+  else toast.success(t('rewrite.scriptDataCleared'))
 }
 
 async function confirmRemove(): Promise<void> {
@@ -239,16 +240,16 @@ async function confirmRemove(): Promise<void> {
   removing.value = null
   if (!target) return
   const error = await store.removeModule(target.id)
-  if (error) toast.error('删除失败', error)
+  if (error) toast.error(t('common.deleteFailed'), error)
 }
 
 async function saveLocal(): Promise<void> {
   const error = await store.setLocalModule(localText.value)
-  if (error) toast.error('保存失败', error)
+  if (error) toast.error(t('common.saveFailed'), error)
   else {
     syncLocal()
     localOpen.value = false
-    toast.success('本地规则已保存')
+    toast.success(t('rewrite.localSaved'))
   }
 }
 
@@ -269,10 +270,10 @@ onBeforeUnmount(() => window.removeEventListener('focus', refreshOnFocus))
   <div class="page-shell feature-page rewrite-view">
     <header class="surge-title">
       <div class="surge-title-row">
-        <h1>重写 &amp; 映射</h1>
-        <button type="button" class="switch surge-switch" :class="{ on: state.settings.rewriteEnabled }" role="switch" :aria-checked="state.settings.rewriteEnabled" aria-label="启用重写" :disabled="!!store.busy" @click="toggleRewrite" />
+        <h1>{{ t('rewrite.title') }}</h1>
+        <button type="button" class="switch surge-switch" :class="{ on: state.settings.rewriteEnabled }" role="switch" :aria-checked="state.settings.rewriteEnabled" :aria-label="t('rewrite.enableLabel')" :disabled="!!store.busy" @click="toggleRewrite" />
       </div>
-      <p v-if="state.settings.rewriteEnabled && !state.active" class="surge-warn">HTTPS 请求需要先开启解密（{{ state.inactiveReason }}）。<RouterLink to="/mitm" class="surge-link">前往解密</RouterLink></p>
+      <p v-if="state.settings.rewriteEnabled && !state.active" class="surge-warn">{{ t('rewrite.needMitm', [state.inactiveReason]) }}<RouterLink to="/mitm" class="surge-link">{{ t('rewrite.goMitm') }}</RouterLink></p>
     </header>
 
     <p v-if="store.lastError" class="inline-error" role="alert">{{ store.lastError }}</p>
@@ -282,39 +283,39 @@ onBeforeUnmount(() => window.removeEventListener('focus', refreshOnFocus))
         <h3>{{ kind.title }}</h3>
         <p>{{ kind.description }}</p>
         <footer>
-          <button type="button" class="rewrite-kind-count" :disabled="!kind.count" :aria-label="`查看${kind.count}条生效中的${kind.title}规则`" @click="viewingKind = kind">{{ kind.count }} 条规则生效中<AppIcon v-if="kind.count" name="next" :size="12" /></button>
-          <button type="button" class="rewrite-kind-edit" :disabled="!!store.busy" @click="openSection(kind)">编辑{{ kind.noun }}规则…</button>
+          <button type="button" class="rewrite-kind-count" :disabled="!kind.count" :aria-label="t('rewrite.viewKindLabel', [kind.count, kind.title])" @click="viewingKind = kind">{{ t('rewrite.activeCount', [kind.count]) }}<AppIcon v-if="kind.count" name="next" :size="12" /></button>
+          <button type="button" class="rewrite-kind-edit" :disabled="!!store.busy" @click="openSection(kind)">{{ t('rewrite.editKind', [kind.noun]) }}</button>
         </footer>
       </SurfaceCard>
     </div>
-    <p class="surge-hint rewrite-kinds-note">以上计数包含了模块中的规则。<button type="button" class="surge-link" @click="openLocal">编辑全部本地规则…</button></p>
+    <p class="surge-hint rewrite-kinds-note">{{ t('rewrite.countNote') }}<button type="button" class="surge-link" @click="openLocal">{{ t('rewrite.editAllLocal') }}</button></p>
 
     <section class="surge-section rewrite-modules-section">
-      <h2 class="tone-pink">模块</h2>
+      <h2 class="tone-pink">{{ t('resources.modules') }}</h2>
       <SurfaceCard class="rewrite-card">
         <form class="rewrite-add" @submit.prevent="addModule">
-          <input v-model="moduleUrl" type="url" placeholder="模块链接（Surge / Loon / Stash / Egern / Quantumult X）" aria-label="模块链接" spellcheck="false" />
-          <button type="submit" class="rewrite-primary" :disabled="!!store.busy || !moduleUrl.trim()">{{ store.busy === 'add-module' ? '下载中…' : '添加' }}</button>
+          <input v-model="moduleUrl" type="url" :placeholder="t('rewrite.moduleUrlPlaceholder')" :aria-label="t('rewrite.moduleUrlLabel')" spellcheck="false" />
+          <button type="submit" class="rewrite-primary" :disabled="!!store.busy || !moduleUrl.trim()">{{ store.busy === 'add-module' ? t('rewrite.downloading') : t('common.addAction') }}</button>
         </form>
-        <p v-if="!state.modules.length" class="rewrite-hint">还没有模块。可以粘贴 Surge 模块、Loon 插件或 Quantumult X 重写链接，模块里的 MITM 主机名会自动加入解密列表。</p>
+        <p v-if="!state.modules.length" class="rewrite-hint">{{ t('rewrite.noModules') }}</p>
         <ul v-else class="rewrite-modules">
           <li v-for="module in state.modules" :key="module.id">
             <div class="rewrite-module-row">
               <div class="rewrite-module-text">
                 <strong>{{ module.name }}</strong>
                 <small v-if="module.description">{{ module.description }}</small>
-                <small>{{ module.ruleCount }} 条规则<template v-if="module.scripts">（含 {{ module.scripts }} 个脚本）</template> · {{ module.hostnames.length }} 个主机名 · 更新于 {{ formatDate(module.updatedAt) }}</small>
-                <small v-if="module.error" class="rewrite-error">上次更新失败：{{ module.error }}</small>
+                <small>{{ t('resources.ruleCount', [module.ruleCount]) }}<template v-if="module.scripts">{{ t('rewrite.scriptCount', [module.scripts]) }}</template> {{ t('rewrite.moduleMeta', [module.hostnames.length, formatDate(module.updatedAt)]) }}</small>
+                <small v-if="module.error" class="rewrite-error">{{ t('rewrite.lastUpdateFailed', [module.error]) }}</small>
                 <span class="rewrite-module-links">
-                  <button v-if="module.warnings.length" type="button" class="rewrite-link" @click="expanded = expanded === module.id ? null : module.id">{{ module.warnings.length }} 条未生效的内容</button>
+                  <button v-if="module.warnings.length" type="button" class="rewrite-link" @click="expanded = expanded === module.id ? null : module.id">{{ t('rewrite.skippedCount', [module.warnings.length]) }}</button>
                 </span>
               </div>
               <div class="rewrite-module-actions">
-                <button type="button" class="icon-control rewrite-module-view" :aria-label="`查看 ${module.name}`" title="查看模块内容" @click="viewingModuleId = module.id"><AppIcon name="eye" :size="16" /></button>
-                <button v-if="module.arguments.length" type="button" class="rewrite-secondary" :disabled="!!store.busy" @click="openArguments(module)">编辑参数</button>
-                <button v-if="module.url" type="button" class="rewrite-secondary" :disabled="!!store.busy" @click="updateModule(module)">{{ store.busy === `update-${module.id}` ? '更新中…' : '更新' }}</button>
-                <button type="button" class="rewrite-danger" :disabled="!!store.busy" @click="removing = module">删除</button>
-                <button type="button" class="switch" :class="{ on: module.enabled }" role="switch" :aria-checked="module.enabled" :aria-label="`启用 ${module.name}`" :disabled="!!store.busy" @click="toggleModule(module)" />
+                <button type="button" class="icon-control rewrite-module-view" :aria-label="t('rewrite.viewName', [module.name])" :title="t('rewrite.viewModule')" @click="viewingModuleId = module.id"><AppIcon name="eye" :size="16" /></button>
+                <button v-if="module.arguments.length" type="button" class="rewrite-secondary" :disabled="!!store.busy" @click="openArguments(module)">{{ t('rewrite.editArgs') }}</button>
+                <button v-if="module.url" type="button" class="rewrite-secondary" :disabled="!!store.busy" @click="updateModule(module)">{{ store.busy === `update-${module.id}` ? t('common.updating') : t('common.update') }}</button>
+                <button type="button" class="rewrite-danger" :disabled="!!store.busy" @click="removing = module">{{ t('common.delete') }}</button>
+                <button type="button" class="switch" :class="{ on: module.enabled }" role="switch" :aria-checked="module.enabled" :aria-label="t('localRules.enable', [module.name])" :disabled="!!store.busy" @click="toggleModule(module)" />
               </div>
             </div>
             <ul v-if="expanded === module.id" class="rewrite-warnings">
@@ -323,75 +324,75 @@ onBeforeUnmount(() => window.removeEventListener('focus', refreshOnFocus))
           </li>
         </ul>
         <div v-if="state.summary.scriptStoreKeys" class="rewrite-store">
-          <span>脚本保存了 {{ state.summary.scriptStoreKeys }} 项数据（$persistentStore）</span>
-          <button type="button" class="rewrite-danger" :disabled="!!store.busy" @click="clearingStore = true">清除</button>
+          <span>{{ t('rewrite.storeCount', [state.summary.scriptStoreKeys]) }}</span>
+          <button type="button" class="rewrite-danger" :disabled="!!store.busy" @click="clearingStore = true">{{ t('dnsTools.flush') }}</button>
         </div>
       </SurfaceCard>
     </section>
 
     <Teleport to="body">
       <div v-if="editingKind" class="modal-shade" role="presentation" @click.self="closeSection">
-        <section ref="sectionDialog" class="rewrite-section-modal" role="dialog" aria-modal="true" :aria-label="`编辑${editingKind.title}规则`">
+        <section ref="sectionDialog" class="rewrite-section-modal" role="dialog" aria-modal="true" :aria-label="t('rewrite.editKindLabel', [editingKind.title])">
           <header>
             <div>
               <h2>{{ editingKind.title }}</h2>
-              <p>本地规则中的 [{{ editingKind.section }}] 段，每行一条。模块里的规则请在模块中修改。</p>
+              <p>{{ t('rewrite.sectionHint', [editingKind.section]) }}</p>
             </div>
-            <button type="button" class="icon-control" aria-label="关闭" :disabled="!!store.busy" @click="closeSection"><AppIcon name="close" /></button>
+            <button type="button" class="icon-control" :aria-label="t('common.close')" :disabled="!!store.busy" @click="closeSection"><AppIcon name="close" /></button>
           </header>
           <textarea v-model="sectionText" class="rewrite-editor" spellcheck="false" :placeholder="editingKind.example" />
           <footer>
-            <span v-if="sectionDirty" class="unsaved-indicator">未保存</span>
-            <button type="button" class="surge-button" :disabled="!!store.busy" @click="closeSection">取消</button>
-            <button type="button" class="surge-button primary" :disabled="!!store.busy || !sectionDirty" @click="saveSection">{{ store.busy === 'local-module' ? '保存中…' : '保存' }}</button>
+            <span v-if="sectionDirty" class="unsaved-indicator">{{ t('common.unsaved') }}</span>
+            <button type="button" class="surge-button" :disabled="!!store.busy" @click="closeSection">{{ t('common.cancel') }}</button>
+            <button type="button" class="surge-button primary" :disabled="!!store.busy || !sectionDirty" @click="saveSection">{{ store.busy === 'local-module' ? t('common.saving') : t('common.save') }}</button>
           </footer>
         </section>
       </div>
     </Teleport>
     <Teleport to="body">
       <div v-if="viewingKind" class="modal-shade" role="presentation" @click.self="viewingKind = null">
-        <section ref="viewDialog" class="rewrite-section-modal" role="dialog" aria-modal="true" :aria-label="`生效中的${viewingKind.title}规则`">
+        <section ref="viewDialog" class="rewrite-section-modal" role="dialog" aria-modal="true" :aria-label="t('rewrite.activeKindLabel', [viewingKind.title])">
           <header>
             <div>
-              <h2>{{ viewingKind.title }} · {{ viewingRules.length }} 条生效中</h2>
-              <p>包括本地规则和已启用模块中的规则。</p>
+              <h2>{{ t('rewrite.activeSummary', [viewingKind.title, viewingRules.length]) }}</h2>
+              <p>{{ t('rewrite.activeNote') }}</p>
             </div>
-            <button type="button" class="icon-control" aria-label="关闭" @click="viewingKind = null"><AppIcon name="close" /></button>
+            <button type="button" class="icon-control" :aria-label="t('common.close')" @click="viewingKind = null"><AppIcon name="close" /></button>
           </header>
           <ol v-if="viewingRules.length" class="rewrite-active-list">
             <li v-for="(rule, index) in viewingRules" :key="index"><code>{{ rule.text }}</code><span>{{ rule.source }}</span></li>
           </ol>
-          <p v-else class="rewrite-hint">没有生效中的规则。</p>
+          <p v-else class="rewrite-hint">{{ t('rewrite.noActive') }}</p>
           <footer>
-            <button type="button" class="surge-button" @click="viewingKind = null">关闭</button>
-            <button type="button" class="surge-button primary" @click="openSection(viewingKind); viewingKind = null">编辑本地规则…</button>
+            <button type="button" class="surge-button" @click="viewingKind = null">{{ t('common.close') }}</button>
+            <button type="button" class="surge-button primary" @click="openSection(viewingKind); viewingKind = null">{{ t('rewrite.editLocal') }}</button>
           </footer>
         </section>
       </div>
     </Teleport>
     <Teleport to="body">
       <div v-if="localOpen" class="modal-shade" role="presentation" @click.self="closeLocal">
-        <section ref="localDialog" class="rewrite-section-modal" role="dialog" aria-modal="true" aria-label="全部本地规则">
+        <section ref="localDialog" class="rewrite-section-modal" role="dialog" aria-modal="true" :aria-label="t('rewrite.allLocal')">
           <header>
             <div>
-              <h2>全部本地规则</h2>
-              <p>Surge 模块语法。支持 [URL Rewrite]、[Header Rewrite]、[Body Rewrite]（含 jq）、[Map Local]、[Script]、[Rule]、[MITM]，也能识别 Loon 的 [Rewrite] 和 Quantumult X 的 [rewrite_local]。[Rule] 只能使用 DIRECT 或 REJECT。</p>
+              <h2>{{ t('rewrite.allLocal') }}</h2>
+              <p>{{ t('rewrite.syntaxHint') }}</p>
             </div>
-            <button type="button" class="icon-control" aria-label="关闭" :disabled="!!store.busy" @click="closeLocal"><AppIcon name="close" /></button>
+            <button type="button" class="icon-control" :aria-label="t('common.close')" :disabled="!!store.busy" @click="closeLocal"><AppIcon name="close" /></button>
           </header>
           <textarea v-model="localText" class="rewrite-editor" spellcheck="false" :placeholder="LOCAL_PLACEHOLDER" />
           <ul v-if="state.localWarnings.length" class="rewrite-warnings">
             <li v-for="warning in state.localWarnings" :key="warning">{{ warning }}</li>
           </ul>
           <footer>
-            <span v-if="localDirty" class="unsaved-indicator">未保存</span>
-            <button type="button" class="surge-button" :disabled="!!store.busy" @click="closeLocal">取消</button>
-            <button type="button" class="surge-button primary" :disabled="!!store.busy || !localDirty" @click="saveLocal">{{ store.busy === 'local-module' ? '保存中…' : '保存' }}</button>
+            <span v-if="localDirty" class="unsaved-indicator">{{ t('common.unsaved') }}</span>
+            <button type="button" class="surge-button" :disabled="!!store.busy" @click="closeLocal">{{ t('common.cancel') }}</button>
+            <button type="button" class="surge-button primary" :disabled="!!store.busy || !localDirty" @click="saveLocal">{{ store.busy === 'local-module' ? t('common.saving') : t('common.save') }}</button>
           </footer>
         </section>
       </div>
     </Teleport>
-    <DetailDrawer :open="!!editingArgsModule" :title="editingArgsModule?.name ?? ''" subtitle="模块参数" @close="editingArgs = null">
+    <DetailDrawer :open="!!editingArgsModule" :title="editingArgsModule?.name ?? ''" :subtitle="t('rewrite.argsSubtitle')" @close="editingArgs = null">
       <form v-if="editingArgsModule" class="module-args" @submit.prevent="saveArguments(editingArgsModule)">
         <div class="module-viewer-card module-args-card">
           <label v-for="arg in editingArgsModule.arguments" :key="arg.name" :title="arg.desc || undefined">
@@ -403,27 +404,27 @@ onBeforeUnmount(() => window.removeEventListener('focus', refreshOnFocus))
         </div>
         <p v-if="editingArgsModule.argumentsDesc" class="module-args-desc">{{ editingArgsModule.argumentsDesc }}</p>
         <div class="rewrite-actions">
-          <button type="button" class="rewrite-secondary" @click="resetArguments(editingArgsModule)">恢复默认</button>
-          <button type="submit" class="rewrite-primary" :disabled="!!store.busy">{{ store.busy === `arguments-${editingArgsModule.id}` ? '保存中…' : '保存参数' }}</button>
+          <button type="button" class="rewrite-secondary" @click="resetArguments(editingArgsModule)">{{ t('common.restoreDefaults') }}</button>
+          <button type="submit" class="rewrite-primary" :disabled="!!store.busy">{{ store.busy === `arguments-${editingArgsModule.id}` ? t('common.saving') : t('rewrite.saveArgs') }}</button>
         </div>
       </form>
     </DetailDrawer>
-    <DetailDrawer :open="!!viewingModule" :title="viewingModule?.name ?? ''" subtitle="模块内容" @close="viewingModuleId = null">
+    <DetailDrawer :open="!!viewingModule" :title="viewingModule?.name ?? ''" :subtitle="t('rewrite.contentSubtitle')" @close="viewingModuleId = null">
       <div v-if="viewingModule" class="module-viewer">
         <dl class="module-viewer-card">
-          <div><dt>模块名称</dt><dd>{{ viewingModule.name }}</dd></div>
-          <div v-if="viewingModule.description || viewingModuleParts.meta.desc"><dt>模块描述</dt><dd>{{ viewingModule.description || viewingModuleParts.meta.desc }}</dd></div>
+          <div><dt>{{ t('rewrite.moduleName') }}</dt><dd>{{ viewingModule.name }}</dd></div>
+          <div v-if="viewingModule.description || viewingModuleParts.meta.desc"><dt>{{ t('rewrite.moduleDesc') }}</dt><dd>{{ viewingModule.description || viewingModuleParts.meta.desc }}</dd></div>
           <div v-if="viewingModule.url"><dt>URL</dt><dd class="module-viewer-url">{{ viewingModule.url }}</dd></div>
         </dl>
         <section v-for="section in viewingModuleParts.sections" :key="section.name" class="module-viewer-section">
           <h3>{{ section.name }}</h3>
           <pre :class="{ mitm: section.name.toLowerCase() === 'mitm' }">{{ section.body }}</pre>
         </section>
-        <p v-if="!viewingModuleParts.sections.length" class="rewrite-hint">模块没有可显示的内容。</p>
+        <p v-if="!viewingModuleParts.sections.length" class="rewrite-hint">{{ t('rewrite.moduleEmpty') }}</p>
       </div>
     </DetailDrawer>
-    <ConfirmModal :open="clearingStore" title="清除脚本数据？" description="会删除所有脚本通过 $persistentStore 保存的数据，例如 BoxJs 的设置和各脚本的登录信息。" confirm-label="清除" :busy="!!store.busy" @close="clearingStore = false" @confirm="clearStore" />
-    <ConfirmModal :open="!!removing" title="删除模块？" :description="`将删除「${removing?.name ?? ''}」及其规则。`" confirm-label="删除" :busy="!!store.busy" @close="removing = null" @confirm="confirmRemove" />
+    <ConfirmModal :open="clearingStore" :title="t('rewrite.clearDataTitle')" :description="t('rewrite.clearDataDescription')" :confirm-label="t('dnsTools.flush')" :busy="!!store.busy" @close="clearingStore = false" @confirm="clearStore" />
+    <ConfirmModal :open="!!removing" :title="t('rewrite.deleteModuleTitle')" :description="t('rewrite.deleteModuleDescription', [removing?.name ?? ''])" :confirm-label="t('common.delete')" :busy="!!store.busy" @close="removing = null" @confirm="confirmRemove" />
   </div>
 </template>
 

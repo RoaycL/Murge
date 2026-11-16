@@ -7,6 +7,7 @@
  */
 
 /** One IPv4 address of this host (`app:list-local-addresses`). */
+import { t } from './i18n'
 export interface LocalAddress {
   /** OS adapter name, e.g. `WLAN` or `以太网`. */
   name: string
@@ -58,11 +59,11 @@ export function isThisHost(address: string, local: readonly LocalAddress[]): boo
 export function describeDevice(address: string, inbounds: readonly string[], local: readonly LocalAddress[]): string {
   const plain = address.replace(/^::ffff:/i, '')
   const viaTun = inbounds.some((type) => type.toLowerCase() === 'tun')
-  if (isLoopbackAddress(plain)) return '本机 · 回环地址'
-  if (isTunAddress(plain)) return '本机 · TUN'
-  if (local.some((entry) => entry.address === plain)) return viaTun ? '本机 · TUN' : '本机'
-  if (isPrivateAddress(plain)) return viaTun ? '局域网设备 · 网关' : '局域网设备 · 代理'
-  return '其他地址'
+  if (isLoopbackAddress(plain)) return t('lan.loopback')
+  if (isTunAddress(plain)) return t('lan.thisTun')
+  if (local.some((entry) => entry.address === plain)) return viaTun ? t('lan.thisTun') : t('lan.thisDevice')
+  if (isPrivateAddress(plain)) return viaTun ? t('lan.lanGateway') : t('lan.lanProxy')
+  return t('lan.other')
 }
 
 /** The addresses other devices should dial: the LAN-reachable ones only. */

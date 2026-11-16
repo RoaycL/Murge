@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted, ref } from 'vue'
 import SurfaceCard from './SurfaceCard.vue'
 import { useNetworkMetadataStore, type NetworkMetadataRow } from '../stores/network-metadata'
@@ -50,9 +51,9 @@ function toggleReveal(): void {
 const unlockRows = computed(() => unlock.orderedResults())
 
 const STATUS_LABELS = {
-  supported: '支持',
-  unsupported: '不支持',
-  error: '测试失败'
+  supported: t('netMeta.supported'),
+  unsupported: t('netMeta.unsupported'),
+  error: t('netMeta.testFailed')
 } as const
 
 function statusLabel(status: ServiceUnlockResult['status']): string {
@@ -67,20 +68,20 @@ function hasRegion(region: string | null): boolean {
 <template>
   <SurfaceCard class="network-card">
     <div class="card-title-row info-title-row">
-      <span class="metric-label">出口网络信息</span>
+      <span class="metric-label">{{ t('netMeta.title') }}</span>
       <div class="title-actions">
-        <button type="button" class="quiet-button" :disabled="busy" @click="onRefresh">刷新</button>
+        <button type="button" class="quiet-button" :disabled="busy" @click="onRefresh">{{ t('common.refresh') }}</button>
         <button type="button" class="quiet-button" :aria-pressed="revealed" @click="toggleReveal">
-          {{ revealed ? '隐藏' : '显示' }}
+          {{ revealed ? t('common.hide') : t('common.show') }}
         </button>
       </div>
     </div>
 
-    <div class="provider-table" :class="{ empty: !rows.length }" role="table" aria-label="出口网络信息（全部数据源）">
+    <div class="provider-table" :class="{ empty: !rows.length }" role="table" :aria-label="t('netMeta.allSourcesLabel')">
       <div class="provider-row head" role="row">
-        <span role="columnheader">数据源</span>
-        <span role="columnheader">出口 IP</span>
-        <span role="columnheader">地区 · 城市</span>
+        <span role="columnheader">{{ t('netMeta.source') }}</span>
+        <span role="columnheader">{{ t('netMeta.exitIp') }}</span>
+        <span role="columnheader">{{ t('netMeta.regionCity') }}</span>
         <span role="columnheader">ASN</span>
       </div>
       <div v-for="row in rows" :key="row.providerId" class="provider-row" role="row" :class="{ failed: row.phase === 'error' && !row.metadata }">
@@ -93,24 +94,24 @@ function hasRegion(region: string | null): boolean {
     <p v-if="store.refreshError" class="inline-error" role="alert">{{ store.refreshError }}</p>
 
     <div class="card-title-row unlock-title-row">
-      <span class="metric-label">服务解锁测试 <em v-if="unlock.testingAll" class="status">检测中…</em></span>
+      <span class="metric-label">{{ t('netMeta.unlockTitle') }} <em v-if="unlock.testingAll" class="status">{{ t('netMeta.detecting') }}</em></span>
       <div class="title-actions">
         <button type="button" class="quiet-button" :disabled="unlock.testingAll" @click="unlock.testAll()">
-          {{ unlock.testingAll ? '检测中…' : '测试全部' }}
+          {{ unlock.testingAll ? t('netMeta.detecting') : t('common.testAll') }}
         </button>
       </div>
     </div>
-    <div class="unlock-grid" role="table" aria-label="服务解锁测试结果">
+    <div class="unlock-grid" role="table" :aria-label="t('netMeta.unlockResults')">
       <div v-for="row in unlockRows" :key="row.name" class="unlock-row" role="row">
         <span class="unlock-name" role="cell" :title="row.name">{{ row.name }}</span>
         <span class="unlock-verdict" role="cell">
-          <template v-if="unlock.testing[row.name]"><span class="unlock-pill pending">待检测</span></template>
+          <template v-if="unlock.testing[row.name]"><span class="unlock-pill pending">{{ t('netMeta.pending') }}</span></template>
           <template v-else>
             <span class="unlock-pill" :class="row.status">{{ statusLabel(row.status) }}</span>
             <span v-if="hasRegion(row.region)" class="unlock-region">{{ row.region }}</span>
           </template>
         </span>
-        <button type="button" class="icon-control unlock-retest" :disabled="unlock.testing[row.name]" :aria-label="`重新测试 ${row.name}`" @click="unlock.testOne(row.name)">⟳</button>
+        <button type="button" class="icon-control unlock-retest" :disabled="unlock.testing[row.name]" :aria-label="t('netMeta.retest', [row.name])" @click="unlock.testOne(row.name)">⟳</button>
       </div>
     </div>
     <p v-if="unlock.error" class="inline-error" role="alert">{{ unlock.error }}</p>

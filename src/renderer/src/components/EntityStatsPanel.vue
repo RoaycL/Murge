@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed } from 'vue'
 import type { EntityTrafficStats } from '../lib/entity-traffic'
 import { formatBytes, formatRate } from '../lib/format'
@@ -22,32 +23,32 @@ const windows = computed(() => props.stats?.windows ?? [])
 
 <template>
   <div class="entity-stats">
-    <section class="entity-stats-section bandwidth" aria-label="带宽">
-      <h3>带宽</h3>
+    <section class="entity-stats-section bandwidth" :aria-label="t('stats.bandwidth')">
+      <h3>{{ t('stats.bandwidth') }}</h3>
       <div class="entity-stats-pair">
-        <div><span>上传</span><strong>{{ up.value }}<small>{{ up.unit }}</small></strong></div>
-        <div><span>下载</span><strong>{{ down.value }}<small>{{ down.unit }}</small></strong></div>
+        <div><span>{{ t('common.upload') }}</span><strong>{{ up.value }}<small>{{ up.unit }}</small></strong></div>
+        <div><span>{{ t('common.download') }}</span><strong>{{ down.value }}<small>{{ down.unit }}</small></strong></div>
       </div>
     </section>
-    <section class="entity-stats-section connections" aria-label="连接">
-      <h3>连接</h3>
+    <section class="entity-stats-section connections" :aria-label="t('stats.connections')">
+      <h3>{{ t('stats.connections') }}</h3>
       <div class="entity-stats-pair">
-        <div><span>活动</span><strong>{{ activeConnections }}</strong></div>
-        <div><span>总计</span><strong>{{ totalConnections }}</strong></div>
+        <div><span>{{ t('stats.active') }}</span><strong>{{ activeConnections }}</strong></div>
+        <div><span>{{ t('stats.total') }}</span><strong>{{ totalConnections }}</strong></div>
       </div>
     </section>
-    <section class="entity-stats-section details" aria-label="详情">
-      <h3>详情</h3>
+    <section class="entity-stats-section details" :aria-label="t('common.details')">
+      <h3>{{ t('common.details') }}</h3>
       <dl>
         <div v-for="row in details" :key="row.label"><dt>{{ row.label }}</dt><dd>{{ row.value }}</dd></div>
       </dl>
     </section>
-    <section class="entity-stats-section traffic" aria-label="流量">
-      <h3>流量</h3>
+    <section class="entity-stats-section traffic" :aria-label="t('stats.traffic')">
+      <h3>{{ t('stats.traffic') }}</h3>
       <dl>
         <div v-for="row in windows" :key="row.key"><dt>{{ row.label }}</dt><dd>↑ {{ formatBytes(row.up) }} / ↓ {{ formatBytes(row.down) }}</dd></div>
       </dl>
-      <p class="entity-stats-note">统计自本次启动，按连接字节增量累计；退出后不保留。</p>
+      <p class="entity-stats-note">{{ t('stats.sinceLaunch') }}</p>
     </section>
   </div>
 </template>

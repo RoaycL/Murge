@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { locale, t } from '@shared/i18n'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import AppIcon from '../components/AppIcon.vue'
 import DetailDrawer from '../components/DetailDrawer.vue'
@@ -34,7 +35,7 @@ function scriptFileName(url: string): string {
   }
 }
 
-const KIND_TEXT: Record<ResourceKind, string> = { proxy: '代理集合', rule: '规则集合', module: '模块', script: '脚本' }
+const KIND_TEXT: Record<ResourceKind, string> = { proxy: t('resources.proxyProvider'), rule: t('resources.ruleProvider'), module: t('common.module'), script: t('common.script') }
 type ResourceStatus = 'ready' | 'updating' | 'failed' | 'pending'
 interface ResourceRow {
   key: string
@@ -51,7 +52,7 @@ interface ResourceRow {
 /** 全部 / 代理集合 / 规则集合 / 模块 / 脚本: one table, filtered by type. */
 const kindFilter = ref<'all' | ResourceKind>('all')
 const onlyNotReady = ref(false)
-const STATUS_TEXT: Record<ResourceStatus, string> = { ready: '就绪', updating: '更新中', failed: '失败', pending: '未加载' }
+const STATUS_TEXT: Record<ResourceStatus, string> = { ready: t('localNodes.ready'), updating: t('geodata.updating'), failed: t('common.failed'), pending: t('resources.notLoaded') }
 
 function declaredUrl(kind: ResourceKind, name: string): string {
   const list = kind === 'proxy' ? providers.providerCatalog.proxy : providers.providerCatalog.rule
@@ -66,26 +67,26 @@ function rowStatus(kind: 'proxy' | 'rule', name: string, updatedAt: string | und
 const rows = computed<ResourceRow[]>(() => [
   ...providers.remoteProxyProviders.map((item) => ({
     key: `proxy\0${item.name}`, kind: 'proxy' as const, name: item.name,
-    count: `${item.proxies?.length ?? 0} 个节点`, updatedAt: item.updatedAt,
+    count: t('resources.nodeCount', [item.proxies?.length ?? 0]), updatedAt: item.updatedAt,
     url: declaredUrl('proxy', item.name), status: rowStatus('proxy', item.name, item.updatedAt),
     error: providers.opOf(item.name, 'proxy').error ?? null
   })),
   ...providers.remoteRuleProviders.map((item) => ({
     key: `rule\0${item.name}`, kind: 'rule' as const, name: item.name,
-    count: `${item.ruleCount ?? 0} 条规则`, updatedAt: item.updatedAt,
+    count: t('resources.ruleCount', [item.ruleCount ?? 0]), updatedAt: item.updatedAt,
     url: declaredUrl('rule', item.name), status: rowStatus('rule', item.name, item.updatedAt),
     error: providers.opOf(item.name, 'rule').error ?? null
   })),
   ...remoteModules.value.map((module) => ({
     key: `module\0${module.id}`, kind: 'module' as const, name: module.name,
-    count: `${module.ruleCount} 条规则`, updatedAt: module.updatedAt ? new Date(module.updatedAt).toISOString() : undefined,
+    count: t('resources.ruleCount', [module.ruleCount]), updatedAt: module.updatedAt ? new Date(module.updatedAt).toISOString() : undefined,
     url: module.url ?? '', moduleId: module.id,
     status: (mitm.busy === `update-${module.id}` ? 'updating' : module.error ? 'failed' : 'ready') as ResourceStatus,
     error: module.error
   })),
   ...moduleScripts.value.map((script) => ({
     key: `script\0${script.url}`, kind: 'script' as const, name: script.name || scriptFileName(script.url),
-    count: script.sources.join('、'), updatedAt: script.updatedAt ? new Date(script.updatedAt).toISOString() : undefined,
+    count: script.sources.join(t('common.listSeparator')), updatedAt: script.updatedAt ? new Date(script.updatedAt).toISOString() : undefined,
     url: script.url,
     status: (mitm.busy === `script-${script.url}` ? 'updating' : script.error ? 'failed' : script.cached ? 'ready' : 'pending') as ResourceStatus,
     error: script.error
@@ -95,11 +96,11 @@ const visibleRows = computed(() => rows.value.filter((row) =>
   (kindFilter.value === 'all' || row.kind === kindFilter.value) && (!onlyNotReady.value || row.status !== 'ready')
 ))
 const kindTabs = computed(() => [
-  { value: 'all' as const, label: '全部', count: rows.value.length },
-  { value: 'proxy' as const, label: '代理集合', count: providers.remoteProxyProviders.length },
-  { value: 'rule' as const, label: '规则集合', count: providers.remoteRuleProviders.length },
-  ...(remoteModules.value.length ? [{ value: 'module' as const, label: '模块', count: remoteModules.value.length }] : []),
-  ...(moduleScripts.value.length ? [{ value: 'script' as const, label: '脚本', count: moduleScripts.value.length }] : [])
+  { value: 'all' as const, label: t('common.all'), count: rows.value.length },
+  { value: 'proxy' as const, label: t('resources.proxyProviders'), count: providers.remoteProxyProviders.length },
+  { value: 'rule' as const, label: t('resources.ruleProviders'), count: providers.remoteRuleProviders.length },
+  ...(remoteModules.value.length ? [{ value: 'module' as const, label: t('resources.modules'), count: remoteModules.value.length }] : []),
+  ...(moduleScripts.value.length ? [{ value: 'script' as const, label: t('resources.scripts'), count: moduleScripts.value.length }] : [])
 ])
 const notReadyCount = computed(() => rows.value.filter((row) => row.status !== 'ready').length)
 const now = ref(Date.now())
@@ -113,10 +114,10 @@ function relativeTime(value: string | undefined): string {
   const time = Date.parse(value)
   if (Number.isNaN(time)) return '—'
   const seconds = Math.max(0, Math.floor((now.value - time) / 1000))
-  if (seconds < 60) return '刚刚'
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟之前`
-  if (seconds < 86_400) return `${Math.floor(seconds / 3600)} 小时之前`
-  return `${Math.floor(seconds / 86_400)} 天之前`
+  if (seconds < 60) return t('common.justNow')
+  if (seconds < 3600) return t('resources.minutesAgo', [Math.floor(seconds / 60)])
+  if (seconds < 86_400) return t('resources.hoursAgo', [Math.floor(seconds / 3600)])
+  return t('resources.daysAgo', [Math.floor(seconds / 86_400)])
 }
 /** Split a URL so the middle elides and the distinguishing file name stays visible. */
 function pathParts(url: string): { head: string; tail: string } {
@@ -161,7 +162,7 @@ async function refreshAll(): Promise<{ updated: number; failed: number }> {
 function refreshRow(row: ResourceRow): void {
   if (row.kind === 'proxy') void providers.refreshProxyProvider(row.name)
   else if (row.kind === 'rule') void providers.refreshRuleProvider(row.name)
-  else void updateMitmRow(row).then((error) => { if (error) toast.error('更新失败', error) })
+  else void updateMitmRow(row).then((error) => { if (error) toast.error(t('common.updateFailed'), error) })
 }
 function rowRefreshing(row: ResourceRow): boolean {
   return row.kind === 'proxy' || row.kind === 'rule' ? providers.opOf(row.name, row.kind).refreshing : row.status === 'updating'
@@ -189,17 +190,17 @@ const viewConfig = computed<ProfileProviderConfig | null>(() => {
 const viewTitle = computed(() => viewTarget.value?.name ?? viewing.value?.name ?? '')
 
 function intervalText(seconds: number | undefined): string {
-  if (!seconds || seconds <= 0) return '未声明'
+  if (!seconds || seconds <= 0) return t('resources.notDeclared')
   if (seconds % 3600 === 0) {
     const hours = seconds / 3600
-    return `${hours} 小时`
+    return t('resources.hours', [hours])
   }
-  return `${seconds} 秒`
+  return t('resources.seconds', [seconds])
 }
 
 function expireText(expire: number | undefined): string {
   if (!expire) return '—'
-  return new Date(expire * 1000).toLocaleString('zh-CN', { hour12: false })
+  return new Date(expire * 1000).toLocaleString(locale.value, { hour12: false })
 }
 
 function vehicleText(provider: MihomoProxyProvider | MihomoRuleProvider | null): string {
@@ -209,74 +210,74 @@ function vehicleText(provider: MihomoProxyProvider | MihomoRuleProvider | null):
 function updatedAtText(provider: MihomoProxyProvider | MihomoRuleProvider | null): string {
   const updatedAt = provider?.updatedAt
   if (!updatedAt) return '—'
-  return new Date(updatedAt).toLocaleString('zh-CN', { hour12: false })
+  return new Date(updatedAt).toLocaleString(locale.value, { hour12: false })
 }
 
 function subscriptionText(provider: MihomoProxyProvider | null): string {
   const info = provider?.subscriptionInfo
   if (!info) return '—'
-  const parts = [`已用 ${formatBytes((info.Upload ?? 0) + (info.Download ?? 0))}`, `总量 ${formatBytes(info.Total ?? 0)}`]
-  if (info.Expire) parts.push(`到期 ${expireText(info.Expire)}`)
+  const parts = [t('resources.used', [formatBytes((info.Upload ?? 0) + (info.Download ?? 0))]), t('resources.totalQuota', [formatBytes(info.Total ?? 0)])]
+  if (info.Expire) parts.push(t('resources.expires', [expireText(info.Expire)]))
   return parts.join(' · ')
 }
 </script>
 
 <template><div class="page-shell feature-page">
   <header class="feature-header">
-    <div><h1>外部资源</h1><p>代理集合、规则集合、重写模块与脚本，以及地理数据库。</p></div>
+    <div><h1>{{ t('resources.title') }}</h1><p>{{ t('resources.intro') }}</p></div>
   </header>
-  <p v-if="kernel.status.phase !== 'running'" class="inline-note">启动内核后即可读取和更新集合。</p>
-  <section v-else class="surface-card resource-table-card" aria-label="远程集合">
+  <p v-if="kernel.status.phase !== 'running'" class="inline-note">{{ t('resources.needCore') }}</p>
+  <section v-else class="surface-card resource-table-card" :aria-label="t('resources.remoteLabel')">
     <div class="resource-table-toolbar">
-      <div class="resource-table-filter" role="group" aria-label="集合类型">
+      <div class="resource-table-filter" role="group" :aria-label="t('resources.kindLabel')">
         <button v-for="tab in kindTabs" :key="tab.value" type="button" :class="{ selected: kindFilter === tab.value }" :aria-pressed="kindFilter === tab.value" @click="kindFilter = tab.value">{{ tab.label }}<span>{{ tab.count }}</span></button>
       </div>
       <div class="resource-table-actions">
         <div class="resource-only-pending" @click="onlyNotReady = !onlyNotReady">
-          <span>仅显示未就绪<em v-if="notReadyCount">{{ notReadyCount }}</em></span>
-          <button type="button" class="switch" :class="{ on: onlyNotReady }" role="switch" :aria-checked="onlyNotReady" aria-label="仅显示未就绪的项目" />
+          <span>{{ t('resources.onlyNotReady') }}<em v-if="notReadyCount">{{ notReadyCount }}</em></span>
+          <button type="button" class="switch" :class="{ on: onlyNotReady }" role="switch" :aria-checked="onlyNotReady" :aria-label="t('resources.onlyNotReadyLabel')" />
         </div>
         <RefreshAllButton :run="refreshAll" :disabled="providers.batchRefreshing || !total" />
       </div>
     </div>
-    <div class="resource-table" role="table" aria-label="外部资源列表">
+    <div class="resource-table" role="table" :aria-label="t('resources.listLabel')">
       <div class="resource-tr resource-th" role="row">
-        <span role="columnheader">类型</span><span role="columnheader">名称</span><span role="columnheader">最后更新</span><span role="columnheader">路径</span><span role="columnheader">状态</span><span role="columnheader" class="sr-only">操作</span>
+        <span role="columnheader">{{ t('common.type') }}</span><span role="columnheader">{{ t('common.name') }}</span><span role="columnheader">{{ t('resources.lastUpdated') }}</span><span role="columnheader">{{ t('groupWizard.path') }}</span><span role="columnheader">{{ t('common.status') }}</span><span role="columnheader" class="sr-only">{{ t('resources.actions') }}</span>
       </div>
       <div v-for="row in visibleRows" :key="row.key" class="resource-tr" role="row" :class="`status-${row.status}`">
         <span role="cell" class="resource-kind">{{ KIND_TEXT[row.kind] }}</span>
         <span v-if="row.kind === 'module' || row.kind === 'script'" role="cell" class="resource-name" :title="row.error ?? `${row.name}${row.count ? ` · ${row.count}` : ''}`"><strong>{{ row.name }}</strong><small>{{ row.count }}</small></span>
-        <button v-else role="cell" type="button" class="resource-name" :aria-label="row.kind === 'proxy' ? '查看代理集合配置' : '查看规则集合配置'" :title="row.error ?? row.name" @click="viewing = { kind: row.kind as 'proxy' | 'rule', name: row.name }"><strong>{{ row.name }}</strong><small>{{ row.count }}</small></button>
+        <button v-else role="cell" type="button" class="resource-name" :aria-label="row.kind === 'proxy' ? t('resources.viewProxyConfig') : t('resources.viewRuleConfig')" :title="row.error ?? row.name" @click="viewing = { kind: row.kind as 'proxy' | 'rule', name: row.name }"><strong>{{ row.name }}</strong><small>{{ row.count }}</small></button>
         <span role="cell" class="resource-updated" :title="row.kind === 'module' || row.kind === 'script' ? (row.updatedAt ?? undefined) : updatedAtText(row.kind === 'proxy' ? providers.proxyProviders[row.name] ?? null : providers.ruleProviders[row.name] ?? null)">{{ relativeTime(row.updatedAt) }}</span>
-        <span role="cell" class="resource-path" :title="row.url || '未声明远程地址'"><span>{{ pathParts(row.url).head }}</span><span v-if="pathParts(row.url).tail">{{ pathParts(row.url).tail }}</span></span>
+        <span role="cell" class="resource-path" :title="row.url || t('resources.noRemoteUrl')"><span>{{ pathParts(row.url).head }}</span><span v-if="pathParts(row.url).tail">{{ pathParts(row.url).tail }}</span></span>
         <span role="cell" class="resource-status" :title="row.error ?? undefined"><i />{{ STATUS_TEXT[row.status] }}</span>
         <span role="cell" class="resource-actions">
-          <button v-if="row.kind === 'proxy' || row.kind === 'rule'" class="icon-control" type="button" :aria-label="row.kind === 'proxy' ? '查看代理集合内容' : '查看规则集合内容'" title="查看内容" @click="viewingContent = { kind: row.kind, name: row.name }"><AppIcon name="eye" :size="15" /></button>
-          <button class="icon-control refresh-control" type="button" :disabled="rowRefreshing(row)" :aria-label="rowRefreshing(row) ? '更新中' : `更新${KIND_TEXT[row.kind]}`" title="更新" @click="refreshRow(row)"><RefreshIndicator :busy="rowRefreshing(row)" :failed="rowFailed(row)" :size="15" /></button>
+          <button v-if="row.kind === 'proxy' || row.kind === 'rule'" class="icon-control" type="button" :aria-label="row.kind === 'proxy' ? t('resources.viewProxyContent') : t('resources.viewRuleContent')" :title="t('resources.viewContent')" @click="viewingContent = { kind: row.kind, name: row.name }"><AppIcon name="eye" :size="15" /></button>
+          <button class="icon-control refresh-control" type="button" :disabled="rowRefreshing(row)" :aria-label="rowRefreshing(row) ? t('geodata.updating') : t('resources.updateKind', [KIND_TEXT[row.kind]])" :title="t('common.update')" @click="refreshRow(row)"><RefreshIndicator :busy="rowRefreshing(row)" :failed="rowFailed(row)" :size="15" /></button>
         </span>
       </div>
-      <p v-if="!visibleRows.length" class="resource-table-empty">{{ onlyNotReady ? '所有集合都已就绪。' : total ? '该类型下没有远程集合。' : '当前配置没有远程代理集合或规则集合。' }}</p>
+      <p v-if="!visibleRows.length" class="resource-table-empty">{{ onlyNotReady ? t('resources.allReady') : total ? t('resources.noneOfKind') : t('resources.noProviders') }}</p>
     </div>
   </section>
   <GeodataSettingsPanel />
   <ConfigInspectionCard section="geodata" title="Geodata" />
 
-  <DetailDrawer :open="Boolean(viewing)" :title="viewTitle" subtitle="集合配置" @close="viewing = null">
+  <DetailDrawer :open="Boolean(viewing)" :title="viewTitle" :subtitle="t('resources.configSubtitle')" @close="viewing = null">
     <div v-if="viewing" class="provider-config-detail">
       <dl class="detail-list">
-        <div class="detail-item"><dt>类型</dt><dd>{{ vehicleText(viewTarget) }}</dd></div>
-        <div class="detail-item"><dt>远程地址</dt><dd class="break-all">{{ viewConfig?.url ?? '未声明（本地/内联集合）' }}</dd></div>
-        <div class="detail-item"><dt>自动更新间隔</dt><dd>{{ intervalText(viewConfig?.interval) }}</dd></div>
+        <div class="detail-item"><dt>{{ t('common.type') }}</dt><dd>{{ vehicleText(viewTarget) }}</dd></div>
+        <div class="detail-item"><dt>{{ t('resources.remoteUrl') }}</dt><dd class="break-all">{{ viewConfig?.url ?? t('resources.notDeclaredLocal') }}</dd></div>
+        <div class="detail-item"><dt>{{ t('groupWizard.updateInterval') }}</dt><dd>{{ intervalText(viewConfig?.interval) }}</dd></div>
         <div class="detail-item" v-if="viewConfig?.behavior"><dt>behavior</dt><dd>{{ viewConfig.behavior }}</dd></div>
         <div class="detail-item" v-if="viewConfig?.format"><dt>format</dt><dd>{{ viewConfig.format }}</dd></div>
-        <div class="detail-item" v-if="viewConfig?.testUrl"><dt>健康检查 URL</dt><dd class="break-all">{{ viewConfig.testUrl }}</dd></div>
-        <div class="detail-item" v-if="viewing.kind === 'rule'"><dt>规则数</dt><dd>{{ (viewTarget as MihomoRuleProvider | null)?.ruleCount ?? 0 }}</dd></div>
-        <div class="detail-item" v-if="viewing.kind === 'proxy'"><dt>节点数</dt><dd>{{ (viewTarget as MihomoProxyProvider | null)?.proxies?.length ?? 0 }}</dd></div>
-        <div class="detail-item"><dt>最近更新</dt><dd>{{ updatedAtText(viewTarget) }}</dd></div>
-        <div class="detail-item" v-if="providers.opOf(viewing.name, viewing.kind).error"><dt>最近错误</dt><dd class="row-error">{{ providers.opOf(viewing.name, viewing.kind).error }}</dd></div>
-        <div class="detail-item" v-if="viewing.kind === 'proxy'"><dt>订阅信息</dt><dd>{{ subscriptionText(viewTarget as MihomoProxyProvider | null) }}</dd></div>
+        <div class="detail-item" v-if="viewConfig?.testUrl"><dt>{{ t('resources.healthCheckUrl') }}</dt><dd class="break-all">{{ viewConfig.testUrl }}</dd></div>
+        <div class="detail-item" v-if="viewing.kind === 'rule'"><dt>{{ t('resources.ruleTotal') }}</dt><dd>{{ (viewTarget as MihomoRuleProvider | null)?.ruleCount ?? 0 }}</dd></div>
+        <div class="detail-item" v-if="viewing.kind === 'proxy'"><dt>{{ t('resources.nodeTotal') }}</dt><dd>{{ (viewTarget as MihomoProxyProvider | null)?.proxies?.length ?? 0 }}</dd></div>
+        <div class="detail-item"><dt>{{ t('resources.recentUpdate') }}</dt><dd>{{ updatedAtText(viewTarget) }}</dd></div>
+        <div class="detail-item" v-if="providers.opOf(viewing.name, viewing.kind).error"><dt>{{ t('resources.recentError') }}</dt><dd class="row-error">{{ providers.opOf(viewing.name, viewing.kind).error }}</dd></div>
+        <div class="detail-item" v-if="viewing.kind === 'proxy'"><dt>{{ t('resources.subscriptionInfo') }}</dt><dd>{{ subscriptionText(viewTarget as MihomoProxyProvider | null) }}</dd></div>
       </dl>
-      <p class="detail-note">远程地址与间隔来自当前配置文件的集合声明；运行状态来自控制器。</p>
+      <p class="detail-note">{{ t('resources.footnote') }}</p>
     </div>
   </DetailDrawer>
   <ProviderContentModal

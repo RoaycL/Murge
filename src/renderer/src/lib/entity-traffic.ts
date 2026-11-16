@@ -1,3 +1,4 @@
+import { t } from '@shared/i18n'
 import type { MihomoConnection } from '@shared/mihomo-api'
 import { deviceKeyOf, processKeyOf } from './connection-groups'
 
@@ -53,14 +54,14 @@ interface EntityRecord {
 }
 
 const WINDOW_SPECS: Array<{ key: string; label: string; ms: number | 'today' | 'start' }> = [
-  { key: 'today', label: '今日', ms: 'today' },
-  { key: 'start', label: '自启动以来', ms: 'start' },
-  { key: '5m', label: '最近 5 分钟', ms: 5 * 60_000 },
-  { key: '15m', label: '最近 15 分钟', ms: 15 * 60_000 },
-  { key: '60m', label: '最近 60 分钟', ms: 60 * 60_000 },
-  { key: '6h', label: '最近 6 小时', ms: 6 * 60 * 60_000 },
-  { key: '12h', label: '最近 12 小时', ms: 12 * 60 * 60_000 },
-  { key: '24h', label: '最近 24 小时', ms: 24 * 60 * 60_000 }
+  { key: 'today', get label() { return t('entityTraffic.today') }, ms: 'today' },
+  { key: 'start', get label() { return t('entityTraffic.sinceLaunch') }, ms: 'start' },
+  { key: '5m', get label() { return t('entityTraffic.last5m') }, ms: 5 * 60_000 },
+  { key: '15m', get label() { return t('entityTraffic.last15m') }, ms: 15 * 60_000 },
+  { key: '60m', get label() { return t('entityTraffic.last60m') }, ms: 60 * 60_000 },
+  { key: '6h', get label() { return t('entityTraffic.last6h') }, ms: 6 * 60 * 60_000 },
+  { key: '12h', get label() { return t('entityTraffic.last12h') }, ms: 12 * 60 * 60_000 },
+  { key: '24h', get label() { return t('entityTraffic.last24h') }, ms: 24 * 60 * 60_000 }
 ]
 
 function localMidnight(now: number): number {

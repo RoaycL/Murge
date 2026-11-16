@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted, ref, watch } from 'vue'
 import { usePoliciesStore, POLICY_MODE_OPTIONS, type PolicyMode } from '../stores/policies'
 import { useKernelStore } from '../stores/kernel'
@@ -29,24 +30,24 @@ function openGroup(name: string): void {
 }
 
 const MODE_LABELS: Record<PolicyMode, string> = {
-  direct: '直接连接',
-  global: '全局代理',
-  rule: '规则判定'
+  direct: t('common.modeDirect'),
+  global: t('common.modeGlobal'),
+  rule: t('common.modeRule')
 }
 
 /** Kernel group/node types in Chinese; unknown types fall back to the raw one. */
 const PROXY_TYPE_LABELS: Record<string, string> = {
-  selector: '手动选择',
-  urltest: '自动测试',
-  fallback: '故障转移',
-  loadbalance: '负载均衡',
-  relay: '链式代理',
-  direct: '直接连接',
-  reject: '拒绝'
+  selector: t('groupWizard.kindSelect'),
+  urltest: t('groupWizard.kindUrlTest'),
+  fallback: t('policy.kindFallback'),
+  loadbalance: t('groupWizard.kindLoadBalance'),
+  relay: t('policy.kindRelay'),
+  direct: t('common.modeDirect'),
+  reject: t('policy.reject')
 }
 
 function displayType(proxyType: string | null | undefined): string {
-  if (!proxyType) return '节点'
+  if (!proxyType) return t('policy.node')
   return PROXY_TYPE_LABELS[proxyType.toLowerCase()] ?? proxyType
 }
 
@@ -75,7 +76,7 @@ function nodeTags(member: string): string[] {
 }
 
 function groupSummary(group: Parameters<typeof policies.groupSelectedMember>[0]): string {
-  return policies.groupSelectedMember(group) || (policies.isSelectableGroup(group) ? '未选择' : '内核自动')
+  return policies.groupSelectedMember(group) || (policies.isSelectableGroup(group) ? t('policy.notSelected') : t('policy.coreAuto'))
 }
 
 /**
@@ -167,10 +168,10 @@ function testGroupFromMenu(name: string): void {
 async function saveGroup(group: LocalGroup): Promise<void> {
   const message = await localStore.upsertGroup(group)
   if (message) {
-    toast.error('保存失败', message)
+    toast.error(t('common.saveFailed'), message)
     return
   }
-  toast.success(group.id ? '已保存' : `已添加策略组「${group.config.name}」`)
+  toast.success(group.id ? t('common.saved') : t('policy.groupAdded', [group.config.name]))
   wizardOpen.value = false
   onLocalChanged()
 }
@@ -180,11 +181,11 @@ async function confirmRemoveGroup(): Promise<void> {
   if (!group) return
   const message = await localStore.removeGroup(group.id)
   if (message) {
-    toast.error('删除失败', message)
+    toast.error(t('common.deleteFailed'), message)
     return
   }
   removingGroup.value = null
-  toast.success('已删除')
+  toast.success(t('common.deleted'))
   onLocalChanged()
 }
 
@@ -208,7 +209,7 @@ function delayTitle(name: string): string {
 
 const drawerSubtitle = computed(() => {
   const group = policies.currentGroup
-  if (!group) return '节点列表'
+  if (!group) return t('policy.nodeList')
   return displayType(group.type)
 })
 
@@ -244,9 +245,9 @@ watch(() => kernel.status.phase, (phase, previous) => {
 
 <template>
   <div class="page-shell policy-view">
-    <h1>策略</h1>
+    <h1>{{ t('nav.policy') }}</h1>
 
-    <div class="mode-selector" role="tablist" aria-label="代理模式">
+    <div class="mode-selector" role="tablist" :aria-label="t('policy.modeLabel')">
       <button
         v-for="option in POLICY_MODE_OPTIONS"
         :key="option"
@@ -258,21 +259,21 @@ watch(() => kernel.status.phase, (phase, previous) => {
     </div>
 
     <div v-if="kernel.status.phase !== 'running'" class="empty-state">
-      <p>内核尚未运行</p>
-      <span>请先在“概览”中启动内核，策略将在 Controller 就绪后自动载入。</span>
+      <p>{{ t('common.coreNotStarted') }}</p>
+      <span>{{ t('policy.startHint') }}</span>
     </div>
 
     <div v-else-if="policies.status === 'error'" class="empty-state">
-      <p>无法读取策略</p>
+      <p>{{ t('policy.loadFailed') }}</p>
       <span>{{ policies.lastError }}</span>
-      <button type="button" @click="init">重试</button>
+      <button type="button" @click="init">{{ t('common.retry') }}</button>
     </div>
 
     <template v-else>
-      <div class="section-caption"><span>策略组</span></div>
+      <div class="section-caption"><span>{{ t('policy.groups') }}</span></div>
       <div class="policy-group-grid">
         <button v-for="group in policies.groups" :key="group.name" type="button" :class="{ selected: policies.selectedGroup === group.name, 'has-icon': Boolean(group.icon) }" @click="openGroup(group.name)" @contextmenu="onGroupContext($event, group)"><CachedRemoteIcon v-if="group.icon" class="group-icon" :src="group.icon" :cache-key="`policy:${group.name}`" /><small>{{ displayType(group.type) }}</small><strong>{{ group.name }}</strong><span>{{ groupSummary(group) }}</span><AppIcon name="next" :size="14" /></button>
-        <button type="button" class="policy-group-add" :disabled="localStore.busy" aria-label="新建策略组" title="新建策略组" @click="addGroup"><span aria-hidden="true">+</span></button>
+        <button type="button" class="policy-group-add" :disabled="localStore.busy" :aria-label="t('groupWizard.newTitle')" :title="t('groupWizard.newTitle')" @click="addGroup"><span aria-hidden="true">+</span></button>
       </div>
     </template>
 
@@ -285,31 +286,31 @@ watch(() => kernel.status.phase, (phase, previous) => {
       <template v-if="groupMenu">
         <div class="group-menu-head" @click.stop>
           <strong>{{ groupMenu.name }}</strong>
-          <small>{{ groupMenu.type }}<template v-if="groupMenu.local"> · 本地</template><template v-if="groupMenu.current"> · 当前 {{ groupMenu.current }}</template></small>
+          <small>{{ groupMenu.type }}<template v-if="groupMenu.local"> {{ t('policy.localSuffix') }}</template><template v-if="groupMenu.current"> {{ t('policy.currentSuffix', [groupMenu.current]) }}</template></small>
           <div v-if="groupMenuStats" class="group-menu-stats">
-            <span><small>活跃连接</small><b>{{ groupMenuStats.count }}</b></span>
-            <span><small>上传</small><b>{{ groupMenuStats.up }}</b></span>
-            <span><small>下载</small><b>{{ groupMenuStats.down }}</b></span>
+            <span><small>{{ t('policy.activeConnections') }}</small><b>{{ groupMenuStats.count }}</b></span>
+            <span><small>{{ t('common.upload') }}</small><b>{{ groupMenuStats.up }}</b></span>
+            <span><small>{{ t('common.download') }}</small><b>{{ groupMenuStats.down }}</b></span>
           </div>
         </div>
         <div class="popover-sep" />
-        <button type="button" class="popover-item" role="menuitem" @click="openGroup(groupMenu.name)">查看策略…</button>
-        <button type="button" class="popover-item" role="menuitem" @click="testGroupFromMenu(groupMenu.name)">测试策略组延迟</button>
+        <button type="button" class="popover-item" role="menuitem" @click="openGroup(groupMenu.name)">{{ t('policy.viewPolicy') }}</button>
+        <button type="button" class="popover-item" role="menuitem" @click="testGroupFromMenu(groupMenu.name)">{{ t('policy.testGroupLatency') }}</button>
         <template v-if="groupMenu.local">
           <div class="popover-sep" />
-          <button type="button" class="popover-item" role="menuitem" :disabled="localStore.busy" @click="editGroup(groupMenu.local)">编辑策略组…</button>
-          <button type="button" class="popover-item danger" role="menuitem" :disabled="localStore.busy" @click="removingGroup = groupMenu.local">删除策略组…</button>
+          <button type="button" class="popover-item" role="menuitem" :disabled="localStore.busy" @click="editGroup(groupMenu.local)">{{ t('policy.editGroup') }}</button>
+          <button type="button" class="popover-item danger" role="menuitem" :disabled="localStore.busy" @click="removingGroup = groupMenu.local">{{ t('policy.deleteGroup') }}</button>
         </template>
         <template v-else>
           <div class="popover-sep" />
-          <button type="button" class="popover-item" role="menuitem" :disabled="localStore.busy" @click="addGroup">新建策略组…</button>
+          <button type="button" class="popover-item" role="menuitem" :disabled="localStore.busy" @click="addGroup">{{ t('policy.newGroup') }}</button>
         </template>
       </template>
     </PopoverMenu>
-    <ConfirmModal :open="!!removingGroup" title="删除策略组" :description="`删除「${removingGroup?.config.name ?? ''}」？引用它的规则和策略组会自动跳过它。`" :busy="localStore.busy" @close="removingGroup = null" @confirm="confirmRemoveGroup" />
+    <ConfirmModal :open="!!removingGroup" :title="t('policy.deleteGroupTitle')" :description="t('policy.confirmDelete', [removingGroup?.config.name ?? ''])" :busy="localStore.busy" @close="removingGroup = null" @confirm="confirmRemoveGroup" />
 
     <DetailDrawer :open="groupDrawerOpen && Boolean(policies.selectedGroup)" :title="policies.selectedGroup" :subtitle="drawerSubtitle" :icon="policies.currentGroup?.icon" :icon-cache-key="`policy:${policies.selectedGroup}`" @close="groupDrawerOpen = false">
-      <div class="node-caption"><span>节点列表</span><button type="button" :disabled="policies.groupDelayStatus === 'testing'" @click="testGroup">{{ policies.groupDelayStatus === 'testing' ? '测试中…' : '测试当前组' }}</button></div>
+      <div class="node-caption"><span>{{ t('policy.nodeList') }}</span><button type="button" :disabled="policies.groupDelayStatus === 'testing'" @click="testGroup">{{ policies.groupDelayStatus === 'testing' ? t('nodeLatency.testing') : t('policy.testGroup') }}</button></div>
       <div class="drawer-body-grid">
         <div class="node-grid"><div v-for="member in policies.groupMembers" :key="member" class="node-card" :class="{ selected: policies.selectedMember === member, unavailable: isUnavailable(member) }"><button type="button" class="node-select" :disabled="!policies.isSelectableGroup(policies.currentGroup)" @click="onCardClick(member)"><small v-if="isNestedGroup(member)">{{ displayType(policies.nodeByMember[member]?.type) }}</small><strong>{{ member }}</strong><span v-if="nodeTags(member).length" class="node-tags"><i v-for="tag in nodeTags(member)" :key="tag">{{ tag }}</i></span></button><button type="button" class="node-delay" :class="latencyLabel(member).kind" :title="delayTitle(member)" :disabled="memberState(member).status === 'testing'" @click="testMember(member)">{{ latencyLabel(member).text }}</button></div></div>
       </div>

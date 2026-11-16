@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted, ref, watch } from 'vue'
 import type { MihomoConnection } from '@shared/mihomo-api'
 import { buildDomainRuleOverride, normalizeRuleDomain, type DomainRuleMatch } from '@shared/domain-rule'
@@ -16,7 +17,7 @@ const error = ref('')
 const created = ref<{ id: string; rule: string } | null>(null)
 const domain = computed(() => normalizeRuleDomain(props.connection.metadata.host ?? ''))
 const targetOptions = computed(() => [
-  { value: 'DIRECT', label: '直连 · DIRECT' },
+  { value: 'DIRECT', label: t('connRule.directOption') },
   ...policies.groups.filter((group) => group.name !== 'DIRECT' && !/[\r\n,]/.test(group.name))
     .map((group) => ({ value: group.name, label: group.name }))
 ])
@@ -38,10 +39,10 @@ async function save(): Promise<void> {
     if (overrides.lastError) throw new Error(overrides.lastError)
     const before = new Set(overrides.items.map((item) => item.id))
     const rule = draft.value.rule
-    if (!(await overrides.create(draft.value))) throw new Error(overrides.lastError ?? '保存失败')
+    if (!(await overrides.create(draft.value))) throw new Error(overrides.lastError ?? t('common.saveFailed'))
     const item = overrides.items.find((candidate) => !before.has(candidate.id))
     if (item) created.value = { id: item.id, rule }
-  } catch (cause) { error.value = cause instanceof Error ? cause.message : '保存失败' }
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : t('common.saveFailed') }
   finally { saving.value = false }
 }
 
@@ -50,7 +51,7 @@ async function undo(): Promise<void> {
   saving.value = true
   const removed = await overrides.remove(created.value.id)
   if (removed) created.value = null
-  else error.value = overrides.lastError ?? '撤销失败'
+  else error.value = overrides.lastError ?? t('connRule.undoFailed')
   saving.value = false
 }
 
@@ -58,16 +59,16 @@ onMounted(() => { void policies.load() })
 </script>
 
 <template>
-  <section class="connection-rule-panel" aria-label="为连接创建域名规则">
-    <h3>为此域名创建分流规则</h3>
-    <p v-if="!domain">这条连接没有可用的域名，无法生成域名规则。</p>
+  <section class="connection-rule-panel" :aria-label="t('connRule.label')">
+    <h3>{{ t('connRule.title') }}</h3>
+    <p v-if="!domain">{{ t('connRule.noDomain') }}</p>
     <template v-else>
-      <p>从连接记录提取 {{ domain }}；保存为全局覆写，下次重载配置后生效。</p>
-      <label>匹配范围<AppSelect v-model="match" :options="[{ value: 'exact', label: '仅此域名' }, { value: 'suffix', label: '包含子域名' }]" label="域名规则匹配范围" /></label>
-      <label>出站策略<AppSelect v-model="target" :options="targetOptions" label="域名规则出站策略" /></label>
-      <div class="connection-rule-preview"><span>保存前预览</span><code>{{ draft?.rule ?? '请选择有效策略' }}</code></div>
-      <div class="connection-rule-actions"><button type="button" :disabled="!draft || saving || !targetOptions.some((option) => option.value === target)" @click="save">{{ saving ? '保存中…' : '保存规则' }}</button><button v-if="created" type="button" :disabled="saving" @click="undo">撤销本次添加</button></div>
-      <p v-if="created" role="status">已保存 {{ created.rule }}</p>
+      <p>{{ t('connRule.intro', [domain]) }}</p>
+      <label>{{ t('connRule.scope') }}<AppSelect v-model="match" :options="[{ value: 'exact', label: t('connRule.exactDomain') }, { value: 'suffix', label: t('connRule.withSubdomains') }]" :label="t('connRule.scopeLabel')" /></label>
+      <label>{{ t('connRule.outbound') }}<AppSelect v-model="target" :options="targetOptions" :label="t('connRule.outboundLabel')" /></label>
+      <div class="connection-rule-preview"><span>{{ t('connRule.preview') }}</span><code>{{ draft?.rule ?? t('connRule.pickPolicy') }}</code></div>
+      <div class="connection-rule-actions"><button type="button" :disabled="!draft || saving || !targetOptions.some((option) => option.value === target)" @click="save">{{ saving ? t('common.saving') : t('connRule.saveRule') }}</button><button v-if="created" type="button" :disabled="saving" @click="undo">{{ t('connRule.undo') }}</button></div>
+      <p v-if="created" role="status">{{ t('connRule.saved', [created.rule]) }}</p>
     </template>
     <p v-if="error" class="inline-error" role="alert">{{ error }}</p>
   </section>

@@ -483,6 +483,8 @@ pub async fn dispatch(
             let auto_check_update_before = settings.get().auto_check_update;
             let include_beta_before = settings.get().update_include_beta;
             let applied = settings.set(&patch);
+            // The tray menu, tooltip and notifications follow the language.
+            crate::i18n::apply_setting(&applied.language);
             if applied.auto_check_update != auto_check_update_before {
                 updates.apply_polling(applied.auto_check_update);
             }

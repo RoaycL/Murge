@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { locale, t } from '@shared/i18n'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useOverridesStore } from '../stores/overrides'
 import type { OverrideInput } from '@shared/overrides'
@@ -37,13 +38,13 @@ const hasLastKnownGood = computed(() => store.lastGood !== null)
 const lastGoodLabel = computed(() => {
   const last = store.lastGood
   if (!last) return ''
-  return `上次可用：${new Date(last.capturedAt).toLocaleString()}`
+  return t('overrides.lastGood', [new Date(last.capturedAt).toLocaleString(locale.value)])
 })
 
 function issueSummary(): string {
   const validation = store.validation
   if (!validation || validation.valid) return ''
-  return `${validation.issues.filter((issue) => issue.level === 'error').length} 项错误`
+  return t('overrides.errorCount', [validation.issues.filter((issue) => issue.level === 'error').length])
 }
 
 async function runPreview(): Promise<void> {
@@ -70,7 +71,7 @@ function label(kind: string): string {
 }
 
 function scopeLabel(scope: string): string {
-  return scope === 'profile' ? '当前订阅' : '全局'
+  return scope === 'profile' ? t('overrides.scopeProfile') : t('overrides.scopeGlobal')
 }
 
 function openCreate(): void {
@@ -109,8 +110,8 @@ async function save(): Promise<void> {
   }
   const wasEditing = isEditing.value
   const ok = wasEditing ? await store.update(editingId.value!, input) : await store.create(input)
-  if (ok) { closeEditor(); toast.success(wasEditing ? '覆写已更新' : '覆写已添加') }
-  else toast.error('覆写保存失败', store.lastError ?? undefined)
+  if (ok) { closeEditor(); toast.success(wasEditing ? t('overrides.updated') : t('overrides.added')) }
+  else toast.error(t('overrides.saveFailed'), store.lastError ?? undefined)
 }
 
 onMounted(() => {
@@ -119,21 +120,21 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="overrides-panel" aria-label="配置覆写">
+  <section class="overrides-panel" :aria-label="t('overrides.title')">
     <header class="ov-head">
       <div>
-        <h2 class="ov-title">配置覆写</h2>
+        <h2 class="ov-title">{{ t('overrides.title') }}</h2>
         <p class="ov-subtitle">
-          在订阅配置之上叠加自定义规则、分组或 DNS，无需改动订阅文件；下次启动内核时生效。
+          {{ t('overrides.intro') }}
         </p>
       </div>
-      <button type="button" class="ov-add" @click="openCreate"><AppIcon name="add" :size="15" />新增</button>
+      <button type="button" class="ov-add" @click="openCreate"><AppIcon name="add" :size="15" />{{ t('common.add') }}</button>
     </header>
 
     <p v-if="store.lastError" class="inline-error" role="alert">{{ store.lastError }}</p>
 
     <div v-if="store.items.length === 0" class="ov-empty">
-      <p>尚未添加覆写。全局覆写作用于所有订阅；也可以为当前使用的订阅单独添加。</p>
+      <p>{{ t('overrides.empty') }}</p>
     </div>
 
     <ul v-else class="ov-list">
@@ -148,25 +149,25 @@ onMounted(() => {
             type="button"
             class="ov-icon"
             :disabled="index === 0"
-            aria-label="上移"
-            title="上移"
+            :aria-label="t('common.moveUp')"
+            :title="t('common.moveUp')"
             @click="store.move(item.id, 'up')"
           ><AppIcon name="move-up" :size="14" /></button>
           <button
             type="button"
             class="ov-icon"
             :disabled="index === store.items.length - 1"
-            aria-label="下移"
-            title="下移"
+            :aria-label="t('common.moveDown')"
+            :title="t('common.moveDown')"
             @click="store.move(item.id, 'down')"
           ><AppIcon name="move-down" :size="14" /></button>
-          <button type="button" class="ov-icon" aria-label="编辑" title="编辑" @click="openEdit(item)"><AppIcon name="edit" :size="14" /></button>
-          <button type="button" class="ov-icon danger" aria-label="删除" title="删除" @click="store.remove(item.id)"><AppIcon name="delete" :size="14" /></button>
-          <label class="ov-toggle" :title="item.enabled ? '停用' : '启用'">
+          <button type="button" class="ov-icon" :aria-label="t('common.edit')" :title="t('common.edit')" @click="openEdit(item)"><AppIcon name="edit" :size="14" /></button>
+          <button type="button" class="ov-icon danger" :aria-label="t('common.delete')" :title="t('common.delete')" @click="store.remove(item.id)"><AppIcon name="delete" :size="14" /></button>
+          <label class="ov-toggle" :title="item.enabled ? t('common.disable') : t('common.enable')">
             <input
               :checked="item.enabled"
               type="checkbox"
-              :aria-label="`${item.enabled ? '停用' : '启用'} ${item.name}`"
+              :aria-label="`${item.enabled ? t('common.disable') : t('common.enable')} ${item.name}`"
               @change="store.setEnabled(item.id, ($event.target as HTMLInputElement).checked)"
             />
             <span class="ov-toggle-track" />
@@ -177,14 +178,14 @@ onMounted(() => {
 
     <div class="ov-tools">
       <button type="button" class="ov-tool" :disabled="store.validating" @click="runValidation">
-        {{ store.validating ? '校验中…' : '校验' }}
+        {{ store.validating ? t('overrides.validating') : t('overrides.validate') }}
       </button>
       <button type="button" class="ov-tool" :disabled="store.previewLoading" @click="runPreview">
-        {{ store.previewLoading ? '生成中…' : '预演' }}
+        {{ store.previewLoading ? t('overrides.generating') : t('overrides.dryRun') }}
       </button>
       <span class="ov-tool-spacer" />
-      <button type="button" class="ov-tool" :disabled="!hasLastKnownGood" title="撤销到最后一次校验通过的覆写集合" @click="rollback">
-        回滚到最后可用
+      <button type="button" class="ov-tool" :disabled="!hasLastKnownGood" :title="t('overrides.rollbackTitle')" @click="rollback">
+        {{ t('overrides.rollback') }}
       </button>
     </div>
 
@@ -192,12 +193,12 @@ onMounted(() => {
       <span class="ov-validate-mark"><AppIcon :name="store.validation.valid ? 'check' : 'close'" :size="15" /></span>
       <div class="ov-validate-body">
         <p class="ov-validate-head">
-          {{ store.validation.valid ? '覆写校验通过' : `覆写校验未通过 · ${issueSummary()}` }}
-          <span v-if="store.validation.issues.length === 0" class="ov-validate-note">将原样应用订阅配置</span>
+          {{ store.validation.valid ? t('overrides.validateOk') : t('overrides.validateFailed', [issueSummary()]) }}
+          <span v-if="store.validation.issues.length === 0" class="ov-validate-note">{{ t('overrides.noOverrides') }}</span>
         </p>
         <ul v-if="store.validation.issues.length > 0" class="ov-issues">
           <li v-for="(issue, index) in store.validation.issues" :key="index" :class="`ov-issue-${issue.level}`">
-            <span v-if="issue.itemName" class="ov-issue-name">「{{ issue.itemName }}」</span>{{ issue.message }}
+            <span v-if="issue.itemName" class="ov-issue-name">{{ t('common.quoted', [issue.itemName]) }}</span>{{ issue.message }}
           </li>
         </ul>
       </div>
@@ -205,53 +206,53 @@ onMounted(() => {
 
     <div v-if="store.preview" class="ov-preview">
       <header class="ov-preview-head">
-        <h3>覆写预演（已脱敏）</h3>
-        <span v-if="store.preview.unavailable" class="ov-preview-note">当前没有活动的订阅</span>
-        <span v-else class="ov-preview-note">红色为移除、绿色为新增，仅显示改动附近内容</span>
+        <h3>{{ t('overrides.dryRunTitle') }}</h3>
+        <span v-if="store.preview.unavailable" class="ov-preview-note">{{ t('common.noActiveSubscription') }}</span>
+        <span v-else class="ov-preview-note">{{ t('overrides.diffLegend') }}</span>
       </header>
-      <p v-if="store.preview.unavailable" class="ov-preview-empty">{{ store.preview.warnings.join('；') }}</p>
-      <div v-else class="ov-diff" aria-label="覆写差异预览">
+      <p v-if="store.preview.unavailable" class="ov-preview-empty">{{ store.preview.warnings.join(t('common.semicolon')) }}</p>
+      <div v-else class="ov-diff" :aria-label="t('overrides.diffLabel')">
         <div v-for="(line, index) in previewDiff" :key="index" :class="`ov-diff-line ov-diff-${line.type}`">
           <span class="ov-diff-sign">{{ line.type === 'added' ? '+' : line.type === 'removed' ? '-' : ' ' }}</span>
           <span class="ov-diff-text">{{ line.text }}</span>
         </div>
       </div>
       <p v-if="store.preview.warnings.length > 0" class="ov-preview-warn">
-        {{ store.preview.warnings.join('；') }}
+        {{ store.preview.warnings.join(t('common.semicolon')) }}
       </p>
     </div>
 
     <div v-if="open" class="ov-backdrop" @click.self="closeEditor">
-      <div class="ov-editor" role="dialog" aria-modal="true" aria-label="编辑覆写">
+      <div class="ov-editor" role="dialog" aria-modal="true" :aria-label="t('overrides.editTitle')">
         <header class="ov-editor-head">
-          <h3>{{ isEditing ? '编辑覆写' : '新增覆写' }}</h3>
-          <button type="button" class="ov-icon" aria-label="关闭" @click="closeEditor"><AppIcon name="close" :size="15" /></button>
+          <h3>{{ isEditing ? t('overrides.editTitle') : t('overrides.addTitle') }}</h3>
+          <button type="button" class="ov-icon" :aria-label="t('common.close')" @click="closeEditor"><AppIcon name="close" :size="15" /></button>
         </header>
 
         <div class="ov-form">
-          <input v-model="form.name" class="ov-field" placeholder="覆写名称" aria-label="覆写名称" />
+          <input v-model="form.name" class="ov-field" :placeholder="t('overrides.namePlaceholder')" :aria-label="t('overrides.namePlaceholder')" />
           <div class="ov-form-row">
-            <label class="ov-label">类型</label>
-            <AppSelect v-model="form.kind" :options="[{ value: 'yaml', label: 'YAML 覆写' }, { value: 'js', label: 'JS 覆写' }]" label="覆写类型" />
-            <label class="ov-label">作用域</label>
-            <AppSelect v-model="form.scope" :options="[{ value: 'global', label: '全局' }, { value: 'profile', label: '当前订阅', disabled: !canUseProfileScope }]" label="覆写作用域" />
+            <label class="ov-label">{{ t('common.type') }}</label>
+            <AppSelect v-model="form.kind" :options="[{ value: 'yaml', label: t('overrides.kindYaml') }, { value: 'js', label: t('overrides.kindJs') }]" :label="t('overrides.kindLabel')" />
+            <label class="ov-label">{{ t('overrides.scope') }}</label>
+            <AppSelect v-model="form.scope" :options="[{ value: 'global', label: t('overrides.scopeGlobal') }, { value: 'profile', label: t('overrides.scopeProfile'), disabled: !canUseProfileScope }]" :label="t('overrides.scopeLabel')" />
           </div>
           <p v-if="form.scope === 'profile' && !canUseProfileScope" class="ov-note">
-            当前没有使用中的订阅，暂无法绑定到某个订阅。
+            {{ t('overrides.noProfileHint') }}
           </p>
           <textarea
             v-model="form.content"
             class="ov-textarea"
             spellcheck="false"
             :placeholder="form.kind === 'js' ? jsPlaceholder : yamlPlaceholder"
-            aria-label="覆写内容"
+            :aria-label="t('overrides.contentLabel')"
           />
         </div>
 
         <footer class="ov-editor-actions">
-          <button type="button" class="ov-cancel" @click="closeEditor">取消</button>
+          <button type="button" class="ov-cancel" @click="closeEditor">{{ t('common.cancel') }}</button>
           <button type="button" class="ov-save" :disabled="!form.name.trim()" @click="save">
-            {{ isEditing ? '保存' : '创建' }}
+            {{ isEditing ? t('common.save') : t('common.create') }}
           </button>
         </footer>
       </div>

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { inlineMessages } from './helpers/localized-source'
 import { access, readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
@@ -24,9 +25,9 @@ describe('release-candidate feature scope', () => {
 
   it('does not expose excluded Surge-like pages in navigation or router imports', async () => {
     const [sidebar, router, overview] = await Promise.all([
-      readFile(path.join(root, 'src/renderer/src/lib/sidebar-layout.ts'), 'utf8'),
+      readFile(path.join(root, 'src/renderer/src/lib/sidebar-layout.ts'), 'utf8').then(inlineMessages),
       readFile(path.join(root, 'src/renderer/src/router.ts'), 'utf8'),
-      readFile(path.join(root, 'src/renderer/src/views/OverviewView.vue'), 'utf8')
+      readFile(path.join(root, 'src/renderer/src/views/OverviewView.vue'), 'utf8').then(inlineMessages)
     ])
     for (const route of ['/capture', '/decrypt', '/panel']) {
       expect(sidebar).not.toContain(route)

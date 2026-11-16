@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises'
+import { inlineMessages } from './helpers/localized-source'
 import { describe, expect, it } from 'vitest'
 
-const read = (path: string): Promise<string> => readFile(new URL(`../${path}`, import.meta.url), 'utf8')
+const read = async (path: string): Promise<string> => inlineMessages(await readFile(new URL(`../${path}`, import.meta.url), 'utf8'))
 
 /**
  * 任务 2/4 的 UI 契约：解锁测试卡片挂进网络诊断抽屉；外部资源页改用「集合」
@@ -122,7 +123,7 @@ describe('network drawer + resources UI contract', () => {
       read('src/renderer/src/components/RefreshAllButton.vue')
     ])
     // 共用按钮：空闲时纯文本「全部更新」，仅在更新中 / 结果提示时出现图标。
-    expect(button).toMatch(/label: '全部更新'/)
+    expect(button).toContain("props.label ?? '全部更新'")
     expect(button).toMatch(/<RefreshIndicator v-if="busy \|\| outcome"/)
     expect(resources).toMatch(/<RefreshAllButton :run="refreshAll"/)
     expect(rules).toMatch(/<RefreshAllButton :run="providers\.refreshAllRuleProviders"/)

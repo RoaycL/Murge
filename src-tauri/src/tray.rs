@@ -26,6 +26,7 @@ use serde_json::Value;
 use tokio::sync::Mutex;
 
 use crate::error::IpcError;
+use crate::i18n::{t, tf};
 
 // ---------------------------------------------------------------------------
 // Menu tree (data) — the TS TrayMenuItem shape
@@ -113,19 +114,19 @@ pub(crate) trait TrayView: Send + Sync {
 
 pub fn phase_label(phase: &str) -> &'static str {
     match phase {
-        "starting" => "正在启动",
-        "running" => "运行中",
-        "stopping" => "正在停止",
-        "failed" => "启动失败",
-        _ => "已停止",
+        "starting" => t("tray.phase.starting"),
+        "running" => t("tray.phase.running"),
+        "stopping" => t("tray.phase.stopping"),
+        "failed" => t("tray.phase.failed"),
+        _ => t("tray.phase.stopped"),
     }
 }
 
 pub fn mode_label(mode: &str) -> &'static str {
     match mode {
-        "global" => "全局",
-        "direct" => "直连",
-        _ => "规则",
+        "global" => t("tray.mode.global"),
+        "direct" => t("tray.mode.direct"),
+        _ => t("tray.mode.rule"),
     }
 }
 
@@ -167,7 +168,7 @@ pub fn process_rows(connections: &Value) -> Vec<(String, u64)> {
                 .as_str()
                 .map(str::trim)
                 .filter(|name| !name.is_empty())
-                .unwrap_or("未知进程")
+                .unwrap_or(t("tray.unknownProcess"))
                 .to_string();
             *totals.entry(name).or_insert(0) += upload + download;
         }
@@ -704,7 +705,7 @@ impl TrayController {
 fn mode_menu(state: &TrayState, transition: bool) -> TrayMenuItem {
     TrayMenuItem::submenu(
         "outbound-mode",
-        &format!("出站模式 · {}", mode_label(&state.mode)),
+        &tf("tray.outboundMode", &[mode_label(&state.mode)]),
         state.status_phase == "running" && !transition,
         ["rule", "global", "direct"]
             .iter()
@@ -796,7 +797,7 @@ fn process_menu(state: &TrayState) -> TrayMenuItem {
         .collect();
     TrayMenuItem::submenu(
         "processes",
-        &format!("进程与客户端 · {count} 个连接"),
+        &tf("tray.processes", &[&count.to_string()]),
         !rows.is_empty(),
         children,
     )
@@ -818,7 +819,7 @@ fn configuration_menu(state: &TrayState, transition: bool) -> TrayMenuItem {
     let mut children = vec![
         TrayMenuItem::normal(
             "reload-config",
-            "重新载入当前配置",
+            t("tray.reloadConfig"),
             active.is_some() && state.status_phase == "running" && !transition,
         ),
         TrayMenuItem::normal(
@@ -828,9 +829,9 @@ fn configuration_menu(state: &TrayState, transition: bool) -> TrayMenuItem {
                 "start-kernel"
             },
             if state.status_phase == "running" {
-                "重启内核"
+                t("tray.restartKernel")
             } else {
-                "启动内核"
+                t("tray.startKernel")
             },
             !transition,
         ),
@@ -853,26 +854,29 @@ fn configuration_menu(state: &TrayState, transition: bool) -> TrayMenuItem {
             let id = active["id"].as_str().unwrap_or("");
             children.push(TrayMenuItem::normal(
                 &format!("update-profile:{id}"),
-                "更新当前订阅",
+                t("tray.updateCurrent"),
                 active_is_url && !transition,
             ));
         }
         children.push(TrayMenuItem::normal(
             "update-all-profiles",
-            "更新全部订阅",
+            t("tray.updateAll"),
             !url_ids.is_empty() && !transition,
         ));
     }
-    TrayMenuItem::submenu("configuration", "配置", true, children)
+    TrayMenuItem::submenu("configuration", t("tray.configuration"), true, children)
 }
 
 /// 模块: every rewrite/MITM module as a toggle (Surge's Modules menu).
 fn module_menu(state: &TrayState) -> TrayMenuItem {
     let enabled = state.modules.iter().filter(|module| module.enabled).count();
     let label = if state.modules.is_empty() {
-        "模块".to_string()
+        t("tray.modules").to_string()
     } else {
-        format!("模块 · {enabled}/{} 已启用", state.modules.len())
+        tf(
+            "tray.modulesEnabled",
+            &[&enabled.to_string(), &state.modules.len().to_string()],
+        )
     };
     let children = state
         .modules
@@ -893,13 +897,13 @@ fn module_menu(state: &TrayState) -> TrayMenuItem {
 fn directory_menu() -> TrayMenuItem {
     TrayMenuItem::submenu(
         "open-directory",
-        "打开目录",
+        t("tray.openDirectory"),
         true,
         vec![
-            TrayMenuItem::normal("open-directory:application", "应用目录", true),
-            TrayMenuItem::normal("open-directory:working", "工作目录", true),
-            TrayMenuItem::normal("open-directory:kernel", "内核目录", true),
-            TrayMenuItem::normal("open-directory:logs", "日志目录", true),
+            TrayMenuItem::normal("open-directory:application", t("tray.dirApplication"), true),
+            TrayMenuItem::normal("open-directory:working", t("tray.dirWorking"), true),
+            TrayMenuItem::normal("open-directory:kernel", t("tray.dirKernel"), true),
+            TrayMenuItem::normal("open-directory:logs", t("tray.dirLogs"), true),
         ],
     )
 }
@@ -917,9 +921,9 @@ pub(crate) fn tooltip_text(product: &str, phase: &str) -> String {
 pub(crate) fn render_menu(product: &str, state: &TrayState) -> Vec<TrayMenuItem> {
     if state.quitting {
         return vec![
-            TrayMenuItem::normal("quitting", &format!("正在退出 {product}…"), false),
+            TrayMenuItem::normal("quitting", &tf("tray.quitting", &[product]), false),
             TrayMenuItem::separator(),
-            TrayMenuItem::normal("force-quit", "强制退出", true),
+            TrayMenuItem::normal("force-quit", t("tray.forceQuit"), true),
         ];
     }
     let phase = state.status_phase.clone();
@@ -930,25 +934,25 @@ pub(crate) fn render_menu(product: &str, state: &TrayState) -> Vec<TrayMenuItem>
     // The two switches sit above the mode and policy groups: with many
     // groups they would otherwise be a long scroll away.
     let mut menu = vec![
-        TrayMenuItem::normal("show", "显示主窗口", true),
+        TrayMenuItem::normal("show", t("tray.show"), true),
         TrayMenuItem::separator(),
         TrayMenuItem::stateful(
             "system-proxy",
-            "系统代理",
+            t("tray.systemProxy"),
             state.system_proxy_supported && !system_proxy_busy && !transition,
             state.system_proxy_phase == "enabled",
             false,
         ),
         TrayMenuItem::stateful(
             "tun",
-            "TUN 模式",
+            t("tray.tun"),
             state.tun_supported && !tun_busy && !transition,
             state.tun_phase == "active",
             false,
         ),
         TrayMenuItem::normal(
             "copy-terminal-proxy",
-            "复制终端代理命令",
+            t("tray.copyTerminalProxy"),
             state.status_phase == "running" && state.mixed_port.is_some(),
         ),
         TrayMenuItem::separator(),
@@ -958,12 +962,12 @@ pub(crate) fn render_menu(product: &str, state: &TrayState) -> Vec<TrayMenuItem>
     menu.push(TrayMenuItem::separator());
     menu.push(TrayMenuItem::normal(
         "network-quality",
-        &format!(
-            "网络质量 · {}",
-            match state.network_latency_ms {
+        &tf(
+            "tray.networkQuality",
+            &[&match state.network_latency_ms {
                 Some(ms) => format!("{ms} ms"),
                 None => "—".to_string(),
-            }
+            }],
         ),
         false,
     ));
@@ -972,19 +976,27 @@ pub(crate) fn render_menu(product: &str, state: &TrayState) -> Vec<TrayMenuItem>
     menu.push(configuration_menu(state, transition));
     menu.push(module_menu(state));
     menu.push(directory_menu());
-    menu.push(TrayMenuItem::normal("check-update", "检查更新", true));
+    menu.push(TrayMenuItem::normal(
+        "check-update",
+        t("tray.checkUpdate"),
+        true,
+    ));
     menu.push(TrayMenuItem::separator());
     if state.quit_blocked {
         menu.push(TrayMenuItem::normal(
             "quit-blocked",
-            "系统代理未能恢复，已取消退出",
+            t("tray.quitBlocked"),
             false,
         ));
-        menu.push(TrayMenuItem::normal("force-quit", "强制退出", true));
+        menu.push(TrayMenuItem::normal(
+            "force-quit",
+            t("tray.forceQuit"),
+            true,
+        ));
     }
     menu.push(TrayMenuItem::normal(
         "quit",
-        &format!("退出 {product}"),
+        &tf("tray.quit", &[product]),
         true,
     ));
     menu
@@ -1607,6 +1619,14 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
     // keyboard access. Left click/double click reveal the window (the TS
     // onActivate).
     let refresher = TrayRefresher::new(controller.clone());
+    {
+        // A language switch redraws the menu and tooltip at once.
+        let controller = controller.clone();
+        crate::i18n::on_change(move || {
+            let controller = controller.clone();
+            tauri::async_runtime::spawn(async move { controller.refresh().await });
+        });
+    }
     {
         let refresher = refresher.clone();
         let app_for_activate = app.clone();

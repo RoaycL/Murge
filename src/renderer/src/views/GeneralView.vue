@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { LOCALE_NAMES, LOCALES, locale, t, type LanguageSetting } from '@shared/i18n'
 import { computed, onMounted, ref } from 'vue'
 import { useStartupStore } from '../stores/startup'
 import { useAppSettingsStore } from '../stores/app-settings'
@@ -28,9 +29,17 @@ const webdavPassphrase = ref('')
 const webdavPasswordVisible = ref(false)
 const webdavPassphraseVisible = ref(false)
 const webdavFileUrl = computed(() => composeWebDavFileUrl(webdavAddress.value, webdavFilePath.value, webdavDefaultPath.value))
+const languageOptions = [
+  { value: 'system', label: t('common.followSystem') },
+  ...LOCALES.map((value) => ({ value, label: LOCALE_NAMES[value] }))
+]
+const language = computed({
+  get: () => appSettings.settings.language,
+  set: (value: string) => { void appSettings.set({ language: value as LanguageSetting }) }
+})
 const delayScopeOptions = [
-  { value: 'group', label: '跟随策略组' },
-  { value: 'global', label: '始终使用全局地址' }
+  { value: 'group', label: t('general.scopeGroup') },
+  { value: 'global', label: t('general.scopeGlobal') }
 ]
 const delayScope = computed({
   get: () => appSettings.settings.delayTestUrlScope,
@@ -46,7 +55,7 @@ async function saveDelayUrl(): Promise<void> {
       const parsed = new URL(value)
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('scheme')
     } catch {
-      delayUrlError.value = '请输入有效的 HTTP 或 HTTPS 测试地址。'
+      delayUrlError.value = t('general.urlInvalid')
       return
     }
   }
@@ -62,24 +71,24 @@ async function createBackup(): Promise<void> {
   if (backupBusy.value) return
   backupError.value = ''; backupNotice.value = ''
   if (backupPassword.value.length < 8 || backupPassword.value !== backupConfirm.value) {
-    backupError.value = '请设置至少 8 位密码，并确认两次输入一致。'
+    backupError.value = t('general.passwordRule')
     return
   }
   backupBusy.value = true
   try {
     const result = await window.desktop.backup.create(backupPassword.value)
-    if (result.saved) { backupNotice.value = '加密备份已保存到你选择的位置。'; backupPassword.value = ''; backupConfirm.value = '' }
-  } catch (error) { backupError.value = error instanceof Error ? error.message : '备份失败' }
+    if (result.saved) { backupNotice.value = t('general.backupSaved'); backupPassword.value = ''; backupConfirm.value = '' }
+  } catch (error) { backupError.value = error instanceof Error ? error.message : t('general.backupFailed') }
   finally { backupBusy.value = false }
 }
 
 async function previewBackup(): Promise<void> {
   if (backupBusy.value) return
   backupError.value = ''; backupNotice.value = ''; backupPreview.value = null; restoreConfirmed.value = false
-  if (!restorePassword.value) { backupError.value = '请先输入备份密码。'; return }
+  if (!restorePassword.value) { backupError.value = t('general.passwordFirst'); return }
   backupBusy.value = true
   try { backupPreview.value = await window.desktop.backup.preview(restorePassword.value) }
-  catch (error) { backupError.value = error instanceof Error ? error.message : '读取备份失败' }
+  catch (error) { backupError.value = error instanceof Error ? error.message : t('general.readFailed') }
   finally { backupBusy.value = false }
 }
 
@@ -91,26 +100,26 @@ async function uploadWebDav(): Promise<void> {
   if (backupBusy.value) return
   backupError.value = ''; backupNotice.value = ''
   if (webdavPassphrase.value.length < 8) {
-    backupError.value = '请为 WebDAV 备份设置至少 8 位加密口令，恢复时需要输入同一口令。'; return
+    backupError.value = t('general.webdavPassphraseRule'); return
   }
   backupBusy.value = true
   try {
     await window.desktop.backup.webdavUpload(webdavTarget(), webdavPassphrase.value)
-    backupNotice.value = '加密备份已上传到 WebDAV。'
+    backupNotice.value = t('general.webdavUploaded')
     webdavPassword.value = ''; webdavPassphrase.value = ''
-  } catch (error) { backupError.value = error instanceof Error ? error.message : 'WebDAV 上传失败' }
+  } catch (error) { backupError.value = error instanceof Error ? error.message : t('general.webdavUploadFailed') }
   finally { backupBusy.value = false }
 }
 
 async function previewWebDav(): Promise<void> {
   if (backupBusy.value) return
   backupError.value = ''; backupNotice.value = ''; backupPreview.value = null; restoreConfirmed.value = false
-  if (!webdavPassphrase.value) { backupError.value = '请输入上传这份 WebDAV 备份时设置的加密口令。'; return }
+  if (!webdavPassphrase.value) { backupError.value = t('general.webdavPassphraseNeeded'); return }
   backupBusy.value = true
   try {
     backupPreview.value = await window.desktop.backup.webdavPreview(webdavTarget(), webdavPassphrase.value)
     webdavPassword.value = ''; webdavPassphrase.value = ''
-  } catch (error) { backupError.value = error instanceof Error ? error.message : 'WebDAV 下载失败' }
+  } catch (error) { backupError.value = error instanceof Error ? error.message : t('general.webdavDownloadFailed') }
   finally { backupBusy.value = false }
 }
 
@@ -119,9 +128,9 @@ async function restoreBackup(): Promise<void> {
   backupBusy.value = true; backupError.value = ''
   try {
     await window.desktop.backup.restore(backupPreview.value.token)
-    backupNotice.value = '备份已校验并安排恢复，应用即将重启。'
+    backupNotice.value = t('general.restoreScheduled')
     restorePassword.value = ''
-  } catch (error) { backupError.value = error instanceof Error ? error.message : '恢复失败' }
+  } catch (error) { backupError.value = error instanceof Error ? error.message : t('general.restoreFailed') }
   finally { backupBusy.value = false }
 }
 
@@ -139,14 +148,26 @@ onMounted(async () => {
 
 <template>
   <div class="page-shell general-view">
-    <h1>通用</h1>
+    <h1>{{ t('general.title') }}</h1>
 
     <section>
-      <h2>启动</h2>
+      <h2>{{ t('general.language') }}</h2>
       <div class="surface-card preference-list">
         <label>
           <span>
-            <strong>登录 Windows 时启动</strong>
+            <strong>{{ t('general.interfaceLanguage') }}</strong>
+          </span>
+          <AppSelect v-model="language" :options="languageOptions" :label="t('general.interfaceLanguage')" />
+        </label>
+      </div>
+    </section>
+
+    <section>
+      <h2>{{ t('general.startup') }}</h2>
+      <div class="surface-card preference-list">
+        <label>
+          <span>
+            <strong>{{ t('general.launchAtLogin') }}</strong>
           </span>
           <button
             type="button"
@@ -154,14 +175,14 @@ onMounted(async () => {
             :class="{ on: startup.status.enabled }"
             :aria-checked="startup.status.enabled"
             :disabled="!startup.status.supported || startup.busy"
-            aria-label="登录 Windows 时启动"
+            :aria-label="t('general.launchAtLogin')"
             @click="startup.setEnabled(!startup.status.enabled)"
           />
         </label>
         <label class="startup-behavior">
           <span>
-            <strong>静默启动</strong>
-            <span class="startup-detail">开启后登录 Windows 时只在托盘运行，不弹出主窗口；关闭则自动打开主窗口。手动启动应用总会显示。</span>
+            <strong>{{ t('general.silentLaunch') }}</strong>
+            <span class="startup-detail">{{ t('general.silentLaunchHint') }}</span>
           </span>
           <button
             type="button"
@@ -169,13 +190,13 @@ onMounted(async () => {
             :class="{ on: appSettings.settings.silentLaunch }"
             :aria-checked="appSettings.settings.silentLaunch"
             :disabled="appSettings.busy"
-            aria-label="静默启动"
+            :aria-label="t('general.silentLaunch')"
             @click="appSettings.set({ silentLaunch: !appSettings.settings.silentLaunch })"
           />
         </label>
         <label>
           <span>
-            <strong>关闭窗口时最小化到托盘</strong>
+            <strong>{{ t('general.closeToTray') }}</strong>
           </span>
           <button
             type="button"
@@ -183,22 +204,22 @@ onMounted(async () => {
             :class="{ on: appSettings.settings.closeToTray }"
             :aria-checked="appSettings.settings.closeToTray"
             :disabled="appSettings.busy"
-            aria-label="关闭窗口时最小化到托盘"
+            :aria-label="t('general.closeToTray')"
             @click="appSettings.set({ closeToTray: !appSettings.settings.closeToTray })"
           />
         </label>
       </div>
-      <p v-if="startup.status.phase === 'unsupported'" class="setting-help">登录项在此平台不可用；Windows 安装包中可用。</p>
+      <p v-if="startup.status.phase === 'unsupported'" class="setting-help">{{ t('general.loginUnavailable') }}</p>
       <p v-else-if="startup.status.errorMessage" class="inline-error">{{ startup.status.errorMessage }}</p>
       <p v-if="appSettings.errorMessage" class="inline-error">{{ appSettings.errorMessage }}</p>
     </section>
 
     <section>
-      <h2>更新</h2>
+      <h2>{{ t('general.update') }}</h2>
       <div class="surface-card preference-list">
         <label>
           <span>
-            <strong>自动检查更新</strong>
+            <strong>{{ t('general.autoCheck') }}</strong>
           </span>
           <button
             type="button"
@@ -206,7 +227,7 @@ onMounted(async () => {
             :class="{ on: appSettings.settings.autoCheckUpdate }"
             :aria-checked="appSettings.settings.autoCheckUpdate"
             :disabled="appSettings.busy"
-            aria-label="自动检查更新"
+            :aria-label="t('general.autoCheck')"
             @click="appSettings.set({ autoCheckUpdate: !appSettings.settings.autoCheckUpdate })"
           />
         </label>
@@ -214,44 +235,44 @@ onMounted(async () => {
     </section>
 
     <section>
-      <h2>配置备份与恢复</h2>
+      <h2>{{ t('general.backupTitle') }}</h2>
       <div class="surface-card backup-panel">
-        <div class="backup-intro"><strong>加密备份</strong><p>包含配置、订阅及 Sub-Store 用户数据，不包含日志和缓存。备份密码只用于本次操作；忘记密码将无法恢复。</p></div>
+        <div class="backup-intro"><strong>{{ t('general.encryptedBackup') }}</strong><p>{{ t('general.backupHint') }}</p></div>
         <div class="backup-grid">
           <div class="backup-action">
-            <strong>保存到本地文件</strong>
-            <input v-model="backupPassword" type="password" autocomplete="new-password" placeholder="设置至少 8 位备份密码" aria-label="设置备份密码" />
-            <input v-model="backupConfirm" type="password" autocomplete="new-password" placeholder="再次输入密码" aria-label="确认备份密码" />
-            <button type="button" :disabled="backupBusy" @click="createBackup">保存加密备份…</button>
+            <strong>{{ t('general.saveLocal') }}</strong>
+            <input v-model="backupPassword" type="password" autocomplete="new-password" :placeholder="t('general.passwordPlaceholder')" :aria-label="t('general.passwordLabel')" />
+            <input v-model="backupConfirm" type="password" autocomplete="new-password" :placeholder="t('general.confirmPlaceholder')" :aria-label="t('general.confirmLabel')" />
+            <button type="button" :disabled="backupBusy" @click="createBackup">{{ t('general.saveBackup') }}</button>
           </div>
           <div class="backup-action">
-            <strong>从本地文件恢复</strong>
-            <input v-model="restorePassword" type="password" autocomplete="off" placeholder="输入备份密码" aria-label="备份恢复密码" />
-            <button type="button" :disabled="backupBusy" @click="previewBackup">选择文件并预览</button>
+            <strong>{{ t('general.restoreLocal') }}</strong>
+            <input v-model="restorePassword" type="password" autocomplete="off" :placeholder="t('general.restorePlaceholder')" :aria-label="t('general.restoreLabel')" />
+            <button type="button" :disabled="backupBusy" @click="previewBackup">{{ t('general.chooseFile') }}</button>
           </div>
         </div>
         <div class="webdav-backup">
-          <strong>WebDAV 备份</strong>
-          <p>把加密备份上传到 WebDAV 网盘，或从网盘下载并恢复。加密口令与上方本地备份的密码互不相关；WebDAV 账号、密码和口令都不会保存。</p>
+          <strong>{{ t('general.webdavTitle') }}</strong>
+          <p>{{ t('general.webdavHint') }}</p>
           <div class="webdav-form">
-            <label class="webdav-field wide"><span>WebDAV 地址</span><input v-model="webdavAddress" type="url" spellcheck="false" autocomplete="off" placeholder="https://dav.example.com/dav" /></label>
-            <label class="webdav-field"><span>用户名</span><input v-model="webdavUsername" spellcheck="false" autocomplete="username" placeholder="WebDAV 用户名" /></label>
-            <label class="webdav-field"><span>密码</span><span class="webdav-secret"><input v-model="webdavPassword" :type="webdavPasswordVisible ? 'text' : 'password'" autocomplete="off" placeholder="WebDAV 密码或应用密码" /><button type="button" class="webdav-eye" :class="{ active: webdavPasswordVisible }" :aria-label="webdavPasswordVisible ? '隐藏 WebDAV 密码' : '显示 WebDAV 密码'" @click.prevent="webdavPasswordVisible = !webdavPasswordVisible"><AppIcon name="eye" :size="16" /></button></span></label>
-            <label class="webdav-field"><span>文件路径</span><input v-model="webdavFilePath" spellcheck="false" autocomplete="off" :placeholder="webdavDefaultPath" /></label>
-            <label class="webdav-field"><span>加密口令（至少 8 位，恢复时需要）</span><span class="webdav-secret"><input v-model="webdavPassphrase" :type="webdavPassphraseVisible ? 'text' : 'password'" autocomplete="new-password" placeholder="设置或输入加密口令" /><button type="button" class="webdav-eye" :class="{ active: webdavPassphraseVisible }" :aria-label="webdavPassphraseVisible ? '隐藏加密口令' : '显示加密口令'" @click.prevent="webdavPassphraseVisible = !webdavPassphraseVisible"><AppIcon name="eye" :size="16" /></button></span></label>
+            <label class="webdav-field wide"><span>{{ t('general.webdavUrl') }}</span><input v-model="webdavAddress" type="url" spellcheck="false" autocomplete="off" placeholder="https://dav.example.com/dav" /></label>
+            <label class="webdav-field"><span>{{ t('common.username') }}</span><input v-model="webdavUsername" spellcheck="false" autocomplete="username" :placeholder="t('general.webdavUserPlaceholder')" /></label>
+            <label class="webdav-field"><span>{{ t('common.password') }}</span><span class="webdav-secret"><input v-model="webdavPassword" :type="webdavPasswordVisible ? 'text' : 'password'" autocomplete="off" :placeholder="t('general.webdavPasswordPlaceholder')" /><button type="button" class="webdav-eye" :class="{ active: webdavPasswordVisible }" :aria-label="webdavPasswordVisible ? t('general.hideWebdavPassword') : t('general.showWebdavPassword')" @click.prevent="webdavPasswordVisible = !webdavPasswordVisible"><AppIcon name="eye" :size="16" /></button></span></label>
+            <label class="webdav-field"><span>{{ t('general.filePath') }}</span><input v-model="webdavFilePath" spellcheck="false" autocomplete="off" :placeholder="webdavDefaultPath" /></label>
+            <label class="webdav-field"><span>{{ t('general.passphrase') }}</span><span class="webdav-secret"><input v-model="webdavPassphrase" :type="webdavPassphraseVisible ? 'text' : 'password'" autocomplete="new-password" :placeholder="t('general.passphrasePlaceholder')" /><button type="button" class="webdav-eye" :class="{ active: webdavPassphraseVisible }" :aria-label="webdavPassphraseVisible ? t('general.hidePassphrase') : t('general.showPassphrase')" @click.prevent="webdavPassphraseVisible = !webdavPassphraseVisible"><AppIcon name="eye" :size="16" /></button></span></label>
           </div>
-          <p v-if="webdavFileUrl" class="webdav-target">远端文件：<code>{{ webdavFileUrl }}</code>。上传将覆盖同名文件。</p>
-          <div class="webdav-actions"><button type="button" :disabled="backupBusy || !webdavFileUrl" @click="uploadWebDav">上传加密备份</button><button type="button" :disabled="backupBusy || !webdavFileUrl" @click="previewWebDav">下载并预览恢复</button></div>
+          <p v-if="webdavFileUrl" class="webdav-target">{{ t('general.remoteFile') }}<code>{{ webdavFileUrl }}</code>{{ t('general.overwriteNote') }}</p>
+          <div class="webdav-actions"><button type="button" :disabled="backupBusy || !webdavFileUrl" @click="uploadWebDav">{{ t('general.upload') }}</button><button type="button" :disabled="backupBusy || !webdavFileUrl" @click="previewWebDav">{{ t('general.downloadPreview') }}</button></div>
         </div>
         <div v-if="backupPreview" class="backup-preview" :class="{ incompatible: !backupPreview.compatible }">
-          <strong>恢复前预览</strong>
-          <span>备份版本 {{ backupPreview.appVersion }} · {{ new Date(backupPreview.createdAt).toLocaleString() }}</span>
-          <span>{{ backupPreview.profileCount }} 个配置 · {{ backupPreview.subscriptionSourceCount }} 个订阅地址 · {{ backupPreview.fileCount }} 个文件</span>
-          <span>将替换 {{ backupPreview.replaceCount }} 个现有文件、新增 {{ backupPreview.addCount }} 个、移除 {{ backupPreview.removeCount }} 个</span>
-          <span>覆写：{{ backupPreview.includesOverrides ? '包含' : '无' }} · Sub-Store：{{ backupPreview.includesSubStore ? '包含' : '无' }}</span>
+          <strong>{{ t('general.previewTitle') }}</strong>
+          <span>{{ t('general.backupVersion', [backupPreview.appVersion, new Date(backupPreview.createdAt).toLocaleString(locale)]) }}</span>
+          <span>{{ t('general.backupCounts', [backupPreview.profileCount, backupPreview.subscriptionSourceCount, backupPreview.fileCount]) }}</span>
+          <span>{{ t('general.backupChanges', [backupPreview.replaceCount, backupPreview.addCount, backupPreview.removeCount]) }}</span>
+          <span>{{ t('general.backupExtras', [backupPreview.includesOverrides ? t('general.included') : t('common.none'), backupPreview.includesSubStore ? t('general.included') : t('common.none')]) }}</span>
           <span>{{ backupPreview.compatibilityMessage }}</span>
-          <label v-if="backupPreview.compatible"><input v-model="restoreConfirmed" type="checkbox" /> 我了解恢复将替换当前配置，应用需要重启</label>
-          <button v-if="backupPreview.compatible" type="button" :disabled="backupBusy || !restoreConfirmed" @click="restoreBackup">确认恢复并重启</button>
+          <label v-if="backupPreview.compatible"><input v-model="restoreConfirmed" type="checkbox" /> {{ t('general.restoreAck') }}</label>
+          <button v-if="backupPreview.compatible" type="button" :disabled="backupBusy || !restoreConfirmed" @click="restoreBackup">{{ t('general.restoreConfirm') }}</button>
         </div>
       </div>
       <p v-if="backupError" class="inline-error" role="alert">{{ backupError }}</p>
@@ -259,17 +280,17 @@ onMounted(async () => {
     </section>
 
     <section>
-      <h2>延迟测试</h2>
+      <h2>{{ t('general.delayTest') }}</h2>
       <div class="surface-card preference-list delay-preferences">
         <label>
           <span>
-            <strong>测试地址来源</strong>
+            <strong>{{ t('general.urlSource') }}</strong>
           </span>
-          <AppSelect v-model="delayScope" :options="delayScopeOptions" label="测试地址来源" />
+          <AppSelect v-model="delayScope" :options="delayScopeOptions" :label="t('general.urlSource')" />
         </label>
         <label>
           <span>
-            <strong>全局测试地址</strong>
+            <strong>{{ t('general.globalUrl') }}</strong>
           </span>
           <input
             v-model="delayUrl"

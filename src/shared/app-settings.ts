@@ -1,4 +1,5 @@
 import type { KernelVersionChannel } from './kernel-manager'
+import { isLanguageSetting, type LanguageSetting } from './i18n'
 
 /**
  * Release channel the retired Electron build followed: `stable` was the
@@ -95,6 +96,8 @@ export interface AppSettings {
    * (applied by the privileged TUN service while TUN is up).
    */
   lanGateway: boolean
+  /** Interface language: follow the system, 简体中文 or English. */
+  language: LanguageSetting
 }
 
 export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = Object.freeze({
@@ -117,7 +120,8 @@ export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = Object.freeze({
   proxyGuard: true,
   subStoreEnabled: true,
   subStoreUseProxy: false,
-  lanGateway: false
+  lanGateway: false,
+  language: 'system'
 })
 
 function parseDelayTestUrl(value: unknown): string {
@@ -202,7 +206,8 @@ export function parseAppSettings(value: string | null): AppSettings {
       lanGateway:
         typeof parsed.lanGateway === 'boolean'
           ? parsed.lanGateway
-          : DEFAULT_APP_SETTINGS.lanGateway
+          : DEFAULT_APP_SETTINGS.lanGateway,
+      language: isLanguageSetting(parsed.language) ? parsed.language : DEFAULT_APP_SETTINGS.language
     }
   } catch {
     return { ...DEFAULT_APP_SETTINGS }

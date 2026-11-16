@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import SpeedSparkline from '../components/SpeedSparkline.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
@@ -51,7 +52,7 @@ const gatewayText = computed(() => delayText(latency.gatewayMs))
 const dnsText = computed(() => delayText(latency.dnsMs))
 const proxyText = computed(() => delayText(latency.proxyMs))
 const headlineText = computed(() => (latency.state === 'idle' || latency.state === 'probing' ? '···' : proxyText.value))
-const diagnosisButtonLabel = computed(() => (latency.state === 'probing' ? '检测中…' : '网络诊断'))
+const diagnosisButtonLabel = computed(() => (latency.state === 'probing' ? t('netMeta.detecting') : t('activity.networkDiagnosis')))
 
 function openNetworkDiagnostics(): void {
   summaryDrawer.value = 'network'
@@ -131,13 +132,13 @@ const directPct = computed(() =>
 )
 
 const modeLabel = computed(() => {
-  const map = { rule: '规则判定', global: '全局代理', direct: '直接连接' } as const
+  const map = { rule: t('activity.modeRule'), global: t('activity.modeGlobal'), direct: t('activity.modeDirect') } as const
   return map[policies.mode]
 })
 const modeOptions = [
-  { value: 'rule', label: '规则判定' },
-  { value: 'global', label: '全局代理' },
-  { value: 'direct', label: '直接连接' }
+  { value: 'rule', label: t('activity.modeRule') },
+  { value: 'global', label: t('activity.modeGlobal') },
+  { value: 'direct', label: t('activity.modeDirect') }
 ]
 const modePicker = ref<HTMLElement | null>(null)
 const profilePicker = ref<HTMLElement | null>(null)
@@ -160,10 +161,10 @@ const selectedProfile = computed({
     if (!id || id === profilesStore.active?.id) return
     void profilesStore.activate(id)
       .then(() => {
-        toast.success('配置已启用')
+        toast.success(t('activity.profileActivated'))
         return runtime.refresh()
       })
-      .catch(() => toast.error('无法启用配置', profilesStore.lastError ?? undefined))
+      .catch(() => toast.error(t('activity.profileActivateFailed'), profilesStore.lastError ?? undefined))
   }
 })
 const selectedMode = computed({
@@ -193,9 +194,9 @@ const connDotClass = computed(() => {
   return ['online-dot', `runtime-${accent}`, { pending: connStatus.value === 'loading', offline: connStatus.value === 'disconnected' || connStatus.value === 'error' }]
 })
 const connStateLabel = computed(() => {
-  if (connStatus.value === 'loading') return '载入中'
-  if (connStatus.value === 'disconnected') return '已断开'
-  if (connStatus.value === 'error') return '数据异常'
+  if (connStatus.value === 'loading') return t('activity.loading')
+  if (connStatus.value === 'disconnected') return t('activity.disconnected')
+  if (connStatus.value === 'error') return t('activity.dataError')
   return ''
 })
 
@@ -212,53 +213,53 @@ const chartBars = computed<number[]>(() => {
 <template>
   <div class="activity-view page-shell">
     <header class="activity-header">
-      <h1>活动</h1>
+      <h1>{{ t('nav.activity') }}</h1>
     </header>
 
-    <section class="runtime-context" aria-label="运行上下文">
-      <div><span>网络</span><strong>{{ runtime.summary?.networkName ?? '以太网' }}</strong></div>
-      <div v-if="profilesStore.active" ref="profilePicker" class="runtime-mode-picker runtime-profile-picker"><span class="runtime-detail-label" @pointerdown.stop @click="openPicker(profilePicker)">配置<AppIcon name="chevron-down" :size="12" /></span><AppSelect v-model="selectedProfile" :options="profileOptions" :label="`配置：${profileName}`" plain /></div>
-      <div v-else><span>配置</span><strong>{{ profileName }}</strong></div>
-      <div ref="modePicker" class="runtime-mode-picker"><span class="runtime-detail-label" @pointerdown.stop @click="toggleModePicker">出站模式<AppIcon name="chevron-down" :size="12" /></span><AppSelect v-model="selectedMode" :options="modeOptions" :label="`出站模式：${modeLabel}`" plain /></div>
-      <div class="runtime-ip"><button type="button" class="runtime-detail-label runtime-detail-link" aria-label="查看网络信息" @click="summaryDrawer = 'network'">外部 IP<AppIcon name="chevron-down" :size="12" /></button><button type="button" class="runtime-ip-value" :aria-pressed="ipRevealed" :aria-label="ipRevealed ? '隐藏外部 IP' : '显示完整外部 IP'" :title="ipRevealed ? '点击隐藏' : '点击显示完整 IP'" @click="toggleIpReveal"><strong>{{ externalIpText }}</strong></button></div>
+    <section class="runtime-context" :aria-label="t('activity.contextLabel')">
+      <div><span>{{ t('activity.network') }}</span><strong>{{ runtime.summary?.networkName ?? t('activity.ethernet') }}</strong></div>
+      <div v-if="profilesStore.active" ref="profilePicker" class="runtime-mode-picker runtime-profile-picker"><span class="runtime-detail-label" @pointerdown.stop @click="openPicker(profilePicker)">{{ t('activity.profile') }}<AppIcon name="chevron-down" :size="12" /></span><AppSelect v-model="selectedProfile" :options="profileOptions" :label="t('activity.profileTitle', [profileName])" plain /></div>
+      <div v-else><span>{{ t('activity.profile') }}</span><strong>{{ profileName }}</strong></div>
+      <div ref="modePicker" class="runtime-mode-picker"><span class="runtime-detail-label" @pointerdown.stop @click="toggleModePicker">{{ t('activity.outboundMode') }}<AppIcon name="chevron-down" :size="12" /></span><AppSelect v-model="selectedMode" :options="modeOptions" :label="t('activity.modeTitle', [modeLabel])" plain /></div>
+      <div class="runtime-ip"><button type="button" class="runtime-detail-label runtime-detail-link" :aria-label="t('activity.viewNetworkInfo')" @click="summaryDrawer = 'network'">{{ t('activity.externalIp') }}<AppIcon name="chevron-down" :size="12" /></button><button type="button" class="runtime-ip-value" :aria-pressed="ipRevealed" :aria-label="ipRevealed ? t('activity.hideIp') : t('activity.showIp')" :title="ipRevealed ? t('activity.clickHide') : t('activity.clickShow')" @click="toggleIpReveal"><strong>{{ externalIpText }}</strong></button></div>
     </section>
 
     <section class="dashboard-grid">
       <SurfaceCard class="latency-card">
         <div class="card-title-row">
-          <span class="metric-label latency-label">网络延迟<button type="button" class="latency-refresh refresh-control" :disabled="latency.state === 'probing'" aria-label="重新测速" @click="latency.probe()"><RefreshIndicator :busy="latency.state === 'probing'" :failed="latency.state === 'error'" :size="12" /></button></span>
+          <span class="metric-label latency-label">{{ t('activity.latency') }}<button type="button" class="latency-refresh refresh-control" :disabled="latency.state === 'probing'" :aria-label="t('activity.retest')" @click="latency.probe()"><RefreshIndicator :busy="latency.state === 'probing'" :failed="latency.state === 'error'" :size="12" /></button></span>
           <button type="button" class="quiet-button" @click="openNetworkDiagnostics">{{ diagnosisButtonLabel }}</button>
         </div>
         <div class="large-metric" :class="{ 'metric-dimmed': headlineText === '—' }">{{ headlineText }}<span>ms</span></div>
         <div class="latency-breakdown">
-          <div><span>路由</span><strong>{{ gatewayText }}<i v-if="gatewayText !== '—'" class="delay-unit">ms</i></strong></div>
+          <div><span>{{ t('activity.route') }}</span><strong>{{ gatewayText }}<i v-if="gatewayText !== '—'" class="delay-unit">ms</i></strong></div>
           <div><span>DNS</span><strong>{{ dnsText }}<i v-if="dnsText !== '—'" class="delay-unit">ms</i></strong></div>
-          <div><span>{{ latency.proxyNode ?? '当前策略' }}</span><strong>{{ proxyText }}<i v-if="proxyText !== '—'" class="delay-unit">ms</i></strong></div>
+          <div><span>{{ latency.proxyNode ?? t('activity.currentPolicy') }}</span><strong>{{ proxyText }}<i v-if="proxyText !== '—'" class="delay-unit">ms</i></strong></div>
         </div>
       </SurfaceCard>
 
       <div class="speed-grid">
-        <SpeedSparkline kind="upload" title="上传" :value="up.value" :unit="up.unit" :series="traffic.uploadSeries" />
-        <SpeedSparkline kind="download" title="下载" :value="down.value" :unit="down.unit" :series="traffic.downloadSeries" />
+        <SpeedSparkline kind="upload" :title="t('common.upload')" :value="up.value" :unit="up.unit" :series="traffic.uploadSeries" />
+        <SpeedSparkline kind="download" :title="t('common.download')" :value="down.value" :unit="down.unit" :series="traffic.downloadSeries" />
       </div>
 
       <SurfaceCard class="connections-card">
-        <div class="card-title-row"><span class="metric-label">活动连接<span v-if="connStateLabel" class="stream-state">{{ connStateLabel }}</span></span><i :class="connDotClass" /></div>
-        <button type="button" class="connections-summary-link" @click="router.push('/connections')"><strong>{{ activeCount }}</strong><span>查看连接</span><AppIcon name="next" :size="15" /></button>
+        <div class="card-title-row"><span class="metric-label">{{ t('activity.activeConnections') }}<span v-if="connStateLabel" class="stream-state">{{ connStateLabel }}</span></span><i :class="connDotClass" /></div>
+        <button type="button" class="connections-summary-link" @click="router.push('/connections')"><strong>{{ activeCount }}</strong><span>{{ t('activity.viewConnections') }}</span><AppIcon name="next" :size="15" /></button>
         <div class="connections-breakdown">
-          <button type="button" aria-label="查看进程" @click="router.push('/processes')"><strong>{{ processCount }}</strong><span>进程</span></button>
-          <button type="button" aria-label="查看设备" @click="router.push('/devices')"><strong>{{ deviceCount }}</strong><span>设备</span></button>
-          <button type="button" aria-label="查看连接" @click="router.push('/connections')"><strong>{{ hostCount }}</strong><span>域名</span></button>
+          <button type="button" :aria-label="t('activity.viewProcesses')" @click="router.push('/processes')"><strong>{{ processCount }}</strong><span>{{ t('nav.processes') }}</span></button>
+          <button type="button" :aria-label="t('activity.viewDevices')" @click="router.push('/devices')"><strong>{{ deviceCount }}</strong><span>{{ t('activity.devices') }}</span></button>
+          <button type="button" :aria-label="t('activity.viewConnections')" @click="router.push('/connections')"><strong>{{ hostCount }}</strong><span>{{ t('activity.domains') }}</span></button>
         </div>
       </SurfaceCard>
 
       <SurfaceCard class="traffic-card">
-        <div class="card-title-row"><span class="metric-label">流量</span><div class="segmented" role="group" aria-label="流量范围"><button type="button" :class="{ selected: rankScope === 'all' }" :aria-pressed="rankScope === 'all'" @click="connections.setRankScope('all')">全部</button><button type="button" :class="{ selected: rankScope === 'proxy' }" :aria-pressed="rankScope === 'proxy'" @click="connections.setRankScope('proxy')">仅代理</button></div></div>
-        <div class="bar-chart" aria-label="最近流量">
+        <div class="card-title-row"><span class="metric-label">{{ t('stats.traffic') }}</span><div class="segmented" role="group" :aria-label="t('activity.trafficScope')"><button type="button" :class="{ selected: rankScope === 'all' }" :aria-pressed="rankScope === 'all'" @click="connections.setRankScope('all')">{{ t('common.all') }}</button><button type="button" :class="{ selected: rankScope === 'proxy' }" :aria-pressed="rankScope === 'proxy'" @click="connections.setRankScope('proxy')">{{ t('activity.proxyOnly') }}</button></div></div>
+        <div class="bar-chart" :aria-label="t('activity.recentLabel')">
           <i v-for="(height, index) in chartBars" :key="index" :style="{ height: `${height}%` }" />
         </div>
-        <div class="chart-axis"><span>最近</span><span>1 分钟</span></div>
-        <div class="rank-tabs" role="group" aria-label="流量排行维度"><button type="button" :class="{ selected: rankDimension === 'process' }" :aria-pressed="rankDimension === 'process'" @click="rankDimension = 'process'">进程与设备</button><button type="button" :class="{ selected: rankDimension === 'host' }" :aria-pressed="rankDimension === 'host'" @click="rankDimension = 'host'">域名</button><button type="button" :class="{ selected: rankDimension === 'policy' }" :aria-pressed="rankDimension === 'policy'" @click="rankDimension = 'policy'">策略</button></div>
+        <div class="chart-axis"><span>{{ t('activity.recent') }}</span><span>{{ t('activity.oneMinute') }}</span></div>
+        <div class="rank-tabs" role="group" :aria-label="t('activity.rankingLabel')"><button type="button" :class="{ selected: rankDimension === 'process' }" :aria-pressed="rankDimension === 'process'" @click="rankDimension = 'process'">{{ t('activity.processesAndDevices') }}</button><button type="button" :class="{ selected: rankDimension === 'host' }" :aria-pressed="rankDimension === 'host'" @click="rankDimension = 'host'">{{ t('sniffer.domains') }}</button><button type="button" :class="{ selected: rankDimension === 'policy' }" :aria-pressed="rankDimension === 'policy'" @click="rankDimension = 'policy'">{{ t('common.policy') }}</button></div>
         <div class="rank-list">
           <div v-for="item in rankedList" :key="item.name" class="rank-row">
             <ProcessIcon v-if="rankDimension === 'process'" class="rank-process-icon" :path="item.iconPath" :name="item.name" :size="12" />
@@ -270,15 +271,15 @@ const chartBars = computed<number[]>(() => {
       </SurfaceCard>
 
       <SurfaceCard class="total-card">
-        <div class="card-title-row"><span class="metric-label">总计</span><button type="button" class="quiet-button" @click="summaryDrawer = 'usage'">查看历史</button></div>
+        <div class="card-title-row"><span class="metric-label">{{ t('stats.total') }}</span><button type="button" class="quiet-button" @click="summaryDrawer = 'usage'">{{ t('activity.viewHistory') }}</button></div>
         <div class="large-metric">{{ total.value }}<span>{{ total.unit }}</span></div>
-        <div class="total-labels"><div><span>DIRECT</span><strong>{{ direct.value }} {{ direct.unit }}</strong></div><div><span>代理</span><strong>{{ proxy.value }} {{ proxy.unit }}</strong></div></div>
-        <button type="button" class="total-bar total-history-link" aria-label="查看用量历史" @click="summaryDrawer = 'usage'"><i :style="{ width: `${directPct}%` }" /><i :style="{ width: `${100 - directPct}%` }" /></button>
+        <div class="total-labels"><div><span>DIRECT</span><strong>{{ direct.value }} {{ direct.unit }}</strong></div><div><span>{{ t('activity.proxy') }}</span><strong>{{ proxy.value }} {{ proxy.unit }}</strong></div></div>
+        <button type="button" class="total-bar total-history-link" :aria-label="t('activity.viewUsage')" @click="summaryDrawer = 'usage'"><i :style="{ width: `${directPct}%` }" /><i :style="{ width: `${100 - directPct}%` }" /></button>
       </SurfaceCard>
 
     </section>
-    <DetailDrawer :open="Boolean(summaryDrawer)" :title="summaryDrawer === 'network' ? '网络信息' : '用量历史'" @close="summaryDrawer = null">
-      <template v-if="summaryDrawer === 'network'" #actions><button type="button" class="drawer-probe-button" :disabled="latency.state === 'probing'" @click="latency.probe()">{{ latency.state === 'probing' ? '检测中…' : '重新检测' }}</button></template>
+    <DetailDrawer :open="Boolean(summaryDrawer)" :title="summaryDrawer === 'network' ? t('activity.networkInfo') : t('activity.usageHistory')" @close="summaryDrawer = null">
+      <template v-if="summaryDrawer === 'network'" #actions><button type="button" class="drawer-probe-button" :disabled="latency.state === 'probing'" @click="latency.probe()">{{ latency.state === 'probing' ? t('netMeta.detecting') : t('activity.recheck') }}</button></template>
       <NetworkMetadataPanel v-if="summaryDrawer === 'network'" /><UsageHistoryPanel v-else-if="summaryDrawer === 'usage'" />
     </DetailDrawer>
   </div>

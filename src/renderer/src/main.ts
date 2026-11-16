@@ -13,10 +13,12 @@ import App from './App.vue'
 import { router } from './router'
 import { detectShell } from './platform/desktop-contract'
 import { createDesktopApi } from './platform/generated/desktop-api'
+import { locale } from '@shared/i18n'
 import './styles/tokens.css'
 import './styles/base.css'
 
 const shell = detectShell()
+document.documentElement.lang = locale.value
 
 if (shell.kind === 'tauri') {
   // Under Tauri the bridge is not preinstalled; install it before mount.

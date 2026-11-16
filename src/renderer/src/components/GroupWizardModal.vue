@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, ref, toRef, watch } from 'vue'
 import AppSelect from './AppSelect.vue'
 import PopoverMenu from './PopoverMenu.vue'
@@ -38,27 +39,27 @@ interface TypeOption {
   disabled?: string
 }
 
-const SMART: TypeOption = { id: 'smart', label: 'Smart 策略组', description: '由 Smart 内核根据网络情况和历史表现，自动从子策略中选择合适的策略。' }
+const SMART: TypeOption = { id: 'smart', label: t('groupWizard.smartTitle'), description: t('groupWizard.smartDesc') }
 const BASE_TYPES: TypeOption[] = [
-  { id: 'select', label: '手动选择策略组', description: '在策略视图或托盘菜单中选择将使用哪个策略。' },
-  { id: 'url-test', label: '自动测试策略组', description: '通过对测试 URL 进行延迟测试来自动选择将使用哪个策略。' },
-  { id: 'fallback', label: 'Fallback 策略组', description: '根据优先级自动选择可用策略。可用性通过访问测试 URL（类似自动测试组）进行测试。' },
-  { id: 'load-balance', label: '负载均衡策略组', description: '把连接分散到多个子策略，并测试子策略的可用性。' }
+  { id: 'select', label: t('groupWizard.selectTitle'), description: t('groupWizard.selectDesc') },
+  { id: 'url-test', label: t('groupWizard.urlTestTitle'), description: t('groupWizard.urlTestDesc') },
+  { id: 'fallback', label: t('groupWizard.fallbackTitle'), description: t('groupWizard.fallbackDesc') },
+  { id: 'load-balance', label: t('groupWizard.loadBalanceTitle'), description: t('groupWizard.loadBalanceDesc') }
 ]
 /** Smart is offered only with the Smart kernel (or when editing a Smart group). */
 const TYPES = computed<TypeOption[]>(() => (props.smart || props.group?.config.type === 'smart' ? [BASE_TYPES[0]!, SMART, ...BASE_TYPES.slice(1)] : BASE_TYPES))
-const SUBTITLES = ['选择策略组类型', '选择包含的策略', '设置名称和选项']
+const SUBTITLES = [t('groupWizard.stepType'), t('groupWizard.stepMembers'), t('groupWizard.stepOptions')]
 const groupPicker = ref<{ x: number; y: number } | null>(null)
 function openGroupPicker(event: MouseEvent): void {
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
   groupPicker.value = { x: rect.left, y: rect.bottom + 4 }
 }
-const TYPE_LABELS: Record<LocalGroupType, string> = { smart: 'Smart', select: '手动选择', 'url-test': '自动测试', fallback: 'Fallback', 'load-balance': '负载均衡' }
+const TYPE_LABELS: Record<LocalGroupType, string> = { smart: 'Smart', select: t('groupWizard.kindSelect'), 'url-test': t('groupWizard.kindUrlTest'), fallback: 'Fallback', 'load-balance': t('groupWizard.kindLoadBalance') }
 
 const STRATEGIES = [
-  { value: 'consistent-hashing', label: '一致性哈希（同一目标走同一策略）' },
-  { value: 'round-robin', label: '轮询' },
-  { value: 'sticky-sessions', label: '粘性会话' }
+  { value: 'consistent-hashing', label: t('groupWizard.strategyHash') },
+  { value: 'round-robin', label: t('groupWizard.strategyRoundRobin') },
+  { value: 'sticky-sessions', label: t('groupWizard.strategySticky') }
 ]
 
 const step = ref(1)
@@ -83,7 +84,7 @@ const strategy = ref('consistent-hashing')
 const error = ref<string | null>(null)
 
 const isNew = computed(() => !props.group?.id)
-const title = computed(() => (isNew.value ? '新建策略组' : `编辑策略组「${props.group?.config.name ?? ''}」`))
+const title = computed(() => (isNew.value ? t('groupWizard.newTitle') : t('groupWizard.editTitle', [props.group?.config.name ?? ''])))
 const tests = computed(() => type.value !== 'select')
 const ownName = computed(() => props.group?.config.name ?? '')
 const choices = computed(() => {
@@ -135,16 +136,16 @@ function toggle(list: string[], item: string): string[] {
 }
 
 function membersProblem(): string | null {
-  if (useProvider.value && !/^https?:\/\//i.test(providerUrl.value.trim())) return '外部策略需要 http(s) 地址'
+  if (useProvider.value && !/^https?:\/\//i.test(providerUrl.value.trim())) return t('groupWizard.providerUrlInvalid')
   if (useFilter.value && filter.value.trim()) {
     try {
       new RegExp(filter.value.replace(/^\(\?i\)/, ''))
     } catch {
-      return '过滤正则无效'
+      return t('groupWizard.filterInvalid')
     }
   }
   const any = members.value.length || (useProvider.value && providerUrl.value.trim()) || includeAll.value || (useIncludeGroups.value && includeGroups.value.length)
-  return any ? null : '至少选择一个策略，或勾选右侧的包含方式'
+  return any ? null : t('groupWizard.needMember')
 }
 
 function next(): void {
@@ -160,7 +161,7 @@ function positive(value: string, label: string): number | undefined {
   const text = value.trim()
   if (!text) return undefined
   const number = Number(text)
-  if (!Number.isInteger(number) || number < 0) throw new Error(`${label}必须是非负整数`)
+  if (!Number.isInteger(number) || number < 0) throw new Error(t('groupWizard.mustBeNonNegative', [label]))
   return number
 }
 
@@ -172,11 +173,11 @@ function submit(): void {
   }
   const groupName = name.value.trim()
   if (!groupName) {
-    error.value = '请填写名称'
+    error.value = t('groupWizard.nameRequired')
     return
   }
   if (props.takenNames.includes(groupName)) {
-    error.value = `「${groupName}」已被节点或策略组使用`
+    error.value = t('groupWizard.nameTaken', [groupName])
     return
   }
   try {
@@ -189,12 +190,12 @@ function submit(): void {
     if (icon.value.trim()) config.icon = icon.value.trim()
     if (tests.value) {
       if (testUrl.value.trim()) {
-        if (!/^https?:\/\//i.test(testUrl.value.trim())) throw new Error('测试地址需要 http(s) 开头')
+        if (!/^https?:\/\//i.test(testUrl.value.trim())) throw new Error(t('groupWizard.testUrlInvalid'))
         config.url = testUrl.value.trim()
       }
-      config.interval = positive(interval.value, '测试间隔') ?? 300
+      config.interval = positive(interval.value, t('groupWizard.testInterval')) ?? 300
       if (type.value === 'url-test') {
-        const value = positive(tolerance.value, '容差')
+        const value = positive(tolerance.value, t('groupWizard.tolerance'))
         if (value !== undefined) config.tolerance = value
       }
       if (type.value === 'load-balance') config.strategy = strategy.value
@@ -204,7 +205,7 @@ function submit(): void {
       enabled: props.group?.enabled ?? true,
       config: config as LocalGroup['config'],
       includeGroups: useIncludeGroups.value ? [...includeGroups.value] : [],
-      providers: useProvider.value && providerUrl.value.trim() ? [{ url: providerUrl.value.trim(), interval: providerAuto.value ? positive(providerInterval.value, '自动更新间隔') || 86400 : 0 }] : []
+      providers: useProvider.value && providerUrl.value.trim() ? [{ url: providerUrl.value.trim(), interval: providerAuto.value ? positive(providerInterval.value, t('groupWizard.updateInterval')) || 86400 : 0 }] : []
     })
   } catch (problem) {
     error.value = problem instanceof Error ? problem.message : String(problem)
@@ -217,12 +218,12 @@ function submit(): void {
     <div v-if="open" class="modal-shade group-wizard-shade" role="presentation" @click.self="!busy && emit('close')">
       <section ref="dialog" class="group-wizard" :class="`step-${step}`" role="dialog" aria-modal="true" :aria-label="title">
         <header class="gw-head">
-          <h2>{{ isNew ? '策略组' : title }}</h2>
+          <h2>{{ isNew ? t('common.policyGroup') : title }}</h2>
           <p>{{ SUBTITLES[step - 1] }}</p>
         </header>
 
         <div class="gw-body">
-          <div v-if="step === 1" class="gw-types" role="radiogroup" aria-label="策略组类型">
+          <div v-if="step === 1" class="gw-types" role="radiogroup" :aria-label="t('groupWizard.typeLabel')">
             <button v-for="option in TYPES" :key="option.id" type="button" role="radio" class="gw-type" :aria-checked="type === option.id" :disabled="Boolean(option.disabled)" @click="pickType(option)" @dblclick="!option.disabled && next()">
               <i class="gw-radio" :class="{ on: type === option.id }" aria-hidden="true" />
               <span><strong>{{ option.label }}</strong><small>{{ option.disabled ?? option.description }}</small></span>
@@ -232,17 +233,17 @@ function submit(): void {
           <div v-else-if="step === 2" class="gw-members">
             <section class="gw-list">
               <div class="gw-list-head">
-                <h3>选择子策略</h3>
-                <input v-model="search" class="gw-input gw-search" type="search" placeholder="搜索" aria-label="搜索策略" />
+                <h3>{{ t('groupWizard.chooseMembers') }}</h3>
+                <input v-model="search" class="gw-input gw-search" type="search" :placeholder="t('common.search')" :aria-label="t('groupWizard.searchPolicies')" />
               </div>
-              <div class="gw-table" role="group" aria-label="子策略">
-                <div class="gw-table-head"><span />策略<small v-if="members.length">已选 {{ members.length }}</small></div>
+              <div class="gw-table" role="group" :aria-label="t('groupWizard.subPolicies')">
+                <div class="gw-table-head"><span />{{ t('common.policy') }}<small v-if="members.length">{{ t('groupWizard.selectedCount', [members.length]) }}</small></div>
                 <div class="gw-table-body">
                   <label v-for="item in choices" :key="item" class="gw-table-row" :class="{ on: members.includes(item) }">
                     <input type="checkbox" :checked="members.includes(item)" @change="members = toggle(members, item)" />
                     <span>{{ item }}</span>
                   </label>
-                  <p v-if="!choices.length" class="gw-hint">{{ props.policies.length ? '没有匹配的策略' : '启动内核后可以选择策略' }}</p>
+                  <p v-if="!choices.length" class="gw-hint">{{ props.policies.length ? t('groupWizard.noMatch') : t('groupWizard.startCoreFirst') }}</p>
                 </div>
               </div>
             </section>
@@ -250,38 +251,38 @@ function submit(): void {
             <section class="gw-options">
               <div class="gw-card">
                 <div class="gw-row">
-                  <span class="gw-label"><b>同时包含外部策略</b><small>使用由代理服务商提供的代理列表（mihomo proxy-provider 格式），按下面的间隔自动更新。</small></span>
-                  <button type="button" class="switch" :class="{ on: useProvider }" role="switch" :aria-checked="useProvider" aria-label="同时包含外部策略" @click="useProvider = !useProvider" />
+                  <span class="gw-label"><b>{{ t('groupWizard.includeProvider') }}</b><small>{{ t('groupWizard.includeProviderHint') }}</small></span>
+                  <button type="button" class="switch" :class="{ on: useProvider }" role="switch" :aria-checked="useProvider" :aria-label="t('groupWizard.includeProvider')" @click="useProvider = !useProvider" />
                 </div>
                 <div class="gw-row" :class="{ off: !useProvider }">
-                  <span class="gw-label"><b>路径</b></span>
-                  <input v-model="providerUrl" class="gw-input gw-wide" type="url" spellcheck="false" placeholder="URL" aria-label="外部策略地址" :disabled="!useProvider" />
+                  <span class="gw-label"><b>{{ t('groupWizard.path') }}</b></span>
+                  <input v-model="providerUrl" class="gw-input gw-wide" type="url" spellcheck="false" placeholder="URL" :aria-label="t('groupWizard.providerUrlLabel')" :disabled="!useProvider" />
                 </div>
                 <div class="gw-row" :class="{ off: !useProvider }">
-                  <span class="gw-label"><b>自动更新间隔（秒）</b></span>
+                  <span class="gw-label"><b>{{ t('groupWizard.updateIntervalSeconds') }}</b></span>
                   <span class="gw-pair">
-                    <input v-model="providerInterval" class="gw-input gw-number" type="text" inputmode="numeric" aria-label="自动更新间隔" :disabled="!useProvider || !providerAuto" />
-                    <button type="button" class="switch" :class="{ on: providerAuto }" role="switch" :aria-checked="providerAuto" aria-label="自动更新" :disabled="!useProvider" @click="providerAuto = !providerAuto" />
+                    <input v-model="providerInterval" class="gw-input gw-number" type="text" inputmode="numeric" :aria-label="t('groupWizard.updateInterval')" :disabled="!useProvider || !providerAuto" />
+                    <button type="button" class="switch" :class="{ on: providerAuto }" role="switch" :aria-checked="providerAuto" :aria-label="t('common.autoUpdate')" :disabled="!useProvider" @click="providerAuto = !providerAuto" />
                   </span>
                 </div>
               </div>
               <div class="gw-card">
                 <div class="gw-row">
-                  <span class="gw-label"><b>同时包含所有代理策略</b><small>订阅和本地的全部节点，不含策略组。</small></span>
-                  <button type="button" class="switch" :class="{ on: includeAll }" role="switch" :aria-checked="includeAll" aria-label="同时包含所有代理策略" @click="includeAll = !includeAll" />
+                  <span class="gw-label"><b>{{ t('groupWizard.includeAll') }}</b><small>{{ t('groupWizard.includeAllHint') }}</small></span>
+                  <button type="button" class="switch" :class="{ on: includeAll }" role="switch" :aria-checked="includeAll" :aria-label="t('groupWizard.includeAll')" @click="includeAll = !includeAll" />
                 </div>
                 <div class="gw-row">
-                  <span class="gw-label"><b>同时包含其他策略组的策略</b><small>{{ useIncludeGroups && includeGroups.length ? `已选：${includeGroups.join('、')}` : '将其他策略组中的子策略复制到该策略组。' }}</small></span>
+                  <span class="gw-label"><b>{{ t('groupWizard.includeGroups') }}</b><small>{{ useIncludeGroups && includeGroups.length ? t('groupWizard.selectedList', [includeGroups.join(t('common.listSeparator'))]) : t('groupWizard.includeGroupsHint') }}</small></span>
                   <span class="gw-pair">
-                    <button type="button" class="surge-button gw-small" :disabled="!useIncludeGroups" @click="openGroupPicker">选择策略组…</button>
-                    <button type="button" class="switch" :class="{ on: useIncludeGroups }" role="switch" :aria-checked="useIncludeGroups" aria-label="同时包含其他策略组的策略" @click="useIncludeGroups = !useIncludeGroups" />
+                    <button type="button" class="surge-button gw-small" :disabled="!useIncludeGroups" @click="openGroupPicker">{{ t('groupWizard.chooseGroups') }}</button>
+                    <button type="button" class="switch" :class="{ on: useIncludeGroups }" role="switch" :aria-checked="useIncludeGroups" :aria-label="t('groupWizard.includeGroups')" @click="useIncludeGroups = !useIncludeGroups" />
                   </span>
                 </div>
               </div>
               <div class="gw-card">
                 <div class="gw-row">
-                  <span class="gw-label"><b>包含过滤</b><small>使用正则表达式进行过滤，仅包含部分子策略，该选项对上面三个选项均有效。</small></span>
-                  <input v-model="filter" class="gw-input gw-filter" type="text" spellcheck="false" placeholder="正则表达式（可选）" aria-label="过滤正则" @input="useFilter = Boolean(filter.trim())" />
+                  <span class="gw-label"><b>{{ t('groupWizard.includeFilter') }}</b><small>{{ t('groupWizard.includeFilterHint') }}</small></span>
+                  <input v-model="filter" class="gw-input gw-filter" type="text" spellcheck="false" :placeholder="t('groupWizard.regexOptional')" :aria-label="t('groupWizard.filterLabel')" @input="useFilter = Boolean(filter.trim())" />
                 </div>
               </div>
             </section>
@@ -289,33 +290,33 @@ function submit(): void {
 
           <div v-else class="gw-final">
             <div class="gw-card">
-              <label class="gw-row"><span class="gw-label"><b>名称</b></span><input v-model="name" class="gw-input gw-wide" type="text" spellcheck="false" placeholder="必填" /></label>
-              <div class="gw-row"><span class="gw-label"><b>类型</b></span><span class="gw-value">{{ TYPE_LABELS[type] }}</span></div>
-              <label class="gw-row"><span class="gw-label"><b>图标</b><small>可选，图片地址</small></span><input v-model="icon" class="gw-input gw-wide" type="url" spellcheck="false" placeholder="https://…" /></label>
+              <label class="gw-row"><span class="gw-label"><b>{{ t('common.name') }}</b></span><input v-model="name" class="gw-input gw-wide" type="text" spellcheck="false" :placeholder="t('common.required')" /></label>
+              <div class="gw-row"><span class="gw-label"><b>{{ t('common.type') }}</b></span><span class="gw-value">{{ TYPE_LABELS[type] }}</span></div>
+              <label class="gw-row"><span class="gw-label"><b>{{ t('groupWizard.icon') }}</b><small>{{ t('groupWizard.iconHint') }}</small></span><input v-model="icon" class="gw-input gw-wide" type="url" spellcheck="false" placeholder="https://…" /></label>
             </div>
             <div v-if="tests" class="gw-card">
-              <label class="gw-row"><span class="gw-label"><b>测试 URL</b><small>留空使用内核默认</small></span><input v-model="testUrl" class="gw-input gw-wide" type="url" spellcheck="false" placeholder="https://www.gstatic.com/generate_204" /></label>
-              <label class="gw-row"><span class="gw-label"><b>测试间隔（秒）</b></span><input v-model="interval" class="gw-input gw-number" type="text" inputmode="numeric" /></label>
-              <label v-if="type === 'url-test'" class="gw-row"><span class="gw-label"><b>容差（毫秒）</b><small>延迟差小于它时不切换</small></span><input v-model="tolerance" class="gw-input gw-number" type="text" inputmode="numeric" placeholder="50" /></label>
-              <div v-if="type === 'load-balance'" class="gw-row"><span class="gw-label"><b>分配方式</b></span><span class="gw-select"><AppSelect v-model="strategy" :options="STRATEGIES" label="分配方式" /></span></div>
+              <label class="gw-row"><span class="gw-label"><b>{{ t('groupWizard.testUrl') }}</b><small>{{ t('groupWizard.testUrlHint') }}</small></span><input v-model="testUrl" class="gw-input gw-wide" type="url" spellcheck="false" placeholder="https://www.gstatic.com/generate_204" /></label>
+              <label class="gw-row"><span class="gw-label"><b>{{ t('groupWizard.testIntervalSeconds') }}</b></span><input v-model="interval" class="gw-input gw-number" type="text" inputmode="numeric" /></label>
+              <label v-if="type === 'url-test'" class="gw-row"><span class="gw-label"><b>{{ t('groupWizard.toleranceMs') }}</b><small>{{ t('groupWizard.toleranceHint') }}</small></span><input v-model="tolerance" class="gw-input gw-number" type="text" inputmode="numeric" placeholder="50" /></label>
+              <div v-if="type === 'load-balance'" class="gw-row"><span class="gw-label"><b>{{ t('groupWizard.strategy') }}</b></span><span class="gw-select"><AppSelect v-model="strategy" :options="STRATEGIES" :label="t('groupWizard.strategy')" /></span></div>
             </div>
           </div>
         </div>
 
         <footer class="gw-foot">
-          <button type="button" class="surge-button" :disabled="busy" @click="emit('close')">取消</button>
+          <button type="button" class="surge-button" :disabled="busy" @click="emit('close')">{{ t('common.cancel') }}</button>
           <p v-if="error" class="gw-error" role="alert">{{ error }}</p>
           <span class="spacer" />
-          <button v-if="step > 1 && (isNew || step > 2)" type="button" class="surge-button" :disabled="busy" @click="step--; error = null">返回</button>
-          <button v-if="step < 3" type="button" class="surge-button primary" @click="next">下一步</button>
-          <button v-else type="button" class="surge-button primary" :disabled="busy" @click="submit">{{ busy ? '保存中…' : '完成' }}</button>
+          <button v-if="step > 1 && (isNew || step > 2)" type="button" class="surge-button" :disabled="busy" @click="step--; error = null">{{ t('common.back') }}</button>
+          <button v-if="step < 3" type="button" class="surge-button primary" @click="next">{{ t('common.next') }}</button>
+          <button v-else type="button" class="surge-button primary" :disabled="busy" @click="submit">{{ busy ? t('common.saving') : t('common.done') }}</button>
         </footer>
       </section>
     </div>
-    <PopoverMenu :open="!!groupPicker" :x="groupPicker?.x ?? 0" :y="groupPicker?.y ?? 0" label="选择策略组" @close="groupPicker = null">
+    <PopoverMenu :open="!!groupPicker" :x="groupPicker?.x ?? 0" :y="groupPicker?.y ?? 0" :label="t('groupWizard.chooseGroupLabel')" @close="groupPicker = null">
       <div class="gw-picker" @click.stop>
         <label v-for="item in groupChoices" :key="item" class="popover-item gw-picker-item"><span>{{ item }}</span><input type="checkbox" :checked="includeGroups.includes(item)" @change="includeGroups = toggle(includeGroups, item)" /></label>
-        <p v-if="!groupChoices.length" class="gw-hint">没有可选的策略组</p>
+        <p v-if="!groupChoices.length" class="gw-hint">{{ t('groupWizard.noGroups') }}</p>
       </div>
     </PopoverMenu>
   </Teleport>

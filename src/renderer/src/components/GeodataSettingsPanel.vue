@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@shared/i18n'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useGeodataSettingsStore } from '../stores/geodata-settings'
 import type { GeodataSettings, GeoipMode } from '@shared/geodata'
@@ -30,18 +31,18 @@ async function upgradeGeo(): Promise<void> {
   geoUpgradeFailed.value = false
   try {
     await window.desktop.mihomo.upgradeGeo()
-    toast.success('地理数据库已更新')
+    toast.success(t('geodata.updated'))
   } catch (error) {
     geoUpgradeFailed.value = true
-    toast.error('地理数据库更新失败', toProtocolError(error).message)
+    toast.error(t('geodata.updateFailed'), toProtocolError(error).message)
   } finally {
     geoUpgrading.value = false
   }
 }
 
 const GEOIP_OPTIONS: Array<{ value: GeoipMode; label: string }> = [
-  { value: 'standard', label: '标准模式' },
-  { value: 'memconservative', label: '低内存模式' }
+  { value: 'standard', label: t('geodata.standardMode') },
+  { value: 'memconservative', label: t('geodata.lowMemoryMode') }
 ]
 
 const INTERVAL_MIN = 1
@@ -59,8 +60,8 @@ function syncFromConfig(value: GeodataSettings): void {
 
 async function save(): Promise<void> {
   const ok = await store.save({ ...form })
-  if (ok) { syncFromConfig(store.settings); toast.success('地理数据设置已保存并生效') }
-  else toast.error('地理数据设置保存失败', store.lastError ?? undefined)
+  if (ok) { syncFromConfig(store.settings); toast.success(t('geodata.saved')) }
+  else toast.error(t('geodata.saveFailed'), store.lastError ?? undefined)
 }
 
 async function preview(): Promise<void> {
@@ -78,12 +79,12 @@ async function confirmReset(): Promise<void> {
   if (ok) {
     syncFromConfig(store.settings)
     resetOpen.value = false
-    toast.success('地理数据设置已恢复默认并生效')
-  } else toast.error('地理数据设置重置失败', store.lastError ?? undefined)
+    toast.success(t('geodata.resetDone'))
+  } else toast.error(t('geodata.resetFailed'), store.lastError ?? undefined)
 }
 
 const dirty = computed(() => hydrated.value && JSON.stringify({ ...form }) !== JSON.stringify(store.settings))
-useUnsavedChanges('geodata-settings', '地理数据设置', dirty)
+useUnsavedChanges('geodata-settings', t('geodata.name'), dirty)
 
 watch(
   () => store.settings,
@@ -99,56 +100,56 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="gd-panel" aria-label="地理数据设置">
+  <section class="gd-panel" :aria-label="t('geodata.name')">
     <header class="gd-head">
       <div>
-        <h2 class="gd-title">地理数据设置</h2>
+        <h2 class="gd-title">{{ t('geodata.name') }}</h2>
         <p class="gd-subtitle">
-          管理 GeoIP、GeoSite 与 ASN 数据库的匹配方式、加载方式、自动更新和下载地址。保存后立即应用，不会修改订阅源文件。
+          {{ t('geodata.intro') }}
         </p>
       </div>
-      <div v-if="dirty" class="gd-head-actions"><button type="button" class="gd-reset" @click="restoreSaved">撤销更改</button><button type="button" class="gd-reset" @click="requestReset">恢复默认</button></div>
+      <div v-if="dirty" class="gd-head-actions"><button type="button" class="gd-reset" @click="restoreSaved">{{ t('common.revertChanges') }}</button><button type="button" class="gd-reset" @click="requestReset">{{ t('common.restoreDefaults') }}</button></div>
     </header>
 
     <p v-if="store.lastError" class="inline-error" role="alert">{{ store.lastError }}</p>
 
-    <p v-if="!form.enabled" class="gd-hint">当前未启用，将使用配置文件中的地理数据设置。</p>
+    <p v-if="!form.enabled" class="gd-hint">{{ t('geodata.disabledHint') }}</p>
 
     <div class="gd-body">
       <fieldset class="gd-group">
-        <legend>启用</legend>
+        <legend>{{ t('common.enable') }}</legend>
         <label class="gd-switch inline">
-          <input v-model="form.enabled" type="checkbox" aria-label="启用地理数据设置" />
+          <input v-model="form.enabled" type="checkbox" :aria-label="t('geodata.enableLabel')" />
           <span class="gd-switch-track" />
-          <span class="gd-label">启用后使用此处的地理数据设置</span>
+          <span class="gd-label">{{ t('geodata.enableHint') }}</span>
         </label>
       </fieldset>
 
       <fieldset class="gd-group">
-        <legend>匹配模式</legend>
+        <legend>{{ t('geodata.matchMode') }}</legend>
         <div class="gd-grid">
           <label class="gd-switch small">
             <input v-model="form.geodataMode" type="checkbox" aria-label="geodata-mode" />
             <span class="gd-switch-track" />
-            <span class="gd-label">使用 GeoData 数据格式</span>
+            <span class="gd-label">{{ t('geodata.geodataMode') }}</span>
           </label>
           <label class="gd-field">
-            <span class="gd-label">数据加载模式</span>
-            <AppSelect v-model="form.geoipMode" :options="GEOIP_OPTIONS" label="数据加载模式" />
+            <span class="gd-label">{{ t('geodata.loaderMode') }}</span>
+            <AppSelect v-model="form.geoipMode" :options="GEOIP_OPTIONS" :label="t('geodata.loaderMode')" />
           </label>
         </div>
       </fieldset>
 
       <fieldset class="gd-group">
-        <legend>自动更新</legend>
+        <legend>{{ t('geodata.autoUpdate') }}</legend>
         <div class="gd-grid">
           <label class="gd-switch small">
             <input v-model="form.autoUpdate" type="checkbox" aria-label="geo-auto-update" />
             <span class="gd-switch-track" />
-            <span class="gd-label">自动更新地理数据库</span>
+            <span class="gd-label">{{ t('geodata.autoUpdateLabel') }}</span>
           </label>
           <label class="gd-field">
-            <span class="gd-label">更新间隔（小时）</span>
+            <span class="gd-label">{{ t('geodata.interval') }}</span>
             <input
               v-model.number="form.updateIntervalHours"
               class="gd-input"
@@ -162,21 +163,21 @@ onMounted(async () => {
         </div>
       </fieldset>
 
-      <fieldset class="gd-group geodata-sources"><legend>数据库来源</legend><div class="gd-source-update"><span>内核按下列地址重新下载 GeoIP、GeoSite、MMDB 和 ASN 数据库。</span><button type="button" class="gd-update-button" :disabled="geoUpgrading" :aria-label="geoUpgrading ? '更新中' : '立即更新地理数据库'" @click="upgradeGeo"><RefreshIndicator :busy="geoUpgrading" :failed="geoUpgradeFailed" :size="14" />{{ geoUpgrading ? '更新中…' : '立即更新' }}</button></div><label class="gd-source-row"><span>GeoIP-DAT 数据库</span><input v-model="form.geoxUrls.geoip" class="gd-input" type="url" /></label><label class="gd-source-row"><span>GeoIP-MMDB 数据库</span><input v-model="form.geoxUrls.mmdb" class="gd-input" type="url" /></label><label class="gd-source-row"><span>GeoSite 数据库</span><input v-model="form.geoxUrls.geosite" class="gd-input" type="url" /></label><label class="gd-source-row"><span>IP-ASN 数据库</span><input v-model="form.geoxUrls.asn" class="gd-input" type="url" /></label></fieldset>
+      <fieldset class="gd-group geodata-sources"><legend>{{ t('geodata.sources') }}</legend><div class="gd-source-update"><span>{{ t('geodata.sourcesHint') }}</span><button type="button" class="gd-update-button" :disabled="geoUpgrading" :aria-label="geoUpgrading ? t('geodata.updating') : t('geodata.updateNowLabel')" @click="upgradeGeo"><RefreshIndicator :busy="geoUpgrading" :failed="geoUpgradeFailed" :size="14" />{{ geoUpgrading ? t('geodata.updatingEllipsis') : t('geodata.updateNow') }}</button></div><label class="gd-source-row"><span>{{ t('geodata.geoipDat') }}</span><input v-model="form.geoxUrls.geoip" class="gd-input" type="url" /></label><label class="gd-source-row"><span>{{ t('geodata.geoipMmdb') }}</span><input v-model="form.geoxUrls.mmdb" class="gd-input" type="url" /></label><label class="gd-source-row"><span>{{ t('geodata.geosite') }}</span><input v-model="form.geoxUrls.geosite" class="gd-input" type="url" /></label><label class="gd-source-row"><span>{{ t('geodata.asn') }}</span><input v-model="form.geoxUrls.asn" class="gd-input" type="url" /></label></fieldset>
 
       <div class="gd-actions">
-        <button type="button" class="gd-preview" @click="preview">预览配置</button>
-        <span v-if="dirty" class="unsaved-indicator">未保存</span><button type="button" class="gd-save" :disabled="store.busy || !dirty" @click="save">{{ store.busy ? '保存中…' : '保存' }}</button>
+        <button type="button" class="gd-preview" @click="preview">{{ t('common.previewConfig') }}</button>
+        <span v-if="dirty" class="unsaved-indicator">{{ t('common.unsaved') }}</span><button type="button" class="gd-save" :disabled="store.busy || !dirty" @click="save">{{ store.busy ? t('common.saving') : t('common.save') }}</button>
       </div>
 
       <div v-if="previewOpen" class="gd-preview">
         <div class="gd-preview-head">
-          <span>将应用的地理数据配置</span>
-          <button type="button" class="gd-icon" aria-label="关闭预览" @click="previewOpen = false"><AppIcon name="close" :size="15" /></button>
+          <span>{{ t('geodata.previewTitle') }}</span>
+          <button type="button" class="gd-icon" :aria-label="t('common.closePreview')" @click="previewOpen = false"><AppIcon name="close" :size="15" /></button>
         </div>
-        <pre class="gd-preview-body">{{ previewYaml || '（空）' }}</pre>
+        <pre class="gd-preview-body">{{ previewYaml || t('common.emptyParen') }}</pre>
       </div>
-      <ConfirmModal :open="resetOpen" title="恢复默认地理数据设置？" description="当前地理数据设置与默认值不同。确认后将保存默认设置，并立即应用到正在运行的内核。" confirm-label="恢复默认" :busy="store.busy" @close="resetOpen = false" @confirm="confirmReset" />
+      <ConfirmModal :open="resetOpen" :title="t('geodata.resetTitle')" :description="t('geodata.resetDescription')" :confirm-label="t('common.restoreDefaults')" :busy="store.busy" @close="resetOpen = false" @confirm="confirmReset" />
     </div>
   </section>
 </template>

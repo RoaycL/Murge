@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import { inlineMessages } from './helpers/localized-source'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 const root = process.cwd()
-const read = (path: string): string => readFileSync(resolve(root, path), 'utf8')
+const read = (path: string): string => inlineMessages(readFileSync(resolve(root, path), 'utf8'))
 
 describe('Surge-inspired UI navigation contract', () => {
   it('keeps feature areas separate and gives every sidebar destination a semantic icon', () => {

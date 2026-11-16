@@ -822,6 +822,18 @@ impl ProxySelectionStore {
 // Client (main/services/mihomo-client.ts)
 // ---------------------------------------------------------------------------
 
+/// A reqwest builder for talking to services on this machine (the mihomo
+/// controller, the local Sub-Store backend). Proxies are switched off
+/// explicitly: reqwest otherwise honours `HTTP(S)_PROXY`/`ALL_PROXY` and, on
+/// Windows, the system proxy in the registry. While our own system proxy is
+/// on, that sends `127.0.0.1:<controller>` into mihomo's mixed-port, where it
+/// is routed like any other request (e.g. `MATCH` → a remote node) and comes
+/// back as HTTP 502. The registry bypass list does not save us either:
+/// `127.*` is not an IP/CIDR pattern reqwest understands.
+pub fn local_client_builder() -> reqwest::ClientBuilder {
+    crate::outbound::direct_builder()
+}
+
 #[derive(Clone)]
 pub struct MihomoClient {
     http: reqwest::Client,
@@ -832,7 +844,7 @@ pub struct MihomoClient {
 
 impl MihomoClient {
     pub fn new(port: i64, secret: &str) -> Result<Self, IpcError> {
-        let http = reqwest::Client::builder()
+        let http = local_client_builder()
             .build()
             .map_err(|error| IpcError::internal(error.to_string()))?;
         Ok(MihomoClient {
@@ -1910,6 +1922,93 @@ mod tests {
 
     fn client(port: i64) -> MihomoClient {
         MihomoClient::new(port, "s3cret").unwrap()
+    }
+
+    const PROXY_CHILD_ENV: &str = "MURGE_TEST_CONTROLLER_PROXY_CHILD";
+
+    /// Regression: with a proxy configured for the process (here through
+    /// `HTTP_PROXY`/`ALL_PROXY`; on Windows also our own system proxy in the
+    /// registry), controller requests went into the proxy, mihomo routed
+    /// `127.0.0.1:9090` to a remote node and the UI saw HTTP 502. Proxy env
+    /// is process-wide, so the check runs in a child test process.
+    #[test]
+    fn controller_requests_ignore_configured_proxies() {
+        let exe = std::env::current_exe().unwrap();
+        let output = std::process::Command::new(exe)
+            .args([
+                "mihomo::tests::controller_requests_ignore_configured_proxies_child",
+                "--exact",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(PROXY_CHILD_ENV, "1")
+            .env_remove("NO_PROXY")
+            .env_remove("no_proxy")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "child failed:\n{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn controller_requests_ignore_configured_proxies_child() {
+        if std::env::var_os(PROXY_CHILD_ENV).is_none() {
+            return; // only meaningful inside the child spawned above
+        }
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let proxy_hits = Arc::new(AtomicUsize::new(0));
+        let hits = proxy_hits.clone();
+        // Stands in for mihomo's mixed-port routing the request to a dead node.
+        let proxy = MockServer::start("", move |_method, _path, _body| {
+            hits.fetch_add(1, Ordering::SeqCst);
+            (502, "bad gateway".to_string())
+        });
+        let controller = MockServer::start("s3cret", |_method, path, _body| match path {
+            "/version" => (200, r#"{"meta":true,"version":"v1.19.30"}"#.to_string()),
+            _ => (404, "{}".to_string()),
+        });
+        let proxy_url = format!("http://127.0.0.1:{}", proxy.port);
+        for key in ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "ALL_PROXY"] {
+            std::env::set_var(key, &proxy_url);
+        }
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            // Sanity: a default client really is pointed at the proxy, so
+            // the assertion below is not vacuous.
+            let status = reqwest::Client::new()
+                .get(format!("http://127.0.0.1:{}/version", controller.port))
+                .send()
+                .await
+                .unwrap()
+                .status();
+            assert_eq!(status.as_u16(), 502);
+            let before = proxy_hits.load(Ordering::SeqCst);
+            assert!(before > 0);
+
+            let version = client(controller.port).get_version().await.unwrap();
+            assert_eq!(version["version"], "v1.19.30");
+            assert_eq!(proxy_hits.load(Ordering::SeqCst), before);
+
+            // The "direct" route of direct-then-proxy fetches is direct too.
+            let status = crate::outbound::direct_builder()
+                .build()
+                .unwrap()
+                .get(format!("http://127.0.0.1:{}/version", controller.port))
+                .header("Authorization", "Bearer s3cret")
+                .send()
+                .await
+                .unwrap()
+                .status();
+            assert_eq!(status.as_u16(), 200);
+            assert_eq!(proxy_hits.load(Ordering::SeqCst), before);
+        });
     }
 
     #[tokio::test]

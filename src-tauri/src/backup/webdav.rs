@@ -52,12 +52,48 @@ fn status(code: u16, expected: &[u16]) -> Result<()> {
     })
 }
 
-fn client() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
+const NETWORK_ERROR: &str = "WebDAV 网络连接失败或超时";
+
+/// `None` is the direct route (no system/env proxy); `Some` goes through the
+/// running core's mixed-port.
+fn client(proxy: Option<&str>) -> Result<reqwest::Client> {
+    let builder = match proxy {
+        Some(url) => crate::outbound::proxied_builder(url).ok_or(NETWORK_ERROR)?,
+        // Fail over to the proxy quickly when the server is unreachable.
+        None => crate::outbound::direct_builder().connect_timeout(Duration::from_secs(10)),
+    };
+    builder
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(30))
         .build()
-        .map_err(|_| "WebDAV 网络连接失败或超时".into())
+        .map_err(|_| NETWORK_ERROR.into())
+}
+
+/// Direct first; only a transport failure (never an HTTP answer such as 401
+/// or 404) retries the whole operation once through the running core.
+async fn direct_then_proxy<T, F, Fut>(operation: F) -> Result<T>
+where
+    F: Fn(reqwest::Client) -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    direct_then_proxy_via(crate::outbound::live_proxy_url(), operation).await
+}
+
+async fn direct_then_proxy_via<T, F, Fut>(
+    proxy_url: impl std::future::Future<Output = Option<String>>,
+    operation: F,
+) -> Result<T>
+where
+    F: Fn(reqwest::Client) -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    match operation(client(None)?).await {
+        Err(error) if error == NETWORK_ERROR => match proxy_url.await {
+            Some(proxy) => operation(client(Some(&proxy))?).await,
+            None => Err(error),
+        },
+        result => result,
+    }
 }
 
 async fn send(target: &Target, request: reqwest::RequestBuilder) -> Result<reqwest::Response> {
@@ -66,14 +102,14 @@ async fn send(target: &Target, request: reqwest::RequestBuilder) -> Result<reqwe
         request = request.basic_auth(&target.username, Some(&target.password));
     }
     // Never stringify reqwest errors: they can contain the complete URL.
-    request
-        .send()
-        .await
-        .map_err(|_| "WebDAV 网络连接失败或超时".into())
+    request.send().await.map_err(|_| NETWORK_ERROR.into())
 }
 
-async fn request(target: &Target, body: Option<Vec<u8>>) -> Result<reqwest::Response> {
-    let client = client()?;
+async fn request(
+    client: &reqwest::Client,
+    target: &Target,
+    body: Option<Vec<u8>>,
+) -> Result<reqwest::Response> {
     let request = if let Some(bytes) = body {
         if bytes.len() > MAX_ARCHIVE {
             return Err("备份文件超过上限".into());
@@ -107,8 +143,7 @@ fn parent_collections(file_url: &str) -> Vec<String> {
 }
 
 /// Creates missing parent folders. 405 means the collection already exists.
-async fn create_parents(target: &Target) -> Result<()> {
-    let client = client()?;
+async fn create_parents(client: &reqwest::Client, target: &Target) -> Result<()> {
     let method = reqwest::Method::from_bytes(b"MKCOL").map_err(|_| "WebDAV 参数无效")?;
     for dir in parent_collections(&target.url) {
         let response = send(target, client.request(method.clone(), &dir)).await?;
@@ -119,19 +154,28 @@ async fn create_parents(target: &Target) -> Result<()> {
 
 pub async fn upload(target: &Value, archive: Vec<u8>) -> Result<()> {
     let target = validate(target)?;
-    let response = request(&target, Some(archive.clone())).await?;
+    direct_then_proxy(|client| upload_with(client, &target, &archive)).await
+}
+
+async fn upload_with(client: reqwest::Client, target: &Target, archive: &[u8]) -> Result<()> {
+    let response = request(&client, target, Some(archive.to_vec())).await?;
     let code = response.status().as_u16();
     if code == 409 {
         // Many servers (Nextcloud, Jianguoyun, Synology) reject PUT into a missing folder.
-        create_parents(&target).await?;
-        let response = request(&target, Some(archive)).await?;
+        create_parents(&client, target).await?;
+        let response = request(&client, target, Some(archive.to_vec())).await?;
         return status(response.status().as_u16(), &[200, 201, 204]);
     }
     status(code, &[200, 201, 204])
 }
 
 pub async fn download(target: &Value) -> Result<Vec<u8>> {
-    let mut response = request(&validate(target)?, None).await?;
+    let target = validate(target)?;
+    direct_then_proxy(|client| download_with(client, &target)).await
+}
+
+async fn download_with(client: reqwest::Client, target: &Target) -> Result<Vec<u8>> {
+    let mut response = request(&client, target, None).await?;
     status(response.status().as_u16(), &[200])?;
     if response
         .content_length()
@@ -140,11 +184,7 @@ pub async fn download(target: &Value) -> Result<Vec<u8>> {
         return Err("WebDAV 备份文件超过上限".into());
     }
     let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|_| "WebDAV 网络连接失败或超时")?
-    {
+    while let Some(chunk) = response.chunk().await.map_err(|_| NETWORK_ERROR)? {
         if bytes.len() + chunk.len() > MAX_ARCHIVE {
             return Err("WebDAV 备份文件超过上限".into());
         }
@@ -188,6 +228,45 @@ mod tests {
             "WebDAV 请求失败（HTTP 500）"
         );
     }
+    #[tokio::test]
+    async fn only_transport_failures_retry_through_the_proxy() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let proxy = || async { Some("http://127.0.0.1:7890".to_string()) };
+        // Unreachable directly → one more attempt through the proxy.
+        let calls = AtomicUsize::new(0);
+        let result = direct_then_proxy_via(proxy(), |_client| {
+            let attempt = calls.fetch_add(1, Ordering::SeqCst);
+            async move {
+                if attempt == 0 {
+                    Err(NETWORK_ERROR.to_string())
+                } else {
+                    Ok("via proxy")
+                }
+            }
+        })
+        .await;
+        assert_eq!(result.unwrap(), "via proxy");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        // An HTTP answer (e.g. 401) is final: the server was reached.
+        let calls = AtomicUsize::new(0);
+        let result: Result<()> = direct_then_proxy_via(proxy(), |_client| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Err(status(401, &[200]).unwrap_err()) }
+        })
+        .await;
+        assert!(result.unwrap_err().contains("认证"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        // No core running → the direct failure stands.
+        let calls = AtomicUsize::new(0);
+        let result: Result<()> = direct_then_proxy_via(async { None }, |_client| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Err(NETWORK_ERROR.to_string()) }
+        })
+        .await;
+        assert_eq!(result.unwrap_err(), NETWORK_ERROR);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
     #[test]
     fn lists_parent_collections_for_mkcol() {
         assert_eq!(

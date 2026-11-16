@@ -38,6 +38,7 @@ mod network_metadata;
 mod network_name;
 mod network_watch;
 mod notifications;
+mod outbound;
 mod override_apply;
 mod override_model;
 mod override_service;
@@ -158,7 +159,7 @@ pub fn run() {
             // fetched with the current profile's nodes.
             {
                 let app = app.handle().clone();
-                profiles.attach_subscription_proxy(std::sync::Arc::new(move || {
+                let source: subscription::ProxyUrlSource = std::sync::Arc::new(move || {
                     use tauri::Manager;
                     let app = app.clone();
                     Box::pin(async move {
@@ -172,7 +173,11 @@ pub fn run() {
                         let port = ipc::resolve_mixed_port(&models).await.ok()?;
                         Some(format!("http://127.0.0.1:{port}"))
                     })
-                }));
+                });
+                // Icons and WebDAV go the other way round: direct first,
+                // then this route when the direct attempt fails.
+                outbound::attach_live_proxy(source.clone());
+                profiles.attach_subscription_proxy(source);
             }
             // Preview/validate resolve the base document from the ACTIVE
             // profile (document + id), mirroring the Electron composition.

@@ -483,13 +483,14 @@ impl SubscriptionFetcher {
     /// per-hop validation loop instead of being followed silently, which would
     /// bypass the SSRF checks entirely.
     fn build_client(proxy: Option<&str>) -> reqwest::Client {
-        let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
-        if let Some(url) = proxy {
-            if let Ok(proxy) = reqwest::Proxy::all(url) {
-                builder = builder.proxy(proxy);
-            }
-        }
-        builder.build().expect("subscription HTTP client builds")
+        // `None` is the direct route: no system/env proxy either.
+        let builder = proxy
+            .and_then(crate::outbound::proxied_builder)
+            .unwrap_or_else(crate::outbound::direct_builder);
+        builder
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("subscription HTTP client builds")
     }
 
     /// Test toggle: enforce the SSRF allow-list with an injected resolver.

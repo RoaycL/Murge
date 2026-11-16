@@ -254,36 +254,36 @@ impl RemoteIconCache {
         ))
     }
 
+    /// Direct first; when that fails, once more through the running core's
+    /// mixed-port (or the injected proxy client), so an icon host the direct
+    /// route cannot reach still loads.
     async fn download(&self, url: &str) -> Result<String, String> {
-        let mut last_error = String::from("no icon transport");
-        let transports: [&reqwest::Client; 2] = [
-            &self.direct,
-            match &self.proxy {
-                Some(proxy) => proxy,
-                // The proxy slot is filled by the 3D system-proxy slice; until
-                // then the second transport IS the direct client (a harmless
-                // repeat: the disk cache dedupes the bytes).
-                None => &self.direct,
-            },
-        ];
-        for transport in transports {
-            match self.fetch_with(transport, url).await {
-                Ok(data_url) => return Ok(data_url),
-                Err(error) => last_error = error,
-            }
+        let direct_error = match self.fetch_with(&self.direct, url).await {
+            Ok(data_url) => return Ok(data_url),
+            Err(error) => error,
+        };
+        let proxy = match &self.proxy {
+            Some(proxy) => Some(proxy.clone()),
+            None => crate::outbound::live_proxy_url()
+                .await
+                .map(|proxy_url| build_client(Some(&proxy_url))),
+        };
+        match proxy {
+            Some(proxy) => self.fetch_with(&proxy, url).await,
+            None => Err(direct_error),
         }
-        Err(last_error)
     }
 }
 
 fn build_client(proxy: Option<&str>) -> reqwest::Client {
-    let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
-    if let Some(url) = proxy {
-        if let Ok(proxy) = reqwest::Proxy::all(url) {
-            builder = builder.proxy(proxy);
-        }
-    }
-    builder.build().expect("icon HTTP client builds")
+    // `None` is the direct route: no system/env proxy either.
+    let builder = proxy
+        .and_then(crate::outbound::proxied_builder)
+        .unwrap_or_else(crate::outbound::direct_builder);
+    builder
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("icon HTTP client builds")
 }
 
 fn is_ip_like(host: &str) -> bool {

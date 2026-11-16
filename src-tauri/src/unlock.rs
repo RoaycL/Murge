@@ -655,7 +655,9 @@ pub fn real_probe(mixed_port: u16) -> Probe {
                 .timeout(Duration::from_millis(REQUEST_TIMEOUT_MS))
                 .cookie_store(true)
                 .redirect(reqwest::redirect::Policy::default());
-            match reqwest::Proxy::http(format!("http://127.0.0.1:{mixed_port}")) {
+            // `all`, not `http`: every probe target is https, and an http-only
+            // proxy rule would let those bypass the node entirely.
+            match reqwest::Proxy::all(format!("http://127.0.0.1:{mixed_port}")) {
                 Ok(proxy) => builder
                     .proxy(proxy)
                     .build()
@@ -708,6 +710,34 @@ pub fn real_probe(mixed_port: u16) -> Probe {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression: an http-only proxy rule let the (all-https) probes skip
+    /// the mixed port, so results described the direct route, not the node.
+    #[tokio::test]
+    async fn https_probes_go_through_the_mixed_port() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buffer = [0u8; 1024];
+            let read = stream.read(&mut buffer).await.unwrap();
+            let _ = stream
+                .write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+                .await;
+            String::from_utf8_lossy(&buffer[..read]).to_string()
+        });
+        let probe = real_probe(port);
+        let _ = (probe)(ProbeStep::get("https://probe.invalid/")).await;
+        let request = tokio::time::timeout(Duration::from_secs(5), seen)
+            .await
+            .expect("the probe reached the mixed port")
+            .unwrap();
+        assert!(
+            request.starts_with("CONNECT probe.invalid:443"),
+            "{request}"
+        );
+    }
 
     fn scripted(responses: Vec<ProbeResponse>) -> Probe {
         let queue = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from(

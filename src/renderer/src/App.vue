@@ -5,11 +5,13 @@ import AppSidebar from './components/AppSidebar.vue'
 import ToastHost from './components/ToastHost.vue'
 import ConfirmModal from './components/ConfirmModal.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
+import UiStyleTrialBar from './components/UiStyleTrialBar.vue'
 import type { BrandConfig } from '@shared/brand'
 import { brand as fallbackBrand } from '@shared/brand'
 import { useKernelStore } from './stores/kernel'
 import { useSystemProxyStore } from './stores/system-proxy'
 import { useAppearanceStore } from './stores/appearance'
+import { useUiStyleStore } from './stores/ui-style'
 import { useTunStore } from './stores/tun'
 import { useTrafficStore } from './stores/traffic'
 import { useConnectionsStore } from './stores/connections'
@@ -28,6 +30,8 @@ const contentScrollbar = computed(() => HIDDEN_SCROLLBAR_ROUTES.includes(route.p
 const kernel = useKernelStore()
 const systemProxy = useSystemProxyStore()
 const appearance = useAppearanceStore()
+// 在挂载前创建，缓存的自定义样式第一帧就生效。
+const uiStyle = useUiStyleStore()
 const tun = useTunStore()
 const traffic = useTrafficStore()
 const connections = useConnectionsStore()
@@ -41,6 +45,7 @@ function discardAndNavigate(): void {
 onMounted(async () => {
   unsubscribeNavigation = window.desktop.app.onNavigate((path) => { void router.push(path) })
   appearance.connect()
+  void uiStyle.connect()
   kernel.connect()
   systemProxy.connect()
   tun.connect()
@@ -56,6 +61,7 @@ onBeforeUnmount(() => {
   kernel.disconnect()
   systemProxy.disconnect()
   appearance.disconnect()
+  uiStyle.disconnect()
   tun.disconnect()
   traffic.disconnect()
   connections.disconnect()
@@ -70,6 +76,7 @@ onBeforeUnmount(() => {
         <RouterView />
       </main>
       <ToastHost />
+      <UiStyleTrialBar />
       <UpdateDialog />
       <ConfirmModal :open="Boolean(pendingNavigation)" title="放弃未保存的修改？" :description="`${unsavedLabels.join('、') || '当前页面'}包含尚未保存的修改，离开后将无法恢复。`" confirm-label="放弃并离开" @close="cancelNavigation" @confirm="discardAndNavigate" />
     </div>

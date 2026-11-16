@@ -126,6 +126,10 @@ export const api: DesktopApi = {
     get: () => invoke(IPC.appSettingsGet),
     set: (patch) => invoke(IPC.appSettingsSet, patch)
   },
+  uiStyle: {
+    get: () => invoke(IPC.uiStyleGet),
+    set: (patch) => invoke(IPC.uiStyleSet, patch)
+  },
   subStore: {
     getState: () => invoke(IPC.subStoreGetState),
     ensureRunning: () => invoke(IPC.subStoreEnsureRunning),

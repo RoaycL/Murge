@@ -927,8 +927,30 @@ pub(crate) fn render_menu(product: &str, state: &TrayState) -> Vec<TrayMenuItem>
     let system_proxy_busy =
         state.system_proxy_phase == "enabling" || state.system_proxy_phase == "restoring";
     let tun_busy = state.tun_phase == "starting" || state.tun_phase == "restoring";
+    // The two switches sit above the mode and policy groups: with many
+    // groups they would otherwise be a long scroll away.
     let mut menu = vec![
         TrayMenuItem::normal("show", "显示主窗口", true),
+        TrayMenuItem::separator(),
+        TrayMenuItem::stateful(
+            "system-proxy",
+            "系统代理",
+            state.system_proxy_supported && !system_proxy_busy && !transition,
+            state.system_proxy_phase == "enabled",
+            false,
+        ),
+        TrayMenuItem::stateful(
+            "tun",
+            "TUN 模式",
+            state.tun_supported && !tun_busy && !transition,
+            state.tun_phase == "active",
+            false,
+        ),
+        TrayMenuItem::normal(
+            "copy-terminal-proxy",
+            "复制终端代理命令",
+            state.status_phase == "running" && state.mixed_port.is_some(),
+        ),
         TrayMenuItem::separator(),
         mode_menu(state, transition),
     ];
@@ -946,26 +968,6 @@ pub(crate) fn render_menu(product: &str, state: &TrayState) -> Vec<TrayMenuItem>
         false,
     ));
     menu.push(process_menu(state));
-    menu.push(TrayMenuItem::separator());
-    menu.push(TrayMenuItem::stateful(
-        "system-proxy",
-        "系统代理",
-        state.system_proxy_supported && !system_proxy_busy && !transition,
-        state.system_proxy_phase == "enabled",
-        false,
-    ));
-    menu.push(TrayMenuItem::stateful(
-        "tun",
-        "TUN 模式",
-        state.tun_supported && !tun_busy && !transition,
-        state.tun_phase == "active",
-        false,
-    ));
-    menu.push(TrayMenuItem::normal(
-        "copy-terminal-proxy",
-        "复制终端代理命令",
-        state.status_phase == "running" && state.mixed_port.is_some(),
-    ));
     menu.push(TrayMenuItem::separator());
     menu.push(configuration_menu(state, transition));
     menu.push(module_menu(state));
@@ -1872,6 +1874,16 @@ mod tests {
         assert!(labels.iter().any(|(label, _, _)| label == "日志目录"));
         assert!(labels.iter().any(|(label, _, _)| label == "检查更新"));
         assert!(labels.iter().any(|(label, _, _)| label == "退出 Murge"));
+        // The switches come before the mode and the policy groups (#110).
+        let at = |wanted: &str| {
+            labels
+                .iter()
+                .position(|(label, _, _)| label == wanted)
+                .unwrap()
+        };
+        assert!(at("系统代理") < at("TUN 模式"));
+        assert!(at("TUN 模式") < at("出站模式 · 全局"));
+        assert!(at("出站模式 · 全局") < at("🚀 节点选择 · 香港 01"));
     }
 
     #[test]

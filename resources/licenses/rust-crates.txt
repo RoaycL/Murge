@@ -380,7 +380,7 @@ quick-xml 0.41.0 | MIT | https://github.com/tafia/quick-xml
 quick-xml 0.42.0 | MIT | https://github.com/tafia/quick-xml
 quinn 0.11.11 | MIT OR Apache-2.0 | https://github.com/quinn-rs/quinn
 quinn-proto 0.11.19 | MIT OR Apache-2.0 | https://github.com/quinn-rs/quinn
-quinn-udp 0.5.15 | MIT OR Apache-2.0 | https://github.com/quinn-rs/quinn
+quinn-udp 0.5.16 | MIT OR Apache-2.0 | https://github.com/quinn-rs/quinn
 quote 1.0.47 | MIT OR Apache-2.0 | https://github.com/dtolnay/quote
 r-efi 5.3.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later | https://github.com/r-efi/r-efi
 r-efi 6.0.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later | https://github.com/r-efi/r-efi
@@ -7312,7 +7312,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ==============================================================================
-Applies to: embed_plist 1.2.2, encoding_rs 0.8.40, lru-slab 0.1.2, multiversion 0.8.0, multiversion_no_op 1.0.0, multiversion-macros 0.8.0, quinn 0.11.11, quinn-proto 0.11.19, quinn-udp 0.5.15, rustls-platform-verifier 0.7.1, serialize-to-javascript 0.1.2, serialize-to-javascript-impl 0.1.2, static_assertions 1.1.0, target-features 0.1.6, tinyvec 1.13.2, utf16_iter 1.0.5, utf8_iter 1.0.4, write16 1.0.0, x11rb 0.13.2, x11rb-protocol 0.13.2, zeroize 1.9.0, zune-core 0.5.3, zune-jpeg 0.5.15
+Applies to: embed_plist 1.2.2, encoding_rs 0.8.40, lru-slab 0.1.2, multiversion 0.8.0, multiversion_no_op 1.0.0, multiversion-macros 0.8.0, quinn 0.11.11, quinn-proto 0.11.19, quinn-udp 0.5.16, rustls-platform-verifier 0.7.1, serialize-to-javascript 0.1.2, serialize-to-javascript-impl 0.1.2, static_assertions 1.1.0, target-features 0.1.6, tinyvec 1.13.2, utf16_iter 1.0.5, utf8_iter 1.0.4, write16 1.0.0, x11rb 0.13.2, x11rb-protocol 0.13.2, zeroize 1.9.0, zune-core 0.5.3, zune-jpeg 0.5.15
 ------------------------------------------------------------------------------
 Apache License
                            Version 2.0, January 2004
@@ -14053,7 +14053,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ==============================================================================
-Applies to: quinn 0.11.11, quinn-proto 0.11.19, quinn-udp 0.5.15
+Applies to: quinn 0.11.11, quinn-proto 0.11.19, quinn-udp 0.5.16
 ------------------------------------------------------------------------------
 Copyright (c) 2018 The quinn Developers
 

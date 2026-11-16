@@ -521,6 +521,13 @@ pub fn wire_main_window(app: &tauri::AppHandle) {
         return;
     };
     crate::window_backdrop::apply(&window);
+    // Before the window is shown: reopen at the size it was last left at.
+    crate::window_state::attach(
+        &window,
+        app.try_state::<crate::paths::AppPaths>()
+            .and_then(|paths| paths.app_data_root.clone())
+            .as_deref(),
+    );
     let handle = app.clone();
     let target = window.clone();
     window.on_window_event(move |event| {

@@ -164,7 +164,7 @@ h1 { margin: 0; font-size: var(--font-size-display); line-height: 34px; letter-s
 .overview-view section:nth-of-type(3n) h2 { color: var(--app-blue); }
 /* 恒两列：概览的网络接管在最小窗口下也必须保持两排卡片，
    auto-fill 会在窄窗口塌成一列，这里改为固定双列（小屏各占一半）。 */
-.overview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; }
+.overview-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(var(--card-min), 100%), 1fr)); gap: 15px; }
 /* Surge 概览小卡片：约 2.8:1 的扁平比例，标题 13px、说明 11px，底部状态行 + 「…」。 */
 .overview-grid .surface-card { min-height: 118px; padding: 13px 16px 12px; border-radius: var(--radius-panel); display: flex; flex-direction: column; }
 .setting-head { display: flex; align-items: flex-start; gap: var(--space-5); min-height: 46px; }
@@ -209,7 +209,8 @@ h1 { margin: 0; font-size: var(--font-size-display); line-height: 34px; letter-s
 .appearance-view { width: 100%; }
 .appearance-view > section { margin-top: 27px; }
 .appearance-view h2 { margin: 0 0 11px; color: var(--app-pink); font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); }
-.theme-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-5); }
+/* 主题预览卡片宽窗口下不再拉长（预览图会变形），每张最多 260px。 */
+.theme-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-5); max-width: calc(3 * 260px + 2 * var(--space-5)); }
 .theme-options button { display: flex; flex-direction: column; height: 157px; padding: 11px; border: 1px solid transparent; border-radius: var(--radius-md); background: var(--app-fill-subtle); text-align: left; cursor: pointer; }
 .theme-options button.selected { border-color: var(--app-blue); background: rgba(21,135,248,.08); }
 .theme-options strong { margin-top: 9px; font-size: var(--font-size-md); }.theme-options span { margin-top: 3px; color: var(--app-muted); font-size: var(--font-size-2xs); line-height: 1.35; }
@@ -400,7 +401,7 @@ h1 { margin: 0; font-size: var(--font-size-display); line-height: 34px; letter-s
 
 /* 完全流式布局（2026 年调整，替代原“固定卡片 + 留白”策略）：
    任何窗口宽度下仪表盘都保持规范的双列排布（卡片随列轨弹性伸缩），
-   不做单列降级；高于规范宽度时内容停在 --content-max-width，贴左对齐。 */
+   不做单列降级；内容随窗口铺满，贴左对齐。 */
 .unsaved-indicator{display:inline-flex;align-items:center;justify-content:center;min-width:58px;min-height:32px;padding:0 12px;border:1px solid color-mix(in srgb,var(--app-warning) 38%,var(--app-divider));border-radius:var(--radius-control);background:color-mix(in srgb,var(--app-warning) 8%,transparent);color:var(--app-warning);font-size:var(--font-size-xs);font-weight:var(--font-weight-semibold);line-height:1;white-space:nowrap}
 .app-window,.app-frame,.app-sidebar,.app-content{user-select:none;-webkit-user-select:none}
 input,textarea,[contenteditable="true"],code,pre{user-select:text;-webkit-user-select:text}

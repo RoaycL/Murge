@@ -104,6 +104,6 @@ async function exportDiagnostics(): Promise<void> {
 .update-row + .update-row { margin-top: 14px; }
 .update-row > button { flex: 0 0 auto; margin-top: 0; }
 .update-row .segmented { flex: 0 0 auto; }
-.update-row .segmented button { width: 64px; min-height: 0; height: 24px; margin-top: 0; padding: 0; border-radius: var(--radius-sm); background: transparent; color: inherit; }
+.update-row .segmented button { min-width: 64px; min-height: 0; height: 24px; margin-top: 0; padding: 0 8px; border-radius: var(--radius-sm); background: transparent; color: inherit; }
 .update-row .segmented button.selected { color: white; background: var(--app-control-selected); }
 </style>

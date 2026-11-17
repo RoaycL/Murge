@@ -108,14 +108,16 @@ h1 { margin: 0; font-size: var(--font-size-display); line-height: 34px; letter-s
 /* Surge 右下流量卡：正方形，跨左侧连接与总计两行。 */
 .traffic-card { grid-column: 2; grid-row: 2 / span 2; aspect-ratio: 1 / 1; padding: 15px 16px; min-width: 0; overflow: hidden; }
 .card-title-row { display: flex; justify-content: space-between; align-items: center; }
-.segmented { display: flex; padding: 2px; border-radius: var(--radius-control); background: var(--app-fill); }
-.segmented button { width: 64px; height: 20px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; font-size: var(--font-size-xs); cursor: pointer; }
+.segmented { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; padding: 2px; border-radius: var(--radius-control); background: var(--app-fill); }
+/* Equal-width segments sized to the longest label, so longer translations widen the control instead of wrapping. */
+.segmented button { min-width: 64px; height: 20px; padding: 0 8px; border: 0; white-space: nowrap; border-radius: var(--radius-sm); background: transparent; font-size: var(--font-size-xs); cursor: pointer; }
 .segmented button.selected { color: white; background: var(--app-control-selected); }
 .bar-chart { display: flex; align-items: flex-end; gap: var(--space-3); height: 78px; margin-top: 17px; padding: 0 4px 15px; border-bottom: 1px solid var(--app-divider); }
 .bar-chart i { width: 5px; min-height: 4px; border-radius: 2px 2px 0 0; background: var(--app-cyan); }
 .chart-axis { display: flex; justify-content: space-between; margin: -13px 1px 7px; color: var(--app-faint); font-size: var(--font-size-2xs); }
-.rank-tabs { display: grid; grid-template-columns: repeat(3, 1fr); height: 23px; padding: 2px; border-radius: var(--radius-sm); background: var(--app-fill-subtle); }
-.rank-tabs button { border: 0; border-radius: var(--radius-sm); background: transparent; color: inherit; font-size: var(--font-size-2xs); }
+.rank-tabs { display: flex; height: 23px; padding: 2px; border-radius: var(--radius-sm); background: var(--app-fill-subtle); }
+/* Segments share the spare width but never shrink below their label; a label that still cannot fit is cut with an ellipsis instead of wrapping. */
+.rank-tabs button { flex: 1 1 auto; min-width: 0; padding: 0 8px; overflow: hidden; border: 0; border-radius: var(--radius-sm); background: transparent; color: inherit; font-size: var(--font-size-2xs); white-space: nowrap; text-overflow: ellipsis; }
 .rank-tabs button.selected { color: white; background: var(--app-control-selected); }
 .rank-list { margin-top: 8px; }
 .rank-row { display: grid; grid-template-columns: 24px 1fr auto; align-items: center; height: 31px; font-size: var(--font-size-sm); }

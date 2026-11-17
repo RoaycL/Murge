@@ -154,7 +154,7 @@ const example = t('uiStyle.cssPlaceholder')
 .font-field input { width: 260px; height: 28px; padding: 0 9px; border: 1px solid var(--app-divider); border-radius: var(--radius-control); background: var(--app-fill-subtle); color: inherit; }
 .font-field input[aria-invalid="true"] { border-color: var(--app-danger); }
 .font-error { margin: -4px 14px 8px; }
-.font-scale button { width: 48px; }
+.font-scale button { min-width: 48px; }
 .custom-css-section .preference-list { margin-bottom: var(--space-5); }
 .css-editor-card { padding: 10px; border-radius: var(--radius-md); }
 .css-editor { display: block; box-sizing: border-box; width: 100%; min-height: 220px; padding: 10px 12px; border: 1px solid var(--app-divider); border-radius: var(--radius-control); background: var(--app-panel); color: inherit; font: 12.5px/1.55 "Cascadia Code", Consolas, ui-monospace, monospace; resize: vertical; tab-size: 2; white-space: pre; outline: none; }

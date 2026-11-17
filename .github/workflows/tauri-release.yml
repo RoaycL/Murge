@@ -213,7 +213,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "push" ]; then
-            # The hand-written Chinese notes the Electron release uses too.
+            # This version's section of docs/CHANGELOG.md.
             node scripts/generate-release-notes.mjs
             cp dist/RELEASE_NOTES.md "$RUNNER_TEMP/notes.md"
           else

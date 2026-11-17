@@ -86,7 +86,7 @@ function hasRegion(region: string | null): boolean {
       </div>
       <div v-for="row in rows" :key="row.providerId" class="provider-row" role="row" :class="{ failed: row.phase === 'error' && !row.metadata }">
         <span class="provider-name" role="cell" :title="row.label">{{ row.label }}</span>
-        <span class="provider-ip" role="cell">{{ ipText(row) }}</span>
+        <span class="provider-ip" role="cell" :title="ipText(row)">{{ ipText(row) }}</span>
         <span class="provider-geo" role="cell" :title="geoText(row)">{{ geoText(row) }}</span>
         <span class="provider-asn" role="cell" :title="asnText(row)">{{ asnText(row) }}</span>
       </div>
@@ -140,7 +140,8 @@ function hasRegion(region: string | null): boolean {
 .provider-row.failed .provider-ip { color: var(--app-danger); }
 .provider-table.empty { opacity: 0.6; }
 .provider-name { overflow: hidden; font-weight: var(--font-weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
-.provider-ip { font-weight: var(--font-weight-bold); font-variant-numeric: tabular-nums; }
+/* IPv6 出口地址很长：超出列宽的部分隐藏（省略号），悬停可看完整地址，不再压到地区列上。 */
+.provider-ip { min-width: 0; overflow: hidden; font-weight: var(--font-weight-bold); font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
 .provider-geo, .provider-asn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inline-error { margin: 12px 0 0; color: var(--app-danger); font-size: var(--font-size-sm); }
 .unlock-title-row { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--app-divider); }

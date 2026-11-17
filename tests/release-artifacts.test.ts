@@ -24,6 +24,17 @@ describe('release-candidate artifacts', () => {
     expect(second).not.toContain('{{')
   })
 
+  it('takes the notes from this version\'s changelog section only', async () => {
+    const notes = await readFile(path.join(root, 'dist/RELEASE_NOTES.md'), 'utf8')
+    const changelog = (await readFile(path.join(root, 'docs/CHANGELOG.md'), 'utf8')).replace(/\r\n/g, '\n')
+    const start = changelog.indexOf(`## v${pkg.version}`)
+    expect(start).toBeGreaterThanOrEqual(0)
+    const firstItem = changelog.slice(start).split('\n').find((line) => line.startsWith('- '))
+    expect(firstItem).toBeTruthy()
+    expect(notes).toContain(firstItem!)
+    expect(notes).not.toMatch(/^## v\d/m)
+  })
+
   it('ships source access for the application and the exact bundled mihomo version', async () => {
     const source = await readFile(path.join(root, 'resources/SOURCE_CODE.md'), 'utf8')
     expect(source).toContain(brand.repositoryUrl)

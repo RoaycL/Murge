@@ -188,8 +188,6 @@ onMounted(async () => {
   padding-top: 18px;
   border-top: 1px solid var(--app-divider);
 }
-/* 外部资源列表随窗口铺满，下面这块是设置表单，保持与设置页相同的可读宽度。 */
-.gd-panel > * { max-width: calc(var(--content-readable-width) - 2 * var(--page-gutter)); }
 .gd-head {
   display: flex;
   align-items: flex-start;

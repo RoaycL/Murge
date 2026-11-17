@@ -7,19 +7,20 @@ describe('wide window layout', () => {
   it('lets card and list pages follow the window width', async () => {
     const tokens = await read('src/renderer/src/styles/tokens.css')
     expect(tokens).toMatch(/--content-max-width:\s*none/)
-    expect(tokens).toMatch(/--content-readable-width:\s*880px/)
     const css = await read('src/renderer/src/styles/base.css')
     // Overview cards add columns instead of stretching two cards across the window.
     expect(css).toMatch(/\.overview-grid\s*\{[^}]*repeat\(auto-fill, minmax\(min\(var\(--card-min\), 100%\), 1fr\)\)/)
-    expect(css).toMatch(/\.page-shell\.page-readable\s*\{\s*max-width:\s*var\(--content-readable-width\)/)
   })
 
-  it('keeps settings forms at a readable width', async () => {
-    for (const view of ['GeneralView', 'AppearanceView', 'AboutView', 'DnsView', 'DnsSnifferView', 'NetworkSettingsView', 'KernelSettingsView', 'ProviderSettingsView']) {
-      expect(await read(`src/renderer/src/views/${view}.vue`), view).toMatch(/class="page-shell[^"]*page-readable/)
-    }
-    for (const view of ['PolicyView', 'OverviewView', 'ConfigView', 'ConnectionsView', 'ProcessListView', 'DeviceListView', 'ResourcesView', 'RulesView', 'MitmView', 'OverridesView', 'RewriteView']) {
-      expect(await read(`src/renderer/src/views/${view}.vue`), view).not.toMatch(/page-readable/)
+  it('keeps theme preview cards from stretching', async () => {
+    const css = await read('src/renderer/src/styles/base.css')
+    expect(css).toMatch(/\.theme-options\s*\{[^}]*max-width:\s*calc\(3 \* 260px/)
+  })
+
+  it('lets settings pages follow the window width too', async () => {
+    for (const view of ['GeneralView', 'AppearanceView', 'AboutView', 'DnsView', 'DnsSnifferView', 'NetworkSettingsView', 'KernelSettingsView', 'ProviderSettingsView', 'PolicyView', 'OverviewView', 'ConfigView', 'ConnectionsView', 'ResourcesView', 'MitmView', 'OverridesView', 'RewriteView']) {
+      const source = await read(`src/renderer/src/views/${view}.vue`)
+      expect(source, view).not.toMatch(/page-shell[^{]*\{[^}]*max-width:\s*\d/)
     }
   })
 

@@ -11,7 +11,7 @@ const TYPE_OPTIONS = types.map((value) => ({ value, label: value }))
 </script>
 
 <template>
-  <div class="page-shell dns-view page-readable">
+  <div class="page-shell dns-view">
     <h1>DNS</h1>
     <section><h2>{{ t('dnsTools.title') }}</h2><div class="surface-card dns-query-card">
       <form @submit.prevent="store.query">

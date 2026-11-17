@@ -73,11 +73,9 @@
   --space-7: 16px;
   --space-gutter: 15px;
   --sidebar-width: 190px;
-  /* 页面内容宽度：卡片页、列表页随窗口铺满（卡片用 auto-fill 网格增加列数，
-     不拉伸单张卡片的比例）。设置类表单页另用 --content-readable-width 封顶，
-     避免开关和输入框离标签太远。 */
+  /* 页面内容宽度：所有页面随窗口铺满（卡片用 auto-fill 网格增加列数，
+     不拉伸单张卡片的比例）。 */
   --content-max-width: none;
-  --content-readable-width: 880px;
   /* 页面左右留白：活动页与其他页面共用，保证大标题位置一致。 */
   --page-gutter: 24px;
   --activity-content-width: 695px;

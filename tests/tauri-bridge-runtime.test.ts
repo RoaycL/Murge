@@ -38,6 +38,23 @@ describe('Tauri bridge runtime behavior', () => {
     ])
   })
 
+  it('saves the WebDAV form with separate secrets and uses null for saved credentials', async () => {
+    const api = createDesktopApi()
+    const form = { address: 'https://dav.example.com/dav', filePath: 'App/app.murge-backup', url: 'https://dav.example.com/dav/App/app.murge-backup', username: 'alice', autoEnabled: true, intervalHours: 24 }
+    const secrets = { password: 'webdav-secret', passphrase: null }
+    const target = { url: form.url, username: 'alice', password: null }
+    await api.backup.webdavSettings()
+    await api.backup.webdavSave(form, secrets)
+    await api.backup.webdavUpload(target, null)
+    await api.backup.webdavForget()
+    expect(invoke.mock.calls).toEqual([
+      ['desktop_ipc', { channel: 'backup:webdav-settings', payload: [] }],
+      ['desktop_ipc', { channel: 'backup:webdav-save', payload: [form, secrets] }],
+      ['desktop_ipc', { channel: 'backup:webdav-upload', payload: [target, null] }],
+      ['desktop_ipc', { channel: 'backup:webdav-forget', payload: [] }]
+    ])
+  })
+
   it('preserves positional values for every generated invoke method', async () => {
     let count = 0
     for (const [namespace, methods] of Object.entries(createDesktopApi())) {
@@ -51,7 +68,7 @@ describe('Tauri bridge runtime behavior', () => {
         count++
       }
     }
-    expect(count).toBe(153)
+    expect(count).toBe(156)
   })
 
   it('generates the identical bridge from Windows CRLF source files', async () => {

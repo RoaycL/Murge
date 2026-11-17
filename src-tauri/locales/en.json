@@ -36,5 +36,7 @@
   "notify.updateAvailableTitle": "New version v{0} available",
   "notify.updateAvailableBody": "Downloading in the background; it installs when you quit the app.",
   "notify.updateReadyTitle": "Version v{0} is ready",
-  "notify.updateReadyBody": "It installs when you quit the app, or click \"Restart and install\" to update now."
+  "notify.updateReadyBody": "It installs when you quit the app, or click \"Restart and install\" to update now.",
+  "notify.webdavBackupFailedTitle": "WebDAV auto backup failed",
+  "notify.webdavBackupFailedBody": "{0}. Open General to review or retry."
 }

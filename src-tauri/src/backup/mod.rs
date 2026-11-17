@@ -4,6 +4,7 @@ mod archive;
 mod managed;
 mod secrets;
 mod webdav;
+mod webdav_store;
 
 use crate::{
     error::IpcError,
@@ -25,6 +26,7 @@ struct Pending {
 pub fn initialize(app: tauri::AppHandle, paths: &AppPaths) -> Result<(), std::convert::Infallible> {
     crate::diagnostics::initialize();
     if let Some(root) = &paths.app_data_root {
+        webdav_store::start_scheduler(root.clone());
         let codec = secrets::Codec { root: root.clone() };
         let rolled_back = std::cell::Cell::new(false);
         let warn = |message: &'static str| {
@@ -337,29 +339,97 @@ pub async fn local_preview(paths: &AppPaths, payload: &Value) -> Result<Value, I
     Ok(value)
 }
 
+/// Build the encrypted archive and PUT it to `target` (password resolved).
+async fn upload_archive(root: &Path, target: &Value, passphrase: String) -> archive::Result<()> {
+    // One upload at a time: a manual upload and the scheduler never race.
+    static UPLOADING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _guard = UPLOADING.lock().await;
+    let owned = root.to_path_buf();
+    let bytes = tokio::task::spawn_blocking(move || create_archive(&owned, &passphrase))
+        .await
+        .map_err(|_| "备份创建失败")??;
+    webdav::upload(target, bytes).await
+}
+
+/// `[target, passphrase]`: a `null` target password or passphrase uses the
+/// one saved in the credential store.
 pub async fn webdav_upload(paths: &AppPaths, payload: &Value) -> Result<Value, IpcError> {
     let root = root(paths, false)?.to_path_buf();
-    let pass = string(payload, 1)?.to_owned();
-    let bytes = tokio::task::spawn_blocking(move || create_archive(&root, &pass))
-        .await
-        .map_err(|_| IpcError::internal("备份创建失败"))?
+    let secrets = webdav_store::KeyringSecrets::new();
+    let target = webdav_store::resolve_target(payload.get(0).unwrap_or(&Value::Null), &secrets)
         .map_err(IpcError::internal)?;
-    webdav::upload(payload.get(0).unwrap_or(&Value::Null), bytes)
-        .await
-        .map_err(IpcError::internal)?;
+    let pass =
+        webdav_store::resolve_passphrase(payload.get(1), &secrets).map_err(IpcError::internal)?;
+    let outcome = upload_archive(&root, &target, pass).await;
+    // A manual upload to the saved target also counts for the schedule.
+    if let (Ok(()), Some(url)) = (&outcome, target["url"].as_str()) {
+        let now = chrono::Utc::now().timestamp_millis();
+        let _ = webdav_store::record(&root, url, now, &Ok(()));
+    }
+    outcome.map_err(IpcError::internal)?;
     Ok(json!({"saved":true}))
 }
 
 pub async fn webdav_preview(paths: &AppPaths, payload: &Value) -> Result<Value, IpcError> {
     let root = root(paths, true)?;
+    let secrets = webdav_store::KeyringSecrets::new();
+    let target = webdav_store::resolve_target(payload.get(0).unwrap_or(&Value::Null), &secrets)
+        .map_err(IpcError::internal)?;
+    let pass =
+        webdav_store::resolve_passphrase(payload.get(1), &secrets).map_err(IpcError::internal)?;
     let mut pending = PENDING.lock().await;
     *pending = None;
-    let bytes = webdav::download(payload.get(0).unwrap_or(&Value::Null))
+    let bytes = webdav::download(&target)
         .await
         .map_err(IpcError::internal)?;
-    let (next, value) = preview(root, &bytes, string(payload, 1)?)?;
+    let (next, value) = preview(root, &bytes, &pass)?;
     *pending = Some(next);
     Ok(value)
+}
+
+/// The saved WebDAV target and schedule; `null` outside the installed app.
+pub async fn webdav_settings(paths: &AppPaths) -> Result<Value, IpcError> {
+    let Some(root) = paths.app_data_root.clone() else {
+        return Ok(Value::Null);
+    };
+    tokio::task::spawn_blocking(move || {
+        let secrets = webdav_store::KeyringSecrets::new();
+        webdav_store::view(&webdav_store::load(&root), &secrets)
+    })
+    .await
+    .map_err(|_| IpcError::internal("无法读取 WebDAV 备份设置"))
+}
+
+/// `[form, {password, passphrase}]`; `null` secrets keep the saved ones.
+pub async fn webdav_save(paths: &AppPaths, payload: &Value) -> Result<Value, IpcError> {
+    let root = root(paths, false)?.to_path_buf();
+    let form: webdav_store::Form =
+        serde_json::from_value(payload.get(0).cloned().unwrap_or(Value::Null))
+            .map_err(|_| IpcError::internal("WebDAV 参数无效"))?;
+    let input: webdav_store::SecretInput =
+        serde_json::from_value(payload.get(1).cloned().unwrap_or_else(|| json!({})))
+            .map_err(|_| IpcError::internal("WebDAV 参数无效"))?;
+    tokio::task::spawn_blocking(move || {
+        let secrets = webdav_store::KeyringSecrets::new();
+        let settings = webdav_store::apply(&root, &secrets, form, input)?;
+        Ok::<_, String>(webdav_store::view(&settings, &secrets))
+    })
+    .await
+    .map_err(|_| IpcError::internal("无法保存 WebDAV 备份设置"))?
+    .map_err(IpcError::internal)
+}
+
+/// Remove the saved WebDAV password and passphrase (and stop auto backup).
+pub async fn webdav_forget(paths: &AppPaths) -> Result<Value, IpcError> {
+    let root = root(paths, false)?.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let secrets = webdav_store::KeyringSecrets::new();
+        let settings = webdav_store::forget(&root, &secrets)?;
+        Ok::<_, String>(webdav_store::view(&settings, &secrets))
+    })
+    .await
+    .map_err(|_| IpcError::internal("无法清除 WebDAV 凭据"))?
+    .map_err(IpcError::internal)
 }
 
 pub async fn restore(paths: &AppPaths, payload: &Value) -> Result<Value, IpcError> {

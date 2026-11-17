@@ -73,6 +73,9 @@ export function createDesktopApi(): DesktopApi {
       restore: (token) => bridgeInvoke("backup:restore", [token]),
       webdavUpload: (target, password) => bridgeInvoke("backup:webdav-upload", [target, password]),
       webdavPreview: (target, password) => bridgeInvoke("backup:webdav-preview", [target, password]),
+      webdavSettings: () => bridgeInvoke("backup:webdav-settings", []),
+      webdavSave: (form, secrets) => bridgeInvoke("backup:webdav-save", [form, secrets]),
+      webdavForget: () => bridgeInvoke("backup:webdav-forget", []),
     },
     kernel: {
       getStatus: () => bridgeInvoke("kernel:get-status", []),

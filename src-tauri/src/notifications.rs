@@ -152,6 +152,54 @@ pub fn show_script_toast(app: &tauri::AppHandle, title: String, body: String, ur
     crate::diag!("[notifications] {title}: {body}");
 }
 
+/// A toast that brings the main window up on `route` when clicked (used by
+/// the scheduled WebDAV backup to report a failure).
+#[cfg(windows)]
+pub fn show_navigate_toast(
+    app: &tauri::AppHandle,
+    title: String,
+    body: String,
+    route: &'static str,
+) {
+    use tauri_winrt_notification::Toast;
+    let dev_build = tauri::utils::platform::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf()))
+        .map(|dir| dir.ends_with("target/debug") || dir.ends_with("target/release"))
+        .unwrap_or(false);
+    let app_id = if dev_build {
+        Toast::POWERSHELL_APP_ID.to_string()
+    } else {
+        app.config().identifier.clone()
+    };
+    let click_app = app.clone();
+    std::thread::spawn(move || {
+        let result = Toast::new(&app_id)
+            .title(&title)
+            .text1(&body)
+            .on_activated(move |_| {
+                crate::lifecycle::reveal_main_window(&click_app);
+                let _ = tauri::Emitter::emit(&click_app, "app:navigate-event", route);
+                Ok(())
+            })
+            .show();
+        if let Err(error) = result {
+            crate::diag!("[notifications] toast failed: {error}");
+        }
+    });
+}
+
+#[cfg(not(windows))]
+pub fn show_navigate_toast(
+    app: &tauri::AppHandle,
+    title: String,
+    body: String,
+    route: &'static str,
+) {
+    let _ = (app, route);
+    crate::diag!("[notifications] {title}: {body}");
+}
+
 /// Subscribe the notifier to the update service (call once at startup).
 pub fn start(app: &tauri::AppHandle) {
     use tauri::Manager;

@@ -47,7 +47,7 @@ import type { AppSettings } from './app-settings'
 import type { UpdateState } from './updates'
 import type { AppLogSnapshot, DiagnosticReport, LogBundleResult } from './diagnostics'
 import type { ConfigBackupPreview, ConfigBackupResult } from './config-backup'
-import type { WebDavBackupTarget } from './webdav-backup'
+import type { WebDavBackupForm, WebDavBackupSecrets, WebDavBackupSettings, WebDavBackupTarget } from './webdav-backup'
 
 export const IPC = {
   appGetBrand: 'app:get-brand',
@@ -68,6 +68,9 @@ export const IPC = {
   backupRestore: 'backup:restore',
   backupWebDavUpload: 'backup:webdav-upload',
   backupWebDavPreview: 'backup:webdav-preview',
+  backupWebDavSettings: 'backup:webdav-settings',
+  backupWebDavSave: 'backup:webdav-save',
+  backupWebDavForget: 'backup:webdav-forget',
   appNavigateEvent: 'app:navigate-event',
   kernelGetStatus: 'kernel:get-status',
   kernelStart: 'kernel:start',
@@ -252,8 +255,13 @@ export interface DesktopApi {
     create(password: string): Promise<ConfigBackupResult>
     preview(password: string): Promise<ConfigBackupPreview | null>
     restore(token: string): Promise<void>
-    webdavUpload(target: WebDavBackupTarget, password: string): Promise<ConfigBackupResult>
-    webdavPreview(target: WebDavBackupTarget, password: string): Promise<ConfigBackupPreview>
+    /** `password: null` uses the saved archive passphrase. */
+    webdavUpload(target: WebDavBackupTarget, password: string | null): Promise<ConfigBackupResult>
+    webdavPreview(target: WebDavBackupTarget, password: string | null): Promise<ConfigBackupPreview>
+    /** `null` outside the installed app. */
+    webdavSettings(): Promise<WebDavBackupSettings | null>
+    webdavSave(form: WebDavBackupForm, secrets: WebDavBackupSecrets): Promise<WebDavBackupSettings>
+    webdavForget(): Promise<WebDavBackupSettings>
   }
   kernel: {
     getStatus(): Promise<KernelStatus>

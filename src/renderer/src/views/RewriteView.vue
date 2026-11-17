@@ -278,6 +278,8 @@ onBeforeUnmount(() => window.removeEventListener('focus', refreshOnFocus))
 
     <p v-if="store.lastError" class="inline-error" role="alert">{{ store.lastError }}</p>
 
+    <div class="rewrite-layout">
+    <div class="rewrite-rules-column">
     <div class="rewrite-kinds" :class="{ off: !state.settings.rewriteEnabled }">
       <SurfaceCard v-for="kind in ruleKinds" :key="kind.section" class="rewrite-kind">
         <h3>{{ kind.title }}</h3>
@@ -289,6 +291,7 @@ onBeforeUnmount(() => window.removeEventListener('focus', refreshOnFocus))
       </SurfaceCard>
     </div>
     <p class="surge-hint rewrite-kinds-note">{{ t('rewrite.countNote') }}<button type="button" class="surge-link" @click="openLocal">{{ t('rewrite.editAllLocal') }}</button></p>
+    </div>
 
     <section class="surge-section rewrite-modules-section">
       <h2 class="tone-pink">{{ t('resources.modules') }}</h2>
@@ -329,6 +332,7 @@ onBeforeUnmount(() => window.removeEventListener('focus', refreshOnFocus))
         </div>
       </SurfaceCard>
     </section>
+    </div>
 
     <Teleport to="body">
       <div v-if="editingKind" class="modal-shade" role="presentation" @click.self="closeSection">
@@ -476,6 +480,13 @@ onBeforeUnmount(() => window.removeEventListener('focus', refreshOnFocus))
 .rewrite-kinds-note { margin-top: 12px; padding-left: 14px; }
 .rewrite-kinds-note .surge-link { margin-left: 6px; }
 .rewrite-modules-section { margin-top: 30px; }
+/* 宽窗口：规则类型卡片在左、模块列表在右，两栏并排，不把六张卡片拉成横条。
+   窄窗口保持原来的上下排列。按内容区宽度（容器查询）而不是窗口宽度切换。 */
+.rewrite-view { container: rewrite-page / inline-size; }
+@container rewrite-page (min-width: 1180px) {
+  .rewrite-layout { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(400px, 1fr); column-gap: 28px; align-items: start; }
+  .rewrite-layout > .rewrite-modules-section { margin-top: 32px; }
+}
 .rewrite-section-modal { display: grid; gap: 14px; width: min(680px, calc(100vw - 48px)); padding: 20px; border: 1px solid var(--app-divider); border-radius: var(--radius-panel); color: var(--app-text); background: var(--app-popover); -webkit-backdrop-filter: var(--app-popover-filter); backdrop-filter: var(--app-popover-filter); box-shadow: 0 22px 70px rgba(0, 0, 0, 0.28); }
 .rewrite-section-modal header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); }
 .rewrite-section-modal h2 { margin: 0; font-size: var(--font-size-title); }

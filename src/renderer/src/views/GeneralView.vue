@@ -147,7 +147,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="page-shell general-view">
+  <div class="page-shell general-view page-readable">
     <h1>{{ t('general.title') }}</h1>
 
     <section>

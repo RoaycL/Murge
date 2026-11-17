@@ -58,7 +58,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="page-shell provider-settings">
+  <div class="page-shell provider-settings page-readable">
     <h1>{{ t('providerSettings.title') }}</h1>
 
     <p v-if="!activeMeta" class="inline-note">{{ t('providerSettings.needProfile') }}</p>

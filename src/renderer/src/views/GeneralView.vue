@@ -211,7 +211,7 @@ async function previewWebDav(): Promise<void> {
     // never make another remote file the auto-upload target (the next
     // scheduled run would overwrite the backup being inspected).
     const saved = webdavSaved.value
-    const retargetsAuto = saved?.autoEnabled === true && saved.url !== target.url
+    const retargetsAuto = saved?.autoEnabled === true && (saved.url !== form.url || saved.username !== form.username)
     if (!retargetsAuto) await saveWebDav(webdavAutoEnabled.value, Number(webdavInterval.value), form)
   } catch (error) { backupError.value = error instanceof Error ? error.message : t('general.webdavDownloadFailed') }
   finally { backupBusy.value = false }

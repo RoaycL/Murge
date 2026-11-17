@@ -127,17 +127,40 @@ function applyWebDavSettings(saved: WebDavBackupSettings | null): void {
  * empty field keeps the saved one. Returns false (with the error shown) when
  * the backend refuses.
  */
-async function saveWebDav(autoEnabled = webdavAutoEnabled.value, intervalHours = Number(webdavInterval.value)): Promise<boolean> {
+/** The form as typed now; taken before an awaited operation so a later edit cannot be saved in its place. */
+function webdavSnapshot(): WebDavFormSnapshot {
+  return {
+    address: webdavAddress.value.trim(),
+    filePath: webdavFilePath.value.trim(),
+    url: webdavFileUrl.value,
+    username: webdavUsername.value.trim(),
+    password: webdavPassword.value || null,
+    passphrase: webdavPassphrase.value || null
+  }
+}
+
+interface WebDavFormSnapshot {
+  address: string
+  filePath: string
+  url: string
+  username: string
+  password: string | null
+  passphrase: string | null
+}
+
+async function saveWebDav(autoEnabled = webdavAutoEnabled.value, intervalHours = Number(webdavInterval.value), form = webdavSnapshot()): Promise<boolean> {
   try {
     applyWebDavSettings(await window.desktop.backup.webdavSave({
-      address: webdavAddress.value.trim(),
-      filePath: webdavFilePath.value.trim(),
-      url: webdavFileUrl.value,
-      username: webdavUsername.value.trim(),
+      address: form.address,
+      filePath: form.filePath,
+      url: form.url,
+      username: form.username,
       autoEnabled,
       intervalHours
-    }, { password: webdavPassword.value || null, passphrase: webdavPassphrase.value || null }))
-    webdavPassword.value = ''; webdavPassphrase.value = ''
+    }, { password: form.password, passphrase: form.passphrase }))
+    // Clear only what was saved; a value typed meanwhile stays.
+    if (webdavPassword.value === (form.password ?? '')) webdavPassword.value = ''
+    if (webdavPassphrase.value === (form.passphrase ?? '')) webdavPassphrase.value = ''
     return true
   } catch (error) {
     backupError.value = error instanceof Error ? error.message : t('general.webdavSaveFailed')
@@ -180,15 +203,16 @@ async function previewWebDav(): Promise<void> {
   if (!webdavPassphrase.value && !webdavHasPassphrase.value) { backupError.value = t('general.webdavPassphraseNeeded'); return }
   backupBusy.value = true
   try {
+    const form = webdavSnapshot()
     const target = webdavTarget()
-    const passphrase = webdavPassphrase.value || null
+    const passphrase = form.passphrase
     backupPreview.value = await window.desktop.backup.webdavPreview(target, passphrase)
     // Remember the form only once the passphrase decrypted the backup, and
     // never make another remote file the auto-upload target (the next
     // scheduled run would overwrite the backup being inspected).
     const saved = webdavSaved.value
     const retargetsAuto = saved?.autoEnabled === true && saved.url !== target.url
-    if (!retargetsAuto) await saveWebDav()
+    if (!retargetsAuto) await saveWebDav(webdavAutoEnabled.value, Number(webdavInterval.value), form)
   } catch (error) { backupError.value = error instanceof Error ? error.message : t('general.webdavDownloadFailed') }
   finally { backupBusy.value = false }
 }

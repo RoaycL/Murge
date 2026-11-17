@@ -315,20 +315,28 @@ async fn run_once(root: &Path) {
     let secrets = KeyringSecrets::new();
     let settings = load(root);
     let now = chrono::Utc::now().timestamp_millis();
-    let passphrase = secrets
-        .get(PASSPHRASE)
-        .ok()
-        .flatten()
-        .filter(|p| !p.is_empty());
-    if !due(&settings, now, passphrase.is_some()) {
+    // A credential-store error on a due backup is a failure to report, not
+    // "no passphrase saved" (which would silently stop auto backup).
+    let passphrase = match secrets.get(PASSPHRASE) {
+        Ok(value) => Ok(value.filter(|p| !p.is_empty())),
+        Err(error) => Err(error),
+    };
+    let has_passphrase = !matches!(passphrase, Ok(None));
+    if !due(&settings, now, has_passphrase) {
         return;
     }
-    let target = json!({
-        "url": settings.url,
-        "username": settings.username,
-        "password": secrets.get(PASSWORD).ok().flatten().unwrap_or_default(),
-    });
-    let outcome = super::upload_archive(root, &target, passphrase.unwrap_or_default()).await;
+    let outcome = match (passphrase, secrets.get(PASSWORD)) {
+        (Ok(Some(passphrase)), Ok(password)) => {
+            let target = json!({
+                "url": settings.url,
+                "username": settings.username,
+                "password": password.unwrap_or_default(),
+            });
+            super::upload_archive(root, &target, passphrase).await
+        }
+        (Err(error), _) | (_, Err(error)) => Err(error),
+        (Ok(None), _) => return,
+    };
     let was_failing = settings.last_error.is_some();
     match &outcome {
         Ok(()) => crate::diag!("[backup] scheduled WebDAV backup uploaded"),

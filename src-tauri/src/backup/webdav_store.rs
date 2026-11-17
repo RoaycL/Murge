@@ -85,12 +85,19 @@ pub fn update(root: &Path, change: impl FnOnce(&mut Settings)) -> Result<Setting
     Ok(settings)
 }
 
+/// Record an upload's outcome, but only while `url` is still the saved
+/// target: an upload that finishes after the user switched targets must not
+/// mark the new destination as backed up.
 pub fn record(
     root: &Path,
+    url: &str,
     now: i64,
     outcome: &std::result::Result<(), String>,
 ) -> Result<Settings> {
     update(root, |settings| {
+        if settings.url != url {
+            return;
+        }
         settings.last_attempt_at = Some(now);
         match outcome {
             Ok(()) => {
@@ -327,7 +334,7 @@ async fn run_once(root: &Path) {
         Ok(()) => crate::diag!("[backup] scheduled WebDAV backup uploaded"),
         Err(_) => crate::diag!("[backup] scheduled WebDAV backup failed"),
     }
-    let _ = record(root, now, &outcome);
+    let _ = record(root, &settings.url, now, &outcome);
     // Toast once per failure streak, not on every retry.
     if let (Err(error), false) = (&outcome, was_failing) {
         if let Some(app) = super::APP.get() {
@@ -525,12 +532,18 @@ pub mod tests {
             SecretInput::default(),
         )
         .unwrap();
-        record(root.path(), 5, &Err("WebDAV 认证失败或没有权限".into())).unwrap();
+        record(
+            root.path(),
+            URL,
+            5,
+            &Err("WebDAV 认证失败或没有权限".into()),
+        )
+        .unwrap();
         assert_eq!(
             load(root.path()).last_error.as_deref(),
             Some("WebDAV 认证失败或没有权限")
         );
-        record(root.path(), 6, &Ok(())).unwrap();
+        record(root.path(), URL, 6, &Ok(())).unwrap();
         let settings = load(root.path());
         assert_eq!(
             (settings.last_success_at, settings.last_error),
@@ -543,6 +556,9 @@ pub mod tests {
             SecretInput::default(),
         )
         .unwrap();
+        assert_eq!(load(root.path()).last_success_at, None);
+        // A late outcome for the old target leaves the new one untouched.
+        record(root.path(), URL, 7, &Ok(())).unwrap();
         assert_eq!(load(root.path()).last_success_at, None);
     }
 

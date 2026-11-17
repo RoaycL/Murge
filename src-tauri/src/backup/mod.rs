@@ -362,8 +362,9 @@ pub async fn webdav_upload(paths: &AppPaths, payload: &Value) -> Result<Value, I
         webdav_store::resolve_passphrase(payload.get(1), &secrets).map_err(IpcError::internal)?;
     let outcome = upload_archive(&root, &target, pass).await;
     // A manual upload to the saved target also counts for the schedule.
-    if outcome.is_ok() && target["url"] == json!(webdav_store::load(&root).url) {
-        let _ = webdav_store::record(&root, chrono::Utc::now().timestamp_millis(), &Ok(()));
+    if let (Ok(()), Some(url)) = (&outcome, target["url"].as_str()) {
+        let now = chrono::Utc::now().timestamp_millis();
+        let _ = webdav_store::record(&root, url, now, &Ok(()));
     }
     outcome.map_err(IpcError::internal)?;
     Ok(json!({"saved":true}))

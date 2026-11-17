@@ -6,7 +6,7 @@ import { useAppSettingsStore } from '../stores/app-settings'
 import AppSelect from '../components/AppSelect.vue'
 import AppIcon from '../components/AppIcon.vue'
 import type { ConfigBackupPreview } from '@shared/config-backup'
-import { composeWebDavFileUrl, defaultWebDavFilePath, type WebDavBackupTarget } from '@shared/webdav-backup'
+import { composeWebDavFileUrl, defaultWebDavFilePath, WEBDAV_AUTO_INTERVALS, type WebDavBackupSettings, type WebDavBackupTarget } from '@shared/webdav-backup'
 
 const startup = useStartupStore()
 const appSettings = useAppSettingsStore()
@@ -29,6 +29,20 @@ const webdavPassphrase = ref('')
 const webdavPasswordVisible = ref(false)
 const webdavPassphraseVisible = ref(false)
 const webdavFileUrl = computed(() => composeWebDavFileUrl(webdavAddress.value, webdavFilePath.value, webdavDefaultPath.value))
+/** Saved target, schedule and whether a password/passphrase is remembered. */
+const webdavSaved = ref<WebDavBackupSettings | null>(null)
+const webdavAutoEnabled = ref(false)
+const webdavInterval = ref('24')
+const webdavIntervalOptions = WEBDAV_AUTO_INTERVALS.map((hours) => ({ value: String(hours), label: intervalLabel(hours) }))
+const webdavHasPassword = computed(() => webdavSaved.value?.hasPassword === true)
+const webdavHasPassphrase = computed(() => webdavSaved.value?.hasPassphrase === true)
+const webdavStatus = computed(() => {
+  const saved = webdavSaved.value
+  if (!saved) return ''
+  if (saved.lastError) return t('general.webdavAutoFailed', [saved.lastError])
+  if (saved.lastSuccessAt) return t('general.webdavLastSuccess', [new Date(saved.lastSuccessAt).toLocaleString(locale.value)])
+  return ''
+})
 const languageOptions = [
   { value: 'system', label: t('common.followSystem') },
   ...LOCALES.map((value) => ({ value, label: LOCALE_NAMES[value] }))
@@ -92,21 +106,70 @@ async function previewBackup(): Promise<void> {
   finally { backupBusy.value = false }
 }
 
+function intervalLabel(hours: number): string {
+  if (hours % 168 === 0) return t('general.webdavEveryWeeks', [hours / 168])
+  if (hours % 24 === 0) return t('general.webdavEveryDays', [hours / 24])
+  return t('general.webdavEveryHours', [hours])
+}
+
+function applyWebDavSettings(saved: WebDavBackupSettings | null): void {
+  webdavSaved.value = saved
+  if (!saved) return
+  if (saved.address) webdavAddress.value = saved.address
+  if (saved.filePath) webdavFilePath.value = saved.filePath
+  if (saved.username) webdavUsername.value = saved.username
+  webdavAutoEnabled.value = saved.autoEnabled
+  webdavInterval.value = String(saved.intervalHours)
+}
+
+/**
+ * Remember the form; typed secrets go to the system credential store, an
+ * empty field keeps the saved one. Returns false (with the error shown) when
+ * the backend refuses.
+ */
+async function saveWebDav(autoEnabled = webdavAutoEnabled.value, intervalHours = Number(webdavInterval.value)): Promise<boolean> {
+  try {
+    applyWebDavSettings(await window.desktop.backup.webdavSave({
+      address: webdavAddress.value.trim(),
+      filePath: webdavFilePath.value.trim(),
+      url: webdavFileUrl.value,
+      username: webdavUsername.value.trim(),
+      autoEnabled,
+      intervalHours
+    }, { password: webdavPassword.value || null, passphrase: webdavPassphrase.value || null }))
+    webdavPassword.value = ''; webdavPassphrase.value = ''
+    return true
+  } catch (error) {
+    backupError.value = error instanceof Error ? error.message : t('general.webdavSaveFailed')
+    return false
+  }
+}
+
 function webdavTarget(): WebDavBackupTarget {
-  return { url: webdavFileUrl.value, username: webdavUsername.value.trim(), password: webdavPassword.value }
+  // Saved just before every operation: an empty field means "use the saved one".
+  return { url: webdavFileUrl.value, username: webdavUsername.value.trim(), password: webdavPassword.value || null }
+}
+
+function checkPassphrase(rule: string): boolean {
+  if (webdavPassphrase.value) {
+    if (webdavPassphrase.value.length >= 8) return true
+  } else if (webdavHasPassphrase.value) return true
+  backupError.value = rule
+  return false
 }
 
 async function uploadWebDav(): Promise<void> {
   if (backupBusy.value) return
   backupError.value = ''; backupNotice.value = ''
-  if (webdavPassphrase.value.length < 8) {
-    backupError.value = t('general.webdavPassphraseRule'); return
-  }
+  if (!checkPassphrase(t('general.webdavPassphraseRule'))) return
   backupBusy.value = true
   try {
-    await window.desktop.backup.webdavUpload(webdavTarget(), webdavPassphrase.value)
+    const target = webdavTarget()
+    const passphrase = webdavPassphrase.value || null
+    if (!(await saveWebDav())) return
+    await window.desktop.backup.webdavUpload(target, passphrase)
     backupNotice.value = t('general.webdavUploaded')
-    webdavPassword.value = ''; webdavPassphrase.value = ''
+    await refreshWebDav()
   } catch (error) { backupError.value = error instanceof Error ? error.message : t('general.webdavUploadFailed') }
   finally { backupBusy.value = false }
 }
@@ -114,13 +177,50 @@ async function uploadWebDav(): Promise<void> {
 async function previewWebDav(): Promise<void> {
   if (backupBusy.value) return
   backupError.value = ''; backupNotice.value = ''; backupPreview.value = null; restoreConfirmed.value = false
-  if (!webdavPassphrase.value) { backupError.value = t('general.webdavPassphraseNeeded'); return }
+  if (!webdavPassphrase.value && !webdavHasPassphrase.value) { backupError.value = t('general.webdavPassphraseNeeded'); return }
   backupBusy.value = true
   try {
-    backupPreview.value = await window.desktop.backup.webdavPreview(webdavTarget(), webdavPassphrase.value)
-    webdavPassword.value = ''; webdavPassphrase.value = ''
+    const target = webdavTarget()
+    const passphrase = webdavPassphrase.value || null
+    if (!(await saveWebDav())) return
+    backupPreview.value = await window.desktop.backup.webdavPreview(target, passphrase)
   } catch (error) { backupError.value = error instanceof Error ? error.message : t('general.webdavDownloadFailed') }
   finally { backupBusy.value = false }
+}
+
+async function toggleWebDavAuto(): Promise<void> {
+  if (backupBusy.value) return
+  backupError.value = ''; backupNotice.value = ''
+  const next = !webdavAutoEnabled.value
+  if (next && !checkPassphrase(t('general.webdavAutoNeedsPassphrase'))) return
+  backupBusy.value = true
+  try {
+    if (await saveWebDav(next) && next) backupNotice.value = t('general.webdavAutoOn')
+  } finally { backupBusy.value = false }
+}
+
+async function changeWebDavInterval(value: string): Promise<void> {
+  webdavInterval.value = value
+  if (!webdavSaved.value) return
+  backupError.value = ''
+  backupBusy.value = true
+  try { await saveWebDav(webdavAutoEnabled.value, Number(value)) } finally { backupBusy.value = false }
+}
+
+async function forgetWebDav(): Promise<void> {
+  if (backupBusy.value) return
+  backupError.value = ''; backupNotice.value = ''
+  backupBusy.value = true
+  try {
+    applyWebDavSettings(await window.desktop.backup.webdavForget())
+    webdavPassword.value = ''; webdavPassphrase.value = ''
+    backupNotice.value = t('general.webdavForgotten')
+  } catch (error) { backupError.value = error instanceof Error ? error.message : t('general.webdavSaveFailed') }
+  finally { backupBusy.value = false }
+}
+
+async function refreshWebDav(): Promise<void> {
+  try { applyWebDavSettings(await window.desktop.backup.webdavSettings()) } catch { /* the form still works without it */ }
 }
 
 async function restoreBackup(): Promise<void> {
@@ -141,6 +241,7 @@ onMounted(async () => {
     webdavDefaultPath.value = defaultWebDavFilePath(brand.productName)
     if (webdavFilePath.value === previous) webdavFilePath.value = webdavDefaultPath.value
   }).catch(() => undefined)
+  void refreshWebDav()
   await appSettings.refresh()
   delayUrl.value = appSettings.settings.delayTestUrl
 })
@@ -257,12 +358,21 @@ onMounted(async () => {
           <div class="webdav-form">
             <label class="webdav-field wide"><span>{{ t('general.webdavUrl') }}</span><input v-model="webdavAddress" type="url" spellcheck="false" autocomplete="off" placeholder="https://dav.example.com/dav" /></label>
             <label class="webdav-field"><span>{{ t('common.username') }}</span><input v-model="webdavUsername" spellcheck="false" autocomplete="username" :placeholder="t('general.webdavUserPlaceholder')" /></label>
-            <label class="webdav-field"><span>{{ t('common.password') }}</span><span class="webdav-secret"><input v-model="webdavPassword" :type="webdavPasswordVisible ? 'text' : 'password'" autocomplete="off" :placeholder="t('general.webdavPasswordPlaceholder')" /><button type="button" class="webdav-eye" :class="{ active: webdavPasswordVisible }" :aria-label="webdavPasswordVisible ? t('general.hideWebdavPassword') : t('general.showWebdavPassword')" @click.prevent="webdavPasswordVisible = !webdavPasswordVisible"><AppIcon name="eye" :size="16" /></button></span></label>
+            <label class="webdav-field"><span>{{ t('common.password') }}</span><span class="webdav-secret"><input v-model="webdavPassword" :type="webdavPasswordVisible ? 'text' : 'password'" autocomplete="off" :placeholder="webdavHasPassword ? t('general.webdavSavedPlaceholder') : t('general.webdavPasswordPlaceholder')" /><button type="button" class="webdav-eye" :class="{ active: webdavPasswordVisible }" :aria-label="webdavPasswordVisible ? t('general.hideWebdavPassword') : t('general.showWebdavPassword')" @click.prevent="webdavPasswordVisible = !webdavPasswordVisible"><AppIcon name="eye" :size="16" /></button></span></label>
             <label class="webdav-field"><span>{{ t('general.filePath') }}</span><input v-model="webdavFilePath" spellcheck="false" autocomplete="off" :placeholder="webdavDefaultPath" /></label>
-            <label class="webdav-field"><span>{{ t('general.passphrase') }}</span><span class="webdav-secret"><input v-model="webdavPassphrase" :type="webdavPassphraseVisible ? 'text' : 'password'" autocomplete="new-password" :placeholder="t('general.passphrasePlaceholder')" /><button type="button" class="webdav-eye" :class="{ active: webdavPassphraseVisible }" :aria-label="webdavPassphraseVisible ? t('general.hidePassphrase') : t('general.showPassphrase')" @click.prevent="webdavPassphraseVisible = !webdavPassphraseVisible"><AppIcon name="eye" :size="16" /></button></span></label>
+            <label class="webdav-field"><span>{{ t('general.passphrase') }}</span><span class="webdav-secret"><input v-model="webdavPassphrase" :type="webdavPassphraseVisible ? 'text' : 'password'" autocomplete="new-password" :placeholder="webdavHasPassphrase ? t('general.webdavSavedPlaceholder') : t('general.passphrasePlaceholder')" /><button type="button" class="webdav-eye" :class="{ active: webdavPassphraseVisible }" :aria-label="webdavPassphraseVisible ? t('general.hidePassphrase') : t('general.showPassphrase')" @click.prevent="webdavPassphraseVisible = !webdavPassphraseVisible"><AppIcon name="eye" :size="16" /></button></span></label>
           </div>
           <p v-if="webdavFileUrl" class="webdav-target">{{ t('general.remoteFile') }}<code>{{ webdavFileUrl }}</code>{{ t('general.overwriteNote') }}</p>
-          <div class="webdav-actions"><button type="button" :disabled="backupBusy || !webdavFileUrl" @click="uploadWebDav">{{ t('general.upload') }}</button><button type="button" :disabled="backupBusy || !webdavFileUrl" @click="previewWebDav">{{ t('general.downloadPreview') }}</button></div>
+          <div class="webdav-actions"><button type="button" :disabled="backupBusy || !webdavFileUrl" @click="uploadWebDav">{{ t('general.upload') }}</button><button type="button" :disabled="backupBusy || !webdavFileUrl" @click="previewWebDav">{{ t('general.downloadPreview') }}</button><button v-if="webdavHasPassword || webdavHasPassphrase" type="button" class="webdav-forget" :disabled="backupBusy" @click="forgetWebDav">{{ t('general.webdavForget') }}</button></div>
+          <div v-if="webdavSaved" class="webdav-auto">
+            <span class="webdav-auto-text">
+              <strong>{{ t('general.webdavAuto') }}</strong>
+              <span>{{ t('general.webdavAutoHint') }}</span>
+              <span v-if="webdavStatus" class="webdav-auto-status" :class="{ failed: webdavSaved.lastError }" role="status">{{ webdavStatus }}</span>
+            </span>
+            <AppSelect :model-value="webdavInterval" :options="webdavIntervalOptions" :label="t('general.webdavInterval')" :disabled="backupBusy" @update:model-value="changeWebDavInterval" />
+            <button type="button" class="switch" :class="{ on: webdavAutoEnabled }" :aria-checked="webdavAutoEnabled" :disabled="backupBusy || !webdavFileUrl" :aria-label="t('general.webdavAuto')" @click="toggleWebDavAuto" />
+          </div>
         </div>
         <div v-if="backupPreview" class="backup-preview" :class="{ incompatible: !backupPreview.compatible }">
           <strong>{{ t('general.previewTitle') }}</strong>
@@ -346,6 +456,14 @@ onMounted(async () => {
 .webdav-actions{display:flex;gap:var(--space-4);flex-wrap:wrap}
 .webdav-actions button{padding:8px 13px;border:0;border-radius:var(--radius-control);background:var(--app-accent);color:var(--app-on-accent);cursor:pointer}
 .webdav-actions button:disabled{opacity:.5;cursor:not-allowed}
+.webdav-actions .webdav-forget{margin-left:auto;background:transparent;color:var(--app-muted);border:1px solid var(--app-divider)}
+.webdav-actions .webdav-forget:hover:not(:disabled){color:var(--app-text)}
+.webdav-auto{display:flex;align-items:center;gap:var(--space-5);padding-top:var(--space-5);border-top:1px solid var(--app-divider)}
+.webdav-auto-text{display:flex;flex-direction:column;gap:var(--space-1);flex:1;min-width:0}
+.webdav-auto-text strong{font-size:var(--font-size-sm)}
+.webdav-auto-text span{color:var(--app-muted);font-size:var(--font-size-xs);line-height:1.5}
+.webdav-auto-text .webdav-auto-status{color:var(--app-text);overflow-wrap:anywhere}
+.webdav-auto-text .webdav-auto-status.failed{color:var(--app-danger)}
 .backup-panel>.backup-preview{margin-top:16px}
 @media(max-width:760px){.backup-grid,.webdav-form{grid-template-columns:1fr}}
 </style>

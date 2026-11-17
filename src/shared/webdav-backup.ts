@@ -1,9 +1,46 @@
-/** Credentials are supplied for one operation and never persisted. */
+/**
+ * One WebDAV operation's target. `password: null` uses the password saved in
+ * the system credential store (see `WebDavBackupSettings.hasPassword`).
+ */
 export interface WebDavBackupTarget {
   url: string
   username: string
-  password: string
+  password: string | null
 }
+
+/** Remembered target and schedule (`backup.webdavSave`). Never holds secrets. */
+export interface WebDavBackupForm {
+  address: string
+  filePath: string
+  /** The composed file URL, see `composeWebDavFileUrl`. */
+  url: string
+  username: string
+  autoEnabled: boolean
+  intervalHours: number
+}
+
+/** `null` or `''` keeps the saved value; a non-empty string replaces it. */
+export interface WebDavBackupSecrets {
+  password: string | null
+  passphrase: string | null
+}
+
+/**
+ * What the backend returns: the saved form plus schedule status. The WebDAV
+ * password and the archive passphrase live in the system credential store and
+ * are only reported as saved or not.
+ */
+export interface WebDavBackupSettings extends WebDavBackupForm {
+  hasPassword: boolean
+  hasPassphrase: boolean
+  lastSuccessAt: number | null
+  lastAttemptAt: number | null
+  lastError: string | null
+  /** Offered auto-backup intervals, in hours. */
+  intervals: number[]
+}
+
+export const WEBDAV_AUTO_INTERVALS = [1, 6, 12, 24, 72, 168] as const
 
 export const WEBDAV_BACKUP_EXTENSION = '.murge-backup'
 /** Default remote path, e.g. `<Product>/<product>.murge-backup`. */

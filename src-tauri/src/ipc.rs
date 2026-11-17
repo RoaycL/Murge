@@ -285,6 +285,9 @@ pub async fn dispatch(
         "backup:restore" => crate::backup::restore(_paths, payload).await,
         "backup:webdav-upload" => crate::backup::webdav_upload(_paths, payload).await,
         "backup:webdav-preview" => crate::backup::webdav_preview(_paths, payload).await,
+        "backup:webdav-settings" => crate::backup::webdav_settings(_paths).await,
+        "backup:webdav-save" => crate::backup::webdav_save(_paths, payload).await,
+        "backup:webdav-forget" => crate::backup::webdav_forget(_paths).await,
         "app:get-brand" => Ok(brand::brand_document()),
         // Desktop integrations (Phase 3C): icons + network interfaces. The
         // TS handlers return null/[] quietly on invalid input — no errors.

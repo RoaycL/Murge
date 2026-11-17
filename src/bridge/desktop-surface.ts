@@ -38,7 +38,10 @@ export const api: DesktopApi = {
     preview: (password) => invoke(IPC.backupPreview, password),
     restore: (token) => invoke(IPC.backupRestore, token),
     webdavUpload: (target, password) => invoke(IPC.backupWebDavUpload, target, password),
-    webdavPreview: (target, password) => invoke(IPC.backupWebDavPreview, target, password)
+    webdavPreview: (target, password) => invoke(IPC.backupWebDavPreview, target, password),
+    webdavSettings: () => invoke(IPC.backupWebDavSettings),
+    webdavSave: (form, secrets) => invoke(IPC.backupWebDavSave, form, secrets),
+    webdavForget: () => invoke(IPC.backupWebDavForget)
   },
   kernel: {
     getStatus: () => invoke(IPC.kernelGetStatus),

@@ -7,12 +7,21 @@ import { detectShell } from '../platform/desktop-contract'
 
 const isTauri = detectShell().kind === 'tauri'
 const maximized = ref(false)
+/**
+ * Hiding the window (close to tray) or minimizing it happens while the pointer
+ * is still over the caption button, and WebView2 never sees the pointer leave.
+ * The button keeps its :hover look, so the close button was still red the next
+ * time the window opened. Hover is suppressed from that moment until the
+ * pointer really moves again.
+ */
+const staleHover = ref(false)
 const error = ref('')
 const disposers: UnlistenFn[] = []
 let disposed = false
 
 async function control(action: 'minimize' | 'maximize' | 'close'): Promise<void> {
   error.value = ''
+  if (action !== 'maximize') staleHover.value = true
   try {
     if (action === 'close') await getCurrentWindow().close()
     else if (action === 'minimize') await getCurrentWindow().minimize()
@@ -27,8 +36,19 @@ function retain(unlisten: UnlistenFn): void {
   else disposers.push(unlisten)
 }
 
+function clearStaleHover(): void {
+  staleHover.value = false
+}
+
+function onVisibilityChange(): void {
+  if (document.visibilityState === 'hidden') staleHover.value = true
+}
+
 onMounted(async () => {
   if (!isTauri) return
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  document.addEventListener('pointermove', clearStaleHover, { passive: true })
+  document.addEventListener('pointerdown', clearStaleHover, { passive: true })
   const current = getCurrentWindow()
   try {
     // Listen before reading state so a maximize during setup is observed.
@@ -41,6 +61,9 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   disposed = true
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  document.removeEventListener('pointermove', clearStaleHover)
+  document.removeEventListener('pointerdown', clearStaleHover)
   for (const unlisten of disposers.splice(0)) unlisten()
 })
 </script>
@@ -50,7 +73,7 @@ onBeforeUnmount(() => {
     <div class="tauri-titlebar">
       <!-- Tauri handles dragging and double-click maximize on this region. -->
       <div class="tauri-titlebar-drag" data-tauri-drag-region aria-hidden="true" />
-      <div class="tauri-window-controls" :aria-label="t('titlebar.controls')">
+      <div class="tauri-window-controls" :class="{ 'stale-hover': staleHover }" :aria-label="t('titlebar.controls')">
         <button type="button" class="tauri-caption-button" :aria-label="t('titlebar.minimize')" :title="t('titlebar.minimize')" @click="control('minimize')">
           <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5.5h10" /></svg>
         </button>
@@ -81,6 +104,8 @@ onBeforeUnmount(() => {
 .tauri-caption-button:focus-visible { outline-offset: -3px; }
 .tauri-caption-close:hover { background: #c42b1c; color: #fff; }
 .tauri-caption-close:active { background: #b02518; color: #fff; }
+/* Leftover hover from before the window was hidden or minimized (see staleHover). */
+.tauri-window-controls.stale-hover .tauri-caption-button:hover { background: transparent; color: inherit; }
 /* While a drawer is open, the caption buttons move into the floating
    drawer's top-right corner (same 8px inset as the content panel), so they
    read as the drawer's own top bar instead of overlapping its edge. The

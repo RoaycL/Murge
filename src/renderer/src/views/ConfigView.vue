@@ -10,6 +10,7 @@ import DetailDrawer from '../components/DetailDrawer.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import { useToast } from '../composables/use-toast'
 import EmptyState from '../components/EmptyState.vue'
+import { openProfileFile } from '../composables/use-external-profile-edits'
 
 const profilesStore = useProfilesStore()
 const toast = useToast()
@@ -84,7 +85,7 @@ function toggleMenu(id: string, event: MouseEvent): void {
   }
   const button = event.currentTarget as HTMLElement
   const rect = button.getBoundingClientRect()
-  const top = Math.min(rect.bottom + 4, window.innerHeight - 132)
+  const top = Math.min(rect.bottom + 4, window.innerHeight - 168)
   menuAnchor.value = { id, top, left: rect.left }
 }
 
@@ -359,6 +360,7 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
         <template v-if="meta.id === menuAnchor.id">
           <button v-if="!meta.active" type="button" role="menuitem" @click="activate(meta.id); closeMenu()">{{ t('profiles.use') }}</button>
           <button type="button" role="menuitem" @click="openEditor(meta.id)">{{ t('profiles.edit') }}</button>
+          <button type="button" role="menuitem" @click="closeMenu(); openProfileFile(meta.id)">{{ t('profiles.openFile') }}</button>
           <button type="button" role="menuitem" @click="openRename(meta.id)">{{ t('profiles.rename') }}</button>
           <button type="button" role="menuitem" class="danger" @click="pendingDeleteId = meta.id; closeMenu()">{{ t('common.delete') }}</button>
         </template>
@@ -367,7 +369,7 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
 
     <DetailDrawer :open="Boolean(selectedProfile)" :title="selectedProfile?.name ?? t('profiles.details')" :subtitle="selectedProfile ? `${sourceBadge(selectedProfile.source.type)} · ${relativeTime(selectedProfile.updatedAt)}` : ''" @close="selectedProfileId = null">
       <div v-if="selectedProfile" class="entity-detail drawer-detail"><dl><div><dt>{{ t('profiles.source') }}</dt><dd>{{ sourceBadge(selectedProfile.source.type) }}</dd></div><div><dt>{{ t('profiles.updatedAt') }}</dt><dd>{{ relativeTime(selectedProfile.updatedAt) }}</dd></div><div><dt>{{ t('common.status') }}</dt><dd>{{ selectedProfile.active ? t('profiles.inUse') : t('profiles.notInUse') }}</dd></div></dl></div>
-      <template #footer><button type="button" class="secondary-button" @click="selectedProfile && openEditor(selectedProfile.id)"><AppIcon name="code" :size="15" />{{ t('profiles.edit') }}</button><button type="button" class="danger-button" :disabled="selectedProfile?.active" @click="selectedProfile && (pendingDeleteId = selectedProfile.id)"><AppIcon name="delete" :size="15" />{{ t('common.delete') }}</button><button type="button" class="primary-button" :disabled="selectedProfile?.active" @click="selectedProfile && activate(selectedProfile.id)">{{ selectedProfile?.active ? t('profiles.inUseNow') : t('profiles.useThis') }}</button></template>
+      <template #footer><button type="button" class="secondary-button" @click="selectedProfile && openEditor(selectedProfile.id)"><AppIcon name="code" :size="15" />{{ t('profiles.edit') }}</button><button type="button" class="secondary-button" @click="selectedProfile && openProfileFile(selectedProfile.id)">{{ t('profiles.openFile') }}</button><button type="button" class="danger-button" :disabled="selectedProfile?.active" @click="selectedProfile && (pendingDeleteId = selectedProfile.id)"><AppIcon name="delete" :size="15" />{{ t('common.delete') }}</button><button type="button" class="primary-button" :disabled="selectedProfile?.active" @click="selectedProfile && activate(selectedProfile.id)">{{ selectedProfile?.active ? t('profiles.inUseNow') : t('profiles.useThis') }}</button></template>
     </DetailDrawer>
     <ConfirmModal :open="Boolean(pendingDeleteId)" :title="t('profiles.deleteTitle')" :description="t('profiles.deleteDescription')" @close="pendingDeleteId = null" @confirm="confirmRemove" />
     <Teleport to="body"><div v-if="pendingRenameId" class="modal-shade" @click.self="pendingRenameId = null"><section class="rename-modal" role="dialog" aria-modal="true" :aria-label="t('profiles.renameTitle')"><header><h2>{{ t('profiles.renameTitle') }}</h2><button type="button" class="icon-control" :aria-label="t('common.close')" @click="pendingRenameId = null"><AppIcon name="close" /></button></header><input v-model="renameValue" class="field" autofocus :aria-label="t('profiles.nameLabel')" @keyup.enter="confirmRename" /><footer><button type="button" class="secondary-button" @click="pendingRenameId = null">{{ t('common.cancel') }}</button><button type="button" class="primary-button" :disabled="!renameValue.trim()" @click="confirmRename">{{ t('common.save') }}</button></footer></section></div></Teleport>

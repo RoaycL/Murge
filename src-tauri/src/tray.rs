@@ -221,6 +221,8 @@ pub struct TrayDeps {
     pub on_check_update: Box<dyn Fn() + Send + Sync>,
     /// Rewrite/MITM modules as `(id, name, enabled)` (the 模块 submenu).
     pub list_modules: Box<dyn Fn() -> Vec<TrayModule> + Send + Sync>,
+    /// Sections the user hid in 通用 · 托盘菜单 (`settings::TRAY_SECTIONS` ids).
+    pub hidden_sections: Box<dyn Fn() -> Vec<String> + Send + Sync>,
     /// `mitm:set-module-enabled` through the same arm the 重写 page uses (it
     /// hot-reloads a running kernel when the injected config changes).
     pub set_module_enabled: SetModuleCallback,
@@ -259,6 +261,8 @@ pub(crate) struct TrayState {
     profiles: Vec<Value>,
     connections: Value,
     modules: Vec<TrayModule>,
+    /// Sections the user switched off (`settings::TRAY_SECTIONS` ids).
+    hidden_sections: Vec<String>,
     network_latency_ms: Option<u64>,
     active_profile_stamp: String,
     busy: bool,
@@ -307,6 +311,7 @@ impl TrayController {
             .unwrap_or_default();
         let group_order = (self.deps.resolve_group_order)();
         let modules = (self.deps.list_modules)();
+        let hidden_sections = (self.deps.hidden_sections)();
 
         let mut config = None;
         let mut proxies = None;
@@ -314,6 +319,7 @@ impl TrayController {
         if kernel["phase"].as_str() == Some("running") {
             let Ok(client) = client_for(&self.deps.models) else {
                 let mut state = self.state.lock().await;
+                state.hidden_sections = hidden_sections;
                 self.render_locked(&mut state);
                 return;
             };
@@ -336,6 +342,7 @@ impl TrayController {
         state.tun_supported = tun["supported"].as_bool().unwrap_or(false);
         state.profiles = profiles;
         state.modules = modules;
+        state.hidden_sections = hidden_sections;
         state.group_order = group_order;
 
         let active = state
@@ -931,6 +938,7 @@ pub(crate) fn render_menu(product: &str, state: &TrayState) -> Vec<TrayMenuItem>
     let system_proxy_busy =
         state.system_proxy_phase == "enabling" || state.system_proxy_phase == "restoring";
     let tun_busy = state.tun_phase == "starting" || state.tun_phase == "restoring";
+    let shown = |section: &str| !state.hidden_sections.iter().any(|hidden| hidden == section);
     // The two switches sit above the mode and policy groups: with many
     // groups they would otherwise be a long scroll away.
     let mut menu = vec![
@@ -950,37 +958,55 @@ pub(crate) fn render_menu(product: &str, state: &TrayState) -> Vec<TrayMenuItem>
             state.tun_phase == "active",
             false,
         ),
-        TrayMenuItem::normal(
+    ];
+    if shown("copy-terminal-proxy") {
+        menu.push(TrayMenuItem::normal(
             "copy-terminal-proxy",
             t("tray.copyTerminalProxy"),
             state.status_phase == "running" && state.mixed_port.is_some(),
-        ),
-        TrayMenuItem::separator(),
-        mode_menu(state, transition),
-    ];
-    menu.extend(group_menus(state, transition));
+        ));
+    }
     menu.push(TrayMenuItem::separator());
-    menu.push(TrayMenuItem::normal(
-        "network-quality",
-        &tf(
-            "tray.networkQuality",
-            &[&match state.network_latency_ms {
-                Some(ms) => format!("{ms} ms"),
-                None => "—".to_string(),
-            }],
-        ),
-        false,
-    ));
-    menu.push(process_menu(state));
+    if shown("outbound-mode") {
+        menu.push(mode_menu(state, transition));
+    }
+    if shown("groups") {
+        menu.extend(group_menus(state, transition));
+    }
     menu.push(TrayMenuItem::separator());
-    menu.push(configuration_menu(state, transition));
-    menu.push(module_menu(state));
-    menu.push(directory_menu());
-    menu.push(TrayMenuItem::normal(
-        "check-update",
-        t("tray.checkUpdate"),
-        true,
-    ));
+    if shown("network-quality") {
+        menu.push(TrayMenuItem::normal(
+            "network-quality",
+            &tf(
+                "tray.networkQuality",
+                &[&match state.network_latency_ms {
+                    Some(ms) => format!("{ms} ms"),
+                    None => "—".to_string(),
+                }],
+            ),
+            false,
+        ));
+    }
+    if shown("processes") {
+        menu.push(process_menu(state));
+    }
+    menu.push(TrayMenuItem::separator());
+    if shown("configuration") {
+        menu.push(configuration_menu(state, transition));
+    }
+    if shown("modules") {
+        menu.push(module_menu(state));
+    }
+    if shown("open-directory") {
+        menu.push(directory_menu());
+    }
+    if shown("check-update") {
+        menu.push(TrayMenuItem::normal(
+            "check-update",
+            t("tray.checkUpdate"),
+            true,
+        ));
+    }
     menu.push(TrayMenuItem::separator());
     if state.quit_blocked {
         menu.push(TrayMenuItem::normal(
@@ -999,7 +1025,30 @@ pub(crate) fn render_menu(product: &str, state: &TrayState) -> Vec<TrayMenuItem>
         &tf("tray.quit", &[product]),
         true,
     ));
-    menu
+    collapse_separators(menu)
+}
+
+/// A hidden section can leave two separators next to each other; keep one.
+fn collapse_separators(items: Vec<TrayMenuItem>) -> Vec<TrayMenuItem> {
+    let mut out: Vec<TrayMenuItem> = Vec::with_capacity(items.len());
+    for item in items {
+        let separator = item.kind == MenuKind::Separator;
+        if separator
+            && out
+                .last()
+                .is_none_or(|last| last.kind == MenuKind::Separator)
+        {
+            continue;
+        }
+        out.push(item);
+    }
+    if out
+        .last()
+        .is_some_and(|last| last.kind == MenuKind::Separator)
+    {
+        out.pop();
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -1438,6 +1487,10 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
                 })
                 .unwrap_or_default()
         }),
+        hidden_sections: {
+            let settings = settings.clone();
+            Box::new(move || settings.get().tray_hidden_sections)
+        },
         set_module_enabled: {
             let kernel = kernel.clone();
             let models = models.clone();
@@ -1619,6 +1672,29 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
     // keyboard access. Left click/double click reveal the window (the TS
     // onActivate).
     let refresher = TrayRefresher::new(controller.clone());
+    {
+        // 通用 · 托盘菜单: a shown/hidden section redraws the menu at once.
+        let controller = controller.clone();
+        let hidden = std::sync::Mutex::new(settings.get().tray_hidden_sections);
+        settings.subscribe(Arc::new(move |value| {
+            let next: Vec<String> = value["trayHiddenSections"]
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut last = hidden.lock().expect("tray sections mutex");
+            if *last == next {
+                return;
+            }
+            *last = next;
+            let controller = controller.clone();
+            tauri::async_runtime::spawn(async move { controller.refresh().await });
+        }));
+    }
     {
         // A language switch redraws the menu and tooltip at once.
         let controller = controller.clone();
@@ -1904,6 +1980,37 @@ mod tests {
         assert!(at("系统代理") < at("TUN 模式"));
         assert!(at("TUN 模式") < at("出站模式 · 全局"));
         assert!(at("出站模式 · 全局") < at("🚀 节点选择 · 香港 01"));
+    }
+
+    #[test]
+    fn hidden_sections_drop_out_of_the_menu() {
+        let mut state = state();
+        state.status_phase = "running".to_string();
+        state.proxies = json!({
+            "🚀 节点选择": {"type": "Selector", "now": "香港 01", "all": ["香港 01"]}
+        });
+        state.profiles =
+            vec![json!({"id": "p1", "name": "Home", "active": true, "source": {"type": "url"}})];
+        state.hidden_sections = crate::settings::TRAY_SECTIONS
+            .iter()
+            .map(|section| section.to_string())
+            .collect();
+        let menu = render_menu("Murge", &state);
+        let ids: Vec<&str> = menu.iter().map(|item| item.id.as_str()).collect();
+        // Everything optional gone: the fixed rows remain, with one separator
+        // between them and none doubled or trailing.
+        assert_eq!(ids, vec!["show", "", "system-proxy", "tun", "", "quit"]);
+
+        state.hidden_sections = vec!["groups".to_string(), "configuration".to_string()];
+        let labels = labels_of(&state);
+        assert!(!labels
+            .iter()
+            .any(|(label, _, _)| label.starts_with("🚀 节点选择")));
+        assert!(!labels.iter().any(|(label, _, _)| label == "Home"));
+        assert!(labels
+            .iter()
+            .any(|(label, _, _)| label.starts_with("出站模式")));
+        assert!(labels.iter().any(|(label, _, _)| label == "检查更新"));
     }
 
     #[test]

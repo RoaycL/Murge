@@ -6,6 +6,7 @@ import { useAppSettingsStore } from '../stores/app-settings'
 import AppSelect from '../components/AppSelect.vue'
 import AppIcon from '../components/AppIcon.vue'
 import type { ConfigBackupPreview } from '@shared/config-backup'
+import { TRAY_SECTIONS, type TraySection } from '@shared/app-settings'
 import { composeWebDavFileUrl, defaultWebDavFilePath, WEBDAV_AUTO_INTERVALS, type WebDavBackupSettings, type WebDavBackupTarget } from '@shared/webdav-backup'
 
 const startup = useStartupStore()
@@ -61,6 +62,41 @@ const delayScope = computed({
     if (value === 'group' || value === 'global') void appSettings.set({ delayTestUrlScope: value })
   }
 })
+
+const TRAY_SECTION_LABELS: Record<TraySection, string> = {
+  'copy-terminal-proxy': t('general.traySection.copyTerminalProxy'),
+  'outbound-mode': t('general.traySection.outboundMode'),
+  groups: t('general.traySection.groups'),
+  'network-quality': t('general.traySection.networkQuality'),
+  processes: t('general.traySection.processes'),
+  configuration: t('general.traySection.configuration'),
+  modules: t('general.traySection.modules'),
+  'open-directory': t('general.traySection.openDirectory'),
+  'check-update': t('general.traySection.checkUpdate')
+}
+const traySections = TRAY_SECTIONS.map((id) => ({ id, label: TRAY_SECTION_LABELS[id] }))
+
+function trayShown(section: TraySection): boolean {
+  return !appSettings.settings.trayHiddenSections.includes(section)
+}
+
+function toggleTraySection(section: TraySection): void {
+  const hidden = new Set(appSettings.settings.trayHiddenSections)
+  if (hidden.has(section)) hidden.delete(section)
+  else hidden.add(section)
+  void appSettings.set({ trayHiddenSections: TRAY_SECTIONS.filter((id) => hidden.has(id)) })
+}
+
+/** The chosen editor's file name; the full path is the tooltip. */
+const profileEditorName = computed(() => {
+  const path = appSettings.settings.profileEditor
+  return path ? path.split(/[\\/]/).pop() || path : t('general.profileEditorDefault')
+})
+
+async function chooseProfileEditor(): Promise<void> {
+  const path = await window.desktop.profiles.pickEditor().catch(() => null)
+  if (path) await appSettings.set({ profileEditor: path })
+}
 
 async function saveDelayUrl(): Promise<void> {
   const value = delayUrl.value.trim()
@@ -345,6 +381,44 @@ onMounted(async () => {
     </section>
 
     <section>
+      <h2>{{ t('general.trayMenu') }}</h2>
+      <div class="surface-card preference-list">
+        <label v-for="section in traySections" :key="section.id">
+          <span>
+            <strong>{{ section.label }}</strong>
+          </span>
+          <button
+            type="button"
+            class="switch"
+            :class="{ on: trayShown(section.id) }"
+            :aria-checked="trayShown(section.id)"
+            :disabled="appSettings.busy"
+            :aria-label="section.label"
+            @click="toggleTraySection(section.id)"
+          />
+        </label>
+      </div>
+      <p class="setting-help">{{ t('general.trayMenuHint') }}</p>
+    </section>
+
+    <section>
+      <h2>{{ t('general.profileFiles') }}</h2>
+      <div class="surface-card preference-list">
+        <div class="editor-row startup-behavior">
+          <span>
+            <strong>{{ t('general.profileEditor') }}</strong>
+            <span class="startup-detail">{{ t('general.profileEditorHint') }}</span>
+          </span>
+          <span class="editor-choice">
+            <span class="editor-name" :class="{ muted: !appSettings.settings.profileEditor }" :title="appSettings.settings.profileEditor || undefined">{{ profileEditorName }}</span>
+            <button v-if="appSettings.settings.profileEditor" type="button" class="editor-button quiet" :disabled="appSettings.busy" @click="appSettings.set({ profileEditor: '' })">{{ t('general.resetEditor') }}</button>
+            <button type="button" class="editor-button" :disabled="appSettings.busy" @click="chooseProfileEditor">{{ t('general.chooseEditor') }}</button>
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <section>
       <h2>{{ t('general.update') }}</h2>
       <div class="surface-card preference-list">
         <label>
@@ -452,6 +526,14 @@ onMounted(async () => {
 <style scoped>
 .delay-url-field{width:min(430px,60vw)!important;height:32px!important;padding:0 10px;border:1px solid var(--app-divider);border-radius:var(--radius-control);background:color-mix(in srgb,var(--app-surface) 88%,var(--app-bg));color:var(--app-text);font-size:var(--font-size-sm)}
 .startup-behavior{gap:var(--space-7)}
+.editor-row{display:flex;align-items:center;justify-content:space-between;min-height:65px;padding:10px 14px}
+.editor-choice{display:flex;align-items:center;gap:var(--space-3);flex-shrink:0;min-width:0}
+.editor-name{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--font-size-sm)}
+.editor-name.muted{color:var(--app-muted)}
+.editor-button{height:30px;padding:0 12px;border:1px solid var(--app-divider);border-radius:var(--radius-control);background:var(--app-surface);color:var(--app-text);font-size:var(--font-size-sm);cursor:pointer;white-space:nowrap}
+.editor-button.quiet{border-color:transparent;background:transparent;color:var(--app-muted)}
+.editor-button:hover:not(:disabled){background:color-mix(in srgb,var(--app-text) 6%,var(--app-surface))}
+.editor-button:disabled{opacity:.5;cursor:not-allowed}
 .startup-behavior span:first-child{display:flex;flex-direction:column;gap:var(--space-1)}
 .startup-detail{color:var(--app-muted);font-size:var(--font-size-xs);font-weight:var(--font-weight-regular)}
 .backup-panel{padding:20px}

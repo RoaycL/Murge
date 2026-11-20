@@ -38,5 +38,10 @@
   "notify.updateReadyTitle": "新版本 v{0} 已就绪",
   "notify.updateReadyBody": "退出应用时自动安装，或点击“重启并安装”立即更新。",
   "notify.webdavBackupFailedTitle": "WebDAV 自动备份失败",
-  "notify.webdavBackupFailedBody": "{0}。打开「通用」页查看或重试。"
+  "notify.webdavBackupFailedBody": "{0}。打开「通用」页查看或重试。",
+  "editor.pickTitle": "选择配置文件编辑器",
+  "editor.programs": "程序",
+  "editor.missing": "找不到编辑器：{0}",
+  "editor.fileMissing": "找不到配置文件：{0}",
+  "editor.launchFailed": "无法打开配置文件：{0}"
 }

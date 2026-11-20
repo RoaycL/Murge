@@ -529,6 +529,21 @@ pub async fn dispatch(
         // --- profiles (Phase 3A) -------------------------------------------
         "profiles:list" => profiles.list(),
         "profiles:get" => profiles.get(&required_string(payload, 0, "profiles:get id")?),
+        "profiles:open-file" => {
+            // 打开文件: the stored YAML in the user's own editor. Edits made
+            // there are picked up by the 配置 page when the window regains
+            // focus (validated and applied like an in-app save).
+            let id = required_string(payload, 0, "profiles:open-file id")?;
+            profiles.get(&id)?;
+            let path = profiles.repository.doc_path(&id)?;
+            let editor = settings.get().profile_editor;
+            crate::external_editor::open(&path, &editor).map_err(IpcError::invalid_argument)?;
+            Ok(Value::Null)
+        }
+        "profiles:pick-editor" => Ok(crate::external_editor::pick()
+            .await
+            .map(Value::String)
+            .unwrap_or(Value::Null)),
         "profiles:import" => {
             let _gate = runtime_update_guard().await?;
             let request = arg(payload, 0).ok_or_else(|| {

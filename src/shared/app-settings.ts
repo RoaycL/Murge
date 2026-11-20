@@ -9,6 +9,30 @@ import { isLanguageSetting, type LanguageSetting } from './i18n'
 export type UpdateChannel = 'stable' | 'experimental'
 
 /**
+ * Tray menu sections the user can hide (通用 · 托盘菜单), in menu order.
+ * 显示主窗口, the system proxy / TUN switches and 退出 always stay.
+ * Mirrors `TRAY_SECTIONS` in src-tauri/src/settings.rs.
+ */
+export const TRAY_SECTIONS = [
+  'copy-terminal-proxy',
+  'outbound-mode',
+  'groups',
+  'network-quality',
+  'processes',
+  'configuration',
+  'modules',
+  'open-directory',
+  'check-update'
+] as const
+export type TraySection = (typeof TRAY_SECTIONS)[number]
+
+/** Known ids only, deduplicated, in menu order; `null` when not an array. */
+export function parseTraySections(value: unknown): TraySection[] | null {
+  if (!Array.isArray(value)) return null
+  return TRAY_SECTIONS.filter((section) => value.includes(section))
+}
+
+/**
  * User-facing application preferences that live outside a profile and outside
  * the OS network configuration. Persisted by the main process in the stable
  * app-data namespace so they survive restarts and are readable at launch time
@@ -98,6 +122,10 @@ export interface AppSettings {
   lanGateway: boolean
   /** Interface language: follow the system, 简体中文 or English. */
   language: LanguageSetting
+  /** Program that 打开文件 opens a profile's YAML with; empty = the system default app. */
+  profileEditor: string
+  /** Tray menu sections the user switched off. */
+  trayHiddenSections: TraySection[]
 }
 
 export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = Object.freeze({
@@ -121,7 +149,9 @@ export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = Object.freeze({
   subStoreEnabled: true,
   subStoreUseProxy: false,
   lanGateway: false,
-  language: 'system'
+  language: 'system',
+  profileEditor: '',
+  trayHiddenSections: []
 })
 
 function parseDelayTestUrl(value: unknown): string {
@@ -207,7 +237,10 @@ export function parseAppSettings(value: string | null): AppSettings {
         typeof parsed.lanGateway === 'boolean'
           ? parsed.lanGateway
           : DEFAULT_APP_SETTINGS.lanGateway,
-      language: isLanguageSetting(parsed.language) ? parsed.language : DEFAULT_APP_SETTINGS.language
+      language: isLanguageSetting(parsed.language) ? parsed.language : DEFAULT_APP_SETTINGS.language,
+      profileEditor:
+        typeof parsed.profileEditor === 'string' ? parsed.profileEditor.trim() : DEFAULT_APP_SETTINGS.profileEditor,
+      trayHiddenSections: parseTraySections(parsed.trayHiddenSections) ?? []
     }
   } catch {
     return { ...DEFAULT_APP_SETTINGS }

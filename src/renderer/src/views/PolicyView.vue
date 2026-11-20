@@ -167,11 +167,18 @@ async function saveRename(next: { name: string; icon: string }): Promise<void> {
   const group = renaming.value
   if (!group) return
   const from = group.config.name
-  // mihomo remembers a group's manual choice by group name; carry it over to the new name.
+  // mihomo remembers manual choices by group and member name. Carry over both the
+  // renamed group's own choice and every other group's choice of the renamed group.
   // Selector: the chosen member. URLTest/Fallback: only an explicit pin (`fixed`), never the automatic pick.
-  const proxy = policies.proxies?.proxies[from]
-  const pinned = proxy?.type === 'Selector' ? policies.groupSelectedMember(proxy) : proxy && policies.isSelectableGroup(proxy) && typeof proxy.fixed === 'string' ? proxy.fixed : ''
-  const kept = next.name !== from ? pinned : ''
+  const restore: Array<[string, string]> = []
+  if (next.name !== from) {
+    for (const proxy of Object.values(policies.proxies?.proxies ?? {})) {
+      const pinned = proxy.type === 'Selector' ? policies.groupSelectedMember(proxy) : policies.isSelectableGroup(proxy) && typeof proxy.fixed === 'string' ? proxy.fixed : ''
+      if (!pinned) continue
+      if (proxy.name === from) restore.push([next.name, pinned === from ? next.name : pinned])
+      else if (pinned === from) restore.push([proxy.name, next.name])
+    }
+  }
   const message = await localStore.renameGroup(group.id, next.name, next.icon)
   if (message) {
     toast.error(t('common.saveFailed'), message)
@@ -180,7 +187,7 @@ async function saveRename(next: { name: string; icon: string }): Promise<void> {
   renaming.value = null
   toast.success(t('common.saved'))
   if (kernel.status.phase !== 'running') return
-  if (kept) await window.desktop.mihomo.selectProxy(next.name, kept).catch(() => undefined)
+  for (const [groupName, member] of restore) await window.desktop.mihomo.selectProxy(groupName, member).catch(() => undefined)
   await policies.load()
 }
 

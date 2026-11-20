@@ -8,7 +8,7 @@ function settings(): LocalSettings {
       { id: 'g1', enabled: true, config: { name: '游戏', type: 'select', proxies: ['HK', 'DIRECT'], icon: 'https://a/old.png' }, includeGroups: [], providers: [] },
       { id: 'g2', enabled: true, config: { name: '外层', type: 'url-test', proxies: ['游戏', 'HK'] }, includeGroups: ['游戏'], providers: [] }
     ],
-    nodes: [{ id: 'n1', enabled: true, config: { name: 'HK', type: 'ss' }, groups: ['游戏', 'Proxy'], tailnetRules: false }],
+    nodes: [{ id: 'n1', enabled: true, config: { name: 'HK', type: 'ss', 'dialer-proxy': '游戏' }, groups: ['游戏', 'Proxy'], tailnetRules: false }],
     rules: [
       { id: 'r1', enabled: true, rule: 'DOMAIN-SUFFIX,steam.com,游戏' },
       { id: 'r2', enabled: true, rule: 'IP-CIDR,10.0.0.0/8,游戏,no-resolve' },
@@ -33,6 +33,7 @@ describe('renameLocalGroup', () => {
     expect(next.groups[1].config.proxies).toEqual(['主机游戏', 'HK'])
     expect(next.groups[1].includeGroups).toEqual(['主机游戏'])
     expect(next.nodes[0].groups).toEqual(['主机游戏', 'Proxy'])
+    expect(next.nodes[0].config['dialer-proxy']).toBe('主机游戏')
     expect(next.rules.map((rule) => rule.rule)).toEqual([
       'DOMAIN-SUFFIX,steam.com,主机游戏',
       'IP-CIDR,10.0.0.0/8,主机游戏,no-resolve',

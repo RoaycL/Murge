@@ -278,7 +278,7 @@ export function retargetRuleLine(line: string, from: string, to: string): string
 /**
  * Rename a local policy group and/or change its icon. Everything in the local
  * layer that names the group follows the new name: other local groups'
- * members, nodes that join it, local rules and subscription rule edits of
+ * members, nodes that join it or dial through it (`dialer-proxy`), local rules and subscription rule edits of
  * every profile. Returns a new settings object; the input is left untouched.
  */
 export function renameLocalGroup(settings: LocalSettings, id: string, name: string, icon: string): LocalSettings {
@@ -297,7 +297,11 @@ export function renameLocalGroup(settings: LocalSettings, id: string, name: stri
     if (Array.isArray(other.config.proxies)) other.config.proxies = (other.config.proxies as unknown[]).map((member) => (typeof member === 'string' ? swap(member) : member))
     other.includeGroups = (other.includeGroups ?? []).map(swap)
   }
-  for (const node of next.nodes) node.groups = node.groups.map(swap)
+  for (const node of next.nodes) {
+    node.groups = node.groups.map(swap)
+    // A node may dial through a policy group (底层代理).
+    if (node.config['dialer-proxy'] === from) node.config['dialer-proxy'] = to
+  }
   for (const rule of next.rules) rule.rule = retargetRuleLine(rule.rule, from, to)
   for (const edits of Object.values(next.profileEdits)) {
     for (const edit of edits) {

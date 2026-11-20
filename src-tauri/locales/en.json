@@ -38,5 +38,10 @@
   "notify.updateReadyTitle": "Version v{0} is ready",
   "notify.updateReadyBody": "It installs when you quit the app, or click \"Restart and install\" to update now.",
   "notify.webdavBackupFailedTitle": "WebDAV auto backup failed",
-  "notify.webdavBackupFailedBody": "{0}. Open General to review or retry."
+  "notify.webdavBackupFailedBody": "{0}. Open General to review or retry.",
+  "editor.pickTitle": "Choose a profile editor",
+  "editor.programs": "Programs",
+  "editor.missing": "Editor not found: {0}",
+  "editor.fileMissing": "Profile file not found: {0}",
+  "editor.launchFailed": "Unable to open the profile file: {0}"
 }

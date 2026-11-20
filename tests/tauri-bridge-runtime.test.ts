@@ -68,7 +68,7 @@ describe('Tauri bridge runtime behavior', () => {
         count++
       }
     }
-    expect(count).toBe(157)
+    expect(count).toBe(160)
   })
 
   it('generates the identical bridge from Windows CRLF source files', async () => {

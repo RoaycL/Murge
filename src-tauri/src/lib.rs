@@ -20,6 +20,7 @@ mod diagnostics;
 mod enhancements;
 mod error;
 mod events;
+mod external_editor;
 mod file_log;
 mod i18n;
 mod inspection;

@@ -50,6 +50,38 @@ pub struct AppSettings {
     pub lan_gateway: bool,
     /// Interface language: "system" (follow Windows), "zh-CN" or "en".
     pub language: String,
+    /// The program that 打开文件 opens a profile's YAML with; empty = the
+    /// system default app for the file.
+    pub profile_editor: String,
+    /// Tray menu sections the user switched off (ids of [`TRAY_SECTIONS`]).
+    pub tray_hidden_sections: Vec<String>,
+}
+
+/// Tray menu sections the user can hide, in menu order. 显示主窗口, the
+/// system proxy / TUN switches and 退出 always stay.
+pub const TRAY_SECTIONS: [&str; 9] = [
+    "copy-terminal-proxy",
+    "outbound-mode",
+    "groups",
+    "network-quality",
+    "processes",
+    "configuration",
+    "modules",
+    "open-directory",
+    "check-update",
+];
+
+/// Known section ids only, deduplicated, in menu order. `None` when the value
+/// is not an array (the field keeps its current/default value).
+fn parse_tray_sections(value: Option<&serde_json::Value>) -> Option<Vec<String>> {
+    let items = value?.as_array()?;
+    Some(
+        TRAY_SECTIONS
+            .iter()
+            .filter(|section| items.iter().any(|item| item.as_str() == Some(section)))
+            .map(|section| section.to_string())
+            .collect(),
+    )
 }
 
 impl Default for AppSettings {
@@ -74,6 +106,8 @@ impl Default for AppSettings {
             sub_store_use_proxy: false,
             lan_gateway: false,
             language: "system".into(),
+            profile_editor: String::new(),
+            tray_hidden_sections: Vec::new(),
         }
     }
 }
@@ -159,6 +193,11 @@ pub fn parse_app_settings(document: &serde_json::Value) -> AppSettings {
         lan_gateway: boolean("lanGateway", defaults.lan_gateway),
         language: is_valid_language(object.get("language"))
             .unwrap_or_else(|| defaults.language.clone()),
+        profile_editor: string("profileEditor", &defaults.profile_editor)
+            .trim()
+            .to_string(),
+        tray_hidden_sections: parse_tray_sections(object.get("trayHiddenSections"))
+            .unwrap_or_default(),
     }
 }
 
@@ -307,6 +346,11 @@ impl SettingsStore {
             sub_store_use_proxy: boolean("subStoreUseProxy", current.sub_store_use_proxy),
             lan_gateway: boolean("lanGateway", current.lan_gateway),
             language: is_valid_language(patch.get("language")).unwrap_or(current.language),
+            profile_editor: string("profileEditor", &current.profile_editor)
+                .trim()
+                .to_string(),
+            tray_hidden_sections: parse_tray_sections(patch.get("trayHiddenSections"))
+                .unwrap_or(current.tray_hidden_sections),
         };
         self.write_to_disk(&next);
         state.cached = Some(next.clone());
@@ -465,6 +509,35 @@ mod tests {
         let ok =
             parse_app_settings(&serde_json::json!({ "delayTestUrl": "https://example.com/speed" }));
         assert_eq!(ok.delay_test_url, "https://example.com/speed");
+    }
+
+    #[test]
+    fn profile_editor_and_tray_sections_round_trip() {
+        let temp = TempDir::new().unwrap();
+        let store = store_in(&temp);
+        assert_eq!(store.get().profile_editor, "");
+        assert!(store.get().tray_hidden_sections.is_empty());
+        let next = store.set(&AppSettingsPatch(serde_json::json!({
+            "profileEditor": "  C:\\Tools\\Code.exe ",
+            "trayHiddenSections": ["modules", "bogus", "groups", "groups"]
+        })));
+        assert_eq!(next.profile_editor, "C:\\Tools\\Code.exe");
+        // Unknown ids dropped, duplicates merged, menu order kept.
+        assert_eq!(next.tray_hidden_sections, vec!["groups", "modules"]);
+        let kept = store.set(&AppSettingsPatch(
+            serde_json::json!({ "trayHiddenSections": "groups" }),
+        ));
+        assert_eq!(kept.tray_hidden_sections, vec!["groups", "modules"]);
+        let raw = fs::read_to_string(temp.path().join(APP_SETTINGS_FILE)).unwrap();
+        let document: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let parsed = parse_app_settings(&document);
+        assert_eq!(parsed.tray_hidden_sections, vec!["groups", "modules"]);
+        assert_eq!(parsed.profile_editor, "C:\\Tools\\Code.exe");
+        let cleared = store.set(&AppSettingsPatch(
+            serde_json::json!({ "profileEditor": "", "trayHiddenSections": [] }),
+        ));
+        assert_eq!(cleared.profile_editor, "");
+        assert!(cleared.tray_hidden_sections.is_empty());
     }
 
     #[test]

@@ -99,6 +99,7 @@ export const api: DesktopApi = {
     get: (id) => invoke(IPC.profilesGet, id),
     openFile: (id) => invoke(IPC.profilesOpenFile, id),
     pickEditor: () => invoke(IPC.profilesPickEditor),
+    readExternal: (id) => invoke(IPC.profilesReadExternal, id),
     import: (request) => invoke(IPC.profilesImport, request),
     importFromUrl: (name, url, activate) => invoke(IPC.profilesImportFromUrl, name, url, activate),
     updateFromSource: (id) => invoke(IPC.profilesUpdateFromSource, id),

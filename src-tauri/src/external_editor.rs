@@ -1,10 +1,71 @@
 //! 打开文件: hand a profile's YAML to the user's own editor — the program
 //! chosen in 通用 · 配置文件编辑器, or the system default app for the file.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::i18n::{t, tf};
+
+/// Where working copies live: `<appData>/profile-edits/<id>/<name>.yaml`
+/// (the system temp folder in dev, which keeps no app data).
+pub(crate) fn staging_root(app_data_root: Option<&Path>) -> PathBuf {
+    app_data_root
+        .map(Path::to_path_buf)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("profile-edits")
+}
+
+/// A file name the editor can show: the profile name without characters
+/// Windows refuses, never empty.
+fn file_stem(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| match c {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect();
+    let trimmed = cleaned.trim().trim_end_matches('.').trim();
+    if trimmed.is_empty() {
+        "profile".to_string()
+    } else {
+        trimmed.chars().take(80).collect()
+    }
+}
+
+/// Write a fresh working copy of `document` for profile `id` (replacing any
+/// earlier one) and return its path.
+pub(crate) fn stage(root: &Path, id: &str, name: &str, document: &str) -> Result<PathBuf, String> {
+    let dir = root.join(id);
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).map_err(|error| error.to_string())?;
+    }
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let path = dir.join(format!("{}.yaml", file_stem(name)));
+    std::fs::write(&path, document).map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
+/// The working copy of profile `id` as the editor last saved it; `None`
+/// when there is none (never opened, or removed).
+pub(crate) fn read_staged(root: &Path, id: &str) -> Result<Option<String>, String> {
+    let dir = root.join(id);
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) == Some("yaml") {
+            return std::fs::read_to_string(&path)
+                .map(Some)
+                .map_err(|error| error.to_string());
+        }
+    }
+    Ok(None)
+}
 
 /// Windows script launchers would flash a console window; programs (and
 /// every other platform) start as they are.
@@ -96,6 +157,29 @@ mod tests {
             "xdg-open"
         };
         assert_eq!(command.get_program(), expected);
+    }
+
+    #[test]
+    fn working_copy_round_trips_and_restaging_replaces_it() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = staging_root(Some(temp.path()));
+        assert_eq!(read_staged(&root, "p1").unwrap(), None);
+        let path = stage(&root, "p1", "机场: 订阅?", "proxies: []\n").unwrap();
+        assert_eq!(path.file_name().unwrap(), "机场_ 订阅_.yaml");
+        std::fs::write(&path, "proxies: [a]\n").unwrap();
+        assert_eq!(
+            read_staged(&root, "p1").unwrap().as_deref(),
+            Some("proxies: [a]\n")
+        );
+        // Re-opening (e.g. after a rename) starts from the stored document.
+        let renamed = stage(&root, "p1", "Home", "rules: []\n").unwrap();
+        assert_eq!(renamed.file_name().unwrap(), "Home.yaml");
+        assert!(!path.exists());
+        assert_eq!(
+            read_staged(&root, "p1").unwrap().as_deref(),
+            Some("rules: []\n")
+        );
+        assert_eq!(file_stem(" .. "), "profile");
     }
 
     #[test]

@@ -120,6 +120,7 @@ export const IPC = {
   profilesGet: 'profiles:get',
   profilesOpenFile: 'profiles:open-file',
   profilesPickEditor: 'profiles:pick-editor',
+  profilesReadExternal: 'profiles:read-external',
   profilesImport: 'profiles:import',
   profilesImportFromUrl: 'profiles:import-from-url',
   profilesUpdateFromSource: 'profiles:update-from-source',
@@ -328,8 +329,10 @@ export interface DesktopApi {
     inspectActiveConfig(): Promise<ActiveProfileConfigInspection>
     list(): Promise<ProfileMeta[]>
     get(id: string): Promise<Profile>
-    /** 打开文件: open the stored YAML in the chosen editor (or the system default app). */
+    /** 打开文件: open a working copy of the YAML in the chosen editor (or the system default app). */
     openFile(id: string): Promise<void>
+    /** The working copy as the editor last saved it; `null` when there is none. */
+    readExternal(id: string): Promise<string | null>
     /** Native picker for the editor program; `null` when cancelled. */
     pickEditor(): Promise<string | null>
     import(request: ImportRequest): Promise<ProfileMeta>

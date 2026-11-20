@@ -4,36 +4,42 @@ import { useProfilesStore } from '../stores/profiles'
 import { useToast } from './use-toast'
 
 /**
- * 打开文件: a profile opened in the user's own editor. The document as it was
- * when opened (or last applied) is remembered; when the window regains focus
- * a changed file is validated and applied exactly like an in-app save, so
- * the running profile reloads. Lives outside any view: leaving the 配置 page
- * keeps the watch.
+ * 打开文件: the editor works on a copy of the profile's YAML, never the stored
+ * document. When the window regains focus, a changed copy is validated and
+ * applied exactly like an in-app save (the running profile reloads); a
+ * broken save is reported and the stored document stays as it was. Lives
+ * outside any view: leaving the 配置 page keeps the watch.
  */
 const snapshots = new Map<string, string>()
 let listening = false
 let syncing = false
+let pending = false
 
 async function syncExternalEdits(): Promise<void> {
-  if (syncing || snapshots.size === 0) return
+  if (syncing) { pending = true; return }
+  if (snapshots.size === 0) return
   syncing = true
   const store = useProfilesStore()
   const toast = useToast()
   try {
     for (const [id, snapshot] of [...snapshots]) {
-      let profile
+      let document: string | null
       try {
-        profile = await window.desktop.profiles.get(id)
+        document = await window.desktop.profiles.readExternal(id)
       } catch {
-        snapshots.delete(id) // deleted meanwhile
+        continue // unreadable right now (editor mid-save): try on the next focus
+      }
+      if (document === null || !store.profiles.some((meta) => meta.id === id)) {
+        snapshots.delete(id) // copy or profile gone
         continue
       }
-      const document = profile.document
       if (document === snapshot) continue
       // Remember this version either way: an invalid save is reported once,
-      // the next save is checked again.
+      // the next save is checked again. The copy itself is never written,
+      // so a newer editor save is never overwritten.
       snapshots.set(id, document)
-      const name = profile.meta.name
+      const name = store.profiles.find((meta) => meta.id === id)?.name ?? id
+      const active = store.profiles.find((meta) => meta.id === id)?.active === true
       const result = await store.validate(document)
       if (!result.ok) {
         toast.error(t('profiles.externalInvalid', [name]), result.issues.map((issue) => issue.message).join(t('common.semicolon')))
@@ -41,7 +47,7 @@ async function syncExternalEdits(): Promise<void> {
       }
       try {
         await store.replaceDocument(id, document)
-        toast.success(t('profiles.externalApplied', [name]), profile.meta.active ? t('profiles.reloaded') : undefined)
+        toast.success(t('profiles.externalApplied', [name]), active ? t('profiles.reloaded') : undefined)
       } catch (error) {
         toast.error(t('profiles.externalFailed', [name]), toProtocolError(error).message)
       }
@@ -49,15 +55,17 @@ async function syncExternalEdits(): Promise<void> {
   } finally {
     syncing = false
   }
+  // A focus that arrived mid-sync may carry a newer save.
+  if (pending) { pending = false; await syncExternalEdits() }
 }
 
-/** Open the profile's YAML in the chosen editor and watch it for saves. */
+/** Open a working copy of the profile's YAML in the chosen editor and watch it for saves. */
 export async function openProfileFile(id: string): Promise<void> {
   const toast = useToast()
   try {
-    const profile = await window.desktop.profiles.get(id)
     await window.desktop.profiles.openFile(id)
-    snapshots.set(id, profile.document)
+    const staged = await window.desktop.profiles.readExternal(id)
+    if (staged !== null) snapshots.set(id, staged)
     if (!listening) {
       listening = true
       window.addEventListener('focus', () => { void syncExternalEdits() })
@@ -72,6 +80,7 @@ export async function openProfileFile(id: string): Promise<void> {
 export function resetExternalProfileEdits(): void {
   snapshots.clear()
   syncing = false
+  pending = false
 }
 
 export { syncExternalEdits }

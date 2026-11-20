@@ -133,6 +133,7 @@ export function createDesktopApi(): DesktopApi {
       get: (id) => bridgeInvoke("profiles:get", [id]),
       openFile: (id) => bridgeInvoke("profiles:open-file", [id]),
       pickEditor: () => bridgeInvoke("profiles:pick-editor", []),
+      readExternal: (id) => bridgeInvoke("profiles:read-external", [id]),
       import: (request) => bridgeInvoke("profiles:import", [request]),
       importFromUrl: (name, url, activate) => bridgeInvoke("profiles:import-from-url", [name, url, activate]),
       updateFromSource: (id) => bridgeInvoke("profiles:update-from-source", [id]),

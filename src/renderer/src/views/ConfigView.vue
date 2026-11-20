@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { t } from '@shared/i18n'
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { useProfilesStore } from '../stores/profiles'
 import type { ValidationResult } from '@shared/profiles'
 import AppIcon from '../components/AppIcon.vue'
@@ -49,6 +49,7 @@ function isSubscription(id: string | null | undefined): boolean {
 const editingIsSubscription = computed(() => isSubscription(editingId.value))
 
 const menuAnchor = ref<{ id: string; top: number; left: number } | null>(null)
+const menuElement = ref<HTMLElement | null>(null)
 
 const SOURCE_BADGE: Record<string, string> = {
   url: t('profiles.sourceRemote'),
@@ -97,8 +98,22 @@ function toggleMenu(id: string, event: MouseEvent): void {
   }
   const button = event.currentTarget as HTMLElement
   const rect = button.getBoundingClientRect()
-  const top = Math.min(rect.bottom + 4, window.innerHeight - 168)
-  menuAnchor.value = { id, top, left: rect.left }
+  menuAnchor.value = { id, top: rect.bottom + 4, left: rect.left }
+  // 卡片靠窗口右边（或底部）时，菜单按实际大小收回窗口内：右边放不下就与按钮右缘对齐，
+  // 下面放不下就翻到按钮上方。
+  void nextTick(() => {
+    const menu = menuElement.value
+    if (!menu || menuAnchor.value?.id !== id) return
+    const margin = 8
+    const { width, height } = menu.getBoundingClientRect()
+    let left = rect.left
+    if (left + width > window.innerWidth - margin) left = rect.right - width
+    left = Math.max(margin, Math.min(left, window.innerWidth - width - margin))
+    let top = rect.bottom + 4
+    if (top + height > window.innerHeight - margin) top = rect.top - 4 - height
+    top = Math.max(margin, Math.min(top, window.innerHeight - height - margin))
+    menuAnchor.value = { id, top, left }
+  })
 }
 
 function closeMenu(): void {
@@ -394,7 +409,7 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
 
     <!-- 全屏遮罩关闭卡片菜单 -->
     <div v-if="menuAnchor" class="menu-backdrop" @click="closeMenu" />
-    <div v-if="menuAnchor" class="card-menu" role="menu" :style="{ top: `${menuAnchor.top}px`, left: `${menuAnchor.left}px` }" @click.stop>
+    <div v-if="menuAnchor" ref="menuElement" class="card-menu" role="menu" :style="{ top: `${menuAnchor.top}px`, left: `${menuAnchor.left}px` }" @click.stop>
       <template v-for="meta in profilesStore.ordered" :key="meta.id">
         <template v-if="meta.id === menuAnchor.id">
           <button v-if="!meta.active" type="button" role="menuitem" @click="activate(meta.id); closeMenu()">{{ t('profiles.use') }}</button>
@@ -686,6 +701,7 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
   text-align: left;
   color: var(--app-text);
   font-size: var(--font-size-md);
+  white-space: nowrap;
 }
 .card-menu button:hover {
   background: var(--app-fill);

@@ -25,7 +25,9 @@ let highlightTimer: ReturnType<typeof setTimeout> | undefined
 function renderHighlight(text: string): void {
   if (lineCache.size > 20000) lineCache.clear()
   const out: string[] = []
-  for (const line of text.split('\n')) {
+  // The textarea shows CRLF / CR as LF; a stray \r left in the overlay would
+  // become an extra line once parsed as HTML and push the colours out of line.
+  for (const line of text.replace(/\r\n?/g, '\n').split('\n')) {
     let html = lineCache.get(line)
     if (html === undefined) { html = highlightYamlLine(line); lineCache.set(line, html) }
     out.push(html)
@@ -45,7 +47,7 @@ watch(() => props.modelValue, (text, previous) => {
 
 onBeforeUnmount(() => { clearTimeout(analyzeTimer); clearTimeout(highlightTimer) })
 
-const lineCount = computed(() => props.modelValue.split('\n').length)
+const lineCount = computed(() => props.modelValue.replace(/\r\n?/g, '\n').split('\n').length)
 const errors = computed(() => analysis.value.problems.filter((p) => p.severity === 'error'))
 const errorLines = computed(() => new Set(errors.value.filter((p) => p.line > 0).map((p) => p.line)))
 const gutter = computed(() => {

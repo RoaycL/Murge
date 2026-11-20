@@ -73,3 +73,15 @@ describe('subscription profiles', () => {
     }
   })
 })
+
+describe('missing working copy', () => {
+  it('keeps watching while an editor briefly removes the copy during a save', async () => {
+    await openProfileFile('p1')
+    const profiles = (window as unknown as { desktop: { profiles: { readExternal: ReturnType<typeof vi.fn> } } }).desktop.profiles
+    profiles.readExternal.mockResolvedValueOnce(null)
+    await syncExternalEdits()
+    copy = 'a: 2\n'
+    await syncExternalEdits()
+    expect(store.replaceDocument).toHaveBeenCalledWith('p1', 'a: 2\n')
+  })
+})

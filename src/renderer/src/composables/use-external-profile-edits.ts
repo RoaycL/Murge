@@ -36,11 +36,14 @@ async function syncExternalEdits(): Promise<void> {
       } catch {
         continue // unreadable right now (editor mid-save): try on the next focus
       }
-      if (document === null || !store.profiles.some((meta) => meta.id === id)) {
-        snapshots.delete(id) // copy or profile gone
+      if (!store.profiles.some((meta) => meta.id === id)) {
+        snapshots.delete(id) // profile gone
         baselines.delete(id)
         continue
       }
+      // No copy right now: an editor's safe save may be between removing the
+      // old file and writing the new one. Keep watching; reopening re-stages.
+      if (document === null) continue
       if (document === snapshot) continue
       // Remember this version either way: an invalid save is reported once,
       // the next save is checked again. The copy itself is never written,

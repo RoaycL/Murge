@@ -38,7 +38,7 @@ export function analyzeYaml(source: string): YamlAnalysis {
   const problems: YamlProblem[] = []
   let doc
   try {
-    doc = parseDocument(source, { lineCounter, prettyErrors: false, uniqueKeys: false })
+    doc = parseDocument(source, { lineCounter, prettyErrors: false, uniqueKeys: true })
   } catch (error) {
     return { lines, sections, problems: [{ line: 0, col: 0, message: error instanceof Error ? error.message : String(error), severity: 'error' }] }
   }

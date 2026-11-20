@@ -45,6 +45,11 @@ describe('analyzeYaml', () => {
     expect(errors[0].message).not.toContain('\n')
   })
 
+  it('flags duplicate keys, which save-time validation rejects', () => {
+    const errors = analyzeYaml('port: 7890\nport: 7891\n').problems.filter((p) => p.severity === 'error')
+    expect(errors.map((p) => p.line)).toEqual([2])
+  })
+
   it('handles empty and non-map documents', () => {
     expect(analyzeYaml('')).toMatchObject({ lines: 1, sections: [], problems: [] })
     expect(analyzeYaml('- a\n- b\n').sections).toEqual([])

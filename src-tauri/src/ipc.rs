@@ -795,6 +795,17 @@ pub async fn dispatch(
                     return Err(error);
                 }
             }
+            // A save that came from 打开文件's working copy is now that copy's
+            // base, so a later broken save there is kept for fixing on reopen.
+            if let Some(stored) = profiles.get(&id)?["document"].as_str() {
+                let root = crate::external_editor::staging_root(_paths.app_data_root.as_deref());
+                let submitted = string_arg(payload, 1).unwrap_or_default();
+                if let Err(error) =
+                    crate::external_editor::note_applied(&root, &id, &submitted, stored)
+                {
+                    crate::diag!("[profiles] working copy base for {id} not updated: {error}");
+                }
+            }
             Ok(meta)
         }
         "profiles:get-source-url" => {

@@ -121,6 +121,30 @@ pub(crate) fn stage(
     Ok((path, false))
 }
 
+/// Record that the working copy of profile `id` was applied: when the copy
+/// still holds the `submitted` text, the stored document it became
+/// (`stored`) is its new base. Without this, a later broken save in the
+/// same copy looked like edits on an outdated base, and reopening the file
+/// moved it to `backup/` instead of letting the user fix it in place.
+/// A profile with no working copy, or one saved again since, is left alone.
+pub(crate) fn note_applied(
+    root: &Path,
+    id: &str,
+    submitted: &str,
+    stored: &str,
+) -> Result<(), String> {
+    let dir = root.join(id);
+    let Some(copy) = staged_copy(&dir) else {
+        return Ok(());
+    };
+    match std::fs::read_to_string(&copy) {
+        Ok(text) if text == submitted => {
+            write_private(&dir.join(BASE_FILE), stored).map_err(|error| error.to_string())
+        }
+        _ => Ok(()),
+    }
+}
+
 /// The working copy of profile `id` as the editor last saved it; `None`
 /// when there is none (never opened, or removed).
 pub(crate) fn read_staged(root: &Path, id: &str) -> Result<Option<String>, String> {
@@ -267,6 +291,35 @@ mod tests {
             Some("rules: [y]\n")
         );
         assert_eq!(file_stem(" .. "), "profile");
+    }
+
+    #[test]
+    fn an_applied_edit_becomes_the_base_so_a_later_broken_save_is_kept() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = staging_root(Some(temp.path()));
+        let (path, _) = stage(&root, "p1", "Home", "rules: []\n").unwrap();
+        // A valid save is applied: the stored document is now that text.
+        std::fs::write(&path, "rules: [a]\n").unwrap();
+        note_applied(&root, "p1", "rules: [a]\n", "rules: [a]\n").unwrap();
+        // Then a broken save that cannot be applied; reopening keeps it in
+        // the editor instead of moving it to backup/.
+        std::fs::write(&path, "rules: [broken\n").unwrap();
+        let (_, kept) = stage(&root, "p1", "Home", "rules: [a]\n").unwrap();
+        assert!(kept);
+        assert_eq!(
+            read_staged(&root, "p1").unwrap().as_deref(),
+            Some("rules: [broken\n")
+        );
+        assert!(!root.join("p1").join("backup").exists());
+        // An in-app save that did not come from the copy leaves the base alone.
+        note_applied(&root, "p1", "rules: [other]\n", "rules: [other]\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.join("p1").join(BASE_FILE)).unwrap(),
+            "rules: [a]\n"
+        );
+        // No working copy at all: nothing to do.
+        note_applied(&root, "p2", "x", "x").unwrap();
+        assert!(!root.join("p2").exists());
     }
 
     #[cfg(unix)]

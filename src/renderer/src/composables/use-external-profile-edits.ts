@@ -11,6 +11,13 @@ import { useToast } from './use-toast'
  * outside any view: leaving the 配置 page keeps the watch.
  */
 const snapshots = new Map<string, string>()
+/**
+ * The stored document each working copy is based on. When the profile
+ * changes elsewhere (subscription update, in-app edit) after the copy was
+ * opened, an external save would silently undo that change, so it is not
+ * applied; reopening the file stages a fresh copy (the old one goes to backup/).
+ */
+const baselines = new Map<string, string>()
 let listening = false
 let syncing = false
 let pending = false
@@ -31,6 +38,7 @@ async function syncExternalEdits(): Promise<void> {
       }
       if (document === null || !store.profiles.some((meta) => meta.id === id)) {
         snapshots.delete(id) // copy or profile gone
+        baselines.delete(id)
         continue
       }
       if (document === snapshot) continue
@@ -45,8 +53,17 @@ async function syncExternalEdits(): Promise<void> {
         toast.error(t('profiles.externalInvalid', [name]), result.issues.map((issue) => issue.message).join(t('common.semicolon')))
         continue
       }
+      const baseline = baselines.get(id)
+      if (baseline !== undefined) {
+        const current = (await window.desktop.profiles.get(id)).document
+        if (current !== baseline) {
+          toast.error(t('profiles.externalConflict', [name]), t('profiles.externalConflictDetail'))
+          continue
+        }
+      }
       try {
         await store.replaceDocument(id, document)
+        baselines.set(id, (await window.desktop.profiles.get(id)).document)
         toast.success(t('profiles.externalApplied', [name]), active ? t('profiles.reloaded') : undefined)
       } catch (error) {
         // A valid edit that could not be applied (e.g. the kernel failed to
@@ -69,9 +86,11 @@ export async function openProfileFile(id: string): Promise<void> {
     const { keptUnapplied } = await window.desktop.profiles.openFile(id)
     const staged = await window.desktop.profiles.readExternal(id)
     if (staged !== null) {
+      const stored = (await window.desktop.profiles.get(id)).document
+      baselines.set(id, stored)
       // A kept copy holds edits not applied yet: the next focus checks them
       // again (the stored document is the baseline, not the copy).
-      if (keptUnapplied) snapshots.set(id, (await window.desktop.profiles.get(id)).document)
+      if (keptUnapplied) snapshots.set(id, stored)
       else snapshots.set(id, staged)
     }
     if (!listening) {
@@ -87,6 +106,7 @@ export async function openProfileFile(id: string): Promise<void> {
 /** Test seam: forget every watched profile. */
 export function resetExternalProfileEdits(): void {
   snapshots.clear()
+  baselines.clear()
   syncing = false
   pending = false
 }

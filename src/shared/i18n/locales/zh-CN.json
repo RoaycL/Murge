@@ -1186,6 +1186,8 @@
   "profiles.emptyDetail": "添加远程订阅、本地 YAML，或手动创建一份 mihomo 配置。",
   "profiles.emptyTitle": "还没有配置文件",
   "profiles.externalApplied": "已应用「{0}」的外部修改",
+  "profiles.externalConflict": "「{0}」已在别处更新，外部修改未应用",
+  "profiles.externalConflictDetail": "为避免覆盖较新的内容，请重新「打开文件」后再编辑。",
   "profiles.externalFailed": "「{0}」的外部修改未能应用",
   "profiles.externalInvalid": "「{0}」的外部修改未通过校验",
   "profiles.importing": "导入中…",

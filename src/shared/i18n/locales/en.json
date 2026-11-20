@@ -1186,6 +1186,8 @@
   "profiles.emptyDetail": "Add a remote subscription or a local YAML file, or create a mihomo config by hand.",
   "profiles.emptyTitle": "No profiles yet",
   "profiles.externalApplied": "Applied outside changes to \"{0}\"",
+  "profiles.externalConflict": "\"{0}\" changed elsewhere; outside changes not applied",
+  "profiles.externalConflictDetail": "To avoid overwriting newer content, use \"Open file\" again and redo your edits.",
   "profiles.externalFailed": "Couldn't apply outside changes to \"{0}\"",
   "profiles.externalInvalid": "Outside changes to \"{0}\" failed validation",
   "profiles.importing": "Importing…",

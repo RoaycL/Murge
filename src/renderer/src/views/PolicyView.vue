@@ -167,9 +167,11 @@ async function saveRename(next: { name: string; icon: string }): Promise<void> {
   const group = renaming.value
   if (!group) return
   const from = group.config.name
-  // mihomo remembers a selector's choice by group name; carry it over to the new name.
+  // mihomo remembers a group's manual choice by group name; carry it over to the new name.
+  // Selector: the chosen member. URLTest/Fallback: only an explicit pin (`fixed`), never the automatic pick.
   const proxy = policies.proxies?.proxies[from]
-  const kept = next.name !== from && proxy?.type === 'Selector' ? policies.groupSelectedMember(proxy) : ''
+  const pinned = proxy?.type === 'Selector' ? policies.groupSelectedMember(proxy) : proxy && policies.isSelectableGroup(proxy) && typeof proxy.fixed === 'string' ? proxy.fixed : ''
+  const kept = next.name !== from ? pinned : ''
   const message = await localStore.renameGroup(group.id, next.name, next.icon)
   if (message) {
     toast.error(t('common.saveFailed'), message)

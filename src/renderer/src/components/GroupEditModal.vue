@@ -48,6 +48,11 @@ function submit(): void {
     error.value = t('groupWizard.nameRequired')
     return
   }
+  // Rule lines are comma-separated: a comma in the name would split the retargeted rules.
+  if (nextName.includes(',')) {
+    error.value = t('groupWizard.nameComma')
+    return
+  }
   if (nextName !== props.name && props.takenNames.includes(nextName)) {
     error.value = t('groupWizard.nameTaken', [nextName])
     return

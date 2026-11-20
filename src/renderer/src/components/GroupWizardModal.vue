@@ -176,6 +176,10 @@ function submit(): void {
     error.value = t('groupWizard.nameRequired')
     return
   }
+  if (groupName.includes(',')) {
+    error.value = t('groupWizard.nameComma')
+    return
+  }
   if (props.takenNames.includes(groupName)) {
     error.value = t('groupWizard.nameTaken', [groupName])
     return

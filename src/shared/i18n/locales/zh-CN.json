@@ -585,6 +585,7 @@
   "groupWizard.loadBalanceDesc": "把连接分散到多个子策略，并测试子策略的可用性。",
   "groupWizard.loadBalanceTitle": "负载均衡策略组",
   "groupWizard.mustBeNonNegative": "{0}必须是非负整数",
+  "groupWizard.nameComma": "名称不能包含英文逗号（规则用逗号分隔）",
   "groupWizard.nameRequired": "请填写名称",
   "groupWizard.nameTaken": "「{0}」已被节点或策略组使用",
   "groupWizard.needMember": "至少选择一个策略，或勾选右侧的包含方式",

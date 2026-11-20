@@ -585,6 +585,7 @@
   "groupWizard.loadBalanceDesc": "Spreads connections across several sub-policies and tests their availability.",
   "groupWizard.loadBalanceTitle": "Load-balance group",
   "groupWizard.mustBeNonNegative": "{0} must be a non-negative integer",
+  "groupWizard.nameComma": "The name cannot contain a comma (rules are comma-separated)",
   "groupWizard.nameRequired": "Enter a name",
   "groupWizard.nameTaken": "\"{0}\" is already used by a node or policy group",
   "groupWizard.needMember": "Select at least one policy, or tick an include option on the right",

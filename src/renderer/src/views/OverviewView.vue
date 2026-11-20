@@ -216,7 +216,7 @@ function openSettings(key: SettingKey): void {
           </div>
           <div class="setting-body">
             <span class="setting-status" :title="sp.phase === 'conflict' ? sp.conflictDetail ?? undefined : undefined"><i :class="{ active: spEnabled }" />{{ spPhaseLabel }}</span>
-            <button type="button" class="setting-nav" :aria-label="t('overview.openSystemProxy')" @click="openSettings('system-proxy')"><AppIcon name="more-horizontal" :size="16" /></button>
+            <button type="button" class="setting-nav" :aria-label="t('overview.openSystemProxy')" @click="openSettings('system-proxy')"><AppIcon name="next" :size="14" /></button>
           </div>
           <p v-if="actionError" class="inline-error" role="alert">{{ actionError }}</p>
           <p v-else-if="spEnabled && sp.errorMessage" class="inline-error">{{ sp.errorMessage }}</p>
@@ -231,7 +231,7 @@ function openSettings(key: SettingKey): void {
           </div>
           <div class="setting-body">
             <span class="setting-status"><i :class="{ active: tunActive }" />{{ tunPhaseLabel }}</span>
-            <button type="button" class="setting-nav" :aria-label="t('overview.openTun')" @click="openSettings('tun')"><AppIcon name="more-horizontal" :size="16" /></button>
+            <button type="button" class="setting-nav" :aria-label="t('overview.openTun')" @click="openSettings('tun')"><AppIcon name="next" :size="14" /></button>
           </div>
           <p v-if="tun.actionError" class="inline-error" role="alert">{{ tun.actionError }}</p>
         </SurfaceCard>
@@ -283,7 +283,7 @@ function openSettings(key: SettingKey): void {
           </div>
           <div class="setting-body">
             <span class="setting-status"><i :class="{ active: snifferEnabled }" />{{ snifferBusy ? t('overview.applying') : snifferEnabled ? t('common.enabled') : t('common.notEnabled') }}</span>
-            <button type="button" class="setting-nav" :aria-label="t('overview.openSniffer')" @click="openSettings('sniffer')"><AppIcon name="more-horizontal" :size="16" /></button>
+            <button type="button" class="setting-nav" :aria-label="t('overview.openSniffer')" @click="openSettings('sniffer')"><AppIcon name="next" :size="14" /></button>
           </div>
           <p v-if="sniffer.lastError" class="inline-error" role="alert">{{ sniffer.lastError }}</p>
         </SurfaceCard>
@@ -297,7 +297,7 @@ function openSettings(key: SettingKey): void {
           </div>
           <div class="setting-body">
             <span class="setting-status"><i :class="{ active: dnsEnabled }" />{{ dnsBusy ? t('overview.applying') : dnsEnabled ? t('common.enabled') : t('common.notEnabled') }}</span>
-            <button type="button" class="setting-nav" :aria-label="t('overview.openDns')" @click="openSettings('dns')"><AppIcon name="more-horizontal" :size="16" /></button>
+            <button type="button" class="setting-nav" :aria-label="t('overview.openDns')" @click="openSettings('dns')"><AppIcon name="next" :size="14" /></button>
           </div>
           <p v-if="dns.lastError" class="inline-error" role="alert">{{ dns.lastError }}</p>
         </SurfaceCard>

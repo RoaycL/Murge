@@ -11,6 +11,7 @@ import EmptyState from '../components/EmptyState.vue'
 import AppIcon from '../components/AppIcon.vue'
 import { downloadDiagnosticReport, exportStamp, saveTextFile } from '../lib/diagnostic-export'
 import { useToast } from '../composables/use-toast'
+import SubpageBack from '../components/SubpageBack.vue'
 
 type LogSource = 'core' | 'app'
 /** The 应用 tail is re-read from disk on this cadence while it is shown. */
@@ -129,6 +130,7 @@ onBeforeUnmount(stopPolling)
 
 <template>
   <div class="page-shell logs-view">
+    <SubpageBack />
     <header class="logs-header">
       <div><h1>{{ t('logs.title') }}</h1><p>{{ t('logs.summary', [statusLabel, shownCount]) }}</p></div>
       <div class="logs-actions">

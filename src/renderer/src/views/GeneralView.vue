@@ -5,10 +5,21 @@ import { useStartupStore } from '../stores/startup'
 import { useAppSettingsStore } from '../stores/app-settings'
 import AppSelect from '../components/AppSelect.vue'
 import AppIcon from '../components/AppIcon.vue'
+import SubpageBack from '../components/SubpageBack.vue'
+import { useToast } from '../composables/use-toast'
+import type { AppDirectory } from '@shared/ipc'
 import type { ConfigBackupPreview } from '@shared/config-backup'
 import { composeWebDavFileUrl, defaultWebDavFilePath, WEBDAV_AUTO_INTERVALS, type WebDavBackupSettings, type WebDavBackupTarget } from '@shared/webdav-backup'
 
 const startup = useStartupStore()
+const toast = useToast()
+// 与托盘右键「打开目录」是同一组目录。
+const directories: Array<{ id: AppDirectory; label: string }> = [
+  { id: 'application', label: t('general.dirApplication') },
+  { id: 'working', label: t('general.dirWorking') },
+  { id: 'kernel', label: t('general.dirKernel') },
+  { id: 'logs', label: t('general.dirLogs') }
+]
 const appSettings = useAppSettingsStore()
 const delayUrl = ref('')
 const delayUrlError = ref<string | null>(null)
@@ -61,6 +72,14 @@ const delayScope = computed({
     if (value === 'group' || value === 'global') void appSettings.set({ delayTestUrlScope: value })
   }
 })
+
+async function openDirectory(directory: AppDirectory): Promise<void> {
+  try {
+    await window.desktop.app.openDirectory(directory)
+  } catch (error) {
+    toast.error(t('general.openDirectoryFailed'), error instanceof Error ? error.message : undefined)
+  }
+}
 
 async function saveDelayUrl(): Promise<void> {
   const value = delayUrl.value.trim()
@@ -278,6 +297,7 @@ onMounted(async () => {
 
 <template>
   <div class="page-shell general-view">
+    <SubpageBack />
     <h1>{{ t('general.title') }}</h1>
 
     <section>
@@ -444,6 +464,18 @@ onMounted(async () => {
         </label>
       </div>
       <p v-if="delayUrlError" class="inline-error">{{ delayUrlError }}</p>
+    </section>
+
+    <section>
+      <h2>{{ t('general.directories') }}</h2>
+      <div class="surface-card preference-list directory-list">
+        <label v-for="item in directories" :key="item.id">
+          <span>
+            <strong>{{ item.label }}</strong>
+          </span>
+          <button type="button" class="secondary-button" @click="openDirectory(item.id)"><AppIcon name="folder" :size="14" />{{ t('general.openDirectory') }}</button>
+        </label>
+      </div>
     </section>
 
   </div>

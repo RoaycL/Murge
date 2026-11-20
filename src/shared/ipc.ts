@@ -49,6 +49,10 @@ import type { AppLogSnapshot, DiagnosticReport, LogBundleResult } from './diagno
 import type { ConfigBackupPreview, ConfigBackupResult } from './config-backup'
 import type { WebDavBackupForm, WebDavBackupSecrets, WebDavBackupSettings, WebDavBackupTarget } from './webdav-backup'
 
+/** Folders 更多 › 通用 and the tray's 打开目录 submenu can open. */
+export const APP_DIRECTORIES = ['application', 'working', 'kernel', 'logs'] as const
+export type AppDirectory = typeof APP_DIRECTORIES[number]
+
 export const IPC = {
   appGetBrand: 'app:get-brand',
   appGetInfo: 'app:get-info',
@@ -56,6 +60,7 @@ export const IPC = {
   appGetCachedIcon: 'app:get-cached-icon',
   appListNetworkInterfaces: 'app:list-network-interfaces',
   appListLocalAddresses: 'app:list-local-addresses',
+  appOpenDirectory: 'app:open-directory',
   appGetLanGateway: 'lan-gateway:get-state',
   appSetLanGateway: 'lan-gateway:set-enabled',
   diagnosticsCollect: 'diagnostics:collect',
@@ -234,6 +239,8 @@ export interface DesktopApi {
     getLanGateway(): Promise<LanGatewayState>
     /** `device` is the TUN adapter name, used only by the UAC fallback. */
     setLanGateway(enabled: boolean, device: string): Promise<LanGatewayState>
+    /** Open an app folder in the system file manager (same set as the tray's 打开目录). */
+    openDirectory(directory: AppDirectory): Promise<void>
     /** Main-process requests such as notification clicks navigate an existing window. */
     onNavigate(listener: (path: string) => void): () => void
   }

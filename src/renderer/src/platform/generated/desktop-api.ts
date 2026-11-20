@@ -56,6 +56,7 @@ export function createDesktopApi(): DesktopApi {
       listLocalAddresses: () => bridgeInvoke("app:list-local-addresses", []),
       getLanGateway: () => bridgeInvoke("lan-gateway:get-state", []),
       setLanGateway: (enabled, device) => bridgeInvoke("lan-gateway:set-enabled", [enabled, device]),
+      openDirectory: (directory) => bridgeInvoke("app:open-directory", [directory]),
       onNavigate: (listener) => bridgeListen("app:navigate-event", listener),
     },
     diagnostics: {

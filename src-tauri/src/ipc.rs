@@ -204,6 +204,11 @@ pub async fn dispatch(
                     .unwrap_or_else(|_| serde_json::json!({"entries": [], "modules": []})),
             )
         }
+        "app:open-directory" => {
+            let directory = string_arg(payload, 0).unwrap_or_default();
+            crate::tray::open_named_directory(&directory).map_err(IpcError::invalid_argument)?;
+            Ok(Value::Null)
+        }
         "logs:open-folder" => {
             crate::tray::open_file_manager(&log_directory(_paths))
                 .map_err(IpcError::invalid_argument)?;

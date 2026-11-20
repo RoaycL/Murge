@@ -61,8 +61,8 @@ onBeforeUnmount(() => {
 <template>
   <!-- 栏覆盖在窗口拖动区上方，所以它自己的空白处也能拖动窗口、双击最大化。 -->
   <div ref="bar" class="subpage-bar" :class="{ scrolled, 'title-shown': titleShown }" data-tauri-drag-region>
-    <button type="button" class="subpage-back" @click="goBack">
-      <AppIcon name="back" :size="15" :stroke-width="2.2" /><span>{{ t('common.back') }}</span>
+    <button type="button" class="subpage-back" :aria-label="t('common.back')" :title="t('common.back')" @click="goBack">
+      <AppIcon name="back" :size="17" :stroke-width="2.2" />
     </button>
     <strong class="subpage-bar-title" :aria-hidden="!titleShown">{{ title }}</strong>
   </div>

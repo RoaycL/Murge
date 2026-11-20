@@ -470,6 +470,8 @@ input,textarea,[contenteditable="true"],code,pre{user-select:text;-webkit-user-s
 .subpage-bar-title { position: absolute; left: 50%; top: 50%; max-width: calc(100% - 2 * 150px); overflow: hidden; color: var(--app-text); font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); white-space: nowrap; text-overflow: ellipsis; opacity: 0; transform: translate(-50%, calc(-50% + 6px)); transition: opacity .18s ease, transform .18s ease; pointer-events: none; }
 .subpage-bar.title-shown .subpage-bar-title { opacity: 1; transform: translate(-50%, -50%); }
 .logs-view > .subpage-bar { margin-right: -29px; padding-right: 29px; }
-.subpage-back { position: relative; display: inline-flex; align-items: center; gap: 2px; height: 26px; margin-left: -6px; padding: 0 8px 0 3px; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--app-blue); font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); cursor: pointer; }
-.subpage-back:hover { background: var(--app-fill-subtle); }
+/* iOS 26 式圆形返回键：毛玻璃圆底 + 居中箭头，文字只给读屏和悬停提示。 */
+.subpage-back { position: relative; display: grid; place-items: center; width: 32px; height: 32px; margin-left: -4px; padding: 0 1px 0 0; border: 0; border-radius: 50%; background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-filter); backdrop-filter: var(--glass-filter); box-shadow: inset 0 0 0 0.5px var(--glass-edge), 0 0 0 0.5px var(--app-divider), 0 2px 8px rgba(0, 0, 0, 0.08); color: var(--app-text); cursor: pointer; transition: background-color .15s ease, transform .15s ease; }
+.subpage-back:hover { background: color-mix(in srgb, var(--glass-bg), var(--app-text) 6%); }
+.subpage-back:active { transform: scale(.94); }
 .subpage-back:focus-visible { outline: 2px solid var(--app-blue); outline-offset: 1px; }

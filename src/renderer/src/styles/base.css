@@ -39,14 +39,14 @@ button:disabled { cursor: default; opacity: 0.55; }
 h1 { margin: 0; font-size: var(--font-size-display); line-height: 34px; letter-spacing: -0.7px; font-weight: var(--font-weight-bold); }
 .surface-card { background: var(--app-surface); border: 1px solid var(--app-surface-border); border-radius: var(--radius-large); box-shadow: var(--app-shadow); overflow: hidden; }
 /* 与 Surge 一致：大标题与下方“网络/配置/出站模式”事实条之间留出明显间距。 */
-.activity-header { width: 100%; margin-bottom: 12px; }
+.activity-header { display: flex; align-items: center; justify-content: space-between; width: 100%; margin-bottom: 12px; }
 .status-pills { display: flex; gap: var(--space-5); }
 .status-pill { display: flex; align-items: center; justify-content: center; min-width: 122px; height: 23px; border-radius: var(--radius-pill); color: #4f535a; background: rgba(220, 221, 224, 0.9); font-size: var(--font-size-sm); }
 .status-pill i { width: 8px; height: 8px; margin-right: 14px; border-radius: 50%; background: var(--app-green); }
 /* 四格事实条：所有单元格（含按钮/选择器）统一“标签居顶 + 16px 加粗值
    固定基线”，因此网络/配置/出站模式/外部 IP 恒在同一水平线上。
    与 Surge 一样跟随下方卡片同步伸缩：四等分 + 15px 间距在几何上恰好等于
-   .dashboard-grid 两列（15px）再把右列 .speed-grid 二分（15px），于是
+   .dashboard-grid 的四条子轨道（两列各二分，间距都是 15px），于是
    网络=延迟卡左缘、配置=延迟卡中线、出站模式=上传卡左缘、外部 IP=下载卡左缘。 */
 .runtime-context { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); column-gap: 15px; align-items: start; width: 100%; min-width: calc(2 * var(--card-min) + 15px); min-height: 57px; }
 .runtime-context > div, .runtime-context > button { display: flex; flex-direction: column; justify-content: flex-start; min-width: 0; }
@@ -61,13 +61,26 @@ h1 { margin: 0; font-size: var(--font-size-display); line-height: 34px; letter-s
    中缝后的总高恰好等于同列宽的正方形流量卡。
    min-width 与主进程 848px 最小窗口互为兜底：网格内容宽永不低于
    2×--card-min + 间距，卡片到达最小尺寸后不再被压缩。 */
-.dashboard-grid { position: relative; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: auto; gap: 15px; width: 100%; min-width: calc(2 * var(--card-min) + 15px); margin: 6px auto 0; }
+.dashboard-grid { position: relative; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: auto; gap: 15px; width: 100%; min-width: calc(2 * var(--card-min) + 15px); margin: 6px auto 0; }
 /* 卡片拖动排序（composables/use-activity-layout.ts）：位置由内联 grid-column/grid-row 给出；
    被拖起的卡片跟随指针、浮在其他卡片之上，其余卡片滑到新位置。 */
 .dashboard-grid > .card-lifted { position: relative; z-index: 5; transition: none !important; box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18); cursor: grabbing; }
-.speed-grid.card-lifted { box-shadow: none; filter: drop-shadow(0 12px 22px rgba(0, 0, 0, 0.16)); }
 .dashboard-grid.is-dragging, .dashboard-grid.is-dragging * { cursor: grabbing !important; }
 body.activity-card-dragging { user-select: none; -webkit-user-select: none; }
+/* 整理模式（长按卡片进入）：像 iOS 主屏幕移动图标一样，卡片轻微晃动表示可以拖动。
+   用独立的 rotate 属性，不和拖动/FLIP 用的 transform 冲突；相邻卡片相位错开。
+   「减少动态效果」打开时不晃动，只保留描边提示。 */
+.dashboard-grid.is-editing { user-select: none; -webkit-user-select: none; }
+.dashboard-grid.is-editing > [data-card] { touch-action: none; cursor: grab; outline: 1px dashed color-mix(in srgb, var(--app-blue) 45%, transparent); outline-offset: 3px; }
+.dashboard-grid.is-editing > [data-card]:not(.card-lifted) { animation: activity-card-jiggle .26s ease-in-out infinite alternate; }
+.dashboard-grid.is-editing > [data-card]:nth-child(2n):not(.card-lifted) { animation-delay: -.13s; animation-direction: alternate-reverse; }
+.dashboard-grid.is-editing > [data-card]:nth-child(3n):not(.card-lifted) { animation-duration: .3s; }
+.dashboard-grid.is-editing > [data-card] * { pointer-events: none; }
+.dashboard-grid.is-editing > .card-lifted { scale: 1.03; }
+@keyframes activity-card-jiggle { from { rotate: -0.6deg; } to { rotate: 0.6deg; } }
+:root[data-reduce-motion="true"] .dashboard-grid.is-editing > [data-card] { animation: none; }
+@media (prefers-reduced-motion: reduce) { .dashboard-grid.is-editing > [data-card] { animation: none; } }
+.activity-arrange-done { height: 28px; padding: 0 14px; border: 0; border-radius: 14px; background: var(--app-blue); color: var(--app-on-accent); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); cursor: pointer; }
 /* Surge 左列横卡：约 336×160。 */
 .latency-card { container-type: inline-size; display: flex; flex-direction: column; aspect-ratio: 2.1 / 1; padding: 15px 16px 13px; overflow: hidden; }
 .quiet-button { float: right; width: 100px; height: 28px; margin-top: -5px; border: 1px solid var(--app-divider); border-radius: var(--radius-sm); background: transparent; font-size: var(--font-size-sm); cursor: pointer; }
@@ -78,7 +91,6 @@ body.activity-card-dragging { user-select: none; -webkit-user-select: none; }
 .latency-breakdown div:first-child { padding-left: 0; border-left: 0; }
 .latency-breakdown span { display: block; color: var(--app-muted); font-size: var(--font-size-xs); }
 .latency-breakdown strong { display: block; margin-top: 4px; font-size: var(--font-size-lg); font-weight: var(--font-weight-bold); }
-.speed-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; min-width: 0; }
 /* Surge 右上速率卡：上传、下载各自接近正方形。 */
 .speed-card { position: relative; aspect-ratio: 1 / 1; min-width: 0; padding: 16px 14px; overflow: hidden; }
 .speed-value { margin-top: 5px; font-size: var(--font-size-hero); line-height: 37px; font-weight: var(--font-weight-bold); }

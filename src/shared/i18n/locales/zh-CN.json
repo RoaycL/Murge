@@ -21,6 +21,8 @@
   "about.update": "更新",
   "about.versionLine": "版本 {0} · {1} / {2}",
   "activity.activeConnections": "活动连接",
+  "activity.cardArrange": "整理卡片",
+  "activity.cardDone": "完成",
   "activity.cardMenu": "卡片排列",
   "activity.cardMoveDown": "下移",
   "activity.cardMoveLeft": "移到左列",

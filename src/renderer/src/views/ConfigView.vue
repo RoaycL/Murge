@@ -10,6 +10,7 @@ import DetailDrawer from '../components/DetailDrawer.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import { useToast } from '../composables/use-toast'
 import EmptyState from '../components/EmptyState.vue'
+import { openProfileFile } from '../composables/use-external-profile-edits'
 
 const profilesStore = useProfilesStore()
 const toast = useToast()
@@ -33,7 +34,19 @@ const renameValue = ref('')
 const editingId = ref<string | null>(null)
 const editingDocument = ref('')
 const editingUrl = ref('')
+const editingOriginalUrl = ref('')
 const savingEdit = ref(false)
+const savingCopy = ref(false)
+
+/**
+ * Subscription profiles are read-only, like Surge's managed profiles: the
+ * next update replaces the whole document, so in-place edits would be lost.
+ * They can be viewed, or saved as a local copy that is edited freely.
+ */
+function isSubscription(id: string | null | undefined): boolean {
+  return profilesStore.profiles.find((entry) => entry.id === id)?.source.type === 'url'
+}
+const editingIsSubscription = computed(() => isSubscription(editingId.value))
 
 const menuAnchor = ref<{ id: string; top: number; left: number } | null>(null)
 
@@ -84,7 +97,7 @@ function toggleMenu(id: string, event: MouseEvent): void {
   }
   const button = event.currentTarget as HTMLElement
   const rect = button.getBoundingClientRect()
-  const top = Math.min(rect.bottom + 4, window.innerHeight - 132)
+  const top = Math.min(rect.bottom + 4, window.innerHeight - 168)
   menuAnchor.value = { id, top, left: rect.left }
 }
 
@@ -258,11 +271,38 @@ async function openEditor(id: string): Promise<void> {
   editingId.value = id
   editingDocument.value = profile.document
   editingUrl.value = profile.meta.source.type === 'url' ? (await profilesStore.getSourceUrl(id) ?? '') : ''
+  editingOriginalUrl.value = editingUrl.value
+}
+
+async function saveLocalCopy(id: string): Promise<void> {
+  closeMenu()
+  const profile = await profilesStore.get(id)
+  if (!profile) return
+  savingCopy.value = true
+  try {
+    await profilesStore.importProfile({ name: t('profiles.copyName', [profile.meta.name]), document: profile.document, source: { type: 'manual' } })
+    if (editingId.value === id) editingId.value = null
+    toast.success(t('profiles.copySaved'), t('profiles.copySavedHint'))
+  } catch { toast.error(t('profiles.copyFailed'), profilesStore.lastError ?? undefined) }
+  finally { savingCopy.value = false }
 }
 
 async function saveEditor(): Promise<void> {
   const id = editingId.value
   if (!id) return
+  if (isSubscription(id)) {
+    // Read-only document: only the subscription URL can change.
+    const nextUrl = editingUrl.value.trim()
+    if (!nextUrl || nextUrl === editingOriginalUrl.value) { editingId.value = null; return }
+    savingEdit.value = true
+    try {
+      await profilesStore.setSourceUrl(id, nextUrl)
+      editingId.value = null
+      toast.success(t('profiles.saved'))
+    } catch { toast.error(t('profiles.saveFailed'), profilesStore.lastError ?? undefined) }
+    finally { savingEdit.value = false }
+    return
+  }
   const result = await profilesStore.validate(editingDocument.value)
   if (!result.ok) { toast.error(t('profiles.validateFailed'), result.issues.map((i) => i.message).join(t('common.semicolon'))); return }
   savingEdit.value = true
@@ -358,7 +398,9 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
       <template v-for="meta in profilesStore.ordered" :key="meta.id">
         <template v-if="meta.id === menuAnchor.id">
           <button v-if="!meta.active" type="button" role="menuitem" @click="activate(meta.id); closeMenu()">{{ t('profiles.use') }}</button>
-          <button type="button" role="menuitem" @click="openEditor(meta.id)">{{ t('profiles.edit') }}</button>
+          <button type="button" role="menuitem" @click="openEditor(meta.id)">{{ meta.source.type === 'url' ? t('profiles.view') : t('profiles.edit') }}</button>
+          <button v-if="meta.source.type === 'url'" type="button" role="menuitem" :disabled="savingCopy" @click="saveLocalCopy(meta.id)">{{ t('profiles.saveLocalCopy') }}</button>
+          <button v-else type="button" role="menuitem" @click="closeMenu(); openProfileFile(meta.id)">{{ t('profiles.openFile') }}</button>
           <button type="button" role="menuitem" @click="openRename(meta.id)">{{ t('profiles.rename') }}</button>
           <button type="button" role="menuitem" class="danger" @click="pendingDeleteId = meta.id; closeMenu()">{{ t('common.delete') }}</button>
         </template>
@@ -367,11 +409,11 @@ const selectedProfile = computed(() => profilesStore.profiles.find((entry) => en
 
     <DetailDrawer :open="Boolean(selectedProfile)" :title="selectedProfile?.name ?? t('profiles.details')" :subtitle="selectedProfile ? `${sourceBadge(selectedProfile.source.type)} · ${relativeTime(selectedProfile.updatedAt)}` : ''" @close="selectedProfileId = null">
       <div v-if="selectedProfile" class="entity-detail drawer-detail"><dl><div><dt>{{ t('profiles.source') }}</dt><dd>{{ sourceBadge(selectedProfile.source.type) }}</dd></div><div><dt>{{ t('profiles.updatedAt') }}</dt><dd>{{ relativeTime(selectedProfile.updatedAt) }}</dd></div><div><dt>{{ t('common.status') }}</dt><dd>{{ selectedProfile.active ? t('profiles.inUse') : t('profiles.notInUse') }}</dd></div></dl></div>
-      <template #footer><button type="button" class="secondary-button" @click="selectedProfile && openEditor(selectedProfile.id)"><AppIcon name="code" :size="15" />{{ t('profiles.edit') }}</button><button type="button" class="danger-button" :disabled="selectedProfile?.active" @click="selectedProfile && (pendingDeleteId = selectedProfile.id)"><AppIcon name="delete" :size="15" />{{ t('common.delete') }}</button><button type="button" class="primary-button" :disabled="selectedProfile?.active" @click="selectedProfile && activate(selectedProfile.id)">{{ selectedProfile?.active ? t('profiles.inUseNow') : t('profiles.useThis') }}</button></template>
+      <template #footer><button type="button" class="secondary-button" @click="selectedProfile && openEditor(selectedProfile.id)"><AppIcon name="code" :size="15" />{{ selectedProfile?.source.type === 'url' ? t('profiles.view') : t('profiles.edit') }}</button><button v-if="selectedProfile?.source.type === 'url'" type="button" class="secondary-button" :disabled="savingCopy" @click="selectedProfile && saveLocalCopy(selectedProfile.id)">{{ t('profiles.saveLocalCopy') }}</button><button v-else type="button" class="secondary-button" @click="selectedProfile && openProfileFile(selectedProfile.id)">{{ t('profiles.openFile') }}</button><button type="button" class="danger-button" :disabled="selectedProfile?.active" @click="selectedProfile && (pendingDeleteId = selectedProfile.id)"><AppIcon name="delete" :size="15" />{{ t('common.delete') }}</button><button type="button" class="primary-button" :disabled="selectedProfile?.active" @click="selectedProfile && activate(selectedProfile.id)">{{ selectedProfile?.active ? t('profiles.inUseNow') : t('profiles.useThis') }}</button></template>
     </DetailDrawer>
     <ConfirmModal :open="Boolean(pendingDeleteId)" :title="t('profiles.deleteTitle')" :description="t('profiles.deleteDescription')" @close="pendingDeleteId = null" @confirm="confirmRemove" />
     <Teleport to="body"><div v-if="pendingRenameId" class="modal-shade" @click.self="pendingRenameId = null"><section class="rename-modal" role="dialog" aria-modal="true" :aria-label="t('profiles.renameTitle')"><header><h2>{{ t('profiles.renameTitle') }}</h2><button type="button" class="icon-control" :aria-label="t('common.close')" @click="pendingRenameId = null"><AppIcon name="close" /></button></header><input v-model="renameValue" class="field" autofocus :aria-label="t('profiles.nameLabel')" @keyup.enter="confirmRename" /><footer><button type="button" class="secondary-button" @click="pendingRenameId = null">{{ t('common.cancel') }}</button><button type="button" class="primary-button" :disabled="!renameValue.trim()" @click="confirmRename">{{ t('common.save') }}</button></footer></section></div></Teleport>
-    <Teleport to="body"><div v-if="editingId" class="modal-shade" @click.self="editingId = null"><section class="profile-edit-modal" role="dialog" aria-modal="true" :aria-label="t('profiles.edit')"><header><div><h2>{{ t('profiles.edit') }}</h2><p>{{ t('profiles.editHint') }}</p></div><button type="button" class="icon-control" :aria-label="t('common.close')" @click="editingId = null"><AppIcon name="close" /></button></header><label v-if="profilesStore.profiles.find(i => i.id === editingId)?.source.type === 'url'" class="modal-field"><span>{{ t('profiles.subscriptionUrl') }}</span><input v-model="editingUrl" class="field" :aria-label="t('profiles.subscriptionUrlFull')" /></label><label class="modal-field editor-field"><span>{{ t('profiles.yaml') }}</span><textarea v-model="editingDocument" class="field document profile-document-editor" spellcheck="false" :aria-label="t('profiles.editYamlLabel')" /></label><footer><button type="button" class="secondary-button" @click="editingId = null">{{ t('common.cancel') }}</button><button type="button" class="primary-button" :disabled="savingEdit || !editingDocument.trim()" @click="saveEditor">{{ savingEdit ? t('common.saving') : t('profiles.validateAndSave') }}</button></footer></section></div></Teleport>
+    <Teleport to="body"><div v-if="editingId" class="modal-shade" @click.self="editingId = null"><section class="profile-edit-modal" role="dialog" aria-modal="true" :aria-label="editingIsSubscription ? t('profiles.view') : t('profiles.edit')"><header><div><h2>{{ editingIsSubscription ? t('profiles.view') : t('profiles.edit') }}</h2><p>{{ editingIsSubscription ? t('profiles.subscriptionReadOnlyHint') : t('profiles.editHint') }}</p></div><button type="button" class="icon-control" :aria-label="t('common.close')" @click="editingId = null"><AppIcon name="close" /></button></header><label v-if="profilesStore.profiles.find(i => i.id === editingId)?.source.type === 'url'" class="modal-field"><span>{{ t('profiles.subscriptionUrl') }}</span><input v-model="editingUrl" class="field" :aria-label="t('profiles.subscriptionUrlFull')" /></label><label class="modal-field editor-field"><span>{{ t('profiles.yaml') }}</span><textarea v-model="editingDocument" class="field document profile-document-editor" spellcheck="false" :readonly="editingIsSubscription" :aria-label="editingIsSubscription ? t('profiles.viewYamlLabel') : t('profiles.editYamlLabel')" /></label><footer v-if="editingIsSubscription"><button type="button" class="secondary-button" @click="editingId = null">{{ t('common.close') }}</button><button type="button" class="secondary-button" :disabled="savingCopy" @click="editingId && saveLocalCopy(editingId)">{{ t('profiles.saveLocalCopy') }}</button><button type="button" class="primary-button" :disabled="savingEdit || !editingUrl.trim() || editingUrl.trim() === editingOriginalUrl" @click="saveEditor">{{ savingEdit ? t('common.saving') : t('profiles.saveSubscriptionUrl') }}</button></footer><footer v-else><button type="button" class="secondary-button" @click="editingId = null">{{ t('common.cancel') }}</button><button type="button" class="primary-button" :disabled="savingEdit || !editingDocument.trim()" @click="saveEditor">{{ savingEdit ? t('common.saving') : t('profiles.validateAndSave') }}</button></footer></section></div></Teleport>
 
   </div>
 </template>

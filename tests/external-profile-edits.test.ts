@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 const store = {
-  profiles: [{ id: 'p1', name: 'Main', active: false }],
+  profiles: [{ id: 'p1', name: 'Main', active: false, source: { type: 'manual' } }],
   validate: vi.fn(async () => ({ ok: true, issues: [] })),
   replaceDocument: vi.fn(async (_id: string, document: string) => { stored = document })
 }
@@ -58,5 +58,18 @@ describe('external profile edits', () => {
     await syncExternalEdits()
     expect(store.replaceDocument).toHaveBeenLastCalledWith('p1', 'a: 3\n')
     expect(stored).toBe('a: 3\n')
+  })
+})
+
+describe('subscription profiles', () => {
+  it('are never opened for external editing', async () => {
+    store.profiles.push({ id: 'sub', name: 'Sub', active: false, source: { type: 'url' } } as never)
+    try {
+      await openProfileFile('sub')
+      const profiles = (window as unknown as { desktop: { profiles: { openFile: ReturnType<typeof vi.fn> } } }).desktop.profiles
+      expect(profiles.openFile).not.toHaveBeenCalled()
+    } finally {
+      store.profiles.pop()
+    }
   })
 })

@@ -82,6 +82,8 @@ async function syncExternalEdits(): Promise<void> {
 /** Open a working copy of the profile's YAML in the chosen editor and watch it for saves. */
 export async function openProfileFile(id: string): Promise<void> {
   const toast = useToast()
+  // Subscription profiles are read-only (the next update replaces them).
+  if (useProfilesStore().profiles.find((meta) => meta.id === id)?.source.type === 'url') return
   try {
     const { keptUnapplied } = await window.desktop.profiles.openFile(id)
     const staged = await window.desktop.profiles.readExternal(id)

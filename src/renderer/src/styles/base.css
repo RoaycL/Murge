@@ -462,7 +462,14 @@ input,textarea,[contenteditable="true"],code,pre{user-select:text;-webkit-user-s
 .more-hidden-pages { margin-top: 28px; }
 .more-hidden-pages h2 { margin: 0; color: var(--app-pink); font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); }
 .more-hidden-pages .settings-menu { padding-top: 12px; }
-/* 「更多」二级页面标题上方的返回入口（SubpageBack.vue）。 */
-.subpage-back { display: inline-flex; align-self: flex-start; align-items: center; gap: 2px; height: 24px; margin: -14px 0 8px -6px; padding: 0 8px 0 3px; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--app-blue); font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); cursor: pointer; }
+/* 「更多」二级页面的顶部导航栏（SubpageBack.vue），像 iOS 设置：贴在内容面板顶部，
+   盖住 .page-shell 的上内边距和左右页边距；滚动后变成毛玻璃并在中间显示页名。
+   z-index 41：压在窗口拖动区（40）上面，低于抽屉（50）、弹窗和标题栏按钮。 */
+.subpage-bar { --subpage-bar-height: 48px; position: sticky; top: 0; z-index: 41; flex: 0 0 auto; display: flex; align-items: center; height: var(--subpage-bar-height); margin: -45px calc(-1 * var(--page-gutter)) 10px; padding: 0 var(--page-gutter); border-bottom: 1px solid transparent; background: transparent; transition: background-color .18s ease, border-color .18s ease, backdrop-filter .18s ease; }
+.subpage-bar.scrolled { border-bottom-color: var(--app-divider); background: var(--glass-bg); -webkit-backdrop-filter: var(--glass-filter); backdrop-filter: var(--glass-filter); }
+.subpage-bar-title { position: absolute; left: 50%; top: 50%; max-width: calc(100% - 2 * 150px); overflow: hidden; color: var(--app-text); font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); white-space: nowrap; text-overflow: ellipsis; opacity: 0; transform: translate(-50%, calc(-50% + 6px)); transition: opacity .18s ease, transform .18s ease; pointer-events: none; }
+.subpage-bar.title-shown .subpage-bar-title { opacity: 1; transform: translate(-50%, -50%); }
+.logs-view > .subpage-bar { margin-right: -29px; padding-right: 29px; }
+.subpage-back { position: relative; display: inline-flex; align-items: center; gap: 2px; height: 26px; margin-left: -6px; padding: 0 8px 0 3px; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--app-blue); font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); cursor: pointer; }
 .subpage-back:hover { background: var(--app-fill-subtle); }
 .subpage-back:focus-visible { outline: 2px solid var(--app-blue); outline-offset: 1px; }

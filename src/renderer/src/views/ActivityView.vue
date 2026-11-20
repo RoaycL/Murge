@@ -27,6 +27,26 @@ import { resolveRuntimeAccent } from '@shared/runtime-accent'
 import { networkMetadataMaskIpMiddle } from '@shared/network-metadata'
 import { useProfilesStore } from '../stores/profiles'
 import { useToast } from '../composables/use-toast'
+import PopoverMenu from '../components/PopoverMenu.vue'
+import { useActivityLayout } from '../composables/use-activity-layout'
+import { cardPosition, type ActivityCardId, type ActivityColumn } from '../lib/activity-layout'
+
+// 卡片拖动排序：按住任一卡片拖到两列中的任意位置；右键卡片可上移/下移/换列/恢复默认。
+const dashboard = ref<HTMLElement | null>(null)
+const {
+  layout: cardLayout, isDefault: cardLayoutDefault, dragging: cardDragging, cardStyle,
+  onPointerDown: onCardPointerDown, onClickCapture: onCardClickCapture, moveBy: moveCardBy, moveAcross: moveCardAcross, reset: resetCards
+} = useActivityLayout(dashboard)
+const cardMenu = ref<{ id: ActivityCardId; x: number; y: number; column: ActivityColumn; canUp: boolean; canDown: boolean } | null>(null)
+
+function onCardContext(event: MouseEvent): void {
+  const card = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-card]')
+  if (!card) return
+  event.preventDefault()
+  const id = card.dataset.card as ActivityCardId
+  const { column, index } = cardPosition(cardLayout.value, id)
+  cardMenu.value = { id, x: event.clientX, y: event.clientY, column, canUp: index > 0, canDown: index < cardLayout.value[column].length - 1 }
+}
 
 const traffic = useTrafficStore()
 const connections = useConnectionsStore()
@@ -224,8 +244,8 @@ const chartBars = computed<number[]>(() => {
       <div class="runtime-ip"><button type="button" class="runtime-detail-label runtime-detail-link" :aria-label="t('activity.viewNetworkInfo')" @click="summaryDrawer = 'network'">{{ t('activity.externalIp') }}<AppIcon name="chevron-down" :size="12" /></button><button type="button" class="runtime-ip-value" :aria-pressed="ipRevealed" :aria-label="ipRevealed ? t('activity.hideIp') : t('activity.showIp')" :title="ipRevealed ? t('activity.clickHide') : t('activity.clickShow')" @click="toggleIpReveal"><strong>{{ externalIpText }}</strong></button></div>
     </section>
 
-    <section class="dashboard-grid">
-      <SurfaceCard class="latency-card">
+    <section ref="dashboard" class="dashboard-grid" :class="{ 'is-dragging': Boolean(cardDragging) }" @pointerdown="onCardPointerDown" @click.capture="onCardClickCapture" @contextmenu="onCardContext">
+      <SurfaceCard class="latency-card" data-card="latency" :class="{ 'card-lifted': cardDragging === 'latency' }" :style="cardStyle('latency')">
         <div class="card-title-row">
           <span class="metric-label latency-label">{{ t('activity.latency') }}<button type="button" class="latency-refresh refresh-control" :disabled="latency.state === 'probing'" :aria-label="t('activity.retest')" @click="latency.probe()"><RefreshIndicator :busy="latency.state === 'probing'" :failed="latency.state === 'error'" :size="12" /></button></span>
           <button type="button" class="quiet-button" @click="openNetworkDiagnostics">{{ diagnosisButtonLabel }}</button>
@@ -238,12 +258,12 @@ const chartBars = computed<number[]>(() => {
         </div>
       </SurfaceCard>
 
-      <div class="speed-grid">
+      <div class="speed-grid" data-card="speed" :class="{ 'card-lifted': cardDragging === 'speed' }" :style="cardStyle('speed')">
         <SpeedSparkline kind="upload" :title="t('common.upload')" :value="up.value" :unit="up.unit" :series="traffic.uploadSeries" />
         <SpeedSparkline kind="download" :title="t('common.download')" :value="down.value" :unit="down.unit" :series="traffic.downloadSeries" />
       </div>
 
-      <SurfaceCard class="connections-card">
+      <SurfaceCard class="connections-card" data-card="connections" :class="{ 'card-lifted': cardDragging === 'connections' }" :style="cardStyle('connections')">
         <div class="card-title-row"><span class="metric-label">{{ t('activity.activeConnections') }}<span v-if="connStateLabel" class="stream-state">{{ connStateLabel }}</span></span><i :class="connDotClass" /></div>
         <button type="button" class="connections-summary-link" @click="router.push('/connections')"><strong>{{ activeCount }}</strong><span>{{ t('activity.viewConnections') }}</span><AppIcon name="next" :size="15" /></button>
         <div class="connections-breakdown">
@@ -253,7 +273,7 @@ const chartBars = computed<number[]>(() => {
         </div>
       </SurfaceCard>
 
-      <SurfaceCard class="traffic-card">
+      <SurfaceCard class="traffic-card" data-card="traffic" :class="{ 'card-lifted': cardDragging === 'traffic' }" :style="cardStyle('traffic')">
         <div class="card-title-row"><span class="metric-label">{{ t('stats.traffic') }}</span><div class="segmented" role="group" :aria-label="t('activity.trafficScope')"><button type="button" :class="{ selected: rankScope === 'all' }" :aria-pressed="rankScope === 'all'" @click="connections.setRankScope('all')">{{ t('common.all') }}</button><button type="button" :class="{ selected: rankScope === 'proxy' }" :aria-pressed="rankScope === 'proxy'" @click="connections.setRankScope('proxy')">{{ t('activity.proxyOnly') }}</button></div></div>
         <div class="bar-chart" :aria-label="t('activity.recentLabel')">
           <i v-for="(height, index) in chartBars" :key="index" :style="{ height: `${height}%` }" />
@@ -270,7 +290,7 @@ const chartBars = computed<number[]>(() => {
         </div>
       </SurfaceCard>
 
-      <SurfaceCard class="total-card">
+      <SurfaceCard class="total-card" data-card="total" :class="{ 'card-lifted': cardDragging === 'total' }" :style="cardStyle('total')">
         <div class="card-title-row"><span class="metric-label">{{ t('stats.total') }}</span><button type="button" class="quiet-button" @click="summaryDrawer = 'usage'">{{ t('activity.viewHistory') }}</button></div>
         <div class="large-metric">{{ total.value }}<span>{{ total.unit }}</span></div>
         <div class="total-labels"><div><span>DIRECT</span><strong>{{ direct.value }} {{ direct.unit }}</strong></div><div><span>{{ t('activity.proxy') }}</span><strong>{{ proxy.value }} {{ proxy.unit }}</strong></div></div>
@@ -278,6 +298,15 @@ const chartBars = computed<number[]>(() => {
       </SurfaceCard>
 
     </section>
+    <PopoverMenu :open="!!cardMenu" :x="cardMenu?.x ?? 0" :y="cardMenu?.y ?? 0" :label="t('activity.cardMenu')" @close="cardMenu = null">
+      <template v-if="cardMenu">
+        <button type="button" class="popover-item" role="menuitem" :disabled="!cardMenu.canUp" @click="moveCardBy(cardMenu.id, -1)">{{ t('activity.cardMoveUp') }}</button>
+        <button type="button" class="popover-item" role="menuitem" :disabled="!cardMenu.canDown" @click="moveCardBy(cardMenu.id, 1)">{{ t('activity.cardMoveDown') }}</button>
+        <button type="button" class="popover-item" role="menuitem" @click="moveCardAcross(cardMenu.id)">{{ cardMenu.column === 'left' ? t('activity.cardMoveRight') : t('activity.cardMoveLeft') }}</button>
+        <div class="popover-sep" />
+        <button type="button" class="popover-item" role="menuitem" :disabled="cardLayoutDefault" @click="resetCards">{{ t('activity.cardReset') }}</button>
+      </template>
+    </PopoverMenu>
     <DetailDrawer :open="Boolean(summaryDrawer)" :title="summaryDrawer === 'network' ? t('activity.networkInfo') : t('activity.usageHistory')" @close="summaryDrawer = null">
       <template v-if="summaryDrawer === 'network'" #actions><button type="button" class="drawer-probe-button" :disabled="latency.state === 'probing'" @click="latency.probe()">{{ latency.state === 'probing' ? t('netMeta.detecting') : t('activity.recheck') }}</button></template>
       <NetworkMetadataPanel v-if="summaryDrawer === 'network'" /><UsageHistoryPanel v-else-if="summaryDrawer === 'usage'" />

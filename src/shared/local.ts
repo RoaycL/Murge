@@ -259,3 +259,51 @@ export function newLocalId(): string {
 export function plainClone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
+
+/** Field index of a rule line's policy (`MATCH,<policy>` or `TYPE,payload,<policy>`). */
+function ruleTargetIndex(fields: string[]): number {
+  const type = (fields[0] ?? '').toUpperCase()
+  return type === 'MATCH' || type === 'FINAL' ? 1 : 2
+}
+
+/** The rule line with its policy `from` swapped for `to`; other lines unchanged. */
+export function retargetRuleLine(line: string, from: string, to: string): string {
+  const fields = splitRuleLine(line.trim())
+  const index = ruleTargetIndex(fields)
+  if (fields[index] !== from) return line
+  fields[index] = to
+  return fields.join(',')
+}
+
+/**
+ * Rename a local policy group and/or change its icon. Everything in the local
+ * layer that names the group follows the new name: other local groups'
+ * members, nodes that join it, local rules and subscription rule edits of
+ * every profile. Returns a new settings object; the input is left untouched.
+ */
+export function renameLocalGroup(settings: LocalSettings, id: string, name: string, icon: string): LocalSettings {
+  const next = plainClone(settings)
+  const group = (next.groups ?? []).find((item) => item.id === id)
+  if (!group) return next
+  const from = group.config.name
+  const to = name.trim()
+  const url = icon.trim()
+  if (url) group.config.icon = url
+  else delete group.config.icon
+  if (!to || to === from) return next
+  group.config.name = to
+  const swap = (value: string): string => (value === from ? to : value)
+  for (const other of next.groups) {
+    if (Array.isArray(other.config.proxies)) other.config.proxies = (other.config.proxies as unknown[]).map((member) => (typeof member === 'string' ? swap(member) : member))
+    other.includeGroups = (other.includeGroups ?? []).map(swap)
+  }
+  for (const node of next.nodes) node.groups = node.groups.map(swap)
+  for (const rule of next.rules) rule.rule = retargetRuleLine(rule.rule, from, to)
+  for (const edits of Object.values(next.profileEdits)) {
+    for (const edit of edits) {
+      if (edit.newTarget === from) edit.newTarget = to
+      if (edit.replacement) edit.replacement = retargetRuleLine(edit.replacement, from, to)
+    }
+  }
+  return next
+}

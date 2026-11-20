@@ -5,6 +5,7 @@ import {
   EMPTY_LOCAL_STATE,
   newLocalId,
   plainClone,
+  renameLocalGroup,
   ruleIdentity,
   parseRuleLine,
   tailnetRulesFor,
@@ -105,13 +106,21 @@ export const useLocalStore = defineStore('local', () => {
   }
 
   function upsertGroup(group: LocalGroup): Promise<string | null> {
-    const next = clone()
+    let next = clone()
     next.groups ??= []
+    // A rename from the wizard carries the local references along, like 编辑名称与图标.
+    const prior = group.id ? next.groups.find((item) => item.id === group.id) : undefined
+    if (prior && prior.config.name !== group.config.name) next = renameLocalGroup(next, group.id, group.config.name, String(prior.config.icon ?? ''))
     const draft = { ...group, id: group.id || newLocalId() }
     const index = next.groups.findIndex((item) => item.id === draft.id)
     if (index >= 0) next.groups[index] = draft
     else next.groups.push(draft)
     return save(next)
+  }
+
+  /** 编辑名称与图标: rename a local group (and every local reference) and set its icon. */
+  function renameGroup(id: string, name: string, icon: string): Promise<string | null> {
+    return save(renameLocalGroup(clone(), id, name, icon))
   }
 
   function removeGroup(id: string): Promise<string | null> {
@@ -261,6 +270,7 @@ export const useLocalStore = defineStore('local', () => {
     save,
     upsertNode,
     upsertGroup,
+    renameGroup,
     removeGroup,
     duplicateNode,
     delays,

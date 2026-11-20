@@ -1,6 +1,6 @@
 import { computed, nextTick, onBeforeUnmount, ref, type Ref } from 'vue'
 import {
-  ACTIVITY_LAYOUT_STORAGE_KEY, activityPlacement, cardPosition, defaultActivityLayout, isDefaultActivityLayout,
+  ACTIVITY_LAYOUT_STORAGE_KEY, activityPlacement, cardPosition, defaultActivityLayout, isDefaultActivityLayout, isHalfCard,
   moveActivityCard, parseActivityLayout, type ActivityCardId, type ActivityColumn, type ActivityLayout
 } from '../lib/activity-layout'
 
@@ -10,8 +10,12 @@ function readStored(): string | null {
 
 /** Pointer travel before a press on a card turns into a drag (a shorter press stays a click). */
 const DRAG_THRESHOLD = 6
-/** Presses here keep their own behavior (typing, choosing) and never start a drag. */
+/** How long a card is held still before the page enters 整理 (arrange) mode, like iOS's home screen. */
+export const LONG_PRESS_MS = 450
+/** Presses here keep their own behavior (typing, choosing) and never start a long press. */
 const NO_DRAG = 'input, textarea, select, .app-select'
+/** Presses here never leave arrange mode (the 完成 button, menus opened from a card). */
+const KEEP_EDITING = '[data-card], .activity-arrange-done, .popover-menu, [role="menu"]'
 
 interface DragState {
   id: ActivityCardId
@@ -25,18 +29,27 @@ interface DragState {
 }
 
 /**
- * 活动页卡片拖动排序. Cards stay in place in the DOM and are placed on the
- * two-column grid from the saved order, so a drag never remounts a card.
- * While dragging, the lifted card follows the pointer and the other cards
- * slide (FLIP) to the slot it would drop into.
+ * 活动页卡片拖动排序. Like moving app icons on iOS: a plain press, drag or
+ * scroll on a card behaves normally (the traffic list scrolls, buttons
+ * click); holding a card still for LONG_PRESS_MS enters arrange mode, where
+ * every card jiggles and can be dragged. Arrange mode ends with 完成, Esc,
+ * or a press outside the cards.
+ *
+ * Cards stay in place in the DOM and are placed on the grid from the saved
+ * order, so a drag never remounts a card. While dragging, the lifted card
+ * follows the pointer and the other cards slide (FLIP) to the slot it would
+ * drop into.
  */
 export function useActivityLayout(grid: Ref<HTMLElement | null>) {
   const layout = ref<ActivityLayout>(parseActivityLayout(readStored()))
   const placement = computed(() => activityPlacement(layout.value))
   const isDefault = computed(() => isDefaultActivityLayout(layout.value))
   const dragging = ref<ActivityCardId | null>(null)
+  /** Arrange mode: cards jiggle and any press on one can drag it. */
+  const editing = ref(false)
   const offset = ref({ x: 0, y: 0 })
   let drag: DragState | null = null
+  let pressTimer: number | undefined
   let lastPointer = { x: 0, y: 0 }
   let suppressClick = false
 
@@ -74,7 +87,11 @@ export function useActivityLayout(grid: Ref<HTMLElement | null>) {
     offset.value = { x: lastPointer.x - state.grabX - (rect.left + el.offsetLeft), y: lastPointer.y - state.grabY - (rect.top + el.offsetTop) }
   }
 
-  /** The slot under the pointer: the grid half picks the column, the other cards' centers the index. */
+  /**
+   * The slot under the pointer: the grid half picks the column; a full card
+   * counts as before the slot once the pointer is past its middle, a half
+   * card once the pointer is below it or to the right of its middle on its row.
+   */
   function target(): { column: ActivityColumn; index: number } | null {
     const state = drag
     const box = grid.value
@@ -85,7 +102,13 @@ export function useActivityLayout(grid: Ref<HTMLElement | null>) {
     for (const id of layout.value[column]) {
       if (id === state.id) continue
       const el = cardEl(id)
-      if (el && rect.top + el.offsetTop + el.offsetHeight / 2 < lastPointer.y) index++
+      if (!el) continue
+      const top = rect.top + el.offsetTop
+      const bottom = top + el.offsetHeight
+      const before = isHalfCard(id)
+        ? lastPointer.y > bottom || (lastPointer.y >= top && lastPointer.x > rect.left + el.offsetLeft + el.offsetWidth / 2)
+        : top + el.offsetHeight / 2 < lastPointer.y
+      if (before) index++
     }
     return { column, index }
   }
@@ -96,6 +119,11 @@ export function useActivityLayout(grid: Ref<HTMLElement | null>) {
     lastPointer = { x: event.clientX, y: event.clientY }
     if (!state.active) {
       if (Math.hypot(event.clientX - state.startX, event.clientY - state.startY) < DRAG_THRESHOLD) return
+      if (!editing.value) {
+        // Moved before the long press: an ordinary drag/scroll/selection, not ours.
+        cancelPress()
+        return
+      }
       state.active = true
       dragging.value = state.id
       document.body.classList.add('activity-card-dragging')
@@ -109,13 +137,28 @@ export function useActivityLayout(grid: Ref<HTMLElement | null>) {
     follow()
   }
 
-  function stop(event: PointerEvent): void {
-    const state = drag
-    if (!state || event.pointerId !== state.pointerId) return
-    drag = null
+  function unlisten(): void {
     window.removeEventListener('pointermove', onMove)
     window.removeEventListener('pointerup', stop)
     window.removeEventListener('pointercancel', stop)
+  }
+
+  function cancelPress(): void {
+    window.clearTimeout(pressTimer)
+    pressTimer = undefined
+    drag = null
+    unlisten()
+  }
+
+  function stop(event: PointerEvent): void {
+    const state = drag
+    if (!state || event.pointerId !== state.pointerId) return
+    window.clearTimeout(pressTimer)
+    pressTimer = undefined
+    drag = null
+    unlisten()
+    // A long press ended without a drag: swallow its click, but only that one.
+    if (suppressClick) window.setTimeout(() => { suppressClick = false }, 80)
     if (!state.active) return
     // The release is not a click on whatever button the drag started from.
     suppressClick = true
@@ -137,12 +180,37 @@ export function useActivityLayout(grid: Ref<HTMLElement | null>) {
     persist()
   }
 
+  function startEditing(): void {
+    if (editing.value) return
+    editing.value = true
+    document.addEventListener('pointerdown', onOutsidePointerDown)
+    window.addEventListener('keydown', onKeyDown)
+  }
+
+  function stopEditing(): void {
+    if (!editing.value) return
+    editing.value = false
+    document.removeEventListener('pointerdown', onOutsidePointerDown)
+    window.removeEventListener('keydown', onKeyDown)
+  }
+
+  function onOutsidePointerDown(event: PointerEvent): void {
+    if (drag) return
+    const source = event.target as HTMLElement | null
+    if (!source?.closest(KEEP_EDITING)) stopEditing()
+  }
+
+  function onKeyDown(event: KeyboardEvent): void {
+    if (event.key === 'Escape' && !drag) stopEditing()
+  }
+
   function onPointerDown(event: PointerEvent): void {
     if (event.button !== 0 || drag) return
     const source = event.target as HTMLElement | null
     const card = source?.closest<HTMLElement>('[data-card]')
     const box = grid.value
-    if (!card || !box || source?.closest(NO_DRAG)) return
+    if (!card || !box) return
+    if (!editing.value && source?.closest(NO_DRAG)) return
     const rect = box.getBoundingClientRect()
     drag = {
       id: card.dataset.card as ActivityCardId,
@@ -157,10 +225,26 @@ export function useActivityLayout(grid: Ref<HTMLElement | null>) {
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', stop)
     window.addEventListener('pointercancel', stop)
+    if (editing.value) {
+      // In arrange mode a press grabs the card right away (no text selection).
+      event.preventDefault()
+      return
+    }
+    window.clearTimeout(pressTimer)
+    pressTimer = window.setTimeout(() => {
+      pressTimer = undefined
+      if (!drag) return
+      startEditing()
+      // The release of this press is not a click on the button it started on.
+      suppressClick = true
+      window.getSelection()?.removeAllRanges()
+    }, LONG_PRESS_MS)
   }
 
   function onClickCapture(event: MouseEvent): void {
-    if (!suppressClick) return
+    // In arrange mode cards are only moved: their buttons and links stay inert.
+    const onCard = Boolean((event.target as HTMLElement | null)?.closest('[data-card]'))
+    if (!suppressClick && !(editing.value && onCard)) return
     suppressClick = false
     event.preventDefault()
     event.stopPropagation()
@@ -191,11 +275,11 @@ export function useActivityLayout(grid: Ref<HTMLElement | null>) {
   }
 
   onBeforeUnmount(() => {
-    window.removeEventListener('pointermove', onMove)
-    window.removeEventListener('pointerup', stop)
-    window.removeEventListener('pointercancel', stop)
+    window.clearTimeout(pressTimer)
+    unlisten()
+    stopEditing()
     document.body.classList.remove('activity-card-dragging')
   })
 
-  return { layout, isDefault, dragging, cardStyle, onPointerDown, onClickCapture, moveBy, moveAcross, reset }
+  return { layout, isDefault, dragging, editing, startEditing, stopEditing, cardStyle, onPointerDown, onClickCapture, moveBy, moveAcross, reset }
 }

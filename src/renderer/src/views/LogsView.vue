@@ -130,7 +130,7 @@ onBeforeUnmount(stopPolling)
 
 <template>
   <div class="page-shell logs-view">
-    <SubpageBack />
+    <SubpageBack :title="t('logs.title')" />
     <header class="logs-header">
       <div><h1>{{ t('logs.title') }}</h1><p>{{ t('logs.summary', [statusLabel, shownCount]) }}</p></div>
       <div class="logs-actions">

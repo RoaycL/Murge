@@ -333,7 +333,7 @@ onMounted(async () => {
 
 <template>
   <div class="page-shell general-view">
-    <SubpageBack />
+    <SubpageBack :title="t('general.title')" />
     <h1>{{ t('general.title') }}</h1>
 
     <section>

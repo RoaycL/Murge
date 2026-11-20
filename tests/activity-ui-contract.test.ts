@@ -38,7 +38,8 @@ describe('Activity fluid-layout UI contract', () => {
     expect(css).toMatch(/\.app-window\s*\{[^}]*height:\s*100%;\s*overflow:\s*hidden;/)
     expect(css).not.toMatch(/\.app-window\s*\{[^}]*padding:/)
     // 完全流式仪表盘：弹性列 + 居中内容壳，禁止回到写死列宽。
-    expect(css).toMatch(/\.dashboard-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/)
+    // 两列各二分成四条子轨道：横卡、流量卡占一列（两条），上传/下载各占半列（一条），可分别拖动。
+    expect(css).toMatch(/\.dashboard-grid\s*\{[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/)
     expect(css).toMatch(/\.dashboard-grid\s*\{[^}]*width:\s*100%/)
     expect(css).toMatch(/\.dashboard-grid\s*\{[^}]*margin:\s*6px auto 0/)
     // Surge 实图：左列横卡约 2.1:1；上传/下载和跨两行流量卡约 1:1。

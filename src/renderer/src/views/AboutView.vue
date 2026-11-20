@@ -76,7 +76,7 @@ async function exportDiagnostics(): Promise<void> {
 }
 </script>
 
-<template><div class="page-shell about-view"><SubpageBack /><h1>{{ t('about.title') }}</h1>
+<template><div class="page-shell about-view"><SubpageBack :title="t('about.title')" /><h1>{{ t('about.title') }}</h1>
   <section class="surface-card about-product"><div class="about-product-title"><BrandMark :size="38" /><strong>{{ brand?.productName ?? '—' }}</strong></div><span>{{ t('about.versionLine', [info?.version ?? '—', info?.platform ?? '—', info?.arch ?? '—']) }}</span><p>{{ brand?.description }}</p></section>
   <section><h2>{{ t('about.update') }}</h2><div class="surface-card general-info">
     <div class="update-row"><span><strong>{{ t('about.checkInstall') }}</strong><small>{{ t('about.checkInstallHint') }}</small></span><button type="button" :disabled="busy || updates.state.phase === 'checking' || updates.state.phase === 'downloading'" @click="checkUpdates">{{ t('common.checkUpdate') }}</button></div>

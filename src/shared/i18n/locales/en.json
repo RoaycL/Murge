@@ -21,6 +21,8 @@
   "about.update": "Updates",
   "about.versionLine": "Version {0} · {1} / {2}",
   "activity.activeConnections": "Active connections",
+  "activity.cardArrange": "Arrange cards",
+  "activity.cardDone": "Done",
   "activity.cardMenu": "Card layout",
   "activity.cardMoveDown": "Move down",
   "activity.cardMoveLeft": "Move to left column",

@@ -1777,5 +1777,16 @@
   "wireguard.peerSkipped": "Skipped peers without PublicKey or Endpoint",
   "wireguard.searchDomainIgnored": "Search domains in DNS were ignored",
   "wireguard.sectionIgnored": "Ignored unknown section [{0}]",
-  "wireguard.unrecognized": "Unrecognized WireGuard configuration: a wg-quick [Interface]/[Peer], or a Surge [WireGuard name] section, is required"
+  "wireguard.unrecognized": "Unrecognized WireGuard configuration: a wg-quick [Interface]/[Peer], or a Surge [WireGuard name] section, is required",
+  "yamlEditor.errors": "{0} syntax error(s)",
+  "yamlEditor.item": "{0} item",
+  "yamlEditor.items": "{0} items",
+  "yamlEditor.key": "{0} key",
+  "yamlEditor.keys": "{0} keys",
+  "yamlEditor.lineN": "Line {0}",
+  "yamlEditor.lines": "{0} lines",
+  "yamlEditor.noSections": "No sections found",
+  "yamlEditor.outline": "Config outline",
+  "yamlEditor.sections": "Top-level sections",
+  "yamlEditor.valid": "YAML parsed OK"
 }

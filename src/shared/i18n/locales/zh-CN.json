@@ -1777,5 +1777,16 @@
   "wireguard.peerSkipped": "已跳过缺少 PublicKey 或 Endpoint 的 Peer",
   "wireguard.searchDomainIgnored": "DNS 中的搜索域已忽略",
   "wireguard.sectionIgnored": "已忽略未知段落 [{0}]",
-  "wireguard.unrecognized": "无法识别的 WireGuard 配置：需要 wg-quick 的 [Interface]/[Peer]，或 Surge 的 [WireGuard 名称] 段落"
+  "wireguard.unrecognized": "无法识别的 WireGuard 配置：需要 wg-quick 的 [Interface]/[Peer]，或 Surge 的 [WireGuard 名称] 段落",
+  "yamlEditor.errors": "{0} 处语法错误",
+  "yamlEditor.item": "{0} 项",
+  "yamlEditor.items": "{0} 项",
+  "yamlEditor.key": "{0} 个键",
+  "yamlEditor.keys": "{0} 个键",
+  "yamlEditor.lineN": "第 {0} 行",
+  "yamlEditor.lines": "共 {0} 行",
+  "yamlEditor.noSections": "没有可识别的段落",
+  "yamlEditor.outline": "配置结构",
+  "yamlEditor.sections": "顶层段落",
+  "yamlEditor.valid": "YAML 解析正常"
 }

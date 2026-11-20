@@ -12,6 +12,7 @@ import DetailDrawer from '../components/DetailDrawer.vue'
 import CachedRemoteIcon from '../components/CachedRemoteIcon.vue'
 import LocalNodesSection from '../components/LocalNodesSection.vue'
 import GroupWizardModal from '../components/GroupWizardModal.vue'
+import GroupEditModal from '../components/GroupEditModal.vue'
 import PopoverMenu from '../components/PopoverMenu.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import { useToast } from '../composables/use-toast'
@@ -152,6 +153,42 @@ function editGroup(group: LocalGroup): void {
   void kernelManager.refresh()
   wizardGroup.value = plainClone(group)
   wizardOpen.value = true
+}
+
+// 编辑名称与图标 (local groups only; subscription groups belong to the subscription).
+const renaming = ref<LocalGroup | null>(null)
+const renameTaken = computed(() => {
+  const own = renaming.value?.config.name
+  const names = [...Object.keys(policies.proxies?.proxies ?? {}), ...localStore.state.groups.map((group) => group.name), ...localStore.settings.nodes.map((node) => node.config.name), ...BUILTIN_POLICIES]
+  return names.filter((name) => name !== own)
+})
+
+async function saveRename(next: { name: string; icon: string }): Promise<void> {
+  const group = renaming.value
+  if (!group) return
+  const from = group.config.name
+  // mihomo remembers manual choices by group and member name. Carry over both the
+  // renamed group's own choice and every other group's choice of the renamed group.
+  // Selector: the chosen member. URLTest/Fallback: only an explicit pin (`fixed`), never the automatic pick.
+  const restore: Array<[string, string]> = []
+  if (next.name !== from) {
+    for (const proxy of Object.values(policies.proxies?.proxies ?? {})) {
+      const pinned = proxy.type === 'Selector' ? policies.groupSelectedMember(proxy) : policies.isSelectableGroup(proxy) && typeof proxy.fixed === 'string' ? proxy.fixed : ''
+      if (!pinned) continue
+      if (proxy.name === from) restore.push([next.name, pinned === from ? next.name : pinned])
+      else if (pinned === from) restore.push([proxy.name, next.name])
+    }
+  }
+  const message = await localStore.renameGroup(group.id, next.name, next.icon)
+  if (message) {
+    toast.error(t('common.saveFailed'), message)
+    return
+  }
+  renaming.value = null
+  toast.success(t('common.saved'))
+  if (kernel.status.phase !== 'running') return
+  for (const [groupName, member] of restore) await window.desktop.mihomo.selectProxy(groupName, member).catch(() => undefined)
+  await policies.load()
 }
 
 function onGroupContext(event: MouseEvent, group: (typeof policies.groups)[number]): void {
@@ -298,6 +335,7 @@ watch(() => kernel.status.phase, (phase, previous) => {
         <button type="button" class="popover-item" role="menuitem" @click="testGroupFromMenu(groupMenu.name)">{{ t('policy.testGroupLatency') }}</button>
         <template v-if="groupMenu.local">
           <div class="popover-sep" />
+          <button type="button" class="popover-item" role="menuitem" :disabled="localStore.busy" @click="renaming = plainClone(groupMenu.local)">{{ t('policy.editNameIcon') }}</button>
           <button type="button" class="popover-item" role="menuitem" :disabled="localStore.busy" @click="editGroup(groupMenu.local)">{{ t('policy.editGroup') }}</button>
           <button type="button" class="popover-item danger" role="menuitem" :disabled="localStore.busy" @click="removingGroup = groupMenu.local">{{ t('policy.deleteGroup') }}</button>
         </template>
@@ -307,6 +345,7 @@ watch(() => kernel.status.phase, (phase, previous) => {
         </template>
       </template>
     </PopoverMenu>
+    <GroupEditModal :open="!!renaming" :name="renaming?.config.name ?? ''" :icon="String(renaming?.config.icon ?? '')" :taken-names="renameTaken" :busy="localStore.busy" @close="renaming = null" @save="saveRename" />
     <ConfirmModal :open="!!removingGroup" :title="t('policy.deleteGroupTitle')" :description="t('policy.confirmDelete', [removingGroup?.config.name ?? ''])" :busy="localStore.busy" @close="removingGroup = null" @confirm="confirmRemoveGroup" />
 
     <DetailDrawer :open="groupDrawerOpen && Boolean(policies.selectedGroup)" :title="policies.selectedGroup" :subtitle="drawerSubtitle" :icon="policies.currentGroup?.icon" :icon-cache-key="`policy:${policies.selectedGroup}`" @close="groupDrawerOpen = false">

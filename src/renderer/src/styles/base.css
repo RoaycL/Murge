@@ -61,7 +61,13 @@ h1 { margin: 0; font-size: var(--font-size-display); line-height: 34px; letter-s
    中缝后的总高恰好等于同列宽的正方形流量卡。
    min-width 与主进程 848px 最小窗口互为兜底：网格内容宽永不低于
    2×--card-min + 间距，卡片到达最小尺寸后不再被压缩。 */
-.dashboard-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: auto; gap: 15px; width: 100%; min-width: calc(2 * var(--card-min) + 15px); margin: 6px auto 0; }
+.dashboard-grid { position: relative; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: auto; gap: 15px; width: 100%; min-width: calc(2 * var(--card-min) + 15px); margin: 6px auto 0; }
+/* 卡片拖动排序（composables/use-activity-layout.ts）：位置由内联 grid-column/grid-row 给出；
+   被拖起的卡片跟随指针、浮在其他卡片之上，其余卡片滑到新位置。 */
+.dashboard-grid > .card-lifted { position: relative; z-index: 5; transition: none !important; box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18); cursor: grabbing; }
+.speed-grid.card-lifted { box-shadow: none; filter: drop-shadow(0 12px 22px rgba(0, 0, 0, 0.16)); }
+.dashboard-grid.is-dragging, .dashboard-grid.is-dragging * { cursor: grabbing !important; }
+body.activity-card-dragging { user-select: none; -webkit-user-select: none; }
 /* Surge 左列横卡：约 336×160。 */
 .latency-card { container-type: inline-size; display: flex; flex-direction: column; aspect-ratio: 2.1 / 1; padding: 15px 16px 13px; overflow: hidden; }
 .quiet-button { float: right; width: 100px; height: 28px; margin-top: -5px; border: 1px solid var(--app-divider); border-radius: var(--radius-sm); background: transparent; font-size: var(--font-size-sm); cursor: pointer; }
@@ -105,8 +111,8 @@ h1 { margin: 0; font-size: var(--font-size-display); line-height: 34px; letter-s
 .connection-breakdown div:first-child { padding-left: 0; border-left: 0; }
 .connection-breakdown strong { font-size: var(--font-size-2xl); line-height: 25px; font-weight: var(--font-weight-bold); }
 .connection-breakdown span { margin-top: 4px; color: var(--app-muted); font-size: var(--font-size-xs); }
-/* Surge 右下流量卡：正方形，跨左侧连接与总计两行。 */
-.traffic-card { grid-column: 2; grid-row: 2 / span 2; aspect-ratio: 1 / 1; padding: 15px 16px; min-width: 0; overflow: hidden; }
+/* Surge 右下流量卡：正方形，占两行（默认跨左侧连接与总计两行）。 */
+.traffic-card { aspect-ratio: 1 / 1; padding: 15px 16px; min-width: 0; overflow: hidden; }
 .card-title-row { display: flex; justify-content: space-between; align-items: center; }
 .segmented { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; padding: 2px; border-radius: var(--radius-control); background: var(--app-fill); }
 /* Equal-width segments sized to the longest label, so longer translations widen the control instead of wrapping. */

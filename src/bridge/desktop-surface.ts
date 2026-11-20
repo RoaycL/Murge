@@ -22,6 +22,7 @@ export const api: DesktopApi = {
     listLocalAddresses: () => invoke(IPC.appListLocalAddresses),
     getLanGateway: () => invoke(IPC.appGetLanGateway),
     setLanGateway: (enabled, device) => invoke(IPC.appSetLanGateway, enabled, device),
+    openDirectory: (directory) => invoke(IPC.appOpenDirectory, directory),
     onNavigate: (listener) => listen(IPC.appNavigateEvent, listener)
   },
   diagnostics: {

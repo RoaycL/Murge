@@ -1045,6 +1045,35 @@ fn tray_icon_root(app: &tauri::AppHandle) -> std::path::PathBuf {
     }
 }
 
+/// Open one of the named app folders (application / working / kernel / logs)
+/// in the system file manager. Shared by the tray's 打开目录 submenu and the
+/// `app:open-directory` IPC behind 更多 › 通用.
+pub(crate) fn open_named_directory(directory: &str) -> Result<(), String> {
+    let target = match directory {
+        "application" => {
+            return std::env::current_exe()
+                .ok()
+                .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf()))
+                .ok_or_else(|| "unable to resolve the application directory".to_string())
+                .and_then(|dir| open_file_manager(&dir));
+        }
+        "working" => match crate::paths::AppPaths::probe().app_data_root {
+            Some(root) => root,
+            None => return Err("no working directory in dev".to_string()),
+        },
+        "kernel" => match crate::paths::AppPaths::probe().kernel_root() {
+            Some(root) => root,
+            None => return Err("no kernel directory in dev".to_string()),
+        },
+        "logs" => match crate::paths::AppPaths::probe().app_data_root {
+            Some(root) => root.join("logs"),
+            None => return Err("no log directory in dev".to_string()),
+        },
+        _ => return Err(format!("unknown directory: {directory}")),
+    };
+    open_file_manager(&target)
+}
+
 pub(crate) fn open_file_manager(target: &std::path::Path) -> Result<(), String> {
     std::fs::create_dir_all(target).map_err(|error| error.to_string())?;
     #[cfg(target_os = "windows")]
@@ -1501,32 +1530,7 @@ pub(crate) fn wire_tray(app: tauri::AppHandle) -> Result<(), tauri::Error> {
                 });
             })
         },
-        open_directory: Box::new(|directory| {
-            // The tray-adapter directory map (application/working/kernel/logs).
-            let target = match directory {
-                "application" => {
-                    return std::env::current_exe()
-                        .ok()
-                        .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf()))
-                        .ok_or_else(|| "unable to resolve the application directory".to_string())
-                        .and_then(|dir| open_file_manager(&dir));
-                }
-                "working" => match crate::paths::AppPaths::probe().app_data_root {
-                    Some(root) => root,
-                    None => return Err("no working directory in dev".to_string()),
-                },
-                "kernel" => match crate::paths::AppPaths::probe().kernel_root() {
-                    Some(root) => root,
-                    None => return Err("no kernel directory in dev".to_string()),
-                },
-                "logs" => match crate::paths::AppPaths::probe().app_data_root {
-                    Some(root) => root.join("logs"),
-                    None => return Err("no log directory in dev".to_string()),
-                },
-                _ => return Err(format!("unknown tray directory: {directory}")),
-            };
-            open_file_manager(&target)
-        }),
+        open_directory: Box::new(open_named_directory),
         copy_text: Box::new(|value| {
             // Best-effort clipboard write (the TS `clipboard.writeText`).
             if let Ok(mut clipboard) = arboard::Clipboard::new() {

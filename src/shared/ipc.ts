@@ -330,7 +330,7 @@ export interface DesktopApi {
     list(): Promise<ProfileMeta[]>
     get(id: string): Promise<Profile>
     /** 打开文件: open a working copy of the YAML in the chosen editor (or the system default app). */
-    openFile(id: string): Promise<void>
+    openFile(id: string): Promise<{ keptUnapplied: boolean }>
     /** The working copy as the editor last saved it; `null` when there is none. */
     readExternal(id: string): Promise<string | null>
     /** Native picker for the editor program; `null` when cancelled. */

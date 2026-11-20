@@ -34,37 +34,102 @@ fn file_stem(name: &str) -> String {
     }
 }
 
-/// Write a fresh working copy of `document` for profile `id` (replacing any
-/// earlier one) and return its path.
-pub(crate) fn stage(root: &Path, id: &str, name: &str, document: &str) -> Result<PathBuf, String> {
-    let dir = root.join(id);
-    if dir.exists() {
-        std::fs::remove_dir_all(&dir).map_err(|error| error.to_string())?;
+/// Write `contents` readable by the owner only (profiles can carry proxy
+/// credentials; the repository stores them `0600` too).
+fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
     }
-    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let mut file = options.open(path)?;
+    file.write_all(contents.as_bytes())?;
+    file.flush()
+}
+
+fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(dir)
+}
+
+/// The stored document a working copy was made from.
+const BASE_FILE: &str = ".base";
+
+fn staged_copy(dir: &Path) -> Option<PathBuf> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.is_file()
+                && path.extension().and_then(|extension| extension.to_str()) == Some("yaml")
+        })
+}
+
+/// Prepare the working copy for profile `id` and return its path, plus
+/// whether an earlier copy with unapplied edits was kept.
+///
+/// A copy is never thrown away with edits in it: one whose edits still apply
+/// to the stored document (it has not changed since) is reused as is; when
+/// the stored document moved on too (e.g. a subscription update), the old
+/// copy is moved to `backup/` and a fresh one is made.
+pub(crate) fn stage(
+    root: &Path,
+    id: &str,
+    name: &str,
+    document: &str,
+) -> Result<(PathBuf, bool), String> {
+    let dir = root.join(id);
+    create_private_dir(&dir).map_err(|error| error.to_string())?;
     let path = dir.join(format!("{}.yaml", file_stem(name)));
-    std::fs::write(&path, document).map_err(|error| error.to_string())?;
-    Ok(path)
+    if let Some(existing) = staged_copy(&dir) {
+        let copy = std::fs::read_to_string(&existing).map_err(|error| error.to_string())?;
+        let base = std::fs::read_to_string(dir.join(BASE_FILE)).ok();
+        let edited = copy != document && base.as_deref() != Some(copy.as_str());
+        if edited && base.as_deref() == Some(document) {
+            if existing != path {
+                std::fs::rename(&existing, &path).map_err(|error| error.to_string())?;
+            }
+            return Ok((path, true));
+        }
+        if edited {
+            let backup = dir.join("backup");
+            create_private_dir(&backup).map_err(|error| error.to_string())?;
+            let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+            let stem = existing
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("profile")
+                .to_string();
+            std::fs::rename(&existing, backup.join(format!("{stem}-{stamp}.yaml")))
+                .map_err(|error| error.to_string())?;
+        } else {
+            std::fs::remove_file(&existing).map_err(|error| error.to_string())?;
+        }
+    }
+    write_private(&dir.join(BASE_FILE), document).map_err(|error| error.to_string())?;
+    write_private(&path, document).map_err(|error| error.to_string())?;
+    Ok((path, false))
 }
 
 /// The working copy of profile `id` as the editor last saved it; `None`
 /// when there is none (never opened, or removed).
 pub(crate) fn read_staged(root: &Path, id: &str) -> Result<Option<String>, String> {
-    let dir = root.join(id);
-    let entries = match std::fs::read_dir(&dir) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.to_string()),
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|extension| extension.to_str()) == Some("yaml") {
-            return std::fs::read_to_string(&path)
-                .map(Some)
-                .map_err(|error| error.to_string());
-        }
+    match staged_copy(&root.join(id)) {
+        Some(path) => std::fs::read_to_string(&path)
+            .map(Some)
+            .map_err(|error| error.to_string()),
+        None => Ok(None),
     }
-    Ok(None)
 }
 
 /// Windows script launchers would flash a console window; programs (and
@@ -160,26 +225,60 @@ mod tests {
     }
 
     #[test]
-    fn working_copy_round_trips_and_restaging_replaces_it() {
+    fn working_copy_round_trips_and_keeps_unapplied_edits() {
         let temp = tempfile::TempDir::new().unwrap();
         let root = staging_root(Some(temp.path()));
         assert_eq!(read_staged(&root, "p1").unwrap(), None);
-        let path = stage(&root, "p1", "机场: 订阅?", "proxies: []\n").unwrap();
+        let (path, kept) = stage(&root, "p1", "机场: 订阅?", "proxies: []\n").unwrap();
+        assert!(!kept);
         assert_eq!(path.file_name().unwrap(), "机场_ 订阅_.yaml");
-        std::fs::write(&path, "proxies: [a]\n").unwrap();
-        assert_eq!(
-            read_staged(&root, "p1").unwrap().as_deref(),
-            Some("proxies: [a]\n")
-        );
-        // Re-opening (e.g. after a rename) starts from the stored document.
-        let renamed = stage(&root, "p1", "Home", "rules: []\n").unwrap();
+        // An edit not applied yet (e.g. it failed validation) survives a
+        // re-open, under the profile's new name too.
+        std::fs::write(&path, "proxies: [broken\n").unwrap();
+        let (renamed, kept) = stage(&root, "p1", "Home", "proxies: []\n").unwrap();
+        assert!(kept);
         assert_eq!(renamed.file_name().unwrap(), "Home.yaml");
         assert!(!path.exists());
         assert_eq!(
             read_staged(&root, "p1").unwrap().as_deref(),
+            Some("proxies: [broken\n")
+        );
+        // The stored document moved on as well: the edit goes to backup/.
+        let (fresh, kept) = stage(&root, "p1", "Home", "rules: []\n").unwrap();
+        assert!(!kept);
+        assert_eq!(
+            read_staged(&root, "p1").unwrap().as_deref(),
             Some("rules: []\n")
         );
+        let backups: Vec<_> = std::fs::read_dir(root.join("p1").join("backup"))
+            .unwrap()
+            .flatten()
+            .map(|entry| std::fs::read_to_string(entry.path()).unwrap())
+            .collect();
+        assert_eq!(backups, vec!["proxies: [broken\n".to_string()]);
+        // An applied edit (copy == stored) or an untouched copy is just refreshed.
+        std::fs::write(&fresh, "rules: [x]\n").unwrap();
+        let (_, kept) = stage(&root, "p1", "Home", "rules: [x]\n").unwrap();
+        assert!(!kept);
+        let (_, kept) = stage(&root, "p1", "Home", "rules: [y]\n").unwrap();
+        assert!(!kept);
+        assert_eq!(
+            read_staged(&root, "p1").unwrap().as_deref(),
+            Some("rules: [y]\n")
+        );
         assert_eq!(file_stem(" .. "), "profile");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn working_copy_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = staging_root(Some(temp.path()));
+        let (path, _) = stage(&root, "p1", "Home", "proxies: []\n").unwrap();
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(&root.join("p1")), 0o700);
     }
 
     #[test]

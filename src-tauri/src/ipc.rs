@@ -538,7 +538,7 @@ pub async fn dispatch(
             let id = required_string(payload, 0, "profiles:open-file id")?;
             let profile = profiles.get(&id)?;
             let root = crate::external_editor::staging_root(_paths.app_data_root.as_deref());
-            let path = crate::external_editor::stage(
+            let (path, kept) = crate::external_editor::stage(
                 &root,
                 &id,
                 profile["meta"]["name"].as_str().unwrap_or_default(),
@@ -547,7 +547,7 @@ pub async fn dispatch(
             .map_err(IpcError::invalid_argument)?;
             let editor = settings.get().profile_editor;
             crate::external_editor::open(&path, &editor).map_err(IpcError::invalid_argument)?;
-            Ok(Value::Null)
+            Ok(serde_json::json!({ "keptUnapplied": kept }))
         }
         "profiles:read-external" => {
             let id = required_string(payload, 0, "profiles:read-external id")?;

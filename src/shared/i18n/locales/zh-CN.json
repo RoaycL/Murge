@@ -1191,6 +1191,7 @@
   "profiles.openFileFailed": "无法打开配置文件",
   "profiles.openedExternal": "已在编辑器中打开",
   "profiles.openedExternalHint": "保存后回到本窗口，会自动校验并应用修改。",
+  "profiles.openedExternalKept": "已打开上次未应用的修改。保存后回到本窗口，会自动校验并应用。",
   "profiles.pasteUrl": "粘贴订阅地址",
   "profiles.reapply": "重新应用",
   "profiles.reapplyLabel": "重新应用该配置",

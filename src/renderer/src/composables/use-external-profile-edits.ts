@@ -49,6 +49,9 @@ async function syncExternalEdits(): Promise<void> {
         await store.replaceDocument(id, document)
         toast.success(t('profiles.externalApplied', [name]), active ? t('profiles.reloaded') : undefined)
       } catch (error) {
+        // A valid edit that could not be applied (e.g. the kernel failed to
+        // reload) stays eligible: the next focus tries it again.
+        snapshots.set(id, snapshot)
         toast.error(t('profiles.externalFailed', [name]), toProtocolError(error).message)
       }
     }
@@ -63,14 +66,19 @@ async function syncExternalEdits(): Promise<void> {
 export async function openProfileFile(id: string): Promise<void> {
   const toast = useToast()
   try {
-    await window.desktop.profiles.openFile(id)
+    const { keptUnapplied } = await window.desktop.profiles.openFile(id)
     const staged = await window.desktop.profiles.readExternal(id)
-    if (staged !== null) snapshots.set(id, staged)
+    if (staged !== null) {
+      // A kept copy holds edits not applied yet: the next focus checks them
+      // again (the stored document is the baseline, not the copy).
+      if (keptUnapplied) snapshots.set(id, (await window.desktop.profiles.get(id)).document)
+      else snapshots.set(id, staged)
+    }
     if (!listening) {
       listening = true
       window.addEventListener('focus', () => { void syncExternalEdits() })
     }
-    toast.info(t('profiles.openedExternal'), t('profiles.openedExternalHint'))
+    toast.info(t('profiles.openedExternal'), keptUnapplied ? t('profiles.openedExternalKept') : t('profiles.openedExternalHint'))
   } catch (error) {
     toast.error(t('profiles.openFileFailed'), toProtocolError(error).message)
   }

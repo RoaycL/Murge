@@ -1191,6 +1191,7 @@
   "profiles.openFileFailed": "Couldn't open the profile file",
   "profiles.openedExternal": "Opened in your editor",
   "profiles.openedExternalHint": "Save, then come back to this window to validate and apply the changes.",
+  "profiles.openedExternalKept": "Your earlier unapplied changes are still there. Save, then come back to this window to validate and apply them.",
   "profiles.pasteUrl": "Paste subscription URL",
   "profiles.reapply": "Re-apply",
   "profiles.reapplyLabel": "Re-apply this profile",

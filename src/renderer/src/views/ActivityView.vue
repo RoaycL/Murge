@@ -356,6 +356,11 @@ const chartBars = computed<number[]>(() => {
         <button type="button" class="popover-item" role="menuitem" :disabled="cardLayoutDefault" @click="resetCards">{{ t('activity.cardReset') }}</button>
       </template>
     </PopoverMenu>
+    <div v-if="!cardVisible.size" class="activity-all-hidden">
+      <p>{{ t('widgets.allHidden') }}</p>
+      <button type="button" class="activity-arrange-add" @click="openAddMenu"><AppIcon name="add" :size="14" />{{ t('widgets.addCard') }}</button>
+      <button type="button" class="activity-arrange-add" @click="resetCards">{{ t('activity.cardReset') }}</button>
+    </div>
     <PopoverMenu :open="!!addMenu" :x="addMenu?.x ?? 0" :y="addMenu?.y ?? 0" :label="t('widgets.addCard')" @close="addMenu = null">
       <button v-for="id in cardLayout.hidden" :key="id" type="button" class="popover-item" role="menuitem" @click="showCard(id); if (!cardLayout.hidden.length) addMenu = null">{{ cardName(id) }}</button>
     </PopoverMenu>
@@ -367,6 +372,8 @@ const chartBars = computed<number[]>(() => {
 </template>
 
 <style scoped>
+.activity-all-hidden { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: 40px; color: var(--app-muted); font-size: var(--font-size-sm); }
+.activity-all-hidden p { margin: 0; }
 .activity-arrange-actions { display: flex; align-items: center; gap: 8px; }
 .activity-arrange-add { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 12px; border: 1px solid var(--app-divider); border-radius: 14px; background: var(--app-surface); color: var(--app-blue); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); cursor: pointer; }
 .stream-state {

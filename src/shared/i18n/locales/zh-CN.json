@@ -1773,6 +1773,7 @@
   "widgets.activityChart": "最近一分钟的下载与上传速率",
   "widgets.addCard": "添加卡片",
   "widgets.allEvents": "全部事件",
+  "widgets.allHidden": "所有卡片都已隐藏",
   "widgets.bandwidth": "带宽",
   "widgets.bandwidthFailed": "测试失败",
   "widgets.bandwidthHint": "通过当前策略下载、上传一小段数据（约几十 MB）",

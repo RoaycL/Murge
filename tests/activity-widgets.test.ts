@@ -42,10 +42,31 @@ describe('流量用量 periods', () => {
   })
 
   it('asks the shell for history from the first day of last month, across a year boundary too', () => {
-    expect(usageHistorySince(now)).toBe(at(2026, 10, 1))
-    expect(usageHistorySince(new Date(2027, 0, 9))).toBe(at(2026, 12, 1))
+    // One hour minus 1 ms earlier: the UTC-hour bucket overlapping local midnight is included.
+    expect(usageHistorySince(now)).toBe(at(2026, 10, 1) - 3_600_000 + 1)
+    expect(usageHistorySince(new Date(2027, 0, 9))).toBe(at(2026, 12, 1) - 3_600_000 + 1)
     expect(usagePeriodSlots('lastMonth', new Date(2027, 0, 9)).starts).toHaveLength(31)
     expect(usagePeriodSlots('month', new Date(2028, 1, 3)).starts).toHaveLength(29)
+  })
+})
+
+describe('流量用量 in a fractional-offset time zone', () => {
+  it('shares a UTC-hour bucket that straddles local midnight between the two days', () => {
+    const previous = process.env.TZ
+    process.env.TZ = 'Asia/Kolkata' // UTC+5:30
+    try {
+      const now = new Date(2026, 10, 25, 0, 15)
+      // The UTC hour 18:00–19:00 on the 24th is 23:30–00:30 local.
+      const bucketStart = Date.UTC(2026, 10, 24, 18)
+      const today = summarizeUsagePeriod([{ bucketStart, up: 0, down: 600, count: 0, proxy: 200, direct: 400 }], 'today', now)
+      expect(today.total).toBe(300)
+      expect(today.slots[0].bytes).toBe(300)
+      expect([today.proxy, today.direct]).toEqual([100, 200])
+      expect(usageHistorySince(now)).toBeLessThanOrEqual(bucketStart)
+    } finally {
+      if (previous === undefined) delete process.env.TZ
+      else process.env.TZ = previous
+    }
   })
 })
 

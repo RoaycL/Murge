@@ -51,7 +51,7 @@ const flag = computed(() => countryFlag(meta.value?.country))
         <strong>{{ meta?.city ?? '—' }}</strong>
       </div>
     </div>
-    <div class="external-ip-footer"><span>{{ owner.org ?? meta?.provider ?? '—' }}</span><span>{{ owner.number ?? '' }}</span></div>
+    <div class="external-ip-footer"><span>{{ owner.org ?? '—' }}</span><span>{{ owner.number ?? '' }}</span></div>
   </SurfaceCard>
 </template>
 

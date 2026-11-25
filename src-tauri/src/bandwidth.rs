@@ -82,26 +82,36 @@ async fn download(client: &reqwest::Client) -> Option<f64> {
 
 async fn upload(client: &reqwest::Client) -> Option<f64> {
     let sent = Arc::new(AtomicU64::new(0));
+    // Set when hyper pulls the first chunk, i.e. once the connection through
+    // the chain is up: the handshake is latency, not bandwidth.
+    let first_chunk = Arc::new(std::sync::OnceLock::<Instant>::new());
     let counter = sent.clone();
+    let opened = first_chunk.clone();
     let chunks = (UPLOAD_BYTES as usize).div_ceil(UPLOAD_CHUNK);
     let payload = bytes::Bytes::from(vec![0u8; UPLOAD_CHUNK]);
-    let body = futures_util::stream::iter((0..chunks).map(move |_| {
+    // The body ends early once the phase budget has run out since the first
+    // chunk, so a slow link uploads less instead of running on.
+    let body = futures_util::stream::iter((0..chunks).map_while(move |_| {
+        let started = *opened.get_or_init(Instant::now);
+        if started.elapsed() >= PHASE_BUDGET {
+            return None;
+        }
         counter.fetch_add(UPLOAD_CHUNK as u64, Ordering::Relaxed);
-        Ok::<bytes::Bytes, std::io::Error>(payload.clone())
+        Some(Ok::<bytes::Bytes, std::io::Error>(payload.clone()))
     }));
-    let started = Instant::now();
     let request = client
         .post(UPLOAD_URL)
         .header("content-type", "application/octet-stream")
         .body(reqwest::Body::wrap_stream(body))
         .send();
-    match tokio::time::timeout(PHASE_BUDGET + CONNECT_TIMEOUT, request).await {
+    let elapsed = || first_chunk.get().map(Instant::elapsed);
+    match tokio::time::timeout(CONNECT_TIMEOUT + PHASE_BUDGET + CONNECT_TIMEOUT, request).await {
         Ok(Ok(response)) if response.status().is_success() => {
-            mbps(sent.load(Ordering::Relaxed), started.elapsed())
+            mbps(sent.load(Ordering::Relaxed), elapsed()?)
         }
         Ok(_) => None,
-        // Budget used up mid-upload: the bytes handed to the socket so far.
-        Err(_) => mbps(sent.load(Ordering::Relaxed), started.elapsed()),
+        // The server never answered: rate from the bytes handed to the socket.
+        Err(_) => mbps(sent.load(Ordering::Relaxed), elapsed()?),
     }
 }
 

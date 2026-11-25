@@ -43,9 +43,15 @@ export function usagePeriodSlots(period: UsagePeriod, now: Date): { kind: 'hour'
   return { kind: 'day', starts, end: new Date(first.getFullYear(), first.getMonth() + 1, 1).getTime() }
 }
 
-/** The earliest bucket any period needs: the first day of last month. */
+const HOUR = 3_600_000
+
+/**
+ * The earliest bucket any period needs: the one covering the first day of last month.
+ * Stored buckets are UTC hours, so in a fractional-offset zone (UTC+5:30) the bucket that
+ * started up to an hour before local midnight still overlaps it.
+ */
 export function usageHistorySince(now: Date): number {
-  return new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime()
+  return new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime() - HOUR + 1
 }
 
 export function summarizeUsagePeriod(buckets: readonly UsageBucket[], period: UsagePeriod, now: Date): UsagePeriodSummary {
@@ -53,19 +59,27 @@ export function summarizeUsagePeriod(buckets: readonly UsageBucket[], period: Us
   const slots: UsageSlot[] = starts.map((start) => ({ start, bytes: 0, future: start > now.getTime() }))
   const summary: UsagePeriodSummary = { period, up: 0, down: 0, total: 0, proxy: 0, direct: 0, splitKnown: false, slotKind: kind, slots }
   const first = starts[0]
+  const bounds = [...starts, end]
   for (const bucket of buckets) {
-    const at = bucket.bucketStart
-    if (at < first || at >= end) continue
-    let index = slots.length - 1
-    while (index > 0 && starts[index] > at) index -= 1
-    const bytes = bucket.up + bucket.down
-    slots[index].bytes += bytes
-    summary.up += bucket.up
-    summary.down += bucket.down
+    const from = bucket.bucketStart
+    const to = from + HOUR
+    if (to <= first || from >= end) continue
+    // A UTC-hour bucket can straddle a local slot boundary (UTC+5:30, UTC+9:45…):
+    // share its bytes by overlap, as traffic inside one hour is not stored any finer.
+    let inside = 0
+    for (let index = 0; index < slots.length; index += 1) {
+      const overlap = Math.min(to, bounds[index + 1]) - Math.max(from, bounds[index])
+      if (overlap <= 0) continue
+      const share = overlap / HOUR
+      slots[index].bytes += (bucket.up + bucket.down) * share
+      inside += share
+    }
+    summary.up += bucket.up * inside
+    summary.down += bucket.down * inside
     if (bucket.proxy != null || bucket.direct != null) {
       summary.splitKnown = true
-      summary.proxy += bucket.proxy ?? 0
-      summary.direct += bucket.direct ?? 0
+      summary.proxy += (bucket.proxy ?? 0) * inside
+      summary.direct += (bucket.direct ?? 0) * inside
     }
   }
   summary.total = summary.up + summary.down

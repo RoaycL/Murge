@@ -7,8 +7,8 @@
  * 用户可以把卡片拖到任一列的任意位置；顺序存在本机（localStorage）。
  *
  * 1.2.0 起加入 Surge 6 iPad 版的小组件（活动、网络、带宽、外部 IP、DNS、流量用量、
- * 流量排行、策略延迟、事件）。卡片可以隐藏（hidden），之后再从「添加卡片」放回来；
- * 旧版存下的排列里没有的新卡片自动补到较短的一列。
+ * 流量排行、策略延迟、事件）。它们默认不显示（hidden），从「添加卡片」放到页面上；
+ * 任何卡片都可以再隐藏。原有六张卡片若在存储里缺失，仍补到较短的一列。
  */
 
 export type ActivityCardId =
@@ -40,11 +40,16 @@ export function isHalfCard(id: ActivityCardId): boolean {
   return HALF_CARDS.has(id)
 }
 
+/** The Surge widgets start off the page; users add the ones they want from 添加卡片. */
+export const OPTIONAL_ACTIVITY_CARDS: readonly ActivityCardId[] = Object.freeze([
+  'activity', 'network', 'dns', 'bandwidth', 'externalIp', 'usage', 'ranking', 'policyLatency', 'events'
+])
+
 export function defaultActivityLayout(): ActivityLayout {
   return {
-    left: ['latency', 'connections', 'total', 'network', 'externalIp', 'usage', 'policyLatency'],
-    right: ['upload', 'download', 'traffic', 'dns', 'bandwidth', 'activity', 'ranking', 'events'],
-    hidden: []
+    left: ['latency', 'connections', 'total'],
+    right: ['upload', 'download', 'traffic'],
+    hidden: [...OPTIONAL_ACTIVITY_CARDS]
   }
 }
 
@@ -105,6 +110,11 @@ export function normalizeActivityLayout(value: unknown): ActivityLayout {
   layout.hidden = pick(raw.hidden)
   for (const id of ACTIVITY_CARDS) {
     if (seen.has(id)) continue
+    // A card added in an update starts hidden instead of rearranging the page.
+    if (OPTIONAL_ACTIVITY_CARDS.includes(id)) {
+      layout.hidden.push(id)
+      continue
+    }
     const openHalf = isHalfCard(id) ? (['left', 'right'] as const).find((column) => hasOpenHalf(layout[column])) : undefined
     const column = openHalf ?? (columnRows(layout.right) < columnRows(layout.left) ? 'right' : 'left')
     layout[column].push(id)
@@ -122,7 +132,10 @@ export function parseActivityLayout(value: string | null): ActivityLayout {
 }
 
 export function isDefaultActivityLayout(layout: ActivityLayout): boolean {
-  return JSON.stringify(layout) === JSON.stringify(defaultActivityLayout())
+  const fallback = defaultActivityLayout()
+  // Hidden cards have no position, so their order does not matter.
+  const sameHidden = layout.hidden.length === fallback.hidden.length && fallback.hidden.every((id) => layout.hidden.includes(id))
+  return sameHidden && JSON.stringify(layout.left) === JSON.stringify(fallback.left) && JSON.stringify(layout.right) === JSON.stringify(fallback.right)
 }
 
 export function cardPosition(layout: ActivityLayout, id: ActivityCardId): { column: ActivityColumn; index: number } {

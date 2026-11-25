@@ -351,6 +351,7 @@ const chartBars = computed<number[]>(() => {
         <button type="button" class="popover-item" role="menuitem" :disabled="!cardMenu.canDown" @click="moveCardBy(cardMenu.id, 1)">{{ t('activity.cardMoveDown') }}</button>
         <button type="button" class="popover-item" role="menuitem" @click="moveCardAcross(cardMenu.id)">{{ cardMenu.column === 'left' ? t('activity.cardMoveRight') : t('activity.cardMoveLeft') }}</button>
         <button type="button" class="popover-item" role="menuitem" @click="hideCard(cardMenu.id); cardMenu = null">{{ t('widgets.hideCard') }}</button>
+        <button v-if="cardLayout.hidden.length" type="button" class="popover-item" role="menuitem" @click="addMenu = { x: cardMenu.x, y: cardMenu.y }; cardMenu = null">{{ t('widgets.addCardMenu') }}</button>
         <div class="popover-sep" />
         <button v-if="!cardEditing" type="button" class="popover-item" role="menuitem" @click="cardMenu = null; startCardEditing()">{{ t('activity.cardArrange') }}</button>
         <button type="button" class="popover-item" role="menuitem" :disabled="cardLayoutDefault" @click="resetCards">{{ t('activity.cardReset') }}</button>

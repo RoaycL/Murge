@@ -1772,6 +1772,7 @@
   "widgets.activity": "活动",
   "widgets.activityChart": "最近一分钟的下载与上传速率",
   "widgets.addCard": "添加卡片",
+  "widgets.addCardMenu": "添加卡片…",
   "widgets.allEvents": "全部事件",
   "widgets.allHidden": "所有卡片都已隐藏",
   "widgets.bandwidth": "带宽",

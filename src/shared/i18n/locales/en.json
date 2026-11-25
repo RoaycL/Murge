@@ -1772,6 +1772,7 @@
   "widgets.activity": "Activity",
   "widgets.activityChart": "Download and upload rates over the last minute",
   "widgets.addCard": "Add card",
+  "widgets.addCardMenu": "Add card…",
   "widgets.allEvents": "All events",
   "widgets.allHidden": "All cards are hidden",
   "widgets.bandwidth": "Bandwidth",

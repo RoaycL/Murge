@@ -129,6 +129,9 @@ export const api: DesktopApi = {
   unlock: {
     testAll: () => invoke(IPC.unlockTestAll),
     testOne: (name) => invoke(IPC.unlockTestOne, name)
+  },
+  bandwidth: {
+    test: () => invoke(IPC.bandwidthTest)
   },  appSettings: {
     get: () => invoke(IPC.appSettingsGet),
     set: (patch) => invoke(IPC.appSettingsSet, patch)
@@ -228,7 +231,8 @@ export const api: DesktopApi = {
     rank: (window, ranking, limit) => invoke(IPC.usageHistoryRank, window, ranking, limit),
     processRanking: (window) => invoke(IPC.usageHistoryProcessRanking, window),
     clear: () => invoke(IPC.usageHistoryClear),
-    getCapacity: () => invoke(IPC.usageHistoryGetCapacity)
+    getCapacity: () => invoke(IPC.usageHistoryGetCapacity),
+    hourly: (since) => invoke(IPC.usageHistoryHourly, since)
   },
   networkMetadata: {
     getProviders: () => invoke(IPC.networkMetadataGetProviders),

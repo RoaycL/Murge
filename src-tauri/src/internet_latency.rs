@@ -30,6 +30,10 @@ pub struct InternetLatencySample {
     pub proxy_ms: Option<u64>,
     /// The selector's current node the proxy delay was measured against.
     pub proxy_node: Option<String>,
+    /// The default gateway the first-hop RTT was measured against.
+    pub gateway_ip: Option<String>,
+    /// The kernel's DIRECT outbound delay (the 网络 card's 互联网 slot).
+    pub direct_ms: Option<u64>,
 }
 
 /// True when the proxy slot is meaningful: a selector exists and currently
@@ -74,12 +78,15 @@ pub async fn sample(
     let gateway = crate::route_latency::measure_gateway_rtt();
     let dns = sample_dns(client);
     let proxy = sample_proxy(client, &group_order);
-    let (gateway, dns_ms, proxy) = tokio::join!(gateway, dns, proxy);
+    let direct = sample_direct(client);
+    let (gateway, dns_ms, proxy, direct_ms) = tokio::join!(gateway, dns, proxy, direct);
     InternetLatencySample {
         gateway_ms: gateway.rtt_ms,
         dns_ms,
         proxy_ms: proxy.0,
         proxy_node: proxy.1,
+        gateway_ip: gateway.gateway,
+        direct_ms,
     }
 }
 
@@ -99,6 +106,20 @@ async fn sample_dns(client: &crate::mihomo::MihomoClient) -> Option<u64> {
         return Some(now_millis().saturating_sub(system_started));
     }
     None
+}
+
+/// mihomo's built-in DIRECT outbound timed against the same test URL: the
+/// plain internet RTT without any node in the way.
+async fn sample_direct(client: &crate::mihomo::MihomoClient) -> Option<u64> {
+    client
+        .delay_test(
+            "DIRECT",
+            None,
+            crate::mihomo::DEFAULT_DELAY_TIMEOUT_MS as i64,
+        )
+        .await
+        .ok()
+        .and_then(|result| result["delay"].as_u64())
 }
 
 async fn sample_proxy(
@@ -140,6 +161,8 @@ pub fn to_value(sample: &InternetLatencySample) -> Value {
         "dnsMs": sample.dns_ms,
         "proxyMs": sample.proxy_ms,
         "proxyNode": sample.proxy_node,
+        "gatewayIp": sample.gateway_ip,
+        "directMs": sample.direct_ms,
     })
 }
 
@@ -185,10 +208,12 @@ mod tests {
             dns_ms: None,
             proxy_ms: Some(220),
             proxy_node: Some("香港 01".to_string()),
+            gateway_ip: Some("192.168.1.1".to_string()),
+            direct_ms: None,
         };
         assert_eq!(
             to_value(&sample),
-            json!({ "gatewayMs": 3, "dnsMs": Value::Null, "proxyMs": 220, "proxyNode": "香港 01" })
+            json!({ "gatewayMs": 3, "dnsMs": Value::Null, "proxyMs": 220, "proxyNode": "香港 01", "gatewayIp": "192.168.1.1", "directMs": Value::Null })
         );
     }
 }

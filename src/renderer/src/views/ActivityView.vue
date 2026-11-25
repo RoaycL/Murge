@@ -30,14 +30,49 @@ import { useToast } from '../composables/use-toast'
 import PopoverMenu from '../components/PopoverMenu.vue'
 import { useActivityLayout } from '../composables/use-activity-layout'
 import { cardPosition, type ActivityCardId, type ActivityColumn } from '../lib/activity-layout'
+import ActivityOverviewCard from '../components/activity/ActivityOverviewCard.vue'
+import NetworkCard from '../components/activity/NetworkCard.vue'
+import BandwidthCard from '../components/activity/BandwidthCard.vue'
+import ExternalIpCard from '../components/activity/ExternalIpCard.vue'
+import DnsCard from '../components/activity/DnsCard.vue'
+import UsagePeriodCard from '../components/activity/UsagePeriodCard.vue'
+import TrafficRankCard from '../components/activity/TrafficRankCard.vue'
+import PolicyLatencyCard from '../components/activity/PolicyLatencyCard.vue'
+import EventsCard from '../components/activity/EventsCard.vue'
 
 // 卡片排列：长按任一卡片进入整理模式（卡片晃动，像 iOS 主屏幕），再拖到两列中的任意位置；
 // 「完成」、Esc 或点卡片外面退出。普通按住拖动/滚动不受影响。右键卡片可上移/下移/换列/恢复默认。
 const dashboard = ref<HTMLElement | null>(null)
 const {
-  layout: cardLayout, isDefault: cardLayoutDefault, dragging: cardDragging, editing: cardEditing, startEditing: startCardEditing, stopEditing: stopCardEditing, cardStyle,
-  onPointerDown: onCardPointerDown, onClickCapture: onCardClickCapture, moveBy: moveCardBy, moveAcross: moveCardAcross, reset: resetCards
+  layout: cardLayout, isDefault: cardLayoutDefault, visible: cardVisible, dragging: cardDragging, editing: cardEditing, startEditing: startCardEditing, stopEditing: stopCardEditing, cardStyle,
+  onPointerDown: onCardPointerDown, onClickCapture: onCardClickCapture, moveBy: moveCardBy, moveAcross: moveCardAcross, hide: hideCard, show: showCard, reset: resetCards
 } = useActivityLayout(dashboard)
+// 「添加卡片」: hidden cards, listed by name, put back at the end of the shorter column.
+const addMenu = ref<{ x: number; y: number } | null>(null)
+function openAddMenu(event: MouseEvent): void {
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  addMenu.value = { x: rect.left, y: rect.bottom + 4 }
+}
+function cardName(id: ActivityCardId): string {
+  const names: Record<ActivityCardId, string> = {
+    latency: t('widgets.card.latency'),
+    upload: t('widgets.card.upload'),
+    download: t('widgets.card.download'),
+    connections: t('widgets.card.connections'),
+    traffic: t('widgets.card.traffic'),
+    total: t('widgets.card.total'),
+    activity: t('widgets.card.activity'),
+    network: t('widgets.card.network'),
+    dns: t('widgets.card.dns'),
+    bandwidth: t('widgets.card.bandwidth'),
+    externalIp: t('widgets.card.externalIp'),
+    usage: t('widgets.card.usage'),
+    ranking: t('widgets.card.ranking'),
+    policyLatency: t('widgets.card.policyLatency'),
+    events: t('widgets.card.events')
+  }
+  return names[id]
+}
 const cardMenu = ref<{ id: ActivityCardId; x: number; y: number; column: ActivityColumn; canUp: boolean; canDown: boolean } | null>(null)
 
 function onCardContext(event: MouseEvent): void {
@@ -235,7 +270,10 @@ const chartBars = computed<number[]>(() => {
   <div class="activity-view page-shell">
     <header class="activity-header">
       <h1>{{ t('nav.activity') }}</h1>
-      <button v-if="cardEditing" type="button" class="activity-arrange-done" @click="stopCardEditing">{{ t('activity.cardDone') }}</button>
+      <div v-if="cardEditing" class="activity-arrange-actions">
+        <button v-if="cardLayout.hidden.length" type="button" class="activity-arrange-add" @click="openAddMenu"><AppIcon name="add" :size="14" />{{ t('widgets.addCard') }}</button>
+        <button type="button" class="activity-arrange-done" @click="stopCardEditing">{{ t('activity.cardDone') }}</button>
+      </div>
     </header>
 
     <section class="runtime-context" :aria-label="t('activity.contextLabel')">
@@ -247,7 +285,7 @@ const chartBars = computed<number[]>(() => {
     </section>
 
     <section ref="dashboard" class="dashboard-grid" :class="{ 'is-dragging': Boolean(cardDragging), 'is-editing': cardEditing }" @pointerdown="onCardPointerDown" @click.capture="onCardClickCapture" @contextmenu="onCardContext">
-      <SurfaceCard class="latency-card" data-card="latency" :class="{ 'card-lifted': cardDragging === 'latency' }" :style="cardStyle('latency')">
+      <SurfaceCard class="latency-card" v-if="cardVisible.has('latency')" data-card="latency" :class="{ 'card-lifted': cardDragging === 'latency' }" :style="cardStyle('latency')">
         <div class="card-title-row">
           <span class="metric-label latency-label">{{ t('activity.latency') }}<button type="button" class="latency-refresh refresh-control" :disabled="latency.state === 'probing'" :aria-label="t('activity.retest')" @click="latency.probe()"><RefreshIndicator :busy="latency.state === 'probing'" :failed="latency.state === 'error'" :size="12" /></button></span>
           <button type="button" class="quiet-button" @click="openNetworkDiagnostics">{{ diagnosisButtonLabel }}</button>
@@ -260,10 +298,10 @@ const chartBars = computed<number[]>(() => {
         </div>
       </SurfaceCard>
 
-      <SpeedSparkline kind="upload" data-card="upload" :class="{ 'card-lifted': cardDragging === 'upload' }" :style="cardStyle('upload')" :title="t('common.upload')" :value="up.value" :unit="up.unit" :series="traffic.uploadSeries" />
-      <SpeedSparkline kind="download" data-card="download" :class="{ 'card-lifted': cardDragging === 'download' }" :style="cardStyle('download')" :title="t('common.download')" :value="down.value" :unit="down.unit" :series="traffic.downloadSeries" />
+      <SpeedSparkline v-if="cardVisible.has('upload')" kind="upload" data-card="upload" :class="{ 'card-lifted': cardDragging === 'upload' }" :style="cardStyle('upload')" :title="t('common.upload')" :value="up.value" :unit="up.unit" :series="traffic.uploadSeries" />
+      <SpeedSparkline v-if="cardVisible.has('download')" kind="download" data-card="download" :class="{ 'card-lifted': cardDragging === 'download' }" :style="cardStyle('download')" :title="t('common.download')" :value="down.value" :unit="down.unit" :series="traffic.downloadSeries" />
 
-      <SurfaceCard class="connections-card" data-card="connections" :class="{ 'card-lifted': cardDragging === 'connections' }" :style="cardStyle('connections')">
+      <SurfaceCard class="connections-card" v-if="cardVisible.has('connections')" data-card="connections" :class="{ 'card-lifted': cardDragging === 'connections' }" :style="cardStyle('connections')">
         <div class="card-title-row"><span class="metric-label">{{ t('activity.activeConnections') }}<span v-if="connStateLabel" class="stream-state">{{ connStateLabel }}</span></span><i :class="connDotClass" /></div>
         <button type="button" class="connections-summary-link" @click="router.push('/connections')"><strong>{{ activeCount }}</strong><span>{{ t('activity.viewConnections') }}</span><AppIcon name="next" :size="15" /></button>
         <div class="connections-breakdown">
@@ -273,7 +311,7 @@ const chartBars = computed<number[]>(() => {
         </div>
       </SurfaceCard>
 
-      <SurfaceCard class="traffic-card" data-card="traffic" :class="{ 'card-lifted': cardDragging === 'traffic' }" :style="cardStyle('traffic')">
+      <SurfaceCard class="traffic-card" v-if="cardVisible.has('traffic')" data-card="traffic" :class="{ 'card-lifted': cardDragging === 'traffic' }" :style="cardStyle('traffic')">
         <div class="card-title-row"><span class="metric-label">{{ t('stats.traffic') }}</span><div class="segmented" role="group" :aria-label="t('activity.trafficScope')"><button type="button" :class="{ selected: rankScope === 'all' }" :aria-pressed="rankScope === 'all'" @click="connections.setRankScope('all')">{{ t('common.all') }}</button><button type="button" :class="{ selected: rankScope === 'proxy' }" :aria-pressed="rankScope === 'proxy'" @click="connections.setRankScope('proxy')">{{ t('activity.proxyOnly') }}</button></div></div>
         <div class="bar-chart" :aria-label="t('activity.recentLabel')">
           <i v-for="(height, index) in chartBars" :key="index" :style="{ height: `${height}%` }" />
@@ -290,23 +328,36 @@ const chartBars = computed<number[]>(() => {
         </div>
       </SurfaceCard>
 
-      <SurfaceCard class="total-card" data-card="total" :class="{ 'card-lifted': cardDragging === 'total' }" :style="cardStyle('total')">
+      <SurfaceCard class="total-card" v-if="cardVisible.has('total')" data-card="total" :class="{ 'card-lifted': cardDragging === 'total' }" :style="cardStyle('total')">
         <div class="card-title-row"><span class="metric-label">{{ t('stats.total') }}</span><button type="button" class="quiet-button" @click="summaryDrawer = 'usage'">{{ t('activity.viewHistory') }}</button></div>
         <div class="large-metric">{{ total.value }}<span>{{ total.unit }}</span></div>
         <div class="total-labels"><div><span>DIRECT</span><strong>{{ direct.value }} {{ direct.unit }}</strong></div><div><span>{{ t('activity.proxy') }}</span><strong>{{ proxy.value }} {{ proxy.unit }}</strong></div></div>
         <button type="button" class="total-bar total-history-link" :aria-label="t('activity.viewUsage')" @click="summaryDrawer = 'usage'"><i :style="{ width: `${directPct}%` }" /><i :style="{ width: `${100 - directPct}%` }" /></button>
       </SurfaceCard>
 
+      <ActivityOverviewCard v-if="cardVisible.has('activity')" data-card="activity" :class="{ 'card-lifted': cardDragging === 'activity' }" :style="cardStyle('activity')" />
+      <NetworkCard v-if="cardVisible.has('network')" data-card="network" :class="{ 'card-lifted': cardDragging === 'network' }" :style="cardStyle('network')" />
+      <DnsCard v-if="cardVisible.has('dns')" data-card="dns" :class="{ 'card-lifted': cardDragging === 'dns' }" :style="cardStyle('dns')" />
+      <BandwidthCard v-if="cardVisible.has('bandwidth')" data-card="bandwidth" :class="{ 'card-lifted': cardDragging === 'bandwidth' }" :style="cardStyle('bandwidth')" />
+      <ExternalIpCard v-if="cardVisible.has('externalIp')" data-card="externalIp" :class="{ 'card-lifted': cardDragging === 'externalIp' }" :style="cardStyle('externalIp')" @details="summaryDrawer = 'network'" />
+      <UsagePeriodCard v-if="cardVisible.has('usage')" data-card="usage" :class="{ 'card-lifted': cardDragging === 'usage' }" :style="cardStyle('usage')" @history="summaryDrawer = 'usage'" />
+      <TrafficRankCard v-if="cardVisible.has('ranking')" data-card="ranking" :class="{ 'card-lifted': cardDragging === 'ranking' }" :style="cardStyle('ranking')" />
+      <PolicyLatencyCard v-if="cardVisible.has('policyLatency')" data-card="policyLatency" :class="{ 'card-lifted': cardDragging === 'policyLatency' }" :style="cardStyle('policyLatency')" />
+      <EventsCard v-if="cardVisible.has('events')" data-card="events" :class="{ 'card-lifted': cardDragging === 'events' }" :style="cardStyle('events')" />
     </section>
     <PopoverMenu :open="!!cardMenu" :x="cardMenu?.x ?? 0" :y="cardMenu?.y ?? 0" :label="t('activity.cardMenu')" @close="cardMenu = null">
       <template v-if="cardMenu">
         <button type="button" class="popover-item" role="menuitem" :disabled="!cardMenu.canUp" @click="moveCardBy(cardMenu.id, -1)">{{ t('activity.cardMoveUp') }}</button>
         <button type="button" class="popover-item" role="menuitem" :disabled="!cardMenu.canDown" @click="moveCardBy(cardMenu.id, 1)">{{ t('activity.cardMoveDown') }}</button>
         <button type="button" class="popover-item" role="menuitem" @click="moveCardAcross(cardMenu.id)">{{ cardMenu.column === 'left' ? t('activity.cardMoveRight') : t('activity.cardMoveLeft') }}</button>
+        <button type="button" class="popover-item" role="menuitem" @click="hideCard(cardMenu.id); cardMenu = null">{{ t('widgets.hideCard') }}</button>
         <div class="popover-sep" />
         <button v-if="!cardEditing" type="button" class="popover-item" role="menuitem" @click="cardMenu = null; startCardEditing()">{{ t('activity.cardArrange') }}</button>
         <button type="button" class="popover-item" role="menuitem" :disabled="cardLayoutDefault" @click="resetCards">{{ t('activity.cardReset') }}</button>
       </template>
+    </PopoverMenu>
+    <PopoverMenu :open="!!addMenu" :x="addMenu?.x ?? 0" :y="addMenu?.y ?? 0" :label="t('widgets.addCard')" @close="addMenu = null">
+      <button v-for="id in cardLayout.hidden" :key="id" type="button" class="popover-item" role="menuitem" @click="showCard(id); if (!cardLayout.hidden.length) addMenu = null">{{ cardName(id) }}</button>
     </PopoverMenu>
     <DetailDrawer :open="Boolean(summaryDrawer)" :title="summaryDrawer === 'network' ? t('activity.networkInfo') : t('activity.usageHistory')" @close="summaryDrawer = null">
       <template v-if="summaryDrawer === 'network'" #actions><button type="button" class="drawer-probe-button" :disabled="latency.state === 'probing'" @click="latency.probe()">{{ latency.state === 'probing' ? t('netMeta.detecting') : t('activity.recheck') }}</button></template>
@@ -316,6 +367,8 @@ const chartBars = computed<number[]>(() => {
 </template>
 
 <style scoped>
+.activity-arrange-actions { display: flex; align-items: center; gap: 8px; }
+.activity-arrange-add { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 12px; border: 1px solid var(--app-divider); border-radius: 14px; background: var(--app-surface); color: var(--app-blue); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); cursor: pointer; }
 .stream-state {
   margin-left: 6px;
 }

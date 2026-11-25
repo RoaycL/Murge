@@ -18,7 +18,11 @@ use serde_json::{json, Map, Value};
 use crate::error::IpcError;
 
 pub const USAGE_BUCKET_MS: i64 = 3_600_000;
-pub const USAGE_MAX_BUCKETS: usize = 24 * 30;
+/// 63 days of hourly buckets: enough for the 流量用量 card's 上月 view on any
+/// day of the current month (the previous month starts at most 62 days ago).
+pub const USAGE_MAX_BUCKETS: usize = 24 * 63;
+/// Per-process rows stay at 30 days: each bucket can hold up to 64 names.
+pub const PROCESS_USAGE_MAX_BUCKETS: usize = 24 * 30;
 
 /// Per-window bucketing config: grid granularity and slot count.
 fn window_config(window: &str) -> Option<(i64, i64)> {
@@ -82,6 +86,13 @@ pub fn coerce_usage_bucket(input: &Value) -> Option<Value> {
     );
     if record.get("countType").and_then(Value::as_str) == Some("connections") {
         bucket.insert("countType".into(), json!("connections"));
+    }
+    // Proxy/DIRECT split (bytes) measured from connection deltas; buckets
+    // written before the split existed simply lack it.
+    for key in ["proxy", "direct"] {
+        if let Some(value) = record.get(key).and_then(is_non_negative) {
+            bucket.insert(key.into(), json!(value.round() as i64));
+        }
     }
     Some(Value::Object(bucket))
 }
@@ -546,7 +557,7 @@ impl ProcessUsageStore {
         fs::read_to_string(path)
             .ok()
             .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
-            .map(|parsed| coerce_process_usage_buckets(&parsed, USAGE_MAX_BUCKETS))
+            .map(|parsed| coerce_process_usage_buckets(&parsed, PROCESS_USAGE_MAX_BUCKETS))
             .unwrap_or_default()
     }
 
@@ -683,7 +694,7 @@ impl UsageHistoryService {
         state.buckets = coerce_usage_buckets(&json!(self.store.read()), self.max_buckets);
         state.current_bucket_start = state.buckets.last().and_then(|b| b["bucketStart"].as_i64());
         let processes = self.process_store.read();
-        let skip = processes.len().saturating_sub(self.max_buckets);
+        let skip = processes.len().saturating_sub(PROCESS_USAGE_MAX_BUCKETS);
         state.process_buckets = processes.into_iter().skip(skip).collect();
         state.loaded = true;
     }
@@ -760,6 +771,8 @@ impl UsageHistoryService {
         self.record_connections(&ids, at)?;
         let mut state = self.guard();
         let mut next_bytes: std::collections::HashMap<String, (f64, f64)> = Default::default();
+        let mut split_proxy = 0.0;
+        let mut split_direct = 0.0;
         for connection in &connections {
             let Some(id) = connection.get("id").and_then(Value::as_str) else {
                 continue;
@@ -782,6 +795,12 @@ impl UsageHistoryService {
                 None => (upload, download),
             };
             if up > 0.0 || down > 0.0 {
+                let direct = connection
+                    .get("chains")
+                    .and_then(Value::as_array)
+                    .is_some_and(|chains| chains.iter().any(|hop| hop.as_str() == Some("DIRECT")));
+                split_proxy += if direct { 0.0 } else { up + down };
+                split_direct += if direct { up + down } else { 0.0 };
                 let name = process_usage_name(
                     connection
                         .pointer("/metadata/process")
@@ -792,6 +811,16 @@ impl UsageHistoryService {
         }
         state.active_connection_bytes = next_bytes;
         state.seen_process_snapshot = true;
+        if split_proxy > 0.0 || split_direct > 0.0 {
+            let current = self.ensure_bucket(&mut state, at);
+            let object = current.as_object_mut().expect("bucket is an object");
+            for (key, bytes) in [("proxy", split_proxy), ("direct", split_direct)] {
+                let previous = object.get(key).and_then(Value::as_f64).unwrap_or(0.0);
+                object.insert(key.into(), json_number((previous + bytes).round()));
+            }
+            self.trim_to_bound(&mut state);
+            self.maybe_persist(&mut state, at)?;
+        }
         if state.process_dirty
             && !(self.persist_interval_ms > 0
                 && at - state.last_process_persist_at < self.persist_interval_ms)
@@ -828,7 +857,7 @@ impl UsageHistoryService {
                 bucket_start: start,
                 rows: Vec::new(),
             });
-            while state.process_buckets.len() > self.max_buckets {
+            while state.process_buckets.len() > PROCESS_USAGE_MAX_BUCKETS {
                 state.process_buckets.remove(0);
             }
         }
@@ -872,6 +901,22 @@ impl UsageHistoryService {
             aggregate_usage_window(&state.buckets, window, (self.clock)(), self.max_buckets)?;
         let buckets = snapshot["buckets"].as_array().cloned().unwrap_or_default();
         Ok(Value::Array(rank_usage_buckets(&buckets, ranking, limit)?))
+    }
+
+    /// Raw hourly buckets starting at or after `since` (epoch ms), oldest
+    /// first. The 流量用量 card groups them into local days/hours itself so
+    /// "today" and "this month" follow the user's own time zone.
+    pub fn hourly(&self, since: i64) -> Value {
+        self.init();
+        let state = self.guard();
+        Value::Array(
+            state
+                .buckets
+                .iter()
+                .filter(|bucket| bucket["bucketStart"].as_i64().unwrap_or(0) >= since)
+                .cloned()
+                .collect(),
+        )
     }
 
     /// Drop the whole bounded database and persist the empty list.
@@ -1277,6 +1322,42 @@ mod tests {
         reloaded.init();
         let window = reloaded.get_window("1h").unwrap();
         assert_eq!(window["totals"]["up"], 100, "persisted buckets reload");
+    }
+
+    #[test]
+    fn connection_deltas_split_hourly_buckets_into_proxy_and_direct() {
+        let at = USAGE_BUCKET_MS * 7;
+        let service = UsageHistoryService::new(UsageHistoryStore::in_memory())
+            .with_clock(Box::new(move || at + 5000))
+            .with_persist_interval_ms(0);
+        let snapshot = |proxied: i64, direct: i64| {
+            json!({"connections": [
+                {"id": "p", "upload": 0, "download": proxied, "chains": ["香港 01", "节点选择"], "metadata": {}},
+                {"id": "d", "upload": direct, "download": 0, "chains": ["DIRECT"], "metadata": {}}
+            ]})
+        };
+        // Baseline first, then only the growth counts.
+        service
+            .record_connection_snapshot(&snapshot(500, 70), at)
+            .unwrap();
+        service
+            .record_connection_snapshot(&snapshot(800, 100), at + 1000)
+            .unwrap();
+        let hourly = service.hourly(at);
+        let bucket = &hourly.as_array().unwrap()[0];
+        assert_eq!(bucket["bucketStart"], at);
+        assert_eq!(bucket["proxy"], 300);
+        assert_eq!(bucket["direct"], 30);
+        // Older buckets are filtered by `since`; the split survives coercion.
+        assert_eq!(service.hourly(at + USAGE_BUCKET_MS), json!([]));
+        let coerced = coerce_usage_bucket(bucket).unwrap();
+        assert_eq!(coerced["proxy"], 300);
+        assert_eq!(
+            coerce_usage_bucket(&json!({"bucketStart": 0, "up": 1, "down": 2}))
+                .unwrap()
+                .get("proxy"),
+            None
+        );
     }
 
     #[test]

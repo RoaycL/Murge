@@ -475,6 +475,14 @@ pub async fn dispatch(
                 &crate::unlock::detect_service(&name, crate::unlock::real_probe(port)).await,
             )]))
         }
+        // 带宽 card: one download + one upload burst through the LIVE mixed
+        // port, so it measures the path the current rules pick.
+        "network:bandwidth-test" => {
+            let port = resolve_mixed_port(models).await?;
+            Ok(crate::bandwidth::to_value(
+                &crate::bandwidth::run(port).await,
+            ))
+        }
         "network-metadata:resolve-all" => {
             let force = crate::subscription::parse_optional_boolean(arg(payload, 0), "force")?;
             Ok(metadata.resolve_all(force).await)
@@ -1160,6 +1168,17 @@ pub async fn dispatch(
         )?),
         "usage-history:clear" => usage.clear().map(|()| Value::Null),
         "usage-history:get-capacity" => Ok(usage.get_capacity()),
+        "usage-history:hourly" => {
+            let since = arg(payload, 0)
+                .and_then(Value::as_f64)
+                .filter(|value| value.is_finite() && *value >= 0.0)
+                .ok_or_else(|| {
+                    IpcError::invalid_argument(
+                        "usage-history:hourly since must be a non-negative number",
+                    )
+                })?;
+            Ok(usage.hourly(since as i64))
+        }
 
         // --- kernel + runtime (Phase 3B) ------------------------------------
         // The supervisor runs with the DisabledKernelResolver port until the

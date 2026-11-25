@@ -8,12 +8,20 @@ import { defineStore } from 'pinia'
  */
 export type LatencyState = 'idle' | 'probing' | 'ready' | 'error'
 
+/** DNS samples the DNS card keeps for its average and sparkline. */
+export const DNS_HISTORY_SIZE = 30
+
 export const useLatencyStore = defineStore('latency', () => {
   const state = ref<LatencyState>('idle')
   const gatewayMs = ref<number | null>(null)
   const dnsMs = ref<number | null>(null)
   const proxyMs = ref<number | null>(null)
   const proxyNode = ref<string | null>(null)
+  const gatewayIp = ref<string | null>(null)
+  /** The kernel's DIRECT outbound delay (网络 card's 互联网 slot). */
+  const directMs = ref<number | null>(null)
+  /** Recent successful DNS timings, oldest first (this session only). */
+  const dnsHistory = ref<number[]>([])
   let probeSeq = 0
 
   async function probe(): Promise<void> {
@@ -26,6 +34,9 @@ export const useLatencyStore = defineStore('latency', () => {
       dnsMs.value = result.dnsMs
       proxyMs.value = result.proxyMs
       proxyNode.value = result.proxyNode
+      gatewayIp.value = result.gatewayIp ?? null
+      directMs.value = result.directMs ?? null
+      if (result.dnsMs != null) dnsHistory.value = [...dnsHistory.value, result.dnsMs].slice(-DNS_HISTORY_SIZE)
       state.value = 'ready'
     } catch {
       if (seq !== probeSeq) return
@@ -51,5 +62,10 @@ export const useLatencyStore = defineStore('latency', () => {
     if (state.value === 'idle') void probe()
   }
 
-  return { state, gatewayMs, dnsMs, proxyMs, proxyNode, probe, probeAfterKernelStart, init }
+  /** Forget the DNS timings (the DNS card's 清空, after flushing the kernel cache). */
+  function clearDnsHistory(): void {
+    dnsHistory.value = []
+  }
+
+  return { state, gatewayMs, dnsMs, proxyMs, proxyNode, gatewayIp, directMs, dnsHistory, probe, probeAfterKernelStart, init, clearDnsHistory }
 })

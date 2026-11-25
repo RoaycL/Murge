@@ -164,6 +164,9 @@ export function createDesktopApi(): DesktopApi {
       testAll: () => bridgeInvoke("network:unlock-test-all", []),
       testOne: (name) => bridgeInvoke("network:unlock-test-one", [name]),
     },
+    bandwidth: {
+      test: () => bridgeInvoke("network:bandwidth-test", []),
+    },
     appSettings: {
       get: () => bridgeInvoke("app-settings:get", []),
       set: (patch) => bridgeInvoke("app-settings:set", [patch]),
@@ -264,6 +267,7 @@ export function createDesktopApi(): DesktopApi {
       processRanking: (window) => bridgeInvoke("usage-history:process-ranking", [window]),
       clear: () => bridgeInvoke("usage-history:clear", []),
       getCapacity: () => bridgeInvoke("usage-history:get-capacity", []),
+      hourly: (since) => bridgeInvoke("usage-history:hourly", [since]),
     },
     networkMetadata: {
       getProviders: () => bridgeInvoke("network-metadata:get-providers", []),

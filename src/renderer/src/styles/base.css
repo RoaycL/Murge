@@ -159,6 +159,26 @@ body.activity-card-dragging { user-select: none; -webkit-user-select: none; }
 .total-history-link{width:100%;padding:0;border:0;background:transparent;cursor:pointer}.total-history-link:hover{filter:brightness(.96)}
 .total-bar i { border-radius: var(--radius-sm); background: var(--app-purple); }
 .total-bar i:last-child { background: var(--app-cyan); }
+/* Surge 6 小组件（活动、网络、带宽、外部 IP、DNS、流量用量、流量排行、策略延迟、事件）：
+   横卡与左列横卡同为 2.1:1，方卡 1:1 占两行，半宽小卡与上传/下载一样是正方形。 */
+.widget-card { container-type: inline-size; display: flex; flex-direction: column; min-width: 0; padding: 14px 16px; overflow: hidden; }
+.widget-wide { aspect-ratio: 2.1 / 1; }
+.widget-square, .widget-half { aspect-ratio: 1 / 1; }
+.widget-half { padding: 14px 13px; }
+.widget-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; }
+.widget-title { display: inline-flex; align-items: center; gap: 2px; min-width: 0; padding: 0; border: 0; background: transparent; color: var(--app-muted); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); white-space: nowrap; }
+.widget-title svg { flex: none; color: var(--app-faint); }
+button.widget-title { cursor: pointer; }
+button.widget-title:hover { color: var(--app-text); }
+.widget-icon-button { display: inline-grid; flex: none; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--app-blue); cursor: pointer; }
+.widget-icon-button:hover:not(:disabled) { background: var(--app-fill-subtle); }
+.widget-icon-button:disabled { cursor: progress; }
+.widget-text-button { flex: none; padding: 0; border: 0; background: transparent; color: var(--app-blue); font-size: var(--font-size-sm); cursor: pointer; }
+.widget-text-button:disabled { opacity: .5; cursor: default; }
+.widget-empty { margin: auto 0; color: var(--app-muted); font-size: var(--font-size-xs); line-height: 1.5; text-align: center; }
+.widget-segmented button { min-width: 42px; }
+.widget-muted { color: var(--app-muted); }
+.widget-unit { margin-left: 3px; font-size: var(--font-size-md); font-weight: var(--font-weight-medium); }
 /* 横卡按自身宽度收紧内部排版，而不是依赖窗口宽度。这样侧栏、窗口缩放
    或未来网格列宽变化时，底部信息仍保持同一锚点且不会在窄卡中互相挤压。 */
 @container (max-width: 320px) {

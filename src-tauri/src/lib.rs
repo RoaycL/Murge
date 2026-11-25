@@ -13,6 +13,7 @@
 
 mod app_info;
 mod backup;
+mod bandwidth;
 mod brand;
 mod client_hardening;
 mod crash;

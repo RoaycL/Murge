@@ -500,6 +500,7 @@ export const usePoliciesStore = defineStore('policies', () => {
     lastError,
     panelError,
     proxies,
+    providerProxies,
     selectedGroup,
     selectedMember,
     mode,

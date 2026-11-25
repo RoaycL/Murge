@@ -35,9 +35,9 @@ describe('Tauri bridge parity (Phase 2)', () => {
     const generated = await read(GENERATED)
     const invokeChannels = [...generated.matchAll(/bridgeInvoke\("([^"]+)"/g)].map((m) => m[1])
     const eventChannels = [...generated.matchAll(/bridgeListen\("([^"]+)"/g)].map((m) => m[1])
-    expect(invokeChannels).toHaveLength(160)
+    expect(invokeChannels).toHaveLength(162)
     expect(eventChannels).toHaveLength(11)
-    expect(new Set([...invokeChannels, ...eventChannels]).size).toBe(171)
+    expect(new Set([...invokeChannels, ...eventChannels]).size).toBe(173)
   })
 
   it('dispatches through the single desktop_ipc command with positional payload arrays', async () => {

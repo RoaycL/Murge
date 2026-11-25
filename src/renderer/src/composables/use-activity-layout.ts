@@ -1,7 +1,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, type Ref } from 'vue'
 import {
-  ACTIVITY_LAYOUT_STORAGE_KEY, activityPlacement, cardPosition, defaultActivityLayout, isDefaultActivityLayout, isHalfCard,
-  moveActivityCard, parseActivityLayout, type ActivityCardId, type ActivityColumn, type ActivityLayout
+  ACTIVITY_LAYOUT_STORAGE_KEY, activityPlacement, cardPosition, defaultActivityLayout, hideActivityCard, isDefaultActivityLayout, isHalfCard,
+  moveActivityCard, parseActivityLayout, showActivityCard, type ActivityCardId, type ActivityColumn, type ActivityLayout
 } from '../lib/activity-layout'
 
 function readStored(): string | null {
@@ -15,7 +15,7 @@ export const LONG_PRESS_MS = 450
 /** Presses here keep their own behavior (typing, choosing) and never start a long press. */
 const NO_DRAG = 'input, textarea, select, .app-select'
 /** Presses here never leave arrange mode (the 完成 button, menus opened from a card). */
-const KEEP_EDITING = '[data-card], .activity-arrange-done, .popover-menu, [role="menu"]'
+const KEEP_EDITING = '[data-card], .activity-arrange-done, .activity-arrange-add, .popover-menu, [role="menu"]'
 
 interface DragState {
   id: ActivityCardId
@@ -253,6 +253,7 @@ export function useActivityLayout(grid: Ref<HTMLElement | null>) {
   /** Inline style of a card: its grid slot, plus the drag offset while lifted. */
   function cardStyle(id: ActivityCardId): Record<string, string> {
     const slot = placement.value[id]
+    if (!slot) return { display: 'none' }
     if (dragging.value !== id) return { gridColumn: slot.gridColumn, gridRow: slot.gridRow }
     return { gridColumn: slot.gridColumn, gridRow: slot.gridRow, transform: `translate(${offset.value.x}px, ${offset.value.y}px)` }
   }
@@ -270,6 +271,17 @@ export function useActivityLayout(grid: Ref<HTMLElement | null>) {
     void commit(moveActivityCard(layout.value, id, other, index)).then(persist)
   }
 
+  /** Cards currently on the page (hidden ones are not rendered at all). */
+  const visible = computed(() => new Set<ActivityCardId>([...layout.value.left, ...layout.value.right]))
+
+  function hide(id: ActivityCardId): void {
+    void commit(hideActivityCard(layout.value, id)).then(persist)
+  }
+
+  function show(id: ActivityCardId): void {
+    void commit(showActivityCard(layout.value, id)).then(persist)
+  }
+
   function reset(): void {
     void commit(defaultActivityLayout()).then(persist)
   }
@@ -281,5 +293,5 @@ export function useActivityLayout(grid: Ref<HTMLElement | null>) {
     document.body.classList.remove('activity-card-dragging')
   })
 
-  return { layout, isDefault, dragging, editing, startEditing, stopEditing, cardStyle, onPointerDown, onClickCapture, moveBy, moveAcross, reset }
+  return { layout, isDefault, visible, dragging, editing, startEditing, stopEditing, cardStyle, onPointerDown, onClickCapture, moveBy, moveAcross, hide, show, reset }
 }

@@ -5,27 +5,52 @@
  * 横卡（延迟、连接、总计）占满一列一行，流量卡是正方形、占两行；上传、下载是半宽的正方形小卡，
  * 同一列里相邻的两张小卡并排共用一行，单独一张就占该行的左半边。
  * 用户可以把卡片拖到任一列的任意位置；顺序存在本机（localStorage）。
+ *
+ * 1.2.0 起加入 Surge 6 iPad 版的小组件（活动、网络、带宽、外部 IP、DNS、流量用量、
+ * 流量排行、策略延迟、事件）。它们默认不显示（hidden），从「添加卡片」放到页面上；
+ * 任何卡片都可以再隐藏。原有六张卡片若在存储里缺失，仍补到较短的一列。
  */
 
-export type ActivityCardId = 'latency' | 'upload' | 'download' | 'connections' | 'traffic' | 'total'
+export type ActivityCardId =
+  | 'latency' | 'upload' | 'download' | 'connections' | 'traffic' | 'total'
+  | 'activity' | 'network' | 'bandwidth' | 'externalIp' | 'dns' | 'usage' | 'ranking' | 'policyLatency' | 'events'
 export type ActivityColumn = 'left' | 'right'
 export interface ActivityLayout {
   left: ActivityCardId[]
   right: ActivityCardId[]
+  /** Cards the user removed from the page (in the order they were hidden). */
+  hidden: ActivityCardId[]
 }
 
 export const ACTIVITY_LAYOUT_STORAGE_KEY = 'activity-layout.v1'
-export const ACTIVITY_CARDS: readonly ActivityCardId[] = Object.freeze(['latency', 'upload', 'download', 'connections', 'traffic', 'total'])
+export const ACTIVITY_CARDS: readonly ActivityCardId[] = Object.freeze([
+  'latency', 'upload', 'download', 'connections', 'traffic', 'total',
+  'activity', 'network', 'dns', 'bandwidth', 'externalIp', 'usage', 'ranking', 'policyLatency', 'events'
+])
 /** Grid rows each card spans. */
-export const ACTIVITY_CARD_ROWS: Readonly<Record<ActivityCardId, number>> = Object.freeze({ latency: 1, upload: 1, download: 1, connections: 1, traffic: 2, total: 1 })
+export const ACTIVITY_CARD_ROWS: Readonly<Record<ActivityCardId, number>> = Object.freeze({
+  latency: 1, upload: 1, download: 1, connections: 1, traffic: 2, total: 1,
+  activity: 2, network: 1, bandwidth: 1, externalIp: 1, dns: 1, usage: 2, ranking: 2, policyLatency: 2, events: 1
+})
+
+const HALF_CARDS: ReadonlySet<ActivityCardId> = new Set(['upload', 'download', 'dns', 'bandwidth'])
 
 /** Half-width cards: two adjacent ones share a row. */
 export function isHalfCard(id: ActivityCardId): boolean {
-  return id === 'upload' || id === 'download'
+  return HALF_CARDS.has(id)
 }
 
+/** The Surge widgets start off the page; users add the ones they want from 添加卡片. */
+export const OPTIONAL_ACTIVITY_CARDS: readonly ActivityCardId[] = Object.freeze([
+  'activity', 'network', 'dns', 'bandwidth', 'externalIp', 'usage', 'ranking', 'policyLatency', 'events'
+])
+
 export function defaultActivityLayout(): ActivityLayout {
-  return { left: ['latency', 'connections', 'total'], right: ['upload', 'download', 'traffic'] }
+  return {
+    left: ['latency', 'connections', 'total'],
+    right: ['upload', 'download', 'traffic'],
+    hidden: [...OPTIONAL_ACTIVITY_CARDS]
+  }
 }
 
 const isCard = (value: unknown): value is ActivityCardId => typeof value === 'string' && (ACTIVITY_CARDS as readonly string[]).includes(value)
@@ -57,9 +82,18 @@ function columnSlots(cards: readonly ActivityCardId[]): ColumnSlot[] {
   return out
 }
 
+/** The column ends in a lone half card, so another half card can share its row. */
+const hasOpenHalf = (cards: readonly ActivityCardId[]): boolean => {
+  const slots = columnSlots(cards)
+  return slots.length > 0 && slots[slots.length - 1].half === 1
+}
+
 const columnRows = (cards: readonly ActivityCardId[]): number => columnSlots(cards).reduce((max, slot) => Math.max(max, slot.row + slot.span - 1), 0)
 
-/** Keep known cards once each; cards missing from storage (new in an update) go to the shorter column. */
+/**
+ * Keep known cards once each; cards missing from storage (new in an update) go to the shorter
+ * column, except that a half card joins the column whose last row still has a free half.
+ */
 export function normalizeActivityLayout(value: unknown): ActivityLayout {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return defaultActivityLayout()
   const seen = new Set<ActivityCardId>()
@@ -72,10 +106,17 @@ export function normalizeActivityLayout(value: unknown): ActivityLayout {
     return out
   }
   const raw = value as Record<string, unknown>
-  const layout: ActivityLayout = { left: pick(split(raw.left)), right: pick(split(raw.right)) }
+  const layout: ActivityLayout = { left: pick(split(raw.left)), right: pick(split(raw.right)), hidden: [] }
+  layout.hidden = pick(raw.hidden)
   for (const id of ACTIVITY_CARDS) {
     if (seen.has(id)) continue
-    const column = columnRows(layout.right) < columnRows(layout.left) ? 'right' : 'left'
+    // A card added in an update starts hidden instead of rearranging the page.
+    if (OPTIONAL_ACTIVITY_CARDS.includes(id)) {
+      layout.hidden.push(id)
+      continue
+    }
+    const openHalf = isHalfCard(id) ? (['left', 'right'] as const).find((column) => hasOpenHalf(layout[column])) : undefined
+    const column = openHalf ?? (columnRows(layout.right) < columnRows(layout.left) ? 'right' : 'left')
     layout[column].push(id)
   }
   return layout
@@ -91,7 +132,10 @@ export function parseActivityLayout(value: string | null): ActivityLayout {
 }
 
 export function isDefaultActivityLayout(layout: ActivityLayout): boolean {
-  return JSON.stringify(layout) === JSON.stringify(defaultActivityLayout())
+  const fallback = defaultActivityLayout()
+  // Hidden cards have no position, so their order does not matter.
+  const sameHidden = layout.hidden.length === fallback.hidden.length && fallback.hidden.every((id) => layout.hidden.includes(id))
+  return sameHidden && JSON.stringify(layout.left) === JSON.stringify(fallback.left) && JSON.stringify(layout.right) === JSON.stringify(fallback.right)
 }
 
 export function cardPosition(layout: ActivityLayout, id: ActivityCardId): { column: ActivityColumn; index: number } {
@@ -101,18 +145,42 @@ export function cardPosition(layout: ActivityLayout, id: ActivityCardId): { colu
 
 /** Move a card to `index` of `column` (index counted without the card itself). */
 export function moveActivityCard(layout: ActivityLayout, id: ActivityCardId, column: ActivityColumn, index: number): ActivityLayout {
-  const next: ActivityLayout = { left: layout.left.filter((card) => card !== id), right: layout.right.filter((card) => card !== id) }
+  const next: ActivityLayout = {
+    left: layout.left.filter((card) => card !== id),
+    right: layout.right.filter((card) => card !== id),
+    hidden: layout.hidden.filter((card) => card !== id)
+  }
   const target = next[column]
   target.splice(Math.max(0, Math.min(index, target.length)), 0, id)
   return next
+}
+
+/** Take a card off the page; it can be added back later. */
+export function hideActivityCard(layout: ActivityLayout, id: ActivityCardId): ActivityLayout {
+  if (layout.hidden.includes(id)) return layout
+  return {
+    left: layout.left.filter((card) => card !== id),
+    right: layout.right.filter((card) => card !== id),
+    hidden: [...layout.hidden, id]
+  }
+}
+
+/** Put a hidden card back at the end of the shorter column (a half card fills an open half first). */
+export function showActivityCard(layout: ActivityLayout, id: ActivityCardId): ActivityLayout {
+  if (!layout.hidden.includes(id)) return layout
+  const base: ActivityLayout = { left: [...layout.left], right: [...layout.right], hidden: layout.hidden.filter((card) => card !== id) }
+  const openHalf = isHalfCard(id) ? (['left', 'right'] as const).find((column) => hasOpenHalf(base[column])) : undefined
+  const column = openHalf ?? (columnRows(base.right) < columnRows(base.left) ? 'right' : 'left')
+  base[column].push(id)
+  return base
 }
 
 /**
  * CSS grid placement of every card on the four sub-tracks (two per column):
  * full cards span their column's two, half cards one.
  */
-export function activityPlacement(layout: ActivityLayout): Record<ActivityCardId, { gridColumn: string; gridRow: string }> {
-  const out = {} as Record<ActivityCardId, { gridColumn: string; gridRow: string }>
+export function activityPlacement(layout: ActivityLayout): Partial<Record<ActivityCardId, { gridColumn: string; gridRow: string }>> {
+  const out: Partial<Record<ActivityCardId, { gridColumn: string; gridRow: string }>> = {}
   ;(['left', 'right'] as const).forEach((column, columnIndex) => {
     const first = columnIndex * 2 + 1
     for (const slot of columnSlots(layout[column])) {

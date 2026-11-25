@@ -167,7 +167,7 @@ describe('usage model', () => {
       const cap = usageCapacity()
       expect(cap.bucketMs).toBe(USAGE_BUCKET_MS)
       expect(cap.maxBuckets).toBe(USAGE_MAX_BUCKETS)
-      expect(cap.retentionHours).toBe(24 * 30)
+      expect(cap.retentionHours).toBe(24 * 63)
     })
   })
 })

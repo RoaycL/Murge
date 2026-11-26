@@ -77,6 +77,14 @@ body.activity-card-dragging { user-select: none; -webkit-user-select: none; }
 .dashboard-grid.is-editing > [data-card]:nth-child(3n):not(.card-lifted) { animation-duration: .3s; }
 .dashboard-grid.is-editing > [data-card] * { pointer-events: none; }
 .dashboard-grid.is-editing > .card-lifted { scale: 1.03; }
+/* 整理模式里卡片左上角的「-」：像 iOS 小组件编辑，压在卡片的角上。 */
+.dashboard-grid > .activity-card-remove { position: relative; z-index: 6; align-self: start; justify-self: start; display: grid; place-items: center; width: 22px; height: 22px; margin: -9px 0 0 -9px; padding: 0; border: 0; border-radius: 50%; background: var(--activity-remove-bg, #8e8e93); box-shadow: 0 1px 4px rgba(0, 0, 0, .22); cursor: pointer; animation: activity-remove-in .16s ease-out; }
+.dashboard-grid > .activity-card-remove i { width: 10px; height: 2px; border-radius: 1px; background: #fff; }
+.dashboard-grid > .activity-card-remove:hover { background: var(--app-danger); }
+.dashboard-grid > .activity-card-remove:focus-visible { outline: 2px solid var(--app-blue); outline-offset: 2px; }
+:root[data-theme="dark"] .dashboard-grid > .activity-card-remove { --activity-remove-bg: #636366; }
+@keyframes activity-remove-in { from { opacity: 0; transform: scale(.4); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .dashboard-grid > .activity-card-remove { animation: none; } }
 @keyframes activity-card-jiggle { from { rotate: -0.6deg; } to { rotate: 0.6deg; } }
 :root[data-reduce-motion="true"] .dashboard-grid.is-editing > [data-card] { animation: none; }
 @media (prefers-reduced-motion: reduce) { .dashboard-grid.is-editing > [data-card] { animation: none; } }

@@ -149,6 +149,24 @@ impl OverrideService {
         }
     }
 
+    /// The current override list (for a caller that may need to put it back).
+    pub fn items(&self) -> Vec<OverrideItem> {
+        let mut state = self.guard();
+        self.ensure_loaded(&mut state);
+        state.items.clone().unwrap_or_default()
+    }
+
+    /// Put a list taken with [`Self::items`] back, e.g. after the core
+    /// rejected the change that replaced it.
+    pub fn restore_items(&self, items: Vec<OverrideItem>) -> Result<Value, IpcError> {
+        let mut state = self.guard();
+        self.ensure_loaded(&mut state);
+        let items = Self::reindex(items);
+        self.persist(&items)?;
+        state.items = Some(items);
+        Ok(Self::snapshot(state.items.as_ref().expect("loaded")))
+    }
+
     pub fn list(&self) -> Result<Value, IpcError> {
         let mut state = self.guard();
         self.ensure_loaded(&mut state);
@@ -230,11 +248,11 @@ impl OverrideService {
             .position(|item| item.id == id)
             .ok_or_else(|| IpcError::invalid_argument("覆写不存在"))?;
         let target = if direction == "up" {
-            index - 1
+            index.checked_sub(1)
         } else {
-            index + 1
+            index.checked_add(1)
         };
-        if target < items.len() {
+        if let Some(target) = target.filter(|target| *target < items.len()) {
             items.swap(index, target);
             *items = Self::reindex(items.clone());
             self.persist(items)?;
@@ -516,6 +534,23 @@ mod tests {
         service.move_item(&a_id, "down").unwrap();
         let items = service.list().unwrap()["items"].as_array().unwrap().clone();
         assert_eq!(items[1]["name"], "A");
+
+        // The first item moving up is a no-op too (never an underflow).
+        service.move_item(&b_id, "up").unwrap();
+        let items = service.list().unwrap()["items"].as_array().unwrap().clone();
+        assert_eq!(items[0]["name"], "B");
+    }
+
+    #[test]
+    fn restore_items_puts_a_previous_list_back_on_disk() {
+        let (temp, service) = service();
+        service.create(&input("A", "yaml", "port: 1\n")).unwrap();
+        let previous = service.items();
+        service.create(&input("B", "yaml", "port: 2\n")).unwrap();
+        service.restore_items(previous.clone()).unwrap();
+        assert_eq!(service.items(), previous);
+        let reopened = OverrideService::new(Some(temp.path().to_path_buf()));
+        assert_eq!(reopened.items(), previous);
     }
 
     #[test]

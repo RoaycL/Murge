@@ -553,8 +553,16 @@ pub fn run() {
                     std::sync::Arc::new(move || {
                         let models = handle_for_mitm
                             .try_state::<std::sync::Arc<crate::enhancements::ModelStores>>()?;
-                        let port = models.core.get()["mixedPort"].as_u64()?;
-                        let port = u16::try_from(port).ok().filter(|port| *port != 0)?;
+                        // The live listener first; before any config was
+                        // handed to the core, the saved (coerced) setting.
+                        let port = match crate::live_config::applied_mixed_port() {
+                            Some(port) => port,
+                            None => {
+                                let core = crate::enhancements::coerce_core_settings(&models.core.get());
+                                let port = core["mixedPort"].as_u64()?;
+                                u16::try_from(port).ok().filter(|port| *port != 0)?
+                            }
+                        };
                         Some(std::net::SocketAddr::from(([127, 0, 0, 1], port)))
                     }),
                 );

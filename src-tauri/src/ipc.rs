@@ -863,11 +863,12 @@ pub async fn dispatch(
             }
         }
         "profiles:inspect-active-config" => {
-            // The Electron composition: overrides -> DNS enhancement ->
-            // sniffer enhancement -> buildProfileKernelConfig. TUN is disabled
-            // inside the Rust shell until the Phase 3D privileged slice, so
-            // the runtime config always follows the non-TUN branch (matching
-            // Electron's tunEnabled=false behavior).
+            // The same composition the live reload and the `mihomo -t` gate
+            // use (overrides + local layer, DNS, sniffer, Tailscale runtime
+            // layer, HTTPS 解密), then the kernel listener/controller keys.
+            // TUN itself is applied by the privileged service; the flag
+            // reports whether it is serving traffic right now.
+            let tun_enabled = tun.get_status().phase == "active";
             let profile = profiles.get_active()?;
             if profile.is_null() {
                 return Ok(inspection::inspect_active_profile_config(
@@ -876,7 +877,7 @@ pub async fn dispatch(
                     "",
                     &serde_json::json!({
                         "coreOverride": false, "dnsOverride": false, "snifferOverride": false,
-                        "geodataOverride": false, "tunEnabled": false
+                        "geodataOverride": false, "tunEnabled": tun_enabled
                     }),
                 ));
             }
@@ -886,11 +887,14 @@ pub async fn dispatch(
                 .unwrap_or_default()
                 .to_string();
             let profile_name = profile["meta"]["name"].as_str().map(str::to_string);
-            let overridden = overrides.apply_for_profile(&document, Some(&profile_id))?;
+            let base = live_config::compose_profile_document(
+                &document,
+                (!profile_id.is_empty()).then_some(profile_id.as_str()),
+                overrides,
+                models,
+            )?;
             let dns = enhancements::coerce_dns_enhancement(&models.dns.get());
-            let (dns_text, _) = inspection::apply_dns_to_document(&overridden, &dns);
             let sniffer = enhancements::coerce_sniffer_enhancement(&models.sniffer.get());
-            let (base, _) = inspection::apply_sniffer_to_document(&dns_text, &sniffer);
             let core = enhancements::coerce_core_settings(&models.core.get());
             let geodata = enhancements::coerce_geodata_settings(&models.geodata.get());
             // The kernel runtime knobs are staged with the Phase 3B/3D
@@ -928,7 +932,7 @@ pub async fn dispatch(
                     "dnsOverride": dns["enabled"].as_bool() == Some(true),
                     "snifferOverride": sniffer["enabled"].as_bool() == Some(true),
                     "geodataOverride": geodata["enabled"].as_bool() == Some(true),
-                    "tunEnabled": false
+                    "tunEnabled": tun_enabled
                 }),
             ))
         }
@@ -939,33 +943,49 @@ pub async fn dispatch(
             let input = arg(payload, 0).ok_or_else(|| {
                 IpcError::invalid_argument("overrides:create requires an input object")
             })?;
-            overrides.create(input)
+            apply_override_change(kernel, models, profiles, overrides, |o| o.create(input)).await
         }
         "overrides:update" => {
             let id = required_string(payload, 0, "overrides:update id")?;
             let input = arg(payload, 1).ok_or_else(|| {
                 IpcError::invalid_argument("overrides:update requires an input object")
             })?;
-            overrides.update(&id, input)
+            apply_override_change(kernel, models, profiles, overrides, |o| {
+                o.update(&id, input)
+            })
+            .await
         }
         "overrides:remove" => {
-            overrides.remove(&required_string(payload, 0, "overrides:remove id")?)
+            let id = required_string(payload, 0, "overrides:remove id")?;
+            apply_override_change(kernel, models, profiles, overrides, |o| o.remove(&id)).await
         }
         "overrides:set-enabled" => {
             let id = required_string(payload, 0, "overrides:set-enabled id")?;
             let enabled = arg(payload, 1).and_then(Value::as_bool).ok_or_else(|| {
                 IpcError::invalid_argument("overrides:set-enabled requires a boolean")
             })?;
-            overrides.set_enabled(&id, enabled)
+            apply_override_change(kernel, models, profiles, overrides, |o| {
+                o.set_enabled(&id, enabled)
+            })
+            .await
         }
-        "overrides:move" => overrides.move_item(
-            &required_string(payload, 0, "overrides:move id")?,
-            &string_arg(payload, 1).unwrap_or_default(),
-        ),
+        "overrides:move" => {
+            let id = required_string(payload, 0, "overrides:move id")?;
+            let direction = string_arg(payload, 1).unwrap_or_default();
+            apply_override_change(kernel, models, profiles, overrides, |o| {
+                o.move_item(&id, &direction)
+            })
+            .await
+        }
         "overrides:preview" => overrides.preview(),
         "overrides:validate" => overrides.validate(),
         "overrides:last-known-good" => overrides.last_known_good(),
-        "overrides:reset-to-last-good" => overrides.reset_to_last_good(),
+        "overrides:reset-to-last-good" => {
+            apply_override_change(kernel, models, profiles, overrides, |o| {
+                o.reset_to_last_good()
+            })
+            .await
+        }
 
         // --- typed single-model stores (Phase 3A) ---------------------------
         // get/set return the same envelope shapes the Electron services use;
@@ -1379,6 +1399,42 @@ pub async fn dispatch(
 /// The kernel's LIVE mixed port for proxied probes — the TS
 /// `resolveMixedPort` composition: `config['mixed-port'] ?? null`, every
 /// failure (controller down, missing key, port <= 0) fails closed null.
+/// An override write as it goes live: serialized with profile switches,
+/// checked by the core (`mihomo -t` on the active profile with the new
+/// override set; a rejection puts the previous list back), then hot-applied.
+/// A failed reload keeps the saved change and hands `reloadError` back, the
+/// same contract as `local:save`.
+async fn apply_override_change(
+    kernel: &kernel::KernelServices,
+    models: &enhancements::ModelStores,
+    profiles: &Arc<ProfilesService>,
+    overrides: &OverrideService,
+    change: impl FnOnce(&OverrideService) -> Result<Value, IpcError>,
+) -> IpcResult {
+    let _gate = runtime_update_guard().await?;
+    let previous = overrides.items();
+    let mut result = change(overrides)?;
+    if overrides.items() == previous {
+        return Ok(result);
+    }
+    if let Err(error) = profiles.check_active_semantics().await {
+        if let Err(restore) = overrides.restore_items(previous) {
+            crate::diag!(
+                "[overrides] restoring the list after a rejected change failed: {}",
+                restore.extract_message()
+            );
+        }
+        return Err(error);
+    }
+    if let Err(message) = live_config::reload_saved_layer(kernel, models, profiles, overrides).await
+    {
+        if let Some(map) = result.as_object_mut() {
+            map.insert("reloadError".into(), Value::String(message));
+        }
+    }
+    Ok(result)
+}
+
 pub(crate) async fn resolve_mixed_port(
     models: &enhancements::ModelStores,
 ) -> Result<u16, IpcError> {
@@ -3494,5 +3550,83 @@ mod tests {
         rollback().await.unwrap();
         assert_eq!(f.profiles.get_active().unwrap()["meta"]["id"], old["id"]);
         assert_eq!(f.profiles.get(id).unwrap()["document"], document);
+    }
+
+    async fn call_dispatch(f: &Fixture, channel: &str, payload: Value) -> IpcResult {
+        dispatch(
+            channel,
+            &payload,
+            &f.paths,
+            &f.settings,
+            &f.profiles,
+            &f.overrides,
+            &f.models,
+            &f.usage,
+            &f.kernel,
+            &f.mihomo,
+            &f.desktop,
+            &f.metadata,
+            &f.startup,
+            &f.substore,
+            &f.system_proxy,
+            &f.tun,
+            &f.updates,
+        )
+        .await
+    }
+
+    fn override_input(name: &str) -> Value {
+        serde_json::json!([{
+            "name": name, "kind": "yaml", "scope": "global",
+            "content": "rules:\n  - DOMAIN,example.com,DIRECT\n"
+        }])
+    }
+
+    #[tokio::test]
+    async fn override_writes_go_through_the_core_check_and_roll_back_on_rejection() {
+        let f = fixtures();
+        f.profiles
+            .import(&serde_json::json!({
+                "name": "active",
+                "document": "proxies: []\nrules: [MATCH,DIRECT]\n",
+                "activate": true
+            }))
+            .unwrap();
+        // Accepted while no gate is attached (the check cannot run).
+        let created = call_dispatch(&f, "overrides:create", override_input("kept"))
+            .await
+            .unwrap();
+        assert_eq!(created["items"].as_array().unwrap().len(), 1);
+        assert!(
+            created.get("reloadError").is_none(),
+            "no core running: nothing to reload"
+        );
+
+        let rejected = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = rejected.clone();
+        f.profiles
+            .set_semantic_validator(std::sync::Arc::new(move |_document, _id| {
+                seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Box::pin(async { Err(IpcError::invalid_argument("mihomo rejected the config")) })
+            }));
+        let error = call_dispatch(&f, "overrides:create", override_input("refused"))
+            .await
+            .unwrap_err();
+        assert!(
+            error.0.contains("mihomo rejected the config"),
+            "{}",
+            error.0
+        );
+        assert_eq!(rejected.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let items = f.overrides.items();
+        assert_eq!(items.len(), 1, "the rejected override was rolled back");
+        assert_eq!(items[0].name, "kept");
+
+        // A write that changes nothing does not ask the core again.
+        let id = items[0].id.clone();
+        call_dispatch(&f, "overrides:move", serde_json::json!([id, "up"]))
+            .await
+            .unwrap();
+        assert_eq!(rejected.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 }

@@ -128,6 +128,27 @@ impl LiveConfigRuntime {
     }
 }
 
+/// The mixed-port of the config last handed to the core (a kernel start or a
+/// successful live reload). A saved but not yet applied port change must not
+/// move app-side clients (HTTPS 解密 upstream legs) off the live listener.
+static APPLIED_MIXED_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+
+fn record_applied_mixed_port(port: i64) {
+    if let Ok(port) = u16::try_from(port) {
+        if port != 0 {
+            APPLIED_MIXED_PORT.store(port, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+}
+
+/// `None` until a config was handed to the core in this session.
+pub fn applied_mixed_port() -> Option<u16> {
+    match APPLIED_MIXED_PORT.load(std::sync::atomic::Ordering::SeqCst) {
+        0 => None,
+        port => Some(port),
+    }
+}
+
 /// `snifferSignature` — the model with `enabled` normalized to `true`, so a
 /// signature comparison checks everything EXCEPT the enabled flag.
 fn sniffer_signature(value: &Value) -> String {
@@ -337,7 +358,12 @@ impl<'a> LiveConfigReloader<'a> {
             )
             .await
             {
-                Ok(result) => return result.map(|_| true),
+                Ok(result) => {
+                    return result.map(|_| {
+                        record_applied_mixed_port(self.runtime.mixed_port);
+                        true
+                    })
+                }
                 Err(_) if self.client.is_responsive(3_000).await => {
                     if !reported {
                         reported = true;
@@ -861,7 +887,9 @@ pub fn build_service_profile(
 ) -> Result<String, IpcError> {
     let document = resolve_enhanced_document(profiles, overrides, models)?;
     let core = enhancements::coerce_core_settings(&models.core.get());
-    let mut options = LiveConfigRuntime::from_core(&core).builder_options();
+    let runtime = LiveConfigRuntime::from_core(&core);
+    record_applied_mixed_port(runtime.mixed_port);
+    let mut options = runtime.builder_options();
     if let Some(map) = options.as_object_mut() {
         map.insert(
             "tunConfig".into(),

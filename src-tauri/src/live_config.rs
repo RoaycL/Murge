@@ -128,9 +128,10 @@ impl LiveConfigRuntime {
     }
 }
 
-/// The mixed-port of the config last handed to the core (a kernel start or a
-/// successful live reload). A saved but not yet applied port change must not
-/// move app-side clients (HTTPS 解密 upstream legs) off the live listener.
+/// The mixed-port the core was started with. Live reloads do not count:
+/// they `PUT /configs` without `force`, so mihomo keeps the listeners it
+/// already bound. A saved but not yet applied port change must not move
+/// app-side clients (HTTPS 解密 upstream legs) off the live listener.
 static APPLIED_MIXED_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
 
 fn record_applied_mixed_port(port: i64) {
@@ -358,12 +359,7 @@ impl<'a> LiveConfigReloader<'a> {
             )
             .await
             {
-                Ok(result) => {
-                    return result.map(|_| {
-                        record_applied_mixed_port(self.runtime.mixed_port);
-                        true
-                    })
-                }
+                Ok(result) => return result.map(|_| true),
                 Err(_) if self.client.is_responsive(3_000).await => {
                     if !reported {
                         reported = true;

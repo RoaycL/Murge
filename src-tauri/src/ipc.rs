@@ -943,28 +943,34 @@ pub async fn dispatch(
             let input = arg(payload, 0).ok_or_else(|| {
                 IpcError::invalid_argument("overrides:create requires an input object")
             })?;
-            apply_override_change(kernel, models, profiles, overrides, |o| o.create(input)).await
+            apply_override_change(kernel, models, profiles, overrides, mihomo, |o| {
+                o.create(input)
+            })
+            .await
         }
         "overrides:update" => {
             let id = required_string(payload, 0, "overrides:update id")?;
             let input = arg(payload, 1).ok_or_else(|| {
                 IpcError::invalid_argument("overrides:update requires an input object")
             })?;
-            apply_override_change(kernel, models, profiles, overrides, |o| {
+            apply_override_change(kernel, models, profiles, overrides, mihomo, |o| {
                 o.update(&id, input)
             })
             .await
         }
         "overrides:remove" => {
             let id = required_string(payload, 0, "overrides:remove id")?;
-            apply_override_change(kernel, models, profiles, overrides, |o| o.remove(&id)).await
+            apply_override_change(kernel, models, profiles, overrides, mihomo, |o| {
+                o.remove(&id)
+            })
+            .await
         }
         "overrides:set-enabled" => {
             let id = required_string(payload, 0, "overrides:set-enabled id")?;
             let enabled = arg(payload, 1).and_then(Value::as_bool).ok_or_else(|| {
                 IpcError::invalid_argument("overrides:set-enabled requires a boolean")
             })?;
-            apply_override_change(kernel, models, profiles, overrides, |o| {
+            apply_override_change(kernel, models, profiles, overrides, mihomo, |o| {
                 o.set_enabled(&id, enabled)
             })
             .await
@@ -972,7 +978,7 @@ pub async fn dispatch(
         "overrides:move" => {
             let id = required_string(payload, 0, "overrides:move id")?;
             let direction = string_arg(payload, 1).unwrap_or_default();
-            apply_override_change(kernel, models, profiles, overrides, |o| {
+            apply_override_change(kernel, models, profiles, overrides, mihomo, |o| {
                 o.move_item(&id, &direction)
             })
             .await
@@ -981,7 +987,7 @@ pub async fn dispatch(
         "overrides:validate" => overrides.validate(),
         "overrides:last-known-good" => overrides.last_known_good(),
         "overrides:reset-to-last-good" => {
-            apply_override_change(kernel, models, profiles, overrides, |o| {
+            apply_override_change(kernel, models, profiles, overrides, mihomo, |o| {
                 o.reset_to_last_good()
             })
             .await
@@ -1409,16 +1415,17 @@ async fn apply_override_change(
     models: &enhancements::ModelStores,
     profiles: &Arc<ProfilesService>,
     overrides: &OverrideService,
+    mihomo: &mihomo::MihomoServices,
     change: impl FnOnce(&OverrideService) -> Result<Value, IpcError>,
 ) -> IpcResult {
     let _gate = runtime_update_guard().await?;
-    let previous = overrides.items();
+    let previous = overrides.checkpoint();
     let mut result = change(overrides)?;
-    if overrides.items() == previous {
+    if overrides.items() == previous.items() {
         return Ok(result);
     }
     if let Err(error) = profiles.check_active_semantics().await {
-        if let Err(restore) = overrides.restore_items(previous) {
+        if let Err(restore) = overrides.restore_checkpoint(previous) {
             crate::diag!(
                 "[overrides] restoring the list after a rejected change failed: {}",
                 restore.extract_message()
@@ -1431,6 +1438,12 @@ async fn apply_override_change(
         if let Some(map) = result.as_object_mut() {
             map.insert("reloadError".into(), Value::String(message));
         }
+    } else if crate::kernel::KernelStatusSource::kernel_status(kernel)["phase"].as_str()
+        == Some("running")
+    {
+        // The full reload recreates the selectors: replay the remembered
+        // node picks, as the profile reload path does.
+        live_config::restore_selections_after_reload(mihomo, models, profiles).await;
     }
     Ok(result)
 }

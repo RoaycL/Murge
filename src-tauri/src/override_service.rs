@@ -45,6 +45,18 @@ struct LastKnownGood {
     snapshot: Vec<OverrideItem>,
 }
 
+/// See [`OverrideService::checkpoint`].
+pub struct OverrideCheckpoint {
+    items: Vec<OverrideItem>,
+    last_good: Option<LastKnownGood>,
+}
+
+impl OverrideCheckpoint {
+    pub fn items(&self) -> &[OverrideItem] {
+        &self.items
+    }
+}
+
 pub struct OverrideService {
     app_data_base: Option<PathBuf>,
     now: Box<dyn Fn() -> u64 + Send + Sync>,
@@ -149,21 +161,37 @@ impl OverrideService {
         }
     }
 
-    /// The current override list (for a caller that may need to put it back).
+    /// The current override list and recovery point (for a caller that may
+    /// need to put both back: checking a candidate list against the core
+    /// composes it, which can capture it as last-known-good).
+    pub fn checkpoint(&self) -> OverrideCheckpoint {
+        let mut state = self.guard();
+        self.ensure_loaded(&mut state);
+        OverrideCheckpoint {
+            items: state.items.clone().unwrap_or_default(),
+            last_good: state.last_good.as_ref().map(|good| LastKnownGood {
+                captured_at: good.captured_at,
+                snapshot: good.snapshot.clone(),
+            }),
+        }
+    }
+
+    /// The current override list.
     pub fn items(&self) -> Vec<OverrideItem> {
         let mut state = self.guard();
         self.ensure_loaded(&mut state);
         state.items.clone().unwrap_or_default()
     }
 
-    /// Put a list taken with [`Self::items`] back, e.g. after the core
-    /// rejected the change that replaced it.
-    pub fn restore_items(&self, items: Vec<OverrideItem>) -> Result<Value, IpcError> {
+    /// Put a [`Self::checkpoint`] back, e.g. after the core rejected the
+    /// change that replaced it.
+    pub fn restore_checkpoint(&self, checkpoint: OverrideCheckpoint) -> Result<Value, IpcError> {
         let mut state = self.guard();
         self.ensure_loaded(&mut state);
-        let items = Self::reindex(items);
+        let items = Self::reindex(checkpoint.items);
         self.persist(&items)?;
         state.items = Some(items);
+        state.last_good = checkpoint.last_good;
         Ok(Self::snapshot(state.items.as_ref().expect("loaded")))
     }
 
@@ -542,13 +570,24 @@ mod tests {
     }
 
     #[test]
-    fn restore_items_puts_a_previous_list_back_on_disk() {
+    fn restore_checkpoint_puts_the_list_and_recovery_point_back() {
         let (temp, service) = service();
         service.create(&input("A", "yaml", "port: 1\n")).unwrap();
-        let previous = service.items();
+        service
+            .apply_for_profile("proxies: []\nrules: [MATCH,DIRECT]\n", None)
+            .unwrap();
+        let good_before = service.last_known_good().unwrap();
+        let checkpoint = service.checkpoint();
+        let previous = checkpoint.items().to_vec();
         service.create(&input("B", "yaml", "port: 2\n")).unwrap();
-        service.restore_items(previous.clone()).unwrap();
+        // Composing the candidate (as the core check does) captures it.
+        service
+            .apply_for_profile("proxies: []\nrules: [MATCH,DIRECT]\n", None)
+            .unwrap();
+        assert_ne!(service.last_known_good().unwrap(), good_before);
+        service.restore_checkpoint(checkpoint).unwrap();
         assert_eq!(service.items(), previous);
+        assert_eq!(service.last_known_good().unwrap(), good_before);
         let reopened = OverrideService::new(Some(temp.path().to_path_buf()));
         assert_eq!(reopened.items(), previous);
     }

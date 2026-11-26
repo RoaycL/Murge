@@ -9,6 +9,8 @@ import type {
 } from '@shared/overrides'
 import { EMPTY_OVERRIDES, coerceOverridesSnapshot } from '@shared/overrides'
 import { toProtocolError } from '@shared/protocol-errors'
+import { t } from '@shared/i18n'
+import { useToast } from '../composables/use-toast'
 
 /**
  * Renderer-side source of truth for the override (增强/覆写) chain. Every
@@ -25,6 +27,17 @@ export const useOverridesStore = defineStore('overrides', () => {
   const lastGood = ref<OverrideLastKnownGood | null>(null)
   const previewLoading = ref(false)
   const validating = ref(false)
+
+  /**
+   * Take a write's snapshot. The change is saved and passed the core check;
+   * `reloadError` means the running core has not switched to it yet, so say
+   * so instead of a silent success (the `local:save` contract).
+   */
+  function settle(raw: unknown): void {
+    snapshot.value = coerceOverridesSnapshot(raw)
+    const reloadError = (raw as { reloadError?: unknown } | null)?.reloadError
+    if (typeof reloadError === 'string' && reloadError) useToast().info(t('localStore.notApplied'), reloadError)
+  }
 
   /** Items in application order (ascending `order`). */
   const items = computed(() => [...snapshot.value.items].sort((a, b) => a.order - b.order))
@@ -69,8 +82,7 @@ export const useOverridesStore = defineStore('overrides', () => {
     if (busy.value) return false
     busy.value = true
     try {
-      const next = await window.desktop.overrides.resetToLastGood()
-      snapshot.value = coerceOverridesSnapshot(next)
+      settle(await window.desktop.overrides.resetToLastGood())
       lastGood.value = null
       lastError.value = null
       return true
@@ -95,7 +107,7 @@ export const useOverridesStore = defineStore('overrides', () => {
     if (busy.value) return false
     busy.value = true
     try {
-      snapshot.value = coerceOverridesSnapshot(await window.desktop.overrides.create(input))
+      settle(await window.desktop.overrides.create(input))
       lastError.value = null
       return true
     } catch (error) {
@@ -110,7 +122,7 @@ export const useOverridesStore = defineStore('overrides', () => {
     if (busy.value) return false
     busy.value = true
     try {
-      snapshot.value = coerceOverridesSnapshot(await window.desktop.overrides.update(id, input))
+      settle(await window.desktop.overrides.update(id, input))
       lastError.value = null
       return true
     } catch (error) {
@@ -125,7 +137,7 @@ export const useOverridesStore = defineStore('overrides', () => {
     if (busy.value) return false
     busy.value = true
     try {
-      snapshot.value = coerceOverridesSnapshot(await window.desktop.overrides.remove(id))
+      settle(await window.desktop.overrides.remove(id))
       lastError.value = null
       return true
     } catch (error) {
@@ -140,7 +152,7 @@ export const useOverridesStore = defineStore('overrides', () => {
     if (busy.value) return false
     busy.value = true
     try {
-      snapshot.value = coerceOverridesSnapshot(await window.desktop.overrides.setEnabled(id, enabled))
+      settle(await window.desktop.overrides.setEnabled(id, enabled))
       lastError.value = null
       return true
     } catch (error) {
@@ -155,7 +167,7 @@ export const useOverridesStore = defineStore('overrides', () => {
     if (busy.value) return false
     busy.value = true
     try {
-      snapshot.value = coerceOverridesSnapshot(await window.desktop.overrides.move(id, direction))
+      settle(await window.desktop.overrides.move(id, direction))
       lastError.value = null
       return true
     } catch (error) {

@@ -17,7 +17,7 @@ export const useUsageHistoryStore = defineStore('usage-history', () => {
   const capacity = ref<UsageCapacity>({
     bucketMs: 3_600_000,
     maxBuckets: USAGE_MAX_BUCKETS,
-    retentionHours: 24 * 30
+    retentionHours: USAGE_MAX_BUCKETS
   })
   const usageWindow = ref<UsageWindow>('24h')
   const usageRanking = ref<UsageRanking>('total')

@@ -29,6 +29,9 @@ export interface UsageBucket {
   count: number
   /** Persisted semantic marker used to migrate the old 1 Hz sample counter. */
   countType?: 'connections'
+  /** Bytes through a proxy / DIRECT in this bucket (from connection deltas; absent on older buckets). */
+  proxy?: number
+  direct?: number
 }
 
 export interface UsageTotals {
@@ -74,8 +77,8 @@ export interface UsageCapacity {
 /** Hourly bucket granularity used for the persisted database. */
 export const USAGE_BUCKET_MS = 3_600_000
 
-/** Default cap: 720 hourly buckets = 30 days of retained usage. */
-export const USAGE_MAX_BUCKETS = 24 * 30
+/** Default cap: 63 days of hourly buckets, so 上月 is always fully covered. */
+export const USAGE_MAX_BUCKETS = 24 * 63
 
 /**
  * Per-window bucketing config. `bucketMs` is the grid granularity and
@@ -119,7 +122,9 @@ export function coerceUsageBucket(input: unknown): UsageBucket | null {
     up: Math.round(record.up),
     down: Math.round(record.down),
     count: isNonNegative(record.count) ? Math.floor(record.count) : 0,
-    ...(record.countType === 'connections' ? { countType: 'connections' as const } : {})
+    ...(record.countType === 'connections' ? { countType: 'connections' as const } : {}),
+    ...(isNonNegative(record.proxy) ? { proxy: Math.round(record.proxy) } : {}),
+    ...(isNonNegative(record.direct) ? { direct: Math.round(record.direct) } : {})
   }
 }
 

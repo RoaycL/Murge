@@ -38,7 +38,7 @@ import type { TunStatus } from './tun'
 import type { TunConfigModel, TunConfigSnapshot } from './tun-config'
 import type { CoreSettings } from './core-settings'
 import type { GeodataSettings } from './geodata'
-import type { UsageWindow, UsageRanking, UsageHistorySnapshot, UsageRankingEntry, UsageCapacity } from './usage'
+import type { UsageWindow, UsageRanking, UsageHistorySnapshot, UsageRankingEntry, UsageCapacity, UsageBucket } from './usage'
 import type { ProcessUsageSnapshot } from './process-usage'
 import type { NetworkMetadataProvider, NetworkMetadataSnapshot, NetworkMetadataState } from './network-metadata'
 import type { AppInfo } from './app-info'
@@ -94,6 +94,7 @@ export const IPC = {
   mihomoInternetLatency: 'mihomo:internet-latency',
   unlockTestAll: 'network:unlock-test-all',
   unlockTestOne: 'network:unlock-test-one',
+  bandwidthTest: 'network:bandwidth-test',
   mihomoSelectProxy: 'mihomo:select-proxy',
   mihomoGetRules: 'mihomo:get-rules',
   mihomoGetProxyProviders: 'mihomo:get-proxy-providers',
@@ -220,6 +221,7 @@ export const IPC = {
   usageHistoryProcessRanking: 'usage-history:process-ranking',
   usageHistoryClear: 'usage-history:clear',
   usageHistoryGetCapacity: 'usage-history:get-capacity',
+  usageHistoryHourly: 'usage-history:hourly',
   networkMetadataGetProviders: 'network-metadata:get-providers',
   networkMetadataGetState: 'network-metadata:get-state',
   networkMetadataSelectProvider: 'network-metadata:select-provider',
@@ -296,7 +298,7 @@ export interface DesktopApi {
     patchConfig(patch: Partial<MihomoConfigSnapshot>): Promise<void>
     getProxies(): Promise<MihomoProxiesResponse>
     /** One INTERNET-latency sample (gateway/dns/proxy RTTs; null per failed slot). */
-    internetLatency(): Promise<{ gatewayMs: number | null; dnsMs: number | null; proxyMs: number | null; proxyNode: string | null }>
+    internetLatency(): Promise<{ gatewayMs: number | null; dnsMs: number | null; proxyMs: number | null; proxyNode: string | null; gatewayIp?: string | null; directMs?: number | null }>
     selectProxy(group: string, name: string): Promise<void>
     getRules(): Promise<MihomoRulesResponse>
     getProxyProviders(): Promise<MihomoProxyProvidersResponse>
@@ -372,6 +374,10 @@ export interface DesktopApi {
     testAll(): Promise<ServiceUnlockResult[]>
     /** Re-test one preset service (row-level refresh). */
     testOne(name: string): Promise<ServiceUnlockResult>
+  }
+  bandwidth: {
+    /** One download + upload burst through the live mixed port (null per failed direction). */
+    test(): Promise<{ downMbps: number | null; upMbps: number | null; testedAt: number }>
   }
   appSettings: {
     get(): Promise<AppSettings>
@@ -477,6 +483,8 @@ export interface DesktopApi {
     processRanking(window: UsageWindow): Promise<ProcessUsageSnapshot>
     clear(): Promise<void>
     getCapacity(): Promise<UsageCapacity>
+    /** Raw hourly buckets from `since` (epoch ms) on, oldest first. */
+    hourly(since: number): Promise<UsageBucket[]>
   }
   networkMetadata: {
     getProviders(): Promise<NetworkMetadataProvider[]>

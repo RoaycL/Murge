@@ -1,7 +1,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, type Ref } from 'vue'
 import {
-  ACTIVITY_LAYOUT_STORAGE_KEY, activityPlacement, cardPosition, defaultActivityLayout, isDefaultActivityLayout, isHalfCard,
-  moveActivityCard, parseActivityLayout, type ActivityCardId, type ActivityColumn, type ActivityLayout
+  ACTIVITY_LAYOUT_STORAGE_KEY, activityPlacement, cardPosition, defaultActivityLayout, hideActivityCard, isDefaultActivityLayout, isHalfCard,
+  moveActivityCard, parseActivityLayout, showActivityCard, type ActivityCardId, type ActivityColumn, type ActivityLayout
 } from '../lib/activity-layout'
 
 function readStored(): string | null {
@@ -15,7 +15,7 @@ export const LONG_PRESS_MS = 450
 /** Presses here keep their own behavior (typing, choosing) and never start a long press. */
 const NO_DRAG = 'input, textarea, select, .app-select'
 /** Presses here never leave arrange mode (the 完成 button, menus opened from a card). */
-const KEEP_EDITING = '[data-card], .activity-arrange-done, .popover-menu, [role="menu"]'
+const KEEP_EDITING = '[data-card], .activity-card-remove, .activity-arrange-done, .activity-arrange-add, .activity-card-preview, .popover-menu, [role="menu"]'
 
 interface DragState {
   id: ActivityCardId
@@ -33,7 +33,8 @@ interface DragState {
  * scroll on a card behaves normally (the traffic list scrolls, buttons
  * click); holding a card still for LONG_PRESS_MS enters arrange mode, where
  * every card jiggles and can be dragged. Arrange mode ends with 完成, Esc,
- * or a press outside the cards.
+ * or a press outside the cards. In arrange mode each card shows a 「-」 badge
+ * that removes it, and 添加卡片 puts hidden ones back.
  *
  * Cards stay in place in the DOM and are placed on the grid from the saved
  * order, so a drag never remounts a card. While dragging, the lifted card
@@ -62,11 +63,12 @@ export function useActivityLayout(grid: Ref<HTMLElement | null>) {
   /** Commit a new order and slide the other cards from their old slots (FLIP). */
   async function commit(next: ActivityLayout, keep?: ActivityCardId): Promise<void> {
     const before = new Map<HTMLElement, { x: number; y: number }>()
-    grid.value?.querySelectorAll<HTMLElement>('[data-card]').forEach((el) => before.set(el, { x: el.offsetLeft, y: el.offsetTop }))
+    // Cards and their 「-」 badges slide together.
+    grid.value?.querySelectorAll<HTMLElement>('[data-card], [data-card-remove]').forEach((el) => before.set(el, { x: el.offsetLeft, y: el.offsetTop }))
     layout.value = next
     await nextTick()
     for (const [el, from] of before) {
-      if (el.dataset.card === keep) continue
+      if (keep && (el.dataset.card === keep || el.dataset.cardRemove === keep)) continue
       const dx = from.x - el.offsetLeft
       const dy = from.y - el.offsetTop
       if (!dx && !dy) continue
@@ -253,21 +255,20 @@ export function useActivityLayout(grid: Ref<HTMLElement | null>) {
   /** Inline style of a card: its grid slot, plus the drag offset while lifted. */
   function cardStyle(id: ActivityCardId): Record<string, string> {
     const slot = placement.value[id]
+    if (!slot) return { display: 'none' }
     if (dragging.value !== id) return { gridColumn: slot.gridColumn, gridRow: slot.gridRow }
     return { gridColumn: slot.gridColumn, gridRow: slot.gridRow, transform: `translate(${offset.value.x}px, ${offset.value.y}px)` }
   }
 
-  function moveBy(id: ActivityCardId, delta: -1 | 1): void {
-    const { column, index } = cardPosition(layout.value, id)
-    const next = index + delta
-    if (next < 0 || next >= layout.value[column].length) return
-    void commit(moveActivityCard(layout.value, id, column, next)).then(persist)
+  /** Cards currently on the page (hidden ones are not rendered at all). */
+  const visible = computed(() => new Set<ActivityCardId>([...layout.value.left, ...layout.value.right]))
+
+  function hide(id: ActivityCardId): void {
+    void commit(hideActivityCard(layout.value, id)).then(persist)
   }
 
-  function moveAcross(id: ActivityCardId): void {
-    const { column, index } = cardPosition(layout.value, id)
-    const other: ActivityColumn = column === 'left' ? 'right' : 'left'
-    void commit(moveActivityCard(layout.value, id, other, index)).then(persist)
+  function show(id: ActivityCardId): void {
+    void commit(showActivityCard(layout.value, id)).then(persist)
   }
 
   function reset(): void {
@@ -281,5 +282,5 @@ export function useActivityLayout(grid: Ref<HTMLElement | null>) {
     document.body.classList.remove('activity-card-dragging')
   })
 
-  return { layout, isDefault, dragging, editing, startEditing, stopEditing, cardStyle, onPointerDown, onClickCapture, moveBy, moveAcross, reset }
+  return { layout, isDefault, visible, dragging, editing, startEditing, stopEditing, cardStyle, onPointerDown, onClickCapture, hide, show, reset }
 }

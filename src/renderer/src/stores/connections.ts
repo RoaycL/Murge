@@ -37,6 +37,10 @@ export interface ConnectionsSummary {
   directBytes: number
   /** Since-start upload + download through a proxy, including closed connections. */
   proxyBytes: number
+  /** Connections (requests) seen since start, closed ones included. */
+  requestCount: number
+  /** Distinct domains seen since start (the 流量排行 footer). */
+  rankedHosts: number
   topProcesses: ProcessRank[]
 }
 
@@ -97,9 +101,9 @@ export const useConnectionsStore = defineStore('connections', () => {
   })
   const cumulativeVersion = ref(0)
 
-  function buildRank(dimension: TrafficDimension): ProcessRank[] {
+  function buildRank(dimension: TrafficDimension, scope: RankScope = rankScope.value): ProcessRank[] {
     void cumulativeVersion.value
-    const proxyOnly = rankScope.value === 'proxy'
+    const proxyOnly = scope === 'proxy'
     const ranked = Array.from(cumulative.rows(dimension).entries())
       .filter(([, bucket]) => !proxyOnly || bucket.proxied)
       .map(([name, bucket]) => ({ name, bytes: proxyOnly ? bucket.proxy : bucket.all, iconPath: bucket.iconPath }))
@@ -118,6 +122,9 @@ export const useConnectionsStore = defineStore('connections', () => {
   const topProcesses = computed(() => buildRank('process'))
   const topHosts = computed(() => buildRank('host'))
   const topPolicies = computed(() => buildRank('policy'))
+  // The 流量排行 card always ranks every connection, whatever the 流量 card's scope.
+  const allHosts = computed(() => buildRank('host', 'all'))
+  const allPolicies = computed(() => buildRank('policy', 'all'))
 
   const summary = computed<ConnectionsSummary | null>(() => {
     const snap = snapshot.value
@@ -143,6 +150,8 @@ export const useConnectionsStore = defineStore('connections', () => {
       memory: snap.memory,
       directBytes: cumulative.direct,
       proxyBytes: cumulative.proxy,
+      requestCount: cumulative.requests,
+      rankedHosts: cumulative.rows('host').size,
       topProcesses: topProcesses.value
     }
   })
@@ -317,7 +326,7 @@ export const useConnectionsStore = defineStore('connections', () => {
   return {
     status, lastError, snapshot, summary, closedConnections, view,
     selectedId, selectedConnection, search, visibleConnections, closingIds, closingMany, actionError, sort,
-    rankScope, setRankScope, topProcesses, topHosts, topPolicies, entityStats, entityTotals,
+    rankScope, setRankScope, topProcesses, topHosts, topPolicies, allHosts, allPolicies, entityStats, entityTotals,
     connect, disconnect, select, close, closeMany, setView, clearClosed
   }
 })

@@ -47,6 +47,8 @@ export class CumulativeTraffic {
   }
   direct = 0
   proxy = 0
+  /** Connections (requests) seen since start, closed ones included. */
+  requests = 0
 
   constructor(private readonly keys: CumulativeKeys) {}
 
@@ -57,6 +59,7 @@ export class CumulativeTraffic {
       const up = bytes(connection.upload)
       const down = bytes(connection.download)
       const previous = this.seen.get(connection.id)
+      if (!previous) this.requests += 1
       this.seen.set(connection.id, { up, down })
       // A counter that went backwards means a reused id; count it from zero.
       const delta = previous

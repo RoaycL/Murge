@@ -293,7 +293,7 @@ button.widget-title:hover { color: var(--app-text); }
 .node-grid .add-node { align-items: center; justify-content: center; color: var(--app-muted); font-size: var(--font-size-2xl); border: 1px dashed var(--app-divider); background: transparent; }
 .rules-header { display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 18px; }
 .rules-header p { margin: 2px 0 0; color: var(--app-muted); font-size: var(--font-size-xs); }
-.rules-header input { width: 245px; height: 27px; padding: 0 12px; border: 1px solid var(--app-divider); border-radius: var(--radius-card); background: rgba(255,255,255,.24); }
+.rules-header input { width: 245px; height: 27px; padding: 0 12px; border: 1px solid var(--app-divider); border-radius: var(--radius-card); background: var(--app-search-bg); }
 .table-frame { width: 100%; overflow: hidden; border: 1px solid var(--app-divider); border-radius: var(--radius-sm); }
 /* 规则表用固定布局：ID/类型/策略/使用计数/来源列定宽，「值」占剩余宽度并以省略号截断。
    之前三列各 33.33% 再加上其他列，总宽超过 100%，长规则把表格撑出 .table-frame 后被裁掉右侧。 */
@@ -361,7 +361,8 @@ button.widget-title:hover { color: var(--app-text); }
 .log-module { justify-self: start; max-width: 70px; height: 18px; padding: 0 6px; overflow: hidden; border: 0; border-radius: var(--radius-sm); color: var(--app-muted); background: var(--app-fill); font-size: var(--font-size-2xs); text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .log-module:hover { color: inherit; }
 .logs-toolbar { display: flex; gap: var(--space-4); width: 100%; margin: 17px 0 12px; }
-.logs-toolbar input { flex: 1; height: 29px; padding: 0 12px; border: 1px solid var(--app-divider); border-radius: var(--radius-control); background: rgba(255,255,255,.24); color: inherit; }
+.logs-toolbar input { flex: 1; height: 29px; padding: 0 12px; border: 1px solid var(--app-divider); border-radius: var(--radius-control); background: var(--app-search-bg); color: inherit; }
+.logs-toolbar input::placeholder, .connections-toolbar input::placeholder, .rules-header input::placeholder { color: var(--app-muted); opacity: 1; }
 .logs-toolbar select { width: 112px; height: 29px; padding: 0 8px; border: 0; border-radius: var(--radius-control); background: var(--app-fill); color: inherit; }
 .logs-panel { width: 100%; flex: 1; min-height: 240px; overflow: auto; border-radius: var(--radius-control); }
 .log-row { display: grid; grid-template-columns: 132px 62px 1fr; align-items: start; min-height: 29px; padding: 6px 10px; border-bottom: 1px solid var(--app-divider); font-size: var(--font-size-xs); }
@@ -379,7 +380,7 @@ button.widget-title:hover { color: var(--app-text); }
 /* One radius for the whole toolbar row: search, sort select and action button. */
 .connections-toolbar .search-control, .connections-toolbar .connection-toolbar-action { border-radius: var(--radius-control); }
 .connections-toolbar .connection-toolbar-action { flex: 0 0 120px; width: 120px; height: 32px; min-height: 32px; white-space: nowrap; }
-.connections-toolbar input { flex: 1; min-width: 0; height: 29px; padding: 0 12px; border: 1px solid var(--app-divider); border-radius: var(--radius-panel); background: rgba(255,255,255,.24); color: inherit; }
+.connections-toolbar input { flex: 1; min-width: 0; height: 29px; padding: 0 12px; border: 1px solid var(--app-divider); border-radius: var(--radius-panel); background: var(--app-search-bg); color: inherit; }
 .connections-toolbar select { width: 108px; height: 29px; padding: 0 8px; border: 0; border-radius: var(--radius-control); background: var(--app-fill); color: inherit; }
 .connections-layout { width: 100%; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .connection-list { position: relative; overflow: auto; border-radius: var(--radius-control); }
@@ -419,7 +420,7 @@ button.widget-title:hover { color: var(--app-text); }
 .secondary-button { display:inline-flex; align-items:center; justify-content:center; gap:var(--space-2); min-height:30px; padding:0 12px; border:1px solid var(--app-divider); border-radius:var(--radius-control); color:inherit; background:transparent; cursor:pointer; }
 .danger-button { display:inline-flex; align-items:center; justify-content:center; gap:var(--space-2); }
 .danger-button.solid { color:var(--app-on-accent); background:var(--app-danger); }
-.search-control { display:flex; align-items:center; flex:1; min-width:0; height:29px; padding:0 10px; border:1px solid var(--app-divider); border-radius:var(--radius-panel); color:var(--app-muted); background:rgba(255,255,255,.24); }
+.search-control { display:flex; align-items:center; flex:1; min-width:0; height:29px; padding:0 10px; border:1px solid var(--app-divider); border-radius:var(--radius-panel); color:var(--app-muted); background:var(--app-search-bg); }
 .search-control input { flex:1; min-width:0; height:100%; padding:0 0 0 7px; border:0; outline:0; color:var(--app-text); background:transparent; }
 .connections-toolbar > input { display:none; }
 .full-width-list { width:100%; flex:1; min-height:0; overflow:auto; border-radius:var(--radius-md); }
